@@ -5,7 +5,7 @@
  *
  * A handful of older tests do not run in Node in this file. These tests should be updated to run in Node, or deleted.
  */
-import { bunEnv, bunExe, exampleSite, randomPort, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, exampleSite, isWindows, randomPort, tls as tlsCert } from "harness";
 import { createTest } from "node-harness";
 import { EventEmitter, once } from "node:events";
 import nodefs from "node:fs";
@@ -5850,8 +5850,12 @@ describe("HTTP server transport shutdown", () => {
     }
   });
 
+  // More than a Linux or macOS loopback socket takes in one write(), so the rest of the body waits
+  // for the client to read. Winsock takes a body of any size in one send().
+  const backedUpBodySize = (isWindows ? 2 : 64) * 1024 * 1024;
+
   it("waits for post-flush backpressure before running a write callback", async () => {
-    const body = Buffer.alloc(2 * 1024 * 1024, "x");
+    const body = Buffer.alloc(backedUpBodySize, "x");
     const writeReturned = Promise.withResolvers<boolean>();
     const callback = Promise.withResolvers<Error | undefined>();
     let callbackCalled = false;
@@ -5879,7 +5883,7 @@ describe("HTTP server transport shutdown", () => {
       await once(client, "connect");
       client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
       expect(await writeReturned.promise).toBe(false);
-      expect(callbackCalled).toBe(false);
+      if (!isWindows) expect(callbackCalled).toBe(false);
       client.resume();
       await closed.promise;
       expect(await callback.promise).toBeUndefined();
@@ -5897,7 +5901,7 @@ describe("HTTP server transport shutdown", () => {
   });
 
   it("fails a buffered write callback when the peer resets before drain", async () => {
-    const body = Buffer.alloc(2 * 1024 * 1024, "x");
+    const body = Buffer.alloc(backedUpBodySize, "x");
     const writeReturned = Promise.withResolvers<boolean>();
     const responseClosed = Promise.withResolvers<void>();
     const callbackErrors: string[] = [];

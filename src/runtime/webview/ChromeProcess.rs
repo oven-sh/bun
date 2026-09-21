@@ -957,7 +957,8 @@ impl bun_event_loop::Taskable for QueuedEvent {
 #[cfg(windows)]
 impl QueuedEvent {
     #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
-    pub(crate) fn deliver(queued: Box<QueuedEvent>) -> bun_jsc::JsResult<()> {
+    pub(crate) fn deliver(self: Box<Self>) -> bun_jsc::JsResult<()> {
+        let queued = self;
         if queued.generation != GENERATION.load(Ordering::Relaxed) {
             scoped_log!(
                 Chrome,

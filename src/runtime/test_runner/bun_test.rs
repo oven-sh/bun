@@ -1513,7 +1513,8 @@ pub struct RunTestsTask {
 }
 impl RunTestsTask {
     #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
-    pub fn call(this: Box<RunTestsTask>) -> JsResult<()> {
+    pub fn call(self: Box<Self>) -> JsResult<()> {
+        let this = self;
         // Box drops at end of scope; the Weak drops with it.
         let Some(strong) = this.weak.upgrade() else { return Ok(()) };
         if let Err(e) = BunTest::run(&strong, &this.global_this) {

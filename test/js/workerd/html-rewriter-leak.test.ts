@@ -1,6 +1,7 @@
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, expectRssDeltaBelow, isASAN, isDebug, tempDir } from "harness";
+import { join } from "node:path";
 
 // `wire_input`'s materialized-body path transfers the body's `+1` (a
 // `WTFStringImpl` for an all-ASCII `new Response("...")`) into an `AnyBlob`
@@ -710,6 +711,44 @@ test("a direct-stream pull parked on flush(true) is released when the handler pr
   }
   expect(msg).toContain("will never settle");
 });
+
+// An unobserved transform reads one upstream chunk per event-loop turn: after the first chunk it
+// queues a task for the next one, and that task holds a ref on the pipe (and so the chunks the pipe
+// is holding) and a protect() on its cell. A worker that exits with the task queued must give both
+// back.
+test("a worker exiting with an unobserved transform's pull queued frees the pipe", async () => {
+  using dir = tempDir("html-rewriter-queued-pull", {
+    "worker.js": /* js */ `
+      const chunk = new Uint8Array(1024 * 1024).fill(0x61);
+      const body = new ReadableStream({
+        type: "direct",
+        pull(c) {
+          for (let i = 0; i < 8; i++) c.write(chunk);
+          c.end();
+        },
+      });
+      // One chunk in, seven held: the next pull is queued, not run.
+      globalThis.keep = new HTMLRewriter().on("p", { element() {} }).transform(new Response(body));
+      process.exit(0);
+    `,
+    "main.js": /* js */ `
+      async function round(n) {
+        for (let i = 0; i < n; i++) {
+          const worker = new Worker(new URL("./worker.js", import.meta.url).href);
+          await new Promise(resolve => worker.addEventListener("close", resolve));
+        }
+        Bun.gc(true);
+        return process.memoryUsage.rss();
+      }
+      const before = await round(5);
+      const after = await round(15);
+      console.log(JSON.stringify({ deltaMiB: (after - before) / 1024 / 1024 }));
+    `,
+  });
+
+  // Unfixed: ~130 MiB. Fixed: allocator slack only.
+  await expectRssDeltaBelow([join(String(dir), "main.js")], { release: 50, debug: 60 });
+}, 20_000);
 
 test("element.attributes iterator does not leak names/values", async () => {
   const code = /* js */ `

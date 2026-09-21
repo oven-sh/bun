@@ -144,7 +144,12 @@ impl bun_event_loop::Taskable for Result {
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract — the box `run_from_thread_pool_impl` (or
         // `ServerComponentParseTask`) leaked.
-        drop(unsafe { bun_core::heap::take(this) });
+        let mut result = unsafe { bun_core::heap::take(this) };
+        // A native plugin's source buffer: `on_parse_task_complete` would have handed this to
+        // the bundle's finalizers. The source may borrow the buffer, so it goes first.
+        let external = core::mem::take(&mut result.external);
+        drop(result);
+        external.call();
     }
     /// A step of the bundle.
     unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {

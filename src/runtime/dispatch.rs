@@ -335,9 +335,8 @@ pub(crate) fn run_task(
         }
         task_tag::RunTestsTask => {
             // SAFETY: boxed in `run_next_tick`; the arm consumes it.
-            crate::test_runner::bun_test::RunTestsTask::call(unsafe {
-                bun_core::heap::take(cast_ptr!(crate::test_runner::bun_test::RunTestsTask))
-            })?;
+            unsafe { bun_core::heap::take(cast_ptr!(crate::test_runner::bun_test::RunTestsTask)) }
+                .call()?;
         }
         task_tag::ValkeyDeferredFailure => {
             // SAFETY: boxed at the enqueue site; the arm consumes it.
@@ -392,27 +391,38 @@ pub(crate) fn run_task(
         task_tag::HTTPSAppClose => {
             crate::server::AppCloseTask::<true>::run(cast_ptr!(crate::server::AppCloseTask<true>));
         }
-        // SAFETY (all four): the unique owning server pointer `schedule_deinit` queued.
-        task_tag::HTTPServerDeinit => unsafe {
-            crate::server::ServerDeinitTask::<false, false>::run(cast_ptr!(
-                crate::server::ServerDeinitTask<false, false>
-            ));
-        },
-        task_tag::HTTPSServerDeinit => unsafe {
-            crate::server::ServerDeinitTask::<true, false>::run(cast_ptr!(
-                crate::server::ServerDeinitTask<true, false>
-            ));
-        },
-        task_tag::DebugHTTPServerDeinit => unsafe {
-            crate::server::ServerDeinitTask::<false, true>::run(cast_ptr!(
-                crate::server::ServerDeinitTask<false, true>
-            ));
-        },
-        task_tag::DebugHTTPSServerDeinit => unsafe {
-            crate::server::ServerDeinitTask::<true, true>::run(cast_ptr!(
-                crate::server::ServerDeinitTask<true, true>
-            ));
-        },
+        task_tag::HTTPServerDeinit => {
+            // SAFETY: the unique owning server pointer `schedule_deinit` queued.
+            unsafe {
+                crate::server::ServerDeinitTask::<false, false>::run(cast_ptr!(
+                    crate::server::ServerDeinitTask<false, false>
+                ))
+            };
+        }
+        task_tag::HTTPSServerDeinit => {
+            // SAFETY: the unique owning server pointer `schedule_deinit` queued.
+            unsafe {
+                crate::server::ServerDeinitTask::<true, false>::run(cast_ptr!(
+                    crate::server::ServerDeinitTask<true, false>
+                ))
+            };
+        }
+        task_tag::DebugHTTPServerDeinit => {
+            // SAFETY: the unique owning server pointer `schedule_deinit` queued.
+            unsafe {
+                crate::server::ServerDeinitTask::<false, true>::run(cast_ptr!(
+                    crate::server::ServerDeinitTask<false, true>
+                ))
+            };
+        }
+        task_tag::DebugHTTPSServerDeinit => {
+            // SAFETY: the unique owning server pointer `schedule_deinit` queued.
+            unsafe {
+                crate::server::ServerDeinitTask::<true, true>::run(cast_ptr!(
+                    crate::server::ServerDeinitTask<true, true>
+                ))
+            };
+        }
         #[cfg(windows)]
         task_tag::CopyFileWindowsMkdirp => {
             // SAFETY: the live copy `on_mkdirp_complete_concurrent` posted.
@@ -434,9 +444,8 @@ pub(crate) fn run_task(
         #[cfg(windows)]
         task_tag::ChromePipeEvent => {
             // SAFETY: boxed in `PipeEvent::post`; the arm consumes it.
-            crate::webview::chrome_process::QueuedEvent::deliver(unsafe {
-                bun_core::heap::take(cast_ptr!(crate::webview::chrome_process::QueuedEvent))
-            })?;
+            unsafe { bun_core::heap::take(cast_ptr!(crate::webview::chrome_process::QueuedEvent)) }
+                .deliver()?;
         }
         task_tag::CppTask => {
             cast!(CppTask).run(global)?;

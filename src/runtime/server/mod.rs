@@ -4300,8 +4300,7 @@ impl<const SSL: bool, const DEBUG: bool> bun_event_loop::Taskable for ServerDein
         (false, true) => bun_event_loop::task_tag::DebugHTTPServerDeinit,
         (true, true) => bun_event_loop::task_tag::DebugHTTPSServerDeinit,
     };
-    /// Not freed here: `finalize()` frees a server whose deinit was scheduled once the VM is
-    /// shutting down (`DEINIT_SCHEDULED`).
+    /// Frees nothing: a server whose deinit is still queued when its VM stops stays allocated.
     unsafe fn release_unrun(_: *mut Self) {}
     /// Enters no context.
     unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {

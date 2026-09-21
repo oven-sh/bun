@@ -22,11 +22,10 @@ mod kernel32 {
     }
 }
 
-/// UTF-16 units per `WriteConsoleW` call (libuv's cap).
-const CHUNK_UNITS: usize = 8192;
-/// Stack scratch for a small write. The crash handler writes from an
-/// overflowed stack, so the frame stays small and a big write goes to the heap.
-const STACK_UNITS: usize = 512;
+/// UTF-16 units per `WriteConsoleW` call. The scratch lives on the stack and
+/// the crash handler reaches this function from an overflowed stack and from
+/// a broken allocator, so it stays small and never goes to the heap.
+const CHUNK_UNITS: usize = 1024;
 
 /// Incomplete UTF-8 sequence left by the previous write to stdout (0) or
 /// stderr (1), packed as `len | b0 << 8 | b1 << 16 | b2 << 24`.
@@ -115,14 +114,7 @@ fn write_chunk(fd: Fd, bytes: &[u8], utf16: &mut [u16]) -> Maybe<()> {
 pub fn write(fd: Fd, buf: &[u8]) -> Option<Maybe<usize>> {
     let slot = console_slot(fd)?;
     let pending = &PENDING[slot];
-    let mut stack = [0u16; STACK_UNITS];
-    let mut heap: Vec<u16> = Vec::new();
-    let utf16: &mut [u16] = if buf.len() <= STACK_UNITS - 4 {
-        &mut stack
-    } else {
-        heap.resize(CHUNK_UNITS, 0);
-        &mut heap
-    };
+    let utf16 = &mut [0u16; CHUNK_UNITS];
 
     let mut consumed = 0usize;
     let mut head = [0u8; 4];

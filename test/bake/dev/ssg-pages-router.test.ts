@@ -388,3 +388,35 @@ devTest("SSG pages router - catch-all routes [...slug]", {
     expect(await c4.elemsText("li")).toEqual(["blog", "2024", "january", "new-features"]);
   },
 });
+
+// `routes: { "/*": { dir, style } }` mounts the same router on a directory. That directory does
+// not have to be inside the cwd, e.g. the pages of a sibling package in a monorepo.
+devTest("pages router - directory route with a dir outside the cwd", {
+  framework: "react",
+  cwd: "apps/api",
+  mainDir: "apps/api",
+  files: {
+    "apps/api/bun.app.ts": `
+      export default {
+        routes: { "/*": { dir: "../web/pages", style: "nextjs-pages" } },
+        fetch: () => new Response("not routed", { status: 404 }),
+      };
+    `,
+    "apps/web/pages/index.tsx": `
+      export default function IndexPage() {
+        return <h1>Index Page</h1>;
+      }
+    `,
+    "apps/web/pages/blog/[slug].tsx": `
+      const Page: Bun.SSGPage = ({ params }) => <h1>{"Post: " + params.slug}</h1>;
+      export default Page;
+    `,
+  },
+  async test(dev) {
+    await using c1 = await dev.client("/");
+    expect(await c1.elemText("h1")).toBe("Index Page");
+
+    await using c2 = await dev.client("/blog/hello-world");
+    expect(await c2.elemText("h1")).toBe("Post: hello-world");
+  },
+});

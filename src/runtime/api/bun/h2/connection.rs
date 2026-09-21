@@ -172,6 +172,8 @@ pub trait Sink {
     }
     /// A SETTINGS entry with an id outside the standard registry (node's remoteCustomSettings).
     fn on_remote_custom_setting(&self, _id: u16, _value: u32) {}
+    /// One SETTINGS_HEADER_TABLE_SIZE entry from the peer, called per entry in wire order.
+    fn on_remote_header_table_size(&self, _size: u32) {}
     /// One decoded header field. `name`/`value` alias a shared buffer — copy before returning.
     fn on_header(&self, _stream_id: u32, _name: &[u8], _value: &[u8], _never_index: bool) {}
     /// The header block for `stream_id` is complete. `end_stream` = the HEADERS carried END_STREAM.
@@ -289,6 +291,7 @@ pub struct Connection {
 
     /// Scratch buffer for the outbound HPACK-encoded header block.
     enc_buf: Vec<u8>,
+    enc_announced: hpack::AnnouncedAt,
     /// Reusable scratch for end-of-batch window replenishment (stream id, increment).
     replenish_buf: Vec<(u32, u32)>,
     /// Reused buffer for evicting closed streams after each receive pass (no per-call allocation).
@@ -317,7 +320,7 @@ impl Connection {
             max_settings: 32,
             send_window: SendWindow::new(wire::DEFAULT_WINDOW_SIZE),
             recv_window: RecvWindow::new(wire::DEFAULT_WINDOW_SIZE),
-            hpack: hpack::Coder::new(local.header_table_size),
+            hpack: hpack::Coder::new(),
             streams: HashMap::new(),
             header_block_in_flight: None,
             header_block: Vec::new(),
@@ -325,6 +328,7 @@ impl Connection {
             terminated: false,
             obq_ack_pending: 0,
             enc_buf: Vec::new(),
+            enc_announced: Default::default(),
             replenish_buf: Vec::new(),
             evict_buf: Vec::new(),
             preface_received: 0,
@@ -680,6 +684,8 @@ impl Connection {
             // The peer has acknowledged this submission: header-list enforcement may now use the
             // limit it carried.
             self.enforced_max_header_list_size = acked.settings.max_header_list_size;
+            self.hpack
+                .set_acked_header_table_size(acked.settings.header_table_size);
             sink.on_local_settings(&acked.settings);
             return false;
         }
@@ -698,7 +704,6 @@ impl Connection {
             self.send_go_away(sink, code, b"SETTINGS value out of range");
             return true;
         }
-        let old_table = self.remote_settings.header_table_size;
         let old_initial_window = self.remote_settings.initial_window_size;
         let mut i = 0;
         while i + 6 <= payload.len() {
@@ -724,15 +729,15 @@ impl Connection {
                     return true;
                 }
                 self.remote_settings.apply(sid, value);
+                // Per entry, not once per frame: the peer's decoder evicts at each (RFC 7541 §4.2).
+                if sid == SettingId::HeaderTableSize {
+                    self.hpack.set_peer_header_table_size(value);
+                    sink.on_remote_header_table_size(value);
+                }
             } else {
                 sink.on_remote_custom_setting(id, value);
             }
             i += 6;
-        }
-        // The peer's HEADER_TABLE_SIZE governs OUR encoder; queue a 6.3 size update.
-        if self.remote_settings.header_table_size != old_table {
-            self.hpack
-                .queue_encoder_capacity(self.remote_settings.header_table_size);
         }
         // 6.9.2: a change to SETTINGS_INITIAL_WINDOW_SIZE adjusts every non-closed stream's send
         // window by the delta (the connection window is not affected).
@@ -1211,6 +1216,8 @@ impl Connection {
                     }
                     sink.on_header(target, h.name, h.value, h.never_index);
                 }
+                // Size updates and no field, for example empty trailers. lshpack applied them.
+                Err(_) if off == 0 && self.hpack.is_size_update_only(&block) => break,
                 Err(_) => {
                     // §4.3: a header-block decoding error is a connection COMPRESSION_ERROR.
                     self.send_go_away(sink, ErrorCode::CompressionError, b"HPACK decode error");
@@ -1780,9 +1787,7 @@ impl Connection {
     /// Begin a new outbound header block. Emits any pending §6.3 dynamic-table size update first.
     pub fn begin_header_block(&mut self) {
         self.enc_buf.clear();
-        let mut tmp = [0u8; hpack::MAX_SIZE_UPDATE_BYTES];
-        let n = self.hpack.take_pending_size_update(&mut tmp, 0);
-        self.enc_buf.extend_from_slice(&tmp[..n]);
+        self.enc_announced = self.hpack.write_pending_size_update(&mut self.enc_buf);
     }
 
     /// HPACK-encode one header field into the current block. Returns false on encode failure.
@@ -1808,6 +1813,7 @@ impl Connection {
     /// it exceeds the peer's max frame size (§4.3/§6.10), and advance the send-side stream state.
     pub fn send_header_block(&mut self, sink: &impl Sink, stream_id: u32, end_stream: bool) {
         let block = std::mem::take(&mut self.enc_buf);
+        self.hpack.size_update_committed(self.enc_announced);
         let max = (self.remote_settings.max_frame_size as usize).max(1);
         let total = block.len();
 
@@ -1939,6 +1945,7 @@ impl Connection {
     /// promised request headers staged via begin_header_block/encode_header (RFC 9113 §6.6).
     pub fn send_push_promise(&mut self, sink: &impl Sink, parent_id: u32, promised_id: u32) {
         let block = std::mem::take(&mut self.enc_buf);
+        self.hpack.size_update_committed(self.enc_announced);
         let max = (self.remote_settings.max_frame_size as usize).max(5);
 
         // First frame: PUSH_PROMISE = 4-byte promised id + (head of) the header block.
@@ -2067,7 +2074,7 @@ mod tests {
 
     /// Encode a header block with a standalone coder (mirrors a real peer's encoder).
     fn encode_block(pairs: &[(&[u8], &[u8])]) -> Vec<u8> {
-        let mut coder = hpack::Coder::new(4096);
+        let mut coder = hpack::Coder::new();
         let mut buf = vec![0u8; 4096];
         let mut off = 0usize;
         for (name, value) in pairs {

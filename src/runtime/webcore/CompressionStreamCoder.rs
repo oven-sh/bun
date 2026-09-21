@@ -302,6 +302,8 @@ impl CompressionStreamCoder {
         }))
     }
 
+    /// First byte of a gzip member (RFC 1952 ID1): bytes after a member that start otherwise are trailing junk.
+    const GZIP_ID1: u8 = 0x1f;
     const ZSTD_MAGIC: [u8; 4] = 0xFD2F_B528u32.to_le_bytes();
     const ZSTD_MAGIC_SKIPPABLE: [u8; 3] = [0x2A, 0x4D, 0x18];
 
@@ -439,7 +441,7 @@ impl CompressionStreamCoder {
                     // a member boundary". For gzip, a following chunk starts the
                     // next member; for deflate/deflate-raw it is trailing junk.
                     if self.ended && !input.is_empty() {
-                        if !gzip {
+                        if !gzip || input[0] != Self::GZIP_ID1 {
                             return Err(CodecError::TrailingJunk);
                         }
                         // SAFETY: `s` is an initialized inflate stream.
@@ -492,7 +494,7 @@ impl CompressionStreamCoder {
                             if remaining.is_empty() {
                                 return Ok(Progress::Done);
                             }
-                            if !gzip {
+                            if !gzip || remaining[0] != Self::GZIP_ID1 {
                                 return Err(CodecError::TrailingJunk);
                             }
                             // SAFETY: `s` is an initialized inflate stream.

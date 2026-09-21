@@ -324,6 +324,8 @@ test("new Blob([file]) is a Blob, not a File", async () => {
   expect(blob instanceof File).toBe(false);
   expect(blob).toBeInstanceOf(Blob);
   expect((blob as any).name).toBeUndefined();
+  // a plain Blob prints neither a name nor a lastModified
+  expect(Bun.inspect(blob)).toBe("Blob (5 bytes)");
   expect(await blob.text()).toBe("hello");
   // the source is unchanged
   expect([file.name, file.lastModified]).toEqual(["original.txt", 1000]);

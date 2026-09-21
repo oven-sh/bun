@@ -85,8 +85,13 @@ describe("FormData", () => {
     expect(file.name).toBe("original.txt");
 
     const body = await new Response(form).text();
-    expect(body).toContain('name="set"; filename="renamed.txt"');
-    expect(body).toContain('name="unnamed"; filename="original.txt"');
+    const dispositions = body.split("\r\n").filter(line => line.startsWith("Content-Disposition"));
+    expect(dispositions).toEqual([
+      'Content-Disposition: form-data; name="set"; filename="renamed.txt"',
+      'Content-Disposition: form-data; name="append"; filename="appended.txt"',
+      'Content-Disposition: form-data; name="wrapped"; filename="wrapped.txt"',
+      'Content-Disposition: form-data; name="unnamed"; filename="original.txt"',
+    ]);
   });
 
   const multipartFormDataFixturesRawBody = [

@@ -3986,8 +3986,9 @@ pub(crate) extern "C" fn Blob__dupeFromJS(value: JSValue) -> Option<NonNull<Blob
     )
 }
 
-/// Called on the FormData entry's private dupe, never on the caller's Blob.
-/// The entry's filename wins over the name the dupe inherited from a File.
+/// `this` is the impl behind a C++ `WebCore::Blob` (a FormData entry's private
+/// dupe, a WebSocket message), never a Blob that JS holds. A non-empty entry
+/// filename wins over the name the dupe inherited from a File.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &BunString) {
     this.is_jsdom_file.set(true);

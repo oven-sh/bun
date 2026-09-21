@@ -256,6 +256,7 @@ describe("fs.watch", () => {
   // The OS hands over several events at once (a rename is two events from one
   // syscall), and node still makes one callback per event: what the listener
   // queued for one event has run by the time the next event arrives.
+  // https://github.com/nodejs/node/blob/v26.3.0/src/fs_event_wrap.cc#L239
   function burstEndingWithLast(root: string) {
     for (const name of ["a", "b", "c", "d", "e", "f", "g", "last"]) {
       fs.writeFileSync(path.join(root, name + ".tmp"), "x");

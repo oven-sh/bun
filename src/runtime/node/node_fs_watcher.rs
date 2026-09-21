@@ -935,14 +935,13 @@ impl FSWatcher {
         }
     }
 
-    /// One event per task, as on Windows. Node makes one `MakeCallback` per event:
-    /// https://github.com/nodejs/node/blob/v26.3.0/src/fs_event_wrap.cc#L239
-    /// The task for the rest is queued first: a listener that spins the loop gets it.
+    /// One event per task, as on Windows: node makes one `MakeCallback` per event.
     #[cfg(not(windows))]
     fn deliver_one(&self) -> JsResult<()> {
         let Some(event) = self.undelivered.with_mut(VecDeque::pop_front) else {
             return Ok(());
         };
+        // Queued before the listener runs: a listener that spins the event loop gets the rest.
         if !self.undelivered.get().is_empty() && self.ref_task() {
             let task = bun_core::heap::into_raw(Box::new(FSWatchTaskPosix {
                 // SAFETY: `self` is the live FSWatcher (BACKREF); it outlives its tasks.

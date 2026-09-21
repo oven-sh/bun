@@ -66,40 +66,6 @@ template<typename T> struct Converter<IDLOptional<T>> : DefaultConverter<IDLOpti
             return T::nullValue();
         return Converter<T>::convert(lexicalGlobalObject, value);
     }
-    static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, JSC::JSObject& thisObject)
-    {
-        if (value.isUndefined())
-            return T::nullValue();
-        return Converter<T>::convert(lexicalGlobalObject, value, thisObject);
-    }
-    static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, JSDOMGlobalObject& globalObject)
-    {
-        if (value.isUndefined())
-            return T::nullValue();
-        return Converter<T>::convert(lexicalGlobalObject, value, globalObject);
-    }
-    template<typename ExceptionThrower = DefaultExceptionThrower>
-        requires(!Bun::IDLConversionContext<std::decay_t<ExceptionThrower>>)
-    static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, ExceptionThrower&& exceptionThrower)
-    {
-        if (value.isUndefined())
-            return T::nullValue();
-        return Converter<T>::convert(lexicalGlobalObject, value, std::forward<ExceptionThrower>(exceptionThrower));
-    }
-    template<typename ExceptionThrower = DefaultExceptionThrower>
-    static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, JSC::JSObject& thisObject, ExceptionThrower&& exceptionThrower)
-    {
-        if (value.isUndefined())
-            return T::nullValue();
-        return Converter<T>::convert(lexicalGlobalObject, value, thisObject, std::forward<ExceptionThrower>(exceptionThrower));
-    }
-    template<typename ExceptionThrower = DefaultExceptionThrower>
-    static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, JSDOMGlobalObject& globalObject, ExceptionThrower&& exceptionThrower)
-    {
-        if (value.isUndefined())
-            return T::nullValue();
-        return Converter<T>::convert(lexicalGlobalObject, value, globalObject, std::forward<ExceptionThrower>(exceptionThrower));
-    }
 };
 
 } // namespace WebCore

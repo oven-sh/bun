@@ -118,13 +118,6 @@ public:
             }
         }
 
-        if (m_callee && m_callee->inherits<JSC::JSFunction>()) {
-            auto* function = uncheckedDowncast<JSC::JSFunction>(m_callee);
-            if (function->isHostFunction()) {
-                return false;
-            }
-        }
-
         return false;
     }
     bool isConstructor() const

@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 // clang-format off
-#if (defined(LIBUS_USE_OPENSSL) || defined(LIBUS_USE_WOLFSSL))
+#ifdef LIBUS_USE_OPENSSL
 
 #include "internal/internal.h"
 #include "internal/fault_inject.h"
@@ -32,20 +32,12 @@ int sni_add(void *sni, const char *hostname, void *user);
 void *sni_remove(void *sni, const char *hostname);
 void *sni_find(void *sni, const char *hostname);
 
-#ifdef LIBUS_USE_OPENSSL
 #include <openssl/bio.h>
 #include <openssl/dh.h>
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 #include <openssl/pkcs12.h>
 #include <openssl/pool.h>
-#elif LIBUS_USE_WOLFSSL
-#include <wolfssl/openssl/bio.h>
-#include <wolfssl/openssl/dh.h>
-#include <wolfssl/openssl/err.h>
-#include <wolfssl/openssl/ssl.h>
-#include <wolfssl/options.h>
-#endif
 
 #include "./root_certs_header.h"
 #include "./default_ciphers.h"

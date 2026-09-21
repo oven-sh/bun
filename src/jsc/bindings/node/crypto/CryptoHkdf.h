@@ -14,16 +14,11 @@ JSC_DECLARE_HOST_FUNCTION(jsHkdfSync);
 
 struct HkdfJobCtx {
 
-    enum class Mode {
-        Sync,
-        Async,
-    };
-
     HkdfJobCtx(ncrypto::Digest digest, size_t length, KeyObject&& key, WTF::Vector<uint8_t>&& info, WTF::Vector<uint8_t>&& salt);
     HkdfJobCtx(HkdfJobCtx&&);
     ~HkdfJobCtx();
 
-    static std::optional<HkdfJobCtx> fromJS(JSC::JSGlobalObject*, JSC::CallFrame*, JSC::ThrowScope&, Mode);
+    static std::optional<HkdfJobCtx> fromJS(JSC::JSGlobalObject*, JSC::CallFrame*, JSC::ThrowScope&);
 
     void runTask(JSC::JSGlobalObject*);
     JSCallbackArgs runFromJS(JSC::JSGlobalObject*);

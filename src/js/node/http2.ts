@@ -3002,12 +3002,12 @@ function tryClose(fd) {
 }
 
 // node's respondWithFD() sends headers before it reads the fd and fails on the read; replay that.
-function failFdResponseAsStreamError(this: Http2Stream, headers, options) {
+function failFdResponseAsStreamError(this: ServerHttp2Stream, headers, options) {
   if (this.destroyed || this.closed) return;
   if (!this.headersSent) {
     try {
       this.respond(headers, options);
-    } catch (err) {
+    } catch (err: any) {
       this.destroy(err);
       return;
     }
@@ -3099,7 +3099,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
     if (stat.isFile()) {
       // remove content-length header
       for (let i in headers) {
-        if (i?.toLowerCase() === HTTP2_HEADER_CONTENT_LENGTH) {
+        if (StringPrototypeToLowerCase.$call(i) === HTTP2_HEADER_CONTENT_LENGTH) {
           delete headers[i];
         }
       }

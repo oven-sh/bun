@@ -1,4 +1,4 @@
-import { define, InvalidThisBehavior } from "../../codegen/class-definitions";
+import { define, InvalidThisBehavior } from "../../codegen/class-definitions.ts";
 
 export default [
   define({
@@ -6,7 +6,7 @@ export default [
     rustPath: "crate::dns_jsc::Resolver",
     construct: false,
     noConstructor: true,
-    finalize: true,
+    refCounted: true,
     configurable: false,
     klass: {},
     proto: {
@@ -105,7 +105,7 @@ export default [
     name: "StatWatcher",
     construct: false,
     noConstructor: true,
-    finalize: true,
+    refCounted: true,
     configurable: false,
     klass: {},
     JSType: "0b11101110",
@@ -129,7 +129,7 @@ export default [
     name: "Timeout",
     rustPath: "crate::timer::TimeoutObject",
     construct: true,
-    finalize: true,
+    refCounted: true,
     sharedThis: true,
     configurable: false,
     klass: {},
@@ -200,7 +200,7 @@ export default [
     name: "Immediate",
     rustPath: "crate::timer::ImmediateObject",
     construct: true,
-    finalize: true,
+    refCounted: true,
     sharedThis: true,
     configurable: false,
     klass: {},

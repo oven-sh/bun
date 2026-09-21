@@ -10,7 +10,6 @@ use enumset::EnumSet;
 use super::response::HeadersRef;
 use crate::api::AnyRequestContext;
 use crate::webcore::BlobExt as _;
-use crate::webcore::blob::ZigStringBlobExt as _;
 use crate::webcore::body::{self, BodyHiveHandle, BodyMixin, Value as BodyValue};
 use crate::webcore::jsc::{
     CallFrame, HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsRef, JsResult,
@@ -18,7 +17,7 @@ use crate::webcore::jsc::{
 use crate::webcore::{AbortSignal, Blob, CookieMap, FetchHeaders, ReadableStream, Response};
 use bun_alloc::AllocError;
 use bun_core::{Output, fmt as bun_fmt};
-use bun_core::{String as BunString, ZigString, strings};
+use bun_core::{String as BunString, strings};
 use bun_http_jsc::fetch_enums_jsc::{
     fetch_cache_mode_to_js, fetch_redirect_to_js, fetch_request_mode_to_js,
 };
@@ -28,6 +27,7 @@ use bun_http_types::FetchRedirect::FetchRedirect;
 use bun_http_types::FetchRequestMode::FetchRequestMode;
 use bun_http_types::Method::Method;
 use bun_jsc::AbortSignalRef;
+use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::StringJsc as _;
 use bun_jsc::generated::JSRequest as js_gen;
 use bun_ptr::weak_ptr::WeakPtrData;
@@ -341,25 +341,25 @@ impl Request {
         Ok(None)
     }
 
-    pub(crate) fn get_content_type(&self) -> JsResult<Option<bun_core::ZigStringSlice>> {
+    pub(crate) fn get_content_type(&self) -> JsResult<Option<bun_core::Utf8Bytes<'_>>> {
         if let Some(req) = self.request_context.get_request() {
             // S008: `uws::Request` is an `opaque_ffi!` ZST handle — safe deref.
             let req = bun_opaque::opaque_deref(req);
             if let Some(value) = req.header(b"content-type") {
-                return Ok(Some(bun_core::ZigStringSlice::from_utf8_never_free(value)));
+                return Ok(Some(bun_core::Utf8Bytes::Borrowed(value)));
             }
         }
 
         if let Some(headers) = self.headers_mut().as_mut() {
             if let Some(value) = headers.fast_get(HTTPHeaderName::ContentType) {
-                return Ok(Some(value.to_slice()));
+                return Ok(Some(value.to_utf8()));
             }
         }
 
         if let BodyValue::Blob(blob) = self.body_value() {
             let ct = blob.content_type_slice();
             if !ct.is_empty() {
-                return Ok(Some(bun_core::ZigStringSlice::from_utf8_never_free(ct)));
+                return Ok(Some(bun_core::Utf8Bytes::Borrowed(ct)));
             }
         }
 
@@ -387,7 +387,9 @@ impl Request {
     #[bun_uws::uws_callback(export = "Request__clone")]
     pub fn ffi_clone(&self, global_this: &JSGlobalObject) -> Option<Box<Request>> {
         self.throw_if_body_unusable(global_this).ok()?;
-        self.clone(global_this).ok()
+        // `BunRequest.prototype.clone`, a C++ host function, calls this.
+        let cx = global_this.js_thread_of_caller_no_frame();
+        self.clone(&cx).ok()
     }
 
     /// `JSBunRequest::clone` tail: mirror [`Self::do_clone`]'s cache sync so a
@@ -669,11 +671,11 @@ impl Request {
     }
 
     pub(crate) fn get_destination(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
-        ZigString::init(b"").to_js(global_this)
+        JSValue::js_empty_string(global_this)
     }
 
     pub(crate) fn get_integrity(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
-        ZigString::EMPTY.to_js(global_this)
+        JSValue::js_empty_string(global_this)
     }
 
     /// The `AbortSignal` this request was constructed with or lazily created
@@ -709,7 +711,7 @@ impl Request {
         // headers.deref() → HeadersRef::Drop when set to None
         self.headers.set(None);
 
-        self.url.set(BunString::empty());
+        self.url.set(BunString::EMPTY);
 
         // AbortSignalRef::Drop unrefs the C++ handle.
         self.signal.set(None);
@@ -753,11 +755,11 @@ impl Request {
             }
         }
 
-        ZigString::init(b"").to_js(global_object)
+        JSValue::js_empty_string(global_object)
     }
 
     pub(crate) fn get_referrer_policy(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
-        ZigString::init(b"").to_js(global_this)
+        JSValue::js_empty_string(global_this)
     }
 
     pub(crate) fn get_url(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
@@ -974,7 +976,7 @@ impl Request {
     }
 
     pub(crate) fn construct_into(
-        global_this: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         arguments: &[JSValue],
         this_value: JSValue,
     ) -> JsResult<Request> {
@@ -985,7 +987,7 @@ impl Request {
         // (the +1) is moved into `req.body` next.
         let body_seed_ptr = body.as_ptr();
         let mut req = Request {
-            url: JsCell::new(BunString::empty()),
+            url: JsCell::new(BunString::EMPTY),
             headers: JsCell::new(None),
             signal: JsCell::new(None),
             body: ManuallyDrop::new(body),
@@ -1025,11 +1027,11 @@ impl Request {
         }
 
         if arguments.is_empty() {
-            bail!(Err(global_this.throw(format_args!(
+            bail!(Err(cx.global().throw(format_args!(
                 "Failed to construct 'Request': 1 argument required, but only 0 present."
             ))));
         } else if arguments[0].is_empty_or_undefined_or_null() || !arguments[0].is_cell() {
-            bail!(Err(global_this.throw(format_args!(
+            bail!(Err(cx.global().throw(format_args!(
                 "Failed to construct 'Request': expected non-empty string or object, got undefined"
             ))));
         }
@@ -1042,10 +1044,10 @@ impl Request {
             // fastest path:
             url_or_object_type.is_string_like() ||
             // slower path:
-            bun_jsc::DOMURL::cast_(url_or_object, global_this.vm()).is_some();
+            bun_jsc::DOMURL::cast_(url_or_object, cx.global().vm()).is_some();
 
         if is_first_argument_a_url {
-            let str = match BunString::from_js(arguments[0], global_this) {
+            let str = match BunString::from_js(arguments[0], cx.global()) {
                 Ok(s) => s,
                 Err(e) => bail!(Err(e)),
             };
@@ -1055,7 +1057,7 @@ impl Request {
                 fields.insert(Fields::Url);
             }
         } else if !url_or_object_type.is_object() {
-            bail!(Err(global_this.throw(format_args!(
+            bail!(Err(cx.global().throw(format_args!(
                 "Failed to construct 'Request': expected non-empty string or object"
             ))));
         }
@@ -1090,7 +1092,7 @@ impl Request {
                         match Request::clone_into(
                             request,
                             &mut req,
-                            global_this,
+                            cx,
                             fields.contains(Fields::Url),
                         ) {
                             Ok(()) => {}
@@ -1122,7 +1124,7 @@ impl Request {
                     }
 
                     if !fields.contains(Fields::Headers) {
-                        match request.clone_headers(global_this) {
+                        match request.clone_headers(cx.global()) {
                             Ok(Some(headers)) => {
                                 req.headers.set(Some(headers));
                                 fields.insert(Fields::Headers);
@@ -1136,7 +1138,7 @@ impl Request {
                         match request.body_value() {
                             BodyValue::Null | BodyValue::Empty | BodyValue::Used => {}
                             _ => {
-                                match request.clone_body_value_via_cached_stream(global_this) {
+                                match request.clone_body_value_via_cached_stream(cx) {
                                     Ok(v) => {
                                         *req.body_value_mut() = v;
                                     }
@@ -1161,7 +1163,7 @@ impl Request {
                             // The flag is set unconditionally once `getInitHeaders()` yielded a
                             // value, even if `cloneThis` returns null — so a later arg can't
                             // repopulate headers from a different source.
-                            match headers.clone_this(global_this) {
+                            match headers.clone_this(cx.global()) {
                                 Ok(h) => {
                                     // SAFETY: clone_this returns a +1 ref FetchHeaders.
                                     req.headers.set(h.map(|p| unsafe { HeadersRef::adopt(p) }));
@@ -1184,7 +1186,7 @@ impl Request {
                         match response.get_body_value() {
                             BodyValue::Null | BodyValue::Empty | BodyValue::Used => {}
                             _ => {
-                                match response.clone_body_value_via_cached_stream(global_this) {
+                                match response.clone_body_value_via_cached_stream(cx) {
                                     Ok(v) => {
                                         *req.body_value_mut() = v;
                                     }
@@ -1198,23 +1200,23 @@ impl Request {
             }
 
             if !fields.contains(Fields::Body) {
-                match value.fast_get(global_this, bun_jsc::BuiltinName::Body) {
+                match value.fast_get(cx.global(), bun_jsc::BuiltinName::Body) {
                     Ok(Some(body_)) => {
                         fields.insert(Fields::Body);
                         // fetch spec Request(init): `keepalive: true` with a ReadableStream
                         // body throws before body extraction (Node's message is "keepalive").
                         if crate::webcore::ReadableStream::is_readable_stream(body_) {
-                            match value.get(global_this, "keepalive") {
+                            match value.get(cx.global(), "keepalive") {
                                 Ok(Some(keepalive)) if keepalive.to_boolean() => {
-                                    bail!(Err(
-                                        global_this.throw_type_error(format_args!("keepalive"))
-                                    ));
+                                    bail!(Err(cx
+                                        .global()
+                                        .throw_type_error(format_args!("keepalive"))));
                                 }
                                 Ok(_) => {}
                                 Err(e) => bail!(Err(e)),
                             }
                         }
-                        match BodyValue::from_js(global_this, body_) {
+                        match BodyValue::from_js(cx.global(), body_) {
                             Ok(v) => {
                                 *req.body_value_mut() = v;
                             }
@@ -1226,15 +1228,15 @@ impl Request {
                 }
 
                 // BodyValue::from_js() throws without returning Err; see Blob::from_dom_form_data
-                if global_this.has_exception() {
+                if cx.global().has_exception() {
                     bail!(Err(JsError::Thrown));
                 }
             }
 
             if !fields.contains(Fields::Url) {
-                match value.fast_get(global_this, bun_jsc::BuiltinName::Url) {
+                match value.fast_get(cx.global(), bun_jsc::BuiltinName::Url) {
                     Ok(Some(url)) => {
-                        match BunString::from_js(url, global_this) {
+                        match BunString::from_js(url, cx.global()) {
                             Ok(s) => req.url.set(s),
                             Err(e) => bail!(Err(e)),
                         }
@@ -1252,12 +1254,12 @@ impl Request {
                         if value == values_to_try[values_to_try.len() - 1]
                             && !is_first_argument_a_url
                         {
-                            let implements = match value.implements_to_string(global_this) {
+                            let implements = match value.implements_to_string(cx.global()) {
                                 Ok(b) => b,
                                 Err(e) => bail!(Err(e)),
                             };
                             if implements {
-                                let str = match BunString::from_js(value, global_this) {
+                                let str = match BunString::from_js(value, cx.global()) {
                                     Ok(s) => s,
                                     Err(e) => bail!(Err(e)),
                                 };
@@ -1276,7 +1278,7 @@ impl Request {
                 // WebIDL `AbortSignal?`: present iff the member is not undefined.
                 // `fast_get` maps absent/undefined → None; `null` is Some(null) and
                 // means "present, detach" (no fallback to the input Request's signal).
-                match value.fast_get(global_this, bun_jsc::BuiltinName::signal) {
+                match value.fast_get(cx.global(), bun_jsc::BuiltinName::signal) {
                     Ok(Some(signal_)) => {
                         fields.insert(Fields::Signal);
                         if signal_.is_null() {
@@ -1287,7 +1289,7 @@ impl Request {
                             // `ref_from_js` already ref'd.
                             req.signal.set(Some(signal));
                         } else {
-                            bail!(Err(global_this.throw_type_error(format_args!(
+                            bail!(Err(cx.global().throw_type_error(format_args!(
                                 "Failed to construct 'Request': signal is not of type AbortSignal."
                             ))));
                         }
@@ -1298,11 +1300,11 @@ impl Request {
             }
 
             if !fields.contains(Fields::Method) || !fields.contains(Fields::Headers) {
-                match crate::webcore::response::Init::init(global_this, value) {
+                match crate::webcore::response::Init::init(cx.global(), value) {
                     Ok(Some(response_init)) => {
                         let header_check = !explicit_check
                             || (explicit_check
-                                && match value.fast_get(global_this, bun_jsc::BuiltinName::Headers)
+                                && match value.fast_get(cx.global(), bun_jsc::BuiltinName::Headers)
                                 {
                                     Ok(v) => v.is_some(),
                                     Err(e) => bail!(Err(e)),
@@ -1320,7 +1322,7 @@ impl Request {
 
                         let method_check = !explicit_check
                             || (explicit_check
-                                && match value.fast_get(global_this, bun_jsc::BuiltinName::Method) {
+                                && match value.fast_get(cx.global(), bun_jsc::BuiltinName::Method) {
                                     Ok(v) => v.is_some(),
                                     Err(e) => bail!(Err(e)),
                                 });
@@ -1338,7 +1340,7 @@ impl Request {
 
             // Extract redirect option
             if !fields.contains(Fields::Redirect) {
-                match value.get_optional_enum::<FetchRedirect>(global_this, "redirect") {
+                match value.get_optional_enum::<FetchRedirect>(cx.global(), "redirect") {
                     Ok(Some(redirect_value)) => {
                         req.flags.redirect = redirect_value;
                         fields.insert(Fields::Redirect);
@@ -1350,7 +1352,7 @@ impl Request {
 
             // Extract cache option
             if !fields.contains(Fields::Cache) {
-                match value.get_optional_enum::<FetchCacheMode>(global_this, "cache") {
+                match value.get_optional_enum::<FetchCacheMode>(cx.global(), "cache") {
                     Ok(Some(cache_value)) => {
                         req.flags.cache = cache_value;
                         fields.insert(Fields::Cache);
@@ -1362,7 +1364,7 @@ impl Request {
 
             // Extract mode option
             if !fields.contains(Fields::Mode) {
-                match value.get_optional_enum::<FetchRequestMode>(global_this, "mode") {
+                match value.get_optional_enum::<FetchRequestMode>(cx.global(), "mode") {
                     Ok(Some(mode_value)) => {
                         req.flags.mode = mode_value;
                         fields.insert(Fields::Mode);
@@ -1374,7 +1376,7 @@ impl Request {
         }
 
         if req.url.get().is_empty() {
-            bail!(Err(global_this.throw(format_args!(
+            bail!(Err(cx.global().throw(format_args!(
                 "Failed to construct 'Request': url is required."
             ))));
         }
@@ -1383,11 +1385,11 @@ impl Request {
         if href.is_empty() {
             // globalThis.throw can cause GC, which could cause the above string to be freed.
             // so we must increment the reference count before calling it.
-            let err = global_this.err_invalid_url(format_args!(
+            let err = cx.global().err_invalid_url(format_args!(
                 "Failed to construct 'Request': Invalid URL \"{}\"",
                 req.url.get()
             ));
-            bail!(Err(global_this.throw_value(err)));
+            bail!(Err(cx.global().throw_value(err)));
         }
 
         // hrefFromString increments the reference count if they end up being
@@ -1414,7 +1416,7 @@ impl Request {
                         HTTPHeaderName::ContentType,
                         // SAFETY: ct_ptr borrows req.body which is not mutated here.
                         &BunString::ascii(unsafe { &*ct_ptr }),
-                        global_this,
+                        cx.global(),
                     ) {
                         Ok(()) => {}
                         Err(e) => bail!(Err(e)),
@@ -1424,7 +1426,7 @@ impl Request {
         }
 
         req.calculate_estimated_byte_size();
-        req.check_body_stream_ref(global_this);
+        req.check_body_stream_ref(cx.global());
         success = true;
 
         cleanup(&mut req, body_seed_ptr, success);
@@ -1438,7 +1440,11 @@ impl Request {
     ) -> JsResult<Box<Request>> {
         let arguments = callframe.arguments();
 
-        let request = Self::construct_into(global_this, arguments, this_value)?;
+        let request = Self::construct_into(
+            &global_this.js_thread_of_caller(callframe),
+            arguments,
+            this_value,
+        )?;
         Ok(Request::new(request))
     }
 
@@ -1449,7 +1455,7 @@ impl Request {
     ) -> JsResult<JSValue> {
         self.throw_if_body_unusable(global_this)?;
         let this_value = callframe.this();
-        let cloned = self.clone(global_this)?;
+        let cloned = self.clone(&global_this.js_thread_of_caller(callframe))?;
 
         let cloned_ptr = bun_core::heap::into_raw(cloned);
         // SAFETY: cloned_ptr was just created via heap::alloc above; toJS adopts ownership.
@@ -1461,17 +1467,17 @@ impl Request {
     pub(crate) fn clone_into(
         &self,
         req: &mut Request,
-        global_this: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         preserve_url: bool,
     ) -> JsResult<()> {
         // allocator param dropped (global mimalloc)
         let _ = self.ensure_url();
-        let body_ = self.clone_body_value_via_cached_stream(global_this)?;
+        let body_ = self.clone_body_value_via_cached_stream(cx)?;
         // BodyValue's Drop frees `body_` on the `?` error path
         let body = body::hive_alloc(body_);
         // Last fallible call; an early return here leaves `req.url` untouched.
         // `body` (a `BodyHiveHandle`) drops on the `?` error path, releasing its +1.
-        let headers = self.clone_headers(global_this)?;
+        let headers = self.clone_headers(cx.global())?;
         let url = if preserve_url {
             req.url.take()
         } else {
@@ -1513,12 +1519,12 @@ impl Request {
         Ok(())
     }
 
-    pub(crate) fn clone(&self, global_this: &JSGlobalObject) -> JsResult<Box<Request>> {
+    pub(crate) fn clone(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<Box<Request>> {
         // allocator param dropped (global mimalloc)
         // `clone_into` `ptr::write`s the new fields over the seed
         // without reading or dropping it.
         let mut req = Box::new(Request {
-            url: JsCell::new(BunString::empty()),
+            url: JsCell::new(BunString::EMPTY),
             headers: JsCell::new(None),
             signal: JsCell::new(None),
             // `clone_into` `ptr::write`s the whole struct without dropping the
@@ -1536,7 +1542,7 @@ impl Request {
             reported_estimated_size: Cell::new(0),
         });
         // Box<Request> drops on the error path automatically
-        self.clone_into(&mut req, global_this, false)?;
+        self.clone_into(&mut req, cx, false)?;
         Ok(req)
     }
 }
@@ -1550,7 +1556,7 @@ impl Request {
         body: BodyHiveHandle,
     ) -> Request {
         Request {
-            url: JsCell::new(BunString::empty()),
+            url: JsCell::new(BunString::EMPTY),
             headers: JsCell::new(None),
             signal: JsCell::new(signal),
             body: ManuallyDrop::new(body),

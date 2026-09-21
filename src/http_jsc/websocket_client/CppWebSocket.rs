@@ -10,7 +10,7 @@
 
 use bun_boringssl::c::OwnedSslCtx;
 use bun_core::ffi::FfiSlice;
-use bun_core::{String as BunString, ZigString};
+use bun_core::{EncodedSlice, String as BunString};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_ptr::ThisPtr;
 use bun_uws_sys::Socket;
@@ -66,7 +66,7 @@ unsafe extern "C" {
     safe fn WebSocket__didReceiveText(
         websocket_context: &CppWebSocket,
         clone: bool,
-        text: &ZigString,
+        text: &EncodedSlice,
     );
     safe fn WebSocket__didReceiveBytes(
         websocket_context: &CppWebSocket,
@@ -74,6 +74,7 @@ unsafe extern "C" {
         opcode: u8,
     );
     safe fn WebSocket__rejectUnauthorized(websocket_context: &CppWebSocket) -> bool;
+    safe fn WebSocket__bunContext(websocket_context: &CppWebSocket) -> *const core::ffi::c_void;
     safe fn WebSocket__holdPendingActivityForClient(websocket_context: &CppWebSocket);
     safe fn WebSocket__releasePendingActivityForClient(websocket_context: &CppWebSocket);
     safe fn WebSocket__setProtocol(websocket_context: &CppWebSocket, protocol: BunString);
@@ -85,6 +86,14 @@ unsafe extern "C" {
 // borrows (often while `&mut WebSocket<SSL>` is also live), so `&mut self`
 // would force needless `unsafe { &mut *ptr }` at every site.
 impl CppWebSocket {
+    /// The context of the script that made this WebSocket: its connection is that context's.
+    pub(crate) fn context(&self) -> &bun_jsc::ScriptExecutionContext {
+        // SAFETY: called while the WebSocket is connecting from its constructor, inside the context
+        // that made it (alive while its script runs); every `WebCore::ScriptExecutionContext` has
+        // its Rust half.
+        unsafe { &*WebSocket__bunContext(self).cast::<bun_jsc::ScriptExecutionContext>() }
+    }
+
     pub(crate) fn did_abrupt_close(&self, reason: ErrorCode) {
         // SAFETY: VirtualMachine::get() returns the live current-thread VM;
         // event_loop() yields its raw event-loop pointer (live for VM lifetime).
@@ -121,7 +130,7 @@ impl CppWebSocket {
         event_loop.exit();
     }
 
-    pub(crate) fn did_receive_text(&self, clone: bool, text: &ZigString) {
+    pub(crate) fn did_receive_text(&self, clone: bool, text: &EncodedSlice) {
         let event_loop = VirtualMachine::get().event_loop_mut();
         event_loop.enter();
         WebSocket__didReceiveText(self, clone, text);

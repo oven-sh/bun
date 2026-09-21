@@ -5,6 +5,7 @@ use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr::{null, null_mut};
 use std::collections::VecDeque;
 
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     ArrayBuffer, CallFrame, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, StringJsc, Strong,
 };
@@ -864,8 +865,13 @@ impl QuicSession {
             let buf = ArrayBuffer::create_buffer(global, &blob).or_report();
             if let Some(cb) = callbacks::get(global, "onSessionTicket") {
                 let vm = global.bun_vm().as_mut();
-                vm.event_loop_ref()
-                    .run_callback(cb, global, self.handle(), &[buf]);
+                vm.event_loop_ref().run_callback(
+                    bun_event_loop::ContextId::NONE,
+                    cb,
+                    global,
+                    self.handle(),
+                    &[buf],
+                );
             }
         }
         if !self.pending_tickets.get().is_empty() {
@@ -1027,6 +1033,7 @@ impl QuicSession {
                     if let Some(cb) = callbacks::get(global, "onStreamCreated") {
                         let vm = global.bun_vm().as_mut();
                         vm.event_loop_ref().run_callback(
+                            bun_event_loop::ContextId::NONE,
                             cb,
                             global,
                             self.handle(),
@@ -1046,16 +1053,26 @@ impl QuicSession {
                 let buf = ArrayBuffer::create_buffer(global, &token)?;
                 if let Some(cb) = callbacks::get(global, "onSessionNewToken") {
                     let vm = global.bun_vm().as_mut();
-                    vm.event_loop_ref()
-                        .run_callback(cb, global, self.handle(), &[buf]);
+                    vm.event_loop_ref().run_callback(
+                        bun_event_loop::ContextId::NONE,
+                        cb,
+                        global,
+                        self.handle(),
+                        &[buf],
+                    );
                 }
             }
             SessionEvent::Keylog(line) => {
-                let s = bun_jsc::bun_string_jsc::create_utf8_for_js(global, &line)?;
+                let s = bun_string_jsc::create_utf8_for_js(global, &line)?;
                 if let Some(cb) = callbacks::get(global, "onSessionKeyLog") {
                     let vm = global.bun_vm().as_mut();
-                    vm.event_loop_ref()
-                        .run_callback(cb, global, self.handle(), &[s]);
+                    vm.event_loop_ref().run_callback(
+                        bun_event_loop::ContextId::NONE,
+                        cb,
+                        global,
+                        self.handle(),
+                        &[s],
+                    );
                 }
             }
             SessionEvent::SessionResume(blob) => {
@@ -1071,8 +1088,13 @@ impl QuicSession {
                 let buf = ArrayBuffer::create_buffer(global, &blob)?;
                 if let Some(cb) = callbacks::get(global, "onSessionTicket") {
                     let vm = global.bun_vm().as_mut();
-                    vm.event_loop_ref()
-                        .run_callback(cb, global, self.handle(), &[buf]);
+                    vm.event_loop_ref().run_callback(
+                        bun_event_loop::ContextId::NONE,
+                        cb,
+                        global,
+                        self.handle(),
+                        &[buf],
+                    );
                 }
             }
             SessionEvent::StreamReset { stream, code } => {
@@ -1087,7 +1109,13 @@ impl QuicSession {
                 {
                     if let Some(cb) = callbacks::get(global, "onStreamReset") {
                         let vm = global.bun_vm().as_mut();
-                        vm.event_loop_ref().run_callback(cb, global, handle, &[err]);
+                        vm.event_loop_ref().run_callback(
+                            bun_event_loop::ContextId::NONE,
+                            cb,
+                            global,
+                            handle,
+                            &[err],
+                        );
                     }
                 }
             }
@@ -1097,8 +1125,13 @@ impl QuicSession {
                 let last_stream_id = JSValue::from_int64_no_truncate(global, -1)?;
                 if let Some(cb) = callbacks::get(global, "onSessionGoaway") {
                     let vm = global.bun_vm().as_mut();
-                    vm.event_loop_ref()
-                        .run_callback(cb, global, self.handle(), &[last_stream_id]);
+                    vm.event_loop_ref().run_callback(
+                        bun_event_loop::ContextId::NONE,
+                        cb,
+                        global,
+                        self.handle(),
+                        &[last_stream_id],
+                    );
                 }
             }
             SessionEvent::StreamWantsTrailers { stream } => {
@@ -1108,7 +1141,13 @@ impl QuicSession {
                 let handle = stream.handle();
                 if let Some(cb) = callbacks::get(global, "onStreamTrailers") {
                     let vm = global.bun_vm().as_mut();
-                    vm.event_loop_ref().run_callback(cb, global, handle, &[]);
+                    vm.event_loop_ref().run_callback(
+                        bun_event_loop::ContextId::NONE,
+                        cb,
+                        global,
+                        handle,
+                        &[],
+                    );
                 }
             }
             SessionEvent::StreamHeaders {
@@ -1131,6 +1170,7 @@ impl QuicSession {
                     if let Some(cb) = callbacks::get(global, "onStreamHeaders") {
                         let vm = global.bun_vm().as_mut();
                         vm.event_loop_ref().run_callback(
+                            bun_event_loop::ContextId::NONE,
                             cb,
                             global,
                             handle,
@@ -1146,7 +1186,13 @@ impl QuicSession {
                 let handle = stream.handle();
                 if let Some(cb) = callbacks::get(global, "onStreamDrain") {
                     let vm = global.bun_vm().as_mut();
-                    vm.event_loop_ref().run_callback(cb, global, handle, &[]);
+                    vm.event_loop_ref().run_callback(
+                        bun_event_loop::ContextId::NONE,
+                        cb,
+                        global,
+                        handle,
+                        &[],
+                    );
                 }
             }
             SessionEvent::StreamBlocked { stream } => {
@@ -1156,7 +1202,13 @@ impl QuicSession {
                 let handle = stream.handle();
                 if let Some(cb) = callbacks::get(global, "onStreamBlocked") {
                     let vm = global.bun_vm().as_mut();
-                    vm.event_loop_ref().run_callback(cb, global, handle, &[]);
+                    vm.event_loop_ref().run_callback(
+                        bun_event_loop::ContextId::NONE,
+                        cb,
+                        global,
+                        handle,
+                        &[],
+                    );
                 }
             }
             SessionEvent::StreamWake { stream } => {
@@ -1168,8 +1220,13 @@ impl QuicSession {
                 };
                 if let Some(wakeup) = stream.take_wakeup() {
                     let vm = global.bun_vm().as_mut();
-                    vm.event_loop_ref()
-                        .run_callback(wakeup.get(), global, JSValue::UNDEFINED, &[]);
+                    vm.event_loop_ref().run_callback(
+                        bun_event_loop::ContextId::NONE,
+                        wakeup.get(),
+                        global,
+                        JSValue::UNDEFINED,
+                        &[],
+                    );
                 }
             }
             SessionEvent::Datagram { payload, early } => {
@@ -1181,6 +1238,7 @@ impl QuicSession {
                 if let Some(cb) = callbacks::get(global, "onSessionDatagram") {
                     let vm = global.bun_vm().as_mut();
                     vm.event_loop_ref().run_callback(
+                        bun_event_loop::ContextId::NONE,
                         cb,
                         global,
                         self.handle(),
@@ -1198,10 +1256,11 @@ impl QuicSession {
                     return Ok(());
                 }
                 let id_js = JSValue::from_uint64_no_truncate(global, id)?;
-                let status_js = bun_core::String::static_(b"abandoned").to_js(global)?;
+                let status_js = global.common_strings().quic_datagram_abandoned();
                 if let Some(cb) = callbacks::get(global, "onSessionDatagramStatus") {
                     let vm = global.bun_vm().as_mut();
                     vm.event_loop_ref().run_callback(
+                        bun_event_loop::ContextId::NONE,
                         cb,
                         global,
                         self.handle(),
@@ -1227,10 +1286,10 @@ impl QuicSession {
                 }
             }
             SessionEvent::DatagramAckStatus { count, acked } => {
-                let status = if acked {
-                    b"acknowledged".as_slice()
+                let status_js = if acked {
+                    global.common_strings().quic_datagram_acknowledged()
                 } else {
-                    b"lost".as_slice()
+                    global.common_strings().quic_datagram_lost()
                 };
                 // Every acknowledged/lost datagram is popped and counted even
                 // when its status cannot be delivered.
@@ -1247,11 +1306,8 @@ impl QuicSession {
                     if !self.has_listener(LISTENER_FLAG_DATAGRAM_STATUS) || undelivered.is_err() {
                         continue;
                     }
-                    let args = JSValue::from_uint64_no_truncate(global, id).and_then(|id_js| {
-                        Ok([id_js, bun_core::String::static_(status).to_js(global)?])
-                    });
-                    let [id_js, status_js] = match args {
-                        Ok(args) => args,
+                    let id_js = match JSValue::from_uint64_no_truncate(global, id) {
+                        Ok(id_js) => id_js,
                         Err(err) => {
                             undelivered = Err(err);
                             continue;
@@ -1260,6 +1316,7 @@ impl QuicSession {
                     if let Some(cb) = callbacks::get(global, "onSessionDatagramStatus") {
                         let vm = global.bun_vm().as_mut();
                         vm.event_loop_ref().run_callback(
+                            bun_event_loop::ContextId::NONE,
                             cb,
                             global,
                             self.handle(),
@@ -1287,6 +1344,7 @@ impl QuicSession {
                 if let Some(cb) = callbacks::get(global, "onSessionVersionNegotiation") {
                     let vm = global.bun_vm().as_mut();
                     vm.event_loop_ref().run_callback(
+                        bun_event_loop::ContextId::NONE,
                         cb,
                         global,
                         self.handle(),
@@ -1318,12 +1376,17 @@ impl QuicSession {
                 }
                 let array =
                     JSValue::create_array_from_iter(global, ranges.into_iter(), |(o, n)| {
-                        bun_jsc::bun_string_jsc::create_utf8_for_js(global, &payload[o..o + n])
+                        bun_string_jsc::create_utf8_for_js(global, &payload[o..o + n])
                     })?;
                 if let Some(cb) = callbacks::get(global, "onSessionOrigin") {
                     let vm = global.bun_vm().as_mut();
-                    vm.event_loop_ref()
-                        .run_callback(cb, global, self.handle(), &[array]);
+                    vm.event_loop_ref().run_callback(
+                        bun_event_loop::ContextId::NONE,
+                        cb,
+                        global,
+                        self.handle(),
+                        &[array],
+                    );
                 }
             }
             SessionEvent::PathValidation {
@@ -1365,6 +1428,7 @@ impl QuicSession {
                 if let Some(cb) = callbacks::get(global, "onSessionPathValidation") {
                     let vm = global.bun_vm().as_mut();
                     vm.event_loop_ref().run_callback(
+                        bun_event_loop::ContextId::NONE,
                         cb,
                         global,
                         self.handle(),
@@ -1410,8 +1474,13 @@ impl QuicSession {
                 let handle = stream.handle();
                 if let Some(cb) = callbacks::get(global, "onStreamClose") {
                     let vm = global.bun_vm().as_mut();
-                    vm.event_loop_ref()
-                        .run_callback(cb, global, handle, &[JSValue::UNDEFINED]);
+                    vm.event_loop_ref().run_callback(
+                        bun_event_loop::ContextId::NONE,
+                        cb,
+                        global,
+                        handle,
+                        &[JSValue::UNDEFINED],
+                    );
                 }
                 // onStreamClose is user JS too: re-acquire before the
                 // `release_close_root` below, as above.
@@ -1516,9 +1585,9 @@ impl QuicSession {
             self.with_state(|s| s.headers_supported = 2);
         }
         let alpn = alpn_bytes
-            .map(|b| bun_jsc::bun_string_jsc::create_utf8_for_js(global, &b).or_report())
+            .map(|b| bun_string_jsc::create_utf8_for_js(global, &b).or_report())
             .unwrap_or(JSValue::UNDEFINED);
-        let cipher_version = bun_core::String::static_(b"TLSv1.3")
+        let cipher_version = bun_core::String::static_("TLSv1.3")
             .to_js(global)
             .or_report();
         // Node reports both fields only on failure -- the JS 'auto' rejection
@@ -1545,6 +1614,7 @@ impl QuicSession {
         if let Some(callback) = callbacks::get(global, "onSessionHandshake") {
             let vm = global.bun_vm().as_mut();
             vm.event_loop_ref().run_callback(
+                bun_event_loop::ContextId::NONE,
                 callback,
                 global,
                 self.handle(),
@@ -1574,8 +1644,13 @@ impl QuicSession {
         if early_data.0 && !early_data.1 && !self.is_server.get() {
             if let Some(callback) = callbacks::get(global, "onSessionEarlyDataRejected") {
                 let vm = global.bun_vm().as_mut();
-                vm.event_loop_ref()
-                    .run_callback(callback, global, self.handle(), &[]);
+                vm.event_loop_ref().run_callback(
+                    bun_event_loop::ContextId::NONE,
+                    callback,
+                    global,
+                    self.handle(),
+                    &[],
+                );
             }
         }
 
@@ -1655,11 +1730,11 @@ impl QuicSession {
         // `qlog_fin_sent` is latched above and also gates the guard at the top,
         // so bailing here would silently end the whole qlog stream, not just
         // drop this record.
-        let data_js =
-            bun_jsc::bun_string_jsc::create_utf8_for_js(global, data.as_bytes()).or_report();
+        let data_js = bun_string_jsc::create_utf8_for_js(global, data.as_bytes()).or_report();
         if let Some(cb) = callbacks::get(global, "onSessionQlog") {
             let vm = global.bun_vm().as_mut();
             vm.event_loop_ref().run_callback(
+                bun_event_loop::ContextId::NONE,
                 cb,
                 global,
                 self.handle(),
@@ -1719,7 +1794,7 @@ impl QuicSession {
         let code_js = JSValue::from_uint64_no_truncate(global, code).or_report();
         let reason_js = reason
             .filter(|r| !r.is_empty())
-            .map(|r| bun_jsc::bun_string_jsc::create_utf8_for_js(global, &r).or_report())
+            .map(|r| bun_string_jsc::create_utf8_for_js(global, &r).or_report())
             .unwrap_or(JSValue::UNDEFINED);
         let endpoint = self.endpoint.get();
         if !endpoint.is_null() {
@@ -1729,6 +1804,7 @@ impl QuicSession {
         if let Some(callback) = callbacks::get(global, "onSessionClose") {
             let vm = global.bun_vm().as_mut();
             vm.event_loop_ref().run_callback(
+                bun_event_loop::ContextId::NONE,
                 callback,
                 global,
                 self.handle(),
@@ -2100,11 +2176,16 @@ impl QuicSession {
             return Ok(());
         }
         let id_js = JSValue::from_uint64_no_truncate(global, id)?;
-        let status_js = bun_core::String::static_(b"abandoned").to_js(global)?;
+        let status_js = global.common_strings().quic_datagram_abandoned();
         if let Some(cb) = callbacks::get(global, "onSessionDatagramStatus") {
             let vm = global.bun_vm().as_mut();
-            vm.event_loop_ref()
-                .run_callback(cb, global, self.handle(), &[id_js, status_js]);
+            vm.event_loop_ref().run_callback(
+                bun_event_loop::ContextId::NONE,
+                cb,
+                global,
+                self.handle(),
+                &[id_js, status_js],
+            );
         }
         Ok(())
     }
@@ -2262,7 +2343,7 @@ impl QuicSession {
             let v = if s.is_empty() {
                 JSValue::UNDEFINED
             } else {
-                bun_jsc::bun_string_jsc::create_utf8_for_js(global, s.as_bytes())?
+                bun_string_jsc::create_utf8_for_js(global, s.as_bytes())?
             };
             obj.put(global, name, v);
             Ok(())
@@ -2276,13 +2357,13 @@ impl QuicSession {
 
 fn opt_bytes_to_js(global: &JSGlobalObject, bytes: Option<&[u8]>) -> JSValue {
     match bytes {
-        Some(b) => bun_jsc::bun_string_jsc::create_utf8_for_js(global, b).or_report(),
+        Some(b) => bun_string_jsc::create_utf8_for_js(global, b).or_report(),
         None => JSValue::UNDEFINED,
     }
 }
 
 fn make_application_error(global: &JSGlobalObject, code: u64) -> JsResult<JSValue> {
-    let kind = bun_core::String::static_(b"application").to_js(global)?;
+    let kind = bun_core::String::static_("application").to_js(global)?;
     let code = JSValue::from_uint64_no_truncate(global, code)?;
     JSValue::create_array_from_slice(
         global,
@@ -2323,12 +2404,6 @@ impl QuicSession {
         };
         Self::transport_params_to_js(global, &tp)
     }
-
-    #[expect(
-        clippy::boxed_local,
-        reason = "codegen's host_fn_finalize calls this as `|b| QuicSession::finalize(b)` and requires `self: Box<Self>`"
-    )]
-    pub(crate) fn finalize(self: Box<Self>) {}
 }
 
 lsquic_callback! {

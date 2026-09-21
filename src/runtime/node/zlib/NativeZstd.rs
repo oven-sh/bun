@@ -62,9 +62,6 @@ mod _impl {
         pub(crate) estimated_external_size: usize,
     }
 
-    // `pub const ref/deref = RefCount.ref/deref;` — wired via `CompressionStreamImpl::{ref_,deref}`
-    // below; deref-to-zero reconstitutes the Box (running Drop) and frees, mirroring `bun.destroy`.
-    //
     // `pub const js = jsc.Codegen.JSNativeZstd; toJS/fromJS/fromJSDirect = js.*;` — provided by
     // `#[bun_jsc::JsClass]` derive (wires to_js / from_js / from_js_direct).
     //
@@ -293,9 +290,7 @@ mod _impl {
         }
     }
 
-    // Called by RefCount when the count hits 0. `poll_ref` and `this_value`
-    // (Strong) cleanup are handled by their own Drop impls; the Box free is
-    // handled by IntrusiveRc dropping the Box.
+    // `poll_ref` and `this_value` (Strong) clean up via their own Drop impls.
     impl Drop for NativeZstd {
         fn drop(&mut self) {
             self.stream.with_mut(|s| match s.mode {

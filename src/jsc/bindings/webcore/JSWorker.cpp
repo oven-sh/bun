@@ -346,6 +346,16 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
         RETURN_IF_EXCEPTION(throwScope, {});
     }
 
+    // A worker made by script of a Bun.ModuleGraph that was already disposed is terminated at birth
+    // and reports nothing (Worker::create), so nothing is sent to it. The ports node:worker_threads
+    // made for it in that context (in the transfer list, and inside workerData) were closed at
+    // birth the same way: serializing them would throw from the constructor, into a loop that may
+    // be retrying without ever yielding.
+    if (context->isStopped()) {
+        transferList.clear();
+        workerData = jsUndefined();
+    }
+
     Vector<RefPtr<MessagePort>> ports;
     auto* valueToTransfer = constructEmptyArray(globalObject, nullptr, 2);
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -359,6 +369,7 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
     // Reports a DataCloneError through ExceptionOr, but a getter or toJSON that throws during serialization
     // leaves that exception on the VM and returns normally.
     ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*lexicalGlobalObject, valueToTransfer, WTF::move(transferList), ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
+    RETURN_IF_EXCEPTION(throwScope, {});
     if (serialized.hasException()) {
         WebCore::propagateException(*lexicalGlobalObject, throwScope, serialized.releaseException());
         RELEASE_AND_RETURN(throwScope, {});

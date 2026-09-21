@@ -2,9 +2,9 @@
  * CI integration: collapsible log groups, environment dump, Buildkite
  * annotations on build failure.
  *
- * Thin layer over `scripts/utils.mjs` — the same helpers the CMake build
- * uses. We import rather than reimplement so CI logs look identical and
- * annotation regex stays in one place.
+ * Thin layer over `scripts/buildkite.ts`, which the test runner and the
+ * pipeline generator use too, so CI logs and annotations look the same
+ * whichever of them wrote them.
  */
 
 import { spawn as nodeSpawn, spawnSync } from "node:child_process";
@@ -19,41 +19,16 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { basename, relative, resolve } from "node:path";
+import { basename, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { generateOrderFile, readTextSymbols } from "../orderfile/generate.ts";
-// @ts-ignore — utils.mjs has JSDoc types but no .d.ts
-import * as utils from "../utils.mjs";
+import { isBuildkite, markBuildkiteStepReported, reportAnnotationToBuildkite } from "../buildkite.ts";
+import { formatAnnotationToHtml, parseAnnotations } from "./annotations.ts";
 import { bunExeName, shouldStrip, type BunOutput } from "./bun.ts";
 import type { Config } from "./config.ts";
 import { webkitTestFFIPath } from "./deps/webkit.ts";
 import { BuildError } from "./error.ts";
 import { crossFeaturesJson } from "./features-json.ts";
 import { linkerMapOutputs, orderFilePath, usesOrderFile } from "./flags.ts";
-
-/** True if running under any CI (env: CI, BUILDKITE, or GITHUB_ACTIONS). */
-export const isCI: boolean = utils.isCI;
-
-/** True if running under Buildkite specifically. */
-export const isBuildkite: boolean = utils.isBuildkite;
-
-/** True if running under GitHub Actions specifically. */
-export const isGithubAction: boolean = utils.isGithubAction;
-
-/**
- * Print machine/environment/repository info in collapsible groups.
- * Call at the top of a CI run so you can diagnose without SSH access.
- */
-export const printEnvironment: () => void = utils.printEnvironment;
-
-/**
- * Start a collapsible log group. Buildkite: `--- Title`. GitHub: `::group::`.
- * If `fn` is given, runs it and closes the group (handles async).
- */
-export const startGroup: (title: string, fn?: () => unknown) => unknown = utils.startGroup;
-
-/** Close the most recent group opened with `startGroup`. */
-export const endGroup: () => void = utils.endGroup;
 
 interface SpawnAnnotatedOptions {
   /** Working directory for the subprocess. */
@@ -168,12 +143,12 @@ export async function spawnWithAnnotations(
         .split("\n")
         .filter(line => !/^\[[\w-]+\]\s+CMake (Deprecation )?Warning/i.test(line.replace(/\x1b\[[0-9;]*m/g, "")))
         .join("\n");
-      const { annotations } = utils.parseAnnotations(annotatable);
+      const { annotations } = parseAnnotations(annotatable);
       for (const ann of annotations) {
-        utils.reportAnnotationToBuildKite({
+        reportAnnotationToBuildkite({
           priority: 10,
-          label: ann.title || ann.filename,
-          content: utils.formatAnnotationToHtml(ann),
+          label: ann.title,
+          content: formatAnnotationToHtml(ann),
         });
         annotated = true;
       }
@@ -184,14 +159,14 @@ export async function spawnWithAnnotations(
     // Nothing matched the compiler-error regexes → post a generic annotation
     // with the full buffered output so there's still a PR-visible signal.
     if (!annotated) {
-      const content = utils.formatAnnotationToHtml({
+      const content = formatAnnotationToHtml({
         filename: relative(process.cwd(), fileURLToPath(import.meta.url)),
         title: "build failed",
         content: buffer,
         source: "build",
         level: "error",
       });
-      utils.reportAnnotationToBuildKite({
+      reportAnnotationToBuildkite({
         priority: 10,
         label: "build failed",
         content,
@@ -205,7 +180,7 @@ export async function spawnWithAnnotations(
     console.error(`Command exited: code ${exitCode}`);
   }
 
-  utils.markBuildkiteStepReported();
+  markBuildkiteStepReported();
   process.exit(exitCode ?? 1);
 }
 
@@ -244,7 +219,7 @@ export function uploadArtifacts(cfg: Config, output: BunOutput): void {
 
   if (cfg.mode === "rust-only") {
     // Relative to buildDir so link-only's `artifact download '*' .` recreates
-    // the rust-target/<triple>/<profile>/ layout that `rustLibPath(cfg)`
+    // the rust/<triple>/ layout that `rustLibPath(cfg)`
     // expects. gzip on posix (release staticlib is ~200MB of mostly bitcode
     // when LTO is on); .lib on Windows is uploaded raw — same convention as
     // the cpp archive below.
@@ -302,7 +277,11 @@ export function uploadArtifacts(cfg: Config, output: BunOutput): void {
     console.log("Cleaning intermediate files to free disk...");
     rmSync(cfg.codegenDir, { recursive: true, force: true });
     rmSync(resolve(cfg.buildDir, "obj"), { recursive: true, force: true });
-    rmSync(cfg.cacheDir, { recursive: true, force: true });
+    // The build's own cache only: one placed elsewhere (--cacheDir, $BUN_BUILD_CACHE_DIR) is not this build's disk to free.
+    const cacheFromBuildDir = relative(cfg.buildDir, cfg.cacheDir);
+    if (!cacheFromBuildDir.startsWith("..") && !isAbsolute(cacheFromBuildDir)) {
+      rmSync(cfg.cacheDir, { recursive: true, force: true });
+    }
 
     // gzip: posix only (matches cmake — only libbun-*.a are gzipped,
     // Windows .lib archives uploaded uncompressed). gzip isn't a
@@ -330,6 +309,58 @@ function upload(paths: string[], cwd: string): void {
   if (paths.length === 0) return;
   run(["buildkite-agent", "artifact", "upload", paths.join(";")], cwd);
 }
+
+/**
+ * The timings chart's file: `timings.html`, or under Buildkite a name with the step's key in it. Every build step of
+ * a build uploads its own, and the key is what tells them apart (two steps can share a target and a mode:
+ * `linux-x64` and `linux-x64-asan`).
+ */
+export function timingsChartName(): string {
+  return isBuildkite ? chartOfStep(process.env.BUILDKITE_STEP_KEY!) : "timings.html";
+}
+
+const chartOfStep = (stepKey: string): string => `timings-${stepKey}.html`;
+
+/**
+ * Put a build step's timings chart where someone looking at the build finds it: uploaded as an artifact, which
+ * Buildkite serves as a page, and linked from the build page, in one annotation that folds away.
+ *
+ * Every build step has a chart and no step runs after them all, so each writes the whole annotation: it records its
+ * chart in the build's meta-data and lists every chart recorded so far. Two steps finishing together can each list
+ * the charts it saw, and the later write may be the one that saw fewer; so a step looks again after writing and
+ * writes again if the list grew. The last write of all was then checked against a list that had every chart.
+ */
+export function publishTimings(cfg: Config, chart: string): void {
+  // The link resolves only once the artifact exists.
+  upload([relative(cfg.buildDir, chart)], cfg.buildDir);
+  run(
+    ["buildkite-agent", "meta-data", "set", `${TIMINGS_META_DATA}${process.env.BUILDKITE_STEP_KEY}`, "1"],
+    cfg.buildDir,
+  );
+  const recorded = (): string[] => {
+    const keys = spawnSync("buildkite-agent", ["meta-data", "keys"], { encoding: "utf8" });
+    if (keys.status !== 0) throw new BuildError(`buildkite-agent meta-data keys exited with code ${keys.status}`);
+    const all = keys.stdout.split("\n").map(k => k.trim());
+    return all
+      .filter(k => k.startsWith(TIMINGS_META_DATA))
+      .map(k => k.slice(TIMINGS_META_DATA.length))
+      .sort();
+  };
+  for (let written: string[] = [], steps = recorded(); steps.join() !== written.join(); steps = recorded()) {
+    const links = steps.map(step => `<li><a href="artifact://${chartOfStep(step)}">${step}</a></li>`);
+    reportAnnotationToBuildkite({
+      style: "info",
+      priority: 1,
+      label: "build timings",
+      append: false,
+      content: `<details>\n<summary>⏱️ Build timings</summary>\n<ul>\n${links.join("\n")}\n</ul>\n</details>\n`,
+    });
+    written = steps;
+  }
+}
+
+/** The build's meta-data key of a step that uploaded a timings chart, before the step's key. */
+const TIMINGS_META_DATA = "timings:";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Link-only post-link: features.json + packaging + upload
@@ -360,14 +391,14 @@ function upload(paths: string[], cwd: string): void {
 //
 // bunTriplet = bun-${os}-${arch}[-musl][-baseline]
 //
-// Test steps (runner.node.mjs) download '**' from build-bun and pick any
+// Test steps (runner.node.ts) download '**' from build-bun and pick any
 // bun*.zip; baseline-verification step downloads ${triplet}.zip specifically
 // and expects ${triplet}/bun inside.
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
  * Base triplet (bun-os-arch[-musl][-baseline]). Variant suffix (-profile,
- * -asan) is added by the caller. Matches ci.mjs getTargetTriplet() and
+ * -asan) is added by the caller. Matches ci.ts getTargetTriplet() and
  * cmake's bunTriplet — any drift breaks test-step downloads.
  */
 export function computeBunTriplet(cfg: Config): string {
@@ -399,10 +430,7 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   const bunTriplet = computeBunTriplet(cfg);
 
   // ─── features.json ───
-  // Run the built bun with features.mjs to dump its feature flags.
-  // Env vars match cmake's (BuildBun.cmake ~1462).
-  // No setarch wrapper — cmake doesn't use one for features.mjs either
-  // (only for the --revision smoke test).
+  // Run the built bun with features.ts to dump its feature flags.
   // Binaries that can't run on this host: every field is a build-time
   // constant, so generate the same payload host-side instead (the feature
   // list is parsed out of src/analytics/lib.rs; see features-json.ts).
@@ -411,7 +439,7 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
     writeFileSync(resolve(buildDir, "features.json"), crossFeaturesJson(cfg));
   } else {
     console.log("Generating features.json...");
-    run([exe, resolve(cfg.cwd, "scripts", "features.mjs")], buildDir, {
+    run([exe, resolve(cfg.cwd, "scripts", "features.ts")], buildDir, {
       BUN_GARBAGE_COLLECTOR_LEVEL: "1",
       BUN_DEBUG_QUIET_LOGS: "1",
       BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
@@ -438,7 +466,7 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
     files.push(`${exeName}.dSYM`);
   }
   // Linker map(s). On windows they are also what the trace-order step
-  // (.buildkite/ci.mjs) resolves traced addresses against, the PE itself
+  // (.buildkite/ci.ts) resolves traced addresses against, the PE itself
   // having no symbol table, so without them that step has nothing to work from.
   files.push(...linkerMapOutputs(cfg).map(map => basename(map)));
   // The symbol ordering file this binary was linked with, next to the linker
@@ -448,17 +476,6 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
     files.push(basename(orderFilePath(cfg)));
   }
   zipPaths.push(makeZip(cfg, bunPath, files));
-
-  // Also upload it standalone, so the next build inherits it with a small
-  // download instead of pulling the whole profile zip. Only when this lane
-  // traced the file itself — a cross-compiled lane's fresh trace comes from the
-  // sibling trace-order step (.buildkite/ci.mjs), and re-uploading the inherited
-  // copy would give inheritOrderFile() two same-named artifacts to race over.
-  if (hasOrderFile && canTraceOrderFile(cfg)) {
-    const artifact = orderFileArtifact(cfg);
-    cpSync(orderFilePath(cfg), resolve(buildDir, artifact));
-    zipPaths.push(artifact);
-  }
 
   // ─── Stripped zip ───
   // Only for plain release (shouldStrip). Just the stripped `bun` binary.
@@ -576,15 +593,15 @@ export async function downloadArtifacts(cfg: Config): Promise<void> {
     await Promise.all([dl(cppStep), dl(`${targetKey}-build-rust`)]);
   }
 
-  // Recursive: rust artifact lands under rust-target/<triple>/<profile>/.
+  // Recursive: rust artifact lands under rust/<triple>/.
   const gzFiles: string[] = [];
   const walk = (dir: string) => {
     if (!existsSync(dir)) return;
     for (const e of readdirSync(dir, { withFileTypes: true })) {
       const p = resolve(dir, e.name);
       if (e.isDirectory()) {
-        // rust-and-link built rust locally; skip cargo's huge output tree.
-        if (cfg.mode === "rust-and-link" && e.name === "rust-target") continue;
+        // rust-and-link built rust locally; skip the per-crate artifact tree.
+        if (cfg.mode === "rust-and-link" && (e.name === "rust" || e.name === "rust-target")) continue;
         walk(p);
       } else if (e.isFile() && e.name.endsWith(".gz")) gzFiles.push(relative(cfg.buildDir, p));
     }
@@ -681,19 +698,27 @@ async function waitForStepOutcome(stepKey: string): Promise<void> {
 // ═══════════════════════════════════════════════════════════════════════════
 // Symbol ordering file
 //
-// A build either generates one (trace its own binary, relink against the result)
-// or inherits an earlier build's and links once. Releases generate, canaries
-// inherit, PRs do neither; one that inherits nothing generates, seeding the chain.
+// No build traces its own binary. Every build, of a pull request too, inherits
+// the most recent file a build of the main branch published, and links once
+// against it. What publishes it is the target's `-trace-order` step
+// (.buildkite/ci.ts), which runs after each main build on a machine that can
+// run the binary.
 // ═══════════════════════════════════════════════════════════════════════════
 
-/** Cap on builds we ask for an order file before giving up and generating one. */
+/** Cap on probed builds we ask for an order file. The newest passed build is asked on top of these. */
 const PREVIOUS_BUILDS_TO_TRY = 50;
 
-/** Bound on the number-probe fallback: a branch is sparse among build numbers. */
+/** Bound on the number probe: the main branch is sparse among build numbers. */
 const NUMBER_PROBE_BUDGET = 200;
 
 /** Per-attempt cap, so a hung agent cannot blow the step's budget. */
 const ARTIFACT_DOWNLOAD_TIMEOUT_MS = 30_000;
+
+/**
+ * How long a build looks for an order file to inherit. Every build does, and the file is an optimization: past
+ * this, a Buildkite that is slow to answer costs the build its ordering, not its time. Finding one takes seconds.
+ */
+const INHERIT_BUDGET_MS = 120_000;
 
 /**
  * The CI facts the order-file decisions depend on. Passed in rather than read
@@ -701,60 +726,47 @@ const ARTIFACT_DOWNLOAD_TIMEOUT_MS = 30_000;
  */
 export interface OrderFileContext {
   buildkite: boolean;
-  /** Buildkite build URL of the running build, for walking the branch. */
+  /** Buildkite build URL of the running build, for walking back from it. */
   buildUrl: string | undefined;
-  branch: string | undefined;
+  /** The branch whose builds publish order files: the pipeline's default branch. */
+  mainBranch: string | undefined;
   buildNumber: number | undefined;
-  commitMessage: string;
-  pullRequest: boolean;
 }
 
 /** Read the environment once, at the edge. */
 export function orderFileContext(): OrderFileContext {
-  const pr = process.env.BUILDKITE_PULL_REQUEST;
   return {
     buildkite: isBuildkite,
     buildUrl: process.env.BUILDKITE_BUILD_URL,
-    branch: process.env.BUILDKITE_BRANCH,
+    mainBranch: process.env.BUILDKITE_PIPELINE_DEFAULT_BRANCH,
     buildNumber: Number(process.env.BUILDKITE_BUILD_NUMBER) || undefined,
-    commitMessage: process.env.BUILDKITE_MESSAGE ?? "",
-    pullRequest: pr !== undefined && pr !== "" && pr !== "false",
   };
 }
 
-/** Only builds that link, on targets that use an order file, outside PRs. */
+/** Only builds that link, on targets that use an order file. */
 export function orderFileEligible(cfg: Config, ctx: OrderFileContext): boolean {
-  if (!usesOrderFile(cfg) || !ctx.buildkite || ctx.pullRequest) return false;
+  if (!usesOrderFile(cfg) || !ctx.buildkite) return false;
   return cfg.mode !== "cpp-only" && cfg.mode !== "rust-only";
 }
 
-/** Tracing runs the binary we just linked, so the host must be able to execute it. */
-export function canTraceOrderFile(cfg: Config): boolean {
-  return cfg.canRunOnHost;
-}
-
 /**
- * An eligible lane that cannot trace (cross-compiled) and inherited nothing is
- * shipping unordered. A sibling `-trace-order` step on a native-arch host seeds
- * the chain (see getTraceOrderStep in .buildkite/ci.mjs), so this fires once on
- * the first build and then the next build inherits that trace. If it persists,
- * the trace step is failing or missing for this target.
+ * An eligible build inherited nothing and is shipping unordered: no recent build of the main branch published
+ * this target's order file, so its `-trace-order` step is failing or missing.
  */
-export function reportOrderFileCannotTrace(cfg: Config): void {
+export function reportNothingToInherit(cfg: Config): void {
   const msg =
-    `${orderFileArtifact(cfg)}: nothing to inherit and this lane cross-compiles ` +
-    `(target ${cfg.crossTarget}), so the binary cannot be traced here. Shipping unordered. ` +
-    `Expected once while the native-arch trace-order step seeds the chain; if this ` +
-    `appears on every build, that step is failing or missing.`;
+    `${orderFileArtifact(cfg)}: no recent build of the main branch published it, so this build links unordered. ` +
+    `The target's trace-order step publishes it after each main build; that step is failing or missing.`;
   console.log(`~ symbol order: ${msg}`);
   if (!isBuildkite) return;
-  utils.reportAnnotationToBuildKite({
+  reportAnnotationToBuildkite({
+    // Not an error: the build is fine and its binary correct, only fatter in resident pages.
     style: "warning",
     priority: 5,
     label: "symbol order file",
-    content: utils.formatAnnotationToHtml({
+    content: formatAnnotationToHtml({
       filename: "scripts/build/ci.ts",
-      title: "symbol order file: cross-compiled lane cannot trace, shipping unordered",
+      title: "symbol order file: nothing to inherit, shipping unordered",
       content: msg,
       source: "build",
       level: "warning",
@@ -782,75 +794,87 @@ function orderFileFunctionCount(cfg: Config): number {
     .filter((line: string) => line && !line.startsWith("#")).length;
 }
 
-/**
- * Releases always trace their own binary — it is the artifact people install.
- * A canary only does so on request, since it costs a second link.
- */
-export function shouldGenerateOrderFile(cfg: Config, ctx: OrderFileContext): boolean {
-  if (!orderFileEligible(cfg, ctx) || !canTraceOrderFile(cfg)) return false;
-  if (!cfg.canary) return true;
-  return /\[generate symbol order\]/i.test(ctx.commitMessage);
+/** The fields of a build's public JSON (`<pipeline>/builds/<n>.json`) that are read here. */
+interface BuildJson {
+  id?: string;
+  number?: number;
+  branch_name?: string;
 }
 
 /**
- * A build that inherited nothing must generate: otherwise it publishes nothing,
- * the next build inherits nothing either, and the chain never recovers.
+ * The unauthenticated Buildkite lookups candidateBuilds() makes. Passed in, like
+ * OrderFileContext, so the walk runs offline in a test.
  */
-export function mustGenerateOrderFile(cfg: Config, ctx: OrderFileContext, inherited: boolean): boolean {
-  if (shouldGenerateOrderFile(cfg, ctx)) return true;
-  return orderFileEligible(cfg, ctx) && canTraceOrderFile(cfg) && !inherited;
+export interface BuildLookups {
+  /** A build's public JSON, or undefined when it cannot be read. */
+  build(url: string): Promise<BuildJson | undefined>;
+  /** Where `url` redirects to, without following it. */
+  redirect(url: string): Promise<string | null>;
 }
 
+/** The lookups, against buildkite.com, until `signal` aborts them: a request that is cut short finds nothing. */
+const buildkiteLookups = (signal: AbortSignal): BuildLookups => ({
+  async build(url) {
+    try {
+      const response = await fetch(url, { signal });
+      return response.ok ? ((await response.json()) as BuildJson) : undefined;
+    } catch {
+      return undefined;
+    }
+  },
+  async redirect(url) {
+    try {
+      return (await fetch(url, { redirect: "manual", signal })).headers.get("location");
+    } catch {
+      return null;
+    }
+  },
+});
+
 /**
- * Builds on this branch that might have published an order file, newest first.
- * Lazy: the first candidate is nearly always the answer and the caller stops
- * there, so the happy path is one lookup.
+ * Builds of the main branch that might have published an order file, nearest first.
+ * Lazy: the first candidate is nearly always the answer and the caller stops there.
  */
-async function* candidateBuilds(ctx: OrderFileContext): AsyncGenerator<{ id: string; number?: number }> {
-  const { branch, buildUrl } = ctx;
+export async function* candidateBuilds(
+  ctx: OrderFileContext,
+  lookups: BuildLookups,
+): AsyncGenerator<{ id: string; number: number | undefined }> {
+  const { mainBranch: branch, buildUrl } = ctx;
   if (!branch || !buildUrl) return;
 
   // https://buildkite.com/<org>/<pipeline>/builds/<n> -> https://buildkite.com/<org>/<pipeline>
   const url = new URL(buildUrl);
   const pipeline = new URL(url.pathname.replace(/\/builds\/.*$/, ""), url.origin).toString();
 
-  const fetchBuild = async (target: string): Promise<any | undefined> => {
-    const response: { error?: unknown; body?: any } = await utils.curl(target, { json: true, cache: true });
-    return response.error ? undefined : response.body;
-  };
-
   const seen = new Set<string>();
 
-  // Buildkite dropped `prev_branch_build` from the public build JSON, so
-  // `utils.getLastSuccessfulBuild()` always returns undefined. This redirect is
-  // what works unauthenticated; it drops the `.json`, so read it rather than follow it.
-  const newest = await (async () => {
-    try {
-      const latest = `${pipeline}/builds/latest?branch=${encodeURIComponent(branch)}&state=passed`;
-      const location = (await fetch(latest, { redirect: "manual" })).headers.get("location");
-      return location ? await fetchBuild(`${location}.json`) : undefined;
-    } catch {
-      return undefined;
-    }
-  })();
-  if (newest?.id) {
-    seen.add(newest.id);
-    yield { id: newest.id, number: newest.number };
-  }
-
-  // Probe downwards from this build, not from the newest passed one: a build can
-  // fail its tests and still have linked and published.
+  // Probe downwards from this build: the nearest file matches this link best.
+  // Rust symbol names embed a per-crate hash that changes with the crate's
+  // dependencies or the toolchain, so an older file can lose half its names to
+  // one commit. A build can fail its tests, or be cancelled, and still have
+  // linked and published.
   let number = ctx.buildNumber;
-  if (number === undefined) return;
-
-  for (let probes = 0; probes < NUMBER_PROBE_BUDGET; probes++) {
+  for (let probes = 0; number !== undefined && number > 1 && probes < NUMBER_PROBE_BUDGET; probes++) {
+    if (seen.size >= PREVIOUS_BUILDS_TO_TRY) break;
     number -= 1;
-    if (number < 1) return;
-    const body = await fetchBuild(`${pipeline}/builds/${number}.json`);
-    if (!body?.id || body.branch_name !== branch || seen.has(body.id)) continue;
+    const body = await lookups.build(`${pipeline}/builds/${number}.json`);
+    if (!body?.id || body.branch_name !== branch) continue;
     seen.add(body.id);
     yield { id: body.id, number: body.number };
   }
+
+  // The branch was quiet for longer than the probe reaches: fall back to its
+  // newest passed build. Buildkite dropped `prev_branch_build` from the public
+  // build JSON, so `getLastSuccessfulBuild()` always returns undefined.
+  // This redirect is what works unauthenticated. Its Location repeats the query
+  // (`<pipeline>/builds/116199?branch=main&state=passed`), so `.json` goes on
+  // the path: after the query, Buildkite answers with the HTML page.
+  const latest = `${pipeline}/builds/latest?branch=${encodeURIComponent(branch)}&state=passed`;
+  const location = await lookups.redirect(latest);
+  if (!location) return;
+  const target = new URL(location, latest);
+  const newest = await lookups.build(`${target.origin}${target.pathname}.json`);
+  if (newest?.id && !seen.has(newest.id)) yield { id: newest.id, number: newest.number };
 }
 
 /**
@@ -859,19 +883,20 @@ async function* candidateBuilds(ctx: OrderFileContext): AsyncGenerator<{ id: str
  * rides in. Best-effort: no file means an unordered link, never a failed build.
  */
 export async function inheritOrderFile(cfg: Config, ctx: OrderFileContext): Promise<boolean> {
-  if (!orderFileEligible(cfg, ctx) || shouldGenerateOrderFile(cfg, ctx)) return false;
+  if (!orderFileEligible(cfg, ctx)) return false;
   const start = Date.now();
   const artifact = orderFileArtifact(cfg);
 
-  console.log(`Looking for ${artifact} published by an earlier build on ${ctx.branch}...`);
+  console.log(`Looking for ${artifact} published by an earlier build of ${ctx.mainBranch}...`);
   const downloaded = resolve(cfg.buildDir, artifact);
   let tried = 0;
 
-  for await (const build of candidateBuilds(ctx)) {
-    if (++tried > PREVIOUS_BUILDS_TO_TRY) break;
-    // No --step: exactly one step per build publishes the target-unique name —
-    // packageAndUpload() for a lane that traced its own binary, the sibling
-    // trace-order step (.buildkite/ci.mjs) for a cross-compiled one.
+  const outOfTime = AbortSignal.timeout(INHERIT_BUDGET_MS);
+  for await (const build of candidateBuilds(ctx, buildkiteLookups(outOfTime))) {
+    if (outOfTime.aborted) break;
+    tried++;
+    // No --step: exactly one step per build publishes the target-unique name,
+    // the target's trace-order step (.buildkite/ci.ts).
     const result = spawnSync("buildkite-agent", ["artifact", "download", artifact, ".", "--build", build.id], {
       cwd: cfg.buildDir,
       stdio: "ignore",
@@ -897,172 +922,11 @@ export async function inheritOrderFile(cfg: Config, ctx: OrderFileContext): Prom
     return true;
   }
 
-  const what =
-    tried === 0 ? "found no earlier build to inherit from" : `none of the ${tried} builds tried published it`;
+  const what = outOfTime.aborted
+    ? "gave up looking for a build to inherit from"
+    : tried === 0
+      ? "found no earlier build to inherit from"
+      : `none of the ${tried} builds tried published it`;
   console.log(`~ symbol order: ${what} (${since(start)})`);
   return false;
-}
-
-/**
- * Trace the binary from pass 1 and overwrite the order file. The caller re-runs
- * ninja, which relinks and nothing else: `linkDepends()` lists the order file,
- * so it is the only edge whose input changed.
- */
-export function regenerateOrderFile(cfg: Config, ctx: OrderFileContext): void {
-  const start = Date.now();
-  const exeName = bunExeName(cfg); // bun-profile, or bun-assertions on an assertions build
-  const why = !cfg.canary
-    ? "release build"
-    : shouldGenerateOrderFile(cfg, ctx)
-      ? "[generate symbol order] in the commit message"
-      : "nothing to inherit";
-  console.log(`Tracing ${exeName} to build a fresh order file (${why})`);
-  console.log("Each workload runs under an injected function-entry tracer, so it is slower than a normal run.\n");
-
-  const { count } = generateOrderFile({ buildDir: cfg.buildDir, exeName, verbose: true });
-
-  console.log(`\n+ symbol order: traced ${count} functions in ${since(start)} — relinking against them`);
-}
-
-/**
- * A canary found nothing to inherit and is paying a second link to seed the
- * chain. Expected once; on every build it means inheriting is broken.
- */
-export function reportOrderFileBootstrap(cfg: Config): void {
-  if (!cfg.canary) return; // a release always generates — nothing to report
-  const message =
-    `No earlier build published ${orderFileArtifact(cfg)}, so this build is tracing its own binary and ` +
-    `relinking (one extra link). Expected once, to seed the chain. If every build on this branch says ` +
-    `this, inheriting is broken — check the "Inherit symbol order file" step.`;
-  console.log(`~ symbol order: ${message}`);
-  if (!isBuildkite) return;
-  utils.reportAnnotationToBuildKite({
-    style: "warning",
-    priority: 5,
-    label: "symbol order file",
-    content: utils.formatAnnotationToHtml({
-      filename: "scripts/build/ci.ts",
-      title: "symbol order file: nothing to inherit, generating from scratch",
-      content: message,
-      source: "build",
-      level: "warning",
-    }),
-  });
-}
-
-/**
- * The trace failed. Ship the unordered binary — correct, just fatter in resident
- * pages — but annotate, so this cannot rot into a permanently unordered release.
- */
-export function reportOrderFileFailure(error: Error): void {
-  console.error(`- symbol order: FAILED to generate — ${error.message}`);
-  console.error("- symbol order: linking unordered. The binary is correct; it just faults in more pages at startup.");
-  if (!isBuildkite) return;
-  utils.reportAnnotationToBuildKite({
-    // Not an error: the build is fine. A red annotation would read as a failure.
-    style: "warning",
-    priority: 5,
-    label: "symbol order file",
-    content: utils.formatAnnotationToHtml({
-      filename: "scripts/orderfile/generate.ts",
-      title: "symbol order file not generated — shipped unordered",
-      content: error.message,
-      source: "build",
-      level: "warning",
-    }),
-  });
-}
-
-/**
- * Prove the relink honoured the order file: one lld silently ignores produces a
- * binary indistinguishable from an unordered one. Scale-free — compare where the
- * hot functions landed against where a typical function landed.
- */
-export function verifyOrderFileApplied(cfg: Config, ctx: OrderFileContext, exe: string, { strict = true } = {}): void {
-  const SAMPLE = 1000;
-  /** Ordered, the hot set sits near the front; unordered, at ~100% of the control. */
-  const MAX_FRACTION_OF_CONTROL = 0.4;
-  /** Strict mode traced this exact binary, so nearly every name must resolve. */
-  const MIN_STRICT_MATCH_RATE = 0.75;
-
-  const start = Date.now();
-  if (!orderFileEligible(cfg, ctx)) return;
-  const wanted = readFileSync(orderFilePath(cfg), "utf8")
-    .split("\n")
-    .filter((line: string) => line && !line.startsWith("#"))
-    .slice(0, SAMPLE);
-  if (wanted.length < SAMPLE) {
-    console.log(`~ symbol order: only ${wanted.length} functions in the order file — nothing to verify`);
-    return;
-  }
-
-  // The same names the generator traces against: nm's, or on windows the link's maps'.
-  let symbols: Map<number, string[]>;
-  try {
-    symbols = readTextSymbols(exe);
-  } catch (error) {
-    console.log(
-      `~ symbol order: cannot read the binary's symbols — skipping verification (${(error as Error).message})`,
-    );
-    return;
-  }
-
-  const addresses = new Map<string, number>();
-  let textBase = Number.MAX_SAFE_INTEGER;
-  for (const [address, names] of symbols) {
-    for (const name of names) addresses.set(name, address);
-    if (address < textBase) textBase = address;
-  }
-
-  const median = (values: number[]) => (values.length ? values[values.length >> 1]! : 0);
-  const sorted = (values: number[]) => values.sort((a, b) => a - b);
-  const offsets = sorted(
-    wanted
-      .map(name => addresses.get(name))
-      .filter((address): address is number => address !== undefined)
-      .map(address => address - textBase),
-  );
-  // Where a typical function sits. Ordering does not move this.
-  const control = median(sorted([...addresses.values()].map(address => address - textBase)));
-
-  // An inherited file legitimately loses symbols to code churn; one we just
-  // generated from this binary has no such excuse, so only that case is fatal.
-  const fail = (message: string, hint: string) => {
-    if (strict) throw new BuildError(`symbol order: ${message}`, { hint });
-    console.log(`~ symbol order: ${message} — ${hint}`);
-  };
-
-  const mb = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)}MB`;
-  const rate = offsets.length / wanted.length;
-  if (offsets.length === 0) {
-    fail(
-      "not one of the order file's symbols is in the linked binary",
-      "the symbol spellings do not match this link — see scripts/orderfile/generate.ts",
-    );
-    return;
-  }
-  if (strict && rate < MIN_STRICT_MATCH_RATE) {
-    fail(
-      `only ${offsets.length}/${wanted.length} of the order file's symbols are in the binary we traced`,
-      "the order file and the link disagree on symbol names — most of the win is being silently lost",
-    );
-    return;
-  }
-
-  const hot = median(offsets);
-  if (control > 0 && hot > control * MAX_FRACTION_OF_CONTROL) {
-    fail(
-      `the order file had no effect: hot functions sit at ${mb(hot)}, a typical one at ${mb(control)}`,
-      cfg.darwin
-        ? "Apple ld ignored it — check -order_file and that the names match nm's"
-        : cfg.windows
-          ? "lld-link ignored it — check /order and that /Gy survived"
-          : "lld ignored it — check --symbol-ordering-file and that -ffunction-sections survived",
-    );
-    return;
-  }
-  console.log(
-    `+ symbol order: applied — ${offsets.length}/${wanted.length} (${(rate * 100).toFixed(0)}%) of the hottest ` +
-      `functions resolved; median ${mb(hot)} into .text vs ${mb(control)} for a typical one (${since(start)})`,
-  );
 }

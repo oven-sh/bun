@@ -2,7 +2,7 @@ use core::cell::Cell;
 use core::ptr::NonNull;
 use std::rc::Rc;
 
-use bun_core::zig_string::Slice as ZigStringSlice;
+use bun_core::Utf8Bytes;
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::generated::{
     SocketConfig as GeneratedSocketConfig, SocketConfigHandlers as GeneratedSocketConfigHandlers,
@@ -48,6 +48,8 @@ pub struct Handlers {
 
     pub(crate) vm: &'static VirtualMachine,
     pub(crate) global_object: GlobalRef,
+    /// The context of the script that gave these handlers: a socket event is dispatched inside it.
+    context: bun_jsc::ContextId,
     /// Live sockets plus in-flight callback [`Scope`]s. Drives the listener's
     /// idle release; ownership itself is the `Rc`.
     pub(crate) active_connections: Cell<u32>,
@@ -205,9 +207,11 @@ impl Handlers {
     #[inline]
     pub(crate) fn enter(self: &Rc<Self>) -> Scope {
         self.mark_active();
+        let context = self.vm.enter_context(self.context);
         self.vm.event_loop_ref().enter();
         Scope {
             handlers: Rc::clone(self),
+            _context: context,
         }
     }
 
@@ -253,8 +257,12 @@ impl Handlers {
         // closed and it's not listening anymore.
         if let Some(listener) = self.listener() {
             if matches!(listener.listener.get(), ListenerType::None) {
+                listener.abort_handle.leave();
                 listener.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
                 listener.this_value.with_mut(|r| r.downgrade());
+                listener
+                    .strong_data
+                    .with_mut(|s| s.clear_without_deallocation());
             }
         }
         false
@@ -288,6 +296,7 @@ impl Handlers {
         }
 
         global_object.bun_vm().event_loop_mut().run_callback(
+            bun_event_loop::ContextId::NONE,
             on_error,
             &global_object,
             this_value,
@@ -322,6 +331,7 @@ impl Handlers {
             // VM outlives every `Handlers` (process-lifetime singleton).
             vm: global_object.bun_vm(),
             global_object: GlobalRef::from(global_object),
+            context: global_object.bun_vm().context_of_caller_no_frame().id(),
             active_connections: Cell::new(0),
             mode,
             listener: Cell::new(None),
@@ -417,6 +427,7 @@ impl Handlers {
 /// to invoke outlive a `close()` from inside them.
 pub(crate) struct Scope {
     pub(crate) handlers: Rc<Handlers>,
+    _context: bun_jsc::virtual_machine::ContextScope<'static>,
 }
 
 impl Scope {
@@ -442,7 +453,7 @@ impl Scope {
 use bun_jsc::generated::SocketConfigHandlersBinaryType as GeneratedBinaryType;
 
 pub struct SocketConfig {
-    pub(crate) hostname_or_unix: ZigStringSlice,
+    pub(crate) hostname_or_unix: Utf8Bytes<'static>,
     pub(crate) port: Option<u16>,
     pub(crate) fd: Option<Fd>,
     pub(crate) ssl: Option<SSLConfig>,
@@ -484,7 +495,7 @@ impl SocketConfig {
     pub(crate) fn from_generated(
         vm: &'static VirtualMachine,
         global: &JSGlobalObject,
-        generated: &GeneratedSocketConfig,
+        generated: GeneratedSocketConfig,
         mode: SocketMode,
     ) -> JsResult<SocketConfig> {
         let mut result: SocketConfig = 'blk: {
@@ -500,7 +511,7 @@ impl SocketConfig {
                 GeneratedTls::Object(ssl) => SSLConfig::from_generated(vm, global, ssl)?,
             };
             break 'blk SocketConfig {
-                hostname_or_unix: ZigStringSlice::empty(),
+                hostname_or_unix: Utf8Bytes::EMPTY,
                 port: None,
                 fd: generated.fd.map(|v| {
                     #[cfg(windows)]
@@ -537,26 +548,26 @@ impl SocketConfig {
 
         if result.fd.is_some() {
             // If a user passes a file descriptor then prefer it over hostname or unix
-        } else if let Some(unix) = generated.unix_.as_ref() {
+        } else if let Some(unix) = generated.unix_.into_inner() {
             if unix.length() == 0 {
                 return Err(global
                     .throw_invalid_arguments(format_args!("Expected a non-empty \"unix\" path")));
             }
-            result.hostname_or_unix = unix.to_utf8();
+            result.hostname_or_unix = unix.into_utf8();
             let slice = result.hostname_or_unix.slice();
             if slice.starts_with(b"file://")
                 || slice.starts_with(b"unix://")
                 || slice.starts_with(b"sock://")
             {
                 let without_prefix = slice[7..].to_vec();
-                result.hostname_or_unix = ZigStringSlice::init_owned(without_prefix);
+                result.hostname_or_unix = Utf8Bytes::Owned(without_prefix);
             }
-        } else if let Some(hostname) = generated.hostname.as_ref() {
+        } else if let Some(hostname) = generated.hostname.into_inner() {
             if hostname.length() == 0 {
                 return Err(global
                     .throw_invalid_arguments(format_args!("Expected a non-empty \"hostname\"")));
             }
-            result.hostname_or_unix = hostname.to_utf8();
+            result.hostname_or_unix = hostname.into_utf8();
             let slice = result.hostname_or_unix.slice();
             if bun_core::strings::contains_char(slice, 0) {
                 return Err(global.throw_invalid_arguments(format_args!(
@@ -589,7 +600,7 @@ impl SocketConfig {
         mode: SocketMode,
     ) -> JsResult<SocketConfig> {
         let generated = GeneratedSocketConfig::from_js(global_object, opts)?;
-        Self::from_generated(vm, global_object, &generated, mode)
+        Self::from_generated(vm, global_object, generated, mode)
     }
 }
 

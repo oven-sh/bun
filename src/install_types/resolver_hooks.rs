@@ -260,6 +260,12 @@ impl Behavior {
             || (features.workspaces && self.is_workspace())
     }
 
+    /// False when the installers filter the dependency, and with it everything below.
+    #[inline]
+    pub fn is_placed(self, features: Features) -> bool {
+        !self.is_bundled() && self.is_enabled(features)
+    }
+
     pub fn cmp(self, rhs: Self) -> core::cmp::Ordering {
         use core::cmp::Ordering::*;
         if self == rhs {
@@ -1512,7 +1518,6 @@ pub trait AutoInstaller {
 pub trait PackageJsonView {
     fn name(&self) -> &[u8];
     fn version(&self) -> &[u8];
-    fn source_path(&self) -> &[u8];
     /// Backing string-bytes buffer the dependency `SemverString`s slice into.
     fn dependency_source_buf(&self) -> &[u8];
     fn arch(&self) -> Architecture;

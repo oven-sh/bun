@@ -326,7 +326,7 @@ impl ScopeFunctions {
             if debugger.test_reporter_agent.is_enabled() {
                 debugger.test_reporter_agent.next_test_id += 1;
                 let id = debugger.test_reporter_agent.next_test_id;
-                let name = BunString::init(description.unwrap_or(b"(unnamed)"));
+                let name = BunString::from_bytes(description.unwrap_or(b"(unnamed)"));
                 let parent: &DescribeScope = bun_test.collection.active_scope();
                 let parent_id = if parent.base.test_id_for_debugger != 0 {
                     parent.base.test_id_for_debugger
@@ -549,7 +549,7 @@ fn get_description(
     }
 
     if description.is_number() || description.is_string() {
-        let slice = description.to_slice(global)?;
+        let slice = description.to_utf8(global)?;
         return Ok(slice.into_vec());
     }
 
@@ -745,11 +745,9 @@ impl fmt::Display for ScopeFunctions {
     }
 }
 
-impl ScopeFunctions {
-    /// `.classes.ts` `finalize: true` — runs on mutator thread during lazy sweep.
-    pub fn finalize(self: Box<Self>) {
+impl Drop for ScopeFunctions {
+    fn drop(&mut self) {
         let _g = group_log::begin();
-        drop(self);
     }
 }
 

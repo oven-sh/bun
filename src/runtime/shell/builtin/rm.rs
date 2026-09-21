@@ -934,7 +934,7 @@ impl ShellRmTask {
     /// dereferences `dir_task` to find out.
     fn remove_entry(&self, dir_task: *mut DirTask, is_absolute: bool) -> bun_sys::Maybe<bool> {
         let mut waiting = false;
-        let mut buf = bun_paths::PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         // SAFETY: `dir_task` is live; this thread owns it. `kind_hint` /
         // `path` are read-only after construction.
         let (kind_hint, path) = unsafe { ((*dir_task).kind_hint, (*dir_task).path.as_zstr()) };
@@ -1199,7 +1199,7 @@ impl ShellRmTask {
                     },
                 }
             } else {
-                let mut buf = bun_paths::PathBuffer::uninit();
+                let mut buf = bun_paths::path_buffer_pool::get();
                 self.remove_entry_file(dir_task, path, is_abs, &mut buf, &mut state)?;
                 if state.enqueued {
                     return Ok(false);
@@ -1733,6 +1733,10 @@ impl bun_event_loop::Taskable for ShellRmTask {
             ShellRmTask::decr_pending_and_maybe_deinit(this);
         }
     }
+    /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 impl bun_event_loop::Taskable for DirTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellRmDirTask;
@@ -1748,6 +1752,10 @@ impl bun_event_loop::Taskable for DirTask {
             }
             ShellRmTask::decr_pending_and_maybe_deinit(tm);
         }
+    }
+    /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 

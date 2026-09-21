@@ -549,22 +549,13 @@ impl PosixSpawnResult {
                     // Until we switch to CLONE_PIDFD, this needs to be handled separately.
                     bun_sys::E::ESRCH => {}
 
-                    // For all other cases, ensure we don't leak the child process on error
-                    // That would cause Zombie processes to accumulate.
+                    // The spawn fails below. Kill first: a child that waits on a pipe this process holds would block wait4 forever.
                     _ => {
-                        loop {
-                            let mut status: i32 = 0;
-                            // SAFETY: libc wait4
-                            let rc = unsafe {
-                                libc::wait4(self.pid, &raw mut status, 0, core::ptr::null_mut())
-                            };
-                            match bun_sys::get_errno(rc as isize) {
-                                bun_sys::E::SUCCESS => {}
-                                bun_sys::E::EINTR => continue,
-                                _ => {}
-                            }
-                            break;
+                        // SAFETY: `self.pid` is the un-reaped child posix_spawn just returned.
+                        unsafe {
+                            libc::kill(self.pid, libc::SIGKILL);
                         }
+                        let _ = posix_spawn::wait4(self.pid, 0, None);
                     }
                 }
                 Err(err)

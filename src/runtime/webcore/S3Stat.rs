@@ -1,5 +1,5 @@
 use bun_core::String as BunString;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc};
 
 bun_output::declare_scope!(S3Stat, visible);
 
@@ -24,7 +24,7 @@ impl S3Stat {
         global: &JSGlobalObject,
     ) -> JsResult<Box<Self>> {
         let last_modified =
-            bun_jsc::bun_string_jsc::parse_date(&BunString::init(last_modified), global)?;
+            bun_string_jsc::parse_date(&BunString::from_bytes(last_modified), global)?;
 
         Ok(Box::new(S3Stat {
             size,

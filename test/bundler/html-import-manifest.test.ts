@@ -3,7 +3,41 @@ import { tempDir } from "harness";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SourceMapConsumer } from "source-map";
-import { itBundled } from "./expectBundled";
+import { type BundlerTestBundleAPI, itBundled } from "./expectBundled";
+
+interface ManifestFile {
+  input?: string;
+  path: string;
+  loader: string;
+  isEntry: boolean;
+  headers: Record<string, string>;
+}
+
+interface Manifest {
+  index: string;
+  files: ManifestFile[];
+}
+
+/** The manifests embedded in a bundled server entry point, in import order. */
+function readManifests(api: BundlerTestBundleAPI, file: string): Manifest[] {
+  const manifests = [...api.readFile(file).matchAll(/__jsonParse\("(.+?)"\)/gs)].map(match =>
+    JSON.parse(JSON.parse('"' + match[1] + '"')),
+  );
+  for (const manifest of manifests) {
+    for (const { path } of manifest.files) {
+      api.assertFileExists(join("out", path));
+    }
+  }
+  return manifests;
+}
+
+/** `[input, loader]` of every manifest entry that came from a source file, sorted. */
+function inputs(manifest: Manifest): [string, string][] {
+  return manifest.files
+    .filter(file => file.input !== undefined)
+    .map((file): [string, string] => [file.input!, file.loader])
+    .sort();
+}
 
 describe.concurrent("bundler", () => {
   // Test HTML import manifest with enhanced metadata
@@ -107,11 +141,11 @@ console.log(favicon);
             "files": [
               {
                 "input": "client.html",
-                "path": "./client-sjg7egv9.js",
+                "path": "./client-qjznw47b.js",
                 "loader": "js",
                 "isEntry": true,
                 "headers": {
-                  "etag": "efKwB-6QGwk",
+                  "etag": "l5IfNVyE54s",
                   "content-type": "text/javascript;charset=utf-8"
                 }
               },
@@ -121,17 +155,17 @@ console.log(favicon);
                 "loader": "html",
                 "isEntry": true,
                 "headers": {
-                  "etag": "sJJm55rxM4I",
+                  "etag": "xh1kdn7wbmI",
                   "content-type": "text/html;charset=utf-8"
                 }
               },
               {
                 "input": "client.html",
-                "path": "./client-0z58sk45.css",
+                "path": "./client-gsg59jv4.css",
                 "loader": "css",
                 "isEntry": true,
                 "headers": {
-                  "etag": "4B9l6JnTRAU",
+                  "etag": "cJnwBSkS-4Q",
                   "content-type": "text/css;charset=utf-8"
                 }
               },
@@ -291,17 +325,17 @@ console.log("About manifest:", aboutHtml);
               {
                 "headers": {
                   "content-type": "text/javascript;charset=utf-8",
-                  "etag": "xAZoSOIIQJ8",
+                  "etag": "Dl7kT6q7eY4",
                 },
                 "input": "home.html",
                 "isEntry": true,
                 "loader": "js",
-                "path": "./home-4688280z.js",
+                "path": "./home-ey4favse.js",
               },
               {
                 "headers": {
                   "content-type": "text/html;charset=utf-8",
-                  "etag": "uIE6dXgvM-4",
+                  "etag": "IhvRaM9jGDU",
                 },
                 "input": "home.html",
                 "isEntry": true,
@@ -311,12 +345,12 @@ console.log("About manifest:", aboutHtml);
               {
                 "headers": {
                   "content-type": "text/css;charset=utf-8",
-                  "etag": "ZTZtbLd3364",
+                  "etag": "hT1GudlsHgI",
                 },
                 "input": "home.html",
                 "isEntry": true,
                 "loader": "css",
-                "path": "./home-5pdcqqze.css",
+                "path": "./home-5x6sscy2.css",
               },
             ],
             "index": "./home.html",
@@ -326,17 +360,17 @@ console.log("About manifest:", aboutHtml);
               {
                 "headers": {
                   "content-type": "text/javascript;charset=utf-8",
-                  "etag": "INLwcb4oxw8",
+                  "etag": "RCRrF1EbBvo",
                 },
                 "input": "about.html",
                 "isEntry": true,
                 "loader": "js",
-                "path": "./about-0jghy87f.js",
+                "path": "./about-44bqhv6t.js",
               },
               {
                 "headers": {
                   "content-type": "text/html;charset=utf-8",
-                  "etag": "ZpqlG2wo2xo",
+                  "etag": "2OGqRD6vx54",
                 },
                 "input": "about.html",
                 "isEntry": true,
@@ -346,12 +380,12 @@ console.log("About manifest:", aboutHtml);
               {
                 "headers": {
                   "content-type": "text/css;charset=utf-8",
-                  "etag": "x6pW8hAzxGI",
+                  "etag": "ti_Q2k-EP3o",
                 },
                 "input": "about.html",
                 "isEntry": true,
                 "loader": "css",
-                "path": "./about-7apjgk42.css",
+                "path": "./about-pfgtf4zt.css",
               },
             ],
             "index": "./about.html",
@@ -360,6 +394,175 @@ console.log("About manifest:", aboutHtml);
       `);
     },
   });
+
+  // With code splitting, each dynamically imported module is an entry point of
+  // its own, so the files only it reaches are not attributed to the HTML entry
+  // point. The manifest has to follow the page's dynamic imports to find them.
+  itBundled("html-import/splitting-lists-assets-of-lazy-chunks", {
+    outdir: "out/",
+    splitting: true,
+    target: "bun",
+    entryPoints: ["/server.js"],
+    files: {
+      "/server.js": `
+        import html from "./client.html";
+        import serverOnly from "./server-only.png";
+        console.log(html.index, serverOnly);
+      `,
+      "/client.html": `<!DOCTYPE html><html><head><script type="module" src="./client.js"></script></head><body></body></html>`,
+      "/client.js": `
+        import("./lazy-a.js").then(m => console.log(m.default));
+        import("./lazy-b.js").then(m => console.log(m.default));
+      `,
+      "/lazy-a.js": `
+        import a from "./a.png";
+        import shared from "./shared.js";
+        export default [a, shared, import("./lazier.js")];
+      `,
+      "/lazy-b.js": `
+        import shared from "./shared.js";
+        export default shared;
+      `,
+      "/lazier.js": `
+        import deep from "./deep.png";
+        export default deep;
+      `,
+      "/shared.js": `
+        import shared from "./shared.png";
+        export default shared;
+      `,
+      "/a.png": "a",
+      "/deep.png": "deep",
+      "/shared.png": "shared",
+      "/server-only.png": "server only",
+    },
+
+    onAfterBundle(api) {
+      const [manifest] = readManifests(api, "out/server.js");
+      expect(inputs(manifest)).toEqual([
+        ["a.png", "file"],
+        ["client.html", "html"],
+        ["client.html", "js"],
+        ["deep.png", "file"],
+        ["lazier.js", "js"],
+        ["lazy-a.js", "js"],
+        ["lazy-b.js", "js"],
+        ["shared.png", "file"],
+      ]);
+    },
+  });
+
+  // Each page only gets the chunks and assets its own code can load.
+  itBundled("html-import/splitting-attributes-lazy-chunks-to-their-page", {
+    outdir: "out/",
+    splitting: true,
+    target: "bun",
+    entryPoints: ["/server.js"],
+    files: {
+      "/server.js": `
+        import home from "./home.html";
+        import about from "./about.html";
+        console.log(home.index, about.index);
+      `,
+      "/home.html": `<!DOCTYPE html><html><head><script type="module" src="./home.js"></script></head><body></body></html>`,
+      "/about.html": `<!DOCTYPE html><html><head><script type="module" src="./about.js"></script></head><body></body></html>`,
+      "/home.js": `import("./home-lazy.js").then(m => console.log(m.default));`,
+      "/about.js": `import("./about-lazy.js").then(m => console.log(m.default));`,
+      "/home-lazy.js": `
+        import img from "./home.png";
+        export default img;
+      `,
+      "/about-lazy.js": `
+        import img from "./about.png";
+        export default img;
+      `,
+      "/home.png": "home",
+      "/about.png": "about",
+    },
+
+    onAfterBundle(api) {
+      const [home, about] = readManifests(api, "out/server.js");
+      expect(inputs(home)).toEqual([
+        ["home-lazy.js", "js"],
+        ["home.html", "html"],
+        ["home.html", "js"],
+        ["home.png", "file"],
+      ]);
+      expect(inputs(about)).toEqual([
+        ["about-lazy.js", "js"],
+        ["about.html", "html"],
+        ["about.html", "js"],
+        ["about.png", "file"],
+      ]);
+    },
+  });
+
+  // Pages with identical stylesheets share one CSS output file. It is created
+  // for whichever page comes first, but every page whose HTML links to it
+  // needs it in its manifest.
+  itBundled("html-import/shared-css-chunk-is-in-every-manifest", {
+    outdir: "out/",
+    target: "bun",
+    entryPoints: ["/server.js"],
+    files: {
+      "/server.js": `
+        import home from "./home.html";
+        import about from "./about.html";
+        console.log(home.index, about.index);
+      `,
+      "/home.html": `<!DOCTYPE html><html><head><link rel="stylesheet" href="./shared.css"></head><body>home</body></html>`,
+      "/about.html": `<!DOCTYPE html><html><head><link rel="stylesheet" href="./shared.css"></head><body>about</body></html>`,
+      "/shared.css": `body { margin: 0; }`,
+    },
+
+    onAfterBundle(api) {
+      const [home, about] = readManifests(api, "out/server.js");
+      const homeHref = api.readFile("out/home.html").match(/href="([^"]+)"/)![1];
+      const aboutHref = api.readFile("out/about.html").match(/href="([^"]+)"/)![1];
+      expect(aboutHref).toBe(homeHref);
+      expect(home.files.filter(file => file.loader === "css").map(file => file.path)).toEqual([homeHref]);
+      expect(about.files.filter(file => file.loader === "css").map(file => file.path)).toEqual([aboutHref]);
+    },
+  });
+
+  // Past 127 entry points the entry bits switch to a heap-allocated bitset.
+  // The manifest has to size its own bitset from the same entry point list as
+  // the files (which, with splitting, includes the dynamic imports), or the
+  // two never intersect and every asset goes missing.
+  {
+    const lazyCount = 130;
+    const files: Record<string, string> = {
+      "/server.js": `
+        import html from "./client.html";
+        console.log(html.index);
+      `,
+      "/client.html": `<!DOCTYPE html><html><head><script type="module" src="./client.js"></script></head><body></body></html>`,
+      "/icon.png": "icon",
+    };
+    let client = `import icon from "./icon.png";\nconsole.log(icon);\n`;
+    for (let i = 0; i < lazyCount; i++) {
+      files[`/lazy-${i}.js`] = `export default ${i};`;
+      client += `import("./lazy-${i}.js").then(m => console.log(m.default));\n`;
+    }
+    files["/client.js"] = client;
+
+    itBundled("html-import/splitting-more-than-127-entry-points", {
+      outdir: "out/",
+      splitting: true,
+      target: "bun",
+      entryPoints: ["/server.js"],
+      files,
+
+      onAfterBundle(api) {
+        const [manifest] = readManifests(api, "out/server.js");
+        const listed = inputs(manifest);
+        expect(listed).toContainEqual(["icon.png", "file"]);
+        expect(listed).toContainEqual(["client.html", "html"]);
+        expect(listed).toContainEqual(["client.html", "js"]);
+        expect(listed.filter(([input]) => input.startsWith("lazy-"))).toHaveLength(lazyCount);
+      },
+    });
+  }
 
   // The HTML chunk's etag must change when only a referenced JS/CSS chunk
   // changes; otherwise the browser 304s to a body that points at chunks the

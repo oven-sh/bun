@@ -5,8 +5,8 @@
 // a bare repo on disk (served over git's dumb HTTP protocol by Bun.serve
 // when an http URL is needed) or tarballs built in memory.
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, isLinux, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "path";
 import { pathToFileURL } from "url";
 
@@ -586,3 +586,132 @@ test.concurrent("installs a git+file:// dependency", async () => {
   expect(await lockedPackages(project)).toEqual(locked);
   expect(exitCode).toBe(0);
 });
+
+// issue #40803: `bun install <git url>` (no alias) sorted the workspace dep
+// under its version literal. The real name is only known once the repo is
+// fetched; it is rewritten in place after resolution, so the written key
+// landed at the literal's position ("git..." here, between nothing and
+// "hhh-first") instead of its own.
+test.concurrent("bun install <git url> sorts the workspace dependency by its resolved name", async () => {
+  using dir = tempDir("git-dep-sort", {
+    "project/package.json": JSON.stringify({
+      name: "project",
+      version: "1.0.0",
+      dependencies: { "hhh-first": "file:./hhh-first", "jjj-last": "file:./jjj-last" },
+    }),
+    "project/hhh-first/package.json": JSON.stringify({ name: "hhh-first", version: "1.0.0" }),
+    "project/jjj-last/package.json": JSON.stringify({ name: "jjj-last", version: "1.0.0" }),
+  });
+  const root = String(dir);
+  const project = join(root, "project");
+  const bare = await makeSharedRepo(root, [{ name: "iii-middle", branch: "main" }], "sort-repo.git");
+
+  const first = await runInstall(project, join(root, "cache"), {});
+  expect(first.stderr).toContain("Saved lockfile");
+  expect(first.exitCode).toBe(0);
+
+  const second = await runInstall(project, join(root, "cache"), {}, `git+${pathToFileURL(bare)}#main`);
+  expect(second.stderr).toContain("Saved lockfile");
+  expect(second.exitCode).toBe(0);
+
+  const lockfile = Bun.JSONC.parse(await Bun.file(join(project, "bun.lock")).text()) as {
+    workspaces: Record<string, { dependencies: Record<string, string> }>;
+  };
+  expect(Object.keys(lockfile.workspaces[""].dependencies)).toEqual(["hhh-first", "iii-middle", "jjj-last"]);
+});
+
+// The git commands of an install used to run on thread-pool threads through
+// the synchronous spawn helper, which installed the signal forwarder meant for
+// the foreground child of `bun run`: a SIGINT while clones ran was sent on to
+// one of the git processes instead of stopping the install, and concurrent
+// clones raced on the forwarder's process-wide state. On Linux the git
+// processes now carry PR_SET_PDEATHSIG, so they die with bun.
+test.concurrent.skipIf(isWindows)(
+  "SIGINT during git clones stops the install and is not forwarded to git",
+  async () => {
+    using dir = tempDir("git-dep-sigint", {});
+    const root = String(dir);
+    const bin = join(root, "bin");
+    mkdirSync(bin);
+    const running = join(root, "git-running");
+    const exited = join(root, "git-exited");
+    const gotSigint = join(root, "git-got-sigint");
+    const quote = (path: string) => `'${path.replaceAll("'", "'\\''")}'`;
+    const lineCount = (file: string) => (existsSync(file) ? readFileSync(file, "utf8").split("\n").length - 1 : 0);
+    // A fake git. Each process appends a line to `running` when it starts, to
+    // `exited` when it ends, and blocks until the test deletes `running`. A
+    // SIGINT that bun forwards to one of them is recorded in `gotSigint`, which
+    // makes every other fake git (the concurrent clone, the retry over ssh)
+    // exit at once.
+    writeFileSync(
+      join(bin, "git"),
+      `#!/bin/sh
+trap 'echo $$ >> ${quote(exited)}' EXIT
+trap ': > ${quote(gotSigint)}; exit 130' INT
+echo $$ >> ${quote(running)}
+i=0
+while [ -e ${quote(running)} ] && [ ! -e ${quote(gotSigint)} ] && [ $i -lt 600 ]; do sleep 0.05; i=$((i+1)); done
+exit 1
+`,
+      { mode: 0o755 },
+    );
+    // two repositories, so two clones run at the same time
+    const project = writeProject(root, {
+      [nameOf("a")]: "git+https://localhost/scope/pkg-a.git",
+      [nameOf("b")]: "git+https://localhost/scope/pkg-b.git",
+    });
+    const env = { ...gitEnv, BUN_INSTALL_CACHE_DIR: join(root, "cache"), PATH: `${bin}:${gitEnv.PATH}` };
+    delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: project,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stdout = proc.stdout.text();
+    const stderr = proc.stderr.text();
+    try {
+      const deadline = Date.now() + 20_000;
+      while (lineCount(running) < 2) {
+        if (proc.exitCode !== null || proc.signalCode !== null) {
+          throw new Error(`install exited before it ran git:\n${await stderr}`);
+        }
+        if (Date.now() > deadline) throw new Error(`install ran ${lineCount(running)} of 2 clones`);
+        await Bun.sleep(10);
+      }
+      proc.kill("SIGINT");
+      await Promise.all([stdout, stderr, proc.exited]);
+      // Read the marker only once every fake git is gone, so that a trap that
+      // fires after bun exited still counts.
+      const gone = Date.now() + 10_000;
+      const pids = readFileSync(running, "utf8").trim().split("\n").map(Number);
+      if (isLinux) {
+        // The kernel kills them with bun (PR_SET_PDEATHSIG); `running` still exists.
+        const alive = (pid: number) => {
+          try {
+            return !readFileSync(`/proc/${pid}/status`, "utf8").includes("State:\tZ");
+          } catch {
+            return false;
+          }
+        };
+        while (pids.some(alive)) {
+          if (Date.now() > gone) throw new Error(`fake gits outlived bun: ${pids.filter(alive)}`);
+          await Bun.sleep(10);
+        }
+      } else {
+        rmSync(running, { force: true });
+        while (lineCount(exited) < pids.length) {
+          if (Date.now() > gone) throw new Error(`${lineCount(exited)} of ${pids.length} fake gits exited`);
+          await Bun.sleep(10);
+        }
+      }
+      expect({ signalCode: proc.signalCode, gitGotSigint: existsSync(gotSigint) }).toEqual({
+        signalCode: "SIGINT",
+        gitGotSigint: false,
+      });
+    } finally {
+      rmSync(running, { force: true });
+    }
+  },
+);

@@ -1363,7 +1363,7 @@ impl Connection {
             let send_init = self.remote_settings.initial_window_size;
             let recv_init = self.local_settings.initial_window_size;
             let mut s = Stream::new(send_init, recv_init);
-            s.state = State::Open;
+            s.state = self.local_stream_state();
             self.streams.insert(hdr.stream_id, s);
         }
         let recv_limit = self
@@ -1497,13 +1497,13 @@ impl Connection {
             FlowControlViolation,
             Deliver(u32),
         }
-        // Transition shim: DATA for a stream the embedder opened locally (legacy outbound) — open it
+        // Transition shim: DATA for a stream the embedder opened locally (legacy outbound) — enter it
         // here so it isn't mistaken for a closed/idle stream.
         if !self.streams.contains_key(&hdr.stream_id) && sink.is_local_stream(hdr.stream_id) {
             let send_init = self.remote_settings.initial_window_size;
             let recv_init = self.local_settings.initial_window_size;
             let mut s = Stream::new(send_init, recv_init);
-            s.state = State::Open;
+            s.state = self.local_stream_state();
             self.streams.insert(hdr.stream_id, s);
         }
         let recv_limit = self
@@ -1578,6 +1578,17 @@ impl Connection {
             }
         }
         false
+    }
+
+    /// State to enter for a stream the embedder opened without this engine, when its first inbound
+    /// DATA arrives. A client opens request streams, which take DATA. A server opens only pushed
+    /// streams, which never do: reserved (local), then half-closed (remote) (RFC 9113 §5.1).
+    fn local_stream_state(&self) -> State {
+        if self.is_server {
+            State::HalfClosedRemote
+        } else {
+            State::Open
+        }
     }
 
     /// RFC 9113 §8.1.1: once END_STREAM arrives, a request whose received DATA total contradicts

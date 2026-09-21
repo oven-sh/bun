@@ -824,6 +824,43 @@ describe.concurrent("version-scoped targets", () => {
     `);
   });
 
+  // #43138. An edge pinned at an exact prerelease matches a ranged selector only when the
+  // prerelease satisfies it, which needs a comparator with a prerelease of the same
+  // major.minor.patch. `<1.0.0` has none, so the rule leaves the edge alone, as in npm.
+  // `>=1.0.0-0 <1.0.0` applies because `Bun.semver.satisfies` admits the prerelease (npm
+  // tests each comparator alone and does not). `*` matches every edge, as in npm, and
+  // `>=0.0.0` parses to the same range (npm reads it as a comparator and does not match).
+  describe.concurrent.each([
+    { declared: "1.0.0-rc.1", selector: "<1.0.0", applies: false },
+    { declared: "1.0.0-rc.1 || 1.0.0-rc.0", selector: "<1.0.0", applies: false },
+    { declared: "1.0.0-rc.1", selector: ">=1.0.0-0 <1.0.0", applies: true },
+    { declared: "1.0.0-rc.1", selector: "1.0.0-rc.1", applies: true },
+    { declared: "1.0.0-rc.1", selector: "*", applies: true },
+    { declared: "1.0.0-rc.1", selector: ">=0.0.0", applies: true },
+  ])("an exact prerelease edge and a ranged selector %j", ({ declared, selector, applies }) => {
+    test(applies ? "the rule applies" : "the rule leaves the edge alone", async () => {
+      const dir = await project({
+        dependencies: { "no-deps-tags": declared },
+        overrides: { [`no-deps-tags@${selector}`]: "1.0.0" },
+      });
+      const { err } = await installOk(dir);
+      expect(err).not.toContain("warn:");
+      expect(await versionSeenBy(dir, undefined, "no-deps-tags")).toBe(applies ? "1.0.0" : "1.0.0-rc.1");
+      await installOk(dir, "--frozen-lockfile");
+    });
+  });
+
+  test("an exact prerelease selector matches a declared range only when the range admits it", async () => {
+    const dir = await project({
+      dependencies: { "no-deps": "<2" },
+      overrides: { "no-deps@2.0.0-alpha.0": "1.0.0" },
+    });
+    const { err } = await installOk(dir);
+    expect(err).not.toContain("warn:");
+    expect(await versionSeenBy(dir, undefined, "no-deps")).toBe("1.1.0");
+    await installOk(dir, "--frozen-lockfile");
+  });
+
   test("two matching ranged rules: the range text that sorts first wins", async () => {
     const dir = await project({
       dependencies: { "one-range-dep": "1.0.0" },

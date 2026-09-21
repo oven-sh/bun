@@ -111,3 +111,37 @@ fn satisfies(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         left.slice(),
     )))
 }
+
+/// `bun:internal-for-testing`: `Group::intersects` on two range strings.
+#[bun_jsc::host_fn]
+pub fn intersects_for_testing(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let arguments = frame.arguments();
+    if arguments.len() < 2 {
+        return Err(global.throw(format_args!("Expected two arguments")));
+    }
+
+    let left_view = arguments[0].to_js_string_view(global)?;
+    let right_view = arguments[1].to_js_string_view(global)?;
+
+    let left = left_view.to_utf8();
+    let right = right_view.to_utf8();
+
+    let left_group =
+        match query::parse(left.slice(), SlicedString::init(left.slice(), left.slice())) {
+            Ok(g) => g,
+            Err(_) => return Err(global.throw_out_of_memory()),
+        };
+    let right_group = match query::parse(
+        right.slice(),
+        SlicedString::init(right.slice(), right.slice()),
+    ) {
+        Ok(g) => g,
+        Err(_) => return Err(global.throw_out_of_memory()),
+    };
+
+    Ok(JSValue::js_boolean(left_group.intersects(
+        left.slice(),
+        &right_group,
+        right.slice(),
+    )))
+}

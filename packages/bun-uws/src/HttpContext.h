@@ -939,8 +939,12 @@ private:
             }
 
             /* Before onClientError: its listener can destroy the socket, and
-             * onClose reads this bit. */
-            httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_PEER_ENDED;
+             * onClose reads this bit. Not once this side has shut down: TLS
+             * defers a close(0) until the peer answers our close_notify, and
+             * that answer arrives here as an EOF for a close the server started. */
+            if (!us_socket_is_shut_down(s)) {
+                httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_PEER_ENDED;
+            }
 
             if (httpContextData->onClientError && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED)
                 && (httpResponseData->hasBufferedPartialRequestHeaders()

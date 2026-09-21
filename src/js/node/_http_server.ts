@@ -19,6 +19,7 @@ const {
 } = require("internal/validators");
 const {
   ConnResetException,
+  ErrnoException,
   hasObserver,
   startPerf,
   stopPerf,
@@ -1650,8 +1651,11 @@ function getNodeHTTPServerSocket() {
         }
         // Only with a listener (the server's socketOnError, until the socket is
         // handed to 'connect'/'upgrade'): an unhandled 'error' ends the process.
-        if (this.listenerCount("error") > 0) {
-          this.#closeError = closedHandle.closeError;
+        const closeError = this.listenerCount("error") > 0 ? closedHandle.closeError : undefined;
+        if (closeError) {
+          // Node's errnoException(nread, 'read'): "read ECONNRESET".
+          const er = new ErrnoException(closeError.errno, "read");
+          this.#closeError = er.code === closeError.code ? er : closeError;
         }
       }
       this.server?.[kTrackedConnections]?.delete(this);

@@ -943,6 +943,17 @@ impl<const SSL: bool> NewSocket<SSL> {
     pub(crate) fn close_after_fatal_send(&self, errno: c_int) {
         let socket = self.socket.get();
         let code = dead_transport_close_code(errno);
+        // darwin fails every send on a disconnected socket with EPIPE and leaves
+        // the cause (a reset, a timeout, an unreachable host) in SO_ERROR.
+        #[cfg(not(windows))]
+        let code = if errno == sys::SystemErrno::EPIPE as c_int {
+            match dead_transport_close_code(socket.get_error()) {
+                pending if pending > 2 => pending,
+                _ => code,
+            }
+        } else {
+            code
+        };
         // 0, 1 and 2 collide with `CloseCode`, which `on_close` filters out.
         if code > 2 {
             socket.close_with_error_code(code);

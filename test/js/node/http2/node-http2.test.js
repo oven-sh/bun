@@ -6545,12 +6545,14 @@ describe("a client session reports a peer reset that one of its writes sees firs
         stdout: "pipe",
         stderr: "pipe",
       });
+      // Drain stderr while stdout is scanned, so a child that logs a lot cannot block on it.
+      const stderrText = proc.stderr.text();
       let stdout = "";
       for await (const chunk of proc.stdout) {
         stdout += Buffer.from(chunk).toString();
         onStdout?.(stdout);
       }
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const [stderr, exitCode] = await Promise.all([stderrText, proc.exited]);
       expect(stderr).toBe("");
       const lines = stdout.trim().split("\n");
       expect(JSON.parse(lines[lines.length - 1])).toEqual(reported);

@@ -413,6 +413,8 @@ describe.skipIf(skip)("node:http2 transport write errors", () => {
     };
     // :method GET, :scheme http and :path / from the static table, then a literal :authority.
     const requestBlock = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01, 0x09]), Buffer.from("localhost")]);
+    // Drain stderr while stdout is scanned, so a child that logs a lot cannot block on it.
+    const stderrText = proc.stderr.text();
     let stdout = "";
     let socket: net.Socket | undefined;
     for await (const chunk of proc.stdout) {
@@ -431,7 +433,7 @@ describe.skipIf(skip)("node:http2 transport write errors", () => {
         socket.on("error", () => {});
       }
     }
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stderr, exitCode] = await Promise.all([stderrText, proc.exited]);
     socket?.destroy();
     expect(stderr).toBe("");
     const lines = stdout.trim().split("\n");

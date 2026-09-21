@@ -77,8 +77,7 @@ pub(crate) struct FSWatcher {
     /// While it's not closed, the pending activity
     pending_activity_count: AtomicU32,
     current_task: JsCell<FSWatchTask>,
-    /// JS thread: events of the batches that ran and that the listener has not
-    /// seen yet, oldest first. See `deliver`.
+    /// JS thread: events the listener has not seen yet, oldest first.
     #[cfg(not(windows))]
     undelivered: JsCell<VecDeque<Event>>,
 
@@ -936,19 +935,11 @@ impl FSWatcher {
         }
     }
 
-    /// Deliver `undelivered`, oldest first, each event as a callback of its own.
-    ///
-    /// A batch is how the watcher thread posts; the listener must not see it.
-    /// Node makes one `MakeCallback` per event, so the nextTicks and promise
-    /// reactions one event queued run before the next event:
+    /// Each event is a callback of its own, as in node, so the checkpoint that
+    /// `run_callback` skips inside a task runs between two events:
     /// https://github.com/nodejs/node/blob/v26.3.0/src/fs_event_wrap.cc#L239
-    /// `run_callback` runs no checkpoint inside a task (`tick()` holds the
-    /// entered count), so this loop does. The task queue runs the checkpoint
-    /// after the last event.
-    ///
-    /// A checkpoint can spin the event loop (`expect().resolves`), and a later
-    /// batch can run in there. It delivers from the front of the same queue,
-    /// so the events that this frame still holds come first.
+    /// That checkpoint can spin the event loop. A later batch that runs in
+    /// there delivers from this same queue, so the order holds.
     #[cfg(not(windows))]
     fn deliver(&self) -> JsResult<()> {
         while let Some(event) = self.undelivered.with_mut(VecDeque::pop_front) {
@@ -969,15 +960,14 @@ impl FSWatcher {
                     Ok(())
                 }
             };
-            // A filename that could not be built (allocation failure, or the
-            // VM is stopping): what is left stays queued.
+            // A filename that could not be built: what is left stays queued.
             emitted?;
             if self.undelivered.get().is_empty() {
                 break;
             }
             let vm = self.global_this.bun_vm();
             if vm.event_loop_mut().drain_microtasks().is_err() {
-                // The VM is stopping: what is left goes with the watcher.
+                // The VM is stopping.
                 break;
             }
         }
@@ -1171,8 +1161,7 @@ impl FSWatcher {
         // Idempotent: `detach()` can run more than once (close + finalize).
         self.js_this.set(JsRef::empty());
 
-        // Nothing is emitted from here on; this also ends a `deliver` loop
-        // whose listener closed the watcher.
+        // Ends a `deliver` loop whose listener closed the watcher.
         #[cfg(not(windows))]
         self.undelivered.with_mut(VecDeque::clear);
     }

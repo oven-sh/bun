@@ -26,6 +26,9 @@ class ResponseReader {
   // Bytes after the last complete response that do not form a head yet (after
   // a 101 these are WebSocket frames).
   unparsed: Buffer = Buffer.alloc(0);
+  // How many of the next responses answer a HEAD request: such a response has
+  // the framing headers of the GET response and no body (RFC 9112 6.3).
+  headResponses = 0;
   #head: { statusLine: string; headers: Record<string, string> } | undefined;
   #chunked = false;
   #pendingChunked: Buffer = Buffer.alloc(0);
@@ -46,8 +49,10 @@ class ResponseReader {
           headers[line.slice(0, colon).toLowerCase()] = line.slice(colon + 1).trim();
         }
         this.#head = { statusLine, headers };
-        this.#chunked = headers["transfer-encoding"] === "chunked";
-        this.#bodyNeed = Number(headers["content-length"] ?? 0);
+        const hasBody = this.headResponses === 0;
+        if (!hasBody) this.headResponses--;
+        this.#chunked = hasBody && headers["transfer-encoding"] === "chunked";
+        this.#bodyNeed = hasBody ? Number(headers["content-length"] ?? 0) : 0;
         chunk = this.unparsed.subarray(headEnd + 4);
         this.unparsed = Buffer.alloc(0);
       }
@@ -517,6 +522,115 @@ it("a request pipelined behind a request body that the handler is still consumin
   expect({ closed: client.closed, responses: client.responses.map(summarize) }).toEqual({
     closed: false,
     responses: [ok("uploaded hello"), ok("body of /after")],
+  });
+});
+
+// Other ways the response ahead is produced. Each ends through its own path in
+// the server, and each has to release the held request like a plain 200 does.
+it("a request pipelined behind a handler that throws after an await is answered after the 500", async () => {
+  const entered = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const hits: string[] = [];
+  using server = Bun.serve({
+    ...tcp,
+    async fetch(req) {
+      const path = new URL(req.url).pathname;
+      hits.push(path);
+      if (path !== "/throw") return plainResponse(req);
+      entered.resolve();
+      await release.promise;
+      throw new Error("boom");
+    },
+    error: error => new Response(`handled ${error.message}`, { status: 500 }),
+  });
+  using client = await RawClient.connect(tcpOnly.target(server, ""));
+
+  client.write(request("/throw") + request("/after"));
+  await Promise.race([entered.promise, client.until(c => c.closed)]);
+  await probe(tcpOnly, server, "");
+  expect({ hits, closed: client.closed }).toEqual({ hits: ["/throw", "/probe"], closed: false });
+
+  release.resolve();
+  await client.until(c => c.responses.length === 2);
+  expect({ hits, closed: client.closed, responses: client.responses.map(summarize) }).toEqual({
+    hits: ["/throw", "/probe", "/after"],
+    closed: false,
+    responses: [{ statusLine: "HTTP/1.1 500 Internal Server Error", body: "handled boom" }, ok("body of /after")],
+  });
+});
+
+it("a request pipelined behind a HEAD request waits for its response", async () => {
+  const handler = holdingHandler();
+  using server = Bun.serve({ ...tcp, fetch: handler.fetch });
+  using client = await RawClient.connect(tcpOnly.target(server, ""));
+
+  client.headResponses = 1;
+  client.write("HEAD /hold HTTP/1.1\r\nHost: x\r\n\r\n" + request("/after"));
+  await Promise.race([handler.entered("/hold"), client.until(c => c.closed)]);
+  await probe(tcpOnly, server, "");
+  expect({ hits: handler.hits, closed: client.closed }).toEqual({ hits: ["/hold", "/probe"], closed: false });
+
+  handler.release("/hold");
+  await client.until(c => c.responses.length === 2);
+  expect({
+    hits: handler.hits,
+    closed: client.closed,
+    responses: client.responses.map(({ statusLine, headers, body }) => ({
+      statusLine,
+      contentLength: headers["content-length"],
+      body,
+    })),
+  }).toEqual({
+    hits: ["/hold", "/probe", "/after"],
+    closed: false,
+    responses: [
+      { statusLine: "HTTP/1.1 200 OK", contentLength: "13", body: "" },
+      { statusLine: "HTTP/1.1 200 OK", contentLength: "14", body: "body of /after" },
+    ],
+  });
+});
+
+// The server answers the Expect header with 100 Continue when it dispatches the
+// request, so an interim response is already on the wire when the request behind
+// it is held.
+describe.each([
+  { name: "whose body is in the same write", bodyWaitsFor100: false },
+  { name: "whose body follows the 100 Continue", bodyWaitsFor100: true },
+])("a request pipelined behind a request with Expect: 100-continue $name", ({ bodyWaitsFor100 }) => {
+  it("waits for the final response", async () => {
+    const seen: string[] = [];
+    const bodyRead = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      ...tcp,
+      async fetch(req) {
+        if (new URL(req.url).pathname !== "/upload") return plainResponse(req);
+        seen.push(await req.text());
+        bodyRead.resolve();
+        await release.promise;
+        return new Response(`uploaded ${seen[0]}`);
+      },
+    });
+    using client = await RawClient.connect(tcpOnly.target(server, ""));
+
+    const head = "POST /upload HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: 5\r\n\r\n";
+    if (bodyWaitsFor100) {
+      client.write(head);
+      await client.until(c => c.responses.length === 1);
+      client.write("hello" + request("/after"));
+    } else {
+      client.write(head + "hello" + request("/after"));
+    }
+    await Promise.race([bodyRead.promise, client.until(c => c.closed)]);
+    await probe(tcpOnly, server, "");
+    expect({ seen, closed: client.closed }).toEqual({ seen: ["hello"], closed: false });
+
+    release.resolve();
+    await client.until(c => c.responses.length === 3);
+    expect({ closed: client.closed, responses: client.responses.map(summarize) }).toEqual({
+      closed: false,
+      responses: [{ statusLine: "HTTP/1.1 100 Continue", body: "" }, ok("uploaded hello"), ok("body of /after")],
+    });
   });
 });
 

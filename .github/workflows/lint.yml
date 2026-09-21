@@ -32,7 +32,8 @@ jobs:
           bun x tsc --noEmit -p scripts/build/tsconfig.json
           bun x tsc --noEmit -p scripts/tsconfig.json
       - name: Typecheck the built-in modules
-        # src/js/builtins.d.ts references the types the code generators write into build/types.
+        # The code generators write the types src/js/builtins.d.ts references (build/types) and the enums the dev
+        # server's sources import (src/runtime/bake/generated.ts).
         run: |
           bun run build:types
           bun x tsc --noEmit -p src/js/tsconfig.json

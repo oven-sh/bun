@@ -27,7 +27,7 @@
  *
  * Files nothing compiles may stay undeclared (bundle-modules' eval/ dir,
  * JSSink.lut.txt consumed within its own step). The .d.ts files src/js is
- * typechecked against are declared, in cfg.typesDir: see `builtinTypes`. The remaining
+ * typechecked against are declared, in cfg.typesDir: see `generatedTypes`. The remaining
  * #included exception is BunBuiltinNames+extras.h from bundle-functions.ts,
  * reached through the PCH.
  */
@@ -222,10 +222,11 @@ export interface CodegenOutputs {
   all: string[];
 
   /**
-   * The type declarations `src/js/builtins.d.ts` references, in cfg.typesDir: phony target `builtin-types`. Made from
+   * The generated TypeScript a typecheck needs: phony target `generated-types`. The type declarations
+   * `src/js/builtins.d.ts` references, in cfg.typesDir, and `src/runtime/bake/generated.ts`. Made from
    * source alone, so every profile's graph declares the same files (like a dep's `vendor/<name>/.ref`).
    */
-  builtinTypes: string[];
+  generatedTypes: string[];
 
   /**
    * Outputs a Rust crate reads (`include!`, `include_bytes!`), or needs to exist. The crates' edges are ordered
@@ -297,7 +298,7 @@ export function emitCodegen(n: Ninja, cfg: CodegenFields, sources: Sources): Cod
 
   const o: CodegenOutputs = {
     all: [],
-    builtinTypes: [],
+    generatedTypes: [],
     rustInputs: [],
     cppSources: [],
     cppHeaders: [],
@@ -345,7 +346,7 @@ export function emitCodegen(n: Ninja, cfg: CodegenFields, sources: Sources): Cod
   emitCompressedEmbeds(ctx);
 
   n.phony("codegen", o.all);
-  n.phony("builtin-types", o.builtinTypes);
+  n.phony("generated-types", o.generatedTypes);
   n.blank();
 
   // Assemble cppAll — the cxx-relevant subset. See field docstring.
@@ -658,7 +659,7 @@ function emitErrorCode({ n, cfg, o, dirStamp }: Ctx): void {
   });
 
   o.all.push(...outputs);
-  o.builtinTypes.push(types);
+  o.generatedTypes.push(types);
   o.rustInputs.push(...cppOutputs, rustOutput);
   o.cppHeaders.push(...cppOutputs);
 }
@@ -693,7 +694,7 @@ function emitGeneratedClasses({ n, cfg, sources, o, dirStamp }: Ctx): void {
   });
 
   o.all.push(...outputs, types);
-  o.builtinTypes.push(types);
+  o.generatedTypes.push(types);
   o.rustInputs.push(...outputs);
   o.cppSources.push(outputs[1]!); // .cpp
   o.cppHeaders.push(outputs[0]!, outputs[2]!, outputs[3]!, outputs[4]!, outputs[5]!); // .h files
@@ -839,7 +840,7 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
   });
 
   o.all.push(...outputs, ...types);
-  o.builtinTypes.push(...types);
+  o.generatedTypes.push(...types);
   o.rustInputs.push(...outputs);
   o.cppSources.push(outputs[0]!); // WebCoreJSBuiltins.cpp
   o.cppHeaders.push(...outputs.filter(p => p.endsWith(".h")));
@@ -863,9 +864,12 @@ function emitBakeCodegen({ n, cfg, sources, o, dirStamp }: Ctx): void {
     resolve(cfg.codegenDir, "bake.server.js"),
     resolve(cfg.codegenDir, "bake.error.js"),
   ];
+  // The enums of dev_server/mod.rs as TypeScript, written beside the runtime sources that import it. It is the
+  // same in every profile, like the declarations in cfg.typesDir.
+  const generatedTs = resolve(cfg.cwd, "src", "runtime", "bake", "generated.ts");
 
   n.build({
-    outputs,
+    outputs: [...outputs, generatedTs],
     rule: "codegen_bun",
     inputs: [script, ...sources.bakeRuntime],
     orderOnlyInputs: [dirStamp],
@@ -876,7 +880,8 @@ function emitBakeCodegen({ n, cfg, sources, o, dirStamp }: Ctx): void {
     },
   });
 
-  o.all.push(...outputs);
+  o.all.push(...outputs, generatedTs);
+  o.generatedTypes.push(generatedTs);
   // Debug reads these at runtime; release embeds them.
   o.rustInputs.push(...outputs);
 }

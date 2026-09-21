@@ -12,8 +12,8 @@ import { connect as tlsConnect } from "node:tls";
 // second request never answered. Such a request is now held until the response
 // ahead of it completes and is dispatched then, so responses stay in request
 // order (RFC 9112 9.3.2); one held behind a Connection: close request is dropped
-// with the connection (RFC 9112 9.6), and one held behind a request that turns
-// the connection into a WebSocket is dropped with the HTTP state.
+// with the connection (RFC 9112 9.6), and what is held behind a request that
+// turns the connection into a WebSocket goes to that WebSocket, as frames.
 
 type RawResponse = { statusLine: string; headers: Record<string, string>; body: string };
 
@@ -800,9 +800,19 @@ describe.each(transports.filter(t => t.name !== "unix"))("WebSocket upgrade over
     body,
     accept: headers["sec-websocket-accept"] as string | undefined,
   });
-  // A masked text frame "hi" (mask key 1 2 3 4); the server echoes it unmasked.
-  const maskedHiFrame = new Uint8Array([0x81, 0x82, 1, 2, 3, 4, "h".charCodeAt(0) ^ 1, "i".charCodeAt(0) ^ 2]);
-  const echoedHiFrame = [0x81, 0x02, "h".charCodeAt(0), "i".charCodeAt(0)];
+  // A masked text frame with a short payload (mask key 1 2 3 4); the server
+  // echoes it unmasked.
+  const maskedFrame = (payload: string) =>
+    new Uint8Array([
+      0x81,
+      0x80 | payload.length,
+      1,
+      2,
+      3,
+      4,
+      ...Buffer.from(payload).map((byte, i) => byte ^ ((i % 4) + 1)),
+    ]);
+  const echoedFrame = (payload: string) => [0x81, payload.length, ...Buffer.from(payload)];
 
   // /ws is upgraded from the handler itself, or (held: true) from a continuation
   // the test releases; every other path is the holding handler's.
@@ -828,10 +838,15 @@ describe.each(transports.filter(t => t.name !== "unix"))("WebSocket upgrade over
     return { server, upgradeEntered: entered.promise, releaseUpgrade: released.resolve };
   }
 
-  async function expectEcho(client: RawClient) {
-    client.write(maskedHiFrame);
-    await client.until(c => c.unparsed.length >= echoedHiFrame.length);
-    expect({ closed: client.closed, frame: [...client.unparsed] }).toEqual({ closed: false, frame: echoedHiFrame });
+  // Waits for the echo of the last payload, then expects everything after the
+  // 101 to be the echoes of `payloads`, in order.
+  async function expectEchoes(client: RawClient, payloads: string[]) {
+    const last = Buffer.from(echoedFrame(payloads.at(-1)!));
+    await client.until(c => c.unparsed.subarray(-last.length).equals(last));
+    expect({ closed: client.closed, frames: [...client.unparsed] }).toEqual({
+      closed: false,
+      frames: payloads.flatMap(echoedFrame),
+    });
   }
 
   it("pipelined behind an async handler is performed once the response ahead of it is out", async () => {
@@ -853,20 +868,22 @@ describe.each(transports.filter(t => t.name !== "unix"))("WebSocket upgrade over
     });
 
     // The connection is the WebSocket now.
-    await expectEcho(client);
+    client.write(maskedFrame("hi"));
+    await expectEchoes(client, ["hi"]);
   });
 
-  // The request held behind the handshake is discarded with the HTTP state when
-  // the connection becomes a WebSocket (as bytes trailing a synchronous upgrade
-  // in the same read always were), and holding it must not leave the WebSocket's
-  // reads switched off.
-  it("performed by an async handler with a request pipelined behind it drops that request and reads frames", async () => {
+  // What follows an upgrade request on the wire is frames: a client that does not
+  // wait for the 101 (RFC 6455 4.1) gets them into the read of the request. They
+  // are held like anything behind a pending response, and the upgrade gives them
+  // to the WebSocket, as it does with the rest of the read when it runs during the
+  // request's dispatch. Holding them must not leave the WebSocket's reads off.
+  it("performed by an async handler gives the WebSocket the frames held behind the handshake, and reads on", async () => {
     const handler = holdingHandler();
     const { upgradeEntered, releaseUpgrade, ...serving } = serveWithUpgrade(handler, { held: true });
     using server = serving.server;
     using client = await RawClient.connect(transport.target(server, ""));
 
-    client.write(upgradeRequest + request("/never"));
+    client.write(Buffer.concat([Buffer.from(upgradeRequest, "latin1"), maskedFrame("hi")]));
     await Promise.race([upgradeEntered, client.until(c => c.closed)]);
     await probe(transport, server, "");
     expect({ hits: handler.hits, closed: client.closed }).toEqual({ hits: ["/ws", "/probe"], closed: false });
@@ -878,13 +895,65 @@ describe.each(transports.filter(t => t.name !== "unix"))("WebSocket upgrade over
       responses: [switching],
     });
 
-    await expectEcho(client);
-    // The echo round trip above means the server has long since processed
-    // everything it received before the frame; /never was not part of it.
+    client.write(maskedFrame("yo"));
+    await expectEchoes(client, ["hi", "yo"]);
+  });
+
+  // Both at once: the upgrade request waits behind a pending response with a frame
+  // behind it, and is then performed by an async handler. The frame is held twice,
+  // the second time as what the replay of the upgrade request did not reach.
+  it("held behind an async handler and performed by an async handler still gives the WebSocket the frame behind it", async () => {
+    const handler = holdingHandler();
+    const { upgradeEntered, releaseUpgrade, ...serving } = serveWithUpgrade(handler, { held: true });
+    using server = serving.server;
+    using client = await RawClient.connect(transport.target(server, ""));
+
+    client.write(Buffer.concat([Buffer.from(request("/hold") + upgradeRequest, "latin1"), maskedFrame("hi")]));
+    await Promise.race([handler.entered("/hold"), client.until(c => c.closed)]);
     await probe(transport, server, "");
-    expect({ hits: handler.hits, responses: client.responses.length }).toEqual({
-      hits: ["/ws", "/probe", "/probe"],
-      responses: 1,
+    handler.release("/hold");
+    await Promise.race([upgradeEntered, client.until(c => c.closed)]);
+    await probe(transport, server, "");
+    expect({ hits: handler.hits, closed: client.closed }).toEqual({
+      hits: ["/hold", "/probe", "/ws", "/probe"],
+      closed: false,
+    });
+
+    releaseUpgrade();
+    await client.until(c => c.responses.length === 2);
+    expect({ closed: client.closed, responses: client.responses.map(withAccept) }).toEqual({
+      closed: false,
+      responses: [{ statusLine: "HTTP/1.1 200 OK", body: "body of /hold", accept: undefined }, switching],
+    });
+
+    client.write(maskedFrame("yo"));
+    await expectEchoes(client, ["hi", "yo"]);
+  });
+
+  // A request held behind the handshake is never dispatched as HTTP: the
+  // connection has left HTTP by then. As frames the bytes are not valid, so the
+  // WebSocket fails the connection.
+  it("performed by an async handler fails the connection when an HTTP request is held behind the handshake", async () => {
+    const handler = holdingHandler();
+    const { upgradeEntered, releaseUpgrade, ...serving } = serveWithUpgrade(handler, { held: true });
+    using server = serving.server;
+    using client = await RawClient.connect(transport.target(server, ""));
+
+    client.write(upgradeRequest + request("/never"));
+    await Promise.race([upgradeEntered, client.until(c => c.closed)]);
+    await probe(transport, server, "");
+    expect({ hits: handler.hits, closed: client.closed }).toEqual({ hits: ["/ws", "/probe"], closed: false });
+
+    releaseUpgrade();
+    await client.until(c => c.closed);
+    expect({
+      hits: handler.hits,
+      responses: client.responses.map(withAccept),
+      framesAfterThe101: [...client.unparsed],
+    }).toEqual({
+      hits: ["/ws", "/probe"],
+      responses: [switching],
+      framesAfterThe101: [],
     });
   });
 });

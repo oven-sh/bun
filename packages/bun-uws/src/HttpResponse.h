@@ -393,17 +393,19 @@ public:
 
         auto* responseData = getHttpResponseData();
 
-        /* Request bytes parked behind this handshake (HttpParser::parkedRequestBytes)
-         * go down with the HTTP state destructed below, like bytes trailing a
-         * synchronous upgrade in the same read (a client may not send anything
-         * before the 101 anyway, RFC 6455 4.1). Parking paused reads; the adopted
-         * WebSocket needs them flowing, and us_socket_adopt keeps the flag. The
-         * resume re-arms writable too, so the WebSocket gets one drain callback with
-         * nothing to drain right after open; dropping the bytes before
-         * endUpgradeHandshake() keeps markDone() from arming a second one for a
-         * replay that cannot happen. */
-        if (!responseData->parkedRequestBytes.isEmpty()) [[unlikely]] {
-            responseData->parkedRequestBytes.clear();
+        /* Bytes parked behind this handshake (HttpParser::parkedRequestBytes) follow
+         * the upgrade request on the wire: frames of a client that did not wait for
+         * the 101 (RFC 6455 4.1). The WebSocket gets them after open, below, like the
+         * rest of the read of an upgrade made during the dispatch
+         * (HttpContext::onData). Taken here because the HTTP state that owns them is
+         * destructed below, and before endUpgradeHandshake() so that markDone() does
+         * not arm a replay dispatch for them. Parking paused reads; the WebSocket
+         * needs them flowing, and us_socket_adopt keeps the flag. The resume re-arms
+         * writable too, so the WebSocket gets one drain callback with nothing to
+         * drain. */
+        WTF::Vector<char> earlyFrames = std::exchange(responseData->parkedRequestBytes, {});
+        size_t earlyFramesStart = std::exchange(responseData->parkedRequestBytesStart, 0);
+        if (!earlyFrames.isEmpty()) [[unlikely]] {
             Super::resume();
         }
 
@@ -488,6 +490,18 @@ public:
         /* Emit open event and start the timeout */
         if (webSocketContextData->openHandler) {
             webSocketContextData->openHandler(webSocket);
+        }
+
+        if (!earlyFrames.isEmpty() && !us_socket_is_closed(usSocket) && !us_socket_is_shut_down(usSocket)) [[unlikely]] {
+            /* The frame parser writes on both sides of what it is given (a spilled
+             * frame head in front, unmasking in blocks behind), as it may in the
+             * loop's padded receive buffer. */
+            size_t length = earlyFrames.size() - earlyFramesStart;
+            WTF::Vector<char> padded;
+            padded.grow(LIBUS_RECV_BUFFER_PADDING + length + LIBUS_RECV_BUFFER_PADDING);
+            char *frames = padded.mutableSpan().data() + LIBUS_RECV_BUFFER_PADDING;
+            memcpy(frames, earlyFrames.span().data() + earlyFramesStart, length);
+            us_dispatch_data(usSocket, frames, (int) length);
         }
 
         return usSocket;

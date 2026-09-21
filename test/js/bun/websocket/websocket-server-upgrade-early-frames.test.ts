@@ -5,9 +5,11 @@
 // went out, the connection stayed open, and the frames were never seen. If the
 // read ended inside a frame, the next read started in the middle of it and the
 // server closed the connection. The `ws` package on Node parses these bytes
-// (it unshifts the 'upgrade' event's head into the socket). So does Bun.serve
-// when server.upgrade() runs before the request's dispatch returns: in the
-// handler itself, or after an await that needs no new turn of the event loop.
+// (it unshifts the 'upgrade' event's head into the socket). So does Bun.serve:
+// when server.upgrade() runs before the request's dispatch returns (in the
+// handler itself, or after an await that needs no new turn of the event loop)
+// the WebSocket gets the rest of the read, and when it runs later it gets what
+// the server held behind the pending response in the meantime.
 import type { Server } from "bun";
 import { serve } from "bun";
 import { describe, expect, it } from "bun:test";
@@ -283,27 +285,49 @@ describe.concurrent("frames in the same read as the upgrade request", () => {
   });
 
   // A server.upgrade() in a later turn of the event loop runs when the read is
-  // over. By then the HTTP parser has read the frame as the start of the next
-  // request and rejected it: the client gets a 400 and a closed connection.
-  // (Bytes that can still begin a request line wait in the parser's buffer
-  // instead, and the upgrade frees that buffer.)
-  it("fail the connection when server.upgrade() runs in a later turn of the event loop", async () => {
-    const events: string[] = [];
-    const upgradeResult = Promise.withResolvers<boolean>();
-    using server = echoServer(events, {
-      async fetch(req, srv) {
-        await new Promise(resolve => setImmediate(resolve));
-        upgradeResult.resolve(srv.upgrade(req));
-      },
-    });
-    using client = await rawClient(server.port);
+  // over. The server does not parse what follows a request while that request's
+  // response is pending, it holds it: frames in the read of the upgrade request,
+  // and frames in a read of their own that arrives before the upgrade. The
+  // upgrade gives what was held to the WebSocket.
+  it.each(["the same read as the request", "a read of their own before the upgrade"])(
+    "are delivered when server.upgrade() runs in a later turn of the event loop (frames in %s)",
+    async arrival => {
+      const events: string[] = [];
+      const waiting = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      using server = echoServer(events, {
+        async fetch(req, srv) {
+          if (new URL(req.url).pathname === "/plain") return new Response("plain");
+          waiting.resolve();
+          await release.promise;
+          if (srv.upgrade(req)) return;
+          return new Response("no", { status: 400 });
+        },
+      });
+      using client = await rawClient(server.port);
 
-    client.socket.write(Buffer.concat([Buffer.from(upgradeRequest), text("early")]));
-    expect(await client.status()).toBe("HTTP/1.1 400 Bad Request");
-    await client.closed;
-    expect(await upgradeResult.promise).toBe(false);
-    expect(events).toEqual([]);
-  });
+      const early = Buffer.concat([text("early"), ping("p")]);
+      if (arrival === "the same read as the request") {
+        client.socket.write(Buffer.concat([Buffer.from(upgradeRequest), early]));
+        await waiting.promise;
+      } else {
+        client.socket.write(upgradeRequest);
+        await waiting.promise;
+        client.socket.write(early);
+      }
+      // The frames were on their way before this request, so the server has read
+      // them by the time it answers it, with the upgrade still to come.
+      expect(await (await fetch(new URL("/plain", server.url))).text()).toBe("plain");
+      expect(events).toEqual([]);
+
+      release.resolve();
+      expect(await client.status()).toBe("HTTP/1.1 101 Switching Protocols");
+      client.socket.write(text("later"));
+
+      expect(await client.framesUntil("text:echo:later")).toEqual(["text:echo:early", "pong:p", "text:echo:later"]);
+      expect(events).toEqual(["open", "message:early", "ping:p", "message:later"]);
+    },
+  );
 
   // server.upgrade() for one connection can run in a microtask of another
   // connection's request. The bytes after that other request are not frames

@@ -1173,6 +1173,14 @@ struct HttpResponseData;
                 consumedTotal += length;
                 return HttpParserResult::success(consumedTotal, returnedUser);
             }
+            /* Bun.serve: a closing connection takes nothing more (RFC 9112 9.6). Ahead
+             * of the park, which pauses reads: a close over bytes left unread resets
+             * the connection behind the complete response. */
+            if constexpr (!IsNodeHttp) {
+                if (sawConnectionClose) [[unlikely]] {
+                    return HttpParserResult::success(consumedTotal + length, user);
+                }
+            }
             /* Before getHeaders touches the next head. Reported as consumed so the
              * caller does not spill it into the size-capped fallback buffer. Reads
              * that arrive while bytes are parked go behind them, to keep wire order. */
@@ -1203,11 +1211,10 @@ struct HttpResponseData;
                 }
             }
             /* Must stay below the tunnel check, the park and the CR/LF skip, like llhttp's closed state. */
-            if (sawConnectionClose) {
-                if constexpr (IsNodeHttp) {
+            if constexpr (IsNodeHttp) {
+                if (sawConnectionClose) {
                     return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_CLOSED_CONNECTION);
                 }
-                return HttpParserResult::success(consumedTotal + length, user);
             }
             auto result = getHeaders(data, data + length, req->headers, req->ancientHttp, isConnectRequest, useStrictMethodValidation, useInsecureHTTPParser, maxHeaderSize);
             if(result.isError()) {

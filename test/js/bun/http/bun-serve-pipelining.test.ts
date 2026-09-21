@@ -756,6 +756,42 @@ describe("a request pipelined behind a Connection: close request", () => {
       responses: [ok("body of /hold")],
     });
   });
+
+  // The server drops what arrives behind the closing request, and it has to keep
+  // reading to drop it. A close over bytes that were left unread resets the
+  // connection, and a unix socket reports that to the client behind the complete
+  // response.
+  it.if(isPosix)("is read and dropped while the response is pending, so the connection ends cleanly", async () => {
+    using dir = tempDir("serve-pipelining", {});
+    const unix = transports.find(transport => transport.name === "unix")!;
+    const handler = holdingHandler();
+    using server = Bun.serve({ ...unix.listen(String(dir)), fetch: handler.fetch });
+    const socket = netConnect({ path: join(String(dir), "pipeline.sock") });
+    const reader = new ResponseReader();
+    const seen: { ended: boolean; error?: string } = { ended: false };
+    socket.on("data", chunk => reader.push(chunk));
+    socket.on("end", () => (seen.ended = true));
+    socket.on("error", (error: NodeJS.ErrnoException) => (seen.error = error.code));
+    const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+    await once(socket, "connect");
+    const write = (data: string) => new Promise<void>(resolve => socket.write(data, () => resolve()));
+
+    await write(request("/hold", "Connection: close\r\n"));
+    await handler.entered("/hold");
+    // Two later reads. The server has taken each one when its probe is answered.
+    for (let i = 0; i < 2; i++) {
+      await write(request("/never"));
+      await probe(unix, server, String(dir));
+    }
+
+    handler.release("/hold");
+    await closed;
+    expect({ hits: handler.hits, seen, responses: reader.responses.map(summarize) }).toEqual({
+      hits: ["/hold", "/probe", "/probe"],
+      seen: { ended: true },
+      responses: [ok("body of /hold")],
+    });
+  });
 });
 
 // A graceful stop() closes idle connections and marks busy ones to close once

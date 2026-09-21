@@ -1,7 +1,7 @@
 use core::mem;
 use core::ptr::NonNull;
 
-use bun_jsc::{JSGlobalObject, JSValue, JsResult, SysErrorJsc as _, event_loop::EventLoop};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, event_loop::EventLoop};
 use bun_sys::{self, Fd, FdExt as _};
 
 use crate::node::types::FdJsc as _;
@@ -286,14 +286,20 @@ impl Readable {
 
                 JSValue::create_buffer_from_box(global, own)
             }
-            Readable::Errored(..) => {
-                let Readable::Errored(_, err) = mem::replace(self, Readable::Closed) else {
-                    unreachable!()
-                };
-                Err(err.throw(global))
-            }
             _ => Ok(JSValue::UNDEFINED),
         }
+    }
+
+    /// The error reading this output ended with, taken out of it. `spawnSync` asks before
+    /// `to_buffered_value` and throws it: the output that was lost cannot be returned.
+    pub(crate) fn take_read_error(&mut self) -> Option<bun_sys::Error> {
+        if !matches!(self, Readable::Errored(..)) {
+            return None;
+        }
+        let Readable::Errored(_, err) = mem::replace(self, Readable::Closed) else {
+            unreachable!()
+        };
+        Some(err)
     }
 }
 

@@ -60,9 +60,9 @@ interface ExecPromiseWithResolvers extends PromiseWithResolvers<ExecResult> {
 
 interface SpawnSyncResult {
   signal: string | null;
-  status: number | null | undefined;
-  output: (Buffer | string | null | undefined)[];
-  pid: number | undefined;
+  status: number | null;
+  output: (Buffer | string | null | undefined)[] | null;
+  pid: number;
   stdout?: Buffer | string | null;
   stderr?: Buffer | string | null;
   error?: SystemError;
@@ -584,9 +584,8 @@ function spawnSync(file, args, options?): SpawnSyncResult {
       exitedDueToTimeout,
       exitedDueToMaxBuffer,
       pid,
-    }: Omit<Bun.SyncSubprocess, "exitCode" | "pid" | "stdout" | "stderr"> & {
-      exitCode: number | null | undefined;
-      pid: number | undefined;
+    }: Omit<Bun.SyncSubprocess, "exitCode" | "stdout" | "stderr"> & {
+      exitCode: number | null;
       stdout?: Buffer | number | null;
       stderr?: Buffer | number | null;
     } = Bun.spawnSync({
@@ -611,13 +610,14 @@ function spawnSync(file, args, options?): SpawnSyncResult {
       killSignal: options.killSignal,
       maxBuffer: options.maxBuffer,
     });
-  } catch (err) {
+  } catch (err: any) {
     error = err;
     stdout = null;
     stderr = null;
-    // Whether the process ran is not known here: Bun.spawnSync also throws when reading its output failed.
-    exitCode = undefined;
-    pid = undefined;
+    // Bun.spawnSync puts `pid` and `exitCode` on the error it throws when the process ran and its output was
+    // lost. Any other error means the process never ran, which node reports as `status: null` and `pid: 0`.
+    exitCode = err?.exitCode ?? null;
+    pid = err?.pid ?? 0;
   }
 
   // When stdio is redirected to a file descriptor, Bun.spawnSync returns the fd number
@@ -630,7 +630,8 @@ function spawnSync(file, args, options?): SpawnSyncResult {
     signal: typeof signalCode === "number" ? "" : (signalCode ?? null),
     status: exitCode,
     // TODO: Need to expose extra pipes from Bun.spawnSync to child_process
-    output: [null, outputStdout, outputStderr],
+    // node: `output` is null when the process never ran.
+    output: error !== undefined && error?.pid === undefined ? null : [null, outputStdout, outputStderr],
     pid,
   };
 
@@ -638,16 +639,19 @@ function spawnSync(file, args, options?): SpawnSyncResult {
     result.error = error;
   }
 
-  if (outputStdout && encoding && encoding !== "buffer") {
-    result.output[1] = result.output[1]?.toString(encoding);
+  const output = result.output;
+  if (output) {
+    if (outputStdout && encoding && encoding !== "buffer") {
+      output[1] = output[1]?.toString(encoding);
+    }
+
+    if (outputStderr && encoding && encoding !== "buffer") {
+      output[2] = output[2]?.toString(encoding);
+    }
   }
 
-  if (outputStderr && encoding && encoding !== "buffer") {
-    result.output[2] = result.output[2]?.toString(encoding);
-  }
-
-  result.stdout = result.output[1];
-  result.stderr = result.output[2];
+  result.stdout = output?.[1];
+  result.stderr = output?.[2];
 
   if (exitedDueToTimeout && error == null) {
     result.error = new SystemError(

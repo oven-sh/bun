@@ -823,16 +823,19 @@ function hasUnreadBytes(self) {
   return self.readableLength > 0 || (tail !== undefined && tail.length > 0);
 }
 
-// The peer's FIN has reached the stream (or waits behind the onread tail): node reads nothing after it.
+// The peer's FIN has reached the stream (or waits behind the onread tail). libuv stops a handle's reads
+// for good there: https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L931-L934
 function readsEnded(self) {
   return self[kended] || self[kOnreadPendingEnd];
 }
 
 // usockets reads what the kernel queued ahead of a reset into the stream before it reports the
-// error, also when reads are stopped. Node leaves those bytes in the kernel and meets the error on
-// the read after them, so its consumer gets them first, however late it reads. Hold the error until
-// ours has them too. Behind a FIN node never reads it at all: the stream ends, and only a write
-// reports the reset. A write in flight fails on the reset at once in node as well.
+// error, also when reads are stopped. Node meets a read error only in a read of the handle
+// (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L213-L217), and a
+// stopped handle does not read (https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L1043-L1044),
+// so those bytes reach its consumer first, however late it reads. Hold the error until ours has
+// them too. Behind a FIN node never reads it: the stream ends, and only a write reports the reset.
+// A write in flight fails on the reset at once in node as well (stream.c#L1232-L1234).
 function reportReadError(self, err) {
   const notReading = self[kReadStopped] || self[kReadWhileStopped] || readsEnded(self);
   if (notReading && !self[kwriteCallback] && hasUnreadBytes(self)) {
@@ -842,8 +845,9 @@ function reportReadError(self, err) {
   self.destroy(err);
 }
 
-// Node meets the error on the read it starts once the buffered bytes are taken: a turn of the loop
-// later, so a consumer that is done with the socket by then (a complete HTTP response) never sees it.
+// Node meets the error in the read that _read() starts once the buffered bytes are taken
+// (https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L769-L792): a turn of the loop later, so a
+// consumer that is done with the socket by then (a complete HTTP response) never sees it.
 function scheduleHeldError(self) {
   if (self[kHeldErrorDue]) return;
   self[kHeldErrorDue] = true;

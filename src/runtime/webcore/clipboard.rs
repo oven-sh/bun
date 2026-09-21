@@ -589,12 +589,9 @@ mod platform {
         }
     }
 
-    /// A bitmap-only clipboard (a screenshot, Paint) still offers PNG, as a
-    /// TIFF-only pasteboard does on macOS.
-    fn png_from_dib(clipboard: &mut OpenedClipboard) -> Option<Vec<u8>> {
+    fn png_from_bmp(bmp: &[u8]) -> Option<Vec<u8>> {
         use crate::image::codecs::{self, DecodeHint, EncodeOptions, Format};
-        let bmp = crate::image::backend_wic::dib_as_bmp(clipboard).ok()??;
-        let image = codecs::decode(&bmp, codecs::DEFAULT_MAX_PIXELS, DecodeHint::default()).ok()?;
+        let image = codecs::decode(bmp, codecs::DEFAULT_MAX_PIXELS, DecodeHint::default()).ok()?;
         let options = EncodeOptions {
             format: Format::Png,
             ..Default::default()
@@ -603,7 +600,14 @@ mod platform {
         Some(png.as_slice().to_vec())
     }
 
-    fn read_type(clipboard: &mut OpenedClipboard, mime: Mime) -> Option<Vec<u8>> {
+    enum Read {
+        Bytes(Vec<u8>),
+        /// A bitmap-only clipboard (a screenshot, Paint) still offers PNG, as a
+        /// TIFF-only pasteboard does on macOS; converted once the clipboard is closed.
+        Bitmap(Vec<u8>),
+    }
+
+    fn read_type(clipboard: &mut OpenedClipboard, mime: Mime) -> Option<Read> {
         for format in read_formats(mime).into_iter().flatten() {
             // Memory another app left unlockable reads as absent.
             if let Some(bytes) = clipboard.with_data(format, |bytes| match mime {
@@ -615,21 +619,32 @@ mod platform {
                     cf_html_fragment(&bytes[..end])
                 }
             }) {
-                return bytes;
+                return bytes.map(Read::Bytes);
             }
         }
         if mime == Mime::ImagePng {
-            return png_from_dib(clipboard);
+            return crate::image::backend_wic::dib_as_bmp(clipboard)
+                .ok()?
+                .map(Read::Bitmap);
         }
         None
     }
 
     /// One open span, so no other process writes between the types.
     pub(super) fn read_types(types: &[Mime], _env: &Env) -> Outcome {
-        let mut clipboard = OpenedClipboard::open().ok_or(Unavailable::Platform)?;
-        Ok(types
-            .iter()
-            .filter_map(|&mime| Some((mime, read_type(&mut clipboard, mime)?)))
+        let read: Vec<(Mime, Read)> = {
+            let mut clipboard = OpenedClipboard::open().ok_or(Unavailable::Platform)?;
+            types
+                .iter()
+                .filter_map(|&mime| Some((mime, read_type(&mut clipboard, mime)?)))
+                .collect()
+        };
+        Ok(read
+            .into_iter()
+            .filter_map(|(mime, read)| match read {
+                Read::Bytes(bytes) => Some((mime, bytes)),
+                Read::Bitmap(bmp) => Some((mime, png_from_bmp(&bmp)?)),
+            })
             .collect())
     }
 

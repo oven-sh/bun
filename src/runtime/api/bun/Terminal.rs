@@ -10,7 +10,9 @@
 //! - Callbacks are stored via `values` in classes.ts, accessed via js.gc
 
 use core::cell::Cell;
-use core::ffi::{c_int, c_void};
+#[cfg(not(windows))]
+use core::ffi::c_int;
+use core::ffi::c_void;
 #[cfg(windows)]
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -39,26 +41,26 @@ bun_output::declare_scope!(Terminal, hidden);
 // Generated bindings — `jsc.Codegen.JSTerminal`. The `.classes.ts` codegen
 // emits `crate::generated_classes::js_Terminal` with `from_js`/`to_js` and the
 // cached-value accessors; re-export here so callers continue to spell `js::*`.
-pub use self::js::to_js;
-pub mod js {
-    pub use crate::generated_classes::js_Terminal::{
+pub(crate) use self::js::to_js;
+pub(crate) mod js {
+    pub(crate) use crate::generated_classes::js_Terminal::{
         data_get_cached, data_set_cached, drain_get_cached, drain_set_cached, exit_get_cached,
         exit_set_cached, from_js, get_constructor, to_js,
     };
 
     /// Typed accessor for the `values:` slots.
-    pub mod gc {
+    pub(crate) mod gc {
         use bun_jsc::{JSGlobalObject, JSValue};
 
         #[derive(Clone, Copy)]
-        pub enum GcValue {
+        pub(crate) enum GcValue {
             Data,
             Exit,
             Drain,
         }
 
         #[inline]
-        pub fn get(which: GcValue, this_value: JSValue) -> Option<JSValue> {
+        pub(crate) fn get(which: GcValue, this_value: JSValue) -> Option<JSValue> {
             match which {
                 GcValue::Data => super::data_get_cached(this_value),
                 GcValue::Exit => super::exit_get_cached(this_value),
@@ -101,7 +103,7 @@ pub mod js {
 // `&*this` (shared); all field mutation routes through the cells.
 #[bun_jsc::JsClass(no_construct, no_finalize)]
 #[derive(bun_ptr::RefCounted)]
-pub struct Terminal {
+pub(crate) struct Terminal {
     ref_count: bun_ptr::RefCount<Terminal>,
 
     /// The master side of the PTY (original fd, used for ioctl operations)
@@ -181,16 +183,16 @@ bitflags::bitflags! {
 /// `bun.io.StreamingWriter(@This(), struct { onClose, onWritable, onError, onWrite })`
 /// — the anon-struct of callback decls is the `PosixStreamingWriterParent` /
 /// `WindowsStreamingWriterParent` trait impls at the bottom of this file.
-pub type IOWriter = StreamingWriter<Terminal>;
+pub(crate) type IOWriter = StreamingWriter<Terminal>;
 
 /// Poll type alias for FilePoll Owner registration
 #[cfg(not(windows))]
 pub(crate) type Poll = IOWriter;
 
-pub type IOReader = BufferedReader;
+pub(crate) type IOReader = BufferedReader;
 
 /// Options for creating a Terminal
-pub struct Options {
+pub(crate) struct Options {
     pub(crate) cols: u16,
     pub(crate) rows: u16,
     pub(crate) data_callback: Option<JSValue>,
@@ -473,23 +475,25 @@ impl Terminal {
             }
         }
 
-        // Start reader with the read fd - adds a ref
+        // Start reader with the read fd. The reader's ref is taken first: when
+        // the poll registration fails, POSIX `start()` calls `on_reader_error`,
+        // which releases that ref, and still returns Ok.
+        terminal.ref_();
         match terminal
             .reader
             .with_mut(|r| r.start(pty_result.read_fd, true))
         {
             sys::Result::Err(_) => {
-                // Reader never started: closeInternal skips reader.close() but
-                // runs writer.close() → onWriterClose → deref (2→1). Then drop
-                // the initial ref (1→0).
+                // No callback ran: the reader took neither read_fd nor its ref.
                 terminal.read_fd.get().close();
                 terminal.read_fd.set(Fd::INVALID);
-                terminal.close_internal();
                 terminal.deref_();
-                return Err(InitError::ReaderStartFailed);
+                return Err(terminal.fail_reader_start());
+            }
+            sys::Result::Ok(()) if terminal.flags.get().contains(Flags::READER_DONE) => {
+                return Err(terminal.fail_reader_start());
             }
             sys::Result::Ok(()) => {
-                terminal.ref_();
                 #[cfg(unix)]
                 {
                     terminal.reader.with_mut(|r| {
@@ -509,6 +513,10 @@ impl Terminal {
         // SAFETY: the reader cell is live for the terminal's lifetime; `read`
         // is the raw re-entrancy-safe entry (its dispatch runs user JS).
         unsafe { IOReader::read(terminal.reader.as_ptr()) };
+        // The first read can end the reader too: EOF, a read error, or a failed re-arm.
+        if terminal.flags.get().contains(Flags::READER_DONE) {
+            return Err(terminal.fail_reader_start());
+        }
 
         // Get or create the JS wrapper
         let this_value = existing_js_value.unwrap_or_else(|| js::to_js(parent_ptr, global_object));
@@ -537,6 +545,17 @@ impl Terminal {
             terminal: unsafe { bun_ptr::BackRef::from_raw_mut(parent_ptr) },
             js_value: this_value,
         })
+    }
+
+    /// `init_terminal` error path for a reader that finished before the
+    /// terminal reached JS, with the reader's ref already released.
+    /// `close_internal` closes what is still open (a writer that is still
+    /// open releases its ref through `on_writer_close`), then the initial ref
+    /// is dropped, which may free `self`.
+    fn fail_reader_start(&self) -> InitError {
+        self.close_internal();
+        self.deref_();
+        InitError::ReaderStartFailed
     }
 
     /// Constructor for Terminal - called from JavaScript
@@ -763,7 +782,7 @@ impl Terminal {
     }
 }
 
-pub struct PtyResult {
+pub(crate) struct PtyResult {
     pub(crate) master: Fd,
     pub(crate) read_fd: Fd,
     pub(crate) write_fd: Fd,
@@ -798,7 +817,8 @@ fn create_pty(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
 // OpenPtyTermios is required for the openpty() extern signature even though we pass null.
 // Kept for type correctness of the C function declaration.
 #[repr(C)]
-pub struct OpenPtyTermios {
+#[cfg(not(windows))]
+pub(crate) struct OpenPtyTermios {
     pub c_iflag: u32,
     pub c_oflag: u32,
     pub c_cflag: u32,
@@ -808,9 +828,11 @@ pub struct OpenPtyTermios {
     pub c_ospeed: u32,
 }
 
-pub use bun_core::Winsize;
+#[cfg(not(windows))]
+pub(crate) use bun_core::Winsize;
 
-pub type OpenPtyFn = unsafe extern "C" fn(
+#[cfg(not(windows))]
+pub(crate) type OpenPtyFn = unsafe extern "C" fn(
     amaster: *mut c_int,
     aslave: *mut c_int,
     name: *mut u8,
@@ -1454,6 +1476,9 @@ impl Terminal {
             let r = w.write(bytes);
             (r, w.has_pending_data())
         });
+        // The writer can close inside `write()` and keep the bytes; no drain follows them.
+        let writer_done = self.flags.get().contains(Flags::WRITER_DONE);
+        let has_pending = has_pending && !writer_done;
         self.writer_has_buffered.set(has_pending);
         if has_pending {
             // Keep the wrapper rooted for the pending drain dispatch; a write
@@ -1463,7 +1488,7 @@ impl Terminal {
         // A second write() can drain what an earlier one buffered; on_write saw
         // the cleared flag, so fire drain here (outside `with_mut`).
         #[cfg(unix)]
-        if had_buffered && !has_pending {
+        if had_buffered && !has_pending && !writer_done {
             self.on_writer_ready();
         }
         #[cfg(not(unix))]
@@ -1751,6 +1776,7 @@ impl Terminal {
             if let Some(callback) = js::gc::get(js::GcValue::Drain, this_jsvalue) {
                 let global_this = self.global();
                 global_this.bun_vm().event_loop_mut().run_callback(
+                    bun_event_loop::ContextId::NONE,
                     callback,
                     global_this,
                     this_jsvalue,
@@ -1887,6 +1913,7 @@ impl Terminal {
         };
 
         global_this.bun_vm().event_loop_mut().run_callback(
+            bun_event_loop::ContextId::NONE,
             callback,
             global_this,
             this_jsvalue,
@@ -1947,6 +1974,7 @@ impl Terminal {
         // Each chunk's `data` callback is its own top-level call: reported and
         // reading continues, as a stream 'data' listener that throws does.
         global_this.bun_vm().event_loop_mut().run_callback(
+            bun_event_loop::ContextId::NONE,
             callback,
             global_this,
             this_jsvalue,

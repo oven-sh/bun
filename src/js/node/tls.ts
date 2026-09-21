@@ -5,6 +5,7 @@ const Duplex = require("internal/streams/duplex");
 const EventEmitter = require("node:events");
 const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
 const { throwNotImplemented } = require("internal/shared");
+const { domainToASCII } = require("internal/url");
 const {
   throwOnInvalidTLSArray,
   tlsStringToProtocolVersion,
@@ -396,6 +397,9 @@ function check(hostParts, pattern, wildcards) {
 
   const { 0: prefix, 1: suffix } = patternSubdomainParts;
 
+  // Node lets "*" match the empty label of ".example.com", the IDNA form of "。example.com".
+  if (hostSubdomain === "") return false;
+
   if (prefix.length + suffix.length > hostSubdomain.length) return false;
 
   if (!StringPrototypeStartsWith.$call(hostSubdomain, prefix)) return false;
@@ -450,6 +454,12 @@ function checkServerIdentity(hostname, cert) {
   const ips = [];
 
   hostname = "" + hostname;
+  // CVE-2026-48618, https://github.com/nodejs/node/commit/1efb4ff51a: IDNA maps "。" to ".".
+  const hostnameASCII = domainToASCII(hostname);
+
+  // Remove trailing dots for error messages and matching.
+  hostname = unfqdn(hostname);
+  const hostnameASCIIWithoutFQDN = unfqdn(hostnameASCII);
 
   if (altNames) {
     const splitAltNames = StringPrototypeIncludes.$call(altNames, '"')
@@ -467,14 +477,14 @@ function checkServerIdentity(hostname, cert) {
   let valid = false;
   let reason = "Unknown reason";
 
-  hostname = unfqdn(hostname); // Remove trailing dot for error messages.
+  // https://github.com/nodejs/node/commit/1d87a24050: domainToASCII("::1") is "", so IP hosts stay as typed.
   if (net.isIP(hostname)) {
     valid = ArrayPrototypeIncludes.$call(ips, canonicalizeIP(hostname));
     if (!valid) reason = `IP: ${hostname} is not in the cert's list: ` + ArrayPrototypeJoin.$call(ips, ", ");
   } else {
     const hasDnsNames = dnsNames.length > 0;
     if (hasDnsNames || subject?.CN) {
-      const hostParts = splitHost(hostname);
+      const hostParts = splitHost(hostnameASCIIWithoutFQDN);
       const wildcard = pattern => check(hostParts, pattern, true);
 
       if (hasDnsNames) {
@@ -552,7 +562,7 @@ function newNativeSecureContext(options, cached = false) {
   // convertALPNProtocols normalizes them on the socket options.
   const ALPNProtocols = options.ALPNProtocols;
   if (Array.isArray(ALPNProtocols)) {
-    const normalized = {};
+    const normalized: { ALPNProtocols?: Buffer } = {};
     convertALPNProtocols(ALPNProtocols, normalized);
     options = { ...options, ALPNProtocols: normalized.ALPNProtocols };
   }
@@ -1583,7 +1593,7 @@ function normalizeConnectArgs(listArgs) {
 function connect(...args) {
   let normal = normalizeConnectArgs(args);
   const options = normal[0];
-  const { ALPNProtocols, servername } = options as { ALPNProtocols?: unknown; servername?: unknown };
+  const { ALPNProtocols, servername } = options as { ALPNProtocols?: unknown; servername?: string };
 
   // The TLSSocket applies the NODE_TLS_REJECT_UNAUTHORIZED default itself
   // (rejectUnauthorizedDefault); this call exists to emit Node's one-time
@@ -1611,7 +1621,7 @@ function connect(...args) {
     ? options.rejectUnauthorized !== false
     : rejectUnauthorizedDefault();
 
-  const connectOptions = { checkServerIdentity, ...options, rejectUnauthorized };
+  const connectOptions: Record<PropertyKey, any> = { checkServerIdentity, ...options, rejectUnauthorized };
   if (!ObjectPrototypeHasOwnProperty.$call(options, "ciphers") || connectOptions.ciphers == null) {
     connectOptions.ciphers = getDefaultCiphers();
   }
@@ -1899,4 +1909,7 @@ export default {
     return cacheBundledRootCertificates();
   },
   getCACertificates,
-} as any as typeof import("node:tls");
+} as any as typeof import("node:tls") & {
+  SecureContext: typeof SecureContext;
+  convertALPNProtocols: typeof convertALPNProtocols;
+};

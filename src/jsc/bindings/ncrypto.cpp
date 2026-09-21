@@ -1666,6 +1666,11 @@ DataPointer hkdf(const Digest& md,
         return {};
     }
 
+    // Node.js (OpenSSL) rejects a zero-length derivation; BoringSSL accepts it.
+    if (length == 0) {
+        return {};
+    }
+
     auto ctx = EVPKeyCtxPointer::NewFromID(EVP_PKEY_HKDF);
     // OpenSSL < 3.0.0 accepted only a void* as the argument of
     // EVP_PKEY_CTX_set_hkdf_md.

@@ -75,7 +75,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.3.14"
+          bun-version: "1.4.2"
       - name: Install Dependencies
         run: bun install
       - name: Sign Release
@@ -104,7 +104,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.3.14"
+          bun-version: "1.4.2"
       - name: Install Dependencies
         run: bun install
       - name: Release
@@ -135,7 +135,7 @@ jobs:
         if: ${{ env.BUN_VERSION != 'canary' }}
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.3.14"
+          bun-version: "1.4.2"
       - name: Setup Bun
         if: ${{ env.BUN_VERSION == 'canary' }}
         uses: ./.github/actions/setup-bun
@@ -189,7 +189,7 @@ jobs:
       - name: Setup Bun
         uses: ./bun/.github/actions/setup-bun
         with:
-          bun-version: "1.3.14"
+          bun-version: "1.4.2"
       - id: bun-version
         run: echo "BUN_VERSION=${BUN_VERSION#bun-v}" >> "$GITHUB_OUTPUT"
       - name: Update bun-types version in package.json
@@ -333,7 +333,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.3.14"
+          bun-version: "1.4.2"
       - name: Install Dependencies
         run: bun install
       - name: Release

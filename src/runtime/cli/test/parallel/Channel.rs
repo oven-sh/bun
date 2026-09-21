@@ -46,7 +46,7 @@ use super::frame;
 
 /// The owner implements [`bun_core::IntrusiveField<Channel<Self>>`]
 /// (via `bun_core::intrusive_field!`) plus the two callbacks below.
-pub trait ChannelOwner: bun_core::IntrusiveField<Channel<Self>> {
+pub(crate) trait ChannelOwner: bun_core::IntrusiveField<Channel<Self>> {
     fn on_channel_frame(&mut self, kind: frame::Kind, rd: &mut frame::Reader<'_>);
     fn on_channel_done(&mut self);
 }
@@ -56,7 +56,7 @@ pub trait ChannelOwner: bun_core::IntrusiveField<Channel<Self>> {
 // `impl ChannelOwner` is in scope. Method impls that recover the owner via
 // `IntrusiveField::OFFSET` keep the bound. (Rust also forbids a stricter bound
 // on `Drop` than on the struct, so Drop/Default below are unbounded too.)
-pub struct Channel<Owner> {
+pub(crate) struct Channel<Owner> {
     /// Incoming bytes that don't yet form a complete frame.
     pub(crate) r#in: JsCell<Vec<u8>>,
     /// Outgoing bytes the kernel didn't accept yet.
@@ -77,9 +77,9 @@ pub struct Channel<Owner> {
 }
 
 #[cfg(windows)]
-pub type Backend = WindowsBackend;
+pub(crate) type Backend = WindowsBackend;
 #[cfg(not(windows))]
-pub type Backend = PosixBackend;
+pub(crate) type Backend = PosixBackend;
 
 impl<Owner> Default for Channel<Owner> {
     fn default() -> Self {
@@ -110,10 +110,10 @@ impl<Owner: ChannelOwner> Channel<Owner> {
 // -- POSIX (usockets) --------------------------------------------------------
 
 #[cfg(not(windows))]
-pub type Socket = uws::NewSocketHandler<false>;
+pub(crate) type Socket = uws::NewSocketHandler<false>;
 
 #[cfg(not(windows))]
-pub struct PosixBackend {
+pub(crate) struct PosixBackend {
     pub(crate) socket: Cell<Socket>,
     /// Bytes at the front of `out` already written to the kernel;
     /// front-draining per partial write instead is quadratic in backlog size.
@@ -158,7 +158,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
 // -- Windows (uv.Pipe) -------------------------------------------------------
 
 #[cfg(windows)]
-pub struct WindowsBackend {
+pub(crate) struct WindowsBackend {
     pub(crate) pipe: Cell<*mut uv::Pipe>,
     /// Read scratch — libuv asks us to allocate before each read.
     /// Wrapped so every byte is interior-mutable: libuv forms
@@ -429,21 +429,19 @@ impl<Owner: ChannelOwner> Channel<Owner> {
 
     /// True while any encoded bytes are still queued or in flight.
     pub(crate) fn has_pending_writes(&self) -> bool {
-        if !self.out.get().is_empty() {
-            return true;
-        }
         #[cfg(windows)]
         {
-            return !self.backend.inflight.get().is_empty();
+            !self.out.get().is_empty() || !self.backend.inflight.get().is_empty()
         }
         #[cfg(not(windows))]
         {
-            false
+            !self.out.get().is_empty()
         }
     }
 
     /// Best-effort drain of any buffered writes.
-    pub fn flush(&self) {
+    #[cfg(not(windows))]
+    pub(crate) fn flush(&self) {
         #[cfg(windows)]
         {
             return self.submit_windows_write();

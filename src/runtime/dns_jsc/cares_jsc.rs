@@ -700,8 +700,18 @@ impl ErrorDeferred {
         self.promise.reject(global_this, Ok(instance))
     }
 
-    pub(crate) fn reject_later(self: Box<Self>, global_this: &JSGlobalObject) {
+    /// `context` is the context of the script that asked. Once it has stopped the
+    /// error is not reported: closing a resolver's channel fails every pending
+    /// query with `ARES_EDESTRUCTION`, and that is how a `Bun.ModuleGraph`'s
+    /// resolver goes when the graph is disposed.
+    pub(crate) fn reject_later(
+        self: Box<Self>,
+        global_this: &JSGlobalObject,
+        context: bun_jsc::ContextId,
+    ) {
         struct Context {
+            /// The context of the script that asked; it may stop before the task runs.
+            asking: bun_jsc::ContextId,
             deferred: Box<ErrorDeferred>,
             // LIFETIMES.tsv row 1403: JSC_BORROW — the global outlives the
             // enqueued task (VM-owned), so a `BackRef` captures the invariant.
@@ -715,6 +725,8 @@ impl ErrorDeferred {
                 // below; ManagedTask::run calls us exactly once with that pointer.
                 let this = unsafe { bun_core::heap::take(this) };
                 let global = this.global_this.get();
+                // For the script that asked: once its context has stopped the error goes to nobody.
+                let _context = global.bun_vm().enter_context(this.asking);
                 this.deferred.reject(global)
             }
         }
@@ -730,6 +742,7 @@ impl ErrorDeferred {
         }
 
         let context = bun_core::heap::into_raw(Box::new(Context {
+            asking: context,
             deferred: self,
             global_this: bun_ptr::BackRef::new(global_this),
         }));
@@ -737,7 +750,7 @@ impl ErrorDeferred {
         // SAFETY: `bun_vm()` returns a non-null VM pointer (VM-owned for the lifetime of
         // the JSGlobalObject).
         vm.as_mut()
-            .enqueue_task(bun_jsc::ManagedTask::ManagedTask::new(
+            .enqueue_task(bun_jsc::ManagedTask::ManagedTask::new_owned(
                 context,
                 Context::callback,
             ));

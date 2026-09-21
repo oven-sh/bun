@@ -645,16 +645,58 @@ describe("WebSocket frames in the same read as the 101", () => {
     }
   });
 
+  test("an open listener that waits synchronously for them", async () => {
+    using server = rawServer({ glued: textFrame("with the 101") });
+
+    const order: string[] = [];
+    const opened = Promise.withResolvers<void>();
+    const received = Promise.withResolvers<void>();
+    const ws = new globalThis.WebSocket(server.url);
+    rejectOnFailure(ws, opened, received);
+    ws.addEventListener("open", () => {
+      order.push("open");
+      // Nothing else arrives on the socket. Without the cap, a client that holds the message back hangs here.
+      const { promise: cap, resolve: giveUp } = Promise.withResolvers<void>();
+      const timer = setTimeout(giveUp, 2000);
+      try {
+        // Ticks the event loop until the message is dispatched.
+        expect(Promise.race([received.promise, cap])).resolves.toBeUndefined();
+        order.push("open returns");
+        opened.resolve();
+      } catch (error) {
+        opened.reject(error);
+      } finally {
+        clearTimeout(timer);
+      }
+    });
+    ws.addEventListener("message", event => {
+      order.push(`message ${event.data}`);
+      received.resolve();
+    });
+
+    try {
+      await opened.promise;
+      expect(order).toEqual(["open", "message with the 101", "open returns"]);
+    } finally {
+      ws.close();
+    }
+  });
+
   // The nested event loop can see the end of the stream before the open listener returns.
-  describe("an open listener that spins the event loop with the end of the stream behind them", () => {
-    async function eventsOf(glued: Uint8Array, afterHandshake: (socket: Socket<{ request: string }>) => void) {
-      using server = rawServer({ glued, afterHandshake });
+  describe("an open listener that ends the peer and spins the event loop", () => {
+    async function eventsOf(
+      protocol: string,
+      glued: Uint8Array,
+      endPeer: (socket: Socket<{ request: string }>) => void,
+    ) {
+      using server = rawServer({ secure: protocol === "wss", glued });
 
       const events: string[] = [];
       const closed = Promise.withResolvers<void>();
-      const ws = new globalThis.WebSocket(server.url);
+      const ws = new globalThis.WebSocket(server.url, { tls: { rejectUnauthorized: false } });
       ws.addEventListener("open", () => {
         events.push("open");
+        endPeer(server.peer());
         // Two turns of the event loop, each with a poll of the socket.
         expect(new Promise<void>(resolve => setImmediate(() => setImmediate(resolve)))).resolves.toBeUndefined();
       });
@@ -670,9 +712,9 @@ describe("WebSocket frames in the same read as the 101", () => {
 
     // Windows: a socket that closes while its own data callback spins the event loop is freed under
     // the outer dispatch (libuv.c does not count tick_depth). A debug build segfaults, with or without this fix.
-    test.skipIf(isWindows)("a Close frame, then FIN", async () => {
+    test.skipIf(isWindows).each(["ws", "wss"])("%s: a Close frame, then FIN", async protocol => {
       const glued = Buffer.concat([textFrame("last words"), closeFrame(1000)]);
-      expect(await eventsOf(glued, socket => socket.end())).toEqual([
+      expect(await eventsOf(protocol, glued, socket => socket.end())).toEqual([
         "open",
         "message last words",
         "close 1000 clean=true",
@@ -681,7 +723,7 @@ describe("WebSocket frames in the same read as the 101", () => {
 
     // Only Linux is known to keep received bytes readable once the reset is in.
     test.skipIf(!isLinux)("a reset", async () => {
-      expect(await eventsOf(textFrame("last words"), socket => socket.terminate())).toEqual([
+      expect(await eventsOf("ws", textFrame("last words"), socket => socket.terminate())).toEqual([
         "open",
         "message last words",
         "close 1006 clean=false",

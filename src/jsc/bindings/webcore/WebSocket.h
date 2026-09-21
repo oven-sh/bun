@@ -211,7 +211,7 @@ public:
     void didClose(unsigned unhandledBufferedAmount, unsigned short code, const String& reason);
     void didConnect(us_socket_t* socket, void* bufferedData, const PerMessageDeflateParams* deflate_params, void* customSSLCtx);
     void didConnectWithTunnel(void* tunnel, void* bufferedData, const PerMessageDeflateParams* deflate_params);
-    // The connected client parses didConnect*()'s bufferedData; called after the microtasks of open.
+    // The connected client parses didConnect*()'s bufferedData: after the microtasks of open, or from a task if open spins the event loop.
     void deliverInitialData();
     void didFailWithErrorCode(Bun::WebSocketErrorCode code);
 
@@ -336,6 +336,7 @@ private:
     // Drop the in-flight upgrade / the connected client without a closing handshake. Neither
     // dispatches anything itself; the native side may call back synchronously.
     void cancelUpgradeClient();
+    void queueInitialDataDelivery();
     bool applyPauseToConnectedClient();
     void cancelConnectedClient();
     bool m_rejectUnauthorized { false };

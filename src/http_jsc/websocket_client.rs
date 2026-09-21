@@ -173,7 +173,6 @@ impl<const SSL: bool> WebSocket<SSL> {
     pub(crate) fn clear_data(&self) {
         log!("clearData");
         self.unref_keep_alive();
-        drop(self.initial_data.take());
         self.clear_receive_buffers(true);
         self.clear_send_buffers(true);
         self.control_frame_started.set(false);
@@ -286,8 +285,6 @@ impl<const SSL: bool> WebSocket<SSL> {
     pub fn handle_close(&self, _socket: Socket<SSL>, _code: c_int, _reason: *mut c_void) {
         log!("onClose");
         jsc::mark_binding!();
-        // A reset can get in ahead of `deliver_initial_data`, like the read in `handle_data`.
-        self.parse_initial_data();
         if let Some((code, reason)) = self.close_dispatch_pending.take() {
             // The socket closed while our close frame was mid-flush; the peer
             // either got it or didn't, but JS should still see the
@@ -545,13 +542,15 @@ impl<const SSL: bool> WebSocket<SSL> {
         let Some(initial_data) = self.initial_data.take() else {
             return false;
         };
-        if self.cpp_websocket().is_some() && !self.close_received.get() {
+        // For tunnel mode, tcp is detached but connection is still active through the tunnel
+        let is_connected = !self.tcp.get().is_closed() || self.tunnel().is_some();
+        if self.cpp_websocket().is_some() && is_connected && !self.close_received.get() {
             self.handle_data_loop(&initial_data);
         }
         true
     }
 
-    /// Called by the upgrade client (through C++) after the microtask checkpoint that follows `open`.
+    /// Called through C++: after the microtask checkpoint that follows `open`, or from a task if `open` spins the event loop.
     pub(crate) fn deliver_initial_data(this: ThisPtr<Self>) {
         let _guard = RefPtr::from_this(this);
         this.parse_initial_data();
@@ -1212,11 +1211,6 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     pub fn handle_end(&self, socket: Socket<SSL>) {
         debug_assert!(self.is_same_socket(&socket));
-        // A FIN can get in ahead of `deliver_initial_data`, like the read in `handle_data`.
-        if self.parse_initial_data() && self.cpp_websocket().is_none() {
-            // A Close frame in those bytes ended the connection; uSockets closes the socket after on_end.
-            return;
-        }
         if self.has_pending_close_dispatch() {
             // Peer FIN'd while we're still draining our close frame; finish the
             // drain on the next writable event instead of RST'ing via

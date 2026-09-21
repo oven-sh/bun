@@ -6156,8 +6156,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     fn lower_import_meta_main_for_node_js(&mut self, inverted: bool, loc: bun_ast::Loc) -> Expr {
-        // Outside of the CommonJS format the printer writes `require` as
-        // `__require`, so we need to reference a handle to that function.
         self.record_usage_of_runtime_require();
 
         if self.options.output_format != options::Format::Esm {
@@ -6168,15 +6166,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             };
         }
 
-        // Node.js has import.meta.main since v22.18.0 and v24.2.0. Before that,
-        // the closest thing is `require.main === module`, but with the ESM
-        // format, both `require` and `module` are not present, and
-        // `require.main` is undefined when the entry point is an ES module.
-        // So that form is only the fallback, and the code generation we need is:
-        //
-        //     import { createRequire } from "node:module";
-        //     var __require = createRequire(import.meta.url);
-        //     var import_meta_main = import.meta.main ?? __require.main == __require.module;
+        // `import.meta.main ?? __require.main == __require.module`: Node.js before v22.18.0 and v24.2.0 has no import.meta.main.
         let require_module = self.new_expr(
             E::Dot {
                 target: self.value_for_require(loc),

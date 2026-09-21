@@ -329,6 +329,7 @@ impl<'a> Parser<'a> {
         // Must be set before the priming `next()` so leading comments are seen.
         lexer.track_comments = options.features.minify_identifiers;
         lexer.track_react_suppressions = options.features.react_compiler.is_enabled();
+        lexer.track_react_refresh_reset = options.features.react_fast_refresh;
         lexer.step();
         lexer.next()?;
         // Copy the lexer's `NonNull<Log>` so both handles share one provenance

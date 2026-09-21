@@ -1835,10 +1835,9 @@ pub struct ReactRefresh<'a> {
     /// used by the refresh runtime to perform smart hook tracking.
     pub(crate) create_signature_ref: Ref,
 
-    /// If a comment with '@refresh reset' is seen, we will forward a
-    /// force refresh to the refresh runtime. This lets you reset the
-    /// state of hooks on an update on a per-component basis.
-    // TODO: this is never set
+    /// If a comment with '@refresh reset' is seen anywhere in the file, we
+    /// forward a force reset to the refresh runtime in every `_s(...)` call
+    /// of the file. This resets the state of hooks on every update of the file.
     pub(crate) force_reset: bool,
 
     /// The last hook that was scanned. This is used when visiting

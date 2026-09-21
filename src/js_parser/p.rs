@@ -3472,6 +3472,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.declare_generated_symbol(js_ast::symbol::Kind::Other, b"$RefreshSig$");
             self.react_refresh.register_ref =
                 self.declare_generated_symbol(js_ast::symbol::Kind::Other, b"$RefreshReg$");
+            self.react_refresh.force_reset = self.lexer.has_react_refresh_reset_comment;
         }
 
         {
@@ -9701,6 +9702,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         lexer.track_comments = opts.features.minify_identifiers;
         let track_scope_uses = opts.bundle && !opts.features.minify_identifiers;
         lexer.track_react_suppressions = opts.features.react_compiler.is_enabled();
+        lexer.track_react_refresh_reset = opts.features.react_fast_refresh;
 
         if !TYPESCRIPT {
             // This is so it doesn't impact runtime transpiler caching when not in use

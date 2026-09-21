@@ -150,6 +150,7 @@ pub struct LexerSnapshot<'a> {
     pub(crate) has_pure_comment_before: bool,
     pub(crate) has_react_hooks_suppression_before: bool,
     pub(crate) has_react_hooks_block_suppression: bool,
+    pub(crate) has_react_refresh_reset_comment: bool,
     pub(crate) preserve_all_comments_before: bool,
     pub(crate) is_legacy_octal_literal: bool,
     pub(crate) is_log_disabled: bool,
@@ -168,6 +169,7 @@ pub struct LexerSnapshot<'a> {
     pub(crate) string_literal_raw_format: StringLiteralRawFormat,
     pub(crate) track_comments: bool,
     pub(crate) track_react_suppressions: bool,
+    pub(crate) track_react_refresh_reset: bool,
     // Vec buffer lengths — restore() truncates back to these.
     pub(crate) all_comments_len: usize,
     pub(crate) comments_to_preserve_before_len: usize,
@@ -219,6 +221,9 @@ pub struct Lexer<'a> {
     /// `eslint-disable` (no `-next-line` suffix). Never cleared by the
     /// parser, so it applies to every subsequent function in the file.
     pub(crate) has_react_hooks_block_suppression: bool,
+    /// Set once a comment that contains `@refresh reset` has been scanned.
+    /// The parser reads this after the parse pass to set `ReactRefresh::force_reset`.
+    pub(crate) has_react_refresh_reset_comment: bool,
     pub(crate) preserve_all_comments_before: bool,
     pub(crate) is_legacy_octal_literal: bool,
     pub(crate) is_log_disabled: bool,
@@ -240,6 +245,7 @@ pub struct Lexer<'a> {
     pub(crate) temp_buffer_u16: Vec<u16>,
     pub(crate) track_comments: bool,
     pub(crate) track_react_suppressions: bool,
+    pub(crate) track_react_refresh_reset: bool,
     pub(crate) all_comments: Vec<Range>,
 }
 
@@ -335,6 +341,7 @@ impl<'a> Lexer<'a> {
             has_pure_comment_before: self.has_pure_comment_before,
             has_react_hooks_suppression_before: self.has_react_hooks_suppression_before,
             has_react_hooks_block_suppression: self.has_react_hooks_block_suppression,
+            has_react_refresh_reset_comment: self.has_react_refresh_reset_comment,
             preserve_all_comments_before: self.preserve_all_comments_before,
             is_legacy_octal_literal: self.is_legacy_octal_literal,
             is_log_disabled: self.is_log_disabled,
@@ -353,6 +360,7 @@ impl<'a> Lexer<'a> {
             string_literal_raw_format: self.string_literal_raw_format,
             track_comments: self.track_comments,
             track_react_suppressions: self.track_react_suppressions,
+            track_react_refresh_reset: self.track_react_refresh_reset,
             all_comments_len: self.all_comments.len(),
             comments_to_preserve_before_len: self.comments_to_preserve_before.len(),
         }
@@ -373,6 +381,7 @@ impl<'a> Lexer<'a> {
         self.has_pure_comment_before = original.has_pure_comment_before;
         self.has_react_hooks_suppression_before = original.has_react_hooks_suppression_before;
         self.has_react_hooks_block_suppression = original.has_react_hooks_block_suppression;
+        self.has_react_refresh_reset_comment = original.has_react_refresh_reset_comment;
         self.preserve_all_comments_before = original.preserve_all_comments_before;
         self.is_legacy_octal_literal = original.is_legacy_octal_literal;
         self.is_log_disabled = original.is_log_disabled;
@@ -391,6 +400,7 @@ impl<'a> Lexer<'a> {
         self.string_literal_raw_format = original.string_literal_raw_format;
         self.track_comments = original.track_comments;
         self.track_react_suppressions = original.track_react_suppressions;
+        self.track_react_refresh_reset = original.track_react_refresh_reset;
 
         debug_assert!(self.all_comments.len() >= original.all_comments_len);
         debug_assert!(
@@ -1937,6 +1947,14 @@ impl<'a> Lexer<'a> {
             }
         }
 
+        // react-refresh/babel and SWC match this text anywhere in any comment of the file.
+        if self.track_react_refresh_reset
+            && !self.has_react_refresh_reset_comment
+            && strings::contains(text, b"@refresh reset")
+        {
+            self.has_react_refresh_reset_comment = true;
+        }
+
         if has_legal_annotation || self.preserve_all_comments_before {
             if is_multiline_comment {
                 // text = lexer.removeMultilineCommentIndent(lexer.source.contents[0..lexer.start], text);
@@ -2250,6 +2268,7 @@ impl<'a> Lexer<'a> {
             has_pure_comment_before: false,
             has_react_hooks_suppression_before: false,
             has_react_hooks_block_suppression: false,
+            has_react_refresh_reset_comment: false,
             preserve_all_comments_before: false,
             is_legacy_octal_literal: false,
             is_log_disabled: false,
@@ -2271,6 +2290,7 @@ impl<'a> Lexer<'a> {
             temp_buffer_u16: Vec::new(),
             track_comments: false,
             track_react_suppressions: false,
+            track_react_refresh_reset: false,
             all_comments: Vec::new(),
         }
     }

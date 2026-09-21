@@ -1513,12 +1513,21 @@ describe("addContext() entries apply to every listen()", () => {
     }
   });
 
-  it("an entry that the live listener rejects is not kept for the next listen()", async () => {
+  it("addContext() without a servername throws ERR_TLS_REQUIRED_SERVER_NAME and keeps no entry", async () => {
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1571-L1574
+    const required = expect.objectContaining({
+      name: "Error",
+      code: "ERR_TLS_REQUIRED_SERVER_NAME",
+      message: '"servername" is required parameter for Server.addContext',
+    });
     const server: Server = createServer(agent1, socket => socket.end());
     try {
+      // A kept empty name would make every listen() fail.
+      for (const servername of ["", undefined, null]) {
+        expect(() => server.addContext(servername as any, agent2)).toThrow(required);
+      }
       await listen(server);
-      // The native listener refuses an empty name. A kept entry would make the next listen() fail.
-      expect(() => server.addContext("", agent2)).toThrow("hostname pattern cannot be empty");
+      expect(() => server.addContext("", agent2)).toThrow(required);
       expect(await servedCN(await relisten(server), "added.example")).toBe("agent1");
     } finally {
       server.close();

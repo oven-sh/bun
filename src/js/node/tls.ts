@@ -1242,6 +1242,10 @@ function Server(options, secureConnectionListener): void {
   const contexts = new Map<string, InstanceType<typeof InternalSecureContext>>();
 
   this.addContext = function (hostname, context) {
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1571-L1574
+    if (!hostname) {
+      throw $ERR_TLS_REQUIRED_SERVER_NAME();
+    }
     if (typeof hostname !== "string") {
       throw new TypeError("hostname must be a string");
     }

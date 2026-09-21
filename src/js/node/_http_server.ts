@@ -1642,15 +1642,12 @@ function getNodeHTTPServerSocket() {
       releaseServerParserShim(this);
       this[kHandle] = null;
       if (closedHandle) {
-        // Like Node.js's net.Socket onStreamRead: the peer's FIN ends the
-        // readable side ('end' before 'close'), and a failed read (a peer RST)
-        // is the error the socket is destroyed with.
+        // Peer FIN: 'end' before 'close', like Node's net.Socket. read(0) emits it when nothing reads the socket.
         if (closedHandle.peerEnded) {
           this.push(null);
           this.read(0);
         }
-        // Only with a listener (the server's socketOnError, until the socket is
-        // handed to 'connect'/'upgrade'): an unhandled 'error' ends the process.
+        // With no 'error' listener (a socket handed to 'upgrade') the read error would be an uncaught exception.
         const closeError = this.listenerCount("error") > 0 ? closedHandle.closeError : undefined;
         if (closeError) {
           // Node's errnoException(nread, 'read'): "read ECONNRESET".

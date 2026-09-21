@@ -54,9 +54,7 @@ public:
     unsigned ended : 1 = 0;
     unsigned upgraded : 1 = 0;
     unsigned peer_cert_verified : 1 = 0;
-    /* Latched by onClose() and read by the JS socket from its onclose callback
-     * (the closeError / peerEnded getters). node:http emits 'end' for a peer
-     * FIN and 'error' for a failed read (a peer RST) before 'close'. */
+    /* Set by onClose() for the peerEnded / closeError getters: the peer's FIN, the error of a failed read. */
     unsigned peer_ended : 1 = 0;
     int closeReadError = 0;
     const char* peerCertVerifyErrorCode = nullptr;

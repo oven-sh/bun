@@ -81,8 +81,7 @@ fn read_error_from_close_code(code: c_int) -> sys::Error {
     }
 }
 
-/// The same error for a `node:http` server connection, whose close callback is
-/// C++ (`JSNodeHTTPServerSocket::onClose`).
+/// `read_error_from_close_code` for C++: the `closeError` getter of `JSNodeHTTPServerSocket`.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__socketReadErrorFromCloseCode(
     global: &JSGlobalObject,

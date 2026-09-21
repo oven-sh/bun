@@ -155,10 +155,8 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
          * that runs after it (microtasks, the request body callback) can block,
          * reset the connection or end the process. */
         HTTP_SEND_WHEN_COMPLETE = 1 << 18,
-        /* node:http: the peer sent its FIN on this connection, whether or not the
-         * close was deferred (HTTP_NODE_RECEIVED_FIN only covers the deferred
-         * case). Reported to onSocketClosed so the JS socket emits 'end' before
-         * 'close' for a peer half-close and not for a close the server started. */
+        /* node:http: the peer sent its FIN first (HTTP_NODE_RECEIVED_FIN only covers a
+         * deferred close). onSocketClosed reports it so the JS socket emits 'end'. */
         HTTP_NODE_PEER_ENDED = 1 << 19,
 
         /* Bits that describe the connection rather than the response in flight.

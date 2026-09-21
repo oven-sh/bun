@@ -277,8 +277,7 @@ private:
             bool peerEnded = false;
             /* A tunnel reports its EOF through onSocketData above. */
             if (!httpResponseData->isConnectRequest && !nodeHttpTunnelAfterBody) {
-                /* Codes up to FAST_SHUTDOWN mean this side closed. Anything
-                 * above is the error of the read that failed (a peer RST). */
+                /* Above FAST_SHUTDOWN the code is the error of the failed read (a peer RST). */
                 readError = code > LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN ? code : 0;
                 peerEnded = (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_PEER_ENDED) != 0;
             }
@@ -938,10 +937,8 @@ private:
                 return s;
             }
 
-            /* Before onClientError: its listener can destroy the socket, and
-             * onClose reads this bit. Not once this side has shut down: TLS
-             * defers a close(0) until the peer answers our close_notify, and
-             * that answer arrives here as an EOF for a close the server started. */
+            /* Before onClientError, whose listener can destroy the socket. Not once this side
+             * shut down: TLS delivers the peer's answer to our close_notify here as an EOF. */
             if (!us_socket_is_shut_down(s)) {
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_PEER_ENDED;
             }

@@ -578,7 +578,16 @@ impl<'a> Transpiler<'a> {
 
     /// Load env files and build `options.define`. Idempotent — a no-op once
     /// `options.defines_loaded` is set.
+    #[inline]
     pub fn configure_defines(&mut self) -> crate::Result<()> {
+        self.configure_defines_with_process_env(None)
+    }
+
+    /// [`Self::configure_defines`], with env defines and `NODE_ENV` read from `process_env` when given.
+    pub fn configure_defines_with_process_env(
+        &mut self,
+        process_env: Option<&dot_env::Map>,
+    ) -> crate::Result<()> {
         if self.options.defines_loaded {
             return Ok(());
         }
@@ -590,13 +599,17 @@ impl<'a> Transpiler<'a> {
 
         self.run_env_loader(self.options.env.disable_default_env_files)?;
 
-        let env_loader = self.env_mut();
-        let mut is_production = env_loader.is_production();
+        let env_loader = self.env();
+        let (env_map, node_env) = match process_env {
+            Some(env) => (env, env.get(b"BUN_ENV").or_else(|| env.get(b"NODE_ENV"))),
+            None => (&env_loader.map, env_loader.get_node_env()),
+        };
+        let mut is_production = node_env == Some(b"production");
 
         // `load_defines` injects a default `process.env.NODE_ENV`; sample the
         // explicit sources first so that default isn't mistaken for user intent
         // and `force_node_env` stays `Unspecified` (tsconfig jsx stays in control).
-        let had_explicit_node_env = env_loader.get_node_env().is_some()
+        let had_explicit_node_env = node_env.is_some()
             || self
                 .options
                 .transform_options
@@ -620,7 +633,7 @@ impl<'a> Transpiler<'a> {
         // Spec passed `&this.options.env` as a separate arg; `load_defines` now
         // reads `&self.env` internally so the disjoint borrow is resolved
         // inside the `&mut self` scope without `unsafe`.
-        self.options.load_defines(self.arena, Some(env_loader))?;
+        self.options.load_defines(self.arena, env_map, node_env)?;
 
         let mut is_development = false;
         if had_explicit_node_env {

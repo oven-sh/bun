@@ -55,8 +55,8 @@ fn env_string_store_put(
     // `Expr.Data.Store` — `configureDefines` resets that store on return, so
     // the env-define payloads must outlive it. Allocate from `bump` (the
     // transpiler arena) so the slab is bulk-freed with the `Define` table
-    // instead of leaking a `Box` per env var. Value bytes alias the long-lived
-    // env-map storage.
+    // instead of leaking a `Box` per env var. The value is copied there too.
+    let value: &[u8] = bump.alloc_slice_copy(value);
     let value: ExprData = ExprData::EString(bun_ast::StoreRef::from_bump(
         bump.alloc(bun_ast::E::EString::init(value)),
     ));
@@ -70,10 +70,9 @@ fn env_string_store_put(
     Ok(())
 }
 
-/// Copies `process.env.*` entries from the dotenv loader into `to_string`
-/// according to `behavior` (all of them, or only those starting with `prefix`).
+/// One `process.env.<KEY>` define per `env` entry (`Prefix`: only keys starting with `prefix`).
 pub(crate) fn copy_env_for_define(
-    env: &bun_dotenv::Loader,
+    env: &bun_dotenv::Map,
     to_string: &mut UserDefinesArray,
     behavior: bun_dotenv::DotEnvBehavior,
     prefix: &[u8],
@@ -92,8 +91,8 @@ pub(crate) fn copy_env_for_define(
     let mut key_buf: Vec<u8> = Vec::new();
     // borrowck — iterate parallel slices instead of `iterator()` so the
     // map borrow stays shared while we write into the define store.
-    let keys = env.map.map.keys();
-    let values = env.map.map.values();
+    let keys = env.map.keys();
+    let values = env.map.values();
     for (k, v) in keys.iter().zip(values.iter()) {
         if k.is_empty() {
             continue;

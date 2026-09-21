@@ -595,15 +595,35 @@ impl<T: JsSinkType> JSSink<T> {
         }
 
         let mut wrote: u64 = 0;
-        let mut pending: Option<(*mut streams::WritablePending, JSValue)> = None;
+        // The sink's pending operation, its Promise, and what that Promise resolves to as of the last write.
+        let mut pending: Option<(*mut streams::WritablePending, JSValue, u64)> = None;
         // No argument is one `undefined` chunk, which write_value() rejects as write() does.
         for i in 0..frame.arguments_count().max(1) as usize {
-            match Self::write_value(this, global, frame.argument(i))? {
+            let result = Self::write_value(this, global, frame.argument(i))?;
+            // A write can settle the pending operation on the spot: the reader made room, and this chunk went out
+            // with everything buffered before it. Its Promise has resolved to `consumed`, which this call's total
+            // carries on from as a count. Checked before `to_js` below, which arms the slot for the next operation.
+            if let Some((operation, _, consumed)) = pending {
+                // SAFETY: `operation` is the sink's pending slot, which the sink owns and `this` keeps alive.
+                if unsafe { (*operation).state } != streams::PendingState::Pending {
+                    wrote += consumed;
+                    pending = None;
+                }
+            }
+            match result {
                 // Nothing after it can succeed either. The pending operation, if there is one, is given the error
                 // by the sink itself: this is only reached with nothing pending.
-                Writable::Err(err) => return Ok(Writable::Err(err).to_js(&cx)),
+                Writable::Err(err) => {
+                    // A short chunk before this one is still buffered. Left there, the auto flusher finds the
+                    // broken pipe later and marks the sink finished, and every later write reports nothing at
+                    // all. Flushed here it fails as this write did, which is the error the caller already has.
+                    let _ = Self::flush_sink(this, &cx, true);
+                    return Ok(Writable::Err(err).to_js(&cx));
+                }
                 Writable::Pending(operation) => {
-                    pending = Some((operation, Writable::Pending(operation).to_js(&cx)));
+                    let promise = Writable::Pending(operation).to_js(&cx);
+                    // SAFETY: as above.
+                    pending = Some((operation, promise, unsafe { (*operation).consumed }));
                 }
                 Writable::Owned(n)
                 | Writable::OwnedAndDone(n)
@@ -614,14 +634,14 @@ impl<T: JsSinkType> JSSink<T> {
             }
         }
 
-        let Some((operation, promise)) = pending else {
+        let Some((operation, promise, _)) = pending else {
             Self::flush_value(this, global, &cx, true)?;
             return Ok(JSValue::from(wrote));
         };
         // The Promise resolves to what the pending operation consumed. The counts are part of this call's total
         // too: a chunk written before the sink backed up, or a small one buffered beside the operation.
-        // SAFETY: `operation` is the sink's pending slot, which the sink owns and `this` keeps alive; nothing
-        // has run since the write that returned it, so it is still the pending one.
+        // SAFETY: `operation` is the sink's pending slot, which the sink owns and `this` keeps alive. It was
+        // still pending after the last write, and nothing has run since.
         let operation = unsafe { &mut *operation };
         operation.consumed += wrote;
         // `result` is the running total, unless a write failed beside the operation: then it is that error.
@@ -660,19 +680,24 @@ impl<T: JsSinkType> JSSink<T> {
         cx: &bun_jsc::JsThread<'_>,
         wait: bool,
     ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue> {
-        use crate::webcore::jsc::JSValue;
         use bun_sys_jsc::ErrorJsc;
-        if T::HAS_FLUSH_FROM_JS {
-            return match this.sink.flush_from_js(cx, wait) {
-                sys::Result::Ok(value) => Ok(value),
-                sys::Result::Err(err) => Err(global.throw_value(err.to_js(global)?)),
-            };
-        }
-
-        match this.sink.flush() {
-            sys::Result::Ok(()) => Ok(JSValue::UNDEFINED),
+        match Self::flush_sink(this, cx, wait) {
+            sys::Result::Ok(value) => Ok(value),
             sys::Result::Err(err) => Err(global.throw_value(err.to_js(global)?)),
         }
+    }
+
+    fn flush_sink(
+        this: &mut JSSink<T>,
+        cx: &bun_jsc::JsThread<'_>,
+        wait: bool,
+    ) -> sys::Result<crate::webcore::jsc::JSValue> {
+        if T::HAS_FLUSH_FROM_JS {
+            return this.sink.flush_from_js(cx, wait);
+        }
+        this.sink
+            .flush()
+            .map(|()| crate::webcore::jsc::JSValue::UNDEFINED)
     }
 
     /// `${abi_name}__start` host-fn body.

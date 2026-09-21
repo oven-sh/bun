@@ -6003,17 +6003,21 @@ describe("a pipelined request whose body continues after the previous response e
   // uws keeps one request body handler per connection. The pipelined request
   // arms it while the earlier response is still pending; that response ending
   // must not drop it, or the rest of the body never reaches the request.
-  async function exchange(steps: { write: string; waitFor: string }[], lastUrl: string) {
+  async function exchange(
+    steps: { write: string; waitFor: string }[],
+    lastUrl: string,
+    describeBody = (body: Buffer) => `${body.length}`,
+  ) {
     const { promise: lastDispatched, resolve: resolveLastDispatched } = Promise.withResolvers<void>();
     const server = createServer((req, res) => {
       const read = () => {
-        let n = 0;
-        req.on("data", c => (n += c.length));
+        const chunks: Buffer[] = [];
+        req.on("data", c => chunks.push(c));
         req.on("end", () => {
           const trailers = Object.entries(req.trailers)
             .map(([name, value]) => `,${name}=${value}`)
             .join("");
-          res.end(`${req.url}=${n}${trailers};`);
+          res.end(`${req.url}=${describeBody(Buffer.concat(chunks))}${trailers};`);
         });
       };
       if (req.url === lastUrl) {
@@ -6079,6 +6083,39 @@ describe("a pipelined request whose body continues after the previous response e
         "/two",
       ),
     ).toEqual(["/one=0;", two, "/three=0;"]);
+  });
+
+  it("two late bodies in one write each reach their own request", async () => {
+    // /two lost its own body and received the first reads of the body of /three.
+    const size = 1024 * 1024;
+    // Each body is one repeated byte: report the length, then that byte.
+    const lengthAndFill = (body: Buffer) => {
+      if (body.length === 0) return "0";
+      const uniform = body.equals(Buffer.alloc(body.length, body[0]));
+      return `${body.length}${uniform ? String.fromCharCode(body[0]) : "(mixed)"}`;
+    };
+    expect(
+      await exchange(
+        [
+          {
+            write:
+              "GET /one HTTP/1.1\r\nHost: a\r\n\r\n" +
+              `POST /two HTTP/1.1\r\nHost: a\r\nContent-Length: ${size}\r\n\r\n`,
+            waitFor: "/one=0;",
+          },
+          {
+            write:
+              Buffer.alloc(size, "a").toString() +
+              `POST /three HTTP/1.1\r\nHost: a\r\nContent-Length: ${size}\r\n\r\n` +
+              Buffer.alloc(size, "c").toString() +
+              "GET /four HTTP/1.1\r\nHost: a\r\n\r\n",
+            waitFor: "/four=0;",
+          },
+        ],
+        "/two",
+        lengthAndFill,
+      ),
+    ).toEqual(["/one=0;", `/two=${size}a;`, `/three=${size}c;`, "/four=0;"]);
   });
 
   it("Content-Length body", async () => {

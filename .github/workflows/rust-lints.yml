@@ -144,9 +144,9 @@ jobs:
           components: rustc-dev llvm-tools-preview
           ninja-targets: codegen clone-lolhtml clone-rust-argon2
 
-      - name: Add the Windows targets
-        # So `unused_pub` sees `#[cfg(windows)]` callers. No linker needed.
-        run: rustup target add --toolchain "$MORDANT_TOOLCHAIN" x86_64-pc-windows-msvc aarch64-pc-windows-msvc
+      - name: Add the Windows and macOS targets
+        # So `unused_pub` sees `cfg(windows)` and `cfg(target_os = "macos")` callers. No linker needed.
+        run: rustup target add --toolchain "$MORDANT_TOOLCHAIN" x86_64-pc-windows-msvc aarch64-apple-darwin
 
       - name: Restore the mordant binaries
         # cargo-mordant and mordant-driver are a pure function of the pinned
@@ -187,7 +187,7 @@ jobs:
           cargo +"$MORDANT_TOOLCHAIN" mordant --workspace --keep-going \
             --target x86_64-unknown-linux-gnu \
             --target x86_64-pc-windows-msvc \
-            --target aarch64-pc-windows-msvc
+            --target aarch64-apple-darwin
 
       - name: Fail on findings over the baseline
         # In baseline mode mordant reports findings over mordant-baseline.toml

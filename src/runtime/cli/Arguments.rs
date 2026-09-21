@@ -780,6 +780,89 @@ pub use bun_bunfig::arguments::{load_config_path, load_config_with_cmd_args};
 /// the attached value `e`. Bun's `-p` takes the code, so `-pe X` is `-p X`.
 pub const NODE_SHORT_ALIASES: &[(&[u8], &[u8])] = &[(b"-pe", b"-p")];
 
+/// How `Command::which()` treats a flag in front of the subcommand keyword.
+/// The arity comes from `AUTO_PARAMS` so the sniffer and clap agree.
+pub(crate) enum LeadingFlag {
+    /// The rest of argv belongs to the program (`-`, `--`, `-e`, `-p`).
+    Program,
+    Flag {
+        /// The next argv token is this flag's value, not the keyword.
+        consumes_value: bool,
+        /// `--filter` / `-F` / `--workspaces`.
+        filter: bool,
+    },
+}
+
+impl LeadingFlag {
+    /// A short flag means different things to different commands (`-p` is
+    /// `--print` and `--production`), so a keyword wins over its auto value.
+    pub(crate) fn classify(arg: &[u8], next_is_keyword: bool) -> Self {
+        if arg == b"-" || arg == b"--" {
+            return Self::Program;
+        }
+        let no_value = Self::Flag {
+            consumes_value: false,
+            filter: false,
+        };
+        if let Some(long) = arg.strip_prefix(b"--") {
+            let (name, has_attached_value) = match strings::index_of_char_usize(long, b'=') {
+                Some(i) => (&long[..i], true),
+                None => (long, false),
+            };
+            let Some(param) = AUTO_PARAMS.iter().find(|p| p.names.matches_long(name)) else {
+                return no_value;
+            };
+            if Self::is_eval(param) && !has_attached_value {
+                return Self::Program;
+            }
+            return Self::Flag {
+                consumes_value: !has_attached_value && Self::takes_value(param),
+                filter: Self::is_filter_long(name),
+            };
+        }
+        // Short chain: the first value-taking flag claims the rest of the
+        // token (`-Fpat`) or, when it is the last character, the next token.
+        let chain = if arg == b"-pe" {
+            b"p".as_slice()
+        } else {
+            &arg[1..]
+        };
+        for (i, &c) in chain.iter().enumerate() {
+            let Some(param) = AUTO_PARAMS.iter().find(|p| p.names.short == Some(c)) else {
+                break;
+            };
+            let value_is_next_token = i + 1 == chain.len();
+            if Self::is_eval(param) {
+                // `-p` yields to a keyword and to an attached value (`-p=pkg`
+                // is bunx's `--package`). `-e` always ends the scan.
+                if c == b'e' || (value_is_next_token && !next_is_keyword) {
+                    return Self::Program;
+                }
+                return no_value;
+            }
+            if Self::takes_value(param) {
+                return Self::Flag {
+                    consumes_value: value_is_next_token && !next_is_keyword,
+                    filter: c == b'F',
+                };
+            }
+        }
+        no_value
+    }
+
+    fn takes_value(param: &ParamType) -> bool {
+        matches!(param.takes_value, clap::Values::One | clap::Values::Many)
+    }
+
+    fn is_eval(param: &ParamType) -> bool {
+        matches!(param.names.long, Some(b"eval") | Some(b"print"))
+    }
+
+    fn is_filter_long(name: &[u8]) -> bool {
+        name == b"filter" || name == b"workspaces"
+    }
+}
+
 /// Parse `argv` into `api::TransformOptions` for the given subcommand.
 ///
 /// `command::tag_params(cmd)` does a runtime lookup of the per-subcommand
@@ -919,7 +1002,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     }
 
     ctx.args.absolute_working_dir = Some(cwd);
-    ctx.positionals = slice_to_owned(args.positionals());
+    ctx.positionals = slice_to_owned(bun_install::positionals_from_keyword(args.positionals()));
 
     if command::LOADS_CONFIG[cmd] {
         load_config_with_cmd_args(cmd, &args, ctx)?;

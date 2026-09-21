@@ -991,7 +991,7 @@ p, .meta { color: var(--text-2); margin: 2px 0 0; }
 .tile { background: var(--raised); border-radius: 8px; padding: 10px 14px; min-width: 150px; }
 .tile b { display: block; font-size: 22px; font-weight: 600; }
 .tile span { color: var(--text-2); font-size: 12px; }
-.run { display: flex; margin-top: 8px; border-radius: 8px; background: var(--raised); }
+.run { position: relative; display: flex; margin-top: 8px; border-radius: 8px; background: var(--raised); }
 .gutter { position: relative; flex: none; width: 124px; border-right: 1px solid var(--grid); }
 .lane { position: absolute; left: 10px; right: 6px; font-size: 11px; line-height: 16px; color: var(--text-2); white-space: nowrap; }
 .lane i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; }
@@ -1011,8 +1011,7 @@ text.dim { opacity: 0.25; }
 .hoverbar { fill: none; stroke: var(--text); stroke-width: 1.5px; stroke-dasharray: 4 3; rx: 2px; pointer-events: none; }
 .tickmark { stroke: var(--surface); stroke-width: 2px; pointer-events: none; }
 .grid { stroke: var(--grid); stroke-width: 1px; }
-.rule { stroke: var(--text-2); stroke-width: 1px; opacity: 0.45; }
-.gutter .rule { position: absolute; left: 0; right: 0; border-top: 1px solid var(--text-2); }
+.rule { position: absolute; left: 0; right: 0; border-top: 1px solid var(--text-2); opacity: 0.45; pointer-events: none; }
 .running { opacity: 0.85; }
 #tip { position: fixed; z-index: 1; max-width: 420px; background: var(--surface); color: var(--text); border: 1px solid var(--grid);
   border-radius: 8px; padding: 8px 10px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,.2); pointer-events: none; }
@@ -1096,14 +1095,8 @@ const client = `
       el("text", { x: x(t) + 3, y: height - 5 }, svg).textContent = ms(t);
     }
 
-    // The strip of running commands is a band of its own above the lanes, on the same time axis: a rule under it,
-    // through the chart and the gutter.
-    el("line", { x1: 0, x2: width, y1: STRIP + STRIP_GAP / 2, y2: STRIP + STRIP_GAP / 2, "class": "rule" }, svg);
-    gutter.style.height = height + "px";
-    html("div", undefined, gutter, "rule").style.top = STRIP + STRIP_GAP / 2 + "px";
-
     // The lanes, named in the gutter beside the chart so the names stay put when the chart scrolls.
-    html("div", "commands running", gutter, "lane").style.top = STRIP / 2 - 8 + "px";
+    gutter.style.height = height + "px";
     run.lanes.forEach(function (lane, i) {
       var name = html("div", undefined, gutter, "lane");
       name.style.top = laneTop[i] - 2 + "px";
@@ -1123,11 +1116,10 @@ const client = `
       events.forEach(function (e) {
         if (e[2] > upTo) return;
         running += e[1];
-        d += "H" + x(e[0]) + "V" + (STRIP - running / most * (STRIP - 16));
+        d += "H" + x(e[0]) + "V" + (STRIP - running / most * (STRIP - 6));
       });
       el("path", { d: d + "H" + x(run.wallMs) + "V" + STRIP + "Z", fill: "var(--k" + upTo + ")", "class": "running" }, svg);
     }
-    el("text", { x: LEFT + 3, y: 11 }, svg).textContent = "most at once: " + most;
 
     // What is outlined and joined. With nothing pinned: the critical path. With a bar pinned: the chain of commands
     // this run waited on before it, each joined to the one it was waiting on, and lit, every command it held up.
@@ -1240,6 +1232,9 @@ const client = `
       (sum / run.wallMs).toFixed(1) + "× parallel", runs, "meta");
     run.note = html("div", undefined, runs, "meta");
     var row = html("div", undefined, runs, "run");
+    // The strip of running commands is a band of its own above the lanes, on the same time axis: one rule under it,
+    // across the lane names and the chart.
+    html("div", undefined, row, "rule").style.top = STRIP + STRIP_GAP / 2 + "px";
     gutters.push(html("div", undefined, row, "gutter"));
     return html("div", undefined, row, "scroll");
   });

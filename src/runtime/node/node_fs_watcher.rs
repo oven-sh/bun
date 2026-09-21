@@ -935,12 +935,9 @@ impl FSWatcher {
         }
     }
 
-    /// Each event is a task of its own, as on Windows, so the event loop runs
-    /// the nextTicks and microtasks of one event before the next event. Node
-    /// makes one `MakeCallback` per event:
+    /// One event per task, as on Windows. Node makes one `MakeCallback` per event:
     /// https://github.com/nodejs/node/blob/v26.3.0/src/fs_event_wrap.cc#L239
-    /// The task for the rest is queued before the listener runs, so a listener
-    /// that spins the event loop gets the next events, in order.
+    /// The task for the rest is queued first: a listener that spins the loop gets it.
     #[cfg(not(windows))]
     fn deliver_one(&self) -> JsResult<()> {
         let Some(event) = self.undelivered.with_mut(VecDeque::pop_front) else {

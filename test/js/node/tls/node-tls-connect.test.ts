@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { once } from "events";
+import { writeFileSync } from "fs";
 import { bunEnv, bunExe, tls as COMMON_CERT_, isASAN, nodeExe, tempDir } from "harness";
 import https from "https";
 import net from "net";
@@ -2020,6 +2021,207 @@ it.skipIf(!nodeExe())(
     }
   },
 );
+
+// A write issued before the handshake completes (node:https sends its request
+// that way) must leave in the same TCP segment as the final handshake flight,
+// like Node. As a second segment it lets a server with Nagle on send its
+// session tickets first and then hold the reply until they are acknowledged.
+describe("a write issued before the handshake leaves with the final handshake flight in one segment", () => {
+  // Runs `client` against a raw TCP proxy in front of a TLS 1.3 server. Resolves
+  // with, per connection, the client-to-server chunks the proxy had received
+  // when the server first saw plaintext: each send is its own chunk unless the
+  // kernel coalesces two before the proxy reads.
+  async function countClientChunks(client: (proxyPort: number) => Promise<void>) {
+    const proxied = new Map<number, { chunks: number }>();
+    const chunkCounts: number[] = [];
+
+    const server = tls.createServer({
+      key: COMMON_CERT_.key,
+      cert: COMMON_CERT_.cert,
+      minVersion: "TLSv1.3",
+      maxVersion: "TLSv1.3",
+    });
+    server.on("secureConnection", socket => {
+      socket.once("data", () => {
+        chunkCounts.push(proxied.get(socket.remotePort!)?.chunks ?? -1);
+        socket.end();
+      });
+      socket.on("error", () => {});
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const serverPort = (server.address() as AddressInfo).port;
+
+    const proxy = net.createServer({ allowHalfOpen: true }, downstream => {
+      const counter = { chunks: 0 };
+      const upstream = net.connect({ port: serverPort, host: "127.0.0.1", allowHalfOpen: true });
+      upstream.once("connect", () => proxied.set(upstream.localPort!, counter));
+      downstream.on("data", data => {
+        counter.chunks++;
+        upstream.write(data);
+      });
+      upstream.on("data", data => downstream.write(data));
+      downstream.on("end", () => upstream.end());
+      upstream.on("end", () => downstream.end());
+      downstream.on("error", () => {});
+      upstream.on("error", () => {});
+    });
+    await once(proxy.listen(0, "127.0.0.1"), "listening");
+
+    try {
+      await client((proxy.address() as AddressInfo).port);
+      return chunkCounts;
+    } finally {
+      proxy.close();
+      server.close();
+    }
+  }
+
+  it("node:tls", async () => {
+    // The flight and the write leave natively, back to back, so two sends can
+    // reach the proxy as one chunk: several connections, each must show 2.
+    const connections = 4;
+    let result = {};
+    const chunkCounts = await countClientChunks(async proxyPort => {
+      const script = `
+        const tls = require("node:tls");
+        let left = ${connections};
+        (function next() {
+          if (left-- === 0) return;
+          const socket = tls.connect({
+            host: "127.0.0.1",
+            port: ${proxyPort},
+            rejectUnauthorized: false,
+            minVersion: "TLSv1.3",
+            maxVersion: "TLSv1.3",
+          });
+          socket.write("HELLO");
+          socket.resume();
+          socket.on("error", error => console.log("error:" + error.code));
+          socket.on("close", next);
+        })();
+      `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      result = { stdout, exitCode, failureDetail: exitCode === 0 ? "" : stderr };
+    });
+    // ClientHello, then one segment with change_cipher_spec + Finished + "HELLO".
+    expect({ ...result, chunkCounts }).toEqual({
+      stdout: "",
+      exitCode: 0,
+      failureDetail: "",
+      chunkCounts: Array(connections).fill(2),
+    });
+  });
+
+  it("Bun.connect, retried from drain", async () => {
+    using dir = tempDir("tls-parked-write", {});
+    const proceed = join(String(dir), "proceed");
+    let result = {};
+    const chunkCounts = await countClientChunks(async proxyPort => {
+      // With a handshake callback, open runs before the handshake: write()
+      // reports 0 bytes and the caller retries from drain. drain blocks until
+      // the proxy has read everything sent so far, so a flight that left on
+      // its own is always its own chunk.
+      const script = `
+        const fs = require("node:fs");
+        let pending = "HELLO";
+        Bun.connect({
+          hostname: "127.0.0.1",
+          port: ${proxyPort},
+          tls: { rejectUnauthorized: false },
+          socket: {
+            open(socket) {
+              pending = pending.slice(socket.write(pending));
+            },
+            handshake() {},
+            drain(socket) {
+              if (!pending) return;
+              fs.writeSync(1, "drain\\n");
+              const deadline = Date.now() + 10_000;
+              while (!fs.existsSync(${JSON.stringify(proceed)}) && Date.now() < deadline) {}
+              pending = pending.slice(socket.write(pending));
+            },
+            data() {},
+            error(socket, error) {
+              console.log("error:" + error.code);
+            },
+          },
+        });
+      `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const stderrText = proc.stderr.text();
+      const decoder = new TextDecoder();
+      let stdout = "";
+      let released = false;
+      for await (const chunk of proc.stdout) {
+        stdout += decoder.decode(chunk, { stream: true });
+        if (!released && stdout.includes("drain\n")) {
+          released = true;
+          // One loop turn: a flight already in the proxy's receive queue is read before the client continues.
+          await new Promise(resolve => setImmediate(resolve));
+          writeFileSync(proceed, "");
+        }
+      }
+      const [stderr, exitCode] = await Promise.all([stderrText, proc.exited]);
+      result = { stdout, exitCode, failureDetail: exitCode === 0 ? "" : stderr };
+    });
+    expect({ ...result, chunkCounts }).toEqual({
+      stdout: "drain\n",
+      exitCode: 0,
+      failureDetail: "",
+      chunkCounts: [2],
+    });
+  });
+});
+
+// The retry of a write issued before the handshake runs right after the
+// handshake callback: a peer that callback rejects must not receive it.
+describe("a write issued before the handshake is failed, not delivered", () => {
+  async function run(connectOptions: tls.ConnectionOptions, onClient: (client: TLSSocket) => void) {
+    const received: Buffer[] = [];
+    const serverDone = Promise.withResolvers<void>();
+    const server = tls.createServer({ key: COMMON_CERT_.key, cert: COMMON_CERT_.cert }, socket => {
+      socket.on("data", chunk => received.push(chunk));
+      socket.on("error", () => {});
+      socket.on("close", () => serverDone.resolve());
+    });
+    server.on("tlsClientError", () => serverDone.resolve());
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const writeOutcome = Promise.withResolvers<string>();
+      const clientClosed = Promise.withResolvers<void>();
+      const client = tlsConnect({ host: "127.0.0.1", port: (server.address() as AddressInfo).port, ...connectOptions });
+      let clientErrorCode: string | undefined;
+      client.on("error", error => (clientErrorCode = (error as NodeJS.ErrnoException).code));
+      client.on("close", () => clientClosed.resolve());
+      client.write("secret", error => writeOutcome.resolve(error ? "failed" : "succeeded"));
+      onClient(client);
+      const [outcome] = await Promise.all([writeOutcome.promise, clientClosed.promise, serverDone.promise]);
+      return { clientErrorCode, outcome, serverReceived: Buffer.concat(received).toString() };
+    } finally {
+      server.close();
+    }
+  }
+
+  it("when the server's certificate is rejected", async () => {
+    // The self-signed fixture fails verification under the default rejectUnauthorized.
+    expect(await run({}, () => {})).toEqual({
+      clientErrorCode: "DEPTH_ZERO_SELF_SIGNED_CERT",
+      outcome: "failed",
+      serverReceived: "",
+    });
+  });
+
+  it("when a 'secureConnect' listener destroys the socket", async () => {
+    expect(
+      await run({ rejectUnauthorized: false }, client => client.on("secureConnect", () => client.destroy())),
+    ).toEqual({
+      clientErrorCode: undefined,
+      outcome: "failed",
+      serverReceived: "",
+    });
+  });
+});
 
 // The peer accepts the TCP connection and never answers the ClientHello (a dead
 // TLS backend, a plaintext service on a TLS port). A caller that gives up must

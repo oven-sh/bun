@@ -2642,9 +2642,15 @@ restart:
         if (s->ssl_handshake_state == HANDSHAKE_PENDING && SSL_is_init_finished(s_ssl(s))) {
           ssl_trigger_handshake(s, 1);
           if (ssl_gone(s)) return NULL;
+          /* A write parked before the handshake (node:https queues its request
+           * that way) is retried with the flight still held, so both leave in
+           * one segment, like a write from the callback. */
+          s = ssl_retry_parked_write(s);
+          if (!s || ssl_gone(s)) return NULL;
           loop_ssl_data->ssl_socket = s;
-          /* The callback ran with the flight held: a write it issued already
-           * flushed flight + data together; send whatever is still held. */
+          /* The callback and the retry ran with the flight held: a write they
+           * issued already flushed flight + data together; send whatever is
+           * still held. */
           if (loop_ssl_data->ssl_write_batch_len &&
               loop_ssl_data->ssl_write_batch_owner == s) {
             ssl_flush_write_batch(loop_ssl_data, s);
@@ -2686,8 +2692,9 @@ restart:
       loop_ssl_data->ssl_read_input_length = saved_length;
       loop_ssl_data->ssl_read_input_offset = saved_offset;
       loop_ssl_data->ssl_socket = s;
-      /* Same as the no-data completion above: send what the callback's own
-       * write did not already flush of the held flight. */
+      /* Send what the callback's own write did not already flush of the held
+       * flight. No parked-write retry here: its writable dispatch would run
+       * before the data this read decrypted reaches the caller. */
       if (loop_ssl_data->ssl_write_batch_len &&
           loop_ssl_data->ssl_write_batch_owner == s) {
         ssl_flush_write_batch(loop_ssl_data, s);

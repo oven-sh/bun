@@ -460,29 +460,54 @@ export interface QueueTotal {
   longest: { execution: Execution; ms: number };
 }
 
-/** How long each of the run's edges waited to start after its inputs existed. */
-export function waits(build: Build, run: Run): Map<Execution, number> {
+/** Why a command started when it did. */
+export interface Wait {
+  /** Milliseconds between every input existing and the command starting. */
+  ms: number;
+  /** The command of the same run that made the last of its inputs to exist: what it was waiting on. */
+  blocker: Execution | undefined;
+  /** When the blocker released that input, on the run's clock: its end, or earlier for an output released early. */
+  readyAt: number;
+  /** How many commands of the run made an input of this one. */
+  inputs: number;
+}
+
+/** For each of the run's commands, what it waited on and for how long after that. */
+export function waits(build: Build, run: Run): Map<Execution, Wait> {
   const inRun = new Map<ManifestEdge, Execution>(run.executions.map(x => [x.edge, x]));
-  // When an edge's outputs existed in this run; an edge the run did not execute (up to date, or a phony) passes on
-  // when its own inputs did.
-  const readyAt = new Map<ManifestEdge, number>();
-  const ready = (edge: ManifestEdge): number => {
-    let at = readyAt.get(edge);
-    if (at !== undefined) return at;
-    at = 0;
-    readyAt.set(edge, at);
+  interface Ready {
+    at: number;
+    by: Execution | undefined;
+    makers: Set<Execution>;
+  }
+  // When an edge's inputs existed in this run, and which of the run's commands made them; an input whose edge the
+  // run did not execute (up to date, or a phony) stands for that edge's own inputs.
+  const memo = new Map<ManifestEdge, Ready>();
+  const ready = (edge: ManifestEdge): Ready => {
+    let r = memo.get(edge);
+    if (r !== undefined) return r;
+    r = { at: 0, by: undefined, makers: new Set() };
+    memo.set(edge, r);
     for (const input of [...edge.inputs, ...edge.implicitInputs, ...edge.orderOnlyInputs]) {
       const path = resolve(build.buildDir, input);
       const from = build.producer.get(path);
       if (from === undefined) continue;
       const x = inRun.get(from);
-      at = Math.max(at, x === undefined ? ready(from) : x.start + (x.released.get(path) ?? duration(x)));
+      const through = x === undefined ? ready(from) : undefined;
+      const at = through?.at ?? x!.start + (x!.released.get(path) ?? duration(x!));
+      if (through !== undefined) for (const m of through.makers) r.makers.add(m);
+      else r.makers.add(x!);
+      if (at > r.at) [r.at, r.by] = [at, through?.by ?? x];
     }
-    readyAt.set(edge, at);
-    return at;
+    return r;
   };
 
-  return new Map(run.executions.map(x => [x, Math.max(0, x.start - ready(x.edge))]));
+  return new Map(
+    run.executions.map(x => {
+      const r = ready(x.edge);
+      return [x, { ms: Math.max(0, x.start - r.at), blocker: r.by, readyAt: r.at, inputs: r.makers.size }];
+    }),
+  );
 }
 
 /**
@@ -491,7 +516,7 @@ export function waits(build: Build, run: Run): Map<Execution, number> {
  */
 export function queueTimes(build: Build, run: Run): QueueTotal[] {
   const totals = new Map<string | undefined, QueueTotal>();
-  for (const [x, ms] of waits(build, run)) {
+  for (const [x, { ms }] of waits(build, run)) {
     const t = totals.get(x.pool);
     if (t === undefined) {
       const depth = x.pool === "console" ? 1 : x.pool === undefined ? undefined : build.manifest.pools.get(x.pool);

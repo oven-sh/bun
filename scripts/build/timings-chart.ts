@@ -1,10 +1,10 @@
 /**
  * `<buildDir>/timings.html`: the build as a chart. One page, no dependencies, the data inside it.
  *
- * Each run of ninja still in the log is a Gantt chart: a bar per command from its start to its end, in the first
- * free row, under a strip of how many commands were running. The commands on the critical path (timings.ts
- * `criticalPath`) get the top rows to themselves, so the chain reads as a staircase: each step starts where the one
- * before it released what it needed, which for a library crate is the tick inside its bar (its `.rmeta`), not its end.
+ * Each run of ninja still in the log is a Gantt chart: a bar per command from its start to its end, in a lane for its
+ * kind, under a strip of how many commands of each kind were running. The commands on the critical path (timings.ts
+ * `criticalPath`) are outlined where they ran, and joined: each step starts where the one before it released what it
+ * needed, which for a library crate is the tick inside its bar (its `.rmeta`), not its end.
  */
 
 import { relative } from "node:path";
@@ -12,13 +12,40 @@ import type { RuleName } from "./ninja.ts";
 import { type Build, type Execution, type Run, clock, criticalPath, topLevelPhases, waits } from "./timings.ts";
 
 /**
- * What a bar's color says. Any two bars can end up side by side, and only three hues stay apart for every pair of
- * them under color-vision deficiency on both a light and a dark page; the rest is a neutral. The hover names the rule.
+ * A lane of the chart: the commands of one kind, top to bottom in the order a build gets to them. Lanes are told
+ * apart by their labels; a lane's color is one of the three hues that stay apart for every pair of them under
+ * color-vision deficiency on both a light and a dark page, or the neutral.
  */
-const kinds = ["C and C++", "Rust", "codegen and dependencies", "link, checks and the rest"] as const;
-type Kind = (typeof kinds)[number];
+const lanes = [
+  { name: "dependencies", color: 2 },
+  { name: "codegen", color: 2 },
+  { name: "Rust", color: 1 },
+  { name: "C and C++", color: 0 },
+  { name: "link and checks", color: 3 },
+  { name: "other", color: 3 },
+] as const;
+type Lane = (typeof lanes)[number]["name"];
 
-const ruleKind: Record<RuleName, Kind> = {
+const ruleLane: Record<RuleName, Lane> = {
+  dep_build: "dependencies",
+  dep_cargo: "dependencies",
+  dep_cargo_cross: "dependencies",
+  dep_check_undefined: "dependencies",
+  dep_codegen: "dependencies",
+  dep_configure: "dependencies",
+  dep_fetch: "dependencies",
+  dep_fetch_prebuilt: "dependencies",
+  dep_host_cc: "dependencies",
+  dep_prebuild: "dependencies",
+  dep_subst: "dependencies",
+  bun_install: "codegen",
+  codegen: "codegen",
+  codegen_bun: "codegen",
+  esbuild: "codegen",
+  npm_install: "codegen",
+  rust_build_script: "Rust",
+  rust_plan: "Rust",
+  rust_rustc: "Rust",
   cc: "C and C++",
   cxx: "C and C++",
   cxx_pch: "C and C++",
@@ -26,49 +53,31 @@ const ruleKind: Record<RuleName, Kind> = {
   pch: "C and C++",
   pch_msvc: "C and C++",
   rc: "C and C++",
-  rust_build_script: "Rust",
-  rust_plan: "Rust",
-  rust_rustc: "Rust",
-  bun_install: "codegen and dependencies",
-  codegen: "codegen and dependencies",
-  codegen_bun: "codegen and dependencies",
-  esbuild: "codegen and dependencies",
-  npm_install: "codegen and dependencies",
-  dep_build: "codegen and dependencies",
-  dep_cargo: "codegen and dependencies",
-  dep_cargo_cross: "codegen and dependencies",
-  dep_check_undefined: "codegen and dependencies",
-  dep_codegen: "codegen and dependencies",
-  dep_configure: "codegen and dependencies",
-  dep_fetch: "codegen and dependencies",
-  dep_fetch_prebuilt: "codegen and dependencies",
-  dep_host_cc: "codegen and dependencies",
-  dep_prebuild: "codegen and dependencies",
-  dep_subst: "codegen and dependencies",
-  ar: "link, checks and the rest",
-  binary_verify: "link, checks and the rest",
-  copy_exe: "link, checks and the rest",
-  dsymutil: "link, checks and the rest",
-  duplicate_symbols: "link, checks and the rest",
-  link: "link, checks and the rest",
-  shim_verify: "link, checks and the rest",
-  smoke_test: "link, checks and the rest",
-  strip: "link, checks and the rest",
-  bk_upload: "link, checks and the rest",
-  bk_upload_gz: "link, checks and the rest",
-  host_tool_cc: "link, checks and the rest",
-  mkdir_stamp: "link, checks and the rest",
-  regen: "link, checks and the rest",
-  shim_crt_decompress: "link, checks and the rest",
+  ar: "link and checks",
+  binary_verify: "link and checks",
+  copy_exe: "link and checks",
+  dsymutil: "link and checks",
+  duplicate_symbols: "link and checks",
+  link: "link and checks",
+  shim_verify: "link and checks",
+  smoke_test: "link and checks",
+  strip: "link and checks",
+  bk_upload: "other",
+  bk_upload_gz: "other",
+  host_tool_cc: "other",
+  mkdir_stamp: "other",
+  regen: "other",
+  shim_crt_decompress: "other",
 };
 
 export interface ChartBar {
   label: string;
   rule: string;
-  kind: number;
+  /** Index into the run's `lanes`, and the row within that lane. */
+  lane: number;
+  row: number;
   start: number;
   end: number;
-  row: number;
   /** Its place on the critical path, when it is on it. */
   step: number | undefined;
   /** Milliseconds after `start` that it held up the next step of the path. */
@@ -76,22 +85,31 @@ export interface ChartBar {
   /** Milliseconds after `start` that it released an output to its dependents. */
   released: number | undefined;
   waited: number;
+  /** The bar (index into the run's `bars`) that made the last of its inputs to exist, and when it released it. */
+  blocker: number | undefined;
+  readyAt: number;
+  /** How many of the run's commands made an input of this one. */
+  inputs: number;
   pool: string | undefined;
   phases: [name: string, ms: number][];
+}
+
+export interface ChartLane {
+  name: string;
+  color: number;
+  rows: number;
 }
 
 export interface ChartRun {
   title: string;
   wallMs: number;
-  /** The rows kept for the critical path, above the rest. */
-  pathRows: number;
-  rows: number;
+  /** The lanes this run has commands in. */
+  lanes: ChartLane[];
   bars: ChartBar[];
 }
 
 export interface ChartData {
   buildDir: string;
-  kinds: readonly string[];
   criticalPathMs: number;
   edges: number;
   /** Most recent first. */
@@ -104,33 +122,40 @@ const PHASES_SHOWN = 4;
 
 function chartRun(build: Build, run: Run, steps: Map<Execution, { step: number; blocksNextForMs: number }>): ChartRun {
   const waited = waits(build, run);
-  const rowFreeAt: number[][] = [[], []];
-  // Each bar goes in the first row of its group that is free when it starts.
-  const place = (group: number, x: Execution): number => {
-    const rows = rowFreeAt[group]!;
-    let row = rows.findIndex(freeAt => freeAt <= x.start);
-    if (row < 0) row = rows.length;
-    rows[row] = x.end;
-    return row;
+  const index = new Map(run.executions.map((x, i) => [x, i]));
+  const laneOf = (x: Execution): Lane => ruleLane[x.edge.rule as RuleName] ?? "other";
+  const used = lanes.filter(lane => run.executions.some(x => laneOf(x) === lane.name));
+  // A bar goes in the first row of its lane with nothing in its way. The critical path is placed first, so its steps
+  // take the top rows of their lanes and read as a staircase.
+  const taken = used.map((): { start: number; end: number }[][] => []);
+  const place = (x: Execution): { lane: number; row: number } => {
+    const lane = used.findIndex(l => l.name === laneOf(x));
+    const rows = taken[lane]!;
+    let row = rows.findIndex(bars => bars.every(b => b.end <= x.start || b.start >= x.end));
+    if (row < 0) row = rows.push([]) - 1;
+    rows[row]!.push(x);
+    return { lane, row };
   };
-  const placed = run.executions.map(x => ({ x, onPath: steps.has(x), row: place(steps.has(x) ? 0 : 1, x) }));
-  const pathRows = rowFreeAt[0]!.length;
+  const placed = new Map<Execution, { lane: number; row: number }>();
+  for (const x of run.executions) if (steps.has(x)) placed.set(x, place(x));
+  for (const x of run.executions) if (!steps.has(x)) placed.set(x, place(x));
   return {
     title: clock(run.epochMs),
     wallMs: Math.max(...run.executions.map(x => x.end)),
-    pathRows,
-    rows: pathRows + rowFreeAt[1]!.length,
-    bars: placed.map(({ x, onPath, row }) => ({
+    lanes: used.map((lane, i) => ({ name: lane.name, color: lane.color, rows: taken[i]!.length })),
+    bars: run.executions.map(x => ({
       label: x.label,
       rule: x.edge.rule,
-      kind: kinds.indexOf(ruleKind[x.edge.rule as RuleName] ?? "link, checks and the rest"),
+      ...placed.get(x)!,
       start: x.start,
       end: x.end,
-      row: onPath ? row : pathRows + row,
       step: steps.get(x)?.step,
       blocksNextForMs: steps.get(x)?.blocksNextForMs,
       released: x.released.size > 0 ? Math.min(...x.released.values()) : undefined,
-      waited: waited.get(x) ?? 0,
+      waited: waited.get(x)!.ms,
+      blocker: index.get(waited.get(x)!.blocker!),
+      readyAt: waited.get(x)!.readyAt,
+      inputs: waited.get(x)!.inputs,
       pool: x.pool,
       phases: topLevelPhases(x.selfReport)
         .map((p): [string, number] => [p.name, p.endMs - p.startMs])
@@ -145,7 +170,6 @@ export function chartData(build: Build): ChartData {
   const steps = new Map(path.steps.map((s, step) => [s.execution, { step, blocksNextForMs: s.blocksNextForMs }]));
   return {
     buildDir: relative(process.cwd(), build.buildDir) || ".",
-    kinds,
     criticalPathMs: path.totalMs,
     edges: build.last.size,
     runs: [...build.runs]
@@ -208,8 +232,8 @@ const css = `
   --surface: #1a1a19; --raised: #262624; --text: #ffffff; --text-2: #c3c2b7; --grid: #383835;
   --k0: #3987e5; --k1: #d95926; --k2: #199e70; --k3: #6f6e68;
 }
-body { margin: 0; background: var(--surface); }
-.viz-root { background: var(--surface); color: var(--text); font: 14px/1.4 system-ui, sans-serif; padding: 24px; }
+body { margin: 0; background: var(--surface); color: var(--text); font: 14px/1.4 system-ui, sans-serif; }
+.viz-root { padding: 24px; }
 h1 { font-size: 20px; margin: 0; }
 h2 { font-size: 15px; margin: 32px 0 2px; }
 p, .meta { color: var(--text-2); margin: 2px 0 0; }
@@ -223,18 +247,27 @@ p, .meta { color: var(--text-2); margin: 2px 0 0; }
 #legend i.path { background: none; box-shadow: inset 0 0 0 1.5px var(--text); }
 #legend i.tick { background: linear-gradient(to right, var(--k1) 45%, var(--surface) 45% 60%, var(--k1) 60%); }
 label { font-size: 12px; color: var(--text-2); }
-.scroll { overflow-x: auto; border-radius: 8px; background: var(--raised); margin-top: 8px; }
+.run { display: flex; margin-top: 8px; border-radius: 8px; background: var(--raised); }
+.gutter { position: relative; flex: none; width: 124px; border-right: 1px solid var(--grid); }
+.lane { position: absolute; left: 10px; right: 6px; font-size: 11px; line-height: 16px; color: var(--text-2); white-space: nowrap; }
+.lane i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; }
+.scroll { overflow-x: auto; flex: 1; min-width: 0; }
 svg { display: block; }
 svg text { font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; fill: var(--text-2); }
 svg text.in { fill: #0b0b0b; pointer-events: none; }
-.bar { rx: 2px; }
-.faded { opacity: 0.4; }
+.bar { rx: 2px; cursor: pointer; }
+.faded { opacity: 0.55; }
 .onpath { stroke: var(--text); stroke-width: 1.5px; }
 .bar:hover { opacity: 1; stroke: var(--text); stroke-width: 1px; }
-.link { stroke: var(--text); stroke-width: 1.5px; fill: none; }
+.dim { opacity: 0.13; }
+text.dim { opacity: 0.25; }
+.join { stroke: var(--text); stroke-width: 1.5px; fill: none; pointer-events: none; }
+.join.forward { stroke-width: 1px; opacity: 0.6; }
+.join.hover { stroke-dasharray: 4 3; }
+.hoverbar { fill: none; stroke: var(--text); stroke-width: 1.5px; stroke-dasharray: 4 3; rx: 2px; pointer-events: none; }
 .tickmark { stroke: var(--surface); stroke-width: 2px; pointer-events: none; }
 .grid { stroke: var(--grid); stroke-width: 1px; }
-.running { fill: var(--text-2); opacity: 0.35; }
+.running { opacity: 0.85; }
 #tip { position: fixed; z-index: 1; max-width: 420px; background: var(--surface); color: var(--text); border: 1px solid var(--grid);
   border-radius: 8px; padding: 8px 10px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,.2); pointer-events: none; }
 #tip b { display: block; word-break: break-all; }
@@ -250,7 +283,7 @@ const client = `
 (function () {
   var data = JSON.parse(document.getElementById("data").textContent);
   var NS = "http://www.w3.org/2000/svg";
-  var ROW = 14, BAR = 12, LEFT = 8, RIGHT = 24, STRIP = 44, AXIS = 18, GAP = 10, CHAR = 6.05;
+  var ROW = 14, BAR = 12, LEFT = 8, RIGHT = 24, STRIP = 44, AXIS = 18, GAP = 10, LANE_GAP = 12, THIN_ROW = 5, CHAR = 6.05, NAMED_SHARE = 0.03;
   var zoom = document.getElementById("zoom");
   var level = 1;
   var tip = document.getElementById("tip");
@@ -278,10 +311,6 @@ const client = `
   if (data.runs.length > 0) tile(ms(data.runs[0].wallMs), "wall time of the most recent run of ninja");
 
   var legend = document.getElementById("legend");
-  data.kinds.forEach(function (k, i) {
-    var s = html("span", undefined, legend); var sw = html("i", undefined, s); sw.style.background = "var(--k" + i + ")";
-    s.appendChild(document.createTextNode(k));
-  });
   var lp = html("span", undefined, legend); html("i", undefined, lp, "path"); lp.appendChild(document.createTextNode("on the critical path"));
   var lt = html("span", undefined, legend); html("i", undefined, lt, "tick"); lt.appendChild(document.createTextNode("dependents released here"));
 
@@ -291,15 +320,30 @@ const client = `
     return steps[steps.length - 1];
   }
 
-  function draw(run, host) {
+  function draw(run, host, gutter) {
+    var scrolled = host.scrollLeft;
     host.textContent = "";
+    gutter.textContent = "";
     var plot = plotWidth(host);
     var width = plot + LEFT + RIGHT;
     var x = function (t) { return LEFT + t / run.wallMs * plot; };
-    var top = STRIP + GAP;
-    var pathGap = run.pathRows > 0 ? GAP : 0;
-    var y = function (row) { return top + row * ROW + (row >= run.pathRows ? pathGap : 0); };
-    var height = y(run.rows) + AXIS;
+    // A row is full height when a bar in it is on the critical path or lasts a share of the run that can carry a
+    // name with the whole run in view, and thin when it holds only slivers: a burst of short commands then costs
+    // little room. Decided from the data, not from the zoom, so zooming only stretches the chart sideways.
+    var chars = function (b) { return Math.floor((Math.max(1.5, x(b.end) - x(b.start)) - 8) / CHAR); };
+    var tall = run.lanes.map(function (lane) { return new Array(lane.rows).fill(false); });
+    run.bars.forEach(function (b) {
+      if (b.step !== undefined || (b.end - b.start) / run.wallMs >= NAMED_SHARE) tall[b.lane][b.row] = true;
+    });
+    var laneTop = [], rowTop = [], top = STRIP + GAP;
+    run.lanes.forEach(function (lane, i) {
+      laneTop.push(top);
+      rowTop.push(tall[i].map(function (isTall) { var at = top; top += isTall ? ROW : THIN_ROW; return at; }));
+      top += LANE_GAP;
+    });
+    var y = function (b) { return rowTop[b.lane][b.row]; };
+    var h = function (b) { return tall[b.lane][b.row] ? BAR : THIN_ROW - 1; };
+    var height = top - LANE_GAP + GAP + AXIS;
     var svg = el("svg", { width: width, height: height, role: "img", "aria-label": "commands of the run at " + run.title }, host);
 
     var step = niceStep(run.wallMs, plot);
@@ -308,59 +352,128 @@ const client = `
       el("text", { x: x(t) + 3, y: height - 5 }, svg).textContent = ms(t);
     }
 
-    // How many commands were running.
+    // The lanes, named in the gutter beside the chart so the names stay put when the chart scrolls.
+    gutter.style.height = height + "px";
+    html("div", "commands running", gutter, "lane").style.top = "0px";
+    run.lanes.forEach(function (lane, i) {
+      var name = html("div", undefined, gutter, "lane");
+      name.style.top = laneTop[i] - 2 + "px";
+      html("i", undefined, name).style.background = "var(--k" + lane.color + ")";
+      name.appendChild(document.createTextNode(lane.name));
+      if (i > 0) el("line", { x1: 0, x2: width, y1: laneTop[i] - LANE_GAP / 2, y2: laneTop[i] - LANE_GAP / 2, "class": "grid" }, svg);
+    });
+
+    // How many commands were running, stacked by color from the bottom: C and C++, Rust, the rest.
     var events = [];
-    run.bars.forEach(function (b) { events.push([b.start, 1], [b.end, -1]); });
+    run.bars.forEach(function (b) { var c = run.lanes[b.lane].color; events.push([b.start, 1, c], [b.end, -1, c]); });
     events.sort(function (a, b) { return a[0] - b[0] || a[1] - b[1]; });
     var most = 0, now = 0;
     events.forEach(function (e) { now += e[1]; if (now > most) most = now; });
-    var d = "M" + x(0) + "," + STRIP, level = 0;
-    events.forEach(function (e) {
-      d += "H" + x(e[0]);
-      level += e[1];
-      d += "V" + (STRIP - level / most * (STRIP - 12));
-    });
-    el("path", { d: d + "H" + x(run.wallMs) + "V" + STRIP + "Z", "class": "running" }, svg);
-    el("text", { x: LEFT + 3, y: 10 }, svg).textContent = "commands running (most: " + most + ")";
-
-    if (run.pathRows > 0) {
-      el("line", { x1: 0, x2: width, y1: y(run.pathRows) - pathGap / 2, y2: y(run.pathRows) - pathGap / 2, "class": "grid" }, svg);
+    for (var upTo = 3; upTo >= 0; upTo--) {
+      var d = "M" + x(0) + "," + STRIP, level = 0;
+      events.forEach(function (e) {
+        if (e[2] > upTo) return;
+        level += e[1];
+        d += "H" + x(e[0]) + "V" + (STRIP - level / most * (STRIP - 14));
+      });
+      el("path", { d: d + "H" + x(run.wallMs) + "V" + STRIP + "Z", fill: "var(--k" + upTo + ")", "class": "running" }, svg);
     }
+    el("text", { x: LEFT + 3, y: 10 }, svg).textContent = "most at once: " + most;
+
+    // What is outlined and joined. With nothing pinned: the critical path. With a bar pinned: the chain of commands
+    // this run waited on before it, each joined to the one it was waiting on, and lit, every command it held up.
     var steps = run.bars.filter(function (b) { return b.step !== undefined; }).sort(function (a, b) { return a.step - b.step; });
-    for (var i = 0; i + 1 < steps.length; i++) {
-      var from = steps[i], to = steps[i + 1];
-      var x1 = x(from.start + from.blocksNextForMs), x2 = x(to.start);
-      var y1 = y(from.row) + BAR / 2, y2 = y(to.row) + BAR / 2;
-      if (from.row === to.row) continue;
-      el("path", { d: "M" + x1 + "," + y1 + "V" + y2 + "H" + x2, "class": "link" }, svg);
+    var links = [], forward = [], chain = {}, held = {};
+    if (run.pinned === undefined) {
+      for (var i = 0; i + 1 < steps.length; i++) links.push([steps[i], steps[i].start + steps[i].blocksNextForMs, steps[i + 1]]);
+    } else {
+      for (var at = run.pinned; at !== undefined; at = run.bars[at].blocker) {
+        chain[at] = true;
+        if (run.bars[at].blocker !== undefined) links.push([run.bars[run.bars[at].blocker], run.bars[at].readyAt, run.bars[at]]);
+      }
+      var heldUp = {};
+      run.bars.forEach(function (b, i) { if (b.blocker !== undefined) (heldUp[b.blocker] = heldUp[b.blocker] || []).push(i); });
+      for (var queue = [run.pinned]; queue.length > 0; ) {
+        (heldUp[queue.pop()] || []).forEach(function (i) {
+          held[i] = true;
+          queue.push(i);
+          forward.push([run.bars[run.bars[i].blocker], run.bars[i].readyAt, run.bars[i]]);
+        });
+      }
+    }
+    // From where one command released what the next needed, down or up to the next one's row, then along to its
+    // start: along the gap between rows, so the line never runs through the bars (and names) of that row.
+    var join = function (link, cls, parent) {
+      var x1 = x(link[1]), x2 = x(link[2].start);
+      var y1 = y(link[0]) + h(link[0]) / 2, to = link[2];
+      if (y(link[0]) === y(to)) return;
+      var gap = y1 < y(to) ? y(to) - 1 : y(to) + h(to) + 1;
+      el("path", { d: "M" + x1 + "," + y1 + "V" + gap + "H" + x2, "class": cls }, parent);
+    };
+    if (run.pinned === undefined) {
+      run.note.textContent = steps.length === 0 ? "Click a bar to see what it waited on and what it held up." :
+        "Outlined: the critical path, from how long each edge last took. Click a bar to see what it waited on and what it held up.";
+    } else {
+      var back = Object.keys(chain).length - 1, ahead = Object.keys(held).length;
+      var count = function (n) { return n === 1 ? "the 1 command" : "the " + n + " commands"; };
+      run.note.textContent = "Pinned: " + run.bars[run.pinned].label + ". " +
+        (back === 0 ? "It waited on nothing this run built. " : "Outlined: " + count(back) + " this run waited on before it, back to the start. ") +
+        (ahead === 0 ? "Nothing waited on it last. " : "Lit, and joined to what each waited on: " + count(ahead) + " it held up. ") +
+        "Click it again, or press Esc, to unpin.";
     }
 
-    var fade = run.pathRows > 0;
+    var outlined = function (b, i) { return run.pinned === undefined ? b.step !== undefined : chain[i]; };
+    var lit = function (b, i) { return run.pinned === undefined ? steps.length === 0 : held[i]; };
+    // With a bar pinned, what has nothing to do with it all but disappears; otherwise the rest only steps back.
+    var away = run.pinned === undefined ? " faded" : " dim";
     run.bars.forEach(function (b, i) {
       var w = Math.max(1.5, x(b.end) - x(b.start));
-      var r = el("rect", {
-        x: x(b.start), y: y(b.row), width: w, height: BAR, fill: "var(--k" + b.kind + ")",
-        "class": "bar" + (b.step !== undefined ? " onpath" : fade ? " faded" : ""), "data-i": i,
+      el("rect", {
+        x: x(b.start), y: y(b), width: w, height: h(b), fill: "var(--k" + run.lanes[b.lane].color + ")",
+        "class": "bar" + (outlined(b, i) ? " onpath" : lit(b, i) ? "" : away), "data-i": i,
       }, svg);
       if (b.released !== undefined) {
-        el("line", { x1: x(b.start + b.released), x2: x(b.start + b.released), y1: y(b.row), y2: y(b.row) + BAR, "class": "tickmark" }, svg);
+        el("line", { x1: x(b.start + b.released), x2: x(b.start + b.released), y1: y(b), y2: y(b) + h(b), "class": "tickmark" }, svg);
       }
-      var chars = Math.floor((w - 8) / CHAR);
-      if (chars >= 5) {
-        var label = b.label.length > chars ? b.label.slice(0, chars - 1) + "…" : b.label;
-        el("text", { x: x(b.start) + 4, y: y(b.row) + BAR - 3, "class": "in" }, svg).textContent = label;
+      var fits = chars(b);
+      if (fits >= 5 && tall[b.lane][b.row]) {
+        var label = b.label.length > fits ? b.label.slice(0, fits - 1) + "…" : b.label;
+        var related = outlined(b, i) || lit(b, i) || run.pinned === undefined;
+        el("text", { x: x(b.start) + 4, y: y(b) + BAR - 3, "class": related ? "in" : "in dim" }, svg).textContent = label;
       }
     });
+    forward.forEach(function (link) { join(link, "join forward", svg); });
+    links.forEach(function (link) { join(link, "join", svg); });
+
+    // Under the cursor: the chain the bar waited on, without pinning anything.
+    var hoverLayer = el("g", {}, svg), hovered;
+    var showChain = function (i) {
+      if (i === hovered) return;
+      hovered = i;
+      hoverLayer.textContent = "";
+      for (var at = i; at !== undefined; at = run.bars[at].blocker) {
+        var b = run.bars[at];
+        el("rect", { x: x(b.start), y: y(b), width: Math.max(1.5, x(b.end) - x(b.start)), height: h(b), "class": "hoverbar" }, hoverLayer);
+        if (b.blocker !== undefined) join([run.bars[b.blocker], b.readyAt, b], "join hover", hoverLayer);
+      }
+    };
 
     svg.addEventListener("mousemove", function (ev) {
       var i = ev.target.getAttribute && ev.target.getAttribute("data-i");
-      if (i === null || i === undefined) { tip.hidden = true; return; }
+      if (i === null || i === undefined) { tip.hidden = true; showChain(undefined); return; }
+      showChain(Number(i));
       var b = run.bars[i];
       tip.textContent = "";
       html("b", b.label, tip);
-      html("div", data.kinds[b.kind] + " · rule " + b.rule + (b.pool ? " · pool " + b.pool : ""), tip);
+      html("div", run.lanes[b.lane].name + " · rule " + b.rule + (b.pool ? " · pool " + b.pool : ""), tip);
       html("div", ms(b.end - b.start) + " · from " + ms(b.start) + " to " + ms(b.end), tip);
-      if (b.waited > 0) html("div", "waited " + ms(b.waited) + " after its inputs existed", tip);
+      if (b.blocker === undefined) html("div", "nothing it reads was built by this run", tip);
+      else {
+        var blocker = run.bars[b.blocker];
+        html("div", "started " + ms(b.waited) + " after " + blocker.label +
+          (b.readyAt < blocker.end ? " released what it needs" : " finished") + " · " +
+          b.inputs + (b.inputs === 1 ? " input" : " inputs") + " made by this run", tip);
+      }
       if (b.released !== undefined) html("div", "dependents could start after " + ms(b.released), tip);
       if (b.step !== undefined) html("div", "critical path step " + (b.step + 1) + ": holds up the next for " + ms(b.blocksNextForMs), tip);
       if (b.phases.length > 0) html("div", b.phases.map(function (p) { return p[0] + " " + ms(p[1]); }).join(" · "), tip);
@@ -369,19 +482,29 @@ const client = `
       tip.style.left = Math.min(ev.clientX + 14, window.innerWidth - tw - 8) + "px";
       tip.style.top = (ev.clientY + 18 + th > window.innerHeight ? ev.clientY - th - 10 : ev.clientY + 18) + "px";
     });
-    svg.addEventListener("mouseleave", function () { tip.hidden = true; });
+    svg.addEventListener("mouseleave", function () { tip.hidden = true; showChain(undefined); });
+    svg.addEventListener("click", function (ev) {
+      var i = ev.target.getAttribute && ev.target.getAttribute("data-i");
+      run.pinned = i === null || i === undefined || Number(i) === run.pinned ? undefined : Number(i);
+      draw(run, host, gutter);
+    });
+    host.scrollLeft = scrolled;
   }
 
   var runs = document.getElementById("runs");
+  var gutters = [];
   var hosts = data.runs.map(function (run, i) {
     html("h2", (i === 0 ? "most recent run of ninja · " : "earlier run · ") + run.title, runs);
     var sum = run.bars.reduce(function (s, b) { return s + b.end - b.start; }, 0);
     html("div", ms(run.wallMs) + " wall · " + run.bars.length + " edges · " + ms(sum) + " of commands · " +
       (sum / run.wallMs).toFixed(1) + "× average parallelism", runs, "meta");
-    return html("div", undefined, runs, "scroll");
+    run.note = html("div", undefined, runs, "meta");
+    var row = html("div", undefined, runs, "run");
+    gutters.push(html("div", undefined, row, "gutter"));
+    return html("div", undefined, row, "scroll");
   });
   function plotWidth(host) { return Math.max(320, host.clientWidth) * level - LEFT - RIGHT; }
-  function drawAll() { data.runs.forEach(function (run, i) { draw(run, hosts[i]); }); }
+  function drawAll() { data.runs.forEach(function (run, i) { draw(run, hosts[i], gutters[i]); }); }
   // Zoom every chart, keeping the moment under the cursor (or, away from the cursor, at the middle of the view) still.
   function zoomTo(value, overHost, clientX) {
     var anchors = hosts.map(function (host) {
@@ -395,6 +518,11 @@ const client = `
   }
   zoom.addEventListener("input", function () { zoomTo(Number(zoom.value)); });
   window.addEventListener("resize", drawAll);
+  window.addEventListener("keydown", function (ev) {
+    if (ev.key !== "Escape") return;
+    data.runs.forEach(function (run) { run.pinned = undefined; });
+    drawAll();
+  });
   hosts.forEach(function (host) {
     var turned = 0, clientX = 0, queued = false;
     host.addEventListener("wheel", function (ev) {

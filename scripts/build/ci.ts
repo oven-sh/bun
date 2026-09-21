@@ -317,20 +317,19 @@ export function timingsFileStem(cfg: Config): string {
 }
 
 /**
- * Put a build step's timings where someone looking at the build finds them: the chart and the trace as artifacts,
- * and a line on the build page (one annotation for the build, a line per step) that links to the chart.
+ * Put a build step's timings chart where someone looking at the build finds it: uploaded as an artifact, which
+ * Buildkite serves as a page, and linked from the build page (one annotation for the build, a link per step).
  */
-export function publishTimings(cfg: Config, files: { chart: string; trace: string }, headline: string): void {
+export function publishTimings(cfg: Config, chart: string): void {
   if (!cfg.buildkite) return;
+  const artifact = relative(cfg.buildDir, chart);
   // The link resolves only once the artifact exists.
-  upload([relative(cfg.buildDir, files.chart), relative(cfg.buildDir, files.trace)], cfg.buildDir);
+  upload([artifact], cfg.buildDir);
   reportAnnotationToBuildkite({
     style: "info",
     priority: 1,
     label: "build timings",
-    content:
-      `<p><span class="bold">${computeBunTriplet(cfg)}</span> ${cfg.mode}: ${headline} ` +
-      `<a href="artifact://${relative(cfg.buildDir, files.chart)}">chart</a></p>\n`,
+    content: `<p>build timings: <a href="artifact://${artifact}">${computeBunTriplet(cfg)} ${cfg.mode}</a></p>\n`,
   });
 }
 

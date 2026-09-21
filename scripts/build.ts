@@ -50,8 +50,8 @@ import { BuildError } from "./build/error.ts";
 import { ninjaIfPresent } from "./build/ninja-release.ts";
 import { STREAM_FD } from "./build/stream.ts";
 import { chartHtml } from "./build/timings-chart.ts";
-import { criticalPath, formatReport, loadBuild, traceEvents } from "./build/timings.ts";
-import { bold, dim, formatElapsed, interactive, nameColor, status } from "./build/tty.ts";
+import { formatReport, loadBuild, traceEvents } from "./build/timings.ts";
+import { bold, dim, interactive, nameColor, status } from "./build/tty.ts";
 import { isCI, printEnvironment, startGroup } from "./buildkite.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -339,28 +339,23 @@ async function main(): Promise<void> {
 }
 
 /**
- * `--timings`, and every CI build: print where the build directory's time went, and write the same as a chart and as
- * a trace. In CI both are uploaded and the build page links to the chart.
+ * `--timings`, and every CI build: print where the build directory's time went, and write the same as a chart. In CI
+ * the chart is uploaded and the build page links to it; locally there is also a trace for Perfetto.
  */
 function reportTimings(cfg: Config, write: (text: string) => void): void {
   const build = loadBuild(cfg.buildDir);
   write(formatReport(build, { bold, dim }));
-  const run = build.runs.at(-1);
-  if (run === undefined) return;
-  const chart = join(cfg.buildDir, `${timingsFileStem(cfg)}.html`);
-  const trace = join(cfg.buildDir, `${timingsFileStem(cfg)}-trace.json`);
-  writeFileSync(chart, chartHtml(build));
-  writeFileSync(trace, JSON.stringify({ traceEvents: traceEvents(build) }) + "\n");
+  if (build.runs.length === 0) return;
   const rel = (p: string) => relative(process.cwd(), p);
-  write(`\n${bold("chart")}  ${rel(chart)}${dim("  every run as a Gantt chart, the critical path on top")}\n`);
-  write(`${bold("trace")}  ${rel(trace)}${dim("  the same runs for ui.perfetto.dev or chrome://tracing")}\n`);
-  const wall = Math.max(...run.executions.map(x => x.end));
-  publishTimings(
-    cfg,
-    { chart, trace },
-    `critical path ${formatElapsed(criticalPath(build).totalMs)}, ` +
-      `last run of ninja ${formatElapsed(wall)} for ${run.executions.length} edges.`,
+  const chart = join(cfg.buildDir, `${timingsFileStem(cfg)}.html`);
+  writeFileSync(chart, chartHtml(build));
+  write(
+    `\n${bold("chart")}  ${rel(chart)}${dim("  every run of ninja, a lane per kind of command; hover or click a bar")}\n`,
   );
+  if (cfg.buildkite) return publishTimings(cfg, chart);
+  const trace = join(cfg.buildDir, `${timingsFileStem(cfg)}-trace.json`);
+  writeFileSync(trace, JSON.stringify({ traceEvents: traceEvents(build) }) + "\n");
+  write(`${bold("trace")}  ${rel(trace)}${dim("  the same runs for ui.perfetto.dev or chrome://tracing")}\n`);
 }
 
 /**

@@ -9,7 +9,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
 import { mkdirSync, utimesSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 
 import { BuildError } from "../../scripts/build/error.ts";
 import { type ManifestEdge, Ninja, readManifest } from "../../scripts/build/ninja.ts";
@@ -23,6 +23,7 @@ import {
   lowParallelismWindows,
   parseNinjaLog,
   queueTimes,
+  waits,
   totalsByKind,
   traceEvents,
 } from "../../scripts/build/timings.ts";
@@ -34,6 +35,9 @@ const dir = tempDir("build-timings", {});
 afterAll(() => dir[Symbol.dispose]());
 const buildDir = join(String(dir), "build");
 const out = (name: string) => join(buildDir, name);
+// Outside the build directory, so the graph names it by a relative path, spelled the way the host spells paths.
+const ref = join(String(dir), "vendor", "dep", ".ref");
+const refName = relative(buildDir, ref);
 let build: Build;
 
 function touch(path: string, mtimeMs: number, content = ""): void {
@@ -56,7 +60,6 @@ beforeAll(async () => {
   n.rule("cc", { command: "cc $cflags -c $in -o $out", description: "cc $out" });
   n.rule("link", { command: "ld $ldflags $in -o $out", description: "link $out" });
 
-  const ref = join(String(dir), "vendor", "dep", ".ref");
   n.build({
     outputs: [ref],
     rule: "dep_fetch",
@@ -101,7 +104,7 @@ beforeAll(async () => {
     ...logged(edgeOf("x.o"), 2000, 2050, T1 + 2000),
     ...logged(edgeOf("exe"), 2100, 3400, T1 + 2100),
     // The first ninja built everything. A restat rule's stamp is its output's mtime, not its start.
-    ...logged(edgeOf("../vendor/dep/.ref"), 5, 105, T0 + 100),
+    ...logged(edgeOf(refName), 5, 105, T0 + 100),
     ...logged(edgeOf("liba.rlib"), 110, 1110, T0 + 110),
     ...logged(edgeOf("x.o"), 110, 160, T0 + 112),
     ...logged(edgeOf("libb.rlib"), 412, 2412, T0 + 412),
@@ -171,7 +174,7 @@ describe("readManifest", () => {
       implicitOutputs: [out("libb.rlib"), out("libb.rmeta")],
       inputs: [],
       implicitInputs: ["liba.rmeta"],
-      orderOnlyInputs: ["../vendor/dep/.ref"],
+      orderOnlyInputs: [refName],
       validations: [],
       bindings: { manifest: "b.json", crate: "b", what: "", early_output_prefix: "@early@" },
     });
@@ -260,6 +263,22 @@ describe("analysis", () => {
     expect(lowParallelismWindows(run).map(w => [w.from, w.to, labels(w.running)])).toEqual([
       [0, 3400, ["cc x.o", "link exe"]],
     ]);
+    // What each command was waiting on: the command of the run that made the last of its inputs to exist.
+    const why = (r: typeof run) =>
+      [...waits(build, r)].map(([x, w]) => [x.label, w.blocker?.label, w.readyAt, w.ms, w.inputs]);
+    expect(why(run)).toEqual([
+      ["cc x.o", undefined, 0, 2000, 0],
+      ["link exe", "cc x.o", 2050, 50, 1],
+    ]);
+    expect(why(build.runs[0]!)).toEqual([
+      ["fetch dep", undefined, 0, 5, 0],
+      ["cc x.o", undefined, 0, 110, 0],
+      ["rustc a", "fetch dep", 105, 5, 1],
+      // `b` could start when `a` released liba.rmeta, 300 ms into it, not when `a` ended.
+      ["rustc b", "rustc a", 410, 2, 2],
+      ["rustc root → libroot.a", "rustc b", 2412, 3, 3],
+      ["link exe", "rustc root → libroot.a", 3415, 5, 2],
+    ]);
     expect(queueTimes(build, run).map(q => [q.pool, q.depth, q.edges, q.totalMs, q.longest.execution.label])).toEqual([
       // Nothing x.o reads was built by this run, so it could have started at 0.
       ["compile", 2, 1, 2000, "cc x.o"],
@@ -319,23 +338,45 @@ describe("formatReport", () => {
 });
 
 describe("chart", () => {
-  test("the critical path has the top rows to itself; everything else goes below in the first free row", () => {
+  test("a lane per kind of command, in build order; the critical path takes the top rows of its lanes", () => {
     const [second, first] = chartData(build).runs;
-    expect(second!.bars.map(b => [b.label, b.row, b.step])).toEqual([
-      ["cc x.o", 1, undefined],
-      ["link exe", 0, 4],
+    const placed = (run: typeof first) =>
+      run!.bars.map(b => [b.label, run!.lanes[b.lane]!.name, b.row, b.step, b.blocksNextForMs, b.released]);
+    // Each bar names the bar it was waiting on, which is what a pinned bar's chain follows.
+    expect(first!.bars.map(b => (b.blocker === undefined ? undefined : first!.bars[b.blocker]!.label))).toEqual([
+      undefined,
+      undefined,
+      "fetch dep",
+      "rustc a",
+      "rustc b",
+      "rustc root → libroot.a",
     ]);
-    expect([first!.pathRows, first!.rows]).toEqual([2, 3]);
-    expect(first!.bars.map(b => [b.label, b.row, b.step, b.blocksNextForMs, b.released])).toEqual([
-      ["fetch dep", 0, 0, 100, undefined],
+
+    expect(second!.lanes).toEqual([
+      { name: "C and C++", color: 0, rows: 1 },
+      { name: "link and checks", color: 3, rows: 1 },
+    ]);
+    expect(placed(second)).toEqual([
+      ["cc x.o", "C and C++", 0, undefined, undefined, undefined],
+      ["link exe", "link and checks", 0, 4, 1300, undefined],
+    ]);
+
+    expect(first!.lanes).toEqual([
+      { name: "dependencies", color: 2, rows: 1 },
+      { name: "Rust", color: 1, rows: 2 },
+      { name: "C and C++", color: 0, rows: 1 },
+      { name: "link and checks", color: 3, rows: 1 },
+    ]);
+    expect(placed(first)).toEqual([
+      ["fetch dep", "dependencies", 0, 0, 100, undefined],
       // Not on the path: x.o was last built by the second run.
-      ["cc x.o", 2, undefined, undefined, undefined],
-      ["rustc a", 0, 1, 300, 300],
+      ["cc x.o", "C and C++", 0, undefined, undefined, undefined],
+      ["rustc a", "Rust", 0, 1, 300, 300],
       // `a` is still running when `b` starts, so `b` is a row down: the staircase.
-      ["rustc b", 1, 2, 2000, 200],
-      ["rustc root → libroot.a", 0, 3, 1000, undefined],
+      ["rustc b", "Rust", 1, 2, 2000, 200],
+      ["rustc root → libroot.a", "Rust", 0, 3, 1000, undefined],
       // Superseded by the second run's link, which is the one on the path.
-      ["link exe", 2, undefined, undefined, undefined],
+      ["link exe", "link and checks", 0, undefined, undefined, undefined],
     ]);
     expect(first!.bars.find(b => b.label === "rustc b")!.phases).toEqual([
       ["LLVM_passes", 1600],

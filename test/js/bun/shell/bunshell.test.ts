@@ -1350,9 +1350,13 @@ booga"
 
   test("which", async () => {
     const bogus = "akdfjlsdjflks";
-    const { stdout } = await $`which ${BUN} ${bogus}`;
+    const { stdout, stderr, exitCode } = await $`which ${BUN} ${bogus}`;
     const bunWhich = Bun.which(BUN);
-    expect(stdout.toString()).toEqual(`${bunWhich}\n${bogus} not found\n`);
+    expect({ stdout: stdout.toString(), stderr: stderr.toString(), exitCode }).toEqual({
+      stdout: `${bunWhich}\n`,
+      stderr: `which: ${bogus} not found\n`,
+      exitCode: 1,
+    });
   });
 
   describe("rm", () => {

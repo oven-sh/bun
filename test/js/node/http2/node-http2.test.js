@@ -5948,10 +5948,9 @@ describe("http2 sentHeaders reports only what this side sent", () => {
     const server = http2.createServer();
     server.on("stream", stream => {
       try {
-        // scheme is a Bun-only getter. It answers from the request headers, before and after respond().
-        const before = { sentHeaders: stream.sentHeaders, scheme: stream.scheme };
+        const before = stream.sentHeaders;
         stream.respond({ ":status": 200, "x-a": "1" }, { sendDate: false });
-        const after = { sentHeaders: stream.sentHeaders, scheme: stream.scheme };
+        const after = stream.sentHeaders;
         stream.end();
         observed.resolve({ before, after });
       } catch (err) {
@@ -5959,8 +5958,8 @@ describe("http2 sentHeaders reports only what this side sent", () => {
       }
     });
     expect(await serveOnce(server, () => observed.promise)).toEqual({
-      before: { sentHeaders: undefined, scheme: "http" },
-      after: { sentHeaders: { ":status": 200, "x-a": "1" }, scheme: "http" },
+      before: undefined,
+      after: { ":status": 200, "x-a": "1" },
     });
   });
 
@@ -5995,13 +5994,11 @@ describe("http2 sentHeaders reports only what this side sent", () => {
         try {
           if (err) throw err;
           const before = pushed.sentHeaders;
-          const scheme = [pushed.scheme];
           pushed.respond({ ":status": 200, "x-pushed": "1" }, { sendDate: false });
           const after = pushed.sentHeaders;
-          scheme.push(pushed.scheme);
           pushed.end();
           stream.end();
-          serverSide.resolve({ before, isCallbackHeaders: before === promised, after, scheme });
+          serverSide.resolve({ before, isCallbackHeaders: before === promised, after });
         } catch (e) {
           serverSide.reject(e);
         }
@@ -6012,12 +6009,11 @@ describe("http2 sentHeaders reports only what this side sent", () => {
       authority = host;
       const clientSide = Promise.withResolvers();
       client.on("stream", pushed => {
-        // scheme is a Bun-only getter. On a pushed stream it answers from the PUSH_PROMISE.
-        const seen = { scheme: pushed.scheme, sentHeaders: [pushed.sentHeaders] };
+        const seen = [pushed.sentHeaders];
         pushed.on("error", fail);
-        pushed.on("push", () => seen.sentHeaders.push(pushed.sentHeaders));
+        pushed.on("push", () => seen.push(pushed.sentHeaders));
         pushed.on("close", () => {
-          seen.sentHeaders.push(pushed.sentHeaders);
+          seen.push(pushed.sentHeaders);
           clientSide.resolve(seen);
         });
         pushed.resume();
@@ -6032,16 +6028,50 @@ describe("http2 sentHeaders reports only what this side sent", () => {
       "x-push": "1",
     };
     expect(result).toEqual([
-      {
-        before: promisedBlock,
-        isCallbackHeaders: true,
-        after: { ":status": 200, "x-pushed": "1" },
-        // Before and after respond(), like the ordinary server stream above.
-        scheme: ["http", "http"],
-      },
-      // Read at 'stream', at 'push' and at 'close'.
-      { scheme: "http", sentHeaders: [undefined, undefined, undefined] },
+      { before: promisedBlock, isCallbackHeaders: true, after: { ":status": 200, "x-pushed": "1" } },
+      // The client reads at 'stream', at 'push' and at 'close'.
+      [undefined, undefined, undefined],
     ]);
+  });
+
+  // node's Http2Stream has no scheme getter, so this test is for Bun only.
+  const bunOnlyIt = process.versions.bun ? it : it.skip;
+  bunOnlyIt("stream.scheme gives the scheme of the request, before and after respond()", async () => {
+    const serverSide = Promise.withResolvers();
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      try {
+        const parent = [stream.scheme];
+        stream.respond({ ":status": 200 }, { sendDate: false });
+        parent.push(stream.scheme);
+        stream.pushStream({ ":path": "/pushed" }, (err, pushed) => {
+          try {
+            if (err) throw err;
+            const child = [pushed.scheme];
+            pushed.respond({ ":status": 200 }, { sendDate: false });
+            child.push(pushed.scheme);
+            pushed.end();
+            stream.end();
+            serverSide.resolve({ stream: parent, pushed: child });
+          } catch (e) {
+            serverSide.reject(e);
+          }
+        });
+      } catch (e) {
+        serverSide.reject(e);
+      }
+    });
+    const result = await serveOnce(server, (client, _host, fail) => {
+      const clientSide = Promise.withResolvers();
+      client.on("stream", pushed => {
+        const scheme = pushed.scheme;
+        pushed.on("error", fail);
+        pushed.on("close", () => clientSide.resolve(scheme));
+        pushed.resume();
+      });
+      return Promise.all([serverSide.promise, clientSide.promise]);
+    });
+    expect(result).toEqual([{ stream: ["http", "http"], pushed: ["http", "http"] }, "http"]);
   });
 });
 

@@ -68,8 +68,10 @@ pub(crate) type Source = readable_stream::NewSource<ByteStream>;
 /// A network body producer's (fetch, S3) hold on the stream it feeds: a counted ref on the stream's
 /// `Source`, so delivery and unhooking go through memory the producer keeps alive rather than the
 /// JS wrapper (which the VM's last sweep destroys in no particular order), plus the parked bit of
-/// the receive backpressure. The ref roots the wrapper except while parked, so an unread stream
-/// can be collected (`SourceHandle::consumer_collected`).
+/// the receive backpressure. The ref roots the wrapper only for a consumer that takes the bytes
+/// without holding the stream (a native sink, a whole-body read). Any other reader holds the
+/// stream from JS, so one nothing can read is collected (`SourceHandle::consumer_collected`),
+/// whether or not its body ever reaches the mark.
 #[derive(Default)]
 pub(crate) struct ProducerHold {
     source: Cell<Option<core::ptr::NonNull<Source>>>,
@@ -83,7 +85,7 @@ pub(crate) enum AfterDelivery {
     Resume,
     /// At the mark with a back-pressured sink: it resumes the producer when it drains.
     Pause,
-    /// At the mark and nothing reads: pause, release the loop, leave the stream collectable.
+    /// At the mark and nothing reads: pause, release the loop.
     Park,
 }
 
@@ -100,6 +102,25 @@ impl ProducerHold {
             (*source).increment_count();
             self.source.set(core::ptr::NonNull::new(source));
         }
+        self.sync_wrapper_root();
+    }
+
+    fn sync_wrapper_root(&self) {
+        let Some(source) = self.source.get() else {
+            return;
+        };
+        let source = source.as_ptr();
+        // SAFETY: live through our ref. The caller may hold the `&ByteStream` of this very source
+        // (the chunk it just delivered): shared reads of its cells here, and the root is a
+        // separate field written through the raw pointer.
+        unsafe {
+            let bytes = &(*source).context;
+            if bytes.sink.get().is_some() || bytes.buffer_action.get().is_some() {
+                Source::root_wrapper(source);
+            } else {
+                Source::unroot_wrapper(source);
+            }
+        }
     }
 
     pub(crate) fn is_held(&self) -> bool {
@@ -107,7 +128,7 @@ impl ProducerHold {
     }
 
     /// The held stream, pinned for the guard's life: a consumer inside `on_data` can cancel the
-    /// producer (which drops the hold), and while parked the wrapper is not rooted.
+    /// producer (which drops the hold), and the wrapper is not always rooted.
     pub(crate) fn bytes(&self) -> Option<PinnedBytes> {
         let source = self.source.get()?;
         // SAFETY: live through our ref; no borrow of the source exists yet.
@@ -133,7 +154,8 @@ impl ProducerHold {
         drop(self.take());
     }
 
-    pub(crate) fn after_delivery(bytes: &ByteStream) -> AfterDelivery {
+    pub(crate) fn after_delivery(&self, bytes: &ByteStream) -> AfterDelivery {
+        self.sync_wrapper_root();
         if bytes.buffered_len() < bun_http::signals::BODY_HIGH_WATER_MARK
             || bytes.buffer_action.get().is_some()
         {
@@ -147,28 +169,14 @@ impl ProducerHold {
 
     /// Returns whether this call parked (the caller then releases its loop ref).
     pub(crate) fn park(&self) -> bool {
-        if self.parked.replace(true) {
-            return false;
-        }
-        if let Some(source) = self.source.get() {
-            // SAFETY: live through our ref. The caller may hold the `&ByteStream` of this very
-            // source (the chunk it just delivered), which is why this is not a method call.
-            unsafe { Source::unroot_wrapper(source.as_ptr()) };
-        }
-        true
+        !self.parked.replace(true)
     }
 
-    /// Returns whether this call unparked (the caller then re-takes its loop ref). Reached from a
-    /// consumer holding the stream.
+    /// A consumer attached or took bytes. Returns whether this call unparked (the caller then
+    /// re-takes its loop ref).
     pub(crate) fn unpark(&self) -> bool {
-        if !self.parked.replace(false) {
-            return false;
-        }
-        if let Some(source) = self.source.get() {
-            // SAFETY: as in `park`.
-            unsafe { Source::root_wrapper(source.as_ptr()) };
-        }
-        true
+        self.sync_wrapper_root();
+        self.parked.replace(false)
     }
 }
 

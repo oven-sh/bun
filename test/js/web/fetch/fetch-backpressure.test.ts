@@ -1255,6 +1255,56 @@ describe.concurrent("fetch() receive backpressure — a Response whose body noth
   }
 });
 
+// An origin whose body stays under the mark, as an event stream does between events: a head and
+// one small chunk, then nothing until `trickle()` sends every response one more chunk and
+// `finish()` ends them. The origin never closes, so every close it sees is the client's.
+const PIECE = 1024;
+async function quietOrigin() {
+  const piece = Buffer.from(`${PIECE.toString(16)}\r\n${Buffer.alloc(PIECE, 65)}\r\n`);
+  let closed = 0;
+  let responded = 0;
+  const responses = new Set<import("node:net").Socket>();
+  const sockets = new Set<import("node:net").Socket>();
+  const closeWaiters: [number, () => void][] = [];
+  const responseWaiters: [number, () => void][] = [];
+  const srv = createTcpServer(socket => {
+    sockets.add(socket);
+    socket.on("error", () => {});
+    socket.on("close", () => {
+      closed++;
+      sockets.delete(socket);
+      responses.delete(socket);
+      for (const [n, resolve] of closeWaiters) if (closed >= n) resolve();
+    });
+    socket.once("data", () => {
+      socket.write("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nTransfer-Encoding: chunked\r\n\r\n");
+      socket.write(piece, () => {
+        responses.add(socket);
+        responded++;
+        for (const [n, resolve] of responseWaiters) if (responded >= n) resolve();
+      });
+    });
+  });
+  srv.listen(0, "127.0.0.1");
+  await once(srv, "listening");
+  const { port } = srv.address() as import("node:net").AddressInfo;
+  const toEach = (data: string | Buffer) =>
+    Promise.all(Array.from(responses, socket => new Promise(resolve => socket.write(data, resolve))));
+  return {
+    url: `http://127.0.0.1:${port}/`,
+    respondedTo: (n: number) =>
+      responded >= n ? Promise.resolve() : new Promise<void>(resolve => responseWaiters.push([n, resolve])),
+    trickle: () => toEach(piece),
+    finish: () => toEach("0\r\n\r\n"),
+    closedAtLeast: (n: number) =>
+      closed >= n ? Promise.resolve() : new Promise<void>(resolve => closeWaiters.push([n, resolve])),
+    [Symbol.asyncDispose]: () => {
+      for (const socket of sockets) socket.destroy();
+      return new Promise<void>(resolve => srv.close(() => resolve()));
+    },
+  };
+}
+
 // S3 downloads go through the same HTTP client with their own body producer
 // (S3DownloadStreamWrapper). The same rule applies: a reader that stalls pauses the transport,
 // an unread stream does not hold the process, and a collected one aborts the download.
@@ -1649,6 +1699,123 @@ describe.serial("fetch() receive backpressure — an unread body hands its conne
       }
       expect(origin.connections() - N).toBeLessThanOrEqual(1);
       expect({ closed: origin.closed(), held: responses.length }).toEqual({ closed: 0, held: N });
+    });
+  }
+});
+
+// A body stream nothing can read any more has to go away in whatever state its body is, also
+// one that never reaches the mark. Before, the fetch rooted its stream until it parked at the
+// mark, so against a body that stalls under it the stream, its connection and its request slot
+// lived until the peer gave up: 256 status probes of an event stream (`if (!res.body) throw`)
+// and every later fetch() pended.
+//
+// Serial on purpose: every test here runs full collections. Among the concurrent blocks above
+// they would wait seconds for a turn of the loop on a debug build, and stall the others.
+describe.serial("fetch() receive backpressure — an abandoned body stream under the mark", () => {
+  const N = 4;
+  const shapes: [string, (res: Response) => Promise<unknown>, "quiet" | "trickle"][] = [
+    ["res.body touched", async res => res.body, "quiet"],
+    ["getReader(), never read", async res => void res.body!.getReader(), "quiet"],
+    // A pull that is in flight when the stream is dropped waits for bytes, and holds the
+    // stream until some arrive for it.
+    [
+      "one read(), then releaseLock()",
+      async res => {
+        const reader = res.body!.getReader();
+        await reader.read();
+        reader.releaseLock();
+      },
+      "trickle",
+    ],
+    ["dropped while a reader holds the lock", async res => void (await res.body!.getReader().read()), "trickle"],
+  ];
+
+  for (const [name, shape, peer] of shapes) {
+    test(`${name}, ${peer} peer: the stream is collected and its fetch is aborted`, async () => {
+      await using origin = await quietOrigin();
+      // Its own frame, so that nothing on this one still refers to a response afterwards.
+      async function abandonOne() {
+        await shape(await fetch(origin.url));
+      }
+      for (let i = 0; i < N; i++) await abandonOne();
+      await origin.respondedTo(N);
+      if (peer === "trickle") await origin.trickle();
+      await collectUntil(origin.closedAtLeast(N));
+    });
+  }
+
+  test("an S3 stream, trickle peer: the stream is collected and its download is aborted", async () => {
+    await using origin = await quietOrigin();
+    const s3 = new S3Client({ accessKeyId: "test", secretAccessKey: "test", endpoint: origin.url, bucket: "b" });
+    // Its own frame: after it returns nothing refers to the stream.
+    await (async () => {
+      const reader = s3.file("k").stream().getReader();
+      await reader.read();
+      reader.releaseLock();
+    })();
+    await origin.respondedTo(1);
+    await origin.trickle();
+    await collectUntil(origin.closedAtLeast(1));
+  });
+
+  // The other side of that rule: a consumer is often held by nothing but its own promise, and
+  // its body must still arrive, through full collections between the pieces of a body that is
+  // never anywhere near the mark.
+  const PIECES = 4;
+  const count = async (chunks: AsyncIterable<{ length: number }>) => {
+    let total = 0;
+    for await (const chunk of chunks) total += chunk.length;
+    return total;
+  };
+  const consumers: [string, (res: Response, dir: string) => Promise<number>][] = [
+    [
+      "a reader loop",
+      async res => {
+        let total = 0;
+        for (let r, reader = res.body!.getReader(); !(r = await reader.read()).done; ) total += r.value.byteLength;
+        return total;
+      },
+    ],
+    [
+      "pipeTo()",
+      async res => {
+        let total = 0;
+        await res.body!.pipeTo(new WritableStream({ write: chunk => void (total += chunk.byteLength) }));
+        return total;
+      },
+    ],
+    ["tee()", async res => Math.min(...(await Promise.all(res.body!.tee().map(count))))],
+    ["Readable.fromWeb()", res => count(Readable.fromWeb(res.body as any))],
+    ["textStream()", res => count(res.textStream())],
+    ["res.body.text()", async res => (await res.body!.text()).length],
+    ["res.text() after res.body", async res => (void res.body, (await res.text()).length)],
+    ["HTMLRewriter.transform()", async res => (await new HTMLRewriter().on("x", {}).transform(res).text()).length],
+    ["Bun.write() after res.body", (res, dir) => (void res.body, Bun.write(join(dir, "body"), res))],
+    [
+      "a Bun.serve response",
+      async res => {
+        using proxy = Bun.serve({ port: 0, fetch: () => new Response(res.body) });
+        return (await (await fetch(proxy.url)).bytes()).byteLength;
+      },
+    ],
+  ];
+
+  for (const [name, consume] of consumers) {
+    test(`${name} gets a whole body that trickles in while the collector runs`, async () => {
+      using dir = tempDir("fetch-trickle-consumer", {});
+      await using origin = await quietOrigin();
+      // Its own frame: once it returns, the consumer's promise is all that is held.
+      const received = (async () => consume(await fetch(origin.url), String(dir)))();
+      await origin.respondedTo(1);
+      for (let i = 1; i < PIECES; i++) {
+        await stat(import.meta.path);
+        Bun.gc(true);
+        await origin.trickle();
+      }
+      await stat(import.meta.path);
+      Bun.gc(true);
+      await origin.finish();
+      expect(await received).toBe(PIECES * PIECE);
     });
   }
 });

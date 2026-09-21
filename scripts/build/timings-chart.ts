@@ -83,6 +83,7 @@ const ruleLane: Record<RuleName, Lane> = {
 
 export interface ChartBar {
   label: string;
+  rule: string;
   /** Index into the run's `lanes`, and the row within that lane. */
   lane: number;
   row: number;
@@ -98,6 +99,7 @@ export interface ChartBar {
   /** The bar (index into the run's `bars`) that made the last of its inputs to exist, and when it released it. */
   blocker: number | undefined;
   readyAt: number;
+  pool: string | undefined;
   phases: [name: string, ms: number][];
 }
 
@@ -151,6 +153,7 @@ function chartRun(build: Build, run: Run, steps: Map<Execution, { step: number; 
     lanes: used.map((lane, i) => ({ name: lane.name, color: lane.color, rows: taken[i]!.length })),
     bars: run.executions.map(x => ({
       label: x.label,
+      rule: x.edge.rule,
       ...placed.get(x)!,
       start: x.start,
       end: x.end,
@@ -160,6 +163,7 @@ function chartRun(build: Build, run: Run, steps: Map<Execution, { step: number; 
       waited: waited.get(x)!.ms,
       blocker: index.get(waited.get(x)!.blocker!),
       readyAt: waited.get(x)!.readyAt,
+      pool: x.pool,
       phases: largestPhases(x),
     })),
   };
@@ -462,6 +466,7 @@ const client = `
       var b = run.bars[i];
       tip.textContent = "";
       html("b", b.label, tip);
+      html("div", b.rule + (b.pool ? " · pool " + b.pool : ""), tip);
       html("div", ms(b.end - b.start) + " · " + ms(b.start) + " → " + ms(b.end), tip);
       // How long it sat ready before it started. What it was waiting for until then is the line drawn from it.
       html("div", "queued " + ms(b.waited), tip);

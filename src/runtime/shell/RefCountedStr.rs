@@ -1,4 +1,5 @@
 use core::cell::Cell;
+use core::ptr::NonNull;
 
 bun_core::declare_scope!(RefCountedEnvStr, hidden);
 
@@ -10,13 +11,13 @@ pub struct RefCountedStr {
 
 impl RefCountedStr {
     // Takes ownership of `slice` (global mimalloc) and stores it directly.
-    pub(crate) fn init(slice: Box<[u8]>) -> *mut RefCountedStr {
+    pub(crate) fn init(slice: Box<[u8]>) -> NonNull<RefCountedStr> {
         bun_core::scoped_log!(RefCountedEnvStr, "init: {}", bstr::BStr::new(&*slice));
         // bun.handleOom(bun.default_allocator.create(...)) → Box::new (aborts on OOM)
-        bun_core::heap::into_raw(Box::new(RefCountedStr {
+        bun_core::heap::alloc_nn(RefCountedStr {
             refcount: Cell::new(1),
             data: slice,
-        }))
+        })
     }
 
     pub(crate) fn byte_slice(&self) -> &[u8] {
@@ -27,13 +28,13 @@ impl RefCountedStr {
         self.refcount.set(self.refcount.get() + 1);
     }
 
-    // Takes `*mut Self` because reaching refcount==0 deallocates the
+    // Takes `NonNull<Self>` because reaching refcount==0 deallocates the
     // `Box<Self>` that backs `this`; a `&self` borrow would dangle across that drop.
-    pub unsafe fn deref(this: *mut RefCountedStr) {
+    pub unsafe fn deref(this: NonNull<RefCountedStr>) {
         // SAFETY: caller guarantees `this` was produced by `init` and is still
         // live; on hitting 0, `this` is uniquely owned and Box-allocated.
         unsafe {
-            let rc = &(*this).refcount;
+            let rc = &this.as_ref().refcount;
             rc.set(rc.get() - 1);
             if rc.get() == 0 {
                 Self::deinit(this);
@@ -43,16 +44,16 @@ impl RefCountedStr {
 
     // Not `impl Drop` — this is the intrusive-rc self-destroy path
     // (`bun.default_allocator.destroy(this)`), which must deallocate the Box backing `self`.
-    unsafe fn deinit(this: *mut RefCountedStr) {
+    unsafe fn deinit(mut this: NonNull<RefCountedStr>) {
         // SAFETY: refcount just reached 0; `this` is uniquely owned and was Box-allocated in `init`.
         unsafe {
             bun_core::scoped_log!(
                 RefCountedEnvStr,
                 "deinit: {}",
-                bstr::BStr::new((*this).byte_slice())
+                bstr::BStr::new(this.as_ref().byte_slice())
             );
-            (*this).free_str();
-            drop(bun_core::heap::take(this));
+            this.as_mut().free_str();
+            drop(bun_core::heap::take(this.as_ptr()));
         }
     }
 

@@ -7,94 +7,50 @@
 //!
 //! So environment strings can be ref counted or borrowed slices
 
-use core::ffi::c_void;
+use core::mem::size_of;
+use core::ptr::NonNull;
 
 use super::ref_counted_str::RefCountedStr;
 
-/// Packed `u128` layout (LSB-first):
-/// - bits  0..48  : `ptr` (u48)
-/// - bits 48..64  : `tag` (u16)
-/// - bits 64..128 : `len` (usize)
-#[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub struct EnvStr(u128);
+pub enum EnvStr {
+    /// Memory is managed elsewhere so don't dealloc it: the `init_slice`
+    /// caller keeps the bytes alive for as long as the value is read.
+    Slice(NonNull<[u8]>),
 
-#[repr(u16)]
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum Tag {
-    /// no value
-    Empty = 0,
-
-    /// Dealloced by reference counting
-    Refcounted = 1,
-
-    /// Memory is managed elsewhere so don't dealloc it
-    Slice = 2,
+    /// Dealloced by reference counting: the value stands for one of the
+    /// counted refs (taken by the constructors and `ref_`, released by
+    /// `deref`), so the target is live for as long as the value is used.
+    Refcounted(NonNull<RefCountedStr>),
 }
 
-const PTR_MASK: u128 = (1u128 << 48) - 1;
-const TAG_SHIFT: u32 = 48;
-const TAG_MASK: u128 = 0xFFFF;
-const LEN_SHIFT: u32 = 64;
+// `Refcounted` is encoded in the null niche of the `Slice` data pointer, so the
+// enum is exactly the fat pointer, with no discriminant word added.
+const _: () = assert!(size_of::<EnvStr>() == size_of::<NonNull<[u8]>>());
 
 impl EnvStr {
-    #[inline]
-    const fn pack(ptr: u64, tag: Tag, len: usize) -> EnvStr {
-        EnvStr(
-            (ptr as u128 & PTR_MASK)
-                | ((tag as u16 as u128) << TAG_SHIFT)
-                | ((len as u64 as u128) << LEN_SHIFT),
-        )
-    }
-
-    #[inline]
-    fn ptr(self) -> u64 {
-        (self.0 & PTR_MASK) as u64
-    }
-
-    #[inline]
-    fn tag(self) -> Tag {
-        // Only constructed via `pack` with a valid `Tag` discriminant (0..=2);
-        // any other value is corruption — trap rather than silently folding
-        // to `Empty`.
-        match ((self.0 >> TAG_SHIFT) & TAG_MASK) as u16 {
-            0 => Tag::Empty,
-            1 => Tag::Refcounted,
-            2 => Tag::Slice,
-            n => unreachable!("invalid EnvStr tag {n}"),
-        }
-    }
-
-    #[inline]
-    fn len(self) -> usize {
-        (self.0 >> LEN_SHIFT) as u64 as usize
-    }
+    /// What every constructor returns for an empty string.
+    const EMPTY: EnvStr = EnvStr::Slice(NonNull::from_ref(&[]));
 
     #[inline]
     pub(crate) fn init_slice(str: &[u8]) -> EnvStr {
         if str.is_empty() {
-            // Zero length strings may have invalid pointers, leading to a bad integer cast.
-            return Self::pack(0, Tag::Empty, 0);
+            return Self::EMPTY;
         }
 
-        Self::pack(to_ptr(str.as_ptr().cast::<c_void>()), Tag::Slice, str.len())
+        EnvStr::Slice(NonNull::from(str))
     }
 
     /// Same thing as `init_ref_counted` except it duplicates the passed string
     pub(crate) fn dupe_ref_counted(old_str: &[u8]) -> EnvStr {
         if old_str.is_empty() {
-            return Self::pack(0, Tag::Empty, 0);
+            return Self::EMPTY;
         }
 
         // Global mimalloc aborts on OOM; ownership of the duplicated bytes
         // transfers to RefCountedStr.
         let str: Box<[u8]> = Box::<[u8]>::from(old_str);
-        let len = str.len();
-        Self::pack(
-            to_ptr(RefCountedStr::init(str) as *const c_void),
-            Tag::Refcounted,
-            len,
-        )
+        EnvStr::Refcounted(RefCountedStr::init(str))
     }
 
     /// Takes ownership of the backing allocation (hands the slice to
@@ -102,106 +58,63 @@ impl EnvStr {
     /// copy a borrowed slice instead.
     pub(crate) fn init_ref_counted(str: Box<[u8]>) -> EnvStr {
         if str.is_empty() {
-            return Self::pack(0, Tag::Empty, 0);
+            return Self::EMPTY;
         }
 
-        // NOTE: `len` is left 0 here (only `ptr` + `tag` set); the slice
-        // length is recovered via RefCountedStr::byte_slice().
-        Self::pack(
-            to_ptr(RefCountedStr::init(str) as *const c_void),
-            Tag::Refcounted,
-            0,
-        )
+        EnvStr::Refcounted(RefCountedStr::init(str))
     }
 
     pub(crate) fn slice(&self) -> &[u8] {
-        // NOTE: the returned slice borrows either external memory (Tag::Slice) or the
+        // NOTE: the returned slice borrows either external memory (`Slice`) or the
         // RefCountedStr buffer. Tying the return lifetime to `&self` prevents the caller from
         // conjuring `&'static [u8]` (PORTING.md §Forbidden: lifetime-extension via raw-pointer
         // deref). `EnvStr` is still `Copy`, so this is a best-effort bound — the caller is
         // responsible for keeping the backing storage alive.
-        match self.tag() {
-            Tag::Empty => b"",
-            Tag::Slice => self.cast_slice(),
-            Tag::Refcounted => match self.as_ref_counted() {
-                Some(r) => r.byte_slice(),
-                // Unreachable: tag check above guarantees `Some`.
-                None => b"",
-            },
+        match self {
+            // SAFETY: `Slice` contract above; the borrow is tied to the value being read.
+            EnvStr::Slice(str) => unsafe { str.as_ref() },
+            EnvStr::Refcounted(refc) => ref_counted(refc).byte_slice(),
         }
     }
 
     pub(crate) fn memory_cost(self) -> usize {
-        let divisor: usize = 'brk: {
-            if let Some(refc) = self.as_ref_counted() {
-                break 'brk refc.refcount.get() as usize;
+        let (len, divisor) = match self {
+            EnvStr::Slice(str) => (str.len(), 1),
+            EnvStr::Refcounted(refc) => {
+                let refc = ref_counted(&refc);
+                (refc.byte_slice().len(), refc.refcount.get() as usize)
             }
-            break 'brk 1;
         };
         if divisor == 0 {
             bun_core::hint::cold();
             return 0;
         }
 
-        self.len() / divisor
+        len / divisor
     }
 
     pub fn ref_(self) {
-        if let Some(refc) = self.as_ref_counted() {
-            refc.ref_();
+        if let EnvStr::Refcounted(refc) = self {
+            ref_counted(&refc).ref_();
         }
     }
 
     pub fn deref(self) {
-        if self.tag() == Tag::Refcounted {
-            // SAFETY: tag == Refcounted guarantees a live *mut RefCountedStr;
-            // `deref` may free it, so this stays raw-ptr (not `as_ref_counted`).
-            unsafe { RefCountedStr::deref(self.cast_ref_counted()) };
+        if let EnvStr::Refcounted(refc) = self {
+            // SAFETY: `Refcounted` contract above; this releases the ref the value holds.
+            unsafe { RefCountedStr::deref(refc) };
         }
-    }
-
-    /// Shared-borrow accessor for the ref-counted backing — centralises the
-    /// `unsafe { &*self.cast_ref_counted() }` back-ref deref under the
-    /// `Tag::Refcounted ⇒ live heap RefCountedStr` invariant. Returns `None`
-    /// for `Slice`/`Empty`. The borrow is tied to `&self` (best-effort: `EnvStr`
-    /// is `Copy`, so the caller is still responsible for keeping the +1 alive).
-    #[inline]
-    fn as_ref_counted(&self) -> Option<&RefCountedStr> {
-        if self.tag() == Tag::Refcounted {
-            // SAFETY: tag == Refcounted guarantees `ptr` is a live
-            // *mut RefCountedStr (set by init_ref_counted/dupe_ref_counted)
-            // with refcount >= 1; read-only borrow here.
-            return Some(unsafe { &*self.cast_ref_counted() });
-        }
-        None
-    }
-
-    #[inline]
-    fn cast_slice(&self) -> &[u8] {
-        // SAFETY: tag == Slice guarantees `ptr` was derived from a valid `[*]const u8` of
-        // length `len` whose lifetime is managed elsewhere (caller contract of init_slice).
-        // The returned borrow is tied to `&self` so callers cannot pick `'static`.
-        // Provenance: the packed-tagged-value design round-trips the pointer
-        // through an integer by construction (exposed provenance), so this is
-        // not strict-provenance clean and cannot be without unpacking EnvStr.
-        unsafe { core::slice::from_raw_parts(self.ptr() as usize as *const u8, self.len()) }
-    }
-
-    #[inline]
-    fn cast_ref_counted(self) -> *mut RefCountedStr {
-        // SAFETY: tag == Refcounted guarantees `ptr` was derived from RefCountedStr::init.
-        self.ptr() as usize as *mut RefCountedStr
     }
 }
 
 impl Default for EnvStr {
     fn default() -> Self {
-        Self::pack(0, Tag::Empty, 0)
+        Self::EMPTY
     }
 }
 
 #[inline]
-fn to_ptr(ptr_val: *const c_void) -> u64 {
-    // Masks the low 48 bits of the address.
-    (ptr_val as usize as u64) & ((1u64 << 48) - 1)
+fn ref_counted(refc: &NonNull<RefCountedStr>) -> &RefCountedStr {
+    // SAFETY: `EnvStr::Refcounted` contract; the borrow is tied to the value holding the ref.
+    unsafe { refc.as_ref() }
 }

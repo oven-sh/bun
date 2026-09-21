@@ -470,7 +470,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
  * x25519_ge_frombytes_vartime) counts as a second caller and stops the helper
  * being inlined into the one that ships.
  */
-function lazyDepObjects(cfg: Config, depObjects: string[]): { eager: string[]; lazy: string[] } {
+export function lazyDepObjects(cfg: Config, depObjects: string[]): { eager: string[]; lazy: string[] } {
   if (!cfg.windows) return { eager: [], lazy: depObjects };
   const isAssemblerOutput = (obj: string) => /\.(asm|S)\.obj$/i.test(obj);
   return { eager: depObjects.filter(o => !isAssemblerOutput(o)), lazy: depObjects.filter(isAssemblerOutput) };

@@ -200,23 +200,6 @@ impl Clone for S3Credentials {
     }
 }
 
-impl Default for S3Credentials {
-    fn default() -> Self {
-        Self {
-            ref_count: RefCount::init(),
-            access_key_id: Box::default(),
-            secret_access_key: Box::default(),
-            region: Box::default(),
-            endpoint: Box::default(),
-            bucket: Box::default(),
-            session_token: Box::default(),
-            storage_class: None,
-            insecure_http: false,
-            virtual_hosted_style: false,
-        }
-    }
-}
-
 impl S3Credentials {
     /// Construct a value (refcount = 1) from owned field data. Exists so
     /// higher-tier callers (e.g. `bun_runtime`) can build the refcounted
@@ -253,21 +236,6 @@ impl S3Credentials {
             + self.secret_access_key.len()
             + self.endpoint.len()
             + self.bucket.len()
-    }
-
-    pub fn dupe(&self) -> RefPtr<S3Credentials> {
-        RefPtr::new(S3Credentials {
-            ref_count: RefCount::init(),
-            access_key_id: self.access_key_id.clone(),
-            secret_access_key: self.secret_access_key.clone(),
-            region: self.region.clone(),
-            endpoint: self.endpoint.clone(),
-            bucket: self.bucket.clone(),
-            session_token: self.session_token.clone(),
-            storage_class: None,
-            insecure_http: self.insecure_http,
-            virtual_hosted_style: self.virtual_hosted_style,
-        })
     }
 
     pub fn sign_request<const ALLOW_EMPTY_PATH: bool>(
@@ -1236,9 +1204,9 @@ impl<'a> Default for SignOptions<'a> {
 // S3CredentialsWithOptions
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(Default)]
 pub struct S3CredentialsWithOptions {
-    pub credentials: S3Credentials,
+    /// The caller's credentials, or a copy when the options object overrides a field.
+    pub credentials: RefPtr<S3Credentials>,
     pub options: MultiPartUploadOptions,
     pub acl: Option<ACL>,
     pub storage_class: Option<StorageClass>,
@@ -1247,10 +1215,22 @@ pub struct S3CredentialsWithOptions {
     pub content_encoding: Option<bun_core::Utf8Bytes<'static>>,
     /// indicates if requester pays for the request (for requester pays buckets)
     pub request_payer: bool,
-    /// indicates if the credentials have changed
-    pub changed_credentials: bool,
-    /// indicates if the virtual hosted style is used
-    pub virtual_hosted_style: bool,
+}
+
+impl S3CredentialsWithOptions {
+    /// `credentials` with the default options and nothing overridden.
+    pub fn new(credentials: RefPtr<S3Credentials>) -> Self {
+        Self {
+            credentials,
+            options: MultiPartUploadOptions::default(),
+            acl: None,
+            storage_class: None,
+            content_disposition: None,
+            content_type: None,
+            content_encoding: None,
+            request_payer: false,
+        }
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -12,6 +12,7 @@ import { bench, group, run } from "../runner.mjs";
 const dir = workerData?.dir ?? mkdtempSync(join(tmpdir(), "require-cached-"));
 if (isMainThread) {
   mkdirSync(join(dir, "node_modules", "pkg"), { recursive: true });
+  mkdirSync(join(dir, "small"));
   writeFileSync(join(dir, "child.cjs"), "module.exports = { value: 1 };");
   writeFileSync(join(dir, "node_modules", "pkg", "package.json"), `{ "name": "pkg", "main": "index.js" }`);
   writeFileSync(join(dir, "node_modules", "pkg", "index.js"), "module.exports = 1;");
@@ -74,6 +75,20 @@ if (workers || !isMainThread) {
       let next = 0;
       bench(`${count} modules`, () => require(specifiers[next++ % count]));
     }
+  });
+
+  // A lookup that fails makes the resolver read that directory again, and the resolution memo starts over.
+  group("failed lookup", () => {
+    const missing = () => {
+      try {
+        require.resolve("./small/missing.cjs");
+      } catch {}
+    };
+    bench(`require.resolve("./small/missing.cjs")`, missing);
+    bench(`require.resolve("./small/missing.cjs"), then require("./child.cjs")`, () => {
+      missing();
+      require("./child.cjs");
+    });
   });
 
   await run();

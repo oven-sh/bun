@@ -117,21 +117,37 @@ impl ResolutionMemo {
         let epoch = self.low_half(epoch);
         let (index, tag) = slot(specifier, source, kind);
         let Bucket(ways) = &mut self.buckets[index];
-        // An entry starts at the second resolution of a pair, so a one-off evicts nothing.
-        let missed = (tag as u8).max(1); // 0: the bucket saw nothing yet
-        if ways.iter().all(|way| way.missed != missed) {
-            ways[1].missed = ways[0].missed;
-            ways[0].missed = missed;
-            return;
+        // An entry from an older epoch: the pair is a repeat, and most often the answer is the same.
+        if let Some(way) = ways
+            .iter()
+            .position(|way| way.holds(tag, specifier, source, kind))
+        {
+            if way != 0 {
+                swap_entries(ways);
+            }
+            if ways[0]
+                .entry
+                .as_ref()
+                .is_some_and(|entry| is_ascii_path(&entry.path, path))
+            {
+                ways[0].epoch = epoch;
+                return;
+            }
+        } else {
+            // An entry starts at the second resolution of a pair, so a one-off evicts nothing.
+            let missed = (tag as u8).max(1); // 0: the bucket saw nothing yet
+            if ways.iter().all(|way| way.missed != missed) {
+                ways[1].missed = ways[0].missed;
+                ways[0].missed = missed;
+                return;
+            }
+            // Over the less recently used.
+            swap_entries(ways);
         }
         let path = String::clone_utf8(path);
         let Some(path) = path.as_wtf_impl() else {
             return;
         };
-        // Over the same pair from an older epoch, else over the less recently used.
-        if !ways[0].holds(tag, specifier, source, kind) {
-            swap_entries(ways);
-        }
         ways[0].entry = Some(Entry {
             specifier: retain(specifier),
             source: retain(source),
@@ -176,15 +192,24 @@ fn same_string(a: &WTFStringImplStruct, b: &WTFStringImplStruct) -> bool {
     ptr::eq(a, b) || (a.is_8bit() == b.is_8bit() && a.byte_slice() == b.byte_slice())
 }
 
+/// Whether `kept` is `path`. Only an ASCII path says yes: other characters are not the same bytes in UTF-8.
+#[inline]
+fn is_ascii_path(kept: &WTFStringImplStruct, path: &[u8]) -> bool {
+    kept.is_8bit()
+        && kept.byte_slice() == path
+        && bun_core::strings::first_non_ascii(path).is_none()
+}
+
 /// The bucket of a key, and a tag that tells it from most other keys of that bucket.
 #[inline]
 fn slot(specifier: &WTFStringImplStruct, source: &WTFStringImplStruct, kind: Kind) -> (usize, u16) {
     // A `StringImpl` hash is 24 bits.
     let key = u64::from(specifier.hash()) << 32 | u64::from(source.hash()) << 8 | u64::from(kind.0);
     let mixed = key.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    // Both from the top: a bit of the product depends only on the key bits at and below it.
     (
         (mixed >> (u64::BITS - BUCKET_BITS)) as usize,
-        (mixed >> 16) as u16,
+        (mixed >> (u64::BITS - BUCKET_BITS - u16::BITS)) as u16,
     )
 }
 

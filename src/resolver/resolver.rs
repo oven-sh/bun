@@ -2440,6 +2440,10 @@ impl<'a> Resolver<'a> {
     /// See `assertValidCacheKey` for requirements on the input
     pub fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
         Self::assert_valid_cache_key(path);
+        // Not under one lock: the check of a memo hit on another thread must not see the drop with the old epoch.
+        if bun_core::Environment::CI_ASSERT {
+            resolution_epoch::bump();
+        }
         let first_bust = self.fs_mut().fs.bust_entries_cache(path);
         let second_bust = self.dir_cache_mut().remove(path);
         if first_bust || second_bust {

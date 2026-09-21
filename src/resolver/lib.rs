@@ -1028,13 +1028,24 @@ pub mod fs {
             // `BSSMapInner::put` mutates `result.index` to record placement; callers
             // (e.g. `dir_info_cached_maybe_log`) re-read `result.index` post-`put`, so the
             // mutation must be visible — pass through directly.
-            self.inner()
+            let checked_before = result.has_checked_if_exists();
+            let slot = self
+                .inner()
                 .put(result, value)
                 .map(std::ptr::from_mut::<EntriesOption>)
-                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))
+                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError));
+            // A directory that was found or not found before gets another answer.
+            if checked_before {
+                crate::resolution_epoch::bump();
+            }
+            slot
         }
         pub(crate) fn mark_not_found(&mut self, result: bun_alloc::Result) {
-            self.inner().mark_not_found(result)
+            let was_found = result.status == bun_alloc::ItemStatus::Exists;
+            self.inner().mark_not_found(result);
+            if was_found {
+                crate::resolution_epoch::bump();
+            }
         }
         pub(crate) fn remove(&mut self, key: &[u8]) -> bool {
             self.inner().remove(key)

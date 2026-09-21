@@ -143,6 +143,11 @@ beforeAll(async () => {
   );
   const passes = (at: number) => [
     { name: "type_check_crate", startMs: at + 430, endMs: at + 600 },
+    // The pass type_check_crate is part of. rustc prints a pass as it ends, with its duration and no clock time, so
+    // run.ts dates it by when the line arrived: this one's line was read 2 ms late, and it seems to start after the
+    // pass inside it.
+    { name: "analysis", startMs: at + 432, endMs: at + 650 },
+    { name: "a sliver", startMs: at + 700, endMs: at + 703 },
     { name: "LLVM_passes", startMs: at + 700, endMs: at + 2300 },
     { name: "total", startMs: at + 420, endMs: at + 2400 },
   ];
@@ -247,7 +252,8 @@ describe("loadBuild", () => {
       "fetch dep": [],
       "link exe": [],
       "rustc a": [],
-      "rustc b": ["type_check_crate", "LLVM_passes", "total"],
+      // Without the sliver: a phase under 10 ms is not kept.
+      "rustc b": ["type_check_crate", "analysis", "LLVM_passes", "total"],
       "rustc root → libroot.a": [],
     });
   });
@@ -454,7 +460,7 @@ describe("formatReport", () => {
 
       slowest 6 edges
            2.0s  rustc b  dependents can start after 200ms
-                 LLVM_passes 1.6s · type_check_crate 170ms
+                 LLVM_passes 1.6s · analysis 218ms
            1.3s  link exe
            1.0s  rustc a  dependents can start after 300ms
            1.0s  rustc root → libroot.a
@@ -520,9 +526,10 @@ describe("chart", () => {
       // Superseded by the second run's link, which is the one on the path.
       ["link exe", "link and checks", 0, undefined, 4],
     ]);
+    // The largest whole parts of the command: type_check_crate is inside analysis, so it is not counted again.
     expect(first!.bars.find(b => b.label === "rustc b")!.phases).toEqual([
       ["LLVM_passes", 1600],
-      ["type_check_crate", 170],
+      ["analysis", 218],
     ]);
   });
 

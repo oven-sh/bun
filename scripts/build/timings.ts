@@ -262,8 +262,10 @@ interface ClangTimeTrace {
 }
 
 /**
- * A compiler phase shorter than this is not kept: a translation unit's trace has tens of thousands of events, nearly
- * all of them slivers, and a build has hundreds of translation units.
+ * How finely a compiler's phases are read. A shorter one is not kept: a translation unit's trace has tens of
+ * thousands of events, nearly all of them slivers, and a build has hundreds of translation units. And a phase's times
+ * are not trusted closer than this: rustc gives a pass's duration and no clock time, so run.ts dates a pass by when
+ * its line arrived, and a pass can seem to start a little after the first pass inside it.
  */
 const PHASE_FLOOR_MS = 10;
 
@@ -287,7 +289,10 @@ function readReport<T>(path: string): T | undefined {
 
 function readSelfReport(buildDir: string, edge: ManifestEdge): Phase[] {
   const output = resolve(buildDir, edge.outputs[0]!);
-  if (edge.rule === RUSTC) return readReport<Phase[]>(rustcPhasesPath(output)) ?? [];
+  if (edge.rule === RUSTC) {
+    const passes = readReport<Phase[]>(rustcPhasesPath(output)) ?? [];
+    return passes.filter(p => p.endMs - p.startMs >= PHASE_FLOOR_MS);
+  }
   if (!clangTraced.has(edge.rule)) return [];
   // clang names the trace after the output, with its extension replaced.
   const trace = readReport<ClangTimeTrace>(output.replace(/\.[^./\\]+$/, ".json"));
@@ -317,9 +322,13 @@ export function largestPhases(x: Execution): [name: string, ms: number][] {
     (a, b) => (a === undefined || length(b) > length(a) ? b : a),
     undefined,
   );
-  const inside = (p: Phase, q: Phase) => p !== q && q.startMs <= p.startMs && p.endMs <= q.endMs;
+  // Of two phases that span each other to within the floor, the shorter is the inner one (the earlier, if neither).
+  const inside = (p: Phase, q: Phase) =>
+    q.startMs <= p.startMs + PHASE_FLOOR_MS &&
+    p.endMs <= q.endMs + PHASE_FLOOR_MS &&
+    (length(q) > length(p) || (length(q) === length(p) && phases.indexOf(q) > phases.indexOf(p)));
   return phases
-    .filter(p => p !== root && !phases.some(q => q !== root && inside(p, q)))
+    .filter(p => p !== root && !phases.some(q => q !== root && q !== p && inside(p, q)))
     .sort((a, b) => length(b) - length(a))
     .slice(0, PHASES_SHOWN)
     .map(p => [p.name, length(p)]);

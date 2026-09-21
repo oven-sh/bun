@@ -74,8 +74,11 @@ const NINJA_WINDOWS_EPOCH_MS = Date.UTC(1601, 0, 1) + 12_622_770_400_000;
 // A command's stamp and its `start` are read from two clocks at two moments, so `stamp - start` only brackets when
 // its ninja started.
 
-/** The stamp can be early: the kernel stamps files from a clock it advances once per timer tick (10 ms at HZ=100). */
-const STAMP_EARLY_MS = 10;
+/**
+ * The stamp can be early: the kernel stamps files from a clock it advances once per timer tick, which is 10 ms on
+ * Linux at HZ=100 and 15.6 ms on Windows by default.
+ */
+const STAMP_EARLY_MS = 16;
 /**
  * The stamp can be late: ninja reads its clock, creates the outputs' directories, and only then touches
  * `.ninja_lock`. Up to 57 ms in the log of a build of everything on 32 cores; the bound is that with room to spare.

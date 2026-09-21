@@ -32,13 +32,7 @@ public:
             return JSC::JSValue(cell);
         return JSC::jsUndefined();
     }
-    void owner(JSC::VM&, JSC::JSValue value)
-    {
-        if (value.isCell())
-            m_owner = makeWeak(value.asCell());
-        else
-            m_owner.clear();
-    }
+    void owner(JSC::VM&, JSC::JSValue value) { m_owner = makeOwnerWeak(value); }
 
     bool isUsingDefaultLoader() const { return m_isUsingDefaultLoader; }
     auto temporarilyUseDefaultLoader()
@@ -73,6 +67,22 @@ private:
         return JSC::Weak<JSC::JSCell>(cell, &codeIsAlive.get(), this);
     }
 
+    bool hasUserCallback() const
+    {
+        auto* cell = m_dynamicImportCallback.get();
+        return cell && cell->isObject();
+    }
+
+    // Node retains the referrer only while a user callback exists (registerModule).
+    JSC::Weak<JSC::JSCell> makeOwnerWeak(JSC::JSValue value)
+    {
+        if (!value.isCell())
+            return {};
+        if (hasUserCallback())
+            return makeWeak(value.asCell());
+        return JSC::Weak<JSC::JSCell>(value.asCell());
+    }
+
     JSC::Weak<JSC::JSCell> m_dynamicImportCallback;
     // m_owner is the NodeVMScript / JSFunction / module wrapper that holds this
     // fetcher via m_source -> SourceProvider -> SourceOrigin -> RefPtr<fetcher>.
@@ -87,8 +97,7 @@ private:
     {
         if (dynamicImportCallback && dynamicImportCallback.isCell())
             m_dynamicImportCallback = makeWeak(dynamicImportCallback.asCell());
-        if (owner.isCell())
-            m_owner = makeWeak(owner.asCell());
+        m_owner = makeOwnerWeak(owner);
     }
 };
 

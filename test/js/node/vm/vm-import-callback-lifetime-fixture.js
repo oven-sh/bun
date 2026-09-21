@@ -114,6 +114,28 @@ const scenarios = {
     script.runInContext(c);
     return outcome(seen, () => vm.runInContext("f()", c));
   },
+  // Only the executables root these fetchers: the Script wrapper is discarded at once.
+  async "alive-runInContext"() {
+    const c = vm.createContext({});
+    const seen = (() => {
+      const { hook, seen } = makeHook();
+      vm.runInContext("globalThis.f = () => import('x')", c, { importModuleDynamically: hook });
+      return seen;
+    })();
+    await collectGarbage();
+    return outcome(seen, () => vm.runInContext("f()", c));
+  },
+  async "alive-compileFunction"() {
+    const c = vm.createContext({});
+    const seen = (() => {
+      const { hook, seen } = makeHook();
+      c.fn = vm.compileFunction("return import('x')", [], { parsingContext: c, importModuleDynamically: hook });
+      return seen;
+    })();
+    await collectGarbage();
+    return outcome(seen, () => vm.runInContext("fn()", c));
+  },
+
   async "alive-module"() {
     const { f, seen } = await (async () => {
       const { hook, seen } = makeHook();

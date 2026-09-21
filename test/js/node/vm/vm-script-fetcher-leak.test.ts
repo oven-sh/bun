@@ -68,6 +68,8 @@ describe("node:vm importModuleDynamically lifetime", () => {
     "leak-module": { alive: 0 },
     "alive-hostFunction": { contextCollected: true, result: "hooked", referrer: "Script" },
     "alive-compiledBeforeRun": { result: "hooked", referrer: "Script" },
+    "alive-runInContext": { result: "hooked", referrer: "Script" },
+    "alive-compileFunction": { result: "hooked", referrer: "function" },
     "alive-module": { result: "hooked", referrer: "SourceTextModule" },
     "freed-perScriptClosures": { alive: 0 },
     "stringFilename": { result: "ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING" },
@@ -78,11 +80,16 @@ describe("node:vm importModuleDynamically lifetime", () => {
   });
 
   // collectContinuously is very slow under Windows + ASAN in CI (see sourcetextmodule-link-gc.test.ts).
-  test.concurrent.skipIf(isWindows).each(["alive-hostFunction", "alive-compiledBeforeRun", "alive-module"])(
-    "%s while collecting continuously",
-    async scenario => {
-      const result = await bunRun([fixture, scenario], { BUN_JSC_collectContinuously: "1" });
-      expect(result).toSpawn(JSON.stringify(expected[scenario]));
-    },
-  );
+  test.concurrent
+    .skipIf(isWindows)
+    .each([
+      "alive-hostFunction",
+      "alive-compiledBeforeRun",
+      "alive-runInContext",
+      "alive-compileFunction",
+      "alive-module",
+    ])("%s while collecting continuously", async scenario => {
+    const result = await bunRun([fixture, scenario], { BUN_JSC_collectContinuously: "1" });
+    expect(result).toSpawn(JSON.stringify(expected[scenario]));
+  });
 });

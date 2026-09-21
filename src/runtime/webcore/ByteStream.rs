@@ -786,6 +786,20 @@ impl ByteStream {
         streams::Result::Pending(self.pending.as_ptr())
     }
 
+    /// The JS stream was errored with `reason`. A native reader that waits now fails with it.
+    pub(crate) fn error_native_consumer(&self, reason: JSValue) {
+        let waiting = self.sink.get().is_some()
+            || self.buffer_action.get().is_some()
+            || self.pending.get().state == streams::PendingState::Pending;
+        self.on_data(streams::Result::Err(if waiting {
+            let global = self.parent_const().global_this();
+            streams::StreamError::JSValue(StrongOptional::create(reason, global))
+        } else {
+            // Kept for a reader that already holds this source and pulls later. A stored `reason` would be a GC root.
+            streams::StreamError::AbortReason(jsc::CommonAbortReason::UserAbort)
+        }));
+    }
+
     pub(crate) fn on_cancel(&self) {
         bun_jsc::mark_binding!();
         let view = self.value();

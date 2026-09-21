@@ -1235,6 +1235,16 @@ void us_internal_ssl_set_inline_reject(SSL *ssl) {
   SSL_set_verify(ssl, SSL_VERIFY_PEER, us_inline_reject_verify_callback);
 }
 
+/* Socket-level form for the clients whose SSL lives on a us_socket_t (fetch,
+ * postgres, mysql, valkey, WebSocket): same policy, installed before the
+ * handshake is driven so a rejected chain never sees the client's Certificate
+ * flight. A client whose TLS runs in SSLWrapper (proxy tunnels, upgraded
+ * duplexes, named pipes) has no handshake drive here and is not covered. */
+void us_socket_set_inline_reject(struct us_socket_t *s) {
+  if (!s->ssl || s->ssl_is_server || s->ssl_handshake_state == HANDSHAKE_COMPLETED) return;
+  us_internal_ssl_set_inline_reject(s_ssl(s));
+}
+
 /* Drop the strdup'd passphrase. Called as soon as private-key load completes
  * (the only consumer of the passwd_cb), so the secret never outlives ctx
  * construction and SSL_CTX_free() is sufficient on every later path. Also

@@ -306,6 +306,14 @@ impl us_socket_t {
         c::us_socket_start_tls_handshake(self);
     }
 
+    /// Client TLS socket with `rejectUnauthorized` on: refuse a bad chain
+    /// during the handshake, so the client's own certificate never reaches a
+    /// server that fails verification. Must run before the handshake is
+    /// driven. No-op on a server socket or after the handshake.
+    pub fn set_inline_reject(&mut self) {
+        c::us_socket_set_inline_reject(self);
+    }
+
     /// Feed bytes that were already read off the wire (e.g. a ClientHello the
     /// plain-TCP layer consumed before the upgrade) through the same decrypt
     /// path as bytes arriving from the kernel.
@@ -601,6 +609,7 @@ mod c {
             length: i32,
         ) -> *mut us_socket_t;
         pub(super) safe fn us_socket_start_tls_handshake(s: &mut us_socket_t);
+        pub(super) safe fn us_socket_set_inline_reject(s: &mut us_socket_t);
     }
 }
 

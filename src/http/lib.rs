@@ -1874,6 +1874,13 @@ impl<'a> HTTPClient<'a> {
                     self.alpn_offer(),
                 );
 
+                // `on_handshake` fails a rejecting request on any chain
+                // error, so abort the handshake before the client's own
+                // certificate goes out, like node:tls.
+                if self.flags.reject_unauthorized {
+                    socket.set_inline_reject();
+                }
+
                 if crate::session_cache::eligible(self) {
                     let want_tunnel = self.http_proxy.is_some() && self.url.is_https();
                     // SAFETY: `ssl_ptr` is live and pre-handshake (guarded by

@@ -676,6 +676,15 @@ where
                     );
                 }
             }
+            // `handle_handshake` fails a rejecting client on any chain error,
+            // so abort the handshake before the client's own certificate
+            // goes out.
+            if this
+                .cpp_websocket()
+                .is_some_and(|ws| ws.reject_unauthorized())
+            {
+                socket.set_inline_reject();
+            }
         }
 
         // If using proxy, set state to proxy_handshake

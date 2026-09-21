@@ -1744,6 +1744,14 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub(crate) fn on_open(this: &JSValkeyClient, socket: SocketType<SSL>) -> JsResult<()> {
+        // `on_handshake` fails a rejecting client on any chain error, so
+        // abort the handshake before the client's own certificate goes out.
+        if SSL {
+            let client = this.client.get();
+            if client.tls.reject_unauthorized(client.vm) {
+                socket.set_inline_reject();
+            }
+        }
         this.client_mut().socket = Self::socket(socket);
         this.client_mut().on_open(Self::socket(socket))
     }

@@ -570,6 +570,16 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
 
     // ── TLS ─────────────────────────────────────────────────────────────────
 
+    /// Client TLS socket with `rejectUnauthorized` on: refuse a bad chain
+    /// during the handshake, before the client's own certificate goes out.
+    /// Call it from `on_open`, before the handshake is driven. Only a
+    /// loop-owned socket has the handshake drive that enforces it.
+    pub fn set_inline_reject(&self) {
+        if let InternalSocket::Connected(s) = self.socket {
+            sock(s).set_inline_reject();
+        }
+    }
+
     /// `SSL*` if this is a TLS socket, else `None`.
     #[inline]
     pub fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {

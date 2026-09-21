@@ -21,7 +21,7 @@ import {
 } from "node:fs";
 import { basename, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { isBuildkite, markBuildkiteStepReported, reportAnnotationToBuildkite } from "../buildkite.ts";
+import { getJson, isBuildkite, markBuildkiteStepReported, reportAnnotationToBuildkite } from "../buildkite.ts";
 import { readTextSymbols } from "../orderfile/generate.ts";
 import { formatAnnotationToHtml, parseAnnotations } from "./annotations.ts";
 import { bunExeName, shouldStrip, type BunOutput } from "./bun.ts";
@@ -821,12 +821,8 @@ export interface BuildLookups {
 /** The lookups, against buildkite.com, until `signal` aborts them: a request that is cut short finds nothing. */
 const buildkiteLookups = (signal: AbortSignal): BuildLookups => ({
   async build(url) {
-    try {
-      const response = await fetch(url, { signal });
-      return response.ok ? ((await response.json()) as BuildJson) : undefined;
-    } catch {
-      return undefined;
-    }
+    const { error, body } = await getJson(url, signal);
+    return error ? undefined : (body as BuildJson);
   },
   async redirect(url) {
     try {

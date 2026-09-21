@@ -301,13 +301,17 @@ function getGithubToken(): string | undefined {
 }
 
 /** The JSON at `url`, asked for up to three times; GitHub's API gets the token when there is one. */
-export async function getJson(url: string | URL): Promise<{ error: Error | undefined; body: unknown }> {
+export async function getJson(
+  url: string | URL,
+  signal?: AbortSignal,
+): Promise<{ error: Error | undefined; body: unknown }> {
   const { hostname, href } = new URL(url);
   const githubToken = hostname === "api.github.com" ? getGithubToken() : undefined;
   return request(href, {
     headers: githubToken ? { Authorization: `Bearer ${githubToken}` } : {},
     json: true,
     attempts: 3,
+    signal,
   });
 }
 

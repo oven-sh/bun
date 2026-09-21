@@ -36,7 +36,9 @@ export async function brewInstall(formula: string): Promise<void> {
   if (await succeeds($`${brew} list ${name}`)) return;
   // Homebrew refuses to load a formula from a tap it has not been told to trust
   // ("Refusing to load formula ... from untrusted tap"), which fails the install.
-  // A tap formula is written org/repo/name.
+  // A tap formula is written org/repo/name. Trust the whole tap, not only the named
+  // formula: `brew install cirruslabs/cli/tart` trusts tart by itself and still
+  // refuses its dependency cirruslabs/cli/softnet from the same tap.
   if (parts.length === 2) {
     const tap = parts.join("/");
     await $`${brew} tap ${tap}`;

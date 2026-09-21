@@ -1470,6 +1470,10 @@ impl crate::webcore::sink::JsSinkType for FileSink {
     fn pending_state_is_pending(&self) -> bool {
         self.pending.get().state == streams::PendingState::Pending
     }
+    fn pending_operation(&mut self) -> Option<*mut streams::WritablePending> {
+        self.pending_state_is_pending()
+            .then(|| self.pending.as_ptr())
+    }
     fn protect_js_wrapper(&mut self, global: &JSGlobalObject, this_value: JSValue) {
         Self::protect_js_wrapper(self, global, this_value)
     }

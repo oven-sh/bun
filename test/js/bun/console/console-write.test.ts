@@ -1,5 +1,8 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { mkfifo } from "mkfifo";
+import { closeSync, constants, openSync } from "node:fs";
+import { join } from "node:path";
 
 test("console.write rejects a non-object this", async () => {
   await using proc = Bun.spawn({
@@ -193,4 +196,68 @@ try {
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("pipe already broken: true\ncaught EPIPE\nlater: caught EPIPE\n");
   expect(exitCode).toBe(0);
+});
+
+// The reader has stalled and the pipe is full, so a short console.write() is buffered and its flush cannot push
+// the buffer out. That left the sink with a pending Promise while console.write() returned the byte count: when
+// the reader then hung up, the Promise was rejected with nobody holding it, and a script that awaited every
+// console.write() still died of an unhandled rejection.
+//
+// stdout is a FIFO whose read end this test holds open and never reads. Another writer on the same pipe fills
+// it and stays backed up, so console's own writer has nothing pending when the short write happens.
+test.skipIf(isWindows)("an awaited console.write to a full pipe fails when the stalled reader hangs up", async () => {
+  using dir = tempDir("console-write-stalled", {});
+  const fifo = join(String(dir), "stdout.fifo");
+  mkfifo(fifo, 0o600);
+  const readEnd = openSync(fifo, constants.O_RDONLY | constants.O_NONBLOCK);
+  const writeEnd = openSync(fifo, constants.O_WRONLY);
+  let readEndOpen = true;
+  try {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+process.on("unhandledRejection", e => {
+  console.error("unhandledRejection " + e?.code);
+});
+const filler = Bun.stdout.writer().write(Buffer.alloc(4 * 1024 * 1024, "f").toString());
+filler.catch(() => {});
+const result = console.write("line\\n");
+console.error("READY " + (result instanceof Promise ? "Promise" : result));
+try {
+  await result;
+  console.error("resolved");
+} catch (e) {
+  console.error("caught " + e.code);
+}
+`,
+      ],
+      env: bunEnv,
+      stdout: writeEnd,
+      stderr: "pipe",
+    });
+    closeSync(writeEnd);
+
+    const reader = proc.stderr.getReader();
+    const decoder = new TextDecoder();
+    let stderr = "";
+    while (!stderr.includes("READY")) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      stderr += decoder.decode(value, { stream: true });
+    }
+    closeSync(readEnd);
+    readEndOpen = false;
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      stderr += decoder.decode(value, { stream: true });
+    }
+
+    expect(stderr).toBe("READY Promise\ncaught EPIPE\n");
+    expect(await proc.exited).toBe(0);
+  } finally {
+    if (readEndOpen) closeSync(readEnd);
+  }
 });

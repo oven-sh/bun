@@ -396,6 +396,10 @@ pub trait JsSinkType: Sized + JsSinkAbi {
     fn get_pending_error(&mut self) -> Option<JSValue> {
         None
     }
+    /// The operation whose Promise is outstanding, for a sink that settles writes through one.
+    fn pending_operation(&mut self) -> Option<*mut streams::WritablePending> {
+        None
+    }
     fn source(&mut self) -> Option<&mut SourceHandle> {
         None
     }
@@ -648,8 +652,22 @@ impl<T: JsSinkType> JSSink<T> {
         }
 
         let Some((operation, promise, _)) = pending else {
-            flushed_to_js(global, Self::flush_sink(this, &cx, true))?;
-            return Ok(JSValue::from(wrote));
+            let was_pending = this.sink.pending_operation().is_some();
+            let flushed = flushed_to_js(global, Self::flush_sink(this, &cx, true))?;
+            let Some(operation) = this.sink.pending_operation().filter(|_| !was_pending) else {
+                return Ok(JSValue::from(wrote));
+            };
+            // Every chunk was buffered, and the flush could not push the buffer out: the sink is backed up after
+            // all, and `flushed` is the Promise of the operation the flush left pending. The caller gets it. With
+            // a count instead, nobody holds that Promise when the write fails, and the failure is an unhandled
+            // rejection. It resolves to this call's total, which what the flush did push out is already part of.
+            // SAFETY: `operation` is the sink's pending slot, which the sink owns and `this` keeps alive.
+            let operation = unsafe { &mut *operation };
+            operation.consumed = wrote;
+            if let Writable::Owned(total) = &mut operation.result {
+                *total = wrote;
+            }
+            return Ok(flushed);
         };
         // The Promise resolves to what the pending operation consumed. The counts are part of this call's total
         // too: a chunk written before the sink backed up, or a small one buffered beside the operation.

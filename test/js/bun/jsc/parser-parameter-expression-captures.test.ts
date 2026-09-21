@@ -161,7 +161,13 @@ describe("a parameter expression that uses a name the function body declares aga
     expect(sources.map(source => [source, evaluate(source)])).toEqual(sources.map(source => [source, 10]));
   });
 
-  test("does not read an import of the same name", async () => {
+  // JavaScriptCore's parser can skip a function that it parsed before (the SourceProviderCache). A skipped function and
+  // a parsed one took different paths through the bug, so the module runs with the cache and without it. The catch
+  // parameter only failed without it.
+  test.each([
+    ["with", {}],
+    ["without", { BUN_JSC_useSourceProviderCache: "0" }],
+  ])("in a module that has an import of the same name, %s the parser's function cache", async (_, env) => {
     using dir = tempDir("parameter-expression-captures", {
       "names.mjs": `export let shadowed = "imported";\n`,
       "main.mjs": `
@@ -172,22 +178,30 @@ describe("a parameter expression that uses a name the function body declares aga
           let shadowed = 10;
           return () => (b = shadowed) => { var shadowed = 7; return b; };
         }
+        function caught() {
+          try {
+            throw 10;
+          } catch (shadowed) {
+            return ((b = shadowed) => { var shadowed = 7; return b; })();
+          }
+        }
         console.log(JSON.stringify([
           enclosing()()(),
           (() => (b = moduleVariable) => { var moduleVariable = 7; return b; })()(),
           (() => (b = shadowed) => { var shadowed = 7; return b; })()(),
+          caught(),
         ]));
       `,
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "main.mjs"],
-      env: bunEnv,
+      env: { ...bunEnv, ...env },
       cwd: String(dir),
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(stdout).toBe(`[10,10,"imported"]\n`);
+    expect(stdout).toBe(`[10,10,"imported",10]\n`);
     expect(exitCode).toBe(0);
   });
 });

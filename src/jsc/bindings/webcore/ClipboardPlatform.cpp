@@ -14,10 +14,10 @@ struct ClipboardRequest {
     ClipboardCompletion completion;
 };
 
-extern "C" void Bun__Clipboard__scheduleReadText(JSC::JSGlobalObject*, ClipboardRequest*);
-extern "C" void Bun__Clipboard__scheduleRead(JSC::JSGlobalObject*, ClipboardRequest*);
+extern "C" bool Bun__Clipboard__scheduleReadText(JSC::JSGlobalObject*, ClipboardRequest*);
+extern "C" bool Bun__Clipboard__scheduleRead(JSC::JSGlobalObject*, ClipboardRequest*);
 // Copies every byte range before returning.
-extern "C" void Bun__Clipboard__scheduleWrite(JSC::JSGlobalObject*, ClipboardRequest*, const ClipboardRepresentation*, size_t count);
+extern "C" bool Bun__Clipboard__scheduleWrite(JSC::JSGlobalObject*, ClipboardRequest*, const ClipboardRepresentation*, size_t count);
 
 static ClipboardRequest* createRequest(ClipboardCompletion&& completion)
 {

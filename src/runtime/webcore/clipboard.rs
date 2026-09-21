@@ -6,7 +6,7 @@ use core::ptr;
 use std::borrow::Cow;
 
 use bun_jsc::job::JsAffine;
-use bun_jsc::{Completion, JSGlobalObject, Job, JobContext, JsThread};
+use bun_jsc::{Completion, JSGlobalObject, Job, JobContext, JsError, JsThread};
 
 /// `WebCore::ClipboardRequest`, completed or released on the JS thread.
 struct Request(*mut c_void);
@@ -126,12 +126,18 @@ impl JobContext for ClipboardJob {
     }
 }
 
-fn schedule(global: &JSGlobalObject, op: Op, request: *mut c_void) {
+/// Whether the operation was scheduled. When it was not, the request is released
+/// and the exception is left pending, which the promise operation turns into the
+/// rejection.
+fn schedule(global: &JSGlobalObject, op: Op, request: *mut c_void) -> bool {
     let request = Request(request);
-    // A failure reading the environment leaves its exception pending, which the
-    // promise operation turns into the rejection.
-    let Ok(env) = platform::Env::snapshot(global) else {
-        return;
+    let env = match platform::Env::snapshot(global) {
+        Ok(env) => env,
+        Err(JsError::Thrown | JsError::Terminated) => return false,
+        Err(JsError::OutOfMemory) => {
+            let _ = global.throw_out_of_memory();
+            return false;
+        }
     };
     let off = ClipboardOp {
         op,
@@ -139,22 +145,23 @@ fn schedule(global: &JSGlobalObject, op: Op, request: *mut c_void) {
         outcome: Err(Unavailable::Platform),
     };
     Job::<ClipboardJob>::schedule(&global.js_thread_of_caller_no_frame(), off, request);
+    true
 }
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__Clipboard__scheduleReadText(
     global: &JSGlobalObject,
     request: *mut c_void,
-) {
-    schedule(global, Op::ReadText, request);
+) -> bool {
+    schedule(global, Op::ReadText, request)
 }
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__Clipboard__scheduleRead(
     global: &JSGlobalObject,
     request: *mut c_void,
-) {
-    schedule(global, Op::Read, request);
+) -> bool {
+    schedule(global, Op::Read, request)
 }
 
 /// # Safety
@@ -165,7 +172,7 @@ pub(crate) unsafe extern "C" fn Bun__Clipboard__scheduleWrite(
     request: *mut c_void,
     representations: *const Representation,
     count: usize,
-) {
+) -> bool {
     // SAFETY: forwarded from the caller's contract.
     let entries = unsafe { bun_core::ffi::slice(representations, count) };
     let items = entries
@@ -176,7 +183,7 @@ pub(crate) unsafe extern "C" fn Bun__Clipboard__scheduleWrite(
             (entry.mime, bytes.to_vec())
         })
         .collect();
-    schedule(global, Op::Write(items), request);
+    schedule(global, Op::Write(items), request)
 }
 
 /// Why the platform clipboard could not be used; the `NotAllowedError` message.

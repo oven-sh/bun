@@ -17,6 +17,8 @@
 #include <JavaScriptCore/Exception.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ErrorInstance.h>
+#include <JavaScriptCore/JSBoundFunction.h>
+#include <JavaScriptCore/JSScope.h>
 #include <JavaScriptCore/StackVisitor.h>
 #include <JavaScriptCore/NativeCallee.h>
 #include <JavaScriptCore/Interpreter.h>
@@ -503,12 +505,143 @@ String functionName(JSC::VM& vm, JSC::JSObject* object)
         }
     }
 
+    // An accessor is named `get g`, as JSC names it once it reifies `fn.name`.
+    if (!functionName.isEmpty() && jstype == JSC::JSFunctionType) {
+        auto* function = uncheckedDowncast<JSC::JSFunction>(object);
+        if (!function->isHostFunction()) {
+            auto* executable = function->jsExecutable();
+            if (executable->isGetter() && !functionName.startsWith("get "_s))
+                functionName = makeString("get "_s, functionName);
+            else if (executable->isSetter() && !functionName.startsWith("set "_s))
+                functionName = makeString("set "_s, functionName);
+        }
+    }
+
+    return functionName;
+}
+
+// An own data property, read without a property table materialization, a getter, or a proxy trap.
+static JSValue ownDataProperty(JSC::JSObject* object, UniquedStringImpl* name)
+{
+    unsigned attributes;
+    PropertyOffset offset = object->structure()->getConcurrently(name, attributes);
+    if (offset == invalidOffset || (attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue)))
+        return {};
+    return object->getDirect(offset);
+}
+
+static bool isConstructorFunction(JSC::JSObject* object)
+{
+    auto type = object->type();
+    if (type == JSC::InternalFunctionType)
+        return true;
+    // V8 names a bound function "Function", not "bound f".
+    return type == JSC::JSFunctionType && !object->inherits<JSC::JSBoundFunction>();
+}
+
+JSValue frameReceiver(const JSC::StackFrame& frame)
+{
+    JSValue receiver = frame.thisValue();
+    if (receiver && receiver.isObject() && asObject(receiver)->inherits<JSC::JSScope>())
+        return jsUndefined();
+    return receiver;
+}
+
+String receiverTypeName(JSC::VM& vm, JSC::JSValue receiver)
+{
+    if (!receiver || receiver.isUndefinedOrNull())
+        return String();
+
+    // V8 does ToObject on a primitive receiver and names the wrapper's class.
+    if (!receiver.isObject()) {
+        if (receiver.isString())
+            return "String"_s;
+        if (receiver.isNumber())
+            return "Number"_s;
+        if (receiver.isBoolean())
+            return "Boolean"_s;
+        if (receiver.isSymbol())
+            return "Symbol"_s;
+        if (receiver.isBigInt())
+            return "BigInt"_s;
+        return String();
+    }
+
+    JSObject* object = asObject(receiver);
+    auto type = object->type();
+    // A call with the global object as receiver is a top-level call (V8's IsToplevel).
+    if (type == JSC::GlobalObjectType || type == JSC::GlobalProxyType)
+        return String();
+    if (type == JSC::ProxyObjectType)
+        return "Proxy"_s;
+    if (isConstructorFunction(object)) {
+        // A static method: the class's own name.
+        String name = Zig::functionName(vm, object);
+        if (!name.isEmpty())
+            return name;
+    }
+
+    // V8's JSReceiver::GetConstructorName, which skips the receiver's own `constructor`.
+    JSObject* current = object;
+    while (true) {
+        JSValue tag = ownDataProperty(current, vm.propertyNames->toStringTagSymbol.impl());
+        if (tag && tag.isString()) {
+            auto value = asString(tag)->tryGetValueWithoutGC();
+            if (!value->isEmpty())
+                return value;
+        }
+
+        if (current != object) {
+            JSValue constructor = ownDataProperty(current, vm.propertyNames->constructor.impl());
+            if (constructor && constructor.isObject() && isConstructorFunction(asObject(constructor))) {
+                String name = Zig::functionName(vm, asObject(constructor));
+                if (!name.isEmpty() && name != "Object"_s)
+                    return name;
+            }
+        }
+
+        if (current->structure()->typeInfo().overridesGetPrototype())
+            break;
+        JSValue prototype = current->getPrototypeDirect();
+        if (!prototype.isObject())
+            break;
+        current = asObject(prototype);
+    }
+
+    return String(object->classInfo()->className);
+}
+
+// V8's String::IsIdentifier: `get x`, `o.f` and `bound f` get no type name prefix.
+static bool isIdentifier(const String& name)
+{
+    if (name.isEmpty())
+        return false;
+    for (unsigned i = 0; i < name.length(); i++) {
+        char16_t c = name[i];
+        if (c == '$' || c == '_' || isASCIIAlpha(c) || c >= 0x80)
+            continue;
+        if (i > 0 && isASCIIDigit(c))
+            continue;
+        return false;
+    }
+    return true;
+}
+
+String methodCallName(const String& typeName, const String& functionName)
+{
+    if (typeName.isEmpty())
+        return functionName;
+    if (functionName.isEmpty())
+        return makeString(typeName, ".<anonymous>"_s);
+    if (isIdentifier(functionName) && functionName != typeName)
+        return makeString(typeName, '.', functionName);
     return functionName;
 }
 
 String functionName(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* flags)
 {
     bool isConstructor = false;
+    bool isFunction = false;
     WTF::String functionName;
     JSC::JSObject* callee = frame.callee() ? frame.callee()->getObject() : nullptr;
 
@@ -522,6 +655,7 @@ String functionName(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* fla
         switch (codeType) {
         case JSC::CodeType::FunctionCode:
         case JSC::CodeType::EvalCode: {
+            isFunction = codeType == JSC::CodeType::FunctionCode;
             if (flags) {
                 if (codeType == JSC::CodeType::EvalCode) {
                     *flags |= static_cast<unsigned int>(FunctionNameFlags::Eval);
@@ -552,6 +686,10 @@ String functionName(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* fla
 
     if ((flags && (*flags & static_cast<unsigned int>(FunctionNameFlags::AddNewKeyword))) && isConstructor && !functionName.isEmpty()) {
         return makeString("new "_s, functionName);
+    }
+
+    if ((flags && (*flags & static_cast<unsigned int>(FunctionNameFlags::AddTypeName))) && isFunction && !isConstructor) {
+        return methodCallName(receiverTypeName(vm, frameReceiver(frame)), functionName);
     }
 
     return functionName;

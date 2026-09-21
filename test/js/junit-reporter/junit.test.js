@@ -601,7 +601,7 @@ describe("junit reporter", () => {
     });
     const [dataUrlCase, sourceUrlCase, longPathCase, pathCase] = result.testsuites.testsuite[0].testcase;
 
-    expect(dataUrlCase.failure[0]._).toContain(`at fromDataUrl (${dataUrl}:1:`);
+    expect(dataUrlCase.failure[0]._).toContain(`at Module.fromDataUrl (${dataUrl}:1:`);
     // The frame in the test file itself is still relative to the cwd.
     expect(dataUrlCase.failure[0]._).toContain("at dataUrlTest (source-url.test.js:");
     expect(sourceUrlCase.failure[0]._).toContain("at fromSourceUrl (webpack://app/./src/x.ts:1:");

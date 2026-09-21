@@ -204,10 +204,19 @@ public:
     static constexpr unsigned Builtin = 1 << 2;
     static constexpr unsigned Function = 1 << 3;
     static constexpr unsigned AddNewKeyword = 1 << 4;
+    // Name a method call frame `Type.method`, as V8 does.
+    static constexpr unsigned AddTypeName = 1 << 5;
 };
 
 String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock);
 String functionName(JSC::VM& vm, JSC::JSObject* callee);
 String functionName(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* flags);
+
+// The frame's receiver. A scope object left in the this slot by a call like `f()` reads as undefined.
+JSC::JSValue frameReceiver(const JSC::StackFrame& frame);
+// V8's CallSiteInfo::GetTypeName. Empty for a top-level call (no receiver, or the global object).
+String receiverTypeName(JSC::VM& vm, JSC::JSValue receiver);
+// V8's AppendMethodCall: how a method call frame is named from its type name and function name.
+String methodCallName(const String& typeName, const String& functionName);
 
 }

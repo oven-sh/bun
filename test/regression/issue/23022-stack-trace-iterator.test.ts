@@ -29,5 +29,5 @@ test("V8StackTraceIterator handles frames without parentheses (issue #23022)", a
 
   // Ensure both "unknown" frames and regular frames are present
   expect(inspected).toContain("at unknown");
-  expect(inspected).toContain("at _write");
+  expect(inspected).toContain("at Socket._write");
 });

@@ -1207,7 +1207,7 @@ describe.concurrent(() => {
       // `new Widget`, as in Node's report.
       constructor: { report: ["new Widget", "viaConstructor"], error: ["new Widget", "viaConstructor"] },
       eval: { report: ["<anonymous>", "viaEval"], error: ["<anonymous>", "viaEval"] },
-      builtin: { report: ["<anonymous>", "map"], error: ["<anonymous>", "map"] },
+      builtin: { report: ["<anonymous>", "Array.map"], error: ["<anonymous>", "Array.map"] },
     });
   });
 

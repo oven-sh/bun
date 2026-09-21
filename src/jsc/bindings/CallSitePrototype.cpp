@@ -94,18 +94,28 @@ void CallSitePrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalO
     Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
-// TODO: doesn't recognize thisValue as global object
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetThis, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     ENTER_PROTO_FUNC();
+    // V8: a strict frame, and every frame below it, hides its receiver.
+    if (callSite->isStrict()) {
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
     return JSC::JSValue::encode(callSite->thisValue());
 }
 
-// TODO: doesn't get class name
+// V8: the receiver's type name for a method call, else null.
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetTypeName, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     ENTER_PROTO_FUNC();
-    return JSC::JSValue::encode(JSC::jsTypeStringForValue(globalObject, callSite->thisValue()));
+    if (callSite->isConstructor()) {
+        return JSC::JSValue::encode(JSC::jsNull());
+    }
+    WTF::String typeName = Zig::receiverTypeName(vm, callSite->thisValue());
+    if (typeName.isEmpty()) {
+        return JSC::JSValue::encode(JSC::jsNull());
+    }
+    return JSC::JSValue::encode(JSC::jsString(vm, typeName));
 }
 
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetFunction, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -168,19 +178,19 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncIsToplevel, (JSGlobalObject * globalOb
 {
     ENTER_PROTO_FUNC();
 
-    if (callSite->isSloppyFunctionCall()) {
+    // V8's IsToplevel: no receiver, or the global object. A construct call's receiver is the instance.
+    if (callSite->isConstructor()) {
         return JSC::JSValue::encode(JSC::jsBoolean(false));
     }
 
     JSC::JSValue thisValue = callSite->thisValue();
 
-    // This is what v8 does (JSStackFrame::IsToplevel in messages.cc):
     if (thisValue.isUndefinedOrNull()) {
         return JSC::JSValue::encode(JSC::jsBoolean(true));
     }
 
     JSC::JSObject* thisObject = thisValue.getObject();
-    if (thisObject && thisObject->isGlobalObject()) {
+    if (thisObject && (thisObject->isGlobalObject() || thisObject->type() == JSC::GlobalProxyType)) {
         return JSC::JSValue::encode(JSC::jsBoolean(true));
     }
 

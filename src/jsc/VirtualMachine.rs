@@ -6301,12 +6301,22 @@ impl VirtualMachine {
         let source_code_slice: &mut Option<bun_core::Utf8Bytes<'static>> =
             unsafe { &mut *_tail.source_code_slice.cast_mut() };
 
+        // A method call frame reads `Type.name` (`ModuleLoader.moduleEvaluation`).
         fn is_noisy_builtin(name: &bun_core::String) -> bool {
-            name.eq_ascii(b"asyncModuleEvaluation")
-                || name.eq_ascii(b"link")
-                || name.eq_ascii(b"linkAndEvaluateModule")
-                || name.eq_ascii(b"moduleEvaluation")
-                || name.eq_ascii(b"processTicksAndRejections")
+            let name = name.to_utf8();
+            let name = name.slice();
+            let bare = match bun_core::strings::last_index_of_char(name, b'.') {
+                Some(dot) => &name[dot + 1..],
+                None => name,
+            };
+            matches!(
+                bare,
+                b"asyncModuleEvaluation"
+                    | b"link"
+                    | b"linkAndEvaluateModule"
+                    | b"moduleEvaluation"
+                    | b"processTicksAndRejections"
+            )
         }
         fn is_hidden_frame(f: &crate::ZigStackFrame) -> bool {
             f.source_url.eq_ascii(b"bun:wrap") || f.function_name.eq_ascii(b"::bunternal::")

@@ -747,7 +747,7 @@ describe("bun test", () => {
       expect(annotations).toHaveLength(2);
       const [dataUrl, longSourceUrl] = annotations;
       expect(dataUrl).toStartWith(`::error file=data%3Atext/javascript;base64%2C${base64},line=1,col=`);
-      expect(dataUrl).toContain(`%0A      at fromDataUrl (data:text/javascript;base64,${base64}:1:`);
+      expect(dataUrl).toContain(`%0A      at Module.fromDataUrl (data:text/javascript;base64,${base64}:1:`);
       expect(longSourceUrl).toStartWith(`::error file=${longPath},line=1,col=`);
       expect(longSourceUrl).toContain(`%0A      at fromLongPath (${longPath}:1:`);
     });

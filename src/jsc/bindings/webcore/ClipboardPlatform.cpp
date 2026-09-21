@@ -102,7 +102,11 @@ extern "C" void Bun__Clipboard__requestRelease(WebCore::ClipboardRequest* reques
 }
 
 // The script's `process.env`, which holds the writes the native env map does not.
+// Empty when creating it threw.
 extern "C" JSC::EncodedJSValue Bun__Clipboard__processEnv(Zig::GlobalObject* globalObject)
 {
-    return JSC::JSValue::encode(globalObject->processEnvObject());
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto* env = globalObject->processEnvObject();
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSC::JSValue::encode(env);
 }

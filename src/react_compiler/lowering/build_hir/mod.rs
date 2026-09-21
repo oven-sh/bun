@@ -322,7 +322,6 @@ pub(super) fn lower_inner<'h>(
                 ReactFunctionType::Other
             },
             params: hir_params,
-            return_type_annotation: None,
             returns,
             context,
             body: hir_body,

@@ -395,15 +395,6 @@ pub mod text {
         }
 
         write!(writer, "{:>7.2}", vals.functions * 100.0)?;
-        // writer.write_all(&pretty_fmt("<r><d> | <r>", ENABLE_COLORS))?;
-        // if ENABLE_COLORS {
-        //     // if vals.stmts < failing.stmts {
-        //     writer.write_all(&pretty_fmt("<d>", true))?;
-        //     // } else {
-        //     //     writer.write_all(&pretty_fmt("<d>", true))?;
-        //     // }
-        // }
-        // write!(writer, "{:>8.2}", vals.stmts * 100.0)?;
         writer.write_all(&pretty_fmt::<ENABLE_COLORS>("<r><d> | <r>"))?;
 
         if ENABLE_COLORS {

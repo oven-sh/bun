@@ -122,33 +122,22 @@ function runInNewContext(code, context, options) {
 // Mirrors Node's lib/vm.js getContextOptions, including the order it reads and validates in.
 function getContextOptions(options) {
   if (!options) return {};
-  const contextOptions: any = {
-    name: options.contextName,
-    origin: options.contextOrigin,
-    codeGeneration: undefined,
-    microtaskMode: options.microtaskMode,
-  };
-  if (contextOptions.name !== undefined) validateString(contextOptions.name, "options.contextName");
-  if (contextOptions.origin !== undefined) validateString(contextOptions.origin, "options.contextOrigin");
+  const name = options.contextName;
+  const origin = options.contextOrigin;
+  const microtaskMode = options.microtaskMode;
+  if (name !== undefined) validateString(name, "options.contextName");
+  if (origin !== undefined) validateString(origin, "options.contextOrigin");
+  let codeGeneration;
   const contextCodeGeneration = options.contextCodeGeneration;
   if (contextCodeGeneration !== undefined) {
     validateObject(contextCodeGeneration, "options.contextCodeGeneration");
     const { strings, wasm } = contextCodeGeneration;
-    const codeGeneration: any = {};
-    if (strings !== undefined) {
-      validateBoolean(strings, "options.contextCodeGeneration.strings");
-      codeGeneration.strings = strings;
-    }
-    if (wasm !== undefined) {
-      validateBoolean(wasm, "options.contextCodeGeneration.wasm");
-      codeGeneration.wasm = wasm;
-    }
-    contextOptions.codeGeneration = codeGeneration;
+    if (strings !== undefined) validateBoolean(strings, "options.contextCodeGeneration.strings");
+    if (wasm !== undefined) validateBoolean(wasm, "options.contextCodeGeneration.wasm");
+    codeGeneration = { strings, wasm };
   }
-  if (contextOptions.microtaskMode !== undefined) {
-    validateString(contextOptions.microtaskMode, "options.microtaskMode");
-  }
-  return contextOptions;
+  if (microtaskMode !== undefined) validateString(microtaskMode, "options.microtaskMode");
+  return { name, origin, codeGeneration, microtaskMode };
 }
 
 function createScript(code, options) {

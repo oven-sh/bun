@@ -46,6 +46,7 @@ const {
   kArmHandshakeTimeout,
   kDestroyOnRead,
   kPreHandshakeWrite,
+  kReadStop,
   kSecureConnectDone,
   kVerifyError,
 } = require("internal/net/symbols");
@@ -1408,20 +1409,18 @@ function onconnection(err, clientHandle) {
   _socket.server = self;
   _socket._server = self;
 
-  if (pauseOnConnect && !isTLS) {
-    pauseOnCreate(_socket, clientHandle);
-  }
-
+  // Before 'connection', as node's Socket constructor does: a listener that stops the reads (spawn()
+  // with this socket as the child's stdio) must not have them restarted when it returns.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L493-L502
   if (isTLS) initAcceptedTLSSocket(self, _socket);
+  else if (pauseOnConnect) pauseOnCreate(_socket, clientHandle);
+  else _socket.read(0);
 
   // Node reports a throwing 'connection' listener as uncaughtException and keeps the socket.
   try {
     self.emit("connection", _socket);
   } catch (e) {
     reportError(e);
-  }
-  if (!pauseOnConnect && !isTLS) {
-    _socket.read(0);
   }
 }
 
@@ -2514,6 +2513,11 @@ Socket.prototype.pause = function pause() {
     readStop(this, handle);
   }
   return Duplex.prototype.pause.$call(this);
+};
+
+Socket.prototype[kReadStop] = function () {
+  const handle = this._handle;
+  if (handle) readStop(this, handle);
 };
 
 // Server-side TLS upgrade over an accepted socket, for

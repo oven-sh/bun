@@ -939,17 +939,7 @@ public:
             }
 
             /* If we have no backbuffer and we are connection close and we responded fully then close */
-            HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
-            if (httpResponseData->shouldCloseConnection()) {
-                if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
-                    if (((AsyncSocket<SSL> *) this)->hasFullyDrained()) {
-                        ((AsyncSocket<SSL> *) this)->shutdown();
-                        /* We need to force close after sending FIN since we want to hinder
-                        * clients from keeping to send their huge data */
-                        ((AsyncSocket<SSL> *) this)->close();
-                    }
-                }
-            }
+            closeIfDoneAndMarked(getHttpResponseData());
         } else {
             /* We are already corked, or can't cork so let's just call the handler */
             handler();

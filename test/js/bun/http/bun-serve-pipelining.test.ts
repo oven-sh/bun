@@ -868,6 +868,54 @@ describe("a request pipelined behind a Connection: close request", () => {
   });
 });
 
+// A response without a body completes while its socket is still corked, and its
+// close then runs from HttpResponse::cork(), not from the gates the tests above
+// go through. The client wrote more while a request was held, so the server has
+// to read that before it closes. On a unix socket the reset shows as an error
+// behind the response. A response this small is out before a TCP reset can cut it.
+it.if(isPosix)(
+  "a HEAD response that closes the connection ends it cleanly when the client wrote more while it was pending",
+  async () => {
+    using dir = tempDir("serve-pipelining", {});
+    const unix = transports.find(transport => transport.name === "unix")!;
+    const handler = holdingHandler();
+    using server = Bun.serve({
+      ...unix.listen(String(dir)),
+      async fetch(req) {
+        const response = await handler.fetch(req);
+        if (new URL(req.url).pathname === "/hold") response.headers.set("Connection", "close");
+        return response;
+      },
+    });
+    const client = await connectNodeSocket(unix, server, String(dir));
+    client.reader.headResponses = 1;
+
+    await client.write("HEAD /hold HTTP/1.1\r\nHost: x\r\n\r\n");
+    await handler.entered("/hold");
+    // The first /never is held, the second one stays unread.
+    for (let i = 0; i < 2; i++) {
+      await client.write(request("/never"));
+      await probe(unix, server, String(dir));
+    }
+
+    handler.release("/hold");
+    await client.closed;
+    expect({
+      hits: handler.hits,
+      seen: client.seen,
+      responses: client.reader.responses.map(({ statusLine, headers, body }) => ({
+        statusLine,
+        connection: headers["connection"],
+        body,
+      })),
+    }).toEqual({
+      hits: ["/hold", "/probe", "/probe"],
+      seen: { ended: true },
+      responses: [{ statusLine: "HTTP/1.1 200 OK", connection: "close", body: "" }],
+    });
+  },
+);
+
 // A graceful stop() closes idle connections and marks busy ones to close once
 // their work is done. A request that was received and held behind the response
 // in flight is part of that work: it is answered, and the connection closes after

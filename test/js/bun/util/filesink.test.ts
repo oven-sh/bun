@@ -1234,7 +1234,10 @@ console.error(JSON.stringify(counts));
 // writes are buffered, the flush fails from the event loop, and the sink finishes. Later writes return `true`
 // and the script runs to its end. A rejected Promise per later write would be held by nobody, and the script
 // would die of an unhandled rejection instead.
-it("writes that are not awaited keep the script running after the reader has gone", async () => {
+//
+// Not on Windows, where this script has always died that way: a write goes to the pipe at once there, so each
+// one fails on the spot with a rejected Promise of its own.
+it.skipIf(isWindows)("writes that are not awaited keep the script running after the reader has gone", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

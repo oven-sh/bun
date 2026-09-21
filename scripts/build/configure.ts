@@ -27,7 +27,7 @@ import { BuildError } from "./error.ts";
 import { orderFilePath, usesOrderFile } from "./flags.ts";
 import { mkdirAll, writeIfChanged } from "./fs.ts";
 import { ensureMacosSdk } from "./macos-sdk.ts";
-import { ensureNinja, ninjaIfPresent } from "./ninja-release.ts";
+import { ensureNinja } from "./ninja-release.ts";
 import { Ninja } from "./ninja.ts";
 import { getProfile } from "./profiles.ts";
 import { registerAllRules } from "./rules.ts";
@@ -293,12 +293,25 @@ export function configOf(input: ConfigureInput): { cfg: Config; toolchain: Toolc
   return { cfg: resolveConfig(partial, toolchain), toolchain };
 }
 
+/** build.ts configuring before it spawns ninja: resolves the ninja to spawn (ninja-release.ts). */
+export function configure(input: ConfigureInput): Promise<ConfigureResult> {
+  return generate(input, ensureNinja);
+}
+
 /**
- * `fromNinja`: this run is ninja's own `regen` edge replaying configure.json
- * (build.ts --config-file), as opposed to build.ts configuring before it
- * spawns ninja.
+ * ninja's own `regen` edge replaying configure.json (build.ts --config-file): rewrites build.ninja and what is
+ * written beside it. It runs inside the ninja that was chosen and starts none, so it does not look for one: asking
+ * whether the pinned ninja can run is a process spawned for an answer nobody reads, and on a machine that refuses
+ * to run it, a second refusal in the middle of the build.
  */
-export async function configure(input: ConfigureInput, fromNinja = false): Promise<ConfigureResult> {
+export async function reconfigure(input: ConfigureInput): Promise<void> {
+  await generate(input, async () => undefined);
+}
+
+async function generate<N extends string | undefined>(
+  input: ConfigureInput,
+  resolveNinja: (cfg: Config) => Promise<N>,
+): Promise<Omit<ConfigureResult, "ninja"> & { ninja: N }> {
   const start = performance.now();
   const trace = process.env.BUN_BUILD_TRACE === "1";
   const mark = (label: string) => {
@@ -324,9 +337,8 @@ export async function configure(input: ConfigureInput, fromNinja = false): Promi
   mark("ensureMacosSdk");
 
   // The ninja itself, before anything here runs one (the restat below) so every
-  // ninja that touches this build directory is the same one. A regen replay is
-  // already inside the ninja that was chosen: it never fetches.
-  const ninja = fromNinja ? ninjaIfPresent(cfg) : await ensureNinja(cfg);
+  // ninja that touches this build directory is the same one.
+  const ninja = await resolveNinja(cfg);
   mark("ensureNinja");
 
   checkWorkarounds(cfg);
@@ -403,7 +415,7 @@ export async function configure(input: ConfigureInput, fromNinja = false): Promi
   // Having just configured, the manifest is current as of now: stamp it and
   // let `-t restat` record that. (Not when ninja is the one running us — it
   // records its own edge — and nothing to record into in a fresh dir.)
-  if (!fromNinja) {
+  if (ninja !== undefined) {
     const now = new Date();
     utimesSync(ninjaPath, now, now);
     if (existsSync(resolve(cfg.buildDir, ".ninja_log"))) {

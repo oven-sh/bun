@@ -40,7 +40,7 @@ import {
   verifyOrderFileApplied,
 } from "./build/ci.ts";
 import { formatConfig, formatConfigUnchanged, type PartialConfig } from "./build/config.ts";
-import { configOf, configure, type ConfigureInput } from "./build/configure.ts";
+import { configOf, configure, reconfigure, type ConfigureInput } from "./build/configure.ts";
 import { BuildError } from "./build/error.ts";
 import { ninjaIfPresent } from "./build/ninja-release.ts";
 import { STREAM_FD } from "./build/stream.ts";
@@ -126,18 +126,18 @@ async function main(): Promise<void> {
     return merged;
   };
 
-  if (args.configFile !== undefined && args.configureOnly) {
+  if (args.configFile !== undefined) {
     // ninja's generator rule replaying a previous configure (`regen`, configure.ts): just rewrite build.ninja.
     // ninja's own [N/M] line already says "reconfigure"; the CI prelude and the local summary would be noise
     // in the middle of a build log.
-    await configure(input, true);
+    await reconfigure(input);
     return;
   }
 
   if (isCI) {
     // CI: machine/env dump + collapsible groups + annotation-on-failure.
     printEnvironment();
-    const result = await startGroup("Configure", () => configure(input, args.configFile !== undefined));
+    const result = await startGroup("Configure", () => configure(input));
     if (args.configureOnly) return;
 
     // The order file is a link input, so it must land before the linking ninja pass.
@@ -192,7 +192,7 @@ async function main(): Promise<void> {
     }
   } else {
     // Local: configure, then spawn ninja.
-    const result = await configure(input, args.configFile !== undefined);
+    const result = await configure(input);
 
     // Quiet one-liner when configure was a no-op — the full banner only
     // prints when build.ninja changed. Timing matters: a regression here
@@ -208,9 +208,8 @@ async function main(): Promise<void> {
     // Configure summary. Full block only when build.ninja changed (new
     // profile/flags/sources) — a no-op reconfigure, which happens every
     // run, gets a one-liner. CI always full. Suppressed entirely in quiet
-    // mode and during ninja's generator-rule replay (ninja's [N/M] already
-    // says "reconfigure").
-    if (!quiet && !args.configFile) {
+    // mode.
+    if (!quiet) {
       if (result.changed || result.cfg.ci) {
         const o = result.output;
         process.stderr.write(formatConfig(result.cfg, result.exe) + "\n\n");

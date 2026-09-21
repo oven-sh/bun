@@ -1285,30 +1285,10 @@ impl VirtualMachine {
     /// stopped context `id`: they go on the next turn of the loop, before the
     /// context can be freed.
     pub(crate) fn stop_graph_context_again(&mut self, id: crate::ContextId) {
-        fn stop_again(id: *mut crate::ContextId) -> crate::JsResult<()> {
-            // SAFETY: boxed below for this task.
-            let id = *unsafe { Box::from_raw(id) };
-            let vm = VirtualMachine::get().as_mut();
-            if let Some(context) = vm.graph_context(id).map(NonNull::from) {
-                // SAFETY: registered ⇒ not freed.
-                let _ = unsafe { vm.stop_graph_context(context, crate::StopReason::Disposed) };
-            }
-            Ok(())
-        }
         if id == self.dead_context.id() {
-            fn stop_dead(vm: *mut VirtualMachine) -> crate::JsResult<()> {
-                // SAFETY: the VM that queued this task on its own loop.
-                let dead_context = &unsafe { &*vm }.dead_context;
-                let _ = dead_context.stop(crate::StopReason::Disposed);
-                if let Some(hooks) = runtime_hooks() {
-                    // SAFETY: live per-thread VM on the JS thread.
-                    unsafe { (hooks.cancel_timers)(vm, Some(dead_context.id())) };
-                }
-                Ok(())
-            }
             if !self.dead_context.stop_again_is_queued() {
-                let vm = std::ptr::from_mut(self);
-                self.enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new(vm, stop_dead));
+                let vm = std::ptr::from_mut(self).cast::<DeadContextStopAgain>();
+                self.enqueue_task(bun_event_loop::Task::init(vm));
             }
             return;
         }
@@ -1316,10 +1296,8 @@ impl VirtualMachine {
             .graph_context(id)
             .is_some_and(|context| !context.stop_again_is_queued())
         {
-            // (Owned: released with the task if the VM goes before it runs.)
-            self.enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new_owned(
-                Box::into_raw(Box::new(id)),
-                stop_again,
+            self.enqueue_task(bun_event_loop::Task::init(
+                id.raw() as usize as *mut GraphContextStopAgain
             ));
         }
     }
@@ -1402,19 +1380,8 @@ impl VirtualMachine {
             unsafe { self.free_graph_context(context) };
             return;
         }
-        fn stop_and_free(context: *mut crate::ScriptExecutionContext) -> crate::JsResult<()> {
-            let vm = VirtualMachine::get().as_mut();
-            // SAFETY: still registered (`destroy` frees what teardown left), so not freed.
-            unsafe {
-                let context = NonNull::new_unchecked(context);
-                let _ = vm.stop_graph_context(context, crate::StopReason::Disposed);
-                vm.free_graph_context(context);
-            }
-            Ok(())
-        }
-        self.enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new(
-            context.as_ptr(),
-            stop_and_free,
+        self.enqueue_task(bun_event_loop::Task::init(
+            context.as_ptr().cast::<GraphContextStopAndFree>(),
         ));
     }
 
@@ -2610,6 +2577,84 @@ impl VirtualMachine {
         self.regular_event_loop.release_queued_tasks();
         self.macro_event_loop.release_queued_tasks();
         self.transpiler_store.release_queued_jobs_for_teardown();
+    }
+}
+
+/// [`VirtualMachine::stop_graph_context_again`]'s task for a `Bun.ModuleGraph` context; `ptr`
+/// packs the [`ContextId`](crate::ContextId), nothing is owned.
+pub struct GraphContextStopAgain;
+
+impl bun_event_loop::Taskable for GraphContextStopAgain {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::GraphContextStopAgain;
+    unsafe fn release_unrun(_: *mut Self) {}
+    /// Enters no context.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
+}
+
+impl GraphContextStopAgain {
+    pub fn run(vm: &mut VirtualMachine, id: crate::ContextId) {
+        if let Some(context) = vm.graph_context(id).map(NonNull::from) {
+            // SAFETY: registered ⇒ not freed.
+            let _ = unsafe { vm.stop_graph_context(context, crate::StopReason::Disposed) };
+        }
+    }
+}
+
+/// [`VirtualMachine::stop_graph_context_again`]'s task for the dead context: same pointer as the
+/// VM, its own tag.
+#[repr(transparent)]
+pub struct DeadContextStopAgain(VirtualMachine);
+
+impl bun_event_loop::Taskable for DeadContextStopAgain {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::DeadContextStopAgain;
+    unsafe fn release_unrun(_: *mut Self) {}
+    /// Enters no context.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
+}
+
+impl DeadContextStopAgain {
+    /// # Safety
+    /// `this` is the VM that queued this task on its own loop.
+    pub unsafe fn run(this: *mut Self) {
+        let vm = this.cast::<VirtualMachine>();
+        // SAFETY: fn contract.
+        let dead_context = &unsafe { &*vm }.dead_context;
+        let _ = dead_context.stop(crate::StopReason::Disposed);
+        if let Some(hooks) = runtime_hooks() {
+            // SAFETY: live per-thread VM on the JS thread.
+            unsafe { (hooks.cancel_timers)(vm, Some(dead_context.id())) };
+        }
+    }
+}
+
+/// [`VirtualMachine::release_graph_context`]'s task: same pointer as the context, its own tag.
+#[repr(transparent)]
+pub struct GraphContextStopAndFree(crate::ScriptExecutionContext);
+
+impl bun_event_loop::Taskable for GraphContextStopAndFree {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::GraphContextStopAndFree;
+    /// Still registered: `destroy` frees what teardown left.
+    unsafe fn release_unrun(_: *mut Self) {}
+    /// Enters no context.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
+}
+
+impl GraphContextStopAndFree {
+    /// # Safety
+    /// `this` is the context `release_graph_context` queued.
+    pub unsafe fn run(vm: &mut VirtualMachine, this: *mut Self) {
+        // SAFETY: still registered (`destroy` frees what teardown left), so not freed.
+        unsafe {
+            let context = NonNull::new_unchecked(this.cast::<crate::ScriptExecutionContext>());
+            let _ = vm.stop_graph_context(context, crate::StopReason::Disposed);
+            vm.free_graph_context(context);
+        }
     }
 }
 

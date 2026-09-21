@@ -114,7 +114,7 @@ contribution so it cannot absorb the next object's unnamed code.
 
 PDB coverage for the same code can vary across linker versions — a function
 that gets an `S_LPROC32` record on one toolchain may fall through to `<lib:>`
-on another. If a symbol flips between a mangled name and `<lib:NAME.lib>`
+on another. If a symbol flips between a mangled name and `<lib:NAME.lib>` / `<lib:NAME.obj>`
 across CI runs, allowlist both forms.
 
 Rust v0 mangled names carry a crate-hash (`Cs[base62]_`) that changes across

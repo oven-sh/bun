@@ -246,8 +246,7 @@ pub(crate) enum PartState {
 }
 
 pub(crate) struct UploadPart {
-    /// The part's bytes, from `get_create_part` until `free_data`. Counted, so that `perform`
-    /// keeps them for a request that frees the part before it returns.
+    /// Counted so that `perform` can keep the bytes across a request that frees the part.
     pub(crate) data: JsCell<Option<Rc<Vec<u8>>>>,
     pub ctx: bun_ptr::BackRef<MultiPartUpload, bun_ptr::Mut>, // BACKREF (LIFETIMES.tsv)
     pub(crate) state: Cell<PartState>,
@@ -329,8 +328,6 @@ impl UploadPart {
 
     fn perform(&self) -> bun_jsc::JsResult<()> {
         let ctx = self.ctx.get();
-        // A request that fails before it leaves reports that inside the call below, which frees
-        // this part. This count keeps the bytes the call borrows until it returns.
         let data = self.data.get().clone();
         let mut params_buffer = [0u8; 2048];
         let written = {
@@ -466,8 +463,7 @@ impl MultiPartUpload {
     }
 
     /// This is the only place we allocate the queue or the parts, this is responsible for the flow of parts and the max allowed concurrency
-    ///
-    /// `take_data` runs only when the queue has a slot: the part owns the bytes it returns.
+    /// `take_data` runs only when the queue has a slot, and the part owns the bytes it returns.
     fn get_create_part(&self, take_data: impl FnOnce() -> Vec<u8>) -> Option<&UploadPart> {
         let mut available = self.available.get();
         let Some(index) = available.find_first_set() else {
@@ -862,8 +858,7 @@ impl MultiPartUpload {
         )
     }
 
-    /// `Ok(false)`: the queue is full and `take_data` did not run. Otherwise a part owns the
-    /// bytes, also when starting its request failed.
+    /// `Ok(false)`: the queue is full and `take_data` did not run. On `Err` a part has the bytes.
     fn enqueue_part(&self, take_data: impl FnOnce() -> Vec<u8>) -> bun_jsc::JsResult<bool> {
         let Some(part) = self.get_create_part(take_data) else {
             return Ok(false);

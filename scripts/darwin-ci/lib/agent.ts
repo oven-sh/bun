@@ -114,3 +114,23 @@ async function unload(target: string): Promise<void> {
   await $`sudo launchctl bootout ${target}`.quiet().nothrow();
   await poll(30, 2000, async () => ((await succeeds($`sudo launchctl print ${target}`)) ? undefined : true));
 }
+
+// a host runs at most two guests, so the agent and its job guests have to be gone before a bake can boot one
+export async function drainTartAgent(): Promise<void> {
+  const user = config.ciUser;
+  await unload(`gui/${await ciUserId()}/${agentLabel}`);
+  const guests = (await output($`sudo -u ${user} -H ${config.tart.bin} list --source local --quiet`))
+    .split("\n")
+    .filter(name => name.startsWith("bk-"));
+  for (const guest of guests) {
+    await $`sudo -u ${user} -H ${config.tart.bin} stop ${guest} --timeout 5`.quiet().nothrow();
+    await $`sudo -u ${user} -H ${config.tart.bin} delete ${guest}`.quiet().nothrow();
+  }
+}
+
+// after a failed bake the previous image and config are still in place, so the old agent can simply come back
+export async function resumeTartAgent(): Promise<void> {
+  const plist = `/Library/LaunchAgents/${agentLabel}.plist`;
+  if (!(await Bun.file(plist).exists())) return;
+  await $`sudo launchctl bootstrap gui/${await ciUserId()} ${plist}`.quiet().nothrow();
+}

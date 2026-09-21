@@ -24,9 +24,19 @@ export const cyan = (s: string): string => (useColor ? `\x1b[36m${s}\x1b[39m` : 
 export const green = (s: string): string => (useColor ? `\x1b[32m${s}\x1b[39m` : s);
 export const red = (s: string): string => (useColor ? `\x1b[31m${s}\x1b[39m` : s);
 
-/** "412ms" under a second, "3.2s" after — for a step's elapsed time. */
+/**
+ * An elapsed time in minutes, seconds and milliseconds, without the parts that are zero: "412ms", "3s 200ms",
+ * "1m 55s 400ms", "2m". The timings page runs this same function (timings.ts puts its source in the page), so it is
+ * plain JavaScript that needs nothing from this module.
+ */
 export function formatElapsed(ms: number): string {
-  return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
+  const whole = Math.round(ms);
+  const parts = [
+    [Math.floor(whole / 60000), "m"],
+    [Math.floor(whole / 1000) % 60, "s"],
+    [whole % 1000, "ms"],
+  ].filter(part => part[0] !== 0);
+  return parts.length === 0 ? "0ms" : parts.map(part => `${part[0]}${part[1]}`).join(" ");
 }
 
 /**

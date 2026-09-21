@@ -668,7 +668,7 @@ export function queueTimes(build: Build, run: Run): QueueTotal[] {
 // ───────────────────────────────────────────────────────────────────────────
 
 /** An elapsed time in a column. */
-const column = (ms: number): string => formatElapsed(ms).padStart(7);
+const column = (ms: number): string => formatElapsed(ms).padStart(12);
 const clock = (unixMs: number): string => new Date(unixMs).toISOString().replace("T", " ").slice(0, 19) + "Z";
 
 export interface ReportStyle {
@@ -696,7 +696,7 @@ export function formatReport(build: Build, style: ReportStyle): string {
 
   out.push(
     "",
-    bold("by rule".padEnd(26)) + dim(`${"edges".padStart(7)}${"total".padStart(9)}  ${"slowest".padStart(7)}`),
+    bold("by rule".padEnd(26)) + dim(`${"edges".padStart(7)}${"total".padStart(14)}  ${"slowest".padStart(12)}`),
   );
   for (const t of totalsByRule(build)) {
     out.push(
@@ -709,7 +709,7 @@ export function formatReport(build: Build, style: ReportStyle): string {
     out.push(`  ${column(duration(x))}  ${x.label}`);
     const phases = largestPhases(x);
     if (phases.length > 0) {
-      out.push(dim(`           ${phases.map(([name, ms]) => `${name} ${formatElapsed(ms)}`).join(" · ")}`));
+      out.push(dim(`${"".padStart(16)}${phases.map(([name, ms]) => `${name} ${formatElapsed(ms)}`).join(" · ")}`));
     }
   }
 
@@ -962,7 +962,7 @@ export function chartHtml(build: Build): string {
 </main>
 <div id="tip" hidden></div>
 <script id="data" type="application/json">${data}</script>
-<script>${client}</script>
+<script>${client.replace("FORMAT_ELAPSED", () => formatElapsed.toString())}</script>
 </body>
 </html>
 `;
@@ -1032,7 +1032,7 @@ const client = `
   var level = 1, MOST_ZOOM = 200;
   var tip = document.getElementById("tip");
 
-  function ms(t) { return t < 1000 ? Math.round(t) + "ms" : (t / 1000).toFixed(1) + "s"; }
+  var ms = FORMAT_ELAPSED;
   function el(name, attrs, parent) {
     var e = document.createElementNS(NS, name);
     for (var k in attrs) e.setAttribute(k, attrs[k]);
@@ -1253,7 +1253,8 @@ const client = `
   var hosts = data.runs.map(function (run, i) {
     html("h2", run.title, runs);
     var sum = run.bars.reduce(function (s, b) { return s + b.end - b.start; }, 0);
-    html("div", ms(run.wallMs) + " · " + run.bars.length + " commands · " +
+    // The first chart's time is the page's total.
+    html("div", (i === 0 ? "" : ms(run.wallMs) + " · ") + run.bars.length + " commands · " +
       (sum / run.wallMs).toFixed(1) + "× parallel", runs, "meta");
     run.note = html("div", undefined, runs, "meta");
     var row = html("div", undefined, runs, "run");

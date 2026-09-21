@@ -681,11 +681,13 @@ describe("Server", () => {
 
   // The same queue at process exit: the loop does not tick again after the
   // last turn, so nothing committed the batch before the sockets went away.
+  // On Windows the exit resets the connection, and the reset can discard what
+  // the client has not read yet.
   describe.each([
     { label: "server.unref()", exit: "server.unref()" },
     { label: "process.exit()", exit: "process.exit(0)" },
   ])("publish() then $label in same tick", ({ exit }) => {
-    it.concurrent("delivers the queued messages before the process exits", async () => {
+    it.concurrent.skipIf(isWindows)("delivers the queued messages before the process exits", async () => {
       await using proc = spawn({
         cmd: [
           bunExe(),

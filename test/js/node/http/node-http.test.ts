@@ -1765,6 +1765,19 @@ it("request(urlString, cb) does not read options from Object.prototype", async (
   expect(exitCode).toBe(0);
 });
 
+it("a paused Upgrade request destroyed in its listener does not crash while the TLS close is deferred", async () => {
+  // The request is destroyed inside the read that carried it, and spilled TLS
+  // bytes keep the socket open after that read is parsed.
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", path.join(import.meta.dir, "node-http-upgrade-paused-destroy-tls-fixture.js")],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+});
+
 // This test is disabled because it can OOM the CI
 it.skip("should be able to stream huge amounts of data", async () => {
   const buf = Buffer.alloc(1024 * 1024 * 256);

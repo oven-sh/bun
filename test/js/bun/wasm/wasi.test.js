@@ -72,6 +72,126 @@ it("random_get fills only the requested window", () => {
   expect(after.subarray(bufPtr, bufPtr + bufLen).some(b => b !== 0)).toBe(true);
 });
 
+it("proc_raise uses wasi_snapshot_preview1 signal numbering", () => {
+  const raised = [];
+  const wasi = new WASI({
+    bindings: {
+      hrtime: () => process.hrtime.bigint(),
+      exit: () => {},
+      kill: signal => raised.push(signal),
+      randomFillSync: array => crypto.getRandomValues(array),
+      isTTY: () => false,
+      fs,
+      path,
+    },
+  });
+  wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+
+  const WASI_ESUCCESS = 0;
+  const WASI_EINVAL = 28;
+  // https://github.com/WebAssembly/WASI/blob/main/legacy/preview1/docs.md#-signal-variant
+  const preview1 = [
+    "SIGHUP",
+    "SIGINT",
+    "SIGQUIT",
+    "SIGILL",
+    "SIGTRAP",
+    "SIGABRT",
+    "SIGBUS",
+    "SIGFPE",
+    "SIGKILL",
+    "SIGUSR1",
+    "SIGSEGV",
+    "SIGUSR2",
+    "SIGPIPE",
+    "SIGALRM",
+    "SIGTERM",
+    "SIGCHLD",
+    "SIGCONT",
+    "SIGSTOP",
+    "SIGTSTP",
+    "SIGTTIN",
+    "SIGTTOU",
+    "SIGURG",
+    "SIGXCPU",
+    "SIGXFSZ",
+    "SIGVTALRM",
+    "SIGPROF",
+    "SIGWINCH",
+    "SIGPOLL",
+    "SIGPWR",
+    "SIGSYS",
+  ];
+  const errnos = preview1.map((_, i) => wasi.wasiImport.proc_raise(i + 1));
+  expect(raised).toEqual(preview1);
+  expect(errnos).toEqual(preview1.map(() => WASI_ESUCCESS));
+  expect(wasi.wasiImport.proc_raise(0)).toBe(WASI_EINVAL);
+  expect(wasi.wasiImport.proc_raise(31)).toBe(WASI_EINVAL);
+  expect(raised.length).toBe(preview1.length);
+});
+
+it("proc_raise reports ENOTSUP for a signal the host does not have and rethrows anything else", () => {
+  const WASI_ENOTSUP = 58;
+  const makeWasi = kill => {
+    const wasi = new WASI({
+      bindings: {
+        hrtime: () => process.hrtime.bigint(),
+        exit: () => {},
+        kill,
+        randomFillSync: array => crypto.getRandomValues(array),
+        isTTY: () => false,
+        fs,
+        path,
+      },
+    });
+    wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+    return wasi;
+  };
+
+  const unknownSignal = makeWasi(signal => {
+    throw Object.assign(new TypeError("Unknown signal: " + signal), { code: "ERR_UNKNOWN_SIGNAL" });
+  });
+  // 28 is SIGPOLL in preview1 numbering.
+  expect(unknownSignal.wasiImport.proc_raise(28)).toBe(WASI_ENOTSUP);
+
+  const broken = makeWasi(() => {
+    throw new Error("kill binding bug");
+  });
+  expect(() => broken.wasiImport.proc_raise(28)).toThrow("kill binding bug");
+});
+
+it.skipIf(isWindows)("bun prog.wasm: proc_raise(SIGTERM) delivers SIGTERM to the host process", () => {
+  // (module
+  //   (import "wasi_snapshot_preview1" "proc_raise" (func (param i32) (result i32)))
+  //   (import "wasi_snapshot_preview1" "proc_exit" (func (param i32)))
+  //   (memory (export "memory") 1)
+  //   (func (export "_start") (drop (call 0 (i32.const 15))) (call 1 (i32.const 42))))
+  const s = t => [t.length, ...Buffer.from(t)];
+  const sec = (id, b) => [id, b.length, ...b];
+  const W = "wasi_snapshot_preview1";
+  const body = [0, 0x41, 15, 0x10, 0, 0x1a, 0x41, 42, 0x10, 1, 0x0b];
+  const mod = Buffer.from([
+    ...[0, 97, 115, 109, 1, 0, 0, 0],
+    ...sec(1, [3, 0x60, 1, 0x7f, 1, 0x7f, 0x60, 1, 0x7f, 0, 0x60, 0, 0]),
+    ...sec(2, [2, ...s(W), ...s("proc_raise"), 0, 0, ...s(W), ...s("proc_exit"), 0, 1]),
+    ...sec(3, [1, 2]),
+    ...sec(5, [1, 0, 1]),
+    ...sec(7, [2, ...s("memory"), 2, 0, ...s("_start"), 0, 2]),
+    ...sec(10, [1, body.length, ...body]),
+  ]);
+  using dir = tempDir("wasi-proc-raise", { "raise.wasm": mod });
+
+  const { stdout, exitCode, signalCode } = spawnSync({
+    cmd: [bunExe(), path.join(String(dir), "raise.wasm")],
+    stdout: "pipe",
+    stderr: "inherit",
+    env: bunEnv,
+  });
+  expect(stdout.toString()).toBe("");
+  expect(signalCode).toBe("SIGTERM");
+  expect(exitCode).not.toBe(42);
+});
+
 it("path_open reports the host errno to the guest when the open fails", () => {
   using dir = tempDir("wasi-path-open-errno", {
     "exists.txt": "x",

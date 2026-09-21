@@ -1113,9 +1113,9 @@ impl Request {
                 && value_type == bun_jsc::JSType::FinalObject
                 && values_to_try[1].js_type() == bun_jsc::JSType::DOMWrapper;
             if value_type == bun_jsc::JSType::DOMWrapper {
-                if let Some(request) = value.as_direct::<Request>() {
-                    // SAFETY: as_direct returns a live *mut Request payload (m_ctx)
-                    let request = unsafe { &*request };
+                // Not `as_direct`: a Bun.serve `routes:` BunRequest and a
+                // `class X extends Request` instance are Requests too.
+                if let Some(request) = value.as_class_ref::<Request>() {
                     // Spec step 45's transfer applies only when this Request is
                     // the *input* (arguments[0]); a Request supplied as *init*
                     // (Bun extension) keeps the non-consuming tee, matching the
@@ -1452,8 +1452,8 @@ impl Request {
         req.url.set(href);
 
         if transfer_input_body {
-            // The arm that set the flag matched `url_or_object` with the stricter
-            // `as_direct::<Request>()`, and nothing since could change the cell.
+            // The arm that set the flag matched `url_or_object` the same way,
+            // and nothing since could change the cell.
             let input = url_or_object
                 .as_class_ref::<Request>()
                 .expect("arguments[0] matched as a Request in the loop above");

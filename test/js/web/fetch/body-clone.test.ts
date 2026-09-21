@@ -1588,20 +1588,44 @@ describe("new Request(input) transfers the input body", () => {
     expect(await copy.text()).toBe("hello");
   });
 
+  // A subclass instance is a Request too: the constructor reads its internal
+  // body, not the `body` getter, so the same transfer applies.
+  test.each([
+    ["single-arg", (req: Request) => new Request(req)],
+    ["two-arg", (req: Request) => new Request(req, { headers: { "x-a": "1" } })],
+  ])("%s new Request(input) transfers the body of a `class extends Request` instance", async (_, construct) => {
+    class MyRequest extends Request {}
+    // @ts-expect-error duplex
+    const input = new MyRequest("http://example.com/", { method: "POST", body: "hello", duplex: "half" });
+    const copy = construct(input);
+    expect({
+      inputUsed: input.bodyUsed,
+      copyIsPlainRequest: copy.constructor === Request,
+      copyText: await copy.text(),
+    }).toEqual({ inputUsed: true, copyIsPlainRequest: true, copyText: "hello" });
+    expect(() => new Request(input)).toThrow(TypeError);
+  });
+
   // A Bun.serve incoming Request shares its body slot with the RequestContext.
   // The transfer must not move that Locked value out of the shared slot; it
   // materializes the stream in place so chunks still reach the copy. Cover
   // both construct_into entry points: single-arg (clone_into transfer) and
-  // two-arg (deferred post-loop transfer).
-  for (const [variant, construct] of [
-    ["single-arg", (req: Request) => new Request(req)],
-    ["two-arg", (req: Request) => new Request(req, { headers: { "x-proxied": "1" } })],
-  ] as const) {
-    for (const touchBodyFirst of [false, true]) {
-      test(`Bun.serve: ${variant} new Request(incomingReq)${touchBodyFirst ? " after .body was accessed" : ""} reads the bytes and consumes the input`, async () => {
-        await using server = Bun.serve({
-          port: 0,
-          async fetch(req) {
+  // two-arg (deferred post-loop transfer), for a `fetch` handler (Request) and
+  // a `routes` handler (BunRequest, a Request subclass).
+  type Handler = (req: Request) => Promise<Response>;
+  const serveWith = (kind: "fetch" | "routes", handler: Handler) =>
+    kind === "fetch"
+      ? Bun.serve({ port: 0, fetch: handler })
+      : Bun.serve({ port: 0, routes: { "/": handler }, fetch: () => new Response("unrouted", { status: 500 }) });
+
+  for (const kind of ["fetch", "routes"] as const) {
+    for (const [variant, construct] of [
+      ["single-arg", (req: Request) => new Request(req)],
+      ["two-arg", (req: Request) => new Request(req, { headers: { "x-proxied": "1" } })],
+    ] as const) {
+      for (const touchBodyFirst of [false, true]) {
+        test(`Bun.serve ${kind}: ${variant} new Request(incomingReq)${touchBodyFirst ? " after .body was accessed" : ""} reads the bytes and consumes the input`, async () => {
+          await using server = serveWith(kind, async req => {
             const observed = touchBodyFirst ? req.body : null;
             const r = construct(req);
             const inputUsed = req.bodyUsed;
@@ -1621,37 +1645,34 @@ describe("new Request(input) transfers the input body", () => {
               inputTextRejected = e instanceof TypeError;
             }
             return Response.json({ inputUsed, observedLocked, copyText, secondThrew, inputTextRejected });
-          },
+          });
+          const res = await fetch(server.url, { method: "POST", body: "hello-server" });
+          expect(await res.json()).toEqual({
+            inputUsed: true,
+            observedLocked: touchBodyFirst ? true : null,
+            copyText: "hello-server",
+            secondThrew: true,
+            inputTextRejected: true,
+          });
         });
-        const res = await fetch(server.url, { method: "POST", body: "hello-server" });
-        expect(await res.json()).toEqual({
-          inputUsed: true,
-          observedLocked: touchBodyFirst ? true : null,
-          copyText: "hello-server",
-          secondThrew: true,
-          inputTextRejected: true,
-        });
-      });
-    }
+      }
 
-    test(`Bun.serve: req.clone() then ${variant} new Request(req) both read the bytes and the input is consumed`, async () => {
-      await using server = Bun.serve({
-        port: 0,
-        async fetch(req) {
+      test(`Bun.serve ${kind}: req.clone() then ${variant} new Request(req) both read the bytes and the input is consumed`, async () => {
+        await using server = serveWith(kind, async req => {
           const c = req.clone();
           const r = construct(req);
           const inputUsed = req.bodyUsed;
           const [cloneText, copyText] = await Promise.all([c.text(), r.text()]);
           return Response.json({ inputUsed, cloneText, copyText });
-        },
+        });
+        const res = await fetch(server.url, { method: "POST", body: "hello-server" });
+        expect(await res.json()).toEqual({
+          inputUsed: true,
+          cloneText: "hello-server",
+          copyText: "hello-server",
+        });
       });
-      const res = await fetch(server.url, { method: "POST", body: "hello-server" });
-      expect(await res.json()).toEqual({
-        inputUsed: true,
-        cloneText: "hello-server",
-        copyText: "hello-server",
-      });
-    });
+    }
   }
 });
 

@@ -416,7 +416,8 @@ function destroyNT(self, err) {
 }
 // Node's wrap 'close' -> destroy(): https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L739-L741
 function onUpgradedClose(self, connection) {
-  if (self[kupgraded] === connection) self.destroy();
+  // A held error (see reportReadError) closes the socket once the consumer has the bytes ahead of it.
+  if (self[kupgraded] === connection && self[kHeldError] === undefined) self.destroy();
 }
 function destroyWhenUpgradedCloses(self, connection) {
   connection.once("close", (self[kOnUpgradedClose] = onUpgradedClose.bind(null, self, connection)));
@@ -2572,10 +2573,7 @@ Socket.prototype.resume = function resume() {
   // An ended readable side (EOF emitted, or `readable: false`) never restarts the handle: node reaches readStart only from _read.
   // An onread socket is the exception: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L830-L845
   if (this.readableEnded && this[kOnreadBuffer] === undefined) return ret;
-  if (!this.connecting && !drainOnreadTail(this)) {
-    this._handle?.resume?.();
-    this[kReadStopped] = false;
-  }
+  if (!this.connecting && !drainOnreadTail(this)) readStart(this, this._handle);
   // Even while still connecting, so pause-then-resume stays symmetric.
   restorePausedHold(this, this._handle);
   return ret;
@@ -2680,16 +2678,19 @@ Socket.prototype.read = function read(size) {
     readStart(this, this._handle);
   }
   const chunk = Duplex.prototype.read.$call(this, size);
-  if (this[kReadWhileStopped] || this[kHeldError] !== undefined) afterStoppedRead(this, chunk, size);
+  if (this[kReadWhileStopped] || this[kHeldError] !== undefined) afterStoppedRead(this);
   return chunk;
 };
 
-function afterStoppedRead(self, chunk, size) {
-  const drained = self._readableState.length === 0;
-  if (drained) self[kReadWhileStopped] = false;
-  // The held error is next once the consumer has the bytes ahead of it, or asks for more of them than arrived.
+function afterStoppedRead(self) {
+  const state = self._readableState;
+  const length = state.length;
+  if (length === 0) self[kReadWhileStopped] = false;
+  // Node's read() calls _read(), which restarts the handle and meets the error, once what stays
+  // buffered is below the highWaterMark (a read(n) for more than arrived raises it first):
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/streams/readable.js#L730-L751
   if (self[kHeldError] !== undefined && self[kOnreadTail] === undefined && !readsEnded(self)) {
-    if (drained || (chunk === null && size > 0)) scheduleHeldError(self);
+    if (length === 0 || length < state.highWaterMark) scheduleHeldError(self);
   }
 }
 
@@ -3015,6 +3016,14 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     return;
   }
   const socket = this._handle;
+  const heldError = this[kHeldError];
+  if (heldError !== undefined) {
+    // The connection is already gone: node's write(2) fails on the reset, and the unread bytes go with the socket.
+    this[kHeldError] = undefined;
+    const errno = heldError.errno;
+    process.nextTick(failWrite, this, typeof errno === "number" && errno < 0 ? errno : uv().UV_ECONNRESET, callback);
+    return false;
+  }
   if (!socket && this[kupgraded] && !this.destroyed) {
     // Node wraps the handle synchronously in the TLSSocket constructor
     // (_wrapHandle), so a banner written in the same tick as the wrap is
@@ -3033,14 +3042,6 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
   this._pendingData = null;
   this._pendingEncoding = "";
   this[kwriteCallback] = null;
-  const heldError = this[kHeldError];
-  if (heldError !== undefined) {
-    // The connection is already gone: node's write(2) fails on the reset, and the unread bytes go with the socket.
-    this[kHeldError] = undefined;
-    const errno = heldError.errno;
-    process.nextTick(failWrite, this, typeof errno === "number" && errno < 0 ? errno : uv().UV_ECONNRESET, callback);
-    return false;
-  }
   if (!socket) {
     callback($ERR_SOCKET_CLOSED());
     return false;

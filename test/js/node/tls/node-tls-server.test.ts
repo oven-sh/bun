@@ -2592,6 +2592,114 @@ describe.each(["tls", "net"])("%s server socket whose peer resets the connection
   });
 });
 
+// A TLS socket built over a connected net.Socket shares its fd with it, and the reset reaches the
+// wrapped socket first. Its 'close' must not take the TLS socket down while that one holds the
+// error behind unread bytes. Windows discards the receive queue on a reset.
+describe.skipIf(isWindows)("TLS socket over a net.Socket whose peer resets behind unread data", () => {
+  const tick = () => new Promise<void>(resolve => setImmediate(resolve));
+  const chunk = Buffer.alloc(64 * 1024, "r");
+  const tail = Buffer.alloc(1024, "t");
+
+  // Fills the paused socket to its highWaterMark, so that its reads stop, then sends a tail and
+  // resets. Only the read that takes the queued bytes off the socket ahead of the error reads
+  // the tail, so bytesRead tells that the reset has arrived.
+  async function fillThenReset(socket: TLSSocket, peer: Bun.Socket) {
+    expect(peer.write(chunk)).toBe(chunk.length);
+    while (socket.readableLength < socket.readableHighWaterMark) await tick();
+    expect(peer.write(tail)).toBe(tail.length);
+    peer.terminate();
+    while (socket.bytesRead < chunk.length + tail.length) await tick();
+  }
+
+  function watch(socket: TLSSocket) {
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    socket.on("end", () => events.push("end"));
+    socket.on("error", error => {
+      const { code, syscall } = error as NodeJS.ErrnoException;
+      events.push(`error ${code} ${syscall}`);
+    });
+    socket.on("close", hadError => {
+      events.push(`close hadError=${hadError}`);
+      closed.resolve();
+    });
+    return { events, closed: closed.promise };
+  }
+
+  it("tls.connect({ socket }) delivers the unread bytes, then ECONNRESET", async () => {
+    const peerReady = Promise.withResolvers<Bun.Socket>();
+    using listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: COMMON_CERT,
+      socket: { data: peer => peerReady.resolve(peer), close() {}, error() {} },
+    });
+    const conn = net.connect(listener.port, "127.0.0.1");
+    conn.on("error", () => {});
+    await once(conn, "connect");
+    const socket = connect({ socket: conn, ca: COMMON_CERT.cert, servername: "localhost" });
+    const { events, closed } = watch(socket);
+    try {
+      await once(socket, "secureConnect");
+      socket.pause();
+      socket.write("go");
+      await fillThenReset(socket, await peerReady.promise);
+      expect(events).toEqual([]);
+      let received = 0;
+      socket.on("data", data => (received += data.length));
+      socket.resume();
+      await closed;
+      expect({ events, received }).toEqual({
+        events: ["error ECONNRESET read", "close hadError=true"],
+        received: chunk.length + tail.length,
+      });
+    } finally {
+      socket.destroy();
+    }
+  });
+
+  it("new TLSSocket(socket, { isServer }) fails a write with ECONNRESET while the bytes are unread", async () => {
+    const accepted = Promise.withResolvers<TLSSocket>();
+    const server = net.createServer(conn => {
+      conn.on("error", () => {});
+      const socket = new TLSSocket(conn, { isServer: true, ...COMMON_CERT });
+      socket.pause();
+      accepted.resolve(socket);
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const peerReady = Promise.withResolvers<void>();
+    const peer = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: (server.address() as AddressInfo).port,
+      tls: { ca: COMMON_CERT.cert },
+      socket: {
+        handshake: (_peer, success, verifyError) =>
+          success ? peerReady.resolve() : peerReady.reject(verifyError ?? new Error("handshake failed")),
+        data() {},
+        close() {},
+        error: (_peer, error) => peerReady.reject(error),
+        connectError: (_peer, error) => peerReady.reject(error),
+      },
+    });
+    const socket = await accepted.promise;
+    const { events, closed } = watch(socket);
+    try {
+      await peerReady.promise;
+      await fillThenReset(socket, peer);
+      expect(events).toEqual([]);
+      socket.write("late", error => {
+        const { code, syscall } = (error ?? {}) as NodeJS.ErrnoException;
+        events.push(`write ${code} ${syscall}`);
+      });
+      await closed;
+      expect(events).toEqual(["write ECONNRESET write", "error ECONNRESET write", "close hadError=true"]);
+    } finally {
+      socket.destroy();
+      server.close();
+    }
+  });
+});
+
 describe.each(["tls", "net"])("%s server socket that unpipe() paused after it end()ed", transport => {
   // A front server pipes each accepted socket to an upstream connection and back.
   // The upstream replies and closes: inner.pipe(sock) end()s sock, and the cleanup

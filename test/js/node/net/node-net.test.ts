@@ -1788,6 +1788,21 @@ describe.concurrent("read-stopped socket whose peer resets behind unread data", 
     expect(exitCode).toBe(0);
   });
 
+  // Node's read() restarts the handle, and so meets the reset, once what stays buffered is below the highWaterMark.
+  it.skipIf(isWindows)("reports the reset to a read(n) that takes only a part of the bytes", async () => {
+    const { result, exitCode } = await run(`
+      pausedClient({}, writeThenReset, s =>
+        afterReset(s, TOTAL, () => events.push("read " + s.read(TOTAL - 4000).length)),
+      );
+    `);
+    expect(result).toEqual({
+      events: ["read 16000", "error ECONNRESET read", "close true"],
+      received: 0,
+      bytesRead: 20000,
+    });
+    expect(exitCode).toBe(0);
+  });
+
   it.skipIf(isWindows)("fails a write on the reset while the bytes are still unread", async () => {
     const { result, exitCode } = await run(`
       pausedClient({}, writeThenReset, s =>

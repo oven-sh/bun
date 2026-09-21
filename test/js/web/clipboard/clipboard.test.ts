@@ -843,8 +843,7 @@ const HELPERS: Helper[] = ["xclip", "xsel", "wl-paste", "wl-copy"];
 
 const NO_DISPLAY =
   "NotAllowedError: The clipboard requires a Wayland or X11 display, but neither $WAYLAND_DISPLAY nor $DISPLAY is set.";
-const NO_HELPER =
-  "NotAllowedError: No clipboard helper was found. Install `wl-clipboard` (Wayland), `xclip`, or `xsel` (X11).";
+const NO_HELPER = "NotAllowedError: No clipboard helper was found. Install `wl-clipboard` (Wayland) or `xclip` (X11).";
 const HELPER_FAILED = "NotAllowedError: The clipboard helper program failed to access the clipboard.";
 
 // Available to every child script: settle a promise into something JSON can
@@ -945,7 +944,6 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
           read: await settle(navigator.clipboard.read()),
           writeText: await settle(navigator.clipboard.writeText("x")),
           write: await settle(navigator.clipboard.write([new ClipboardItem({ "text/plain": "x" })])),
-          leftovers: leftovers(),
         });
       `,
       // An empty $DISPLAY counts as unset.
@@ -957,7 +955,6 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
         read: { error: NO_DISPLAY },
         writeText: { error: NO_DISPLAY },
         write: { error: NO_DISPLAY },
-        leftovers: [],
       },
       log: [],
     });
@@ -972,7 +969,6 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
           read: await settle(navigator.clipboard.read()),
           writeText: await settle(navigator.clipboard.writeText("x")),
           write: await settle(navigator.clipboard.write([new ClipboardItem({ "text/html": "<b>x</b>" })])),
-          leftovers: leftovers(),
         });
       `,
       // Both displays, so every Wayland and X11 candidate is tried; the
@@ -985,7 +981,6 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
         read: { error: NO_HELPER },
         writeText: { error: NO_HELPER },
         write: { error: NO_HELPER },
-        leftovers: [],
       },
       log: [
         "wl-paste --no-newline --type text",
@@ -996,7 +991,6 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
         "xsel --clipboard --output",
         "wl-copy --type text/plain;charset=utf-8",
         "xclip -selection clipboard -in",
-        "xsel --clipboard --input",
         "wl-copy --type text/html",
         "xclip -selection clipboard -t text/html -in",
       ],
@@ -1038,7 +1032,6 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
             navigator.clipboard.write([new ClipboardItem({ "text/html": "<b>hi</b>" })]),
             () => received("wl-copy-received"),
           ),
-          leftovers: leftovers(),
         });
       `,
       { WAYLAND_DISPLAY: "wayland-0" },
@@ -1050,7 +1043,6 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
         read: { ok: [["text/plain"]] },
         writeText: { ok: "hello" },
         writeHtml: { ok: "<b>hi</b>" },
-        leftovers: [],
       },
       log: [
         "wl-paste --no-newline --type text",
@@ -1104,35 +1096,38 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
     );
     expect({ result, log }).toEqual({
       result: { readText, read, writeText: { error: HELPER_FAILED } },
-      log: [...reads, "xclip -selection clipboard -in", "xsel --clipboard --input"],
+      log: [...reads, "xclip -selection clipboard -in"],
     });
   });
 
   test("a helper that dies is skipped in favor of the next candidate", async () => {
     const { result, log } = await runWithHelpers(
       {
-        xclip: "kill -TERM $$",
-        xsel: `case "$*" in *--output*) printf 'from xsel' ;; *) cat > "$CLIP_DIR/xsel-received" ;; esac`,
+        "wl-copy": "kill -TERM $$",
+        xclip: `case "$*" in *-out*) kill -TERM $$ ;; *) cat > "$CLIP_DIR/xclip-received" ;; esac`,
+        xsel: "printf 'from xsel'",
       },
       `
         print({
           readText: await settle(navigator.clipboard.readText()),
-          writeText: await settle(navigator.clipboard.writeText("via xsel"), () => received("xsel-received")),
+          writeText: await settle(navigator.clipboard.writeText("via xclip"), () => received("xclip-received")),
         });
       `,
+      { WAYLAND_DISPLAY: "wayland-0" },
     );
     expect({ result, log }).toEqual({
-      result: { readText: { ok: "from xsel" }, writeText: { ok: "via xsel" } },
+      result: { readText: { ok: "from xsel" }, writeText: { ok: "via xclip" } },
       log: [
+        "wl-paste --no-newline --type text",
         "xclip -selection clipboard -out",
         "xsel --clipboard --output",
+        "wl-copy --type text/plain;charset=utf-8",
         "xclip -selection clipboard -in",
-        "xsel --clipboard --input",
       ],
     });
   });
 
-  test("when every candidate dies the failure is reported and nothing is left behind", async () => {
+  test("when every candidate dies the failure is reported", async () => {
     const { result } = await runWithHelpers(
       { xclip: "kill -KILL $$", xsel: "kill -KILL $$" },
       `
@@ -1141,7 +1136,6 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
           read: await settle(navigator.clipboard.read()),
           writeText: await settle(navigator.clipboard.writeText("x")),
           writeHtml: await settle(navigator.clipboard.write([new ClipboardItem({ "text/html": "<b>x</b>" })])),
-          leftovers: leftovers(),
         });
       `,
     );
@@ -1150,7 +1144,6 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
       read: { error: HELPER_FAILED },
       writeText: { error: HELPER_FAILED },
       writeHtml: { error: HELPER_FAILED },
-      leftovers: [],
     });
   });
 
@@ -1226,8 +1219,7 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
   // the job's completion unrun, which has to release the request's promise on
   // the worker's own thread. Any fault on that path aborts the child (debug
   // assertions, ASAN) instead of exiting 0; the parent's own write afterwards
-  // shows the backend is still usable, and the orphaned write still removed
-  // its staged file.
+  // shows the backend is still usable.
   test("terminating a worker with a write in flight releases the op cleanly", async () => {
     const { result, log } = await runWithHelpers(
       {
@@ -1246,13 +1238,13 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
         worker.terminate();
         writeFileSync(CLIP_DIR + "/release", "");
         await closed;
-        print({ after: await settle(navigator.clipboard.writeText("after")), leftovers: leftovers() });
+        print({ after: await settle(navigator.clipboard.writeText("after")) });
       `,
       {},
       { "worker.js": `navigator.clipboard.writeText("from the worker").catch(() => {});` },
     );
     expect({ result, log }).toEqual({
-      result: { after: {}, leftovers: [] },
+      result: { after: {} },
       log: ["xclip -selection clipboard -in", "xclip -selection clipboard -in"],
     });
   });

@@ -1482,8 +1482,8 @@ interface Navigator {
    * Supported representations on every platform: `text/plain`,
    * `text/html`, and `image/png`.
    *
-   * On Linux this drives `wl-paste`/`wl-copy` (Wayland), `xclip`, or `xsel`
-   * (text only), so one of those must be installed and `$WAYLAND_DISPLAY` or
+   * On Linux this drives `wl-paste`/`wl-copy` (Wayland) or `xclip`, with
+   * `xsel` as a fallback for reading text, so one of those must be installed and `$WAYLAND_DISPLAY` or
    * `$DISPLAY` must be set; otherwise the methods reject with a
    * `"NotAllowedError"` `DOMException`.
    *
@@ -1583,7 +1583,7 @@ declare var Clipboard: Bun.__internal.UseLibDomIfAvailable<
  * [MDN](https://developer.mozilla.org/en-US/docs/Web/API/ClipboardItem)
  *
  * Bun supports `text/plain`, `text/html`, and `image/png` on every
- * platform (on Linux, `xsel` handles text only).
+ * platform (on Linux, `xsel` only reads text).
  */
 interface ClipboardItem {
   /** The MIME types this item holds, in insertion order (frozen). */

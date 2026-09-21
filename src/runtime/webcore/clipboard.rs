@@ -192,7 +192,7 @@ impl Unavailable {
             }
             #[cfg(not(any(target_os = "macos", windows)))]
             Unavailable::NoHelper => {
-                b"No clipboard helper was found. Install `wl-clipboard` (Wayland), `xclip`, or `xsel` (X11)."
+                b"No clipboard helper was found. Install `wl-clipboard` (Wayland) or `xclip` (X11)."
             }
             #[cfg(not(any(target_os = "macos", windows)))]
             Unavailable::HelperFailed => b"The clipboard helper program failed to access the clipboard.",
@@ -674,7 +674,7 @@ mod platform {
     }
 }
 
-// ─── everything else: `wl-clipboard`, `xclip`, or `xsel` (text only) ────────
+// ─── everything else: `wl-clipboard`, `xclip`, or `xsel` (reading text) ─────
 #[cfg(not(any(target_os = "macos", windows)))]
 mod platform {
     use bun_core::{env_var, strings};
@@ -760,7 +760,7 @@ mod platform {
                 (Helper::Xclip, Mime::ImagePng) => {
                     &["xclip", "-selection", "clipboard", "-t", "image/png", "-in"]
                 }
-                (Helper::Xsel, Mime::TextPlain) => &["xsel", "--clipboard", "--input"],
+                // xsel exits before its daemon owns the selection, so a write would resolve early.
                 (Helper::Xsel, _) => return None,
             })
         }

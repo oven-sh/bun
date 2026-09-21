@@ -1388,7 +1388,6 @@ impl GetAddrInfoRequest {
             let retcode = (*uv_info).retcode.int();
             bun_output::scoped_log!(GetAddrInfoRequest, "onLibUVComplete: status={}", retcode);
             let this: *mut Self = (*uv_info).data.cast();
-            #[cfg(windows)]
             debug_assert!(uv_info == core::ptr::from_mut((*this).backend.as_libc_uv_mut()));
 
             // On Windows, libuv's `uv_getaddrinfo` calls `GetAddrInfoW` then

@@ -5244,7 +5244,6 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
         ) {
             bun_sys::Result::Ok(result) => result,
             bun_sys::Result::Err(err) => {
-                #[cfg(not(windows))]
                 if err.get_errno() == bun_sys::E::ENOENT {
                     *_needs_async = true;
                     return JSValue::ZERO;
@@ -5275,7 +5274,6 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
                 }
             }
             bun_sys::Result::Err(err) => {
-                #[cfg(not(windows))]
                 if err.get_errno() == bun_sys::E::EAGAIN {
                     *_needs_async = true;
                     return JSValue::ZERO;
@@ -5291,12 +5289,6 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
     }
 
     if truncate {
-        #[cfg(windows)]
-        // SAFETY: fd is a valid open handle on this code path; FFI call.
-        unsafe {
-            bun_sys::windows::kernel32::SetEndOfFile(fd.native())
-        };
-        #[cfg(not(windows))]
         let _ = bun_sys::ftruncate(fd, i64::try_from(written).expect("int cast"));
     }
 

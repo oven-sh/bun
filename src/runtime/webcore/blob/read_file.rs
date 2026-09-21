@@ -811,119 +811,112 @@ impl ReadFile {
 
     #[cfg(not(windows))]
     fn do_read_loop(&mut self) {
-        #[cfg(not(windows))]
-        {
-            // we hold a 64 KB stack buffer incase the amount of data to
-            // be read is greater than the reported amount
-            //
-            // 64 KB is large, but since this is running in a thread
-            // with it's own stack, it should have sufficient space.
-            let mut stack_storage = bun_core::vec::UninitBuf::<{ 64 * 1024 }>::uninit();
-            // SAFETY: only `do_read` writes into it and only `stack_buffer[..read_amount]` is read back.
-            let stack_buffer = unsafe { stack_storage.as_bytes_mut() };
-            // `do_read` never touches `self.buffer`; move it out so the read
-            // target slice (which may point into its spare capacity) can be
-            // held as a safe `&mut [u8]` across the `&mut self` call.
-            let mut buffer = core::mem::take(&mut self.buffer);
-            while self.state.load(Ordering::Relaxed) == ClosingState::Running as u8 {
-                let (use_stack, buf) = Self::remaining_buffer(
-                    &mut buffer,
-                    stack_buffer,
-                    self.max_length,
-                    self.read_off,
-                );
+        // we hold a 64 KB stack buffer incase the amount of data to
+        // be read is greater than the reported amount
+        //
+        // 64 KB is large, but since this is running in a thread
+        // with it's own stack, it should have sufficient space.
+        let mut stack_storage = bun_core::vec::UninitBuf::<{ 64 * 1024 }>::uninit();
+        // SAFETY: only `do_read` writes into it and only `stack_buffer[..read_amount]` is read back.
+        let stack_buffer = unsafe { stack_storage.as_bytes_mut() };
+        // `do_read` never touches `self.buffer`; move it out so the read
+        // target slice (which may point into its spare capacity) can be
+        // held as a safe `&mut [u8]` across the `&mut self` call.
+        let mut buffer = core::mem::take(&mut self.buffer);
+        while self.state.load(Ordering::Relaxed) == ClosingState::Running as u8 {
+            let (use_stack, buf) =
+                Self::remaining_buffer(&mut buffer, stack_buffer, self.max_length, self.read_off);
 
-                if !buf.is_empty() && self.errno.is_none() && !self.read_eof {
-                    let mut read_amount: usize = 0;
-                    let mut retry = false;
-                    let continue_reading = self.do_read(buf, &mut read_amount, &mut retry);
+            if !buf.is_empty() && self.errno.is_none() && !self.read_eof {
+                let mut read_amount: usize = 0;
+                let mut retry = false;
+                let continue_reading = self.do_read(buf, &mut read_amount, &mut retry);
 
-                    // We might read into the stack buffer, so we need to copy it into the heap.
-                    if use_stack {
-                        // `do_read` initialized exactly `stack_buffer[..read_amount]` (0 on error/retry).
-                        let read = &stack_buffer[..read_amount];
-                        if buffer.capacity() == 0 {
-                            // We need to allocate a new buffer
-                            // In this case, we want to use `ensureTotalCapacityPrecise` so that it's an exact amount
-                            // We want to avoid over-allocating incase it's a large amount of data sent in a single chunk followed by a 0 byte chunk.
-                            buffer.reserve_exact(read.len());
-                        } else {
-                            buffer.reserve(read.len());
-                        }
-                        buffer.extend_from_slice(read);
+                // We might read into the stack buffer, so we need to copy it into the heap.
+                if use_stack {
+                    // `do_read` initialized exactly `stack_buffer[..read_amount]` (0 on error/retry).
+                    let read = &stack_buffer[..read_amount];
+                    if buffer.capacity() == 0 {
+                        // We need to allocate a new buffer
+                        // In this case, we want to use `ensureTotalCapacityPrecise` so that it's an exact amount
+                        // We want to avoid over-allocating incase it's a large amount of data sent in a single chunk followed by a 0 byte chunk.
+                        buffer.reserve_exact(read.len());
                     } else {
-                        // record the amount of data read
-                        // SAFETY: read() wrote `read_amount` initialized bytes into spare capacity.
-                        unsafe { bun_core::vec::commit_spare(&mut buffer, read_amount) };
+                        buffer.reserve(read.len());
                     }
-                    // - If they DID set a max length, we should stop
-                    //   reading after that.
-                    //
-                    // - If they DID NOT set a max_length, then it will
-                    //   be Blob.max_size which is an impossibly large
-                    //   amount to read.
-                    if !self.read_eof && buffer.len() >= self.max_length as usize {
-                        break;
-                    }
+                    buffer.extend_from_slice(read);
+                } else {
+                    // record the amount of data read
+                    // SAFETY: read() wrote `read_amount` initialized bytes into spare capacity.
+                    unsafe { bun_core::vec::commit_spare(&mut buffer, read_amount) };
+                }
+                // - If they DID set a max length, we should stop
+                //   reading after that.
+                //
+                // - If they DID NOT set a max_length, then it will
+                //   be Blob.max_size which is an impossibly large
+                //   amount to read.
+                if !self.read_eof && buffer.len() >= self.max_length as usize {
+                    break;
+                }
 
-                    if !continue_reading {
-                        // Stop reading, we errored
-                        break;
-                    }
+                if !continue_reading {
+                    // Stop reading, we errored
+                    break;
+                }
 
-                    // If it's not a regular file, it might be something
-                    // which would block on the next read. So we should
-                    // avoid immediately reading again until the next time
-                    // we're scheduled to read.
-                    //
-                    // An example of where this happens is stdin.
-                    //
-                    //    await Bun.stdin.text();
-                    //
-                    // If we immediately call read(), it will block until stdin is
-                    // readable.
-                    if retry
-                        || (self.could_block
+                // If it's not a regular file, it might be something
+                // which would block on the next read. So we should
+                // avoid immediately reading again until the next time
+                // we're scheduled to read.
+                //
+                // An example of where this happens is stdin.
+                //
+                //    await Bun.stdin.text();
+                //
+                // If we immediately call read(), it will block until stdin is
+                // readable.
+                if retry
+                    || (self.could_block
                         // If we received EOF, we can skip the poll() system
                         // call. We already know it's done.
                         && !self.read_eof)
-                    {
-                        if self.could_block
+                {
+                    if self.could_block
                         // If we received EOF, we can skip the poll() system
                         // call. We already know it's done.
                         && !self.read_eof
-                        {
-                            match bun_core::is_readable(self.opened_fd) {
-                                bun_core::Pollable::NotReady => {}
-                                bun_core::Pollable::Ready | bun_core::Pollable::Hup => continue,
-                            }
+                    {
+                        match bun_core::is_readable(self.opened_fd) {
+                            bun_core::Pollable::NotReady => {}
+                            bun_core::Pollable::Ready | bun_core::Pollable::Hup => continue,
                         }
-                        self.read_eof = false;
-                        self.buffer = buffer;
-                        self.wait_for_readable();
-
-                        return;
                     }
+                    self.read_eof = false;
+                    self.buffer = buffer;
+                    self.wait_for_readable();
 
-                    // There can be more to read
-                    continue;
+                    return;
                 }
 
-                // -- We are done reading.
-                break;
-            }
-            self.buffer = buffer;
-
-            if self.system_error.is_some() {
-                self.buffer = Vec::new(); // clearAndFree
+                // There can be more to read
+                continue;
             }
 
-            // If we over-allocated by a lot, we should shrink the buffer to conserve memory.
-            if self.buffer.len() + 16_000 < self.buffer.capacity() {
-                self.buffer.shrink_to_fit();
-            }
-            self.on_finish();
+            // -- We are done reading.
+            break;
         }
+        self.buffer = buffer;
+
+        if self.system_error.is_some() {
+            self.buffer = Vec::new(); // clearAndFree
+        }
+
+        // If we over-allocated by a lot, we should shrink the buffer to conserve memory.
+        if self.buffer.len() + 16_000 < self.buffer.capacity() {
+            self.buffer.shrink_to_fit();
+        }
+        self.on_finish();
     }
 }
 

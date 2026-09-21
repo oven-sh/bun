@@ -54,7 +54,7 @@ pub use keep_alive::KeepAlive;
 //                  process object is signaled (i.e. has terminated).
 // Downstream code calls `install()` / `enable()` / `is_enabled()`
 // unconditionally, so both arms expose the same surface.
-#[cfg(not(windows))]
+#[cfg(unix)]
 #[path = "ParentDeathWatchdog.rs"]
 pub mod parent_death_watchdog;
 #[cfg(windows)]

@@ -219,9 +219,7 @@ pub(crate) const LONG_PATH_PREFIX: [u16; 4] =
 pub(crate) const NT_OBJECT_PREFIX_U8: [u8; 4] = *b"\\??\\";
 pub const LONG_PATH_PREFIX_U8: [u8; 4] = *b"\\\\?\\";
 
-#[cfg(windows)]
 pub use bun_paths::PathBuffer;
-#[cfg(windows)]
 pub use bun_paths::WPathBuffer;
 
 pub use bun_windows_sys::HANDLE;
@@ -1753,11 +1751,6 @@ pub(crate) fn spawn_watcher_child(
 /// broke when I just used it. Not sure. ... but this works!
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__LoadLibraryBunString(str_: &bun_core::String) -> *mut c_void {
-    #[cfg(not(windows))]
-    {
-        compile_error!("unreachable");
-    }
-
     let mut buf = bun_paths::w_path_buffer_pool::get();
     // The path is JS-supplied; over-length input must surface as the same
     // `null + GetLastError()` shape `LoadLibraryExW` itself would yield, not

@@ -635,7 +635,6 @@ pub mod posix_spawn {
             || cfg!(target_os = "freebsd")
             || (cfg!(target_os = "macos") && (pty_slave_fd >= 0 || uid.is_some() || gid.is_some()));
 
-        #[cfg(unix)]
         if use_bun_spawn {
             return spawn_bun(
                 path,
@@ -724,42 +723,6 @@ pub mod posix_spawn {
         // Windows path (uses different mechanism)
         // Gated not(unix) because `actions`/`attr` here are PosixSpawnActions/PosixSpawnAttr
         // fields; on unix the Actions/Attr aliases resolve to bun_spawn::* which lack `.attr`.
-        #[cfg(not(unix))]
-        {
-            let mut pid: pid_t = 0;
-            // SAFETY: all pointers valid; argv/envp NULL-terminated
-            let rc = unsafe {
-                system::posix_spawn(
-                    &mut pid,
-                    path.as_ptr(),
-                    actions.map_or(ptr::null(), |a| &a.actions),
-                    attr.map_or(ptr::null(), |a| &a.attr),
-                    argv,
-                    envp,
-                )
-            };
-            if cfg!(debug_assertions) {
-                sys::syslog!(
-                    "posix_spawn({}) = {} ({})",
-                    bstr::BStr::new(path.to_bytes()),
-                    rc,
-                    pid
-                );
-            }
-
-            // Unlike most syscalls, posix_spawn returns 0 on success and an errno on failure.
-            // That is why bun.sys.getErrno() is not used here, since that checks for -1.
-            if rc == 0 {
-                return sys::Result::Ok(pid);
-            }
-
-            sys::Result::Err(sys::Error {
-                errno: rc as sys::ErrorInt,
-                syscall: SYSCALL_POSIX_SPAWN,
-                path: path.to_bytes().into(),
-                ..Default::default()
-            })
-        }
     }
 
     /// Same as waitpid, but also returns resource usage information.

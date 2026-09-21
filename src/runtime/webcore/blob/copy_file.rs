@@ -36,7 +36,6 @@ use core::marker::ConstParamTy;
 
 #[cfg(not(windows))]
 pub(crate) struct CopyFile {
-    #[cfg(not(windows))]
     pub(crate) destination_file_store: store::File,
     pub(crate) source_file_store: store::File,
     // `RefPtr<Store>` is the thread-safe refcounted handle;
@@ -45,11 +44,8 @@ pub(crate) struct CopyFile {
     pub(crate) store: Option<RefPtr<Store>>,
     pub(crate) source_store: Option<RefPtr<Store>>,
     pub offset: SizeType,
-    #[cfg(not(windows))]
     pub(crate) max_length: SizeType,
-    #[cfg(not(windows))]
     pub(crate) destination_fd: Fd,
-    #[cfg(not(windows))]
     pub(crate) source_fd: Fd,
 
     pub(crate) system_error: Option<SystemError>,
@@ -57,7 +53,6 @@ pub(crate) struct CopyFile {
     pub(crate) read_len: SizeType,
 
     pub(crate) mkdirp_if_not_exists: bool,
-    #[cfg(not(windows))]
     pub(crate) destination_mode: Option<Mode>,
 }
 
@@ -98,7 +93,6 @@ impl jsc::JobContext for CopyFile {
 #[cfg(not(windows))]
 impl CopyFile {
     /// Schedule the copy on the work pool; returns its promise.
-    #[cfg(not(windows))]
     pub(crate) fn create(
         store: RefPtr<Store>,
         source_store: RefPtr<Store>,
@@ -129,7 +123,6 @@ impl CopyFile {
         value
     }
 
-    #[cfg(not(windows))]
     pub(crate) fn reject(
         &mut self,
         promise: &mut JSPromise,
@@ -157,7 +150,6 @@ impl CopyFile {
         promise.reject(global_this, Ok(instance))
     }
 
-    #[cfg(not(windows))]
     pub(crate) fn then(
         &mut self,
         promise: &mut JSPromise,
@@ -175,7 +167,6 @@ impl CopyFile {
         )
     }
 
-    #[cfg(not(windows))]
     pub(crate) fn do_close(&mut self) {
         let close_input = !matches!(
             self.destination_file_store.pathlike,
@@ -208,7 +199,6 @@ impl CopyFile {
         }
     }
 
-    #[cfg(not(windows))]
     pub(crate) fn do_close_file<const WHICH: IOWhich>(&mut self) {
         match WHICH {
             IOWhich::Both => {
@@ -224,7 +214,6 @@ impl CopyFile {
         }
     }
 
-    #[cfg(not(windows))]
     pub(crate) fn do_open_file<const WHICH: IOWhich>(&mut self) -> Result<(), crate::Error> {
         let mut path_buf1 = bun_paths::path_buffer_pool::get();
         // open source file first
@@ -624,345 +613,337 @@ impl CopyFile {
         Ok(())
     }
 
-    #[cfg(not(windows))]
     pub(crate) fn run_async(&mut self) {
-        #[cfg(windows)]
-        {
-            return; // why
+        #[cfg(target_os = "macos")]
+        let mut stat_: Option<Stat> = None;
+        #[cfg(not(target_os = "macos"))]
+        let stat_: Option<Stat> = None;
+
+        if let PathOrFileDescriptor::Fd(fd) = &self.destination_file_store.pathlike {
+            self.destination_fd = *fd;
         }
-        #[cfg(not(windows))]
-        {
+
+        if let PathOrFileDescriptor::Fd(fd) = &self.source_file_store.pathlike {
+            self.source_fd = *fd;
+        }
+
+        // Do we need to open both files?
+        if self.destination_fd == Fd::INVALID && self.source_fd == Fd::INVALID {
+            // First, we attempt to clonefile() on macOS
+            // This is the fastest way to copy a file.
             #[cfg(target_os = "macos")]
-            let mut stat_: Option<Stat> = None;
-            #[cfg(not(target_os = "macos"))]
-            let stat_: Option<Stat> = None;
-
-            if let PathOrFileDescriptor::Fd(fd) = &self.destination_file_store.pathlike {
-                self.destination_fd = *fd;
-            }
-
-            if let PathOrFileDescriptor::Fd(fd) = &self.source_file_store.pathlike {
-                self.source_fd = *fd;
-            }
-
-            // Do we need to open both files?
-            if self.destination_fd == Fd::INVALID && self.source_fd == Fd::INVALID {
-                // First, we attempt to clonefile() on macOS
-                // This is the fastest way to copy a file.
-                #[cfg(target_os = "macos")]
-                {
-                    if self.offset == 0
-                        && matches!(
-                            self.source_file_store.pathlike,
-                            PathOrFileDescriptor::Path(_)
-                        )
-                        && matches!(
-                            self.destination_file_store.pathlike,
-                            PathOrFileDescriptor::Path(_)
-                        )
-                    {
-                        'do_clonefile: {
-                            let mut path_buf = bun_paths::path_buffer_pool::get();
-
-                            // stat the output file, make sure it:
-                            // 1. Exists
-                            match bun_sys::stat(
-                                self.source_file_store
-                                    .pathlike
-                                    .path()
-                                    .slice_z(&mut path_buf),
-                            ) {
-                                bun_sys::Result::Ok(result) => {
-                                    stat_ = Some(result);
-
-                                    if bun_sys::S::ISDIR(result.st_mode as u32) {
-                                        self.system_error = Some(unsupported_directory_error());
-                                        return;
-                                    }
-
-                                    if !bun_sys::S::ISREG(result.st_mode as u32) {
-                                        break 'do_clonefile;
-                                    }
-                                }
-                                bun_sys::Result::Err(err) => {
-                                    // If we can't stat it, we also can't copy it.
-                                    self.system_error = Some(err.to_system_error());
-                                    return;
-                                }
-                            }
-
-                            match self.do_clonefile() {
-                                Ok(()) => {
-                                    let stat_size = stat_.unwrap().st_size;
-                                    if self.max_length != MAX_SIZE
-                                        && self.max_length
-                                            < SizeType::try_from(stat_size).expect("int cast")
-                                    {
-                                        // If this fails...well, there's not much we can do about it.
-                                        // SAFETY: NUL-terminated path in path_buf; libc truncate(2).
-                                        let _ = unsafe {
-                                            bun_sys::c::truncate(
-                                                self.destination_file_store
-                                                    .pathlike
-                                                    .path()
-                                                    .slice_z(&mut path_buf)
-                                                    .as_ptr(),
-                                                i64::try_from(self.max_length).expect("int cast"),
-                                            )
-                                        };
-                                        self.read_len =
-                                            SizeType::try_from(self.max_length).expect("int cast");
-                                    } else {
-                                        self.read_len =
-                                            SizeType::try_from(stat_size).expect("int cast");
-                                    }
-                                    // Apply destination mode if specified (clonefile copies source permissions)
-                                    if let Some(mode) = self.destination_mode {
-                                        match bun_sys::chmod(
-                                            self.destination_file_store
-                                                .pathlike
-                                                .path()
-                                                .slice_z(&mut path_buf),
-                                            mode,
-                                        ) {
-                                            bun_sys::Result::Err(err) => {
-                                                self.system_error = Some(err.to_system_error());
-                                                return;
-                                            }
-                                            bun_sys::Result::Ok(()) => {}
-                                        }
-                                    }
-                                    return;
-                                }
-                                Err(_) => {
-                                    // this may still fail, in which case we just continue trying with fcopyfile
-                                    // it can fail when the input file already exists
-                                    // or if the output is not a directory
-                                    // or if it's a network volume
-                                    self.system_error = None;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if self.do_open_file::<{ IOWhich::Both }>().is_err() {
-                    return;
-                }
-                // Do we need to open only one file?
-            } else if self.destination_fd == Fd::INVALID {
-                self.source_fd = self.source_file_store.pathlike.fd();
-
-                if self.do_open_file::<{ IOWhich::Destination }>().is_err() {
-                    return;
-                }
-                // Do we need to open only one file?
-            } else if self.source_fd == Fd::INVALID {
-                self.destination_fd = self.destination_file_store.pathlike.fd();
-
-                if self.do_open_file::<{ IOWhich::Source }>().is_err() {
-                    return;
-                }
-            }
-
-            if self.system_error.is_some() {
-                return;
-            }
-
-            debug_assert!(self.destination_fd.is_valid());
-            debug_assert!(self.source_fd.is_valid());
-
-            if matches!(
-                self.destination_file_store.pathlike,
-                PathOrFileDescriptor::Fd(_)
-            ) {
-                // nothing to do for the Fd case
-            }
-
-            let stat: Stat = match stat_ {
-                Some(s) => s,
-                None => match bun_sys::fstat(self.source_fd) {
-                    bun_sys::Result::Ok(result) => result,
-                    bun_sys::Result::Err(err) => {
-                        self.do_close();
-                        self.system_error = Some(err.to_system_error());
-                        return;
-                    }
-                },
-            };
-
-            if bun_sys::S::ISDIR(stat.st_mode as _) {
-                self.system_error = Some(unsupported_directory_error());
-                self.do_close();
-                return;
-            }
-
-            // BSD fstat on a pipe reports bytes currently buffered in st_size;
-            // only a regular-file st_size is a length.
-            if stat.st_size != 0 && bun_sys::S::ISREG(stat.st_mode as _) {
-                self.max_length = (SizeType::try_from(stat.st_size)
-                    .expect("int cast")
-                    .min(self.max_length))
-                .max(self.offset)
-                    - self.offset;
-                if self.max_length == 0 {
-                    self.do_close();
-                    return;
-                }
-
-                if PREALLOCATE_SUPPORTED
+            {
+                if self.offset == 0
+                    && matches!(
+                        self.source_file_store.pathlike,
+                        PathOrFileDescriptor::Path(_)
+                    )
                     && matches!(
                         self.destination_file_store.pathlike,
                         PathOrFileDescriptor::Path(_)
                     )
-                    && self.max_length > PREALLOCATE_LENGTH
-                    && self.max_length != MAX_SIZE
                 {
-                    let _ = bun_sys::preallocate_file(
-                        self.destination_fd.native(),
-                        0,
-                        self.max_length as i64,
-                    );
-                }
-            }
+                    'do_clonefile: {
+                        let mut path_buf = bun_paths::path_buffer_pool::get();
 
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            {
-                // Bun.write(Bun.file("a"), Bun.file("b"))
-                if bun_sys::S::ISREG(stat.st_mode as _)
-                    && (bun_sys::S::ISREG(self.destination_file_store.mode as _)
-                        || self.destination_file_store.mode == 0)
-                {
-                    if self.destination_file_store.is_atty.unwrap_or(false) {
-                        let _ = self.do_copy_file_range::<{ TryWith::CopyFileRange }, true>();
-                    } else {
-                        let _ = self.do_copy_file_range::<{ TryWith::CopyFileRange }, false>();
-                    }
+                        // stat the output file, make sure it:
+                        // 1. Exists
+                        match bun_sys::stat(
+                            self.source_file_store
+                                .pathlike
+                                .path()
+                                .slice_z(&mut path_buf),
+                        ) {
+                            bun_sys::Result::Ok(result) => {
+                                stat_ = Some(result);
 
-                    self.do_close();
-                    return;
-                }
+                                if bun_sys::S::ISDIR(result.st_mode as u32) {
+                                    self.system_error = Some(unsupported_directory_error());
+                                    return;
+                                }
 
-                // $ bun run foo.js | bun run bar.js
-                if bun_sys::S::ISFIFO(stat.st_mode as _)
-                    && bun_sys::S::ISFIFO(self.destination_file_store.mode as _)
-                {
-                    if self.destination_file_store.is_atty.unwrap_or(false) {
-                        let _ = self.do_copy_file_range::<{ TryWith::Splice }, true>();
-                    } else {
-                        let _ = self.do_copy_file_range::<{ TryWith::Splice }, false>();
-                    }
-
-                    self.do_close();
-                    return;
-                }
-
-                if bun_sys::S::ISREG(stat.st_mode as _)
-                    || bun_sys::S::ISCHR(stat.st_mode as _)
-                    || bun_sys::S::ISSOCK(stat.st_mode as _)
-                {
-                    if self.destination_file_store.is_atty.unwrap_or(false) {
-                        let _ = self.do_copy_file_range::<{ TryWith::Sendfile }, true>();
-                    } else {
-                        let _ = self.do_copy_file_range::<{ TryWith::Sendfile }, false>();
-                    }
-
-                    self.do_close();
-                    return;
-                }
-
-                self.system_error = Some(unsupported_non_regular_file_error());
-                self.do_close();
-                return;
-            }
-
-            #[cfg(target_os = "macos")]
-            {
-                // fcopyfile rewrites dest from offset 0 and the slice trim is
-                // ftruncate; both are only safe for a dest Bun opened O_TRUNC.
-                if matches!(
-                    self.destination_file_store.pathlike,
-                    PathOrFileDescriptor::Path(_)
-                ) {
-                    let copied = match self.do_fcopy_file_with_read_write_loop_fallback(
-                        u64::try_from(stat.st_size).expect("int cast"),
-                    ) {
-                        Ok(copied) => copied,
-                        Err(_) => {
-                            self.do_close();
-                            return;
+                                if !bun_sys::S::ISREG(result.st_mode as u32) {
+                                    break 'do_clonefile;
+                                }
+                            }
+                            bun_sys::Result::Err(err) => {
+                                // If we can't stat it, we also can't copy it.
+                                self.system_error = Some(err.to_system_error());
+                                return;
+                            }
                         }
-                    };
-                    if stat.st_size != 0
-                        && SizeType::try_from(stat.st_size).expect("int cast") > self.max_length
-                    {
-                        let _ = bun_sys::ftruncate(
-                            self.destination_fd,
-                            i64::try_from(self.max_length).expect("int cast"),
-                        );
-                        self.read_len = copied.min(self.max_length as u64) as SizeType;
-                    } else {
-                        self.read_len = copied as SizeType;
+
+                        match self.do_clonefile() {
+                            Ok(()) => {
+                                let stat_size = stat_.unwrap().st_size;
+                                if self.max_length != MAX_SIZE
+                                    && self.max_length
+                                        < SizeType::try_from(stat_size).expect("int cast")
+                                {
+                                    // If this fails...well, there's not much we can do about it.
+                                    // SAFETY: NUL-terminated path in path_buf; libc truncate(2).
+                                    let _ = unsafe {
+                                        bun_sys::c::truncate(
+                                            self.destination_file_store
+                                                .pathlike
+                                                .path()
+                                                .slice_z(&mut path_buf)
+                                                .as_ptr(),
+                                            i64::try_from(self.max_length).expect("int cast"),
+                                        )
+                                    };
+                                    self.read_len =
+                                        SizeType::try_from(self.max_length).expect("int cast");
+                                } else {
+                                    self.read_len =
+                                        SizeType::try_from(stat_size).expect("int cast");
+                                }
+                                // Apply destination mode if specified (clonefile copies source permissions)
+                                if let Some(mode) = self.destination_mode {
+                                    match bun_sys::chmod(
+                                        self.destination_file_store
+                                            .pathlike
+                                            .path()
+                                            .slice_z(&mut path_buf),
+                                        mode,
+                                    ) {
+                                        bun_sys::Result::Err(err) => {
+                                            self.system_error = Some(err.to_system_error());
+                                            return;
+                                        }
+                                        bun_sys::Result::Ok(()) => {}
+                                    }
+                                }
+                                return;
+                            }
+                            Err(_) => {
+                                // this may still fail, in which case we just continue trying with fcopyfile
+                                // it can fail when the input file already exists
+                                // or if the output is not a directory
+                                // or if it's a network volume
+                                self.system_error = None;
+                            }
+                        }
                     }
-                } else if self.do_read_write_loop_capped(self.max_length).is_err() {
+                }
+            }
+
+            if self.do_open_file::<{ IOWhich::Both }>().is_err() {
+                return;
+            }
+            // Do we need to open only one file?
+        } else if self.destination_fd == Fd::INVALID {
+            self.source_fd = self.source_file_store.pathlike.fd();
+
+            if self.do_open_file::<{ IOWhich::Destination }>().is_err() {
+                return;
+            }
+            // Do we need to open only one file?
+        } else if self.source_fd == Fd::INVALID {
+            self.destination_fd = self.destination_file_store.pathlike.fd();
+
+            if self.do_open_file::<{ IOWhich::Source }>().is_err() {
+                return;
+            }
+        }
+
+        if self.system_error.is_some() {
+            return;
+        }
+
+        debug_assert!(self.destination_fd.is_valid());
+        debug_assert!(self.source_fd.is_valid());
+
+        if matches!(
+            self.destination_file_store.pathlike,
+            PathOrFileDescriptor::Fd(_)
+        ) {
+            // nothing to do for the Fd case
+        }
+
+        let stat: Stat = match stat_ {
+            Some(s) => s,
+            None => match bun_sys::fstat(self.source_fd) {
+                bun_sys::Result::Ok(result) => result,
+                bun_sys::Result::Err(err) => {
                     self.do_close();
+                    self.system_error = Some(err.to_system_error());
                     return;
+                }
+            },
+        };
+
+        if bun_sys::S::ISDIR(stat.st_mode as _) {
+            self.system_error = Some(unsupported_directory_error());
+            self.do_close();
+            return;
+        }
+
+        // BSD fstat on a pipe reports bytes currently buffered in st_size;
+        // only a regular-file st_size is a length.
+        if stat.st_size != 0 && bun_sys::S::ISREG(stat.st_mode as _) {
+            self.max_length = (SizeType::try_from(stat.st_size)
+                .expect("int cast")
+                .min(self.max_length))
+            .max(self.offset)
+                - self.offset;
+            if self.max_length == 0 {
+                self.do_close();
+                return;
+            }
+
+            if PREALLOCATE_SUPPORTED
+                && matches!(
+                    self.destination_file_store.pathlike,
+                    PathOrFileDescriptor::Path(_)
+                )
+                && self.max_length > PREALLOCATE_LENGTH
+                && self.max_length != MAX_SIZE
+            {
+                let _ = bun_sys::preallocate_file(
+                    self.destination_fd.native(),
+                    0,
+                    self.max_length as i64,
+                );
+            }
+        }
+
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            // Bun.write(Bun.file("a"), Bun.file("b"))
+            if bun_sys::S::ISREG(stat.st_mode as _)
+                && (bun_sys::S::ISREG(self.destination_file_store.mode as _)
+                    || self.destination_file_store.mode == 0)
+            {
+                if self.destination_file_store.is_atty.unwrap_or(false) {
+                    let _ = self.do_copy_file_range::<{ TryWith::CopyFileRange }, true>();
+                } else {
+                    let _ = self.do_copy_file_range::<{ TryWith::CopyFileRange }, false>();
                 }
 
                 self.do_close();
                 return;
             }
 
-            #[cfg(target_os = "freebsd")]
+            // $ bun run foo.js | bun run bar.js
+            if bun_sys::S::ISFIFO(stat.st_mode as _)
+                && bun_sys::S::ISFIFO(self.destination_file_store.mode as _)
             {
-                if matches!(
-                    self.destination_file_store.pathlike,
-                    PathOrFileDescriptor::Path(_)
+                if self.destination_file_store.is_atty.unwrap_or(false) {
+                    let _ = self.do_copy_file_range::<{ TryWith::Splice }, true>();
+                } else {
+                    let _ = self.do_copy_file_range::<{ TryWith::Splice }, false>();
+                }
+
+                self.do_close();
+                return;
+            }
+
+            if bun_sys::S::ISREG(stat.st_mode as _)
+                || bun_sys::S::ISCHR(stat.st_mode as _)
+                || bun_sys::S::ISSOCK(stat.st_mode as _)
+            {
+                if self.destination_file_store.is_atty.unwrap_or(false) {
+                    let _ = self.do_copy_file_range::<{ TryWith::Sendfile }, true>();
+                } else {
+                    let _ = self.do_copy_file_range::<{ TryWith::Sendfile }, false>();
+                }
+
+                self.do_close();
+                return;
+            }
+
+            self.system_error = Some(unsupported_non_regular_file_error());
+            self.do_close();
+            return;
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            // fcopyfile rewrites dest from offset 0 and the slice trim is
+            // ftruncate; both are only safe for a dest Bun opened O_TRUNC.
+            if matches!(
+                self.destination_file_store.pathlike,
+                PathOrFileDescriptor::Path(_)
+            ) {
+                let copied = match self.do_fcopy_file_with_read_write_loop_fallback(
+                    u64::try_from(stat.st_size).expect("int cast"),
                 ) {
-                    let mut total_written: u64 = 0;
-                    match node_fs::NodeFS::copy_file_using_read_write_loop(
-                        bun_core::ZStr::EMPTY,
-                        bun_core::ZStr::EMPTY,
-                        self.source_fd,
+                    Ok(copied) => copied,
+                    Err(_) => {
+                        self.do_close();
+                        return;
+                    }
+                };
+                if stat.st_size != 0
+                    && SizeType::try_from(stat.st_size).expect("int cast") > self.max_length
+                {
+                    let _ = bun_sys::ftruncate(
                         self.destination_fd,
-                        0,
-                        &mut total_written,
-                    ) {
-                        bun_sys::Result::Err(err) => {
-                            self.system_error = Some(err.to_system_error());
-                            self.do_close();
-                            return;
-                        }
-                        bun_sys::Result::Ok(()) => {}
-                    }
-                    if stat.st_size != 0
-                        && SizeType::try_from(stat.st_size).expect("int cast") > self.max_length
-                    {
-                        let _ = bun_sys::ftruncate(
-                            self.destination_fd,
-                            i64::try_from(self.max_length).expect("int cast"),
-                        );
-                        self.read_len = total_written.min(self.max_length as u64) as SizeType;
-                    } else {
-                        self.read_len = total_written as SizeType;
-                    }
-                } else if self.do_read_write_loop_capped(self.max_length).is_err() {
-                    self.do_close();
-                    return;
+                        i64::try_from(self.max_length).expect("int cast"),
+                    );
+                    self.read_len = copied.min(self.max_length as u64) as SizeType;
+                } else {
+                    self.read_len = copied as SizeType;
                 }
+            } else if self.do_read_write_loop_capped(self.max_length).is_err() {
                 self.do_close();
                 return;
             }
 
-            #[cfg(not(any(
-                target_os = "linux",
-                target_os = "android",
-                target_os = "macos",
-                target_os = "freebsd"
-            )))]
-            {
-                compile_error!("TODO: implement copyfile");
+            self.do_close();
+            return;
+        }
+
+        #[cfg(target_os = "freebsd")]
+        {
+            if matches!(
+                self.destination_file_store.pathlike,
+                PathOrFileDescriptor::Path(_)
+            ) {
+                let mut total_written: u64 = 0;
+                match node_fs::NodeFS::copy_file_using_read_write_loop(
+                    bun_core::ZStr::EMPTY,
+                    bun_core::ZStr::EMPTY,
+                    self.source_fd,
+                    self.destination_fd,
+                    0,
+                    &mut total_written,
+                ) {
+                    bun_sys::Result::Err(err) => {
+                        self.system_error = Some(err.to_system_error());
+                        self.do_close();
+                        return;
+                    }
+                    bun_sys::Result::Ok(()) => {}
+                }
+                if stat.st_size != 0
+                    && SizeType::try_from(stat.st_size).expect("int cast") > self.max_length
+                {
+                    let _ = bun_sys::ftruncate(
+                        self.destination_fd,
+                        i64::try_from(self.max_length).expect("int cast"),
+                    );
+                    self.read_len = total_written.min(self.max_length as u64) as SizeType;
+                } else {
+                    self.read_len = total_written as SizeType;
+                }
+            } else if self.do_read_write_loop_capped(self.max_length).is_err() {
+                self.do_close();
+                return;
             }
+            self.do_close();
+            return;
+        }
+
+        #[cfg(not(any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "macos",
+            target_os = "freebsd"
+        )))]
+        {
+            compile_error!("TODO: implement copyfile");
         }
     }
 }

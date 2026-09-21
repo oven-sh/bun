@@ -337,6 +337,22 @@ writeCorpusFile(
   `var loaded = 0, failed = [];\n${librariesSource}\nconsole.log(loaded + " libraries, failed: " + JSON.stringify(failed));\n`,
 );
 
+// A `.jsc` next to a bundle is the encoder's payload followed by a 24-byte footer (payload length, wyhash of the
+// payload, magic) that the loader verifies before JSC sees any of it. The footer's hash covers the cache version that
+// fingerprint() masks, so these tests compare the payload alone and put a footer back around what they write.
+function sidecarFooter(payload: Uint8Array) {
+  const footer = Buffer.alloc(24);
+  footer.writeBigUInt64LE(BigInt(payload.byteLength), 0);
+  footer.writeBigUInt64LE(BigInt(Bun.hash.wyhash(payload)), 8);
+  footer.write("\0bun.jsc", 16, "latin1");
+  return footer;
+}
+function sidecarPayload(file: Buffer) {
+  const payload = file.subarray(0, -24);
+  expect(file.subarray(payload.length), "`.jsc` footer").toEqual(sidecarFooter(payload));
+  return payload;
+}
+
 async function bundle(
   outdir: string,
   entry: string,
@@ -358,7 +374,7 @@ async function bundle(
   const output = basename(entry).replace(/\.[cm]?js$/, ".js"); // the bundler names its output .js whatever the entry's extension
   expect(readdirSync(outdir).sort(), `${label} output files`).toEqual([output, output + ".jsc"]);
   const path = join(outdir, output);
-  return { path, js: readFileSync(path), jsc: readFileSync(path + ".jsc") };
+  return { path, js: readFileSync(path), jsc: sidecarPayload(readFileSync(path + ".jsc")) };
 }
 
 // Several tests read the same build: the snapshot test fingerprints it, the load test runs it, the reject tests spoil a
@@ -667,7 +683,9 @@ describe("bytecode cache portability", () => {
     expect(exitCode).toBe(0);
     const expected = hash(referenceJsc);
     const results: Record<string, string> = Object.fromEntries(conditionHashes);
-    results["Bun.build() after running other JS"] = hash(readFileSync(join(String(dir), "api", "features.js.jsc")));
+    results["Bun.build() after running other JS"] = hash(
+      sidecarPayload(readFileSync(join(String(dir), "api", "features.js.jsc"))),
+    );
     expect(results).toEqual(Object.fromEntries(Object.keys(results).map(k => [k, expected])));
 
     expect(Object.keys(internalModules).length).toBeGreaterThan(100);
@@ -752,6 +770,8 @@ describe("bytecode cache portability", () => {
 
   // A payload this build cannot use (written by an incompatible build, cut short, empty) must cost a parse, nothing more.
   // Bytes 0..3 are the entry header's cache version (GenericCacheEntry { cacheVersion; tag; reservedCalleeLocals }).
+  // Each spoiled payload gets a footer that verifies, so it is JSC that has to turn it down; bun-build-api.test.ts covers
+  // a footer that does not verify.
   const recordsBuild = corpusBuilds.find(({ entry, args }) => entry === "./records.js" && args.length === 0)!;
   for (const [variant, spoil] of [
     ["a different build's header", (jsc: Buffer) => ((jsc[1] ^= 0xff), jsc)],
@@ -762,7 +782,11 @@ describe("bytecode cache portability", () => {
       using dir = tempDir("bytecode-portable-reject", {});
       const { js, jsc } = await build(recordsBuild);
       writeFileSync(join(String(dir), "records.js"), js);
-      writeFileSync(join(String(dir), "records.js.jsc"), spoil(Buffer.from(jsc)));
+      const payload = spoil(Buffer.from(jsc));
+      writeFileSync(
+        join(String(dir), "records.js.jsc"),
+        payload.length ? Buffer.concat([payload, sidecarFooter(payload)]) : payload,
+      );
       await using proc = Bun.spawn({
         cmd: [bunExe(), join(String(dir), "records.js")],
         env: { ...bunEnv, BUN_JSC_verboseDiskCache: "1" },

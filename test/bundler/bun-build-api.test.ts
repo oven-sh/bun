@@ -262,7 +262,7 @@ describe("Bun.build", () => {
             + "module.exports = [p, t];\\n");
           const build = await Bun.build({ entrypoints: ["./" + file], outdir: "./out" + variant, target: "bun", format: "cjs", bytecode: true });
           if (!build.success) throw new AggregateError(build.logs);
-          return build.outputs.find(o => o.kind === "bytecode")!.size;
+          return build.outputs.find(o => o.kind === "bytecode")!.size - 24; // the encoder's payload, without the sidecar footer
         }
         const pageEnd = 64 * 1024;
         const n0 = 60000;

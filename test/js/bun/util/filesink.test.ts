@@ -625,15 +625,8 @@ it.skipIf(!isPosix)("writing after end() fails during flush does not crash", asy
   }
   expect(endErr).toBeDefined();
   // Previously this would attempt to write to an invalid fd and crash with a
-  // debug assertion. The sink has failed: a write reports the error it failed
-  // with, and nothing reaches the fd.
-  const outcome = (result: unknown) =>
-    Promise.resolve(result).then(
-      () => "resolved",
-      e => e.code,
-    );
-  expect(await outcome(writer.write("y"))).toBe("EBADF");
-  // Started again, with nothing to write to: that failure was the last run's.
+  // debug assertion; now it should behave as if the sink is closed.
+  expect(() => writer.write("y")).not.toThrow();
   expect(() => writer.start({})).not.toThrow();
   expect(() => writer.write("z")).not.toThrow();
   expect(() => writer.flush()).not.toThrow();

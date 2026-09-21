@@ -100,6 +100,14 @@ pub struct Execution {
     /// `t.skip()`/`t.todo()` mark lands there before the DoneCallback is
     /// stamped).
     pub(crate) on_stack_entry_data: core::cell::Cell<Option<super::bun_test::EntryData>>,
+    /// `bun_test::WaitingEntry`s on the stack holding `on_stack_entry`'s callback blocked,
+    /// so that while non-zero, JS reaching a matcher is a continuation, not that callback.
+    pub(crate) blocking_matcher_waits: core::cell::Cell<u32>,
+    /// The innermost on-stack `bun_test::WaitingEntry` reached from a continuation (the runner
+    /// live): the entry (or concurrent group) whose timeout it will turn into the matcher's error.
+    /// While the claim names the entry that is due, the timeout timer leaves that deadline to it
+    /// (`defers_timeout_to_matcher_wait`).
+    pub(crate) matcher_wait_claim: core::cell::Cell<Option<super::bun_test::RefDataValue>>,
 }
 
 pub struct ConcurrentGroup {
@@ -282,6 +290,8 @@ impl Execution {
             group_index: 0,
             on_stack_entry: core::cell::Cell::new(None),
             on_stack_entry_data: core::cell::Cell::new(None),
+            blocking_matcher_waits: core::cell::Cell::new(0),
+            matcher_wait_claim: core::cell::Cell::new(None),
         }
     }
 
@@ -302,6 +312,41 @@ impl Execution {
         // SAFETY: deref parent at point-of-use; `self` is not accessed while this `&mut BunTest` is live.
         unsafe { (*buntest).add_result(RefDataValue::Start) };
         Ok(())
+    }
+
+    /// `Some(deadline)` when a matcher wait on the stack claims the entry whose timeout would be
+    /// handled here; that wait turns the timeout into its own error, so stepping the runner past the
+    /// entry would only turn the failure into an outdated one (`Unhandled error between tests`, and a
+    /// spurious error for a test that passes on retry). Decided by identity, never by the clock: this
+    /// callback's clock and `step`'s are two samples, and a timer that fires inside the gap between
+    /// them (macOS rounds timers to the millisecond) would pass a clock check here as "not due yet"
+    /// and still step past the entry in `step`.
+    pub(crate) fn defers_timeout_to_matcher_wait(&mut self) -> Option<Timespec> {
+        use super::bun_test::RefDataValue;
+        let claim = self.matcher_wait_claim.get()?;
+        let claimed_entry = match claim {
+            RefDataValue::Execution { group_index, entry_data: None } => {
+                if group_index != self.group_index {
+                    return None;
+                }
+                let group = self.active_group_ref()?;
+                let mut executing = group.sequences(self).iter().filter(|sequence| sequence.executing);
+                let sequence = executing.next()?;
+                if executing.next().is_some() {
+                    return None;
+                }
+                sequence.active_entry
+            }
+            data @ RefDataValue::Execution { entry_data: Some(_), .. } => self
+                .get_current_and_valid_execution_sequence(&data)
+                // SAFETY: the sequence points into `self.sequences`; deref at point-of-use.
+                .and_then(|(sequence, _)| unsafe { sequence.as_ref() }.active_entry),
+            _ => return None,
+        };
+        // SAFETY: arena-owned entry, alive for the lifetime of BunTest.
+        let deadline = unsafe { claimed_entry?.as_ref() }.timespec;
+        // An entry with no deadline defers nothing: there is no timeout to leave to the wait.
+        if deadline.eql(&Timespec::EPOCH) { None } else { Some(deadline) }
     }
 
     /// The kill-only half of [`handle_timeout`]: reaps a timed-out test's spawned processes without touching the runner's queue, so it may run from inside `spawnSync`'s isolated loop.

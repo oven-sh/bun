@@ -150,11 +150,16 @@ export function write(this: Console & { $writer: ConsoleWriter | undefined }, in
 
   writer.flush(true);
   if (pending === undefined) return wrote;
-  if (pending.length === 1 && wrote === 0) return pending[0];
-  return Promise.all(pending).$then(counts => {
-    for (var j = 0; j < counts.length; j++) wrote += counts[j];
-    return wrote;
-  });
+  // Summed by hand: `Promise.all` is a property a script can replace. Every Promise after the first is marked
+  // handled, because its reaction is only attached once the ones before it have fulfilled; if one of those
+  // rejects instead, that is the error the caller gets, and this one's is not reported a second time.
+  var total = pending[0];
+  for (var j = 1; j < pending.length; j++) {
+    const next = pending[j];
+    $pokePromiseAsHandled(next);
+    total = total.$then(sum => next.$then(n => sum + n));
+  }
+  return wrote === 0 ? total : total.$then(n => wrote + n);
 }
 
 // This is the `console.Console` constructor. It is mostly copied from Node.

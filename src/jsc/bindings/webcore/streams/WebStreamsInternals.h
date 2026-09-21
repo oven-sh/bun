@@ -156,9 +156,9 @@ JSC::JSValue invokeOptionalMethod(JSC::JSGlobalObject*, JSC::JSObject*, const JS
 // pullPromise, error the controller"), and only this frame knows which controller that is.
 // nullptr only with a VM termination pending. userJS: yes — WebStreamsMisc.cpp
 JSC::JSPromise* invokeCallbackReturningPromise(JSC::JSGlobalObject*, JSC::JSObject* callback, JSC::JSValue thisValue, const JSC::MarkedArgumentBuffer&);
-// Same conversion, minus wrappers the internal reaction machinery does not need: nullptr with
-// nothing pending for a synchronous non-thenable result (the caller runs its fulfilment step
-// inline), and a vanilla JSPromise returned unwrapped. userJS: yes — WebStreamsMisc.cpp
+// Same conversion, minus the wrapper for a result that cannot be a thenable: nullptr with
+// nothing pending for a non-object result (the caller queues its fulfilment step as one
+// microtask, which is when the wrapper's reaction would run). userJS: yes — WebStreamsMisc.cpp
 JSC::JSPromise* invokeCallbackReturningPromiseFast(JSC::JSGlobalObject*, JSC::JSObject* callback, JSC::JSValue thisValue, const JSC::MarkedArgumentBuffer&);
 JSC::JSPromise* promiseResolvedWith(JSC::JSGlobalObject*, JSC::JSValue); // userJS: yes — WebStreamsMisc.cpp
 // "a promise rejected with r" (rejection never does a `then` lookup)

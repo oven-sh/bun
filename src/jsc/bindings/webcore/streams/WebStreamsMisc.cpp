@@ -421,11 +421,8 @@ JSPromise* invokeCallbackReturningPromiseFast(JSGlobalObject* globalObject, JSOb
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (!result.isObject()) [[likely]]
             return nullptr;
-        // A vanilla JSPromise with an unpatched .then needs no wrapper: callers use
-        // performPromiseThenWithContext (internal reactions), so skipping promiseResolvedWith's
-        // thenable adoption is unobservable. Subclasses / patched .then fall through.
-        if (auto* resultPromise = dynamicDowncast<JSC::JSPromise>(result); resultPromise && resultPromise->isThenFastAndNonObservable())
-            return resultPromise;
+        // A returned promise is NOT reacted to directly: adopting it takes two microtasks, and
+        // user code sees them (when the next pull()/write() runs relative to its own jobs).
         RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
     });
 }

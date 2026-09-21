@@ -108,3 +108,117 @@ test("writer.write() with a sync sink does not allocate a wrapper promise per ch
     exitCode: 0,
   });
 });
+
+// Only a result that cannot be a thenable may skip the wrapper. Web IDL converts what a
+// Promise-returning callback returns into "a new promise resolved with" it, and the stream reacts to
+// that new promise. Adopting a native promise takes two more microtasks than reacting to it
+// directly, and the source/sink observes them: they decide whether its own jobs run before or after
+// the stream calls it again.
+describe("a promise returned from pull() / write() is adopted, not reacted to directly", () => {
+  // `now` counts passes through the microtask queue.
+  function microtaskClock() {
+    let now = 0;
+    let running = true;
+    (function tick() {
+      now++;
+      if (running) queueMicrotask(tick);
+    })();
+    return {
+      get now() {
+        return now;
+      },
+      stop() {
+        running = false;
+      },
+    };
+  }
+  const distances = (calledAt: number[]) => calledAt.slice(1).map((at, i) => at - calledAt[i]);
+  // The callback is called at tick T and its promise settles `awaits` ticks later (at once with no
+  // await). The adoption job runs at T+1, the adopted promise settles one tick after the later of
+  // the two, and the stream's reaction (the next call) runs one tick after that.
+  const expectedDistance = (awaits: number) => Math.max(awaits, 1) + 2;
+
+  describe.each(["default", "bytes"] as const)("%s controller", kind => {
+    test.each([0, 1, 2])("async pull() with %d await(s)", async awaits => {
+      const clock = microtaskClock();
+      const calledAt: number[] = [];
+      const { promise: done, resolve } = Promise.withResolvers<void>();
+      new ReadableStream(
+        {
+          type: kind === "bytes" ? "bytes" : undefined,
+          async pull(c) {
+            calledAt.push(clock.now);
+            for (let i = 0; i < awaits; i++) await null;
+            c.enqueue(new Uint8Array(1));
+            if (calledAt.length === 4) {
+              c.close();
+              resolve();
+            }
+          },
+        },
+        { highWaterMark: 10 },
+      );
+      await done;
+      clock.stop();
+      const d = expectedDistance(awaits);
+      expect(distances(calledAt)).toEqual([d, d, d]);
+    });
+  });
+
+  test.each([0, 1, 2])("async write() with %d await(s)", async awaits => {
+    const clock = microtaskClock();
+    const calledAt: number[] = [];
+    const writer = new WritableStream(
+      {
+        async write() {
+          calledAt.push(clock.now);
+          for (let i = 0; i < awaits; i++) await null;
+        },
+      },
+      { highWaterMark: 10 },
+    ).getWriter();
+    await writer.ready;
+    writer.write(1);
+    writer.write(2);
+    writer.write(3);
+    await writer.write(4);
+    clock.stop();
+    const d = expectedDistance(awaits);
+    expect(distances(calledAt)).toEqual([d, d, d]);
+  });
+
+  // With the default highWaterMark of 1 the pipe reads again once the write of "a" has finished. A
+  // pull() that is called again too early enqueues "b" before that read exists, so "b" sits in the
+  // source's queue, and error() resets the queue / the abort shuts the pipe down before it is read.
+  test.each([
+    ["controller.error()", {}, { result: "rejected: boom", sink: ["a", "b", "abort: boom"] }],
+    ["controller.error() with preventAbort", { preventAbort: true }, { result: "rejected: boom", sink: ["a", "b"] }],
+    ["signal.abort()", { abort: true }, { result: "rejected: sig", sink: ["a", "b", "abort: sig"] }],
+  ] as const)("pipeTo() writes the chunk an async pull() enqueues right before %s", async (_, options, expected) => {
+    const ac = new AbortController();
+    const sink: string[] = [];
+    let pulls = 0;
+    const readable = new ReadableStream({
+      async pull(c) {
+        await null;
+        if (++pulls === 1) return c.enqueue("a");
+        c.enqueue("b");
+        if ("abort" in options) ac.abort(new Error("sig"));
+        else c.error(new Error("boom"));
+      },
+    });
+    const writable = new WritableStream({
+      write(chunk) {
+        sink.push(chunk);
+      },
+      abort(reason) {
+        sink.push("abort: " + reason.message);
+      },
+    });
+    const result = await readable.pipeTo(writable, { signal: ac.signal, preventAbort: "preventAbort" in options }).then(
+      () => "resolved",
+      e => "rejected: " + e.message,
+    );
+    expect({ result, sink }).toEqual(expected);
+  });
+});

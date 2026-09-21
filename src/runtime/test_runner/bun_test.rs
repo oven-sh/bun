@@ -640,6 +640,9 @@ pub(crate) struct BunTest {
     /// Only the Box header may be freed in `Drop` — fields alias `DescribeScope` originals.
     pub(crate) cloned_hook_entries: Vec<*mut ExecutionEntry>,
     pub(crate) wants_wakeup: bool,
+    /// The running `node:test` test's claim on uncaught errors; see
+    /// [`BunTest::offer_uncaught_to_node_test`].
+    pub(crate) node_test_uncaught: Option<NodeTestUncaught>,
 
     pub(crate) phase: Phase,
     pub(crate) collection: Collection,
@@ -677,6 +680,7 @@ impl BunTest {
             // `next = EPOCH, state = PENDING`.
             timer: EventLoopTimer::init_paused(EventLoopTimerTag::BunTest),
             wants_wakeup: false,
+            node_test_uncaught: None,
         }
     }
 
@@ -1260,6 +1264,41 @@ impl BunTest {
         Some(cfg_data)
     }
 
+    /// `node:test` runs a test's hooks, subtests and mock restore inside the one
+    /// bun:test callback, so failing that entry here would start the next test on
+    /// top of them. While `current` is the entry its handler was registered for,
+    /// the handler sees the error first; `true` means `node:test` winds the test
+    /// down and then fails it itself, through `done`.
+    pub(crate) fn offer_uncaught_to_node_test(
+        this_strong: &BunTestPtr,
+        global_this: &JSGlobalObject,
+        current: &RefDataValue,
+        error: JSValue,
+    ) -> bool {
+        // Copy the handler out: the call re-enters JS, so no borrow of the
+        // `BunTest` may be live across it.
+        let handler = match &this_strong.get().node_test_uncaught {
+            Some(claim) if claim.entry.is_same_entry(current) => claim.handler.get(),
+            _ => return false,
+        };
+        // JS gets the thrown value, not the `JSC::Exception` cell around it.
+        let thrown_value = error.to_error().unwrap_or(error);
+        match handler.call(global_this, JSValue::UNDEFINED, &[thrown_value]) {
+            Ok(taken) => {
+                let taken = taken.to_boolean();
+                bun_core::scoped_log!(bun_test_group, "offerUncaughtToNodeTest -> taken: {}", taken);
+                taken
+            }
+            Err(e) => {
+                let thrown = global_this.take_exception(e);
+                if !thrown.is_termination_exception() {
+                    this_strong.get().on_uncaught_exception(global_this, Some(thrown), false, current);
+                }
+                false
+            }
+        }
+    }
+
     /// called from the uncaught exception handler, or if a test callback rejects or throws an error
     pub(crate) fn on_uncaught_exception(
         &mut self,
@@ -1399,11 +1438,19 @@ bun_jsc::jsc_host_abi! {
 
 // Clone/Copy: bitwise OK — `entry` is a non-owning erased borrow of an
 // `ExecutionEntry` owned by `BunTest::execution`.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) struct EntryData {
     pub(crate) sequence_index: usize,
     pub(crate) entry: *const (),
     pub(crate) remaining_repeat_count: i64,
+}
+
+/// Registered by `node:test` (`jest::js_node_test_on_uncaught`) each time
+/// bun:test invokes one of its tests.
+pub(crate) struct NodeTestUncaught {
+    /// The entry whose callback registered `handler`.
+    pub(crate) entry: RefDataValue,
+    pub(crate) handler: Strong,
 }
 
 // Clone/Copy: bitwise OK — `active_scope` is a non-owning borrow of a
@@ -1427,6 +1474,17 @@ pub(crate) enum RefDataValue {
 }
 
 impl RefDataValue {
+    /// Both name the same attempt of the same execution entry.
+    pub(crate) fn is_same_entry(&self, other: &RefDataValue) -> bool {
+        match (self, other) {
+            (
+                RefDataValue::Execution { group_index: a_group, entry_data: Some(a) },
+                RefDataValue::Execution { group_index: b_group, entry_data: Some(b) },
+            ) => a_group == b_group && a == b,
+            _ => false,
+        }
+    }
+
     pub(crate) fn sequence<'a>(&self, buntest: &'a mut BunTest) -> Option<&'a mut Execution::ExecutionSequence> {
         let RefDataValue::Execution { group_index, entry_data } = self else { return None };
         let entry_data = (*entry_data)?;

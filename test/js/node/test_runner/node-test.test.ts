@@ -314,6 +314,69 @@ describe("node:test", () => {
     });
   });
 
+  test("should run a failed test's hooks, mock restore and remaining subtests before the next test when the error is thrown outside its promise", async () => {
+    const { exitCode, stdout, stderr } = await runTests(["30-outside-error-order.js"]);
+    const order = /^ORDER=(.*)$/m.exec(stdout)?.[1] ?? "null";
+    // The line `node --test` (v26.3.0) prints for this fixture.
+    expect(JSON.parse(order)).toEqual([
+      "afterEach(A)",
+      "t.after(A)",
+      "B start shared=clean read=real",
+      "B end shared=used-by-B",
+      "afterEach(B)",
+      "sub1",
+      "afterEach(sub1)",
+      "sub2",
+      "afterEach(sub2)",
+      "P end",
+      "afterEach(P)",
+      "C start",
+      "C end",
+      "afterEach(C)",
+      "afterEach(R)",
+      "t.after(R)",
+      "D start",
+      "D end",
+      "afterEach(D)",
+      "afterEach(X)",
+    ]);
+    expect(stderr).toContain("error: thrown from a timer of A");
+    expect(stderr).toContain("error: 1 subtest failed");
+    expect(stderr).toContain("error: thrown from a timer of sub1");
+    expect(stderr).toContain("error: rejected in R");
+    // X expects to fail, so the error thrown from its timer makes it pass.
+    expect(stderr).toContain("4 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 1,
+      stderr: expect.stringContaining("3 fail"),
+    });
+  });
+
+  test("should let a test's hooks finish before the next test when the error is thrown while one of them is pending", async () => {
+    const { exitCode, stdout, stderr } = await runTests(["31-outside-error-in-hooks.js"]);
+    const order = /^ORDER=(.*)$/m.exec(stdout)?.[1] ?? "null";
+    // The line `node --test` (v26.3.0) prints for this fixture.
+    expect(JSON.parse(order)).toEqual([
+      "afterEach(H)",
+      "afterEach(H) end",
+      "t.after(H)",
+      "I",
+      "afterEach(I)",
+      "beforeEach(J)",
+      "beforeEach(J) end",
+      "afterEach(J)",
+      "K",
+      "afterEach(K)",
+    ]);
+    expect(stderr).toContain("error: thrown from a timer of an afterEach hook");
+    expect(stderr).toContain("error: thrown from a timer of a beforeEach hook");
+    expect(stderr).toContain("2 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 1,
+      stderr: expect.stringContaining("2 fail"),
+    });
+  });
+
   test("should resolve the promise of a test that a name pattern filters out", async () => {
     const { exitCode, stderr } = await runTests(["23-filtered-test-promise.js"], {}, ["-t", "should resolve"]);
     expect(stderr).not.toContain("timed out");

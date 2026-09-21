@@ -1559,6 +1559,12 @@ class TestNode {
   firstSubtestError: unknown = undefined;
   // First failure from a before hook created while this test was running.
   hookFailure: unknown = undefined;
+  // Set while executeTestNode() runs this node: fails it with an error thrown
+  // outside its promise and ends the wait on its body.
+  failFromOutside: ((err: unknown) => void) | undefined = undefined;
+  // The subtest executeTestNode() is running. Subtests run one at a time, so
+  // these links lead from a top-level test to the innermost running test.
+  activeSubtest: TestNode | undefined = undefined;
   #ctx: TestContext | undefined;
   #suiteCtx: SuiteContext | undefined;
   #tags: readonly string[] | undefined;
@@ -1639,6 +1645,11 @@ const fileGeneration = $newRustFunction("jest.rs", "jsFileGeneration", 0);
 // `done` binds the intended sequence so a late call after the bun:test watchdog
 // moved on cannot write onto the currently-running test.
 const markCurrentResult = $newRustFunction("jest.rs", "jsNodeTestMarkResult", 2);
+// `onUncaughtError(done, handler)`: while the bun:test entry `done` belongs to is
+// the one bun:test would fail for an uncaught exception or unhandled rejection,
+// bun:test calls `handler(error)` first. `true` means the test fails through
+// `done` instead, so bun:test does not start the next test yet.
+const onUncaughtError = $newRustFunction("jest.rs", "jsNodeTestOnUncaught", 2);
 
 let rootNode: TestNode | undefined;
 let rootGeneration = -1;
@@ -2282,6 +2293,29 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
     node.plan = new TestPlan(planOption);
   }
 
+  // An error thrown outside this test's promise (a timer callback, an unhandled
+  // rejection) arrives through failFromOutside. Node fails the test with it and
+  // aborts the test, which ends the wait on the body and on the plan but not on
+  // a hook (harness.js createProcessEventHandler). Once the body's outcome is
+  // final, the error fails the test after its hooks instead.
+  let outsideError: unknown;
+  let lateOutsideError: unknown;
+  let outcomeIsFinal = false;
+  const outside = Promise.withResolvers<never>();
+  outside.promise.catch(() => {});
+  node.failFromOutside = err => {
+    err ??= makeTestFailure("test failed");
+    if (outcomeIsFinal) {
+      lateOutsideError ??= err;
+    } else {
+      outsideError ??= err;
+      outside.reject(err);
+    }
+  };
+  node.activeSubtest = undefined;
+  const parentTest = enclosingTest(node);
+  if (parentTest !== undefined) parentTest.activeSubtest = node;
+
   try {
     for (const ancestor of ancestors) {
       for (const hook of ancestor.hooks.beforeEach) {
@@ -2291,12 +2325,15 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
   } catch (err) {
     failure = err;
   }
+  failure ??= outsideError;
 
   if (failure === undefined) {
     // Node arms one stopPromise (timeout + signal) and races both the body
     // AND the plan wait against it. Arm timeout once here so plan({wait:true})
     // is bounded by the same test timeout, not left unbounded.
     const stop = createStopController(node.options.timeout);
+    const untilStopped = (promise: Promise<unknown>) =>
+      Promise.race(stop === undefined ? [outside.promise, promise] : [stop.promise, outside.promise, promise]);
     try {
       const runBody = async () => {
         await runWithNode(node, () => invokeTestFn(fn, ctx));
@@ -2306,7 +2343,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
       };
 
       try {
-        await (stop === undefined ? runBody() : Promise.race([stop.promise, runBody()]));
+        await untilStopped(runBody());
       } catch (err) {
         // A body that throws or rejects with a nullish value must still fail.
         failure = err ?? makeTestFailure("test failed");
@@ -2315,6 +2352,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
       // A before hook created while the test was running failed (Node fails the
       // test with the hook's error).
       failure ??= node.hookFailure;
+      failure ??= outsideError;
 
       const { plan } = node;
       if (failure === undefined && plan !== null) {
@@ -2324,12 +2362,11 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
             // Defuse: if stop wins the race, plan's own wait-timeout may still
             // reject `pending` afterward with no one listening.
             pending.catch(() => {});
-            await (stop === undefined ? pending : Promise.race([stop.promise, pending]));
+            await untilStopped(pending);
             // A t.test() that fulfilled the plan from an async callback was
             // scheduled onto subtestChain during the wait; drain again so its
             // failure reaches failedSubtests below (Node fails the parent).
-            const drain = drainSubtestChain(node);
-            await (stop === undefined ? drain : Promise.race([stop.promise, drain]));
+            await untilStopped(drainSubtestChain(node));
           }
         } catch (err) {
           failure = err;
@@ -2353,6 +2390,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
     }
   }
 
+  outcomeIsFinal = true;
   const bodyFailure = failure;
   failure = applyExpectFailure(node, failure);
   const acceptedXfail = bodyFailure !== undefined && failure === undefined;
@@ -2391,10 +2429,38 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
     if (!acceptedXfail) failure ??= err;
   }
 
+  failure ??= lateOutsideError;
+  node.failFromOutside = undefined;
+  if (parentTest !== undefined && parentTest.activeSubtest === node) parentTest.activeSubtest = undefined;
+
   node.passed = failure === undefined;
   node.error = failure ?? (acceptedXfail ? bodyFailure : null);
   reportNodeToRunParent(node, started);
   return failure;
+}
+
+// The test a subtest runs under, past any inline suites in between.
+function enclosingTest(node: TestNode): TestNode | undefined {
+  if (!node.isExecutionPhase) return undefined;
+  let parent = node.parent;
+  while (parent?.isSuite) parent = parent.parent;
+  return parent;
+}
+
+// bun:test calls this with an uncaught exception or unhandled rejection while
+// `top` is the test it would fail for it. bun:test would start the next test at
+// once, on top of this test's afterEach/after hooks, mock restore and remaining
+// subtests, which all run inside `top`'s one callback. So the innermost running
+// test takes the failure (Node: the test that owns the error), winds down in
+// order, and `top` reports through done().
+function failInnermostTest(top: TestNode, err: unknown): boolean {
+  let fail = top.failFromOutside;
+  if (fail === undefined) return false;
+  for (let node = top.activeSubtest; node?.failFromOutside !== undefined; node = node.activeSubtest) {
+    fail = node.failFromOutside;
+  }
+  fail(err);
+  return true;
 }
 
 function scheduleSubtest(parent: TestNode, child: TestNode, fn: TestFn, ownTodo: boolean): Promise<undefined> {
@@ -2545,6 +2611,7 @@ function createTopLevelTestRunner(node: TestNode, fn: TestFn, declaredTodo = fal
     // the flag was only inherited; under a run() child the suite registers as a
     // plain describe so bun:test has no todo scope to consult.
     const todoBefore = node.todoFlag;
+    onUncaughtError(done, (err: unknown) => failInnermostTest(node, err));
     executeTestNode(node, fn).then(
       failure => {
         // A runtime t.skip()/t.todo() overrides bun:test's pass/fail accounting

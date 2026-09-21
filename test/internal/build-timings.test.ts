@@ -467,8 +467,7 @@ describe("formatReport", () => {
            50ms  cxx x.o
                  Frontend 30ms · Backend 15ms
 
-      critical path  4.7s  the longest chain: what a build of everything takes with every core free
-        how long each step holds up the next; less than it runs when the next needs only an output it releases early
+      critical path  how long each step holds up the next
           100ms  fetch dep
           300ms  rustc a  of 1.0s
            2.0s  rustc b

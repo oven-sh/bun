@@ -730,15 +730,7 @@ export function formatReport(build: Build, style: ReportStyle): string {
   }
 
   const path = criticalPath(build);
-  out.push(
-    "",
-    bold("critical path") +
-      `  ${formatElapsed(path.totalMs)}` +
-      dim("  the longest chain: what a build of everything takes with every core free"),
-    dim(
-      "  how long each step holds up the next; less than it runs when the next needs only an output it releases early",
-    ),
-  );
+  out.push("", bold("critical path") + dim("  how long each step holds up the next"));
   for (const step of path.steps) {
     const whole = duration(step.execution);
     out.push(

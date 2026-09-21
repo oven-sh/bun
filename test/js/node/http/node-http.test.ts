@@ -212,8 +212,8 @@ describe("node:http", () => {
         await once(second, "listening");
         expect((second.address() as AddressInfo).port).toBe(port);
       } finally {
-        second.close();
-        first.close();
+        // close(cb) calls back with ERR_SERVER_NOT_RUNNING for a server that never listened.
+        await Promise.all([second, first].map(server => new Promise<void>(resolve => server.close(() => resolve()))));
       }
     });
 

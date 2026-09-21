@@ -931,6 +931,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 CommandTag::RunCommand,
                 true,
                 bun_core::zstr!("bunfig.toml"),
+                arguments::ConfigScope::Project,
                 ctx,
             )?;
         }
@@ -1131,6 +1132,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 CommandTag::RunCommand,
                 true,
                 bun_core::zstr!("bunfig.toml"),
+                arguments::ConfigScope::Project,
                 ctx,
             )?;
         }
@@ -2320,6 +2322,7 @@ impl RunCommand {
                 CommandTag::RunCommand,
                 true,
                 bun_core::zstr!("bunfig.toml"),
+                arguments::ConfigScope::Project,
                 ctx,
             );
         }

@@ -11,7 +11,7 @@ const { SQLHelper, parseOptions } = require("internal/sql/shared");
 
 const { SQLError, PostgresError, SQLiteError, MySQLError } = require("internal/sql/errors");
 const { validateAbortSignal } = require("internal/validators");
-const { isFrameOfStoppedModuleGraph, resistStopPropagation } = require("internal/shared");
+const { resistStopPropagation } = require("internal/shared");
 const AsyncContextFrame = require("internal/async_context_frame");
 
 const defineProperties = Object.defineProperties;
@@ -52,19 +52,12 @@ function settleReservedTransaction(
 }
 
 /// The pool calls a queued `onConnected` in the async context of whatever released the connection, not the caller's.
-function inCallerAsyncContext(
-  pool: { release(pooledConnection): void },
-  onConnected: (err: Error | null, pooledConnection) => void,
-) {
+function inCallerAsyncContext(onConnected: (err: Error | null, pooledConnection) => void) {
+  // Inside a Bun.ModuleGraph the pool's context stays: a transaction that runs as a disposed graph may never release.
+  if (AsyncContextFrame.currentGraph() !== undefined) return onConnected;
   const frame = AsyncContextFrame.current();
-  return (err: Error | null, pooledConnection) => {
-    // A disposed Bun.ModuleGraph hears nothing, and its leftover script could keep the connection for ever.
-    if (isFrameOfStoppedModuleGraph(frame)) {
-      if (!err) pool.release(pooledConnection);
-      return;
-    }
+  return (err: Error | null, pooledConnection) =>
     AsyncContextFrame.run(frame, onConnected, undefined, err, pooledConnection);
-  };
 }
 
 function adapterFromOptions(options: Bun.SQL.__internal.DefinedOptions) {
@@ -1027,7 +1020,7 @@ const SQL: typeof Bun.SQL = function SQL(
     const { promise, resolve, reject } = Promise.withResolvers();
     const useReserved = pool.supportsReservedConnections?.() ?? true;
     pool.connect(
-      inCallerAsyncContext(pool, onTransactionConnected.bind(null, callback, name, resolve, reject, false, true)),
+      inCallerAsyncContext(onTransactionConnected.bind(null, callback, name, resolve, reject, false, true)),
       useReserved,
     );
     return promise;
@@ -1051,7 +1044,7 @@ const SQL: typeof Bun.SQL = function SQL(
     const { promise, resolve, reject } = Promise.withResolvers();
     const useReserved = pool.supportsReservedConnections?.() ?? true;
     pool.connect(
-      inCallerAsyncContext(pool, onTransactionConnected.bind(null, callback, options, resolve, reject, false, false)),
+      inCallerAsyncContext(onTransactionConnected.bind(null, callback, options, resolve, reject, false, false)),
       useReserved,
     );
     return promise;

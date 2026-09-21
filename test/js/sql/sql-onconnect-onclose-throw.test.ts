@@ -480,9 +480,10 @@ function beginCallbackStoreTests(container: { ready: Promise<void> }, url: () =>
     expect(seen).toBe("distributed");
   });
 
-  // The context of the begin() call can be a Bun.ModuleGraph that is disposed before the pool
-  // calls back. A disposed graph hears nothing, and its script could keep the connection for ever.
-  test("sql.begin() queued by a Bun.ModuleGraph that is disposed before its turn", async () => {
+  // Inside a Bun.ModuleGraph a queued begin() keeps the context the pool calls back in. What a
+  // disposed graph awaits never comes, so a transaction that runs as the graph would keep the
+  // connection of the host's pool for ever.
+  test("a Bun.ModuleGraph that is disposed during its queued sql.begin() does not keep the connection", async () => {
     await container.ready;
     using dir = tempDir("sql-begin-disposed-graph", { "app.mjs": "export const call = fn => fn();" });
     await using sql = new SQL(url(), { max: 1 });
@@ -490,22 +491,24 @@ function beginCallbackStoreTests(container: { ready: Promise<void> }, url: () =>
     const graph = new Bun.ModuleGraph();
     const app = await graph.import(path.join(String(dir), "app.mjs"));
     const hold = Promise.withResolvers<void>();
-    const called = { ofTheGraph: false };
-    // The host holds the only connection, so the begin() of the graph's script is queued...
+    const inTransaction = Promise.withResolvers<void>();
+    // The host holds the only connection, so the begin() of the graph's script is queued.
     const holder = sql.begin(() => hold.promise);
     graph.run(() =>
       app.call(() => {
-        void sql.begin(async () => {
-          called.ofTheGraph = true;
+        void sql.begin(async tx => {
+          await tx`SELECT 1`;
+          inTransaction.resolve();
+          // An immediate of a disposed graph never runs.
+          await new Promise(resolve => setImmediate(resolve));
         });
       }),
     );
-    graph.dispose();
-    // ...and the next begin() of the host is queued behind it.
-    const next = sql.begin(async tx => (await tx`SELECT 1 AS x`)[0].x);
     hold.resolve();
     await holder;
-    expect({ next: await next, called }).toStrictEqual({ next: 1, called: { ofTheGraph: false } });
+    await inTransaction.promise;
+    graph.dispose();
+    expect(await sql.begin(async tx => (await tx`SELECT 1 AS x`)[0].x)).toBe(1);
   });
 }
 

@@ -423,7 +423,6 @@ const kInternalAssertionSuffix =
 //
 
 export default {
-  isFrameOfStoppedModuleGraph,
   isStoppedModuleGraphRunning,
   kInternalAssertionSuffix,
   throwNotImplemented,

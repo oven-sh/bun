@@ -369,7 +369,7 @@ void us_loop_free(struct us_loop_t *loop) {
   us_free(loop);
 }
 
-extern unsigned int Bun__JSC_onBeforeWait(void *jsc_vm, uint64_t now_ns);
+extern unsigned int Bun__JSC_onBeforeWait(void *jsc_vm, uint64_t now_ns, int *released_heap_access);
 
 static void idle_sweep_again_cb(struct us_timer_t *t) {}
 
@@ -384,7 +384,7 @@ void us_loop_run(struct us_loop_t *loop) {
     /* uv_update_time() above just refreshed libuv's cached monotonic clock, so
      * uv_now() reads that cache rather than taking the clock again. */
     const unsigned int run_again_ms =
-        Bun__JSC_onBeforeWait(loop->data.jsc_vm, (uint64_t) uv_now(loop->uv_loop) * 1000000ULL);
+        Bun__JSC_onBeforeWait(loop->data.jsc_vm, (uint64_t) uv_now(loop->uv_loop) * 1000000ULL, NULL);
     if (run_again_ms) {
       /* The allocator's idle sweep wants another turn even if nothing else ends
        * the poll. Unref'd: it bounds the poll, it does not keep the loop alive.

@@ -611,7 +611,7 @@ function assertValidHeader(name, value) {
   }
 }
 function assertIsObject(value: any, name: string, types?: string | string[]): asserts value is object {
-  if (value !== undefined && (!$isObject(value) || $isArray(value))) {
+  if (value !== undefined && (value === null || typeof value !== "object" || $isArray(value))) {
     throw $ERR_INVALID_ARG_TYPE(name, $isArray(types) ? types : [types || "Object"], value);
   }
 }
@@ -5596,6 +5596,12 @@ class ClientHttp2Session extends Http2Session {
       if (options.remoteCustomSettings.length > MAX_ADDITIONAL_SETTINGS) throw $ERR_HTTP2_TOO_MANY_CUSTOM_SETTINGS();
     }
 
+    if (options.strictSingleValueFields !== undefined) {
+      validateBoolean(options.strictSingleValueFields, "options.strictSingleValueFields");
+    } else {
+      options.strictSingleValueFields = true;
+    }
+
     if (typeof url === "string") url = new URL(url);
 
     assertIsObject(url, "authority", ["string", "Object", "URL"]);
@@ -5606,7 +5612,7 @@ class ClientHttp2Session extends Http2Session {
     if (options.strictFieldWhitespaceValidation === false) {
       this.#strictFieldWhitespaceValidation = false;
     }
-    this[kStrictSingleValueFields] = options.strictSingleValueFields !== false;
+    this[kStrictSingleValueFields] = options.strictSingleValueFields;
     this.#url = url;
 
     const protocol = url.protocol || options?.protocol || "https:";
@@ -5673,6 +5679,8 @@ class ClientHttp2Session extends Http2Session {
         connectOnNextTick = true;
       }
     } else {
+      // Like node, https only: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L3638
+      if (protocol === "https:") initializeOptions(options);
       socket = connectWithProtocol(
         protocol,
         options
@@ -6453,6 +6461,10 @@ function initializeOptions(options) {
     validateUint32(options.unknownProtocolTimeout, "options.unknownProtocolTimeout");
   else options.unknownProtocolTimeout = 10000;
 
+  if (options.strictSingleValueFields !== undefined) {
+    validateBoolean(options.strictSingleValueFields, "options.strictSingleValueFields");
+  }
+
   // Initialize http1Options bag for HTTP/1 fallback when allowHTTP1 is true.
   options.http1Options = { ...options.http1Options };
   if (options.Http1IncomingMessage !== undefined) {
@@ -6568,26 +6580,6 @@ class Http2SecureServer extends tls.Server {
   timeout = 0;
   [kSessions] = new SafeSet();
   constructor(options, onRequestHandler) {
-    if (typeof options !== "undefined") {
-      if (options && typeof options === "object") {
-        options = { ...options };
-      } else {
-        throw $ERR_INVALID_ARG_TYPE("options", "object", options);
-      }
-    } else {
-      options = {};
-    }
-
-    const settings = options.settings;
-    if (typeof settings !== "undefined") {
-      validateObject(settings, "options.settings");
-    }
-    if (options.maxSessionInvalidFrames !== undefined)
-      validateUint32(options.maxSessionInvalidFrames, "options.maxSessionInvalidFrames");
-
-    if (options.maxSessionRejectedStreams !== undefined) {
-      validateUint32(options.maxSessionRejectedStreams, "options.maxSessionRejectedStreams");
-    }
     options = initializeOptions(options);
     if (!options.ALPNCallback) {
       options.ALPNProtocols = ["h2"];
@@ -6595,7 +6587,7 @@ class Http2SecureServer extends tls.Server {
     }
     super(options, connectionListener);
     this[kSessions] = new SafeSet();
-    this[kOptions] = { settings: settings || {} };
+    this[kOptions] = { settings: options.settings };
     this.setMaxListeners(0);
     this.on("newListener", setupCompat);
     if (options.allowHTTP1 === true) {
@@ -6675,11 +6667,16 @@ Object.defineProperty(connect, promisify.custom, {
   __proto__: null,
   value: function (authority, options) {
     const { promise, resolve, reject } = Promise.withResolvers();
-    const server = connect(authority, options, () => {
-      server.removeListener("error", reject);
-      return resolve(server);
-    });
-    server.once("error", reject);
+    try {
+      const server = connect(authority, options, () => {
+        server.removeListener("error", reject);
+        return resolve(server);
+      });
+      server.once("error", reject);
+    } catch (e) {
+      // node calls connect() inside the Promise executor, so a throw rejects the promise.
+      reject(e);
+    }
     return promise;
   },
 });

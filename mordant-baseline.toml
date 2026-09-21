@@ -37,9 +37,6 @@
 "generic_body_not_generic:src/install/lockfile/printer/tree_printer.rs" = 4
 "interchangeable_aliases:src/install/lockfile/Tree.rs" = 1
 
-[bun_io]
-"generic_body_not_generic:src/io/pipes.rs" = 1
-
 [bun_js_parser]
 "generic_body_not_generic:src/js_parser/fold.rs" = 1
 "generic_body_not_generic:src/js_parser/lower/lower_decorators.rs" = 1
@@ -52,9 +49,6 @@
 "generic_body_not_generic:src/js_parser/visit/mod.rs" = 1
 "generic_body_not_generic:src/js_parser/visit/visit_expr.rs" = 1
 "generic_body_not_generic:src/js_parser/visit/visit_stmt.rs" = 2
-
-[bun_js_printer]
-"parallel_vecs:src/js_printer/lib.rs" = 1
 
 [bun_jsc]
 "defaulted_failure:src/jsc/ConsoleObject.rs" = 4
@@ -82,7 +76,7 @@
 [bun_runtime]
 "defaulted_failure:src/runtime/test_runner/pretty_format.rs" = 4
 "error_collapsed_to_bool:src/runtime/api/bun/Terminal.rs" = 1
-"error_collapsed_to_bool:src/runtime/api/bun/h2_frame_parser.rs" = 31
+"error_collapsed_to_bool:src/runtime/api/bun/h2_frame_parser.rs" = 29
 "error_collapsed_to_bool:src/runtime/ffi/ffi_body.rs" = 1
 "field_valid_only_when:src/runtime/shell/builtin/rm.rs" = 1
 "generic_body_not_generic:src/runtime/api/bun/h2_frame_parser.rs" = 2
@@ -104,7 +98,7 @@
 "generic_body_not_generic:src/runtime/server/server_body.rs" = 2
 "generic_body_not_generic:src/runtime/shell/Builtin.rs" = 1
 "generic_body_not_generic:src/runtime/socket/Listener.rs" = 1
-"generic_body_not_generic:src/runtime/socket/socket_body.rs" = 6
+"generic_body_not_generic:src/runtime/socket/socket_body.rs" = 5
 "generic_body_not_generic:src/runtime/test_runner/diff/text_diff.rs" = 3
 "generic_body_not_generic:src/runtime/test_runner/expect.rs" = 1
 "generic_body_not_generic:src/runtime/test_runner/pretty_format.rs" = 1
@@ -135,6 +129,7 @@
 "unused_pub:src/errno/lib.rs" = 1
 "unused_pub:src/errno/uv_codes.rs" = 3
 "unused_pub:src/event_loop/AnyEventLoop.rs" = 3
+"unused_pub:src/event_loop/ConcurrentTask.rs" = 1
 "unused_pub:src/event_loop/SpawnSyncEventLoop.rs" = 1
 "unused_pub:src/glob/GlobWalker.rs" = 1
 "unused_pub:src/io/ParentDeathWatchdog.rs" = 1
@@ -180,6 +175,3 @@
 
 [bun_sys]
 "error_collapsed_to_bool:src/sys/lib.rs" = 4
-
-[bun_watcher]
-"generic_body_not_generic:src/watcher/Watcher.rs" = 1

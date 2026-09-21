@@ -29,12 +29,16 @@ guest/job.sh       runs inside the guest for every job
 `provision <hostname> tart` disables remote management, makes sshd key-only,
 joins the tailnet, installs `buildkite-agent` and Tart, creates an
 unprivileged auto-login user (Virtualization.framework needs a console
-session), bakes the guest image from a public base image plus
-`scripts/bootstrap.sh`, and starts the agent as that user with `hooks/` as
+session), bakes the guest image from a public base image plus the toolchain
+script generated from `scripts/build/ci-images/spec.ts`, and starts the agent as that user with `hooks/` as
 its hooks path. It asks for one reboot the first time and is re-run after it.
 
-`provision <hostname> bare` does the same host setup, then runs
-`scripts/bootstrap.sh` on the host and installs the `scripts/agent.ts` service.
+`provision <hostname> bare` does the same host setup, then runs that generated
+script on the host and installs the `scripts/agent.ts` service.
+
+The script is `build/ci-images/darwin-<arch>/bootstrap.sh`, written by
+`scripts/build/ci-images/spec.ts` from a checkout of `--ref` on the host.
+The versions it installs are the ones every other CI machine gets.
 
 `bake` is safe on a live host: it builds a staging image and swaps it in only
 after the toolchain verifies. Re-run it when toolchain pins move.

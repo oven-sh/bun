@@ -13,7 +13,8 @@
  * after go to the built binary. `--` forces the cutoff. When exec-args are
  * present, build output is suppressed unless the build fails.
  *
- *   -j/-k/-l/-v                     → ninja
+ *   -j/-k/-l/-v/-n, -d <mode>       → ninja
+ *   -t <tool> [args…]               → the ninja tool, on the build directory as it is (no configure, no build)
  *   --configure-only, --quiet, --help  → here
  *   --<field>=<v> or --<field> <v>  → here (profile/target/config override)
  *   --<unknown>=<v>                 → error (typo check)
@@ -21,7 +22,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   canTraceOrderFile,
@@ -41,8 +42,9 @@ import {
   verifyOrderFileApplied,
 } from "./build/ci.ts";
 import { formatConfig, formatConfigUnchanged, type PartialConfig } from "./build/config.ts";
-import { configure, type ConfigureInput, type ConfigureResult } from "./build/configure.ts";
+import { configOf, configure, reconfigure, type ConfigureInput } from "./build/configure.ts";
 import { BuildError } from "./build/error.ts";
+import { ninjaIfPresent } from "./build/ninja-release.ts";
 import { STREAM_FD } from "./build/stream.ts";
 import { interactive, nameColor, status } from "./build/tty.ts";
 import { isCI, printEnvironment, startGroup } from "./buildkite.ts";
@@ -52,6 +54,8 @@ import { isCI, printEnvironment, startGroup } from "./buildkite.ts";
 // ───────────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
+  const args = parseArgs(process.argv.slice(2));
+
   // Windows: re-exec inside the VS dev shell if not already there.
   // The shell provides PATH (mt.exe, rc.exe, cl.exe), INCLUDE, LIB,
   // WindowsSdkDir — things clang-cl can mostly self-detect but nested
@@ -73,7 +77,19 @@ async function main(): Promise<void> {
     process.exit(result.status ?? 1);
   }
 
-  const args = parseArgs(process.argv.slice(2));
+  // A ninja tool (`-t query <target>`, `-t deps <object>`, `-t commands`, …) inspects what the last configure and
+  // build left behind, so it runs on the build directory as it is, with the ninja the build runs.
+  if (args.ninjaTool !== undefined) {
+    const { cfg } = configOf({ profile: args.profile, overrides: args.overrides });
+    if (!existsSync(join(cfg.buildDir, "build.ninja"))) {
+      throw new BuildError(`${cfg.buildDir} has not been configured`, {
+        hint: "Build it, or configure it with --configure-only, using the same profile flags.",
+      });
+    }
+    const tool = spawnSync(ninjaIfPresent(cfg), ["-C", cfg.buildDir, "-t", ...args.ninjaTool], { stdio: "inherit" });
+    if (tool.error) throw new BuildError(`Failed to run ninja`, { cause: tool.error });
+    process.exit(tool.status ?? 1);
+  }
 
   // Skip on --configure-only / --config-file (ninja regen): those paths
   // return before spawning ninja, so the NO_PROXY mutation can't reach any
@@ -97,7 +113,7 @@ async function main(): Promise<void> {
   // GNU-style include-path vars (CPATH, C_INCLUDE_PATH, CPLUS_INCLUDE_PATH,
   // OBJC_INCLUDE_PATH) apply to every clang invocation regardless of
   // --target. A build environment may set them for the *host* gcc toolchain
-  // (scripts/bootstrap.sh does), which hijacks <vector> & co. away from the MSVC
+  // (a machine set up for a gcc toolchain does), which hijacks <vector> & co. away from the MSVC
   // STL when cross-compiling for Windows ("'bits/c++config.h' file not
   // found"). Scrub them for Windows cross builds — they are host-targeted by
   // definition. Native Windows builds (INCLUDE/LIB from the VS dev shell) and
@@ -112,12 +128,18 @@ async function main(): Promise<void> {
     return merged;
   };
 
+  if (args.configFile !== undefined) {
+    // ninja's generator rule replaying a previous configure (`regen`, configure.ts): just rewrite build.ninja.
+    // ninja's own [N/M] line already says "reconfigure"; the CI prelude and the local summary would be noise
+    // in the middle of a build log.
+    await reconfigure(input);
+    return;
+  }
+
   if (isCI) {
     // CI: machine/env dump + collapsible groups + annotation-on-failure.
     printEnvironment();
-    const result = (await startGroup("Configure", () =>
-      configure(input, args.configFile !== undefined),
-    )) as ConfigureResult;
+    const result = await startGroup("Configure", () => configure(input));
     if (args.configureOnly) return;
 
     // link-only: download cpp-only + rust-only artifacts before ninja.
@@ -126,8 +148,8 @@ async function main(): Promise<void> {
     }
 
     // The order file is a link input, so it must land before the linking ninja
-    // pass. In rust-and-link mode it runs between cargo and the build-cpp
-    // poll (whose sleep loop yields cleanly) so it doesn't stall cargo.
+    // pass. In rust-and-link mode it runs between the Rust build and the build-cpp
+    // poll (whose sleep loop yields cleanly) so it doesn't stall the Rust build.
     const orderCtx = orderFileContext();
     const runInherit = () =>
       (orderFileEligible(result.cfg, orderCtx) && !shouldGenerateOrderFile(result.cfg, orderCtx)
@@ -139,13 +161,14 @@ async function main(): Promise<void> {
       });
     let inherited = false;
 
+    const ninja = result.ninja;
     const runNinja = (targets: string[] = args.ninjaTargets) =>
-      spawnWithAnnotations("ninja", ["-C", result.cfg.buildDir, ...args.ninjaArgs, ...targets], {
+      spawnWithAnnotations(ninja, ["-C", result.cfg.buildDir, ...args.ninjaArgs, ...targets], {
         label: "ninja",
         env: ninjaEnv(result.cfg, result.env),
       });
 
-    // rust-and-link: build libbun_runtime.a first so cargo overlaps with the
+    // rust-and-link: build libbun_runtime.a first so the Rust build overlaps with the
     // sibling build-cpp job, THEN poll for build-cpp's outcome + download
     // its archive, THEN link. link-only skips straight to the full build
     // (its artifacts were downloaded above).
@@ -200,7 +223,7 @@ async function main(): Promise<void> {
     }
   } else {
     // Local: configure, then spawn ninja.
-    const result = await configure(input, args.configFile !== undefined);
+    const result = await configure(input);
 
     // Quiet one-liner when configure was a no-op — the full banner only
     // prints when build.ninja changed. Timing matters: a regression here
@@ -210,14 +233,14 @@ async function main(): Promise<void> {
     // Quiet mode: suppress build output unless the build fails. Enabled by
     // --quiet or automatically when positionals are present (you want to see
     // your test output, not a wall of [N/M] lines above it).
-    const quiet = args.quiet || args.execArgs.length > 0;
+    // Not with -n, -d <mode> or -v: what ninja prints is what those were asked for.
+    const quiet = (args.quiet || args.execArgs.length > 0) && !args.ninjaArgs.some(a => /^-[ndv]/.test(a));
 
     // Configure summary. Full block only when build.ninja changed (new
     // profile/flags/sources) — a no-op reconfigure, which happens every
     // run, gets a one-liner. CI always full. Suppressed entirely in quiet
-    // mode and during ninja's generator-rule replay (ninja's [N/M] already
-    // says "reconfigure").
-    if (!quiet && !args.configFile) {
+    // mode.
+    if (!quiet) {
       if (result.changed || result.cfg.ci) {
         const o = result.output;
         process.stderr.write(formatConfig(result.cfg, result.exe) + "\n\n");
@@ -229,17 +252,11 @@ async function main(): Promise<void> {
       }
     }
 
-    if (args.configureOnly) {
-      // Hint only for manual --configure-only, not generator replay.
-      if (!args.configFile) {
-        process.stderr.write(`run: ninja -C ${result.cfg.buildDir}\n`);
-      }
-      return;
-    }
-    // FD 3 sideband — only when interactive. stream.ts (wrapping deps +
-    // cargo) writes live output there, bypassing ninja's per-job buffering.
+    if (args.configureOnly) return;
+    // FD 3 sideband — only when interactive. stream.ts (wrapping deps and
+    // the cargo plan) writes live output there, bypassing ninja's per-job buffering.
     // A human watching a terminal wants to see cmake configure spew and
-    // cargo build progress in real time. A log file (CI) doesn't —
+    // cargo's download progress in real time. A log file (CI) doesn't —
     // that live output is noise (hundreds of `-- Looking for header.h`
     // lines from cmake). When FD 3 isn't set up, stream.ts falls back to
     // stdout which ninja buffers per-job: deps stay quiet until they
@@ -256,15 +273,18 @@ async function main(): Promise<void> {
     if (!quiet && interactive) {
       stdio[STREAM_FD] = 2;
     }
-    const ninja = spawnSync("ninja", ninjaArgv(result.cfg), {
+    const ninja = spawnSync(result.ninja, ninjaArgv(result.cfg), {
       stdio,
       env: ninjaEnv(result.cfg, result.env),
-      // cargo's compile output (now part of the ninja graph via emitRust) can
-      // be tens of MB on a cold build; the default 1 MB maxBuffer ENOBUFSes.
+      // Captured output (quiet mode) can be tens of MB on a cold build; the default 1 MB maxBuffer ENOBUFSes.
       maxBuffer: 1024 * 1024 * 1024,
     });
     if (ninja.error) {
-      process.stderr.write(`Failed to exec ninja: ${ninja.error.message}\nIs ninja in your PATH?\n`);
+      const hint =
+        result.ninja === "ninja"
+          ? "Is ninja in your PATH?"
+          : "That is the ninja release the build pins. If the file is damaged, delete its directory and the next build fetches it again.";
+      process.stderr.write(`Failed to exec ${result.ninja}: ${ninja.error.message}\n${hint}\n`);
       process.exit(127);
     }
     if (ninja.status !== 0) {
@@ -389,8 +409,10 @@ interface CliArgs {
   configureOnly: boolean;
   /** Suppress build output unless it fails. Also auto-enabled when execArgs present. */
   quiet: boolean;
-  /** Extra ninja args (e.g. -j8, -v). */
+  /** Extra ninja args (e.g. -j8, -v, -n, -d explain). */
   ninjaArgs: string[];
+  /** `-t <tool> [args…]`: run this ninja tool instead of configuring and building. */
+  ninjaTool: string[] | undefined;
   /**
    * Args to exec the built binary with. First bare positional and everything
    * after. Empty = just build, don't exec.
@@ -403,13 +425,69 @@ interface CliArgs {
   configFile: string | undefined;
 }
 
+/** How a `--<field>=<value>` is read, which the field's type decides. */
+type ConfigFlagKind<T> = [T] extends [boolean] ? "boolean" : [T] extends [number] ? "number" : "string";
+
+/**
+ * Every `PartialConfig` field is a `--<field>` flag. The mapped type makes this list complete and correct by
+ * construction: a field added to `PartialConfig` without an entry here, or listed with the wrong kind, does not
+ * compile.
+ */
+const configFlags: { [K in keyof Required<PartialConfig>]: ConfigFlagKind<NonNullable<PartialConfig[K]>> } = {
+  os: "string",
+  arch: "string",
+  abi: "string",
+  buildType: "string",
+  mode: "string",
+  lto: "boolean",
+  pgoGenerate: "string",
+  pgoUse: "string",
+  asan: "boolean",
+  assertions: "boolean",
+  logs: "boolean",
+  baseline: "boolean",
+  canary: "boolean",
+  staticSqlite: "boolean",
+  staticLibatomic: "boolean",
+  tinycc: "boolean",
+  valgrind: "boolean",
+  fuzzilli: "boolean",
+  socketFaultInjection: "boolean",
+  unifiedSources: "boolean",
+  archiveDeps: "boolean",
+  timeTrace: "boolean",
+  ci: "boolean",
+  buildkite: "boolean",
+  webkit: "string",
+  localDeps: "string",
+  packageManager: "string",
+  buildDir: "string",
+  cacheDir: "string",
+  androidNdk: "string",
+  androidApiLevel: "number",
+  freebsdSysroot: "string",
+  freebsdVersion: "string",
+  linuxSysroot: "string",
+  macosSdk: "string",
+  osxDeploymentTarget: "string",
+  winsysroot: "string",
+  nodejsVersion: "string",
+  nodejsAbiVersion: "string",
+  nodejsV8Version: "string",
+  webkitVersion: "string",
+};
+
+/** `ninja -d list` */
+const ninjaDebugModes = new Set(["stats", "explain", "keepdepfile", "keeprsp", "nostatcache", "list"]);
+
 /**
  * Parse argv. Format:
  *   --profile=<name>          Profile (required, no default here — caller picks)
- *   --<field>=<value>         Override any PartialConfig boolean/string field
+ *   --<field>=<value>         Override any PartialConfig field (configFlags)
  *   --target=<name>           Build a specific ninja target (repeatable)
  *   --configure-only          Emit build.ninja, don't run it
- *   -j<N> / -v / -k<N>        Passed through to ninja
+ *   -j<N> / -v / -k<N> / -n / -d <mode>   Passed through to ninja
+ *   -t <tool> [args…]         Run a ninja tool on the build directory; everything after -t is the tool's
  *   <args...>                 Exec the built binary with these args
  *
  * First bare positional ends flag parsing — everything after goes to the
@@ -423,58 +501,12 @@ function parseArgs(argv: string[]): CliArgs {
   const overrides: PartialConfig = {};
   const ninjaTargets: string[] = [];
   const ninjaArgs: string[] = [];
+  let ninjaTool: string[] | undefined;
   const execArgs: string[] = [];
   let configureOnly = false;
   let quiet = false;
   let configFile: string | undefined;
   let inExec = false;
-
-  // PartialConfig fields that are BOOLEANS. Used for value coercion.
-  // Not exhaustive — add as needed. Unknown --<field> is rejected so you
-  // notice typos.
-  const boolFields = new Set([
-    "lto",
-    "asan",
-    "assertions",
-    "logs",
-    "baseline",
-    "canary",
-    "staticSqlite",
-    "staticLibatomic",
-    "tinycc",
-    "valgrind",
-    "fuzzilli",
-    "socketFaultInjection",
-    "unifiedSources",
-    "archiveDeps",
-    "timeTrace",
-    "ci",
-    "buildkite",
-  ]);
-  // PartialConfig fields that are STRINGS.
-  const stringFields = new Set([
-    "os",
-    "arch",
-    "abi",
-    "buildType",
-    "mode",
-    "webkit",
-    "localDeps",
-    "packageManager",
-    "buildDir",
-    "cacheDir",
-    "nodejsVersion",
-    "nodejsAbiVersion",
-    "webkitVersion",
-    "pgoGenerate",
-    "pgoUse",
-    "androidNdk",
-    "macosSdk",
-    "osxDeploymentTarget",
-    "winsysroot",
-    "linuxSysroot",
-    "freebsdSysroot",
-  ]);
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
@@ -483,9 +515,20 @@ function parseArgs(argv: string[]): CliArgs {
       continue;
     }
 
-    // Ninja passthrough: -j<N>, -v, -k<N>, -l<N>. Short flags only —
-    // anything starting with `--` is OURS.
-    if (/^-[jklv]/.test(arg)) {
+    // A ninja tool: it and everything after it are ninja's (a tool's arguments are positionals).
+    if (arg === "-t") {
+      ninjaTool = argv.slice(i + 1);
+      break;
+    }
+
+    // Ninja passthrough: -j<N>, -v, -k<N>, -l<N>, -n, -d <mode>. Short flags only —
+    // anything starting with `--` is OURS. `-d` is ninja's only with one of ninja's debug modes after it:
+    // bun's own `-d K:V` (--define) keeps reaching the built binary.
+    if (arg === "-d" && ninjaDebugModes.has(argv[i + 1] ?? "")) {
+      ninjaArgs.push(arg, argv[++i]!);
+      continue;
+    }
+    if (/^-[jklvn]/.test(arg)) {
       ninjaArgs.push(arg);
       continue;
     }
@@ -526,8 +569,8 @@ function parseArgs(argv: string[]): CliArgs {
     }
     const rawKey = eq[1]!;
     const key = rawKey.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
-    const isOurs =
-      key === "profile" || key === "target" || key === "configFile" || boolFields.has(key) || stringFields.has(key);
+    const kind = Object.hasOwn(configFlags, key) ? configFlags[key as keyof PartialConfig] : undefined;
+    const isOurs = key === "profile" || key === "target" || key === "configFile" || kind !== undefined;
 
     let value = eq[2];
     if (value === undefined) {
@@ -555,18 +598,23 @@ function parseArgs(argv: string[]): CliArgs {
     }
     if (key === "profile") {
       profile = value;
-    } else if (boolFields.has(key)) {
-      (overrides as Record<string, boolean>)[key] = parseBool(value);
-    } else if (stringFields.has(key)) {
-      (overrides as Record<string, string>)[key] = value;
-    } else {
+    } else if (kind === undefined) {
       throw new BuildError(`Unknown config field: --${rawKey}`, {
-        hint: `Known fields: profile, target, ${[...boolFields, ...stringFields].sort().join(", ")}`,
+        hint: `Known fields: profile, target, ${Object.keys(configFlags).sort().join(", ")}`,
       });
+    } else {
+      // The value's type follows `kind`, which `configFlags` ties to the field's declared type.
+      (overrides as Record<string, boolean | number | string>)[key] =
+        kind === "boolean" ? parseBool(value) : kind === "number" ? parseInteger(rawKey, value) : value;
     }
   }
 
-  return { profile, overrides, ninjaTargets, ninjaArgs, execArgs, configureOnly, quiet, configFile };
+  return { profile, overrides, ninjaTargets, ninjaArgs, ninjaTool, execArgs, configureOnly, quiet, configFile };
+}
+
+function parseInteger(flag: string, v: string): number {
+  if (!/^\d+$/.test(v)) throw new BuildError(`--${flag} takes a non-negative integer, got: ${JSON.stringify(v)}`);
+  return Number(v);
 }
 
 function parseBool(v: string): boolean {

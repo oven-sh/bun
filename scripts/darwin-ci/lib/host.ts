@@ -28,8 +28,6 @@ export async function setHostname(name: string): Promise<void> {
   for (const key of ["ComputerName", "LocalHostName", "HostName"]) {
     await $`sudo scutil --set ${key} ${name}`;
   }
-  // bootstrap.sh only appends PATH entries to profiles that already exist
-  await $`touch ~/.profile ~/.zshrc ~/.bash_profile`;
 }
 
 export async function brewInstall(formula: string): Promise<void> {
@@ -84,11 +82,23 @@ export async function installSelf(): Promise<void> {
   await $`sudo rsync -a --delete --chmod=Fa+r,Da+rx ${source}/ ${config.installDir}/`;
 }
 
-export async function bootstrapToolchain(): Promise<void> {
+/**
+ * The script that installs the toolchain on a machine of this architecture,
+ * generated from the image spec (scripts/build/ci-images) of the bun
+ * repository at `ref`. Returns its path. The checkout is left in place:
+ * installBareAgent runs scripts/agent.ts from it.
+ */
+export async function generateBootstrap(ref: string): Promise<string> {
   const checkout = join(process.env.HOME!, "bun-bootstrap");
   await $`rm -rf ${checkout}`;
-  await $`git clone -q --depth=1 --branch ${config.bun.ref} ${config.bun.repo} ${checkout}`;
-  await $`./scripts/bootstrap.sh`.cwd(checkout).nothrow();
+  await $`git clone -q --depth=1 --branch ${ref} ${config.bun.repo} ${checkout}`;
+  const key = `darwin-${process.arch === "arm64" ? "aarch64" : "x64"}`;
+  await $`${process.execPath} scripts/build/ci-images/spec.ts ${key}`.cwd(checkout);
+  return join(checkout, "build", "ci-images", key, "bootstrap.sh");
+}
+
+export async function bootstrapToolchain(ref: string): Promise<void> {
+  await $`sh ${await generateBootstrap(ref)}`;
   await verifyToolchain();
 }
 

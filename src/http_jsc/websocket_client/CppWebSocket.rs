@@ -186,6 +186,18 @@ impl CppWebSocket {
     pub(crate) fn deliver_initial_data(&self) {
         WebSocket__deliverInitialData(self);
     }
+
+    /// Call when the scope around `open` has ended. `overflow_owner` is the WebSocket with bytes behind its 101.
+    pub(crate) fn deliver_initial_data_after_open(overflow_owner: Option<CppWebSocketRef>) {
+        let event_loop = VirtualMachine::get().event_loop_mut();
+        // Under a nested event-loop spin (`expect().resolves`) that scope drained nothing.
+        if event_loop.entered_event_loop_count > 0 {
+            let _ = event_loop.drain_microtasks();
+        }
+        if let Some(ws) = overflow_owner {
+            ws.deliver_initial_data();
+        }
+    }
 }
 
 impl CppWebSocket {

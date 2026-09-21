@@ -815,11 +815,11 @@ where
         let head_len = response.bytes_read;
         let is_101 = response.status_code == 101;
 
-        let vm = bun_jsc::virtual_machine::VirtualMachine::get();
         let overflow_owner;
         {
             // 101: one scope across 'upgrade'+'open' so microtasks drain after open.
-            let _scope = is_101.then(|| vm.enter_event_loop_scope());
+            let _scope = is_101
+                .then(|| bun_jsc::virtual_machine::VirtualMachine::get().enter_event_loop_scope());
 
             if let Some(ws) = this.cpp_websocket() {
                 Self::dispatch_handshake(
@@ -838,13 +838,8 @@ where
                 .map(|ws| CppWebSocketRef::new(&ws));
             Self::process_response(this, response, &full[head_len..]);
         }
-        // Under a nested event-loop spin (`expect().resolves`) the scope above drained nothing.
-        let event_loop = vm.event_loop_mut();
-        if is_101 && event_loop.entered_event_loop_count > 0 {
-            let _ = event_loop.drain_microtasks();
-        }
-        if let Some(ws) = overflow_owner {
-            ws.deliver_initial_data();
+        if is_101 {
+            CppWebSocket::deliver_initial_data_after_open(overflow_owner);
         }
     }
 

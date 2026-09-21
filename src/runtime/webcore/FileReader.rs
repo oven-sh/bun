@@ -94,14 +94,14 @@ impl Default for FileReader {
     }
 }
 
-pub type IOReader = BufferedReader;
+pub(crate) type IOReader = BufferedReader;
 
-pub enum Lazy {
+pub(crate) enum Lazy {
     None,
     Blob(RefPtr<blob::Store>),
 }
 
-pub struct OpenedFileBlob {
+pub(crate) struct OpenedFileBlob {
     pub(crate) fd: Fd,
     pub(crate) pollable: bool,
     pub(crate) nonblocking: bool,
@@ -122,7 +122,8 @@ impl Default for OpenedFileBlob {
 }
 
 unsafe extern "C" {
-    pub safe fn open_as_nonblocking_tty(fd: i32, flags: i32) -> i32;
+    #[cfg(not(windows))]
+    pub(crate) safe fn open_as_nonblocking_tty(fd: i32, flags: i32) -> i32;
 }
 
 impl Lazy {
@@ -1041,7 +1042,7 @@ impl FileReader {
     }
 }
 
-pub type Source = readable_stream::NewSource<FileReader>;
+pub(crate) type Source = readable_stream::NewSource<FileReader>;
 
 /// Holds a ref on the `Source` that embeds a `FileReader` while a dispatch runs
 /// user JS. Dropping it releases the ref and can free the source, so a pin must

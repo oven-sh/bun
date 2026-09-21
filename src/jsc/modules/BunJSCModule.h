@@ -640,8 +640,6 @@ JSC_DEFINE_HOST_FUNCTION(functionReoptimizationRetryCount,
     return JSValue::encode(jsNumber(block->reoptimizationRetryCounter()));
 }
 
-extern "C" void Bun__drainMicrotasks();
-
 JSC_DECLARE_HOST_FUNCTION(functionDrainMicrotasks);
 JSC_DEFINE_HOST_FUNCTION(functionDrainMicrotasks,
     (JSGlobalObject * globalObject, CallFrame*))
@@ -650,7 +648,8 @@ JSC_DEFINE_HOST_FUNCTION(functionDrainMicrotasks,
     auto scope = DECLARE_THROW_SCOPE(vm);
     vm.drainMicrotasks();
     RETURN_IF_EXCEPTION(scope, {});
-    Bun__drainMicrotasks();
+    // Not EventLoop::tick(): it runs queued tasks beneath the caller.
+    defaultGlobalObject()->drainMicrotasks();
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }

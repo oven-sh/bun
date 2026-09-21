@@ -28,12 +28,6 @@ public:
     static JSReadRequest* create(JSC::VM&, JSC::Structure*, Bun::WebStreams::ReadRequestKind, JSC::JSValue context);
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
 
-    static size_t allocationSize(Checked<size_t> inlineCapacity)
-    {
-        ASSERT_UNUSED(inlineCapacity, inlineCapacity == 0U);
-        return sizeof(JSReadRequest);
-    }
-
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
@@ -86,12 +80,6 @@ public:
 
     static JSReadIntoRequest* create(JSC::VM&, JSC::Structure*, Bun::WebStreams::ReadIntoRequestKind, JSC::JSValue context);
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
-
-    static size_t allocationSize(Checked<size_t> inlineCapacity)
-    {
-        ASSERT_UNUSED(inlineCapacity, inlineCapacity == 0U);
-        return sizeof(JSReadIntoRequest);
-    }
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;

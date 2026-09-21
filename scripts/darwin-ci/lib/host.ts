@@ -28,13 +28,22 @@ export async function setHostname(name: string): Promise<void> {
   for (const key of ["ComputerName", "LocalHostName", "HostName"]) {
     await $`sudo scutil --set ${key} ${name}`;
   }
-  // bootstrap.sh only appends PATH entries to profiles that already exist
-  await $`touch ~/.profile ~/.zshrc ~/.bash_profile`;
 }
 
 export async function brewInstall(formula: string): Promise<void> {
-  const name = formula.split("/").pop()!;
+  const parts = formula.split("/");
+  const name = parts.pop()!;
   if (await succeeds($`${brew} list ${name}`)) return;
+  // Homebrew refuses to load a formula from a tap it has not been told to trust
+  // ("Refusing to load formula ... from untrusted tap"), which fails the install.
+  // A tap formula is written org/repo/name. Trust the whole tap, not only the named
+  // formula: `brew install cirruslabs/cli/tart` trusts tart by itself and still
+  // refuses its dependency cirruslabs/cli/softnet from the same tap.
+  if (parts.length === 2) {
+    const tap = parts.join("/");
+    await $`${brew} tap ${tap}`;
+    await $`${brew} trust ${tap}`.nothrow(); // older Homebrew has no `trust`
+  }
   await $`${brew} install ${formula}`;
 }
 
@@ -84,11 +93,23 @@ export async function installSelf(): Promise<void> {
   await $`sudo rsync -a --delete --chmod=Fa+r,Da+rx ${source}/ ${config.installDir}/`;
 }
 
-export async function bootstrapToolchain(): Promise<void> {
+/**
+ * The script that installs the toolchain on a machine of this architecture,
+ * generated from the image spec (scripts/build/ci-images) of the bun
+ * repository at `ref`. Returns its path. The checkout is left in place:
+ * installBareAgent runs scripts/agent.ts from it.
+ */
+export async function generateBootstrap(ref: string): Promise<string> {
   const checkout = join(process.env.HOME!, "bun-bootstrap");
   await $`rm -rf ${checkout}`;
-  await $`git clone -q --depth=1 --branch ${config.bun.ref} ${config.bun.repo} ${checkout}`;
-  await $`./scripts/bootstrap.sh`.cwd(checkout).nothrow();
+  await $`git clone -q --depth=1 --branch ${ref} ${config.bun.repo} ${checkout}`;
+  const key = `darwin-${process.arch === "arm64" ? "aarch64" : "x64"}`;
+  await $`${process.execPath} scripts/build/ci-images/spec.ts ${key}`.cwd(checkout);
+  return join(checkout, "build", "ci-images", key, "bootstrap.sh");
+}
+
+export async function bootstrapToolchain(ref: string): Promise<void> {
+  await $`sh ${await generateBootstrap(ref)}`;
   await verifyToolchain();
 }
 

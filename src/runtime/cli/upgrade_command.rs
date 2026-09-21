@@ -68,6 +68,8 @@ fn argv_contains(target: &[u8]) -> bool {
 #[cfg(unix)]
 struct UnzipProgram {
     bin: &'static [u8],
+    /// The first argument of a multi-call binary. A build can leave the applet out.
+    applet: Option<&'static [u8]>,
     before: &'static [&'static [u8]],
     after: &'static [&'static [u8]],
 }
@@ -78,46 +80,52 @@ struct UnzipProgram {
 const UNZIP_PROGRAMS: &[UnzipProgram] = &[
     UnzipProgram {
         bin: b"unzip",
+        applet: None,
         before: &[b"-q", b"-o"],
         after: &[],
     },
     UnzipProgram {
         bin: b"busybox",
-        before: &[b"unzip", b"-q", b"-o"],
+        applet: Some(b"unzip"),
+        before: &[b"-q", b"-o"],
         after: &[],
     },
     UnzipProgram {
         bin: b"7z",
+        applet: None,
         before: &[b"x", b"-y"],
         after: &[],
     },
     UnzipProgram {
         bin: b"7zz",
+        applet: None,
         before: &[b"x", b"-y"],
         after: &[],
     },
     UnzipProgram {
         bin: b"7za",
+        applet: None,
         before: &[b"x", b"-y"],
         after: &[],
     },
     UnzipProgram {
         bin: b"bsdtar",
+        applet: None,
         before: &[b"--no-same-owner", b"-xf"],
         after: &[],
     },
     UnzipProgram {
         bin: b"python3",
+        applet: None,
         before: &[b"-m", b"zipfile", b"-e"],
         after: &[b"."],
     },
 ];
 
-/// A busybox build can leave out the unzip applet. `busybox --list` prints one
-/// applet name per line.
+/// `busybox --list` prints one applet name per line.
 #[cfg(unix)]
-fn busybox_has_unzip(busybox: &[u8]) -> bool {
-    let argv: [&[u8]; 2] = [busybox, b"--list"];
+fn has_applet(exe: &[u8], applet: &[u8]) -> bool {
+    let argv: [&[u8]; 2] = [exe, b"--list"];
     let Ok(Ok(result)) = spawn_sync::spawn(&spawn_sync::Options {
         argv: build_argv(&argv),
         envp: None,
@@ -129,7 +137,7 @@ fn busybox_has_unzip(busybox: &[u8]) -> bool {
         return false;
     };
     result.status.is_ok()
-        && strings::split(result.stdout.as_slice(), b"\n").any(|line| line == b"unzip")
+        && strings::split(result.stdout.as_slice(), b"\n").any(|line| line == applet)
 }
 
 /// Returns the name and the argv of the first entry of `UNZIP_PROGRAMS` found in `path`.
@@ -144,11 +152,15 @@ fn find_unzip_argv(
         let Some(exe) = which(&mut buf, path, cwd, program.bin) else {
             continue;
         };
-        if program.bin == b"busybox" && !busybox_has_unzip(exe.as_bytes()) {
+        if program
+            .applet
+            .is_some_and(|applet| !has_applet(exe.as_bytes(), applet))
+        {
             continue;
         }
-        let mut argv = Vec::with_capacity(program.before.len() + program.after.len() + 2);
+        let mut argv = Vec::with_capacity(program.before.len() + program.after.len() + 3);
         argv.push(Box::<[u8]>::from(exe.as_bytes()));
+        argv.extend(program.applet.map(Box::<[u8]>::from));
         argv.extend(program.before.iter().map(|a| Box::<[u8]>::from(*a)));
         argv.push(Box::<[u8]>::from(archive));
         argv.extend(program.after.iter().map(|a| Box::<[u8]>::from(*a)));

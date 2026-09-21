@@ -3345,6 +3345,9 @@ describe("net.Socket onread: the callbacks of one native read are separate callb
       host: "127.0.0.1",
     });
     const transport = new Duplex({
+      // A TLSSocket takes allowHalfOpen from the stream it wraps, and with `true` node emits 'end' but never 'close':
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L592
+      allowHalfOpen: false,
       read() {},
       write(chunk, _encoding, callback) {
         raw.write(chunk, callback);

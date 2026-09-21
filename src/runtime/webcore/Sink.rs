@@ -540,6 +540,16 @@ impl<T: JsSinkType> JSSink<T> {
         Ok(Self::write_value(this, global, frame.argument(0))?.to_js(&cx))
     }
 
+    /// The Promise of the sink's pending operation, when it has one that JS holds.
+    fn pending_promise(this: &mut JSSink<T>) -> Option<crate::webcore::jsc::JSValue> {
+        let operation = this.sink.pending_operation()?;
+        // SAFETY: `operation` is the sink's pending slot, which the sink owns and `this` keeps alive.
+        match unsafe { &(*operation).future } {
+            streams::WritableFuture::Promise { strong, .. } => Some(strong.value()),
+            streams::WritableFuture::None => None,
+        }
+    }
+
     /// One chunk from JS into the sink: bytes as they are, a string by its encoding.
     fn write_value(
         this: &mut JSSink<T>,
@@ -612,8 +622,8 @@ impl<T: JsSinkType> JSSink<T> {
         }
 
         let mut wrote: u64 = 0;
-        // An operation left pending by an earlier call: its Promise is that caller's.
-        let pending_before = this.sink.pending_operation().is_some();
+        // The Promise of an operation an earlier call left pending: that caller's, not this call's.
+        let promise_before = Self::pending_promise(this);
         // The sink's pending operation, its Promise, and what that Promise resolves to as of the last write.
         let mut pending: Option<(*mut streams::WritablePending, JSValue, u64)> = None;
         // No argument is one `undefined` chunk, which write_value() rejects as write() does.
@@ -624,7 +634,9 @@ impl<T: JsSinkType> JSSink<T> {
                     // This argument is not something to write, and the call throws. An earlier one is already
                     // the sink's pending operation, with a Promise made in this call that now never reaches
                     // the caller. Nobody can handle its rejection, so it must not be reported as unhandled.
-                    if let (false, Some((_, promise, _))) = (pending_before, pending) {
+                    if let Some((_, promise, _)) =
+                        pending.filter(|held| Some(held.1) != promise_before)
+                    {
                         if let Some(promise) = promise.as_promise() {
                             // SAFETY: `as_promise` returned this live JSPromise cell, which `promise` keeps alive.
                             unsafe { (*promise).set_handled() };
@@ -635,10 +647,11 @@ impl<T: JsSinkType> JSSink<T> {
             };
             // A write can settle the pending operation on the spot: the reader made room, and this chunk went out
             // with everything buffered before it. Its Promise has resolved to `consumed`, which this call's total
-            // carries on from as a count. Checked before `to_js` below, which arms the slot for the next operation.
-            if let Some((operation, _, consumed)) = pending {
-                // SAFETY: `operation` is the sink's pending slot, which the sink owns and `this` keeps alive.
-                if unsafe { (*operation).state } != streams::PendingState::Pending {
+            // carries on from as a count. Settling can run the script's microtasks, and a console.write() in one
+            // of them can leave the slot pending again for an operation of its own, so the question is whether the
+            // outstanding Promise is still the one held here. Checked before `to_js` below, which arms the slot.
+            if let Some((_, promise, consumed)) = pending {
+                if Self::pending_promise(this) != Some(promise) {
                     wrote += consumed;
                     pending = None;
                 }
@@ -668,9 +681,11 @@ impl<T: JsSinkType> JSSink<T> {
         }
 
         let Some((operation, promise, _)) = pending else {
-            let was_pending = this.sink.pending_operation().is_some();
+            let promise_before_flush = Self::pending_promise(this);
             let flushed = flushed_to_js(global, Self::flush_sink(this, &cx, true))?;
-            let Some(operation) = this.sink.pending_operation().filter(|_| !was_pending) else {
+            let armed_by_flush = Self::pending_promise(this)
+                .is_some_and(|promise| promise == flushed && Some(promise) != promise_before_flush);
+            let Some(operation) = this.sink.pending_operation().filter(|_| armed_by_flush) else {
                 return Ok(JSValue::from(wrote));
             };
             // Every chunk was buffered, and the flush could not push the buffer out: the sink is backed up after
@@ -688,7 +703,7 @@ impl<T: JsSinkType> JSSink<T> {
         // The Promise resolves to what the pending operation consumed. The counts are part of this call's total
         // too: a chunk written before the sink backed up, or a small one buffered beside the operation.
         // SAFETY: `operation` is the sink's pending slot, which the sink owns and `this` keeps alive. It was
-        // still pending after the last write, and nothing has run since.
+        // still this call's operation after the last write, and nothing runs between that check and here.
         let operation = unsafe { &mut *operation };
         operation.consumed += wrote;
         // `result` is the running total, unless a write failed beside the operation: then it is that error.

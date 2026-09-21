@@ -6475,3 +6475,133 @@ it("originSet is undefined on a destroyed TLS session that never read it", async
     server.close();
   }
 });
+
+describe.concurrent("a client session reports a peer reset that one of its writes sees first", () => {
+  // A failed send() is the only report of the reset: the transport goes away before the read
+  // side is polled again. bun closed it as a clean EOF: the request ended with no 'error' and
+  // no 'response', and with nothing but the socket holding the loop the process exited
+  // before any event.
+  //
+  // Node reports a reset only when its read side sees it. It drops the status of a failed
+  // write (node_http2.cc, see the note in ClearOutgoing), and on linux the failed send() consumes
+  // the socket error, so the read that follows is a clean EOF. Which side sees the reset
+  // first depends on where the request is made. Node defers a write made from a timer until
+  // after the next poll, so its read reports ECONNRESET. It writes at once from inside a read
+  // callback, which is where it emits 'remoteSettings', so there it reports a clean close
+  // (rstCode 8, no 'error'). bun writes at once everywhere and reports the reset in each
+  // case: the request failed, and the client has to hear that.
+  //
+  // The client records what its session and its one request report and prints that when
+  // the process exits on its own. It holds nothing but the socket, so each case also checks
+  // that the events arrive before the process exits.
+  const clientPrelude = `
+    const http2 = require("node:http2");
+    const fs = require("node:fs");
+    const state = { streamError: null, sessionError: null, rstCode: null, sawResponse: false };
+    const session = http2.connect("http://127.0.0.1:" + process.env.H2_PEER_PORT);
+    session.on("error", err => (state.sessionError = err.code));
+    let req;
+    function request(body) {
+      req = session.request({ ":path": "/", ":method": body ? "POST" : "GET" });
+      req.on("response", () => (state.sawResponse = true));
+      req.on("error", err => (state.streamError = err.code));
+      req.on("close", () => (state.rstCode = req.rstCode));
+      req.resume();
+      req.end(body);
+    }
+    function busyThenRequest(body) {
+      // Block the loop so the peer's RST is never polled: this process must observe nothing
+      // until it writes. The marker tells the parent to reset, and the parent sends the byte
+      // only after it has reset, so the RST is always here before the request is written.
+      fs.writeSync(1, "busy\\n");
+      if (fs.readSync(0, Buffer.alloc(1)) !== 1) throw new Error("stdin closed before the reset");
+      request(body);
+    }
+    process.on("exit", () => {
+      const destroyed = { sessionDestroyed: session.destroyed, streamDestroyed: !!req && req.destroyed };
+      fs.writeSync(1, JSON.stringify({ ...state, ...destroyed }) + "\\n");
+    });
+  `;
+  const reported = {
+    streamError: "ECONNRESET",
+    sessionError: "ECONNRESET",
+    rstCode: http2.constants.NGHTTP2_INTERNAL_ERROR,
+    sawResponse: false,
+    sessionDestroyed: true,
+    streamDestroyed: true,
+  };
+  const frame = (type, flags) => Buffer.from([0, 0, 0, type, flags, 0, 0, 0, 0]);
+
+  async function runClient(fixture, onPeer, onStdout) {
+    const server = net.createServer(socket => {
+      socket.on("error", () => {});
+      onPeer(socket);
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", clientPrelude + fixture],
+        env: { ...bunEnv, H2_PEER_PORT: String(server.address().port) },
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      // Drain stderr while stdout is scanned, so a child that logs a lot cannot block on it.
+      const stderrText = proc.stderr.text();
+      let stdout = "";
+      for await (const chunk of proc.stdout) {
+        stdout += Buffer.from(chunk).toString();
+        onStdout?.(stdout, proc);
+      }
+      const [stderr, exitCode] = await Promise.all([stderrText, proc.exited]);
+      expect(stderr).toBe("");
+      const lines = stdout.trim().split("\n");
+      expect(JSON.parse(lines[lines.length - 1])).toEqual(reported);
+      expect(exitCode).toBe(0);
+    } finally {
+      server.close();
+    }
+  }
+
+  // The first write of the next request() is the first operation to see the RST.
+  it.each([
+    // Node reports ECONNRESET here too. The timer is not a wait: it moves the request out
+    // of the read callback that emits 'remoteSettings'.
+    ["a timer", `session.on("remoteSettings", () => setTimeout(busyThenRequest, 0));`],
+    // This request has a body above one DATA frame, which leaves with its HEADERS in a
+    // single writev().
+    [
+      "a timer, with a body larger than one frame",
+      `session.on("remoteSettings", () => setTimeout(busyThenRequest, 0, Buffer.alloc(20000)));`,
+    ],
+    // Node reports a clean close here. This is the one ordering where bun says more.
+    ["inside the 'remoteSettings' event", `session.on("remoteSettings", () => busyThenRequest());`],
+  ])("on an idle session whose loop was busy while the reset arrived, request made from %s", async (_, fixture) => {
+    let peer = null;
+    let reset = false;
+    await runClient(
+      fixture,
+      socket => {
+        peer = socket;
+        socket.write(frame(4, 0)); // empty SETTINGS
+        socket.once("data", () => socket.write(frame(4, 1))); // ACK the client's SETTINGS
+      },
+      (stdout, proc) => {
+        if (!reset && stdout.includes("busy\n")) {
+          reset = true;
+          peer.resetAndDestroy();
+          proc.stdin.write("x");
+          proc.stdin.flush();
+        }
+      },
+    );
+    expect(reset).toBe(true);
+  });
+
+  it("on the first request of a connection that the peer resets at the preface", async () => {
+    // The connect flush sends the preface and then the queued request's HEADERS. The peer
+    // resets as soon as the first bytes arrive, so the RST can land between the two sends.
+    // Whichever side sees it first, the request and the session report it, as in Node.
+    await runClient(`request();`, socket => socket.once("data", () => socket.resetAndDestroy()));
+  });
+});

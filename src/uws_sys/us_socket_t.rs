@@ -93,6 +93,18 @@ impl us_socket_t {
         );
         unsafe {
             // SAFETY: self is a live us_socket_t
+            let _ = c::us_socket_close(self, code as c_int, ptr::null_mut());
+        }
+    }
+
+    /// Close with the error that ended the connection instead of a
+    /// [`CloseCode`]: an errno on POSIX, a WSA code on Windows, the numbering
+    /// the loop closes a failed `recv()` with. The close callback reports any
+    /// code above the enum's range as that error.
+    pub fn close_with_error_code(&mut self, code: c_int) {
+        bun_core::scoped_log!(uws, "us_socket_close({:p}, errno {})", self, code);
+        unsafe {
+            // SAFETY: self is a live us_socket_t
             let _ = c::us_socket_close(self, code, ptr::null_mut());
         }
     }
@@ -404,17 +416,21 @@ impl us_socket_t {
     /// sends on platforms without it). Same closed/shutdown gating and
     /// partial-write poll handling as `raw_write`. Plain-TCP only by contract:
     /// raw writes bypass TLS framing.
-    pub(crate) fn raw_writev(&mut self, iov: &[UsIoVec]) -> i32 {
+    pub(crate) fn raw_writev(&mut self, iov: &[UsIoVec]) -> (i32, i32) {
         bun_core::scoped_log!(uws, "us_socket_raw_writev({:p}, {})", self, iov.len());
+        let mut fatal: i32 = 0;
         // SAFETY: iov entries reference memory owned by the caller for the
         // duration of this call; the C side only reads them synchronously.
-        unsafe {
+        let written = unsafe {
             c::us_socket_raw_writev(
                 self,
                 iov.as_ptr(),
                 i32::try_from(iov.len()).expect("int cast"),
+                &raw mut fatal,
             )
-        }
+        };
+        // (bytes written, fatal send error) as in `write_check_error`.
+        (written, fatal)
     }
 
     /// Bypass TLS — raw bytes to the fd even if `is_tls()`.
@@ -552,6 +568,7 @@ mod c {
             s: *mut us_socket_t,
             iov: *const super::UsIoVec,
             count: i32,
+            fatal_write_error: *mut i32,
         ) -> i32;
         pub(super) fn us_socket_raw_write(s: *mut us_socket_t, data: *const u8, length: i32)
         -> i32;
@@ -559,9 +576,10 @@ mod c {
 
         pub(super) safe fn us_socket_pause(s: &mut us_socket_t);
         pub(super) safe fn us_socket_resume(s: &mut us_socket_t);
+        /// `code`: a [`CloseCode`], or the error that ended the connection.
         pub(super) fn us_socket_close(
             s: *mut us_socket_t,
-            code: CloseCode,
+            code: c_int,
             reason: *mut c_void,
         ) -> *mut us_socket_t;
         pub(super) safe fn us_socket_shutdown(s: &mut us_socket_t);

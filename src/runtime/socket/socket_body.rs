@@ -81,6 +81,34 @@ fn read_error_from_close_code(code: c_int) -> sys::Error {
     }
 }
 
+/// The close code for a send errno, or 0 for a plain close. Only an errno the
+/// kernel set on the socket is reported, because a read would return the same
+/// one (the peer-gone set of `us_socket_write_check_error`). One peer reset
+/// is `ECONNRESET` on linux and `EPIPE` on darwin: both report as the former.
+fn dead_transport_close_code(errno: c_int) -> c_int {
+    use sys::SystemErrno as E;
+    #[cfg(not(windows))]
+    let known = E::init(i64::from(errno));
+    // A WSA code. `read_error_from_close_code` maps it for JS.
+    #[cfg(windows)]
+    let known = E::init(errno.unsigned_abs());
+    match known {
+        #[cfg(not(windows))]
+        Some(E::EPIPE | E::ECONNABORTED) => E::ECONNRESET as c_int,
+        #[cfg(windows)]
+        Some(E::EPIPE | E::ECONNABORTED) => errno,
+        Some(
+            E::ECONNRESET
+            | E::ENOTCONN
+            | E::ETIMEDOUT
+            | E::ENETDOWN
+            | E::ENETUNREACH
+            | E::EHOSTUNREACH,
+        ) => errno,
+        _ => 0,
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports
 // ──────────────────────────────────────────────────────────────────────────
@@ -906,6 +934,32 @@ impl<const SSL: bool> NewSocket<SSL> {
         let called = handlers.call_error_handler(this_value, &[this_value, err_value]);
         self.exit_scope(scope);
         called
+    }
+
+    /// A `send()` the kernel rejected outright takes the connection down. Close
+    /// with that errno, the way uSockets' loop closes a failed `recv()`:
+    /// `on_close` reports a code above the `CloseCode` range as the error that
+    /// ended the connection. A plain close would reach JS as a clean EOF.
+    pub(crate) fn close_after_fatal_send(&self, errno: c_int) {
+        let socket = self.socket.get();
+        let code = dead_transport_close_code(errno);
+        // darwin fails every send on a disconnected socket with EPIPE and leaves
+        // the cause (a reset, a timeout, an unreachable host) in SO_ERROR.
+        #[cfg(not(windows))]
+        let code = if errno == sys::SystemErrno::EPIPE as c_int {
+            match dead_transport_close_code(socket.get_error()) {
+                pending if pending > 2 => pending,
+                _ => code,
+            }
+        } else {
+            code
+        };
+        // 0, 1 and 2 collide with `CloseCode`, which `on_close` filters out.
+        if code > 2 {
+            socket.close_with_error_code(code);
+        } else {
+            socket.close(uws::CloseCode::Normal);
+        }
     }
 
     /// Takes `ThisPtr<Self>`, not `&mut self`: `callback.call(...)` re-enters
@@ -2544,7 +2598,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         if SSL && self.flags.get().contains(Flags::REJECTED) {
             return -1;
         }
-        let res = socket.raw_writev(iov);
+        let (res, fatal_errno) = socket.raw_writev(iov);
+        if fatal_errno != 0 {
+            // The negative errno of a fatal send, as `write_maybe_corked` returns it.
+            return -fatal_errno;
+        }
         let uwrote: usize = usize::try_from(res.max(0)).expect("int cast");
         self.bytes_written
             .set(self.bytes_written.get() + uwrote as u64);

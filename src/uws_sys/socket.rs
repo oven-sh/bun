@@ -354,6 +354,19 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         )
     }
 
+    /// Close reporting the error that ended the connection (see
+    /// [`us_socket_t::close_with_error_code`]). Only a connected socket carries
+    /// a code: the other kinds own their own failure delivery.
+    pub fn close_with_error_code(&self, code: c_int) {
+        on_socket!(self.socket;
+            connected s => s.close_with_error_code(code),
+            connecting c => c.close(),
+            detached => {},
+            duplex d => d.close(),
+            pipe p => p.close(),
+        )
+    }
+
     /// The JS wrapper that owns this socket is being finalized: whatever the
     /// close below unwinds must not reach back into JS objects.
     pub fn prepare_for_finalize(&self) {
@@ -419,7 +432,8 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     /// Vectored raw write: one writev on real sockets; sequential raw writes on
     /// transports without an fd (duplex/pipe). Plain-TCP callers only — raw
     /// writes bypass TLS framing.
-    pub fn raw_writev(&self, iov: &[crate::UsIoVec]) -> i32 {
+    pub fn raw_writev(&self, iov: &[crate::UsIoVec]) -> (i32, i32) {
+        // (bytes written, fatal send error) as in `write_check_error`.
         on_socket!(self.socket;
             connected s => s.raw_writev(iov),
             duplex d => {
@@ -431,7 +445,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
                     if w > 0 { total += w; }
                     if w < slice.len() as i32 { break; }
                 }
-                total
+                (total, 0)
             },
             pipe p => {
                 let mut total: i32 = 0;
@@ -442,9 +456,9 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
                     if w > 0 { total += w; }
                     if w < slice.len() as i32 { break; }
                 }
-                total
+                (total, 0)
             },
-            else => 0,
+            else => (0, 0),
         )
     }
 

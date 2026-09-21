@@ -482,16 +482,16 @@ class Database implements SqliteTypes.Database {
     serialized: NodeJS.TypedArray | ArrayBufferLike,
     options: boolean | { readonly?: boolean; strict?: boolean; safeIntegers?: boolean } = false,
   ) {
-    if (serialized instanceof ArrayBuffer || serialized instanceof SharedArrayBuffer) {
-      serialized = new Uint8Array(serialized);
-    }
+    const bytes: NodeJS.TypedArray = require("node:util/types").isAnyArrayBuffer(serialized)
+      ? new Uint8Array(serialized as ArrayBufferLike)
+      : (serialized as NodeJS.TypedArray);
     if (typeof options === "boolean") {
       // Maintain backward compatibility with existing API
-      return new Database(serialized, { readonly: options });
+      return new Database(bytes, { readonly: options });
     } else if (options && typeof options === "object") {
-      return new Database(serialized, options);
+      return new Database(bytes, options);
     } else {
-      return new Database(serialized, 0);
+      return new Database(bytes, 0);
     }
   }
 

@@ -93,6 +93,7 @@ function configure(buildDir: string): Configured {
   registerCodegenRules(n, cfg);
   const o: CodegenOutputs = {
     all: [],
+    builtinTypes: [],
     rustInputs: [],
     cppSources: [],
     cppHeaders: [],

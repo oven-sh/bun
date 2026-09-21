@@ -72,7 +72,10 @@ function readableFromOldStyleStream(source: import("node:stream").Stream) {
   const { PassThrough } = require("node:stream");
   const passthrough = new PassThrough();
   // pipe() does not forward "error", so a source that fails would leave the body open forever.
-  source.on("error", err => passthrough.destroy(err));
+  source.on("error", err => {
+    // After "end" the body is complete: https://github.com/node-fetch/node-fetch/blob/65ae25a1da2834b046c218685f2085a06f679492/src/body.js#L259-L268
+    if (!passthrough.writableEnded) passthrough.destroy(err);
+  });
   source.pipe(passthrough);
   return passthrough;
 }

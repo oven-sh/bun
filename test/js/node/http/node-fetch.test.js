@@ -344,6 +344,19 @@ test("node-fetch Response rejects the body read when an old-style Stream body fa
   expect(await response.text().catch(e => e)).toBe(error);
 });
 
+test.each([true, false])(
+  "node-fetch Response keeps a complete old-style Stream body when the source fails after its end (own error listener: %p)",
+  async ownListener => {
+    const legacy = new stream.Stream();
+    if (ownListener) legacy.on("error", () => {});
+    const response = new Response(legacy);
+    legacy.emit("data", Buffer.from("hello world"));
+    legacy.emit("end");
+    legacy.emit("error", new Error("close failed"));
+    expect(await response.text()).toBe("hello world");
+  },
+);
+
 test("node-fetch Response body stream emits the error of an old-style Stream body", async () => {
   const legacy = new stream.Stream();
   const { body } = new Response(legacy);
@@ -376,6 +389,20 @@ test.each([true, false])(
     const error = new Error("upload failed");
     legacy.emit("error", error);
     expect(await response.catch(e => e)).toBe(error);
+  },
+);
+
+test.each([true, false])(
+  "node-fetch fetch() sends a complete old-style Stream request body when the source fails after its end (own error listener: %p)",
+  async ownListener => {
+    using server = serveRequestBody();
+    const legacy = new stream.Stream();
+    if (ownListener) legacy.on("error", () => {});
+    const response = fetch2(server.url, { method: "POST", body: legacy });
+    legacy.emit("data", Buffer.from("hello world"));
+    legacy.emit("end");
+    legacy.emit("error", new Error("close failed"));
+    expect(await (await response).text()).toBe("hello world");
   },
 );
 

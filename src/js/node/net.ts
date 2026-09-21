@@ -310,12 +310,9 @@ const kUserUnrefed = Symbol("kUserUnrefed");
 const kPausedUnref = Symbol("kPausedUnref");
 // The last flow-control call on the native handle was pause(): node's `!handle.reading`.
 const kReadStopped = Symbol("kReadStopped");
-// The stream still buffers bytes that arrived while kReadStopped. A push() of such bytes below the
-// highWaterMark makes the stream call _read(), which clears kReadStopped before the close that
-// follows them is dispatched.
+// Bytes that arrived while kReadStopped are still buffered (their push() can make _read() clear kReadStopped).
 const kReadWhileStopped = Symbol("kReadWhileStopped");
-// The error the connection closed with, held while the consumer still has bytes to take that
-// arrived ahead of it (see reportReadError), and whether its delivery is already scheduled.
+// See reportReadError.
 const kHeldError = Symbol("kHeldError");
 const kHeldErrorDue = Symbol("kHeldErrorDue");
 const kOnreadDeliver = Symbol("kOnreadDeliver");
@@ -824,19 +821,12 @@ function hasUnreadBytes(self) {
   return self.readableLength > 0 || (tail !== undefined && tail.length > 0);
 }
 
-// The peer's FIN has reached the stream (or waits behind the onread tail). libuv stops a handle's reads
-// for good there: https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L931-L934
+// libuv reads nothing after a FIN: https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L931-L934
 function readsEnded(self) {
   return self[kended] || self[kOnreadPendingEnd];
 }
 
-// usockets reads what the kernel queued ahead of a reset into the stream before it reports the
-// error, also when reads are stopped. Node meets a read error only in a read of the handle
-// (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L213-L217), and a
-// stopped handle does not read (https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L1043-L1044),
-// so those bytes reach its consumer first, however late it reads. Hold the error until ours has
-// them too. Behind a FIN node never reads it: the stream ends, and only a write reports the reset.
-// A write in flight fails on the reset at once in node as well (stream.c#L1232-L1234).
+// Node meets a reset in the read after the unread bytes, or in a write: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L213-L217
 function reportReadError(self, err) {
   const notReading = self[kReadStopped] || self[kReadWhileStopped] || readsEnded(self);
   if (notReading && !self[kwriteCallback] && hasUnreadBytes(self)) {
@@ -846,9 +836,7 @@ function reportReadError(self, err) {
   self.destroy(err);
 }
 
-// Node meets the error in the read that _read() starts once the buffered bytes are taken
-// (https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L769-L792): a turn of the loop later, so a
-// consumer that is done with the socket by then (a complete HTTP response) never sees it.
+// A turn of the loop later, like the read that node's _read() starts: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L769-L792
 function scheduleHeldError(self) {
   if (self[kHeldErrorDue]) return;
   self[kHeldErrorDue] = true;
@@ -931,8 +919,7 @@ function SocketEmitEndNT(self, _err?) {
     // An error excluded from the synthesis above (teardown noise, or no
     // listener attached): nothing more is coming, but the socket still has to
     // finish its lifecycle - close it quietly instead of leaving it open with
-    // no further events. With bytes still unread, 'end' finishes it once the
-    // consumer has them.
+    // no further events.
     self.destroy();
   }
   // A write that was waiting on the native drain can never complete once the
@@ -2686,9 +2673,7 @@ function afterStoppedRead(self) {
   const state = self._readableState;
   const length = state.length;
   if (length === 0) self[kReadWhileStopped] = false;
-  // Node's read() calls _read(), which restarts the handle and meets the error, once what stays
-  // buffered is below the highWaterMark (a read(n) for more than arrived raises it first):
-  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/streams/readable.js#L730-L751
+  // Where node's read() calls _read() and meets the error: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/streams/readable.js#L730-L751
   if (self[kHeldError] !== undefined && self[kOnreadTail] === undefined && !readsEnded(self)) {
     if (length === 0 || length < state.highWaterMark) scheduleHeldError(self);
   }

@@ -88,8 +88,6 @@ interface RequestOptions {
   json?: boolean;
   /** How many times to try. */
   attempts: number;
-  /** Stop when this aborts: the attempt in flight is cut short and no other is made. */
-  signal?: AbortSignal | undefined;
 }
 
 /**
@@ -101,16 +99,16 @@ export async function request(
   url: string,
   options: RequestOptions,
 ): Promise<{ error: Error | undefined; body: unknown }> {
-  const { method = "GET", headers = {}, body: input, json, attempts, signal } = options;
+  const { method = "GET", headers = {}, body: input, json, attempts } = options;
   let error: Error | undefined;
-  for (let attempt = 0; attempt < attempts && !signal?.aborted; attempt++) {
+  for (let attempt = 0; attempt < attempts; attempt++) {
     if (attempt > 0) {
       await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
     }
     let body: unknown;
     let response: Response;
     try {
-      response = await fetch(url, { method, headers, body: input ?? null, signal: signal ?? null });
+      response = await fetch(url, { method, headers, body: input ?? null });
       body = json && response.ok ? await response.json() : await response.text();
     } catch (cause) {
       error = new Error(`Fetch failed: ${method} ${url}`, { cause });
@@ -124,7 +122,7 @@ export async function request(
       return { error, body };
     }
   }
-  return { error: error ?? new Error(`Gave up: ${method} ${url}`), body: undefined };
+  return { error, body: undefined };
 }
 
 /** The temp directory to use on this machine. */

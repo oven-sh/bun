@@ -6,12 +6,12 @@ const kCallback = Symbol("Callback");
 const kInitOtherSide = Symbol("InitOtherSide");
 
 class DuplexSide extends Duplex {
-  #otherSide: DuplexSide = null as unknown as DuplexSide;
+  #otherSide: DuplexSide | null = null;
   [kCallback]: (() => void) | null = null;
 
   constructor(options) {
     super(options);
-    this.#otherSide = null as unknown as DuplexSide;
+    this.#otherSide = null;
   }
 
   [kInitOtherSide](otherSide) {
@@ -43,8 +43,8 @@ class DuplexSide extends Duplex {
   }
 
   _final(callback) {
-    this.#otherSide.on("end", callback);
-    this.#otherSide.push(null);
+    this.#otherSide!.on("end", callback);
+    this.#otherSide!.push(null);
   }
 
   _destroy(err, callback) {

@@ -59,7 +59,7 @@ declare var $alwaysInline;
  */
 
 interface ReadableStream<R = any> extends _ReadableStream<R> {
-  /** The native source behind a Bun-created stream, if any. */
+  /** The native source behind a Bun-created stream: `undefined` when there is none, `-1` once it is detached. */
   $bunNativePtr: TODO | undefined;
 }
 
@@ -70,7 +70,7 @@ declare var ReadableStream: {
     strategy?: { highWaterMark?: number },
   ): ReadableStream<Uint8Array>;
   new <R = any>(
-    underlyingSource?: Omit<Bun.UnderlyingSource<R>, "type"> & { __proto__?: null; type?: "bytes" | undefined },
+    underlyingSource?: Omit<Bun.UnderlyingSource<R>, "type"> & { type?: "bytes" | undefined },
     strategy?: QueuingStrategy<R>,
   ): ReadableStream<R>;
   new <R = any>(underlyingSource?: Bun.DirectUnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;

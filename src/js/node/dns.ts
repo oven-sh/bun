@@ -40,50 +40,8 @@ const errorCodes = {
   CANCELLED: "ECANCELLED",
 };
 
-type ServerTriple = [family: number, address: string, port: number];
-
-interface NativeResolver {
-  getServers(): string[];
-  setServers(servers: ServerTriple[]): void;
-  setLocalAddress(first: string, second?: string): void;
-  cancel(): void;
-  resolve(hostname: string, rrtype: string): Promise<unknown[]>;
-  resolveAny(hostname: string): Promise<unknown[]>;
-  resolveCname(hostname: string): Promise<string[]>;
-  resolveCaa(hostname: string): Promise<unknown[]>;
-  resolveMx(hostname: string): Promise<unknown[]>;
-  resolveNaptr(hostname: string): Promise<unknown[]>;
-  resolveNs(hostname: string): Promise<string[]>;
-  resolvePtr(hostname: string): Promise<string[]>;
-  resolveSoa(hostname: string): Promise<unknown>;
-  resolveSrv(hostname: string): Promise<unknown[]>;
-  resolveTxt(hostname: string): Promise<string[][]>;
-  reverse(ip: string): Promise<string[]>;
-}
-
-declare module "bun" {
-  namespace dns {
-    export const getServers: NativeResolver["getServers"];
-    export const setServers: NativeResolver["setServers"];
-    export const resolve: NativeResolver["resolve"];
-    export const resolveAny: NativeResolver["resolveAny"];
-    export const resolveCname: NativeResolver["resolveCname"];
-    export const resolveCaa: NativeResolver["resolveCaa"];
-    export const resolveMx: NativeResolver["resolveMx"];
-    export const resolveNaptr: NativeResolver["resolveNaptr"];
-    export const resolveNs: NativeResolver["resolveNs"];
-    export const resolvePtr: NativeResolver["resolvePtr"];
-    export const resolveSoa: NativeResolver["resolveSoa"];
-    export const resolveSrv: NativeResolver["resolveSrv"];
-    export const resolveTxt: NativeResolver["resolveTxt"];
-    export const reverse: NativeResolver["reverse"];
-    function lookupService(
-      address: string,
-      port: number,
-    ): Promise<[hostname: string | undefined, service: string | undefined]>;
-  }
-}
-
+type ServerTriple = Bun.dns.ServerTriple;
+type NativeResolver = Bun.dns.NativeResolver;
 type NewNativeResolver = (options: { timeout: number; tries: number }) => NativeResolver;
 
 interface DNSException extends Error {
@@ -192,12 +150,12 @@ function setServersOn(servers, object) {
 
     if (addrSplitMatch) {
       const hostIP = addrSplitMatch[1];
-      const port = addrSplitMatch[2] || IANA_DNS_PORT;
+      const port = addrSplitMatch[2] ? parseInt(addrSplitMatch[2]) : IANA_DNS_PORT;
 
       ipVersion = isIP(hostIP);
 
       if (ipVersion !== 0) {
-        triples.push([ipVersion, hostIP, parseInt(port)]);
+        triples.push([ipVersion, hostIP, port]);
         return;
       }
     }
@@ -745,7 +703,7 @@ class Resolver {
 
   setLocalAddress(first, second) {
     validateLocalAddresses(first, second);
-    (Resolver.#getResolver(this) as NativeResolver).setLocalAddress(first, second);
+    this.#resolver.setLocalAddress(first, second);
   }
 
   setServers(servers) {
@@ -1044,7 +1002,7 @@ const promises = {
 
     setLocalAddress(first, second) {
       validateLocalAddresses(first, second);
-      (Resolver.#getResolver(this) as NativeResolver).setLocalAddress(first, second);
+      this.#resolver.setLocalAddress(first, second);
     }
 
     setServers(servers) {

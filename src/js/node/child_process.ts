@@ -45,40 +45,6 @@ var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
 
 const MAX_BUFFER = 1024 * 1024;
 
-declare global {
-  namespace NodeJS {
-    interface Process {
-      _eval?: string;
-    }
-  }
-}
-
-type NodeStdio = (Bun.SpawnOptions.Writable | ArrayBufferView | "ipc" | "socket-fd")[];
-
-interface NodeSpawnOptions
-  extends Omit<
-    Bun.Spawn.SpawnOptions<Bun.SpawnOptions.Writable, Bun.SpawnOptions.Readable, Bun.SpawnOptions.Readable>,
-    "stdio" | "onDisconnect"
-  > {
-  cmd: string[];
-  stdio: NodeStdio;
-  onDisconnect?(ok: boolean): void;
-}
-
-interface NodeSpawnSyncOptions
-  extends Omit<
-    Bun.Spawn.SpawnSyncOptions<Bun.SpawnOptions.Writable, Bun.SpawnOptions.Readable, Bun.SpawnOptions.Readable>,
-    "stdio"
-  > {
-  cmd: string[];
-  stdio: NodeStdio;
-}
-
-declare module "bun" {
-  function spawn(options: NodeSpawnOptions): Subprocess;
-  function spawnSync(options: NodeSpawnSyncOptions): SyncSubprocess;
-}
-
 interface ExecException extends Error {
   cmd?: string;
 }
@@ -1798,7 +1764,7 @@ function streamFdOf(item): number | undefined {
   return undefined;
 }
 
-function nodeToBun(item: string, index: number): NodeStdio[number] {
+function nodeToBun(item: string, index: number): Bun.Spawn.NodeStdio[number] {
   // If not defined, use the default.
   // For stdin/stdout/stderr, it's pipe. For others, it's ignore.
   if (item == null) {

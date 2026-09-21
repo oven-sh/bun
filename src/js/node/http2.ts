@@ -142,7 +142,7 @@ function throwSettingTypeError(name: string, value: any) {
   throw err;
 }
 
-function validateSettings(settings: Partial<Settings>) {
+function validateSettings(settings: any) {
   if (typeof settings !== "object" || settings === null || $isArray(settings)) {
     throw $ERR_INVALID_ARG_TYPE("settings", "object", settings);
   }
@@ -1896,7 +1896,7 @@ type Socket = import("node:net").Socket & { servername?: undefined; alpnProtocol
 type TLSSocket = import("node:tls").TLSSocket;
 
 abstract class Http2Session extends EventEmitter {
-  declare timeout: number;
+  declare timeout: number | undefined;
   abstract get destroyed(): boolean;
   abstract destroy(error?: Error | number | null, code?: number): void;
   [bunHTTP2SessionTeardownFrame]: typeof kNoSessionTeardown | import("./async_hooks").Frame | undefined =
@@ -4019,7 +4019,7 @@ class ServerHttp2Session extends Http2Session {
   /// connected indicates that the connection/socket is connected
   #connected: boolean = false;
   #connections: number = 0;
-  #socket_proxy: this | undefined;
+  #socket_proxy: import("node:net").Socket | import("node:tls").TLSSocket | undefined;
   #parser: typeof H2FrameParser | null;
   #alpnProtocol: string | undefined = undefined;
   #localSettings: Settings | null = null;
@@ -4980,7 +4980,7 @@ class ClientHttp2Session extends Http2Session {
   #connected: boolean = false;
   #connections: number = 0;
 
-  #socket_proxy: this | undefined;
+  #socket_proxy: import("node:net").Socket | import("node:tls").TLSSocket | undefined;
   #parser: typeof H2FrameParser | null;
   #url: URL;
   #authority: string;
@@ -6643,11 +6643,11 @@ function emitFrameErrorEventNT(stream, frameType, errorCode) {
 }
 interface Http2SecureServer extends UpgradableSecureServer {}
 class Http2SecureServer extends (tls.Server as unknown as Http2SecureServerBase) {
-  declare keepAliveTimeout: number;
-  declare headersTimeout: number;
-  declare requestTimeout: number;
+  declare keepAliveTimeout: number | undefined;
+  declare headersTimeout: number | undefined;
+  declare requestTimeout: number | undefined;
   declare maxHeadersCount: number | null;
-  declare maxRequestsPerSocket: number;
+  declare maxRequestsPerSocket: number | undefined;
   declare maxHeaderSize: number | undefined;
   declare insecureHTTPParser: boolean | undefined;
   declare httpValidation: string | undefined;

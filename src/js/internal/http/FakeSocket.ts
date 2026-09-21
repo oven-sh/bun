@@ -4,7 +4,7 @@ const { Duplex } = require("internal/stream");
 
 type FakeSocket = InstanceType<typeof FakeSocket>;
 var FakeSocket = class Socket extends Duplex {
-  [kInternalSocketData]!: [import("node:http").Server, import("node:http").ServerResponse, Request];
+  [kInternalSocketData]?: [import("node:http").Server, import("node:http").ServerResponse, Request];
   bytesRead = 0;
   bytesWritten = 0;
   connecting = false;

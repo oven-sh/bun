@@ -2881,19 +2881,11 @@ ServerResponse.prototype.removeHeader = function removeHeader(name) {
 
 // res.headers / res.headers= are Bun-specific conveniences kept for backwards
 // compatibility; they are views over the Node.js-style header storage.
-type OutgoingHeaderValue = number | string | readonly string[];
 Object.defineProperty(ServerResponse.prototype, "headers", {
   get() {
     return this.getHeaders();
   },
-  set(
-    value:
-      | [string, OutgoingHeaderValue][]
-      | { entries(): Iterable<[string, OutgoingHeaderValue]> }
-      | Record<string, OutgoingHeaderValue>
-      | null
-      | undefined,
-  ) {
+  set(value) {
     throwIfServerHeadersSent(this, "set");
     this[kOutHeaders] = null;
     if (!value) return;

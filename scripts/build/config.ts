@@ -760,10 +760,10 @@ export function sharedCacheDir(cwd: string): string {
 }
 
 /**
- * The part of the config that no tool is needed for: the target, the build type, and where things go.
- * resolveConfig() and resolveCodegenConfig() both start from it, so each of these is decided once.
+ * The part of the config that no native tool is needed for: the build type, where things go, the JavaScript tools,
+ * and what build_options.rs is generated from. resolveConfig() and resolveCodegenConfig() both start from it.
  */
-function resolveBase(partial: PartialConfig, host: Host, os: OS, arch: Arch) {
+function resolveBase(partial: PartialConfig, host: Host, os: OS, arch: Arch, js: JsToolchain) {
   const abi: Abi | undefined = os === "linux" ? (partial.abi ?? detectLinuxAbi()) : undefined;
 
   const linux = os === "linux";
@@ -819,7 +819,11 @@ function resolveBase(partial: PartialConfig, host: Host, os: OS, arch: Arch) {
   // host-target objects at the same obj/ paths, and mixing COFF into an ELF
   // build dir (or vice versa) forces a full rebuild each time you switch.
   const crossWindowsSuffix = windows && host.os !== "windows" ? `-windows-${arch}` : "";
-  const defaultBuildDirName = computeBuildDirName({ debug, release, asan, assertions }) + crossWindowsSuffix;
+  // mode=codegen writes a manifest and a compile_commands.json with no native edges in them, so it gets a
+  // directory of its own: build/debug is where clangd reads compile_commands.json.
+  const codegenSuffix = partial.mode === "codegen" ? "-codegen" : "";
+  const defaultBuildDirName =
+    computeBuildDirName({ debug, release, asan, assertions }) + crossWindowsSuffix + codegenSuffix;
   const buildDir =
     partial.buildDir !== undefined
       ? isAbsolute(partial.buildDir)
@@ -845,13 +849,11 @@ function resolveBase(partial: PartialConfig, host: Host, os: OS, arch: Arch) {
   if (packageManager !== "bun" && packageManager !== "npm") {
     throw new BuildError(`Unknown packageManager: ${packageManager}`, { hint: "Use bun or npm" });
   }
+  assert(packageManager === "bun" || js.npm !== undefined, "packageManager=npm needs toolchain.npm");
 
   // ─── What build_options.rs is generated from (buildOptionsRs.ts) ───
   const canary = partial.canary ?? true;
   const canaryRevision = canary ? "1" : "0";
-  // TinyCC: off on Android (no upstream bionic support; FFI cc() falls back
-  // to dlopen-only) and FreeBSD (oven-sh/tinycc has no FreeBSD target).
-  const tinycc = partial.tinycc ?? !(abi === "android" || freebsd);
   const fuzzilli = partial.fuzzilli ?? false;
   const pkgJsonPath = resolve(cwd, "package.json");
   const pkgJson = JSON.parse(readFileSync(pkgJsonPath, "utf8")) as { version: string };
@@ -861,9 +863,12 @@ function resolveBase(partial: PartialConfig, host: Host, os: OS, arch: Arch) {
   const nodejsVersion = partial.nodejsVersion ?? versionDefaults.nodejsVersion;
 
   return {
+    bun: js.bun,
+    npm: packageManager === "npm" ? js.npm : undefined,
+    jsRuntime: js.jsRuntime,
+    esbuild: js.esbuild,
     canary,
     canaryRevision,
-    tinycc,
     fuzzilli,
     version,
     revision,
@@ -901,18 +906,15 @@ export type CodegenFields = Pick<
   | "abi"
   | "x64"
   | "debug"
-  | "ci"
   | "cwd"
   | "buildDir"
   | "codegenDir"
   | "typesDir"
   | "cacheDir"
   | "packageManager"
-  | "asan"
   | "assertions"
   | "canary"
   | "canaryRevision"
-  | "tinycc"
   | "fuzzilli"
   | "version"
   | "revision"
@@ -927,24 +929,9 @@ export function resolveCodegenConfig(partial: PartialConfig, toolchain: JsToolch
   const host = detectHost();
   const os = partial.os ?? host.os;
   const arch = partial.arch ?? host.arch;
-  const { linux, darwin, windows, freebsd, darwinCross, buildType, release, buildkite, ...base } = resolveBase(
-    partial,
-    host,
-    os,
-    arch,
-  );
-  assert(base.packageManager === "bun" || toolchain.npm !== undefined, "packageManager=npm needs toolchain.npm");
-  return {
-    ...base,
-    mode: "codegen",
-    host,
-    os,
-    x64: arch === "x64",
-    bun: toolchain.bun,
-    npm: base.packageManager === "npm" ? toolchain.npm : undefined,
-    jsRuntime: toolchain.jsRuntime,
-    esbuild: toolchain.esbuild,
-  };
+  const { linux, darwin, windows, freebsd, darwinCross, buildType, release, ci, buildkite, asan, ...base } =
+    resolveBase(partial, host, os, arch, toolchain);
+  return { ...base, mode: "codegen", host, os, x64: arch === "x64" };
 }
 
 export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Config {
@@ -982,12 +969,15 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     packageManager,
     canary,
     canaryRevision,
-    tinycc,
     fuzzilli,
     version,
     revision,
     nodejsVersion,
-  } = resolveBase(partial, host, os, arch);
+    bun,
+    npm,
+    jsRuntime,
+    esbuild,
+  } = resolveBase(partial, host, os, arch, toolchain);
 
   const unix = linux || darwin || freebsd;
   const x64 = arch === "x64";
@@ -1110,6 +1100,10 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // those users pass --static-libatomic=off. Not auto-detected: the link
   // failure is loud ("cannot find -l:libatomic.a") and the fix is obvious.
   const staticLibatomic = partial.staticLibatomic ?? true;
+
+  // TinyCC: off on Android (no upstream bionic support; FFI cc() falls back
+  // to dlopen-only) and FreeBSD (oven-sh/tinycc has no FreeBSD target).
+  const tinycc = partial.tinycc ?? !(abi === "android" || freebsd);
 
   const valgrind = partial.valgrind ?? false;
   // Default follows asan: on for local debug (Linux / arm64 macOS) and CI
@@ -1283,8 +1277,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const nodejsV8Version = partial.nodejsV8Version ?? versionDefaults.nodejsV8Version;
   const webkitVersion = partial.webkitVersion ?? versionDefaults.webkitVersion;
 
-  assert(packageManager === "bun" || toolchain.npm !== undefined, "packageManager=npm needs toolchain.npm");
-
   // ─── macOS SDK ───
   // Must be passed to nested cmake builds or they'll pick the wrong SDK.
   // Native darwin: ask xcode-select/xcrun. Cross-compiling from a non-darwin
@@ -1427,10 +1419,10 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     objdump: toolchain.objdump,
     cxxfilt: toolchain.cxxfilt,
     dsymutil: toolchain.dsymutil,
-    bun: toolchain.bun,
-    npm: packageManager === "npm" ? toolchain.npm : undefined,
-    jsRuntime: toolchain.jsRuntime,
-    esbuild: toolchain.esbuild,
+    bun,
+    npm,
+    jsRuntime,
+    esbuild,
     ccache: toolchain.ccache,
     cmake: toolchain.cmake,
     cargo: toolchain.cargo,

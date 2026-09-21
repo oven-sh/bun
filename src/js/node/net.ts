@@ -1426,7 +1426,7 @@ function onconnection(err, clientHandle) {
 }
 
 // TODO: SocketHandlers2 is a bad name but its temporary. reworking the Server in a followup PR
-const SocketHandlers2: InternalSocketHandler<ConnectData> = {
+const SocketHandlers2 = {
   open(socket: Socket<PendingConnectData>) {
     $debug("Bun.Socket open");
     let { self, req } = socket.data;
@@ -1449,7 +1449,7 @@ const SocketHandlers2: InternalSocketHandler<ConnectData> = {
     socket.data.req = undefined;
     if (self[kupgraded]) {
       self.connecting = false;
-      SocketHandlers2.drain!(socket);
+      SocketHandlers2.drain(socket);
     }
   },
   data(socket, buffer) {
@@ -1587,7 +1587,7 @@ const SocketHandlers2: InternalSocketHandler<ConnectData> = {
     }
     req.oncomplete(error.errno, self._handle, req, true, true);
   },
-};
+} satisfies InternalSocketHandler<ConnectData>;
 
 // The same table minus the per-connection callback members: a listener whose
 // config has neither handler never registers the native SNI/ALPN dispatches,
@@ -2104,7 +2104,7 @@ Socket.prototype.connect = function connect(...args) {
       throw $ERR_MISSING_ARGS(["options", "port", "path"]);
     }
     const bunTLS = this[bunTlsSymbol];
-    var tls: any | undefined = undefined;
+    var tls: TLSConnectOptions | undefined = undefined;
     if (typeof bunTLS === "function") {
       tls = bunTLS.$call(this, port, host, true);
       // Client always request Cert

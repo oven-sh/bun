@@ -23,34 +23,6 @@ interface Http1FallbackResponseHead {
   keepAliveTimeoutSecs: number;
 }
 
-interface Http1FallbackResponseHandle {
-  flags: number;
-  ended: boolean;
-  finished: boolean;
-  aborted: boolean;
-  bufferedAmount: number;
-  shouldKeepAlive: boolean;
-  onfinished: (() => void) | null;
-  cork<T>(callback: () => T): T;
-  writeContinue(): void;
-  writeInformational(chunk, encoding): void;
-  writeHead(statusCode, statusMessage, headers, autoHeaderBits, keepAliveTimeoutSecs): void;
-  flushHeaders(): void;
-  writeHeadAndEnd(
-    statusCode,
-    statusMessage,
-    headers,
-    chunk,
-    encoding,
-    strictContentLength,
-    autoHeaderBits,
-    keepAliveTimeoutSecs,
-  ): number;
-  write(chunk, encoding, _callback, _strictContentLength): number;
-  end(chunk, encoding, _callback, _strictContentLength): number;
-  abort(): void;
-}
-
 function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout) {
   const { _checkInvalidHeaderChar: checkInvalidHeaderChar } = require("node:_http_common");
   let head: Http1FallbackResponseHead | null = null;
@@ -190,14 +162,14 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     return length;
   }
 
-  const handle: Http1FallbackResponseHandle = {
+  const handle = {
     flags: 0,
     ended: false,
     finished: false,
     aborted: false,
     bufferedAmount: 0,
     shouldKeepAlive,
-    onfinished: null,
+    onfinished: null as (() => void) | null,
     cork(callback) {
       return callback();
     },

@@ -356,21 +356,17 @@ async function writeManifest(
 /** What configureCodegen() returns: configure()'s result without the native half. */
 export interface CodegenConfigureResult {
   cfg: CodegenConfig;
-  /** Build.ninja absolute path. */
-  ninjaFile: string;
   /** The ninja to run the build with (ninja-release.ts): a path, or `ninja` for the one on PATH. */
   ninja: string;
   /** Wall-clock ms for the configure pass. */
   elapsed: number;
-  /** True if build.ninja actually changed (vs an idempotent re-run). */
-  changed: boolean;
 }
 
 /**
  * configure() for `mode: "codegen"`: a graph of the code generators alone, whose default target is `codegen`.
  * Looks for bun, the root install's esbuild and perl, and for no compiler, linker, cmake or cargo; writes no
- * `.cargo/config.toml` and fetches no SDK or sysroot. The outputs are those of the same profile's full build, in the
- * same build directory, so the two can be run in turn.
+ * `.cargo/config.toml` and fetches no SDK or sysroot. It has a build directory of its own (`build/debug-codegen`);
+ * the type declarations go to `cfg.typesDir`, which every build directory shares.
  */
 export async function configureCodegen(input: ConfigureInput, fromNinja = false): Promise<CodegenConfigureResult> {
   const start = performance.now();
@@ -399,8 +395,8 @@ export async function configureCodegen(input: ConfigureInput, fromNinja = false)
   emitGeneratorRule(n, cfg, input);
   n.default(["codegen"]);
 
-  const { changed, ninjaPath } = await writeManifest(n, cfg, ninja, fromNinja, mark);
-  return { cfg, ninjaFile: ninjaPath, ninja, elapsed: Math.round(performance.now() - start), changed };
+  await writeManifest(n, cfg, ninja, fromNinja, mark);
+  return { cfg, ninja, elapsed: Math.round(performance.now() - start) };
 }
 
 /** LUT codegen (create-hash-table.ts) shells out to a perl script; without perl it fails cryptically. */

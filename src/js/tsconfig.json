@@ -8,17 +8,13 @@
     // baseUrl needed until resolver fix propagates to system Bun used during build
     "ignoreDeprecations": "6.0",
     "baseUrl": ".",
+    // bun-types comes in through `include` below, by path. A `types` entry is looked up from each
+    // `node_modules/@types` going up from here; the isolated install has none at the root, so from a git worktree
+    // nested in another checkout it silently resolves to that checkout's copy.
     "types": [],
     "paths": {
       "internal/*": ["./internal/*"] //deprecated
     }
   },
-  "include": [
-    "**/*.ts",
-    "**/*.tsx",
-    "**/*.js",
-    "./builtins.d.ts",
-    "./private.d.ts",
-    "../../packages/bun-types/index.d.ts"
-  ]
+  "include": ["**/*.ts", "**/*.tsx", "./builtins.d.ts", "./private.d.ts", "../../packages/bun-types/index.d.ts"]
 }

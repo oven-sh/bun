@@ -312,7 +312,6 @@ test.each([
 
 test("node-fetch Response accepts an old-style Stream body", async () => {
   const legacy = new stream.Stream();
-  legacy.readable = true;
   const response = new Response(legacy);
   const text = response.text();
   legacy.emit("data", Buffer.from("hello "));

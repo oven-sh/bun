@@ -1,7 +1,7 @@
 // This file contains functions used for the CommonJS module loader
 
 interface RequiredESMNamespace {
-  __esModule?: true;
+  __esModule?: unknown;
   "module.exports"?: unknown;
 }
 

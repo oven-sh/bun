@@ -75,30 +75,29 @@ interface MaxListenersExceededWarning extends Error {
 }
 
 type EventName = string | symbol;
-type EventEmitterInstance = Required<EventEmitter>;
 
 declare class EventEmitter {
   constructor(opts?: { captureRejections?: boolean });
   _events?: Record<EventName, Listener | ListenerList | undefined>;
-  _eventsCount?: number;
+  _eventsCount: number;
   _maxListeners?: number;
   [kCapture]?: boolean;
   [kShapeMode]?: boolean;
-  setMaxListeners?(this: EventEmitterInstance, n: number): EventEmitterInstance;
-  getMaxListeners?(this: EventEmitterInstance): number;
-  emit?(this: EventEmitterInstance, type: EventName, ...args: unknown[]): boolean;
-  addListener?(this: EventEmitterInstance, type: EventName, fn: Listener): EventEmitterInstance;
-  on?(this: EventEmitterInstance, type: EventName, fn: Listener): EventEmitterInstance;
-  prependListener?(this: EventEmitterInstance, type: EventName, fn: Listener): EventEmitterInstance;
-  once?(this: EventEmitterInstance, type: EventName, fn: Listener): EventEmitterInstance;
-  prependOnceListener?(this: EventEmitterInstance, type: EventName, fn: Listener): EventEmitterInstance;
-  removeListener?(this: EventEmitterInstance, type: EventName, listener: Listener): EventEmitterInstance;
-  off?(this: EventEmitterInstance, type: EventName, listener: Listener): EventEmitterInstance;
-  removeAllListeners?(this: EventEmitterInstance, type: EventName): EventEmitterInstance;
-  listeners?(this: EventEmitterInstance, type: EventName): Function[];
-  rawListeners?(this: EventEmitterInstance, type: EventName): Function[];
-  listenerCount?(this: EventEmitterInstance, type: EventName, method?: Function): number;
-  eventNames?(this: EventEmitterInstance): EventName[];
+  setMaxListeners(n: number): this;
+  getMaxListeners(): number;
+  emit(type: EventName, ...args: unknown[]): boolean;
+  addListener(type: EventName, fn: Listener): this;
+  on(type: EventName, fn: Listener): this;
+  prependListener(type: EventName, fn: Listener): this;
+  once(type: EventName, fn: Listener): this;
+  prependOnceListener(type: EventName, fn: Listener): this;
+  removeListener(type: EventName, listener: Listener): this;
+  off(type: EventName, listener: Listener): this;
+  removeAllListeners(type: EventName): this;
+  listeners(type: EventName): Function[];
+  rawListeners(type: EventName): Function[];
+  listenerCount(type: EventName, method?: Function): number;
+  eventNames(): EventName[];
 }
 
 // EventEmitter must be a standard function because some old code will do weird tricks like `EventEmitter.$apply(this)`.
@@ -129,7 +128,7 @@ function EventEmitter(opts) {
   }
 }
 Object.defineProperty(EventEmitter, "name", { value: "EventEmitter", configurable: true });
-const EventEmitterPrototype: EventEmitter = (EventEmitter.prototype = {});
+const EventEmitterPrototype = (EventEmitter.prototype = {} as EventEmitter);
 
 EventEmitterPrototype.setMaxListeners = function setMaxListeners(n) {
   validateNumber(n, "setMaxListeners", 0);

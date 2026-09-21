@@ -131,7 +131,7 @@ interface StreamConstructor extends Omit<NodeStream, "Stream" | "pipeline" | "fi
   Stream: StreamConstructor;
   pipeline: typeof import("internal/streams/pipeline").default.pipeline;
   finished: typeof import("internal/streams/end-of-stream").default;
-  eos: typeof import("internal/streams/end-of-stream").default;
+  eos?: typeof import("internal/streams/end-of-stream").default;
   destroy: typeof import("internal/streams/destroy").default.destroyer;
   isDestroyed: typeof import("internal/streams/utils").default.isDestroyed;
   isDisturbed: typeof import("internal/streams/utils").default.isDisturbed;

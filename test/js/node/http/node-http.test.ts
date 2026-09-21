@@ -4685,9 +4685,13 @@ it("req.socket.setKeepAlive() and resetAndDestroy() return the socket", async ()
   });
   try {
     await once(server.listen(0), "listening");
-    const response = await fetch(`http://localhost:${(server.address() as AddressInfo).port}/`);
-    await response.text();
+    // resetAndDestroy() resets the connection in node, so the request itself may fail.
+    const request = fetch(`http://localhost:${(server.address() as AddressInfo).port}/`).then(
+      response => response.text(),
+      () => {},
+    );
     expect(await promise).toEqual({ setKeepAlive: true, resetAndDestroy: true });
+    await request;
   } finally {
     server.close();
   }

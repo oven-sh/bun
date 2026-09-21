@@ -165,7 +165,8 @@ it("path_* syscalls cannot escape the preopened directory", () => {
 });
 
 it("poll_oneoff waits on a clock subscription and reports the event", () => {
-  const wasi = new WASI({});
+  const sleeps = [];
+  const wasi = new WASI({ sleep: ms => sleeps.push(ms) });
   wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
   const view = new DataView(wasi.memory.buffer);
 
@@ -181,9 +182,14 @@ it("poll_oneoff waits on a clock subscription and reports the event", () => {
   view.setBigUint64(subscriptionPtr, userdata, true);
   view.setUint8(subscriptionPtr + 8, WASI_EVENTTYPE_CLOCK);
   view.setUint32(subscriptionPtr + 16, WASI_CLOCK_MONOTONIC, true);
-  view.setBigUint64(subscriptionPtr + 24, BigInt(1_000_000), true);
+  // The injected sleep() returns at once, so a long timeout costs nothing and the time already spent in
+  // poll_oneoff cannot use it up.
+  view.setBigUint64(subscriptionPtr + 24, BigInt(60_000_000_000), true);
 
   expect(wasi.wasiImport.poll_oneoff(subscriptionPtr, eventPtr, 1, neventsPtr)).toBe(WASI_ESUCCESS);
+  expect(sleeps).toHaveLength(1);
+  expect(sleeps[0]).toBeGreaterThan(59_000);
+  expect(sleeps[0]).toBeLessThanOrEqual(60_000);
 
   const after = new DataView(wasi.memory.buffer);
   expect({

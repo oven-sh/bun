@@ -150,8 +150,8 @@ async function main(): Promise<void> {
     if (args.execArgs.length > 0) {
       throw new BuildError("mode=codegen builds no binary to run", { hint: "Drop the positional args." });
     }
-    const result = await configureCodegen(input, args.configFile !== undefined);
-    if (!args.quiet && !args.configFile) {
+    const result = await configureCodegen(input);
+    if (!args.quiet) {
       process.stderr.write(`codegen only → ${result.cfg.codegenDir} (configured in ${result.elapsed}ms)\n`);
     }
     if (args.configureOnly) return;
@@ -667,7 +667,7 @@ Options:
                                   vendored dep from a local checkout),
                                   package-manager (bun|npm, installs the
                                   package.json files the build needs),
-                                  buildDir, mode (full|cpp-only|link-only),
+                                  buildDir, mode (full|cpp-only|link-only|codegen),
                                   unifiedSources, timeTrace, os, arch, abi,
                                   winsysroot (Windows cross-compile SDK root)
   --target=<name>         Build a specific ninja target (repeatable)

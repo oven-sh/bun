@@ -6,14 +6,14 @@ export interface ClusterWorker extends InstanceType<typeof EventEmitter> {
   exitedAfterDisconnect: boolean | undefined;
   state: string;
   id: number;
-  process: ChildProcess | NodeJS.Process;
+  process?: ChildProcess | NodeJS.Process;
   kill(signo?: string): void;
   send(message: unknown, ...args: unknown[]): boolean;
   isDead(): boolean;
   isConnected(): boolean;
   disconnect(): this;
   destroy(signo?: string): void;
-  _disconnect(primaryInitiated?: boolean): void;
+  _disconnect?(primaryInitiated?: boolean): void;
 }
 
 const ObjectFreeze = Object.freeze;

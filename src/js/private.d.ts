@@ -46,8 +46,9 @@ declare module "bun" {
     __proto__?: null;
   }
 
-  // Listen options `node:net` passes that the public types do not declare. The native
-  // `SocketConfig` reads all of them for every form of `Bun.listen` (hostname, unix, fd).
+  // Listen options `node:net` passes that the public types do not declare. The native `SocketConfig` applies them
+  // to the hostname and unix forms. It parses them for the fd form too, where they have no effect: the fd is
+  // already bound, and `hostname` is dropped in favour of it.
   interface SocketOptions<Data = unknown> {
     pauseOnConnect?: boolean;
   }
@@ -91,11 +92,72 @@ declare module "bun" {
   }
   function serve<WebSocketData>(options: Serve.NodeHTTPServeOptions<WebSocketData>): Server<WebSocketData>;
 
-  namespace Serve {
-    interface BaseServeOptions<WebSocketData> {
-      /** Older name for `routes`; the native config still reads it. */
-      static?: Record<string, HTMLBundle | Response>;
+  // The form of `Bun.spawn` / `Bun.spawnSync` that `node:child_process` uses: `cmd` inside the options, node's
+  // stdio entries, and `onDisconnect` told whether the channel closed cleanly.
+  namespace Spawn {
+    // `globalThis.`: inside this module the bare name is Bun's narrower `ArrayBufferView` alias.
+    type NodeStdio = (Bun.SpawnOptions.Writable | globalThis.ArrayBufferView | "ipc" | "socket-fd")[];
+    interface NodeSpawnOptions
+      extends Omit<
+        Bun.Spawn.SpawnOptions<Bun.SpawnOptions.Writable, Bun.SpawnOptions.Readable, Bun.SpawnOptions.Readable>,
+        "stdio" | "onDisconnect"
+      > {
+      cmd: string[];
+      stdio: NodeStdio;
+      onDisconnect?(ok: boolean): void;
     }
+    interface NodeSpawnSyncOptions
+      extends Omit<
+        Bun.Spawn.SpawnSyncOptions<Bun.SpawnOptions.Writable, Bun.SpawnOptions.Readable, Bun.SpawnOptions.Readable>,
+        "stdio"
+      > {
+      cmd: string[];
+      stdio: NodeStdio;
+    }
+  }
+  function spawn(options: Spawn.NodeSpawnOptions): Subprocess;
+  function spawnSync(options: Spawn.NodeSpawnSyncOptions): SyncSubprocess;
+
+  // `Bun.dns` also has the methods of the native `Resolver` class, which `node:dns` calls when no resolver
+  // instance is involved. `setLocalAddress` and `cancel` exist on a `Resolver` only.
+  namespace dns {
+    type ServerTriple = [family: number, address: string, port: number];
+    interface NativeResolver {
+      getServers(): string[];
+      setServers(servers: ServerTriple[]): void;
+      setLocalAddress(first: string, second?: string): void;
+      cancel(): void;
+      resolve(hostname: string, rrtype: string): Promise<unknown[]>;
+      resolveAny(hostname: string): Promise<unknown[]>;
+      resolveCname(hostname: string): Promise<string[]>;
+      resolveCaa(hostname: string): Promise<unknown[]>;
+      resolveMx(hostname: string): Promise<unknown[]>;
+      resolveNaptr(hostname: string): Promise<unknown[]>;
+      resolveNs(hostname: string): Promise<string[]>;
+      resolvePtr(hostname: string): Promise<string[]>;
+      resolveSoa(hostname: string): Promise<unknown>;
+      resolveSrv(hostname: string): Promise<unknown[]>;
+      resolveTxt(hostname: string): Promise<string[][]>;
+      reverse(ip: string): Promise<string[]>;
+    }
+    const getServers: NativeResolver["getServers"];
+    const setServers: NativeResolver["setServers"];
+    const resolve: NativeResolver["resolve"];
+    const resolveAny: NativeResolver["resolveAny"];
+    const resolveCname: NativeResolver["resolveCname"];
+    const resolveCaa: NativeResolver["resolveCaa"];
+    const resolveMx: NativeResolver["resolveMx"];
+    const resolveNaptr: NativeResolver["resolveNaptr"];
+    const resolveNs: NativeResolver["resolveNs"];
+    const resolvePtr: NativeResolver["resolvePtr"];
+    const resolveSoa: NativeResolver["resolveSoa"];
+    const resolveSrv: NativeResolver["resolveSrv"];
+    const resolveTxt: NativeResolver["resolveTxt"];
+    const reverse: NativeResolver["reverse"];
+    function lookupService(
+      address: string,
+      port: number,
+    ): Promise<[hostname: string | undefined, service: string | undefined]>;
   }
 }
 
@@ -110,11 +172,10 @@ interface ProxyHandler<T extends object> {
   __proto__?: null;
 }
 
-/** `parseInt` applies ToString to its argument, so a number is accepted. */
-declare function parseInt(string: string | number, radix?: number): number;
-
 declare namespace NodeJS {
   interface Process {
+    /** The `-e` / `--eval` source, which `node:child_process` reads when it forks the current script. */
+    _eval?: string;
     /** Set by `node:domain` while a domain is active. */
     domain?: import("node:domain").Domain | null;
   }

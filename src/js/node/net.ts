@@ -1924,6 +1924,7 @@ function Socket(options?): void {
         const { self } = socket.data;
         if (!self) return;
         self._unrefTimer();
+        self.bytesRead += buffer.length;
         if (socket[kAdoptedTLSRaw]) return;
         const tail = self[kOnreadTail];
         if (tail !== undefined) {

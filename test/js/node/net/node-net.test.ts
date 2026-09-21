@@ -1804,8 +1804,11 @@ describe.concurrent("read-stopped socket whose peer resets behind unread data", 
         s.resume();
       });
     `);
-    expect(result.events).toEqual(["resume", "error ECONNRESET read", "close true"]);
-    expect(result.received).toBe(20000);
+    expect(result).toEqual({
+      events: ["resume", "error ECONNRESET read", "close true"],
+      received: 20000,
+      bytesRead: 20000,
+    });
     expect(exitCode).toBe(0);
   });
 

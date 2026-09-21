@@ -1444,7 +1444,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // update the internal socket instance to the one that was just connected
         // This socket must be replaced because the previous one is a connecting socket not a uSockets socket
         this.socket.set(socket);
-        if this.get_handlers().defer_error_until_read {
+        if this.get_handlers().defer_error_until_read.get() {
             socket.defer_error_until_read();
         }
         // Stale if node:net reconnected through this wrapper while it was paused.

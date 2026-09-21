@@ -11,8 +11,8 @@ planned by cargo and run by ninja (`scripts/build/rust.ts`, `scripts/build/rust/
 - `bun_runtime` (`src/runtime/`) — JS-visible APIs (server, fetch, node compat, crypto)
 - `bun_js_parser`, `bun_js_printer`, `bun_resolver`, `bun_bundler`, `bun_install`, `bun_collections`, `bun_threading`, `bun_alloc` — the rest of the pipeline
 - `bun_runtime::bin_entry` (`src/runtime/bin_entry/`) — the process entry point (`main`) and the
-  C-ABI symbols the C++ side and the C runtime look up; `bun_runtime` is the root of the crate graph, and the
-  final link takes every crate's rlib beside the C/C++ objects.
+  C-ABI symbols the C++ side and the C runtime look up; `bun_runtime` is the root of the crate graph and the final Rust crate: the
+  link takes its objects and every other crate's rlib beside the C/C++ objects.
 
 Conventions:
 

@@ -486,6 +486,61 @@ describe("buildRustGraph + unitManifest", () => {
     expect(linkedRlibs(unwind).map(u => u.crateName)).toEqual(["my_root", "std", "panic_unwind"]);
   });
 
+  test("the final crate is compiled to objects as a staticlib, and is a library when the profile has rustc run an LTO", () => {
+    const graphFor = (lto: string, overrides: Partial<UnitGraphUnit["profile"]> = {}) => {
+      const base = planWith([]);
+      const dep: UnitGraphUnit = { ...unit(registry, "lib", []), profile: { ...profile, lto } };
+      const root: UnitGraphUnit = {
+        ...unit(local, "lib", [{ index: 0, extern_crate_name: "dep_a", public: false, noprelude: false }]),
+        target: { ...unit(local, "lib", []).target, kind: ["staticlib"], crate_types: ["staticlib"] },
+        profile: { ...profile, lto, ...overrides },
+      };
+      return buildRustGraph(
+        { ...base, unitGraph: { version: 1, units: [dep, root], roots: [1] } },
+        "/build/rust-target",
+      );
+    };
+    const valuesOf = (args: string[], flag: string) => args.filter((_, i) => args[i - 1] === flag);
+
+    const objects = graphFor("false");
+    const deps = join("/build/rust-target", triple, "deps");
+    expect(objects.root.kind).toBe("staticlib");
+    // rustc names the objects; the unit's output is the list of them, which the link reads.
+    expect(objects.root.output).toBe(join(deps, `my_bin-${objects.root.hash}.objects.rsp`));
+    expect(objects.root.rmeta).toBeUndefined();
+    const manifest = unitManifest(context(objects), objects.root) as RustcUnitManifest;
+    expect(manifest.objectStem).toBe(`my_bin-${objects.root.hash}`);
+    expect(valuesOf(manifest.args, "--crate-type")).toEqual(["staticlib"]);
+    expect(manifest.args).toContain(`--emit=dep-info=${join(deps, `my_bin-${objects.root.hash}.d`)},obj`);
+    expect(manifest.args).not.toContain("embed-metadata=no");
+    // Nothing is linked, so like a library it reads its dependencies' metadata only and starts as early as one.
+    expect(valuesOf(manifest.args, "--extern")).toEqual([
+      `dep_a=${join(deps, `libdep_a-${objects.units[0]!.hash}.rmeta`)}`,
+    ]);
+    // `--emit=obj` with no count given makes rustc compile the crate as one unit, so a profile that gives none gets
+    // the count rustc would have used: 16, or 256 under incremental compilation.
+    const unitCount = (overrides: Partial<UnitGraphUnit["profile"]>) => {
+      const graph = graphFor("false", overrides);
+      const { args } = unitManifest(context(graph), graph.root) as RustcUnitManifest;
+      return args.filter(arg => arg.startsWith("codegen-units="));
+    };
+    expect(unitCount({})).toEqual(["codegen-units=1"]);
+    expect(unitCount({ codegen_units: null })).toEqual(["codegen-units=16"]);
+    expect(unitCount({ codegen_units: null, incremental: true })).toEqual(["codegen-units=256"]);
+    // The link takes the root's objects from that list, and an rlib from every other crate.
+    expect(linkedRlibs(objects).map(u => u.crateName)).toEqual(["dep_a"]);
+
+    // A final crate would run the profile's LTO itself; with nothing to link, rustc keeps only the root's own
+    // exports through it. The linker runs it, over the root as one more library.
+    const library = graphFor("fat");
+    expect(library.root.kind).toBe("lib");
+    expect(library.root.output).toBe(join(deps, `libmy_bin-${library.root.hash}.rlib`));
+    const libraryManifest = unitManifest(context(library), library.root) as RustcUnitManifest;
+    expect(libraryManifest.objectStem).toBeUndefined();
+    expect(valuesOf(libraryManifest.args, "--crate-type")).toEqual(["lib"]);
+    expect(linkedRlibs(library).map(u => u.crateName)).toEqual(["my_bin", "dep_a"]);
+  });
+
   test("under a library root the libraries carry the profile's LTO themselves: nothing else will run it", () => {
     const lib = (lto: string): UnitGraphUnit => ({ ...unit(registry, "lib", []), profile: { ...profile, lto } });
     const ltoFlags = (lto: string, root: "lib" | "bin") => {

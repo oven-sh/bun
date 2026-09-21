@@ -3,7 +3,7 @@
  *
  * This is where all the phases come together:
  *   - emit codegen → generated .cpp/.h/.rs
- *   - emit the Rust crate graph → libbun_runtime.a
+ *   - emit the Rust crate graph → bun_runtime's objects and every other crate's rlib
  *   - resolve all deps → lib paths + include dirs
  *   - build PCH from root-pch.h (implicit deps: WebKit libs + all codegen)
  *   - compile all C/C++ with the PCH
@@ -33,7 +33,7 @@ import { assert } from "./error.ts";
 import { bunIncludes, computeFlags, extraFlagsFor, linkDepends, linkerMapOutputs } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
-import { emitRust, windowsShimPath } from "./rust.ts";
+import { emitRust, windowsShimPath, type RustLinkInputs } from "./rust.ts";
 import { quote, slash } from "./shell.ts";
 import { emitShims, machoPostlinkCommand, machoPostlinkImplicitInputs } from "./shims.ts";
 import { resolveDep, type Dependency, type DepName, type ResolvedDep } from "./source.ts";
@@ -136,8 +136,8 @@ export interface BunOutput {
   deps: ResolvedDep[];
   /** All codegen outputs. */
   codegen: CodegenOutputs;
-  /** The Rust crates' rlibs, as the link takes them. Empty until the Rust plan exists (rust.ts emitRust). */
-  rustObjects: string[];
+  /** What the link takes from the Rust step. Empty until the Rust plan exists (rust.ts emitRust). */
+  rust: RustLinkInputs;
   /** All compiled .o files. */
   objects: string[];
   /** Stamps of the buildkite artifact-upload edges; archive-link adds them to the default targets. */
@@ -180,7 +180,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const rustArgon2Dep = resolveDep(n, cfg, rustArgon2, depsByName);
   assert(rustArgon2Dep !== null, "rust-argon2 resolveDep returned null — should never be skipped");
   depsByName.set(rustArgon2.name, rustArgon2Dep);
-  const rustObjects = emitRust(n, cfg, {
+  const rust = emitRust(n, cfg, {
     codegenOrderOnly: codegen.rustInputs,
     rustSources: sources.rust,
     vendorStamps: [...lolhtmlDep.outputs, ...rustArgon2Dep.outputs],
@@ -442,19 +442,26 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // own, never archived: .res is small and the .rc depends on cfg.version.
   const windowsRes = cfg.windows ? [emitWindowsResources(n, cfg)] : [];
 
-  // The Rust crates' rlibs go into `$in` between bun's own objects and the
-  // dependency archives. An rlib is an archive: a member is linked when
+  // The Rust libraries' rlibs go into `$in` between bun's own objects and the
+  // dependency archives (bun_runtime's own objects are named by a list: below). An rlib is an archive: a member is linked when
   // something needs a symbol it defines. C++ objects create the `Bun__*`
   // undefined refs, the rlibs satisfy them (and `main`, via crt1.o) and in
   // turn reference JSC/WTF, depLibs satisfies those. Every `#[no_mangle]`
   // export the C++ side touches is reached from those roots.
   const shims = emitShims(n, cfg);
-  const linkObjects = [...(archive !== undefined ? [archive] : allObjects), ...rustObjects, ...windowsRes];
-  const ldflags = [...flags.ldflags, ...systemLibs(cfg), ...shims.ldflags];
+  const linkObjects = [...(archive !== undefined ? [archive] : allObjects), ...rust.rlibs, ...windowsRes];
+  // bun_runtime's objects are rustc's to name, so the link reads the list of them.
+  const rustObjectList = rust.objectList !== undefined ? [rust.objectList] : [];
+  const ldflags = [
+    ...rustObjectList.map(list => `@${n.rel(list)}`),
+    ...flags.ldflags,
+    ...systemLibs(cfg),
+    ...shims.ldflags,
+  ];
   const exe = link(n, cfg, exeName, linkObjects, {
     libs: depLibs,
     flags: ldflags,
-    implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs],
+    implicitInputs: [...rustObjectList, ...linkImplicitInputs(cfg), ...shims.implicitInputs],
     // Declare the maps the release link writes as side-products (`perf`
     // symbolication on linux; the order file tracer's symbol table on windows).
     linkerMapOutputs: linkerMapOutputs(cfg),
@@ -464,9 +471,13 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   });
 
   // ─── Step 7: post-link (strip, dsymutil, smoke test) ───
-  const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags, [...linkObjects, ...depLibs]);
+  const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags, [
+    ...linkObjects,
+    ...rustObjectList,
+    ...depLibs,
+  ]);
 
-  return { exe, strippedExe, dsym, deps, codegen, rustObjects, objects: allObjects, uploadStamps };
+  return { exe, strippedExe, dsym, deps, codegen, rust, objects: allObjects, uploadStamps };
 }
 
 function registerBkUploadRules(n: Ninja, cfg: Config): void {

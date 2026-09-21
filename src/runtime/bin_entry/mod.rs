@@ -55,9 +55,10 @@ static ALLOC: std::alloc::System = std::alloc::System;
 /// `alloc` calls this empty function before every allocation. rustc defines it only in the allocator shim it
 /// generates when rustc itself links the final artifact (`allocator_shim_contents`, rustc_codegen_ssa), as a
 /// tripwire against linking Rust libraries any other way (library/alloc/src/alloc.rs: "Make sure we don't
-/// accidentally allow omitting the allocator shim in stable code until it is actually stabilized"). This build
-/// links the rlibs itself, so it is defined here. Everything else a shim would hold already exists: the
-/// allocator symbols come from `#[global_allocator]` above, the allocation error handler from std.
+/// accidentally allow omitting the allocator shim in stable code until it is actually stabilized"). rustc links
+/// nothing in this build (it writes this crate's objects and stops), so it is defined here. Everything else a shim
+/// would hold already exists: the allocator symbols come from `#[global_allocator]` above, the allocation error
+/// handler from std.
 ///
 /// A toolchain that renames the function (`_v2` → `_v3`) fails the link with an undefined symbol naming the new one.
 #[rustc_std_internal_symbol]

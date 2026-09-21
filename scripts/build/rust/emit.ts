@@ -8,6 +8,7 @@
  *   build-script      rust_rustc → build_script_build-<hash>
  *   build-script-run  rust_build_script → output.json (restat)
  *   bin (root)        rust_rustc → <crate>.exe + its copy under the target's name (the Windows shim)
+ *   staticlib (root)  rust_rustc → <name>-<hash>.objects.rsp, the list of the objects rustc wrote (bun_runtime)
  *
  * Every edge's command is `run.ts <mode> <unit.json>`; the unit manifest
  * (argv/env/cwd) is written at configure with writeIfChanged and is an input
@@ -177,6 +178,21 @@ export function emitRustUnits(n: Ninja, ctx: ManifestContext, inputs: RustEdgeIn
           vars: { ...vars, what: "" },
           depfile,
           earlyOutputPrefix: "@ninja-early-output@",
+        });
+        break;
+      case "staticlib":
+        // rustc writes the crate's objects and links nothing: like a library it reads its dependencies' `.rmeta`s
+        // only, so it starts as early as one. The output is the list of those objects (run.ts), which the final
+        // link reads beside the dependencies' rlibs.
+        n.build({
+          outputs: [unit.output],
+          rule: "rust_rustc",
+          inputs: [],
+          implicitInputs: [...externs, unit.manifestPath, ...common],
+          orderOnlyInputs: orderOnly,
+          ...(inputs.rootValidations.length > 0 ? { validations: inputs.rootValidations } : {}),
+          vars: { ...vars, what: "" },
+          depfile,
         });
         break;
       case "proc-macro":

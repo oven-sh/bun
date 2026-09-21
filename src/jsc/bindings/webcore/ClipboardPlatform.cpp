@@ -3,6 +3,7 @@
 
 #include "BunString.h"
 #include "ClipboardBlob.h"
+#include "ZigGlobalObject.h"
 #include <JavaScriptCore/JSCInlines.h>
 #include <wtf/Vector.h>
 
@@ -98,4 +99,10 @@ extern "C" void Bun__Clipboard__requestComplete(JSC::JSGlobalObject* globalObjec
 extern "C" void Bun__Clipboard__requestRelease(WebCore::ClipboardRequest* request)
 {
     delete request;
+}
+
+// The script's `process.env`, which holds the writes the native env map does not.
+extern "C" JSC::EncodedJSValue Bun__Clipboard__processEnv(Zig::GlobalObject* globalObject)
+{
+    return JSC::JSValue::encode(globalObject->processEnvObject());
 }

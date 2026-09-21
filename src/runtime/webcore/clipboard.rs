@@ -127,16 +127,18 @@ impl JobContext for ClipboardJob {
 }
 
 fn schedule(global: &JSGlobalObject, op: Op, request: *mut c_void) {
+    let request = Request(request);
+    // A failure reading the environment leaves its exception pending, which the
+    // promise operation turns into the rejection.
+    let Ok(env) = platform::Env::snapshot(global) else {
+        return;
+    };
     let off = ClipboardOp {
         op,
-        env: platform::Env::snapshot(global),
+        env,
         outcome: Err(Unavailable::Platform),
     };
-    Job::<ClipboardJob>::schedule(
-        &global.js_thread_of_caller_no_frame(),
-        off,
-        Request(request),
-    );
+    Job::<ClipboardJob>::schedule(&global.js_thread_of_caller_no_frame(), off, request);
 }
 
 #[unsafe(no_mangle)]
@@ -227,8 +229,8 @@ mod platform {
     pub(super) struct Env;
 
     impl Env {
-        pub(super) fn snapshot(_global: &JSGlobalObject) -> Env {
-            Env
+        pub(super) fn snapshot(_global: &JSGlobalObject) -> bun_jsc::JsResult<Env> {
+            Ok(Env)
         }
     }
 
@@ -485,8 +487,8 @@ mod platform {
     pub(super) struct Env;
 
     impl Env {
-        pub(super) fn snapshot(_global: &JSGlobalObject) -> Env {
-            Env
+        pub(super) fn snapshot(_global: &JSGlobalObject) -> bun_jsc::JsResult<Env> {
+            Ok(Env)
         }
     }
 
@@ -724,11 +726,14 @@ mod platform {
 // ─── everything else: `wl-clipboard`, `xclip`, or `xsel` (reading text) ─────
 #[cfg(not(any(target_os = "macos", windows)))]
 mod platform {
-    use core::ffi::{CStr, c_char};
+    use core::ffi::c_char;
     use std::ffi::CString;
+    use std::io::Write as _;
 
     use bun_core::{env_var, strings};
-    use bun_event_loop::EventLoopHandle;
+    use bun_jsc::{
+        JSObject, JSPropertyIterator, JSValue, JsError, JsResult, PropertyIteratorOptions,
+    };
     use bun_sys::{Fd, File, O};
 
     use crate::api::bun_process::Status as SpawnStatus;
@@ -736,16 +741,43 @@ mod platform {
 
     use super::{JSGlobalObject, Mime, Outcome, Unavailable};
 
-    /// The environment the script's own children get (`process.env`, `.env`
-    /// files), taken on the JS thread: the process's C `environ` has neither.
+    unsafe extern "C" {
+        /// The script's `process.env`, which holds the writes the native env map does not.
+        fn Bun__Clipboard__processEnv(global: &JSGlobalObject) -> JSValue;
+    }
+
+    /// What `process.env` holds when the operation is scheduled, taken on the JS
+    /// thread: the process's C `environ` has neither runtime writes nor `.env` files.
     pub(super) struct Env(Vec<CString>);
 
     impl Env {
-        pub(super) fn snapshot(global: &JSGlobalObject) -> Env {
-            let event_loop =
-                EventLoopHandle::init(global.bun_vm().as_mut().event_loop().cast::<()>());
-            let map = bun_core::handle_oom(event_loop.create_null_delimited_env_map());
-            Env(map.iter().map(CStr::to_owned).collect())
+        pub(super) fn snapshot(global: &JSGlobalObject) -> JsResult<Env> {
+            // SAFETY: JS thread with a live global.
+            let Some(object) = (unsafe { Bun__Clipboard__processEnv(global) }).get_object() else {
+                return Ok(Env(Vec::new()));
+            };
+            let properties = JSPropertyIterator::init(
+                global,
+                JSObject::opaque_ref(object),
+                PropertyIteratorOptions {
+                    skip_empty_name: false,
+                    include_value: true,
+                },
+            )?;
+            let mut entries = Vec::with_capacity(properties.len);
+            while let Some((key, value)) = properties.next()? {
+                if value.is_undefined() {
+                    continue;
+                }
+                let value = value.to_bun_string(global)?;
+                let mut line = Vec::new();
+                write!(&mut line, "{key}={value}").map_err(|_| JsError::OutOfMemory)?;
+                // An entry with a NUL cannot be passed to a child.
+                if let Ok(line) = CString::new(line) {
+                    entries.push(line);
+                }
+            }
+            Ok(Env(entries))
         }
 
         fn get(&self, name: &[u8]) -> Option<&[u8]> {
@@ -988,6 +1020,28 @@ mod platform {
         Present(Vec<(Mime, Vec<u8>)>),
     }
 
+    /// Firefox serves `text/html` as UTF-16 with a byte order mark.
+    fn html_to_utf8(bytes: Vec<u8>) -> Vec<u8> {
+        let (rest, big_endian) = match bytes.as_slice() {
+            [0xFF, 0xFE, rest @ ..] => (rest, false),
+            [0xFE, 0xFF, rest @ ..] => (rest, true),
+            _ => return bytes,
+        };
+        let units: Vec<u16> = rest
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| {
+                if big_endian {
+                    u16::from_be_bytes(*pair)
+                } else {
+                    u16::from_le_bytes(*pair)
+                }
+            })
+            .collect();
+        String::from_utf16_lossy(&units).into_bytes()
+    }
+
     fn read_one(helper: Helper, mime: Mime, env: &Env) -> Result<Answer, Unavailable> {
         let Some(argv) = helper.read_argv(mime) else {
             return Ok(Answer::NotInstalled);
@@ -999,6 +1053,9 @@ mod platform {
             // An absent type reads as nothing; only text is ever deliberately empty.
             HelperRun::Succeeded(bytes) if bytes.is_empty() && mime != Mime::TextPlain => {
                 Answer::Present(Vec::new())
+            }
+            HelperRun::Succeeded(bytes) if mime == Mime::TextHtml => {
+                Answer::Present(vec![(mime, html_to_utf8(bytes))])
             }
             HelperRun::Succeeded(bytes) => Answer::Present(vec![(mime, bytes)]),
         })

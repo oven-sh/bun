@@ -1028,6 +1028,20 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
     });
   });
 
+  // Firefox puts text/html on the X11 clipboard as UTF-16 with a byte order mark.
+  test("read() decodes UTF-16 text/html to UTF-8", async () => {
+    const { result } = await runWithHelpers(
+      {
+        xclip: `case "$*" in *TARGETS*) printf 'TARGETS\\ntext/html\\n' ;; *text/html*) printf '\\377\\376<\\000b\\000>\\000h\\000i\\000<\\000/\\000b\\000>\\000' ;; esac`,
+      },
+      `
+        const [item] = await navigator.clipboard.read();
+        print({ types: [...item.types], html: await (await item.getType("text/html")).text() });
+      `,
+    );
+    expect(result).toEqual({ types: ["text/html"], html: "<b>hi</b>" });
+  });
+
   test("Wayland helpers are preferred, X11 ones are the fallback, and read() is best-effort per type", async () => {
     const { result, log } = await runWithHelpers(
       {
@@ -1690,9 +1704,10 @@ describe.skipIf(!isWindows || win32 === null)("Win32 backend", () => {
   // a BITMAPINFOHEADER, an optional colour table, then one pixel in a
   // 4-byte-padded row.
   test.each([
-    { name: "24-bit", bitCount: 24, paletteEntries: 0 },
-    { name: "8-bit with a colour table", bitCount: 8, paletteEntries: 256 },
-  ])("$name DIB reads as image/png", async ({ bitCount, paletteEntries }) => {
+    { name: "24-bit", bitCount: 24, paletteEntries: 0, colorsUsed: 0 },
+    { name: "8-bit with a colour table", bitCount: 8, paletteEntries: 256, colorsUsed: 0 },
+    { name: "8-bit with a short colour table (biClrUsed)", bitCount: 8, paletteEntries: 2, colorsUsed: 2 },
+  ])("$name DIB reads as image/png", async ({ bitCount, paletteEntries, colorsUsed }) => {
     const dib = Buffer.alloc(40 + paletteEntries * 4 + 4);
     dib.writeUInt32LE(40, 0);
     dib.writeInt32LE(1, 4);
@@ -1700,6 +1715,7 @@ describe.skipIf(!isWindows || win32 === null)("Win32 backend", () => {
     dib.writeUInt16LE(1, 12);
     dib.writeUInt16LE(bitCount, 14);
     dib.writeUInt32LE(4, 20);
+    dib.writeUInt32LE(colorsUsed, 32);
     // Blue: BGR bytes, or palette entry 0 (the pixel is index 0).
     dib.set([255, 0, 0], 40);
     raw().setRaw([{ format: CF_DIB, bytes: dib }]);

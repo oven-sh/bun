@@ -1008,6 +1008,10 @@ text.dim { opacity: 0.25; }
 .join { stroke: var(--text); stroke-width: 1.5px; fill: none; pointer-events: none; }
 .join.forward { stroke-width: 1px; opacity: 0.6; }
 .join.hover { stroke-dasharray: 4 3; }
+.guide { stroke: var(--text-2); stroke-width: 1px; stroke-dasharray: 2 3; pointer-events: none; }
+.axisband { fill: var(--raised); pointer-events: none; }
+.span { stroke: var(--text); stroke-width: 2px; pointer-events: none; }
+svg text.at { fill: var(--text); font-weight: 600; pointer-events: none; }
 .hoverbar { fill: none; stroke: var(--text); stroke-width: 1.5px; stroke-dasharray: 4 3; rx: 2px; pointer-events: none; }
 .tickmark { stroke: var(--surface); stroke-width: 2px; pointer-events: none; }
 .grid { stroke: var(--grid); stroke-width: 1px; }
@@ -1194,11 +1198,27 @@ const client = `
       if (i === hovered) return;
       hovered = i;
       hoverLayer.textContent = "";
-      if (i !== undefined) chainOf(i).forEach(function (at) {
+      if (i === undefined) return;
+      chainOf(i).forEach(function (at) {
         var b = run.bars[at];
         el("rect", { x: x(b.start), y: y(b), width: barWidth(b), height: h(b), "class": "hoverbar" }, hoverLayer);
         if (b.blocker !== undefined) join(waitedOn(b), "join hover", hoverLayer);
       });
+      // When the bar started and ended, on the time axis under it. Each time is written outside the span it bounds,
+      // or, where the chart's edge leaves no room, both after it.
+      var bar = run.bars[i], axis = height - AXIS, from = x(bar.start), to = x(bar.start) + barWidth(bar);
+      [from, to].forEach(function (at) {
+        el("line", { x1: at, x2: at, y1: y(bar) + h(bar), y2: axis, "class": "guide" }, hoverLayer);
+      });
+      el("rect", { x: 0, y: axis, width: width, height: AXIS, "class": "axisband" }, hoverLayer);
+      el("line", { x1: from, x2: to, y1: axis + 1, y2: axis + 1, "class": "span" }, hoverLayer);
+      var room = ms(bar.start).length * CHAR + 6;
+      if (from >= room) {
+        el("text", { x: from - 3, y: height - 5, "text-anchor": "end", "class": "at" }, hoverLayer).textContent = ms(bar.start);
+        el("text", { x: to + 3, y: height - 5, "class": "at" }, hoverLayer).textContent = ms(bar.end);
+      } else {
+        el("text", { x: to + 3, y: height - 5, "class": "at" }, hoverLayer).textContent = ms(bar.start) + " – " + ms(bar.end);
+      }
     };
 
     svg.addEventListener("mousemove", function (ev) {
@@ -1209,7 +1229,7 @@ const client = `
       tip.textContent = "";
       html("b", b.label, tip);
       html("div", b.rule + (b.pool ? " · pool " + b.pool : ""), tip);
-      html("div", ms(b.end - b.start) + " · " + ms(b.start) + " → " + ms(b.end), tip);
+      html("div", ms(b.end - b.start), tip);
       // How long it sat ready before it started. What it was waiting for until then is the line drawn from it.
       html("div", "queued " + ms(b.waited), tip);
       if (b.phases.length > 0) html("div", b.phases.map(function (p) { return p[0] + " " + ms(p[1]); }).join(" · "), tip);

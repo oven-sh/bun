@@ -184,7 +184,7 @@ async function main(): Promise<void> {
 
     // Every CI build says where its time went: nobody can come back to this build directory to ask.
     // It describes a build that already succeeded, so here it never fails one: what goes wrong is printed and the
-    // artifacts still upload (the symbol order file's trace above is treated the same way).
+    // artifacts still upload.
     startGroup("Build timings", () => {
       try {
         reportTimings(result.cfg, t => process.stdout.write(t));

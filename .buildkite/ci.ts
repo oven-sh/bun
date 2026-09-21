@@ -842,8 +842,8 @@ const traceOrderTargets: { os: Os; arch: Arch; on: Platform }[] = [
  * uploads the result.
  *
  * Main only: every build, of any branch or pull request, inherits from main's
- * builds, so a trace anywhere else has no consumer. Soft-fail: the order file is an optimization, and a broken
- * tracer must not fail a build.
+ * builds, so a trace anywhere else has no consumer. Soft-fail: the order file
+ * is an optimization, and a broken tracer must not fail a build.
  *
  * Windows agents run commands under cmd.exe (see getVerifyBaselineStep for the
  * `|| exit /b 1` convention). The generator compiles the tracer there, which

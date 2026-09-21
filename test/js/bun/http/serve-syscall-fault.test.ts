@@ -1,6 +1,7 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tls as certs, isWindows } from "harness";
+import { bunEnv, bunExe, tls as certs, isLinux, isWindows } from "harness";
+import { join } from "node:path";
 
 const skip = !fault.available() || isWindows;
 
@@ -148,4 +149,47 @@ describe.skipIf(skip)("Bun.serve under injected syscall faults", () => {
     expect(proc.signalCode).toBeNull();
     expect(proc.exitCode).toBe(0);
   });
+});
+
+// us_socket_resume() fails a socket whose poll the kernel refuses to take back
+// (the dispatcher parks a paused socket whose peer hung up, so the resume is a
+// fresh EPOLL_CTL_ADD and can fail the way a first registration can). The
+// runtime resumes from inside its own work: the request-body hooks and the
+// response-end path. A close dispatched there destructs the uWS response and
+// frees the RequestContext that work still uses.
+//
+// epoll only: kqueue and libuv never park the fd, so their resume is a plain
+// filter/poll change with nothing for the hook to fail. Each case runs in a
+// subprocess so a use-after-free surfaces as a non-zero exit.
+describe.skipIf(skip || !isLinux)("Bun.serve: a request-socket resume that fails the socket", () => {
+  async function run(mode: string, expected: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "serve-resume-fault-fixture.ts"), mode],
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({
+      stdout: stdout.trim().split("\n"),
+      signalCode: proc.signalCode,
+      exitCode,
+      // Only populated when the assertion is about to fail, so the diff shows why.
+      stderrTail: exitCode === 0 ? "" : stderr.slice(-3000),
+    }).toEqual({ stdout: expected, signalCode: null, exitCode: 0, stderrTail: "" });
+  }
+
+  // The body the handler waits for can no longer arrive, so the read rejects
+  // like any other connection that dies mid-body.
+  const bodyFails = ["before: 200 pong", "abort", "body: rejected AbortError", "after: 200 pong", "done"];
+
+  test.concurrent("req.arrayBuffer() rejects and the server stays up", () => run("body-buffered", bodyFails));
+
+  test.concurrent("req.text() on a materialized body rejects and the server stays up", () =>
+    run("body-stream", bodyFails));
+
+  // The handler answered, so the request is complete: ending it must not
+  // deliver an abort, and the connection closes with the response.
+  test.concurrent("a response that ends while the body is paused completes", () =>
+    run("response-ends", ["before: 200 pong", "after: 200 pong", "done"]));
 });

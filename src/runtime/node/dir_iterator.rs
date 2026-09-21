@@ -432,8 +432,6 @@ mod platform {
     pub(crate) trait WindowsOsPath {
         type NameData: Sized;
         type Entry;
-        #[cfg_attr(windows, allow(dead_code))]
-        const IS_U16: bool;
         /// Max u16 codeunits that fit in `name_data` (reserving one for the
         /// trailing NUL on the u16 path, or accounting for UTF-16→UTF-8
         /// expansion on the u8 path).
@@ -452,7 +450,6 @@ mod platform {
     impl WindowsOsPath for OsPathFalse {
         type NameData = [u8; 513];
         type Entry = IteratorResult;
-        const IS_U16: bool = false;
         #[inline]
         fn max_name_u16() -> usize {
             (513 - 1) / 2
@@ -473,7 +470,6 @@ mod platform {
     impl WindowsOsPath for OsPathTrue {
         type NameData = [u16; 257];
         type Entry = IteratorResultW;
-        const IS_U16: bool = true;
         #[inline]
         fn max_name_u16() -> usize {
             257 - 1

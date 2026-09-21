@@ -189,6 +189,7 @@ pub(crate) fn do_send(
                         zig_handle = Some(Handle::init(fd, handle));
                     }
                 }
+                #[cfg(windows)]
                 crate::socket::listener::ListenerType::NamedPipe(_named_pipe) => {}
                 crate::socket::listener::ListenerType::None => {}
             }

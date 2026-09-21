@@ -9,7 +9,6 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::api::bun::process::event_loop_handle_to_ctx;
 use crate::webcore;
-use bun_core::Environment;
 use bun_core::{String as BunString, Utf8WithString, ZStr};
 use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
 use bun_io::KeepAlive;
@@ -31,21 +30,17 @@ use bun_threading::work_pool::{IntrusiveWorkTask as _, Task as WorkPoolTask, Wor
 // as `bun_sys::Maybe<T>`, so this is just the file-local extension trait
 // surface that lets `Maybe::<T>::errno_sys*` / `.get_errno()` resolve.
 // ──────────────────────────────────────────────────────────────────────────
-#[cfg_attr(windows, allow(dead_code))]
+#[cfg(not(windows))]
 pub(crate) trait MaybeSysResultExt<R>: Sized {
-    #[cfg_attr(target_os = "freebsd", allow(dead_code))]
+    #[cfg(not(target_os = "freebsd"))]
     fn get_errno(&self) -> E;
-    #[cfg(not(windows))]
     fn errno_sys<Rc: sys::GetErrno>(rc: Rc, syscall: sys::Tag) -> Option<Self>;
-    #[cfg(not(windows))]
     fn errno_sys_fd<Rc: sys::GetErrno>(rc: Rc, syscall: sys::Tag, fd: FD) -> Option<Self>;
-    #[cfg(not(windows))]
     fn errno_sys_p<Rc: sys::GetErrno>(
         rc: Rc,
         syscall: sys::Tag,
         path: impl AsRef<[u8]>,
     ) -> Option<Self>;
-    #[cfg(not(windows))]
     fn errno_sys_pd<Rc: sys::GetErrno>(
         rc: Rc,
         syscall: sys::Tag,
@@ -53,7 +48,9 @@ pub(crate) trait MaybeSysResultExt<R>: Sized {
         dest: impl AsRef<[u8]>,
     ) -> Option<Self>;
 }
+#[cfg(not(windows))]
 impl<R> MaybeSysResultExt<R> for Maybe<R> {
+    #[cfg(not(target_os = "freebsd"))]
     #[inline]
     fn get_errno(&self) -> E {
         match self {
@@ -61,7 +58,6 @@ impl<R> MaybeSysResultExt<R> for Maybe<R> {
             Err(e) => e.get_errno(),
         }
     }
-    #[cfg(not(windows))]
     #[inline]
     fn errno_sys<Rc: sys::GetErrno>(rc: Rc, syscall: sys::Tag) -> Option<Self> {
         match sys::get_errno(rc) {
@@ -73,7 +69,6 @@ impl<R> MaybeSysResultExt<R> for Maybe<R> {
             })),
         }
     }
-    #[cfg(not(windows))]
     #[inline]
     fn errno_sys_fd<Rc: sys::GetErrno>(rc: Rc, syscall: sys::Tag, fd: FD) -> Option<Self> {
         match sys::get_errno(rc) {
@@ -86,7 +81,6 @@ impl<R> MaybeSysResultExt<R> for Maybe<R> {
             })),
         }
     }
-    #[cfg(not(windows))]
     #[inline]
     fn errno_sys_p<Rc: sys::GetErrno>(
         rc: Rc,
@@ -103,7 +97,6 @@ impl<R> MaybeSysResultExt<R> for Maybe<R> {
             })),
         }
     }
-    #[cfg(not(windows))]
     #[inline]
     fn errno_sys_pd<Rc: sys::GetErrno>(
         rc: Rc,
@@ -9170,14 +9163,14 @@ pub(crate) trait ReaddirEntry: Sized {
     /// a cached `dirent_path` BunString.
     const IS_DIRENT: bool;
     /// Windows: entry names arrive as UTF-16 (`append_entry_w`).
-    #[cfg_attr(not(windows), allow(dead_code))]
+    #[cfg(windows)]
     const IS_U16: bool;
     /// Windows-only: append from a UTF-16 directory entry name.
     /// Non-recursive readdir; `re_encoding_buffer` is the pooled scratch for
     /// `strings::from_w_path` when `encoding != utf8`. Only ever invoked when
     /// `IS_U16` is true — `Buffer`'s impl is a `@compileError`-equivalent
     /// `unreachable!()`.
-    #[cfg_attr(not(windows), allow(dead_code))]
+    #[cfg(windows)]
     fn append_entry_w(
         entries: &mut Vec<Self>,
         utf16_name: &[u16],
@@ -9214,7 +9207,8 @@ pub(crate) trait ReaddirEntry: Sized {
 }
 impl ReaddirEntry for BunString {
     const IS_DIRENT: bool = false;
-    const IS_U16: bool = Environment::IS_WINDOWS;
+    #[cfg(windows)]
+    const IS_U16: bool = true;
     fn into_readdir(v: Vec<Self>) -> ret::Readdir {
         ret::Readdir::Files(v.into_boxed_slice())
     }
@@ -9227,6 +9221,7 @@ impl ReaddirEntry for BunString {
     ) {
         entries.push(webcore::encoding::to_bun_string(utf8_name, encoding));
     }
+    #[cfg(windows)]
     fn append_entry_w(
         entries: &mut Vec<Self>,
         utf16_name: &[u16],
@@ -9266,7 +9261,8 @@ impl ReaddirEntry for BunString {
 }
 impl ReaddirEntry for Dirent {
     const IS_DIRENT: bool = true;
-    const IS_U16: bool = Environment::IS_WINDOWS;
+    #[cfg(windows)]
+    const IS_U16: bool = true;
     fn into_readdir(v: Vec<Self>) -> ret::Readdir {
         ret::Readdir::WithFileTypes(v.into_boxed_slice())
     }
@@ -9283,6 +9279,7 @@ impl ReaddirEntry for Dirent {
             kind,
         });
     }
+    #[cfg(windows)]
     fn append_entry_w(
         entries: &mut Vec<Self>,
         utf16_name: &[u16],
@@ -9321,6 +9318,7 @@ impl ReaddirEntry for Dirent {
 }
 impl ReaddirEntry for Buffer {
     const IS_DIRENT: bool = false;
+    #[cfg(windows)]
     const IS_U16: bool = false;
     fn into_readdir(v: Vec<Self>) -> ret::Readdir {
         ret::Readdir::Buffers(v.into_boxed_slice())
@@ -9334,6 +9332,7 @@ impl ReaddirEntry for Buffer {
     ) {
         entries.push(Buffer::from_string(utf8_name).expect("oom"));
     }
+    #[cfg(windows)]
     fn append_entry_w(
         _: &mut Vec<Self>,
         _: &[u16],

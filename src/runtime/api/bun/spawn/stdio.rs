@@ -315,7 +315,7 @@ impl Stdio {
         }
     }
 
-    #[cfg_attr(windows, allow(dead_code))]
+    #[cfg(not(windows))]
     pub(crate) fn borrows_caller_fd(&self) -> bool {
         matches!(self, Self::Fd(_))
     }

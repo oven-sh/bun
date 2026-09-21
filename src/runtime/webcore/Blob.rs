@@ -4027,7 +4027,7 @@ pub(crate) fn write_format_for_size<W: core::fmt::Write, const ENABLE_ANSI_COLOR
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-#[cfg_attr(windows, allow(dead_code))]
+#[cfg(not(windows))]
 pub(crate) enum Retry {
     Continue,
     Fail,
@@ -4055,7 +4055,7 @@ pub(crate) fn mkdirp_parent(path: &[u8]) -> bun_sys::Result<()> {
 
 // TODO: move this to bun_sys?
 #[inline(never)]
-#[cfg_attr(windows, allow(dead_code))]
+#[cfg(not(windows))]
 pub(crate) fn mkdir_if_not_exists<T: MkdirpTarget>(
     this: &mut T,
     err: &bun_sys::Error,
@@ -4096,7 +4096,7 @@ fn sys_error_with_path_like(
 
 /// Receiver trait for `mkdir_if_not_exists`; impls optionally
 /// write `errno` / `opened_fd` via the defaulted setters.
-#[cfg_attr(windows, allow(dead_code))]
+#[cfg(not(windows))]
 pub(crate) trait MkdirpTarget {
     fn mkdirp_if_not_exists(&self) -> bool;
     fn set_mkdirp_if_not_exists(&mut self, v: bool);
@@ -6467,7 +6467,7 @@ pub(crate) trait FileOpener: Sized {
     /// `CopyFile`) override this to call [`mkdir_if_not_exists`]; everyone else
     /// (e.g. `ReadFile`) keeps the default `Retry::No`, so the open path falls
     /// straight through to the error branch.
-    #[cfg_attr(windows, allow(dead_code))]
+    #[cfg(not(windows))]
     fn try_mkdirp(
         &mut self,
         _err: bun_sys::Error,

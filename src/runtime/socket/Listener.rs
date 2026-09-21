@@ -116,7 +116,7 @@ pub(crate) enum ListenerType {
     /// Box move or `&mut Listener` that transitively covers the context — that
     /// would invalidate the pointer libuv holds under Stacked Borrows. Ownership
     /// is still unique; freed via `close_pipe_and_deinit` → `on_pipe_closed` → `deinit`.
-    #[cfg_attr(not(windows), allow(dead_code))]
+    #[cfg(windows)]
     NamedPipe(NonNull<WindowsNamedPipeListeningContext>),
     #[default]
     None,
@@ -902,8 +902,6 @@ impl Listener {
                     WindowsNamedPipeListeningContext::close_pipe_and_deinit(named_pipe.as_ptr())
                 };
             }
-            #[cfg(not(windows))]
-            ListenerType::NamedPipe(_) => {}
             ListenerType::None => {}
         }
 
@@ -928,8 +926,6 @@ impl Listener {
                     WindowsNamedPipeListeningContext::close_pipe_and_deinit(named_pipe.as_ptr())
                 };
             }
-            #[cfg(not(windows))]
-            ListenerType::NamedPipe(_) => {}
             ListenerType::None => {}
         }
         // `deinit` frees the allocation itself (`heap::take`); hand ownership
@@ -1770,11 +1766,6 @@ pub(crate) struct WindowsNamedPipeListeningContext {
     /// `self.vm.is_shutting_down()` without a raw-pointer deref.
     pub(crate) vm: &'static VirtualMachine,
     pub ctx: Option<boring_sys::OwnedSslCtx>, // server reuses the same ctx
-}
-
-#[cfg(not(windows))]
-pub(crate) struct WindowsNamedPipeListeningContext {
-    _priv: (),
 }
 
 /// `c_int`: raw libuv return code so JS `err.errno` is the platform-correct UV value.

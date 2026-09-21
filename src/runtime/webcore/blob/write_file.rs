@@ -13,11 +13,9 @@ use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, SystemError};
 use bun_sys::{self as sys, Fd};
 use bun_threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask};
 
-use crate::webcore::blob::{
-    self, Blob, FileOpener, MkdirpTarget, Retry, SizeType, mkdir_if_not_exists,
-};
+use crate::webcore::blob::{self, Blob, FileOpener, SizeType};
 #[cfg(not(windows))]
-use crate::webcore::blob::{ClosingState, FileCloser};
+use crate::webcore::blob::{ClosingState, FileCloser, MkdirpTarget, Retry, mkdir_if_not_exists};
 use crate::webcore::body;
 
 bun_output::declare_scope!(WriteFile, hidden);
@@ -86,7 +84,7 @@ impl bun_jsc::JobContext for WriteFile {
 impl WriteFile {
     /// JS thread: hand a prepared `WriteFile` to the work pool (the job is
     /// its one heap allocation).
-    #[cfg_attr(windows, allow(dead_code))]
+    #[cfg(not(windows))]
     pub(crate) fn schedule(
         this: WriteFile,
         promise: Box<WriteFilePromise>,
@@ -118,7 +116,7 @@ pub(crate) struct WriteFile {
     #[cfg(not(windows))]
     pub(crate) could_block: bool,
     pub(crate) close_after_io: bool,
-    #[cfg_attr(windows, allow(dead_code))]
+    #[cfg(not(windows))]
     pub(crate) mkdirp_if_not_exists: bool,
 }
 
@@ -156,6 +154,7 @@ impl FileOpener for WriteFile {
             .as_file()
             .pathlike
     }
+    #[cfg(not(windows))]
     fn try_mkdirp(
         &mut self,
         err: bun_sys::Error,
@@ -182,6 +181,7 @@ impl FileOpener for WriteFile {
     }
 }
 
+#[cfg(not(windows))]
 impl MkdirpTarget for WriteFile {
     fn mkdirp_if_not_exists(&self) -> bool {
         self.mkdirp_if_not_exists

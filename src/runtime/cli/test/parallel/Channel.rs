@@ -440,7 +440,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
     }
 
     /// Best-effort drain of any buffered writes.
-    #[cfg_attr(windows, allow(dead_code))]
+    #[cfg(not(windows))]
     pub(crate) fn flush(&self) {
         #[cfg(windows)]
         {

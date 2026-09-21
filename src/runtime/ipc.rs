@@ -660,7 +660,7 @@ pub(crate) struct Handle {
 }
 
 impl Handle {
-    #[cfg_attr(not(windows), allow(dead_code))]
+    #[cfg(windows)]
     pub(crate) fn init(fd: Fd, js: JSValue) -> Self {
         Self {
             fd,
@@ -675,7 +675,7 @@ impl Handle {
         }
     }
 
-    #[cfg_attr(not(windows), allow(dead_code))]
+    #[cfg(windows)]
     pub(crate) fn init_close_on_complete(fd: Fd, js: JSValue) -> Self {
         Self {
             fd,
@@ -690,7 +690,7 @@ impl Handle {
         }
     }
 
-    #[cfg_attr(windows, allow(dead_code))]
+    #[cfg(not(windows))]
     pub(crate) fn init_dup(
         fd: Fd,
         js: JSValue,
@@ -879,10 +879,6 @@ pub(crate) struct WindowsState {
     pub(crate) try_close_after_write: bool,
 }
 
-#[cfg(not(windows))]
-#[derive(Default)]
-pub(crate) struct WindowsState {}
-
 #[derive(Copy, Clone, Eq, PartialEq)]
 enum CloseReason {
     Normal,
@@ -934,7 +930,7 @@ pub(crate) struct SendQueue {
     pub(crate) write_in_progress: Cell<bool>,
     pub close_event_sent: Cell<bool>,
 
-    #[cfg_attr(not(windows), allow(dead_code))]
+    #[cfg(windows)]
     pub windows: JsCell<WindowsState>,
 }
 
@@ -1058,6 +1054,7 @@ impl SendQueue {
             pending_after_close: Cell::new(false),
             write_in_progress: Cell::new(false),
             close_event_sent: Cell::new(false),
+            #[cfg(windows)]
             windows: JsCell::new(WindowsState::default()),
         });
         this.root.set(Some(this.as_non_null()));
@@ -2010,7 +2007,7 @@ pub(crate) fn windows_export_socket_hex(fd: Fd, peer_pid: u32) -> Option<Box<[u8
     Some(hex.into_boxed_slice())
 }
 
-#[cfg_attr(not(windows), allow(dead_code))]
+#[cfg(windows)]
 pub(crate) const WIN_SOCKET_INFO_KEY: &[u8] = b"$winSocketInfo";
 
 #[cfg(windows)]

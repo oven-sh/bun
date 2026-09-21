@@ -279,7 +279,7 @@ impl ReadFile {
 pub(crate) struct ReadFile {
     pub(crate) file_store: FileStore,
     pub(crate) store: Option<RefPtr<Store>>,
-    #[cfg_attr(windows, allow(dead_code))]
+    #[cfg(not(windows))]
     pub offset: SizeType,
     #[cfg(not(windows))]
     pub(crate) max_length: SizeType,

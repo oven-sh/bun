@@ -122,7 +122,7 @@ impl Default for OpenedFileBlob {
 }
 
 unsafe extern "C" {
-    #[cfg_attr(windows, allow(dead_code))]
+    #[cfg(not(windows))]
     pub(crate) safe fn open_as_nonblocking_tty(fd: i32, flags: i32) -> i32;
 }
 

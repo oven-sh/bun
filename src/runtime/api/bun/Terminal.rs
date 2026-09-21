@@ -10,7 +10,9 @@
 //! - Callbacks are stored via `values` in classes.ts, accessed via js.gc
 
 use core::cell::Cell;
-use core::ffi::{c_int, c_void};
+#[cfg(not(windows))]
+use core::ffi::c_int;
+use core::ffi::c_void;
 #[cfg(windows)]
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -815,7 +817,7 @@ fn create_pty(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
 // OpenPtyTermios is required for the openpty() extern signature even though we pass null.
 // Kept for type correctness of the C function declaration.
 #[repr(C)]
-#[cfg_attr(windows, allow(dead_code))]
+#[cfg(not(windows))]
 pub(crate) struct OpenPtyTermios {
     pub c_iflag: u32,
     pub c_oflag: u32,
@@ -826,9 +828,10 @@ pub(crate) struct OpenPtyTermios {
     pub c_ospeed: u32,
 }
 
+#[cfg(not(windows))]
 pub(crate) use bun_core::Winsize;
 
-#[cfg_attr(windows, allow(dead_code))]
+#[cfg(not(windows))]
 pub(crate) type OpenPtyFn = unsafe extern "C" fn(
     amaster: *mut c_int,
     aslave: *mut c_int,

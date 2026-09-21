@@ -73,7 +73,6 @@ pub(crate) use util::validators;
 // callers reach `.Kind` through `Dirent`. Rust can't hang an associated
 // module off a struct re-export, so expose a tiny module mirroring that shape.
 pub(crate) mod dirent {
-
     pub(crate) use super::types::DirentKind as Kind;
 }
 
@@ -166,25 +165,3 @@ pub(crate) type uid_t = bun_sys::windows::libuv::uv_uid_t;
 pub(crate) type gid_t = libc::gid_t;
 #[cfg(not(unix))]
 pub(crate) type gid_t = bun_sys::windows::libuv::uv_gid_t;
-
-/// Node.js expects the error to include contextual information
-/// - "syscall"
-/// - "path"
-/// - "errno"
-#[cfg_attr(not(windows), allow(dead_code))]
-pub(crate) type Maybe<R, E = bun_sys::Error> = core::result::Result<R, E>;
-
-/// Generic helper surface for `Maybe(R, E)`.
-/// `unwrap_or`/`is_ok`/`is_err`/`map_err` are already provided by
-/// `core::result::Result`, so only the extra helper remains here.
-#[cfg_attr(not(windows), allow(dead_code))]
-pub(crate) trait MaybeExt<R, E>: Sized {
-    fn as_err(&self) -> Option<&E>;
-}
-
-impl<R, E> MaybeExt<R, E> for Maybe<R, E> {
-    #[inline]
-    fn as_err(&self) -> Option<&E> {
-        self.as_ref().err()
-    }
-}

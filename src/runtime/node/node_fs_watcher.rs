@@ -223,6 +223,7 @@ impl FSWatchTaskPosix {
                     self.ctx().emit_error(err, *close);
                     Ok(())
                 }
+                #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
                 Event::NoFilename(event_type) => {
                     self.ctx().emit_null_filename(*event_type);
                     Ok(())
@@ -357,7 +358,7 @@ pub(crate) enum Event {
     /// An event with no filename, surfaced to JS with `null`, matching node:
     /// `Change` when the OS event queue overflowed and changes were lost,
     /// `Rename` when libuv could not convert a name to UTF-8 (Windows).
-    #[cfg_attr(any(target_os = "macos", target_os = "freebsd"), allow(dead_code))]
+    #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
     NoFilename(WatchEventKind),
     Abort,
 }
@@ -422,7 +423,7 @@ impl Default for FSWatchTaskWindows {
     }
 }
 
-#[cfg_attr(not(windows), allow(dead_code))]
+#[cfg(windows)]
 pub(crate) enum StringOrBytesToDecode {
     String(bun_core::String),
     BytesToFree(Box<[u8]>),
@@ -431,6 +432,7 @@ pub(crate) enum StringOrBytesToDecode {
 // `PathWatcher::emit` and `Event::dupe` take a borrowed `&[u8]` rel-path and box
 // it into the owned `bytes_to_free` arm so the Windows task can carry it across
 // the thread hop.
+#[cfg(windows)]
 impl From<&[u8]> for StringOrBytesToDecode {
     #[inline]
     fn from(bytes: &[u8]) -> Self {
@@ -438,6 +440,7 @@ impl From<&[u8]> for StringOrBytesToDecode {
     }
 }
 
+#[cfg(windows)]
 impl core::fmt::Display for StringOrBytesToDecode {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -915,6 +918,7 @@ impl FSWatcher {
         }
     }
 
+    #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
     pub(crate) fn emit_with_filename<const EVENT_TYPE: EventType>(&self, file_name: JSValue) {
         let Some(js_this) = self.js_this.try_get() else {
             return;
@@ -926,6 +930,7 @@ impl FSWatcher {
     }
 
     /// `Event::NoFilename`: deliver `(event, null)` regardless of encoding.
+    #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
     fn emit_null_filename(&self, event_type: WatchEventKind) {
         match event_type {
             WatchEventKind::Rename => {

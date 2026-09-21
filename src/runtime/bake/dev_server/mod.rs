@@ -87,9 +87,6 @@ pub(crate) enum MessageId {
     Version = b'V',
     HotUpdate = b'u',
     Errors = b'e',
-    // The server does not send this one; bake-codegen generates the client's enum from this one.
-    #[allow(dead_code)]
-    Visualizer = b'v',
     MemoryVisualizer = b'M',
     SetUrlResponse = b'n',
     TestingWatchSynchronization = b'r',

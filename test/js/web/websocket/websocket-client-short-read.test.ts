@@ -398,8 +398,8 @@ describe("WebSocket frames in the same read as the 101", () => {
           const first = "HTTP/1.1 101 ";
           socket.write(first);
           socket.flush();
-          // The client shows no sign of having read `first`. 50 ms puts the rest in a later read.
-          setTimeout(respond, 50, first.length);
+          // The first immediate runs before the poll in which the client reads `first`, the second one after it.
+          setImmediate(() => setImmediate(respond, first.length));
         },
       },
     });

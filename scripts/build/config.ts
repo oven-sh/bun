@@ -22,9 +22,8 @@ export type OS = "linux" | "darwin" | "windows" | "freebsd";
 export type Arch = "x64" | "aarch64";
 export type Abi = "gnu" | "musl" | "android";
 export type BuildType = "Debug" | "Release" | "RelWithDebInfo" | "MinSizeRel";
-export type BuildMode = "full" | "archive-link";
-/** `codegen` runs the code generators and nothing else; it resolves a {@link CodegenConfig}, not a {@link Config}. */
-export type Mode = BuildMode | "codegen";
+/** `full` builds bun. `codegen` runs the code generators and nothing else; it resolves a {@link CodegenConfig}, not a {@link Config}. */
+export type Mode = "full" | "codegen";
 export type WebKitMode = "prebuilt" | "local";
 /** The package manager for the package.json files the build installs. */
 export type PackageManager = "bun" | "npm";
@@ -111,7 +110,8 @@ export interface Config {
   buildType: BuildType;
   debug: boolean;
   release: boolean;
-  mode: BuildMode;
+  /** What tells a Config from a {@link CodegenConfig}. */
+  mode: "full";
 
   // ─── Features (all explicit booleans) ───
   lto: boolean;
@@ -154,8 +154,8 @@ export interface Config {
   unifiedSources: boolean;
   /**
    * Archive each `direct` dep's objects into a per-dep .a (the old
-   * behaviour). Default off — dep .o files go straight into bun's link, or
-   * its archive in an archive-link build, instead. Turn on to bisect duplicate-symbol issues:
+   * behaviour). Default off — dep .o files go straight into bun's link
+   * instead. Turn on to bisect duplicate-symbol issues:
    * a .a only contributes members the linker actually pulls.
    */
   archiveDeps: boolean;
@@ -1350,7 +1350,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     buildType,
     debug,
     release,
-    mode: partial.mode ?? "full",
+    mode: "full",
     lto,
     crossLangLto,
     pgoGenerate,
@@ -1756,7 +1756,6 @@ export function formatConfig(cfg: Config, exe: string): string {
   if (cfg.webkit !== "prebuilt") features.push(`webkit:${cfg.webkit}`);
   for (const name of Object.keys(cfg.localDeps)) features.push(`local:${name}`);
   if (cfg.packageManager !== "bun") features.push(`package-manager:${cfg.packageManager}`);
-  if (cfg.mode !== "full") features.push(`mode:${cfg.mode}`);
   // Version pin overrides — show an identifying value so you catch "forgot
   // to revert my WebKit test branch" before the build goes weird. Strip the
   // autobuild- prefix so preview tags show their sha instead of the prefix.

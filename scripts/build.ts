@@ -199,7 +199,7 @@ async function main(): Promise<void> {
     });
 
     // Package + upload zips for downstream test steps.
-    if (result.cfg.buildkite && result.cfg.mode === "archive-link") {
+    if (result.cfg.buildkite) {
       await startGroup("Package and upload", () => packageAndUpload(result.cfg, result.output));
     }
   } else {
@@ -296,11 +296,6 @@ async function main(): Promise<void> {
     // binary — bun-debug for debug, bun-profile for release. That's the one
     // you want for dev iteration (has symbols + assertions in debug).
     const exe = result.output.exe;
-    if (exe === undefined) {
-      throw new BuildError("Cannot exec: build mode produced no executable", {
-        hint: `mode=${result.cfg.mode} builds artifacts, not a runnable binary. Drop the positional args or use --profile=debug.`,
-      });
-    }
     const child = spawnSync(exe, args.execArgs, { stdio: "inherit" });
     if (child.error) {
       throw new BuildError(`Failed to exec ${exe}`, { cause: child.error });
@@ -663,7 +658,7 @@ Options:
                                   vendored dep from a local checkout),
                                   package-manager (bun|npm, installs the
                                   package.json files the build needs),
-                                  buildDir, mode (full|archive-link|codegen),
+                                  buildDir, mode (full|codegen),
                                   unifiedSources, timeTrace, os, arch, abi,
                                   winsysroot (Windows cross-compile SDK root)
   --target=<name>         Build a specific ninja target (repeatable)

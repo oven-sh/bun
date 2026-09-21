@@ -1428,12 +1428,11 @@ export const linkerFlags: Flag[] = [
   },
   {
     // The exe exports symbols (the .def above), so lld-link also writes an
-    // import library — by default `<output basename>.lib`, which is the very
-    // name of the object archive archive-link mode produces. Nothing consumes
-    // it; park it under obj/.
+    // import library — by default `<output basename>.lib` beside the exe.
+    // Nothing consumes it; park it under obj/.
     flag: c => `/IMPLIB:${slash(join(c.buildDir, "obj", `${bunExeName(c)}.import.lib`))}`,
     when: c => c.windows,
-    desc: "Keep the exe's import library from overwriting <exe>.lib (the object archive)",
+    desc: "Write the exe's import library under obj/",
   },
   {
     flag: c => ["-exported_symbols_list", `${c.cwd}/src/symbols.txt`],

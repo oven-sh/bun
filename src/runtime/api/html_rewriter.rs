@@ -922,7 +922,7 @@ impl RewriterPipe {
         if let (Some(reason), SourceHandle::JSController(_)) = (cancel, upstream) {
             upstream.cancel(reason);
         }
-        JSSink::<RewriterPipe>::detach(&mut src, &self.global);
+        src.detach(&self.global);
         if cancel.is_some() {
             match upstream {
                 SourceHandle::ByteStream(_) | SourceHandle::FileReader(_) => {

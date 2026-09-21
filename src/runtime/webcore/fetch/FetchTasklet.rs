@@ -474,7 +474,7 @@ impl FetchTasklet {
             sink.task = None;
             // `detach` may fire the controller's onClose; every terminal path
             // here has already cleared it, so this just nulls m_sinkPtr.
-            JSSink::<FetchRequestBodySink>::detach(&mut sink.source, &self.global_this);
+            sink.source.detach(&self.global_this);
         }
         if let Some(buffer) = self.request_body_streaming_buffer.take() {
             // The HTTP thread may still be using its ref; `clear_drain_callback`

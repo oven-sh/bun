@@ -209,7 +209,7 @@ public:
     void didConnect();
     void didStartClosingHandshake();
     void didClose(unsigned unhandledBufferedAmount, unsigned short code, const String& reason);
-    void didConnect(us_socket_t* socket, void* bufferedData, const PerMessageDeflateParams* deflate_params, void* customSSLCtx);
+    void didConnect(us_socket_t* socket, void* bufferedData, const PerMessageDeflateParams* deflate_params, void* customSSLCtx, std::span<const uint8_t> verifiedHostname);
     void didConnectWithTunnel(void* tunnel, void* bufferedData, const PerMessageDeflateParams* deflate_params);
     // The connected client parses didConnect*()'s bufferedData: after the microtasks of open, or from a task if open spins the event loop.
     void deliverInitialData();

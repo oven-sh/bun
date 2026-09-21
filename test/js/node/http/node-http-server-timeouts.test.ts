@@ -561,4 +561,45 @@ describe("node:http response writes restart the socket inactivity timeout", () =
       server.close();
     }
   });
+
+  test.concurrent("a request body chunk after a write moved the deadline gets a full period", async () => {
+    // The write at 0.6 * TIMEOUT moves the deadline from TIMEOUT to 1.6 * TIMEOUT. The body
+    // chunk arrives between the two. A timer that was re-armed for only the rest of the
+    // period would count 0.6 * TIMEOUT from the chunk.
+    let chunkAt = 0;
+    const { promise: timedOut, resolve: onTimedOut } = Promise.withResolvers<number>();
+    const { promise: wrote, resolve: onWrote } = Promise.withResolvers<void>();
+    const server = http.createServer((req, res) => {
+      req.on("data", chunk => {
+        if (chunk.toString("latin1") === "late") chunkAt = performance.now();
+      });
+      setTimeout(() => {
+        res.write("chunk\n");
+        onWrote();
+      }, TIMEOUT * 0.6);
+    });
+    server.timeout = TIMEOUT;
+    server.on("timeout", socket => {
+      // Only on a machine that stalls until the moved deadline has passed. The chunk
+      // then starts the timer again, and the next 'timeout' is the one measured.
+      if (chunkAt === 0) return;
+      onTimedOut(performance.now());
+      socket.destroy();
+    });
+    const port = await listen(server);
+    const client = net.connect(port, "127.0.0.1");
+    try {
+      client.on("error", () => {});
+      await once(client, "connect");
+      client.write("POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 100\r\n\r\nearly");
+      await wrote;
+      setTimeout(() => client.write("late"), TIMEOUT * 0.7);
+      const quietFor = (await timedOut) - chunkAt;
+      expect(quietFor).toBeGreaterThanOrEqual(TIMEOUT - SLACK);
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  });
 });

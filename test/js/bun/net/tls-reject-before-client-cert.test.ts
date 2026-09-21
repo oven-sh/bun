@@ -44,6 +44,7 @@ type Seen = { peerCN: string | null; closed: Promise<void> };
 async function mtlsServer(opts: {
   plain?: (socket: net.Socket) => Promise<void>;
   onSecure?: (socket: tls.TLSSocket) => void;
+  maxVersion?: tls.SecureVersion;
 }) {
   const closed = Promise.withResolvers<void>();
   const seen: Seen = { peerCN: null, closed: closed.promise };
@@ -57,6 +58,7 @@ async function mtlsServer(opts: {
       ca: untrustedCA,
       requestCert: true,
       rejectUnauthorized: false,
+      maxVersion: opts.maxVersion,
     });
     secure.on("error", () => {});
     secure.on("close", () => {
@@ -145,64 +147,73 @@ async function sqlHandshakeOnly(url: string, options: object, closed: Promise<vo
   await query;
 }
 
-describe("a rejecting client sends no client certificate to a server whose chain fails", () => {
-  test("control: with the right CA the server does see the client certificate", async () => {
-    await using srv = await mtlsServer({ onSecure: httpOk });
-    const res = await fetch(`https://localhost:${srv.port}/`, { tls: { ...mtls, ca: trustedCA } });
-    expect(await res.text()).toBe("ok");
-    expect(srv.seen.peerCN).toBe("agent3");
-  });
+// In TLS 1.3 the client's Certificate follows the server's Finished, so the
+// read loop suppresses it. In TLS 1.2 the client writes it first and the
+// parked-write retry catches it. Both paths must keep it off the wire.
+describe.each(["TLSv1.3", "TLSv1.2"] as const)(
+  "%s: a rejecting client sends no client certificate to a server whose chain fails",
+  maxVersion => {
+    test("control: with the right CA the server does see the client certificate", async () => {
+      await using srv = await mtlsServer({ onSecure: httpOk, maxVersion });
+      const res = await fetch(`https://localhost:${srv.port}/`, { tls: { ...mtls, ca: trustedCA } });
+      expect(await res.text()).toBe("ok");
+      expect(srv.seen.peerCN).toBe("agent3");
+    });
 
-  test("fetch", async () => {
-    await using srv = await mtlsServer({ onSecure: httpOk });
-    const err = await settle(fetch(`https://localhost:${srv.port}/`, { tls: mtls }));
-    expect(err?.code).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
-    await srv.seen.closed;
-    expect(srv.seen.peerCN).toBeNull();
-  });
+    test("fetch", async () => {
+      await using srv = await mtlsServer({ onSecure: httpOk, maxVersion });
+      const err = await settle(fetch(`https://localhost:${srv.port}/`, { tls: mtls }));
+      expect(err?.code).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+      await srv.seen.closed;
+      expect(srv.seen.peerCN).toBeNull();
+    });
 
-  test("fetch with the default trust store (no ca)", async () => {
-    await using srv = await mtlsServer({ onSecure: httpOk });
-    const err = await settle(fetch(`https://localhost:${srv.port}/`, { tls: identity }));
-    expect(err?.code).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
-    await srv.seen.closed;
-    expect(srv.seen.peerCN).toBeNull();
-  });
+    test("fetch with the default trust store (no ca)", async () => {
+      await using srv = await mtlsServer({ onSecure: httpOk, maxVersion });
+      const err = await settle(fetch(`https://localhost:${srv.port}/`, { tls: identity }));
+      expect(err?.code).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+      await srv.seen.closed;
+      expect(srv.seen.peerCN).toBeNull();
+    });
 
-  test("WebSocket", async () => {
-    await using srv = await mtlsServer({});
-    expect(await websocketOutcome(srv.port, mtls)).toBe("error");
-    await srv.seen.closed;
-    expect(srv.seen.peerCN).toBeNull();
-  });
+    test("WebSocket", async () => {
+      await using srv = await mtlsServer({ maxVersion });
+      expect(await websocketOutcome(srv.port, mtls)).toBe("error");
+      await srv.seen.closed;
+      expect(srv.seen.peerCN).toBeNull();
+    });
 
-  test("Bun.RedisClient", async () => {
-    await using srv = await mtlsServer({});
-    const client = new RedisClient(`rediss://localhost:${srv.port}`, { tls: mtls, maxRetries: 0 } as any);
-    const err = await settle(client.connect());
-    // connect() settles from the close event, not from the handshake verdict.
-    expect(err?.code).toBe("ERR_REDIS_CONNECTION_CLOSED");
-    client.close();
-    await srv.seen.closed;
-    expect(srv.seen.peerCN).toBeNull();
-  });
+    test("Bun.RedisClient", async () => {
+      await using srv = await mtlsServer({ maxVersion });
+      const client = new RedisClient(`rediss://localhost:${srv.port}`, { tls: mtls, maxRetries: 0 } as any);
+      const err = await settle(client.connect());
+      // connect() settles from the close event, not from the handshake verdict.
+      expect(err?.code).toBe("ERR_REDIS_CONNECTION_CLOSED");
+      client.close();
+      await srv.seen.closed;
+      expect(srv.seen.peerCN).toBeNull();
+    });
 
-  test("Bun.SQL postgres sslmode=verify-full", async () => {
-    await using srv = await mtlsServer({ plain: postgresPrelude });
-    const err = await sqlError(`postgres://user:pass@localhost:${srv.port}/db`, { sslmode: "verify-full", tls: mtls });
-    expect(err?.code).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
-    await srv.seen.closed;
-    expect(srv.seen.peerCN).toBeNull();
-  });
+    test("Bun.SQL postgres sslmode=verify-full", async () => {
+      await using srv = await mtlsServer({ plain: postgresPrelude, maxVersion });
+      const err = await sqlError(`postgres://user:pass@localhost:${srv.port}/db`, {
+        sslmode: "verify-full",
+        tls: mtls,
+      });
+      expect(err?.code).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+      await srv.seen.closed;
+      expect(srv.seen.peerCN).toBeNull();
+    });
 
-  test("Bun.SQL mysql sslmode=verify-full", async () => {
-    await using srv = await mtlsServer({ plain: mysqlPrelude });
-    const err = await sqlError(`mysql://user:pass@localhost:${srv.port}/db`, { sslmode: "verify-full", tls: mtls });
-    expect(err?.code).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
-    await srv.seen.closed;
-    expect(srv.seen.peerCN).toBeNull();
-  });
-});
+    test("Bun.SQL mysql sslmode=verify-full", async () => {
+      await using srv = await mtlsServer({ plain: mysqlPrelude, maxVersion });
+      const err = await sqlError(`mysql://user:pass@localhost:${srv.port}/db`, { sslmode: "verify-full", tls: mtls });
+      expect(err?.code).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+      await srv.seen.closed;
+      expect(srv.seen.peerCN).toBeNull();
+    });
+  },
+);
 
 // The inline reject is installed only when the client's policy rejects a bad
 // chain. A client that accepts one must still complete the handshake, and
@@ -249,6 +260,26 @@ describe("a client that accepts a bad chain still completes the handshake", () =
     await sqlHandshakeOnly(
       `mysql://user:pass@localhost:${srv.port}/db`,
       { sslmode: "require", tls: identity },
+      srv.seen.closed,
+    );
+    expect(srv.seen.peerCN).toBe("agent3");
+  });
+
+  test("Bun.SQL postgres sslmode=verify-full rejectUnauthorized: false", async () => {
+    await using srv = await mtlsServer({ plain: postgresPrelude, onSecure: dropAfterHandshake });
+    await sqlHandshakeOnly(
+      `postgres://user:pass@localhost:${srv.port}/db`,
+      { sslmode: "verify-full", tls: { ...mtls, rejectUnauthorized: false } },
+      srv.seen.closed,
+    );
+    expect(srv.seen.peerCN).toBe("agent3");
+  });
+
+  test("Bun.SQL mysql sslmode=verify-full rejectUnauthorized: false", async () => {
+    await using srv = await mtlsServer({ plain: mysqlPrelude, onSecure: dropAfterHandshake });
+    await sqlHandshakeOnly(
+      `mysql://user:pass@localhost:${srv.port}/db`,
+      { sslmode: "verify-full", tls: { ...mtls, rejectUnauthorized: false } },
       srv.seen.closed,
     );
     expect(srv.seen.peerCN).toBe("agent3");

@@ -592,6 +592,7 @@ extern void us_internal_socket_raw_shutdown(struct us_socket_t *s);
 static void ssl_update_handshake(struct us_socket_t *s);
 static int ssl_flush_write_batch(struct loop_ssl_data *loop_ssl_data, struct us_socket_t *s);
 static int us_ssl_inline_reject_tripped(struct us_socket_t *s);
+static void ssl_discard_parked_reason(struct us_socket_t *s);
 static inline int ssl_gone(struct us_socket_t *s);
 
 /* ── BIO plumbing ─────────────────────────────────────────────────────────
@@ -1191,10 +1192,18 @@ end:
 }
 
 static int us_verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
-  /* Always continue; the user inspects via us_socket_verify_error after
-   * on_handshake. Returning 1 defers the decision to JS without aborting
-   * mid-handshake - the same model as Node (crypto_tls.cc VerifyCallback). */
-  return 1;
+  /* Clients and non-rejectUnauthorized servers defer the decision to JS so
+   * authorized / authorizationError stay inspectable after the handshake. */
+  if (preverify_ok) return 1;
+  SSL *ssl = X509_STORE_CTX_get_ex_data(ctx, SSL_get_ex_data_X509_STORE_CTX_idx());
+  if (!ssl || !SSL_is_server(ssl) ||
+      !(SSL_get_verify_mode(ssl) & SSL_VERIFY_FAIL_IF_NO_PEER_CERT)) {
+    return 1;
+  }
+  /* requestCert + rejectUnauthorized must fail inside the handshake so the
+   * peer receives a fatal alert instead of a clean post-handshake close.
+   * SSL_get_verify_result keeps the X509 reason for tlsClientError. */
+  return 0;
 }
 
 /* Rejecting client: keep walking (so the final verdict matches node's
@@ -1839,11 +1848,7 @@ void us_internal_ssl_detach(struct us_socket_t *s) {
     s->ssl = NULL;
     /* Same for a parked handshake reason: no dispatch can claim it now, and a
      * socket reusing this address would report it as its own failure. */
-    struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
-    if (loop_ssl_data && loop_ssl_data->ssl_last_fatal_error_owner == (void *)s) {
-      loop_ssl_data->ssl_last_fatal_error[0] = 0;
-      loop_ssl_data->ssl_last_fatal_error_owner = NULL;
-    }
+    ssl_discard_parked_reason(s);
   }
 }
 
@@ -1968,6 +1973,15 @@ static int ssl_dispatch_parked_reason(struct us_socket_t *s) {
   return 1;
 }
 
+static void ssl_discard_parked_reason(struct us_socket_t *s) {
+  struct loop_ssl_data *loop_ssl_data =
+      (struct loop_ssl_data *) s->group->loop->data.ssl_data;
+  if (loop_ssl_data && loop_ssl_data->ssl_last_fatal_error_owner == (void *)s) {
+    loop_ssl_data->ssl_last_fatal_error[0] = 0;
+    loop_ssl_data->ssl_last_fatal_error_owner = NULL;
+  }
+}
+
 static void ssl_trigger_handshake(struct us_socket_t *s, int success) {
   /* Read before the state flip below turns tripped() off. */
   int inline_rejected = us_ssl_inline_reject_tripped(s);
@@ -1981,13 +1995,7 @@ static void ssl_trigger_handshake(struct us_socket_t *s, int success) {
    * through ssl.verifyError() (UNABLE_TO_VERIFY_LEAF_SIGNATURE, ...), not
    * the SSL protocol reason that may wrap it. */
   if (!success && inline_rejected && s->ssl && s_ssl(s)) {
-    struct loop_ssl_data *loop_ssl_data =
-        (struct loop_ssl_data *)s->group->loop->data.ssl_data;
-    if (loop_ssl_data &&
-        loop_ssl_data->ssl_last_fatal_error_owner == (void *)s) {
-      loop_ssl_data->ssl_last_fatal_error[0] = 0;
-      loop_ssl_data->ssl_last_fatal_error_owner = NULL;
-    }
+    ssl_discard_parked_reason(s);
     us_dispatch_handshake(s, 0, us_ssl_socket_verify_error_from_ssl(s_ssl(s)));
     /* Nothing else will tear this connection down (the peer is still waiting
      * for a Finished that will never come) - close unless JS already did. */
@@ -1996,12 +2004,32 @@ static void ssl_trigger_handshake(struct us_socket_t *s, int success) {
     }
     return;
   }
-  /* A fatal SSL protocol error (wrong version number, bad record, ...) was
-   * recorded just before this failure: report it instead of the X509 verify
-   * result so Node's tlsClientError / client error carries the OpenSSL
-   * reason string. */
-  if (!success && ssl_dispatch_parked_reason(s)) {
-    return;
+  if (!success) {
+    /* Server cert-reject failures report SSL_get_verify_result directly. Gate
+     * on a presented peer cert so pre-verify failures (plain HTTP, no cert,
+     * bad record) keep their parked reason instead of INVALID_CALL. */
+    if (s_ssl(s) && SSL_is_server(s_ssl(s)) &&
+        (SSL_get_verify_mode(s_ssl(s)) & SSL_VERIFY_FAIL_IF_NO_PEER_CERT)) {
+      X509 *peer_cert = SSL_get_peer_certificate(s_ssl(s));
+      if (peer_cert) {
+        X509_free(peer_cert);
+        long x509_err = SSL_get_verify_result(s_ssl(s));
+        if (x509_err != X509_V_OK) {
+          ssl_discard_parked_reason(s);
+          struct us_bun_verify_error_t verify_error = {
+              .error = x509_err,
+              .code = us_X509_error_code(x509_err),
+              .reason = X509_verify_cert_error_string(x509_err)};
+          us_dispatch_handshake(s, 0, verify_error);
+          return;
+        }
+      }
+    }
+    /* Fatal protocol errors (wrong version number, bad record, ...) parked
+     * above carry the OpenSSL reason string for tlsClientError. */
+    if (ssl_dispatch_parked_reason(s)) {
+      return;
+    }
   }
   struct us_bun_verify_error_t verify_error = us_internal_ssl_verify_error(s);
   us_dispatch_handshake(s, success, verify_error);

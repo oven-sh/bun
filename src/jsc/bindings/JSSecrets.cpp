@@ -345,7 +345,7 @@ void Bun__SecretsJobOptions__deinit(SecretsJobOptions* opts)
 }
 
 // Native binding exports
-void Bun__Secrets__scheduleJob(JSGlobalObject* global, SecretsJobOptions* opts, EncodedJSValue promise);
+void Bun__Secrets__scheduleJob(JSGlobalObject* global, CallFrame* callFrame, SecretsJobOptions* opts, EncodedJSValue promise);
 
 } // extern "C"
 
@@ -364,7 +364,7 @@ JSC_DEFINE_HOST_FUNCTION(secretsGet, (JSGlobalObject * globalObject, CallFrame* 
     ASSERT(options);
 
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
-    Bun__Secrets__scheduleJob(globalObject, options, JSValue::encode(promise));
+    Bun__Secrets__scheduleJob(globalObject, callFrame, options, JSValue::encode(promise));
 
     return JSValue::encode(promise);
 }
@@ -379,7 +379,7 @@ JSC_DEFINE_HOST_FUNCTION(secretsSet, (JSGlobalObject * globalObject, CallFrame* 
     ASSERT(options);
 
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
-    Bun__Secrets__scheduleJob(globalObject, options, JSValue::encode(promise));
+    Bun__Secrets__scheduleJob(globalObject, callFrame, options, JSValue::encode(promise));
 
     return JSValue::encode(promise);
 }
@@ -399,7 +399,7 @@ JSC_DEFINE_HOST_FUNCTION(secretsDelete, (JSGlobalObject * globalObject, CallFram
     ASSERT(options);
 
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
-    Bun__Secrets__scheduleJob(globalObject, options, JSValue::encode(promise));
+    Bun__Secrets__scheduleJob(globalObject, callFrame, options, JSValue::encode(promise));
 
     return JSValue::encode(promise);
 }

@@ -594,7 +594,8 @@ function spawnSync(file, args, options) {
   const outputStderr = typeof stderr === "number" ? null : stderr;
 
   const result = {
-    signal: signalCode ?? null,
+    // A signal with no name (a number from Bun.spawn) is "" in node: https://github.com/nodejs/node/blob/v26.3.0/src/spawn_sync.cc#L732
+    signal: typeof signalCode === "number" ? "" : (signalCode ?? null),
     status: exitCode,
     // TODO: Need to expose extra pipes from Bun.spawnSync to child_process
     output: [null, outputStdout, outputStderr],
@@ -1121,10 +1122,11 @@ class ChildProcess extends EventEmitter {
   }
 
   #handleOnExit(exitCode, signalCode, err) {
-    if (signalCode) {
+    if (typeof signalCode === "string") {
       this.signalCode = signalCode;
     } else {
-      this.exitCode = exitCode;
+      // A signal with no name (a number from Bun.spawn) is "" in node, which then stores libuv's exit status, 0: https://github.com/nodejs/node/blob/v26.3.0/src/process_wrap.cc#L410
+      this.exitCode = typeof signalCode === "number" ? 0 : exitCode;
     }
 
     // Drain stdio streams
@@ -1404,6 +1406,18 @@ class ChildProcess extends EventEmitter {
       validateArray(options.args, "options.args");
       spawnargs = this.spawnargs = options.args;
     }
+    // What script of a disposed Bun.ModuleGraph starts does not start, and reports nothing: a
+    // child without a handle, as after a failed spawn, but with no 'error' and no 'close'.
+    if (require("internal/shared").isStoppedModuleGraphRunning()) {
+      this.#handle = null;
+      // (fork() always gives its child a channel: this one sends nothing.)
+      if (has_ipc) {
+        this.send = () => false;
+        this.disconnect = () => {};
+      }
+      return;
+    }
+
     // normalizeSpawnargs has already prepended argv0 to the spawnargs array
     // Bun.spawn() expects cmd[0] to be the command to run, and argv0 to replace the first arg when running the command,
     // so we have to set argv0 to spawnargs[0] and cmd[0] to file

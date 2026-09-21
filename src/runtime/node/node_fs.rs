@@ -648,6 +648,8 @@ mod _async_tasks {
         pub(crate) result: Maybe<R>,
         pub(crate) r#ref: KeepAlive,
         pub(crate) tracker: AsyncTaskTracker,
+        /// The context of the script that called.
+        pub(crate) context: bun_jsc::ContextId,
     }
 
     #[cfg(windows)]
@@ -665,23 +667,24 @@ mod _async_tasks {
         }
 
         pub(crate) fn create(
-            global_object: &JSGlobalObject,
+            cx: &bun_jsc::JsThread<'_>,
             binding: &Binding,
             task_args: ThreadIsolated<A>,
             vm: &mut VirtualMachine,
         ) -> JSValue {
             let task = Box::new(Self {
-                promise: JSPromiseStrong::init(global_object),
+                promise: JSPromiseStrong::init(cx.global()),
                 args: task_args,
                 // Sentinel — overwritten by `uv_callback` (or the early-return arms
                 // below) before any read on the JS thread. `Maybe<R>` is
                 // `Result<R, sys::Error>` and may be niche-optimised for arbitrary
                 // `R`; never construct an all-zero `Result` value.
                 result: Err(sys::Error::default()),
-                global_object: bun_ptr::BackRef::new(global_object),
+                global_object: bun_ptr::BackRef::new(cx.global()),
                 req: bun_core::ffi::zeroed(),
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker::init(vm),
+                context: cx.context().id(),
             });
             // Transfer ownership to libuv: the box outlives the async request and is
             // reclaimed in `destroy()` (run_from_js_thread → scopeguard). `heap::release`
@@ -692,7 +695,7 @@ mod _async_tasks {
             // event loop is the only one that owns AsyncFSTask/UVFSRequest.
             task.r#ref.ref_(bun_io::js_vm_ctx());
             let _ = vm;
-            task.tracker.did_schedule(global_object);
+            task.tracker.did_schedule(cx.global());
 
             let loop_ = uv::Loop::get();
             task.req.data = core::ptr::from_mut::<Self>(task).cast::<c_void>();
@@ -982,6 +985,10 @@ mod _async_tasks {
             // SAFETY: caller guarantees `this` is the live Box-leaked allocation;
             // reclaim ownership (paired with the Box::leak in create()).
             let mut task = unsafe { bun_core::heap::take(this) };
+            // A result nobody took (the request's context stopped: released unrun).
+            if let Ok(result) = core::mem::replace(&mut task.result, Err(sys::Error::default())) {
+                result.discard();
+            }
             // `bun_sys::Error` frees its path on Drop.
             task.r#ref.unref(bun_io::js_vm_ctx());
         }
@@ -1031,8 +1038,6 @@ mod _async_tasks {
     impl_fs_argument!(
         args::Rename<'static>,
         args::Truncate<'static>,
-        args::FdVectorIo,
-        args::FTruncate,
         args::Chown<'static>,
         args::Lutimes<'static>,
         args::Chmod<'static>,
@@ -1049,19 +1054,23 @@ mod _async_tasks {
         args::MkdirTemp<'static>,
         args::Readdir<'static>,
         args::Open<'static>,
-        args::Write<'static>,
-        args::Read,
         args::Exists<'static>,
         args::Access<'static>,
         args::CopyFile<'static>,
         args::Cp<'static>,
+    );
+    impl_fs_argument!(
+        args::FdVectorIo,
+        args::FTruncate,
+        args::Write<'static>,
+        args::Read,
         args::Fchown,
         args::FChmod,
         args::Fstat,
-        args::Close,
         args::Futimes,
         args::FdataSync,
         args::Fsync,
+        args::Close,
     );
     // `ReadFile`/`WriteFile` carry an `AbortSignal` field — opt them in so the
     // `const _ = assert!(…::HAVE_ABORT_SIGNAL)` invariants in `async_` hold and
@@ -1111,6 +1120,14 @@ mod _async_tasks {
     /// Each `ret::*` type implements this by forwarding to its inherent method.
     pub trait FsReturn {
         fn fs_to_js(self, global: &JSGlobalObject) -> JsResult<JSValue>;
+        /// The result is not going to be reported (the context of the script that asked has
+        /// stopped): release what only that script could have released.
+        #[inline]
+        fn discard(self)
+        where
+            Self: Sized,
+        {
+        }
     }
     impl FsReturn for JSValue {
         #[inline]
@@ -1146,6 +1163,10 @@ mod _async_tasks {
         #[inline]
         fn fs_to_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
             Ok(crate::node::types::FdJsc::to_js(self, global))
+        }
+        #[inline]
+        fn discard(self) {
+            self.close();
         }
     }
     impl FsReturn for StringOrBuffer<'_> {
@@ -1206,13 +1227,26 @@ mod _async_tasks {
             // SAFETY: fn contract — `Box::leak`'d in `UVFSRequest::create`.
             unsafe { Self::destroy(this) }
         }
+        /// The context whose script asked.
+        unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
+            // SAFETY: fn contract.
+            unsafe { (*this).context }
+        }
     }
 
     /// One `fs.promises.*` operation on the work pool. The arguments' JS-backed
     /// buffers are pinned and rooted (`ThreadIsolated`) and read under the job's ticket.
-    pub struct AsyncFSTask<R, A, const F: NodeFSFunctionEnum> {
+    pub struct AsyncFSTask<R: FsReturn, A, const F: NodeFSFunctionEnum> {
         pub args: ThreadIsolated<A>,
         pub(crate) result: Maybe<R>,
+    }
+    impl<R: FsReturn, A, const F: NodeFSFunctionEnum> Drop for AsyncFSTask<R, A, F> {
+        /// A job whose context stopped is dropped with its result untaken.
+        fn drop(&mut self) {
+            if let Ok(result) = core::mem::replace(&mut self.result, Err(sys::Error::default())) {
+                result.discard();
+            }
+        }
     }
     // SAFETY: results are plain data / owned buffers / WTF strings built off
     // thread for hand-off (`ret::*`); `ThreadIsolated<A>` is Send by its contract.
@@ -1302,17 +1336,17 @@ mod _async_tasks {
         pub(crate) const HAVE_ABORT_SIGNAL: bool = A::HAVE_ABORT_SIGNAL;
 
         pub(crate) fn create(
-            global_object: &JSGlobalObject,
+            cx: &bun_jsc::JsThread<'_>,
             _binding: &Binding,
             args: ThreadIsolated<A>,
             vm: &mut VirtualMachine,
         ) -> JSValue {
             let tracker = AsyncTaskTracker::init(vm);
-            tracker.did_schedule(global_object);
-            let promise = JSPromiseStrong::init(global_object);
+            tracker.did_schedule(cx.global());
+            let promise = JSPromiseStrong::init(cx.global());
             let value = promise.value();
             bun_jsc::Job::<Self>::schedule(
-                &global_object.js_thread(),
+                cx,
                 Self {
                     args,
                     // Sentinel — overwritten by `run` before any read. `Maybe<R>`
@@ -1363,6 +1397,8 @@ mod _async_tasks {
         // `ref_()`/`unref()` (`KeepAlive::default()` is inert until ref'd).
         pub(crate) r#ref: KeepAlive,
         pub(crate) tracker: AsyncTaskTracker,
+        /// `fs.cp`: the context whose script asked. The shell's `cp`: a step of its script.
+        pub(crate) context: bun_event_loop::ContextId,
         pub(crate) has_result: AtomicBool,
         /// Number of in-flight references to `this`. Starts at 1 for the main
         /// directory-scan task; incremented for each `SingleTask` spawned. Every
@@ -1496,6 +1532,10 @@ mod _async_tasks {
             // SAFETY: fn contract — posted by `on_subtask_done` with the count at zero.
             unsafe { Self::destroy(this) }
         }
+        unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
+            // SAFETY: fn contract.
+            unsafe { (*this).context }
+        }
     }
 
     impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
@@ -1518,19 +1558,20 @@ mod _async_tasks {
         /// `fs.cp` / `fs.promises.cp` (JS thread): a promise, an async-stack
         /// tracker, and this VM's loop.
         pub(crate) fn create(
-            global_object: &JSGlobalObject,
+            cx: &bun_jsc::JsThread<'_>,
             _binding: &Binding,
             cp_args: ThreadIsolated<args::Cp<'static>>,
             vm: &mut VirtualMachine,
         ) -> JSValue {
             let tracker = AsyncTaskTracker::init(vm);
-            tracker.did_schedule(global_object);
+            tracker.did_schedule(cx.global());
             let task = Self::schedule_new(
-                JSPromiseStrong::init(global_object),
+                JSPromiseStrong::init(cx.global()),
                 cp_args,
                 EventLoopHandle::init(vm.event_loop.cast()),
                 bun_jsc::ConcurrentPoster::Js(vm.ticket()),
                 tracker,
+                cx.context().id(),
                 core::ptr::null_mut(),
             );
             // SAFETY: `schedule_new` returns a Box::leak'd pointer; valid until destroy()
@@ -1552,6 +1593,8 @@ mod _async_tasks {
                 evtloop,
                 poster,
                 AsyncTaskTracker { id: 0 },
+                // As `ShellCpTask`, which is waiting for this.
+                bun_event_loop::ContextId::NONE,
                 shelltask,
             )
         }
@@ -1562,10 +1605,12 @@ mod _async_tasks {
             evtloop: EventLoopHandle,
             poster: bun_jsc::ConcurrentPoster,
             tracker: AsyncTaskTracker,
+            context: bun_event_loop::ContextId,
             shelltask: *mut ShellCpTask,
         ) -> *mut Self {
             let mut task = Box::new(Self {
                 promise,
+                context,
                 args: cp_args,
                 has_result: AtomicBool::new(false),
                 // Sentinel — overwritten by `finish_concurrently` (gated by the
@@ -2323,7 +2368,7 @@ mod _async_tasks {
         }
 
         pub(crate) fn create(
-            global_object: &JSGlobalObject,
+            cx: &bun_jsc::JsThread<'_>,
             args: ThreadIsolated<args::Readdir<'static>>,
             vm: &mut VirtualMachine,
         ) -> JSValue {
@@ -2344,11 +2389,11 @@ mod _async_tasks {
                 owned.into_boxed_slice()
             };
             let tracker = AsyncTaskTracker::init(vm);
-            tracker.did_schedule(global_object);
-            let promise = JSPromiseStrong::init(global_object);
+            tracker.did_schedule(cx.global());
+            let promise = JSPromiseStrong::init(cx.global());
             let value = promise.value();
             bun_jsc::Job::<Self>::schedule(
-                &global_object.js_thread(),
+                cx,
                 AsyncReaddirRecursiveTask {
                     args,
                     tag,

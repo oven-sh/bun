@@ -9,6 +9,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, globSync, mkdirSync, utimesSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { isBuildkite } from "../buildkite.ts";
 import { globAllSources } from "../glob-sources.ts";
 import { type BunOutput, bunExeName, emitBun, shouldStrip, validateBunConfig } from "./bun.ts";
 import { generateCargoConfig } from "./cargo-config.ts";
@@ -26,11 +27,22 @@ import { BuildError } from "./error.ts";
 import { orderFilePath, usesOrderFile } from "./flags.ts";
 import { mkdirAll, writeIfChanged } from "./fs.ts";
 import { ensureMacosSdk } from "./macos-sdk.ts";
+import { ensureNinja, ninjaIfPresent } from "./ninja-release.ts";
 import { Ninja } from "./ninja.ts";
 import { getProfile } from "./profiles.ts";
 import { registerAllRules } from "./rules.ts";
+import { rustPlanFiles } from "./rust.ts";
 import { quote } from "./shell.ts";
-import { findBun, findCargo, findMsvcLinker, findNpm, findSystemTool, resolveLlvmToolchain } from "./tools.ts";
+import {
+  checkImageTools,
+  findBun,
+  findCargo,
+  findMsvcLinker,
+  findNpm,
+  findSystemTool,
+  resolveLlvmToolchain,
+  writeToolIdentities,
+} from "./tools.ts";
 import { ensureWindowsSysroot } from "./winsysroot.ts";
 import { checkWorkarounds } from "./workarounds.ts";
 
@@ -88,7 +100,7 @@ export function resolveToolchain(targetOs?: OS, packageManager: PackageManager =
   // A codegen script that a module can also import runs its command line
   // only when import.meta.main is true. Node 24.2 added import.meta.main.
   // Before that it is undefined, and the script would write nothing. CI
-  // installs Node 26 (scripts/bootstrap.sh), so the minimum is 25.
+  // installs Node 26 (scripts/build/ci-images/spec.ts), so the minimum is 25.
   if (process.versions.bun === undefined) {
     const major = Number(process.versions.node.split(".")[0]);
     if (major < 25) {
@@ -122,6 +134,8 @@ export interface ConfigureResult {
   output: BunOutput;
   /** Build.ninja absolute path. */
   ninjaFile: string;
+  /** The ninja to run the build with (ninja-release.ts): a path, or `ninja` for the one on PATH. */
+  ninja: string;
   /** Env vars the caller should set before spawning ninja. */
   env: Record<string, string>;
   /** Wall-clock ms for the configure pass. */
@@ -151,8 +165,21 @@ function configureInputs(cwd: string): string[] {
     .filter(f => !excluded.has(f))
     .map(f => resolve(buildDir, f));
   const deps = globSync("deps/*.ts", { cwd: buildDir }).map(f => resolve(buildDir, f));
+  // rust/: units.ts/emit.ts/plan.ts shape the per-crate edges and manifests at configure time (run.ts is build-time
+  // only, but one glob keeps the rule simple).
+  const rust = globSync("rust/*.ts", { cwd: buildDir }).map(f => resolve(buildDir, f));
 
-  return [...scripts, ...deps, resolve(cwd, "scripts", "glob-sources.ts"), resolve(cwd, "package.json")].sort();
+  // Versions the build uses (LLVM, Node.js, the sysroots) are written here.
+  const pins = resolve(buildDir, "ci-images", "spec.ts");
+
+  return [
+    ...scripts,
+    ...deps,
+    ...rust,
+    pins,
+    resolve(cwd, "scripts", "glob-sources.ts"),
+    resolve(cwd, "package.json"),
+  ].sort();
 }
 
 /**
@@ -211,8 +238,16 @@ function emitGeneratorRule(n: Ninja, cfg: Config, input: ConfigureInput): void {
     outputs: [resolve(cfg.buildDir, "build.ninja")],
     rule: "regen",
     inputs: [configFile],
-    implicitInputs: configureInputs(cfg.cwd),
+    // The Rust plans: the per-crate edges are generated from them (rust.ts), so a changed plan — new lockfile,
+    // manifest, toolchain — must reconfigure. They are build outputs; when one is dirty ninja builds it first,
+    // reruns this edge, and restarts with the new manifest.
+    implicitInputs: [...configureInputs(cfg.cwd), ...(buildsRust(cfg) ? rustPlanFiles(cfg) : [])],
   });
+}
+
+/** Whether this graph compiles bun's Rust crates (and therefore has the plan edges emitRust registers). */
+function buildsRust(cfg: Config): boolean {
+  return cfg.mode !== "cpp-only" && cfg.mode !== "link-only";
 }
 
 /**
@@ -252,6 +287,17 @@ function ccacheEnv(cfg: Config): Record<string, string> {
  * no buildDir is set, one is computed from the build type (build/debug,
  * build/release, etc).
  */
+/** The Config an input stands for. Writes and fetches nothing: for configure, and for what only needs to find a build directory. */
+export function configOf(input: ConfigureInput): { cfg: Config; toolchain: Toolchain } {
+  // Expand profile → PartialConfig. Overrides win.
+  const partial: PartialConfig = {
+    ...(input.profile !== undefined ? getProfile(input.profile) : {}),
+    ...(input.overrides ?? {}),
+  };
+  const toolchain = resolveToolchain(partial.os, partial.packageManager);
+  return { cfg: resolveConfig(partial, toolchain), toolchain };
+}
+
 /**
  * `fromNinja`: this run is ninja's own `regen` edge replaying configure.json
  * (build.ts --config-file), as opposed to build.ts configuring before it
@@ -264,17 +310,15 @@ export async function configure(input: ConfigureInput, fromNinja = false): Promi
     if (trace) process.stderr.write(`  ${label}: ${Math.round(performance.now() - start)}ms\n`);
   };
 
-  // Expand profile → PartialConfig. Overrides win.
-  const partial: PartialConfig = {
-    ...(input.profile !== undefined ? getProfile(input.profile) : {}),
-    ...(input.overrides ?? {}),
-  };
-
-  const toolchain = resolveToolchain(partial.os, partial.packageManager);
-  mark("resolveToolchain");
-  const cfg = resolveConfig(partial, toolchain);
+  const { cfg, toolchain } = configOf(input);
+  mark("resolveConfig");
 
   validateBunConfig(cfg);
+  // Not cfg.ci or cfg.buildkite: those are what a ci-* profile asks for, and a
+  // developer can build one (`bun run build:ci`) on a machine that is no image.
+  if (isBuildkite) {
+    checkImageTools(toolchain);
+  }
 
   // Darwin cross-compile: the SDK must exist before ninja runs (every compile
   // edge passes -isysroot) and before checkWorkarounds() (the darwin-cross
@@ -283,6 +327,12 @@ export async function configure(input: ConfigureInput, fromNinja = false): Promi
   // No-op otherwise.
   await ensureMacosSdk(cfg);
   mark("ensureMacosSdk");
+
+  // The ninja itself, before anything here runs one (the restat below) so every
+  // ninja that touches this build directory is the same one. A regen replay is
+  // already inside the ninja that was chosen: it never fetches.
+  const ninja = fromNinja ? ninjaIfPresent(cfg) : await ensureNinja(cfg);
+  mark("ensureNinja");
 
   checkWorkarounds(cfg);
 
@@ -303,6 +353,7 @@ export async function configure(input: ConfigureInput, fromNinja = false): Promi
   // (the discovered clang++ from `tools.ts`) so a contributor running `cargo`
   // directly / rust-analyzer use the same toolchain the ninja build does.
   generateCargoConfig(cfg);
+  writeToolIdentities(cfg);
   mark("generateCargoConfig");
 
   // Perl check: LUT codegen (create-hash-table.ts) shells out to the
@@ -366,7 +417,7 @@ export async function configure(input: ConfigureInput, fromNinja = false): Promi
     const now = new Date();
     utimesSync(ninjaPath, now, now);
     if (existsSync(resolve(cfg.buildDir, ".ninja_log"))) {
-      spawnSync("ninja", ["-C", cfg.buildDir, "-t", "restat", "build.ninja"], { stdio: "ignore" });
+      spawnSync(ninja, ["-C", cfg.buildDir, "-t", "restat", "build.ninja"], { stdio: "ignore" });
     }
   }
   mark("restat");
@@ -396,5 +447,5 @@ export async function configure(input: ConfigureInput, fromNinja = false): Promi
   const elapsed = Math.round(performance.now() - start);
   const exe = bunExeName(cfg) + (shouldStrip(cfg) ? " → bun (stripped)" : "");
 
-  return { cfg, output, ninjaFile, env: ccacheEnv(cfg), elapsed, changed, exe };
+  return { cfg, output, ninjaFile, ninja, env: ccacheEnv(cfg), elapsed, changed, exe };
 }

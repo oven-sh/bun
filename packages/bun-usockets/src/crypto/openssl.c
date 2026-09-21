@@ -1235,6 +1235,64 @@ void us_internal_ssl_set_inline_reject(SSL *ssl) {
   SSL_set_verify(ssl, SSL_VERIFY_PEER, us_inline_reject_verify_callback);
 }
 
+/* ── Chain policy on top of X509_verify_cert ─────────────────────────────── */
+
+/* BoringSSL's verifier has no security levels: it verifies a chain built
+ * through an RSA-512 CA (factorable in hours) as cleanly as one through an
+ * RSA-4096 CA, and its evp.h leaves bounding key sizes to the caller. Node gets
+ * OpenSSL's default level, 2 = 112-bit keys (RSA-2048 / P-224), applied to the
+ * leaf and then to every issuer up to and including the trust anchor:
+ * https://github.com/openssl/openssl/blob/openssl-3.5.0/crypto/x509/x509_vfy.c#L188-L205
+ * https://github.com/openssl/openssl/blob/openssl-3.5.0/crypto/x509/x509_vfy.c#L3674-L3702 */
+#define US_MIN_RSA_KEY_BITS 2048
+#define US_MIN_EC_KEY_BITS 224
+
+static int us_x509_key_too_small(const X509 *cert) {
+  const EVP_PKEY *key = X509_get0_pubkey(cert);
+  if (!key) return 1;
+  switch (EVP_PKEY_id(key)) {
+    case EVP_PKEY_RSA:
+    case EVP_PKEY_RSA_PSS:
+      return EVP_PKEY_bits(key) < US_MIN_RSA_KEY_BITS;
+    case EVP_PKEY_EC:
+      return EVP_PKEY_bits(key) < US_MIN_EC_KEY_BITS;
+  }
+  /* Ed25519, ML-DSA, ...: fixed-size keys, all at or above 128-bit security. */
+  return 0;
+}
+
+/* chain[0] is the end-entity certificate, chain[n-1] the trust anchor. */
+static int us_x509_chain_policy_error(X509_STORE_CTX *ctx) {
+  const STACK_OF(X509) *chain = X509_STORE_CTX_get0_chain(ctx);
+  size_t n = chain ? sk_X509_num(chain) : 0;
+  for (size_t i = 0; i < n; i++) {
+    if (us_x509_key_too_small(sk_X509_value(chain, i))) {
+      return i == 0 ? US_X509_V_ERR_EE_KEY_TOO_SMALL : US_X509_V_ERR_CA_KEY_TOO_SMALL;
+    }
+  }
+  return X509_V_OK;
+}
+
+int us_internal_x509_verify_cert(X509_STORE_CTX *ctx) {
+  if (!X509_verify_cert(ctx)) return 0;
+  /* A verify callback already let an error through; that verdict stands. */
+  if (X509_STORE_CTX_get_error(ctx) != X509_V_OK) return 1;
+  int err = us_x509_chain_policy_error(ctx);
+  if (err == X509_V_OK) return 1;
+  X509_STORE_CTX_set_error(ctx, err);
+  /* Surface it exactly like one of X509_verify_cert's own failures: the
+   * connection's verify callback records it (inline reject) and decides whether
+   * the handshake continues (us_verify_callback) or fails here. A ctx without a
+   * connection behind it (the QUIC client) has no callback and just fails. */
+  SSL *ssl = X509_STORE_CTX_get_ex_data(ctx, SSL_get_ex_data_X509_STORE_CTX_idx());
+  int (*verify_cb)(int, X509_STORE_CTX *) = ssl ? SSL_get_verify_callback(ssl) : NULL;
+  return verify_cb ? verify_cb(0, ctx) : 0;
+}
+
+static int us_ssl_ctx_verify_cert(X509_STORE_CTX *ctx, void *arg) {
+  return us_internal_x509_verify_cert(ctx);
+}
+
 /* Drop the strdup'd passphrase. Called as soon as private-key load completes
  * (the only consumer of the passwd_cb), so the secret never outlives ctx
  * construction and SSL_CTX_free() is sufficient on every later path. Also
@@ -1273,6 +1331,10 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
   /* Default options we rely on — changing these breaks the BIO logic. */
   SSL_CTX_set_read_ahead(ssl_context, 1);
   SSL_CTX_set_mode(ssl_context, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
+  /* Peer chains (server certs on clients, client certs on servers) go through
+   * us_internal_x509_verify_cert; the verify modes and callbacks configured
+   * below and per socket keep deciding what happens with the result. */
+  SSL_CTX_set_cert_verify_callback(ssl_context, us_ssl_ctx_verify_cert, NULL);
   /* BoringSSL ships with SSL_MODE_NO_AUTO_CHAIN set; Node clears it so a
    * leaf-only `cert` presents the intermediates found in the context's store
    * (crypto_context.cc#L1640). It only runs when the configured chain is 1. */
@@ -1902,12 +1964,23 @@ static long us_internal_verify_peer_certificate(const SSL *ssl, long def) {
   return err;
 }
 
+/* OpenSSL's wording for its X509_V_ERR_{EE,CA}_KEY_TOO_SMALL, so the messages
+ * match node's. The code matches too: node has no name for these either and
+ * reports UNSPECIFIED, which is us_X509_error_code's default. */
+static const char *us_X509_error_reason(long err) {
+  switch (err) {
+    case US_X509_V_ERR_EE_KEY_TOO_SMALL: return "EE certificate key too weak";
+    case US_X509_V_ERR_CA_KEY_TOO_SMALL: return "CA certificate key too weak";
+  }
+  return X509_verify_cert_error_string(err);
+}
+
 struct us_bun_verify_error_t us_ssl_socket_verify_error_from_ssl(SSL *ssl) {
   long x509_verify_error =
       us_internal_verify_peer_certificate(ssl, X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT);
   if (x509_verify_error == X509_V_OK)
     return (struct us_bun_verify_error_t){.error = 0, .code = NULL, .reason = NULL};
-  const char *reason = X509_verify_cert_error_string(x509_verify_error);
+  const char *reason = us_X509_error_reason(x509_verify_error);
   const char *code = us_X509_error_code(x509_verify_error);
   return (struct us_bun_verify_error_t){.error = x509_verify_error, .code = code, .reason = reason};
 }

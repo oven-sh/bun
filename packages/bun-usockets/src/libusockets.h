@@ -668,9 +668,7 @@ struct us_socket_group_t *us_socket_group(us_socket_r s) nonnull_fn_decl __attri
 unsigned char us_socket_kind(us_socket_r s) nonnull_fn_decl;
 void us_socket_set_kind(us_socket_r s, unsigned char kind) nonnull_fn_decl;
 void us_socket_set_ssl_raw_tap(us_socket_r s, int enabled) nonnull_fn_decl;
-/* libuv's model, for an owner that restarts its reads on demand and fails on a failed write (node:net):
- * while the socket neither reads nor has a write pending, a peer reset stays in the kernel, behind the
- * bytes queued ahead of it, until us_socket_resume() or a write meets it. No effect on the libuv backend. */
+/* Like libuv (for node:net): while the socket neither reads nor has a write pending, a peer reset waits in the kernel for the resume or write that meets it. Not on the libuv backend. */
 void us_socket_defer_error_until_read(us_socket_r s, int enabled) nonnull_fn_decl;
 
 void us_socket_flush(us_socket_r s) nonnull_fn_decl;

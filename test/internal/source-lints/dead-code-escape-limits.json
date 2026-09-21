@@ -27,6 +27,7 @@
   "src/runtime/image/backend_coregraphics.rs": 14,
   "src/runtime/image/codecs.rs": 1,
   "src/runtime/ipc.rs": 5,
+  "src/runtime/napi/napi_body.rs": 1,
   "src/runtime/node.rs": 2,
   "src/runtime/node/dir_iterator.rs": 1,
   "src/runtime/node/node_fs.rs": 6,

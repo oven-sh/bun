@@ -441,20 +441,37 @@ impl napi_typedarray_type {
     }
 }
 
+/// `napi_status` (js_native_api_types.h), every value of it: C++ returns this type by value
+/// (`NapiEnv__checkCanCallIntoJS` returns `cannot_run_js` for an addon built against N-API 10), and a value the
+/// enum does not declare is undefined behaviour to receive. Rust itself produces only some of them.
 #[repr(u32)]
 #[derive(Copy, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
 pub(crate) enum NapiStatus {
     ok = 0,
     invalid_arg = 1,
     object_expected = 2,
+    string_expected = 3,
+    name_expected = 4,
     function_expected = 5,
+    number_expected = 6,
+    boolean_expected = 7,
     array_expected = 8,
     generic_failure = 9,
     pending_exception = 10,
     cancelled = 11,
     escape_called_twice = 12,
+    handle_scope_mismatch = 13,
+    callback_scope_mismatch = 14,
     queue_full = 15,
     closing = 16,
+    bigint_expected = 17,
+    date_expected = 18,
+    arraybuffer_expected = 19,
+    detachable_arraybuffer_expected = 20,
+    would_deadlock = 21,
+    no_external_buffers_allowed = 22,
+    cannot_run_js = 23,
 }
 
 /// This is not an `enum` so that the enum values cannot be trivially returned from NAPI functions,

@@ -4,8 +4,7 @@ export default {
   // pool): the read path destroys the socket instead of delivering the bytes.
   kDestroyOnRead: Symbol("kDestroyOnRead"),
   kPreHandshakeWrite: Symbol("kPreHandshakeWrite"),
-  // Socket.prototype method, node's handle.readStop(): child_process calls it
-  // on a socket whose descriptor a child now reads as its stdio.
+  // Socket.prototype method for child_process: node's handle.readStop().
   kReadStop: Symbol("kReadStop"),
   // Internal handshake-settled signal: server-side sockets emit no user
   // 'secureConnect' (node parity), so internal deferrals park on this instead.

@@ -1409,9 +1409,7 @@ function onconnection(err, clientHandle) {
   _socket.server = self;
   _socket._server = self;
 
-  // Before 'connection', as node's Socket constructor does: a listener that stops the reads (spawn()
-  // with this socket as the child's stdio) must not have them restarted when it returns.
-  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L493-L502
+  // Before 'connection', so a listener's readStop is not undone: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L493-L502
   if (isTLS) initAcceptedTLSSocket(self, _socket);
   else if (pauseOnConnect) pauseOnCreate(_socket, clientHandle);
   else _socket.read(0);

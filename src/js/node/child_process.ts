@@ -1770,8 +1770,7 @@ function streamFdOf(item): number | undefined {
   return undefined;
 }
 
-// The child reads these sockets now. A parent that kept reading would take bytes the peer sent to the child.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L460-L470
+// The child reads these sockets now, so the parent stops: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L460-L470
 function stopReadingSharedStdio(stdio) {
   for (let i = 0; i < stdio.length; i++) {
     const stream = stdio[i];

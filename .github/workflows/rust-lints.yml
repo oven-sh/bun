@@ -144,12 +144,12 @@ jobs:
           components: rustc-dev llvm-tools-preview
           ninja-targets: codegen clone-lolhtml clone-rust-argon2
 
-      - name: Cache the mordant binaries
+      - name: Restore the mordant binaries
         # cargo-mordant and mordant-driver are a pure function of the pinned
         # revision and the nightly they link. What remains uncached is
         # checking bun itself.
         id: mordant-bin
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/bin/cargo-mordant
@@ -159,6 +159,18 @@ jobs:
       - name: Build the mordant binaries
         if: steps.mordant-bin.outputs.cache-hit != 'true'
         run: cargo +"$MORDANT_TOOLCHAIN" install --locked --git https://github.com/scarletindustries/mordant --rev "$MORDANT_REV"
+
+      - name: Save the mordant binaries
+        # Here, and not in the post step of actions/cache, which a failed job
+        # skips: a pull request with a finding over the baseline would build
+        # mordant again on every push.
+        if: steps.mordant-bin.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/bin/cargo-mordant
+            ~/.cargo/bin/mordant-driver
+          key: ${{ steps.mordant-bin.outputs.cache-primary-key }}
 
       - name: mordant
         env:

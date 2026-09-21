@@ -635,37 +635,23 @@ struct HttpResponseData;
     private:
         std::string fallback;
     public:
-        /* "The parse loop running now must stop at the next request boundary and park
-         * the rest of the buffer, unparsed, in parkedRequestBytes." The boundary check
-         * also holds while bytes are already parked, so later reads queue up behind
-         * them and replay (HttpContext::replayParkedRequestBytes) keeps wire order.
-         *
-         * Bun.serve: HttpContext::onData derives it (at entry, after each dispatch
-         * and after each request's body fin) from cannotDispatchAnotherRequest:
-         * requests pipelined behind a response that is still being produced or
-         * drained wait for it. Reads are paused while bytes are parked, bounding
-         * them to one recv.
-         *
-         * node:http flood prevention: set on the pause edge alongside
-         * HTTP_NODE_READS_PAUSED (which stays set through the replay) and cleared for
-         * the replay so it can make progress. */
+        /* The parse loop must stop at the next request boundary and park the rest in
+         * parkedRequestBytes. Bun.serve: a response is pending (HttpContext::onData
+         * derives it). node:http: set on the flood-prevention pause edge, cleared for
+         * the replay so it can make progress (HTTP_NODE_READS_PAUSED stays set). */
         bool parkAtNextBoundary = false;
         bool nodeHttpSpillReplayScheduled = false;
         /* A request on this connection had Connection: close or was HTTP/1.0, or a Bun.serve response closed it (RFC 9112 9.6). */
         bool sawConnectionClose = false;
-        /* The parked bytes are parkedRequestBytes from here on. Not 0 once a replay
-         * has parked again: it gives its buffer back with a new start instead of
-         * copying what it did not reach, so a long pipeline behind slow responses is
-         * copied once and not once per request. */
+        /* Where the parked bytes start in parkedRequestBytes: a replay that parks
+         * again gives its buffer back instead of copying what it did not reach. */
         unsigned int parkedRequestBytesStart = 0;
         WTF::Vector<char> parkedRequestBytes;
-        /* The buffer HttpContext::replayParkedRequestBytes is feeding to the parser,
-         * for the time of that call. */
+        /* The buffer being replayed, during HttpContext::replayParkedRequestBytes. */
         WTF::Vector<char> *replayedRequestBytes = nullptr;
     private:
-        /* Parks the rest of what is being parsed, [data, data + length). In a replay
-         * that is the tail of the replayed buffer: the buffer comes back whole, less
-         * the fence the replay added, and only its start moves. */
+        /* In a replay, [data, data + length) is the tail of the replayed buffer: it
+         * comes back whole, less the replay's fence, and only the start moves. */
         void parkRequestBytes(char *data, unsigned int length) {
             if (WTF::Vector<char> *replayed = std::exchange(replayedRequestBytes, nullptr)) {
                 char *begin = replayed->mutableSpan().data();
@@ -1187,11 +1173,9 @@ struct HttpResponseData;
                 consumedTotal += length;
                 return HttpParserResult::success(consumedTotal, returnedUser);
             }
-            /* This connection cannot take another request right now (see
-             * parkAtNextBoundary). Stop at this request boundary, before getHeaders
-             * touches the next head, park the rest verbatim and report it as consumed
-             * so the caller does not spill it into the size-capped header fallback
-             * buffer. */
+            /* Before getHeaders touches the next head. Reported as consumed so the
+             * caller does not spill it into the size-capped fallback buffer. Reads
+             * that arrive while bytes are parked go behind them, to keep wire order. */
             if (parkAtNextBoundary || !parkedRequestBytes.isEmpty()) [[unlikely]] {
                 parkRequestBytes(data, length);
                 consumedTotal += length;

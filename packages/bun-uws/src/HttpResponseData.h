@@ -59,21 +59,14 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 
         HttpResponseData<SSL> *httpResponseData = uwsRes->getHttpResponseData();
         /* A queued pipelined response (node:http) still owes output on this
-         * connection, and parked request bytes are received work it still owes a
-         * dispatch, so it is not idle in either case: a closeIdle() sweep (graceful
-         * stop) leaves it alone or marks it close-when-idle, and that mark takes
-         * effect from the markDone() of the last replayed request instead of
-         * closing over the parked ones here. */
+         * connection, and parked requests are still owed a dispatch, so it is not
+         * idle: a graceful stop closes it after the last of them, not here. */
         httpResponseData->isIdle = httpResponseData->nodeHttpQueuedPipelinedCount == 0
             && this->parkedRequestBytes.isEmpty();
 
-        /* Requests are parked behind this response (Bun.serve pipelining). They
-         * are replayed from HttpContext::onWritable rather than here: every caller
-         * (internalEnd, the uws_res_end* wrappers, the request context above them)
-         * still tears this response down after we return, and a dispatch now would
-         * land in the middle of that. node:http parks too (flood prevention); its
-         * onWritable hook tolerates the extra writable event and decides about
-         * replaying itself. */
+        /* Parked requests are replayed from HttpContext::onWritable and not here:
+         * every caller still tears this response down after we return. node:http's
+         * onWritable hook tolerates the extra dispatch. */
         if (!this->parkedRequestBytes.isEmpty()) [[unlikely]] {
             us_socket_request_writable((us_socket_t *) uwsRes);
         }
@@ -248,8 +241,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 
     /* Whether the connection should be torn down once the in-flight response (if
      * any) has completed and all buffered outgoing data has been flushed. A peer
-     * that sent its FIN still gets the answers to the requests it sent before
-     * it: the ones parked behind this response are replayed first. */
+     * that sent its FIN still gets the requests it sent before it answered. */
     bool shouldCloseConnection() const {
         return (state & HTTP_CONNECTION_CLOSE)
             || ((state & HTTP_NODE_RECEIVED_FIN) && nodeHttpQueuedPipelinedCount == 0 && this->parkedRequestBytes.isEmpty())

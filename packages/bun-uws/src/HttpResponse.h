@@ -393,13 +393,9 @@ public:
 
         auto* responseData = getHttpResponseData();
 
-        /* Bytes parked behind this handshake (HttpParser::parkedRequestBytes) follow
-         * the upgrade request on the wire: frames of a client that did not wait for
-         * the 101 (RFC 6455 4.1). The WebSocket gets them after open, below, like the
-         * rest of the read of an upgrade made during the dispatch
-         * (HttpContext::onData). Taken here because the HTTP state that owns them is
-         * destructed below, and before endUpgradeHandshake() so that markDone() does
-         * not arm a replay dispatch for them. */
+        /* Bytes parked behind this handshake are frames of a client that did not
+         * wait for the 101. Taken before markDone() arms a replay for them and before
+         * the HTTP state that owns them is destructed. Dispatched after open. */
         WTF::Vector<char> earlyFrames = std::exchange(responseData->parkedRequestBytes, {});
         size_t earlyFramesStart = std::exchange(responseData->parkedRequestBytesStart, 0);
 
@@ -487,18 +483,16 @@ public:
         }
 
         if (!earlyFrames.isEmpty()) [[unlikely]] {
-            /* Parking paused reads, and us_socket_adopt keeps the flag. Resumed as a
-             * WebSocket and not before the adoption: us_socket_resume closes a socket
-             * that the kernel does not take back, which from here on is an ordinary
-             * WebSocket close. It re-arms writable too, so the WebSocket gets one
-             * drain callback with nothing to drain. */
+            /* Parking paused reads, and us_socket_adopt keeps the flag. Not resumed
+             * before the adoption: us_socket_resume can close the socket, which from
+             * here on is an ordinary WebSocket close. It also re-arms writable, so
+             * one drain callback with nothing to drain follows. */
             us_socket_resume(usSocket);
         }
 
         if (!earlyFrames.isEmpty() && !us_socket_is_closed(usSocket) && !us_socket_is_shut_down(usSocket)) [[unlikely]] {
-            /* The frame parser writes on both sides of what it is given (a spilled
-             * frame head in front, unmasking in blocks behind), as it may in the
-             * loop's padded receive buffer. */
+            /* The frame parser may write on both sides of its input, as it can in
+             * the loop's padded receive buffer. */
             size_t length = earlyFrames.size() - earlyFramesStart;
             WTF::Vector<char> padded;
             padded.grow(LIBUS_RECV_BUFFER_PADDING + length + LIBUS_RECV_BUFFER_PADDING);
@@ -526,13 +520,9 @@ public:
     }
 
     HttpResponse *resume() {
-        /* While requests are parked behind this response the pause belongs to the
-         * pipelining code (HttpContext resumes when it replays them, upgrade() when
-         * it drops them). The resumes arriving here release a request-body
-         * backpressure pause and can land after the body completed and the bytes
-         * behind it were parked; reading on would only queue more behind them, or
-         * take a FIN that closes the connection over them. node:http's flood
-         * prevention only gets here once its parked bytes are gone. */
+        /* While requests are parked the pause belongs to the replay. A resume that
+         * releases a request-body pause can land after they were parked; reading on
+         * would queue more behind them, or take a FIN that closes over them. */
         if (getHttpResponseData()->parkedRequestBytes.isEmpty()) [[likely]] {
             Super::resume();
         }

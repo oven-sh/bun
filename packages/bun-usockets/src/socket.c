@@ -415,9 +415,8 @@ static void us_internal_rearm_writable(struct us_socket_t *s) {
                    LIBUS_SOCKET_WRITABLE | ((s->flags.is_paused || s->read_eof) ? 0 : LIBUS_SOCKET_READABLE));
 }
 
-/* See libusockets.h. last_write_failed is what keeps the loop polling writable
- * past the end of the dispatch this may be called from (loop.c drops the
- * interest again after an on_writable that left it clear). */
+/* See libusockets.h. loop.c drops writable interest after an on_writable that
+ * left last_write_failed clear, so this sets it. */
 void us_socket_request_writable(struct us_socket_t *s) {
     if (us_socket_is_closed(s)) return;
     s->flags.last_write_failed = 1;

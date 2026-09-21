@@ -948,6 +948,8 @@ inline Zig::GlobalObject* defaultGlobalObject()
 {
     return ___private___::getDefaultGlobalObject();
 }
+// The VM's default global from any thread (the parameterless overload is the current thread's).
+Zig::GlobalObject* defaultGlobalObject(JSC::VM&);
 
 // The Structure a LazyClassStructure constructor allocates with for this newTarget. nullptr on exception.
 JSC::Structure* structureForNewTarget(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue newTarget, JSC::LazyClassStructure Zig::GlobalObject::* classStructure);

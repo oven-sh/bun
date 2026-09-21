@@ -58,6 +58,63 @@ pub(crate) fn clone_active_strong() -> Option<BunTestPtr> {
     runner.bun_test_root.clone_active_file()
 }
 
+thread_local! {
+    /// The runner's entry for the callback on the stack was taken with nothing else entered.
+    static RUNNER_ENTRY_IS_OUTERMOST: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
+}
+
+/// Held across a test callback and its microtask drain, so a native `enter()`/`exit()` pair the callback reaches is nested.
+pub(crate) struct RunnerEntry {
+    _entered: jsc::event_loop::EventLoopEnterNoCheckpointGuard,
+    was_outermost: bool,
+}
+
+impl RunnerEntry {
+    fn enter(vm: &VirtualMachine) -> Self {
+        let outermost = vm.event_loop_shared().entered_event_loop_count == 0;
+        Self {
+            was_outermost: RUNNER_ENTRY_IS_OUTERMOST.replace(outermost),
+            _entered: vm.enter_event_loop_scope_without_checkpoint(),
+        }
+    }
+
+    /// For a call that runs an event loop of its own (timer control, matcher wait): its callbacks exit as under `tick()`.
+    pub(crate) fn suspend(vm: &VirtualMachine) -> SuspendedRunnerEntry {
+        let event_loop = vm.event_loop();
+        // SAFETY: the live VM-owned loop; JS thread; short-lived accesses only.
+        if !RUNNER_ENTRY_IS_OUTERMOST.get() || unsafe { (*event_loop).entered_event_loop_count } != 1 {
+            return SuspendedRunnerEntry { event_loop: None };
+        }
+        // One of those callbacks holds the outermost entry while it runs.
+        RUNNER_ENTRY_IS_OUTERMOST.set(false);
+        // SAFETY: as above.
+        unsafe { (*event_loop).exit_without_checkpoint() };
+        SuspendedRunnerEntry { event_loop: NonNull::new(event_loop) }
+    }
+}
+
+impl Drop for RunnerEntry {
+    fn drop(&mut self) {
+        RUNNER_ENTRY_IS_OUTERMOST.set(self.was_outermost);
+    }
+}
+
+/// See [`RunnerEntry::suspend`].
+#[must_use = "dropping immediately resumes the runner's entry"]
+pub(crate) struct SuspendedRunnerEntry {
+    event_loop: Option<NonNull<jsc::event_loop::EventLoop>>,
+}
+
+impl Drop for SuspendedRunnerEntry {
+    fn drop(&mut self) {
+        if let Some(event_loop) = self.event_loop {
+            // SAFETY: the loop `suspend` exited; the VM owns it for the process lifetime.
+            unsafe { (*event_loop.as_ptr()).enter() };
+            RUNNER_ENTRY_IS_OUTERMOST.set(true);
+        }
+    }
+}
+
 pub use super::done_callback::DoneCallback;
 
 pub mod js_fns {
@@ -1137,12 +1194,17 @@ impl BunTest {
         // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point (before JS re-entry).
         unsafe { (*this).update_min_timeout(global_this, timeout) };
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { &[] };
-        let result: JSValue = match vm.event_loop_mut().run_callback_with_result_and_forcefully_drain_microtasks(bun_event_loop::ContextId::NONE, 
-            cfg_callback,
-            global_this,
-            JSValue::UNDEFINED,
-            args_slice,
-        ) {
+        let called = {
+            let _entered = RunnerEntry::enter(vm);
+            vm.event_loop_mut().run_callback_with_result_and_forcefully_drain_microtasks(
+                bun_event_loop::ContextId::NONE,
+                cfg_callback,
+                global_this,
+                JSValue::UNDEFINED,
+                args_slice,
+            )
+        };
+        let result: JSValue = match called {
             Ok(v) => v,
             Err(_) => {
                 global_this.clear_termination_exception();

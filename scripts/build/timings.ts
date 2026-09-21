@@ -271,37 +271,36 @@ const PHASE_FLOOR_MS = 10;
 const clangTraced = new Set<string>(["cxx", "cxx_pch", "pch", "pch_msvc"] satisfies RuleName[]);
 const RUSTC: RuleName = "rust_rustc";
 
+/**
+ * A compiler's report, or nothing when there is none to read: a build interrupted while the file was being written
+ * leaves part of one, which no later build without --time-trace=on rewrites.
+ */
+function readReport<T>(path: string): T | undefined {
+  if (!existsSync(path)) return undefined;
+  try {
+    return JSON.parse(readFileSync(path, "utf8")) as T;
+  } catch (error) {
+    if (error instanceof SyntaxError) return undefined;
+    throw error;
+  }
+}
+
 function readSelfReport(buildDir: string, edge: ManifestEdge): Phase[] {
   const output = resolve(buildDir, edge.outputs[0]!);
-  if (clangTraced.has(edge.rule)) {
-    // clang names the trace after the output, with its extension replaced.
-    const path = output.replace(/\.[^./\\]+$/, ".json");
-    if (!existsSync(path)) return [];
-    let trace: ClangTimeTrace;
-    try {
-      trace = JSON.parse(readFileSync(path, "utf8")) as ClangTimeTrace;
-    } catch (error) {
-      // A build interrupted while clang was writing it leaves half a file, which no later build without
-      // --time-trace=on rewrites.
-      if (error instanceof SyntaxError) return [];
-      throw error;
-    }
-    const phases: Phase[] = [];
-    for (const e of trace.traceEvents) {
-      // "Total <name>" events are clang's own sums, not stretches of time.
-      if (e.ph !== "X" || e.dur === undefined || e.name.startsWith("Total ")) continue;
-      if (e.dur < PHASE_FLOOR_MS * 1000) continue;
-      const startMs = (trace.beginningOfTime + e.ts) / 1000;
-      const detail = e.args?.detail;
-      phases.push({ name: detail ? `${e.name} ${detail}` : e.name, startMs, endMs: startMs + e.dur / 1000 });
-    }
-    return phases;
+  if (edge.rule === RUSTC) return readReport<Phase[]>(rustcPhasesPath(output)) ?? [];
+  if (!clangTraced.has(edge.rule)) return [];
+  // clang names the trace after the output, with its extension replaced.
+  const trace = readReport<ClangTimeTrace>(output.replace(/\.[^./\\]+$/, ".json"));
+  const phases: Phase[] = [];
+  for (const e of trace?.traceEvents ?? []) {
+    // "Total <name>" events are clang's own sums, not stretches of time.
+    if (e.ph !== "X" || e.dur === undefined || e.name.startsWith("Total ")) continue;
+    if (e.dur < PHASE_FLOOR_MS * 1000) continue;
+    const startMs = (trace!.beginningOfTime + e.ts) / 1000;
+    const detail = e.args?.detail;
+    phases.push({ name: detail ? `${e.name} ${detail}` : e.name, startMs, endMs: startMs + e.dur / 1000 });
   }
-  if (edge.rule === RUSTC) {
-    const path = rustcPhasesPath(output);
-    return existsSync(path) ? (JSON.parse(readFileSync(path, "utf8")) as Phase[]) : [];
-  }
-  return [];
+  return phases;
 }
 
 /** The phases shown for a command: the largest few say where its time went. */

@@ -147,6 +147,8 @@ beforeAll(async () => {
     { name: "total", startMs: at + 420, endMs: at + 2400 },
   ];
   writeFileSync(rustcPhasesPath(out("libb.rlib")), JSON.stringify(passes(T0)));
+  // A build interrupted while the file was being written leaves part of one.
+  writeFileSync(rustcPhasesPath(out("libroot.a")), `[{"name":"total","sta`);
   // Left by a build of `a` that was interrupted the day before: not the execution in the log.
   writeFileSync(rustcPhasesPath(out("liba.rlib")), JSON.stringify(passes(T0 - 86_400_000)));
 

@@ -597,9 +597,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     #endif
                 }
 
-                /* `events` was masked with the poll's interest before the handler ran. If the handler
-                 * dropped the read interest (us_socket_pause), the read below must not run for this
-                 * event either: it would hand on_data bytes the caller asked to defer. */
+                /* The handler can drop the read interest (us_socket_pause), and `events` was masked before it ran. */
                 if (!(us_poll_events(&s->p) & LIBUS_SOCKET_READABLE)) {
                     events &= ~LIBUS_SOCKET_READABLE;
                 }

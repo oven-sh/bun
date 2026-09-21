@@ -4463,11 +4463,7 @@ it("a paused socket with a backpressured write still closes when its peer resets
   expect(error?.code).toBe("ECONNRESET");
 });
 
-// One poll event can report a socket writable and readable at once. The dispatch calls drain()
-// first and then reads, and it used to read although drain() had just paused the socket: data()
-// ran once more, right after pause(). The peer is the raw other end of a socketpair, driven with
-// synchronous fs calls from open(), so the socket is both writable and readable the first time
-// the event loop polls it.
+// The raw socketpair peer runs synchronously inside open(), so the first poll event is writable and readable at once.
 it.skipIf(isWindows)("pause() in drain() holds back the data that the same poll event reports", async () => {
   const [fd, peerFd] = createSocketPair();
   const log: string[] = [];
@@ -4491,7 +4487,7 @@ it.skipIf(isWindows)("pause() in drain() holds back the data that the same poll 
           if (log.length > 0) return;
           socket.pause();
           log.push("drain: pause()");
-          // The read of this poll event would run as soon as drain() returns: resume after the dispatch.
+          // Resume after this dispatch ends: the same poll event also reports the socket readable.
           setImmediate(() => {
             log.push("resume()");
             socket.resume();

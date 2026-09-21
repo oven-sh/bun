@@ -989,7 +989,6 @@ export function chartHtml(build: Build): string {
     <h1>build timings</h1>
     <p id="where"></p>
     <div id="tiles"></div>
-    <div id="legend"></div>
   </header>
   <div id="runs"></div>
 </main>
@@ -1024,10 +1023,6 @@ p, .meta { color: var(--text-2); margin: 2px 0 0; }
 .tile { background: var(--raised); border-radius: 8px; padding: 10px 14px; min-width: 150px; }
 .tile b { display: block; font-size: 22px; font-weight: 600; }
 .tile span { color: var(--text-2); font-size: 12px; }
-#legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--text-2); }
-#legend i { display: inline-block; width: 18px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
-#legend i.path { background: none; box-shadow: inset 0 0 0 1.5px var(--text); }
-#legend i.tick { background: linear-gradient(to right, var(--k1) 45%, var(--surface) 45% 60%, var(--k1) 60%); }
 .run { display: flex; margin-top: 8px; border-radius: 8px; background: var(--raised); }
 .gutter { position: relative; flex: none; width: 124px; border-right: 1px solid var(--grid); }
 .lane { position: absolute; left: 10px; right: 6px; font-size: 11px; line-height: 16px; color: var(--text-2); white-space: nowrap; }
@@ -1093,9 +1088,6 @@ const client = `
     return i === null || i === undefined ? undefined : Number(i);
   }
 
-  var legend = document.getElementById("legend");
-  var lp = html("span", undefined, legend); html("i", undefined, lp, "path"); lp.appendChild(document.createTextNode("on the critical path"));
-  var lt = html("span", undefined, legend); html("i", undefined, lt, "tick"); lt.appendChild(document.createTextNode("dependents can start here"));
 
   function niceStep(span, width) {
     var steps = [50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 30000, 60000, 120000, 300000, 600000, 1800000, 3600000];

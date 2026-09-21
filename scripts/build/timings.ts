@@ -1033,6 +1033,8 @@ const client = `
   var tip = document.getElementById("tip");
 
   var ms = FORMAT_ELAPSED;
+  // A moment on the time axis: seconds alone, to as many places as the distance between ticks needs.
+  function onAxis(t, step) { return (t / 1000).toFixed(step >= 1000 ? 0 : step >= 100 ? 1 : 2) + "s"; }
   function el(name, attrs, parent) {
     var e = document.createElementNS(NS, name);
     for (var k in attrs) e.setAttribute(k, attrs[k]);
@@ -1097,7 +1099,7 @@ const client = `
     for (var t = 0; t <= run.wallMs; t += step) {
       // The start needs no grid line: the chart's edge is it.
       if (t > 0) el("line", { x1: x(t), x2: x(t), y1: 0, y2: height - AXIS, "class": "grid" }, svg);
-      el("text", { x: x(t) + 3, y: height - AXIS + TICKS - 4 }, svg).textContent = ms(t);
+      el("text", { x: x(t) + 3, y: height - AXIS + TICKS - 4 }, svg).textContent = onAxis(t, step);
     }
 
     // The lanes, named in the gutter beside the chart so the names stay put when the chart scrolls.
@@ -1210,12 +1212,12 @@ const client = `
         el("text", { x: xAt, y: row + 4, "text-anchor": anchor, "class": "at" }, hoverLayer).textContent = text;
       };
       var room = function (text) { return text.length * CHAR + 6; };
-      var both = ms(bar.start) + " – " + ms(bar.end);
-      if (from < room(ms(bar.start))) at(to + 3, "start", both);
-      else if (to + room(ms(bar.end)) > width) at(from - 3, "end", both);
+      var began = onAxis(bar.start, 100), ended = onAxis(bar.end, 100), both = began + " – " + ended;
+      if (from < room(began)) at(to + 3, "start", both);
+      else if (to + room(ended) > width) at(from - 3, "end", both);
       else {
-        at(from - 3, "end", ms(bar.start));
-        at(to + 3, "start", ms(bar.end));
+        at(from - 3, "end", began);
+        at(to + 3, "start", ended);
       }
     };
 

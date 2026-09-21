@@ -3708,7 +3708,7 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
   if (callback) {
     // A write callback reports that its bytes reached the socket: uncork them before the callback can destroy the response.
     handle.flushHeaders();
-    if (handle.bufferedAmount > 0) {
+    if (hasBody && handle.bufferedAmount > 0) {
       this[kPendingCallbacks].push(callback);
       handle.onwritable = allowWritesToContinue.bind(this);
       return false;

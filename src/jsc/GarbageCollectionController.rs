@@ -21,9 +21,11 @@ pub struct GarbageCollectionController {
     pub(crate) gc_repeating_timer_fast: Cell<bool>,
     pub(crate) disabled: Cell<bool>,
     /// Idle full collections: cumulative quiet thresholds (ms; empty = off) parsed from `BUN_IDLE_GC_SECONDS`, and the
-    /// nominal time (from tick intervals) since the JS heap last grew.
+    /// nominal time (from the intervals the timer was armed with) since the JS heap last grew.
     idle_gc_at_ms: Cell<[u32; 3]>,
     idle_quiet_ms: Cell<u32>,
+    /// What the timer was last armed with: the quiet the tick that follows gets to count.
+    armed_interval_ms: Cell<i32>,
 }
 
 bun_event_loop::impl_timer_owner!(
@@ -42,15 +44,20 @@ impl Default for GarbageCollectionController {
             disabled: Cell::new(false),
             idle_gc_at_ms: Cell::new([0; 3]),
             idle_quiet_ms: Cell::new(0),
+            armed_interval_ms: Cell::new(0),
         }
     }
 }
 
 impl GarbageCollectionController {
-    /// Remove `t` from the heap if linked, set its deadline to `now + ms`, and
-    /// insert. JS-thread only. Real time, not the mocked clock: GC pacing is
-    /// Bun's, not the test's.
-    fn arm(vm: *mut VirtualMachine, t: *mut EventLoopTimer, ms: i32) {
+    /// Remove the timer from the heap if linked, set its deadline to `now + ms`, and insert; the tick that follows
+    /// counts `ms` as its quiet. JS-thread only. Real time, not the mocked clock: GC pacing is Bun's, not the test's.
+    fn arm(&self, vm: *mut VirtualMachine, ms: i32) {
+        self.armed_interval_ms.set(ms);
+        // whole-struct provenance: from_field_ptr recovers the container on fire
+        let t = core::ptr::addr_of!(self.gc_repeating_timer)
+            .cast::<EventLoopTimer>()
+            .cast_mut();
         // SAFETY: `t` is the embedded node of the per-VM controller,
         // address-stable for the VM lifetime; JS-thread only.
         unsafe {
@@ -165,15 +172,7 @@ impl GarbageCollectionController {
         if self.disabled.get() || self.gc_repeating_timer.get().state != TimerState::PENDING {
             return;
         }
-        let interval = self.repeat_interval();
-        Self::arm(
-            VirtualMachine::get_mut_ptr(),
-            // whole-struct provenance: from_field_ptr recovers the container on fire
-            core::ptr::addr_of!(self.gc_repeating_timer)
-                .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
-                .cast_mut(),
-            interval,
-        );
+        self.arm(VirtualMachine::get_mut_ptr(), self.repeat_interval());
     }
 
     pub(crate) fn perform_gc(&self, idle_full: bool) {
@@ -207,7 +206,7 @@ impl GarbageCollectionController {
         // SAFETY: per fn contract.
         let vm_ref = unsafe { &*vm };
         let grew = vm_ref.jsc_vm().block_bytes_allocated() > prev_heap_size + IDLE_GROWTH_SLACK;
-        let (full, idle_gc_due_in) = this.idle_tick(vm_ref, grew, this.repeat_interval());
+        let (full, idle_gc_due_in) = this.idle_tick(vm_ref, grew, this.armed_interval_ms.get());
         this.perform_gc(full);
         // Only growth is activity; a shrinking heap is a collection (possibly the one requested above) doing its job.
         // An idle full collection proceeds at this timer's ticks in a program that runs no JS: fast ones for the next 30.
@@ -230,14 +229,7 @@ impl GarbageCollectionController {
             Some(ms) => this.repeat_interval().min(ms.max(1000) as i32),
             None => this.repeat_interval(),
         };
-        Self::arm(
-            vm,
-            // whole-struct provenance: from_field_ptr recovers the container on fire
-            core::ptr::addr_of!(this.gc_repeating_timer)
-                .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
-                .cast_mut(),
-            interval,
-        );
+        this.arm(vm, interval);
     }
 }
 

@@ -5528,8 +5528,10 @@ impl NodeFS {
                 // a directory or not, so it is checked.
                 E::EISDIR | E::EEXIST => {
                     return match directory_exists_at_os_path(FD::INVALID, path) {
-                        Err(_) => Err(sys::Error {
-                            errno: err.errno,
+                        // The path exists, but the probe could not read it (for example
+                        // ACCESS_DENIED on Windows). Node reports the stat error here.
+                        Err(probe_err) => Err(sys::Error {
+                            errno: probe_err.errno,
                             syscall: sys::Tag::mkdir,
                             path: self
                                 .os_path_into_sync_error_buf(without_nt_prefix(&path[..]))
@@ -5619,24 +5621,30 @@ impl NodeFS {
                                 // On Windows, this may happen if trying to mkdir replacing a file
                                 #[cfg(windows)]
                                 {
-                                    if let Ok(res) =
-                                        directory_exists_at_os_path(FD::INVALID, parent)
-                                    {
+                                    let errno = match directory_exists_at_os_path(
+                                        FD::INVALID,
+                                        parent,
+                                    ) {
                                         // is a directory. break.
-                                        if !res {
-                                            // SAFETY: `working_mem` is not used after this return; the
-                                            // re-derived &mut PathBuffer is scoped to the call.
-                                            return Err(sys::Error {
-                                                errno: E::ENOTDIR as _,
-                                                syscall: sys::Tag::mkdir,
-                                                path: Self::os_path_into_buf(
-                                                    unsafe { &mut *sync_error_buf_ptr },
-                                                    without_nt_prefix(&(&path[..])[..len as usize]),
-                                                )
-                                                .into(),
-                                                ..Default::default()
-                                            });
-                                        }
+                                        Ok(true) => None,
+                                        Ok(false) => Some(E::ENOTDIR as _),
+                                        // The parent exists but the probe could not read it.
+                                        // Node reports the stat error here.
+                                        Err(probe_err) => Some(probe_err.errno),
+                                    };
+                                    if let Some(errno) = errno {
+                                        // SAFETY: `working_mem` is not used after this return; the
+                                        // re-derived &mut PathBuffer is scoped to the call.
+                                        return Err(sys::Error {
+                                            errno,
+                                            syscall: sys::Tag::mkdir,
+                                            path: Self::os_path_into_buf(
+                                                unsafe { &mut *sync_error_buf_ptr },
+                                                without_nt_prefix(&(&path[..])[..len as usize]),
+                                            )
+                                            .into(),
+                                            ..Default::default()
+                                        });
                                     }
                                 }
                                 working_mem[i as usize] = paths::SEP as OSPathChar;

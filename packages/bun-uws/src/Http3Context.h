@@ -58,8 +58,9 @@ struct Http3Context {
             Http3ResponseData *rd = res->getHttpResponseData();
             /* Fire onAborted for both real aborts and post-completion stream
              * teardown. The handler distinguishes via hasResponded(); for the
-             * completed case it just drops its pointer so it doesn't outlive
-             * this destructor. */
+             * completed case it ends the request here, because this is its
+             * last notification and its pointer must not outlive this
+             * destructor. */
             if (rd->onAborted) {
                 rd->onAborted(res, rd->userData);
             }

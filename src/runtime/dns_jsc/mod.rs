@@ -15,10 +15,10 @@ pub(crate) use dns_body::lib_uv_backend::LibuvCompleteHolder;
 pub(crate) use dns_body::netc;
 
 #[path = "cares_jsc.rs"]
-pub mod cares_jsc; // c-ares reply struct → JSValue bridges
+pub(crate) mod cares_jsc; // c-ares reply struct → JSValue bridges
 
 #[path = "options_jsc.rs"]
-pub mod options_jsc; // GetAddrInfo.Options ↔ JSValue
+pub(crate) mod options_jsc; // GetAddrInfo.Options ↔ JSValue
 
 // ─── public surface ──────────────────────────────────────────────────────────
 // `dns_body` is the real implementation (c-ares channel, request types,
@@ -29,11 +29,4 @@ pub mod options_jsc; // GetAddrInfo.Options ↔ JSValue
 
 #[cfg(target_os = "macos")]
 pub(crate) use dns_body::dns_sd;
-pub use dns_body::{
-    CacheHit, GetAddrInfoRequest, GlobalData, InternalDNSRequest, Order, PendingCache,
-    PendingCacheField, RecordType, Resolver, internal,
-};
-pub use dns_body::{
-    get_addr_info_request, get_host_by_addr_info_request, get_name_info_request,
-    resolve_info_request,
-};
+pub(crate) use dns_body::{GlobalData, Order, Resolver};

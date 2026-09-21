@@ -467,7 +467,7 @@ fn jsx_runtime_tag_name(r: bun_options_types::schema::api::JsxRuntime) -> &'stat
 /// PDEATHSIG — coordinator death surfaces as channel close. Same `Channel`
 /// abstraction as the coordinator side: usockets over the socketpair on POSIX,
 /// `uv.Pipe` over the inherited duplex named-pipe on Windows.
-pub struct WorkerCommands {
+pub(crate) struct WorkerCommands {
     pub(crate) channel: Channel<WorkerCommands>,
     /// Coordinator dispatches one `.run` and waits for `.file_done` before
     /// the next, so a single slot is sufficient. Owned path storage.
@@ -677,6 +677,7 @@ pub(crate) fn run_as_worker(
     // (lastChanceToFinalize) runs; bypassing it leaks JSC-owned native state.
     vm_ref.exit_handler.exit_code = 0;
     vm_ref.exit_handler.skip_exit_listeners = test_command::skip_exit_listeners(wloop.reporter);
+    vm_ref.exit_handler.requested = test_command::exit_is_requested();
     vm_ref.run_with_api_lock(|| {
         // SAFETY: caller guarantees `vm` is a valid live VM pointer for the worker's lifetime.
         unsafe {

@@ -395,7 +395,9 @@ extern "C" JSC::JSPromise* Bun__transpileFile(
     ErrorableResolvedSource* result,
     bool allowPromise,
     bool isCommonJSRequire,
-    BunLoaderType forceLoaderType);
+    BunLoaderType forceLoaderType,
+    // The JSModuleLoader that is fetching when it is not the global object's, else empty.
+    JSC::EncodedJSValue moduleLoader = {});
 
 extern "C" bool Bun__fetchBuiltinModule(
     void* bunVM,

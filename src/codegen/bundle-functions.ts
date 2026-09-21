@@ -381,9 +381,11 @@ async function processFunctionFile(x: string) {
 
 interface BundleBuiltinFunctionsArgs {
   requireTransformer: (x: string, filename: string) => string;
+  /** Where WebCoreJSBuiltins.d.ts goes. */
+  typesDir: string;
 }
 
-export async function bundleBuiltinFunctions({ requireTransformer }: BundleBuiltinFunctionsArgs) {
+export async function bundleBuiltinFunctions({ requireTransformer, typesDir }: BundleBuiltinFunctionsArgs) {
   mkdirSync(TMP_DIR, { recursive: true });
   const filesToProcess = readdirSync(SRC_DIR)
     .filter(x => x.endsWith(".ts") && !x.endsWith(".d.ts"))
@@ -842,7 +844,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
       dts += `\n// ${basename}.ts\n`;
       for (const fn of functions) {
         dts += `declare const \$${fn.name}: RemoveThis<typeof import("${path.relative(
-          CODEGEN_DIR,
+          typesDir,
           path.join(SRC_DIR, basename),
         )}")[${JSON.stringify(fn.name)}]>;\n`;
       }
@@ -851,7 +853,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
 
   dts += getJS2NativeDTS();
 
-  writeIfNotChanged(path.join(CODEGEN_DIR, "WebCoreJSBuiltins.d.ts"), dts);
+  writeIfNotChanged(path.join(typesDir, "WebCoreJSBuiltins.d.ts"), dts);
 
   const totalJSSize = files.reduce(
     (acc, { functions }) => acc + functions.reduce((acc, fn) => acc + fn.source.length, 0),

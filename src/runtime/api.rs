@@ -1,80 +1,78 @@
 //! "api" in this context means "the Bun APIs", as in "the exposed JS APIs"
 
 // ─── server / socket / ffi ───────────────────────────────────────────────────
-pub use crate::server;
-pub use crate::server::AnyRequestContext;
-pub use crate::server::AnyServer;
-pub use crate::server::DebugHTTPSServer;
-pub use crate::server::DebugHTTPServer;
-pub use crate::server::HTMLBundle;
-pub use crate::server::HTTPSServer;
-pub use crate::server::HTTPServer;
-pub use crate::server::SavedRequest;
+pub(crate) use crate::server;
+pub(crate) use crate::server::AnyRequestContext;
+pub(crate) use crate::server::AnyServer;
+pub(crate) use crate::server::DebugHTTPSServer;
+pub(crate) use crate::server::DebugHTTPServer;
+pub(crate) use crate::server::HTMLBundle;
+pub(crate) use crate::server::HTTPSServer;
+pub(crate) use crate::server::HTTPServer;
+pub(crate) use crate::server::SavedRequest;
 
-pub use crate::socket;
-pub use crate::socket::Listener;
-pub use crate::socket::NewSocket;
-pub use crate::socket::SocketAddress;
-pub use crate::socket::TCPSocket;
-pub use crate::socket::TLSSocket;
+pub(crate) use crate::socket;
+pub(crate) use crate::socket::Listener;
+pub(crate) use crate::socket::NewSocket;
+pub(crate) use crate::socket::SocketAddress;
 
-pub use crate::crypto;
+pub(crate) use crate::crypto;
 
 // ─── BuildMessage / ResolveMessage ───────────────────────────────────────────
 // Canonical defs live in `bun_jsc` (with `#[bun_jsc::JsClass]` derives wiring
 // the C++ `${T}__create`/`__fromJS`/`__finalize` symbols). `bun_runtime` already
 // depends on `bun_jsc`, so this is a plain downstream re-export — no cycle.
 // Exactly one Rust type backs each C++ `m_ctx` pointer.
-pub use bun_jsc::BuildMessage;
-pub use bun_jsc::ResolveMessage;
+pub(crate) use bun_jsc::BuildMessage;
+pub(crate) use bun_jsc::ResolveMessage;
 
 // ─── compiling submodules (api/ dir) ─────────────────────────────────────────
 #[path = "api/Archive.rs"]
-pub mod archive;
+pub(crate) mod archive;
 #[path = "api/BunObject.rs"]
-pub mod bun_object;
+pub(crate) mod bun_object;
 #[path = "api/crash_handler_jsc.rs"]
-pub mod crash_handler_jsc;
+pub(crate) mod crash_handler_jsc;
 #[path = "api/cron.rs"]
-pub mod cron;
+pub(crate) mod cron;
 #[path = "api/cron_parser.rs"]
-pub mod cron_parser;
+pub(crate) mod cron_parser;
 #[path = "api/csrf_jsc.rs"]
-pub mod csrf_jsc;
+pub(crate) mod csrf_jsc;
 #[path = "api/filesystem_router.rs"]
-pub mod filesystem_router;
+pub(crate) mod filesystem_router;
 #[path = "api/glob.rs"]
-pub mod glob;
+pub(crate) mod glob;
 #[path = "api/HashObject.rs"]
-pub mod hash_object;
+pub(crate) mod hash_object;
 #[path = "api/html_rewriter.rs"]
-pub mod html_rewriter;
+pub(crate) mod html_rewriter;
 #[path = "api/js_bundle_completion_task.rs"]
-pub mod js_bundle_completion_task;
+pub(crate) mod js_bundle_completion_task;
 #[path = "api/JSBundler.rs"]
-pub mod js_bundler;
+pub(crate) mod js_bundler;
 #[path = "api/JSTranspiler.rs"]
-pub mod js_transpiler;
+pub(crate) mod js_transpiler;
 #[path = "api/JSON5Object.rs"]
-pub mod json5_object;
+pub(crate) mod json5_object;
 #[path = "api/JSONCObject.rs"]
-pub mod jsonc_object;
+pub(crate) mod jsonc_object;
 #[path = "api/MarkdownObject.rs"]
-pub mod markdown_object;
+pub(crate) mod markdown_object;
 #[path = "api/NativePromiseContext.rs"]
-pub mod native_promise_context;
+pub(crate) mod native_promise_context;
 #[path = "api/output_file_jsc.rs"]
-pub mod output_file_jsc;
+pub(crate) mod output_file_jsc;
 #[path = "api/standalone_graph_jsc.rs"]
-pub mod standalone_graph_jsc;
+pub(crate) mod standalone_graph_jsc;
 #[path = "api/TOMLObject.rs"]
-pub mod toml_object;
+pub(crate) mod toml_object;
 #[path = "api/UnsafeObject.rs"]
-pub mod unsafe_object;
+pub(crate) mod unsafe_object;
 #[path = "api/XMLObject.rs"]
-pub mod xml_object;
+pub(crate) mod xml_object;
 #[path = "api/YAMLObject.rs"]
-pub mod yaml_object;
+pub(crate) mod yaml_object;
 
 // ─── api/bun/ core (process / spawn / pty / h2) ──────────────────────────────
 // `#[path]` is relative to the dir containing this file (`src/runtime/`); the
@@ -83,73 +81,73 @@ pub mod yaml_object;
 
 // Process struct + posix_spawn/uv_spawn machinery.
 #[path = "api/bun/process.rs"]
-pub mod bun_process;
+pub(crate) mod bun_process;
 
 // posix_spawn(2) wrappers + Stdio enum.
 #[path = "api/bun/spawn.rs"]
-pub mod bun_spawn;
+pub(crate) mod bun_spawn;
 
 // JS-facing `Bun.Subprocess` payload (.classes.ts m_ctx).
 #[path = "api/bun/subprocess.rs"]
-pub mod bun_subprocess;
+pub(crate) mod bun_subprocess;
 
 // Bun.spawn() / Bun.spawnSync() host fns. Entirely JSC (~75 jsc refs).
 #[path = "api/bun/js_bun_spawn_bindings.rs"]
-pub mod js_bun_spawn_bindings;
+pub(crate) mod js_bun_spawn_bindings;
 
 // Bun.Terminal — PTY/ConPTY. JsRef lifecycle + BufferedReader/StreamingWriter
 // generic owner wiring (~120 jsc refs).
 #[path = "api/bun/Terminal.rs"]
-pub mod bun_terminal_body;
+pub(crate) mod bun_terminal_body;
 
 // H2FrameParser — ~338 jsc refs (Strong, JsRef, host_fn getters, AbortSignal).
 // From-scratch node:http2 engine rewrite (will replace h2_frame_parser.rs).
 #[path = "api/bun/h2/mod.rs"]
-pub mod h2;
+pub(crate) mod h2;
 
 #[path = "api/bun/h2_frame_parser.rs"]
-pub mod h2_frame_parser_body;
+pub(crate) mod h2_frame_parser_body;
 
 #[path = "api/bun/SSLContextCache.rs"]
-pub mod bun_ssl_context_cache;
+pub(crate) mod bun_ssl_context_cache;
 
 #[path = "api/bun/SecureContext.rs"]
-pub mod bun_secure_context;
+pub(crate) mod bun_secure_context;
 
 #[path = "api/bun/x509.rs"]
-pub mod bun_x509;
+pub(crate) mod bun_x509;
 
-pub mod bun {
-    pub use super::bun_process as process;
-    pub use super::bun_secure_context as secure_context;
-    pub use super::bun_ssl_context_cache as ssl_context_cache;
-    pub use super::bun_subprocess as subprocess;
-    pub use process::Rusage;
+pub(crate) mod bun {
+    pub(crate) use super::bun_process as process;
+    pub(crate) use super::bun_secure_context as secure_context;
+    pub(crate) use super::bun_ssl_context_cache as ssl_context_cache;
+    pub(crate) use super::bun_subprocess as subprocess;
+    pub(crate) use process::Rusage;
 
-    pub mod terminal {
-        pub use crate::api::bun_terminal_body::Terminal;
+    pub(crate) mod terminal {
+        pub(crate) use crate::api::bun_terminal_body::Terminal;
     }
-    pub use terminal::Terminal;
+    pub(crate) use terminal::Terminal;
 
-    pub mod h2_frame_parser {
-        pub use crate::api::h2_frame_parser_body::H2FrameParser;
+    pub(crate) mod h2_frame_parser {
+        pub(crate) use crate::api::h2_frame_parser_body::H2FrameParser;
         // js2native thunk (`$rust(h2_frame_parser.rs, …)` in generated_js2native.rs).
         pub(crate) use crate::api::h2_frame_parser_body::h2_frame_parser_constructor;
     }
 }
 
-pub use crate::api::bun::h2_frame_parser::H2FrameParser;
-pub use crate::api::bun::ssl_context_cache as SSLContextCache;
-pub use crate::api::filesystem_router::FileSystemRouter;
-pub use crate::api::filesystem_router::MatchedRoute;
-pub use crate::api::hash_object as HashObject;
-pub use crate::api::js_bundler::BuildArtifact;
-pub use crate::api::js_bundler::JSBundler;
-pub use crate::api::json5_object as JSON5Object;
-pub use crate::api::toml_object as TOMLObject;
-pub use crate::api::unsafe_object as UnsafeObject;
-pub use crate::api::xml_object as XMLObject;
-pub use crate::api::yaml_object as YAMLObject;
+pub(crate) use crate::api::bun::h2_frame_parser::H2FrameParser;
+pub(crate) use crate::api::bun::ssl_context_cache as SSLContextCache;
+pub(crate) use crate::api::filesystem_router::FileSystemRouter;
+pub(crate) use crate::api::filesystem_router::MatchedRoute;
+pub(crate) use crate::api::hash_object as HashObject;
+pub(crate) use crate::api::js_bundler::BuildArtifact;
+pub(crate) use crate::api::js_bundler::JSBundler;
+pub(crate) use crate::api::json5_object as JSON5Object;
+pub(crate) use crate::api::toml_object as TOMLObject;
+pub(crate) use crate::api::unsafe_object as UnsafeObject;
+pub(crate) use crate::api::xml_object as XMLObject;
+pub(crate) use crate::api::yaml_object as YAMLObject;
 
 // ─── shared scaffold for Bun.{TOML,JSONC,JSON5,YAML}.parse ───────────────────
 //

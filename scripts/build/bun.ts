@@ -452,16 +452,12 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const linkObjects = [...(archive !== undefined ? [archive] : allObjects), ...rust.rlibs, ...windowsRes];
   // bun_runtime's objects are rustc's to name, so the link reads the list of them.
   const rustObjectList = rust.objectList !== undefined ? [rust.objectList] : [];
-  const ldflags = [
-    ...rustObjectList.map(list => `@${n.rel(list)}`),
-    ...flags.ldflags,
-    ...systemLibs(cfg),
-    ...shims.ldflags,
-  ];
+  const ldflags = [...flags.ldflags, ...systemLibs(cfg), ...shims.ldflags];
   const exe = link(n, cfg, exeName, linkObjects, {
     libs: depLibs,
     flags: ldflags,
-    implicitInputs: [...rustObjectList, ...linkImplicitInputs(cfg), ...shims.implicitInputs],
+    objectLists: rustObjectList,
+    implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs],
     // Declare the maps the release link writes as side-products (`perf`
     // symbolication on linux; the order file tracer's symbol table on windows).
     linkerMapOutputs: linkerMapOutputs(cfg),

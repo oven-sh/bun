@@ -521,3 +521,62 @@ test("mock.property/mock.method survive a polluted Object.prototype", async () =
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), stderr, exitCode }).toMatchObject({ stdout: "ok", exitCode: 0 });
 });
+
+describe("node:test mock.timers and timers/promises scheduler.wait", () => {
+  const { mock } = require("node:test");
+  const { scheduler } = require("node:timers/promises");
+
+  test("reset() puts the inherited Scheduler.prototype.wait back and it still works", async () => {
+    const realWait = scheduler.wait;
+    expect(Object.hasOwn(scheduler, "wait")).toBe(false);
+
+    mock.timers.enable({ apis: ["scheduler.wait"] });
+    try {
+      expect(Object.hasOwn(scheduler, "wait")).toBe(true);
+      const waited = scheduler.wait(1000).then(() => "ticked");
+      mock.timers.tick(1000);
+      expect(await waited).toBe("ticked");
+    } finally {
+      mock.timers.reset();
+    }
+
+    // Node restores a copy bound to the MockTimers instance here, so this call throws
+    // ERR_INVALID_THIS on node itself; the real method must be back on the prototype.
+    expect(await scheduler.wait(1)).toBeUndefined();
+    expect(scheduler.wait).toBe(realWait);
+    expect(Object.hasOwn(scheduler, "wait")).toBe(false);
+  });
+
+  test("reset() works across repeated enable()/reset() cycles", async () => {
+    const realWait = scheduler.wait;
+    try {
+      for (let cycle = 0; cycle < 2; cycle++) {
+        mock.timers.enable({ apis: ["scheduler.wait"] });
+        const waited = scheduler.wait(50).then(() => `ticked ${cycle}`);
+        mock.timers.tick(50);
+        expect(await waited).toBe(`ticked ${cycle}`);
+        mock.timers.reset();
+      }
+    } finally {
+      mock.timers.reset();
+    }
+    expect(await scheduler.wait(1)).toBeUndefined();
+    expect(scheduler.wait).toBe(realWait);
+  });
+
+  test("reset() restores a wait() the user had installed on the scheduler itself", async () => {
+    const customWait = () => Promise.resolve("custom");
+    scheduler.wait = customWait;
+    try {
+      mock.timers.enable({ apis: ["scheduler.wait"] });
+      expect(scheduler.wait).not.toBe(customWait);
+      mock.timers.reset();
+      expect(scheduler.wait).toBe(customWait);
+      expect(await scheduler.wait()).toBe("custom");
+    } finally {
+      mock.timers.reset();
+      delete scheduler.wait;
+    }
+    expect(await scheduler.wait(1)).toBeUndefined();
+  });
+});

@@ -254,8 +254,14 @@ class MockTimers {
     Object.defineProperty(nodeTimersPromises, "setInterval", this.#realPromisifiedSetInterval);
   }
 
+  // Unlike node, not restored as a copy bound to this: Scheduler.prototype.wait checks its receiver.
   #restoreOriginalSchedulerWait() {
-    nodeTimersPromises.scheduler.wait = this.#realTimersPromisifiedSchedulerWait.bind(this);
+    const { scheduler } = nodeTimersPromises;
+    if (this.#realTimersPromisifiedSchedulerWait === undefined) {
+      delete scheduler.wait;
+    } else {
+      Object.defineProperty(scheduler, "wait", this.#realTimersPromisifiedSchedulerWait);
+    }
   }
 
   #restoreOriginalSetTimeout() {
@@ -283,7 +289,7 @@ class MockTimers {
   }
 
   #storeOriginalSchedulerWait() {
-    this.#realTimersPromisifiedSchedulerWait = nodeTimersPromises.scheduler.wait.bind(this);
+    this.#realTimersPromisifiedSchedulerWait = Object.getOwnPropertyDescriptor(nodeTimersPromises.scheduler, "wait");
   }
 
   #storeOriginalSetTimeout() {

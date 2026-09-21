@@ -1500,6 +1500,53 @@ describe("the options argument", () => {
       expect(runInNewContext("1 + 1;", {}, options as any)).toBe(2);
     }
   });
+
+  test("vm.runInNewContext() validates the context options before it copies options, like Node", () => {
+    const thrown = (options: object) => {
+      try {
+        runInNewContext("1", {}, options as any);
+      } catch (e) {
+        return { code: (e as any).code, message: (e as Error).message };
+      }
+      return "did not throw";
+    };
+    expect({
+      // An invalid contextName is rejected before a later getter runs.
+      nameBeforeGetter: thrown({
+        contextName: 5,
+        get filename() {
+          throw new Error("getter ran first");
+        },
+      }),
+      microtaskModeType: thrown({ microtaskMode: 123 }),
+      microtaskModeValue: thrown({ microtaskMode: "bogus" }),
+    }).toEqual({
+      nameBeforeGetter: {
+        code: "ERR_INVALID_ARG_TYPE",
+        message: 'The "options.contextName" property must be of type string. Received type number (5)',
+      },
+      microtaskModeType: {
+        code: "ERR_INVALID_ARG_TYPE",
+        message: 'The "options.microtaskMode" property must be of type string. Received type number (123)',
+      },
+      microtaskModeValue: {
+        code: "ERR_INVALID_ARG_VALUE",
+        message: "The property 'options.microtaskMode' must be one of: 'afterEvaluate', undefined. Received 'bogus'",
+      },
+    });
+  });
+
+  test("an undefined codeGeneration member counts as absent, like Node", () => {
+    const undefinedMembers = { strings: undefined, wasm: undefined };
+    expect({
+      runInNewContext: runInNewContext("eval('1')", {}, { contextCodeGeneration: undefinedMembers }),
+      scriptRunInNewContext: new Script("eval('1')").runInNewContext({}, { contextCodeGeneration: undefinedMembers }),
+      createContext: runInContext("eval('1')", createContext({}, { codeGeneration: undefinedMembers })),
+    }).toEqual({ runInNewContext: 1, scriptRunInNewContext: 1, createContext: 1 });
+    expect(() => createContext({}, { codeGeneration: { strings: null } } as any)).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+  });
 });
 
 describe("a run option rejected with a vm context's global", () => {

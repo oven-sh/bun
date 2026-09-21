@@ -113,25 +113,24 @@ function runInNewContext(code, context, options) {
   }
   if (typeof options === "string") {
     options = { filename: options };
-  } else {
-    options = { ...options };
   }
   context = createContext(context, getContextOptions(options));
+  options = { ...options };
   return createScript(code, options).runInNewContext(context, options);
 }
 
-// Mirrors Node's lib/vm.js getContextOptions.
+// Mirrors Node's lib/vm.js getContextOptions, including the order it reads and validates in.
 function getContextOptions(options) {
   if (!options) return {};
-  const { contextName, contextOrigin, contextCodeGeneration, microtaskMode } = options;
-  if (contextName !== undefined) validateString(contextName, "options.contextName");
-  if (contextOrigin !== undefined) validateString(contextOrigin, "options.contextOrigin");
   const contextOptions: any = {
-    name: contextName,
-    origin: contextOrigin,
+    name: options.contextName,
+    origin: options.contextOrigin,
     codeGeneration: undefined,
-    microtaskMode,
+    microtaskMode: options.microtaskMode,
   };
+  if (contextOptions.name !== undefined) validateString(contextOptions.name, "options.contextName");
+  if (contextOptions.origin !== undefined) validateString(contextOptions.origin, "options.contextOrigin");
+  const contextCodeGeneration = options.contextCodeGeneration;
   if (contextCodeGeneration !== undefined) {
     validateObject(contextCodeGeneration, "options.contextCodeGeneration");
     const { strings, wasm } = contextCodeGeneration;
@@ -145,6 +144,9 @@ function getContextOptions(options) {
       codeGeneration.wasm = wasm;
     }
     contextOptions.codeGeneration = codeGeneration;
+  }
+  if (contextOptions.microtaskMode !== undefined) {
+    validateString(contextOptions.microtaskMode, "options.microtaskMode");
   }
   return contextOptions;
 }

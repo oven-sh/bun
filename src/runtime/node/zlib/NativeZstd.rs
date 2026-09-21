@@ -495,12 +495,20 @@ mod _impl {
             self.output.pos = 0;
         }
 
-        pub fn flush_value_is_valid(flush: u32) -> bool {
-            flush <= 2
+        /// The flush value is forwarded to `ZSTD_compressStream2` as a
+        /// `ZSTD_EndDirective`, which only defines `ZSTD_e_continue` (0),
+        /// `ZSTD_e_flush` (1) and `ZSTD_e_end` (2); anything else fails here so
+        /// the shared write path rejects it.
+        pub fn flush_op_from_u32(flush: u32) -> Option<c_int> {
+            if flush <= 2 {
+                Some(flush as c_int)
+            } else {
+                None
+            }
         }
 
-        pub fn set_flush(&mut self, flush: c_int) {
-            self.flush = flush;
+        pub fn set_flush(&mut self, op: c_int) {
+            self.flush = op;
         }
 
         const ZSTD_MAGICNUMBER: [u8; 4] = 0xFD2FB528u32.to_le_bytes();
@@ -682,6 +690,8 @@ mod _impl {
     // `CompressionStreamImpl for NativeZstd`, and `pub mod js { … }` so
     // `CompressionStream::<NativeZstd>::*` (write/writeSync/reset/close/
     // emit_error/…) can reach this struct's fields.
-    crate::__impl_compression_stream!(NativeZstd, Context, "NativeZstd");
+    // FlushOp = raw `c_int` holding a `ZSTD_EndDirective` (0..=2), validated
+    // by `flush_op_from_u32`.
+    crate::__impl_compression_stream!(NativeZstd, Context, "NativeZstd", c_int);
     crate::__compression_stream_mixin_reexports!(NativeZstd);
 } // mod _impl

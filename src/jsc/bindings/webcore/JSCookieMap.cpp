@@ -198,7 +198,10 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructo
     }
     auto result = result_exception.releaseReturnValue();
 
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJSNewlyCreated(lexicalGlobalObject, castedThis->globalObject(), WTF::move(result))));
+    JSValue jsValue = toJSNewlyCreated(lexicalGlobalObject, castedThis->globalObject(), WTF::move(result));
+    setSubclassStructureIfNeeded<CookieMap>(lexicalGlobalObject, callFrame, asObject(jsValue));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    return JSValue::encode(jsValue);
 }
 
 JSC_ANNOTATE_HOST_FUNCTION(JSCookieMapDOMConstructorConstruct, JSCookieMapDOMConstructor::construct);

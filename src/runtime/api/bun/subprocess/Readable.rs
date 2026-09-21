@@ -17,10 +17,11 @@ use super::{StdioResult, Subprocess};
 
 // `bun.ptr.CowString` — owned/borrowed byte slice (has
 // `init_owned` / `length` / `take_slice`).
-pub type CowString = CowSlice<u8>;
+pub(crate) type CowString = CowSlice<u8>;
 
-pub enum Readable {
+pub(crate) enum Readable {
     Fd(Fd),
+    #[cfg_attr(windows, allow(dead_code))]
     Memfd(Fd),
     Pipe(RefPtr<PipeReader>),
     Inherit,
@@ -33,6 +34,8 @@ pub enum Readable {
     /// the owning `Readable` will be converted into this variant and the pipe's
     /// buffer will be taken as an owned `CowString`.
     Buffer(CowString),
+    /// A buffered `pipe` whose read failed: the bytes read before the error, then the error.
+    Errored(CowString, bun_sys::Error),
 }
 
 impl Readable {
@@ -52,7 +55,7 @@ impl Readable {
     pub(crate) fn memory_cost(&self) -> usize {
         match self {
             Readable::Pipe(pipe) => mem::size_of::<PipeReader>() + pipe.memory_cost(),
-            Readable::Buffer(buffer) => buffer.length(),
+            Readable::Buffer(buffer) | Readable::Errored(buffer, _) => buffer.length(),
             _ => 0,
         }
     }
@@ -64,7 +67,7 @@ impl Readable {
         }
     }
 
-    pub fn ref_(&mut self) {
+    pub(crate) fn ref_(&mut self) {
         match self {
             Readable::Pipe(pipe) => {
                 Self::pipe_reader_mut(pipe).update_ref(true);
@@ -141,9 +144,7 @@ impl Readable {
             Stdio::Pipe => {
                 Readable::Pipe(PipeReader::create(event_loop, process, result, max_size))
             }
-            Stdio::ArrayBuffer(..) | Stdio::Blob(..) => {
-                panic!("TODO: implement ArrayBuffer & Blob support in Stdio readable")
-            }
+            Stdio::Blob(..) => panic!("TODO: implement Blob support in Stdio readable"),
             Stdio::Capture(..) => panic!("TODO: implement capture support in Stdio readable"),
             // ReadableStream is handled separately
             Stdio::ReadableStream(..) => Readable::Ignore,
@@ -152,7 +153,7 @@ impl Readable {
         }
     }
 
-    pub fn close(&mut self) {
+    pub(crate) fn close(&mut self) {
         match self {
             Readable::Memfd(fd) => {
                 let fd = *fd;
@@ -169,7 +170,7 @@ impl Readable {
         }
     }
 
-    pub fn finalize(&mut self) {
+    pub(crate) fn finalize(&mut self) {
         match self {
             Readable::Memfd(fd) => {
                 let fd = *fd;
@@ -204,7 +205,7 @@ impl Readable {
                 }
                 Self::pipe_reader_mut(&pipe).process = None;
             }
-            Readable::Buffer(_) => {
+            Readable::Buffer(_) | Readable::Errored(..) => {
                 // Dropping the CowString (via the overwrite) frees the buffer;
                 // finalize is terminal.
                 *self = Readable::Closed;
@@ -213,17 +214,17 @@ impl Readable {
         }
     }
 
-    pub fn to_js(&mut self, global: &JSGlobalObject, _exited: bool) -> JsResult<JSValue> {
+    pub(crate) fn to_js(&mut self, cx: &bun_jsc::JsThread<'_>, _exited: bool) -> JsResult<JSValue> {
         match self {
             // should only be reachable when the entire output is buffered.
-            Readable::Memfd(_) => self.to_buffered_value(global),
+            Readable::Memfd(_) => self.to_buffered_value(cx.global()),
 
-            Readable::Fd(fd) => Ok(fd.to_js(global)),
+            Readable::Fd(fd) => Ok(fd.to_js(cx.global())),
             Readable::Pipe(_) => {
                 let Readable::Pipe(pipe) = mem::replace(self, Readable::Closed) else {
                     unreachable!()
                 };
-                let result = Self::pipe_reader_mut(&pipe).to_js(global);
+                let result = Self::pipe_reader_mut(&pipe).to_js(cx);
                 Self::pipe_reader_mut(&pipe).process = None;
                 result
             }
@@ -233,11 +234,19 @@ impl Readable {
                 };
 
                 if buffer.length() == 0 {
-                    return ReadableStream::empty(global);
+                    return ReadableStream::empty(cx.global());
                 }
 
                 let own = buffer.take_slice()?;
-                ReadableStream::from_owned_slice(global, own.into_vec(), 0)
+                ReadableStream::from_owned_slice(cx, own.into_vec(), 0)
+            }
+            Readable::Errored(..) => {
+                let Readable::Errored(mut buffer, err) = mem::replace(self, Readable::Closed)
+                else {
+                    unreachable!()
+                };
+                let own = buffer.take_slice()?;
+                ReadableStream::from_bytes_then_error(cx, own.into_vec(), err)
             }
             _ => Ok(JSValue::UNDEFINED),
         }
@@ -279,6 +288,18 @@ impl Readable {
                 JSValue::create_buffer_from_box(global, own)
             }
             _ => Ok(JSValue::UNDEFINED),
+        }
+    }
+
+    /// The error reading this output ended with, taken out of it. `spawnSync` asks before
+    /// `to_buffered_value` and throws it: the output that was lost cannot be returned.
+    pub(crate) fn take_read_error(&mut self) -> Option<bun_sys::Error> {
+        match mem::replace(self, Readable::Closed) {
+            Readable::Errored(_, err) => Some(err),
+            other => {
+                *self = other;
+                None
+            }
         }
     }
 }

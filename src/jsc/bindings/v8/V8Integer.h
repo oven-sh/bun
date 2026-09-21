@@ -14,4 +14,9 @@ public:
     BUN_EXPORT int64_t Value() const;
 };
 
+class Int32 : public Integer {
+public:
+    BUN_EXPORT int32_t Value() const;
+};
+
 } // namespace v8

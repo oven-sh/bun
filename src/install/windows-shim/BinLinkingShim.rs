@@ -1,5 +1,5 @@
 //! This struct is used by bun.exe to encode `.bunx` files, to be consumed
-//! by the shim 'bun_shim_impl.exe'. The latter exe does not include this code.
+//! by the shim 'bun-shim-impl.exe'. The latter exe does not include this code.
 //!
 //! The format is as follows:
 //!
@@ -131,13 +131,15 @@ mod host {
         a == b
     }
 
-    // `@embedFile("bun_shim_impl.exe")` — the shim PE is built as a separate
-    // artifact by the Windows build before this crate is compiled, then embedded
-    // here. It is only ever consumed from `#[cfg(windows)]` code paths
+    // `@embedFile` of the shim — the shim PE is built as a separate
+    // artifact by the Windows build before this crate is compiled (into the
+    // codegen directory, like the other generated files crates include), then
+    // embedded here. It is only ever consumed from `#[cfg(windows)]` code paths
     // (`bin::Linker::create_windows_shim`), so on non-Windows hosts there is no
     // artifact to embed and the data is never read.
     #[cfg(windows)]
-    pub(crate) const EMBEDDED_EXECUTABLE_DATA: &[u8] = include_bytes!("bun_shim_impl.exe");
+    pub(crate) const EMBEDDED_EXECUTABLE_DATA: &[u8] =
+        include_bytes!(concat!(env!("BUN_CODEGEN_DIR"), "/bun-shim-impl.exe"));
     #[cfg(not(windows))]
     pub(crate) const EMBEDDED_EXECUTABLE_DATA: &[u8] = &[];
 
@@ -161,7 +163,7 @@ mod host {
     pub(crate) fn embedded_executable_data() -> &'static [u8] {
         if EMBEDDED_EXECUTABLE_DATA.is_empty() {
             bun_core::pretty_errorln!(
-                "<r><red>error<r>: bun_shim_impl.exe is empty — the Windows shim \
+                "<r><red>error<r>: bun-shim-impl.exe is empty — the Windows shim \
              PE must be built before this crate is compiled (the build is \
              missing the windows-shim step)",
             );

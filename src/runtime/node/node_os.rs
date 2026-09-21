@@ -2,7 +2,6 @@ use core::ffi::c_int;
 #[cfg(not(windows))]
 use core::ffi::{c_char, c_uint, c_void};
 
-use bun_core;
 use bun_core::String as BunString;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
@@ -37,8 +36,7 @@ mod _impl {
     use bun_core::strings;
     use bun_core::{env_var, fmt as bun_fmt};
     use bun_jsc::{CallFrame, JSArray, StringJsc as _, SysErrorJsc as _, SystemError};
-    #[cfg(windows)]
-    use bun_paths::PathBuffer;
+
     #[cfg(windows)]
     use bun_sys::ReturnCodeExt as _;
     #[cfg(not(windows))]
@@ -83,7 +81,7 @@ mod _impl {
     // `bindgen_Node_os_dispatch*` entry points. This module provides the
     // public surface: `js*` extern pointers + `create*Callback` wrappers
     // + the `UserInfoOptions` dictionary.
-    pub mod gen_ {
+    pub(crate) mod gen_ {
         use super::{BunString, CallFrame, EncodedSlice, JSGlobalObject, JSValue};
         use bun_jsc::host_fn;
 
@@ -112,7 +110,7 @@ mod _impl {
         // the exact triples the codegen would have produced.
         macro_rules! create_callback {
         ($($fn_name:ident, $js_name:literal, $argc:literal, $sym:ident;)*) => {$(
-            pub fn $fn_name(global: &JSGlobalObject) -> JSValue {
+            pub(crate) fn $fn_name(global: &JSGlobalObject) -> JSValue {
                 host_fn::new_runtime_function(
                     global,
                     Some(&EncodedSlice::latin1($js_name.as_bytes())),
@@ -145,7 +143,7 @@ mod _impl {
         /// the C++ side passes a pointer to this layout, so it must stay
         /// `#[repr(C)]`.
         #[repr(C)]
-        pub struct UserInfoOptions {
+        pub(crate) struct UserInfoOptions {
             pub(crate) encoding: BunString,
         }
     }
@@ -273,7 +271,7 @@ mod _impl {
                             cpu.put(
                                 global_this,
                                 b"model",
-                                BunString::static_("unknown").to_js(global_this)?,
+                                global_this.common_strings().unknown(),
                             );
                             cpu.put(global_this, b"speed", JSValue::js_number(0.0));
                             stubs.put_index(global_this, i, cpu)?;
@@ -349,7 +347,7 @@ mod _impl {
                         cpu.put(
                             global_this,
                             b"model",
-                            BunString::static_("unknown").to_js(global_this)?,
+                            global_this.common_strings().unknown(),
                         );
                     }
                     // If this line starts a new processor, parse the index from the line
@@ -376,7 +374,7 @@ mod _impl {
                 cpu.put(
                     global_this,
                     b"model",
-                    BunString::static_("unknown").to_js(global_this)?,
+                    global_this.common_strings().unknown(),
                 );
             }
 
@@ -388,7 +386,7 @@ mod _impl {
                 cpu.put(
                     global_this,
                     b"model",
-                    BunString::static_("unknown").to_js(global_this)?,
+                    global_this.common_strings().unknown(),
                 );
             }
         }
@@ -444,7 +442,7 @@ mod _impl {
         let model = if bun_sys::posix::sysctl_read_slice(c"hw.model", &mut model_buf[..]).is_ok() {
             bun_string_jsc::create_utf8_for_js(global_this, bun_core::slice_to_nul(&model_buf))?
         } else {
-            BunString::static_("unknown").to_js(global_this)?
+            global_this.common_strings().unknown()
         };
 
         let mut speed_mhz: c_uint = 0;
@@ -659,7 +657,7 @@ mod _impl {
         // In Node.js, this is a wrapper around uv_os_homedir.
         #[cfg(windows)]
         {
-            let mut out = PathBuffer::uninit();
+            let mut out = bun_paths::path_buffer_pool::get();
             let mut size: usize = out.len();
             // SAFETY: valid buffer + size out-param
             if let Some(err) = unsafe { libuv::uv_os_homedir(out.as_mut_ptr(), &mut size) }
@@ -726,8 +724,7 @@ mod _impl {
             if ret != 0 {
                 return Err(global.throw_value(
                     bun_sys::Error::from_code(
-                        // `ret` is a libc errno; `E::from_raw` is the centralized
-                        // `@enumFromInt` (debug-asserts the discriminant).
+                        // `ret` is a libc errno; a code outside the table is `EUNKNOWN`.
                         bun_sys::E::from_raw(ret as u16),
                         bun_sys::Tag::uv_os_homedir,
                     )
@@ -770,7 +767,7 @@ mod _impl {
                 return BunString::clone_utf16(slice_to_nul_u16(&name_buffer)).into_js(global);
             }
 
-            return BunString::static_("unknown").to_js(global);
+            return Ok(global.common_strings().unknown());
         }
         #[cfg(not(windows))]
         {
@@ -845,12 +842,12 @@ mod _impl {
     }
 
     #[cfg(unix)]
-    pub use network_interfaces_posix as network_interfaces;
+    pub(crate) use network_interfaces_posix as network_interfaces;
     #[cfg(windows)]
-    pub use network_interfaces_windows as network_interfaces;
+    pub(crate) use network_interfaces_windows as network_interfaces;
 
     #[cfg(unix)]
-    pub fn network_interfaces_posix(global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn network_interfaces_posix(global_this: &JSGlobalObject) -> JsResult<JSValue> {
         // getifaddrs sets a pointer to a linked list
         let mut interface_start: *mut libc::ifaddrs = core::ptr::null_mut();
         // SAFETY: valid out-pointer
@@ -1033,7 +1030,7 @@ mod _impl {
                 match addr.family() as c_int {
                     libc::AF_INET => global_this.common_strings().ipv4(),
                     libc::AF_INET6 => global_this.common_strings().ipv6(),
-                    _ => BunString::static_("unknown").to_js(global_this)?,
+                    _ => global_this.common_strings().unknown(),
                 },
             );
 
@@ -1144,7 +1141,7 @@ mod _impl {
     }
 
     #[cfg(windows)]
-    pub fn network_interfaces_windows(global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn network_interfaces_windows(global_this: &JSGlobalObject) -> JsResult<JSValue> {
         let mut ifaces: *mut libuv::uv_interface_address_t = core::ptr::null_mut();
         let mut count: c_int = 0;
         // SAFETY: valid out-pointers
@@ -1266,7 +1263,7 @@ mod _impl {
                 match family {
                     bun_sys::posix::AF::INET => global_this.common_strings().ipv4(),
                     bun_sys::posix::AF::INET6 => global_this.common_strings().ipv6(),
-                    _ => BunString::static_("unknown").to_js(global_this)?,
+                    _ => global_this.common_strings().unknown(),
                 },
             );
 
@@ -1366,65 +1363,27 @@ mod _impl {
         }
 
         let code: i32 = set_process_priority(pid, priority);
-
-        if code == -2 {
-            return bun_sys::E::ESRCH;
-        }
         if code == 0 {
             return bun_sys::E::SUCCESS;
         }
-
-        // get_errno already returns bun_sys::E (= SystemErrno) directly.
-        bun_sys::get_errno(code)
+        // POSIX `setpriority` returns -1 and sets errno; Windows returns a libuv code.
+        #[cfg(windows)]
+        return bun_sys::windows::translate_uv_error_to_e(code);
+        #[cfg(not(windows))]
+        return bun_sys::get_errno(code);
     }
 
     pub(crate) fn set_priority1(global: &JSGlobalObject, pid: i32, priority: i32) -> JsResult<()> {
-        let errcode = set_process_priority_impl(pid, priority);
-        match errcode {
-            bun_sys::E::ESRCH => {
-                let err = SystemError {
-                    message: BunString::static_("no such process"),
-                    code: BunString::static_("ESRCH"),
-                    #[cfg(not(windows))]
-                    errno: -(bun_sys::posix::E::ESRCH as c_int),
-                    #[cfg(windows)]
-                    errno: libuv::UV_ESRCH,
-                    syscall: BunString::static_("uv_os_getpriority"),
-                    ..Default::default()
-                };
-                Err(global.throw_value(err.to_error_instance_with_info_object(global)))
-            }
-            bun_sys::E::EACCES => {
-                let err = SystemError {
-                    message: BunString::static_("permission denied"),
-                    code: BunString::static_("EACCES"),
-                    #[cfg(not(windows))]
-                    errno: -(bun_sys::posix::E::EACCES as c_int),
-                    #[cfg(windows)]
-                    errno: libuv::UV_EACCES,
-                    syscall: BunString::static_("uv_os_getpriority"),
-                    ..Default::default()
-                };
-                Err(global.throw_value(err.to_error_instance_with_info_object(global)))
-            }
-            bun_sys::E::EPERM => {
-                let err = SystemError {
-                    message: BunString::static_("operation not permitted"),
-                    code: BunString::static_("EPERM"),
-                    #[cfg(not(windows))]
-                    errno: -(bun_sys::posix::E::ESRCH as c_int),
-                    #[cfg(windows)]
-                    errno: libuv::UV_ESRCH,
-                    syscall: BunString::static_("uv_os_getpriority"),
-                    ..Default::default()
-                };
-                Err(global.throw_value(err.to_error_instance_with_info_object(global)))
-            }
-            _ => {
-                // no other error codes can be emitted
-                Ok(())
-            }
+        let errno = set_process_priority_impl(pid, priority);
+        if errno == bun_sys::E::SUCCESS {
+            return Ok(());
         }
+        let err = bun_sys::Error::from_code(errno, bun_sys::Tag::uv_os_setpriority);
+        let mut sys_err: SystemError = err.to_system_error().into();
+        // Node's message here is the bare libuv label, not "ESRCH: …, uv_os_setpriority".
+        sys_err.message =
+            BunString::static_(err.uv_code_label().map_or("unknown error", |(_, l)| l));
+        Err(global.throw_value(sys_err.to_error_instance_with_info_object(global)))
     }
 
     pub(crate) fn set_priority2(global: &JSGlobalObject, priority: i32) -> JsResult<()> {
@@ -1587,7 +1546,7 @@ mod _impl {
         Ok(BunString::clone_utf8(slice))
     }
 } // mod _impl
-pub use _impl::*;
+pub(crate) use _impl::*;
 
 /// Given a netmask returns a CIDR suffix.  Returns null if the mask is not valid.
 /// `T` must be one of u32 (IPv4) or u128 (IPv6)

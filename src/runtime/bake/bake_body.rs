@@ -32,67 +32,6 @@ use super::{dev_server, framework_router};
 // FrameworkRouter` are already provided by the parent `mod.rs` (lines 349/369);
 // re-exporting here triggers E0365 because `bake_body` is a private module.
 
-/// Local shim until `bun_jsc` grows a typed `get_optional`.
-/// Returns `None` for missing/null/undefined.
-fn get_optional_slice(
-    target: JSValue,
-    global: &JSGlobalObject,
-    property: &[u8],
-) -> JsResult<Option<Utf8Bytes<'static>>> {
-    match target.get(global, property)? {
-        Some(v) if !v.is_undefined_or_null() => Ok(Some(v.to_utf8(global)?)),
-        _ => Ok(None),
-    }
-}
-
-/// `JSValue.getBooleanStrict` — local shim.
-fn get_boolean_strict(
-    target: JSValue,
-    global: &JSGlobalObject,
-    property: &[u8],
-) -> JsResult<Option<bool>> {
-    match target.get(global, property)? {
-        Some(v) if v.is_boolean() => Ok(Some(v.as_boolean())),
-        _ => Ok(None),
-    }
-}
-
-/// `JSValue.getBooleanLoose` — local shim until `bun_jsc` grows it.
-fn get_boolean_loose(
-    target: JSValue,
-    global: &JSGlobalObject,
-    property: &[u8],
-) -> JsResult<Option<bool>> {
-    match target.get(global, property)? {
-        Some(v) if !v.is_undefined_or_null() => Ok(Some(v.to_boolean())),
-        _ => Ok(None),
-    }
-}
-
-/// `JSValue.getOptional(JSValue, ..)` — local shim: filters undefined/null.
-fn get_optional_value(
-    target: JSValue,
-    global: &JSGlobalObject,
-    property: &[u8],
-) -> JsResult<Option<JSValue>> {
-    match target.get(global, property)? {
-        Some(v) if !v.is_undefined_or_null() => Ok(Some(v)),
-        _ => Ok(None),
-    }
-}
-
-/// `JSValue.getFunction` — local shim until `bun_jsc` grows it.
-fn get_function(
-    target: JSValue,
-    global: &JSGlobalObject,
-    property: &[u8],
-) -> JsResult<Option<JSValue>> {
-    match target.get(global, property)? {
-        Some(v) if v.is_callable() => Ok(Some(v)),
-        _ => Ok(None),
-    }
-}
-
 use bun_bundler_jsc::source_map_mode_jsc::source_map_mode_from_js;
 
 /// Convert a `crate::Error` into a thrown JS exception in a `JsResult`
@@ -136,10 +75,10 @@ const API_NAME: &str = "app";
 // PORTING.md; could thread `'bump` or introduce `ArenaStr`.
 
 /// Rust version of the TS definition 'Bake.Options' in 'bake.d.ts'
-pub struct UserOptions {
+pub(crate) struct UserOptions {
     /// This arena contains some miscellaneous allocations at startup
     pub(crate) arena: Arena,
-    pub allocations: StringRefList,
+    pub(crate) _allocations: StringRefList,
 
     pub(crate) root: &'static ZStr, // TODO(lifetime): arena-owned, self-referential with .arena
     pub(crate) framework: Framework,
@@ -162,7 +101,7 @@ impl Drop for UserOptions {
 
 impl UserOptions {
     /// Currently, this function must run at the top of the event loop.
-    pub fn from_js(config: JSValue, global: &JSGlobalObject) -> JsResult<UserOptions> {
+    pub(crate) fn from_js(config: JSValue, global: &JSGlobalObject) -> JsResult<UserOptions> {
         let arena = Arena::new();
         // errdefer arena.deinit() — handled by Drop
 
@@ -195,7 +134,7 @@ impl UserOptions {
                         root,
                         framework,
                         bundler_options,
-                        allocations,
+                        _allocations: allocations,
                         arena,
                     });
                 }
@@ -205,14 +144,14 @@ impl UserOptions {
             );
         }
 
-        if let Some(js_options) = get_optional_value(config, global, b"bundlerOptions")? {
-            if let Some(server_options) = get_optional_value(js_options, global, b"server")? {
+        if let Some(js_options) = config.get_optional::<JSValue>(global, "bundlerOptions")? {
+            if let Some(server_options) = js_options.get_optional::<JSValue>(global, "server")? {
                 bundler_options.server = BuildConfigSubset::from_js(global, server_options)?;
             }
-            if let Some(client_options) = get_optional_value(js_options, global, b"client")? {
+            if let Some(client_options) = js_options.get_optional::<JSValue>(global, "client")? {
                 bundler_options.client = BuildConfigSubset::from_js(global, client_options)?;
             }
-            if let Some(ssr_options) = get_optional_value(js_options, global, b"ssr")? {
+            if let Some(ssr_options) = js_options.get_optional::<JSValue>(global, "ssr")? {
                 bundler_options.ssr = BuildConfigSubset::from_js(global, ssr_options)?;
             }
         }
@@ -233,7 +172,7 @@ impl UserOptions {
             &arena,
         )?;
 
-        let root: &[u8] = if let Some(slice) = get_optional_slice(config, global, b"root")? {
+        let root: &[u8] = if let Some(slice) = config.get_optional_slice(global, "root")? {
             allocations.track(slice)
         } else {
             match bun_sys::getcwd_alloc() {
@@ -255,7 +194,7 @@ impl UserOptions {
             root: root_z,
             framework,
             bundler_options,
-            allocations,
+            _allocations: allocations,
             arena,
         })
     }
@@ -263,7 +202,7 @@ impl UserOptions {
 
 /// Each string stores its allocator since some may hold reference counts to JSC
 #[derive(Default)]
-pub struct StringRefList {
+pub(crate) struct StringRefList {
     pub(crate) strings: Vec<Utf8Bytes<'static>>,
 }
 
@@ -296,7 +235,7 @@ impl StringRefList {
 }
 
 #[derive(Default)]
-pub struct SplitBundlerOptions {
+pub(crate) struct SplitBundlerOptions {
     pub plugin: Option<NonNull<Plugin>>,
     pub client: BuildConfigSubset,
     pub server: BuildConfigSubset,
@@ -335,20 +274,19 @@ impl SplitBundlerOptions {
                 );
             }
 
-            if let Some(slice) = get_optional_slice(plugin_config, global, b"name")? {
+            if let Some(slice) = plugin_config.get_optional_slice(global, "name")? {
                 if slice.slice().is_empty() {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "Expected plugin to have a non-empty name"
                     )));
                 }
-                // slice dropped here (defer slice.deinit())
             } else {
                 return Err(
                     global.throw_invalid_arguments(format_args!("Expected plugin to have a name"))
                 );
             }
 
-            let function = match get_function(plugin_config, global, b"setup")? {
+            let function = match plugin_config.get_function(global, "setup")? {
                 Some(f) => f,
                 None => {
                     return Err(global.throw_invalid_arguments(format_args!(
@@ -391,7 +329,7 @@ impl SplitBundlerOptions {
     }
 }
 
-pub struct BuildConfigSubset {
+pub(crate) struct BuildConfigSubset {
     pub ignore_dce_annotations: Option<bool>,
     pub conditions: ArrayHashMap<&'static [u8], ()>,
     pub drop: ArrayHashMap<&'static [u8], ()>,
@@ -406,11 +344,14 @@ pub struct BuildConfigSubset {
 }
 
 impl BuildConfigSubset {
-    pub fn from_js(global: &JSGlobalObject, js_options: JSValue) -> JsResult<BuildConfigSubset> {
+    pub(crate) fn from_js(
+        global: &JSGlobalObject,
+        js_options: JSValue,
+    ) -> JsResult<BuildConfigSubset> {
         let mut options = BuildConfigSubset::default();
 
         'brk: {
-            let Some(val) = get_optional_value(js_options, global, b"sourcemap")? else {
+            let Some(val) = js_options.get_optional::<JSValue>(global, "sourcemap")? else {
                 break 'brk;
             };
             if let Some(sourcemap) = source_map_mode_from_js(global, val)? {
@@ -427,7 +368,7 @@ impl BuildConfigSubset {
         }
 
         'brk: {
-            let Some(minify_options) = get_optional_value(js_options, global, b"minify")? else {
+            let Some(minify_options) = js_options.get_optional::<JSValue>(global, "minify")? else {
                 break 'brk;
             };
             if minify_options.is_boolean() && minify_options.as_boolean() {
@@ -437,13 +378,13 @@ impl BuildConfigSubset {
                 break 'brk;
             }
 
-            if let Some(value) = get_boolean_loose(minify_options, global, b"whitespace")? {
+            if let Some(value) = minify_options.get_boolean_loose(global, "whitespace")? {
                 options.minify_whitespace = Some(value);
             }
-            if let Some(value) = get_boolean_loose(minify_options, global, b"syntax")? {
+            if let Some(value) = minify_options.get_boolean_loose(global, "syntax")? {
                 options.minify_syntax = Some(value);
             }
-            if let Some(value) = get_boolean_loose(minify_options, global, b"identifiers")? {
+            if let Some(value) = minify_options.get_boolean_loose(global, "identifiers")? {
                 options.minify_identifiers = Some(value);
             }
         }
@@ -478,7 +419,7 @@ impl Default for BuildConfigSubset {
 /// structure is always arena-allocated, usually owned by the arena in `UserOptions`
 ///
 /// Full documentation on these fields is located in the TypeScript definitions.
-pub struct Framework {
+pub(crate) struct Framework {
     pub is_built_in_react: bool,
     /// `resolve()` rewrites this in place. Stored as an owned `Vec` so
     /// `#[derive(Clone)]` deep-copies (a shared `&[T]` would alias and make
@@ -507,7 +448,7 @@ impl Framework {
     /// Depends on externally provided React
     ///
     /// $ bun i react@experimental react-dom@experimental react-refresh@experimental react-server-dom-bun
-    pub fn react(arena: &Arena) -> crate::Result<Framework> {
+    pub(crate) fn react(arena: &Arena) -> crate::Result<Framework> {
         // Cannot use .import because resolution must happen from the user's POV
         let built_in_values: &[BuiltInModule] = &[
             // Browser-side source: compressed in release builds.
@@ -571,7 +512,7 @@ impl Framework {
     /// - If any file system router types are provided, configure using
     ///   the above react configuration.
     /// The provided allocator is not stored.
-    pub fn auto(
+    pub(crate) fn auto(
         arena: &Arena,
         resolver: &mut bun_resolver::Resolver,
         file_system_router_types: Vec<FileSystemRouterType>,
@@ -604,7 +545,7 @@ impl Framework {
 
     /// Unopinionated default. Note: was `pub const NONE` —
     /// `ArrayHashMap::new()` is not `const fn`.
-    pub fn none() -> Framework {
+    pub(crate) fn none() -> Framework {
         Framework {
             is_built_in_react: false,
             file_system_router_types: Vec::new(),
@@ -616,7 +557,7 @@ impl Framework {
 
     /// `Framework.clone()` — manual because `ArrayHashMap` exposes a
     /// fallible inherent `clone()` rather than `impl Clone`.
-    pub fn clone(&self) -> Framework {
+    pub(crate) fn clone(&self) -> Framework {
         Framework {
             is_built_in_react: self.is_built_in_react,
             file_system_router_types: self.file_system_router_types.clone(),
@@ -626,7 +567,7 @@ impl Framework {
         }
     }
 
-    pub fn add_react_install_command_note(log: &mut bun_ast::Log) -> crate::Result<()> {
+    pub(crate) fn add_react_install_command_note(log: &mut bun_ast::Log) -> crate::Result<()> {
         let clone_line_text = log.clone_line_text;
         log.add_msg(bun_ast::Msg {
             kind: bun_ast::Kind::Note,
@@ -653,7 +594,7 @@ impl Framework {
     ///
     /// All resolution errors will happen before returning error.ModuleNotFound
     /// Errors written into `r.log`
-    pub fn resolve(
+    pub(crate) fn resolve(
         &self,
         server: &mut bun_resolver::Resolver,
         client: &mut bun_resolver::Resolver,
@@ -837,7 +778,7 @@ impl Framework {
             Some(ServerComponents {
                 separate_ssr_graph: 'brk: {
                     // Intentionally not using a truthiness check
-                    let prop = match get_optional_value(sc, global, b"separateSSRGraph")? {
+                    let prop = match sc.get_optional::<JSValue>(global, "separateSSRGraph")? {
                         Some(p) => p,
                         None => {
                             return Err(global.throw_invalid_arguments(format_args!(
@@ -856,7 +797,7 @@ impl Framework {
                     )));
                 },
                 server_runtime_import: refs.track(
-                    match get_optional_slice(sc, global, b"serverRuntimeImportSource")? {
+                    match sc.get_optional_slice(global, "serverRuntimeImportSource")? {
                         Some(s) => s,
                         None => {
                             return Err(global.throw_invalid_arguments(format_args!(
@@ -866,7 +807,7 @@ impl Framework {
                     },
                 ),
                 server_register_client_reference: if let Some(slice) =
-                    get_optional_slice(sc, global, b"serverRegisterClientReferenceExport")?
+                    sc.get_optional_slice(global, "serverRegisterClientReferenceExport")?
                 {
                     refs.track(slice)
                 } else {
@@ -969,9 +910,12 @@ impl Framework {
                     get_optional_string(fsr_opts, global, b"clientEntryPoint", refs)?;
                 let prefix =
                     get_optional_string(fsr_opts, global, b"prefix", refs)?.unwrap_or(b"/");
-                let ignore_underscores =
-                    get_boolean_strict(fsr_opts, global, b"ignoreUnderscores")?.unwrap_or(false);
-                let layouts = get_boolean_strict(fsr_opts, global, b"layouts")?.unwrap_or(false);
+                let ignore_underscores = fsr_opts
+                    .get_boolean_strict(global, "ignoreUnderscores")?
+                    .unwrap_or(false);
+                let layouts = fsr_opts
+                    .get_boolean_strict(global, "layouts")?
+                    .unwrap_or(false);
 
                 let style = style_from_js(
                     match fsr_opts.get(global, "style")? {
@@ -1094,7 +1038,7 @@ impl Framework {
             built_in_modules,
         };
 
-        if let Some(plugin_array) = get_optional_value(opts, global, b"plugins")? {
+        if let Some(plugin_array) = opts.get_optional::<JSValue>(global, "plugins")? {
             bundler_options.parse_plugin_array(plugin_array, global)?;
         }
 
@@ -1139,7 +1083,7 @@ impl Framework {
         )
     }
 
-    pub fn init_transpiler_with_options<'a>(
+    pub(crate) fn init_transpiler_with_options<'a>(
         &mut self,
         arena: &'a Arena,
         log: &mut bun_ast::Log,
@@ -1179,10 +1123,7 @@ impl Framework {
         };
         out.options.entry_points = Box::default();
         out.options.log = log;
-        out.options.output_format = match mode {
-            Mode::Development => bun_bundler::options::Format::InternalBakeDev,
-            Mode::ProductionDynamic | Mode::ProductionStatic => bun_bundler::options::Format::Esm,
-        };
+        out.options.output_format = mode.output_format();
         out.options.out_extensions = bun_collections::StringHashMap::new();
         out.options.hot_module_reloading = mode == Mode::Development;
         out.options.code_splitting = mode != Mode::Development;
@@ -1299,7 +1240,7 @@ impl Framework {
 }
 
 #[derive(Clone)]
-pub struct FileSystemRouterType {
+pub(crate) struct FileSystemRouterType {
     pub root: &'static [u8],
     pub prefix: &'static [u8],
     pub entry_server: &'static [u8],
@@ -1318,7 +1259,7 @@ pub enum BuiltInModule {
 }
 
 #[derive(Copy, Clone)]
-pub struct ServerComponents {
+pub(crate) struct ServerComponents {
     pub separate_ssr_graph: bool,
     pub server_runtime_import: &'static [u8],
     // pub client_runtime_import: &'static [u8],
@@ -1340,7 +1281,7 @@ impl Default for ServerComponents {
 }
 
 #[derive(Copy, Clone)]
-pub struct ReactFastRefresh {
+pub(crate) struct ReactFastRefresh {
     pub import_source: &'static [u8],
 }
 
@@ -1379,13 +1320,9 @@ fn get_optional_string(
     property: &[u8],
     allocations: &mut StringRefList,
 ) -> JsResult<Option<&'static [u8]>> {
-    let Some(value) = target.get(global, property)? else {
-        return Ok(None);
-    };
-    if value.is_undefined_or_null() {
-        return Ok(None);
-    }
-    Ok(Some(allocations.track(value.to_utf8(global)?)))
+    Ok(target
+        .get_optional_slice(global, property)?
+        .map(|slice| allocations.track(slice)))
 }
 
 // Note: `HmrRuntime` is defined canonically in the parent `bake/mod.rs`
@@ -1473,7 +1410,7 @@ pub(crate) fn add_import_meta_defines(
         b"import.meta.env.MODE",
         DefineData::init_static_string(match mode {
             Mode::Development => &MODE_DEVELOPMENT,
-            Mode::ProductionDynamic | Mode::ProductionStatic => &MODE_PRODUCTION,
+            Mode::ProductionStatic => &MODE_PRODUCTION,
         }),
     )?;
     define.insert(
@@ -1492,7 +1429,7 @@ pub(crate) fn add_import_meta_defines(
 
 /// Stack-allocated structure that is written to from end to start.
 /// Used as a staging area for building pattern strings.
-pub struct PatternBuffer {
+pub(crate) struct PatternBuffer {
     pub(crate) bytes: PathBuffer,
     // On Windows MAX_PATH_BYTES = 32767*3+1 = 98302
     // (> u16::MAX), so u32 is required; u16 would truncate the initial index
@@ -1538,7 +1475,7 @@ impl PatternBuffer {
     }
 }
 
-pub fn print_warning() {
+pub(crate) fn print_warning() {
     // Silence this for the test suite
     if bun_core::env_var::BUN_DEV_SERVER_TEST_RUNNER
         .get()

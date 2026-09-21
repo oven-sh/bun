@@ -37,7 +37,6 @@ bun_core::define_scoped_log!(debug, MySQLQuery);
 // shim still emits `this: &mut JSMySQLQuery` — `&mut T` auto-derefs to `&T`
 // so the impls below compile against either.
 #[derive(bun_ptr::CellRefCounted)]
-#[ref_count(destroy = Self::deinit)]
 pub struct JSMySQLQuery {
     this_value: JsCell<JsRef>,
     // unfortunately we cannot use #ref_count here
@@ -47,10 +46,6 @@ pub struct JSMySQLQuery {
     global_object: BackRef<JSGlobalObject>,
     query: JsCell<MySQLQuery>,
 }
-
-// Intrusive refcount (bun.ptr.RefCount): `ref_()`/`deref()` provided by
-// `#[derive(CellRefCounted)]`; `destroy` routes to `Self::deinit` via the
-// struct-level `#[ref_count(destroy = …)]` attribute.
 
 impl JSMySQLQuery {
     /// Hold a ref on `self` for the guard's lifetime (across re-entrant calls).
@@ -73,18 +68,9 @@ impl JSMySQLQuery {
             .throw_invalid_arguments(format_args!("MySQLQuery cannot be constructed directly")))
     }
 
-    fn deinit(this: *mut Self) {
-        // SAFETY: routed only through `CellRefCounted::destroy` (refcount==0);
-        // `this` is the sole live owner of its `heap::alloc` allocation.
-        unsafe {
-            (*this).query.with_mut(|q| q.cleanup());
-            drop(bun_core::heap::take(this));
-        }
-    }
-
-    pub fn finalize(self: Box<Self>) {
+    pub fn finalize(&self) {
         debug!("MySQLQuery finalize");
-        bun_ptr::finalize_js_box(self, |this| this.this_value.with_mut(|v| v.finalize()));
+        self.this_value.with_mut(|v| v.finalize());
     }
 
     // Reached from JS via `put_host_functions!` in `mysql.rs`.
@@ -159,6 +145,16 @@ impl JSMySQLQuery {
         if !target.is_object() {
             return Err(global_object.throw_invalid_argument_type("run", "query", "Query"));
         }
+        // A connection that failed or closed answers nothing: a query queued on it would hold the
+        // event loop for ever. The pool hears of a close through `onclose` and stops handing the
+        // connection out, except a disposed `Bun.ModuleGraph`'s, which is told nothing.
+        if !connection.is_active() {
+            return Err(global_object.throw_value(mysql_error_to_js(
+                global_object,
+                "Connection closed",
+                AnyMySQLError::Error::ConnectionClosed,
+            )));
+        }
         this.set_target(target);
         if let Err(err) = this.run(connection) {
             if !global_object.has_exception() {
@@ -170,7 +166,7 @@ impl JSMySQLQuery {
             }
             return Err(jsc::JsError::Thrown);
         }
-        connection.enqueue_request(this.as_ctx_ptr());
+        connection.enqueue_request(this.ref_guard());
         Ok(JSValue::UNDEFINED)
     }
 
@@ -279,6 +275,7 @@ impl JSMySQLQuery {
         let event_loop = self.event_loop();
 
         event_loop.run_callback(
+            bun_event_loop::ContextId::NONE,
             function,
             self.global_object(),
             this_value,
@@ -370,6 +367,7 @@ impl JSMySQLQuery {
             return;
         };
         event_loop.run_callback(
+            bun_event_loop::ContextId::NONE,
             function,
             self.global_object(),
             this_value,

@@ -979,6 +979,27 @@ describe("copyFileSync", () => {
     }).toThrow();
   });
 
+  it("throws ENOENT with syscall, path and dest for a destination in a missing directory", async () => {
+    const tempdir = tmpdirTestMkdir();
+    const src = import.meta.path;
+    const dest = join(tempdir, "does-not-exist", "copyFileSync.js");
+    const expected = expect.objectContaining({ code: "ENOENT", syscall: "copyfile", path: src, dest });
+    expect(() => copyFileSync(src, dest)).toThrow(expected);
+    await expect(promisify(fs.copyFile)(src, dest)).rejects.toThrow(expected);
+    await expect(fs.promises.copyFile(src, dest)).rejects.toThrow(expected);
+  });
+
+  // CopyFileW fails with ERROR_BAD_NET_NAME (or ERROR_BAD_NETPATH); neither is
+  // in the Win32→errno table, so this is the UNKNOWN path.
+  it.if(isWindows)("throws for a destination on a nonexistent UNC share", async () => {
+    const src = import.meta.path;
+    const dest = "\\\\localhost\\bun-test-no-such-share$\\copyFileSync.js";
+    const expected = expect.objectContaining({ code: "EUNKNOWN", syscall: "copyfile", errno: -4094, path: src, dest });
+    expect(() => copyFileSync(src, dest)).toThrow(expected);
+    await expect(promisify(fs.copyFile)(src, dest)).rejects.toThrow(expected);
+    await expect(fs.promises.copyFile(src, dest)).rejects.toThrow(expected);
+  });
+
   if (process.platform === "linux") {
     describe("should work when copyFileRange is not available", () => {
       it("on large files", () => {
@@ -1833,6 +1854,55 @@ it.skipIf(isWindows)("promises.readdir({recursive: true}) settles when multiple 
     signalCode: null,
   });
 });
+
+// After the first subtask failed, the walker kept scheduling a subtask for every
+// directory it found and only settled once that frontier drained. Two symlinks
+// back to the root make the frontier 2^41 directories (the kernel follows 40
+// symlinks before ELOOP), so the promise and the callback never settled.
+it.skipIf(isWindows)(
+  "readdir({recursive: true}) settles with the first error while symlink loops are still being walked",
+  async () => {
+    using dir = tempDir("readdir-recursive-loop", {
+      "a/b/keep.txt": "x",
+    });
+    const root = String(dir);
+    // Opening this one with O_DIRECTORY fails with ELOOP at once.
+    fs.symlinkSync(join(root, "bad"), join(root, "bad"));
+    fs.symlinkSync(".", join(root, "loop1"));
+    fs.symlinkSync(".", join(root, "loop2"));
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("fs");
+          const root = ${JSON.stringify(root)};
+          const viaPromise = await fs.promises.readdir(root, { recursive: true }).then(
+            r => "resolved " + r.length,
+            e => "rejected " + e.code,
+          );
+          console.log("promise", viaPromise);
+          const { promise, resolve } = Promise.withResolvers();
+          fs.readdir(root, { recursive: true }, (e, r) => resolve(e ? "rejected " + e.code : "resolved " + r.length));
+          console.log("callback", await promise);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      timeout: 10_000,
+    });
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "promise rejected ELOOP\ncallback rejected ELOOP",
+      exitCode: 0,
+      signalCode: null,
+    });
+  },
+);
 
 describe("readSync", () => {
   it("rejects the read when the length argument detaches the destination buffer during coercion", () => {
@@ -3303,6 +3373,35 @@ it("realpath async", async () => {
 }, 30_000);
 
 describe("stat", () => {
+  it("async calls do not keep a Buffer path alive after they complete", async () => {
+    using dir = tempDir("fs-async-buffer-path", { x: "hello" });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const fs = require("fs");
+        const file = Buffer.from(require("path").join(process.argv[1], "x"));
+        const missing = Buffer.from(require("path").join(process.argv[1], "missing"));
+        for (let i = 0; i < 200; i++) {
+          await fs.promises.stat(Buffer.from(file));
+          await fs.promises.readFile(Buffer.from(file));
+          await fs.promises.writeFile(Buffer.from(file), Buffer.from("hello"));
+          await fs.promises.stat(Buffer.from(missing)).catch(() => {});
+        }
+        Bun.gc(true);
+        console.log(require("bun:jsc").heapStats().objectTypeCounts.Uint8Array);`,
+        String(dir),
+      ],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const live = Number(stdout);
+    expect(Number.isFinite(live)).toBe(true);
+    expect(live).toBeLessThan(200);
+    expect(exitCode).toBe(0);
+  });
+
   it("file metadata is correct", () => {
     const fileStats = statSync(join(import.meta.dir, "fs-stream.js"));
     expect(fileStats.isSymbolicLink()).toBe(false);
@@ -5907,6 +6006,14 @@ it("fs.mkdirSync recursive: false should error when the directory already exists
   expect(() => mkdirSync(import.meta.path, { recursive: false })).toThrowError();
 });
 
+it("fs.statfs on a missing path fails with ENOENT and syscall statfs", async () => {
+  const missing = join(tmpdirTestMkdir(), "does-not-exist");
+  const expected = expect.objectContaining({ code: "ENOENT", syscall: "statfs" });
+  expect(() => statfsSync(missing)).toThrow(expected);
+  await expect(promisify(fs.statfs)(missing)).rejects.toThrow(expected);
+  await expect(fs.promises.statfs(missing)).rejects.toThrow(expected);
+});
+
 it("fs.statfsSync should work", () => {
   const stats = statfsSync(import.meta.path);
   ["type", "bsize", "blocks", "bfree", "bavail", "files", "ffree"].forEach(k => {
@@ -6684,6 +6791,104 @@ it("fs.promises.writeFile keeps the source buffer attached while the write is in
   expect(buf.buffer.detached).toBe(true);
 
   expect(readFileSync(file, "latin1")).toBe("EEEEEEEE");
+});
+
+// A pin stops a detach but not `ArrayBuffer.prototype.resize()`. The pool thread copies the path into
+// its own buffer, so it must read the bytes captured at call time, not the shrunk buffer.
+it("fs.promises.stat reads a Buffer path captured at call time when its resizable ArrayBuffer shrinks in flight", async () => {
+  // The unfixed build segfaults on the pool thread, so this runs in a child process.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        import fs from "node:fs";
+        const encoded = new TextEncoder().encode(process.execPath);
+        let wrong = 0;
+        for (let i = 0; i < 20; i++) {
+          const ab = new ArrayBuffer(encoded.length, { maxByteLength: 1 << 16 });
+          const path = new Uint8Array(ab);
+          path.set(encoded);
+          const pending = fs.promises.stat(path);
+          ab.resize(0);
+          if (!((await pending).size > 0)) wrong++;
+        }
+        console.log("wrong:", wrong);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("wrong: 0\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
+// A sync call reads the path after the option getters ran. It reads the bytes captured at call time
+// when a getter shrinks the buffer.
+it("sync fs calls read a Buffer path captured at call time when an option getter shrinks its resizable ArrayBuffer", async () => {
+  using dir = tempDir("fs-resizable-path", {});
+  // The unfixed build segfaults on the main thread, so this runs in a child process.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        import fs from "node:fs";
+        import path from "node:path";
+        const dir = process.cwd();
+        function resizablePath(p) {
+          const bytes = new TextEncoder().encode(p);
+          const ab = new ArrayBuffer(bytes.length, { maxByteLength: 1 << 16 });
+          new Uint8Array(ab).set(bytes);
+          return ab;
+        }
+
+        const written = path.join(dir, "written.txt");
+        {
+          const ab = resizablePath(written);
+          fs.writeFileSync(new Uint8Array(ab), "sync-write", {
+            get flag() {
+              ab.resize(0);
+              return "w";
+            },
+          });
+          console.log("writeFileSync:", fs.readFileSync(written, "utf8"));
+        }
+        {
+          const ab = resizablePath(written);
+          const text = fs.readFileSync(new DataView(ab), {
+            get encoding() {
+              ab.resize(0);
+              return "utf8";
+            },
+          });
+          console.log("readFileSync:", text);
+        }
+        {
+          const made = path.join(dir, "made");
+          const ab = resizablePath(made);
+          fs.mkdirSync(ab, {
+            get recursive() {
+              ab.resize(0);
+              return true;
+            },
+          });
+          console.log("mkdirSync:", fs.statSync(made).isDirectory());
+        }
+      `,
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("writeFileSync: sync-write\nreadFileSync: sync-write\nmkdirSync: true\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });
 
 it.if(isPosix)("realpathSync reports ENAMETOOLONG when cwd plus the path exceeds the system path limit", async () => {

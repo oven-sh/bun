@@ -149,7 +149,9 @@ impl WebSocketProxyTunnel {
             wrapper: OnceCell::new(),
             socket,
             write_buffer: JsCell::new(StreamBuffer::default()),
-            sni_hostname: Some(Box::<[u8]>::from(sni_hostname)),
+            sni_hostname: Some(Box::<[u8]>::from(bun_http::strip_ipv6_brackets(
+                sni_hostname,
+            ))),
             reject_unauthorized,
         })
     }
@@ -486,6 +488,26 @@ impl WebSocketProxyTunnel {
     /// Check if the tunnel has backpressure
     pub(crate) fn has_backpressure(&self) -> bool {
         self.write_buffer.get().is_not_empty()
+    }
+
+    pub(crate) fn buffered_amount(&self) -> usize {
+        self.write_buffer.get().size()
+    }
+
+    pub(crate) fn pause_stream(&self) -> bool {
+        match &self.socket {
+            SocketUnion::Tcp(s) => s.pause_stream(),
+            SocketUnion::Ssl(s) => s.pause_stream(),
+            SocketUnion::None => false,
+        }
+    }
+
+    pub(crate) fn resume_stream(&self) -> bool {
+        match &self.socket {
+            SocketUnion::Tcp(s) => s.resume_stream(),
+            SocketUnion::Ssl(s) => s.resume_stream(),
+            SocketUnion::None => false,
+        }
     }
 }
 

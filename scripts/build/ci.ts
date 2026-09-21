@@ -750,7 +750,9 @@ export function orderFileContext(): OrderFileContext {
     branch: process.env.BUILDKITE_BRANCH,
     buildNumber: Number(process.env.BUILDKITE_BUILD_NUMBER) || undefined,
     commitMessage: process.env.BUILDKITE_MESSAGE ?? "",
-    pullRequest: pr !== undefined && pr !== "" && pr !== "false",
+    // TEMPORARY, REVERT BEFORE MERGE: treat this pull request's builds like main's, so they inherit or trace a
+    // symbol ordering file and the traced two-link graph runs in CI.
+    pullRequest: false && pr !== undefined && pr !== "" && pr !== "false",
   };
 }
 

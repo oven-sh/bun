@@ -293,7 +293,7 @@ extern "C" fn select_alpn_callback(
 // applied in `internal_flush`.
 #[repr(C)]
 #[derive(bun_ptr::RefCounted)]
-pub struct NewSocket<const SSL: bool> {
+pub(crate) struct NewSocket<const SSL: bool> {
     pub(crate) socket: Cell<uws::NewSocketHandler<SSL>>,
     /// `SSL_CTX` this client connection was opened with. Server-accepted
     /// sockets and plain TCP leave this `None` (the Listener / SecureContext
@@ -471,7 +471,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     // ─────────────────────────────────────────────────────────────────────────
 
     // Intrusive refcount API.
-    pub fn ref_(&self) {
+    pub(crate) fn ref_(&self) {
         // SAFETY: `self` is live; `RefCount::ref_` only reads/writes the
         // embedded `ref_count` Cell (interior-mutable), so `&self`→`*mut`
         // is sound for that access.
@@ -480,7 +480,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     // R-2: takes `&self` — every mutated field is `UnsafeCell`-backed, so the
     // `*mut Self` formed for `RefCount::deref` (and `Drop`) writes only
     // through interior-mutable storage.
-    pub fn deref(&self) {
+    pub(crate) fn deref(&self) {
         // SAFETY: `self` is live; if count hits 0, `RefCounted::destructor`
         // (→ `Drop`) runs and `self` is not used after.
         unsafe { bun_ptr::RefCount::<Self>::deref(self.as_ctx_ptr()) };
@@ -490,7 +490,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     // `#[bun_jsc::JsClass]` can't express the per-monomorphisation symbol
     // dispatch, so these hand-roll the `if (ssl) js_TLSSocket else js_TCPSocket`
     // split and route through the codegen'd safe wrappers.
-    pub fn to_js(&self, global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn to_js(&self, global: &JSGlobalObject) -> JSValue {
         jsc::mark_binding!();
         // `self` is a heap-allocated `NewSocket` (every caller goes through
         // `NewSocket::new` → `heap::alloc`); ownership is adopted by the C++
@@ -2093,7 +2093,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`.
-    pub fn on_close(
+    pub(crate) fn on_close(
         this: bun_ptr::ThisPtr<Self>,
         socket: SocketHandler<SSL>,
         err: c_int,
@@ -2387,7 +2387,11 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn write(this: &Self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn write(
+        this: &Self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         jsc::mark_binding!();
 
         if this.socket.get().is_detached() {
@@ -3105,7 +3109,11 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn flush(this: &Self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn flush(
+        this: &Self,
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         jsc::mark_binding!();
         // `end()` → `internal_flush` → `mark_inactive` → `close_and_detach(Normal)`
         // detaches `this.socket` and, for TLS, defers the raw close until the
@@ -3170,7 +3178,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn close(
+    pub(crate) fn close(
         this: &Self,
         global: &JSGlobalObject,
         _callframe: &CallFrame,
@@ -3280,7 +3288,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(JSValue::UNDEFINED)
     }
 
-    pub fn finalize(&self) {
+    pub(crate) fn finalize(&self) {
         log!("finalize() {}", core::ptr::from_ref(self) as usize);
         self.update_flags(|f| f.insert(Flags::FINALIZING));
         self.this_value.with_mut(|r| r.finalize());
@@ -4016,8 +4024,8 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 }
 
-pub type TCPSocket = NewSocket<false>;
-pub type TLSSocket = NewSocket<true>;
+pub(crate) type TCPSocket = NewSocket<false>;
+pub(crate) type TLSSocket = NewSocket<true>;
 
 /// Codegen accessors for `JSTCPSocket` / `JSTLSSocket` (emitted by
 /// `src/codegen/generate-classes.ts`). The const-generic `NewSocket<SSL>`
@@ -4054,7 +4062,7 @@ impl_socket_js_class!(TLSSocket, js_TLSSocket);
 // NativeCallbacks — direct callbacks on HTTP2 when available
 // ──────────────────────────────────────────────────────────────────────────
 
-pub enum NativeCallbacks {
+pub(crate) enum NativeCallbacks {
     H2(RefPtr<H2FrameParser>),
     None,
 }
@@ -4561,7 +4569,7 @@ impl DuplexUpgradeContext {
 /// node:tls's `tls.connect({ socket })` entry point: same upgrade as the
 /// public `upgradeTLS`, but hostname policy stays with node's JS layer.
 #[bun_jsc::host_fn]
-pub fn js_upgrade_tls_deferred(
+pub(crate) fn js_upgrade_tls_deferred(
     global: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -4577,7 +4585,7 @@ pub fn js_upgrade_tls_deferred(
 }
 
 #[bun_jsc::host_fn]
-pub fn js_upgrade_duplex_to_tls(
+pub(crate) fn js_upgrade_duplex_to_tls(
     global: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -4855,7 +4863,7 @@ pub fn js_upgrade_duplex_to_tls(
 }
 
 #[bun_jsc::host_fn]
-pub fn js_is_named_pipe_socket(
+pub(crate) fn js_is_named_pipe_socket(
     global: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -4878,7 +4886,10 @@ pub fn js_is_named_pipe_socket(
 }
 
 #[bun_jsc::host_fn]
-pub fn js_get_buffered_amount(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn js_get_buffered_amount(
+    global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
     jsc::mark_binding!();
 
     let [socket, _, _] = callframe.arguments_as_array::<3>();
@@ -4902,7 +4913,10 @@ pub fn js_get_buffered_amount(global: &JSGlobalObject, callframe: &CallFrame) ->
 }
 
 #[bun_jsc::host_fn]
-pub fn js_create_socket_pair(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn js_create_socket_pair(
+    global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
     jsc::mark_binding!();
 
     #[cfg(windows)]
@@ -4932,7 +4946,10 @@ pub fn js_create_socket_pair(global: &JSGlobalObject, _frame: &CallFrame) -> JsR
 }
 
 #[bun_jsc::host_fn]
-pub fn js_set_socket_options(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn js_set_socket_options(
+    global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
     let arguments = callframe.arguments();
 
     if arguments.len() < 3 {
@@ -4995,7 +5012,7 @@ pub fn js_set_socket_options(global: &JSGlobalObject, callframe: &CallFrame) -> 
     Ok(JSValue::UNDEFINED)
 }
 
-pub mod testing_apis {
+pub(crate) mod testing_apis {
     use super::*;
 
     #[bun_jsc::host_fn]
@@ -5253,4 +5270,4 @@ pub mod testing_apis {
         None
     }
 }
-pub use testing_apis as testing_ap_is;
+pub(crate) use testing_apis as testing_ap_is;

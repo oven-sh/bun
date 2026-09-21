@@ -47,7 +47,7 @@ fn wrap<const SSL: bool>(s: *mut us_socket_t) -> NewSocketHandler<SSL> {
 /// Every handler returns the exception it left pending and never reports it;
 /// [`RawPtrHandler`] — the one trampoline from uSockets into these — folds it
 /// ([`fold`]).
-pub trait RawSocketEvents<const SSL: bool>: Sized {
+pub(crate) trait RawSocketEvents<const SSL: bool>: Sized {
     const HAS_ON_OPEN: bool = false;
 
     fn on_open(_this: ThisPtr<Self>, _s: NewSocketHandler<SSL>) -> JsResult<()> {
@@ -93,7 +93,7 @@ pub trait RawSocketEvents<const SSL: bool>: Sized {
     }
 }
 
-pub struct RawPtrHandler<T, const SSL: bool>(core::marker::PhantomData<T>);
+pub(crate) struct RawPtrHandler<T, const SSL: bool>(core::marker::PhantomData<T>);
 
 impl<T, const SSL: bool> VHandler for RawPtrHandler<T, SSL>
 where
@@ -551,7 +551,7 @@ trait NsSocketEvents<Owner, const SSL: bool> {
     }
 }
 
-pub struct NsHandler<Owner, H, const SSL: bool>(core::marker::PhantomData<(Owner, H)>);
+pub(crate) struct NsHandler<Owner, H, const SSL: bool>(core::marker::PhantomData<(Owner, H)>);
 
 impl<Owner, H, const SSL: bool> VHandler for NsHandler<Owner, H, SSL>
 where
@@ -644,7 +644,7 @@ where
 // This adapter just lifts the word out of the slot, so the `*anyopaque` here
 // is intentional and irreducible — it IS the tagged-pointer encoding, not a
 // type we forgot to name.
-pub struct HTTPClient<const SSL: bool>;
+pub(crate) struct HTTPClient<const SSL: bool>;
 
 // Each event is written out by hand; `HAS_ON_*` is simply left unset
 // for events the upstream `Handler<SSL>` doesn't define.
@@ -748,7 +748,7 @@ pub(crate) type Valkey<const SSL: bool> =
 // Ext is `*IPC.SendQueue` for both child-side `process.send` and parent-side
 // `Bun.spawn({ipc})`. The IPC handlers are free functions, not
 // methods on SendQueue, so we adapt manually here.
-pub struct SpawnIPC;
+pub(crate) struct SpawnIPC;
 
 use IPC::IPCHandlers::PosixSocket as IpcH;
 type IpcS = NewSocketHandler<false>;

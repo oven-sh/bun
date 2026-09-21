@@ -747,6 +747,16 @@ pub unsafe extern "C" fn Bun__VmHandle__refKeepAlive(
     unsafe { VmHandle::borrow_ref(r) }.add_keep_alive(kind, delta.signum());
 }
 
+/// Any thread: wake the VM's loop (no-op once closed).
+///
+/// # Safety
+/// `r` is a live reference its holder keeps for the duration of the call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__VmHandle__wake(r: *const Shared) {
+    // SAFETY: fn contract.
+    unsafe { VmHandle::borrow_ref(r) }.wake()
+}
+
 /// Any thread: Node's `can_call_into_js()`.
 ///
 /// # Safety

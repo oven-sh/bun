@@ -18,7 +18,7 @@ use bun_jsc::{GregorianDateTime, JSGlobalObject, JsResult};
 
 /// Time zone for `CronExpression::next`.
 #[derive(Clone, Copy)]
-pub enum CronTz {
+pub(crate) enum CronTz {
     /// The process's local time zone (default).
     Local,
     /// A resolved IANA time-zone ID from `JSGlobalObject::resolve_time_zone_id`.
@@ -52,7 +52,7 @@ impl CronTz {
 }
 
 #[derive(Clone, Copy)]
-pub struct CronExpression {
+pub(crate) struct CronExpression {
     pub(crate) minutes: u64,               // bits 0-59
     pub(crate) hours: u32,                 // bits 0-23
     pub(crate) days: u32,                  // bits 1-31

@@ -1781,21 +1781,6 @@ impl FmtTuple for fmt::Arguments<'_> {
         1
     }
 }
-impl<T: fmt::Display> FmtTuple for &[T] {
-    fn write_nth(&self, idx: usize, f: &mut dyn fmt::Write) -> Result<bool, fmt::Error> {
-        match self.get(idx) {
-            Some(v) => {
-                write!(f, "{}", v)?;
-                Ok(true)
-            }
-            None => Ok(false),
-        }
-    }
-    #[inline]
-    fn len(&self) -> usize {
-        (*self).len()
-    }
-}
 impl<T: fmt::Display, const N: usize> FmtTuple for &[T; N] {
     fn write_nth(&self, idx: usize, f: &mut dyn fmt::Write) -> Result<bool, fmt::Error> {
         match self.get(idx) {

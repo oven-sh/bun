@@ -581,7 +581,7 @@ static JSObject* installedPrepareStackTrace(JSC::VM& vm, Zig::GlobalObject*& glo
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!globalObject) {
         // node:vm will use a different JSGlobalObject
-        globalObject = defaultGlobalObject();
+        globalObject = defaultGlobalObject(vm);
         if (globalObject->isInsideErrorPrepareStackTraceCallback)
             return nullptr;
         auto* errorConstructor = lexicalGlobalObject->m_errorStructure.constructor(lexicalGlobalObject);
@@ -660,7 +660,7 @@ WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& sta
 
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     // The frames only: JavaScriptCore prepends the error's name and message when the stack is read.
-    WTF::String result = Bun::formatStackTrace(vm, defaultGlobalObject(), nullptr, emptyString(), emptyString(), line, column, sourceURL, stackTrace, nullptr);
+    WTF::String result = Bun::formatStackTrace(vm, defaultGlobalObject(vm), nullptr, emptyString(), emptyString(), line, column, sourceURL, stackTrace, nullptr);
     if (scope.exception()) {
         // The onComputeErrorInfo hook cannot propagate a throw.
         (void)scope.tryClearException();

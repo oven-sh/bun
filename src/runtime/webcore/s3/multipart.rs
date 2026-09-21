@@ -260,6 +260,15 @@ pub(crate) struct UploadPartResult {
     pub(crate) etag: Box<[u8]>,
 }
 
+/// Which bytes of `buffered` a new part takes.
+#[derive(Clone, Copy)]
+enum PartBytes {
+    /// All of them: the part takes the buffer's allocation.
+    Whole,
+    /// A copy of the first `usize` bytes.
+    First(usize),
+}
+
 impl UploadPart {
     /// Release the bytes. A part that has sent them does not need them again.
     fn free_data(&self) {
@@ -463,8 +472,8 @@ impl MultiPartUpload {
     }
 
     /// This is the only place we allocate the queue or the parts, this is responsible for the flow of parts and the max allowed concurrency
-    /// `take_data` runs only when the queue has a slot, and the part owns the bytes it returns.
-    fn get_create_part(&self, take_data: impl FnOnce() -> Vec<u8>) -> Option<&UploadPart> {
+    /// The bytes leave `buffered` only when the queue has a slot, and the part owns them.
+    fn get_create_part(&self, bytes: PartBytes) -> Option<&UploadPart> {
         let mut available = self.available.get();
         let Some(index) = available.find_first_set() else {
             // this means that the queue is full and we cannot flush it
@@ -502,7 +511,11 @@ impl MultiPartUpload {
 
         let queue = self.queue.get().as_deref().expect("queue allocated above");
         let queue_item = &queue[index];
-        queue_item.data.set(Some(Rc::new(take_data())));
+        let data = match bytes {
+            PartBytes::Whole => self.buffered.take().list,
+            PartBytes::First(len) => self.buffered.get().slice()[..len].to_vec(),
+        };
+        queue_item.data.set(Some(Rc::new(data)));
         queue_item.part_number.set(part_number);
         queue_item.index.set(index as u8); // @truncate
         queue_item.retry.set(self.options.get().retry);
@@ -858,9 +871,9 @@ impl MultiPartUpload {
         )
     }
 
-    /// `Ok(false)`: the queue is full and `take_data` did not run. On `Err` a part has the bytes.
-    fn enqueue_part(&self, take_data: impl FnOnce() -> Vec<u8>) -> bun_jsc::JsResult<bool> {
-        let Some(part) = self.get_create_part(take_data) else {
+    /// `Ok(false)`: the queue is full and `buffered` is untouched. On `Err` a part has the bytes.
+    fn enqueue_part(&self, bytes: PartBytes) -> bun_jsc::JsResult<bool> {
+        let Some(part) = self.get_create_part(bytes) else {
             return Ok(false);
         };
 
@@ -925,7 +938,7 @@ impl MultiPartUpload {
             // if is one big chunk we can pass ownership and avoid dupe
             if self.buffered.get().cursor == 0 && self.buffered.get().size() == len {
                 // we dont care about the result because we are sending everything
-                if self.enqueue_part(|| self.buffered.take().list)? {
+                if self.enqueue_part(PartBytes::Whole)? {
                     scoped_log!(
                         S3MultiPartUpload,
                         "processMultiPart {} {} full buffer enqueued",
@@ -943,7 +956,7 @@ impl MultiPartUpload {
                 return Ok(());
             }
 
-            if self.enqueue_part(|| self.buffered.get().slice()[..len].to_vec())? {
+            if self.enqueue_part(PartBytes::First(len))? {
                 scoped_log!(
                     S3MultiPartUpload,
                     "processMultiPart {} {} slice enqueued",

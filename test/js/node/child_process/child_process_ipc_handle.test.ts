@@ -731,6 +731,117 @@ process.on('disconnect', () => process.exit(sawQueued ? 0 : 3));
     },
   );
 
+  // node holds a disconnect() back from the moment it submits a handle until that handle is acked,
+  // even while the handle is still unwritten behind an earlier write, and every callback gets null.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L861-L866
+  test.concurrent(
+    "disconnect() flushes a handle still queued behind an unfinished write, and the messages behind it",
+    async () => {
+      using dir = tempDir("ipc-handle-queued-disconnect", {
+        "parent.js": `
+const { fork } = require('node:child_process');
+const { once } = require('node:events');
+const net = require('node:net');
+const { text } = require('node:stream/consumers');
+const child = fork('child.js', { stdio: ['ignore', 'pipe', 'inherit', 'ipc'] });
+const childDone = Promise.all([text(child.stdout), once(child, 'exit')]);
+const server = net.createServer();
+server.listen(0, '127.0.0.1', () => {
+  net.connect(server.address().port, '127.0.0.1', async function () {
+    const callbacks = { big: 'never called', handle: 'never called', after: 'never called' };
+    // Larger than the IPC socket buffer, so the handle behind it is still unwritten when disconnect() runs.
+    const pad = Buffer.alloc(1 << 21, 'd').toString();
+    child.send({ pad }, err => { callbacks.big = err; });
+    child.send('handle', this, err => { callbacks.handle = err; });
+    child.send('after', err => { callbacks.after = err; });
+    child.disconnect();
+    const connectedAfterDisconnect = child.connected;
+    const [childReceived] = await childDone;
+    console.log(JSON.stringify({ callbacks, connectedAfterDisconnect, childReceived: JSON.parse(childReceived) }));
+    server.close();
+    process.exit(0);
+  }).on('error', () => {});
+});
+`,
+        "child.js": `
+const received = [];
+process.on('message', (m, h) => {
+  received.push(typeof m === 'string' ? (h ? m + '+handle' : m) : 'big');
+  if (h) h.destroy();
+});
+process.on('disconnect', () => console.log(JSON.stringify(received)));
+`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "parent.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+        out: {
+          callbacks: { big: null, handle: null, after: null },
+          connectedAfterDisconnect: false,
+          childReceived: ["big", "handle+handle", "after"],
+        },
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // The same from the child: process.disconnect() with a server still queued behind a large message.
+  test.concurrent(
+    "process.disconnect() flushes a handle still queued behind an unfinished write, and the messages behind it",
+    async () => {
+      using dir = tempDir("ipc-handle-queued-child-disconnect", {
+        "parent.js": `
+const { fork } = require('node:child_process');
+const child = fork('child.js', { stdio: ['ignore', 'inherit', 'pipe', 'ipc'] });
+const got = [];
+let childReport = '';
+child.stderr.on('data', d => { childReport += d; });
+child.on('message', (m, h) => { got.push(typeof m === 'string' ? (h ? 'handle:' + m : m) : 'big'); if (h) h.close(); });
+child.on('disconnect', () => got.push('disconnect'));
+child.on('close', code => console.log(JSON.stringify({ got, code, child: JSON.parse(childReport) })));
+`,
+        "child.js": `
+const net = require('node:net');
+const server = net.createServer().listen(0, '127.0.0.1', () => {
+  const callbacks = { big: 'never called', handle: 'never called', after: 'never called' };
+  // Larger than the IPC socket buffer, so the server behind it is still unwritten when disconnect() runs.
+  const pad = Buffer.alloc(1 << 21, 'd').toString();
+  process.send({ pad }, err => { callbacks.big = err; });
+  process.send('srv', server, err => { callbacks.handle = err; });
+  process.send('after', err => { callbacks.after = err; });
+  process.disconnect();
+  const connectedAfterDisconnect = process.connected;
+  process.on('disconnect', () => { process.stderr.write(JSON.stringify({ callbacks, connectedAfterDisconnect })); server.close(); });
+});
+`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "parent.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+        out: {
+          got: ["big", "handle:srv", "after", "disconnect"],
+          code: 0,
+          child: { callbacks: { big: null, handle: null, after: null }, connectedAfterDisconnect: false },
+        },
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
+
   // The child sends a server and disconnects at once. node: process.connected drops immediately, a
   // second disconnect() errors, and the parent receives the server, then the message queued behind
   // it (the child only sends it once the handle is acked), then 'disconnect'. The parent reports on

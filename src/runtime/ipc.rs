@@ -1267,12 +1267,11 @@ impl SendQueue {
         self.schedule_deferred();
     }
 
-    /// User disconnect(): reports disconnected now but, like node, closes only once a handle awaiting its ack and the queue behind it have gone out.
+    /// User disconnect(): reports disconnected now but, like node, closes only once a handle that is queued or awaiting its ack, and the queue behind it, have gone out.
     pub fn disconnect(&self) {
-        if self.socket_is_open()
-            && !self.pending_close.get()
-            && self.waiting_for_ack.get().is_some()
-        {
+        let handle_outstanding = self.waiting_for_ack.get().is_some()
+            || self.queue.get().iter().any(|item| item.handle.is_some());
+        if self.socket_is_open() && !self.pending_close.get() && handle_outstanding {
             self.close_after_flush.set(true);
             return;
         }

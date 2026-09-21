@@ -815,16 +815,11 @@ where
         let head_len = response.bytes_read;
         let is_101 = response.status_code == 101;
 
-        // With bytes behind the 101: a ref that keeps the C++ WebSocket alive
-        // whatever the `open` listeners and their microtasks do to it.
-        let overflow_owner = this
-            .cpp_websocket()
-            .filter(|_| is_101 && full.len() > head_len)
-            .map(|ws| CppWebSocketRef::new(&ws));
+        let vm = bun_jsc::virtual_machine::VirtualMachine::get();
+        let overflow_owner;
         {
             // 101: one scope across 'upgrade'+'open' so microtasks drain after open.
-            let _scope = is_101
-                .then(|| bun_jsc::virtual_machine::VirtualMachine::get().enter_event_loop_scope());
+            let _scope = is_101.then(|| vm.enter_event_loop_scope());
 
             if let Some(ws) = this.cpp_websocket() {
                 Self::dispatch_handshake(
@@ -836,11 +831,25 @@ where
                     return;
                 }
             }
+            // With bytes behind the 101, keep the C++ WebSocket alive whatever the
+            // `open` listeners and their microtasks do to it. Taken after 'upgrade':
+            // C++ has one slot, and a listener that spins the event loop re-enters
+            // this function.
+            overflow_owner = this
+                .cpp_websocket()
+                .filter(|_| is_101 && full.len() > head_len)
+                .map(|ws| CppWebSocketRef::new(&ws));
             Self::process_response(this, response, &full[head_len..]);
         }
-        // The scope above has drained the microtasks of `open`: the connected
-        // client now parses those frames, as it parses the frames of a later read.
+        // The connected client parses those bytes after the microtasks of `open`,
+        // like a later read. Under a nested event-loop spin (`expect().resolves`,
+        // a `Bun.build` plugin) the scope above was not the outermost and did not
+        // drain them.
         if let Some(ws) = overflow_owner {
+            let event_loop = vm.event_loop_mut();
+            if event_loop.entered_event_loop_count > 0 {
+                let _ = event_loop.drain_microtasks();
+            }
             ws.deliver_initial_data();
         }
     }

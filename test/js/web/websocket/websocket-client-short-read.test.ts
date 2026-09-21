@@ -358,16 +358,18 @@ describe("WebSocket frames in the same read as the 101", () => {
 
   // A raw peer that answers the upgrade with the 101 response and `glued` in one
   // write, so the client gets both from one read. `peer()` is the accepted socket.
-  function rawServer(
-    secure: boolean,
-    glued: Uint8Array,
-    afterHandshake?: (socket: Socket<{ request: string }>) => void,
-  ) {
+  function rawServer(options: {
+    glued: Uint8Array;
+    secure?: boolean;
+    // Sends the start of the status line in a write of its own first, so the client buffers it.
+    splitHead?: boolean;
+    afterHandshake?: (socket: Socket<{ request: string }>) => void;
+  }) {
     let accepted: Socket<{ request: string }> | undefined;
     const server = Bun.listen<{ request: string }>({
       hostname: "127.0.0.1",
       port: 0,
-      tls: secure ? tls : undefined,
+      tls: options.secure ? tls : undefined,
       socket: {
         open(socket) {
           socket.data = { request: "" };
@@ -387,14 +389,22 @@ describe("WebSocket frames in the same read as the 101", () => {
             "Connection: Upgrade\r\n" +
             `Sec-WebSocket-Accept: ${hasher.digest("base64")}\r\n` +
             "\r\n";
-          socket.write(Buffer.concat([Buffer.from(head), glued]));
+          const respond = (from: number) => {
+            socket.write(Buffer.concat([Buffer.from(head.slice(from)), options.glued]));
+            socket.flush();
+            options.afterHandshake?.(socket);
+          };
+          if (!options.splitHead) return respond(0);
+          const first = "HTTP/1.1 101 ";
+          socket.write(first);
           socket.flush();
-          afterHandshake?.(socket);
+          // The client shows no sign of having read `first`. 50 ms puts the rest in a later read.
+          setTimeout(respond, 50, first.length);
         },
       },
     });
     return {
-      url: `${secure ? "wss" : "ws"}://127.0.0.1:${server.port}`,
+      url: `${options.secure ? "wss" : "ws"}://127.0.0.1:${server.port}`,
       peer: () => accepted!,
       [Symbol.dispose]: () => server.stop(true),
     };
@@ -414,7 +424,10 @@ describe("WebSocket frames in the same read as the 101", () => {
     // "split" sends the same frames once the client has dispatched `open`, so a later read brings them.
     test.each(["glued", "split"])("%s: open, its microtasks, then each message", async segmentation => {
       const frames = Buffer.concat([textFrame("a"), binaryFrame("b")]);
-      using server = rawServer(protocol === "wss", segmentation === "glued" ? frames : new Uint8Array());
+      using server = rawServer({
+        secure: protocol === "wss",
+        glued: segmentation === "glued" ? frames : new Uint8Array(),
+      });
 
       const order: string[] = [];
       const opened = Promise.withResolvers<void>();
@@ -462,7 +475,7 @@ describe("WebSocket frames in the same read as the 101", () => {
   });
 
   test("the ws package: code that awaits 'open' gets the message that came with the 101", async () => {
-    using server = rawServer(false, textFrame("greeting"));
+    using server = rawServer({ glued: textFrame("greeting") });
 
     const order: string[] = [];
     const received = Promise.withResolvers<void>();
@@ -525,7 +538,7 @@ describe("WebSocket frames in the same read as the 101", () => {
   });
 
   test("an open listener that spins the event loop gets them ahead of the frames it read meanwhile", async () => {
-    using server = rawServer(false, textFrame("with the 101"));
+    using server = rawServer({ glued: textFrame("with the 101") });
 
     const order: string[] = [];
     const opened = Promise.withResolvers<void>();
@@ -554,10 +567,91 @@ describe("WebSocket frames in the same read as the 101", () => {
     }
   });
 
+  // A callback that waits synchronously ticks the event loop below its own event-loop scope. A
+  // socket callback in there is not the outermost scope, so its exit drains no microtasks.
+  test.each(["glued", "split"])(
+    "%s, while a callback waits synchronously: open, its microtasks, then the message",
+    async segmentation => {
+      using server = rawServer({ glued: segmentation === "glued" ? textFrame("a") : new Uint8Array() });
+
+      const order: string[] = [];
+      const received = Promise.withResolvers<void>();
+      const waited = Promise.withResolvers<void>();
+      setImmediate(() => {
+        const ws = new globalThis.WebSocket(server.url);
+        rejectOnFailure(ws, received);
+        ws.addEventListener("open", () => {
+          order.push("open");
+          queueMicrotask(() => order.push("microtask from open"));
+          if (segmentation === "split") {
+            server.peer().write(textFrame("a"));
+            server.peer().flush();
+          }
+        });
+        ws.addEventListener("message", event => {
+          order.push(`message ${event.data}`);
+          received.resolve();
+        });
+        try {
+          // The connection opens while this ticks the event loop.
+          expect(received.promise).resolves.toBeUndefined();
+          waited.resolve();
+        } catch (error) {
+          waited.reject(error);
+        } finally {
+          ws.close();
+        }
+      });
+
+      await waited.promise;
+      expect(order).toEqual(["open", "microtask from open", "message a"]);
+    },
+  );
+
+  test("an 'upgrade' listener of the ws package that spins the event loop while a later frame arrives", async () => {
+    // With the head split over two reads, the read that the listener lets in parses the same 101
+    // again and completes the connection below the listener.
+    using server = rawServer({ glued: textFrame("with the 101"), splitHead: true });
+
+    const order: string[] = [];
+    const laterFrameRead = Promise.withResolvers<void>();
+    const upgradeReturned = Promise.withResolvers<void>();
+    const ws = new WebSocket(server.url);
+    ws.on("upgrade", () => {
+      order.push("upgrade");
+      server.peer().write(textFrame("after the 101"));
+      server.peer().flush();
+      try {
+        expect(laterFrameRead.promise).resolves.toBeUndefined();
+        order.push("upgrade returns");
+        upgradeReturned.resolve();
+      } catch (error) {
+        upgradeReturned.reject(error);
+      }
+    });
+    ws.on("open", () => order.push("open"));
+    ws.on("message", data => {
+      order.push(`message ${data}`);
+      if (String(data) === "after the 101") laterFrameRead.resolve();
+    });
+    ws.on("error", laterFrameRead.reject);
+    ws.on("close", code => laterFrameRead.reject(new Error(`closed: ${code}`)));
+
+    try {
+      await upgradeReturned.promise;
+      expect(order).toEqual(["upgrade", "open", "message with the 101", "message after the 101", "upgrade returns"]);
+    } finally {
+      ws.close();
+    }
+  });
+
   test("a peer that ends the connection right behind them still gets them delivered", async () => {
     // The 101, a message, a Close frame, then FIN: the client can see the end of the stream in
     // the same poll as the data.
-    using server = rawServer(false, Buffer.concat([textFrame("last words"), closeFrame(1000)]), socket => socket.end());
+    using server = rawServer({
+      glued: Buffer.concat([textFrame("last words"), closeFrame(1000)]),
+      afterHandshake: socket => socket.end(),
+    });
 
     const events: string[] = [];
     const closed = Promise.withResolvers<void>();

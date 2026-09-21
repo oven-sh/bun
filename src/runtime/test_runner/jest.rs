@@ -12,7 +12,7 @@ use bun_jsc::{
 };
 use crate::timer::ElTimespec;
 
-pub use super::bun_test;
+pub(crate) use super::bun_test;
 use super::expect::{Expect, ExpectTypeOf};
 use super::scope_functions::{create_bound, Mode as ScopeKind};
 use super::snapshot::Snapshots;
@@ -27,7 +27,7 @@ struct RepeatInfo {
 }
 
 #[derive(Default)]
-pub struct CurrentFile {
+pub(crate) struct CurrentFile {
     title: Box<[u8]>,
     prefix: Box<[u8]>,
     repeat_info: RepeatInfo,
@@ -109,7 +109,7 @@ impl CurrentFile {
     }
 }
 
-pub struct TestRunner<'a> {
+pub(crate) struct TestRunner<'a> {
     pub(crate) current_file: CurrentFile,
     pub(crate) files: FileList,
     pub(crate) index: FileMap,
@@ -259,7 +259,7 @@ impl<'a> TestRunner<'a> {
 use crate::timer::EventLoopTimerState as TimerState;
 
 #[derive(Default, Clone, Copy)]
-pub struct Summary {
+pub(crate) struct Summary {
     pub(crate) pass: u32,
     pub(crate) expectations: u32,
     pub(crate) skip: u32,
@@ -280,7 +280,9 @@ pub(crate) struct GetOrPutFileResult {
     pub(crate) file_id: FileId,
 }
 
-pub struct File {
+pub(crate) struct File {
+    // Read through `items_source()`, the column accessor `multi_array_columns!` generates.
+    #[allow(dead_code)]
     pub source: bun_ast::Source,
 }
 
@@ -297,7 +299,7 @@ bun_collections::multi_array_columns! {
 pub(crate) type FileMap = ArrayHashMap<&'static [u8], FileId>;
 
 #[allow(non_snake_case)]
-pub mod Jest {
+pub(crate) mod Jest {
     use super::*;
 
     // JS-VM-thread-only singleton; RacyCell

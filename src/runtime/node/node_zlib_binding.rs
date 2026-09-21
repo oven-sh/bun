@@ -16,7 +16,6 @@ use bun_jsc::{
     WorkPoolTask,
 };
 use bun_threading::work_pool::WorkPool;
-use bun_zlib;
 
 bun_output::declare_scope!(zlib, hidden);
 
@@ -31,7 +30,7 @@ bun_output::declare_scope!(zlib, hidden);
 pub(crate) struct CompressionStream<T>(PhantomData<T>);
 
 #[derive(Default)]
-pub struct CountedKeepAlive {
+pub(crate) struct CountedKeepAlive {
     pub(crate) keep_alive: KeepAlive,
     pub(crate) ref_count: u32,
 }
@@ -46,7 +45,7 @@ impl Drop for CountedKeepAlive {
 /// Kept as raw `*const c_char` (not `&'static str`) because zlib (`z_stream.msg`)
 /// and zstd (`ZSTD_getErrorString`) hand back runtime C pointers.
 #[derive(Clone, Copy)]
-pub struct Error {
+pub(crate) struct Error {
     pub(crate) msg: *const c_char,
     pub(crate) err: c_int,
     pub(crate) code: *const c_char,
@@ -887,7 +886,7 @@ macro_rules! __compression_stream_mixin_reexports {
         impl $native {
             // R-2: `this: &Self` — see CompressionStreamImpl note above.
             #[inline]
-            pub fn write(
+            pub(crate) fn write(
                 this: &Self,
                 global: &::bun_jsc::JSGlobalObject,
                 frame: &::bun_jsc::CallFrame,
@@ -897,7 +896,7 @@ macro_rules! __compression_stream_mixin_reexports {
                 )
             }
             #[inline]
-            pub fn write_sync(
+            pub(crate) fn write_sync(
                 this: &Self,
                 global: &::bun_jsc::JSGlobalObject,
                 frame: &::bun_jsc::CallFrame,
@@ -907,7 +906,7 @@ macro_rules! __compression_stream_mixin_reexports {
                 )
             }
             #[inline]
-            pub fn reset(
+            pub(crate) fn reset(
                 this: &Self,
                 global: &::bun_jsc::JSGlobalObject,
                 frame: &::bun_jsc::CallFrame,
@@ -917,7 +916,7 @@ macro_rules! __compression_stream_mixin_reexports {
                 )
             }
             #[inline]
-            pub fn close(
+            pub(crate) fn close(
                 this: &Self,
                 global: &::bun_jsc::JSGlobalObject,
                 frame: &::bun_jsc::CallFrame,
@@ -927,7 +926,7 @@ macro_rules! __compression_stream_mixin_reexports {
                 )
             }
             #[inline]
-            pub fn set_on_error(
+            pub(crate) fn set_on_error(
                 this: &Self,
                 this_value: ::bun_jsc::JSValue,
                 global: &::bun_jsc::JSGlobalObject,
@@ -938,7 +937,7 @@ macro_rules! __compression_stream_mixin_reexports {
                 )
             }
             #[inline]
-            pub fn get_on_error(
+            pub(crate) fn get_on_error(
                 this: &Self,
                 this_value: ::bun_jsc::JSValue,
                 global: &::bun_jsc::JSGlobalObject,

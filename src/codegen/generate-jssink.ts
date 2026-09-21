@@ -1197,7 +1197,7 @@ use bun_jsc::{self, host_fn, CallFrame, JSGlobalObject, JSValue};
 
 /// Native backing type for \`JS${name}.m_sinkPtr\`.
 #[allow(dead_code, unreachable_pub, unused)]
-pub use ${rustPath} as ${name};
+pub(crate) use ${rustPath} as ${name};
 
 `;
 

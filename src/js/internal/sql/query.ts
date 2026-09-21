@@ -1,4 +1,4 @@
-import type { DatabaseAdapter } from "./shared.ts";
+import type { DatabaseAdapter, SQLHelper } from "./shared.ts";
 
 const _resolve = Symbol("resolve");
 const _reject = Symbol("reject");
@@ -20,14 +20,15 @@ export interface BaseQueryHandle<Connection> {
   run(connection: Connection, query: Query<any, any>): void | Promise<void>;
 }
 
-export type { Query };
+export type { Query, SQLQueryResultMode };
+export type QueryStrings = string | TemplateStringsArray | SQLHelper<any> | Query<any, any>;
 class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   public [_resolve]: (value: T) => void;
   public [_reject]: (reason?: Error) => void;
   public [_handle]: Handle | null;
   public [_handler]: (query: Query<T, Handle>, handle: Handle) => T;
   public [_queryStatus]: SQLQueryStatus;
-  public [_strings]: string | TemplateStringsArray;
+  public [_strings]: QueryStrings;
   public [_values]: any[];
   public [_flags]: SQLQueryFlags;
 
@@ -62,7 +63,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   }
 
   constructor(
-    strings: string | TemplateStringsArray,
+    strings: QueryStrings,
     values: any[],
     flags: number,
     handler,
@@ -281,6 +282,10 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     }
   }
 
+  then<TResult1 = T, TResult2 = never>(
+    onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | null,
+    onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | null,
+  ): Promise<TResult1 | TResult2>;
   then() {
     this.#runAsyncAndCatch();
 
@@ -322,13 +327,13 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
 Object.defineProperty(Query, Symbol.species, { value: PublicPromise });
 Object.defineProperty(Query, Symbol.toStringTag, { value: "Query" });
 
-const enum SQLQueryResultMode {
+enum SQLQueryResultMode {
   objects = 0,
   values = 1,
   raw = 2,
 }
 
-const enum SQLQueryFlags {
+enum SQLQueryFlags {
   none = 0,
   allowUnsafeTransaction = 1 << 0,
   unsafe = 1 << 1,

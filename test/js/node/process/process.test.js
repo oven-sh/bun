@@ -2883,3 +2883,79 @@ it("no socket close handler runs after the 'exit' event", async () => {
   expect(stdout).toBe("exit\n");
   expect(exitCode).toBe(0);
 });
+
+// Native code calls these between event loop turns. A native call they make that
+// dispatches a callback of its own (socket.destroy() runs the close callback)
+// must return before the nextTicks and promise jobs they queued run, as it does
+// in every other callback and in Node.
+describe.concurrent("socket.destroy() returns before the queued nextTicks and promise jobs run", () => {
+  const fixture = /* js */ `
+    import net from "node:net";
+    const caller = process.argv[1];
+    const server = net.createServer(serverSocket => {
+      serverSocket.unref();
+      serverSocket.on("error", () => {});
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const socket = net.connect(server.address().port, "127.0.0.1");
+    await new Promise(resolve => socket.once("connect", resolve));
+    server.unref();
+    socket.unref();
+    socket.on("error", () => {});
+
+    function probe() {
+      const order = [];
+      Promise.resolve().then(() => order.push("promise job"));
+      process.nextTick(() => order.push("nextTick"));
+      order.push("before destroy()");
+      socket.destroy();
+      order.push("after destroy()");
+      console.log(JSON.stringify(order));
+    }
+
+    let graph;
+    switch (caller) {
+      case "a 'beforeExit' listener":
+        process.once("beforeExit", probe);
+        break;
+      case "a nextTick that a 'beforeExit' listener queued":
+        process.once("beforeExit", () => process.nextTick(probe));
+        break;
+      case "an 'exit' listener":
+        process.once("exit", probe);
+        break;
+      case "an 'unhandledRejection' listener":
+        process.once("unhandledRejection", probe);
+        setImmediate(() => Promise.reject(new Error("rejected")));
+        break;
+      case "an 'uncaughtException' listener, for a throw of the entry module":
+        process.once("uncaughtException", probe);
+        throw new Error("thrown");
+      case "the onError of a Bun.ModuleGraph, for an unhandled rejection":
+        graph = new Bun.ModuleGraph({ onError: probe });
+        graph.run(() => setImmediate(() => Promise.reject(new Error("rejected"))));
+        break;
+      default:
+        throw new Error("unknown caller: " + caller);
+    }
+  `;
+
+  it.each([
+    "a 'beforeExit' listener",
+    "a nextTick that a 'beforeExit' listener queued",
+    "an 'exit' listener",
+    "an 'unhandledRejection' listener",
+    "an 'uncaughtException' listener, for a throw of the entry module",
+    "the onError of a Bun.ModuleGraph, for an unhandled rejection",
+  ])("called from %s", async caller => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture, caller],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe(JSON.stringify(["before destroy()", "after destroy()"]) + "\n");
+    expect(exitCode).toBe(0);
+  });
+});

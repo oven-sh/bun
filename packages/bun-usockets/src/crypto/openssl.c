@@ -1998,6 +1998,10 @@ static void ssl_trigger_handshake(struct us_socket_t *s, int success) {
       loop_ssl_data->ssl_last_fatal_error[0] = 0;
       loop_ssl_data->ssl_last_fatal_error_owner = NULL;
     }
+    /* The peer never derived the keys our Finished would have carried, so a
+     * graceful close (code 0) must send a bare FIN, not a close_notify it
+     * cannot read, and must not wait for a reply. Fatal also refuses writes. */
+    s->ssl_fatal_error = 1;
     us_dispatch_handshake(s, 0, us_ssl_socket_verify_error_from_ssl(s_ssl(s)));
     /* Nothing else will tear this connection down (the peer is still waiting
      * for a Finished that will never come) - close unless JS already did. */

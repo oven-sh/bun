@@ -180,7 +180,8 @@ describe("a rejecting client sends no client certificate to a server whose chain
     await using srv = await mtlsServer({});
     const client = new RedisClient(`rediss://localhost:${srv.port}`, { tls: mtls, maxRetries: 0 } as any);
     const err = await settle(client.connect());
-    expect(err).toBeInstanceOf(Error);
+    // connect() settles from the close event, not from the handshake verdict.
+    expect(err?.code).toBe("ERR_REDIS_CONNECTION_CLOSED");
     client.close();
     await srv.seen.closed;
     expect(srv.seen.peerCN).toBeNull();

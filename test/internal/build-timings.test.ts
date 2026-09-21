@@ -365,14 +365,12 @@ describe("a build in which ninja started over", () => {
     // that compiled x.o began 3 ms after it ended.
     log({ start: 110, end: 900 }, T0 + 903 + 20);
     const b = loadBuild(where);
-    expect(b.runs.map(r => [r.restarts, r.executions.map(x => [x.label, x.start, x.end])])).toEqual([
+    // One build: x.o's 20 → 520 on the second process's clock is 920 → 1420 on the first's.
+    expect(b.runs.map(r => r.executions.map(x => [x.label, x.start, x.end]))).toEqual([
       [
-        [900],
-        [
-          ["fetch dep", 5, 105],
-          ["reconfigure", 110, 900],
-          ["cxx x.o", 920, 1420],
-        ],
+        ["fetch dep", 5, 105],
+        ["reconfigure", 110, 900],
+        ["cxx x.o", 920, 1420],
       ],
     ]);
     expect(criticalPath(b).steps.map(s => [s.execution.label, s.blocksNextForMs])).toEqual([
@@ -390,9 +388,9 @@ describe("a build in which ninja started over", () => {
     // the configure that rewrote its stamp: it is in no run, and is not taken for the start of that build.
     log({ start: 4000, end: 4700 }, T1 + 86_400_000 + 50 + 20);
     const later = loadBuild(where);
-    expect(later.runs.map(r => [r.restarts, r.executions.map(x => [x.label, x.start, x.end])])).toEqual([
-      [[], [["fetch dep", 5, 105]]],
-      [[], [["cxx x.o", 20, 520]]],
+    expect(later.runs.map(r => r.executions.map(x => [x.label, x.start, x.end]))).toEqual([
+      [["fetch dep", 5, 105]],
+      [["cxx x.o", 20, 520]],
     ]);
     // A fetch ending right where that reconfigure started is not enough either: the process ninja rewrites
     // build.ninja in runs nothing but what build.ninja needs, and this one compiled x.o.
@@ -449,7 +447,7 @@ describe("formatReport", () => {
     const report = formatReport(build, plain).replace(/^build timings .*$/m, "build timings  <buildDir>");
     expect(report).toMatchInlineSnapshot(`
       "build timings  <buildDir>
-        6 edges, last built by 2 builds between 2026-01-02 03:04:05Z and 2026-01-02 04:04:07Z
+        3.4s total · 6 edges
 
       by rule                     edges    total  slowest
         rust_rustc                    3     4.0s     2.0s  rustc b
@@ -458,10 +456,10 @@ describe("formatReport", () => {
         cxx                           1     50ms     50ms  cxx x.o
 
       slowest 6 edges
-           2.0s  rustc b  dependents can start after 200ms
+           2.0s  rustc b
                  LLVM_passes 1.6s · analysis 218ms
            1.3s  link exe
-           1.0s  rustc a  dependents can start after 300ms
+           1.0s  rustc a
            1.0s  rustc root → libroot.a
           100ms  fetch dep
            50ms  cxx x.o
@@ -474,18 +472,17 @@ describe("formatReport", () => {
            1.0s  rustc root → libroot.a
            1.3s  link exe
 
-      last build  2026-01-02 04:04:05Z
-        3.4s wall   2 commands taking 1.4s   0.4× average parallelism
+      last build  2026-01-02 04:04:05Z  2 commands · 0.4× parallel
 
-        low parallelism  2 commands or fewer for 1s or more
+        low parallelism  ≤ 2 commands, ≥ 1s
             0ms –   3.4s  (3.4s)  link exe, cxx x.o
 
-        waited to start  after every input existed: for the pool, or for a free job slot
+        queued
            2.0s  pool compile (depth 2)          1 command    longest 2.0s  cxx x.o
            50ms  no pool                         1 command    longest 50ms  link exe
 
-      earlier builds still in the log  ninja drops an edge's older entries when it compacts the log
-        2026-01-02 03:04:05Z      6 commands     3.9s wall
+      earlier builds
+        2026-01-02 03:04:05Z     3.9s · 6 commands
       "
     `);
   });

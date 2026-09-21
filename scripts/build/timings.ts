@@ -117,8 +117,6 @@ export interface Run {
   /** The end of its last command. */
   wallMs: number;
   executions: Execution[];
-  /** When ninja started over with a rewritten `build.ninja`, on the run's clock. */
-  restarts: number[];
 }
 
 const duration = (x: Execution): number => x.end - x.start;
@@ -170,7 +168,7 @@ function groupRuns(executions: Execution[], feeds: Set<ManifestEdge>, beforeMani
   type Process = Run & { epochLo: number; epochHi: number };
   const processes: Process[] = [];
   const started = (epochLo: number, epochMs: number, epochHi: number): Process => {
-    const p = { epochMs, epochLo, epochHi, wallMs: 0, executions: [], restarts: [] };
+    const p = { epochMs, epochLo, epochHi, wallMs: 0, executions: [] };
     processes.push(p);
     return p;
   };
@@ -233,7 +231,6 @@ function groupRuns(executions: Execution[], feeds: Set<ManifestEdge>, beforeMani
       continue;
     }
     const restart = run.wallMs;
-    run.restarts.push(restart);
     for (const x of next.executions) {
       x.start += restart;
       x.end += restart;
@@ -688,25 +685,14 @@ export function formatReport(build: Build, style: ReportStyle): string {
   const { bold, dim } = style;
   const out: string[] = [];
   const executions = [...build.last.values()];
-  const neverBuilt = build.manifest.edges.filter(e => e.rule !== "phony" && !build.last.has(e)).length;
-  const runsOfLast = build.runs.filter(r => r.executions.some(x => build.last.get(x.edge) === x)).length;
+  const run = build.runs.at(-1);
 
   out.push(`${bold("build timings")}  ${relative(process.cwd(), build.buildDir) || "."}`);
-  if (executions.length === 0) {
-    out.push("  no edge of build.ninja is in the log yet");
-    return out.join("\n") + "\n";
-  }
-  const run = build.runs.at(-1);
   if (run === undefined) {
-    out.push("  the log has only the command that writes build.ninja, which says nothing about when it ran");
+    out.push("  nothing in the log yet");
     return out.join("\n") + "\n";
   }
-  const stamps = executions.filter(x => !x.writesManifest).map(x => x.stampMs);
-  out.push(
-    `  ${executions.length} edges, last built by ${runsOfLast} ${runsOfLast === 1 ? "build" : "builds"}` +
-      ` between ${clock(Math.min(...stamps))} and ${clock(Math.max(...stamps))}` +
-      (neverBuilt > 0 ? dim(`  (${neverBuilt} more have not been built)`) : ""),
-  );
+  out.push(`  ${formatElapsed(run.wallMs)} total · ${executions.length} edges`);
 
   out.push(
     "",
@@ -720,18 +706,15 @@ export function formatReport(build: Build, style: ReportStyle): string {
 
   out.push("", bold(`slowest ${Math.min(SLOWEST_EDGES, executions.length)} edges`));
   for (const x of [...executions].sort((a, b) => duration(b) - duration(a)).slice(0, SLOWEST_EDGES)) {
-    const early = [...x.released.values()];
-    const note = early.length > 0 ? dim(`  dependents can start after ${formatElapsed(Math.min(...early))}`) : "";
-    out.push(`  ${column(duration(x))}  ${x.label}${note}`);
+    out.push(`  ${column(duration(x))}  ${x.label}`);
     const phases = largestPhases(x);
     if (phases.length > 0) {
       out.push(dim(`           ${phases.map(([name, ms]) => `${name} ${formatElapsed(ms)}`).join(" · ")}`));
     }
   }
 
-  const path = criticalPath(build);
   out.push("", bold("critical path") + dim("  how long each step holds up the next"));
-  for (const step of path.steps) {
+  for (const step of criticalPath(build).steps) {
     const whole = duration(step.execution);
     out.push(
       `  ${column(step.blocksNextForMs)}  ${step.execution.label}` +
@@ -739,20 +722,19 @@ export function formatReport(build: Build, style: ReportStyle): string {
     );
   }
 
+  // What exists only within one build: for the last one, the one build nothing can have overwritten part of.
   const sumMs = run.executions.reduce((sum, x) => sum + duration(x), 0);
   out.push(
     "",
-    bold("last build") + `  ${clock(run.epochMs)}`,
-    `  ${formatElapsed(run.wallMs)} wall   ${run.executions.length} commands taking ${formatElapsed(sumMs)}   ` +
-      `${(sumMs / run.wallMs).toFixed(1)}× average parallelism`,
-    ...run.restarts.map(at => dim(`  ninja started over at ${formatElapsed(at)}: build.ninja was rewritten`)),
+    bold("last build") +
+      `  ${clock(run.epochMs)}` +
+      dim(`  ${run.executions.length} commands · ${(sumMs / run.wallMs).toFixed(1)}× parallel`),
   );
   const windows = lowParallelismWindows(run);
   if (windows.length > 0) {
     out.push(
       "",
-      `  ${bold("low parallelism")}` +
-        dim(`  ${LOW_PARALLELISM_COMMANDS} commands or fewer for ${LOW_PARALLELISM_MS / 1000}s or more`),
+      `  ${bold("low parallelism")}` + dim(`  ≤ ${LOW_PARALLELISM_COMMANDS} commands, ≥ ${LOW_PARALLELISM_MS / 1000}s`),
     );
     for (const w of windows) {
       const longest = [...w.running].sort((a, b) => duration(b) - duration(a)).slice(0, WINDOW_COMMANDS_NAMED);
@@ -766,10 +748,7 @@ export function formatReport(build: Build, style: ReportStyle): string {
   }
   const queues = queueTimes(build, run).filter(q => q.totalMs > 0);
   if (queues.length > 0) {
-    out.push(
-      "",
-      `  ${bold("waited to start")}` + dim("  after every input existed: for the pool, or for a free job slot"),
-    );
+    out.push("", `  ${bold("queued")}`);
     for (const q of queues) {
       const name = q.pool === undefined ? "no pool" : `pool ${q.pool} (depth ${q.depth ?? "?"})`;
       out.push(
@@ -780,13 +759,10 @@ export function formatReport(build: Build, style: ReportStyle): string {
   }
 
   if (build.runs.length > 1) {
-    out.push(
-      "",
-      bold("earlier builds still in the log") + dim("  ninja drops an edge's older entries when it compacts the log"),
-    );
+    out.push("", bold("earlier builds"));
     const earlier = build.runs.slice(0, -1).reverse();
     for (const r of earlier.slice(0, EARLIER_RUNS_LISTED)) {
-      out.push(`  ${clock(r.epochMs)}  ${String(r.executions.length).padStart(5)} commands  ${column(r.wallMs)} wall`);
+      out.push(`  ${clock(r.epochMs)}  ${column(r.wallMs)} · ${r.executions.length} commands`);
     }
     if (earlier.length > EARLIER_RUNS_LISTED)
       out.push(dim(`  and ${earlier.length - EARLIER_RUNS_LISTED} before those`));

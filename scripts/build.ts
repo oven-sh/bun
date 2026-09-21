@@ -359,7 +359,7 @@ function reportTimings(cfg: Config, write: (text: string) => void): void {
   if (build.runs.length === 0) return;
   const chart = join(cfg.buildDir, timingsChartName());
   writeFileSync(chart, chartHtml(build));
-  write(`\n${bold("chart")}  ${relative(process.cwd(), chart)}` + dim("  the same, command by command") + "\n");
+  write(`\n${bold("chart")}  ${relative(process.cwd(), chart)}\n`);
   if (isBuildkite) publishTimings(cfg, chart);
 }
 

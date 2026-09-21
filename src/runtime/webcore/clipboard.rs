@@ -759,11 +759,10 @@ mod platform {
 
     impl Env {
         pub(super) fn snapshot(global: &JSGlobalObject) -> JsResult<Env> {
-            // SAFETY: JS thread with a live global.
-            let env = unsafe { Bun__Clipboard__processEnv(global) };
-            if env.is_empty() {
-                return Err(JsError::Thrown);
-            }
+            // SAFETY: JS thread with a live global; empty if and only if it threw.
+            let env = bun_jsc::from_js_host_call(global, || unsafe {
+                Bun__Clipboard__processEnv(global)
+            })?;
             let Some(object) = env.get_object() else {
                 return Ok(Env(Vec::new()));
             };

@@ -20,7 +20,7 @@
  * overwritten part of.
  */
 
-import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { relative, resolve, sep } from "node:path";
 import { BuildError } from "./error.ts";
 import { type Manifest, type ManifestEdge, readManifest } from "./ninja.ts";
@@ -110,11 +110,14 @@ export interface Run {
   executions: Execution[];
 }
 
-const duration = (x: Execution): number => x.end - x.start;
+export const duration = (x: Execution): number => x.end - x.start;
+
+/** The checkout these scripts are in, which is the one they build. */
+const repoRoot = resolve(import.meta.dirname, "..", "..");
 
 /**
  * A rule's description with `$out`, `$in` and the edge's own variables expanded, as ninja prints it, with paths into
- * the build directory shortened to how the graph names them.
+ * the build directory and the checkout shortened to how the graph and the repository name them.
  */
 function describe(buildDir: string, manifest: Manifest, edge: ManifestEdge): string {
   const text = manifest.rules.get(edge.rule)?.description ?? `${edge.rule} $out`;
@@ -127,6 +130,8 @@ function describe(buildDir: string, manifest: Manifest, edge: ManifestEdge): str
       return edge.bindings[name] ?? "";
     })
     .replaceAll(buildDir + sep, "")
+    .replaceAll(repoRoot + sep, "")
+    .replaceAll(repoRoot, ".")
     .trim();
 }
 
@@ -234,7 +239,7 @@ function readSelfReport(buildDir: string, edge: ManifestEdge): Phase[] {
  * The phases that are whole parts of the command: inside nothing but the one phase that spans it all (clang's
  * `ExecuteCompiler`, rustc's `total`). Compilers report phases nested, and only by their times.
  */
-function topLevelPhases(phases: Phase[]): Phase[] {
+export function topLevelPhases(phases: Phase[]): Phase[] {
   const root = phases.reduce<Phase | undefined>(
     (a, b) => (a === undefined || b.endMs - b.startMs > a.endMs - a.startMs ? b : a),
     undefined,
@@ -455,11 +460,8 @@ export interface QueueTotal {
   longest: { execution: Execution; ms: number };
 }
 
-/**
- * How long the run's edges waited to start after their inputs existed, by pool. The log does not say why an edge
- * waited: an edge in a pool waits for the pool or for a job slot, whichever is full.
- */
-export function queueTimes(build: Build, run: Run): QueueTotal[] {
+/** How long each of the run's edges waited to start after its inputs existed. */
+export function waits(build: Build, run: Run): Map<Execution, number> {
   const inRun = new Map<ManifestEdge, Execution>(run.executions.map(x => [x.edge, x]));
   // When an edge's outputs existed in this run; an edge the run did not execute (up to date, or a phony) passes on
   // when its own inputs did.
@@ -480,9 +482,16 @@ export function queueTimes(build: Build, run: Run): QueueTotal[] {
     return at;
   };
 
+  return new Map(run.executions.map(x => [x, Math.max(0, x.start - ready(x.edge))]));
+}
+
+/**
+ * `waits`, by pool. The log does not say why an edge waited: an edge in a pool waits for the pool or for a job slot,
+ * whichever is full.
+ */
+export function queueTimes(build: Build, run: Run): QueueTotal[] {
   const totals = new Map<string | undefined, QueueTotal>();
-  for (const x of run.executions) {
-    const ms = Math.max(0, x.start - ready(x.edge));
+  for (const [x, ms] of waits(build, run)) {
     const t = totals.get(x.pool);
     if (t === undefined) {
       const depth = x.pool === "console" ? 1 : x.pool === undefined ? undefined : build.manifest.pools.get(x.pool);
@@ -501,7 +510,7 @@ export function queueTimes(build: Build, run: Run): QueueTotal[] {
 // ───────────────────────────────────────────────────────────────────────────
 
 const seconds = (ms: number): string => formatElapsed(ms).padStart(7);
-const clock = (unixMs: number): string => new Date(unixMs).toISOString().replace("T", " ").slice(0, 19) + "Z";
+export const clock = (unixMs: number): string => new Date(unixMs).toISOString().replace("T", " ").slice(0, 19) + "Z";
 
 export interface ReportStyle {
   bold(s: string): string;
@@ -707,19 +716,4 @@ export function traceEvents(build: Build): TraceEvent[] {
     }
   });
   return events;
-}
-
-export const tracePath = (buildDir: string): string => resolve(buildDir, "timings-trace.json");
-
-/** Print the report for `buildDir` and write its trace. */
-export function reportTimings(buildDir: string, style: ReportStyle, write: (text: string) => void): void {
-  const build = loadBuild(buildDir);
-  write(formatReport(build, style));
-  if (build.last.size === 0) return;
-  writeFileSync(tracePath(buildDir), JSON.stringify({ traceEvents: traceEvents(build) }) + "\n");
-  write(
-    `\n${style.bold("trace")}  ${relative(process.cwd(), tracePath(buildDir))}` +
-      style.dim("  every run as a timeline; open it in ui.perfetto.dev or chrome://tracing") +
-      "\n",
-  );
 }

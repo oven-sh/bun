@@ -311,6 +311,29 @@ function upload(paths: string[], cwd: string): void {
   run(["buildkite-agent", "artifact", "upload", paths.join(";")], cwd);
 }
 
+/** `timings[-<target>-<mode>]`: every build step of a build uploads its own, so in CI the name says whose it is. */
+export function timingsFileStem(cfg: Config): string {
+  return cfg.buildkite ? `timings-${computeBunTriplet(cfg)}-${cfg.mode}` : "timings";
+}
+
+/**
+ * Put a build step's timings where someone looking at the build finds them: the chart and the trace as artifacts,
+ * and a line on the build page (one annotation for the build, a line per step) that links to the chart.
+ */
+export function publishTimings(cfg: Config, files: { chart: string; trace: string }, headline: string): void {
+  if (!cfg.buildkite) return;
+  // The link resolves only once the artifact exists.
+  upload([relative(cfg.buildDir, files.chart), relative(cfg.buildDir, files.trace)], cfg.buildDir);
+  reportAnnotationToBuildkite({
+    style: "info",
+    priority: 1,
+    label: "build timings",
+    content:
+      `<p><span class="bold">${computeBunTriplet(cfg)}</span> ${cfg.mode}: ${headline} ` +
+      `<a href="artifact://${relative(cfg.buildDir, files.chart)}">chart</a></p>\n`,
+  });
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // Link-only post-link: features.json + packaging + upload
 //

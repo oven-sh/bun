@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { BuildError } from "../../scripts/build/error.ts";
 import { type ManifestEdge, Ninja, readManifest } from "../../scripts/build/ninja.ts";
 import { rustcPhasesPath } from "../../scripts/build/rust/units.ts";
+import { chartData, chartHtml } from "../../scripts/build/timings-chart.ts";
 import {
   type Build,
   criticalPath,
@@ -314,6 +315,39 @@ describe("formatReport", () => {
         2026-01-02 03:04:05Z      6 edges     3.9s wall
       "
     `);
+  });
+});
+
+describe("chart", () => {
+  test("the critical path has the top rows to itself; everything else goes below in the first free row", () => {
+    const [second, first] = chartData(build).runs;
+    expect(second!.bars.map(b => [b.label, b.row, b.step])).toEqual([
+      ["cc x.o", 1, undefined],
+      ["link exe", 0, 4],
+    ]);
+    expect([first!.pathRows, first!.rows]).toEqual([2, 3]);
+    expect(first!.bars.map(b => [b.label, b.row, b.step, b.blocksNextForMs, b.released])).toEqual([
+      ["fetch dep", 0, 0, 100, undefined],
+      // Not on the path: x.o was last built by the second run.
+      ["cc x.o", 2, undefined, undefined, undefined],
+      ["rustc a", 0, 1, 300, 300],
+      // `a` is still running when `b` starts, so `b` is a row down: the staircase.
+      ["rustc b", 1, 2, 2000, 200],
+      ["rustc root → libroot.a", 0, 3, 1000, undefined],
+      // Superseded by the second run's link, which is the one on the path.
+      ["link exe", 2, undefined, undefined, undefined],
+    ]);
+    expect(first!.bars.find(b => b.label === "rustc b")!.phases).toEqual([
+      ["LLVM_passes", 1600],
+      ["type_check_crate", 170],
+    ]);
+  });
+
+  test("the page carries its data and cannot be broken out of by a label", () => {
+    const page = chartHtml(build);
+    const data = /<script id="data" type="application\/json">(.*)<\/script>/.exec(page)![1]!;
+    expect(data).not.toContain("<");
+    expect(JSON.parse(data)).toEqual(JSON.parse(JSON.stringify(chartData(build))));
   });
 });
 

@@ -23,8 +23,8 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join, relative } from "node:path";
 import {
   canTraceOrderFile,
   downloadArtifacts,
@@ -33,22 +33,25 @@ import {
   orderFileContext,
   orderFileEligible,
   packageAndUpload,
+  publishTimings,
   regenerateOrderFile,
   reportOrderFileBootstrap,
   reportOrderFileCannotTrace,
   reportOrderFileFailure,
   shouldGenerateOrderFile,
   spawnWithAnnotations,
+  timingsFileStem,
   uploadArtifacts,
   verifyOrderFileApplied,
 } from "./build/ci.ts";
-import { formatConfig, formatConfigUnchanged, type PartialConfig } from "./build/config.ts";
+import { type Config, formatConfig, formatConfigUnchanged, type PartialConfig } from "./build/config.ts";
 import { configOf, configure, type ConfigureInput } from "./build/configure.ts";
 import { BuildError } from "./build/error.ts";
 import { ninjaIfPresent } from "./build/ninja-release.ts";
 import { STREAM_FD } from "./build/stream.ts";
-import { reportTimings } from "./build/timings.ts";
-import { bold, dim, interactive, nameColor, status } from "./build/tty.ts";
+import { chartHtml } from "./build/timings-chart.ts";
+import { criticalPath, formatReport, loadBuild, traceEvents } from "./build/timings.ts";
+import { bold, dim, formatElapsed, interactive, nameColor, status } from "./build/tty.ts";
 import { isCI, printEnvironment, startGroup } from "./buildkite.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -210,9 +213,7 @@ async function main(): Promise<void> {
     }
 
     // Every CI build says where its time went: nobody can come back to this build directory to ask.
-    await startGroup("Build timings", async () =>
-      reportTimings(result.cfg.buildDir, { bold, dim }, t => process.stdout.write(t)),
-    );
+    await startGroup("Build timings", async () => reportTimings(result.cfg, t => process.stdout.write(t)));
 
     // cpp-only/rust-only: upload build outputs for downstream link-only.
     // link-only/rust-and-link: package + upload zips for downstream test steps.
@@ -303,7 +304,7 @@ async function main(): Promise<void> {
       process.exit(ninja.status ?? 1);
     }
 
-    if (args.timings) reportTimings(result.cfg.buildDir, { bold, dim }, t => process.stderr.write(t));
+    if (args.timings) reportTimings(result.cfg, t => process.stderr.write(t));
 
     if (args.execArgs.length === 0) {
       // Closing line on success: when restat prunes most of the graph
@@ -336,6 +337,31 @@ async function main(): Promise<void> {
     }
     process.exit(child.status ?? 0);
   }
+}
+
+/**
+ * `--timings`, and every CI build: print where the build directory's time went, and write the same as a chart and as
+ * a trace. In CI both are uploaded and the build page links to the chart.
+ */
+function reportTimings(cfg: Config, write: (text: string) => void): void {
+  const build = loadBuild(cfg.buildDir);
+  write(formatReport(build, { bold, dim }));
+  const run = build.runs.at(-1);
+  if (run === undefined) return;
+  const chart = join(cfg.buildDir, `${timingsFileStem(cfg)}.html`);
+  const trace = join(cfg.buildDir, `${timingsFileStem(cfg)}-trace.json`);
+  writeFileSync(chart, chartHtml(build));
+  writeFileSync(trace, JSON.stringify({ traceEvents: traceEvents(build) }) + "\n");
+  const rel = (p: string) => relative(process.cwd(), p);
+  write(`\n${bold("chart")}  ${rel(chart)}${dim("  every run as a Gantt chart, the critical path on top")}\n`);
+  write(`${bold("trace")}  ${rel(trace)}${dim("  the same runs for ui.perfetto.dev or chrome://tracing")}\n`);
+  const wall = Math.max(...run.executions.map(x => x.end));
+  publishTimings(
+    cfg,
+    { chart, trace },
+    `critical path ${formatElapsed(criticalPath(build).totalMs)}, ` +
+      `last run of ninja ${formatElapsed(wall)} for ${run.executions.length} edges.`,
+  );
 }
 
 /**

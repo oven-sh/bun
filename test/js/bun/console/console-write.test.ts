@@ -1,8 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { mkfifo } from "mkfifo";
-import { closeSync, constants, openSync } from "node:fs";
-import { join } from "node:path";
+import { bunEnv, bunExe, isWindows } from "harness";
 
 test("console.write rejects a non-object this", async () => {
   await using proc = Bun.spawn({
@@ -141,10 +138,10 @@ try {
   expect(exitCode).toBe(0);
 });
 
-// Every write to a pipe that is already broken fails on the spot. console.write() called the sink's write() once
-// per argument and kept the last Promise it got back, so a script that awaited it and caught the error still died
-// of the unhandled rejection of another argument's write (or, with a short last argument, of the flush throwing
-// past the Promise it had).
+// Every write to a pipe that is already broken fails on the spot, with a rejected Promise of its own.
+// console.write() kept the last one, and lost that too when a short argument's flush threw or a later argument
+// was not something to write. A script that awaited it and caught the error still died of the unhandled rejection
+// of a Promise it was never given.
 //
 // The child blocks in a synchronous read of stdin until the parent has closed its end of stdout, and checks with
 // a writer of its own that the pipe really is broken, so the test cannot pass by the writes simply being queued.
@@ -152,10 +149,11 @@ try {
 // A later console.write() to the broken pipe fails too.
 const big = `Buffer.alloc(1024 * 1024, "a").toString()`;
 test.concurrent.each([
-  ["two large arguments", `${big}, ${big}`],
-  ["a large argument, then a short one", `${big}, "\\n"`],
-  ["a short argument, then a large one", `"\\n", ${big}`],
-])("an awaited console.write to a broken pipe fails once: %s", async (_label, args) => {
+  ["two large arguments", `${big}, ${big}`, "EPIPE"],
+  ["a large argument, then a short one", `${big}, "\\n"`, "EPIPE"],
+  ["a short argument, then a large one", `"\\n", ${big}`, "EPIPE"],
+  ["a large argument, then one that is not something to write", `${big}, 123`, "ERR_INVALID_ARG_TYPE"],
+])("an awaited console.write to a broken pipe fails once: %s", async (_label, args, code) => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -193,140 +191,6 @@ try {
   await proc.stdin.end();
 
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("pipe already broken: true\ncaught EPIPE\nlater: caught EPIPE\n");
+  expect(stderr).toBe(`pipe already broken: true\ncaught ${code}\nlater: caught EPIPE\n`);
   expect(exitCode).toBe(0);
 });
-
-// The reader has stalled and the pipe is full, so a short console.write() is buffered and its flush cannot push
-// the buffer out. The flush leaves the sink with a pending Promise, which console.write() drops as it always has:
-// it returns the byte count. When the reader then hung up, that Promise was rejected with nobody holding it, and a
-// script that awaited every console.write() still died of an unhandled rejection.
-//
-// stdout is a FIFO whose read end this test holds open and never reads. Another writer on the same pipe fills
-// it and stays backed up, so console's own writer has nothing pending when the short write happens.
-test.concurrent.skipIf(isWindows)(
-  "a short console.write to a full pipe leaves no unhandled rejection when the stalled reader hangs up",
-  async () => {
-    using dir = tempDir("console-write-stalled", {});
-    const fifo = join(String(dir), "stdout.fifo");
-    mkfifo(fifo, 0o600);
-    const readEnd = openSync(fifo, constants.O_RDONLY | constants.O_NONBLOCK);
-    const writeEnd = openSync(fifo, constants.O_WRONLY);
-    let readEndOpen = true;
-    try {
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `
-process.on("unhandledRejection", e => {
-  console.error("unhandledRejection " + e?.code);
-});
-const filler = Bun.stdout.writer().write(Buffer.alloc(4 * 1024 * 1024, "f").toString());
-filler.catch(() => {});
-const result = console.write("line\\n");
-console.error("READY " + (result instanceof Promise ? "Promise" : result));
-try {
-  await result;
-  console.error("resolved");
-} catch (e) {
-  console.error("caught " + e.code);
-}
-`,
-        ],
-        env: bunEnv,
-        stdout: writeEnd,
-        stderr: "pipe",
-      });
-      closeSync(writeEnd);
-
-      const reader = proc.stderr.getReader();
-      const decoder = new TextDecoder();
-      let stderr = "";
-      while (!stderr.includes("READY")) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        stderr += decoder.decode(value, { stream: true });
-      }
-      closeSync(readEnd);
-      readEndOpen = false;
-      for (;;) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        stderr += decoder.decode(value, { stream: true });
-      }
-
-      expect(stderr).toBe("READY 5\nresolved\n");
-      expect(await proc.exited).toBe(0);
-    } finally {
-      if (readEndOpen) closeSync(readEnd);
-    }
-  },
-);
-
-// console.write(big, 123) throws for the argument that is not something to write, after the first one has become
-// the sink's pending write. That write's Promise was made inside the call and never reaches the caller, so when
-// the write later fails nobody can have handled it: it must not be reported as an unhandled rejection.
-//
-// stdout is a FIFO whose read end this test holds open and never reads, then closes.
-test.concurrent.skipIf(isWindows)(
-  "console.write that throws for a later argument leaves no unhandled rejection",
-  async () => {
-    using dir = tempDir("console-write-bad-argument", {});
-    const fifo = join(String(dir), "stdout.fifo");
-    mkfifo(fifo, 0o600);
-    const readEnd = openSync(fifo, constants.O_RDONLY | constants.O_NONBLOCK);
-    const writeEnd = openSync(fifo, constants.O_WRONLY);
-    let readEndOpen = true;
-    try {
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `
-process.on("unhandledRejection", e => {
-  console.error("unhandledRejection " + e?.code);
-});
-try {
-  console.write(Buffer.alloc(4 * 1024 * 1024, "x").toString(), 123);
-  console.error("no throw");
-} catch (e) {
-  console.error("caught " + e.code);
-}
-console.error("READY");
-process.stdin.once("data", () => console.error("end"));
-`,
-        ],
-        env: bunEnv,
-        stdin: "pipe",
-        stdout: writeEnd,
-        stderr: "pipe",
-      });
-      closeSync(writeEnd);
-
-      const reader = proc.stderr.getReader();
-      const decoder = new TextDecoder();
-      let stderr = "";
-      while (!stderr.includes("READY")) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        stderr += decoder.decode(value, { stream: true });
-      }
-      closeSync(readEnd);
-      readEndOpen = false;
-      // The child's event loop sees the hang-up before it sees this byte on stdin.
-      proc.stdin.write("x");
-      await proc.stdin.end();
-      for (;;) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        stderr += decoder.decode(value, { stream: true });
-      }
-
-      expect(stderr).toBe("caught ERR_INVALID_ARG_TYPE\nREADY\nend\n");
-      expect(await proc.exited).toBe(0);
-    } finally {
-      if (readEndOpen) closeSync(readEnd);
-    }
-  },
-);

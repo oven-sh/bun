@@ -133,10 +133,11 @@ export function write(this: Console & { $writer: ConsoleWriter | undefined; $ret
   // while it is backed up, of the bytes those writes added. The caller gets a Promise of the total then, because
   // awaiting it waits for the drain and is where a write error (EPIPE from a reader that hung up) arrives.
   //
-  // The sink hands out other Promises that the caller never gets: a write that fails on the spot returns a rejected
-  // one of its own, a flush that cannot finish returns one, and a throw (an argument that is not something to write,
-  // a flush that fails) loses the one in hand. Nobody can handle those, so they are marked handled. Not the one an
-  // earlier call returned, which a later write or flush can hand back: that one is its caller's.
+  // A write that fails on the spot (the pipe is already broken) returns a rejected Promise of its own instead. The
+  // caller gets the last one. Any other is lost: replaced by a later argument's, or dropped when a later argument
+  // or the flush throws. Nobody can handle its rejection, so it is marked handled. Only one that is already
+  // rejected: the sink hands its pending Promise out again, to callers whose rejection has to be reported. And not
+  // one an earlier call returned, which is that caller's.
   var wrote = 0;
   var pending: Promise<number> | undefined;
   var finished: unknown;
@@ -148,15 +149,15 @@ export function write(this: Console & { $writer: ConsoleWriter | undefined; $ret
       const result = writer.write(arguments[i]);
       if (typeof result === "number") wrote += result;
       else if ($isPromise<number>(result)) {
-        if (pending !== undefined && pending !== result && pending !== returned) $pokePromiseAsHandled(pending);
+        if (pending !== undefined && pending !== result && pending !== returned && $isPromiseRejected(pending))
+          $pokePromiseAsHandled(pending);
         pending = result;
       } else finished = result;
     } while (++i < count);
 
-    const flushed = writer.flush(true);
-    if ($isPromise(flushed) && flushed !== pending && flushed !== returned) $pokePromiseAsHandled(flushed);
+    writer.flush(true);
   } catch (e) {
-    if (pending !== undefined && pending !== returned) $pokePromiseAsHandled(pending);
+    if (pending !== undefined && pending !== returned && $isPromiseRejected(pending)) $pokePromiseAsHandled(pending);
     throw e;
   }
 

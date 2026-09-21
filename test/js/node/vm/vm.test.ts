@@ -1820,6 +1820,29 @@ describe("DONT_CONTEXTIFY", () => {
     expect(ctxArray).toBe(ctx.Array);
     expect(ctxArray).not.toBe(Array);
   });
+
+  test("a private field stamped on the context handle is visible on `this` inside the context", () => {
+    // jsdom 30.1.0 brands its window this way, then uses runInContext("this", window) as the window.
+    class ReturnValue {
+      constructor(value: object) {
+        return value;
+      }
+    }
+    class Brand extends ReturnValue {
+      #stamped = true;
+      static has(value: object) {
+        return #stamped in value;
+      }
+    }
+
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    new Brand(ctx);
+    expect({
+      handle: Brand.has(ctx),
+      this: Brand.has(runInContext("this", ctx)),
+      globalThis: Brand.has(runInContext("globalThis", ctx)),
+    }).toEqual({ handle: true, this: true, globalThis: true });
+  });
 });
 
 describe("defineProperty errors use vm-realm global", () => {

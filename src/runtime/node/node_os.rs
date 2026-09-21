@@ -82,7 +82,7 @@ mod _impl {
     // `bindgen_Node_os_dispatch*` entry points. This module provides the
     // public surface: `js*` extern pointers + `create*Callback` wrappers
     // + the `UserInfoOptions` dictionary.
-    pub mod gen_ {
+    pub(crate) mod gen_ {
         use super::{BunString, CallFrame, EncodedSlice, JSGlobalObject, JSValue};
         use bun_jsc::host_fn;
 
@@ -111,7 +111,7 @@ mod _impl {
         // the exact triples the codegen would have produced.
         macro_rules! create_callback {
         ($($fn_name:ident, $js_name:literal, $argc:literal, $sym:ident;)*) => {$(
-            pub fn $fn_name(global: &JSGlobalObject) -> JSValue {
+            pub(crate) fn $fn_name(global: &JSGlobalObject) -> JSValue {
                 host_fn::new_runtime_function(
                     global,
                     Some(&EncodedSlice::latin1($js_name.as_bytes())),
@@ -144,7 +144,7 @@ mod _impl {
         /// the C++ side passes a pointer to this layout, so it must stay
         /// `#[repr(C)]`.
         #[repr(C)]
-        pub struct UserInfoOptions {
+        pub(crate) struct UserInfoOptions {
             pub(crate) encoding: BunString,
         }
     }
@@ -843,12 +843,12 @@ mod _impl {
     }
 
     #[cfg(unix)]
-    pub use network_interfaces_posix as network_interfaces;
+    pub(crate) use network_interfaces_posix as network_interfaces;
     #[cfg(windows)]
-    pub use network_interfaces_windows as network_interfaces;
+    pub(crate) use network_interfaces_windows as network_interfaces;
 
     #[cfg(unix)]
-    pub fn network_interfaces_posix(global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn network_interfaces_posix(global_this: &JSGlobalObject) -> JsResult<JSValue> {
         // getifaddrs sets a pointer to a linked list
         let mut interface_start: *mut libc::ifaddrs = core::ptr::null_mut();
         // SAFETY: valid out-pointer
@@ -1142,7 +1142,7 @@ mod _impl {
     }
 
     #[cfg(windows)]
-    pub fn network_interfaces_windows(global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn network_interfaces_windows(global_this: &JSGlobalObject) -> JsResult<JSValue> {
         let mut ifaces: *mut libuv::uv_interface_address_t = core::ptr::null_mut();
         let mut count: c_int = 0;
         // SAFETY: valid out-pointers
@@ -1547,7 +1547,7 @@ mod _impl {
         Ok(BunString::clone_utf8(slice))
     }
 } // mod _impl
-pub use _impl::*;
+pub(crate) use _impl::*;
 
 /// Given a netmask returns a CIDR suffix.  Returns null if the mask is not valid.
 /// `T` must be one of u32 (IPv4) or u128 (IPv6)

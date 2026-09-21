@@ -81,7 +81,7 @@ pub struct FileSink {
 /// `heapStats()` (which only counts JS wrapper objects).
 pub(crate) static LIVE_COUNT: AtomicI32 = AtomicI32::new(0);
 
-pub mod testing_apis {
+pub(crate) mod testing_apis {
     use super::*;
 
     pub(crate) fn file_sink_live_count(
@@ -93,7 +93,7 @@ pub mod testing_apis {
 }
 // `generated_js2native.rs` snake-cases `TestingAPIs` as `testing_ap_is`
 // (acronym splitter treats `AP|Is` as two words); alias so both resolve.
-pub use testing_apis as testing_ap_is;
+pub(crate) use testing_apis as testing_ap_is;
 
 /// `bun_sys` does not yet export
 /// an isPollable helper, so re-derive it locally from `S_IFMT`. Windows always
@@ -114,7 +114,7 @@ fn is_pollable(mode: sys::Mode) -> bool {
 /// Streaming-writer vtable wiring: the
 /// parent type implements the handler trait
 /// (onClose / onWritable / onError / onWrite) directly.
-pub type IOWriter = bun_io::StreamingWriter<FileSink>;
+pub(crate) type IOWriter = bun_io::StreamingWriter<FileSink>;
 #[cfg(not(windows))]
 pub(crate) type Poll = IOWriter;
 
@@ -1606,7 +1606,7 @@ bun_jsc::impl_abort_handle_owner!(FileSink, abort_handle, |this, _cause| {
 });
 
 #[derive(Default)]
-pub struct FlushPendingTask {
+pub(crate) struct FlushPendingTask {
     pub(crate) has: Cell<bool>,
 }
 

@@ -113,20 +113,20 @@ fn read_state_str(s: ReadState) -> &'static str {
     }
 }
 
-pub use JscSubprocess::StdioKind;
+pub(crate) use JscSubprocess::StdioKind;
 
 use crate::shell::ShellErr;
 
 #[cfg(windows)]
-pub type StdioResult = WindowsStdioResult;
+pub(crate) type StdioResult = WindowsStdioResult;
 #[cfg(not(windows))]
-pub type StdioResult = Option<Fd>;
+pub(crate) type StdioResult = Option<Fd>;
 
 bun_output::define_scoped_log!(log, SHELL_SUBPROC, visible);
 
 /// Used for captured writer
 #[derive(Default)]
-pub struct ShellIO {
+pub(crate) struct ShellIO {
     pub(crate) stdout: Option<Arc<IOWriter>>,
     pub(crate) stderr: Option<Arc<IOWriter>>,
 }
@@ -153,7 +153,7 @@ pub(crate) const DEFAULT_MAX_BUFFER_SIZE: u32 = 1024 * 1024 * 4;
 /// epoll). Store `(interp, NodeId)` instead and resolve through the arena at
 /// each use site.
 #[derive(Clone, Copy)]
-pub struct CmdHandle {
+pub(crate) struct CmdHandle {
     pub(crate) interp: bun_ptr::ParentRef<Interpreter, bun_ptr::Mut>,
     pub(crate) id: NodeId,
 }
@@ -231,7 +231,7 @@ impl Drop for ShellSubprocess {
 //     },
 // };
 
-pub type StaticPipeWriter = JscSubprocess::NewStaticPipeWriter<ShellSubprocess>;
+pub(crate) type StaticPipeWriter = JscSubprocess::NewStaticPipeWriter<ShellSubprocess>;
 
 impl JscSubprocess::static_pipe_writer::StaticPipeWriterProcess for ShellSubprocess {
     const POLL_OWNER_TAG: bun_io::PollTag =
@@ -1168,13 +1168,18 @@ impl Writable {
 // Readable
 // ───────────────────────────────────────────────────────────────────────────
 
-pub enum Readable {
+pub(crate) enum Readable {
+    // Borrowed from its owner, which closes it (`finalize`); nothing reads it.
+    #[allow(dead_code)]
     Fd(Fd),
+    #[cfg_attr(windows, allow(dead_code))]
     Memfd(Fd),
     Pipe(Arc<PipeReader>),
     Inherit,
     Ignore,
     Closed,
+    // What the pipe had read when it finished; nothing reads it yet.
+    #[allow(dead_code)]
     Buffer(Box<[u8]>),
 }
 
@@ -1335,7 +1340,7 @@ impl Readable {
         }
     }
 
-    pub fn finalize(&mut self) {
+    pub(crate) fn finalize(&mut self) {
         match core::mem::replace(self, Readable::Closed) {
             Readable::Memfd(fd) => {
                 *self = Readable::Closed;
@@ -1361,7 +1366,7 @@ impl Readable {
 // SpawnArgs
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct SpawnArgs<'a> {
+pub(crate) struct SpawnArgs<'a> {
     /// Shared borrow: arena alloc methods take `&self`, and a `&'a Arena`
     /// (being `Copy`) lets `fill_env` hand back `&'a [u8]` slices without
     /// the unsafe pointer round-trip the `&'a mut Arena` reborrow forced.
@@ -1483,7 +1488,7 @@ impl<'a> SpawnArgs<'a> {
 // PipeReader
 // ───────────────────────────────────────────────────────────────────────────
 
-pub type IOReader = BufferedReader;
+pub(crate) type IOReader = BufferedReader;
 
 pub enum PipeReaderState {
     Pending,
@@ -1491,7 +1496,7 @@ pub enum PipeReaderState {
     Err(Option<Box<SystemError>>),
 }
 
-pub struct PipeReader {
+pub(crate) struct PipeReader {
     pub(crate) reader: IOReader,
     pub(crate) process: Option<*mut ShellSubprocess>,
     pub(crate) event_loop: EventLoopHandle,
@@ -1509,7 +1514,7 @@ pub struct PipeReader {
     // goes via the `arc_as_mut_ptr` interior-mutability helper below.
 }
 
-pub enum BufferedOutput {
+pub(crate) enum BufferedOutput {
     Bytelist(Vec<u8>),
     ArrayBuffer { buf: jsc::PinnedArrayBuffer, i: u32 },
 }
@@ -1556,7 +1561,7 @@ impl BufferedOutput {
     }
 }
 
-pub struct CapturedWriter {
+pub(crate) struct CapturedWriter {
     pub(crate) dead: bool,
     /// `None` iff `dead == true`.
     pub(crate) writer: Option<Arc<IOWriter>>,
@@ -2214,7 +2219,7 @@ pub(crate) use assert_stdio_result;
 unsafe extern "C" {
     // `_PATH_DEFPATH` string literal emitted from C; immutable, load-time
     // initialized, never null. Reading the pointer value has no precondition.
-    pub safe static BUN_DEFAULT_PATH_FOR_SPAWN: *const c_char;
+    pub(crate) safe static BUN_DEFAULT_PATH_FOR_SPAWN: *const c_char;
 }
 
 // IntoStaticStr for PipeReaderState (used in logs as the variant name).

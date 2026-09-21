@@ -22,7 +22,7 @@ type FileId = super::jest::FileId;
 
 bun_core::declare_scope!(inline_snapshot, visible);
 
-pub struct Snapshots {
+pub(crate) struct Snapshots {
     pub(crate) update_snapshots: bool,
     pub(crate) total: usize,
     pub(crate) added: usize,
@@ -43,7 +43,7 @@ pub struct Snapshots {
 }
 
 // Re-export the TSV-mandated container name so the field type matches verbatim.
-pub use bun_collections::ArrayHashMap as IndexMap;
+pub(crate) use bun_collections::ArrayHashMap as IndexMap;
 
 impl Snapshots {
     const FILE_HEADER: &'static [u8] = b"// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n";
@@ -73,7 +73,7 @@ impl Snapshots {
 
 // hoisted out of `impl Snapshots` — inherent associated types are unstable.
 
-pub struct InlineSnapshotToWrite {
+pub(crate) struct InlineSnapshotToWrite {
     pub(crate) line: c_ulong,
     pub(crate) col: c_ulong,
     /// owned (was: owned by Snapshots.allocator)
@@ -103,7 +103,7 @@ impl InlineSnapshotToWrite {
     }
 }
 
-pub struct File {
+pub(crate) struct File {
     pub(crate) id: FileId,
     pub(crate) file: bun_sys::File,
 }

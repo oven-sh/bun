@@ -41,7 +41,8 @@ use crate::webcore::blob::store::Bytes as BlobStoreBytes;
 // through `StdAllocator.ptr`) cross threads, so the single-threaded `RefCount`
 // flavor would data-race on ref/deref.
 #[derive(bun_ptr::ThreadSafeRefCounted)]
-pub struct LinuxMemFdAllocator {
+#[cfg_attr(not(any(target_os = "linux", target_os = "android")), allow(dead_code))]
+pub(crate) struct LinuxMemFdAllocator {
     ref_count: bun_ptr::ThreadSafeRefCount<LinuxMemFdAllocator>,
     pub(crate) fd: Fd,
     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -77,7 +78,8 @@ impl LinuxMemFdAllocator {
     // allocation via `heap::take(self as *const _ as *mut _)` is UB —
     // it materializes `&mut Self` (via `Drop`) while a shared `&self`
     // borrow is still live.
-    pub unsafe fn deref(this: *mut Self) {
+    #[cfg_attr(not(any(target_os = "linux", target_os = "android")), allow(dead_code))]
+    pub(crate) unsafe fn deref(this: *mut Self) {
         // SAFETY: caller contract — `this` is live and Box-allocated; forwards
         // to the intrusive refcount which runs `destructor` on zero.
         unsafe { bun_ptr::ThreadSafeRefCount::<Self>::deref(this) };

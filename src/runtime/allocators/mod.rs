@@ -4,4 +4,4 @@
 #![warn(unused_must_use)]
 
 #[path = "LinuxMemFdAllocator.rs"]
-pub mod linux_mem_fd_allocator;
+pub(crate) mod linux_mem_fd_allocator;

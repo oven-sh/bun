@@ -525,7 +525,6 @@ impl JSMySQLConnection {
             let socket = match result {
                 Ok(s) => s,
                 Err(e) => {
-                    let _ = this;
                     // SAFETY: `ptr` is the freshly-boxed allocation; sole owner.
                     // `this` (a `ParentRef`) is not used past this point, so no
                     // borrow outlives the `heap::take` inside `deinit`.

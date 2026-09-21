@@ -615,7 +615,6 @@ impl FSWatcher {
         // safe `&mut EventLoop` accessor. Ownership of `task` transfers to the
         // queue.
         this.vm().event_loop_mut().enqueue_task(Task::init(task));
-        let _ = is_file;
     }
 
     #[cfg(windows)]

@@ -2855,7 +2855,6 @@ mod draft {
             // `CloseHandle`. `report()` runs immediately before
             // `crash()` → `ExitProcess(3)`, so the kernel reclaims them anyway.
             let _ = spawn_result;
-            let _ = url;
         }
         #[cfg(any(
             target_os = "macos",
@@ -2920,8 +2919,6 @@ mod draft {
                 _ => {}
             }
         }
-        #[cfg(not(unix))]
-        let _ = url;
     }
 
     /// Crash. Make sure segfault handlers are off so that this doesnt trigger the crash handler.

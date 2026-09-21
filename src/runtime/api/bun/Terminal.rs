@@ -1798,7 +1798,6 @@ impl Terminal {
 
     fn on_write(&self, amount: usize, status: WriteStatus) {
         bun_output::scoped_log!(Terminal, "onWrite: {} bytes", amount);
-        let _ = amount;
         match status {
             WriteStatus::Pending => {}
             // `PosixStreamingWriter` never dispatches `on_ready`, so POSIX

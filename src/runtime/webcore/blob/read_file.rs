@@ -1092,7 +1092,6 @@ impl<'a> ReadFileUV<'a> {
         // SAFETY: this_ptr is freshly boxed and uniquely owned by the async op.
         unsafe { (*this_ptr).get_fd(Self::on_file_open) };
         // ownership now lives with the libuv request chain until finalize().
-        let _ = this_ptr;
     }
 
     pub(crate) fn finalize(this: *mut Self) {

@@ -725,7 +725,6 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                 }
             }
         }
-        let _ = did_clone;
     }
     debug_css_order(
         this,

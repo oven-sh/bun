@@ -2536,7 +2536,6 @@ where
                         return addr.into_dto(&self.global());
                     }
                 }
-                let _ = port;
                 Ok(JSValue::NULL)
             }
         }

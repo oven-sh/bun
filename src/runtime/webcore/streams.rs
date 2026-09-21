@@ -2386,7 +2386,6 @@ impl NetworkSink {
             flushed,
             task.state.get() as u8
         );
-        let _ = task;
         // SAFETY: `this` is the live sink; each access is scoped and ends
         // before the re-entrant wake below.
         let mut source = unsafe {

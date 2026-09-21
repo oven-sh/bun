@@ -3201,8 +3201,6 @@ impl PackageManifest {
             result.string_buf = v.into_boxed_slice();
         }
 
-        let _ = all_tarball_url_strings; // suppress unused-mut warnings
-
         Ok(Some(result))
     }
 }

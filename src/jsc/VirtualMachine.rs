@@ -2012,7 +2012,6 @@ impl VirtualMachine {
             // routes through `printErrorlikeObject`
             // (which formats name/message/stack); the closest we can do here
             // without the high tier is the value's own `toString`.
-            let _ = exception_list;
             let writer = bun_core::Output::error_writer();
             let global = self.global();
             let display = result

@@ -689,7 +689,6 @@ mod _async_tasks {
             // KeepAlive::ref_ now takes the type-erased aio EventLoopCtx; the JS
             // event loop is the only one that owns AsyncFSTask/UVFSRequest.
             task.r#ref.ref_(bun_io::js_vm_ctx());
-            let _ = vm;
             task.tracker.did_schedule(cx.global());
 
             let loop_ = uv::Loop::get();
@@ -7218,7 +7217,6 @@ impl NodeFS {
                 phase = 1;
             }
         }
-        let _ = phase; // silence the unused-assignment lint on the final phase value
 
         let final_len = if string_type == ReadFileStringType::NullTerminated {
             total + 1

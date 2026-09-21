@@ -52,7 +52,6 @@ pub(crate) fn validate_path(
     // TODO: switch to getFdPath()-based implementation
     // `join_abs_string` resolves `.`/`..` against `cwd` into a threadlocal
     // buffer which is then boxed.
-    let _ = path_kind;
     let out =
         bun_paths::resolve_path::join_abs_string::<bun_paths::platform::Auto>(cwd, &[rel_path]);
     if out.is_empty() {

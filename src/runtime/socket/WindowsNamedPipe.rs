@@ -1121,7 +1121,6 @@ impl uv::StreamReader for WindowsNamedPipe {
         // `on_read_alloc`). Capture the only thing the body needs (length)
         // and drop the slice before touching `*this`.
         let nread = data.len();
-        let _ = data;
         // SAFETY: `this` is the live context stashed in `handle.data` by
         // `read_start_ctx`; `data` is no longer live.
         unsafe { &*this }.on_read(nread);

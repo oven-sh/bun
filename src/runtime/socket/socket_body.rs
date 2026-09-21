@@ -4831,10 +4831,6 @@ pub(crate) fn js_upgrade_duplex_to_tls(
     if duplex_context_ref.ssl_config.get().is_none() {
         drop(ssl_opts.take());
     }
-    // Disarm the guard — either moved into duplexContext or just
-    // freed above; both the move-target and the deinit case must not see it
-    // freed again on a later throw.
-    let _ = ssl_opts;
     tls_ref.ref_();
 
     tls_ref.socket.set(duplex_context_ref.duplex_socket());

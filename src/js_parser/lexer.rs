@@ -691,7 +691,6 @@ impl<'a> Lexer<'a> {
                                     }
                                     j += 1;
                                 }
-                                let _ = width3;
                             }
 
                             iter.c = value as CodePoint; // @truncate

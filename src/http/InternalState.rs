@@ -371,7 +371,6 @@ impl<'a> InternalState<'a> {
                     still_needs_to_decompress = false;
                 }
             }
-            let _ = is_final_chunk;
         }
 
         // Slow path, or brotli: use the .decompressor

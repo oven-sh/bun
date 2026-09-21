@@ -1940,7 +1940,6 @@ impl uv::StreamReader for SendQueue {
         // `incoming` itself, so only the length is forwarded and only a shared
         // view of `*this` is formed.
         let nread = data.len();
-        let _ = data;
         // SAFETY: `this` is the live `SendQueue` stashed in `handle.data` by
         // `read_start_ctx`; a shared reborrow only, and `data` is not used after.
         IPCHandlers::WindowsNamedPipe::on_read(unsafe { &*this }, nread);

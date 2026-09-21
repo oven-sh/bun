@@ -203,7 +203,6 @@ impl Debugger {
         // accesses form short-lived `&mut`s under the single-JS-thread
         // invariant via safe `&VirtualMachine` accessors.
         debug_assert!(core::ptr::eq(this, VirtualMachine::get_mut_ptr()));
-        let _ = this; // release: param otherwise unused
         let this: &VirtualMachine = VirtualMachine::get();
         let Some(dbg) = this.debugger_mut() else {
             return;

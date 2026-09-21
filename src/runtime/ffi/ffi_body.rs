@@ -1342,7 +1342,6 @@ impl FFI {
             return Ok(val);
         }
 
-        let _ = function;
         let text: &[u8] =
             b"// bun:ffi callbacks are compiled by JavaScriptCore (no C source is generated)\n";
         bun_string_jsc::create_utf8_for_js(global, text)

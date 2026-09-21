@@ -1048,8 +1048,6 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         // field address is stable for the VM lifetime.
         unsafe { timer::All::drain_timers(&mut (*state).timer, vm.cast()) };
     }
-    #[cfg(not(unix))]
-    let _ = state;
 
     // SAFETY: per fn contract.
     unsafe { (*vm).on_after_event_loop() };
@@ -1170,8 +1168,6 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
         // on `auto_tick` re: aliased-&mut across `fire()`.
         unsafe { timer::All::drain_timers(&mut (*state).timer, vm.cast()) };
     }
-    #[cfg(not(unix))]
-    let _ = state;
 
     // SAFETY: per fn contract.
     unsafe { (*vm).on_after_event_loop() };
@@ -2425,7 +2421,6 @@ fn transpile_source_code_inner(
                         };
                         virtual_source = Some(&fallback_source);
                     }
-                    let _ = code;
                 }
             }
 
@@ -4230,7 +4225,6 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
                 )
             };
         }
-        let _ = concurrent_loader;
     }
 
     // ── Synchronous-loader fallback ────────────────────────────────────────

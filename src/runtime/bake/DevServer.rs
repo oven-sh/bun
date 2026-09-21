@@ -6528,7 +6528,6 @@ fn bundle_new_route_js_function_impl(
 
     let _exit = dev.vm().enter_event_loop_scope();
 
-    let _ = dev;
     let Some(dev_ptr) = request.request_context.dev_server_mut() else {
         return Err(global.throw(format_args!(
             "Request context does not belong to dev server"

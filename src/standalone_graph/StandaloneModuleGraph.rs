@@ -1219,7 +1219,6 @@ unsafe fn slice_to(base: *const u8, len: usize, ptr: StringPointer) -> &'static 
     let off = ptr.offset as usize;
     let n = ptr.length as usize;
     debug_assert!(off.checked_add(n).is_some_and(|end| end <= len));
-    let _ = len;
     // SAFETY: caller contract — `[off, off+n)` lies within a live 'static read-only allocation.
     unsafe { core::slice::from_raw_parts(base.add(off), n) }
 }
@@ -1234,7 +1233,6 @@ unsafe fn slice_to_mut(base: *mut u8, len: usize, ptr: StringPointer) -> *mut [u
     let off = ptr.offset as usize;
     let n = ptr.length as usize;
     debug_assert!(off.checked_add(n).is_some_and(|end| end <= len));
-    let _ = len;
     // SAFETY: caller contract — `off` is in-bounds of the writable allocation at `base`.
     core::ptr::slice_from_raw_parts_mut(unsafe { base.add(off) }, n)
 }
@@ -1248,7 +1246,6 @@ unsafe fn slice_to_z(base: *const u8, len: usize, ptr: StringPointer) -> &'stati
     let off = ptr.offset as usize;
     let n = ptr.length as usize;
     debug_assert!(off.checked_add(n).is_some_and(|end| end < len));
-    let _ = len;
     // SAFETY: caller contract — `[off, off+n]` is in-bounds with a NUL terminator at `base[off+n]`.
     unsafe { ZStr::from_raw(base.add(off), n) }
 }

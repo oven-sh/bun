@@ -592,7 +592,6 @@ impl SourceMapStore {
             key.get(),
             entry_ref_count
         );
-        let _ = entry_ref_count;
         true
     }
 

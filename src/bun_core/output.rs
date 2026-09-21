@@ -2872,7 +2872,6 @@ mod output_macro_tests {
                 n += 1;
                 n
             });
-            let _ = n;
 
             let s = String::from("x");
             crate::pretty_errorln!("{} {}", s, s.len());

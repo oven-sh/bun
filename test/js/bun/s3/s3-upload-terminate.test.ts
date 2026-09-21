@@ -71,9 +71,17 @@ const host = /* js */ `
         workerData: { endpoint: server.url.origin, key: "key-" + i },
       });
       // Terminate as soon as this worker reports that its uploads are started.
-      return new Promise(resolve => w.once("message", resolve)).then(() => w.terminate());
+      // A worker that fails before that fails the run instead of hanging it.
+      return new Promise((resolve, reject) => {
+        w.once("message", resolve);
+        w.once("error", reject);
+        w.once("exit", code => reject(new Error("worker exited with code " + code + " before it started its uploads")));
+      }).then(() => w.terminate());
     }),
-  );
+  ).catch(error => {
+    console.error(error);
+    process.exit(1);
+  });
   server.stop(true);
   console.log("ok");
 `;

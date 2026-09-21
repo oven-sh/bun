@@ -2323,7 +2323,7 @@ describe("a method call frame is named after its receiver", () => {
     expect(line).toContain("capture-stack-trace.test.js");
   });
 
-  test("the error printed by bun", async () => {
+  test.concurrent("the error printed by bun", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", `class K { m() { throw new Error("x"); } }; ({ mock() { new K().m(); } }).mock();`],
       env: bunEnv,
@@ -2341,12 +2341,14 @@ describe("a method call frame is named after its receiver", () => {
   // one: a stack read through the argument recoveries of an inlined frame gave
   // the arguments array of a varargs call, or a raw word that crashed the
   // collector when it marked the frame.
-  test("hot methods: an inlined frame's name is the bare name or the right type name, never a wrong one", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
+  test.concurrent(
+    "hot methods: an inlined frame's name is the bare name or the right type name, never a wrong one",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
         Error.prepareStackTrace = (e, sites) => String(sites[0].getTypeName());
         const o = { m(i) { "use strict"; if ((i & 255) === 0) { const e = new Error("x"); e.message; return e.stack; } return i; } };
         class K {
@@ -2384,21 +2386,22 @@ describe("a method call frame is named after its receiver", () => {
         if (seen !== 16 * checks.length) console.log("seen", seen);
         console.log("bad", bad);
         `,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout.trim()).toBe("bad 0");
-    expect(exitCode).toBe(0);
-  });
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("bad 0");
+      expect(exitCode).toBe(0);
+    },
+  );
 
   // Node calls the CommonJS wrapper with module.exports as `this`, so the
   // module's own frame reads `at Object.<anonymous>` and `eval("this")` at the
   // top level is module.exports.
-  test("the top-level frame of a CommonJS module, and a namespace receiver", async () => {
+  test.concurrent("the top-level frame of a CommonJS module, and a namespace receiver", async () => {
     using dir = tempDir("cjs-module-frame", {
       "main.cjs": `
         const e = new Error("x");

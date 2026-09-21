@@ -160,7 +160,7 @@ test("over a connected socket the listener and 'connect' run on the first tick, 
   const { server, port } = await listen();
   const sockets: net.Socket[] = [];
   try {
-    // Resolves with the first three calls. The socket closes after all of them.
+    // Resolves with the first three calls.
     const firstCalls = async (
       afterConnect: (client: http2.ClientHttp2Session, record: (name: string) => void) => void,
     ) => {
@@ -178,7 +178,9 @@ test("over a connected socket the listener and 'connect' run on the first tick, 
       client.on("connect", () => record("connect"));
       client.on("close", () => record("close"));
       client.on("error", reject);
-      socket.on("close", () => reject(new Error(`the socket closed after only: ${calls}`)));
+      // node emits the session 'close' from a socket 'close' listener that destroy() adds, so
+      // that listener runs after this one. The failure waits for the rest of the dispatch.
+      socket.on("close", () => setImmediate(() => reject(new Error(`the socket closed after only: ${calls}`))));
       afterConnect(client, record);
       return promise;
     };

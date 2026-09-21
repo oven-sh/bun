@@ -4,22 +4,18 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   candidateBuilds,
-  mustGenerateOrderFile,
   orderFileEligible,
-  shouldGenerateOrderFile,
   type BuildLookups,
   type OrderFileContext,
 } from "../../../../scripts/build/ci.ts";
 import type { Config } from "../../../../scripts/build/config.ts";
 import {
-  computeLinkFlags,
-  finalLink,
   linkDepends,
+  linkerFlags,
   linkerMapOutputs,
   linkerMapPath,
   orderFilePath,
   symbolMapPath,
-  unorderedLink,
   usesOrderFile,
   writesLinkerMap,
 } from "../../../../scripts/build/flags.ts";
@@ -83,17 +79,19 @@ const windowsArm64 = {
   crossTarget: "aarch64-pc-windows-msvc",
 } as Partial<Config>;
 
-/** Everything the command line of the link that ships gets from linkerFlags for this config. */
-const appliedLinkerFlags = (config: Config): string[] => computeLinkFlags(config, finalLink(config));
+/** Everything the link command line gets from linkerFlags for this config (an entry without `when` always applies). */
+const appliedLinkerFlags = (config: Config): string[] =>
+  linkerFlags
+    .filter(flag => !flag.when || flag.when(config))
+    .flatMap(flag => (typeof flag.flag === "function" ? flag.flag(config) : flag.flag))
+    .flat();
 
-/** A canary build on Buildkite, off a pull request. */
+/** A build on Buildkite: of main or of a pull request, the order file comes from main either way. */
 const ctx = (overrides: Partial<OrderFileContext> = {}): OrderFileContext => ({
   buildkite: true,
   buildUrl: "https://buildkite.com/bun/bun/builds/68425",
-  branch: "main",
+  mainBranch: "main",
   buildNumber: 68425,
-  commitMessage: "some ordinary commit",
-  pullRequest: false,
   ...overrides,
 });
 
@@ -117,7 +115,7 @@ describe("symbol ordering file", () => {
   });
 
   it("is disabled where it cannot work or is not wanted", () => {
-    expect(usesOrderFile(cfg({ release: false }))).toBe(false); // debug: not worth a relink
+    expect(usesOrderFile(cfg({ release: false }))).toBe(false); // debug: startup RSS is not what a debug build is for
     expect(usesOrderFile(cfg({ ...windowsX64, release: false }))).toBe(false);
     expect(usesOrderFile(cfg({ asan: true }))).toBe(false); // tracer swaps .text
     expect(usesOrderFile(cfg({ valgrind: true }))).toBe(false);
@@ -177,30 +175,9 @@ describe("symbol ordering file", () => {
     }
   });
 
-  it("is not read by the link whose binary is traced to write it", () => {
-    // A build that traces its own symbol order links twice in one graph. The
-    // first link cannot name the file: it does not exist yet, and naming it
-    // would make the graph a cycle. Everything else about the two links is the
-    // same, so the trace is of the code that ships; each writes its own maps.
-    for (const config of [cfg(), cfg(darwinArm64), cfg(windowsX64), cfg(windowsArm64)]) {
-      const unordered = computeLinkFlags(config, unorderedLink(config));
-      const final = appliedLinkerFlags(config);
-      expect(unordered.join(" ")).not.toMatch(/--symbol-ordering-file|-order_file|\/order:/);
-      expect(linkDepends(config, unorderedLink(config))).not.toContain(orderFilePath(config));
-      expect(linkerMapOutputs(config, unorderedLink(config))).toEqual(
-        linkerMapOutputs(config).map(map => map.replace("bun-profile", "bun-profile-unordered")),
-      );
-      const sameButForTheOrderFileAndTheMaps = (flags: string[]) =>
-        flags
-          .filter(flag => !/symbol-ordering|order_file|\/order:|\/ignore:4037/.test(flag))
-          .map(flag => flag.replace("bun-profile-unordered", "bun-profile"));
-      expect(sameButForTheOrderFileAndTheMaps(unordered)).toEqual(sameButForTheOrderFileAndTheMaps(final));
-    }
-  });
-
   it("is a link dependency, so a new one relinks", () => {
-    // Inheriting one, `bun run orderfile`, or this build's own trace edge writing
-    // it: the link is the only edge whose input changed.
+    // Inheriting one, or `bun run orderfile` writing one: the link is the only
+    // edge whose input changed.
     for (const config of [cfg(), cfg(darwinArm64), cfg(windowsX64), cfg(windowsArm64)]) {
       expect(linkDepends(config)).toContain(orderFilePath(config));
     }
@@ -268,38 +245,19 @@ describe("linker maps", () => {
   });
 });
 
-describe("deciding whether a build generates its own order file", () => {
-  it("a release always does — it is the binary people install", () => {
-    expect(shouldGenerateOrderFile(cfg({ canary: false }), ctx())).toBe(true);
+describe("deciding whether a build links with an inherited order file", () => {
+  // No build traces its own binary: a target's trace-order step (.buildkite/ci.ts)
+  // publishes the file after each main build, and every later build inherits it.
+  it("every build does: release or canary, a pull request's too, whether or not the host can run the target", () => {
+    expect(orderFileEligible(cfg(), ctx())).toBe(true);
+    expect(orderFileEligible(cfg({ canary: false }), ctx())).toBe(true);
+    expect(orderFileEligible(cfg({ canRunOnHost: false } as Partial<Config>), ctx())).toBe(true);
   });
 
-  it("a canary does not by default — it inherits, and pays no second link", () => {
-    expect(shouldGenerateOrderFile(cfg(), ctx())).toBe(false);
-  });
-
-  it("a canary does when the commit asks for it", () => {
-    expect(shouldGenerateOrderFile(cfg(), ctx({ commitMessage: "perf: x [generate symbol order]" }))).toBe(true);
-  });
-
-  it("a pull request never does, and never publishes", () => {
-    const pr = ctx({ pullRequest: true });
-    expect(orderFileEligible(cfg(), pr)).toBe(false);
-    expect(shouldGenerateOrderFile(cfg({ canary: false }), pr)).toBe(false);
-    expect(mustGenerateOrderFile(cfg(), pr, false)).toBe(false);
-  });
-
-  it("a target that cannot run on the host never does", () => {
-    const cross = cfg({ canRunOnHost: false } as Partial<Config>);
-    expect(shouldGenerateOrderFile(cfg({ ...cross, canary: false } as Partial<Config>), ctx())).toBe(false);
-    expect(mustGenerateOrderFile(cross, ctx(), false)).toBe(false);
-    expect(orderFileEligible(cross, ctx())).toBe(true); // ...but it can still inherit one
-  });
-
-  it("a canary that inherited nothing generates anyway, seeding the chain", () => {
-    // Without this the first build publishes nothing, so the next inherits
-    // nothing, so it publishes nothing — and no canary is ever ordered.
-    expect(mustGenerateOrderFile(cfg(), ctx(), false)).toBe(true);
-    expect(mustGenerateOrderFile(cfg(), ctx(), true)).toBe(false);
+  it("a build that does not link, or whose target has no order file, never does", () => {
+    expect(orderFileEligible(cfg({ mode: "cpp-only" }), ctx())).toBe(false);
+    expect(orderFileEligible(cfg({ mode: "rust-only" }), ctx())).toBe(false);
+    expect(orderFileEligible(cfg({ abi: "musl" }), ctx())).toBe(false);
   });
 
   it("nothing happens off Buildkite", () => {
@@ -346,7 +304,7 @@ describe("finding an earlier build to inherit from", () => {
   });
 
   it("falls back to the newest passed build when the branch was quiet for longer than the probe reaches", async () => {
-    // Without this nothing is inherited, and a lane that cannot trace its own binary ships unordered.
+    // Without this nothing is inherited, and the build ships unordered.
     const { found, requested } = await walk({ main: [640], newestPassed: 640 });
     expect(found).toEqual([640]);
     expect(requested.at(-1)).toBe(`${pipeline}/builds/640.json`);

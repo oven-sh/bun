@@ -36,7 +36,6 @@ const ruleVars = {
   rc: ["rcflags"],
   shim_verify: ["spec"],
   smoke_test: [],
-  order_file_trace: ["traced"],
   strip: ["stripflags"],
   // codegen.ts
   bun_install: ["dir", "stamp"],

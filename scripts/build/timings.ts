@@ -834,7 +834,6 @@ const ruleLane: Record<RuleName, Lane> = {
   link: "link and checks",
   shim_verify: "link and checks",
   smoke_test: "link and checks",
-  order_file_trace: "link and checks",
   strip: "link and checks",
   bk_upload: "other",
   bk_upload_gz: "other",

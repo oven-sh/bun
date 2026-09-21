@@ -30,7 +30,7 @@ import { BuildError } from "../error.ts";
 import { writeIfChanged } from "../fs.ts";
 import type { Phase } from "../timings.ts";
 import { type BuildScriptOutput, envify } from "./cargo-env.ts";
-import type { RustcPhases, RustcUnitManifest, UnitManifest } from "./units.ts";
+import type { RustcUnitManifest, UnitManifest } from "./units.ts";
 
 // Guarded so the tests can import the pieces below without running a unit.
 if (process.argv[1] === import.meta.filename) {
@@ -178,8 +178,7 @@ function runRustc(unit: RustcUnitManifest): void {
         stampOutput(unit.binDestination);
       }
       writeDepfile(unit);
-      if (unit.phases !== undefined)
-        writeFileSync(unit.phases, JSON.stringify({ phases } satisfies RustcPhases) + "\n");
+      if (unit.phases !== undefined) writeFileSync(unit.phases, JSON.stringify(phases) + "\n");
     }
     process.exit(status);
   };

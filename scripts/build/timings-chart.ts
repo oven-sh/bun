@@ -1,20 +1,31 @@
 /**
  * `<buildDir>/timings.html`: the build as a chart. One page, no dependencies, the data inside it.
  *
- * Each run of ninja still in the log is a Gantt chart: a bar per command from its start to its end, in a lane for its
- * kind, under a strip of how many commands of each kind were running. The commands on the critical path (timings.ts
- * `criticalPath`) are outlined where they ran, and joined: each step starts where the one before it released what it
- * needed, which for a library crate is the tick inside its bar (its `.rmeta`), not its end.
+ * Each of the most recent runs of ninja is a Gantt chart: a bar per command from its start to its end, in a lane for
+ * what it is, under a strip of how many commands of each color were running. The commands on the critical path
+ * (timings.ts `criticalPath`) are outlined where they ran, and joined: each step starts where the one before it
+ * released what it needed, which for a library crate is the tick inside its bar (its `.rmeta`), not its end. Under
+ * the cursor, and for a bar that was clicked, the same is drawn for the chain of commands that bar waited on.
  */
 
 import { relative } from "node:path";
 import type { RuleName } from "./ninja.ts";
-import { type Build, type Execution, type Run, clock, criticalPath, topLevelPhases, waits } from "./timings.ts";
+import {
+  type Build,
+  type Execution,
+  type Run,
+  EARLIER_RUNS_LISTED,
+  clock,
+  criticalPath,
+  largestPhases,
+  waits,
+} from "./timings.ts";
 
 /**
- * A lane of the chart: the commands of one kind, top to bottom in the order a build gets to them. Lanes are told
- * apart by their labels; a lane's color is one of the three hues that stay apart for every pair of them under
- * color-vision deficiency on both a light and a dark page, or the neutral.
+ * A lane of the chart: commands that are the same sort of work, top to bottom in the order a build gets to them.
+ * Lanes are told apart by their labels; a lane's color (`--k0` to `--k3` in the page) is one of the three hues that
+ * stay apart for every pair of them under color-vision deficiency on both a light and a dark page, or the neutral.
+ * The strip of running commands is stacked by color, in the colors' order.
  */
 const lanes = [
   { name: "dependencies", color: 2 },
@@ -88,8 +99,6 @@ export interface ChartBar {
   /** The bar (index into the run's `bars`) that made the last of its inputs to exist, and when it released it. */
   blocker: number | undefined;
   readyAt: number;
-  /** How many of the run's commands made an input of this one. */
-  inputs: number;
   pool: string | undefined;
   phases: [name: string, ms: number][];
 }
@@ -119,8 +128,7 @@ export interface ChartData {
 }
 
 /** The runs the page draws: the most recent, and as many before it as the report lists. */
-const RUNS_DRAWN = 11;
-const PHASES_SHOWN = 4;
+const RUNS_DRAWN = 1 + EARLIER_RUNS_LISTED;
 
 function chartRun(build: Build, run: Run, steps: Map<Execution, { step: number; blocksNextForMs: number }>): ChartRun {
   const waited = waits(build, run);
@@ -143,7 +151,7 @@ function chartRun(build: Build, run: Run, steps: Map<Execution, { step: number; 
   for (const x of run.executions) if (!steps.has(x)) placed.set(x, place(x));
   return {
     title: clock(run.epochMs),
-    wallMs: Math.max(...run.executions.map(x => x.end)),
+    wallMs: run.wallMs,
     restarts: run.restarts,
     lanes: used.map((lane, i) => ({ name: lane.name, color: lane.color, rows: taken[i]!.length })),
     bars: run.executions.map(x => ({
@@ -158,12 +166,8 @@ function chartRun(build: Build, run: Run, steps: Map<Execution, { step: number; 
       waited: waited.get(x)!.ms,
       blocker: index.get(waited.get(x)!.blocker!),
       readyAt: waited.get(x)!.readyAt,
-      inputs: waited.get(x)!.inputs,
       pool: x.pool,
-      phases: topLevelPhases(x.selfReport)
-        .map((p): [string, number] => [p.name, p.endMs - p.startMs])
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, PHASES_SHOWN),
+      phases: largestPhases(x),
     })),
   };
 }
@@ -218,18 +222,12 @@ const css = `
   --surface: #fcfcfb; --raised: #f3f2ef; --text: #0b0b0b; --text-2: #52514e; --grid: #e4e3df;
   --k0: #2a78d6; --k1: #eb6834; --k2: #1baf7a; --k3: #a3a29b;
 }
-/* A page that embeds this one can pin the theme with data-theme; without it the system's setting decides. */
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
+  :root {
     color-scheme: dark;
     --surface: #1a1a19; --raised: #262624; --text: #ffffff; --text-2: #c3c2b7; --grid: #383835;
     --k0: #3987e5; --k1: #d95926; --k2: #199e70; --k3: #6f6e68;
   }
-}
-:root[data-theme="dark"] {
-  color-scheme: dark;
-  --surface: #1a1a19; --raised: #262624; --text: #ffffff; --text-2: #c3c2b7; --grid: #383835;
-  --k0: #3987e5; --k1: #d95926; --k2: #199e70; --k3: #6f6e68;
 }
 body { margin: 0; background: var(--surface); color: var(--text); font: 14px/1.4 system-ui, sans-serif; }
 .viz-root { padding: 24px; }
@@ -278,7 +276,9 @@ const client = `
 (function () {
   var data = JSON.parse(document.getElementById("data").textContent);
   var NS = "http://www.w3.org/2000/svg";
-  var ROW = 14, BAR = 12, LEFT = 8, RIGHT = 24, STRIP = 44, AXIS = 18, GAP = 10, LANE_GAP = 12, THIN_ROW = 5, CHAR = 6.05, NAMED_SHARE = 0.03;
+  var ROW = 14, BAR = 12, LEFT = 8, RIGHT = 24, STRIP = 44, AXIS = 18, GAP = 10, LANE_GAP = 12, THIN_ROW = 5, NAMED_SHARE = 0.03;
+  // The width of a character of a bar's name (10px monospace), and the colors a lane can have (--k0 to --k3).
+  var CHAR = 6.05, COLORS = 4;
   var level = 1, MOST_ZOOM = 200;
   var tip = document.getElementById("tip");
 
@@ -303,10 +303,14 @@ const client = `
   tile(ms(data.criticalPathMs), "critical path: a build of everything with every core free");
   tile(String(data.edges), "edges, each as it last ran");
   if (data.runs.length > 0) tile(ms(data.runs[0].wallMs), "wall time of the most recent run of ninja");
+  function barIndex(ev) {
+    var i = ev.target.getAttribute && ev.target.getAttribute("data-i");
+    return i === null || i === undefined ? undefined : Number(i);
+  }
 
   var legend = document.getElementById("legend");
   var lp = html("span", undefined, legend); html("i", undefined, lp, "path"); lp.appendChild(document.createTextNode("on the critical path"));
-  var lt = html("span", undefined, legend); html("i", undefined, lt, "tick"); lt.appendChild(document.createTextNode("dependents released here"));
+  var lt = html("span", undefined, legend); html("i", undefined, lt, "tick"); lt.appendChild(document.createTextNode("dependents can start here"));
   html("span", "scroll to zoom · hover or click a bar", legend, "hint");
 
   function niceStep(span, width) {
@@ -325,7 +329,8 @@ const client = `
     // A row is full height when a bar in it is on the critical path or lasts a share of the run that can carry a
     // name with the whole run in view, and thin when it holds only slivers: a burst of short commands then costs
     // little room. Decided from the data, not from the zoom, so zooming only stretches the chart sideways.
-    var chars = function (b) { return Math.floor((Math.max(1.5, x(b.end) - x(b.start)) - 8) / CHAR); };
+    var barWidth = function (b) { return Math.max(1.5, x(b.end) - x(b.start)); };
+    var chars = function (b) { return Math.floor((barWidth(b) - 8) / CHAR); };
     var tall = run.lanes.map(function (lane) { return new Array(lane.rows).fill(false); });
     run.bars.forEach(function (b) {
       if (b.step !== undefined || (b.end - b.start) / run.wallMs >= NAMED_SHARE) tall[b.lane][b.row] = true;
@@ -363,18 +368,18 @@ const client = `
       if (i > 0) el("line", { x1: 0, x2: width, y1: laneTop[i] - LANE_GAP / 2, y2: laneTop[i] - LANE_GAP / 2, "class": "grid" }, svg);
     });
 
-    // How many commands were running, stacked by color from the bottom: C and C++, Rust, the rest.
+    // How many commands were running, stacked by color from the bottom.
     var events = [];
     run.bars.forEach(function (b) { var c = run.lanes[b.lane].color; events.push([b.start, 1, c], [b.end, -1, c]); });
     events.sort(function (a, b) { return a[0] - b[0] || a[1] - b[1]; });
     var most = 0, now = 0;
     events.forEach(function (e) { now += e[1]; if (now > most) most = now; });
-    for (var upTo = 3; upTo >= 0; upTo--) {
-      var d = "M" + x(0) + "," + STRIP, level = 0;
+    for (var upTo = COLORS - 1; upTo >= 0; upTo--) {
+      var d = "M" + x(0) + "," + STRIP, running = 0;
       events.forEach(function (e) {
         if (e[2] > upTo) return;
-        level += e[1];
-        d += "H" + x(e[0]) + "V" + (STRIP - level / most * (STRIP - 14));
+        running += e[1];
+        d += "H" + x(e[0]) + "V" + (STRIP - running / most * (STRIP - 14));
       });
       el("path", { d: d + "H" + x(run.wallMs) + "V" + STRIP + "Z", fill: "var(--k" + upTo + ")", "class": "running" }, svg);
     }
@@ -384,23 +389,26 @@ const client = `
     // this run waited on before it, each joined to the one it was waiting on, and lit, every command it held up.
     var steps = run.bars.filter(function (b) { return b.step !== undefined; }).sort(function (a, b) { return a.step - b.step; });
     var links = [], forward = [], chain = {}, held = {};
+    // The join from the bar a bar waited on; the bars it waited on, back to the start of the run.
+    var waitedOn = function (b) { return [run.bars[b.blocker], b.readyAt, b]; };
+    var chainOf = function (i) { var out = []; for (var at = i; at !== undefined; at = run.bars[at].blocker) out.push(at); return out; };
     if (run.pinned === undefined) {
       // Only steps that follow each other: after incremental builds a run holds some of the path's steps, not all.
       for (var i = 0; i + 1 < steps.length; i++) {
         if (steps[i + 1].step === steps[i].step + 1) links.push([steps[i], steps[i].start + steps[i].blocksNextForMs, steps[i + 1]]);
       }
     } else {
-      for (var at = run.pinned; at !== undefined; at = run.bars[at].blocker) {
+      chainOf(run.pinned).forEach(function (at) {
         chain[at] = true;
-        if (run.bars[at].blocker !== undefined) links.push([run.bars[run.bars[at].blocker], run.bars[at].readyAt, run.bars[at]]);
-      }
+        if (run.bars[at].blocker !== undefined) links.push(waitedOn(run.bars[at]));
+      });
       var heldUp = {};
       run.bars.forEach(function (b, i) { if (b.blocker !== undefined) (heldUp[b.blocker] = heldUp[b.blocker] || []).push(i); });
       for (var queue = [run.pinned]; queue.length > 0; ) {
         (heldUp[queue.pop()] || []).forEach(function (i) {
           held[i] = true;
           queue.push(i);
-          forward.push([run.bars[run.bars[i].blocker], run.bars[i].readyAt, run.bars[i]]);
+          forward.push(waitedOn(run.bars[i]));
         });
       }
     }
@@ -423,9 +431,8 @@ const client = `
     // With a bar pinned, what has nothing to do with it all but disappears; otherwise the rest only steps back.
     var away = run.pinned === undefined ? " faded" : " dim";
     run.bars.forEach(function (b, i) {
-      var w = Math.max(1.5, x(b.end) - x(b.start));
       el("rect", {
-        x: x(b.start), y: y(b), width: w, height: h(b), fill: "var(--k" + run.lanes[b.lane].color + ")",
+        x: x(b.start), y: y(b), width: barWidth(b), height: h(b), fill: "var(--k" + run.lanes[b.lane].color + ")",
         "class": "bar" + (outlined(b, i) ? " onpath" : lit(b, i) ? "" : away), "data-i": i,
       }, svg);
       if (b.released !== undefined) {
@@ -447,30 +454,29 @@ const client = `
       if (i === hovered) return;
       hovered = i;
       hoverLayer.textContent = "";
-      for (var at = i; at !== undefined; at = run.bars[at].blocker) {
+      if (i !== undefined) chainOf(i).forEach(function (at) {
         var b = run.bars[at];
-        el("rect", { x: x(b.start), y: y(b), width: Math.max(1.5, x(b.end) - x(b.start)), height: h(b), "class": "hoverbar" }, hoverLayer);
-        if (b.blocker !== undefined) join([run.bars[b.blocker], b.readyAt, b], "join hover", hoverLayer);
-      }
+        el("rect", { x: x(b.start), y: y(b), width: barWidth(b), height: h(b), "class": "hoverbar" }, hoverLayer);
+        if (b.blocker !== undefined) join(waitedOn(b), "join hover", hoverLayer);
+      });
     };
 
     svg.addEventListener("mousemove", function (ev) {
-      var i = ev.target.getAttribute && ev.target.getAttribute("data-i");
-      if (i === null || i === undefined) { tip.hidden = true; showChain(undefined); return; }
-      showChain(Number(i));
+      var i = barIndex(ev);
+      showChain(i);
+      if (i === undefined) { tip.hidden = true; return; }
       var b = run.bars[i];
       tip.textContent = "";
       html("b", b.label, tip);
       html("div", run.lanes[b.lane].name + " · rule " + b.rule + (b.pool ? " · pool " + b.pool : ""), tip);
       html("div", ms(b.end - b.start) + " · from " + ms(b.start) + " to " + ms(b.end), tip);
-      if (b.blocker === undefined) html("div", "nothing it reads was built by this run", tip);
+      if (b.blocker === undefined) html("div", "nothing it reads was made by this run", tip);
       else {
         var blocker = run.bars[b.blocker];
         html("div", "started " + ms(b.waited) + " after " + blocker.label +
-          (b.readyAt < blocker.end ? " released what it needs" : " finished") + " · " +
-          b.inputs + (b.inputs === 1 ? " input" : " inputs") + " made by this run", tip);
+          (b.readyAt < blocker.end ? " released what it needs" : " finished"), tip);
       }
-      if (b.released !== undefined) html("div", "dependents could start after " + ms(b.released), tip);
+      if (b.released !== undefined) html("div", "dependents can start after " + ms(b.released), tip);
       if (b.step !== undefined) html("div", "critical path step " + (b.step + 1) + ": holds up the next for " + ms(b.blocksNextForMs), tip);
       if (b.phases.length > 0) html("div", b.phases.map(function (p) { return p[0] + " " + ms(p[1]); }).join(" · "), tip);
       tip.hidden = false;
@@ -480,8 +486,8 @@ const client = `
     });
     svg.addEventListener("mouseleave", function () { tip.hidden = true; showChain(undefined); });
     svg.addEventListener("click", function (ev) {
-      var i = ev.target.getAttribute && ev.target.getAttribute("data-i");
-      run.pinned = i === null || i === undefined || Number(i) === run.pinned ? undefined : Number(i);
+      var i = barIndex(ev);
+      run.pinned = i === run.pinned ? undefined : i;
       draw(run, host, gutter);
     });
     host.scrollLeft = scrolled;
@@ -492,7 +498,7 @@ const client = `
   var hosts = data.runs.map(function (run, i) {
     html("h2", (i === 0 ? "most recent run of ninja · " : "earlier run · ") + run.title, runs);
     var sum = run.bars.reduce(function (s, b) { return s + b.end - b.start; }, 0);
-    html("div", ms(run.wallMs) + " wall · " + run.bars.length + " edges · " + ms(sum) + " of commands · " +
+    html("div", ms(run.wallMs) + " wall · " + run.bars.length + " commands taking " + ms(sum) + " · " +
       (sum / run.wallMs).toFixed(1) + "× average parallelism", runs, "meta");
     run.note = html("div", undefined, runs, "meta");
     var row = html("div", undefined, runs, "run");

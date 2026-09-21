@@ -1,5 +1,5 @@
 /**
- * Where a build's time went: `bun scripts/build.ts --timings`.
+ * Where a build's time went: `bun scripts/build.ts --timings` (design: the "Timings" section of CLAUDE.md).
  *
  * Nothing is measured for this. Every build already records what the report needs:
  *
@@ -10,21 +10,14 @@
  *                 that file then (rust/run.ts `stampOutput`), so its mtime says how far into the command its
  *                 dependents could start
  *
- * and, when the build was configured with `--time-trace=on`, what each compiler says about its own phases
- * (`SelfReport`).
- *
- * The report describes the build directory, not one invocation: for every edge, the last time it ran. That is the
- * same whether the directory was built a moment ago, yesterday, or in several sittings, and it is all ninja keeps in
- * the long run (it compacts the log down to one entry per output). What only exists within one run of ninja (how many
- * edges ran at once, how long an edge waited) is reported for the most recent run, the one run nothing can have
- * overwritten part of.
+ * and, when the build was configured with `--time-trace=on`, what each compiler says about its own phases.
  */
 
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { relative, resolve, sep } from "node:path";
 import { BuildError } from "./error.ts";
-import { type Manifest, type ManifestEdge, readManifest } from "./ninja.ts";
-import { type RustcPhases, rustcPhasesPath } from "./rust/units.ts";
+import { type Manifest, type ManifestEdge, type RuleName, expand, readManifest } from "./ninja.ts";
+import { rustcPhasesPath } from "./rust/units.ts";
 import { formatElapsed } from "./tty.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -45,12 +38,12 @@ export interface LogEntry {
 }
 
 /** The one format the ninja this build runs reads and writes (src/build_log.cc `kCurrentVersion`). */
-const logSignature = "# ninja log v7";
+const LOG_SIGNATURE = "# ninja log v7";
 
 export function parseNinjaLog(text: string): LogEntry[] {
   const lines = text.split("\n");
-  if (lines[0] !== logSignature) {
-    throw new BuildError(`.ninja_log starts with ${JSON.stringify(lines[0])}, not "${logSignature}"`, {
+  if (lines[0] !== LOG_SIGNATURE) {
+    throw new BuildError(`.ninja_log starts with ${JSON.stringify(lines[0])}, not "${LOG_SIGNATURE}"`, {
       hint: "The timings read the log of the ninja this build pins (oven-sh/ninja). Another ninja built this directory.",
     });
   }
@@ -77,12 +70,18 @@ function stampToUnixMs(stamp: bigint, windowsHost: boolean): number {
  */
 const NINJA_WINDOWS_EPOCH_MS = Date.UTC(1601, 0, 1) + 12_622_770_400_000;
 
+// A command's stamp and its `start` are read from two clocks at two moments, so `stamp - start` only brackets when
+// its ninja started.
+
+/** The stamp can be early: the kernel stamps files from a clock it advances once per timer tick (10 ms at HZ=100). */
+const STAMP_EARLY_MS = 10;
 /**
- * How far `stamp - start` of a command can be from its ninja's start when the stamp is the command's start. Below:
- * the kernel stamps files from a clock it advances once per timer tick (10 ms at the slowest common rate, HZ=100).
- * Above: ninja reads its clock, creates the outputs' directories, and only then touches `.ninja_lock`.
+ * The stamp can be late: ninja reads its clock, creates the outputs' directories, and only then touches
+ * `.ninja_lock`. Up to 57 ms in the log of a build of everything on 32 cores; the bound is that with room to spare.
  */
-const STAMP_SLACK_MS = 10;
+const STAMP_LATE_MS = 100;
+/** ninja starts a command whose last input just appeared in the same pass of its loop (1 to 5 ms in real logs). */
+const START_AFTER_INPUT_MS = 10;
 
 // ───────────────────────────────────────────────────────────────────────────
 // Executions and runs
@@ -102,7 +101,6 @@ export interface Execution {
   stampIsStart: boolean;
   /** The command that writes `build.ninja` (a `generator` rule). */
   writesManifest: boolean;
-  run: Run;
   /**
    * Outputs released before the command ended, by absolute path: milliseconds after `start`. Known only for an
    * edge's last execution, whose files are the ones on disk.
@@ -111,41 +109,34 @@ export interface Execution {
   selfReport: Phase[];
 }
 
-/**
- * One run of ninja: a ninja process that ran at least one command, together with the processes it became. ninja brings
- * `build.ninja` up to date before anything else, and when that rewrote the file it starts over with the new graph,
- * counting from zero again. That is one build, so it is one run here, on the first process's clock.
- */
+/** One run of ninja: a ninja process that ran at least one command, together with the processes it became. */
 export interface Run {
   /** Unix milliseconds of the first process's start: what `start` and `end` of its executions count from. */
   epochMs: number;
+  /** The end of its last command. */
+  wallMs: number;
   executions: Execution[];
   /** When ninja started over with a rewritten `build.ninja`, on the run's clock. */
   restarts: number[];
 }
 
-export const duration = (x: Execution): number => x.end - x.start;
+const duration = (x: Execution): number => x.end - x.start;
 
-/** The checkout these scripts are in, which is the one they build. */
-const repoRoot = resolve(import.meta.dirname, "..", "..");
+/** How long `x` held up whatever reads `path`: until it released that output, which for most is until it ended. */
+const heldFor = (x: Execution, path: string): number => x.released.get(path) ?? duration(x);
 
 /**
  * A rule's description with `$out`, `$in` and the edge's own variables expanded, as ninja prints it, with paths into
  * the build directory and the checkout shortened to how the graph and the repository name them.
  */
-function describe(buildDir: string, manifest: Manifest, edge: ManifestEdge): string {
+function describe(where: Where, manifest: Manifest, edge: ManifestEdge): string {
   const text = manifest.rules.get(edge.rule)?.description ?? `${edge.rule} $out`;
-  return text
-    .replace(/\$(\$|\{[a-zA-Z0-9_.-]+\}|[a-zA-Z0-9_-]+)/g, (_, ref: string) => {
-      if (ref === "$") return "$";
-      const name = ref.startsWith("{") ? ref.slice(1, -1) : ref;
-      if (name === "out") return edge.outputs.join(" ");
-      if (name === "in") return edge.inputs.join(" ");
-      return edge.bindings[name] ?? "";
-    })
-    .replaceAll(buildDir + sep, "")
-    .replaceAll(repoRoot + sep, "")
-    .replaceAll(repoRoot, ".")
+  const value = (name: string) =>
+    name === "out" ? edge.outputs.join(" ") : name === "in" ? edge.inputs.join(" ") : (edge.bindings[name] ?? "");
+  return expand(text, value)
+    .replaceAll(resolve(where.buildDir) + sep, "")
+    .replaceAll(where.cwd + sep, "")
+    .replaceAll(where.cwd, ".")
     .trim();
 }
 
@@ -153,76 +144,78 @@ function describe(buildDir: string, manifest: Manifest, edge: ManifestEdge): str
  * Split executions into the runs of ninja that made them. The log does not say: every ninja process counts from its
  * own zero, and ninja rewrites the log in no particular order when it compacts it.
  *
- * What places an execution in a process is its stamp. When the stamp is the command's start, `stamp - start` is
- * when its process started (its epoch), give or take `STAMP_SLACK_MS`. Two ninjas on one build directory never
- * overlap, so the next process's epoch is past every end of this one: sorted by epoch, an execution belongs to the
- * process before it exactly when its epoch falls before that process's last end so far. When the stamp may be an
- * output's mtime, all it says is that the epoch lies in `[stamp - end, stamp - start]`; such an execution goes to the
- * latest process whose epoch that allows, and the ones no process allows (a ninja that only fetched and planned) are
- * processes of their own.
+ * What places an execution in a process is its stamp. When the stamp is the command's start, `stamp - start` is when
+ * its process started (its epoch), early by at most `STAMP_EARLY_MS` and late by at most `STAMP_LATE_MS`. Two ninjas
+ * on one build directory never overlap, so the next process's epoch is past every end of this one: sorted by epoch,
+ * an execution belongs to the process before it exactly when its epoch falls before that process's last end so far.
+ * When the stamp may be an output's mtime, the epoch lies anywhere in `[stamp - end, stamp - start]`; such an
+ * execution goes to the latest process whose epoch that allows, and the ones no process allows (a ninja that only
+ * fetched and planned) are processes of their own. One case cannot be told from the log: a command of that kind that
+ * left its output unchanged, in a process with nothing to pin it, which ran for longer than the process before it had
+ * been over; it is put in that one.
  *
  * The command that writes `build.ninja` is the exception: its stamp is not its own. Every configure stamps
  * `build.ninja` and has ninja record that (`ninja -t restat`, configure.ts), so the entry's stamp is the last
- * configure's, whenever the command ran. Its start and end are still its process's, and ninja starts it the moment
- * its last input exists, so it belongs to the process in which a command that makes one of its inputs (`feeds`) ended
- * right at its start. With no such process in the log it is in no run (`Build.last` still has how long it took).
+ * configure's, whenever the command ran. Its start and end are still its process's. ninja brings `build.ninja` up to
+ * date before anything else, so that process ran nothing but what `build.ninja` needs (`beforeManifest`), and ninja
+ * starts the command the moment its last input exists: it belongs to the process made only of such commands in which
+ * one that makes an input of it (`feeds`) ended right at its start. With no such process in the log it is in no run.
  *
- * A process whose last command wrote `build.ninja` started over at once, counting from zero again: the process that
- * begins where it ended is the same run, on the first one's clock.
+ * When that command rewrote `build.ninja`, ninja starts over at once with the new graph, counting from zero again.
+ * That is one build: the process that begins where it ended is the same run, on the first one's clock.
  */
-function groupRuns(executions: Omit<Execution, "run">[], feeds: Set<ManifestEdge>): Run[] {
-  // A process's epoch is known to lie in [epochLo, epochHi]; `epochMs` is the estimate the run is dated by.
-  type Process = Run & { epochLo: number; epochHi: number; lastEnd: number };
+function groupRuns(executions: Execution[], feeds: Set<ManifestEdge>, beforeManifest: Set<ManifestEdge>): Run[] {
+  // The process's epoch is somewhere in [epochLo, epochHi]; `epochMs` is the estimate the run is dated by.
+  type Process = Run & { epochLo: number; epochHi: number };
   const processes: Process[] = [];
-  const started = (epochLo: number, epochHi: number): Process => {
-    const p = { epochMs: epochHi, epochLo, epochHi, lastEnd: 0, executions: [], restarts: [] };
+  const started = (epochLo: number, epochMs: number, epochHi: number): Process => {
+    const p = { epochMs, epochLo, epochHi, wallMs: 0, executions: [], restarts: [] };
     processes.push(p);
     return p;
   };
-  const add = (p: Process, x: Omit<Execution, "run">) => {
-    p.lastEnd = Math.max(p.lastEnd, x.end);
-    p.executions.push(Object.assign(x, { run: p }));
+  const add = (p: Process, x: Execution) => {
+    p.wallMs = Math.max(p.wallMs, x.end);
+    p.executions.push(x);
   };
-  const epochOf = (x: Omit<Execution, "run">) => x.stampMs - x.start;
-  const byEpoch = (a: Omit<Execution, "run">, b: Omit<Execution, "run">) => epochOf(a) - epochOf(b);
+  const epochOf = (x: Execution) => x.stampMs - x.start;
+  const byEpoch = (a: Execution, b: Execution) => epochOf(a) - epochOf(b);
   const placedByStamp = executions.filter(x => !x.writesManifest);
 
   for (const x of placedByStamp.filter(x => x.stampIsStart).sort(byEpoch)) {
-    let p = processes.at(-1);
-    if (p === undefined || epochOf(x) >= p.epochLo + p.lastEnd) {
-      p = started(epochOf(x), epochOf(x));
-      p.epochMs = epochOf(x);
-    }
-    p.epochHi = epochOf(x);
-    add(p, x);
+    const p = processes.at(-1);
+    const epoch = epochOf(x);
+    add(
+      p === undefined || epoch >= p.epochMs + p.wallMs
+        ? started(epoch - STAMP_LATE_MS, epoch, epoch + STAMP_EARLY_MS)
+        : p,
+      x,
+    );
   }
 
   const pinned = processes.length;
   for (const x of placedByStamp.filter(x => !x.stampIsStart).sort(byEpoch)) {
-    const lo = x.stampMs - x.end;
-    const hi = epochOf(x);
+    const lo = x.stampMs - x.end - STAMP_LATE_MS;
+    const hi = epochOf(x) + STAMP_EARLY_MS;
+    const allows = (p: Process) => lo <= p.epochHi && hi >= p.epochLo;
     // Processes with a command that pins the epoch first; then the ones this loop started, the newest of which is
-    // the only one still open to an execution in epoch order.
-    let p = processes
-      .slice(0, pinned)
-      .filter(r => r.epochLo <= hi + STAMP_SLACK_MS && r.epochHi >= lo - STAMP_SLACK_MS)
-      .at(-1);
+    // the only one still open to an execution in epoch order, and whose bounds each execution narrows.
+    let p = processes.slice(0, pinned).filter(allows).at(-1);
     const open = processes.length > pinned ? processes.at(-1)! : undefined;
-    if (p === undefined && open !== undefined && lo - STAMP_SLACK_MS <= open.epochHi) {
+    if (p === undefined && open !== undefined && allows(open)) {
       p = open;
       p.epochLo = Math.max(p.epochLo, lo);
+      p.epochHi = Math.min(p.epochHi, hi);
     }
-    add(p ?? started(lo, hi), x);
+    add(p ?? started(lo, epochOf(x), hi), x);
   }
   processes.sort((a, b) => a.epochMs - b.epochMs);
 
   for (const x of executions.filter(x => x.writesManifest)) {
-    const after = (p: Process) =>
-      p.executions.some(f => feeds.has(f.edge) && x.start >= f.end && x.start - f.end <= STAMP_SLACK_MS);
-    const p = processes.filter(after).at(-1);
-    // In no run: a process that is not among the runs.
-    if (p === undefined) Object.assign(x, { run: { epochMs: x.stampMs - x.end, executions: [x], restarts: [] } });
-    else add(p, x);
+    const ranIt = (p: Process) =>
+      p.executions.every(f => beforeManifest.has(f.edge)) &&
+      p.executions.some(f => feeds.has(f.edge) && x.start >= f.end && x.start - f.end <= START_AFTER_INPUT_MS);
+    const p = processes.filter(ranIt).at(-1);
+    if (p !== undefined) add(p, x);
   }
 
   const runs: Process[] = [];
@@ -232,17 +225,14 @@ function groupRuns(executions: Omit<Execution, "run">[], feeds: Set<ManifestEdge
     const continues =
       run !== undefined &&
       last!.writesManifest &&
-      next.epochHi + STAMP_SLACK_MS >= run.epochLo + run.lastEnd &&
-      next.epochLo - STAMP_SLACK_MS <= run.epochHi + run.lastEnd;
+      next.epochLo <= run.epochHi + run.wallMs &&
+      next.epochHi >= run.epochLo + run.wallMs;
     if (!continues) {
       runs.push(next);
       continue;
     }
-    const restart = run.lastEnd;
+    const restart = run.wallMs;
     run.restarts.push(restart);
-    // The continuation's epoch is pinned by its compilers; the first process's was only bounded.
-    run.epochLo = Math.max(run.epochLo, next.epochLo - restart - STAMP_SLACK_MS);
-    run.epochHi = Math.min(run.epochHi, next.epochHi - restart + STAMP_SLACK_MS);
     for (const x of next.executions) {
       x.start += restart;
       x.end += restart;
@@ -271,14 +261,19 @@ interface ClangTimeTrace {
   traceEvents: { ph: string; name: string; ts: number; dur?: number; args?: { detail?: string } }[];
 }
 
-/** A compiler phase shorter than this is not kept. */
+/**
+ * A compiler phase shorter than this is not kept: a translation unit's trace has tens of thousands of events, nearly
+ * all of them slivers, and a build has hundreds of translation units.
+ */
 const PHASE_FLOOR_MS = 10;
 
-const clangRules = new Set(["cc", "cxx", "cxx_pch", "pch", "pch_msvc"]);
+/** The rules compiled with `cxxflags`, which is where flags.ts puts `-ftime-trace`. */
+const clangTraced = new Set<string>(["cxx", "cxx_pch", "pch", "pch_msvc"] satisfies RuleName[]);
+const RUSTC: RuleName = "rust_rustc";
 
 function readSelfReport(buildDir: string, edge: ManifestEdge): Phase[] {
   const output = resolve(buildDir, edge.outputs[0]!);
-  if (clangRules.has(edge.rule)) {
+  if (clangTraced.has(edge.rule)) {
     // clang names the trace after the output, with its extension replaced.
     const path = output.replace(/\.[^./\\]+$/, ".json");
     if (!existsSync(path)) return [];
@@ -293,39 +288,42 @@ function readSelfReport(buildDir: string, edge: ManifestEdge): Phase[] {
     }
     const phases: Phase[] = [];
     for (const e of trace.traceEvents) {
-      // "Total <name>" events are clang's own sums, not stretches of time. A translation unit has tens of thousands
-      // of events, nearly all of them slivers; a build has hundreds of translation units.
+      // "Total <name>" events are clang's own sums, not stretches of time.
       if (e.ph !== "X" || e.dur === undefined || e.name.startsWith("Total ")) continue;
       if (e.dur < PHASE_FLOOR_MS * 1000) continue;
       const startMs = (trace.beginningOfTime + e.ts) / 1000;
       const detail = e.args?.detail;
-      phases.push({
-        name: detail ? `${e.name} ${detail}` : e.name,
-        startMs,
-        endMs: startMs + e.dur / 1000,
-      });
+      phases.push({ name: detail ? `${e.name} ${detail}` : e.name, startMs, endMs: startMs + e.dur / 1000 });
     }
     return phases;
   }
-  if (edge.rule === "rust_rustc") {
+  if (edge.rule === RUSTC) {
     const path = rustcPhasesPath(output);
-    if (!existsSync(path)) return [];
-    return (JSON.parse(readFileSync(path, "utf8")) as RustcPhases).phases;
+    return existsSync(path) ? (JSON.parse(readFileSync(path, "utf8")) as Phase[]) : [];
   }
   return [];
 }
 
+/** The phases shown for a command: the largest few say where its time went. */
+const PHASES_SHOWN = 4;
+
 /**
- * The phases that are whole parts of the command: inside nothing but the one phase that spans it all (clang's
+ * The largest phases that are whole parts of the command: inside nothing but the one phase that spans it all (clang's
  * `ExecuteCompiler`, rustc's `total`). Compilers report phases nested, and only by their times.
  */
-export function topLevelPhases(phases: Phase[]): Phase[] {
+export function largestPhases(x: Execution): [name: string, ms: number][] {
+  const phases = x.selfReport;
+  const length = (p: Phase) => p.endMs - p.startMs;
   const root = phases.reduce<Phase | undefined>(
-    (a, b) => (a === undefined || b.endMs - b.startMs > a.endMs - a.startMs ? b : a),
+    (a, b) => (a === undefined || length(b) > length(a) ? b : a),
     undefined,
   );
   const inside = (p: Phase, q: Phase) => p !== q && q.startMs <= p.startMs && p.endMs <= q.endMs;
-  return phases.filter(p => p !== root && !phases.some(q => q !== root && inside(p, q)));
+  return phases
+    .filter(p => p !== root && !phases.some(q => q !== root && inside(p, q)))
+    .sort((a, b) => length(b) - length(a))
+    .slice(0, PHASES_SHOWN)
+    .map(p => [p.name, length(p)]);
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -346,92 +344,110 @@ export interface Build {
   beforeManifest: Set<ManifestEdge>;
 }
 
-/**
- * What an edge waits for, as `[path, the edge that makes it]`: its inputs of every kind, and `build.ninja`. No build
- * statement names the manifest as an input, but ninja brings it up to date before it builds anything else, so
- * everything that is not needed for that waits on it.
- */
-function* producers(build: Build, edge: ManifestEdge): Generator<[string, ManifestEdge]> {
+type Producers = Build["producer"];
+
+/** An edge's inputs of every kind that an edge makes, as `[path, that edge]`. */
+function* inputProducers(buildDir: string, producer: Producers, edge: ManifestEdge): Generator<[string, ManifestEdge]> {
   for (const input of [...edge.inputs, ...edge.implicitInputs, ...edge.orderOnlyInputs]) {
-    const path = resolve(build.buildDir, input);
-    const from = build.producer.get(path);
+    const path = resolve(buildDir, input);
+    const from = producer.get(path);
     if (from !== undefined) yield [path, from];
   }
+}
+
+/**
+ * What an edge waits for: its inputs, and `build.ninja`. No build statement names the manifest as an input, but ninja
+ * brings it up to date before it builds anything else, so everything that is not needed for that waits on it.
+ */
+function* producers(build: Build, edge: ManifestEdge): Generator<[string, ManifestEdge]> {
+  yield* inputProducers(build.buildDir, build.producer, edge);
   if (build.manifestEdge !== undefined && !build.beforeManifest.has(edge)) {
     yield [resolve(build.buildDir, build.manifestEdge.outputs[0]!), build.manifestEdge];
   }
 }
 
-export function loadBuild(buildDir: string, windowsHost: boolean = process.platform === "win32"): Build {
-  buildDir = resolve(buildDir);
+/** Where a build is: what `Config` says of it. */
+export interface Where {
+  buildDir: string;
+  /** The checkout. */
+  cwd: string;
+  host: { os: string };
+}
+
+export function loadBuild(where: Where): Build {
+  const buildDir = resolve(where.buildDir);
   const manifestPath = resolve(buildDir, "build.ninja");
   const logPath = resolve(buildDir, ".ninja_log");
   if (!existsSync(manifestPath) || !existsSync(logPath)) {
-    throw new BuildError(`${buildDir} has not been built`, { hint: "Timings describe a build that has run." });
+    throw new BuildError(`${buildDir} has not been built`, {
+      hint: "Timings describe a build that has run: build first, with the same flags and without --configure-only.",
+    });
   }
   const manifest = readManifest(readFileSync(manifestPath, "utf8"));
-  const producer = new Map<string, ManifestEdge>();
+  const producer: Producers = new Map();
   for (const edge of manifest.edges) {
     for (const out of [...edge.outputs, ...edge.implicitOutputs]) producer.set(resolve(buildDir, out), edge);
   }
 
+  // Everything reachable from the manifest's edge through its inputs, going on through the edges `through` accepts.
+  const manifestEdge = manifest.edges.find(e => manifest.rules.get(e.rule)?.generator === true);
+  const reach = (through: (edge: ManifestEdge) => boolean): Set<ManifestEdge> => {
+    const reached = new Set<ManifestEdge>();
+    const walk = (edge: ManifestEdge): void => {
+      for (const [, from] of inputProducers(buildDir, producer, edge)) {
+        if (reached.has(from)) continue;
+        reached.add(from);
+        if (through(from)) walk(from);
+      }
+    };
+    if (manifestEdge !== undefined) walk(manifestEdge);
+    return reached;
+  };
+  // What makes an input of the manifest's edge, looking through phonies; and everything upstream of it, with itself.
+  const feeds = reach(edge => edge.rule === "phony");
+  const beforeManifest = reach(() => true);
+  if (manifestEdge !== undefined) beforeManifest.add(manifestEdge);
+
   // An execution is logged once per output, with the same times on each line. Lines whose output no edge makes any
   // more are from a graph that is gone.
-  const seen = new Map<string, Omit<Execution, "run">>();
+  const seen = new Map<string, Execution>();
   for (const entry of parseNinjaLog(readFileSync(logPath, "utf8"))) {
     const edge = producer.get(resolve(buildDir, entry.output));
     if (edge === undefined) continue;
-    const key = `${manifest.edges.indexOf(edge)} ${entry.start} ${entry.end} ${entry.stamp}`;
+    const key = `${edge.outputs[0]} ${entry.start} ${entry.end} ${entry.stamp}`;
     if (seen.has(key)) continue;
     const rule = manifest.rules.get(edge.rule);
     seen.set(key, {
       edge,
-      label: describe(buildDir, manifest, edge),
+      label: describe(where, manifest, edge),
       pool: edge.bindings.pool ?? rule?.pool,
       start: entry.start,
       end: entry.end,
-      stampMs: stampToUnixMs(entry.stamp, windowsHost),
+      stampMs: stampToUnixMs(entry.stamp, where.host.os === "windows"),
       // A restat or generator rule's stamp is its output's mtime when the command changed the output.
       stampIsStart: rule !== undefined && !rule.restat && !rule.generator,
-      writesManifest: rule?.generator === true,
+      writesManifest: edge === manifestEdge,
       released: new Map(),
       selfReport: [],
     });
   }
-  const manifestEdge = manifest.edges.find(e => manifest.rules.get(e.rule)?.generator === true);
-  // The edges that make an input of the manifest's edge, looking through phonies.
-  const feeds = new Set<ManifestEdge>();
-  const feeding = (edge: ManifestEdge): void => {
-    for (const input of [...edge.inputs, ...edge.implicitInputs, ...edge.orderOnlyInputs]) {
-      const from = producer.get(resolve(buildDir, input));
-      if (from === undefined || feeds.has(from)) continue;
-      feeds.add(from);
-      if (from.rule === "phony") feeding(from);
-    }
-  };
-  if (manifestEdge !== undefined) feeding(manifestEdge);
   const executions = [...seen.values()];
-  const runs = groupRuns(executions, feeds);
+  const runs = groupRuns(executions, feeds, beforeManifest);
 
   const last = new Map<ManifestEdge, Execution>();
   for (const run of runs) for (const x of run.executions) last.set(x.edge, x);
-  // The manifest's command is placed by where it ran, not by when: the log's own order says which was last.
-  for (const x of executions) if (x.writesManifest) last.set(x.edge, x as Execution);
+  // The manifest's command can be in no run. ninja appends to the log and compacting it keeps one entry per output,
+  // so of one output's lines the last is the latest.
+  for (const x of executions) if (x.writesManifest) last.set(x.edge, x);
   for (const x of last.values()) {
     readReleased(buildDir, x);
     x.selfReport = readSelfReport(buildDir, x.edge).filter(
       // A report left by another execution than the logged one (a build that was interrupted) says nothing about it.
-      p => p.startMs >= x.stampMs - STAMP_SLACK_MS && p.endMs <= x.stampMs + duration(x) + STAMP_SLACK_MS,
+      // A compiler reads the process clock, which a file stamp trails.
+      p => p.startMs >= x.stampMs - STAMP_LATE_MS && p.endMs <= x.stampMs + duration(x) + STAMP_EARLY_MS,
     );
   }
-  const build: Build = { buildDir, manifest, runs, last, producer, manifestEdge, beforeManifest: new Set() };
-  const upstream = (edge: ManifestEdge): void => {
-    if (build.beforeManifest.has(edge)) return;
-    build.beforeManifest.add(edge);
-    for (const [, from] of producers(build, edge)) upstream(from);
-  };
-  if (build.manifestEdge !== undefined) upstream(build.manifestEdge);
-  return build;
+  return { buildDir, manifest, runs, last, producer, manifestEdge, beforeManifest };
 }
 
 /**
@@ -444,8 +460,9 @@ function readReleased(buildDir: string, x: Execution): void {
     const mtimeMs = statSync(resolve(buildDir, o), { throwIfNoEntry: false })?.mtimeMs;
     return mtimeMs === undefined ? undefined : Math.floor(mtimeMs) - x.stampMs;
   });
-  // Files from another execution than the logged one (a build that was interrupted) say nothing about it.
-  if (after.some(ms => ms === undefined || ms < -STAMP_SLACK_MS || ms > duration(x) + STAMP_SLACK_MS)) return;
+  // Files from another execution than the logged one (a build that was interrupted) say nothing about it. The start's
+  // stamp can be late, so an output stamped just after the start can seem to come before it.
+  if (after.some(ms => ms === undefined || ms < -STAMP_LATE_MS || ms > duration(x) + STAMP_EARLY_MS)) return;
   // The output stamped last is the one the command ended with, not an early one.
   const last = Math.max(...(after as number[]));
   x.edge.outputs.forEach((o, i) => {
@@ -457,25 +474,25 @@ function readReleased(buildDir: string, x: Execution): void {
 // Analysis
 // ───────────────────────────────────────────────────────────────────────────
 
-export interface KindTotal {
+export interface RuleTotal {
   rule: string;
   edges: number;
   totalMs: number;
   slowest: Execution;
 }
 
-export function totalsByKind(build: Build): KindTotal[] {
-  const kinds = new Map<string, KindTotal>();
+export function totalsByRule(build: Build): RuleTotal[] {
+  const totals = new Map<string, RuleTotal>();
   for (const x of build.last.values()) {
-    const k = kinds.get(x.edge.rule);
-    if (k === undefined) kinds.set(x.edge.rule, { rule: x.edge.rule, edges: 1, totalMs: duration(x), slowest: x });
+    const t = totals.get(x.edge.rule);
+    if (t === undefined) totals.set(x.edge.rule, { rule: x.edge.rule, edges: 1, totalMs: duration(x), slowest: x });
     else {
-      k.edges++;
-      k.totalMs += duration(x);
-      if (duration(x) > duration(k.slowest)) k.slowest = x;
+      t.edges++;
+      t.totalMs += duration(x);
+      if (duration(x) > duration(t.slowest)) t.slowest = x;
     }
   }
-  return [...kinds.values()].sort((a, b) => b.totalMs - a.totalMs);
+  return [...totals.values()].sort((a, b) => b.totalMs - a.totalMs);
 }
 
 export interface PathStep {
@@ -505,7 +522,7 @@ export function criticalPath(build: Build): { steps: PathStep[]; totalMs: number
     timings.set(edge, t);
     for (const [path, from] of producers(build, edge)) {
       const x = build.last.get(from);
-      const blocksNextForMs = x === undefined ? 0 : (x.released.get(path) ?? duration(x));
+      const blocksNextForMs = x === undefined ? 0 : heldFor(x, path);
       const at = timing(from).ready + blocksNextForMs;
       if (at > t.ready) {
         t.ready = at;
@@ -538,9 +555,9 @@ export interface LowParallelismWindow {
   running: Execution[];
 }
 
-/** A stretch counts as low parallelism at this many commands or fewer … */
-const LOW_PARALLELISM_EDGES = 2;
-/** … lasting at least this long. */
+/** A stretch counts as low parallelism at this many commands or fewer (one chain of crates, or a link and a check) … */
+const LOW_PARALLELISM_COMMANDS = 2;
+/** … lasting at least this long: shorter ones are the gaps between commands. */
 const LOW_PARALLELISM_MS = 1000;
 
 export function lowParallelismWindows(run: Run): LowParallelismWindow[] {
@@ -560,21 +577,21 @@ export function lowParallelismWindows(run: Run): LowParallelismWindow[] {
   for (const { at, change } of events) {
     const was = running;
     running += change;
-    if (was > LOW_PARALLELISM_EDGES && running <= LOW_PARALLELISM_EDGES) since = at;
-    if (was <= LOW_PARALLELISM_EDGES && running > LOW_PARALLELISM_EDGES && since !== undefined) {
+    if (was > LOW_PARALLELISM_COMMANDS && running <= LOW_PARALLELISM_COMMANDS) since = at;
+    if (was <= LOW_PARALLELISM_COMMANDS && running > LOW_PARALLELISM_COMMANDS && since !== undefined) {
       close(since, at);
       since = undefined;
     }
   }
-  if (since !== undefined) close(since, Math.max(...run.executions.map(x => x.end)));
+  if (since !== undefined) close(since, run.wallMs);
   return windows;
 }
 
 export interface QueueTotal {
-  /** A pool's name; `undefined` for edges in no pool, which wait only for one of ninja's `-j` job slots. */
+  /** A pool's name; `undefined` for commands in no pool, which wait only for one of ninja's `-j` job slots. */
   pool: string | undefined;
   depth: number | undefined;
-  edges: number;
+  commands: number;
   totalMs: number;
   longest: { execution: Execution; ms: number };
 }
@@ -587,8 +604,6 @@ export interface Wait {
   blocker: Execution | undefined;
   /** When the blocker released that input, on the run's clock: its end, or earlier for an output released early. */
   readyAt: number;
-  /** How many commands of the run made an input of this one. */
-  inputs: number;
 }
 
 /** For each of the run's commands, what it waited on and for how long after that. */
@@ -597,23 +612,19 @@ export function waits(build: Build, run: Run): Map<Execution, Wait> {
   interface Ready {
     at: number;
     by: Execution | undefined;
-    makers: Set<Execution>;
   }
-  // When an edge's inputs existed in this run, and which of the run's commands made them; an input whose edge the
-  // run did not execute (up to date, or a phony) stands for that edge's own inputs.
+  // When an edge's inputs existed in this run, and which of the run's commands made the last of them; an input
+  // whose edge the run did not execute (up to date, or a phony) stands for that edge's own inputs.
   const memo = new Map<ManifestEdge, Ready>();
   const ready = (edge: ManifestEdge): Ready => {
     let r = memo.get(edge);
     if (r !== undefined) return r;
-    r = { at: 0, by: undefined, makers: new Set() };
+    r = { at: 0, by: undefined };
     memo.set(edge, r);
     for (const [path, from] of producers(build, edge)) {
       const x = inRun.get(from);
-      const through = x === undefined ? ready(from) : undefined;
-      const at = through?.at ?? x!.start + (x!.released.get(path) ?? duration(x!));
-      if (through !== undefined) for (const m of through.makers) r.makers.add(m);
-      else r.makers.add(x!);
-      if (at > r.at) [r.at, r.by] = [at, through?.by ?? x];
+      const made: Ready = x === undefined ? ready(from) : { at: x.start + heldFor(x, path), by: x };
+      if (made.at > r.at) [r.at, r.by] = [made.at, made.by];
     }
     return r;
   };
@@ -621,13 +632,13 @@ export function waits(build: Build, run: Run): Map<Execution, Wait> {
   return new Map(
     run.executions.map(x => {
       const r = ready(x.edge);
-      return [x, { ms: Math.max(0, x.start - r.at), blocker: r.by, readyAt: r.at, inputs: r.makers.size }];
+      return [x, { ms: Math.max(0, x.start - r.at), blocker: r.by, readyAt: r.at }];
     }),
   );
 }
 
 /**
- * `waits`, by pool. The log does not say why an edge waited: an edge in a pool waits for the pool or for a job slot,
+ * `waits`, by pool. The log does not say why a command waited: one in a pool waits for the pool or for a job slot,
  * whichever is full.
  */
 export function queueTimes(build: Build, run: Run): QueueTotal[] {
@@ -636,9 +647,9 @@ export function queueTimes(build: Build, run: Run): QueueTotal[] {
     const t = totals.get(x.pool);
     if (t === undefined) {
       const depth = x.pool === "console" ? 1 : x.pool === undefined ? undefined : build.manifest.pools.get(x.pool);
-      totals.set(x.pool, { pool: x.pool, depth, edges: 1, totalMs: ms, longest: { execution: x, ms } });
+      totals.set(x.pool, { pool: x.pool, depth, commands: 1, totalMs: ms, longest: { execution: x, ms } });
     } else {
-      t.edges++;
+      t.commands++;
       t.totalMs += ms;
       if (ms > t.longest.ms) t.longest = { execution: x, ms };
     }
@@ -650,7 +661,8 @@ export function queueTimes(build: Build, run: Run): QueueTotal[] {
 // The report
 // ───────────────────────────────────────────────────────────────────────────
 
-const seconds = (ms: number): string => formatElapsed(ms).padStart(7);
+/** An elapsed time in a column. */
+const column = (ms: number): string => formatElapsed(ms).padStart(7);
 export const clock = (unixMs: number): string => new Date(unixMs).toISOString().replace("T", " ").slice(0, 19) + "Z";
 
 export interface ReportStyle {
@@ -659,18 +671,16 @@ export interface ReportStyle {
 }
 
 const SLOWEST_EDGES = 20;
-const EARLIER_RUNS_LISTED = 10;
+export const EARLIER_RUNS_LISTED = 10;
 /** A low-parallelism window names the longest of the commands that ran in it. */
-const WINDOW_EDGES_NAMED = 4;
-/** Compiler phases shown under an edge: the largest few say where its time went; the rest are in the trace. */
-const PHASES_SHOWN = 4;
+const WINDOW_COMMANDS_NAMED = 4;
 
 export function formatReport(build: Build, style: ReportStyle): string {
   const { bold, dim } = style;
   const out: string[] = [];
   const executions = [...build.last.values()];
   const neverBuilt = build.manifest.edges.filter(e => e.rule !== "phony" && !build.last.has(e)).length;
-  const runsOfLast = new Set(executions.map(x => x.run).filter(run => build.runs.includes(run)));
+  const runsOfLast = build.runs.filter(r => r.executions.some(x => build.last.get(x.edge) === x)).length;
 
   out.push(`${bold("build timings")}  ${relative(process.cwd(), build.buildDir) || "."}`);
   if (executions.length === 0) {
@@ -684,31 +694,29 @@ export function formatReport(build: Build, style: ReportStyle): string {
   }
   const stamps = executions.filter(x => !x.writesManifest).map(x => x.stampMs);
   out.push(
-    `  ${executions.length} edges, last built by ${runsOfLast.size} ${runsOfLast.size === 1 ? "run" : "runs"} of ninja` +
+    `  ${executions.length} edges, last built by ${runsOfLast} ${runsOfLast === 1 ? "run" : "runs"} of ninja` +
       ` between ${clock(Math.min(...stamps))} and ${clock(Math.max(...stamps))}` +
       (neverBuilt > 0 ? dim(`  (${neverBuilt} more have not been built)`) : ""),
   );
 
   out.push(
     "",
-    bold("by kind".padEnd(26)) + dim(`${"edges".padStart(7)}${"total".padStart(9)}  ${"slowest".padStart(7)}`),
+    bold("by rule".padEnd(26)) + dim(`${"edges".padStart(7)}${"total".padStart(9)}  ${"slowest".padStart(7)}`),
   );
-  for (const k of totalsByKind(build)) {
+  for (const t of totalsByRule(build)) {
     out.push(
-      `  ${k.rule.padEnd(24)}${String(k.edges).padStart(7)}${seconds(k.totalMs).padStart(9)}  ${seconds(duration(k.slowest))}  ${dim(k.slowest.label)}`,
+      `  ${t.rule.padEnd(24)}${String(t.edges).padStart(7)}  ${column(t.totalMs)}  ${column(duration(t.slowest))}  ${dim(t.slowest.label)}`,
     );
   }
 
   out.push("", bold(`slowest ${Math.min(SLOWEST_EDGES, executions.length)} edges`));
   for (const x of [...executions].sort((a, b) => duration(b) - duration(a)).slice(0, SLOWEST_EDGES)) {
     const early = [...x.released.values()];
-    const note = early.length > 0 ? dim(`  dependents start after ${seconds(Math.min(...early)).trim()}`) : "";
-    out.push(`  ${seconds(duration(x))}  ${x.label}${note}`);
-    const phases = topLevelPhases(x.selfReport)
-      .sort((a, b) => b.endMs - b.startMs - (a.endMs - a.startMs))
-      .slice(0, PHASES_SHOWN);
+    const note = early.length > 0 ? dim(`  dependents can start after ${formatElapsed(Math.min(...early))}`) : "";
+    out.push(`  ${column(duration(x))}  ${x.label}${note}`);
+    const phases = largestPhases(x);
     if (phases.length > 0) {
-      out.push(dim(`           ${phases.map(p => `${p.name} ${seconds(p.endMs - p.startMs).trim()}`).join(" · ")}`));
+      out.push(dim(`           ${phases.map(([name, ms]) => `${name} ${formatElapsed(ms)}`).join(" · ")}`));
     }
   }
 
@@ -716,7 +724,7 @@ export function formatReport(build: Build, style: ReportStyle): string {
   out.push(
     "",
     bold("critical path") +
-      `  ${seconds(path.totalMs).trim()}` +
+      `  ${formatElapsed(path.totalMs)}` +
       dim("  the longest chain: what a build of everything takes with every core free"),
     dim(
       "  how long each step holds up the next; less than it runs when the next needs only an output it releases early",
@@ -725,35 +733,34 @@ export function formatReport(build: Build, style: ReportStyle): string {
   for (const step of path.steps) {
     const whole = duration(step.execution);
     out.push(
-      `  ${seconds(step.blocksNextForMs)}  ${step.execution.label}` +
-        (step.blocksNextForMs < whole ? dim(`  of ${seconds(whole).trim()}`) : ""),
+      `  ${column(step.blocksNextForMs)}  ${step.execution.label}` +
+        (step.blocksNextForMs < whole ? dim(`  of ${formatElapsed(whole)}`) : ""),
     );
   }
 
-  const wallMs = Math.max(...run.executions.map(x => x.end));
   const sumMs = run.executions.reduce((sum, x) => sum + duration(x), 0);
   out.push(
     "",
     bold("most recent run of ninja") + `  ${clock(run.epochMs)}`,
-    `  ${seconds(wallMs).trim()} wall   ${run.executions.length} edges   ${seconds(sumMs).trim()} of commands   ` +
-      `${(sumMs / wallMs).toFixed(1)}× average parallelism`,
-    ...run.restarts.map(at => dim(`  ninja started over at ${seconds(at).trim()}: build.ninja was rewritten`)),
+    `  ${formatElapsed(run.wallMs)} wall   ${run.executions.length} commands taking ${formatElapsed(sumMs)}   ` +
+      `${(sumMs / run.wallMs).toFixed(1)}× average parallelism`,
+    ...run.restarts.map(at => dim(`  ninja started over at ${formatElapsed(at)}: build.ninja was rewritten`)),
   );
   const windows = lowParallelismWindows(run);
   if (windows.length > 0) {
     out.push(
       "",
       `  ${bold("low parallelism")}` +
-        dim(`  ${LOW_PARALLELISM_EDGES} commands or fewer for ${LOW_PARALLELISM_MS / 1000}s or more`),
+        dim(`  ${LOW_PARALLELISM_COMMANDS} commands or fewer for ${LOW_PARALLELISM_MS / 1000}s or more`),
     );
     for (const w of windows) {
-      const longest = [...w.running].sort((a, b) => duration(b) - duration(a)).slice(0, WINDOW_EDGES_NAMED);
+      const longest = [...w.running].sort((a, b) => duration(b) - duration(a)).slice(0, WINDOW_COMMANDS_NAMED);
       const more = w.running.length - longest.length;
       const names =
         w.running.length === 0
           ? "nothing running"
           : longest.map(x => x.label).join(", ") + (more > 0 ? dim(` and ${more} more`) : "");
-      out.push(`  ${seconds(w.from)} –${seconds(w.to)}  ${dim(`(${seconds(w.to - w.from).trim()})`)}  ${names}`);
+      out.push(`  ${column(w.from)} –${column(w.to)}  ${dim(`(${formatElapsed(w.to - w.from)})`)}  ${names}`);
     }
   }
   const queues = queueTimes(build, run).filter(q => q.totalMs > 0);
@@ -765,8 +772,8 @@ export function formatReport(build: Build, style: ReportStyle): string {
     for (const q of queues) {
       const name = q.pool === undefined ? "no pool" : `pool ${q.pool} (depth ${q.depth ?? "?"})`;
       out.push(
-        `  ${seconds(q.totalMs)}  ${name.padEnd(28)}${String(q.edges).padStart(5)} ${q.edges === 1 ? "edge " : "edges"}   ` +
-          dim(`longest ${seconds(q.longest.ms).trim()}  ${q.longest.execution.label}`),
+        `  ${column(q.totalMs)}  ${name.padEnd(28)}${String(q.commands).padStart(5)} ${q.commands === 1 ? "command " : "commands"}   ` +
+          dim(`longest ${formatElapsed(q.longest.ms)}  ${q.longest.execution.label}`),
       );
     }
   }
@@ -778,8 +785,7 @@ export function formatReport(build: Build, style: ReportStyle): string {
     );
     const earlier = build.runs.slice(0, -1).reverse();
     for (const r of earlier.slice(0, EARLIER_RUNS_LISTED)) {
-      const wall = Math.max(...r.executions.map(x => x.end));
-      out.push(`  ${clock(r.epochMs)}  ${String(r.executions.length).padStart(5)} edges  ${seconds(wall)} wall`);
+      out.push(`  ${clock(r.epochMs)}  ${String(r.executions.length).padStart(5)} commands  ${column(r.wallMs)} wall`);
     }
     if (earlier.length > EARLIER_RUNS_LISTED)
       out.push(dim(`  and ${earlier.length - EARLIER_RUNS_LISTED} before those`));

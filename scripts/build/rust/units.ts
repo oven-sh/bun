@@ -23,7 +23,6 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import type { Config } from "../config.ts";
 import { assert } from "../error.ts";
-import type { Phase } from "../timings.ts";
 import { dylibPathVar, envify } from "./cargo-env.ts";
 import type { ManifestLints, MetadataPackage, RustPlan, RustcTargetInfo, UnitGraphUnit } from "./plan.ts";
 
@@ -355,13 +354,8 @@ export interface RustcUnitManifest extends ManifestCommon {
   buildScriptOutput: string | undefined;
   /** `output.json` of every transitive same-platform dependency with a build script: their `rustc-link-search` paths apply here too (cargo add_native_deps). */
   depBuildScriptOutputs: string[];
-  /** `--time-trace=on`: where run.ts records the passes rustc reports (`RustcPhases`). */
+  /** `--time-trace=on`: where run.ts records the passes rustc reports, as timings.ts's `Phase[]`. */
   phases: string | undefined;
-}
-
-/** What run.ts writes for a unit compiled with `-Z time-passes`, and timings.ts reads. */
-export interface RustcPhases {
-  phases: Phase[];
 }
 
 export const rustcPhasesPath = (output: string): string => `${output}.phases.json`;

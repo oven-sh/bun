@@ -193,19 +193,28 @@ export interface NinjaOptions {
 }
 
 /**
- * The variables in a rule's text, other than ninja's own (`$in`, `$out`, `$in_newline`), read the way ninja's lexer
- * reads them (src/lexer.in.cc): `$name` is `[a-zA-Z0-9_-]+`, so `$out-tmp` is the variable `out-tmp`, and `${name}`
- * may also contain `.`. `$$` is a literal dollar.
+ * A `$` in a rule's text, read the way ninja's lexer reads it (src/lexer.in.cc): `$$` is a literal dollar, `$name` is
+ * `[a-zA-Z0-9_-]+`, so `$out-tmp` is the variable `out-tmp`, and `${name}` may also contain `.`.
  */
+const reference = /\$(?:(\$)|\{([a-zA-Z0-9_.-]+)\}|([a-zA-Z0-9_-]+))/g;
+
+/** The variables in a rule's text, other than ninja's own (`$in`, `$out`, `$in_newline`). */
 function variablesIn(...texts: (string | undefined)[]): string[] {
   const found = new Set<string>();
   for (const text of texts) {
-    for (const m of (text ?? "").replaceAll("$$", "").matchAll(/\$(?:\{([a-zA-Z0-9_.-]+)\}|([a-zA-Z0-9_-]+))/g)) {
-      const name = (m[1] ?? m[2])!;
-      if (name !== "in" && name !== "out" && name !== "in_newline") found.add(name);
+    for (const [, dollar, braced, bare] of (text ?? "").matchAll(reference)) {
+      const name = braced ?? bare;
+      if (dollar === undefined && name !== "in" && name !== "out" && name !== "in_newline") found.add(name!);
     }
   }
   return [...found];
+}
+
+/** A rule's text with each variable replaced by `value(name)`, as ninja expands it. */
+export function expand(text: string, value: (name: string) => string): string {
+  return text.replace(reference, (_, dollar?: string, braced?: string, bare?: string) =>
+    dollar !== undefined ? "$" : value((braced ?? bare)!),
+  );
 }
 
 /**
@@ -520,7 +529,6 @@ export class Ninja {
 // ---------------------------------------------------------------------------
 
 export interface ManifestRule {
-  name: string;
   /** Unexpanded: `$out`, `$in` and the edge's variables are still references. */
   description: string | undefined;
   restat: boolean;
@@ -552,8 +560,9 @@ export interface Manifest {
 /** Parse the text of a `build.ninja` written by `Ninja`. Paths stay as written: relative to the build directory. */
 export function readManifest(text: string): Manifest {
   const manifest: Manifest = { pools: new Map(), rules: new Map(), edges: [] };
-  // `$` + newline continues a statement; ninja drops the newline and the next line's indentation.
-  const lines = text.replace(/\$\r?\n[ \t]*/g, "").split(/\r?\n/);
+  // `$` + newline continues a statement; ninja drops the newline and the next line's indentation. A `$$` is read
+  // first, so a value that ends in a literal dollar does not continue.
+  const lines = text.replace(/\$\$|\$\r?\n[ \t]*/g, m => (m === "$$" ? m : "")).split(/\r?\n/);
   let bind: (name: string, value: string) => void = () => {};
   for (const line of lines) {
     if (line.startsWith("#") || line.trim() === "") continue;
@@ -566,7 +575,6 @@ export function readManifest(text: string): Manifest {
     const [keyword, rest = ""] = splitOnce(line, " ");
     if (keyword === "rule") {
       const rule: ManifestRule = {
-        name: rest,
         description: undefined,
         restat: false,
         generator: false,

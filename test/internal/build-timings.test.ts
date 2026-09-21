@@ -23,7 +23,7 @@ import {
   lowParallelismWindows,
   parseNinjaLog,
   queueTimes,
-  totalsByKind,
+  totalsByRule,
   traceEvents,
   waits,
 } from "../../scripts/build/timings.ts";
@@ -31,12 +31,14 @@ import {
 const T0 = Date.UTC(2026, 0, 2, 3, 4, 5);
 const T1 = T0 + 3_600_000;
 
-const dir = tempDir("build-timings", {});
-afterAll(() => dir[Symbol.dispose]());
-const buildDir = join(String(dir), "build");
+const root = tempDir("build-timings", {});
+afterAll(() => root[Symbol.dispose]());
+const buildDir = join(String(root), "build");
 const out = (name: string) => join(buildDir, name);
+/** A build directory under `cwd`, as `Config` describes one; `os` is the host's. */
+const at = (dir: string, os = "linux") => ({ buildDir: dir, cwd: String(root), host: { os } });
 // Outside the build directory, so the graph names it by a relative path, spelled the way the host spells paths.
-const ref = join(String(dir), "vendor", "dep", ".ref");
+const ref = join(String(root), "vendor", "dep", ".ref");
 const refName = relative(buildDir, ref);
 let build: Build;
 
@@ -57,7 +59,7 @@ beforeAll(async () => {
     pool: "dep",
   });
   n.rule("rust_rustc", { command: "rustc $manifest", description: "rustc $crate $what" });
-  n.rule("cc", { command: "cc $cflags -c $in -o $out", description: "cc $out" });
+  n.rule("cxx", { command: "c++ $cxxflags -c $in -o $out", description: "cxx $out" });
   n.rule("link", { command: "ld $ldflags $in -o $out", description: "link $out" });
 
   n.build({
@@ -82,10 +84,10 @@ beforeAll(async () => {
   crate("root", [out("liba.rlib"), out("liba.rmeta"), out("libb.rlib"), out("libb.rmeta")], "→ libroot.a");
   n.build({
     outputs: [out("x.o")],
-    rule: "cc",
-    inputs: [join(String(dir), "x.c")],
+    rule: "cxx",
+    inputs: [join(String(root), "x.cpp")],
     pool: "compile",
-    vars: { cflags: "-O2" },
+    vars: { cxxflags: "-O2" },
   });
   n.build({ outputs: [out("exe")], rule: "link", inputs: [out("x.o"), out("libroot.a")], vars: { ldflags: "" } });
   n.phony("all", [out("exe")]);
@@ -100,7 +102,7 @@ beforeAll(async () => {
     );
   const log = [
     "# ninja log v7",
-    // The second ninja, an hour later: x.c was edited. x.o waited two seconds for something outside the graph.
+    // The second ninja, an hour later: x.cpp was edited. x.o waited two seconds for something outside the graph.
     ...logged(edgeOf("x.o"), 2000, 2050, T1 + 2000),
     ...logged(edgeOf("exe"), 2100, 3400, T1 + 2100),
     // The first ninja built everything. A restat rule's stamp is its output's mtime, not its start.
@@ -144,11 +146,11 @@ beforeAll(async () => {
     { name: "LLVM_passes", startMs: at + 700, endMs: at + 2300 },
     { name: "total", startMs: at + 420, endMs: at + 2400 },
   ];
-  writeFileSync(rustcPhasesPath(out("libb.rlib")), JSON.stringify({ phases: passes(T0) }));
+  writeFileSync(rustcPhasesPath(out("libb.rlib")), JSON.stringify(passes(T0)));
   // Left by a build of `a` that was interrupted the day before: not the execution in the log.
-  writeFileSync(rustcPhasesPath(out("liba.rlib")), JSON.stringify({ phases: passes(T0 - 86_400_000) }));
+  writeFileSync(rustcPhasesPath(out("liba.rlib")), JSON.stringify(passes(T0 - 86_400_000)));
 
-  build = loadBuild(buildDir, false);
+  build = loadBuild(at(buildDir));
 });
 
 const labels = (xs: { label: string }[]) => xs.map(x => x.label);
@@ -161,7 +163,6 @@ describe("readManifest", () => {
       ["compile", 2],
     ]);
     expect(rules.get("dep_fetch")).toEqual({
-      name: "dep_fetch",
       description: "fetch $name",
       restat: true,
       generator: false,
@@ -178,8 +179,20 @@ describe("readManifest", () => {
       validations: [],
       bindings: { manifest: "b.json", crate: "b", what: "", early_output_prefix: "@early@" },
     });
-    expect(edges.find(e => e.rule === "cc")!.bindings.pool).toBe("compile");
+    expect(edges.find(e => e.rule === "cxx")!.bindings.pool).toBe("compile");
     expect(edges.find(e => e.rule === "phony")).toMatchObject({ outputs: ["all"], inputs: ["exe"] });
+  });
+
+  test("a value that ends in a dollar does not continue onto the next line", () => {
+    const n = new Ninja({ buildDir });
+    n.rule("codegen", { command: "cd $cwd && run $args", description: "gen $desc" });
+    n.build({
+      outputs: [out("a.h")],
+      rule: "codegen",
+      inputs: [],
+      vars: { cwd: ".", args: "--match '^a$'$", desc: "a" },
+    });
+    expect(readManifest(n.toString()).edges[0]!.bindings).toEqual({ cwd: ".", args: "--match '^a$'$", desc: "a" });
   });
 });
 
@@ -188,22 +201,27 @@ describe("parseNinjaLog", () => {
     expect(parseNinjaLog("# ninja log v7\n1\t2\t3000000\ta.o\tbeef\n")).toEqual([
       { start: 1, end: 2, stamp: 3000000n, output: "a.o" },
     ]);
-    expect(() => parseNinjaLog("# ninja log v6\n1\t2\t3\ta.o\tbeef\n")).toThrow(BuildError);
+    const otherNinja = () => parseNinjaLog("# ninja log v6\n1\t2\t3\ta.o\tbeef\n");
+    expect(otherNinja).toThrow(BuildError);
+    expect(otherNinja).toThrow('.ninja_log starts with "# ninja log v6", not "# ninja log v7"');
   });
 });
 
 describe("loadBuild", () => {
   test("splits the log into the ninjas that wrote it, whatever order its lines are in", () => {
     expect(build.runs.map(r => [r.epochMs, labels(r.executions)])).toEqual([
-      [T0, ["fetch dep", "cc x.o", "rustc a", "rustc b", "rustc root → libroot.a", "link exe"]],
-      [T1, ["cc x.o", "link exe"]],
+      [T0, ["fetch dep", "cxx x.o", "rustc a", "rustc b", "rustc root → libroot.a", "link exe"]],
+      [T1, ["cxx x.o", "link exe"]],
     ]);
   });
 
   test("keeps each edge's last execution", () => {
-    const last = [...build.last.values()].map(x => [x.label, x.run === build.runs[1] ? "second" : "first"]);
+    const last = [...build.last.values()].map(x => [
+      x.label,
+      build.runs[1]!.executions.includes(x) ? "second" : "first",
+    ]);
     expect(last.sort()).toEqual([
-      ["cc x.o", "second"],
+      ["cxx x.o", "second"],
       ["fetch dep", "first"],
       ["link exe", "second"],
       ["rustc a", "first"],
@@ -223,7 +241,7 @@ describe("loadBuild", () => {
   test("takes a compiler's report only when it is about the execution in the log", () => {
     const reports = Object.fromEntries([...build.last.values()].map(x => [x.label, x.selfReport.map(p => p.name)]));
     expect(reports).toEqual({
-      "cc x.o": ["ExecuteCompiler", "Frontend", "Source x.h", "Backend"],
+      "cxx x.o": ["ExecuteCompiler", "Frontend", "Source x.h", "Backend"],
       "fetch dep": [],
       "link exe": [],
       "rustc a": [],
@@ -235,11 +253,11 @@ describe("loadBuild", () => {
 
 describe("analysis", () => {
   test("totals by kind of edge", () => {
-    expect(totalsByKind(build).map(k => [k.rule, k.edges, k.totalMs, k.slowest.label])).toEqual([
+    expect(totalsByRule(build).map(t => [t.rule, t.edges, t.totalMs, t.slowest.label])).toEqual([
       ["rust_rustc", 3, 4000, "rustc b"],
       ["link", 1, 1300, "link exe"],
       ["dep_fetch", 1, 100, "fetch dep"],
-      ["cc", 1, 50, "cc x.o"],
+      ["cxx", 1, 50, "cxx x.o"],
     ]);
   });
 
@@ -261,27 +279,28 @@ describe("analysis", () => {
   test("the most recent run: when few commands ran, and how long each waited after its inputs existed", () => {
     const run = build.runs.at(-1)!;
     expect(lowParallelismWindows(run).map(w => [w.from, w.to, labels(w.running)])).toEqual([
-      [0, 3400, ["cc x.o", "link exe"]],
+      [0, 3400, ["cxx x.o", "link exe"]],
     ]);
     // What each command was waiting on: the command of the run that made the last of its inputs to exist.
-    const why = (r: typeof run) =>
-      [...waits(build, r)].map(([x, w]) => [x.label, w.blocker?.label, w.readyAt, w.ms, w.inputs]);
+    const why = (r: typeof run) => [...waits(build, r)].map(([x, w]) => [x.label, w.blocker?.label, w.readyAt, w.ms]);
     expect(why(run)).toEqual([
-      ["cc x.o", undefined, 0, 2000, 0],
-      ["link exe", "cc x.o", 2050, 50, 1],
+      ["cxx x.o", undefined, 0, 2000],
+      ["link exe", "cxx x.o", 2050, 50],
     ]);
     expect(why(build.runs[0]!)).toEqual([
-      ["fetch dep", undefined, 0, 5, 0],
-      ["cc x.o", undefined, 0, 110, 0],
-      ["rustc a", "fetch dep", 105, 5, 1],
+      ["fetch dep", undefined, 0, 5],
+      ["cxx x.o", undefined, 0, 110],
+      ["rustc a", "fetch dep", 105, 5],
       // `b` could start when `a` released liba.rmeta, 300 ms into it, not when `a` ended.
-      ["rustc b", "rustc a", 410, 2, 2],
-      ["rustc root → libroot.a", "rustc b", 2412, 3, 3],
-      ["link exe", "rustc root → libroot.a", 3415, 5, 2],
+      ["rustc b", "rustc a", 410, 2],
+      ["rustc root → libroot.a", "rustc b", 2412, 3],
+      ["link exe", "rustc root → libroot.a", 3415, 5],
     ]);
-    expect(queueTimes(build, run).map(q => [q.pool, q.depth, q.edges, q.totalMs, q.longest.execution.label])).toEqual([
+    expect(
+      queueTimes(build, run).map(q => [q.pool, q.depth, q.commands, q.totalMs, q.longest.execution.label]),
+    ).toEqual([
       // Nothing x.o reads was built by this run, so it could have started at 0.
-      ["compile", 2, 1, 2000, "cc x.o"],
+      ["compile", 2, 1, 2000, "cxx x.o"],
       // exe waited for x.o, which ended at 2050.
       [undefined, undefined, 1, 50, "link exe"],
     ]);
@@ -295,6 +314,7 @@ describe("a build in which ninja started over", () => {
     using restarted = tempDir("build-timings-restart", {});
     const dir = join(String(restarted), "build");
     mkdirSync(dir, { recursive: true });
+    const where = { buildDir: dir, cwd: String(restarted), host: { os: "linux" } };
     const n = new Ninja({ buildDir: dir });
     n.rule("dep_fetch", {
       command: "fetch $name $repo $commit $dest $cache $patches",
@@ -302,7 +322,7 @@ describe("a build in which ninja started over", () => {
       restat: true,
     });
     n.rule("regen", { command: "configure", description: "reconfigure", generator: true });
-    n.rule("cc", { command: "cc $cflags -c $in -o $out", description: "cc $out" });
+    n.rule("cxx", { command: "c++ $cxxflags -c $in -o $out", description: "cxx $out" });
     const stamp = join(String(restarted), "vendor", ".ref");
     const vars = { name: "dep", repo: "o/dep", commit: "abc", dest: "vendor", cache: "cache", patches: "" };
     n.build({ outputs: [stamp], rule: "dep_fetch", inputs: [], vars });
@@ -310,9 +330,9 @@ describe("a build in which ninja started over", () => {
     // Nothing in the graph says x.o needs build.ninja.
     n.build({
       outputs: [join(dir, "x.o")],
-      rule: "cc",
-      inputs: [join(String(restarted), "x.c")],
-      vars: { cflags: "" },
+      rule: "cxx",
+      inputs: [join(String(restarted), "x.cpp")],
+      vars: { cxxflags: "" },
     });
     await n.write();
 
@@ -336,42 +356,57 @@ describe("a build in which ninja started over", () => {
     // reconfigure started 5 ms after the fetch it reads ended, so it ran in the fetch's process, and the process
     // that compiled x.o began 3 ms after it ended.
     log({ start: 110, end: 900 }, T0 + 903 + 20);
-    const b = loadBuild(dir, false);
+    const b = loadBuild(where);
     expect(b.runs.map(r => [r.restarts, r.executions.map(x => [x.label, x.start, x.end])])).toEqual([
       [
         [900],
         [
           ["fetch dep", 5, 105],
           ["reconfigure", 110, 900],
-          ["cc x.o", 920, 1420],
+          ["cxx x.o", 920, 1420],
         ],
       ],
     ]);
     expect(criticalPath(b).steps.map(s => [s.execution.label, s.blocksNextForMs])).toEqual([
       ["fetch dep", 100],
       ["reconfigure", 790],
-      ["cc x.o", 500],
+      ["cxx x.o", 500],
     ]);
     expect([...waits(b, b.runs[0]!)].map(([x, w]) => [x.label, w.blocker?.label, w.ms])).toEqual([
       ["fetch dep", undefined, 5],
       ["reconfigure", "fetch dep", 5],
-      ["cc x.o", "reconfigure", 20],
+      ["cxx x.o", "reconfigure", 20],
     ]);
     expect(chartData(b).runs.map(r => r.restarts)).toEqual([[900]]);
 
     // A reconfigure from some other process, which the log has nothing else of, and a build that began just after
     // the configure that rewrote its stamp: it is in no run, and is not taken for the start of that build.
     log({ start: 4000, end: 4700 }, T1 + 86_400_000 + 50 + 20);
-    const later = loadBuild(dir, false);
+    const later = loadBuild(where);
     expect(later.runs.map(r => [r.restarts, r.executions.map(x => [x.label, x.start, x.end])])).toEqual([
       [[], [["fetch dep", 5, 105]]],
-      [[], [["cc x.o", 20, 520]]],
+      [[], [["cxx x.o", 20, 520]]],
     ]);
+    // A fetch ending right where that reconfigure started is not enough either: the process ninja rewrites
+    // build.ninja in runs nothing but what build.ninja needs, and this one compiled x.o.
+    writeFileSync(
+      join(dir, ".ninja_log"),
+      [
+        "# ninja log v7",
+        `3895\t3995\t${ns(T1 + 3990)}\t${relative(dir, stamp)}\tf00d`,
+        `4000\t4700\t${ns(T1 + 86_400_000)}\tbuild.ninja\tf00d`,
+        `4000\t4500\t${ns(T1 + 4000)}\tx.o\tf00d`,
+        "",
+      ].join("\n"),
+    );
+    expect(loadBuild(where).runs.map(r => r.executions.map(x => x.label))).toEqual([["fetch dep", "cxx x.o"]]);
+    log({ start: 4000, end: 4700 }, T1 + 86_400_000 + 50 + 20);
+
     // It still took what it took: a build of everything waits for it.
     expect(criticalPath(later).steps.map(s => [s.execution.label, s.blocksNextForMs])).toEqual([
       ["fetch dep", 100],
       ["reconfigure", 700],
-      ["cc x.o", 500],
+      ["cxx x.o", 500],
     ]);
   });
 });
@@ -396,7 +431,7 @@ describe("on a Windows host", () => {
     touch(join(dir, "liba.rmeta"), T0 + 110 + 300);
     touch(join(dir, "liba.rlib"), T0 + 1105);
 
-    const [a] = [...loadBuild(dir, true).last.values()];
+    const [a] = [...loadBuild(at(dir, "windows")).last.values()];
     expect([a!.stampMs, [...a!.released.values()]]).toEqual([T0 + 110, [300]]);
   });
 });
@@ -409,20 +444,20 @@ describe("formatReport", () => {
       "build timings  <buildDir>
         6 edges, last built by 2 runs of ninja between 2026-01-02 03:04:05Z and 2026-01-02 04:04:07Z
 
-      by kind                     edges    total  slowest
+      by rule                     edges    total  slowest
         rust_rustc                    3     4.0s     2.0s  rustc b
         link                          1     1.3s     1.3s  link exe
         dep_fetch                     1    100ms    100ms  fetch dep
-        cc                            1     50ms     50ms  cc x.o
+        cxx                           1     50ms     50ms  cxx x.o
 
       slowest 6 edges
-           2.0s  rustc b  dependents start after 200ms
+           2.0s  rustc b  dependents can start after 200ms
                  LLVM_passes 1.6s · type_check_crate 170ms
            1.3s  link exe
-           1.0s  rustc a  dependents start after 300ms
+           1.0s  rustc a  dependents can start after 300ms
            1.0s  rustc root → libroot.a
           100ms  fetch dep
-           50ms  cc x.o
+           50ms  cxx x.o
                  Frontend 30ms · Backend 15ms
 
       critical path  4.7s  the longest chain: what a build of everything takes with every core free
@@ -434,44 +469,36 @@ describe("formatReport", () => {
            1.3s  link exe
 
       most recent run of ninja  2026-01-02 04:04:05Z
-        3.4s wall   2 edges   1.4s of commands   0.4× average parallelism
+        3.4s wall   2 commands taking 1.4s   0.4× average parallelism
 
         low parallelism  2 commands or fewer for 1s or more
-            0ms –   3.4s  (3.4s)  link exe, cc x.o
+            0ms –   3.4s  (3.4s)  link exe, cxx x.o
 
         waited to start  after every input existed: for the pool, or for a free job slot
-           2.0s  pool compile (depth 2)          1 edge    longest 2.0s  cc x.o
-           50ms  no pool                         1 edge    longest 50ms  link exe
+           2.0s  pool compile (depth 2)          1 command    longest 2.0s  cxx x.o
+           50ms  no pool                         1 command    longest 50ms  link exe
 
       earlier runs still in the log  ninja drops an edge's older entries when it compacts the log
-        2026-01-02 03:04:05Z      6 edges     3.9s wall
+        2026-01-02 03:04:05Z      6 commands     3.9s wall
       "
     `);
   });
 });
 
 describe("chart", () => {
-  test("a lane per kind of command, in build order; the critical path takes the top rows of its lanes", () => {
+  test("a lane per sort of command, in build order; the critical path takes the top rows of its lanes", () => {
     const [second, first] = chartData(build).runs;
+    // A bar names the bar it waited on by its place in the run, which is what a pinned bar's chain follows.
     const placed = (run: typeof first) =>
-      run!.bars.map(b => [b.label, run!.lanes[b.lane]!.name, b.row, b.step, b.blocksNextForMs, b.released]);
-    // Each bar names the bar it was waiting on, which is what a pinned bar's chain follows.
-    expect(first!.bars.map(b => (b.blocker === undefined ? undefined : first!.bars[b.blocker]!.label))).toEqual([
-      undefined,
-      undefined,
-      "fetch dep",
-      "rustc a",
-      "rustc b",
-      "rustc root → libroot.a",
-    ]);
+      run!.bars.map(b => [b.label, run!.lanes[b.lane]!.name, b.row, b.step, b.blocker]);
 
     expect(second!.lanes).toEqual([
       { name: "C and C++", color: 0, rows: 1 },
       { name: "link and checks", color: 3, rows: 1 },
     ]);
     expect(placed(second)).toEqual([
-      ["cc x.o", "C and C++", 0, undefined, undefined, undefined],
-      ["link exe", "link and checks", 0, 4, 1300, undefined],
+      ["cxx x.o", "C and C++", 0, undefined, undefined],
+      ["link exe", "link and checks", 0, 4, 0],
     ]);
 
     expect(first!.lanes).toEqual([
@@ -481,15 +508,15 @@ describe("chart", () => {
       { name: "link and checks", color: 3, rows: 1 },
     ]);
     expect(placed(first)).toEqual([
-      ["fetch dep", "dependencies", 0, 0, 100, undefined],
+      ["fetch dep", "dependencies", 0, 0, undefined],
       // Not on the path: x.o was last built by the second run.
-      ["cc x.o", "C and C++", 0, undefined, undefined, undefined],
-      ["rustc a", "Rust", 0, 1, 300, 300],
+      ["cxx x.o", "C and C++", 0, undefined, undefined],
+      ["rustc a", "Rust", 0, 1, 0],
       // `a` is still running when `b` starts, so `b` is a row down: the staircase.
-      ["rustc b", "Rust", 1, 2, 2000, 200],
-      ["rustc root → libroot.a", "Rust", 0, 3, 1000, undefined],
+      ["rustc b", "Rust", 1, 2, 2],
+      ["rustc root → libroot.a", "Rust", 0, 3, 3],
       // Superseded by the second run's link, which is the one on the path.
-      ["link exe", "link and checks", 0, undefined, undefined, undefined],
+      ["link exe", "link and checks", 0, undefined, 4],
     ]);
     expect(first!.bars.find(b => b.label === "rustc b")!.phases).toEqual([
       ["LLVM_passes", 1600],
@@ -499,7 +526,7 @@ describe("chart", () => {
 
   test("the page carries its data and cannot be broken out of by a label", () => {
     // A label is a rule's description with an edge's variables in it, and a variable can hold anything.
-    const hostile = loadBuild(buildDir, false);
+    const hostile = loadBuild(at(buildDir));
     hostile.runs[0]!.executions[0]!.label = "gen </script><script>alert(1)</script>";
     const page = chartHtml(hostile);
     const data = /<script id="data" type="application\/json">(.*?)<\/script>/.exec(page)![1]!;

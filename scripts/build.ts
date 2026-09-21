@@ -213,7 +213,15 @@ async function main(): Promise<void> {
     }
 
     // Every CI build says where its time went: nobody can come back to this build directory to ask.
-    await startGroup("Build timings", async () => reportTimings(result.cfg, t => process.stdout.write(t)));
+    // It describes a build that already succeeded, so here it never fails one: what goes wrong is printed and the
+    // artifacts still upload (the symbol order file's trace above is treated the same way).
+    startGroup("Build timings", () => {
+      try {
+        reportTimings(result.cfg, t => process.stdout.write(t));
+      } catch (error) {
+        console.log(error instanceof BuildError ? error.format() : `build timings: ${(error as Error).stack ?? error}`);
+      }
+    });
 
     // cpp-only/rust-only: upload build outputs for downstream link-only.
     // link-only/rust-and-link: package + upload zips for downstream test steps.
@@ -343,32 +351,21 @@ async function main(): Promise<void> {
 }
 
 /**
- * `--timings`, and every CI build: print where the build directory's time went, and write the same as a chart. In CI
- * the chart is uploaded and the build page links to it; locally there is also a trace for Perfetto.
- *
- * It describes a build that already succeeded, so it never fails one: whatever goes wrong here is printed, and the
- * artifacts still upload and the binary still runs (the symbol order file's trace is treated the same way).
+ * `--timings`, and every CI build: print where the build directory's time went, and write the same as a chart. Under
+ * Buildkite the chart is uploaded and the build page links to it; anywhere else there is also a trace for Perfetto.
  */
 function reportTimings(cfg: Config, write: (text: string) => void): void {
-  try {
-    writeTimings(cfg, write);
-  } catch (error) {
-    write(error instanceof BuildError ? error.format() : `build timings: ${(error as Error).stack ?? error}\n`);
-  }
-}
-
-function writeTimings(cfg: Config, write: (text: string) => void): void {
-  const build = loadBuild(cfg.buildDir);
+  const build = loadBuild(cfg);
   write(formatReport(build, { bold, dim }));
   if (build.runs.length === 0) return;
   const rel = (p: string) => relative(process.cwd(), p);
-  const chart = join(cfg.buildDir, `${timingsFileStem(cfg)}.html`);
+  const chart = join(cfg.buildDir, `${timingsFileStem()}.html`);
   writeFileSync(chart, chartHtml(build));
   write(
-    `\n${bold("chart")}  ${rel(chart)}${dim("  every run of ninja, a lane per kind of command; hover or click a bar")}\n`,
+    `\n${bold("chart")}  ${rel(chart)}${dim("  the most recent runs of ninja, command by command; hover or click a bar")}\n`,
   );
   if (isBuildkite) return publishTimings(cfg, chart);
-  const trace = join(cfg.buildDir, `${timingsFileStem(cfg)}-trace.json`);
+  const trace = join(cfg.buildDir, `${timingsFileStem()}-trace.json`);
   writeFileSync(trace, JSON.stringify({ traceEvents: traceEvents(build) }) + "\n");
   write(`${bold("trace")}  ${rel(trace)}${dim("  the same runs for ui.perfetto.dev or chrome://tracing")}\n`);
 }
@@ -454,7 +451,7 @@ interface CliArgs {
   configureOnly: boolean;
   /** Suppress build output unless it fails. Also auto-enabled when execArgs present. */
   quiet: boolean;
-  /** After a successful build, report where the build directory's time went. */
+  /** After the build (with `configureOnly`: without one), report where the build directory's time went. */
   timings: boolean;
   /** Extra ninja args (e.g. -j8, -v, -n, -d explain). */
   ninjaArgs: string[];
@@ -713,12 +710,13 @@ Options:
   --target=<name>         Build a specific ninja target (repeatable)
   --configure-only        Emit build.ninja, don't run it
   --timings               After the build (or, with --configure-only, without
-                          one), report where the time went: per kind
-                          of edge, the slowest edges, the critical path, and
-                          the last ninja run's parallelism. It describes the
-                          build directory (every edge's last run), so it reads
-                          the same after a build that had nothing to do. With
-                          --time-trace=on, the compilers' own phases too.
+                          one), report where the time went: totals per rule,
+                          the slowest edges, the critical path, and how
+                          parallel the most recent run of ninja was; and write
+                          the same as a chart. It describes the build
+                          directory (the last time every edge ran), so it
+                          reads the same after a build with nothing to do.
+                          With --time-trace=on, the compilers' phases too.
   -j<N>, -v, -k<N>        Passed through to ninja
   --help                  Show this help
 

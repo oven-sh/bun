@@ -311,9 +311,12 @@ function upload(paths: string[], cwd: string): void {
   run(["buildkite-agent", "artifact", "upload", paths.join(";")], cwd);
 }
 
-/** `timings[-<target>-<mode>]`: every build step of a build uploads its own, so in CI the name says whose it is. */
-export function timingsFileStem(cfg: Config): string {
-  return isBuildkite ? `timings-${computeBunTriplet(cfg)}-${cfg.mode}` : "timings";
+/**
+ * `timings`, or under Buildkite `timings-<step key>`: every build step of a build uploads its own, and the step's key
+ * is what tells them apart (two steps can share a target and a mode: `linux-x64` and `linux-x64-asan`).
+ */
+export function timingsFileStem(): string {
+  return isBuildkite ? `timings-${process.env.BUILDKITE_STEP_KEY}` : "timings";
 }
 
 /**
@@ -321,7 +324,6 @@ export function timingsFileStem(cfg: Config): string {
  * Buildkite serves as a page, and linked from the build page (one annotation for the build, a link per step).
  */
 export function publishTimings(cfg: Config, chart: string): void {
-  if (!isBuildkite) return;
   const artifact = relative(cfg.buildDir, chart);
   // The link resolves only once the artifact exists.
   upload([artifact], cfg.buildDir);
@@ -329,7 +331,7 @@ export function publishTimings(cfg: Config, chart: string): void {
     style: "info",
     priority: 1,
     label: "build timings",
-    content: `<p>build timings: <a href="artifact://${artifact}">${computeBunTriplet(cfg)} ${cfg.mode}</a></p>\n`,
+    content: `<p>build timings: <a href="artifact://${artifact}">${process.env.BUILDKITE_STEP_KEY}</a></p>\n`,
   });
 }
 

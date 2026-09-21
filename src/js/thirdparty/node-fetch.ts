@@ -1,7 +1,31 @@
 // Users may override the global fetch implementation, so we need to ensure these are the originals.
 const bindings = $cpp("NodeFetch.cpp", "createNodeFetchInternalBinding");
-const WebResponse: typeof globalThis.Response = bindings[0];
-const WebRequest: typeof globalThis.Request = bindings[1];
+// undici-types declares these members as class properties; at runtime they are prototype accessors and
+// methods, which the subclasses below override and reach through `super`.
+interface WebResponseMembers {
+  readonly body: ReadableStream | null;
+  readonly headers: globalThis.Headers;
+  readonly ok: boolean;
+  readonly type: globalThis.Response["type"];
+  clone(): globalThis.Response;
+  text(): Promise<string>;
+  json(): Promise<any>;
+  arrayBuffer(): Promise<ArrayBuffer>;
+}
+type WebResponseConstructor = new (
+  body?: ConstructorParameters<typeof globalThis.Response>[0],
+  init?: ConstructorParameters<typeof globalThis.Response>[1],
+) => Omit<globalThis.Response, keyof WebResponseMembers> & WebResponseMembers;
+interface WebRequestMembers {
+  readonly url: string;
+}
+type WebRequestConstructor = new (
+  input: string | URL | globalThis.Request,
+  init?: RequestInit,
+) => Omit<globalThis.Request, keyof WebRequestMembers> & WebRequestMembers;
+
+const WebResponse: WebResponseConstructor = bindings[0];
+const WebRequest: WebRequestConstructor = bindings[1];
 const Blob: typeof globalThis.Blob = bindings[2];
 const WebHeaders: typeof globalThis.Headers = bindings[3];
 const FormData: typeof globalThis.FormData = bindings[4];
@@ -13,7 +37,7 @@ const JSONParse = JSON.parse;
 // https://github.com/node-fetch/node-fetch/blob/8b3320d2a7c07bce4afc6b2bf6c3bbddda85b01f/src/headers.js#L44
 class Headers extends WebHeaders {
   raw() {
-    const obj = this.toJSON();
+    const obj: Record<string, string | string[]> = this.toJSON();
     for (const key in obj) {
       const val = obj[key];
       if (!$isJSArray(val)) {
@@ -49,8 +73,14 @@ class Response extends WebResponse {
   [kFetched]: boolean | undefined;
 
   constructor(body, init) {
-    const { Readable, Stream } = require("node:stream");
+    const { Readable, Stream, PassThrough } = require("node:stream");
     if (body && typeof body === "object" && (body instanceof Stream || body instanceof Readable)) {
+      // An old-style Stream is not a Readable: pipe it through a PassThrough first, as fetch() does below.
+      if (!(body instanceof Readable)) {
+        const passthrough = new PassThrough();
+        body.pipe(passthrough);
+        body = passthrough;
+      }
       body = Readable.toWeb(body);
     }
 
@@ -76,7 +106,7 @@ class Response extends WebResponse {
   }
 
   clone() {
-    const cloned = Object.setPrototypeOf(super.clone(this), ResponsePrototype);
+    const cloned = Object.setPrototypeOf(super.clone(), ResponsePrototype);
     // clone() moved the body to a new web stream, so `body` gets a new node stream, as in node-fetch.
     this[kBody] = undefined;
     if (this[kFetched]) cloned[kFetched] = true;
@@ -158,7 +188,7 @@ async function fetch(
         readable.pipe(passthrough);
         readable = passthrough;
       }
-      init = { ...init, body: Readable.toWeb(readable) };
+      init = { ...init, body: Readable.toWeb(readable as import("node:stream").Readable) };
     }
   }
   const response = await nativeFetch.$call(undefined, url, init);

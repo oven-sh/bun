@@ -17,6 +17,7 @@ import type { Config } from "./config.ts";
 import { DARWIN_STACK_SIZE } from "./flags.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote } from "./shell.ts";
+import { toolIdentityFile } from "./tools.ts";
 
 export interface ShimLinkOpts {
   /** Extra ldflags to append to the link() call. */
@@ -165,8 +166,7 @@ export function registerShimRules(n: Ninja, cfg: Config): void {
 }
 
 /**
- * Emit shim build edges and return link flags. Call once per link site
- * (emitBun, emitLinkOnly) before the link() call.
+ * Emit shim build edges and return link flags. Call before the link() call (emitBun).
  *
  * See scripts/build/workarounds.ts for the self-obsoleting check on each.
  */
@@ -183,6 +183,7 @@ export function emitShims(n: Ninja, cfg: Config): ShimLinkOpts {
       outputs: [machoPostlinkToolPath(cfg)],
       rule: "host_tool_cc",
       inputs: [resolve(cfg.cwd, "scripts", "build", "shims", "macho-postlink.c")],
+      implicitInputs: [toolIdentityFile(cfg, "cc")],
     });
     implicitInputs.push(...machoPostlinkImplicitInputs(cfg));
   }

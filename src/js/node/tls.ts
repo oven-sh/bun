@@ -562,7 +562,7 @@ function newNativeSecureContext(options, cached = false) {
   // convertALPNProtocols normalizes them on the socket options.
   const ALPNProtocols = options.ALPNProtocols;
   if (Array.isArray(ALPNProtocols)) {
-    const normalized = {};
+    const normalized: { ALPNProtocols?: Buffer } = {};
     convertALPNProtocols(ALPNProtocols, normalized);
     options = { ...options, ALPNProtocols: normalized.ALPNProtocols };
   }
@@ -1594,7 +1594,7 @@ function normalizeConnectArgs(listArgs) {
 function connect(...args) {
   let normal = normalizeConnectArgs(args);
   const options = normal[0];
-  const { ALPNProtocols, servername } = options as { ALPNProtocols?: unknown; servername?: unknown };
+  const { ALPNProtocols, servername } = options as { ALPNProtocols?: unknown; servername?: string };
 
   // The TLSSocket applies the NODE_TLS_REJECT_UNAUTHORIZED default itself
   // (rejectUnauthorizedDefault); this call exists to emit Node's one-time
@@ -1622,7 +1622,7 @@ function connect(...args) {
     ? options.rejectUnauthorized !== false
     : rejectUnauthorizedDefault();
 
-  const connectOptions = { checkServerIdentity, ...options, rejectUnauthorized };
+  const connectOptions: Record<PropertyKey, any> = { checkServerIdentity, ...options, rejectUnauthorized };
   if (!ObjectPrototypeHasOwnProperty.$call(options, "ciphers") || connectOptions.ciphers == null) {
     connectOptions.ciphers = getDefaultCiphers();
   }
@@ -1910,4 +1910,7 @@ export default {
     return cacheBundledRootCertificates();
   },
   getCACertificates,
-} as any as typeof import("node:tls");
+} as any as typeof import("node:tls") & {
+  SecureContext: typeof SecureContext;
+  convertALPNProtocols: typeof convertALPNProtocols;
+};

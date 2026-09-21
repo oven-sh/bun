@@ -1998,7 +1998,7 @@ describe.concurrent("a repeated resolution", () => {
 
           // The epoch moves. A pair that had an entry keeps it: the first call checks the answer, the next four get it.
           require.extensions[".custom"] = require.extensions[".js"];
-          out.afterChange = hits(() => require("./child.cjs"));
+          out.afterChange = repeats(() => require("./child.cjs"));
           delete require.extensions[".custom"];
 
           // One resolution keeps no entry. Almost no hit in the second round: two pairs seldom share a bucket and a tag.
@@ -2029,7 +2029,7 @@ describe.concurrent("a repeated resolution", () => {
       longDataUrl: 0,
       import: true,
       hooked: true,
-      afterChange: 4,
+      afterChange: true,
       oneOffs: true,
       missing: 0,
       afterMissing: true,

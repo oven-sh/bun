@@ -1114,7 +1114,7 @@ Full documentation is available at <magenta>https://bun.com/docs/install/audit<r
             }
             Subcommand::Info => {
                 let intro_text = r"
-<b>Usage<r>: <b><green>bun info<r> <cyan>[flags]<r> <blue>\<package\><r><d>[@\<version\>]<r>
+<b>Usage<r>: <b><green>bun info<r> <cyan>[flags]<r> <blue>\<package\><r><d>[@\<version\>]<r> <d>[\<property\>...]<r>
 
   View package metadata from the registry.
 
@@ -1128,6 +1128,10 @@ Full documentation is available at <magenta>https://bun.com/docs/install/audit<r
 
   <d>Display a specific version of a package<r>
   <b><green>bun info<r> <blue>react@18.0.0<r>
+
+  <d>Display properties (npm view path syntax)<r>
+  <b><green>bun info<r> <blue>react<r> version license
+  <b><green>bun info<r> <blue>react<r> maintainers.name dist-tags.latest
 
   <d>Display a specific property in JSON format<r>
   <b><green>bun info<r> <blue>react<r> version <cyan>--json<r>
@@ -1786,7 +1790,10 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             cli.diff_name_only = args.flag(b"--name-only");
             cli.diff_raw = args.flag(b"--raw") || args.flag(b"--unformatted");
             cli.no_project_ok = cli.positionals.first().is_some_and(|p| *p == b"pm")
-                && cli.positionals.get(1).is_some_and(|p| *p == b"diff");
+                && cli
+                    .positionals
+                    .get(1)
+                    .is_some_and(|p| *p == b"diff" || *p == b"view");
             cli.diff_unminify = args.flag(b"--unminify");
             cli.diff_minify = args.flag(b"--minify");
             cli.diff_ignore_space = args.flag(b"--ignore-space");
@@ -1803,6 +1810,11 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
                     }
                 }
             }
+        }
+
+        // `bun info` only reads the registry.
+        if subcommand == Subcommand::Info {
+            cli.no_project_ok = true;
         }
 
         // `bun pm why` and `bun why` options

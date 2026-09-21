@@ -215,6 +215,27 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     Ok(username.to_vec())
 }
 
+/// The `"error"` string of a registry error body, when the body is JSON and has one.
+pub fn response_error_message(
+    response_body: &MutableString,
+) -> Result<Option<Vec<u8>>, AllocError> {
+    let mut log = bun_ast::Log::init();
+    let source = bun_ast::Source::init_path_string("???", response_body.list.as_slice());
+    let parsed = match JSON::ParsedJson::parse_json(&source, &mut log) {
+        Ok(j) => j,
+        Err(bun_parsers::Error::Alloc(bun_alloc::AllocError)) => {
+            return Err(AllocError);
+        }
+        Err(_) => return Ok(None),
+    };
+
+    let error_expr = parsed.root.get(b"error");
+    let Some(error) = error_expr.as_ref().and_then(|e| e.as_utf8_string_literal()) else {
+        return Ok(None);
+    };
+    Ok(Some(error.to_vec()))
+}
+
 pub fn response_error<const OTP_RESPONSE: bool>(
     req: &AsyncHTTP,
     res: &bun_http::HTTPResponseMetadata,
@@ -222,23 +243,7 @@ pub fn response_error<const OTP_RESPONSE: bool>(
     pkg_id: Option<(&[u8], &[u8])>,
     response_body: &mut MutableString,
 ) -> Result<core::convert::Infallible, AllocError> {
-    let message: Option<Vec<u8>> = 'message: {
-        let mut log = bun_ast::Log::init();
-        let source = bun_ast::Source::init_path_string("???", response_body.list.as_slice());
-        let parsed = match JSON::ParsedJson::parse_json(&source, &mut log) {
-            Ok(j) => j,
-            Err(bun_parsers::Error::Alloc(bun_alloc::AllocError)) => {
-                return Err(AllocError);
-            }
-            Err(_) => break 'message None,
-        };
-
-        let error_expr = parsed.root.get(b"error");
-        let Some(error) = error_expr.as_ref().and_then(|e| e.as_utf8_string_literal()) else {
-            break 'message None;
-        };
-        Some(error.to_vec())
-    };
+    let message = response_error_message(response_body)?;
 
     bun_core::pretty_errorln!(
         "\n<red>{}<r>{}{}: {}\n",

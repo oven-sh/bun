@@ -1,15 +1,6 @@
-//! UTF-16 output to the console behind stdout / stderr.
-//!
-//! `WriteFile` on a console handle decodes the bytes with the console output
-//! codepage at the moment of the call. That codepage is one value shared by
-//! every process on the console, so it can change under us: in
-//! `bun a | bun b`, `a` restores the codepage it saved at startup when it
-//! exits, while `b` is still writing UTF-8 (#43660). `WriteConsoleW` takes
-//! UTF-16 and does not depend on the codepage, which is also what Node (via
-//! libuv's tty writer) does.
-//!
-//! Only the stdout / stderr handles that were consoles at startup take this
-//! path. Everything else stays on `WriteFile`.
+//! `WriteConsoleW` output for the stdout / stderr console handles. Unlike
+//! `WriteFile`, it does not depend on the console output codepage, which any
+//! process on the same console can change (#43660).
 
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -31,15 +22,11 @@ mod kernel32 {
     }
 }
 
-/// UTF-16 units per `WriteConsoleW` call. A console write larger than this
-/// can fail with `ERROR_NOT_ENOUGH_MEMORY`; libuv uses the same cap.
+/// UTF-16 units per `WriteConsoleW` call (libuv's cap).
 const CHUNK_UNITS: usize = 8192;
 
-/// The bytes of an incomplete UTF-8 sequence at the end of the previous write
-/// to stdout (slot 0) or stderr (slot 1). A buffered writer flushes on a
-/// fixed byte count and can split a character across two writes, so the head
-/// of the next write completes it. Packed as `len | b0 << 8 | b1 << 16 |
-/// b2 << 24`; 0 means nothing pending.
+/// Incomplete UTF-8 sequence left by the previous write to stdout (0) or
+/// stderr (1), packed as `len | b0 << 8 | b1 << 16 | b2 << 24`.
 static PENDING: [AtomicU32; 2] = [AtomicU32::new(0), AtomicU32::new(0)];
 
 fn pack(bytes: &[u8]) -> u32 {
@@ -90,8 +77,7 @@ fn console_slot(fd: Fd) -> Option<usize> {
 
 fn write_chunk(fd: Fd, bytes: &[u8], utf16: &mut [u16]) -> Maybe<()> {
     let handle = fd.native();
-    // `bytes.len() <= utf16.len()` and one UTF-8 byte never yields more than
-    // one UTF-16 unit, so the conversion always fits.
+    // One UTF-8 byte yields at most one UTF-16 unit, so it fits.
     let units = bun_core::strings::try_convert_utf8_to_utf16_in_buffer(utf16, bytes)
         .expect("console chunk fits its UTF-16 buffer");
     let mut written = 0usize;
@@ -119,16 +105,10 @@ fn write_chunk(fd: Fd, bytes: &[u8], utf16: &mut [u16]) -> Maybe<()> {
     Ok(())
 }
 
-/// Write `buf` to the console behind `fd` as UTF-16.
-///
-/// Returns `None` when `fd` is not the stdout / stderr console, or when
-/// `WriteConsoleW` fails before any byte was consumed. The caller then falls
-/// back to `WriteFile`, which reports the error if the handle is bad.
-/// Otherwise returns the number of bytes consumed, which is `buf.len()` on
-/// success: an incomplete trailing sequence is kept in [`PENDING`] and counts
-/// as consumed. A failure after bytes from a previous write were taken out of
-/// [`PENDING`] is an error, not a fallback, so those bytes are never
-/// reordered behind `buf`.
+/// `None`: `fd` is not the stdout / stderr console, or `WriteConsoleW` failed
+/// before any byte was consumed, so the caller falls back to `WriteFile`.
+/// `Some(Ok(n))`: `n` bytes consumed, an incomplete trailing sequence is held
+/// in [`PENDING`] for the next write and counts as consumed.
 pub(crate) fn write(fd: Fd, buf: &[u8]) -> Option<Maybe<usize>> {
     let slot = console_slot(fd)?;
     let pending = &PENDING[slot];
@@ -160,9 +140,7 @@ pub(crate) fn write(fd: Fd, buf: &[u8]) -> Option<Maybe<usize>> {
     while off < body.len() {
         let mut end = (off + CHUNK_UNITS).min(body.len());
         if end < body.len() {
-            // Do not cut a sequence in two: back up to its lead byte. Three
-            // steps cover the longest sequence. Past that the bytes are
-            // invalid anyway and become U+FFFD on either side of the cut.
+            // Back up to a lead byte so the cut does not split a sequence.
             let floor = end - 3;
             while end > floor && is_continuation(body[end]) {
                 end -= 1;
@@ -183,8 +161,7 @@ pub(crate) fn write(fd: Fd, buf: &[u8]) -> Option<Maybe<usize>> {
     Some(Ok(buf.len()))
 }
 
-/// [`write`] over a list of buffers. Stops at the first buffer that is not
-/// fully consumed.
+/// [`write`] over a list of buffers.
 pub(crate) fn writev(fd: Fd, bufs: &[crate::PlatformIoVecConst]) -> Option<Maybe<usize>> {
     console_slot(fd)?;
     let mut total = 0usize;

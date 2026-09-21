@@ -626,6 +626,11 @@ pub fn preadv(fd: Fd, bufs: &[PlatformIOVec], position: i64) -> Result<usize> {
 }
 
 pub fn pwritev(fd: Fd, bufs: &[PlatformIOVecConst], position: i64) -> Result<usize> {
+    if position < 0 {
+        if let Some(result) = crate::windows::console::writev(fd, bufs) {
+            return result;
+        }
+    }
     let uv_fd = fd.uv();
     const _: () = assert!(
         core::mem::size_of::<PlatformIOVec>() == core::mem::size_of::<uv::uv_buf_t>()

@@ -14,8 +14,8 @@
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use super::{BOOL, DWORD, HANDLE, Win32Error};
-use crate::{Error, Fd, Maybe, Tag};
+use super::{BOOL, DWORD, HANDLE};
+use crate::{Fd, Maybe};
 
 mod kernel32 {
     use super::{BOOL, DWORD, HANDLE, c_void};
@@ -88,7 +88,8 @@ fn console_slot(fd: Fd) -> Option<usize> {
     None
 }
 
-fn write_chunk(fd: Fd, handle: HANDLE, bytes: &[u8], utf16: &mut [u16]) -> Maybe<()> {
+/// Returns false when `WriteConsoleW` fails.
+fn write_chunk(handle: HANDLE, bytes: &[u8], utf16: &mut [u16]) -> bool {
     // `bytes.len() <= utf16.len()` and one UTF-8 byte never yields more than
     // one UTF-16 unit, so the conversion always fits.
     let units = bun_core::strings::try_convert_utf8_to_utf16_in_buffer(utf16, bytes)
@@ -108,23 +109,24 @@ fn write_chunk(fd: Fd, handle: HANDLE, bytes: &[u8], utf16: &mut [u16]) -> Maybe
             )
         };
         if rc == 0 {
-            return Err(Error::from_win32(Win32Error::get(), Tag::write).with_fd(fd));
+            return false;
         }
         if n == 0 {
             break;
         }
         written += n as usize;
     }
-    Ok(())
+    true
 }
 
 /// Write `buf` to the console behind `fd` as UTF-16.
 ///
-/// Returns `None` when `fd` is not the stdout / stderr console, or when the
-/// first `WriteConsoleW` fails before any byte was consumed. The caller then
-/// falls back to `WriteFile`. Otherwise returns the number of bytes consumed,
-/// which is `buf.len()` on success: an incomplete trailing sequence is kept in
-/// [`PENDING`] and counts as consumed.
+/// Returns `None` when `fd` is not the stdout / stderr console, or when
+/// `WriteConsoleW` fails before any byte was consumed. The caller then falls
+/// back to `WriteFile`, which reports the error if the handle is bad.
+/// Otherwise returns the number of bytes consumed, which is `buf.len()` on
+/// success: an incomplete trailing sequence is kept in [`PENDING`] and counts
+/// as consumed.
 pub(crate) fn write(fd: Fd, buf: &[u8]) -> Option<Maybe<usize>> {
     let slot = console_slot(fd)?;
     let handle = fd.native();
@@ -144,7 +146,7 @@ pub(crate) fn write(fd: Fd, buf: &[u8]) -> Option<Maybe<usize>> {
             pending.store(pack(&head[..head_len]), Ordering::Relaxed);
             return Some(Ok(buf.len()));
         }
-        if write_chunk(fd, handle, &head[..head_len], &mut utf16).is_err() {
+        if !write_chunk(handle, &head[..head_len], &mut utf16) {
             return None;
         }
     }
@@ -165,7 +167,7 @@ pub(crate) fn write(fd: Fd, buf: &[u8]) -> Option<Maybe<usize>> {
                 end -= 1;
             }
         }
-        if write_chunk(fd, handle, &body[off..end], &mut utf16).is_err() {
+        if !write_chunk(handle, &body[off..end], &mut utf16) {
             if consumed + off == 0 {
                 return None;
             }
@@ -178,4 +180,34 @@ pub(crate) fn write(fd: Fd, buf: &[u8]) -> Option<Maybe<usize>> {
         pending.store(pack(&rest[rest.len() - tail_len..]), Ordering::Relaxed);
     }
     Some(Ok(buf.len()))
+}
+
+/// [`write`] over a list of buffers. Stops at the first buffer that is not
+/// fully consumed.
+pub(crate) fn writev(fd: Fd, bufs: &[crate::PlatformIoVecConst]) -> Option<Maybe<usize>> {
+    console_slot(fd)?;
+    let mut total = 0usize;
+    for buf in bufs {
+        // SAFETY: the caller built each iovec from a live `&[u8]`.
+        let bytes = unsafe { core::slice::from_raw_parts(buf.base, buf.len as usize) };
+        if bytes.is_empty() {
+            continue;
+        }
+        match write(fd, bytes) {
+            Some(Ok(n)) => {
+                total += n;
+                if n < bytes.len() {
+                    break;
+                }
+            }
+            Some(Err(err)) => return Some(Err(err)),
+            None => {
+                if total == 0 {
+                    return None;
+                }
+                break;
+            }
+        }
+    }
+    Some(Ok(total))
 }

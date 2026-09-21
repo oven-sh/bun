@@ -371,11 +371,13 @@ export interface RustcUnitManifest extends ManifestCommon {
   /** lib units: the name ninja knows the `.rmeta` by (its path from the build directory), which is what an early-output announcement has to say. */
   rmetaNinjaName: string | undefined;
   /**
-   * staticlib units: rustc writes, beside `output`, `<objectStem>.o` or with several codegen units one
-   * `<objectStem>.<unit>.rcgu.o` each, and names `<objectStem>.o` in its dep-info either way. run.ts removes the
-   * previous ones before rustc runs and lists the new ones in `output`.
+   * staticlib units. rustc writes, beside `output`, `<stem>.o` or with several codegen units one
+   * `<stem>.<unit>.rcgu.o` each, and names `<stem>.o` in its dep-info either way. run.ts removes the previous ones
+   * before rustc runs and lists the new ones in `output` as paths from `linkDir`, the directory the link runs in
+   * (the build directory), which is how the link's other inputs are named: clang-cl reads an absolute POSIX path as
+   * an option when it can (`/opt/…` is `/o`, `/Users/…` is `/U`) and drops the object.
    */
-  objectStem: string | undefined;
+  objects: { stem: string; linkDir: string } | undefined;
   /** bin units: where run.ts copies `output` once rustc has linked it (a second output of the edge). */
   binDestination: string | undefined;
   /** Which of the build script's `rustc-link-arg*` directives apply to this target (cargo `LinkArgTarget`). */
@@ -602,7 +604,7 @@ function rustcUnitManifest(ctx: ManifestContext, unit: RustUnit): RustcUnitManif
     output: unit.output,
     rmeta: unit.rmeta,
     rmetaNinjaName: unit.rmeta === undefined ? undefined : relative(cfg.buildDir, unit.rmeta),
-    objectStem: unit.kind === "staticlib" ? `${unit.crateName}-${unit.hash}` : undefined,
+    objects: unit.kind === "staticlib" ? { stem: `${unit.crateName}-${unit.hash}`, linkDir: cfg.buildDir } : undefined,
     binDestination: unit.kind === "bin" ? ctx.binDestination : undefined,
     linkArgSelectors: unit.kind === "bin" ? ["all", "bins", `bin=${unit.targetName}`] : ["all"],
     depInfo: unit.depInfo,

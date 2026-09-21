@@ -509,7 +509,7 @@ describe("buildRustGraph + unitManifest", () => {
     expect(objects.root.output).toBe(join(deps, `my_bin-${objects.root.hash}.objects.rsp`));
     expect(objects.root.rmeta).toBeUndefined();
     const manifest = unitManifest(context(objects), objects.root) as RustcUnitManifest;
-    expect(manifest.objectStem).toBe(`my_bin-${objects.root.hash}`);
+    expect(manifest.objects).toEqual({ stem: `my_bin-${objects.root.hash}`, linkDir: "/build" });
     expect(valuesOf(manifest.args, "--crate-type")).toEqual(["staticlib"]);
     expect(manifest.args).toContain(`--emit=dep-info=${join(deps, `my_bin-${objects.root.hash}.d`)},obj`);
     expect(manifest.args).not.toContain("embed-metadata=no");
@@ -536,7 +536,7 @@ describe("buildRustGraph + unitManifest", () => {
     expect(library.root.kind).toBe("lib");
     expect(library.root.output).toBe(join(deps, `libmy_bin-${library.root.hash}.rlib`));
     const libraryManifest = unitManifest(context(library), library.root) as RustcUnitManifest;
-    expect(libraryManifest.objectStem).toBeUndefined();
+    expect(libraryManifest.objects).toBeUndefined();
     expect(valuesOf(libraryManifest.args, "--crate-type")).toEqual(["lib"]);
     expect(linkedRlibs(library).map(u => u.crateName)).toEqual(["my_bin", "dep_a"]);
   });

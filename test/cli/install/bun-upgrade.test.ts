@@ -275,6 +275,32 @@ describe.concurrent("extracts the release archive when the only extractor in PAT
   }
 });
 
+// Any of the extractors above can run, so a failure has to say which one did.
+// The last one found on the host is the one least likely to be `unzip`.
+const [failingExtractor, failingExtractorPath] = extractorPaths.findLast(([, dir]) => dir) ?? [];
+it.skipIf(!failingExtractorPath)("names the extractor that fails on a bad archive", async () => {
+  using cwd = tempDir("bun-upgrade-bad-archive", {});
+  const execPath = join(cwd, basename(bunExe()));
+  await copyFile(bunExe(), execPath);
+
+  // Without a zipPath the server answers the download with bytes that are not a zip.
+  using server = startReleaseServer({ tagName: "bun-v9.9.9" });
+
+  await using proc = Bun.spawn({
+    cmd: [execPath, "upgrade", "--stable"],
+    cwd: String(cwd),
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env: { ...server.env, PATH: failingExtractorPath!, BUN_TMPDIR: String(cwd) },
+  });
+
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain(`${failingExtractor} failed (exit code:`);
+  expect(exitCode).toBe(1);
+});
+
 it("recreates the staging directory in the temp dir instead of reusing a pre-existing one", async () => {
   const tagName = "bun-v9.9.9";
   // Simulate a directory that already exists at the predictable staging path

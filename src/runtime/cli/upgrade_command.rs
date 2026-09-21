@@ -132,9 +132,13 @@ fn busybox_has_unzip(busybox: &[u8]) -> bool {
         && strings::split(result.stdout.as_slice(), b"\n").any(|line| line == b"unzip")
 }
 
-/// Returns the argv of the first entry of `UNZIP_PROGRAMS` found in `path`.
+/// Returns the name and the argv of the first entry of `UNZIP_PROGRAMS` found in `path`.
 #[cfg(unix)]
-fn find_unzip_argv(path: &[u8], cwd: &[u8], archive: &[u8]) -> Option<Vec<Box<[u8]>>> {
+fn find_unzip_argv(
+    path: &[u8],
+    cwd: &[u8],
+    archive: &[u8],
+) -> Option<(&'static [u8], Vec<Box<[u8]>>)> {
     let mut buf = bun_paths::path_buffer_pool::get();
     for program in UNZIP_PROGRAMS {
         let Some(exe) = which(&mut buf, path, cwd, program.bin) else {
@@ -148,7 +152,7 @@ fn find_unzip_argv(path: &[u8], cwd: &[u8], archive: &[u8]) -> Option<Vec<Box<[u
         argv.extend(program.before.iter().map(|a| Box::<[u8]>::from(*a)));
         argv.push(Box::<[u8]>::from(archive));
         argv.extend(program.after.iter().map(|a| Box::<[u8]>::from(*a)));
-        return Some(argv);
+        return Some((program.bin, argv));
     }
     None
 }
@@ -906,7 +910,7 @@ impl UpgradeCommand {
 
                 #[cfg(unix)]
                 {
-                    let Some(unzip_argv) = find_unzip_argv(
+                    let Some((unzip_name, unzip_argv)) = find_unzip_argv(
                         env_loader.map.get(b"PATH").unwrap_or(b""),
                         filesystem.top_level_dir,
                         tmpname.as_bytes(),
@@ -933,7 +937,8 @@ impl UpgradeCommand {
                         Ok(Err(err)) => {
                             let _ = sys::unlinkat(&save_dir, tmpname);
                             bun_core::pretty_errorln!(
-                                "<r><red>error:<r> Failed to spawn unzip due to {}.",
+                                "<r><red>error:<r> Failed to spawn {} due to {}.",
+                                bstr::BStr::new(unzip_name),
                                 bstr::BStr::new(err.name())
                             );
                             Global::exit(1);
@@ -941,7 +946,8 @@ impl UpgradeCommand {
                         Err(err) => {
                             let _ = sys::unlinkat(&save_dir, tmpname);
                             bun_core::pretty_errorln!(
-                                "<r><red>error:<r> Failed to spawn unzip due to {}.",
+                                "<r><red>error:<r> Failed to spawn {} due to {}.",
+                                bstr::BStr::new(unzip_name),
                                 err.name()
                             );
                             Global::exit(1);
@@ -952,14 +958,19 @@ impl UpgradeCommand {
                         Status::Exited(e) if e.code == 0 => {}
                         Status::Exited(e) => {
                             bun_core::pretty_errorln!(
-                                "<r><red>Unzip failed<r> (exit code: {})",
+                                "<r><red>{} failed<r> (exit code: {})",
+                                bstr::BStr::new(unzip_name),
                                 e.code
                             );
                             let _ = sys::unlinkat(&save_dir, tmpname);
                             Global::exit(1);
                         }
                         other => {
-                            bun_core::pretty_errorln!("<r><red>Unzip failed<r> ({})", other);
+                            bun_core::pretty_errorln!(
+                                "<r><red>{} failed<r> ({})",
+                                bstr::BStr::new(unzip_name),
+                                other
+                            );
                             let _ = sys::unlinkat(&save_dir, tmpname);
                             Global::exit(1);
                         }

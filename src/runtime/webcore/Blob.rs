@@ -2196,6 +2196,11 @@ impl BlobExt for Blob {
             }
             _ => {
                 blob = Blob::get::<false, true>(global_this, args[0])?;
+                // `new Blob([file])` dupes the File, File-ness included. The
+                // result is a plain Blob: no name, no lastModified.
+                blob.is_jsdom_file.set(false);
+                blob.name.set(BunString::DEAD);
+                blob.last_modified.set(0.0);
 
                 if args.len() > 1 {
                     let options = args[1];
@@ -3981,10 +3986,12 @@ pub(crate) extern "C" fn Blob__dupeFromJS(value: JSValue) -> Option<NonNull<Blob
     )
 }
 
+/// Called on the FormData entry's private dupe, never on the caller's Blob.
+/// The entry's filename wins over the name the dupe inherited from a File.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &BunString) {
     this.is_jsdom_file.set(true);
-    if !path_str.is_empty() && this.get_file_name().is_none() {
+    if !path_str.is_empty() {
         this.name.set(path_str.clone());
     }
 }

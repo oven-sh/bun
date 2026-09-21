@@ -63,6 +63,32 @@ describe("FormData", () => {
     expect(b1.name).toBe("foo.txt");
   });
 
+  // #43691
+  it("set/append with a filename renames a File entry", async () => {
+    const file = new File(["hello"], "original.txt", { lastModified: 1000 });
+    const form = new FormData();
+    form.set("set", file, "renamed.txt");
+    form.append("append", file, "appended.txt");
+    form.append("wrapped", new Blob([file]), "wrapped.txt");
+    form.append("unnamed", file);
+
+    const entries = [...form.entries()].map(([key, value]) => [key, (value as File).name]);
+    expect(entries).toEqual([
+      ["set", "renamed.txt"],
+      ["append", "appended.txt"],
+      ["wrapped", "wrapped.txt"],
+      ["unnamed", "original.txt"],
+    ]);
+    expect((form.get("set") as File).lastModified).toBe(1000);
+    expect(await (form.get("set") as File).text()).toBe("hello");
+    // the caller's File keeps its name
+    expect(file.name).toBe("original.txt");
+
+    const body = await new Response(form).text();
+    expect(body).toContain('name="set"; filename="renamed.txt"');
+    expect(body).toContain('name="unnamed"; filename="original.txt"');
+  });
+
   const multipartFormDataFixturesRawBody = [
     {
       name: "simple",

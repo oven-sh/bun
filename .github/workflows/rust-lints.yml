@@ -14,6 +14,7 @@ on:
       - "scripts/build/**"
       - "scripts/build.ts"
       - "scripts/rust-miri.ts"
+      - "scripts/rust-mordant.ts"
       - "package.json"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -144,10 +145,6 @@ jobs:
           components: rustc-dev llvm-tools-preview
           ninja-targets: codegen clone-lolhtml clone-rust-argon2
 
-      - name: Add the Windows and macOS targets
-        # So `unused_pub` sees `cfg(windows)` and `cfg(target_os = "macos")` callers. No linker needed.
-        run: rustup target add --toolchain "$MORDANT_TOOLCHAIN" x86_64-pc-windows-msvc aarch64-apple-darwin
-
       - name: Restore the mordant binaries
         # cargo-mordant and mordant-driver are a pure function of the pinned
         # revision and the nightly they link. What remains uncached is
@@ -177,17 +174,10 @@ jobs:
           key: ${{ steps.mordant-bin.outputs.cache-primary-key }}
 
       - name: mordant
-        env:
-          # Mordant's nightly is older than rust-toolchain.toml's, so `#[allow]`s
-          # of lints added since then are unknown to it.
-          MORDANT_RUSTFLAGS: "-A unknown_lints"
-        run: |
-          rm -f target/mordant/over-baseline.txt
-          # Any `--target` drops the host, so it is named too.
-          cargo +"$MORDANT_TOOLCHAIN" mordant --workspace --keep-going \
-            --target x86_64-unknown-linux-gnu \
-            --target x86_64-pc-windows-msvc \
-            --target aarch64-apple-darwin
+        # scripts/rust-mordant.ts names the targets (Linux, Windows and macOS
+        # in one run) and installs their std, so that the job and `bun run
+        # rust:mordant` cannot drift apart. It removes over-baseline.txt first.
+        run: bun scripts/rust-mordant.ts
 
       - name: Fail on findings over the baseline
         # In baseline mode mordant reports findings over mordant-baseline.toml

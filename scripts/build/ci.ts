@@ -945,17 +945,21 @@ export async function inheritOrderFile(cfg: Config, ctx: OrderFileContext): Prom
  * code churn, and a stale one is a slower binary, not a broken one.
  */
 export function verifyOrderFileApplied(cfg: Config, ctx: OrderFileContext, exe: string): void {
-  const SAMPLE = 1000;
+  /** Fewer names than this say too little about where the hot set landed. */
+  const FEWEST_NAMES = 1000;
   /** Ordered, the hot set sits near the front; unordered, at ~100% of the control. */
   const MAX_FRACTION_OF_CONTROL = 0.4;
 
   const start = Date.now();
   if (!orderFileEligible(cfg, ctx)) return;
+  // Every name in the file, not its first ones: a process enters the C runtime's routines first (memcpy,
+  // memset, startup), and on windows x64 those are precompiled code the linker cannot move, in a block of
+  // their own at the end of .text. The first thousand names are mostly that block there, and say nothing
+  // about the functions that can be ordered.
   const wanted = readFileSync(orderFilePath(cfg), "utf8")
     .split("\n")
-    .filter((line: string) => line && !line.startsWith("#"))
-    .slice(0, SAMPLE);
-  if (wanted.length < SAMPLE) {
+    .filter((line: string) => line && !line.startsWith("#"));
+  if (wanted.length < FEWEST_NAMES) {
     console.log(`~ symbol order: only ${wanted.length} functions in the order file — nothing to verify`);
     return;
   }
@@ -1014,7 +1018,7 @@ export function verifyOrderFileApplied(cfg: Config, ctx: OrderFileContext, exe: 
     return;
   }
   console.log(
-    `+ symbol order: applied — ${offsets.length}/${wanted.length} (${(rate * 100).toFixed(0)}%) of the hottest ` +
-      `functions resolved; median ${mb(hot)} into .text vs ${mb(control)} for a typical one (${since(start)})`,
+    `+ symbol order: applied — ${offsets.length}/${wanted.length} (${(rate * 100).toFixed(0)}%) of the order ` +
+      `file's functions resolved; median ${mb(hot)} into .text vs ${mb(control)} for a typical one (${since(start)})`,
   );
 }

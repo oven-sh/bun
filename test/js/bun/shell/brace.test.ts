@@ -325,11 +325,21 @@ describe("comma-less brace group is literal (bash 5.2)", () => {
     // `{x},*.txt` sets both the brace and glob hints; after the lexer demotes
     // `{x}` to text the brace-expand count is 0. The original pattern must
     // still reach the glob walker rather than being taken as the literal word.
-    using dir = tempDir("shell-brace-literal-glob", { "a.txt": "" });
-    const { stderr, exitCode } = await $`echo {x},*.txt`.cwd(String(dir)).nothrow().quiet();
-    expect({ stderr: stderr.toString(), exitCode }).toEqual({
-      stderr: "bun: no matches found: {x},*.txt\n",
-      exitCode: 1,
+    // The walker reads `{x}` as a one-branch group, hence the `x,` fixture.
+    using dir = tempDir("shell-brace-literal-glob", { "a.txt": "", "x,a.txt": "" });
+    const matched = await $`echo {x},*.txt`.cwd(String(dir)).nothrow().quiet();
+    expect(matched.stdout.toString().trim().split(" ")).toContain("x,a.txt");
+
+    // With no match the word is left unchanged, and it is emitted once.
+    const unmatched = await $`echo {x},*.nomatch`.cwd(String(dir)).nothrow().quiet();
+    expect({
+      stdout: unmatched.stdout.toString(),
+      stderr: unmatched.stderr.toString(),
+      exitCode: unmatched.exitCode,
+    }).toEqual({
+      stdout: "{x},*.nomatch\n",
+      stderr: "",
+      exitCode: 0,
     });
   });
 });

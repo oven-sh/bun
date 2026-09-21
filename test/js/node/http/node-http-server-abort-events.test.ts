@@ -1,12 +1,60 @@
 /**
  * This test must also pass in Node.js.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, expect, onTestFinished, test } from "bun:test";
 import { once } from "node:events";
-import { createServer, IncomingMessage, ServerResponse } from "node:http";
+import { createServer, IncomingMessage, request, ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { connect } from "node:net";
 import { duplexPair } from "node:stream";
+
+test.concurrent("SSE response close can remove the request error listener during client cancellation", async () => {
+  const events: string[] = [];
+  const requestClosed = Promise.withResolvers<void>();
+  const server = createServer((req, res) => {
+    const onError = (error: NodeJS.ErrnoException) => events.push(`req.error:${error.code}`);
+    req.on("aborted", () => events.push("req.aborted"));
+    req.on("error", onError);
+    req.on("close", () => {
+      events.push("req.close");
+      requestClosed.resolve();
+    });
+    res.on("close", () => {
+      events.push("res.close");
+      req.off("error", onError);
+    });
+    res.writeHead(200, { "Content-Type": "text/event-stream" });
+    res.write("data: ready\n\n");
+  });
+  let client: ReturnType<typeof request> | undefined;
+  onTestFinished(async () => {
+    client?.destroy();
+    server.closeAllConnections();
+    if (server.listening) {
+      await new Promise<void>((resolve, reject) => {
+        server.close(error => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+  client = request({ host: "127.0.0.1", port, path: "/" });
+  const responseReady = once(client, "response");
+  client.end();
+  const [response] = await responseReady;
+  let chunk: Buffer | null;
+  while ((chunk = response.read(Buffer.byteLength("data: ready\n\n"))) === null) {
+    await once(response, "readable");
+  }
+  expect(chunk.toString()).toBe("data: ready\n\n");
+  const responseClosed = once(response, "close");
+  response.destroy();
+  await Promise.all([requestClosed.promise, responseClosed]);
+
+  expect(events).toEqual(["req.aborted", "res.close", "req.close"]);
+});
 
 test("aborted request body emits 'error' ECONNRESET and res 'close' before req 'close'", async () => {
   // Like Node.js's socketOnClose → abortIncoming: the aborted request is
@@ -45,6 +93,43 @@ test("aborted request body emits 'error' ECONNRESET and res 'close' before req '
 
     expect(events).toEqual(["req.aborted", "res.close", "req.error:ECONNRESET", "req.close"]);
   } finally {
+    server.close();
+  }
+});
+
+test("res close cannot remove a socket listener from the current close emission", async () => {
+  const events: string[] = [];
+  const gotRequest = Promise.withResolvers<void>();
+  const responseClosed = Promise.withResolvers<void>();
+  const server = createServer((req, res) => {
+    const onSocketClose = () => events.push("socket.close");
+    req.socket.on("close", onSocketClose);
+    res.on("close", () => {
+      events.push("res.close");
+      req.socket.off("close", onSocketClose);
+      responseClosed.resolve();
+    });
+    req.on("data", () => {});
+    gotRequest.resolve();
+  });
+  let client: ReturnType<typeof connect> | undefined;
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    client = connect(port, "127.0.0.1");
+    client.on("error", () => {});
+    await once(client, "connect");
+    client.write("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 100\r\n\r\npartial");
+    await gotRequest.promise;
+    const clientClosed = once(client, "close");
+    client.destroy();
+    await Promise.all([responseClosed.promise, clientClosed]);
+    await new Promise<void>(resolve => setImmediate(resolve));
+
+    expect(events).toEqual(["res.close", "socket.close"]);
+  } finally {
+    client?.destroy();
     server.close();
   }
 });

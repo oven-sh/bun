@@ -119,19 +119,26 @@ private:
 
 public:
     /* Re-feed the bytes HttpParser parked (parkedRequestBytes) through the same
-     * parse path fresh socket data takes. Takes the parked bytes, so a dispatch
-     * during the replay that parks again starts a fresh batch behind them. The
-     * caller has already decided what to do about the paused read side. Returns
-     * what onData returns: the socket, closed, or the WebSocket it was upgraded
-     * into. */
+     * parse path fresh socket data takes. The buffer belongs to this call while
+     * it is parsed, because a dispatch can close or upgrade the socket and take
+     * the HTTP state with it. A dispatch that parks again takes the buffer back
+     * through replayedRequestBytes (HttpParser::parkRequestBytes). The caller has
+     * already decided what to do about the paused read side. Returns what onData
+     * returns: the socket, closed, or the WebSocket it was upgraded into. */
     template <bool IsNodeHttp>
     static us_socket_t *replayParkedRequestBytes(us_socket_t *s) {
         auto *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(us_socket_ext(s));
-        WTF::Vector<char> parked = std::exchange(httpResponseData->parkedRequestBytes, {});
-        size_t length = parked.size();
+        WTF::Vector<char> replayed = std::exchange(httpResponseData->parkedRequestBytes, {});
+        size_t start = std::exchange(httpResponseData->parkedRequestBytesStart, 0);
+        size_t length = replayed.size() - start;
         /* The parser fences the buffer by writing past its logical end. */
-        parked.grow(length + LIBUS_RECV_BUFFER_PADDING);
-        return onData<IsNodeHttp>(s, parked.mutableSpan().data(), static_cast<int>(length));
+        replayed.grow(replayed.size() + LIBUS_RECV_BUFFER_PADDING);
+        httpResponseData->replayedRequestBytes = &replayed;
+        us_socket_t *returned = onData<IsNodeHttp>(s, replayed.mutableSpan().data() + start, static_cast<int>(length));
+        if (!us_socket_is_closed(s) && us_socket_kind(s) == socketKind()) {
+            httpResponseData->replayedRequestBytes = nullptr;
+        }
+        return returned;
     }
 
     us_socket_group_t *getSocketGroup() {

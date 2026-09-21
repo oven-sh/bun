@@ -30,8 +30,10 @@
 #include <algorithm>
 #include <chrono>
 #include <climits>
+#include <functional>
 #include <string_view>
 #include <span>
+#include <utility>
 #include <wtf/Vector.h>
 #include "MoveOnlyFunction.h"
 #include "ChunkedEncoding.h"
@@ -651,8 +653,32 @@ struct HttpResponseData;
         bool nodeHttpSpillReplayScheduled = false;
         /* A request on this connection had Connection: close or was HTTP/1.0, or a Bun.serve response closed it (RFC 9112 9.6). */
         bool sawConnectionClose = false;
+        /* The parked bytes are parkedRequestBytes from here on. Not 0 once a replay
+         * has parked again: it gives its buffer back with a new start instead of
+         * copying what it did not reach, so a long pipeline behind slow responses is
+         * copied once and not once per request. */
+        unsigned int parkedRequestBytesStart = 0;
         WTF::Vector<char> parkedRequestBytes;
+        /* The buffer HttpContext::replayParkedRequestBytes is feeding to the parser,
+         * for the time of that call. */
+        WTF::Vector<char> *replayedRequestBytes = nullptr;
     private:
+        /* Parks the rest of what is being parsed, [data, data + length). In a replay
+         * that is the tail of the replayed buffer: the buffer comes back whole, less
+         * the fence the replay added, and only its start moves. */
+        void parkRequestBytes(char *data, unsigned int length) {
+            if (WTF::Vector<char> *replayed = std::exchange(replayedRequestBytes, nullptr)) {
+                char *begin = replayed->mutableSpan().data();
+                if (parkedRequestBytes.isEmpty() && std::greater_equal<char *>{}(data, begin)
+                    && std::less_equal<char *>{}(data + length, begin + replayed->size())) {
+                    parkedRequestBytesStart = (unsigned int) (data - begin);
+                    replayed->shrink(parkedRequestBytesStart + length);
+                    parkedRequestBytes = std::exchange(*replayed, {});
+                    return;
+                }
+            }
+            parkedRequestBytes.append(std::span<const char>(data, length));
+        }
          /* This guy really has only 30 bits since we reserve two highest bits to chunked encoding parsing state */
         uint64_t remainingStreamingBytes = 0;
 
@@ -1167,7 +1193,7 @@ struct HttpResponseData;
              * so the caller does not spill it into the size-capped header fallback
              * buffer. */
             if (parkAtNextBoundary || !parkedRequestBytes.isEmpty()) [[unlikely]] {
-                parkedRequestBytes.append(std::span<const char>(data, length));
+                parkRequestBytes(data, length);
                 consumedTotal += length;
                 return HttpParserResult::success(consumedTotal, user);
             }

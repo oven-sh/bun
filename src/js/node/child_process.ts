@@ -1553,6 +1553,9 @@ class ChildProcess extends EventEmitter {
           this.#stdioOptions[0] = "undefined";
           this.#stdioOptions[1] = "undefined";
           this.#stdioOptions[2] = "undefined";
+        } else if ($isJSArray(stdio)) {
+          // node's spawn() goes on to its stdio loop for these errors: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L403-L420
+          stopReadingSharedStdio(stdio);
         }
       } else {
         if (exCode !== undefined) {

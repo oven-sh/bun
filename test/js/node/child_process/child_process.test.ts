@@ -616,6 +616,29 @@ describe("spawn()", () => {
         }
       });
 
+      it.concurrent("a spawn that fails with ENOENT stops the socket too, as in node", async () => {
+        const failed = Promise.withResolvers<{ code?: string; isPaused: boolean }>();
+        const server = net.createServer(socket => {
+          socket.on("error", failed.reject);
+          const child = spawn("/does-not-exist/child", [], { stdio: [socket, "pipe", "inherit"] });
+          const isPaused = socket.isPaused();
+          child.on("error", (error: NodeJS.ErrnoException) => {
+            socket.destroy();
+            failed.resolve({ code: error.code, isPaused });
+          });
+        });
+        server.on("error", failed.reject).listen(0, "127.0.0.1");
+        await once(server, "listening");
+        const peer = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+        try {
+          peer.on("error", failed.reject);
+          expect(await failed.promise).toEqual({ code: "ENOENT", isPaused: true });
+        } finally {
+          peer.destroy();
+          server.close();
+        }
+      });
+
       // The stopped socket must not hold the event loop. Its peer never closes, so a parent that
       // still reads it, or that only paused it, never exits. Not concurrent: bun:test kills the
       // processes of a test that timed out only when the test is serial.

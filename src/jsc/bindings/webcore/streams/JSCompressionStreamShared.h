@@ -7,11 +7,12 @@
 
 // CompressionStreamCoder.rs. Each transform call runs one bounded step; `more` means the coder
 // must be stepped again (with no input, it kept the tail) before the next chunk is fed.
+// A non-empty `*error` (passed in empty) is thrown by the caller once it has delivered the output.
 extern "C" void* CompressionStreamCoder__create(uint8_t format, bool decompress, size_t highWaterMark, bool hasLevel, int32_t level);
 // Releases the cell's reference (in-flight off-thread steps hold their own).
 extern "C" void CompressionStreamCoder__destroy(void* coder);
-extern "C" JSC::EncodedJSValue CompressionStreamCoder__transform(void* coder, JSC::JSGlobalObject* global, const uint8_t* input, size_t input_len, bool finish, bool* more);
-extern "C" JSC::EncodedJSValue CompressionStreamCoder__transformInto(void* coder, JSC::JSGlobalObject* global, const uint8_t* input, size_t input_len, bool finish, uint8_t sinkId, void* sinkPtr, bool* more);
+extern "C" JSC::EncodedJSValue CompressionStreamCoder__transform(void* coder, JSC::JSGlobalObject* global, const uint8_t* input, size_t input_len, bool finish, bool* more, JSC::EncodedJSValue* error);
+extern "C" JSC::EncodedJSValue CompressionStreamCoder__transformInto(void* coder, JSC::JSGlobalObject* global, const uint8_t* input, size_t input_len, bool finish, uint8_t sinkId, void* sinkPtr, bool* more, JSC::EncodedJSValue* error);
 // Off-thread step, completed by Bun__CompressionStream__deliverAsync.
 extern "C" void CompressionStreamCoder__transformAsync(void* coder, JSC::JSGlobalObject* global, JSC::EncodedJSValue streamCell, JSC::EncodedJSValue chunk, const uint8_t* input, size_t inputLen, bool finish);
 

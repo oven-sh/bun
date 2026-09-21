@@ -1236,6 +1236,128 @@ describe("bounded output per input chunk", () => {
       expect(await Promise.all([closed, cancelled])).toEqual([undefined, undefined]);
     },
   );
+
+  // A chunk can hold the end of the compressed stream and then trailing junk.
+  // The output decoded ahead of the junk is delivered, and then the TypeError is
+  // thrown, in the same transform call: the spec's "decompress and enqueue a
+  // chunk" enqueues before it throws, and WPT
+  // compression/decompression-extra-input.any.js reads the output first, then
+  // expects the rejection. gzip is not covered here: it takes the bytes after a
+  // member for the start of another member, so they never fail as trailing junk.
+  describe("output decoded ahead of trailing junk in the same chunk is delivered first", () => {
+    const junkFormats = formats.filter(format => format !== "gzip");
+    const junk = Buffer.alloc(8);
+    const trailingJunk = { name: "TypeError", code: "ERR_TRAILING_JUNK_AFTER_STREAM_END" };
+
+    async function readUntilError(readable: ReadableStream<Uint8Array>) {
+      const reader = readable.getReader();
+      const pieces: Uint8Array[] = [];
+      try {
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) return { output: Buffer.concat(pieces), error: undefined };
+          pieces.push(value);
+        }
+      } catch (error) {
+        return { output: Buffer.concat(pieces), error };
+      }
+    }
+
+    test.each(
+      junkFormats.flatMap(format => [[format, "the same chunk"] as const, [format, "the next chunk"] as const]),
+    )("DecompressionStream(%s): junk in %s", async (format, where) => {
+      const plain = Buffer.from("hello hello hello hello");
+      const compressed = bombs[format](plain);
+      const ds = new DecompressionStream(format);
+      const writer = ds.writable.getWriter();
+      const writes = where === "the same chunk" ? [Buffer.concat([compressed, junk])] : [compressed, junk];
+      for (const chunk of writes) writer.write(chunk).catch(() => {});
+      writer.close().catch(() => {});
+
+      const { output, error } = await readUntilError(ds.readable);
+      expect(output.toString()).toBe(plain.toString());
+      expect(error).toMatchObject(trailingJunk);
+    });
+
+    // The WPT test: one pad byte, and the writer never closes.
+    test.each(junkFormats)("DecompressionStream(%s): extra pad byte, no close()", async format => {
+      const plain = Buffer.from("expected output");
+      const ds = new DecompressionStream(format);
+      const reader = ds.readable.getReader();
+      const writer = ds.writable.getWriter();
+      writer.write(Buffer.concat([bombs[format](plain), Buffer.alloc(1)])).catch(() => {});
+
+      const { value } = await reader.read();
+      expect(Buffer.from(value!).toString()).toBe(plain.toString());
+      await expect(reader.read()).rejects.toMatchObject(trailingJunk);
+    });
+
+    test.each(junkFormats)(
+      "DecompressionStream(%s): junk at the end of a >128 KiB chunk (thread-pool path)",
+      async format => {
+        const plain = randomBytes(200 * 1024);
+        const withJunk = Buffer.concat([bombs[format](plain), junk]);
+        expect(withJunk.byteLength).toBeGreaterThan(128 * 1024);
+        const ds = new DecompressionStream(format);
+        const writer = ds.writable.getWriter();
+        const write = writer.write(withJunk).then(
+          () => null,
+          e => e,
+        );
+
+        const { output, error } = await readUntilError(ds.readable);
+        expect(output.equals(plain)).toBe(true);
+        expect(error).toMatchObject(trailingJunk);
+        // The write that carried the chunk fails with the same error.
+        expect(await write).toBe(error);
+      },
+    );
+
+    // The junk follows an expansion that takes many steps. The last piece comes
+    // before the error for a reader that calls read() again as soon as a read
+    // settles. A slower reader (for await takes an extra microtask) finds the
+    // last piece still queued when the stream errors, and an error discards the queue.
+    test.each(junkFormats)(
+      "DecompressionStream(%s): junk at the end of a chunk that expands over several steps",
+      async format => {
+        const ds = new DecompressionStream(format);
+        const writer = ds.writable.getWriter();
+        writer.write(Buffer.concat([bombs[format](), junk])).catch(() => {});
+        writer.close().catch(() => {});
+
+        const { output, error } = await readUntilError(ds.readable);
+        expect(output.byteLength).toBe(EXPANDED);
+        expect(output.equals(expanded)).toBe(true);
+        expect(error).toMatchObject(trailingJunk);
+      },
+    );
+
+    // The error is thrown in the transform call that met the junk, never held
+    // back until the output is read: with nobody reading, a held error would
+    // leave this write, and a close() queued behind it, pending forever.
+    test("with nobody reading, the write that carried the junk still rejects", async () => {
+      const ds = new DecompressionStream("deflate");
+      const writer = ds.writable.getWriter();
+      const chunk = Buffer.concat([bombs.deflate(Buffer.from("hello")), junk]);
+      await expect(writer.write(chunk)).rejects.toMatchObject(trailingJunk);
+      await expect(writer.closed).rejects.toMatchObject(trailingJunk);
+    });
+
+    // Only trailing junk delivers first. A data error throws without the step's
+    // output, which has not passed the format's check (here the adler32).
+    test("a chunk that fails its checksum delivers none of its output", async () => {
+      const corrupt = bombs.deflate(Buffer.alloc(40 * 1024, "abcdefghij"));
+      corrupt[corrupt.byteLength - 1] ^= 0xff;
+      const ds = new DecompressionStream("deflate");
+      const writer = ds.writable.getWriter();
+      writer.write(corrupt).catch(() => {});
+      writer.close().catch(() => {});
+
+      const { output, error } = await readUntilError(ds.readable);
+      expect(output.byteLength).toBe(0);
+      expect(error).toBeInstanceOf(TypeError);
+    });
+  });
 });
 
 // The native coder (a gzip deflate context is ~280 KiB of zlib state) must be

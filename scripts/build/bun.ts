@@ -1271,8 +1271,9 @@ function emitOrderFileTrace(n: Ninja, cfg: Config, unordered: string): void {
     inputs: [unordered],
     implicitInputs: [
       cli,
-      ...["generate.ts", "windows-symbols.ts", "functrace.c", "functrace-windows.c", "ptyrun.c"].map(f =>
-        resolve(orderfile, f),
+      // Everything the trace is made of: the tracer's sources, and the script one of its workloads runs.
+      ...["generate.ts", "windows-symbols.ts", "functrace.c", "functrace-windows.c", "ptyrun.c", "cli-fixture.js"].map(
+        f => resolve(orderfile, f),
       ),
     ],
     vars: { traced: unorderedLink(cfg).exeName },

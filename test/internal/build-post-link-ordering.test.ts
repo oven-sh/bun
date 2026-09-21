@@ -88,13 +88,16 @@ function buildEdge(ninja: string, rule: string): string {
 }
 
 describe("a build that traces its own symbol order", () => {
-  /** Every edge of `rule`, as `outputs: rule inputs`, continuations unwrapped and absolute-path aliases dropped. */
+  /**
+   * Every edge of `rule`, as `build <output>: rule inputs`: continuations unwrapped, and the implicit outputs (the
+   * maps, and the absolute-path alias Ninja.build() declares for each output, `C$:\...` on Windows) dropped.
+   */
   const edges = (ninja: string, rule: string): string[] =>
     ninja
       .replace(/ \$\n +/g, " ")
       .split("\n")
       .filter(l => l.startsWith("build ") && l.includes(`: ${rule} `))
-      .map(l => l.replace(new RegExp(`( \\| [^:]*)?(?=: ${rule} )`), ""));
+      .map(l => l.replace(new RegExp(` \\| .*?(?=: ${rule} )`), ""));
 
   test("links unordered, traces that binary, and links again against the trace, in one graph", () => {
     using dir = tempDir("build-trace-order", {});
@@ -112,11 +115,12 @@ describe("a build that traces its own symbol order", () => {
     const exe = emit();
     const out = n.toString();
     const x = cfg.exeSuffix;
+    const object = n.rel(resolve(buildDir, "obj/a.o")); // obj\a.o on Windows
 
     expect(exe).toBe(resolve(buildDir, `bun-profile${x}`));
     const [unordered, final] = edges(out, "link");
     // The binary that is traced: no order file among its inputs, and no checks of its own.
-    expect(unordered).toStartWith(`build bun-profile-unordered${x}: link obj/a.o `);
+    expect(unordered).toStartWith(`build bun-profile-unordered${x}: link ${object} `);
     expect(unordered).not.toContain("linker.order");
     expect(unordered).not.toContain("|@");
     // The trace is the edge between the two links.
@@ -124,7 +128,7 @@ describe("a build that traces its own symbol order", () => {
       `build linker.order: order_file_trace bun-profile-unordered${x} | `,
     );
     // The binary that ships reads what the trace wrote, and carries the checks.
-    expect(final).toStartWith(`build bun-profile${x}: link obj/a.o `);
+    expect(final).toStartWith(`build bun-profile${x}: link ${object} `);
     expect(final).toContain(" linker.order");
     expect(final).toEndWith("|@ bun-profile.smoke-test-passed");
     // Two links write two sets of maps.

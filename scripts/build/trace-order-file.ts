@@ -4,12 +4,15 @@
  *
  *   argv: [runtime, trace-order-file.ts, <unordered executable>, <order file>]
  *
- * A trace that fails does not fail the build: the order file is an optimization, and a flaky workload must not kill
- * a release at its last step. The edge then writes an order file that orders nothing, the final link is the
- * unordered one again, and the failure is an annotation on the build (ci.ts `reportOrderFileFailure`).
+ * On Buildkite a trace that fails does not fail the build: the order file is an optimization, and a flaky workload
+ * must not kill a release at its last step. The edge then writes an order file that orders nothing, the final link is
+ * the unordered one again, and the failure is an annotation on the build (ci.ts `reportOrderFileFailure`). Anywhere
+ * else the edge fails: someone asked for an ordered binary (`--traceOrderFile=on`), and an edge that succeeded would
+ * not run again, so every later build would quietly link unordered.
  */
 import { writeFileSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
+import { isBuildkite } from "../buildkite.ts";
 import { generateOrderFile } from "../orderfile/generate.ts";
 import { reportOrderFileFailure } from "./ci.ts";
 import { EMPTY_ORDER_FILE } from "./flags.ts";
@@ -33,6 +36,10 @@ try {
   });
   console.log(`\n+ symbol order: traced ${count} functions in ${formatElapsed(performance.now() - started)}`);
 } catch (error) {
+  if (!isBuildkite) {
+    console.error(`symbol order: the trace failed: ${(error as Error).message}`);
+    process.exit(1);
+  }
   reportOrderFileFailure(error as Error);
   writeFileSync(out, EMPTY_ORDER_FILE);
 }

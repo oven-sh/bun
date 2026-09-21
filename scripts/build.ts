@@ -44,7 +44,7 @@ import {
   uploadArtifacts,
   verifyOrderFileApplied,
 } from "./build/ci.ts";
-import { type Config, formatConfig, formatConfigUnchanged, type PartialConfig } from "./build/config.ts";
+import { formatConfig, formatConfigUnchanged, type Config, type PartialConfig } from "./build/config.ts";
 import { configOf, configure, reconfigure, type ConfigureInput } from "./build/configure.ts";
 import { BuildError } from "./build/error.ts";
 import { ninjaIfPresent } from "./build/ninja-release.ts";

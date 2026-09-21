@@ -733,6 +733,11 @@ pub fn is_smol_mode() -> bool {
     IS_SMOL_MODE.load(core::sync::atomic::Ordering::Relaxed)
 }
 
+/// The node:cluster worker setup took `NODE_UNIQUE_ID` out of the main thread's env map.
+/// Process-wide: each worker thread's VM reads the OS environment again, and the variable stays there.
+static CLUSTER_WORKER_TOOK_UNIQUE_ID: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
 #[derive(Default)]
 pub struct ExitHandler {
     pub exit_code: u8,
@@ -4214,6 +4219,25 @@ impl VirtualMachine {
         bun_http::MimeType::by_name_static(str_)
     }
 
+    /// `delete process.env.NODE_UNIQUE_ID` only reaches the JS object, and `Bun.spawn` with no `env` copies the env map.
+    pub fn take_cluster_unique_id_from_env(&mut self) {
+        if self
+            .transpiler
+            .env_mut()
+            .map
+            .map
+            .swap_remove(b"NODE_UNIQUE_ID")
+        {
+            CLUSTER_WORKER_TOOK_UNIQUE_ID.store(true, core::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    /// Whether this process is a node:cluster worker.
+    pub fn is_cluster_worker(&self) -> bool {
+        self.env_loader().get(b"NODE_UNIQUE_ID").is_some()
+            || CLUSTER_WORKER_TOOK_UNIQUE_ID.load(core::sync::atomic::Ordering::SeqCst)
+    }
+
     /// Applies env-derived runtime settings, claims the per-thread source code printer, and adopts `NODE_CHANNEL_FD` for IPC.
     pub fn load_extra_env_and_source_code_printer(&mut self) {
         // `Transpiler::env_mut()` encapsulates the raw-ptr deref; the returned
@@ -4269,6 +4293,11 @@ impl VirtualMachine {
                     ),
                 }
             }
+        }
+
+        // Only true in a worker thread's VM, which read the variable back from the OS environment.
+        if CLUSTER_WORKER_TOOK_UNIQUE_ID.load(core::sync::atomic::Ordering::SeqCst) {
+            map.remove(b"NODE_UNIQUE_ID");
         }
 
         // Node.js checks if this is set to "1" and no other value

@@ -1452,21 +1452,63 @@ describe("new Request(input) transfers the input body", () => {
     expect(await copy.text()).toBe("mine");
   });
 
-  test("cancelling the copy's body cancels the transferred source with the same reason", async () => {
-    const { promise: cancelled, resolve } = Promise.withResolvers<unknown>();
-    const input = make(
-      new ReadableStream({
-        pull(c) {
-          c.enqueue(new Uint8Array(16));
+  // The copy's stream is a proxy of the input's stream, not a tee branch. When
+  // it was a tee branch, the other branch stayed with the consumed input where
+  // nothing could cancel it, so none of these settled and the source's
+  // cancel() never ran.
+  describe.each([
+    ["single-arg", (req: Request) => new Request(req)],
+    ["two-arg", (req: Request) => new Request(req, { headers: { "x-a": "1" } })],
+  ] as const)("%s copy of a stream body: a consumer that stops early cancels the source", (_, construct) => {
+    const endless = () => {
+      const { promise: cancelled, resolve } = Promise.withResolvers<unknown>();
+      const input = make(
+        new ReadableStream({
+          pull(c) {
+            c.enqueue(new Uint8Array(16));
+          },
+          cancel(reason) {
+            resolve(reason);
+          },
+        }),
+      );
+      return { copy: construct(input), cancelled };
+    };
+
+    test("body.cancel(reason)", async () => {
+      const { copy, cancelled } = endless();
+      const reason = new Error("stop");
+      await copy.body!.cancel(reason);
+      expect(await cancelled).toBe(reason);
+    });
+
+    test("break out of for await", async () => {
+      const { copy, cancelled } = endless();
+      let chunks = 0;
+      for await (const _ of copy.body!) {
+        chunks++;
+        break;
+      }
+      expect({ chunks, reason: await cancelled }).toEqual({ chunks: 1, reason: undefined });
+    });
+
+    test("pipeTo() into a sink that fails", async () => {
+      const { copy, cancelled } = endless();
+      const failure = new Error("sink failed");
+      const sink = new WritableStream({
+        write() {
+          throw failure;
         },
-        cancel(reason) {
-          resolve(reason);
-        },
-      }),
-    );
-    const copy = new Request(input);
-    await copy.body!.cancel("done");
-    expect(await cancelled).toBe("done");
+      });
+      // Not `.rejects`: it waits for the promise inside the matcher, so a pipe
+      // that never settles would hang the runner instead of timing out the test.
+      const outcome = await copy.body!.pipeTo(sink).then(
+        () => "resolved",
+        e => e,
+      );
+      expect(outcome).toBe(failure);
+      expect(await cancelled).toBe(failure);
+    });
   });
 
   test("constructing twice from the same input throws on the second call", () => {

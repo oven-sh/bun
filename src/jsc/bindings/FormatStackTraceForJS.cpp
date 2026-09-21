@@ -370,7 +370,7 @@ WTF::String formatStackTrace(
     for (size_t i = 0; i < framesCount; i++) {
         StackFrame& frame = stackTrace.at(i);
         ZigStackFrame& remappedFrame = remappedFrames[i];
-        unsigned int flags = static_cast<unsigned int>(FunctionNameFlags::AddNewKeyword);
+        unsigned int flags = static_cast<unsigned int>(FunctionNameFlags::AddNewKeyword) | static_cast<unsigned int>(FunctionNameFlags::AddTypeName);
 
         WTF::String functionName = Zig::functionName(vm, frame, &flags);
         OrdinalNumber originalLine = {};

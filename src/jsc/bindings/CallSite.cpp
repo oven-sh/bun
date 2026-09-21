@@ -56,8 +56,10 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
         }
     }
 
-    // JSC::StackFrame has no receiver, so getThis() is always undefined.
-    m_thisValue.set(vm, this, JSC::jsUndefined());
+    // The receiver is kept for a strict frame too: getTypeName() and isToplevel() read it, as in
+    // V8. getThis() hides it for a strict frame.
+    JSC::JSValue thisValue = stackFrame.stackFrame().thisValue();
+    m_thisValue.set(vm, this, thisValue ? thisValue : JSC::jsUndefined());
     if (isStrictFrame) {
         m_flags |= static_cast<unsigned int>(Flags::IsStrict);
     }
@@ -66,13 +68,6 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
         m_function.set(vm, this, JSC::jsUndefined());
     } else {
         m_function.set(vm, this, callee);
-    }
-    // isToplevel() needs the real callee: m_function is undefined when the callee is hidden.
-    if (!isStrictFrame) {
-        auto* function = calleeFunction(callee);
-        if (function && !function->isHostFunction()) {
-            m_flags |= static_cast<unsigned int>(Flags::IsSloppyFunctionCall);
-        }
     }
 
     m_functionName.set(vm, this, stackFrame.functionName());
@@ -127,10 +122,6 @@ JSValue createNativeFrameForTesting(Zig::GlobalObject* globalObject)
 void CallSite::formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::StringBuilder& sb)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue thisValue = jsUndefined();
-    if (m_thisValue) {
-        thisValue = m_thisValue.get();
-    }
 
     JSString* myFunctionName = functionName().toStringOrNull(globalObject);
     RETURN_IF_EXCEPTION(scope, );
@@ -141,7 +132,11 @@ void CallSite::formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WT
     if (myFunctionName && myFunctionName->length() > 0) {
         functionName = myFunctionName->getString(globalObject);
         RETURN_IF_EXCEPTION(scope, );
-    } else if (m_flags & (static_cast<unsigned int>(Flags::IsFunction) | static_cast<unsigned int>(Flags::IsEval))) {
+    }
+    if ((m_flags & static_cast<unsigned int>(Flags::IsFunction)) && !isConstructor()) {
+        functionName = Zig::methodCallName(Zig::receiverTypeName(vm, thisValue()), functionName);
+    }
+    if (functionName.isEmpty() && (m_flags & (static_cast<unsigned int>(Flags::IsFunction) | static_cast<unsigned int>(Flags::IsEval)))) {
         functionName = "<anonymous>"_s;
     }
 
@@ -149,24 +144,9 @@ void CallSite::formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WT
     std::optional<OrdinalNumber> line = lineNumber().zeroBasedInt() >= 0 ? std::optional(lineNumber()) : std::nullopt;
 
     if (functionName.length() > 0) {
-
         if (isConstructor()) {
             sb.append("new "_s);
         }
-
-        if (auto* object = thisValue.getObject()) {
-            auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            auto className = object->calculatedClassName(object);
-            if (topExceptionScope.exception()) {
-                (void)topExceptionScope.tryClearException();
-            }
-
-            if (className.length() > 0) {
-                sb.append(className);
-                sb.append('.');
-            }
-        }
-
         sb.append(functionName);
     }
 

@@ -108,7 +108,8 @@ static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame& stack
         }
     }
 
-    WTF::String functionName = Zig::functionName(vm, stackFrame, nullptr);
+    unsigned int flags = static_cast<unsigned int>(FunctionNameFlags::AddTypeName);
+    WTF::String functionName = Zig::functionName(vm, stackFrame, &flags);
     if (!functionName.isEmpty())
         frame.function_name = Bun::toStringRef(functionName);
 

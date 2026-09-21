@@ -1,6 +1,6 @@
 import { nativeFrameForTesting } from "bun:internal-for-testing";
 import { noInline } from "bun:jsc";
-import { afterEach, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { totalmem } from "node:os";
 const origPrepareStackTrace = Error.prepareStackTrace;
@@ -421,7 +421,8 @@ test("sanity check", () => {
     Error.prepareStackTrace = (e, s) => {
       // getThis returns undefined in strict mode
       expect(s[0].getThis()).toBe(undefined);
-      expect(s[0].getTypeName()).toBe("undefined");
+      // f3() is a top-level call (no receiver), so there is no type name
+      expect(s[0].getTypeName()).toBe(null);
       // getFunction returns undefined in strict mode
       expect(s[0].getFunction()).toBe(undefined);
       expect(s[0].getFunctionName()).toBe("f3");
@@ -556,7 +557,9 @@ test("CallFrame.p.isNative", () => {
 // have called: a host function, a builtin, an async or generator body function,
 // a wasm frame, a program frame. A call to a body function crashed the process.
 // `...Caller=self` rows: a frame below one of those keeps its own function.
-// `...IsToplevel=false` rows: hiding a callee does not change isToplevel().
+// `...IsToplevel=...` rows: hiding a callee does not change isToplevel(), which
+// reads the receiver as V8 does: the array under `map`, the global object for
+// a plain call in sloppy code.
 // The fixture is CommonJS because a strict frame already reports undefined.
 test.concurrent("CallFrame.p.getFunction hides internal callees from sloppy code", async () => {
   using dir = tempDir("callsite-internal-callee", {
@@ -675,12 +678,12 @@ test.concurrent("CallFrame.p.getFunction hides internal callees from sloppy code
     "wasm=undefined",
     "wasmCaller=self",
     "asyncPrefix=undefined",
-    "asyncPrefixIsToplevel=false",
+    "asyncPrefixIsToplevel=true",
     "asyncPrefixCaller=self",
     "asyncBody=undefined",
-    "asyncBodyIsToplevel=false",
+    "asyncBodyIsToplevel=true",
     "generatorBody=undefined",
-    "generatorBodyIsToplevel=false",
+    "generatorBodyIsToplevel=true",
   ]);
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
@@ -1676,13 +1679,13 @@ test.concurrent("a stack that a collection materializes reads the same as one ma
     "from a node:vm context": row("TypeError: boom"),
     "created in a constructor": row("Error: boom", ["at new Widget"]),
     "created by eval code": row("Error: boom", ["at <anonymous>"]),
-    "created under a builtin": row("Error: boom", ["at <anonymous>", "at map"]),
+    "created under a builtin": row("Error: boom", ["at <anonymous>", "at Array.map"]),
     "created in a function whose name was redefined": row("Error: boom", ["at renamed"]),
     "created in a nameless function with a displayName": row("Error: boom", ["at Shown"]),
     "created in a function whose name is a getter": row("Error: boom", ["at original"]),
     "created in a bound function": row("Error: boom", ["at target"]),
-    "created in a method": row("Error: boom", ["at method"]),
-    "created in a static method": row("Error: boom", ["at make"]),
+    "created in a method": row("Error: boom", ["at Object.method"]),
+    "created in a static method": row("Error: boom", ["at Factory.make"]),
     "created in an arrow function": row("Error: boom", ["at arrow"]),
   };
   expect(JSON.parse(stdout)).toEqual(expectedRows);
@@ -2066,3 +2069,290 @@ test.skipIf(totalmem() < 10 * 1024 ** 3)(
   },
   30_000,
 );
+
+// A method call frame is named `TypeName.functionName`, as V8 prints it:
+// "Object" for a plain object, the class name for an instance, the class for
+// its static method. A top-level call (no receiver, or the global object)
+// keeps the bare function name. Vitest 3 finds the file that called
+// `vi.mock()` by the frame line `at Object.mock` (issue #43685).
+//
+// Each case reads the frame inside the method: `return new Error()` is a tail
+// call after the runtime transpiler turns it into `return Error()`, and a tail
+// call deletes the frame (#24789).
+describe("a method call frame is named after its receiver", () => {
+  const frameName = error =>
+    error.stack
+      .split("\n")[1]
+      .trim()
+      .replace(/ \(.*\)$/, "");
+  const here = () => frameName(new Error("x"));
+
+  class K {
+    m() {
+      return frameName(new Error("x"));
+    }
+    static s() {
+      return frameName(new Error("x"));
+    }
+    get g() {
+      return frameName(new Error("x"));
+    }
+    async am() {
+      await 1;
+      return frameName(new Error("x"));
+    }
+  }
+  class Sub extends K {}
+  const AnonymousClass = (() =>
+    class {
+      m() {
+        return frameName(new Error("x"));
+      }
+    })();
+  const strict = function strict() {
+    return frameName(new Error("x"));
+  };
+  const method = function m() {
+    return frameName(new Error("x"));
+  };
+
+  test.each([
+    [
+      "a plain object's shorthand method",
+      () =>
+        ({
+          mock() {
+            return frameName(new Error("x"));
+          },
+        }).mock(),
+      "at Object.mock",
+    ],
+    [
+      "a plain object's function property",
+      () =>
+        ({
+          anon: function () {
+            return frameName(new Error("x"));
+          },
+        }).anon(),
+      "at Object.anon",
+    ],
+    [
+      "a plain object's anonymous function property",
+      () =>
+        ({
+          f: (() =>
+            function () {
+              return frameName(new Error("x"));
+            })(),
+        }).f(),
+      "at Object.<anonymous>",
+    ],
+    ["a class instance's method", () => new K().m(), "at K.m"],
+    ["a subclass instance's inherited method", () => new Sub().m(), "at Sub.m"],
+    ["a class's static method", () => K.s(), "at K.s"],
+    ["a subclass's inherited static method", () => Sub.s(), "at Sub.s"],
+    ["an anonymous class instance's method", () => new AnonymousClass().m(), "at Object.m"],
+    ["a getter: its name is not an identifier", () => new K().g, "at get g"],
+    [
+      "a method whose name is not an identifier",
+      () =>
+        ({
+          ["get m"]() {
+            return frameName(new Error("x"));
+          },
+        })["get m"](),
+      "at get m",
+    ],
+    [
+      "a method named like its receiver's type",
+      () =>
+        ({
+          Object() {
+            return frameName(new Error("x"));
+          },
+        }).Object(),
+      "at Object",
+    ],
+    ["a plain call", () => strict(), "at strict"],
+    ["a call with the global object as receiver", () => strict.call(globalThis), "at strict"],
+    ["a call with null as receiver", () => strict.call(null), "at strict"],
+    ["a call with a string receiver", () => strict.call("s"), "at String.strict"],
+    ["a call with a number receiver", () => strict.call(1), "at Number.strict"],
+    ["a call with a boolean receiver", () => strict.call(true), "at Boolean.strict"],
+    ["a call with a symbol receiver", () => strict.call(Symbol("q")), "at Symbol.strict"],
+    ["a call with a bigint receiver", () => strict.call(10n), "at BigInt.strict"],
+    ["a receiver with Symbol.toStringTag", () => ({ [Symbol.toStringTag]: "Tagged", m: method }).m(), "at Tagged.m"],
+    ["a receiver with no prototype", () => Object.assign(Object.create(null), { m: method }).m(), "at Object.m"],
+    [
+      "a receiver whose own constructor is not read",
+      () => ({ constructor: function Ctor() {}, m: method }).m(),
+      "at Object.m",
+    ],
+    ["a class prototype as receiver", () => K.prototype.m(), "at Object.m"],
+    ["a Proxy receiver", () => new Proxy({ m: method }, {}).m(), "at Proxy.m"],
+    ["a function receiver", () => Object.assign(function named() {}, { m: method }).m(), "at named.m"],
+    ["an array receiver", () => Object.assign([], { m: method }).m(), "at Array.m"],
+    ["a Map receiver", () => Object.assign(new Map(), { m: method }).m(), "at Map.m"],
+    ["an Error receiver", () => Object.assign(new Error(), { m: method }).m(), "at Error.m"],
+    [
+      "a constructor frame",
+      () => {
+        let name;
+        class C {
+          constructor() {
+            name = frameName(new Error("x"));
+          }
+        }
+        new C();
+        return name;
+      },
+      "at new C",
+    ],
+    ["an arrow function called as a method", () => ({ arrow: here }).arrow(), "at Object.here"],
+    ["an arrow function called plainly", () => here(), "at here"],
+  ])("%s", (_, run, expected) => {
+    expect(run()).toBe(expected);
+  });
+
+  test("a sloppy function called plainly gets the global object, so it stays a top-level call", () => {
+    const sloppy = new Function("frameName", "return frameName(new Error('x'))");
+    expect(sloppy(frameName)).toBe("at anonymous");
+    expect(sloppy.call({}, frameName)).toBe("at Object.anonymous");
+  });
+
+  test("an async method resumed after await", async () => {
+    expect(await new K().am()).toBe("at K.am");
+  });
+
+  test("Error.captureStackTrace", () => {
+    const o = {
+      mock() {
+        const e = {};
+        Error.captureStackTrace(e);
+        return e.stack.split("\n")[1].trim();
+      },
+    };
+    expect(o.mock()).toStartWith("at Object.mock (");
+  });
+
+  test("the trace a collection materialized, after the receiver died", () => {
+    function make() {
+      const error = {
+        mock() {
+          const e = new Error("x");
+          e.message;
+          return e;
+        },
+      }.mock();
+      return error;
+    }
+    const error = make();
+    Bun.gc(true);
+    expect(frameName(error)).toBe("at Object.mock");
+  });
+
+  test("the default Error.prepareStackTrace and CallSite.prototype.toString", () => {
+    Error.prepareStackTrace = (e, sites) => sites;
+    class S {
+      m() {
+        const e = new Error("x");
+        e.message;
+        return e.stack;
+      }
+    }
+    const sites = new S().m();
+    expect(String(sites[0])).toStartWith("S.m (");
+    expect(sites[0].getTypeName()).toBe("S");
+    expect(sites[0].isToplevel()).toBe(false);
+    // A strict frame hides its receiver from getThis(), as in V8
+    expect(sites[0].getThis()).toBe(undefined);
+    expect(origPrepareStackTrace(new Error("x"), sites).split("\n")[1].trim()).toStartWith("at S.m (");
+  });
+
+  test("CallSite.getThis() and getTypeName() of a sloppy frame", () => {
+    Error.prepareStackTrace = (e, sites) => sites;
+    const sloppy = new Function("const e = new Error('x'); e.message; return e.stack[0]");
+    const that = { a: 1 };
+    const site = sloppy.call(that);
+    expect(site.getThis()).toBe(that);
+    expect(site.getTypeName()).toBe("Object");
+    expect(site.isToplevel()).toBe(false);
+    const top = sloppy();
+    expect(top.getThis()).toBe(globalThis);
+    expect(top.getTypeName()).toBe(null);
+    expect(top.isToplevel()).toBe(true);
+  });
+
+  // vitest 3's getImporter: the frame after `at Object.mock` is the caller of vi.mock()
+  test("vitest finds the caller of vi.mock() from the stack", () => {
+    const vi = {
+      mock() {
+        const stackArray = new Error("x").stack.split("\n");
+        const index = stackArray.findIndex(line => line.includes(" at Object.mock"));
+        return stackArray[index + 1];
+      },
+    };
+    function importerFile() {
+      const line = vi.mock();
+      expect(line).toBeString();
+      return line;
+    }
+    const line = importerFile();
+    expect(line).toContain("at importerFile (");
+    expect(line).toContain("capture-stack-trace.test.js");
+  });
+
+  test("the error printed by bun", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `class K { m() { throw new Error("x"); } }; ({ mock() { new K().m(); } }).mock();`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("at K.m (");
+    expect(stderr).toContain("at Object.mock (");
+    expect(exitCode).toBe(1);
+  });
+
+  // Node calls the CommonJS wrapper with module.exports as `this`, so the
+  // module's own frame reads `at Object.<anonymous>` and `eval("this")` at the
+  // top level is module.exports.
+  test("the top-level frame of a CommonJS module, and a namespace receiver", async () => {
+    using dir = tempDir("cjs-module-frame", {
+      "main.cjs": `
+        const e = new Error("x");
+        e.message;
+        const ns = require("./lib.mjs");
+        console.log(JSON.stringify({
+          frame: e.stack.split("\\n")[1].trim().replace(/ \\(.*\\)$/, ""),
+          evalThis: eval("this") === module.exports,
+          namespaceFrame: ns.caller(),
+        }));
+      `,
+      "lib.mjs": `
+        export function caller() {
+          const e = new Error("x");
+          e.message;
+          return e.stack.split("\\n")[1].trim().replace(/ \\(.*\\)$/, "");
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      frame: "at Object.<anonymous>",
+      evalThis: true,
+      namespaceFrame: "at Module.caller",
+    });
+    expect(exitCode).toBe(0);
+  });
+});

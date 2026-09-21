@@ -127,7 +127,7 @@ test("uncaught error thrown from a data: URL module longer than a path buffer is
 
   const annotation = stderr.split("\n").find(line => line.startsWith("::error"));
   expect(annotation).toStartWith(`::error file=data%3Atext/javascript;base64%2C${base64},line=1,col=`);
-  expect(annotation).toContain(`%0A      at fromDataUrl (data:text/javascript;base64,${base64}:1:`);
+  expect(annotation).toContain(`%0A      at Module.fromDataUrl (data:text/javascript;base64,${base64}:1:`);
   expect(exitCode).toBe(1);
 });
 

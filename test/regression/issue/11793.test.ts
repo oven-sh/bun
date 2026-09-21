@@ -24,7 +24,7 @@ test("11793", async () => {
 
     Expected: 0
     Received: 1
-        at <anonymous> (file:NN:NN)
+        at Array.<anonymous> (file:NN:NN)
     (fail) %p
 
      0 pass

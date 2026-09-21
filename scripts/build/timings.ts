@@ -1008,7 +1008,6 @@ text.dim { opacity: 0.25; }
 .join { stroke: var(--text); stroke-width: 1.5px; fill: none; pointer-events: none; }
 .join.forward { stroke-width: 1px; opacity: 0.6; }
 .join.hover { stroke-dasharray: 4 3; }
-.axisband { fill: var(--raised); pointer-events: none; }
 .span { stroke: var(--text); stroke-width: 2px; pointer-events: none; }
 svg text.at { fill: var(--text); font-weight: 600; pointer-events: none; }
 .hoverbar { fill: none; stroke: var(--text); stroke-width: 1.5px; stroke-dasharray: 4 3; rx: 2px; pointer-events: none; }
@@ -1027,7 +1026,7 @@ const client = `
 (function () {
   var data = JSON.parse(document.getElementById("data").textContent);
   var NS = "http://www.w3.org/2000/svg";
-  var ROW = 14, BAR = 12, RIGHT = 24, STRIP = 50, SPLIT = 8, AXIS = 18, GAP = 10, LANE_GAP = 12, THIN_ROW = 5, NAMED_SHARE = 0.03;
+  var ROW = 14, BAR = 12, RIGHT = 24, STRIP = 50, SPLIT = 8, TICKS = 16, AT = 14, AXIS = TICKS + AT, GAP = 10, LANE_GAP = 12, THIN_ROW = 5, NAMED_SHARE = 0.03;
   // The width of a character of a bar's name (10px monospace), and the colors a lane can have (--k0 to --k3).
   var CHAR = 6.05, COLORS = 4;
   var level = 1, MOST_ZOOM = 200;
@@ -1098,7 +1097,7 @@ const client = `
     for (var t = 0; t <= run.wallMs; t += step) {
       // The start needs no grid line: the chart's edge is it.
       if (t > 0) el("line", { x1: x(t), x2: x(t), y1: 0, y2: height - AXIS, "class": "grid" }, svg);
-      el("text", { x: x(t) + 3, y: height - 5 }, svg).textContent = ms(t);
+      el("text", { x: x(t) + 3, y: height - AXIS + TICKS - 4 }, svg).textContent = ms(t);
     }
 
     // The lanes, named in the gutter beside the chart so the names stay put when the chart scrolls.
@@ -1203,17 +1202,20 @@ const client = `
         el("rect", { x: x(b.start), y: y(b), width: barWidth(b), height: h(b), "class": "hoverbar" }, hoverLayer);
         if (b.blocker !== undefined) join(waitedOn(b), "join hover", hoverLayer);
       });
-      // When the bar started and ended, on the time axis under it. Each time is written outside the span it bounds,
-      // or, where the chart's edge leaves no room, both after it.
-      var bar = run.bars[i], axis = height - AXIS, from = x(bar.start), to = x(bar.start) + barWidth(bar);
-      el("rect", { x: 0, y: axis, width: width, height: AXIS, "class": "axisband" }, hoverLayer);
-      el("line", { x1: from, x2: to, y1: axis + 1, y2: axis + 1, "class": "span" }, hoverLayer);
-      var room = ms(bar.start).length * CHAR + 6;
-      if (from >= room) {
-        el("text", { x: from - 3, y: height - 5, "text-anchor": "end", "class": "at" }, hoverLayer).textContent = ms(bar.start);
-        el("text", { x: to + 3, y: height - 5, "class": "at" }, hoverLayer).textContent = ms(bar.end);
-      } else {
-        el("text", { x: to + 3, y: height - 5, "class": "at" }, hoverLayer).textContent = ms(bar.start) + " – " + ms(bar.end);
+      // When the bar started and ended, in a row of its own under the axis's ticks. Each time is written outside
+      // the span it bounds, or both on the side that has room, at either end of the chart.
+      var bar = run.bars[i], from = x(bar.start), to = x(bar.start) + barWidth(bar), row = height - AT / 2;
+      el("line", { x1: from, x2: to, y1: row, y2: row, "class": "span" }, hoverLayer);
+      var at = function (xAt, anchor, text) {
+        el("text", { x: xAt, y: row + 4, "text-anchor": anchor, "class": "at" }, hoverLayer).textContent = text;
+      };
+      var room = function (text) { return text.length * CHAR + 6; };
+      var both = ms(bar.start) + " – " + ms(bar.end);
+      if (from < room(ms(bar.start))) at(to + 3, "start", both);
+      else if (to + room(ms(bar.end)) > width) at(from - 3, "end", both);
+      else {
+        at(from - 3, "end", ms(bar.start));
+        at(to + 3, "start", ms(bar.end));
       }
     };
 
@@ -1232,7 +1234,10 @@ const client = `
       tip.hidden = false;
       var tw = tip.offsetWidth, th = tip.offsetHeight;
       tip.style.left = Math.min(ev.clientX + 14, window.innerWidth - tw - 8) + "px";
-      tip.style.top = (ev.clientY + 18 + th > window.innerHeight ? ev.clientY - th - 10 : ev.clientY + 18) + "px";
+      // Below the cursor, unless that would run off the window or over the chart's time axis.
+      var axisTop = svg.getBoundingClientRect().bottom - AXIS;
+      var below = ev.clientY + 18 + th <= Math.min(window.innerHeight, axisTop);
+      tip.style.top = (below ? ev.clientY + 18 : ev.clientY - th - 10) + "px";
     });
     svg.addEventListener("mouseleave", function () { tip.hidden = true; showChain(undefined); });
     svg.addEventListener("click", function (ev) {

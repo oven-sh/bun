@@ -5927,7 +5927,10 @@ describe("HTTP server transport shutdown", () => {
       await responseClosed.promise;
       await new Promise<void>(resolve => setImmediate(resolve));
       expect(callbackErrors).toHaveLength(1);
-      expect(["ERR_STREAM_DESTROYED", "ECONNRESET", "EPIPE"]).toContain(callbackErrors[0]);
+      // When Winsock took the whole body, no write is buffered and the callback reports success.
+      expect(["ERR_STREAM_DESTROYED", "ECONNRESET", "EPIPE", ...(isWindows ? ["success"] : [])]).toContain(
+        callbackErrors[0],
+      );
     } finally {
       client.destroy();
       server.closeAllConnections();

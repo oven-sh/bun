@@ -23,23 +23,23 @@ pub(crate) fn fetch_type_error_string(value: bun_jsc::JSValue) -> &'static str {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[path = "fetch/FetchTasklet.rs"]
-pub mod fetch_tasklet;
+pub(crate) mod fetch_tasklet;
 
 #[path = "fetch/FetchRequestBodySink.rs"]
-pub mod fetch_request_body_sink;
-pub use self::fetch_request_body_sink::FetchRequestBodySink;
+pub(crate) mod fetch_request_body_sink;
+pub(crate) use self::fetch_request_body_sink::FetchRequestBodySink;
 
 #[path = "fetch/compress_body.rs"]
-pub mod compress_body;
+pub(crate) mod compress_body;
 
 #[path = "fetch/FetchSession.rs"]
-pub mod fetch_session;
-pub use self::fetch_session::FetchSession;
+pub(crate) mod fetch_session;
+pub(crate) use self::fetch_session::FetchSession;
 
 /// `proxyInternals` of `bun:internal-for-testing`. `generated_js2native.rs`
 /// snake-cases `TestingAPIs` as `testing_ap_is`.
 #[path = "fetch/proxy_testing.rs"]
-pub mod testing_ap_is;
+pub(crate) mod testing_ap_is;
 
 // ──────────────────────────────────────────────────────────────────────────
 // fetch() implementation
@@ -81,7 +81,7 @@ use bun_url::PercentEncoding;
 use bun_url::URL as ZigURL;
 
 use self::fetch_tasklet::{FetchOptions, HTTPRequestBody};
-pub use self::fetch_tasklet::{FetchTasklet, FetchTaskletDeinitHop};
+pub(crate) use self::fetch_tasklet::{FetchTasklet, FetchTaskletDeinitHop};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Local extension shims (upstream methods not yet ported / not in scope)

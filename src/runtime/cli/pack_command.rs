@@ -123,7 +123,7 @@ pub(crate) struct Context<'a> {
 }
 
 #[derive(Default, Clone, Copy)]
-pub struct Stats {
+pub(crate) struct Stats {
     pub(crate) unpacked_size: usize,
     pub(crate) total_files: usize,
     pub(crate) packed_size: usize,
@@ -187,7 +187,7 @@ impl<'a> Context<'a> {
 }
 
 #[derive(Clone)]
-pub struct BundledDep {
+pub(crate) struct BundledDep {
     pub name: Box<[u8]>,
     pub(crate) was_packed: bool,
     pub(crate) from_root_package_json: bool,
@@ -3979,7 +3979,7 @@ fn is_special_file_or_variant(filename: &[u8], name: &'static [u8]) -> bool {
 // JS bindings
 // ───────────────────────────────────────────────────────────────────────────
 
-pub mod bindings {
+pub(crate) mod bindings {
     use super::*;
     use bun_core::String as BunString;
     use bun_jsc::{

@@ -74,7 +74,7 @@ impl NpmArgs {
 /// Runtime knobs `Command::start` passes through to select the per-tag exec
 /// behavior.
 #[derive(Clone, Copy)]
-pub struct ExecCfg {
+pub(crate) struct ExecCfg {
     pub(crate) bin_dirs_only: bool,
     pub(crate) log_errors: bool,
     pub(crate) allow_fast_run_for_extensions: bool,
@@ -1233,7 +1233,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
 /// Everything [`Run::start`] needs; built on the stack at the end of
 /// `RunCommand::boot` / `boot_standalone`.
-pub struct Run<'a> {
+pub(crate) struct Run<'a> {
     ctx: &'a ContextData,
     vm: &'a mut VirtualMachine,
     /// `vm.main` already points into these bytes; `'static` because the hot
@@ -3054,7 +3054,7 @@ fn escape_for_js_string(input: &[u8]) -> Vec<u8> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ::core::marker::ConstParamTy)]
-pub enum Filter {
+pub(crate) enum Filter {
     Script,
     Bin,
     BunJs,

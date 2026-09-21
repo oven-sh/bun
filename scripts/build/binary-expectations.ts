@@ -18,6 +18,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config.ts";
+import { versionScriptPath } from "./flags.ts";
 
 export type BinaryFormat = "elf" | "macho" | "pe";
 
@@ -116,6 +117,8 @@ export interface BinaryExpectations {
     rwxLoad: false;
     relro: boolean;
     bindNow: boolean;
+    /** A PT_TLS segment. Absent on Android: bun targets API 28, bionic has ELF TLS from 29, so every thread-local is emulated. */
+    tlsSegment: boolean;
   };
   pe?: {
     /** Exact set of IMAGE_DLL_CHARACTERISTICS_* names. */
@@ -165,6 +168,14 @@ export function versionScriptGlobals(path: string): { patterns: string[]; demang
     (inCxx ? demangledPatterns : patterns).push(s);
   }
   return { patterns, demangledPatterns };
+}
+
+/** A version script's `global:` block in the form lld's `--export-dynamic-symbol-list` reads. */
+export function exportList(versionScript: string): string {
+  const { patterns, demangledPatterns } = versionScriptGlobals(versionScript);
+  const lines = patterns.map(p => `  ${p};`);
+  if (demangledPatterns.length > 0) lines.push('  extern "C++" {', ...demangledPatterns.map(p => `    ${p};`), "  };");
+  return `{\n${lines.join("\n")}\n};\n`;
 }
 
 /** One symbol per line, `#`/`;` comments and blank lines skipped (symbols.txt, symbols.def bodies). */
@@ -407,7 +418,7 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
 
       return {
         format,
-        exports: { versionScript: src(cfg.freebsd ? "linker-freebsd.lds" : "linker.lds"), exact: [], patterns: [] },
+        exports: { versionScript: versionScriptPath(cfg), exact: [], patterns: [] },
         neededLibs: { names: neededLibs, exact: pinned, allowed: allowedLibs },
         ...(pinned && { maxSymbolVersions, versionNames }),
         forbiddenImports: forbiddenImports(cfg),
@@ -422,6 +433,7 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
           rwxLoad: false,
           relro: false,
           bindNow: false,
+          tlsSegment: !android,
         },
         debugInfo: { symtab: true, debugSections: true, compressed: true },
       };

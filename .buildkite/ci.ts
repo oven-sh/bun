@@ -516,7 +516,9 @@ function getBuildAgent(platform: Platform): Ec2Agent {
   // (buildHostPlatform) and cross-compiles to its target; the target's
   // os/arch only affect build args, not agent tags or image-name.
   const { os, arch, abi, profile } = platform;
-  // Lanes without LTO (see ltoDefault in scripts/build/config.ts): rustc does its own fat LTO + codegen inside cargo, so the C++ compile overlapping it costs ~20s on 16 vCPUs; give them 32.
+  // Lanes without C/C++ LTO (see ltoDefault in scripts/build/config.ts) get 32 vCPUs. That was sized when rustc ran a
+  // fat LTO inside cargo beside the C++ compile (~20s lost to the overlap on 16); not re-measured since the link runs
+  // the Rust LTO.
   const nonLto =
     profile === "asan" || abi === "android" || os === "freebsd" || (os === "windows" && arch === "aarch64");
   return getEc2Agent(buildHostPlatform, {
@@ -585,7 +587,7 @@ function getTestAgent(platform: Platform): Agent {
  */
 
 /** The `ci-<mode>` profile of scripts/build.ts a build command runs. */
-type BuildMode = "build" | "cpp-only" | "rust-only" | "link-only" | "rust-and-link";
+type BuildMode = "build";
 
 /**
  * Build the scripts/build.ts argument list from a target's properties.
@@ -627,7 +629,7 @@ function getBuildCommand(target: Target, options: PipelineOptions, mode: BuildMo
 }
 
 /**
- * deps + C++ + cargo + link on one agent; also uploads libbun-*.a, libbun_runtime.a and the dep libs.
+ * deps + C++ + Rust + link on one agent; also uploads libbun-*.a and the dep libs.
  */
 function getBuildBunStep(platform: Platform, options: PipelineOptions): CommandStep {
   const { arch } = platform;

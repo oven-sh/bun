@@ -1696,10 +1696,10 @@ const rustModuleResolver = (() => {
   // Index both `pub struct Name` and `pub type Name = …` — several JS classes
   // (HTTPServer/HTTPSServer/MD4/MD5/…) are generic instantiations exposed as
   // type aliases; the thunks call `Name::method` either way.
-  const structRe = /\bpub\s+(?:struct|type)\s+([A-Z]\w*)\b/g;
+  const structRe = /\bpub(?:\([^)]*\))?\s+(?:struct|type)\s+([A-Z]\w*)\b/g;
   // `pub use a::b::{Name, Name as Alias};` — only the *exported* identifier is
   // indexed, at the current module path.
-  const pubUseRe = /\bpub\s+use\s+((?:\w+::)*)\{?([^;{}]+?)\}?\s*;/g;
+  const pubUseRe = /\bpub(?:\([^)]*\))?\s+use\s+((?:\w+::)*)\{?([^;{}]+?)\}?\s*;/g;
 
   const segs = (p: string) => p.split("::").length;
   function register(name: string, fullPath: string) {
@@ -2231,7 +2231,7 @@ ${gcAccessors}
 /// struct so the thunks below call its inherent methods directly. A missing
 /// method is a compile error — fix it in \`${rustPath}\`, not here.
 #[allow(dead_code, unreachable_pub, unused)]
-pub use ${rustPath} as ${typeName};
+pub(crate) use ${rustPath} as ${typeName};
 
 ${thunks.join("\n\n")}
 

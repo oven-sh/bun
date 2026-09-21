@@ -393,6 +393,7 @@ const kPush = Symbol("pushStream");
 const kNeverAnnounced = Symbol("neverAnnounced");
 // pushPromise() result for a block over the send limit that was not sent (PUSH_PROMISE_OVER_SEND_LIMIT in h2_frame_parser.rs).
 const kPushPromiseOverSendLimit = -2;
+const kFrameTypeHeaders = 0x1;
 const kFrameTypePushPromise = 0x5;
 const kReceivedGoaway = Symbol("receivedGoaway");
 // The error code carried by a received GOAWAY; like Node's state.goawayCode it
@@ -2032,6 +2033,8 @@ enum StreamState {
   // callback). Until then no 'error' listener can exist, so stream errors must not be emitted:
   // node never constructs the JS stream object before a complete header block arrives.
   Delivered = 1 << 8, // 100000000 = 256
+  // The session, not user code, put this unread request into flowing mode (streamEnd).
+  AutoResumed = 1 << 9, // 1000000000 = 512
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
 // h2_frame_parser.rs): the chunk was handed to the socket without queueing and the engine did
@@ -2415,8 +2418,9 @@ class Http2Stream extends Duplex {
     try {
       if (ObjectKeys(headers).length === 0) {
         session[bunHTTP2Native]?.noTrailers(this.#id);
-      } else {
-        session[bunHTTP2Native]?.sendTrailers(this.#id, headers, sensitiveNames);
+      } else if (session[bunHTTP2Native]?.sendTrailers(this.#id, headers, sensitiveNames) === false) {
+        // Over the send limit, nothing was sent. node submits trailers one setImmediate later, and nghttp2 refuses them then.
+        setImmediate(onRefusedTrailers, session, this);
       }
     } catch (error) {
       this.#sentTrailers = undefined;
@@ -4080,6 +4084,7 @@ class ServerHttp2Session extends Http2Session {
           // attach a tick later (e.g. a CONNECT tunnel piping once its socket connects) and
           // resuming with buffered data would silently discard it. At full close, dump as before.
           if ((state == 7 || stream.readableLength === 0) && stream.readableFlowing === null) {
+            stream[bunHTTP2StreamStatus] |= StreamState.AutoResumed;
             stream.resume();
           }
         }
@@ -6604,6 +6609,27 @@ function closeAfterFrameError(session: ServerHttp2Session, stream: ServerHttp2St
   }
   stream.close(code);
   session.close();
+}
+// node's finishSendTrailers() and onFrameError for a trailer block that nghttp2 refuses: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1987-L2003
+function onRefusedTrailers(session: ServerHttp2Session | ClientHttp2Session, stream: Http2Stream) {
+  // node submits no trailers for a stream that was closed meanwhile.
+  if (stream.destroyed || stream.closed) return;
+  stream.emit("frameError", kFrameTypeHeaders, constants.NGHTTP2_FRAME_SIZE_ERROR);
+  if (!stream.destroyed && !stream.closed) {
+    // kMaybeDestroy closes an unread server request with NO_ERROR before onFrameError's close(code) runs.
+    const unread = stream instanceof ServerHttp2Stream && isUnreadRequest(stream);
+    // Not through close(): node's RST_STREAM leaves before the GOAWAY.
+    session[bunHTTP2Native]?.rstStream(stream.id, unread ? NGHTTP2_NO_ERROR : constants.NGHTTP2_FRAME_SIZE_ERROR);
+  }
+  session.close();
+}
+// node's kMaybeDestroy test: user code never tried to read the request.
+function isUnreadRequest(stream: ServerHttp2Stream) {
+  if (stream.readableDidRead) return false;
+  const flowing = stream.readableFlowing;
+  if (flowing === null) return true;
+  const autoResumed = (stream[bunHTTP2StreamStatus] & StreamState.AutoResumed) !== 0;
+  return flowing && autoResumed && stream.listenerCount("data") === 0;
 }
 // nghttp2 closes the promised stream of an unsent PUSH_PROMISE with INTERNAL_ERROR: https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L2897-L2904
 function failUnannouncedPush(pushedStream: ServerHttp2Stream) {

@@ -962,6 +962,22 @@ export const linkerFlags: Flag[] = [
     when: c => c.unix && c.lto && c.smol,
     desc: "LTO codegen at -Os (matches compile-side opt level)",
   },
+  {
+    // With `lto` off the C/C++ objects are machine code and the Rust crates are still bitcode (rust/units.ts
+    // ltoArgs: the release profile's `lto = "fat"`), so this link's LTO is rustc's fat LTO over the crates, run by
+    // the linker, and these say what rustc ran: the crates' `opt-level = 3` for the pipeline and for instruction
+    // selection (lld: 2 for both unless told), and LLVM's MergeFunctions pass, which rustc adds at -O2 and above
+    // with aliases (rustc_codegen_ssa back/write.rs, rustc_codegen_llvm llvm_util.rs) and lld's pipeline only runs
+    // on request. Measured on FreeBSD x64 (`bun`, main 88.38 MB): 88.87 MB without these, 88.40 MB with.
+    flag: ["-Wl,--lto-O3", "-Wl,--lto-CGO3", "-Wl,-mllvm,-enable-merge-functions", "-Wl,-mllvm,-mergefunc-use-aliases"],
+    when: c => linkLtoIsRustOnly(c) && c.unix && (!c.darwin || c.crossTarget !== undefined),
+    desc: "Rust-only LTO in the link: rustc's level and MergeFunctions (lld)",
+  },
+  {
+    flag: ["/opt:lldlto=3", "/opt:lldltocgo=3", "/mllvm:-enable-merge-functions", "/mllvm:-mergefunc-use-aliases"],
+    when: c => linkLtoIsRustOnly(c) && c.windows,
+    desc: "Rust-only LTO in the link: rustc's level and MergeFunctions (lld-link)",
+  },
 
   // ─── PGO (link-side) ───
   {
@@ -1501,14 +1517,6 @@ export const linkerFlags: Flag[] = [
     desc: "Garbage-collect unused sections",
   },
   {
-    // The release objects carry the address-significance table (`-faddrsig` above, `-Cllvm-args=-addrsig` for
-    // Rust) that safe ICF reads. The Rust crates reach this link as one bitcode module each, so the copies of a
-    // generic function that several crates instantiate are only merged if the linker folds them: +0.75 MB without.
-    flag: "-Wl,--icf=safe",
-    when: c => c.freebsd && c.release,
-    desc: "Identical-code-folding (safe)",
-  },
-  {
     flag: c => [
       "-Wl,-Bsymbolic-functions",
       "-rdynamic",
@@ -1519,6 +1527,14 @@ export const linkerFlags: Flag[] = [
     desc: "Dynamic symbol list + version script (FreeBSD adds environ/__progname)",
   },
 ];
+
+/**
+ * The link's LTO covers the Rust crates and nothing else: a release build without ASan (where rust.ts leaves the
+ * release profile's `lto = "fat"` in force) whose C/C++ is compiled without LTO.
+ */
+function linkLtoIsRustOnly(c: Config): boolean {
+  return c.release && !c.asan && !c.lto;
+}
 
 /**
  * Whether this target links with a symbol ordering file (lld

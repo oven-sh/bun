@@ -265,6 +265,35 @@ test("node-fetch body stream delivers every chunk of a streamed response", async
   expect(chunks.join("")).toBe("first second");
 });
 
+// From its first read on, the node stream holds the reader of the web stream. The reader
+// reports an error of the web stream without a pending read.
+test("node-fetch body stream reports an error of the response while its buffer is full", async () => {
+  let controller;
+  const web = new ReadableStream({
+    start(c) {
+      controller = c;
+    },
+  });
+  const body = new Response(web).body;
+  controller.enqueue(new Uint8Array(body.readableHighWaterMark));
+  await once(body, "readable");
+  // Full: the node stream stopped reading the web stream.
+  expect(body.readableLength).toBe(body.readableHighWaterMark);
+
+  const events = [];
+  body.on("error", error => events.push(`error:${error.message}`));
+  const closed = new Promise(resolve => body.once("close", resolve));
+  controller.error(new Error("boom"));
+  // The consumer drains one event-loop turn later. "read" comes first when only a read reports the error.
+  const lateRead = setImmediate(() => {
+    events.push("read");
+    body.read();
+  });
+  await closed;
+  clearImmediate(lateRead);
+  expect(events).toEqual(["error:boom"]);
+});
+
 // clone() moves the body to a new web stream. As in node-fetch, `body` is a new node stream then.
 test("node-fetch body taken before clone() does not break the body after clone()", async () => {
   using server = Bun.serve({ port: 0, fetch: () => new Response("hello world") });

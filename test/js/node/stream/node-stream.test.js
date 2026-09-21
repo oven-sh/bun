@@ -12,6 +12,7 @@ import {
   isErrored,
   isReadable,
   PassThrough,
+  pipeline,
   Readable,
   Stream,
   Transform,
@@ -497,6 +498,153 @@ describe("Readable.fromWeb keeps a web stream with a JS source locked", () => {
     expect(errors).toEqual(["pull-boom"]);
     expect(web.locked).toBe(true);
     expect(() => web.getReader()).toThrow(locked);
+  });
+});
+
+// Node destroys the Readable when `reader.closed` rejects, so an error of the web stream does not
+// wait for the next read.
+describe("Readable.fromWeb reports an error of the web stream at once", () => {
+  function controlled(strategy) {
+    let controller;
+    const { promise: pulled, resolve } = Promise.withResolvers();
+    const web = new ReadableStream(
+      {
+        start(c) {
+          controller = c;
+        },
+        pull: resolve,
+      },
+      strategy,
+    );
+    return { web, controller, pulled };
+  }
+
+  // What `r` reports until it closes. The consumer reads one event-loop turn after this call, so
+  // "read" comes first when only a read tells the Readable that the web stream errored.
+  function eventsWithLateRead(r) {
+    const events = [];
+    r.on("error", e => events.push(`error:${e.code ?? e.message}`));
+    finished(r, e => events.push(`finished:${e?.code ?? e?.message}`));
+    const lateRead = setImmediate(() => {
+      events.push("read");
+      r.read();
+    });
+    return new Promise(resolve => {
+      r.once("close", () => {
+        clearImmediate(lateRead);
+        resolve(events);
+      });
+    });
+  }
+
+  it("with only 'error', 'close' and finished() listeners", async () => {
+    const { web, controller } = controlled();
+    const r = Readable.fromWeb(web);
+    const events = eventsWithLateRead(r);
+    controller.error(new Error("boom"));
+    expect(await events).toEqual(["error:boom", "finished:boom"]);
+    expect({ destroyed: r.destroyed, errored: r.errored?.message }).toEqual({ destroyed: true, errored: "boom" });
+  });
+
+  it("when the web stream errored before fromWeb()", async () => {
+    const { web, controller } = controlled();
+    controller.error(new Error("boom"));
+    expect(await eventsWithLateRead(Readable.fromWeb(web))).toEqual(["error:boom", "finished:boom"]);
+  });
+
+  it("while the buffer of the Readable is full", async () => {
+    const { web, controller } = controlled();
+    const r = Readable.fromWeb(web, { highWaterMark: 1 });
+    controller.enqueue(new Uint8Array(4));
+    await once(r, "readable");
+    // Over the highWaterMark: the Readable stopped calling _read(), so no reader.read() is pending.
+    expect(r.readableLength).toBe(4);
+    const events = eventsWithLateRead(r);
+    controller.error(new Error("boom"));
+    expect(await events).toEqual(["error:boom", "finished:boom"]);
+  });
+
+  it("to a pipeline that a slow sink blocks", async () => {
+    const { web, controller } = controlled();
+    const r = Readable.fromWeb(web, { highWaterMark: 1 });
+    let unblock;
+    const sink = new Writable({
+      highWaterMark: 1,
+      write(chunk, encoding, callback) {
+        unblock = callback;
+      },
+    });
+    const events = [];
+    const done = new Promise(resolve => {
+      pipeline(r, sink, err => {
+        events.push(`pipeline:${err?.message}`);
+        resolve();
+      });
+    });
+    controller.enqueue(new Uint8Array(4));
+    controller.enqueue(new Uint8Array(4));
+    // The sink holds the first chunk and the second one fills the Readable: nothing reads the web stream now.
+    while (!r.destroyed && r.readableLength === 0) await new Promise(resolve => setImmediate(resolve));
+    controller.error(new Error("boom"));
+    const lateDrain = setImmediate(() => {
+      events.push("drain");
+      unblock();
+    });
+    await done;
+    clearImmediate(lateDrain);
+    expect(events).toEqual(["pipeline:boom"]);
+    expect(sink.destroyed).toBe(true);
+  });
+
+  it.each(["idle", "reading"])("as an AbortError when controller.error() has no reason (%s)", async mode => {
+    // highWaterMark 0: pull() runs only for a pending reader.read().
+    const { web, controller, pulled } = controlled({ highWaterMark: 0 });
+    const r = Readable.fromWeb(web);
+    if (mode === "reading") {
+      r.resume();
+      await pulled;
+    }
+    const events = eventsWithLateRead(r);
+    controller.error();
+    expect(await events).toEqual(["error:ABORT_ERR", "finished:ABORT_ERR"]);
+  });
+
+  // A direct stream settles `closed` before the read() that carries the chunk.
+  it("after the chunk that a direct stream wrote before the error", async () => {
+    const web = new ReadableStream({
+      type: "direct",
+      async pull(controller) {
+        controller.write("a");
+        await controller.flush();
+        controller.close(new Error("boom"));
+      },
+    });
+    const r = Readable.fromWeb(web);
+    const events = [];
+    r.on("data", chunk => events.push(`data:${chunk}`));
+    r.on("error", e => events.push(`error:${e.message}`));
+    await new Promise(resolve => r.once("close", resolve));
+    expect(events).toEqual(["data:a", "error:boom"]);
+  });
+
+  // A released reader rejects `closed` too. User code reaches the reader through its own getReader().
+  it.each(["idle", "reading"])("when its reader is released (%s)", async mode => {
+    const { web, pulled } = controlled({ highWaterMark: 0 });
+    let reader;
+    web.getReader = function () {
+      return (reader = ReadableStream.prototype.getReader.call(this));
+    };
+    const r = Readable.fromWeb(web);
+    expect(reader).toBeDefined();
+    if (mode === "reading") {
+      r.resume();
+      await pulled;
+    }
+    const events = eventsWithLateRead(r);
+    reader.releaseLock();
+    expect(await events).toEqual(["error:ERR_INVALID_STATE", "finished:ERR_INVALID_STATE"]);
+    // The reason of `closed`, as in Node. The pending read() rejects with "Releasing reader".
+    expect(r.errored.message).toBe("Invalid state: Reader released");
   });
 });
 

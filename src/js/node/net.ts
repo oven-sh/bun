@@ -122,6 +122,7 @@ function lazyBlockList() {
 }
 const newDetachedSocket = $newRustFunction("node_net_binding.rs", "newDetachedSocket", 1);
 const doConnect = $newRustFunction("node_net_binding.rs", "doConnect", 2);
+const drainMicrotasksAndNextTicks = $newRustFunction("node_net_binding.rs", "drainMicrotasksAndNextTicks", 0);
 
 const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
 const upgradeDuplexToTLS = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeDuplexToTLS", 2);
@@ -194,6 +195,8 @@ const kOnreadPendingEnd = Symbol("kOnreadPendingEnd");
 // Node's handle.reading: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L817-L845
 const kOnreadReading = Symbol("kOnreadReading");
 const kOnreadEmptyTail = Buffer.alloc(0);
+// Not zero while the checkpoint between two onread slices runs: see drainOnreadTailNT.
+let onreadCheckpoints = 0;
 const kwriteCallback = Symbol("writeCallback");
 const kSocketClass = Symbol("kSocketClass");
 
@@ -1775,7 +1778,20 @@ function Socket(options?) {
           reportError(e);
         }
         if (self.destroyed) return;
-        if (ret === false || !self[kOnreadReading]) {
+        let stop = ret === false || !self[kOnreadReading];
+        // Node drains ticks and microtasks after each read, except in a nested scope (a wrapped stream's 'data' emit): https://github.com/nodejs/node/blob/v26.3.0/src/api/callback.cc#L165-L207
+        if (!stop && offset < total && !self[kupgraded]) {
+          const handle = self._handle;
+          onreadCheckpoints++;
+          try {
+            drainMicrotasksAndNextTicks();
+          } finally {
+            onreadCheckpoints--;
+          }
+          if (onreadConnectionGone(self, handle)) return;
+          stop = !self[kOnreadReading];
+        }
+        if (stop) {
           const rest = buffer.subarray(offset);
           self[kOnreadTail] = rest.length !== 0 ? rest : kOnreadEmptyTail;
           readStop(self, self._handle);
@@ -2339,6 +2355,11 @@ function hasUnflushedWrites(connection) {
   return connection.writableLength > 0 || connection[kwriteCallback] != null;
 }
 
+// The rest of a chunk, and a FIN that waits behind it, belong to the connection that read them.
+function onreadConnectionGone(self, handle) {
+  return self.destroyed || self.connecting || self._handle !== handle;
+}
+
 // The tail is delivered on the next tick. A pause() before then clears kOnreadReading and the tick delivers nothing.
 function drainOnreadTail(self) {
   if (self[kOnreadTail] === undefined) return false;
@@ -2351,13 +2372,23 @@ function drainOnreadTail(self) {
 }
 
 function drainOnreadTailNT(socket) {
+  // Inside the checkpoint of another socket this drain would nest, one level per socket with a tail.
+  if (onreadCheckpoints !== 0) {
+    setImmediate(drainOnreadTailNT, socket);
+    return;
+  }
   socket[kOnreadDraining] = false;
   const tail = socket[kOnreadTail];
   if (tail === undefined || socket.destroyed) return;
   if (!socket[kOnreadReading]) return;
   socket[kOnreadTail] = undefined;
+  const handle = socket._handle;
   socket[kOnreadDeliver](tail);
-  if (socket[kOnreadTail] !== undefined || socket.destroyed) return;
+  if (onreadConnectionGone(socket, handle)) {
+    socket[kOnreadPendingEnd] = false;
+    return;
+  }
+  if (socket[kOnreadTail] !== undefined) return;
   if (socket[kOnreadPendingEnd]) {
     socket[kOnreadPendingEnd] = false;
     finishSocketEnd(socket);

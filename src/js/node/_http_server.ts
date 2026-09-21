@@ -1355,6 +1355,17 @@ const kKeepAliveTimeoutSet = Symbol("keepAliveTimeoutSet");
 // the socket timer on every response; onSocketTimeoutTimerExpired reads it to
 // grant the remaining idle budget when the timer actually fires.
 const kKeepAliveIdleStart = Symbol("keepAliveIdleStart");
+// When a response last wrote to the connection. Node.js restarts the socket's
+// inactivity timer on every write (net.Socket._writeGeneric and onWriteComplete
+// call _unrefTimer()). noteResponseWrite records the write instead, for the same
+// reason as kKeepAliveIdleStart, and onSocketTimeoutTimerExpired moves the
+// deadline when the timer fires.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L1019
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L101
+const kLastResponseWrite = Symbol("lastResponseWrite");
+// Set once 'timeout' has been emitted: the timer is spent, and like
+// timer.refresh() in Node.js the next response write starts it again.
+const kSocketTimeoutEmitted = Symbol("socketTimeoutEmitted");
 // HTTP/1.1 pipelining (responses queued behind an in-flight response):
 // - on the socket: array of queued ServerResponses, in arrival order
 // - on a queued response: { ops, bytes, needDrain, ended, isAncient } while it
@@ -1462,6 +1473,22 @@ function onSocketTimeoutTimerExpired(socket) {
       return;
     }
   }
+  // A response wrote to the connection inside the window: the inactivity
+  // period starts at that write. Re-arm this timer and move its start back
+  // to the write (the deadline is _idleStart + _idleTimeout, like Node.js).
+  // A new, shorter timer in the slot would make the next _unrefTimer()
+  // refresh that shorter interval.
+  const lastWrite = socket[kLastResponseWrite];
+  if (lastWrite !== undefined) {
+    socket[kLastResponseWrite] = undefined;
+    const sinceWrite = DateNow() - lastWrite;
+    const timer = socket[kSocketTimeoutTimer];
+    if (sinceWrite < socket.timeout && timer !== undefined) {
+      timer.refresh();
+      if (sinceWrite > 0) timer._idleStart -= sinceWrite;
+      return;
+    }
+  }
   // A fired keep-alive idle timer is dead; drop the reference so the next
   // response-finish re-arms via setTimeout instead of trusting a fired
   // timer whose _idleTimeout still matches (a 'timeout' listener may keep
@@ -1506,6 +1533,8 @@ function getNodeHTTPServerSocket() {
     [kStreamingEnabled] = false;
     [kBoundOnAbort] = null;
     [kKeepAliveIdleStart] = undefined;
+    [kLastResponseWrite]: number | undefined = undefined;
+    [kSocketTimeoutEmitted] = false;
     [kBytesWritten] = 0;
     [kHandle];
     [kUpgradeIncoming]: import("node:http").IncomingMessage | undefined = undefined;
@@ -1724,6 +1753,7 @@ function getNodeHTTPServerSocket() {
         this._unrefTimer();
         return;
       }
+      this[kSocketTimeoutEmitted] = true;
       this.emit("timeout");
     }
     _unrefTimer() {
@@ -2667,6 +2697,7 @@ function advanceResponsePipeline(server, socket) {
         if (kind === "raw") {
           // Buffered 1xx bytes: route through the same AsyncSocket buffer the
           // response's own writeHead/end use so they precede the final response.
+          noteResponseWrite(res);
           handle.writeInformational(op[1], op[2]);
           if (typeof op[3] === "function") process.nextTick(op[3]);
         } else if (kind === "write") {
@@ -3000,6 +3031,19 @@ Object.defineProperty(ServerResponse.prototype, "headersSent", {
   },
 });
 
+// A response write is activity on the connection's inactivity timeout
+// (socket.setTimeout / server.timeout), see kLastResponseWrite.
+function noteResponseWrite(res) {
+  const socket = res[kSocket];
+  if (socket == null || !socket.timeout) return;
+  if (socket[kSocketTimeoutEmitted]) {
+    socket[kSocketTimeoutEmitted] = false;
+    socket._unrefTimer();
+  } else {
+    socket[kLastResponseWrite] = DateNow();
+  }
+}
+
 ServerResponse.prototype._writeRaw = function (chunk, encoding, callback) {
   if (!this[kHandle]) {
     // Standalone path: OutgoingMessage._writeRaw buffers to outputData while
@@ -3024,6 +3068,7 @@ ServerResponse.prototype._writeRaw = function (chunk, encoding, callback) {
   // Write through the response handle's AsyncSocket buffer (same path as
   // writeHead/end) so 1xx lines share ordering with the final response bytes;
   // socket.write() would land in the socket handle's separate stream buffer.
+  noteResponseWrite(this);
   this[kHandle].writeInformational(chunk, encoding);
   if (typeof callback === "function") process.nextTick(callback);
   return true;
@@ -3124,6 +3169,7 @@ ServerResponse.prototype.writeContinue = function (cb) {
     this._sent100 = true;
     return;
   }
+  noteResponseWrite(this);
   const native = this.socket?.[kHandle]?.response;
   if (native) native.writeContinue();
   else this[kHandle]?.writeContinue?.();
@@ -3223,6 +3269,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     // and will not throw or emit an error
     return true;
   }
+  noteResponseWrite(this);
   const sentState = NodeHTTPHeaderState.sent;
   if (headerState !== sentState) {
     {
@@ -3393,6 +3440,7 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
     return true;
   }
 
+  noteResponseWrite(this);
   if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
     handle.cork(() => {
       const renderedHeaders = renderNativeHeaders(this);
@@ -3577,6 +3625,7 @@ ServerResponse.prototype._send = function (data, encoding, callback, _byteLength
     return OutgoingMessagePrototype._send.$apply(this, arguments);
   }
 
+  noteResponseWrite(this);
   if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
     handle.cork(() => {
       const renderedHeaders = renderNativeHeaders(this);
@@ -3707,6 +3756,7 @@ ServerResponse.prototype.flushHeaders = function () {
 
   const handle = this[kHandle];
   if (handle) {
+    noteResponseWrite(this);
     if (this[headerStateSymbol] === NodeHTTPHeaderState.assigned) {
       this[headerStateSymbol] = NodeHTTPHeaderState.sent;
 
@@ -3787,6 +3837,7 @@ function callWriteHeadIfObservable(self, headerState, fromEnd?) {
 }
 
 function allowWritesToContinue() {
+  noteResponseWrite(this);
   this._callPendingCallbacks();
   this.emit("drain");
 }

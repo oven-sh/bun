@@ -144,9 +144,7 @@ impl CppWebSocket {
         event_loop.exit();
     }
 
-    /// A field read on the C++ side: no JS runs, so no event-loop entry (an
-    /// `exit()` from an I/O callback would drain microtasks that can free
-    /// the caller).
+    /// A field read on the C++ side: no JS runs, so no event-loop entry.
     pub(crate) fn reject_unauthorized(&self) -> bool {
         WebSocket__rejectUnauthorized(self)
     }

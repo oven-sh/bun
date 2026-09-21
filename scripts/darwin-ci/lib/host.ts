@@ -31,8 +31,17 @@ export async function setHostname(name: string): Promise<void> {
 }
 
 export async function brewInstall(formula: string): Promise<void> {
-  const name = formula.split("/").pop()!;
+  const parts = formula.split("/");
+  const name = parts.pop()!;
   if (await succeeds($`${brew} list ${name}`)) return;
+  // Homebrew refuses to load a formula from a tap it has not been told to trust
+  // ("Refusing to load formula ... from untrusted tap"), which fails the install.
+  // A tap formula is written org/repo/name.
+  if (parts.length === 2) {
+    const tap = parts.join("/");
+    await $`${brew} tap ${tap}`;
+    await $`${brew} trust ${tap}`.nothrow(); // older Homebrew has no `trust`
+  }
   await $`${brew} install ${formula}`;
 }
 

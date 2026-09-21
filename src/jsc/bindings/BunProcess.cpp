@@ -1613,6 +1613,8 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                     Bun__ensureProcessIPCInitialized(global);
                     Bun__refChannelUnlessOverridden(global);
                 }
+                if (eventName == vm.propertyNames->message)
+                    global->processObject()->flushPendingIPCMessagesOnNextTick(global);
             } else {
                 if (Bun__GlobalObject__hasIPC(global)
                     && totalListenerCount == 0) {
@@ -3100,6 +3102,8 @@ JSC_DEFINE_HOST_FUNCTION(Bun__Process__disconnect, (JSGlobalObject * globalObjec
     }
 
     Bun__closeChildIPC(globalObject);
+    // node drops the held messages with the channel.
+    global->processObject()->clearPendingIPCMessages();
     return JSC::JSValue::encode(jsUndefined());
 }
 
@@ -3778,6 +3782,13 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_argv);
     visitor.append(thisObject->m_execArgv);
     visitor.append(thisObject->m_onWarning);
+    {
+        WTF::Locker locker { thisObject->cellLock() };
+        for (auto& pending : thisObject->m_pendingIPCMessages) {
+            visitor.append(pending.message);
+            visitor.append(pending.handle);
+        }
+    }
 
     thisObject->m_cpuUsageStructure.visit(visitor);
     thisObject->m_resourceUsageStructure.visit(visitor);
@@ -4939,6 +4950,11 @@ extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSVa
         }
     }
 
+    if (ident == vm.propertyNames->message) {
+        process->emitOrHoldIPCMessage(global, message, JSValue::decode(handle));
+        return;
+    }
+
     if (process->wrapped().hasEventListeners(ident)) {
         JSC::MarkedArgumentBuffer args;
         args.append(message);
@@ -4947,10 +4963,88 @@ extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSVa
     }
 }
 
+// node holds a 'message' that arrives while there is no 'message' listener, and emits the held ones, in order, on
+// the tick after a listener is added. It never holds an 'internalMessage'.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L954-L964
+void Process::emitOrHoldIPCMessage(Zig::GlobalObject* globalObject, JSValue message, JSValue handle)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto& emitter = wrapped();
+    const auto& messageEvent = vm.propertyNames->message;
+
+    if (m_pendingIPCMessages.isEmpty() && emitter.hasEventListeners(messageEvent)) {
+        JSC::MarkedArgumentBuffer args;
+        args.append(message);
+        args.append(handle);
+        emitter.emit(messageEvent, args);
+        return;
+    }
+
+    // node drops a message that arrives once the channel is gone.
+    if (!Bun__GlobalObject__connectedIPC(globalObject))
+        return;
+
+    {
+        WTF::Locker locker { cellLock() };
+        m_pendingIPCMessages.append(PendingIPCMessage { { vm, this, message }, { vm, this, handle } });
+    }
+    // node emits each message on its own tick, behind the tick that flushes. Here a message can arrive
+    // between a listener being added and that tick, so it goes out behind the held ones.
+    flushPendingIPCMessages(globalObject);
+}
+
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L726-L742
+void Process::flushPendingIPCMessages(Zig::GlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto& emitter = wrapped();
+    const auto& messageEvent = vm.propertyNames->message;
+
+    // node emits every held message even after a once() listener has left nobody to receive the rest,
+    // which loses them. The rest stays held here.
+    while (!m_pendingIPCMessages.isEmpty() && emitter.hasEventListeners(messageEvent) && Bun__GlobalObject__connectedIPC(globalObject)) {
+        JSC::MarkedArgumentBuffer args;
+        {
+            WTF::Locker locker { cellLock() };
+            auto pending = m_pendingIPCMessages.takeFirst();
+            args.append(pending.message.get());
+            args.append(pending.handle.get());
+        }
+        emitter.emit(messageEvent, args);
+    }
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_flushPendingIPCMessages, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame*))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    globalObject->processObject()->flushPendingIPCMessages(globalObject);
+    return JSValue::encode(jsUndefined());
+}
+
+void Process::flushPendingIPCMessagesOnNextTick(Zig::GlobalObject* globalObject)
+{
+    if (m_pendingIPCMessages.isEmpty())
+        return;
+
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* flush = JSFunction::create(vm, globalObject, 0, ""_s, jsFunction_flushPendingIPCMessages, JSC::ImplementationVisibility::Private);
+    queueNextTick(globalObject, flush);
+    RELEASE_AND_RETURN(scope, void());
+}
+
+void Process::clearPendingIPCMessages()
+{
+    WTF::Locker locker { cellLock() };
+    m_pendingIPCMessages.clear();
+}
+
 extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global)
 {
     auto* process = global->processObject();
     auto& vm = JSC::getVM(global);
+    // node drops the held messages with the channel.
+    process->clearPendingIPCMessages();
     auto ident = Identifier::fromString(vm, "disconnect"_s);
     if (process->wrapped().hasEventListeners(ident)) {
         JSC::MarkedArgumentBuffer args;

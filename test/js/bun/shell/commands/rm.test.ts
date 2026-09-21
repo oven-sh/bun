@@ -7,7 +7,7 @@
 import { $ } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { existsSync, mkdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "path";
 import { createTestBuilder, sortedShellOutput } from "../util";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -143,6 +143,74 @@ foo/
       expect(exitCode).toBe(1);
       expect(await fileExists(`${tempdir}/sub_dir_files`)).toBeTrue();
     }
+  });
+
+  // Windows cannot open a file with one of these characters in its name. It
+  // rejects the name (STATUS_OBJECT_NAME_INVALID) instead of reporting the
+  // file as missing. For rm that is a missing file, as on POSIX. The names
+  // cannot be created on Windows, so no fixture has them.
+  test("a name Windows rejects is a missing file", async () => {
+    using tempdir = tempDir("rm-invalid-name", { "emptydir": {}, "keep.txt": "" });
+    const cwd = String(tempdir);
+    const names = ["*.nomatch", "emptydir/*", path.join(cwd, "a*b"), "a?b", "a|b", "a<b", "a>b", 'a"b', "a\tb"];
+
+    const run = async (...args: string[]) => {
+      const { exitCode, stderr } = await $`rm ${args}`.cwd(cwd).quiet();
+      return { exitCode, stderr: stderr.toString() };
+    };
+    const results: Record<string, unknown> = {};
+    const expected: Record<string, unknown> = {};
+    for (const name of names) {
+      results[name] = {
+        force: await run("-f", name),
+        recursiveForce: await run("-rf", name),
+        dirForce: await run("-df", name),
+        plain: await run(name),
+        recursive: await run("-r", name),
+      };
+      const ignored = { exitCode: 0, stderr: "" };
+      const missing = { exitCode: 1, stderr: `rm: ${name}: No such file or directory\n` };
+      expected[name] = {
+        force: ignored,
+        recursiveForce: ignored,
+        dirForce: ignored,
+        plain: missing,
+        recursive: missing,
+      };
+    }
+    expect(results).toEqual(expected);
+    expect(readdirSync(cwd).sort()).toEqual(["emptydir", "keep.txt"]);
+  });
+
+  // NT rejects an empty or a `..` path component with the same status as a
+  // name it cannot open, and on Windows rm can hand it one (#13523). These
+  // operands name files that exist, so -f must never count them as missing.
+  // `c.txt:s*` is a stream of c.txt on NTFS, where a stream name can hold a `*`.
+  test("-f does not report success for a file it left in place", async () => {
+    using tempdir = tempDir("rm-force-existing", { "work/sub/a.txt": "", "work/sub/c.txt": "", "victim/b.txt": "" });
+    const root = String(tempdir);
+    writeFileSync(path.join(root, "work/sub/c.txt:s*"), "stream");
+    const operands = [
+      ["sub//a.txt", "work/sub/a.txt"],
+      ["../victim/b.txt", "victim/b.txt"],
+      ["sub//c.txt:s*", "work/sub/c.txt:s*"],
+    ];
+    const results: unknown[] = [];
+    for (const [operand, target] of operands) {
+      const existedBefore = existsSync(path.join(root, target));
+      const { exitCode } = await $`rm -f ${operand}`.cwd(path.join(root, "work")).quiet();
+      const removed = !existsSync(path.join(root, target));
+      const outcome =
+        removed && exitCode === 0
+          ? "removed"
+          : !removed && exitCode !== 0
+            ? "failed"
+            : `exit code ${exitCode}, ${removed ? "removed" : "left in place"}`;
+      results.push({ operand, existedBefore, outcome });
+    }
+    // Until #13523 is fixed, rm on Windows fails for some of these.
+    const outcome = isWindows ? expect.stringMatching(/^(removed|failed)$/) : "removed";
+    expect(results).toEqual(operands.map(([operand]) => ({ operand, existedBefore: true, outcome })));
   });
 
   // The DirTask parent/child hand-off had a lost-wakeup window between

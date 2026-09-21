@@ -946,13 +946,41 @@ impl ShellRmTask {
                         need_to_wait_out: &mut waiting,
                     },
                 };
-                self.remove_entry_file(dir_task, path, is_absolute, &mut buf, &mut vtable)?;
+                let removed =
+                    self.remove_entry_file(dir_task, path, is_absolute, &mut buf, &mut vtable);
+                #[cfg(windows)]
+                let removed = removed.or_else(|e| self.missing_if_name_rejected(dir_task, path, e));
+                removed?;
             }
             EntryKindHint::Dir => {
                 self.remove_entry_dir(dir_task, is_absolute, &mut buf, &mut waiting)?;
             }
         }
         Ok(waiting)
+    }
+
+    /// `unlinkat` reports EINVAL for a name NT rejects. That is a name no file
+    /// can have (`a*b`), or a file that exists (#13523), so lstat decides.
+    #[cfg(windows)]
+    fn missing_if_name_rejected(
+        &self,
+        dir_task: *mut DirTask,
+        path: &ZStr,
+        e: bun_sys::Error,
+    ) -> bun_sys::Maybe<()> {
+        // Operands only: a listed entry exists, even with a name NT cannot open.
+        // SAFETY: `dir_task` is live; `remove_entry_file` failed before any hand-off.
+        debug_assert!(unsafe { (*dir_task).parent_task.is_null() });
+        let missing = e.get_errno() == E::EINVAL
+            && crate::shell::interpreter::shell_lstatat(self.cwd, path)
+                .is_err_and(|err| err.get_errno() == E::ENOENT);
+        if !missing {
+            return Err(e);
+        }
+        if self.opts.force {
+            return self.verbose_deleted(dir_task, path.as_bytes());
+        }
+        Err(bun_sys::Error::from_code(E::ENOENT, e.syscall).with_path(path.as_bytes()))
     }
 
     /// `need_to_wait_out` is left `true` only when the hand-off in this

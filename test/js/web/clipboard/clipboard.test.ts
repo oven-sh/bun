@@ -976,6 +976,24 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
     expect(result).toEqual({ readText: { ok: "display=:7" } });
   });
 
+  // A thread creates its process.env on the first read. For this worker that
+  // read is the clipboard operation itself, and creating the object can throw.
+  // A build with exception checks aborts when a caller does not check for that.
+  test("a worker that never read process.env still hands it to the helper", async () => {
+    const { result } = await runWithHelpers(
+      { xclip: `printf 'display=%s' "$DISPLAY"` },
+      `
+        const worker = new Worker(new URL("./worker.js", import.meta.url));
+        print(await new Promise(resolve => worker.addEventListener("message", e => resolve(e.data), { once: true })));
+      `,
+      { BUN_JSC_validateExceptionChecks: "1" },
+      {
+        "worker.js": `navigator.clipboard.readText().then(text => postMessage({ ok: text }), e => postMessage({ error: e.name + ": " + e.message }));`,
+      },
+    );
+    expect(result).toEqual({ ok: "display=:0" });
+  });
+
   test("with a display but nothing installed, the rejection says what to install", async () => {
     const { result, log } = await runWithHelpers(
       {},

@@ -54,6 +54,11 @@ public:
     unsigned ended : 1 = 0;
     unsigned upgraded : 1 = 0;
     unsigned peer_cert_verified : 1 = 0;
+    /* Latched by onClose() and read by the JS socket from its onclose callback
+     * (the closeError / peerEnded getters). node:http emits 'end' for a peer
+     * FIN and 'error' for a failed read (a peer RST) before 'close'. */
+    unsigned peer_ended : 1 = 0;
+    int closeReadError = 0;
     const char* peerCertVerifyErrorCode = nullptr;
     JSC::Strong<JSNodeHTTPServerSocket> strongThis = {};
 
@@ -156,7 +161,7 @@ public:
 
     void detach();
     void syncPeerCertificateVerification();
-    void onClose();
+    void onClose(int readError, bool peerEnded);
     void onDrain();
     void onData(const char* data, int length, bool last);
 

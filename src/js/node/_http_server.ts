@@ -1517,6 +1517,7 @@ function getNodeHTTPServerSocket() {
     _paused = false;
     #pendingCallback = null;
     #pendingAbortMessage;
+    #closeError: Error | undefined = undefined;
     declare encrypted: boolean;
     declare _writableState: { emitClose: boolean; decodeStrings: boolean };
     declare _readableState: { emitClose: boolean };
@@ -1631,14 +1632,28 @@ function getNodeHTTPServerSocket() {
       // is deferred to #onClose so the dispatch promise resolves only after the
       // native on_abort has released the pending-request ref.
       this.#pendingAbortMessage = this._httpMessage;
-      handle.onclose = this.#onCloseForDestroy.bind(this, callback, err);
+      handle.onclose = this.#onCloseForDestroy.bind(this, callback, err, handle);
       handle.close();
     }
-    #onClose() {
+    #onClose(closedHandle = this[kHandle]) {
       // freeParser equivalent: runs before 'close' listeners so they observe the
       // released parser (free() invoked, kOnTimeout nulled).
       releaseServerParserShim(this);
       this[kHandle] = null;
+      if (closedHandle) {
+        // Like Node.js's net.Socket onStreamRead: the peer's FIN ends the
+        // readable side ('end' before 'close'), and a failed read (a peer RST)
+        // is the error the socket is destroyed with.
+        if (closedHandle.peerEnded) {
+          this.push(null);
+          this.read(0);
+        }
+        // Only with a listener (the server's socketOnError, until the socket is
+        // handed to 'connect'/'upgrade'): an unhandled 'error' ends the process.
+        if (this.listenerCount("error") > 0) {
+          this.#closeError = closedHandle.closeError;
+        }
+      }
       this.server?.[kTrackedConnections]?.delete(this);
       const timer = this[kSocketTimeoutTimer];
       if (timer) {
@@ -1703,11 +1718,11 @@ function getNodeHTTPServerSocket() {
       // tunneled/upgraded sockets, main's kIsTunnel case); reaching here from a
       // native close without a JS-initiated destroy must still surface it.
       if (!this.destroyed) {
-        this.destroy();
+        this.destroy(this.#closeError);
       }
     }
-    #onCloseForDestroy(closeCallback, err?: Error) {
-      this.#onClose();
+    #onCloseForDestroy(closeCallback, err: Error | undefined, handle) {
+      this.#onClose(handle);
       // Thread the destroy error through to the streams machinery (like
       // Node.js's net.Socket._destroy passing the exception to its callback),
       // so socket.destroy(err) emits 'error' before 'close'.
@@ -1758,7 +1773,7 @@ function getNodeHTTPServerSocket() {
         if ($isCallable(onclose)) {
           onclose.$call(handle);
         }
-        if ($isCallable(callback)) callback(err);
+        if ($isCallable(callback)) callback(err ?? this.#closeError);
         return;
       }
 

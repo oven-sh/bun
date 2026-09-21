@@ -7700,20 +7700,6 @@ pub mod bv2_impl {
         }
     }
     impl Eq for StableRef {}
-    impl Ord for StableRef {
-        #[inline]
-        fn cmp(&self, other: &Self) -> core::cmp::Ordering {
-            let (a_idx, a_ref) = (self.stable_source_index, self.r#ref);
-            let (b_idx, b_ref) = (other.stable_source_index, other.r#ref);
-            (a_idx, a_ref.inner_index()).cmp(&(b_idx, b_ref.inner_index()))
-        }
-    }
-    impl PartialOrd for StableRef {
-        #[inline]
-        fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
-            Some(self.cmp(other))
-        }
-    }
 
     #[derive(Clone, Copy, Default, PartialEq, Eq)]
     pub struct ImportTracker {

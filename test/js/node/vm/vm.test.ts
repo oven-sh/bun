@@ -5,6 +5,7 @@ import {
   compileFunction,
   constants,
   createContext,
+  isContext,
   runInContext,
   runInNewContext,
   runInThisContext,
@@ -1715,6 +1716,46 @@ describe("DONT_CONTEXTIFY", () => {
 
     ctx.fromOutside = 456;
     expect(runInContext("fromOutside", ctx)).toBe(456);
+  });
+
+  // jsdom 30.1.0 stamps a private field on the object createContext returns
+  // and then reads `vm.runInContext("this", ctx)` as the window. Both must be
+  // the same object, as in Node.
+  test("this, globalThis and the context object are one object", () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+
+    expect(runInContext("this", ctx)).toBe(ctx);
+    expect(runInContext("this === globalThis", ctx)).toBe(true);
+    expect(runInContext("(function () { return this; })()", ctx)).toBe(ctx);
+    expect(runInContext("(0, eval)('this')", ctx)).toBe(ctx);
+    expect(new Script("this === globalThis").runInContext(ctx)).toBe(true);
+    expect(runInNewContext("this === globalThis", constants.DONT_CONTEXTIFY)).toBe(true);
+
+    // A private field stamped on the context object is visible through `this`.
+    class ReturnValue {
+      constructor(value: object) {
+        return value;
+      }
+    }
+    class Brand extends ReturnValue {
+      #impl: string;
+      constructor(wrapper: object, impl: string) {
+        super(wrapper);
+        this.#impl = impl;
+      }
+      static has(value: object) {
+        return #impl in value;
+      }
+    }
+    new Brand(ctx, "window");
+    expect(Brand.has(runInContext("this", ctx))).toBe(true);
+
+    // The context object still accepts properties from both sides and can be
+    // passed back to createContext and isContext.
+    runInContext("this.fromThis = 1", ctx);
+    expect(ctx.fromThis).toBe(1);
+    expect(isContext(ctx)).toBe(true);
+    expect(createContext(ctx)).toBe(ctx);
   });
 });
 

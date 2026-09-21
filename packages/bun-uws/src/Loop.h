@@ -159,8 +159,7 @@ public:
         return (LoopData *) us_loop_ext(loop);
     }
 
-    /* What the next tick's pre handler would do: commit pub/sub batches and
-     * write out leftover corks. For a caller that will not tick again. */
+    /* The pre handler's work, for a caller that will not tick again. */
     void flushPendingWrites() {
         preCb((us_loop_t *) this);
     }

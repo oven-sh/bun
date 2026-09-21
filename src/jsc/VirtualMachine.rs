@@ -2299,10 +2299,7 @@ impl VirtualMachine {
             self.is_inside_deferred_task_queue.set(false);
         }
 
-        // The loop will not tick again, so its pre handler never commits the
-        // `publish()` batches and corked frames the last turn left behind.
-        // Write them out now, while the sockets are still open. Not through
-        // `uws_loop()`: a spawnSync loop it can point at has no uWS LoopData.
+        // No tick follows. `uws_loop()` can be a spawnSync loop with no uWS LoopData.
         if self.script_allowed() {
             // SAFETY: `uws::Loop::get()` returns the live per-thread uws loop.
             unsafe { (*uws::Loop::get()).flush_pending_writes() };

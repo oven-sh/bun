@@ -81,16 +81,13 @@ impl AnyWebSocket {
         ws.memory_cost(ssl)
     }
 
-    /// Forced close. Writes out what `publish()` queued for this socket and
-    /// what a handler corked, then closes.
+    /// Writes out queued publishes and the cork buffer, then closes.
     pub fn close(self) {
         let (ssl, ws) = self.split();
         c::uws_ws_close(ssl, ws, true)
     }
 
-    /// Forced close that drops the queued publishes and the cork buffer. After
-    /// a synchronous upgrade the cork still holds the 101 response, so this
-    /// close fails the handshake.
+    /// Drops queued publishes and the cork buffer, which can still hold the 101.
     pub fn close_without_flush(self) {
         let (ssl, ws) = self.split();
         c::uws_ws_close(ssl, ws, false)

@@ -279,9 +279,7 @@ impl PosixLoop {
         unsafe { c::us_internal_free_closed_sockets(self) };
     }
 
-    /// Write out what the next tick's pre handler would have: queued
-    /// `publish()` batches and leftover corks. For the exit path, where no
-    /// tick follows.
+    /// Runs the uWS pre handler: drains `publish()` batches and leftover corks.
     pub fn flush_pending_writes(&mut self) {
         // SAFETY: self is a valid loop pointer
         unsafe { c::uws_loop_flush_pending_writes(self) };

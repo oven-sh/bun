@@ -390,9 +390,7 @@ public:
         /* close_all() walks head_listen_sockets first, so listeners are closed
          * here without us holding raw pointers to them across loop ticks. */
         us_socket_group_close_all(httpContext->getSocketGroup());
-        /* Write out queued publish() messages and corked frames while the
-         * websocket fds are still open. onClose frees each subscriber without
-         * draining it and discards the cork buffer. */
+        /* onClose cannot write: flush queued publishes and corked frames first. */
         if (topicTree) {
             topicTree->drain();
         }

@@ -64,9 +64,7 @@ public:
 
     /* WebSocket close cannot be an alias to AsyncSocket::close since
      * we need to check first if it was shut down by remote peer.
-     * flush = false drops what publish() queued and what a handler corked. An
-     * open handler that threw needs it: after a synchronous upgrade the cork
-     * still holds the 101, and that handshake must not complete. */
+     * flush = false also drops a 101 that is still corked (open handler threw). */
     us_socket_t *close(bool flush = true) {
         if (us_socket_is_closed((us_socket_t *) this)) {
             return nullptr;
@@ -82,9 +80,8 @@ public:
         return us_socket_close((us_socket_t *) this, 0, nullptr);
     }
 
-    /* Write out what publish() queued for this socket and what a handler
-     * corked, while the fd is still open. onClose runs after the fd is gone:
-     * freeSubscriber there cannot write, and the cork buffer is discarded. */
+    /* onClose runs after the fd is gone, so queued publishes and corked
+     * frames have to be written before us_socket_close. */
     void flushBeforeForcedClose() {
         if (us_socket_is_closed((us_socket_t *) this)) {
             return;

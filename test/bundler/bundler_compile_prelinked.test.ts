@@ -71,6 +71,28 @@ function graphCase(id: string, c: GraphCase) {
   }
 }
 
+// graphCase(), and the same program as `compile/prelinked/<id>+source[+splitting]`: an executable without --bytecode
+// embeds no module graph, so its records are made from each chunk's source when it is loaded.
+function bindingCase(id: string, c: GraphCase) {
+  graphCase(id, c);
+  for (const splitting of [false, true]) {
+    const entries = splitting && c.entries ? c.entries : undefined;
+    itBundled(`compile/prelinked/${id}+source${splitting ? "+splitting" : ""}`, {
+      compile: true,
+      format: "esm",
+      splitting,
+      files: variant(c.files, splitting),
+      ...(entries ? { entryPointsRaw: entries.map(e => "./" + e.replace(/^\//, "")), outfile: "dist/out" } : {}),
+      run: {
+        stdout: variant(c.stdout, splitting),
+        stderr: "",
+        bunArgs: launcher,
+        ...(entries ? { file: "dist/out" } : {}),
+      },
+    });
+  }
+}
+
 describe.concurrent("bundler", () => {
   // Every case links an executable: `bun build --compile` copies the bun binary and writes it again with the bundle
   // patched in. The 20 links describe.concurrent would start at once ran CI out of memory in bundler_compile.test.ts,
@@ -90,7 +112,7 @@ describe.concurrent("bundler", () => {
 
   // (1) cycles: b evaluates before a (entry -> a -> b), calls a hoisted function of a while a is unevaluated, and
   // later reads a's live `counter` binding.
-  graphCase("CycleTwoModules", {
+  bindingCase("CycleTwoModules", {
     files: {
       "/entry.ts": /* js */ `
         import { fromA, counter, bump } from "./a";
@@ -119,7 +141,7 @@ describe.concurrent("bundler", () => {
     stdout: "a sees B(A) | b sees A | 0 0\n2 2",
   });
 
-  graphCase("CycleThreeModules", {
+  bindingCase("CycleThreeModules", {
     files: {
       "/entry.ts": /* js */ `
         import { a, order } from "./a";
@@ -160,7 +182,7 @@ describe.concurrent("bundler", () => {
   // (2) star exports. `x` is exported by both a and b, so it is ambiguous through star.js: the namespace omits it
   // and a static named import of it does not link.
   // In the splitting variant star.js is also loaded by path at run time, so JSC builds that namespace itself.
-  graphCase("StarExportConflict", {
+  bindingCase("StarExportConflict", {
     files: splitting => ({
       "/entry.ts": /* js */ `
         import * as ns from "./star.js";
@@ -204,7 +226,7 @@ describe.concurrent("bundler", () => {
   // `export *` from two modules without conflicts, `export * as ns`, `export { a as b } from`, and a re-export chain
   // three modules deep. With splitting each file is an entry chunk whose exports are indirect (imported from the shared
   // chunk and re-exported under the original names), and the runtime import() resolves through them.
-  graphCase("ReExports", {
+  bindingCase("ReExports", {
     files: splitting => ({
       "/entry.ts": /* js */ `
         import * as star from "./star";
@@ -244,7 +266,7 @@ describe.concurrent("bundler", () => {
   });
 
   // (3) namespace object: key order, a binding that does not exist, and the namespace of a chunk loaded by path.
-  graphCase("NamespaceImport", {
+  bindingCase("NamespaceImport", {
     files: splitting => ({
       "/entry.ts": /* js */ `
         import * as ns from "./lib";
@@ -278,7 +300,7 @@ describe.concurrent("bundler", () => {
 
   // (4) default + named mixes; the entry's hoisted `export default function` is called by a cyclic importer before
   // the entry has evaluated.
-  graphCase("DefaultAndNamed", {
+  bindingCase("DefaultAndNamed", {
     files: {
       "/entry.ts": /* js */ `
         import greet, { named, aliased, also as viaAlso, default as viaDefault } from "./lib";
@@ -310,7 +332,7 @@ describe.concurrent("bundler", () => {
   });
 
   // (5) dynamic import() of a module that is its own chunk and of one that is already statically imported.
-  graphCase("DynamicImport", {
+  bindingCase("DynamicImport", {
     files: {
       "/entry.ts": /* js */ `
         import { shared, tick, ticks } from "./shared";
@@ -348,7 +370,7 @@ describe.concurrent("bundler", () => {
   });
 
   // (6) top-level await in a dependency and in the entry; the sibling after the async dependency waits for it.
-  graphCase("TopLevelAwait", {
+  bindingCase("TopLevelAwait", {
     files: {
       "/entry.ts": /* js */ `
         import { slow, log } from "./slow";
@@ -375,7 +397,7 @@ describe.concurrent("bundler", () => {
   });
 
   // (7) CommonJS required/imported from ESM and ESM required from CommonJS inside one executable.
-  graphCase("CjsEsmInterop", {
+  bindingCase("CjsEsmInterop", {
     files: {
       "/entry.ts": /* js */ `
         import cjs, { kind } from "./math.cjs";
@@ -491,7 +513,7 @@ describe.concurrent("bundler", () => {
   }
 
   // (10) class/const bindings read across a cycle before their module has evaluated.
-  graphCase("TDZAcrossCycle", {
+  bindingCase("TDZAcrossCycle", {
     files: {
       "/entry.ts": /* js */ `
         import { early, late } from "./a";
@@ -549,5 +571,304 @@ describe.concurrent("bundler", () => {
     entries: ["/entry.ts", "/b.ts"],
     // Without splitting everything is the entry module itself, which require.cache does not list.
     stdout: splitting => (splitting ? "0\ntrue 1\nfresh 1" : "0\nfalse 1\nsingle 1"),
+  });
+  // RegistryDelete for a module that reads imports: deleting its registry entry and importing the key again gives the
+  // loader a second record of the same module next to the first, whose functions are hot by then. Both keep running,
+  // each against the bindings it links to: imports the graph resolves to another chunk, a named import of a builtin
+  // module and a namespace import of one. `exporterToo` also deletes the chunk those imports come from, so the second
+  // record links to a second record of that chunk (with its own state) while the first stays linked to the first.
+  for (const exporterToo of [false, true]) {
+    bindingCase(exporterToo ? "RegistryDeleteImporterAndExporter" : "RegistryDeleteImporter", {
+      files: {
+        "/entry.ts": /* js */ `
+          import { api } from "./b";
+          import { stateSelf } from "./state";
+          const slashes = (p: string) => p.replaceAll("\\\\", "/");
+          const drop = (path: string) => {
+            const key = Object.keys(import.meta.require.cache).find(k => slashes(k) === slashes(path));
+            if (key !== undefined) delete import.meta.require.cache[key];
+            return key;
+          };
+          console.log(api.loop(20000), api.read());
+          const key = drop(api.self);
+          console.log(key !== undefined, ${exporterToo} && drop(stateSelf) !== undefined);
+          Bun.gc(true);
+          if (key !== undefined) {
+            const again = await import(key);
+            const api2 = Object.values(again).find((v: any) => v && typeof v === "object" && "counter" in v) as typeof api;
+            console.log(api2 === api ? "same" : "fresh", api.read(), api2.read());
+            api2.bump();
+            api2.bump();
+            api.bump();
+            console.log(api.read(), api2.read(), api.loop(20000), api2.loop(20000));
+            const third = await import(key);
+            console.log(third === again);
+          }
+        `,
+        "/b.ts": /* js */ `
+          import { n, inc } from "./state";
+          import { sep } from "node:path";
+          import * as os from "node:os";
+          function bump() { inc(); }
+          function counter() { return n; }
+          function read() { return [n, sep === "/" || sep === "\\\\", typeof os.EOL].join(); }
+          function loop(k: number) { let r = 0; for (let i = 0; i < k; i++) r = counter(); return r; }
+          export const api = { self: import.meta.path, bump, counter, read, loop };
+        `,
+        "/state.ts": /* js */ `
+          export let n = 0;
+          export function inc() { n++; }
+          export const stateSelf = import.meta.path;
+        `,
+      },
+      entries: ["/entry.ts", "/b.ts", "/state.ts"],
+      // Without splitting everything is the entry module itself, which require.cache does not list.
+      stdout: splitting =>
+        !splitting
+          ? "0 0,true,string\nfalse false"
+          : exporterToo
+            ? "0 0,true,string\ntrue true\nfresh 0,true,string 0,true,string\n1,true,string 2,true,string 1 2\ntrue"
+            : "0 0,true,string\ntrue false\nfresh 0,true,string 0,true,string\n3,true,string 3,true,string 3 3\ntrue",
+    });
+  }
+
+  // The cases below are about how a record reads another record's bindings: every module listed in `entries` is a chunk
+  // (module record) of its own under +splitting, so each import in it crosses a record boundary. Namespace imports of
+  // builtin modules stay namespace imports in the output (imports of bundled modules are lowered to named bindings), so
+  // mixing them with named imports gives a record import lists with namespace entries before, between and after the
+  // named ones.
+  bindingCase("ImportBindingsNamespaceOrders", {
+    files: {
+      "/entry.ts": /* js */ `
+        import { readFirst } from "./first";
+        import { readMiddle } from "./middle";
+        import { readLast, bump } from "./last";
+        import { readOnlyNamespaces } from "./only-namespaces";
+        const all = () => [readFirst(), readMiddle(), readLast(), readOnlyNamespaces()].join(" | ");
+        console.log(all());
+        bump();
+        bump();
+        console.log(all());
+      `,
+      "/state.ts": /* js */ `
+        export let counter = 0;
+        export function bump() { counter++; }
+        export const label = "label";
+        export const zeta = "zeta", alpha = "alpha", Mid = "Mid", _under = "_under", $dollar = "$dollar";
+      `,
+      "/first.ts": /* js */ `
+        import * as path from "node:path";
+        import * as os from "node:os";
+        import { counter, label, zeta } from "./state";
+        export function readFirst() { return [counter, label, zeta, typeof path.join, typeof os.EOL].join(); }
+      `,
+      "/middle.ts": /* js */ `
+        import { alpha } from "./state";
+        import * as util from "node:util";
+        import { counter } from "./state";
+        import * as path from "node:path";
+        import { Mid, _under } from "./state";
+        export function readMiddle() { return [alpha, counter, Mid, _under, typeof util.inspect, path.posix.join("a", "b")].join(); }
+      `,
+      "/last.ts": /* js */ `
+        import { counter, bump, $dollar, zeta, alpha } from "./state";
+        import * as os from "node:os";
+        import * as util from "node:util";
+        import * as path from "node:path";
+        export function readLast() { return [counter, $dollar, zeta, alpha, typeof os.EOL, typeof util.format, path.posix.sep].join(); }
+        export { bump };
+      `,
+      "/only-namespaces.ts": /* js */ `
+        import * as path from "node:path";
+        import * as util from "node:util";
+        export function readOnlyNamespaces() { return [path.posix.basename("/a/b.txt"), util.format("%s", "f")].join(); }
+      `,
+    },
+    entries: ["/entry.ts", "/state.ts", "/first.ts", "/middle.ts", "/last.ts", "/only-namespaces.ts"],
+    stdout:
+      "0,label,zeta,function,string | alpha,0,Mid,_under,function,a/b | 0,$dollar,zeta,alpha,string,function,/ | b.txt,f\n" +
+      "2,label,zeta,function,string | alpha,2,Mid,_under,function,a/b | 2,$dollar,zeta,alpha,string,function,/ | b.txt,f",
+  });
+
+  // Named, default and namespace imports of builtin modules (whose records are not source text modules) next to
+  // imports of other chunks.
+  bindingCase("ImportBindingsBuiltinExporters", {
+    files: {
+      "/entry.ts": /* js */ `
+        import { describe, bump } from "./user";
+        console.log(describe());
+        bump();
+        console.log(describe());
+      `,
+      "/state.ts": /* js */ `
+        export let counter = 10;
+        export function bump() { counter++; }
+      `,
+      "/user.ts": /* js */ `
+        import fs, { existsSync } from "node:fs";
+        import * as path from "node:path";
+        import { counter, bump } from "./state";
+        import { join, sep, posix } from "node:path";
+        import { EventEmitter } from "node:events";
+        import assert, { strictEqual } from "node:assert";
+        export function describe() {
+          strictEqual(fs.existsSync, existsSync);
+          assert(path.join === join);
+          return [counter, typeof existsSync, posix.join("a", "b"), sep === path.sep, new EventEmitter().listenerCount("x")].join();
+        }
+        export { bump };
+      `,
+    },
+    entries: ["/entry.ts", "/state.ts", "/user.ts"],
+    stdout: "10,function,a/b,true,0\n11,function,a/b,true,0",
+  });
+
+  // One record importing many bindings from several records, with live updates of all of them.
+  {
+    const exporters = 6;
+    const perExporter = 16;
+    // (the first file is the entry point)
+    const files: Record<string, string> = {
+      "/entry.ts": /* js */ `
+        import { sum, ends, bumpAll } from "./importer";
+        console.log(sum(), ends());
+        bumpAll();
+        console.log(sum(), ends());
+        for (let i = 0; i < 1000; i++) bumpAll();
+        console.log(sum(), ends());
+      `,
+    };
+    const names: string[] = [];
+    for (let m = 0; m < exporters; m++) {
+      const own = Array.from({ length: perExporter }, (_, i) => `v${m}_${i}`);
+      names.push(...own);
+      files[`/exporter${m}.ts`] =
+        own.map((name, i) => `export let ${name} = ${m * 100 + i};`).join("\n") +
+        `\nexport function bump${m}() { ${own.map(name => `${name}++;`).join(" ")} }`;
+    }
+    files["/importer.ts"] =
+      Array.from(
+        { length: exporters },
+        (_, m) => `import { ${names.filter(n => n.startsWith(`v${m}_`)).join(", ")}, bump${m} } from "./exporter${m}";`,
+      ).join("\n") +
+      `\nexport function sum() { return [${names.join(", ")}].reduce((a, b) => a + b, 0); }` +
+      `\nexport function ends() { return [${names[0]}, ${names[names.length - 1]}].join(); }` +
+      `\nexport function bumpAll() { ${Array.from({ length: exporters }, (_, m) => `bump${m}();`).join(" ")} }`;
+    let base = 0;
+    for (let m = 0; m < exporters; m++) for (let i = 0; i < perExporter; i++) base += m * 100 + i;
+    const count = exporters * perExporter;
+    bindingCase("ImportBindingsMany", {
+      files,
+      entries: ["/entry.ts", "/importer.ts", ...Array.from({ length: exporters }, (_, m) => `/exporter${m}.ts`)],
+      stdout: `${base} 0,515\n${base + count} 1,516\n${base + count * 1001} 1001,1516`,
+    });
+  }
+
+  // Imports that are never read, first read long after their module was evaluated, or first read on a path that is only
+  // taken once the function reading them has run many times.
+  bindingCase("ImportBindingsFirstUse", {
+    files: {
+      "/entry.ts": /* js */ `
+        import { sometimes, loop, neverCalled, evaluated } from "./user";
+        import { bump, setLabel } from "./state";
+        console.log(evaluated, loop(20000, false));
+        bump();
+        setLabel("late");
+        console.log(sometimes(true), loop(20000, true));
+        console.log(sometimes(false), typeof neverCalled);
+        for (let i = 0; i < 3; i++) bump();
+        console.log(sometimes(true), neverCalled().join());
+      `,
+      "/state.ts": /* js */ `
+        export let counter = 0;
+        export let label = "early";
+        export const constant = 42;
+        export const unread = "unread";
+        export function bump() { counter++; }
+        export function setLabel(value: string) { label = value; }
+      `,
+      "/user.ts": /* js */ `
+        import { counter, label, constant, unread } from "./state";
+        import * as path from "node:path";
+        export const evaluated = true;
+        export function sometimes(flag: boolean) {
+          if (flag) return [constant, label, counter, path.posix.sep].join();
+          return 0;
+        }
+        export function loop(n: number, flag: boolean) {
+          let result: unknown;
+          for (let i = 0; i < n; i++) result = sometimes(flag);
+          return result;
+        }
+        export function neverCalled() { return [unread, counter]; }
+      `,
+    },
+    entries: ["/entry.ts", "/state.ts", "/user.ts"],
+    stdout: "true 0\n42,late,1,/ 42,late,1,/\n0 function\n42,late,4,/ unread,4",
+  });
+
+  // One exported variable reaching a record under several names and through re-exporting records.
+  bindingCase("ImportBindingsAliasesAndReExports", {
+    files: {
+      "/entry.ts": /* js */ `
+        import { read, bump } from "./user";
+        console.log(read());
+        bump();
+        console.log(read());
+      `,
+      "/state.ts": /* js */ `
+        export let counter = 0;
+        export function bump() { counter++; }
+        export const fixed = "fixed";
+      `,
+      "/renamed.ts": /* js */ `
+        export { counter as total, bump as increase } from "./state";
+      `,
+      "/starred.ts": /* js */ `
+        export * from "./state";
+        export const own = "own";
+      `,
+      "/chained.ts": /* js */ `
+        export * from "./starred";
+        export { total as grandTotal } from "./renamed";
+      `,
+      "/user.ts": /* js */ `
+        import { counter as one, counter as two, bump } from "./state";
+        import { total, increase } from "./renamed";
+        import { counter as viaStar, own } from "./starred";
+        import { grandTotal, fixed, counter as viaChain } from "./chained";
+        export function read() { return [one, two, total, viaStar, grandTotal, viaChain, own, fixed, increase === bump].join(); }
+        export { bump };
+      `,
+    },
+    entries: ["/entry.ts", "/state.ts", "/renamed.ts", "/starred.ts", "/chained.ts", "/user.ts"],
+    stdout: "0,0,0,0,0,0,own,fixed,true\n1,1,1,1,1,1,own,fixed,true",
+  });
+
+  // A record loaded by import() after the records it imports from have long been evaluated, and loaded a second time.
+  bindingCase("ImportBindingsDynamicImporter", {
+    files: {
+      "/entry.ts": /* js */ `
+        import { counter, bump } from "./state";
+        bump();
+        const late = await import("./late");
+        console.log(counter, late.read());
+        bump();
+        const again = await import("./late");
+        console.log(again === late, counter, again.read());
+      `,
+      "/state.ts": /* js */ `
+        export let counter = 0;
+        export function bump() { counter++; }
+      `,
+      "/late.ts": /* js */ `
+        import { counter, bump } from "./state";
+        import * as path from "node:path";
+        export const seenAtLoad = counter;
+        export function read() { return [seenAtLoad, counter, path.posix.sep, typeof bump].join(); }
+      `,
+    },
+    entries: ["/entry.ts", "/state.ts"],
+    stdout: "1 1,1,/,function\ntrue 2 1,2,/,function",
   });
 });

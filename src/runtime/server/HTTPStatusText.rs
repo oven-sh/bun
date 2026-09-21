@@ -11,7 +11,7 @@ pub(crate) const fn is_sendable(code: u16) -> bool {
     matches!(code, 100..=999)
 }
 
-pub fn get(code: u16) -> Option<&'static [u8]> {
+pub(crate) fn get(code: u16) -> Option<&'static [u8]> {
     match code {
         100 => Some(b"100 Continue"),
         101 => Some(b"101 Switching protocols"),

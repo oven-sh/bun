@@ -63,7 +63,7 @@ impl Default for ByteStream {
 }
 
 /// ReadableStream source backed by a ByteStream.
-pub type Source = readable_stream::NewSource<ByteStream>;
+pub(crate) type Source = readable_stream::NewSource<ByteStream>;
 
 /// A network body producer's (fetch, S3) hold on the stream it feeds: a counted ref on the stream's
 /// `Source`, so delivery and unhooking go through memory the producer keeps alive rather than the
@@ -71,14 +71,14 @@ pub type Source = readable_stream::NewSource<ByteStream>;
 /// the receive backpressure. The ref roots the wrapper except while parked, so an unread stream
 /// can be collected (`SourceHandle::consumer_collected`).
 #[derive(Default)]
-pub struct ProducerHold {
+pub(crate) struct ProducerHold {
     source: Cell<Option<core::ptr::NonNull<Source>>>,
     parked: Cell<bool>,
 }
 
 /// The JS-thread half of `BODY_HIGH_WATER_MARK`, decided from the stream's buffer after a
 /// delivery. The HTTP thread does the other half on its hop buffer.
-pub enum AfterDelivery {
+pub(crate) enum AfterDelivery {
     /// Under the mark, or a whole-body consumer (`readableStreamTo*`) is collecting: keep going.
     Resume,
     /// At the mark with a back-pressured sink: it resumes the producer when it drains.
@@ -92,7 +92,7 @@ impl ProducerHold {
     ///
     /// # Safety
     /// `bytes` is the live ByteStream of a stream the caller holds.
-    pub unsafe fn hold(&self, bytes: *mut ByteStream) {
+    pub(crate) unsafe fn hold(&self, bytes: *mut ByteStream) {
         self.release();
         // SAFETY: fn contract; the ref keeps the Source alive past this call.
         unsafe {
@@ -102,13 +102,13 @@ impl ProducerHold {
         }
     }
 
-    pub fn is_held(&self) -> bool {
+    pub(crate) fn is_held(&self) -> bool {
         self.source.get().is_some()
     }
 
     /// The held stream, pinned for the guard's life: a consumer inside `on_data` can cancel the
     /// producer (which drops the hold), and while parked the wrapper is not rooted.
-    pub fn bytes(&self) -> Option<PinnedBytes> {
+    pub(crate) fn bytes(&self) -> Option<PinnedBytes> {
         let source = self.source.get()?;
         // SAFETY: live through our ref; no borrow of the source exists yet.
         unsafe { (*source.as_ptr()).increment_count() };
@@ -117,7 +117,7 @@ impl ProducerHold {
 
     /// Stop being the producer. The source stays pinned by the returned guard, so the caller can
     /// still deliver a terminal chunk. Touches no JS cell.
-    pub fn take(&self) -> Option<PinnedBytes> {
+    pub(crate) fn take(&self) -> Option<PinnedBytes> {
         let source = self.source.take()?;
         self.parked.set(false);
         // SAFETY: still pinned by our ref, which the guard now owns.
@@ -129,11 +129,11 @@ impl ProducerHold {
     }
 
     /// `take` and drop. Touches no JS cell (safe inside a GC sweep).
-    pub fn release(&self) {
+    pub(crate) fn release(&self) {
         drop(self.take());
     }
 
-    pub fn after_delivery(bytes: &ByteStream) -> AfterDelivery {
+    pub(crate) fn after_delivery(bytes: &ByteStream) -> AfterDelivery {
         if bytes.buffered_len() < bun_http::signals::BODY_HIGH_WATER_MARK
             || bytes.buffer_action.get().is_some()
         {
@@ -146,7 +146,7 @@ impl ProducerHold {
     }
 
     /// Returns whether this call parked (the caller then releases its loop ref).
-    pub fn park(&self) -> bool {
+    pub(crate) fn park(&self) -> bool {
         if self.parked.replace(true) {
             return false;
         }
@@ -160,7 +160,7 @@ impl ProducerHold {
 
     /// Returns whether this call unparked (the caller then re-takes its loop ref). Reached from a
     /// consumer holding the stream.
-    pub fn unpark(&self) -> bool {
+    pub(crate) fn unpark(&self) -> bool {
         if !self.parked.replace(false) {
             return false;
         }
@@ -179,7 +179,7 @@ impl Drop for ProducerHold {
 }
 
 /// A counted ref on a stream's `Source` for the guard's life; derefs to its ByteStream.
-pub struct PinnedBytes(core::ptr::NonNull<Source>);
+pub(crate) struct PinnedBytes(core::ptr::NonNull<Source>);
 
 impl core::ops::Deref for PinnedBytes {
     type Target = ByteStream;
@@ -228,10 +228,10 @@ impl readable_stream::SourceContext for ByteStream {
     }
     fn to_buffered_value(
         &mut self,
-        global: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         action: streams::BufferActionTag,
     ) -> Option<bun_jsc::JsResult<JSValue>> {
-        Some(Self::to_buffered_value(self, global, action))
+        Some(Self::to_buffered_value(self, cx, action))
     }
 }
 
@@ -923,15 +923,15 @@ impl ByteStream {
 
     fn to_buffered_value(
         &self,
-        global_this: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         action: streams::BufferActionTag,
     ) -> bun_jsc::JsResult<JSValue> {
         if self.buffer_action.get().is_some() {
-            return Err(global_this.throw(format_args!("Cannot buffer value twice")));
+            return Err(cx.global().throw(format_args!("Cannot buffer value twice")));
         }
 
         if let streams::Result::Err(err) = &self.pending.get().result {
-            let err_js = err.to_js(global_this);
+            let err_js = err.to_js(cx.global());
             err_js.ensure_still_alive();
             self.pending.with_mut(|p| p.result = streams::Result::Done);
             self.done.set(true);
@@ -939,16 +939,15 @@ impl ByteStream {
                 b.clear();
                 b.shrink_to_fit();
             });
-            return Ok(jsc::JSPromise::rejected_promise(global_this, err_js).to_js());
+            return Ok(jsc::JSPromise::rejected_promise(cx.global(), err_js).to_js());
         }
 
         if let Some(blob_) = self.to_any_blob() {
             let mut blob = blob_;
-            return blob.to_promise(global_this, action);
+            return blob.to_promise(cx, action);
         }
 
-        self.buffer_action
-            .set(Some(BufferAction::new(action, global_this)));
+        self.buffer_action.set(Some(BufferAction::new(action, cx)));
         let promise = self.buffer_action.get().as_ref().unwrap().value();
         // Signal after the action is installed so a backpressure-gated
         // producer observes it; a synchronous producer may fulfil it inline.
@@ -957,7 +956,7 @@ impl ByteStream {
     }
 }
 
-pub mod testing_apis {
+pub(crate) mod testing_apis {
     use super::*;
 
     /// `bun:internal-for-testing`: swap the stream's producer for
@@ -980,4 +979,4 @@ pub mod testing_apis {
 }
 // `generated_js2native.rs` snake-cases `TestingAPIs` as `testing_ap_is`
 // (acronym splitter treats `AP|Is` as two words); alias so both resolve.
-pub use testing_apis as testing_ap_is;
+pub(crate) use testing_apis as testing_ap_is;

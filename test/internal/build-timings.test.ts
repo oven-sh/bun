@@ -24,7 +24,6 @@ import {
   parseNinjaLog,
   queueTimes,
   totalsByRule,
-  traceEvents,
   waits,
 } from "../../scripts/build/timings.ts";
 
@@ -542,27 +541,5 @@ describe("chart", () => {
     expect(data).not.toContain("<");
     expect(JSON.parse(data)).toEqual(JSON.parse(JSON.stringify(chartData(hostile))));
     expect(JSON.parse(data).runs.at(-1).bars[0].label).toBe("gen </script><script>alert(1)</script>");
-  });
-});
-
-describe("traceEvents", () => {
-  test("a process per run, the most recent first; early releases and compiler phases inside their command", () => {
-    const events = traceEvents(build);
-    expect(events.filter(e => e.name === "process_name").map(e => [e.pid, e.args!.name])).toEqual([
-      [0, "ninja 2026-01-02 04:04:05Z"],
-      [1, "ninja 2026-01-02 03:04:05Z"],
-    ]);
-    const inFirstRun = events.filter(e => e.pid === 1 && e.ph === "X");
-    const b = inFirstRun.find(e => e.name === "rustc b")!;
-    expect(b).toMatchObject({ cat: "rust_rustc", ts: 412_000, dur: 2_000_000 });
-    // `a` is still running when `b` starts, so they are on different rows.
-    expect(b.tid).not.toBe(inFirstRun.find(e => e.name === "rustc a")!.tid);
-    const insideB = inFirstRun.filter(e => e !== b && e.tid === b.tid && e.ts! >= b.ts! && e.ts! < b.ts! + b.dur!);
-    expect(insideB.map(e => [e.name, e.ts, e.dur])).toEqual([
-      ["until libb.rmeta is released", 412_000, 200_000],
-      ["total", 420_000, 1_980_000],
-      ["type_check_crate", 430_000, 170_000],
-      ["LLVM_passes", 700_000, 1_600_000],
-    ]);
   });
 });

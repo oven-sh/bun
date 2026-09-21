@@ -50,7 +50,7 @@ import { BuildError } from "./build/error.ts";
 import { ninjaIfPresent } from "./build/ninja-release.ts";
 import { STREAM_FD } from "./build/stream.ts";
 import { chartHtml } from "./build/timings-chart.ts";
-import { formatReport, loadBuild, traceEvents } from "./build/timings.ts";
+import { formatReport, loadBuild } from "./build/timings.ts";
 import { bold, dim, interactive, nameColor, status } from "./build/tty.ts";
 import { isBuildkite, isCI, printEnvironment, startGroup } from "./buildkite.ts";
 
@@ -352,22 +352,20 @@ async function main(): Promise<void> {
 
 /**
  * `--timings`, and every CI build: print where the build directory's time went, and write the same as a chart. Under
- * Buildkite the chart is uploaded and the build page links to it; anywhere else there is also a trace for Perfetto.
+ * Buildkite the chart is uploaded and the build page links to it.
  */
 function reportTimings(cfg: Config, write: (text: string) => void): void {
   const build = loadBuild(cfg);
   write(formatReport(build, { bold, dim }));
   if (build.runs.length === 0) return;
-  const rel = (p: string) => relative(process.cwd(), p);
   const chart = join(cfg.buildDir, `${timingsFileStem()}.html`);
   writeFileSync(chart, chartHtml(build));
   write(
-    `\n${bold("chart")}  ${rel(chart)}${dim("  the most recent runs of ninja, command by command; hover or click a bar")}\n`,
+    `\n${bold("chart")}  ${relative(process.cwd(), chart)}` +
+      dim("  the most recent runs of ninja, command by command; hover or click a bar") +
+      "\n",
   );
-  if (isBuildkite) return publishTimings(cfg, chart);
-  const trace = join(cfg.buildDir, `${timingsFileStem()}-trace.json`);
-  writeFileSync(trace, JSON.stringify({ traceEvents: traceEvents(build) }) + "\n");
-  write(`${bold("trace")}  ${rel(trace)}${dim("  the same runs for ui.perfetto.dev or chrome://tracing")}\n`);
+  if (isBuildkite) publishTimings(cfg, chart);
 }
 
 /**

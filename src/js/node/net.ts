@@ -310,7 +310,7 @@ const kUserUnrefed = Symbol("kUserUnrefed");
 // held the loop (a wrapped duplex with no fd) would pin the process.
 const kPausedUnref = Symbol("kPausedUnref");
 const kOnreadDeliver = Symbol("kOnreadDeliver");
-// Set by kReadStop while a child reads the socket. 1: no 'readable' listener at the hand-off, 2: one was attached.
+// Set by kReadStop for the rest of the event loop turn. 1: no 'readable' listener at the hand-off, 2: one was attached.
 const kHandedOff = Symbol("kHandedOff");
 function noop() {}
 function onUpgradeAttachedWrite(chunk, encoding, callback, onClose) {
@@ -2521,9 +2521,14 @@ Socket.prototype[kReadStop] = function () {
   if (!handle) return;
   readStop(this, handle);
   this[kHandedOff] = this._readableState.readableListening ? 2 : 1;
+  setImmediate(clearHandedOff, this);
 };
 
-// A read(0) is the stream's own kick (maybeReadMore_, resume_, a 'readable' listener's first read). Node restarts the handle on each, and the parent takes the child's bytes.
+function clearHandedOff(self) {
+  self[kHandedOff] = 0;
+}
+
+// A read(0) in the turn of the hand-off is a kick the stream queued earlier (maybeReadMore_, resume_). Node restarts the handle on it, and the parent takes the child's bytes.
 function staysHandedOff(self, size) {
   const handedOff = self[kHandedOff];
   if (!handedOff) return false;

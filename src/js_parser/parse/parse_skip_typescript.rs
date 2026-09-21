@@ -72,8 +72,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.lexer.next()?;
 
                 while self.lexer.token != T::TCloseBracket {
-                    // "[, , a]"
-                    // "[a, , b]"
+                    // "[, a, , b]"
                     if self.lexer.token != T::TComma {
                         // "[...a]"
                         if self.lexer.token == T::TDotDotDot {

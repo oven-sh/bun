@@ -376,6 +376,31 @@ describe("a build in which ninja started over", () => {
   });
 });
 
+describe("on a Windows host", () => {
+  test("ninja's stamps are 100 ns ticks from its own epoch, 10400 s before 2001, and still line up with file mtimes", async () => {
+    using windows = tempDir("build-timings-windows", {});
+    const dir = String(windows);
+    const n = new Ninja({ buildDir: dir });
+    n.rule("rust_rustc", { command: "rustc $manifest", description: "rustc $crate $what" });
+    n.build({
+      outputs: [join(dir, "liba.rlib"), join(dir, "liba.rmeta")],
+      rule: "rust_rustc",
+      inputs: [],
+      vars: { manifest: "a.json", crate: "a", what: "" },
+      earlyOutputPrefix: "@early@",
+    });
+    await n.write();
+    // src/disk_interface.cc TimeStampFromFileTime: FILETIME (100 ns since 1601) less 12622770400 seconds.
+    const ticks = (unixMs: number) => (BigInt(unixMs - Date.UTC(1601, 0, 1)) - 12_622_770_400_000n) * 10_000n;
+    writeFileSync(join(dir, ".ninja_log"), `# ninja log v7\n110\t1110\t${ticks(T0 + 110)}\tliba.rlib\tf00d\n`);
+    touch(join(dir, "liba.rmeta"), T0 + 110 + 300);
+    touch(join(dir, "liba.rlib"), T0 + 1105);
+
+    const [a] = [...loadBuild(dir, true).last.values()];
+    expect([a!.stampMs, [...a!.released.values()]]).toEqual([T0 + 110, [300]]);
+  });
+});
+
 describe("formatReport", () => {
   test("the whole report", () => {
     const plain = { bold: (s: string) => s, dim: (s: string) => s };

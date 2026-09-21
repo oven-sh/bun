@@ -51,7 +51,7 @@ export function parseNinjaLog(text: string): LogEntry[] {
   const lines = text.split("\n");
   if (lines[0] !== logSignature) {
     throw new BuildError(`.ninja_log starts with ${JSON.stringify(lines[0])}, not "${logSignature}"`, {
-      hint: "The log was written by another ninja than the one this build runs. The next build rewrites it.",
+      hint: "The timings read the log of the ninja this build pins (oven-sh/ninja). Another ninja built this directory.",
     });
   }
   const entries: LogEntry[] = [];
@@ -65,11 +65,17 @@ export function parseNinjaLog(text: string): LogEntry[] {
 
 /**
  * A `TimeStamp` as Unix milliseconds. POSIX: nanoseconds since 1970. Windows (src/disk_interface.cc
- * `TimeStampFromFileTime`): 100 ns ticks since 2001-01-01, the FILETIME epoch moved forward 400 years.
+ * `TimeStampFromFileTime`): 100 ns ticks since `NINJA_WINDOWS_EPOCH_MS`.
  */
 function stampToUnixMs(stamp: bigint, windowsHost: boolean): number {
-  return windowsHost ? Number(stamp / 10_000n) + Date.UTC(2001, 0, 1) : Number(stamp / 1_000_000n);
+  return windowsHost ? Number(stamp / 10_000n) + NINJA_WINDOWS_EPOCH_MS : Number(stamp / 1_000_000n);
 }
+
+/**
+ * ninja moves FILETIME's epoch (1601) forward by 12622770400 seconds, which it calls 400 years and is 10400 seconds
+ * short of them: its zero is 2000-12-31 21:06:40 UTC, not 2001-01-01.
+ */
+const NINJA_WINDOWS_EPOCH_MS = Date.UTC(1601, 0, 1) + 12_622_770_400_000;
 
 /**
  * How far `stamp - start` of a command can be from its ninja's start when the stamp is the command's start. Below:
@@ -265,6 +271,9 @@ interface ClangTimeTrace {
   traceEvents: { ph: string; name: string; ts: number; dur?: number; args?: { detail?: string } }[];
 }
 
+/** A compiler phase shorter than this is not kept. */
+const PHASE_FLOOR_MS = 10;
+
 const clangRules = new Set(["cc", "cxx", "cxx_pch", "pch", "pch_msvc"]);
 
 function readSelfReport(buildDir: string, edge: ManifestEdge): Phase[] {
@@ -273,11 +282,21 @@ function readSelfReport(buildDir: string, edge: ManifestEdge): Phase[] {
     // clang names the trace after the output, with its extension replaced.
     const path = output.replace(/\.[^./\\]+$/, ".json");
     if (!existsSync(path)) return [];
-    const trace = JSON.parse(readFileSync(path, "utf8")) as ClangTimeTrace;
+    let trace: ClangTimeTrace;
+    try {
+      trace = JSON.parse(readFileSync(path, "utf8")) as ClangTimeTrace;
+    } catch (error) {
+      // A build interrupted while clang was writing it leaves half a file, which no later build without
+      // --time-trace=on rewrites.
+      if (error instanceof SyntaxError) return [];
+      throw error;
+    }
     const phases: Phase[] = [];
     for (const e of trace.traceEvents) {
-      // "Total <name>" events are clang's own sums, not stretches of time.
+      // "Total <name>" events are clang's own sums, not stretches of time. A translation unit has tens of thousands
+      // of events, nearly all of them slivers; a build has hundreds of translation units.
       if (e.ph !== "X" || e.dur === undefined || e.name.startsWith("Total ")) continue;
+      if (e.dur < PHASE_FLOOR_MS * 1000) continue;
       const startMs = (trace.beginningOfTime + e.ts) / 1000;
       const detail = e.args?.detail;
       phases.push({

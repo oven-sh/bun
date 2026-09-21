@@ -95,6 +95,7 @@ bun run build -n -d explain                 # what would rebuild, and why (dry r
 bun run build -t query <target>             # <target>'s inputs and outputs
 bun run build -t deps <target>              # what headers does foo.o depend on?
 bun run build --timings                     # where the build's time went (see "Timings")
+bun run build --configure-only --timings    # the same report for the directory as it is, without building
 ```
 
 The generated `build.ninja` is the ground truth. If an edge isn't doing what you expect, read it there first.

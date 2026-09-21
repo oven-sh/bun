@@ -385,7 +385,10 @@ const client = `
     var steps = run.bars.filter(function (b) { return b.step !== undefined; }).sort(function (a, b) { return a.step - b.step; });
     var links = [], forward = [], chain = {}, held = {};
     if (run.pinned === undefined) {
-      for (var i = 0; i + 1 < steps.length; i++) links.push([steps[i], steps[i].start + steps[i].blocksNextForMs, steps[i + 1]]);
+      // Only steps that follow each other: after incremental builds a run holds some of the path's steps, not all.
+      for (var i = 0; i + 1 < steps.length; i++) {
+        if (steps[i + 1].step === steps[i].step + 1) links.push([steps[i], steps[i].start + steps[i].blocksNextForMs, steps[i + 1]]);
+      }
     } else {
       for (var at = run.pinned; at !== undefined; at = run.bars[at].blocker) {
         chain[at] = true;

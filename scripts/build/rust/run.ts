@@ -165,6 +165,12 @@ function runRustc(unit: RustcUnitManifest): void {
   const finish = (status: number): never => {
     if (status === 0) {
       stampOutput(unit.output);
+      // A ninja that was not told of the `.rmeta` early released it now, with the rest: same time as the output, so
+      // that the timings do not read an early release that did not happen.
+      if (unit.rmeta !== undefined && earlyOutputPrefix === undefined && existsSync(unit.rmeta)) {
+        const { mtime } = statSync(unit.output);
+        utimesSync(unit.rmeta, mtime, mtime);
+      }
       // A bin is also wanted under its target's name, where its user looks for it (cargo "uplifts" it the same way).
       if (unit.binDestination !== undefined) {
         mkdirSync(dirname(unit.binDestination), { recursive: true });
@@ -204,9 +210,10 @@ function runRustc(unit: RustcUnitManifest): void {
       }
       if (!renderRustcMessage(line) || unit.rmeta === undefined) continue;
       // The .rmeta is complete: give it a current mtime (see stampOutput) and tell ninja, which starts the
-      // dependents now instead of when this process exits.
+      // dependents now instead of when this process exits. Any other ninja gets it stamped with the output.
+      if (earlyOutputPrefix === undefined) continue;
       stampOutput(unit.rmeta);
-      if (earlyOutputPrefix !== undefined) emit(1, `${earlyOutputPrefix}${unit.rmetaNinjaName}\n`);
+      emit(1, `${earlyOutputPrefix}${unit.rmetaNinjaName}\n`);
     }
   });
   child.on("error", e => {
@@ -223,7 +230,7 @@ function runRustc(unit: RustcUnitManifest): void {
  * A line of `-Z time-passes -Z time-passes-format=json`: `time: {"pass":…,"time":<seconds>,…}`, printed as the pass
  * ends. rustc gives the duration and no clock time, so the end is when the line arrived.
  */
-function timePass(line: string): Phase | undefined {
+export function timePass(line: string): Phase | undefined {
   if (!line.startsWith("time: {")) return undefined;
   const { pass, time } = JSON.parse(line.slice("time: ".length)) as { pass: string; time: number };
   const endMs = Date.now();

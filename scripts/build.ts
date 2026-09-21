@@ -52,7 +52,7 @@ import { STREAM_FD } from "./build/stream.ts";
 import { chartHtml } from "./build/timings-chart.ts";
 import { formatReport, loadBuild, traceEvents } from "./build/timings.ts";
 import { bold, dim, interactive, nameColor, status } from "./build/tty.ts";
-import { isCI, printEnvironment, startGroup } from "./buildkite.ts";
+import { isBuildkite, isCI, printEnvironment, startGroup } from "./buildkite.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Main
@@ -260,7 +260,11 @@ async function main(): Promise<void> {
       }
     }
 
-    if (args.configureOnly) return;
+    if (args.configureOnly) {
+      // The report describes the build directory, so it needs no build: this is how to ask for it without one.
+      if (args.timings) reportTimings(result.cfg, t => process.stderr.write(t));
+      return;
+    }
     // FD 3 sideband — only when interactive. stream.ts (wrapping deps and
     // the cargo plan) writes live output there, bypassing ninja's per-job buffering.
     // A human watching a terminal wants to see cmake configure spew and
@@ -341,8 +345,19 @@ async function main(): Promise<void> {
 /**
  * `--timings`, and every CI build: print where the build directory's time went, and write the same as a chart. In CI
  * the chart is uploaded and the build page links to it; locally there is also a trace for Perfetto.
+ *
+ * It describes a build that already succeeded, so it never fails one: whatever goes wrong here is printed, and the
+ * artifacts still upload and the binary still runs (the symbol order file's trace is treated the same way).
  */
 function reportTimings(cfg: Config, write: (text: string) => void): void {
+  try {
+    writeTimings(cfg, write);
+  } catch (error) {
+    write(error instanceof BuildError ? error.format() : `build timings: ${(error as Error).stack ?? error}\n`);
+  }
+}
+
+function writeTimings(cfg: Config, write: (text: string) => void): void {
   const build = loadBuild(cfg.buildDir);
   write(formatReport(build, { bold, dim }));
   if (build.runs.length === 0) return;
@@ -352,7 +367,7 @@ function reportTimings(cfg: Config, write: (text: string) => void): void {
   write(
     `\n${bold("chart")}  ${rel(chart)}${dim("  every run of ninja, a lane per kind of command; hover or click a bar")}\n`,
   );
-  if (cfg.buildkite) return publishTimings(cfg, chart);
+  if (isBuildkite) return publishTimings(cfg, chart);
   const trace = join(cfg.buildDir, `${timingsFileStem(cfg)}-trace.json`);
   writeFileSync(trace, JSON.stringify({ traceEvents: traceEvents(build) }) + "\n");
   write(`${bold("trace")}  ${rel(trace)}${dim("  the same runs for ui.perfetto.dev or chrome://tracing")}\n`);
@@ -697,7 +712,8 @@ Options:
                                   winsysroot (Windows cross-compile SDK root)
   --target=<name>         Build a specific ninja target (repeatable)
   --configure-only        Emit build.ninja, don't run it
-  --timings               After the build, report where the time went: per kind
+  --timings               After the build (or, with --configure-only, without
+                          one), report where the time went: per kind
                           of edge, the slowest edges, the critical path, and
                           the last ninja run's parallelism. It describes the
                           build directory (every edge's last run), so it reads

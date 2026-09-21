@@ -313,7 +313,7 @@ function upload(paths: string[], cwd: string): void {
 
 /** `timings[-<target>-<mode>]`: every build step of a build uploads its own, so in CI the name says whose it is. */
 export function timingsFileStem(cfg: Config): string {
-  return cfg.buildkite ? `timings-${computeBunTriplet(cfg)}-${cfg.mode}` : "timings";
+  return isBuildkite ? `timings-${computeBunTriplet(cfg)}-${cfg.mode}` : "timings";
 }
 
 /**
@@ -321,7 +321,7 @@ export function timingsFileStem(cfg: Config): string {
  * Buildkite serves as a page, and linked from the build page (one annotation for the build, a link per step).
  */
 export function publishTimings(cfg: Config, chart: string): void {
-  if (!cfg.buildkite) return;
+  if (!isBuildkite) return;
   const artifact = relative(cfg.buildDir, chart);
   // The link resolves only once the artifact exists.
   upload([artifact], cfg.buildDir);

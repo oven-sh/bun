@@ -11,7 +11,7 @@ import { join } from "node:path";
 
 import type { Config } from "../../scripts/build/config.ts";
 import type { MetadataPackage, RustPlan, UnitGraphUnit } from "../../scripts/build/rust/plan.ts";
-import { parseBuildScriptOutput, rustcInvocation, writeDepfile } from "../../scripts/build/rust/run.ts";
+import { parseBuildScriptOutput, rustcInvocation, timePass, writeDepfile } from "../../scripts/build/rust/run.ts";
 import { parseToml } from "../../scripts/build/rust/toml.ts";
 import {
   type ManifestContext,
@@ -206,6 +206,20 @@ describe("writeDepfile", () => {
     const unit = manifestIn(root, {});
     writeFileSync(unit.depInfo, `${join(root, "deps", "libother.rlib")}: src/lib.rs\n`);
     expect(() => writeDepfile(unit)).toThrow(/has no rule for/);
+  });
+});
+
+describe("timePass", () => {
+  test("reads a `-Z time-passes` line as a phase that ends now, and leaves every other line alone", () => {
+    const before = Date.now();
+    const phase = timePass(`time: {"pass":"type_check_crate","time":1.5,"rss_start":1,"rss_end":2}`)!;
+    expect(phase.name).toBe("type_check_crate");
+    expect(phase.endMs).toBeGreaterThanOrEqual(before);
+    expect(phase.endMs - phase.startMs).toBe(1500);
+    // A diagnostic, an artifact notice, and rustc's text form of the same flag.
+    expect(timePass(`{"$message_type":"diagnostic","rendered":"warning: time: {"}`)).toBeUndefined();
+    expect(timePass(`{"$message_type":"artifact","emit":"metadata"}`)).toBeUndefined();
+    expect(timePass(`time:   0.001; rss:   46MB ->   49MB (   +2MB)\tparse_crate`)).toBeUndefined();
   });
 });
 

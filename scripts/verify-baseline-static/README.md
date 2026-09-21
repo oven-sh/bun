@@ -99,10 +99,10 @@ instead of stack-frame setup, it's a table. Allowlist the symbol.
 
 ## Symbol attribution
 
-| Binary | Primary source                                                  | Fallback                                     |
-| ------ | --------------------------------------------------------------- | -------------------------------------------- |
-| ELF    | `.symtab`                                                       | `.dynsym`                                    |
-| PE     | PDB DBI module stream (`S_*PROC32`, has real sizes) → `S_PUB32` | PDB section contributions → `<lib:NAME.lib>` |
+| Binary | Primary source                                                  | Fallback                                                       |
+| ------ | --------------------------------------------------------------- | -------------------------------------------------------------- |
+| ELF    | `.symtab`                                                       | `.dynsym`                                                      |
+| PE     | PDB DBI module stream (`S_*PROC32`, has real sizes) → `S_PUB32` | PDB section contributions → `<lib:NAME.lib>`, `<lib:NAME.obj>` |
 
 The Windows fallback handles code with no per-function PDB record (stripped
 CRT objects, anonymized staticlib helpers, an asm file's leading local

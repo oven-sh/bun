@@ -5,7 +5,7 @@
  * says that without archives, by handing the linker the dependency objects between `--start-lib` and `--end-lib` in
  * a response file of its own. These check what the link edge and that file say; no compiler or ninja runs.
  */
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -57,22 +57,22 @@ function emitLink(target: Target, buildDir: string) {
   };
 }
 
-// build.ninja spells paths with the host's separator; the expectations below are written with `/`.
-test.skipIf(isWindows)(
-  "an lld link takes the lazy objects as a --start-lib group in a response file of its own",
-  () => {
-    for (const target of [linux, macosCross]) {
-      using dir = tempDir("build-link-lazy", {});
-      const edge = emitLink(target, String(dir));
-      // Not in $in: `@$out.rsp` would hand them to the linker as plain objects.
-      expect(edge.explicit).toEqual(["obj/bun.o", "cache/libWTF.a"]);
-      // Still inputs of the edge, with the group file: a member added or dropped changes only that file.
-      expect(edge.implicit).toEqual(expect.arrayContaining(["bun.lazy.rsp", "obj/dep/used.o", "obj/dep/unused.o"]));
-      expect(edge.lazy).toBe("-Wl,@bun.lazy.rsp");
-      expect(edge.group).toBe("--start-lib\nobj/dep/used.o\nobj/dep/unused.o\n--end-lib\n");
-    }
-  },
-);
+describe.each([
+  ["ELF", linux],
+  ["a cross-linked macOS target", macosCross],
+])("an lld link (%s)", (_, target) => {
+  // build.ninja spells paths with the host's separator; the expectations in this file are written with `/`.
+  test.skipIf(isWindows)("takes the lazy objects as a --start-lib group in a response file of its own", () => {
+    using dir = tempDir("build-link-lazy", {});
+    const edge = emitLink(target, String(dir));
+    // Not in $in: `@$out.rsp` would hand them to the linker as plain objects.
+    expect(edge.explicit).toEqual(["obj/bun.o", "cache/libWTF.a"]);
+    // Still inputs of the edge, with the group file: a member added or dropped changes only that file.
+    expect(edge.implicit).toEqual(expect.arrayContaining(["bun.lazy.rsp", "obj/dep/used.o", "obj/dep/unused.o"]));
+    expect(edge.lazy).toBe("-Wl,@bun.lazy.rsp");
+    expect(edge.group).toBe("--start-lib\nobj/dep/used.o\nobj/dep/unused.o\n--end-lib\n");
+  });
+});
 
 test.skipIf(isWindows)("lld-link gets the group through clang-cl as a linker input", () => {
   using dir = tempDir("build-link-lazy", {});

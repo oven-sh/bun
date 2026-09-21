@@ -578,7 +578,7 @@ impl Connection {
         // Evict closed streams so the map (and this scan) stay bounded on long-lived connections.
         // A late DATA/RST/WINDOW_UPDATE for an evicted id takes the unknown-stream path, which
         // answers RST_STREAM(STREAM_CLOSED) - the 5.1 closed-state behavior. A late HEADERS for an
-        // evicted id re-opens a fresh entry (the parity check still applies); that matches how
+        // evicted id re-opens a fresh entry on a server (parity check applies); that matches how
         // trailers-after-close are treated as a new block by the legacy parser as well.
         let mut evict = std::mem::take(&mut self.evict_buf);
         evict.clear();
@@ -931,12 +931,16 @@ impl Connection {
             return true;
         }
         let refused = is_new && self.is_server && !sink.can_open_stream();
+        // On a client only request() (embedder entry) or PUSH_PROMISE (entry here) opens a stream.
+        let unknown_on_client = is_new && !self.is_server && !sink.is_local_stream(hdr.stream_id);
         let mut disposition = if refused {
             BlockDisposition::Refused
+        } else if unknown_on_client {
+            BlockDisposition::StreamClosed
         } else {
             BlockDisposition::Deliver
         };
-        if !refused {
+        if !refused && !unknown_on_client {
             let cur_state = self
                 .streams
                 .entry(hdr.stream_id)
@@ -990,7 +994,7 @@ impl Connection {
             if hdr.stream_id > self.last_stream_id {
                 self.last_stream_id = hdr.stream_id;
             }
-            if !refused {
+            if !refused && !unknown_on_client {
                 sink.on_stream_open(hdr.stream_id);
             }
         }
@@ -1915,7 +1919,7 @@ impl Connection {
     /// the per-batch replenish/evict scans) would grow by one entry per request. Removal
     /// has the same observable behavior as scan-eviction of a Closed stream: late frames
     /// for the id take the unknown-stream path (RST STREAM_CLOSED, the §5.1 closed-state
-    /// answer) and a late HEADERS re-opens a fresh entry.
+    /// answer) and, on a server, a late HEADERS re-opens a fresh entry.
     pub fn close_stream(&mut self, stream_id: u32) {
         self.streams.remove(&stream_id);
     }

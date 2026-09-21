@@ -1,4 +1,4 @@
-import type { BunFile, BunPlugin, FileBlob } from "bun";
+import { randomCUID2, type BunFile, type BunPlugin, type FileBlob } from "bun";
 import * as tsd from "./utilities";
 {
   const _plugin: BunPlugin = {
@@ -93,3 +93,13 @@ tsd
 
 tsd.expectType(Bun.mmap("./data.bin", { offset: 4096 })).is<Uint8Array<ArrayBuffer>>();
 tsd.expectType(Bun.mmap("./data.bin", { size: 1024 })).is<Uint8Array<ArrayBuffer>>();
+
+tsd.expectType(Bun.randomCUID2()).is<string>();
+tsd.expectType(Bun.randomCUID2(2)).is<string>();
+tsd.expectType(Bun.randomCUID2(32)).is<string>();
+tsd.expectType(randomCUID2()).is<string>();
+
+// @ts-expect-error `length` must be a number.
+Bun.randomCUID2("24");
+// @ts-expect-error `randomCUID2` accepts at most one argument.
+Bun.randomCUID2(24, 24);

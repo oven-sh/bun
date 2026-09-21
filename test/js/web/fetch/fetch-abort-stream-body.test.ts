@@ -313,6 +313,23 @@ describe("aborting mid-body fails every reader of res.body with signal.reason", 
     });
   });
 
+  // A reason does not have to be an Error.
+  test.concurrent.each([[null], [42], ["str"], [Symbol("reason")]])(
+    "abort(%p) reaches a native reader unchanged",
+    async reason => {
+      for (const timing of ["after the reader started", "before the reader starts"]) {
+        using server = await stalledBodyServer();
+        const controller = new AbortController();
+        const res = await fetch(server.url, { signal: controller.signal });
+        expect(res.body).toBeInstanceOf(ReadableStream);
+        if (timing === "before the reader starts") controller.abort(reason);
+        const settled = settle(new Response(res.body).text());
+        if (timing === "after the reader started") controller.abort(reason);
+        expect(await settled).toBe(reason);
+      }
+    },
+  );
+
   test.concurrent.each(["after the upload started", "before the upload starts"])(
     "fetch(url, { body: res.body }), abort %s",
     async timing => {
@@ -346,8 +363,7 @@ describe("aborting mid-body fails every reader of res.body with signal.reason", 
     },
   );
 
-  // A response that already streams reports the failure on the server and cuts the connection.
-  // One that has not started can still go to the error handler.
+  // A response that has not started can still go to the error handler.
   test.concurrent("Bun.serve response of new Response(res.body), abort before the response starts", async () => {
     using server = await stalledBodyServer();
     const reason = new Error("custom");
@@ -365,6 +381,43 @@ describe("aborting mid-body fails every reader of res.body with signal.reason", 
 
     const res = await fetch(proxy.url);
     expect({ status: res.status, body: await res.text() }).toEqual({ status: 502, body: "signal.reason" });
+  });
+
+  // A response that already streams has sent its status, so the server reports the failure itself
+  // (stderr) and cuts the connection.
+  test.concurrent("Bun.serve response of new Response(res.body), abort after the response started", async () => {
+    const script = `
+      import net from "node:net";
+      const upstream = net.createServer(socket => {
+        socket.on("error", () => {});
+        socket.once("data", () =>
+          socket.write("HTTP/1.1 200 OK\\r\\nContent-Length: 100\\r\\n\\r\\n" + Buffer.alloc(40, "x")),
+        );
+      });
+      await new Promise(resolve => upstream.listen(0, "127.0.0.1", resolve));
+      let controller;
+      const proxy = Bun.serve({
+        port: 0,
+        async fetch() {
+          controller = new AbortController();
+          const res = await fetch("http://127.0.0.1:" + upstream.address().port, { signal: controller.signal });
+          return new Response(res.body);
+        },
+      });
+      const res = await fetch(proxy.url);
+      const reader = res.body.getReader();
+      const first = await reader.read();
+      controller.abort(new Error("custom reason"));
+      await reader.read().catch(() => {});
+      console.log(JSON.stringify({ status: res.status, first: first.value.length }));
+      process.exit(0);
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("error: custom reason");
+    expect(stdout).toBe('{"status":200,"first":40}\n');
+    expect(exitCode).toBe(0);
   });
 });
 

@@ -384,7 +384,6 @@ describe("a build in which ninja started over", () => {
       ["reconfigure", "fetch dep", 5],
       ["cxx x.o", "reconfigure", 20],
     ]);
-    expect(chartData(b).runs.map(r => r.restarts)).toEqual([[900]]);
 
     // A reconfigure from some other process, which the log has nothing else of, and a build that began just after
     // the configure that rewrote its stamp: it is in no run, and is not taken for the start of that build.

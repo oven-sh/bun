@@ -112,8 +112,6 @@ export interface ChartLane {
 export interface ChartRun {
   title: string;
   wallMs: number;
-  /** When ninja started over with a rewritten `build.ninja`. */
-  restarts: number[];
   /** The lanes this run has commands in. */
   lanes: ChartLane[];
   bars: ChartBar[];
@@ -152,7 +150,6 @@ function chartRun(build: Build, run: Run, steps: Map<Execution, { step: number; 
   return {
     title: clock(run.epochMs),
     wallMs: run.wallMs,
-    restarts: run.restarts,
     lanes: used.map((lane, i) => ({ name: lane.name, color: lane.color, rows: taken[i]!.length })),
     bars: run.executions.map(x => ({
       label: x.label,
@@ -263,7 +260,8 @@ text.dim { opacity: 0.25; }
 .hoverbar { fill: none; stroke: var(--text); stroke-width: 1.5px; stroke-dasharray: 4 3; rx: 2px; pointer-events: none; }
 .tickmark { stroke: var(--surface); stroke-width: 2px; pointer-events: none; }
 .grid { stroke: var(--grid); stroke-width: 1px; }
-.restart { stroke: var(--text-2); stroke-width: 1px; stroke-dasharray: 2 3; }
+.rule { stroke: var(--text-2); stroke-width: 1px; opacity: 0.45; }
+.gutter .rule { position: absolute; left: 0; right: 0; border-top: 1px solid var(--text-2); }
 .running { opacity: 0.85; }
 #tip { position: fixed; z-index: 1; max-width: 420px; background: var(--surface); color: var(--text); border: 1px solid var(--grid);
   border-radius: 8px; padding: 8px 10px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,.2); pointer-events: none; }
@@ -276,7 +274,7 @@ const client = `
 (function () {
   var data = JSON.parse(document.getElementById("data").textContent);
   var NS = "http://www.w3.org/2000/svg";
-  var ROW = 14, BAR = 12, LEFT = 8, RIGHT = 24, STRIP = 44, AXIS = 18, GAP = 10, LANE_GAP = 12, THIN_ROW = 5, NAMED_SHARE = 0.03;
+  var ROW = 14, BAR = 12, LEFT = 8, RIGHT = 24, STRIP = 50, STRIP_GAP = 20, AXIS = 18, GAP = 10, LANE_GAP = 12, THIN_ROW = 5, NAMED_SHARE = 0.03;
   // The width of a character of a bar's name (10px monospace), and the colors a lane can have (--k0 to --k3).
   var CHAR = 6.05, COLORS = 4;
   var level = 1, MOST_ZOOM = 200;
@@ -335,7 +333,7 @@ const client = `
     run.bars.forEach(function (b) {
       if (b.step !== undefined || (b.end - b.start) / run.wallMs >= NAMED_SHARE) tall[b.lane][b.row] = true;
     });
-    var laneTop = [], rowTop = [], top = STRIP + GAP;
+    var laneTop = [], rowTop = [], top = STRIP + STRIP_GAP;
     run.lanes.forEach(function (lane, i) {
       laneTop.push(top);
       rowTop.push(tall[i].map(function (isTall) { var at = top; top += isTall ? ROW : THIN_ROW; return at; }));
@@ -352,14 +350,14 @@ const client = `
       el("text", { x: x(t) + 3, y: height - 5 }, svg).textContent = ms(t);
     }
 
-    run.restarts.forEach(function (at) {
-      el("line", { x1: x(at), x2: x(at), y1: STRIP, y2: height - AXIS, "class": "restart" }, svg);
-      el("text", { x: x(at) + 4, y: STRIP + 9 }, svg).textContent = "ninja starts over: build.ninja was rewritten";
-    });
+    // The strip of running commands is a band of its own above the lanes, on the same time axis: a rule under it,
+    // through the chart and the gutter.
+    el("line", { x1: 0, x2: width, y1: STRIP + STRIP_GAP / 2, y2: STRIP + STRIP_GAP / 2, "class": "rule" }, svg);
+    gutter.style.height = height + "px";
+    html("div", undefined, gutter, "rule").style.top = STRIP + STRIP_GAP / 2 + "px";
 
     // The lanes, named in the gutter beside the chart so the names stay put when the chart scrolls.
-    gutter.style.height = height + "px";
-    html("div", "commands running", gutter, "lane").style.top = "0px";
+    html("div", "commands running", gutter, "lane").style.top = STRIP / 2 - 8 + "px";
     run.lanes.forEach(function (lane, i) {
       var name = html("div", undefined, gutter, "lane");
       name.style.top = laneTop[i] - 2 + "px";
@@ -379,11 +377,11 @@ const client = `
       events.forEach(function (e) {
         if (e[2] > upTo) return;
         running += e[1];
-        d += "H" + x(e[0]) + "V" + (STRIP - running / most * (STRIP - 14));
+        d += "H" + x(e[0]) + "V" + (STRIP - running / most * (STRIP - 16));
       });
       el("path", { d: d + "H" + x(run.wallMs) + "V" + STRIP + "Z", fill: "var(--k" + upTo + ")", "class": "running" }, svg);
     }
-    el("text", { x: LEFT + 3, y: 10 }, svg).textContent = "most at once: " + most;
+    el("text", { x: LEFT + 3, y: 11 }, svg).textContent = "most at once: " + most;
 
     // What is outlined and joined. With nothing pinned: the critical path. With a bar pinned: the chain of commands
     // this run waited on before it, each joined to the one it was waiting on, and lit, every command it held up.

@@ -56,8 +56,7 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
         }
     }
 
-    // The receiver is kept for a strict frame too: getTypeName() and isToplevel() read it, as in
-    // V8. getThis() hides it for a strict frame.
+    // Kept for a strict frame too: getTypeName() and isToplevel() read it. getThis() hides it.
     JSC::JSValue thisValue = stackFrame.stackFrame().thisValue();
     m_thisValue.set(vm, this, thisValue ? thisValue : JSC::jsUndefined());
     if (isStrictFrame) {

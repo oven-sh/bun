@@ -504,9 +504,7 @@ String functionName(JSC::VM& vm, JSC::JSObject* object)
         }
     }
 
-    // An accessor is named `get g` / `set g`, as its `name` property reads. JSC puts the prefix on
-    // when it reifies that property, so without this a frame's name would change after the first
-    // read of `fn.name`.
+    // An accessor is named `get g`, as JSC names it once it reifies `fn.name`.
     if (!functionName.isEmpty() && jstype == JSC::JSFunctionType) {
         auto* function = uncheckedDowncast<JSC::JSFunction>(object);
         if (!function->isHostFunction()) {
@@ -521,8 +519,7 @@ String functionName(JSC::VM& vm, JSC::JSObject* object)
     return functionName;
 }
 
-// Reads an own data property without a property table materialization, a getter, or a proxy trap.
-// The receiver's type name is read at the end of a collection too, where no cell may be allocated.
+// An own data property, read without a property table materialization, a getter, or a proxy trap.
 static JSValue ownDataProperty(JSC::JSObject* object, UniquedStringImpl* name)
 {
     unsigned attributes;
@@ -575,10 +572,8 @@ String receiverTypeName(JSC::VM& vm, JSC::JSValue receiver)
             return name;
     }
 
-    // V8's JSReceiver::GetConstructorName: the first @@toStringTag on the prototype chain, or
-    // the name of the first `constructor` on it, which is not read from the receiver itself so
-    // that `B.prototype` (with `B.prototype.constructor = B`) is named after `B.prototype`'s
-    // own prototype.
+    // V8's JSReceiver::GetConstructorName. The receiver's own `constructor` is skipped, so that
+    // `B.prototype` is named after its prototype.
     JSObject* current = object;
     while (true) {
         JSValue tag = ownDataProperty(current, vm.propertyNames->toStringTagSymbol.impl());
@@ -608,8 +603,7 @@ String receiverTypeName(JSC::VM& vm, JSC::JSValue receiver)
     return String(object->classInfo()->className);
 }
 
-// V8's String::IsIdentifier, for the names a stack frame prints. `get x`, `o.f` and `bound f`
-// are not identifiers, so they get no type name prefix.
+// V8's String::IsIdentifier: `get x`, `o.f` and `bound f` get no type name prefix.
 static bool isIdentifier(const String& name)
 {
     if (name.isEmpty())

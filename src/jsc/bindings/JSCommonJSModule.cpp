@@ -308,8 +308,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     //
     //    fn(exports, require, module, __filename, __dirname) { /* code */ }(exports, require, module, __filename, __dirname)
     //
-    // The receiver is module.exports, as in Node: `eval("this")` at the top level reads it, and a
-    // stack trace names the module's frame after it (`at Object.<anonymous>`).
+    // module.exports is the receiver, as in Node.
     JSC::profiledCall(globalObject, ProfilingReason::API, fn, callData, exports, args);
     RETURN_IF_EXCEPTION(scope, false);
     return true;

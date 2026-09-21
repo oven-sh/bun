@@ -1024,7 +1024,7 @@ const client = `
 (function () {
   var data = JSON.parse(document.getElementById("data").textContent);
   var NS = "http://www.w3.org/2000/svg";
-  var ROW = 14, BAR = 12, LEFT = 8, RIGHT = 24, STRIP = 50, STRIP_GAP = 24, SPLIT = 8, AXIS = 18, GAP = 10, LANE_GAP = 12, THIN_ROW = 5, NAMED_SHARE = 0.03;
+  var ROW = 14, BAR = 12, LEFT = 8, RIGHT = 24, STRIP = 50, SPLIT = 8, AXIS = 18, GAP = 10, LANE_GAP = 12, THIN_ROW = 5, NAMED_SHARE = 0.03;
   // The width of a character of a bar's name (10px monospace), and the colors a lane can have (--k0 to --k3).
   var CHAR = 6.05, COLORS = 4;
   var level = 1, MOST_ZOOM = 200;
@@ -1078,7 +1078,7 @@ const client = `
     run.bars.forEach(function (b) {
       if (b.step !== undefined || (b.end - b.start) / run.wallMs >= NAMED_SHARE) tall[b.lane][b.row] = true;
     });
-    var laneTop = [], rowTop = [], top = STRIP + STRIP_GAP;
+    var laneTop = [], rowTop = [], top = STRIP + SPLIT + GAP;
     run.lanes.forEach(function (lane, i) {
       laneTop.push(top);
       rowTop.push(tall[i].map(function (isTall) { var at = top; top += isTall ? ROW : THIN_ROW; return at; }));
@@ -1116,7 +1116,8 @@ const client = `
       events.forEach(function (e) {
         if (e[2] > upTo) return;
         running += e[1];
-        d += "H" + x(e[0]) + "V" + (STRIP - running / most * (STRIP - 6));
+        // The strip's panel is its scale: nothing running is its bottom edge, the most at once is its top.
+        d += "H" + x(e[0]) + "V" + (STRIP - running / most * STRIP);
       });
       el("path", { d: d + "H" + x(run.wallMs) + "V" + STRIP + "Z", fill: "var(--k" + upTo + ")", "class": "running" }, svg);
     }
@@ -1235,7 +1236,7 @@ const client = `
     // The strip of running commands is a panel of its own above the lanes, on the same time axis: a gap of the
     // page's own color under it, across the lane names and the chart.
     var split = html("div", undefined, row, "split");
-    split.style.top = STRIP + (STRIP_GAP - SPLIT) / 2 + "px";
+    split.style.top = STRIP + "px";
     split.style.height = SPLIT + "px";
     gutters.push(html("div", undefined, row, "gutter"));
     return html("div", undefined, row, "scroll");

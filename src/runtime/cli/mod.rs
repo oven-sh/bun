@@ -213,40 +213,12 @@ pub mod add_completions;
 pub mod colon_list_type;
 #[path = "discord_command.rs"]
 pub(crate) mod discord_command;
+#[path = "open.rs"]
+pub mod open;
 #[path = "shell_completions.rs"]
 pub mod shell_completions;
 #[path = "which_npm_client.rs"]
 pub mod which_npm_client;
-
-// ─── open (open_url wrapper; Editor/EditorContext live in open.rs) ───────────
-#[path = "open.rs"]
-mod open_full;
-pub mod open {
-    pub use super::open_full::{Editor, EditorContext};
-    use bun_core::Output;
-
-    #[cfg(target_os = "macos")]
-    pub(crate) const OPENER: &[u8] = b"/usr/bin/open";
-    #[cfg(windows)]
-    pub(crate) const OPENER: &[u8] = b"start";
-    #[cfg(not(any(target_os = "macos", windows)))]
-    pub(crate) const OPENER: &[u8] = b"xdg-open";
-
-    fn fallback(url: &[u8]) {
-        bun_core::prettyln!("-> {}", bstr::BStr::new(url));
-        Output::flush();
-    }
-
-    /// Spawn `OPENER url` with inherited stdio and fall back to printing the
-    /// URL when the spawn fails or the opener exits non-zero (e.g. headless/CI
-    /// environments).
-    pub(crate) fn open_url(url: &[u8]) {
-        match bun_core::spawn_sync_inherit(&[OPENER, url]) {
-            Ok(status) if status.is_ok() => {}
-            _ => fallback(url),
-        }
-    }
-}
 
 // ─── non-JSC subcommand bodies ───────────────────────────────────────────────
 // `init_command.rs` pulls bun_json/bun_js_parser/bun_js_printer/bun_bundler +

@@ -51,16 +51,14 @@ function settleReservedTransaction(
   settle(value);
 }
 
-/// The pool calls a queued `onConnected` from a socket event, or from whatever released the
-/// connection. The returned callback runs it in the async context of this call instead. A
-/// Bun.ModuleGraph disposed meanwhile hears nothing, as from a native callback: the next waiter
-/// gets the connection, which the leftover script of the graph could keep for ever.
+/// The pool calls a queued `onConnected` in the async context of whatever released the connection, not the caller's.
 function inCallerAsyncContext(
   pool: { release(pooledConnection): void },
   onConnected: (err: Error | null, pooledConnection) => void,
 ) {
   const frame = AsyncContextFrame.current();
   return (err: Error | null, pooledConnection) => {
+    // A disposed Bun.ModuleGraph hears nothing, and its leftover script could keep the connection for ever.
     if (isFrameOfStoppedModuleGraph(frame)) {
       if (!err) pool.release(pooledConnection);
       return;

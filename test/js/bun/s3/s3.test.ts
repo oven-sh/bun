@@ -1916,7 +1916,15 @@ describe("s3 upload stream body error", () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
       // The S3 client honors the proxy environment; the stub is on loopback.
-      env: { ...bunEnv, HTTP_PROXY: undefined, HTTPS_PROXY: undefined, http_proxy: undefined, https_proxy: undefined },
+      env: {
+        ...bunEnv,
+        HTTP_PROXY: undefined,
+        HTTPS_PROXY: undefined,
+        ALL_PROXY: undefined,
+        http_proxy: undefined,
+        https_proxy: undefined,
+        all_proxy: undefined,
+      },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -1978,7 +1986,15 @@ describe("s3 upload stream body error", () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
       // The S3 client honors the proxy environment; the stub is on loopback.
-      env: { ...bunEnv, HTTP_PROXY: undefined, HTTPS_PROXY: undefined, http_proxy: undefined, https_proxy: undefined },
+      env: {
+        ...bunEnv,
+        HTTP_PROXY: undefined,
+        HTTPS_PROXY: undefined,
+        ALL_PROXY: undefined,
+        http_proxy: undefined,
+        https_proxy: undefined,
+        all_proxy: undefined,
+      },
       stdout: "pipe",
       stderr: "pipe",
     });

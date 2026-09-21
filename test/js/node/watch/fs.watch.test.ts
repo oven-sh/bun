@@ -324,6 +324,43 @@ describe("fs.watch", () => {
     expect({ seen }).toEqual({ seen: emitted });
   });
 
+  // `.resolves` spins the event loop until the promise settles. Here it runs
+  // between the two events of one rename, and the events that arrive while it
+  // spins must not overtake the second one. Linux only: inotify watches from
+  // the moment fs.watch() returns and reports one rename as two events.
+  test.skipIf(!isLinux)(
+    "a continuation that spins the event loop between two events does not reorder them",
+    async () => {
+      using dir = tempDir("fs-watch-nested-spin", { "before": "x" });
+      const root = String(dir);
+      const seen: string[] = [];
+      const sawLate = Promise.withResolvers<void>();
+      const sawEnd = Promise.withResolvers<void>();
+      let spun: Promise<void> | undefined;
+      const watcher = fs.watch(root, (_eventType, filename) => {
+        seen.push(String(filename));
+        if (filename === "late") sawLate.resolve();
+        if (filename === "end") sawEnd.resolve();
+        spun ??= (async () => {
+          // Resumes in the checkpoint that follows the first event.
+          await undefined;
+          fs.writeFileSync(path.join(root, "late"), "x");
+          await expect(sawLate.promise).resolves.toBeUndefined();
+          fs.writeFileSync(path.join(root, "end"), "x");
+        })();
+      });
+      watcher.once("error", sawEnd.reject);
+      try {
+        fs.renameSync(path.join(root, "before"), path.join(root, "after"));
+        await sawEnd.promise;
+        await spun;
+      } finally {
+        watcher.close();
+      }
+      expect(seen.slice(0, 3)).toEqual(["before", "after", "late"]);
+    },
+  );
+
   test("should error on invalid path", done => {
     try {
       fs.watch(path.join(testDir, "404.txt"));

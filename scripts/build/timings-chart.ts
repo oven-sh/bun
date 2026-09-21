@@ -466,19 +466,12 @@ const client = `
       var b = run.bars[i];
       tip.textContent = "";
       html("b", b.label, tip);
-      html("div", "rule " + b.rule + (b.pool ? " · pool " + b.pool : ""), tip);
-      html("div", ms(b.end - b.start) + " · from " + ms(b.start) + " to " + ms(b.end), tip);
-      // What it was waiting on, and then how long it sat before starting: the first is dependencies, the second is
-      // a full pool or no free job slot.
-      if (b.blocker === undefined) html("div", "needed nothing this run made", tip);
-      else {
-        var blocker = run.bars[b.blocker];
-        html("div", "last thing it needed: " + blocker.label +
-          (b.readyAt < blocker.end ? " (ready " + ms(b.readyAt - blocker.start) + " into it)" : ""), tip);
-        html("div", "started " + ms(b.waited) + " after that was ready", tip);
-      }
-      if (b.released !== undefined) html("div", "dependents can start after " + ms(b.released), tip);
-      if (b.step !== undefined) html("div", "critical path step " + (b.step + 1) + ": holds up the next for " + ms(b.blocksNextForMs), tip);
+      html("div", b.rule + (b.pool ? " · pool " + b.pool : ""), tip);
+      html("div", ms(b.end - b.start) + " · " + ms(b.start) + " → " + ms(b.end), tip);
+      // "after": the command that made the last of its inputs to exist. "queued": how long it then sat before starting.
+      if (b.blocker !== undefined) html("div", "after " + run.bars[b.blocker].label + " · queued " + ms(b.waited), tip);
+      if (b.released !== undefined) html("div", "unblocks dependents " + ms(b.released) + " in", tip);
+      if (b.step !== undefined) html("div", "critical path #" + (b.step + 1), tip);
       if (b.phases.length > 0) html("div", b.phases.map(function (p) { return p[0] + " " + ms(p[1]); }).join(" · "), tip);
       tip.hidden = false;
       var tw = tip.offsetWidth, th = tip.offsetHeight;

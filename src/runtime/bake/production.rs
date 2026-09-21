@@ -398,6 +398,12 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         }
     };
 
+    // No JavaScript frame is below this one, so this wait does not re-enter the event loop.
+    options
+        .bundler_options
+        .wait_for_plugin_setup(global)
+        .map_err(js_err)?;
+
     let framework = &mut options.framework;
 
     let separate_ssr_graph = framework

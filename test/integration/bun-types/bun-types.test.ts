@@ -2,7 +2,7 @@ import { $ as Shell, fileURLToPath } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, makeTree } from "harness";
 import { existsSync, readFileSync } from "node:fs";
-import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
 
@@ -48,11 +48,13 @@ const bunTypesCheckoutBeforeSetup = snapshotBunTypesCheckout();
 
 let TEMP_DIR: string;
 let BASE_FIXTURE_DIR: string;
+let BUN_TYPES_BUILD_DIR: string;
 
 beforeAll(async () => {
   TEMP_DIR = await mkdtemp(join(tmpdir(), "bun-types-test-"));
   BASE_FIXTURE_DIR = join(TEMP_DIR, "base-fixture");
-  const bunTypesBuildDir = join(TEMP_DIR, "bun-types");
+  BUN_TYPES_BUILD_DIR = join(TEMP_DIR, "bun-types");
+  const bunTypesBuildDir = BUN_TYPES_BUILD_DIR;
 
   try {
     await cp(FIXTURE_SOURCE_DIR, BASE_FIXTURE_DIR, { recursive: true });
@@ -601,6 +603,77 @@ describe("@types/bun integration test", () => {
       expect(stderr.trim()).toBe("");
       expect(stdout.trim()).toBe("");
       expect(exitCode).toBe(0);
+    });
+  });
+
+  // Runs on debug builds too: one install plus tsc over a single file.
+  // With the isolated linker and the global store, bun-types lives under
+  // <cache>/links/ and its imports resolve only through the dependencies it
+  // declares. The hoisted fallback layer of the project is not on that path,
+  // so `import("undici-types")` in bun.d.ts, fetch.d.ts and globals.d.ts
+  // fails unless package.json declares undici-types (#43666).
+  describe("isolated install with the global store", () => {
+    test("bun-types resolves undici-types through its own dependencies", async () => {
+      const checkDir = join(TEMP_DIR, "global-store-check");
+      const cacheDir = join(checkDir, ".bun-cache");
+      const tsconfig = structuredClone(sourceTsconfig);
+      tsconfig.include = ["index.ts"];
+      tsconfig.compilerOptions.types = ["bun-types"];
+      tsconfig.compilerOptions.skipLibCheck = false;
+      await mkdir(checkDir, { recursive: true });
+      await $`cd ${BUN_TYPES_BUILD_DIR} && bun pm pack --destination ${checkDir}`.quiet();
+      await makeTree(checkDir, {
+        "package.json": JSON.stringify({
+          name: "global-store-check",
+          private: true,
+          devDependencies: {
+            "bun-types": `./${BUN_TYPES_TARBALL_NAME}`,
+            "@types/node": "latest",
+          },
+        }),
+        "bunfig.toml": `[install]\nlinker = "isolated"\nglobalStore = true\ncache = ${JSON.stringify(cacheDir)}\n`,
+        "tsconfig.json": JSON.stringify(tsconfig, null, 2),
+        "index.ts": `const headers: Headers = new Headers({ "content-type": "text/plain" });
+           const response: Response = await fetch("https://example.com", { headers, proxy: "http://proxy" });
+           console.log(response.status, Bun.version);`,
+      });
+
+      // CI exports BUN_INSTALL_CACHE_DIR, which overrides bunfig's `cache`.
+      // Pin it so the store links land under checkDir.
+      const installEnv = { ...bunEnv, BUN_INSTALL_CACHE_DIR: cacheDir };
+      await using install = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        env: installEnv,
+        cwd: checkDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [installStdout, installStderr, installExitCode] = await Promise.all([
+        install.stdout.text(),
+        install.stderr.text(),
+        install.exited,
+      ]);
+      expect(installStderr + installStdout).not.toContain("error");
+      expect(installExitCode).toBe(0);
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
+        env: bunEnv,
+        cwd: checkDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr.trim()).toBe("");
+      expect(stdout.trim()).toBe("");
+      expect(exitCode).toBe(0);
+
+      // The project links into the store, so bun-types is not under checkDir.
+      const bunTypesRealDir = await realpath(join(checkDir, "node_modules", "bun-types"));
+      expect(bunTypesRealDir).toStartWith(join(cacheDir, "links"));
+      expect(existsSync(join(dirname(bunTypesRealDir), "undici-types", "package.json"))).toBe(true);
     });
   });
 

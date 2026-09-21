@@ -1,7 +1,7 @@
 import type { Subprocess } from "bun";
 import { afterAll, beforeAll, expect, it } from "bun:test";
-import { bunEnv, bunExe, isIPv6, tls } from "harness";
 import { readFileSync } from "fs";
+import { bunEnv, bunExe, isIPv6, tls } from "harness";
 import type { IncomingMessage } from "http";
 import { join } from "path";
 let url: URL;

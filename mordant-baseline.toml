@@ -108,7 +108,7 @@
 "unused_pub:src/paths/lib.rs" = 4
 "unused_pub:src/paths/path_buffer_pool.rs" = 1
 "unused_pub:src/paths/resolve_path.rs" = 2
-"unused_pub:src/paths/string_paths.rs" = 7
+"unused_pub:src/paths/string_paths.rs" = 8
 
 [bun_ptr]
 "unused_pub:src/ptr/CowSlice.rs" = 1
@@ -174,12 +174,6 @@
 "unchecked_construction:src/runtime/cli/pack_command.rs" = 2
 "unchecked_construction:src/runtime/server/HTMLBundle.rs" = 2
 "unchecked_construction:src/runtime/server/server_body.rs" = 5
-"unused_pub:src/runtime/api/bun/h2/connection.rs" = 5
-"unused_pub:src/runtime/api/bun/h2/wire.rs" = 1
-"unused_pub:src/runtime/ipc.rs" = 3
-"unused_pub:src/runtime/node.rs" = 1
-"unused_pub:src/runtime/node/node_fs.rs" = 2
-"unused_pub:src/runtime/node/types.rs" = 1
 
 [bun_simdutf_sys]
 "unused_pub:src/simdutf_sys/simdutf.rs" = 1

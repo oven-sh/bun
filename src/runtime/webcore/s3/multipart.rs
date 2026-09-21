@@ -92,6 +92,7 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 use std::io::Write as _;
+use std::rc::Rc;
 
 use bstr::BStr;
 
@@ -245,8 +246,9 @@ pub(crate) enum PartState {
 }
 
 pub(crate) struct UploadPart {
-    /// The part's bytes, owned from `get_create_part` until `free_data`.
-    pub(crate) data: JsCell<Vec<u8>>,
+    /// The part's bytes, from `get_create_part` until `free_data`. Counted, so that `perform`
+    /// keeps them for a request that frees the part before it returns.
+    pub(crate) data: JsCell<Option<Rc<Vec<u8>>>>,
     pub ctx: bun_ptr::BackRef<MultiPartUpload, bun_ptr::Mut>, // BACKREF (LIFETIMES.tsv)
     pub(crate) state: Cell<PartState>,
     pub(crate) part_number: Cell<u16>, // max is 10,000
@@ -262,14 +264,7 @@ pub(crate) struct UploadPartResult {
 impl UploadPart {
     /// Release the bytes. A part that has sent them does not need them again.
     fn free_data(&self) {
-        self.data.set(Vec::new());
-    }
-
-    /// The request `perform` hands these bytes to copies them, and can fail the upload before
-    /// it returns, which releases them. So this borrow ends with the statement that takes it.
-    #[inline]
-    fn data(&self) -> &[u8] {
-        self.data.get()
+        self.data.set(None);
     }
 
     fn on_part_response(result: S3PartResult, this: *mut c_void) -> bun_jsc::JsResult<()> {
@@ -309,7 +304,7 @@ impl UploadPart {
             }
             S3PartResult::Etag(etag) => {
                 scoped_log!(S3MultiPartUpload, "onPartResponse {} success", part_number);
-                let sent = this.data().len();
+                let sent = this.data.get().as_deref().map_or(0, Vec::len);
                 this.free_data();
                 // we will need to order this
                 ctx.multipart_etags.with_mut(|etags| {
@@ -334,6 +329,9 @@ impl UploadPart {
 
     fn perform(&self) -> bun_jsc::JsResult<()> {
         let ctx = self.ctx.get();
+        // A request that fails before it leaves reports that inside the call below, which frees
+        // this part. This count keeps the bytes the call borrows until it returns.
+        let data = self.data.get().clone();
         let mut params_buffer = [0u8; 2048];
         let written = {
             let mut w: &mut [u8] = &mut params_buffer[..];
@@ -354,7 +352,7 @@ impl UploadPart {
                 path: &ctx.path,
                 method: bun_http::Method::PUT,
                 proxy_url: ctx.proxy_url(),
-                body: self.data(),
+                body: data.as_deref().map_or(&[][..], Vec::as_slice),
                 search_params: Some(search_params),
                 request_payer: ctx.request_payer,
                 ..Default::default()
@@ -493,7 +491,7 @@ impl MultiPartUpload {
             // zero set just in case
             for _ in 0..queue_size {
                 queue.push(UploadPart {
-                    data: JsCell::new(Vec::new()),
+                    data: JsCell::new(None),
                     part_number: Cell::new(0),
                     ctx: self_ref,
                     index: Cell::new(0),
@@ -508,7 +506,7 @@ impl MultiPartUpload {
 
         let queue = self.queue.get().as_deref().expect("queue allocated above");
         let queue_item = &queue[index];
-        queue_item.data.set(take_data());
+        queue_item.data.set(Some(Rc::new(take_data())));
         queue_item.part_number.set(part_number);
         queue_item.index.set(index as u8); // @truncate
         queue_item.retry.set(self.options.get().retry);

@@ -83,12 +83,14 @@ test("terminate() while a multipart upload enqueues a part frees the part's byte
     cmd: [bunExe(), "-e", host],
     env: {
       ...bunEnv,
-      // The S3 client does not honor NO_PROXY, so an inherited proxy would
-      // hijack the loopback stand-in.
+      // An inherited proxy would take the requests away from the loopback
+      // stand-in.
       HTTP_PROXY: undefined,
       HTTPS_PROXY: undefined,
+      ALL_PROXY: undefined,
       http_proxy: undefined,
       https_proxy: undefined,
+      all_proxy: undefined,
       // An upload still open when its worker goes is not freed (#39692). That
       // leak is not what this checks, and LeakSanitizer would report it.
       ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),

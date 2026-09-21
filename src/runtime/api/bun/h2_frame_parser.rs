@@ -91,6 +91,12 @@ pub mod JSH2FrameParser {
 
 const MAX_PAYLOAD_SIZE_WITHOUT_FRAME: usize = 16384 - FrameHeader::BYTE_SIZE - 1;
 
+/// The padding of a PADDED frame: zeros (RFC 9113 6.1), at most as many as Pad Length can count.
+static ZERO_PADDING: [u8; u8::MAX as usize] = [0; u8::MAX as usize];
+
+/// NGHTTP2_MAX_PAYLOADLEN: nghttp2 never pads a HEADERS frame past it, whatever the peer allows.
+const MAX_PADDED_HEADERS_PAYLOAD: usize = 16384;
+
 /// `Copy` view of [`NativeSocket`] for call sites to snapshot across
 /// re-entrant writes. BACKREF — the socket strictly outlives the attachment:
 /// `Tls`/`Tcp` are kept alive by the `RefPtr<H2FrameParser>` stored in the
@@ -1442,22 +1448,31 @@ impl PendingFrame {
 // PendingFrame::deinit handled by Drop (Vec frees, Strong deinits)
 
 impl Stream {
-    pub fn get_padding(&self, frame_len: usize, max_len: usize) -> u8 {
-        match self.padding_strategy {
-            PaddingStrategy::None => 0,
-            PaddingStrategy::Aligned => {
-                let diff = (frame_len + 9) % 8;
-                // already multiple of 8
-                if diff == 0 {
-                    return 0;
-                }
-                let mut padded_len = frame_len + (8 - diff);
-                // limit to maxLen
-                padded_len = padded_len.min(max_len);
-                padded_len.saturating_sub(frame_len).min(255) as u8
-            }
-            PaddingStrategy::Max => max_len.saturating_sub(frame_len).min(255) as u8,
+    /// The Pad Length to send (`None`: not PADDED), sized like nghttp2's select_padding callback.
+    pub fn get_padding(&self, frame_len: usize, max_payload_len: usize) -> Option<u8> {
+        if frame_len >= max_payload_len {
+            return None;
         }
+        // The Pad Length octet plus the most padding it can count (NGHTTP2_MAX_PADLEN).
+        let max_padded_len = max_payload_len.min(frame_len + 1 + u8::MAX as usize);
+        let padded_len = match self.padding_strategy {
+            PaddingStrategy::None => return None,
+            // node's OnDWordAlignedPadding: frame header plus padded payload is a multiple of 8.
+            PaddingStrategy::Aligned => {
+                let remainder = (frame_len + FrameHeader::BYTE_SIZE) % 8;
+                if remainder == 0 {
+                    return None;
+                }
+                (frame_len + (8 - remainder)).min(max_padded_len)
+            }
+            PaddingStrategy::Max => max_padded_len,
+        };
+        Some((padded_len - frame_len - 1) as u8)
+    }
+
+    /// Payload bytes a `get_padding` result adds: the Pad Length octet plus the padding it counts.
+    fn padding_overhead(padding: Option<u8>) -> usize {
+        padding.map_or(0, |pad_length| 1 + pad_length as usize)
     }
 
     pub fn flush_queue(&mut self, client: &H2FrameParser, written: &mut usize) -> FlushState {
@@ -1494,7 +1509,8 @@ impl Stream {
                 owned_frame = Some(frame);
                 break 'brk data_header.write(&mut writer, &client.frames_sent_legacy);
             } else {
-                let max_size = frame_remaining
+                // Bounds the whole payload: padding may use the room past `frame_remaining`.
+                let max_size = MAX_PAYLOAD_SIZE_WITHOUT_FRAME
                     .min(
                         (self
                             .remote_window_size
@@ -1507,8 +1523,7 @@ impl Stream {
                             .get()
                             .saturating_sub(client.remote_used_window_size.get()))
                             as usize,
-                    )
-                    .min(MAX_PAYLOAD_SIZE_WITHOUT_FRAME);
+                    );
                 if max_size == 0 {
                     bun_output::scoped_log!(
                         H2FrameParser,
@@ -1541,43 +1556,22 @@ impl Stream {
                         .set(client.queued_data_size.get() - able_to_send.len() as u64);
                     *written += able_to_send.len();
 
-                    let padding = self.get_padding(able_to_send.len(), max_size - 1);
-                    let payload_size = able_to_send.len()
-                        + if padding != 0 {
-                            padding as usize + 1
-                        } else {
-                            0
-                        };
-                    bun_output::scoped_log!(
-                        H2FrameParser,
-                        "padding: {} size: {} max_size: {} payload_size: {}",
-                        padding,
-                        able_to_send.len(),
-                        max_size,
-                        payload_size
-                    );
+                    // The chunk takes all of `max_size`, which leaves no room to pad it.
+                    let payload_size = able_to_send.len();
                     self.remote_used_window_size += payload_size as u64;
                     client
                         .remote_used_window_size
                         .set(client.remote_used_window_size.get() + payload_size as u64);
                     client.note_engine_send_consumed(self.id, payload_size as u64);
 
-                    let mut flags: u8 = 0; // we ignore end_stream for now because we know we have more data to send
-                    if padding != 0 {
-                        flags |= DataFrameFlags::PADDED as u8;
-                    }
                     let data_header = FrameHeader {
                         type_: FrameType::HTTP_FRAME_DATA as u8,
-                        flags,
+                        flags: 0, // we ignore end_stream for now because we know we have more data to send
                         stream_identifier: self.id,
                         length: u32::try_from(payload_size).expect("int cast"),
                     };
                     let _ = data_header.write(&mut writer, &client.frames_sent_legacy);
-                    if padding != 0 {
-                        break 'brk writer.write_padded(&able_to_send, padding).is_ok();
-                    } else {
-                        break 'brk writer.write_all(&able_to_send).is_ok();
-                    }
+                    break 'brk writer.write_all(&able_to_send).is_ok();
                 } else {
                     // flush with some payload
                     owned_frame = self.data_frame_queue.dequeue();
@@ -1590,16 +1584,11 @@ impl Stream {
                         .set(client.queued_data_size.get() - frame_slice.len() as u64);
                     *written += frame_slice.len();
 
-                    let padding = self.get_padding(frame_slice.len(), max_size - 1);
-                    let payload_size = frame_slice.len()
-                        + if padding != 0 {
-                            padding as usize + 1
-                        } else {
-                            0
-                        };
+                    let padding = self.get_padding(frame_slice.len(), max_size);
+                    let payload_size = frame_slice.len() + Self::padding_overhead(padding);
                     bun_output::scoped_log!(
                         H2FrameParser,
-                        "padding: {} size: {} max_size: {} payload_size: {}",
+                        "padding: {:?} size: {} max_size: {} payload_size: {}",
                         padding,
                         frame_slice.len(),
                         max_size,
@@ -1615,7 +1604,7 @@ impl Stream {
                     } else {
                         0
                     };
-                    if padding != 0 {
+                    if padding.is_some() {
                         flags |= DataFrameFlags::PADDED as u8;
                     }
                     let data_header = FrameHeader {
@@ -1625,7 +1614,7 @@ impl Stream {
                         length: u32::try_from(payload_size).expect("int cast"),
                     };
                     let _ = data_header.write(&mut writer, &client.frames_sent_legacy);
-                    if padding != 0 {
+                    if let Some(padding) = padding {
                         break 'brk writer.write_padded(frame_slice, padding).is_ok();
                     } else {
                         break 'brk writer.write_all(frame_slice).is_ok();
@@ -5216,16 +5205,11 @@ impl H2FrameParser {
                         offset >= payload.len() && close,
                     );
                 } else {
-                    let padding = stream.get_padding(size, max_size - 1);
-                    let payload_size = size
-                        + if padding != 0 {
-                            padding as usize + 1
-                        } else {
-                            0
-                        };
+                    let padding = stream.get_padding(size, max_size);
+                    let payload_size = size + Stream::padding_overhead(padding);
                     bun_output::scoped_log!(
                         H2FrameParser,
-                        "padding: {} size: {} max_size: {} payload_size: {}",
+                        "padding: {:?} size: {} max_size: {} payload_size: {}",
                         padding,
                         size,
                         max_size,
@@ -5240,7 +5224,7 @@ impl H2FrameParser {
                     } else {
                         0
                     };
-                    if padding != 0 {
+                    if padding.is_some() {
                         flags |= DataFrameFlags::PADDED as u8;
                     }
                     let data_header = FrameHeader {
@@ -5253,7 +5237,7 @@ impl H2FrameParser {
                         // Single-frame payload: the cork coalesces it with neighbors.
                         let mut writer = self.to_writer();
                         let _ = data_header.write(&mut writer, &self.frames_sent_legacy);
-                        if padding != 0 {
+                        if let Some(padding) = padding {
                             let _ = writer.write_padded(slice, padding);
                         } else {
                             let _ = writer.write_all(slice);
@@ -5290,7 +5274,7 @@ impl H2FrameParser {
                             }
                             let header_off = batch.len();
                             let _ = data_header.write(batch, &self.frames_sent_legacy);
-                            if padding != 0 {
+                            if let Some(padding) = padding {
                                 batch.push(padding);
                                 batch.extend_from_slice(slice);
                                 batch.resize(batch.len() + payload_size - slice.len() - 1, 0);
@@ -7111,52 +7095,29 @@ impl H2FrameParser {
         } else {
             0
         };
-        let available_payload = actual_max_frame_size - priority_overhead;
-        // Reserve one byte for the pad-length field so `encoded_size +
-        // padding_overhead` never exceeds `available_payload`; otherwise the
-        // CONTINUATION branch below would slice past the end of the encoded
-        // header block. CONTINUATION frames cannot carry padding, so it is
-        // disabled whenever the block does not fit in a single HEADERS frame.
-        let padding: u8 = if encoded_size >= available_payload {
-            0
-        } else {
-            stream.get_padding(encoded_size, available_payload - 1)
-        };
-        let padding_overhead: usize = if padding != 0 {
-            padding as usize + 1
-        } else {
-            0
-        };
-        let headers_frame_max_payload = available_payload - padding_overhead;
+        // Only a payload that fits one frame gets padding: CONTINUATION frames cannot carry any.
+        let padding = stream.get_padding(
+            encoded_size + priority_overhead,
+            actual_max_frame_size.min(MAX_PADDED_HEADERS_PAYLOAD),
+        );
+        let payload_size = encoded_size + priority_overhead + Stream::padding_overhead(padding);
 
         let mut writer = this.to_writer();
 
         // Check if we need CONTINUATION frames
-        if encoded_size <= headers_frame_max_payload {
+        if payload_size <= actual_max_frame_size {
             // Single HEADERS frame - fits in one frame
-            let payload_size = encoded_size + priority_overhead + padding_overhead;
             bun_output::scoped_log!(
                 H2FrameParser,
-                "padding: {} size: {} max_size: {} payload_size: {}",
+                "padding: {:?} size: {} max_size: {} payload_size: {}",
                 padding,
                 encoded_size,
                 encoded_headers.len(),
                 payload_size
             );
 
-            if padding != 0 {
+            if padding.is_some() {
                 flags |= HeadersFrameFlags::PADDED as u8;
-                // Grow before any frame byte is written: failing after the header went out
-                // would abandon the frame mid-serialization (the JS-transport tracker would
-                // hold the stream mid-frame and the wire would owe a payload).
-                if encoded_headers
-                    .try_reserve(encoded_size + padding_overhead - encoded_headers.len())
-                    .is_err()
-                {
-                    return Err(
-                        global_object.throw(format_args!("Failed to allocate padding buffer"))
-                    );
-                }
             }
 
             let frame = FrameHeader {
@@ -7166,6 +7127,11 @@ impl H2FrameParser {
                 length: u32::try_from(payload_size).expect("int cast"),
             };
             let _ = frame.write(&mut writer, &this.frames_sent_legacy);
+
+            // RFC 9113 6.2: Pad Length comes first, ahead of the priority fields.
+            if let Some(pad_length) = padding {
+                let _ = writer.write_all(&[pad_length]);
+            }
 
             // Write priority data if present
             if has_priority {
@@ -7178,19 +7144,9 @@ impl H2FrameParser {
                 let _ = priority_data.write(&mut writer);
             }
 
-            // Handle padding
-            if padding != 0 {
-                // Zero-fill the padding region (RFC 7540 §6.2: padding octets MUST be zero) and
-                // ensure the slice we hand to writer covers only initialized bytes. Cannot
-                // allocate: the capacity was reserved above, before the frame header went out.
-                encoded_headers.resize(encoded_size + padding_overhead, 0);
-                let buffer = encoded_headers.as_mut_slice();
-                // memmove: shift right by 1 to make room for the pad-length byte
-                buffer.copy_within(0..encoded_size, 1);
-                buffer[0] = padding;
-                let _ = writer.write_all(buffer);
-            } else {
-                let _ = writer.write_all(&encoded_headers);
+            let _ = writer.write_all(&encoded_headers);
+            if let Some(pad_length @ 1..) = padding {
+                let _ = writer.write_all(&ZERO_PADDING[..pad_length as usize]);
             }
         } else {
             bun_output::scoped_log!(

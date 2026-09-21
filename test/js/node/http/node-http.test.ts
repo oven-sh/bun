@@ -6009,7 +6009,12 @@ describe("a pipelined request whose body continues after the previous response e
       const read = () => {
         let n = 0;
         req.on("data", c => (n += c.length));
-        req.on("end", () => res.end(`${req.url}=${n};`));
+        req.on("end", () => {
+          const trailers = Object.entries(req.trailers)
+            .map(([name, value]) => `,${name}=${value}`)
+            .join("");
+          res.end(`${req.url}=${n}${trailers};`);
+        });
       };
       if (req.url === lastUrl) {
         resolveLastDispatched();
@@ -6036,12 +6041,45 @@ describe("a pipelined request whose body continues after the previous response e
           await Promise.race([once(client, "data"), closed]);
         }
       }
-      return out.match(/\/\w+=\d+;/g);
+      return out.match(/\/\w+=[^;]+;/g);
     } finally {
       client.destroy();
       await once(server.close(), "close");
     }
   }
+
+  // No byte of the body comes with the head. The dropped body still advanced
+  // the parser to the end of /two, so /three ended it: 'end' with 0 body bytes,
+  // no trailers and no error.
+  it.each([
+    ["Content-Length", "Content-Length: 10\r\n", "0123456789", "/two=10;"],
+    [
+      "Content-Length of 1 MiB",
+      `Content-Length: ${1024 * 1024}\r\n`,
+      Buffer.alloc(1024 * 1024, "b").toString(),
+      `/two=${1024 * 1024};`,
+    ],
+    ["Expect: 100-continue", "Content-Length: 10\r\nExpect: 100-continue\r\n", "0123456789", "/two=10;"],
+    [
+      "chunked with a trailer",
+      "Transfer-Encoding: chunked\r\nTrailer: X-T\r\n",
+      "a\r\n0123456789\r\n0\r\nX-T: v\r\n\r\n",
+      "/two=10,x-t=v;",
+    ],
+  ])("whole body, then the next request: %s", async (_, headers, body, two) => {
+    expect(
+      await exchange(
+        [
+          {
+            write: "GET /one HTTP/1.1\r\nHost: a\r\n\r\n" + `POST /two HTTP/1.1\r\nHost: a\r\n${headers}\r\n`,
+            waitFor: "/one=0;",
+          },
+          { write: body + "GET /three HTTP/1.1\r\nHost: a\r\n\r\n", waitFor: "/three=0;" },
+        ],
+        "/two",
+      ),
+    ).toEqual(["/one=0;", two, "/three=0;"]);
+  });
 
   it("Content-Length body", async () => {
     expect(

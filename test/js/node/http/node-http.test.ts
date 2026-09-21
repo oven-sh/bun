@@ -4668,3 +4668,94 @@ it("connectionListener pauses reads when queued pipelined responses back up", as
   clientSide.destroy();
   serverSide.destroy();
 });
+
+describe("request completion (req.complete, socket.parser.incoming)", () => {
+  function rawClient(server: Server, request: string) {
+    const { port, address } = server.address() as AddressInfo;
+    const client = connect(port, address, () => client.write(request));
+    client.on("error", () => {});
+    client.on("data", () => {});
+    return client;
+  }
+
+  test("req.complete is true inside a 'connect' listener", async () => {
+    await using server = createServer();
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    let sawComplete: boolean | undefined;
+    server.on("connect", (req, socket) => {
+      sawComplete = req.complete;
+      socket.destroy();
+    });
+    const client = rawClient(server, "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n");
+    const [req] = await once(server, "connect");
+    expect(sawComplete).toBe(true);
+    await new Promise(resolve => process.nextTick(resolve));
+    expect(req.complete).toBe(true);
+    await once(client, "close");
+  });
+
+  test("req.complete is true inside an 'upgrade' listener for a request without a body", async () => {
+    await using server = createServer();
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    let sawComplete: boolean | undefined;
+    server.on("upgrade", (req, socket) => {
+      sawComplete = req.complete;
+      socket.destroy();
+    });
+    const client = rawClient(server, "GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n");
+    const [req] = await once(server, "upgrade");
+    expect(sawComplete).toBe(true);
+    await new Promise(resolve => process.nextTick(resolve));
+    expect(req.complete).toBe(true);
+    await once(client, "close");
+  });
+
+  for (const method of ["HEAD", "TRACE"]) {
+    test(`a ${method} request that declares a body delivers it and completes only once it arrived`, async () => {
+      await using server = createServer();
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const chunks: Buffer[] = [];
+      const body = Promise.withResolvers<string>();
+      server.on("request", (req, res) => {
+        req.on("data", c => chunks.push(c));
+        req.on("end", () => {
+          body.resolve(Buffer.concat(chunks).toString());
+          res.end();
+        });
+      });
+      // The headers go first. The declared body follows only once the
+      // request has been dispatched.
+      const client = rawClient(server, `${method} / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\n`);
+      const [req] = await once(server, "request");
+      await new Promise(resolve => process.nextTick(resolve));
+      expect(req.complete).toBe(false);
+      client.write("hello");
+      expect(await body.promise).toBe("hello");
+      expect(req.complete).toBe(true);
+      client.destroy();
+      await once(client, "close");
+    });
+  }
+
+  test("optimizeEmptyRequests: socket.parser.incoming does not keep the request once the response finished", async () => {
+    const closed = Promise.withResolvers<{ atRequest: boolean; atClose: boolean }>();
+    await using server = createServer({ optimizeEmptyRequests: true }, (req, res) => {
+      const socket = req.socket;
+      const atRequest = socket.parser.incoming === req;
+      // The keep-alive connection idles after this response. Node cleared
+      // parser.incoming in resOnFinish because the pre-dumped request had
+      // already ended.
+      res.on("close", () => closed.resolve({ atRequest, atClose: socket.parser.incoming === req }));
+      res.end("ok");
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const client = rawClient(server, "GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+    expect(await closed.promise).toEqual({ atRequest: true, atClose: false });
+    client.destroy();
+    await once(client, "close");
+  });
+});

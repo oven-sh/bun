@@ -1539,10 +1539,19 @@ describe("a PUSH_PROMISE over the send limit (RFC 9113 §8.4)", () => {
     const type = Object.keys(FrameType).find(k => FrameType[k as keyof typeof FrameType] === f.type);
     return `${f.streamId} ${type}${f.flags & 0x1 ? " END_STREAM" : ""}`;
   }
+  // node sends the graceful GOAWAY twice (session.close(), then Http2Session::Close). bun sends it
+  // once. One repeat of the first GOAWAY is dropped, so both pass and a third GOAWAY still fails.
+  function withoutRepeatedGoaway(entries: string[]): string[] {
+    const first = entries.findIndex(entry => entry.includes("GOAWAY"));
+    const repeat = entries.findIndex((entry, i) => i > first && entry === entries[first]);
+    return entries.filter((_, i) => i !== repeat);
+  }
   const streamFrames = (c: RawH2) =>
-    c.frames
-      .filter(f => f.type !== FrameType.SETTINGS && f.type !== FrameType.WINDOW_UPDATE && f.type !== FrameType.PING)
-      .map(describeFrame);
+    withoutRepeatedGoaway(
+      c.frames
+        .filter(f => f.type !== FrameType.SETTINGS && f.type !== FrameType.WINDOW_UPDATE && f.type !== FrameType.PING)
+        .map(describeFrame),
+    );
   const endOfStream = (id: number) => (f: Frame) =>
     f.streamId === id && f.type === FrameType.DATA && (f.flags & 0x1) !== 0;
 
@@ -1657,7 +1666,7 @@ describe("a PUSH_PROMISE over the send limit (RFC 9113 §8.4)", () => {
   });
 
   test.each<[string, http2.OutgoingHttpHeaders, http2.ServerOptions]>([
-    ["a field of exactly 65536 bytes", { "x-big": big(65_531) }, {}],
+    ["a field of exactly 65536 bytes, the most bun encodes (node refuses it)", { "x-big": big(65_531) }, {}],
     ["a block at exactly a user-set limit", { "x-big": big(65_407) }, { maxSendHeaderBlockLength: 65_536 }],
     ["a block that a lower limit refuses", { "x-big": big(400) }, { maxSendHeaderBlockLength: 1000 }],
     ["a block of small fields over 64 KiB with the option unset (node refuses it)", smallFields, {}],
@@ -1790,8 +1799,8 @@ describe("a PUSH_PROMISE over the send limit (RFC 9113 §8.4)", () => {
     try {
       const pushes: number[] = [];
       client.on("stream", pushed => pushes.push(pushed.id!));
-      const goaways: { code: number; lastStreamID: number }[] = [];
-      client.on("goaway", (code, lastStreamID) => goaways.push({ code, lastStreamID }));
+      const goaways: string[] = [];
+      client.on("goaway", (code, lastStreamID) => goaways.push(`GOAWAY ${code} last=${lastStreamID}`));
       const clientClosed = Promise.withResolvers<void>();
       client.on("error", clientClosed.reject);
       client.on("close", () => clientClosed.resolve());
@@ -1808,11 +1817,11 @@ describe("a PUSH_PROMISE over the send limit (RFC 9113 §8.4)", () => {
         return promise;
       };
       const [inFlightResponse, parentResponse] = await Promise.all([run("/in-flight"), run("/"), clientClosed.promise]);
-      expect({ inFlightResponse, parentResponse, pushes, goaways }).toEqual({
+      expect({ inFlightResponse, parentResponse, pushes, goaways: withoutRepeatedGoaway(goaways) }).toEqual({
         inFlightResponse: { status: 200, shared: "same-value", body: "in-flight body" },
         parentResponse: { status: 200, shared: "same-value", body: "parent body" },
         pushes: [],
-        goaways: [{ code: ErrorCode.NO_ERROR, lastStreamID: 3 }],
+        goaways: [`GOAWAY ${ErrorCode.NO_ERROR} last=3`],
       });
     } finally {
       client.destroy();

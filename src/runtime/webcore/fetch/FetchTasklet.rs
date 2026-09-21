@@ -47,7 +47,7 @@ use boringssl::c::{X509_free, d2i_X509};
 /// The "last ref dropped on the HTTP thread → deinit on the JS thread" hop:
 /// same pointer, its own tag, so teardown can tell it from a progress update.
 #[repr(transparent)]
-pub struct FetchTaskletDeinitHop(FetchTasklet);
+pub(crate) struct FetchTaskletDeinitHop(FetchTasklet);
 impl Taskable for FetchTaskletDeinitHop {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FetchTaskletDeinit;
     /// The last ref dropped on the HTTP thread while we were tearing down:
@@ -73,7 +73,7 @@ impl FetchTaskletDeinitHop {
 /// The HTTP thread drained the request body's buffer: the hop that tells the sink, on the JS
 /// thread. Same pointer, its own tag.
 #[repr(transparent)]
-pub struct FetchTaskletRequestDrain(FetchTasklet);
+pub(crate) struct FetchTaskletRequestDrain(FetchTasklet);
 impl Taskable for FetchTaskletRequestDrain {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FetchTaskletRequestDrain;
     /// Carries the +1 `on_write_request_data_drain` took.
@@ -198,7 +198,7 @@ pub struct FetchTasklet {
 // `fetch.rs` (e.g. `HTTPRequestBodyExt::any_blob`) and would require changes
 // across files. The enum is also short-lived per-request, so the size cost is bounded.
 #[allow(clippy::large_enum_variant)]
-pub enum HTTPRequestBody {
+pub(crate) enum HTTPRequestBody {
     AnyBlob(AnyBlob),
     Sendfile(http::SendFile),
     ReadableStream(ReadableStreamStrong),
@@ -243,7 +243,7 @@ impl HTTPRequestBody {
         }
     }
 
-    pub fn from_js(cx: &bun_jsc::JsThread<'_>, value: JSValue) -> JsResult<HTTPRequestBody> {
+    pub(crate) fn from_js(cx: &bun_jsc::JsThread<'_>, value: JSValue) -> JsResult<HTTPRequestBody> {
         let mut body_value = BodyValue::from_js(cx.global(), value)?;
         if matches!(body_value, BodyValue::Used)
             || (matches!(&body_value, BodyValue::Locked(l) if !l.action.is_none() || l.is_disturbed2(cx.global())))
@@ -2762,7 +2762,7 @@ impl FetchTasklet {
     }
 }
 
-pub struct FetchOptions {
+pub(crate) struct FetchOptions {
     pub method: Method,
     pub(crate) headers: Headers,
     pub(crate) body: HTTPRequestBody,

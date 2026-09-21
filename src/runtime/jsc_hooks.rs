@@ -4047,7 +4047,7 @@ const ALWAYS_SYNC_MODULES: &[&[u8]] = &[b"reflect-metadata"];
 /// # Safety
 /// `jsc_vm` is the live per-thread VM.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__transpileFile(
+pub(crate) unsafe extern "C" fn Bun__transpileFile(
     jsc_vm: *mut VirtualMachine,
     global: &JSGlobalObject,
     specifier: &bun_core::String,
@@ -4390,7 +4390,7 @@ fn transpile_error_value(
 /// Transpiles plugin-provided source through the per-thread
 /// `TRANSPILE_PRINTER`, writing the result into `ret`.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__transpileVirtualModule(
+pub(crate) extern "C" fn Bun__transpileVirtualModule(
     global: &JSGlobalObject,
     specifier_str: &bun_core::String,
     referrer_str: &bun_core::String,
@@ -4609,7 +4609,7 @@ fn extract_owner_uid() -> u32 {
 
 /// Support embedded .node files. `Dead` when `path` is not an embedded file.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__resolveEmbeddedNodeFile(path: &bun_core::String) -> bun_core::String {
+pub(crate) extern "C" fn Bun__resolveEmbeddedNodeFile(path: &bun_core::String) -> bun_core::String {
     bun_jsc::mark_binding();
     if VirtualMachine::get().standalone_module_graph.is_none() {
         return bun_core::String::DEAD;
@@ -4625,7 +4625,7 @@ pub extern "C" fn Bun__resolveEmbeddedNodeFile(path: &bun_core::String) -> bun_c
 /// C++ entry point: if `specifier` names a builtin module, writes its resolved
 /// source into `ret` and returns `true`.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__resolveAndFetchBuiltinModule(
+pub(crate) extern "C" fn Bun__resolveAndFetchBuiltinModule(
     specifier: &bun_core::String,
     ret: &mut ErrorableResolvedSource,
 ) -> bool {

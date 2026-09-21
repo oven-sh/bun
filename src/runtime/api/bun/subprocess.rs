@@ -33,25 +33,25 @@ use crate::webcore::{self, AbortSignal, FileSink};
 use bun_libuv_sys::UvHandle as _;
 
 #[path = "subprocess/ResourceUsage.rs"]
-pub mod resource_usage;
-pub use resource_usage::ResourceUsage;
+pub(crate) mod resource_usage;
+pub(crate) use resource_usage::ResourceUsage;
 
 #[path = "subprocess/SubprocessPipeReader.rs"]
-pub mod subprocess_pipe_reader;
-pub use subprocess_pipe_reader as PipeReader;
+pub(crate) mod subprocess_pipe_reader;
+pub(crate) use subprocess_pipe_reader as PipeReader;
 
 #[path = "subprocess/Readable.rs"]
-pub mod readable;
-pub use readable::Readable;
+pub(crate) mod readable;
+pub(crate) use readable::Readable;
 
 #[path = "subprocess/Writable.rs"]
-pub mod writable;
-pub use writable::Writable;
+pub(crate) mod writable;
+pub(crate) use writable::Writable;
 
-pub use bun_spawn::static_pipe_writer;
-pub use static_pipe_writer::StaticPipeWriter as NewStaticPipeWriter;
+pub(crate) use bun_spawn::static_pipe_writer;
+pub(crate) use static_pipe_writer::StaticPipeWriter as NewStaticPipeWriter;
 
-pub use bun_io::MaxBuf;
+pub(crate) use bun_io::MaxBuf;
 
 bun_output::declare_scope!(Subprocess, visible);
 bun_output::declare_scope!(IPC, visible);
@@ -60,7 +60,7 @@ bun_output::declare_scope!(IPC, visible);
 // proc-macro doesn't support generic structs); cached-property accessors
 // (exitedPromiseGetCached, stdinGetCached, …) from `jsc.Codegen.JSSubprocess` are
 // emitted here via `codegen_cached_accessors!`.
-pub mod js {
+pub(crate) mod js {
     bun_jsc::codegen_cached_accessors!(
         "Subprocess";
         stdin,
@@ -75,14 +75,14 @@ pub mod js {
 }
 
 /// Platform-dependent stdio result type.
-pub use bun_spawn::subprocess::StdioResult;
+pub(crate) use bun_spawn::subprocess::StdioResult;
 
 #[cfg(windows)]
 type StdioPipeItem = StdioResult;
 #[cfg(not(windows))]
 type StdioPipeItem = ExtraPipe;
 
-pub type StaticPipeWriter<'a> = NewStaticPipeWriter<Subprocess<'a>>;
+pub(crate) type StaticPipeWriter<'a> = NewStaticPipeWriter<Subprocess<'a>>;
 
 impl<'a> static_pipe_writer::StaticPipeWriterProcess for Subprocess<'a> {
     const POLL_OWNER_TAG: bun_io::PollTag = bun_io::posix_event_loop::poll_tag::STATIC_PIPE_WRITER;
@@ -99,7 +99,7 @@ pub enum ObservableGetter {
     Stderr,
 }
 
-pub use bun_spawn::process::StdioKind;
+pub(crate) use bun_spawn::process::StdioKind;
 
 // Note: `#[bun_jsc::JsClass]` does not yet handle generic structs (it emits the
 // bare ident in extern signatures). The `JsClass` impl + finalize/construct C-ABI
@@ -1502,7 +1502,7 @@ impl Subprocess<'_> {
     }
 }
 
-pub use bun_spawn::subprocess::{Source, SourceData};
+pub(crate) use bun_spawn::subprocess::{Source, SourceData};
 
 // JSC-tier payloads wrap as `Source::Any(Box<dyn SourceData>)` — the lower-tier
 // `bun_spawn` crate cannot name `webcore`/`jsc`, so the vtable travels with the
@@ -1566,7 +1566,7 @@ pub(crate) extern "C" fn on_pipe_close(this: *mut bun_sys::windows::libuv::Pipe)
     drop(unsafe { bun_core::heap::take(this) });
 }
 
-pub mod testing_apis {
+pub(crate) mod testing_apis {
     use super::*;
 
     /// Inject a synthetic read error into a subprocess's stdout/stderr
@@ -1622,4 +1622,4 @@ pub mod testing_apis {
 }
 // `generated_js2native.rs` snake-cases `TestingAPIs` as `testing_ap_is`
 // (the converter splits the trailing `…APIs` cluster into `AP` + `Is`).
-pub use testing_apis as testing_ap_is;
+pub(crate) use testing_apis as testing_ap_is;

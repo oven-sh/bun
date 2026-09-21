@@ -36,7 +36,7 @@ pub enum NativeWireResult {
 /// A `ReadableStream` handle for [`crate::webcore::body::PendingValue`] and the
 /// producers that feed it.
 #[derive(Default)]
-pub enum Strong {
+pub(crate) enum Strong {
     #[default]
     Empty,
     /// GC-roots the stream.
@@ -671,7 +671,7 @@ pub(crate) fn is_locked_value(value: JSValue, global_object: &JSGlobalObject) ->
 
 #[repr(i32)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum Tag {
+pub(crate) enum Tag {
     Invalid = -1,
 
     /// ReadableStreamDefaultController or ReadableByteStreamController

@@ -16,38 +16,42 @@
  *   -j/-k/-l/-v/-n, -d <mode>       → ninja
  *   -t <tool> [args…]               → the ninja tool, on the build directory as it is (no configure, no build)
  *   --configure-only, --quiet, --help  → here
+ *   --timings                       → here: after the build, where the build directory's time went (build/timings.ts)
  *   --<field>=<v> or --<field> <v>  → here (profile/target/config override)
  *   --<unknown>=<v>                 → error (typo check)
  *   anything else                   → runtime
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join, relative } from "node:path";
 import {
-  canTraceOrderFile,
-  downloadArtifacts,
   inheritOrderFile,
-  mustGenerateOrderFile,
   orderFileContext,
   orderFileEligible,
   packageAndUpload,
-  regenerateOrderFile,
-  reportOrderFileBootstrap,
-  reportOrderFileCannotTrace,
-  reportOrderFileFailure,
-  shouldGenerateOrderFile,
+  publishTimings,
+  reportNothingToInherit,
   spawnWithAnnotations,
-  uploadArtifacts,
-  verifyOrderFileApplied,
+  timingsChartName,
 } from "./build/ci.ts";
-import { formatConfig, formatConfigUnchanged, type PartialConfig } from "./build/config.ts";
-import { configOf, configure, reconfigure, type ConfigureInput } from "./build/configure.ts";
+import { formatConfig, formatConfigUnchanged, type Config, type PartialConfig } from "./build/config.ts";
+import {
+  codegenConfigOf,
+  configOf,
+  configure,
+  configureCodegen,
+  modeOf,
+  reconfigure,
+  reconfigureCodegen,
+  type ConfigureInput,
+} from "./build/configure.ts";
 import { BuildError } from "./build/error.ts";
 import { ninjaIfPresent } from "./build/ninja-release.ts";
 import { STREAM_FD } from "./build/stream.ts";
-import { interactive, nameColor, status } from "./build/tty.ts";
-import { isCI, printEnvironment, startGroup } from "./buildkite.ts";
+import { chartHtml, formatReport, loadBuild } from "./build/timings.ts";
+import { bold, dim, interactive, nameColor, status } from "./build/tty.ts";
+import { isBuildkite, isCI, printEnvironment, startGroup } from "./buildkite.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Main
@@ -80,7 +84,8 @@ async function main(): Promise<void> {
   // A ninja tool (`-t query <target>`, `-t deps <object>`, `-t commands`, …) inspects what the last configure and
   // build left behind, so it runs on the build directory as it is, with the ninja the build runs.
   if (args.ninjaTool !== undefined) {
-    const { cfg } = configOf({ profile: args.profile, overrides: args.overrides });
+    const toolInput: ConfigureInput = { profile: args.profile, overrides: args.overrides };
+    const cfg = modeOf(toolInput) === "codegen" ? codegenConfigOf(toolInput) : configOf(toolInput).cfg;
     if (!existsSync(join(cfg.buildDir, "build.ninja"))) {
       throw new BuildError(`${cfg.buildDir} has not been configured`, {
         hint: "Build it, or configure it with --configure-only, using the same profile flags.",
@@ -132,8 +137,24 @@ async function main(): Promise<void> {
     // ninja's generator rule replaying a previous configure (`regen`, configure.ts): just rewrite build.ninja.
     // ninja's own [N/M] line already says "reconfigure"; the CI prelude and the local summary would be noise
     // in the middle of a build log.
-    await reconfigure(input);
+    await (modeOf(input) === "codegen" ? reconfigureCodegen(input) : reconfigure(input));
     return;
+  }
+
+  // mode=codegen: the code generators and nothing else. No toolchain was looked for, and none of what the two
+  // paths below do around a native build (artifacts, the symbol order file, a binary to run) applies.
+  if (modeOf(input) === "codegen") {
+    if (args.execArgs.length > 0) {
+      throw new BuildError("mode=codegen builds no binary to run", { hint: "Drop the positional args." });
+    }
+    const result = await configureCodegen(input);
+    if (!args.quiet) {
+      process.stderr.write(`codegen only → ${result.cfg.codegenDir} (configured in ${result.elapsed}ms)\n`);
+    }
+    if (args.configureOnly) return;
+    const ninja = spawnSync(result.ninja, ninjaArgv(result.cfg), { stdio: "inherit" });
+    if (ninja.error) throw new BuildError("Failed to run ninja", { cause: ninja.error });
+    process.exit(ninja.status ?? 1);
   }
 
   if (isCI) {
@@ -142,25 +163,13 @@ async function main(): Promise<void> {
     const result = await startGroup("Configure", () => configure(input));
     if (args.configureOnly) return;
 
-    // link-only: download cpp-only + rust-only artifacts before ninja.
-    if (result.cfg.buildkite && result.cfg.mode === "link-only") {
-      await startGroup("Download artifacts", () => downloadArtifacts(result.cfg));
-    }
-
-    // The order file is a link input, so it must land before the linking ninja
-    // pass. In rust-and-link mode it runs between the Rust build and the build-cpp
-    // poll (whose sleep loop yields cleanly) so it doesn't stall the Rust build.
+    // The order file is a link input, so it must land before the linking ninja pass.
     const orderCtx = orderFileContext();
     const runInherit = () =>
-      (orderFileEligible(result.cfg, orderCtx) && !shouldGenerateOrderFile(result.cfg, orderCtx)
-        ? inheritOrderFile(result.cfg, orderCtx)
-        : Promise.resolve(false)
-      ).catch(e => {
+      inheritOrderFile(result.cfg, orderCtx).catch(e => {
         console.log(`~ symbol order: inherit failed (${(e as Error)?.message ?? e}); linking unordered`);
         return false;
       });
-    let inherited = false;
-
     const ninja = result.ninja;
     const runNinja = (targets: string[] = args.ninjaTargets) =>
       spawnWithAnnotations(ninja, ["-C", result.cfg.buildDir, ...args.ninjaArgs, ...targets], {
@@ -168,58 +177,30 @@ async function main(): Promise<void> {
         env: ninjaEnv(result.cfg, result.env),
       });
 
-    // rust-and-link: build libbun_runtime.a first so the Rust build overlaps with the
-    // sibling build-cpp job, THEN poll for build-cpp's outcome + download
-    // its archive, THEN link. link-only skips straight to the full build
-    // (its artifacts were downloaded above).
-    if (result.cfg.buildkite && result.cfg.mode === "rust-and-link") {
-      await startGroup("Build Rust", () => runNinja(["bun-rust"]));
-      inherited = (await startGroup("Inherit symbol order file", runInherit)) as boolean;
-      await startGroup("Wait for build-cpp & download artifacts", () => downloadArtifacts(result.cfg));
-    } else {
-      inherited = (await startGroup("Inherit symbol order file", runInherit)) as boolean;
-    }
+    const inherited = (await startGroup("Inherit symbol order file", runInherit)) as boolean;
 
     await startGroup("Build", () => runNinja());
 
-    // Trace and relink when we are a release, when a commit asked for it, or when
-    // there was nothing to inherit. A failed trace is not fatal: the order file is
-    // an optimization, and a flaky workload must not kill a release 40 minutes in.
-    if (mustGenerateOrderFile(result.cfg, orderCtx, inherited)) {
-      if (!inherited && !shouldGenerateOrderFile(result.cfg, orderCtx)) reportOrderFileBootstrap(result.cfg);
-      let traced = true;
-      await startGroup("Generate symbol order file", () => {
-        try {
-          regenerateOrderFile(result.cfg, orderCtx);
-        } catch (error) {
-          traced = false;
-          reportOrderFileFailure(error as Error);
-        }
-      });
-      if (traced) {
-        await startGroup("Relink against symbol order file", runNinja);
-        // We traced this exact binary: nearly every symbol must resolve. Hard-fail.
-        if (result.output.exe) verifyOrderFileApplied(result.cfg, orderCtx, result.output.exe);
-      }
-    } else if (orderFileEligible(result.cfg, orderCtx) && result.output.exe) {
-      // Inherited: a stale file is a slower binary, not a broken one.
-      if (!inherited && !canTraceOrderFile(result.cfg)) reportOrderFileCannotTrace(result.cfg);
-      verifyOrderFileApplied(result.cfg, orderCtx, result.output.exe, { strict: false });
+    // No build traces its own binary: the order file is the one a main build's trace-order step published
+    // (see "Symbol ordering file" in ci.ts).
+    if (orderFileEligible(result.cfg, orderCtx) && result.output.exe && !inherited) {
+      reportNothingToInherit(result.cfg);
     }
 
-    // cpp-only/rust-only: upload build outputs for downstream link-only.
-    // link-only/rust-and-link: package + upload zips for downstream test steps.
-    if (result.cfg.buildkite) {
-      if (result.cfg.mode === "cpp-only" || result.cfg.mode === "rust-only") {
-        await startGroup("Upload artifacts", () => uploadArtifacts(result.cfg, result.output));
+    // Every CI build says where its time went: nobody can come back to this build directory to ask.
+    // It describes a build that already succeeded, so here it never fails one: what goes wrong is printed and the
+    // artifacts still upload.
+    startGroup("Build timings", () => {
+      try {
+        reportTimings(result.cfg, t => process.stdout.write(t));
+      } catch (error) {
+        console.log(error instanceof BuildError ? error.format() : `build timings: ${(error as Error).stack ?? error}`);
       }
-      if (
-        result.cfg.mode === "link-only" ||
-        result.cfg.mode === "rust-and-link" ||
-        result.cfg.mode === "archive-link"
-      ) {
-        await startGroup("Package and upload", () => packageAndUpload(result.cfg, result.output));
-      }
+    });
+
+    // Package + upload zips for downstream test steps.
+    if (result.cfg.buildkite && result.cfg.mode === "archive-link") {
+      await startGroup("Package and upload", () => packageAndUpload(result.cfg, result.output));
     }
   } else {
     // Local: configure, then spawn ninja.
@@ -252,7 +233,11 @@ async function main(): Promise<void> {
       }
     }
 
-    if (args.configureOnly) return;
+    if (args.configureOnly) {
+      // The report describes the build directory, so it needs no build: this is how to ask for it without one.
+      if (args.timings) reportTimings(result.cfg, t => process.stderr.write(t));
+      return;
+    }
     // FD 3 sideband — only when interactive. stream.ts (wrapping deps and
     // the cargo plan) writes live output there, bypassing ninja's per-job buffering.
     // A human watching a terminal wants to see cmake configure spew and
@@ -295,6 +280,8 @@ async function main(): Promise<void> {
       process.exit(ninja.status ?? 1);
     }
 
+    if (args.timings) reportTimings(result.cfg, t => process.stderr.write(t));
+
     if (args.execArgs.length === 0) {
       // Closing line on success: when restat prunes most of the graph
       // (local WebKit no-op shows `[1/555] build WebKit` then silence),
@@ -326,6 +313,20 @@ async function main(): Promise<void> {
     }
     process.exit(child.status ?? 0);
   }
+}
+
+/**
+ * `--timings`, and every CI build: print where the build directory's time went, and write the same as a chart. Under
+ * Buildkite the chart is uploaded and the build page links to it.
+ */
+function reportTimings(cfg: Config, write: (text: string) => void): void {
+  const build = loadBuild(cfg);
+  write(formatReport(build, { bold, dim }));
+  if (build.runs.length === 0) return;
+  const chart = join(cfg.buildDir, timingsChartName());
+  writeFileSync(chart, chartHtml(build));
+  write(`\n${bold("chart")}  ${relative(process.cwd(), chart)}\n`);
+  if (isBuildkite) publishTimings(cfg, chart);
 }
 
 /**
@@ -409,6 +410,8 @@ interface CliArgs {
   configureOnly: boolean;
   /** Suppress build output unless it fails. Also auto-enabled when execArgs present. */
   quiet: boolean;
+  /** After the build (with `configureOnly`: without one), report where the build directory's time went. */
+  timings: boolean;
   /** Extra ninja args (e.g. -j8, -v, -n, -d explain). */
   ninjaArgs: string[];
   /** `-t <tool> [args…]`: run this ninja tool instead of configuring and building. */
@@ -486,6 +489,7 @@ const ninjaDebugModes = new Set(["stats", "explain", "keepdepfile", "keeprsp", "
  *   --<field>=<value>         Override any PartialConfig field (configFlags)
  *   --target=<name>           Build a specific ninja target (repeatable)
  *   --configure-only          Emit build.ninja, don't run it
+ *   --timings                 After the build, report where the build directory's time went
  *   -j<N> / -v / -k<N> / -n / -d <mode>   Passed through to ninja
  *   -t <tool> [args…]         Run a ninja tool on the build directory; everything after -t is the tool's
  *   <args...>                 Exec the built binary with these args
@@ -505,6 +509,7 @@ function parseArgs(argv: string[]): CliArgs {
   const execArgs: string[] = [];
   let configureOnly = false;
   let quiet = false;
+  let timings = false;
   let configFile: string | undefined;
   let inExec = false;
 
@@ -548,6 +553,11 @@ function parseArgs(argv: string[]): CliArgs {
 
     if (arg === "--quiet") {
       quiet = true;
+      continue;
+    }
+
+    if (arg === "--timings") {
+      timings = true;
       continue;
     }
 
@@ -609,7 +619,18 @@ function parseArgs(argv: string[]): CliArgs {
     }
   }
 
-  return { profile, overrides, ninjaTargets, ninjaArgs, ninjaTool, execArgs, configureOnly, quiet, configFile };
+  return {
+    profile,
+    overrides,
+    ninjaTargets,
+    ninjaArgs,
+    ninjaTool,
+    execArgs,
+    configureOnly,
+    quiet,
+    timings,
+    configFile,
+  };
 }
 
 function parseInteger(flag: string, v: string): number {
@@ -642,11 +663,19 @@ Options:
                                   vendored dep from a local checkout),
                                   package-manager (bun|npm, installs the
                                   package.json files the build needs),
-                                  buildDir, mode (full|cpp-only|link-only),
+                                  buildDir, mode (full|archive-link|codegen),
                                   unifiedSources, timeTrace, os, arch, abi,
                                   winsysroot (Windows cross-compile SDK root)
   --target=<name>         Build a specific ninja target (repeatable)
   --configure-only        Emit build.ninja, don't run it
+  --timings               After the build (or, with --configure-only, without
+                          one), report where the time went: totals per rule,
+                          the slowest edges, the critical path, and how
+                          parallel the last build was; and write the same as
+                          a chart. It describes the build
+                          directory (the last time every edge ran), so it
+                          reads the same after a build with nothing to do.
+                          With --time-trace=on, the compilers' phases too.
   -j<N>, -v, -k<N>        Passed through to ninja
   --help                  Show this help
 

@@ -178,9 +178,14 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncIsToplevel, (JSGlobalObject * globalOb
 {
     ENTER_PROTO_FUNC();
 
+    // V8's CallSiteInfo::IsToplevel: no receiver, or the global object. A construct call's receiver
+    // is the instance, which a captured frame does not keep (its this slot holds new.target).
+    if (callSite->isConstructor()) {
+        return JSC::JSValue::encode(JSC::jsBoolean(false));
+    }
+
     JSC::JSValue thisValue = callSite->thisValue();
 
-    // V8's CallSiteInfo::IsToplevel: no receiver, or the global object.
     if (thisValue.isUndefinedOrNull()) {
         return JSC::JSValue::encode(JSC::jsBoolean(true));
     }

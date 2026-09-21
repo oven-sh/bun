@@ -525,10 +525,10 @@ test("CallFrame.p.isConstructor", () => {
 
   Error.prepareStackTrace = (e, s) => {
     expect(s[0].isConstructor()).toBe(true);
-    // TODO: should be false: this is an instance of C
-    expect(s[0].isToplevel()).toBe(true);
-    // TODO: should return the class name
-    // expect(s[0].getTypeName()).toBe('C');
+    // The receiver of a construct call is the instance, so it is not a top-level call (as in V8).
+    // The frame does not keep the instance, so getTypeName() stays null where V8 says 'C'.
+    expect(s[0].isToplevel()).toBe(false);
+    expect(s[0].getTypeName()).toBe(null);
 
     expect(s[1].isConstructor()).toBe(false);
     expect(s[1].isToplevel()).toBe(true);
@@ -2314,6 +2314,60 @@ describe("a method call frame is named after its receiver", () => {
     expect(stderr).toContain("at K.m (");
     expect(stderr).toContain("at Object.mock (");
     expect(exitCode).toBe(1);
+  });
+
+  // The DFG and FTL inline hot calls and can keep an inlined frame's receiver
+  // anywhere. A frame that JSC inlined gets no type name rather than a wrong
+  // one: a stack read through the argument recoveries of an inlined frame gave
+  // the arguments array of a varargs call, or a raw word that crashed the
+  // collector when it marked the frame.
+  test("hot methods: an inlined frame's name is the bare name or the right type name, never a wrong one", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        Error.prepareStackTrace = (e, sites) => sites[0].getTypeName();
+        const stack = () => { const e = new Error("x"); e.message; return e.stack; };
+        const o = { m(i) { "use strict"; return (i & 255) === 0 ? stack() : i; } };
+        class K { m(i) { return (i & 255) === 0 ? stack() : i; } static s(i) { return (i & 255) === 0 ? stack() : i; } }
+        function strict(i) { "use strict"; return (i & 255) === 0 ? stack() : i; }
+        function sloppy(i) { return (i & 255) === 0 ? stack() : i; }
+        const k = new K();
+        const bound = strict.bind(true);
+        const checks = [
+          ["o.m", i => o.m(i), "Object"],
+          ["k.m", i => k.m(i), "K"],
+          ["K.s", i => K.s(i), "K"],
+          ["strict", i => strict(i), null],
+          ["sloppy", i => sloppy(i), null],
+          ["strict.call(string)", i => strict.call("s", i), "String"],
+          ["strict.call(number)", i => strict.call(i, i), "Number"],
+          ["bound", i => bound(i), "Boolean"],
+          ["strict.apply(array)", i => strict.apply({ a: 1 }, [i]), "Object"],
+          ["spread", i => o.m(...[i]), "Object"],
+          ["Reflect.apply", i => Reflect.apply(strict, "s", [i]), "String"],
+        ];
+        let bad = 0;
+        for (let i = 0; i < 4000; i++) {
+          for (const [name, f, want] of checks) {
+            const got = f(i);
+            if (typeof got === "number") continue;
+            if (got !== want && got !== null && got !== undefined) { bad++; if (bad < 5) console.log(name, "got", got, "want", want, "at", i); }
+          }
+          if ((i & 8191) === 0) Bun.gc(true);
+        }
+        console.log("bad", bad);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("bad 0");
+    expect(exitCode).toBe(0);
   });
 
   // Node calls the CommonJS wrapper with module.exports as `this`, so the

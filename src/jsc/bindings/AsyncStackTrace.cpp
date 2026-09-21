@@ -136,6 +136,7 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
         } else {
             results.append(JSC::StackFrame(vm, owner, asyncFunction, /* isAsyncFrame */ true));
         }
+        results.last().setThisValue(vm, owner, generator->internalField(static_cast<unsigned>(JSC::JSAsyncFunctionGenerator::Field::This)).get());
     };
 
     JSC::JSAsyncFunctionGenerator* gen = getAwaitingGenerator(promise);

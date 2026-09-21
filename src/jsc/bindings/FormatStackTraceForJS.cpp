@@ -689,15 +689,18 @@ void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* _Nonnull s
     }
 }
 
-// ErrorInstance holds a frame's callee and code block weakly. Root them while user JS can run.
+// ErrorInstance holds a frame's callee, code block and receiver weakly. Root them while user JS can run.
 static void protectFrameCells(JSC::MarkedArgumentBuffer& cells, const Vector<StackFrame>& stackTrace)
 {
-    cells.ensureCapacity(stackTrace.size() * 2);
+    cells.ensureCapacity(stackTrace.size() * 3);
     for (auto& frame : stackTrace) {
         if (auto* callee = frame.callee())
             cells.append(callee);
         if (auto* codeBlock = frame.codeBlock())
             cells.append(codeBlock);
+        JSValue thisValue = frame.thisValue();
+        if (thisValue && thisValue.isCell())
+            cells.append(thisValue.asCell());
     }
 }
 

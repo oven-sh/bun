@@ -21,7 +21,7 @@ test("#8794", () => {
     } catch (e) {
       e.stack;
       expect(e.stack).toContain("at method ");
-      expect(e.stack).toContain("at a ");
+      expect(e.stack).toContain("at Object.a ");
     }
     Bun.gc(false);
   }

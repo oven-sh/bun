@@ -600,6 +600,230 @@ describe("Server", () => {
     }
   });
 
+  // publish() queues small messages per subscriber until the end of the tick,
+  // and send() inside a handler lands in the cork buffer until the handler
+  // returns. A forced close in the same tick used to drop both: the subscriber
+  // was freed without draining and the cork buffer was discarded.
+  describe.each([
+    {
+      label: "server.stop(true)",
+      shutdown: (server: Server, _sockets: ServerWebSocket<unknown>[]) => server.stop(true),
+    },
+    {
+      label: "ws.terminate()",
+      shutdown: (_server: Server, sockets: ServerWebSocket<unknown>[]) => {
+        for (const ws of sockets) ws.terminate();
+      },
+    },
+  ])("send() and publish() then $label in same tick", ({ shutdown }) => {
+    it.concurrent("delivers the messages before the socket closes", async () => {
+      const sockets: ServerWebSocket<unknown>[] = [];
+      const ready = { a: Promise.withResolvers<void>(), b: Promise.withResolvers<void>() };
+      const closed = { a: Promise.withResolvers<string[]>(), b: Promise.withResolvers<string[]>() };
+      let publishResults: number[] = [];
+
+      const server = serve({
+        port: 0,
+        fetch(req, server) {
+          const id = new URL(req.url).searchParams.get("id")!;
+          if (server.upgrade(req, { data: { id } })) return;
+          return new Response("no", { status: 400 });
+        },
+        websocket: {
+          open(ws) {
+            sockets.push(ws);
+            ws.subscribe("room");
+            ws.send("ready");
+          },
+          message(ws, msg) {
+            if (msg !== "go") return;
+            // The handler's own socket is corked here: this frame sits in the
+            // cork buffer, and the publishes below drain into it too.
+            ws.send("sent");
+            publishResults = [0, 1, 2].map(i => server.publish("room", "bye" + i));
+            shutdown(server, sockets);
+          },
+        },
+      });
+
+      const collect = (id: "a" | "b") => {
+        const received: string[] = [];
+        const ws = new WebSocket(`ws://localhost:${server.port}/?id=${id}`);
+        ws.onmessage = e => {
+          const data = e.data as string;
+          if (data === "ready") return ready[id].resolve();
+          received.push(data);
+        };
+        ws.onerror = e => {
+          ready[id].reject(e);
+          closed[id].reject(e);
+        };
+        // Everything the server wrote before the close has arrived by now.
+        ws.onclose = () => closed[id].resolve(received);
+        return ws;
+      };
+
+      const a = collect("a");
+      const b = collect("b");
+      try {
+        await Promise.all([ready.a.promise, ready.b.promise]);
+        a.send("go");
+        const [aReceived, bReceived] = await Promise.all([closed.a.promise, closed.b.promise]);
+        expect({ publishResults, aReceived, bReceived }).toEqual({
+          publishResults: [4, 4, 4],
+          aReceived: ["sent", "bye0", "bye1", "bye2"],
+          bReceived: ["bye0", "bye1", "bye2"],
+        });
+      } finally {
+        a.close();
+        b.close();
+        server.stop(true);
+      }
+    });
+  });
+
+  // The same queue at process exit: the loop does not tick again after the
+  // last turn, so nothing committed the batch before the sockets went away.
+  describe.each([
+    { label: "server.unref()", exit: "server.unref()" },
+    { label: "process.exit()", exit: "process.exit(0)" },
+  ])("publish() then $label in same tick", ({ exit }) => {
+    it.concurrent("delivers the queued messages before the process exits", async () => {
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const sockets = new Set();
+            const server = Bun.serve({
+              port: 0,
+              fetch(req, server) {
+                return server.upgrade(req) ? undefined : new Response("no", { status: 400 });
+              },
+              websocket: {
+                open(ws) {
+                  ws.subscribe("room");
+                  sockets.add(ws);
+                  if (sockets.size === 2) setTimeout(fire, 0);
+                },
+                message() {},
+              },
+            });
+            function fire() {
+              const rc = [0, 1, 2].map(i => server.publish("room", "bye" + i));
+              console.log(JSON.stringify(rc));
+              ${exit};
+            }
+            console.log(server.port);
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const decoder = new TextDecoder();
+      const reader = proc.stdout.getReader();
+      let out = "";
+      while (!out.includes("\n")) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        out += decoder.decode(value, { stream: true });
+      }
+      const port = parseInt(out);
+      const readRest = async () => {
+        let rest = out.slice(out.indexOf("\n") + 1);
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) return rest;
+          rest += decoder.decode(value, { stream: true });
+        }
+      };
+
+      const collect = () =>
+        new Promise<string[]>((resolve, reject) => {
+          const received: string[] = [];
+          const ws = new WebSocket(`ws://localhost:${port}/`);
+          ws.onmessage = e => received.push(e.data as string);
+          ws.onerror = reject;
+          ws.onclose = () => resolve(received);
+        });
+
+      const [aReceived, bReceived, rest, stderr, exitCode] = await Promise.all([
+        collect(),
+        collect(),
+        readRest(),
+        proc.stderr.text(),
+        proc.exited,
+      ]);
+      expect({ publishResults: rest.trim(), aReceived, bReceived, stderr }).toEqual({
+        publishResults: "[4,4,4]",
+        aReceived: ["bye0", "bye1", "bye2"],
+        bReceived: ["bye0", "bye1", "bye2"],
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // A protocol error fails the connection from inside the frame parser. A
+  // legal frame earlier in the same read has already run its handler, and what
+  // that handler sent is still in the cork buffer.
+  it.concurrent("send() is delivered when a later frame in the same read fails the connection", async () => {
+    const serverClosed = Promise.withResolvers<number>();
+    using server = serve({
+      port: 0,
+      fetch(req, server) {
+        if (server.upgrade(req)) return;
+        return new Response("no", { status: 400 });
+      },
+      websocket: {
+        message(ws, msg) {
+          ws.send(msg);
+        },
+        close(_ws, code) {
+          serverClosed.resolve(code);
+        },
+      },
+    });
+
+    const frame = (opcode: number, text: string) => {
+      const payload = Buffer.from(text);
+      const mask = Buffer.from([1, 2, 3, 4]);
+      return Buffer.concat([
+        Buffer.from([0x80 | opcode, 0x80 | payload.length]),
+        mask,
+        payload.map((byte, i) => byte ^ mask[i & 3]),
+      ]);
+    };
+
+    const afterHandshake = Promise.withResolvers<string>();
+    let received = Buffer.alloc(0);
+    let wroteFrames = false;
+    const socket = net.connect(server.port, "127.0.0.1", () => {
+      socket.write(
+        "GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n" +
+          "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+      );
+    });
+    socket.on("data", chunk => {
+      received = Buffer.concat([received, chunk]);
+      if (!wroteFrames && received.includes("\r\n\r\n")) {
+        wroteFrames = true;
+        // One write, so one read on the server: a text frame, then a
+        // continuation frame with no message to continue (RFC 6455 5.4).
+        socket.write(Buffer.concat([frame(0x1, "legal"), frame(0x0, "orphan")]));
+      }
+    });
+    socket.on("error", afterHandshake.reject);
+    socket.on("close", () =>
+      afterHandshake.resolve(received.subarray(received.indexOf("\r\n\r\n") + 4).toString("latin1")),
+    );
+
+    const [echoed, closeCode] = await Promise.all([afterHandshake.promise, serverClosed.promise]);
+    expect({ echoed, closeCode }).toEqual({ echoed: "\x81\x05legal", closeCode: 1006 });
+  });
+
   describe("websocket", () => {
     test("open", done => ({
       open(ws) {

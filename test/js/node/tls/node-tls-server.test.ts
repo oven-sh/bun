@@ -2722,6 +2722,8 @@ it("an accepted socket emits 'close' when a write is the first to see the peer's
     stdout: "pipe",
     stderr: "pipe",
   });
+  // Drain stderr while stdout is scanned, so a child that logs a lot cannot block on it.
+  const stderrText = proc.stderr.text();
   let stdout = "";
   let raw: net.Socket | undefined;
   let reset = false;
@@ -2740,7 +2742,7 @@ it("an accepted socket emits 'close' when a write is the first to see the peer's
       proc.stdin.flush();
     }
   }
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [stderr, exitCode] = await Promise.all([stderrText, proc.exited]);
   expect(stderr).toBe("");
   const lines = stdout.trim().split("\n");
   expect(JSON.parse(lines[lines.length - 1])).toEqual({ events: ["error", "close:true"], connections: 0 });

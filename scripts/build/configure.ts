@@ -309,7 +309,11 @@ function partialOf(input: ConfigureInput): PartialConfig {
 
 /** The mode an input asks for. `codegen` is configured by configureCodegen(), `full` by configure(). */
 export function modeOf(input: ConfigureInput): Mode {
-  return partialOf(input).mode ?? "full";
+  const mode = partialOf(input).mode ?? "full";
+  if (mode !== "full" && mode !== "codegen") {
+    throw new BuildError(`Unknown mode: "${mode}"`, { hint: "Modes: full, codegen" });
+  }
+  return mode;
 }
 
 /** The Config an input stands for. Writes and fetches nothing: for configure, and for what only needs to find a build directory. */

@@ -153,13 +153,6 @@ export interface Config {
   /** Bundle small .cpp files into unified TUs (WebKit-style). See unified.ts. */
   unifiedSources: boolean;
   /**
-   * Archive each `direct` dep's objects into a per-dep .a (the old
-   * behaviour). Default off — dep .o files go straight into bun's link
-   * instead. Turn on to bisect duplicate-symbol issues:
-   * a .a only contributes members the linker actually pulls.
-   */
-  archiveDeps: boolean;
-  /**
    * The compilers report their own phases: clang writes `-ftime-trace` JSON next to each `.o`, rustc's
    * `-Z time-passes` are recorded next to each crate (rust/run.ts). `--timings` reads both (timings.ts).
    */
@@ -377,7 +370,6 @@ export interface PartialConfig {
   fuzzilli?: boolean;
   socketFaultInjection?: boolean;
   unifiedSources?: boolean;
-  archiveDeps?: boolean;
   timeTrace?: boolean;
   ci?: boolean;
   buildkite?: boolean;
@@ -1368,7 +1360,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     fuzzilli,
     socketFaultInjection,
     unifiedSources: partial.unifiedSources ?? true,
-    archiveDeps: partial.archiveDeps ?? false,
     timeTrace: partial.timeTrace ?? false,
     ci,
     buildkite,

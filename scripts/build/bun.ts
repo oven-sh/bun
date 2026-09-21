@@ -202,7 +202,6 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // compiled source files (deps like picohttpparser that provide .c files
   // instead of a .a — we compile those alongside bun's own sources).
   const depLibs: string[] = [];
-  const depObjects: string[] = [];
   const depIncludes: string[] = [];
   const depDefines: string[] = [];
   // Outputs of deps that provide headers — used as implicit inputs on PCH/cc/
@@ -210,15 +209,14 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // (the .a is the signal — see comment at the PCH step). Deps with no provided
   // includes (tinycc, lolhtml) are skipped: nothing to invalidate, and a tinycc
   // no-op rebuild (ar has no restat) would otherwise cascade to a full PCH+cxx
-  // rebuild. Link still gets every dep via depLibs/depObjects.
+  // rebuild. Link still gets every dep via depLibs.
   const depHeaderSignal: string[] = [];
-  // forbidUndefined stamps (source.ts): validations of whatever the dep
-  // objects go into next, the archive or the link — a dep that regrows a
-  // forbidden reference fails that build without delaying the link.
+  // forbidUndefined stamps (source.ts): validations of each dep's archive —
+  // a dep that regrows a forbidden reference fails that build without
+  // delaying the link.
   const depChecks: string[] = [];
   for (const d of deps) {
     depLibs.push(...d.libs);
-    depObjects.push(...d.objects);
     depChecks.push(...d.checks);
     depIncludes.push(...d.includes);
     depDefines.push(...d.defines);
@@ -408,10 +406,8 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     n.phony(d.name, d.sources.map(compileC));
   }
 
-  // Dep objects (when !cfg.archiveDeps) are linked alongside bun's own
-  // objects, in the same response file. With cfg.archiveDeps they live in
-  // depLibs as .a files instead.
-  const allObjects = [...cxxObjects, ...cObjects, ...depObjects];
+  // bun's own objects are linked as objects; every dependency is a library in depLibs.
+  const allObjects = [...cxxObjects, ...cObjects];
 
   // ─── Step 6: link ───
   n.comment("─── Link ───");

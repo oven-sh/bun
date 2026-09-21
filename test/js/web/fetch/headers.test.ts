@@ -233,6 +233,155 @@ describe("Headers", () => {
       ).toThrow(error);
     });
   });
+  // `new Headers(init)` and every `headers` option share one conversion. A TypeError that
+  // the conversion raises names the argument or the option that held the value.
+  describe("an init of the wrong type", () => {
+    async function thrownBy(fn: () => unknown) {
+      try {
+        await fn();
+        return "did not throw";
+      } catch (e: any) {
+        return { name: e.name, code: e.code, message: e.message };
+      }
+    }
+    const invalidArgType = (message: string) => ({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message });
+
+    test("names the argument or the option", async () => {
+      using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+      const url = server.url.href;
+      const apis: Record<string, [name: string, call: (init: any) => unknown]> = {
+        "new Headers(init)": ["init", init => new Headers(init)],
+        "new Response(body, { headers })": ["headers", headers => new Response("", { headers })],
+        "new Request(url, { headers })": ["headers", headers => new Request(url, { headers })],
+        "fetch(url, { headers })": ["headers", headers => fetch(url, { headers })],
+        "fetch(url, { proxy: { url, headers } })": [
+          "proxy.headers",
+          headers => fetch(url, { proxy: { url, headers } }),
+        ],
+      };
+      const values = [
+        [1, "type number (1)"],
+        ["x", "type string ('x')"],
+        [true, "type boolean (true)"],
+        [Symbol("s"), "type symbol (Symbol(s))"],
+        [1n, "type bigint (1n)"],
+      ] as const;
+      for (const [api, [name, call]] of Object.entries(apis)) {
+        const kind = name.includes(".") ? "property" : "argument";
+        for (const [value, received] of values) {
+          expect(await thrownBy(() => call(value)), `${api} with ${received}`).toEqual(
+            invalidArgType(
+              `The "${name}" ${kind} must be an instance of Headers, Array, or Object. Received ${received}`,
+            ),
+          );
+        }
+      }
+    });
+
+    test("names the index of an entry that is not a [name, value] pair", async () => {
+      const entry = (index: number, received?: string) =>
+        invalidArgType(
+          `The "headers[${index}]" argument must be an instance of Array` + (received ? `. Received ${received}` : ""),
+        );
+      const response = (headers: any) => thrownBy(() => new Response("", { headers }));
+      expect({
+        number: await response([1]),
+        string: await response([["a", "1"], "bc"]),
+        null: await response([null]),
+        "object that is not iterable": await response([["a", "1"], ["b", "2"], {}]),
+        "iterable of numbers": await response(new Set([1])),
+      }).toEqual({
+        number: entry(0, "type number (1)"),
+        string: entry(1, "type string ('bc')"),
+        null: entry(0, "null"),
+        "object that is not iterable": entry(2),
+        "iterable of numbers": entry(0, "type number (1)"),
+      });
+      expect(await thrownBy(() => new Headers([1] as any))).toEqual(
+        invalidArgType(`The "init[0]" argument must be an instance of Array. Received type number (1)`),
+      );
+    });
+
+    test("an exception from user code propagates unchanged", () => {
+      const error = new Error("from user code");
+      const fail = () => {
+        throw error;
+      };
+      const inits = {
+        "Symbol.iterator getter": {
+          get [Symbol.iterator]() {
+            return fail();
+          },
+        },
+        "iterator next()": { [Symbol.iterator]: () => ({ next: fail }) },
+        "Symbol.iterator getter of a pair": [
+          {
+            get [Symbol.iterator]() {
+              return fail();
+            },
+          },
+        ],
+        "iterator next() of a pair": [{ [Symbol.iterator]: () => ({ next: fail }) }],
+        "toString() in a pair": [["a", { toString: fail }]],
+        "property getter": {
+          get a() {
+            return fail();
+          },
+        },
+        "toString() of a property": { a: { toString: fail } },
+      };
+      for (const [label, init] of Object.entries(inits)) {
+        expect(() => new Headers(init as any), label).toThrow(error);
+        expect(() => new Response("", { headers: init as any }), label).toThrow(error);
+      }
+    });
+
+    // Web IDL reads Symbol.iterator once from the init and once from each entry. The error
+    // for a bad entry does not read `constructor` to describe the entry.
+    test("reads Symbol.iterator once from the init and once from each entry", async () => {
+      const reads: string[] = [];
+      const observed = <T extends object>(label: string, target: T) =>
+        new Proxy(target, {
+          get(target, key, receiver) {
+            if (key === Symbol.iterator || key === "constructor") reads.push(`${label}: ${String(key)}`);
+            return Reflect.get(target, key, receiver);
+          },
+        });
+      const init = observed("init", [observed("pair 0", ["a", "1"]), observed("pair 1", ["b", "2"])]);
+      expect([...new Headers(init as any)]).toEqual([
+        ["a", "1"],
+        ["b", "2"],
+      ]);
+      expect(reads).toEqual([
+        "init: Symbol(Symbol.iterator)",
+        "pair 0: Symbol(Symbol.iterator)",
+        "pair 1: Symbol(Symbol.iterator)",
+      ]);
+
+      reads.length = 0;
+      const notIterable = observed("entry", {
+        get constructor() {
+          throw new RangeError("constructor was read");
+        },
+      });
+      expect(await thrownBy(() => new Headers([notIterable] as any))).toEqual(
+        invalidArgType(`The "init[0]" argument must be an instance of Array`),
+      );
+      expect(reads).toEqual(["entry: Symbol(Symbol.iterator)"]);
+    });
+
+    test("an array entry with its own Symbol.iterator is read through it", () => {
+      const entry: any = ["ignored", "ignored"];
+      entry[Symbol.iterator] = function* () {
+        yield "a";
+        yield "1";
+      };
+      expect([...new Headers([entry, ["b", "2"]])]).toEqual([
+        ["a", "1"],
+        ["b", "2"],
+      ]);
+    });
+  });
   describe("append()", () => {
     test("can append header", () => {
       const headers = new Headers();

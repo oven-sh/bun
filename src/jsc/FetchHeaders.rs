@@ -11,6 +11,16 @@ bun_opaque::opaque_ffi! {
     pub struct FetchHeaders;
 }
 
+/// Mirrors `HeadersInitName` in headers-handwritten.h.
+#[repr(u8)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum HeadersInitName {
+    /// `headers`
+    Headers = 0,
+    /// `proxy.headers`
+    ProxyHeaders = 1,
+}
+
 // `FetchHeaders`/`JSGlobalObject`/`VM` are opaque `UnsafeCell`-backed ZST
 // handles, so `&T` is ABI-identical to a non-null `*const T` and C++ mutating
 // header storage / VM state through them is interior mutation invisible to
@@ -74,6 +84,7 @@ unsafe extern "C" {
     safe fn WebCore__FetchHeaders__createFromJS(
         arg0: &JSGlobalObject,
         arg1: JSValue,
+        name: HeadersInitName,
     ) -> *mut FetchHeaders;
 
     safe fn WebCore__FetchHeaders__put(
@@ -101,15 +112,24 @@ impl FetchHeaders {
     /// -  Array<[String, String]>
     /// -  Record<String, String>.
     ///
-    /// Throws an exception if invalid.
+    /// Throws an exception if invalid. A wrong type names the `headers` option.
     ///
     /// If empty, returns null.
     pub fn create_from_js(
         global: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<Option<NonNull<FetchHeaders>>> {
+        Self::create_from_js_named(global, value, HeadersInitName::Headers)
+    }
+
+    /// [`Self::create_from_js`] for a value that a different option held.
+    pub fn create_from_js_named(
+        global: &JSGlobalObject,
+        value: JSValue,
+        name: HeadersInitName,
+    ) -> JsResult<Option<NonNull<FetchHeaders>>> {
         host_fn::from_js_host_call_generic(global, || {
-            NonNull::new(WebCore__FetchHeaders__createFromJS(global, value))
+            NonNull::new(WebCore__FetchHeaders__createFromJS(global, value, name))
         })
     }
 

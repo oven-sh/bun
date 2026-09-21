@@ -2338,7 +2338,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__cast_(JSC::EncodedJSValue JSValue0
     return WebCoreCast<WebCore::JSFetchHeaders, WebCore::FetchHeaders>(JSValue0);
 }
 
-WebCore::FetchHeaders* WebCore__FetchHeaders__createFromJS(JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue argument0_)
+WebCore::FetchHeaders* WebCore__FetchHeaders__createFromJS(JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue argument0_, HeadersInitName name)
 {
     EnsureStillAliveScope argument0 = JSC::JSValue::decode(argument0_);
 
@@ -2348,10 +2348,9 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromJS(JSC::JSGlobalObject* 
     // Note that we use IDLDOMString here rather than IDLByteString: while headers
     //  should be ASCII only, we want the headers->fill implementation to discover
     //  and error on invalid names and values
-    using TargetType = IDLUnion<IDLSequence<IDLSequence<IDLDOMString>>, IDLRecord<IDLDOMString, IDLDOMString>>;
-    using Converter = std::optional<Converter<TargetType>::ReturnType>;
-
-    auto init = argument0.value().isUndefined() ? Converter() : Converter(convert<TargetType>(*lexicalGlobalObject, argument0.value()));
+    std::optional<WebCore::FetchHeaders::Init> init;
+    if (!argument0.value().isUndefined())
+        init = convertHeadersInit<IDLDOMString>(*lexicalGlobalObject, argument0.value(), name);
     RETURN_IF_EXCEPTION(throwScope, nullptr);
 
     // if the headers are empty, return null

@@ -16,7 +16,7 @@ use bun_core::{String as BunString, Utf8Bytes};
 use bun_http_types::Method::Method;
 
 use super::body::{Body, BodyMixin, Value as BodyValue, ValueError as BodyValueError};
-use super::{FetchHeaders, ReadableStream, Request};
+use super::{FetchHeaders, HeadersInitName, ReadableStream, Request};
 
 // Codegen (`generated_classes.rs`) re-exports `Blob` from
 // `crate::webcore::response` because the `.classes.ts` source path is
@@ -72,8 +72,19 @@ impl HeadersRef {
         global: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<Option<Self>> {
+        Self::create_from_js_named(global, value, HeadersInitName::Headers)
+    }
+
+    /// [`Self::create_from_js`] for a value that a different option held.
+    #[inline]
+    pub(crate) fn create_from_js_named(
+        global: &JSGlobalObject,
+        value: JSValue,
+        name: HeadersInitName,
+    ) -> JsResult<Option<Self>> {
         // SAFETY: C++ returns a +1 ref or null.
-        Ok(FetchHeaders::create_from_js(global, value)?.map(|p| unsafe { Self::adopt(p) }))
+        Ok(FetchHeaders::create_from_js_named(global, value, name)?
+            .map(|p| unsafe { Self::adopt(p) }))
     }
 
     /// `FetchHeaders.cloneThis(global)` — deep copy on the C++ side.

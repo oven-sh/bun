@@ -358,25 +358,40 @@ impl ShellArgs {
     /// Heap-allocated (returned as `Box`) because the interpreter stores
     /// `Box<ShellArgs>` and state nodes hold `*const ast::*` into the arena;
     /// the box must not move once `parse()` has filled `script_ast`.
-    pub(crate) fn init() -> Box<ShellArgs> {
+    pub(crate) fn init(
+        arena: bun_alloc::Arena,
+        arena_usage: bun_alloc::ArenaUsage,
+    ) -> Box<ShellArgs> {
         Box::new(ShellArgs {
-            __arena: bun_alloc::Arena::new(),
+            __arena: Some(arena),
+            arena_usage,
+            ast_bytes: 0,
             // Overwritten by `parse()` before `run()`. An empty stmt list is
             // a safe placeholder.
             script_ast: ast::Script { stmts: &[] },
         })
     }
 
+    /// For the parse only: [`Self::set_script_ast`] measures the arena, and nothing allocates from it after.
     #[inline]
     pub(crate) fn arena(&self) -> &bun_alloc::Arena {
-        &self.__arena
+        self.__arena
+            .as_ref()
+            .expect("the arena is taken after the script has finished")
+    }
+
+    /// Gives up the arena, with its `usage()`, and the AST in it: for a script that has finished.
+    pub(crate) fn take_arena(&mut self) -> Option<(bun_alloc::Arena, bun_alloc::ArenaUsage)> {
+        self.script_ast = ast::Script { stmts: &[] };
+        self.ast_bytes = 0;
+        let arena = self.__arena.take()?;
+        debug_assert_eq!(arena.allocated_bytes(), self.arena_usage.allocated);
+        Some((arena, self.arena_usage))
     }
 
     /// Store the parsed AST root alongside its owning arena. This is the single
     /// self-referential lifetime-erasure point: `script` borrows `self.__arena`
-    /// for `'a`, but `ShellArgs` is heap-allocated and the arena is never moved
-    /// or dropped while the interpreter (and thus every state node holding
-    /// `*const ast::*`) is live. Widening `'a` → `'static` here is therefore
+    /// for `'a`, and the arena stays here until [`Self::take_arena`] empties `script_ast`, so widening to `'static` is
     /// sound — every later dereference happens through raw pointers under
     /// `unsafe`, which is where the real invariant is checked.
     ///
@@ -388,23 +403,25 @@ impl ShellArgs {
     pub(crate) fn set_script_ast(&mut self, script: bun_shell_parser::ast::Script<'_>) {
         // `ast::Script` is `bun_shell_parser::ast::Script<'static>` — identical
         // type, only the lifetime parameter differs. `self.__arena` owns every
-        // node `script.stmts` references and is dropped only when this
-        // `ShellArgs` is, so the widened references remain valid for the
-        // interpreter's lifetime. Re-construct field-by-field via a slice
+        // node `script.stmts` references until `take_arena`, after the last state node is done. Re-construct via a slice
         // pointer cast (`Stmt<'a>` and `Stmt<'static>` are layout-identical).
         let stmts = script.stmts;
-        // SAFETY: lifetime-only widen; arena outlives `self` (see above).
+        // SAFETY: lifetime-only widen; `take_arena` empties `script_ast` before the arena leaves `self`.
         let stmts: &'static [ast::Stmt] =
             unsafe { core::slice::from_raw_parts(stmts.as_ptr().cast::<ast::Stmt>(), stmts.len()) };
         self.script_ast = ast::Script { stmts };
+        // `usage()` walks the heap's pages, so it runs once per script.
+        let usage = self.arena().usage();
+        self.ast_bytes = usage.allocated.saturating_sub(self.arena_usage.allocated);
+        self.arena_usage = usage;
     }
 
-    /// Reports the arena's `allocated_bytes()` (a superset — tokens + strpool
+    /// Reports what the parse added to the arena (a superset — tokens + strpool
     /// + AST nodes). This is for GC `estimatedSize` reporting only, where
     /// over-approximation is preferable to a tree walk on a lifetime-erased
     /// AST mirror.
     pub(crate) fn memory_cost(&self) -> usize {
-        core::mem::size_of::<ShellArgs>() + self.__arena.allocated_bytes()
+        core::mem::size_of::<ShellArgs>() + self.ast_bytes
     }
 }
 
@@ -682,7 +699,7 @@ impl Interpreter {
         // We are the script's shell (`bun run <script>`, `bun exec`, `bun x.sh`).
         bun_spawn::ctrl_c::install();
 
-        let mut shargs = ShellArgs::init();
+        let mut shargs = ShellArgs::init(bun_alloc::Arena::new(), bun_alloc::ArenaUsage::default());
 
         // ── parse ──────────────────────────────────────────────────────────
         // `out_parser`/`out_lex_result` borrow `shargs.__arena`, so they're
@@ -1514,27 +1531,16 @@ impl Interpreter {
             self.root_shell.with_mut(|rs| rs.deinit_embedded(false));
         }
 
-        // Note: free the parse arena eagerly. `bun_alloc::Arena` is
-        // a `MimallocArena` (a full `mi_heap_t`): every shell parse pulls
-        // several fresh 64 KiB pages, and with `MI_DEBUG=3` each page-init
-        // runs `mi_assert_expensive(mi_mem_is_zero(page, 64 KiB))`. Under the
-        // shell-load.test.ts fixture (30 000 back-to-back `$\`...\`` calls)
-        // those pages are held until JSC finalizes the wrapper, so RSS grows
-        // ~220 KiB per pending interpreter and >50 % of CPU is spent
-        // re-scanning freshly-mmap'd zero pages. Resetting here returns the
-        // pages to mimalloc's pool immediately so subsequent parses reuse them
-        // (`memid.initially_zero == false` → the expensive scan is skipped)
-        // and memory stays flat. The new heap created by `reset()` allocates
-        // no pages until first use, so the per-interpreter footprint left for
-        // the finalizer is just the bare `mi_heap_t`. `script_ast` is cleared
-        // first because every node it references lives in the arena being
-        // destroyed; nothing dereferences it after this point (the only
-        // remaining reader is `memory_cost()`, which queries
-        // `__arena.allocated_bytes()` and never touches the AST).
-        self.args.with_mut(|a| {
-            a.script_ast = ast::Script { stmts: &[] };
-            a.__arena.reset();
-        });
+        // Nothing dereferences the AST after this point: the arena goes to the VM now, not when JSC finalizes the wrapper.
+        if let Some((arena, usage)) = self.args.with_mut(|a| a.take_arena())
+            && let Some(global) = self.global_this_ref()
+        {
+            global
+                .bun_vm()
+                .as_mut()
+                .rare_data()
+                .put_back_shell_arena(arena, usage);
+        }
 
         self.this_jsvalue.set(crate::jsc::JSValue::ZERO);
         self.cleanup_state.set(CleanupState::RuntimeCleaned);
@@ -2186,8 +2192,12 @@ impl ShellExecEnv {
 // ────────────────────────────────────────────────────────────────────────────
 
 pub struct ShellArgs {
-    /// Arena owning the parsed AST nodes, tokens, and string pool.
-    pub(crate) __arena: bun_alloc::Arena,
+    /// Arena owning the parsed AST nodes, tokens, and string pool. `None` after [`Self::take_arena`].
+    __arena: Option<bun_alloc::Arena>,
+    /// `__arena.usage()` after the parse; a parked arena comes with the dead ASTs of earlier scripts.
+    arena_usage: bun_alloc::ArenaUsage,
+    /// The part of `arena_usage.allocated` that this script's parse added.
+    ast_bytes: usize,
     /// Root AST node. State nodes hold `*const ast::*` into this arena.
     pub(crate) script_ast: ast::Script,
 }

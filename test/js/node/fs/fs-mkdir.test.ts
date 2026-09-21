@@ -400,6 +400,25 @@ describe("fs.promises.mkdir", () => {
   });
 });
 
+// The same arm on POSIX: mkdir on a symlink loop reports EEXIST, and the probe
+// that follows reports ELOOP. Node reports the probe error.
+describe.skipIf(isWindows)("fs.mkdir - recursive on a symlink loop", () => {
+  it("reports ELOOP instead of EEXIST", async () => {
+    using dir = tempDir("mkdir-loop", {});
+    const loop = path.join(String(dir), "loop");
+    fs.symlinkSync("loop", loop);
+
+    expect(() => fs.mkdirSync(loop, { recursive: true })).toThrow(
+      expect.objectContaining({ code: "ELOOP", syscall: "mkdir", path: loop }),
+    );
+    await expect(fs.promises.mkdir(loop, { recursive: true })).rejects.toMatchObject({
+      code: "ELOOP",
+      syscall: "mkdir",
+      path: loop,
+    });
+  });
+});
+
 // https://github.com/oven-sh/bun/issues/43651
 // The directory exists, but the process is not allowed to read its attributes.
 // CreateDirectoryW reports ERROR_ALREADY_EXISTS, and the "is it a directory"

@@ -468,8 +468,8 @@ const client = `
       html("b", b.label, tip);
       html("div", b.rule + (b.pool ? " · pool " + b.pool : ""), tip);
       html("div", ms(b.end - b.start) + " · " + ms(b.start) + " → " + ms(b.end), tip);
-      // "after": the command that made the last of its inputs to exist. "queued": how long it then sat before starting.
-      if (b.blocker !== undefined) html("div", "after " + run.bars[b.blocker].label + " · queued " + ms(b.waited), tip);
+      // How long it sat ready before it started. What it was waiting for until then is the line drawn from it.
+      html("div", "queued " + ms(b.waited), tip);
       if (b.released !== undefined) html("div", "unblocks dependents " + ms(b.released) + " in", tip);
       if (b.step !== undefined) html("div", "critical path #" + (b.step + 1), tip);
       if (b.phases.length > 0) html("div", b.phases.map(function (p) { return p[0] + " " + ms(p[1]); }).join(" · "), tip);

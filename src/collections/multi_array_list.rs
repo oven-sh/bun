@@ -154,13 +154,13 @@ macro_rules! multi_array_columns {
             }
             #[allow(dead_code, non_snake_case)]
             impl <$($decl)*> $trait <$($use)*> for $crate::MultiArrayList<$elem> {
-                $( $crate::__mal_column_impl!($field : $ty); )*
+                $( $crate::__mal_column_impl!($elem, $field : $ty); )*
                 $crate::__mal_split_mut_impl!([<$trait Mut>] [$($use)*] { $( $field : $ty, )* });
                 $crate::__mal_split_raw_impl!([<$trait Raw>] [$($use)*] { $( $field : $ty, )* });
             }
             #[allow(dead_code, non_snake_case)]
             impl <$($decl)*> $trait <$($use)*> for $crate::multi_array_list::Slice<$elem> {
-                $( $crate::__mal_column_impl!($field : $ty); )*
+                $( $crate::__mal_column_impl!($elem, $field : $ty); )*
                 $crate::__mal_split_mut_impl!([<$trait Mut>] [$($use)*] { $( $field : $ty, )* });
                 $crate::__mal_split_raw_impl!([<$trait Raw>] [$($use)*] { $( $field : $ty, )* });
             }
@@ -225,10 +225,15 @@ macro_rules! __mal_split_raw_impl {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __mal_column_impl {
-    ($field:ident : $ty:ty) => {
+    ($elem:ty, $field:ident : $ty:ty) => {
         $crate::__mal_paste! {
             #[inline]
             fn [<items_ $field>](&self) -> &[$ty] {
+                // The column is found by the field's name, which `dead_code` cannot follow. This is the read of
+                // `$field` it can: the field counts as read exactly when its accessor is used.
+                let _ = |elem: &$elem| {
+                    let _ = &elem.$field;
+                };
                 self.items::<{ ::core::stringify!($field) }, $ty>()
             }
             #[inline]

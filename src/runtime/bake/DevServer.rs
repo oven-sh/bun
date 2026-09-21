@@ -5131,11 +5131,6 @@ pub(super) enum OpaqueFileIdOrOptional {
     Id(OpaqueFileId),
     Optional(framework_router::OpaqueFileIdOptional),
 }
-impl From<OpaqueFileId> for OpaqueFileIdOrOptional {
-    fn from(v: OpaqueFileId) -> Self {
-        Self::Id(v)
-    }
-}
 impl From<framework_router::OpaqueFileIdOptional> for OpaqueFileIdOrOptional {
     fn from(v: framework_router::OpaqueFileIdOptional) -> Self {
         Self::Optional(v)

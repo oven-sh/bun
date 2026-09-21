@@ -8,6 +8,10 @@
 // For `__rust_no_alloc_shim_is_unstable_v2` in bin_entry.
 #![feature(rustc_attrs)]
 #![allow(internal_features)]
+// The unit-test harness leaves out `bin_entry` (below), the root that keeps
+// this crate's `pub(crate)` items alive, so in a test build most of the crate
+// reads as dead code. `dead_code` is checked by the crate's own build.
+#![cfg_attr(test, allow(dead_code))]
 
 pub(crate) mod error;
 pub(crate) use error::{Error, Result};

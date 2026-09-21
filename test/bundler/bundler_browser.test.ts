@@ -140,6 +140,9 @@ describe("bundler", () => {
         console.log("negative", a0a.indexOf("a", -2, "ucs2"), a0a.lastIndexOf("a", -3, "ucs2"), a0a.lastIndexOf(Buffer.from([97, 0]), -3, "ucs2"));
         // The odd last byte of a Buffer value is not compared, but the whole value must fit in bytes.
         console.log("odd value", Buffer.from([97, 97, 98, 0]).lastIndexOf(Buffer.from([97, 97, 98]), "ucs2"), ab.lastIndexOf(Buffer.from([97, 0, 98, 0, 1]), "ucs2"), ab.indexOf("b", 3, "ucs2"));
+        // The search does not need Symbol.species. Without it (Hermes), subarray() returns a plain Uint8Array.
+        Object.defineProperty(Buffer, Symbol.species, { get: () => Uint8Array });
+        console.log("no species", odd.lastIndexOf("c", "utf16le"), odd.indexOf("c", -4, "utf16le"));
       `,
     },
     target: "browser",
@@ -151,6 +154,7 @@ describe("bundler", () => {
         odd length 10 -1 -1
         negative 0 -1 0
         odd value 0 -1 -1
+        no species 10 10
       `,
     },
     onAfterBundle(api) {

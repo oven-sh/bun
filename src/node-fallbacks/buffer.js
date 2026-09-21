@@ -764,13 +764,14 @@ function bidirectionalIndexOf(buffer, val, byteOffset, encoding, dir) {
 
   // For a string, Node.js drops the odd last byte of a UTF-16 haystack before it resolves the offset:
   // https://github.com/nodejs/node/blob/v26.3.0/src/node_buffer.cc#L990-L992
-  if (typeof val === "string" && isUtf16le(encoding)) buffer = buffer.subarray(0, buffer.length & ~1);
+  let length = buffer.length;
+  if (typeof val === "string" && isUtf16le(encoding)) length -= length % 2;
 
   // Normalize byteOffset: negative offsets start from the end of the buffer
-  if (byteOffset < 0) byteOffset = buffer.length + byteOffset;
-  if (byteOffset >= buffer.length) {
+  if (byteOffset < 0) byteOffset = length + byteOffset;
+  if (byteOffset >= length) {
     if (dir) return -1;
-    else byteOffset = buffer.length - 1;
+    else byteOffset = length - 1;
   } else if (byteOffset < 0) {
     if (dir) byteOffset = 0;
     else return -1;
@@ -811,14 +812,14 @@ function arrayIndexOf(arr, val, byteOffset, encoding, dir) {
   if (isUtf16le(encoding)) {
     // Node.js checks in bytes that `val` fits, then searches whole 2-byte units:
     // https://github.com/nodejs/node/blob/v26.3.0/src/node_buffer.cc#L1158-L1175
-    const searchEnd = arr.length & ~1;
+    const searchEnd = arr.length - (arr.length % 2);
     if (val.length < 2 || val.length > searchEnd || (dir && byteOffset + val.length > searchEnd)) {
       return -1;
     }
     indexSize = 2;
-    arrLength = searchEnd >> 1;
-    valLength >>= 1;
-    byteOffset >>= 1;
+    arrLength = searchEnd / 2;
+    valLength = Math.floor(valLength / 2);
+    byteOffset = Math.floor(byteOffset / 2);
   }
 
   function read(buf, i) {

@@ -1,8 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { tls } from "harness";
 import { once } from "node:events";
 import http from "node:http";
+import https from "node:https";
 import net from "node:net";
 import { pipeline, Writable } from "node:stream";
+import { connect as connectTLS } from "node:tls";
 
 // Each test opens a raw TCP socket against a server whose timeout knob is a
 // few hundred ms and waits for the server to close the connection. A small
@@ -421,5 +424,126 @@ describe("node:http server timeout enforcement", () => {
       server.closeAllConnections();
       server.close();
     }
+  });
+
+  // Node refreshes the socket's inactivity timer on every read. These clients
+  // never pause for longer than `gap`, a tenth of the timeout, but they take
+  // longer than the timeout to finish a part of the message that the native
+  // parser keeps to itself until it is whole. The pause between two writes is
+  // the stimulus here, not a wait for a condition.
+  const inactivityTimeout = 500;
+  const gap = 50;
+  const pad = Buffer.alloc(200, "p").toString();
+  const chunkedHead = "POST /chunked HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n";
+
+  function inPieces(text: string, count = 14) {
+    const size = Math.ceil(text.length / count);
+    const pieces: string[] = [];
+    for (let i = 0; i < text.length; i += size) pieces.push(text.slice(i, i + size));
+    return pieces;
+  }
+
+  type SlowClient = {
+    knob: "timeout" | "keepAliveTimeout";
+    secure?: boolean;
+    parts: string[];
+    // The client is done once the response ends with this. Without it, at the first 'timeout'.
+    lastBody?: string;
+  };
+
+  // Writes `parts` one `gap` apart. Resolves with the response bodies, and with
+  // how long the client had been quiet each time the server emitted 'timeout'.
+  async function sendSlowly({ knob, secure = false, parts, lastBody }: SlowClient) {
+    const onRequest = (req: http.IncomingMessage, res: http.ServerResponse) => {
+      let received = 0;
+      req.on("data", chunk => (received += chunk.length));
+      req.on("end", () => res.end(`${req.url} got ${received}`));
+    };
+    const server = secure
+      ? https.createServer({ key: tls.key, cert: tls.cert }, onRequest)
+      : http.createServer(onRequest);
+    server[knob] = inactivityTimeout;
+    server.keepAliveTimeoutBuffer = 0;
+    let lastWriteAt = 0;
+    const quietAtTimeout: number[] = [];
+    const { promise: settled, resolve: onSettled } = Promise.withResolvers<void>();
+    server.on("timeout", socket => {
+      quietAtTimeout.push(performance.now() - lastWriteAt);
+      socket.destroy();
+      onSettled();
+    });
+    const port = await listen(server);
+    const client = secure
+      ? connectTLS({ port, host: "127.0.0.1", rejectUnauthorized: false })
+      : net.connect(port, "127.0.0.1");
+    try {
+      let received = "";
+      client.setNoDelay(true);
+      client.on("error", () => {});
+      client.on("data", chunk => {
+        received += chunk.toString("latin1");
+        if (lastBody !== undefined && received.endsWith(lastBody)) onSettled();
+      });
+      await once(client, secure ? "secureConnect" : "connect");
+      for (let i = 0; i < parts.length && !client.destroyed; i++) {
+        if (i > 0) await Bun.sleep(gap);
+        lastWriteAt = performance.now();
+        client.write(parts[i]);
+      }
+      await settled;
+      return { bodies: received.match(/\/\w+ got \d+/g), quietAtTimeout };
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  }
+
+  const headInPieces = [
+    ...inPieces(`POST /head HTTP/1.1\r\nHost: a\r\nContent-Length: 800\r\nX-Pad: ${pad}\r\n\r\n`),
+    Buffer.alloc(800, "b").toString(),
+  ];
+
+  test.concurrent.each<SlowClient & { name: string; bodies: string[] }>([
+    { name: "server.timeout, a request head", knob: "timeout", parts: headInPieces, bodies: ["/head got 800"] },
+    {
+      name: "server.timeout, a request head over TLS",
+      knob: "timeout",
+      secure: true,
+      parts: headInPieces,
+      bodies: ["/head got 800"],
+    },
+    {
+      name: "server.timeout, a chunk size line with an extension",
+      knob: "timeout",
+      parts: [chunkedHead, ...inPieces(`5;ext=${pad}\r\n`), "hello\r\n0\r\n\r\n"],
+      bodies: ["/chunked got 5"],
+    },
+    {
+      name: "server.timeout, a trailer section",
+      knob: "timeout",
+      parts: [chunkedHead + "5\r\nhello\r\n0\r\n", ...inPieces(`X-Trailer: ${pad}\r\n\r\n`)],
+      bodies: ["/chunked got 5"],
+    },
+    {
+      name: "keepAliveTimeout, the head of the next request",
+      knob: "keepAliveTimeout",
+      parts: [
+        "GET /first HTTP/1.1\r\nHost: a\r\n\r\n",
+        ...inPieces(`GET /second HTTP/1.1\r\nHost: a\r\nX-Pad: ${pad}\r\n\r\n`),
+      ],
+      bodies: ["/first got 0", "/second got 0"],
+    },
+  ])("bytes that arrive in pieces keep the connection active ($name)", async ({ name, bodies, ...client }) => {
+    expect(await sendSlowly({ ...client, lastBody: bodies.at(-1) })).toEqual({ bodies, quietAtTimeout: [] });
+  });
+
+  test.concurrent("server.timeout is measured from the last piece of an unfinished request head", async () => {
+    const parts = inPieces(`GET /silent HTTP/1.1\r\nHost: a\r\nX-Pad: ${pad}\r\n\r\n`).slice(0, 7);
+    const { bodies, quietAtTimeout } = await sendSlowly({ knob: "timeout", parts });
+    expect(bodies).toBeNull();
+    expect(quietAtTimeout).toHaveLength(1);
+    // The timer runs on whole milliseconds, so it can fire a fraction early.
+    expect(quietAtTimeout[0]).toBeGreaterThanOrEqual(inactivityTimeout - 5);
   });
 });

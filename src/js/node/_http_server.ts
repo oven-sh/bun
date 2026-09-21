@@ -1462,6 +1462,18 @@ function onSocketTimeoutTimerExpired(socket) {
       return;
     }
   }
+  // Node.js refreshes this timer on every socket read. Bytes that the native
+  // parser keeps to itself (an unfinished request head, chunk framing,
+  // trailers) reach no JS callback, so nothing called _unrefTimer() for them:
+  // measure the timeout from the last read instead. setTimeout() re-arms the
+  // timer at its full interval; moving _idleStart back moves the deadline.
+  const sinceLastRead = socket[kHandle]?.msSinceLastRead();
+  if (sinceLastRead < socket.timeout) {
+    socket.setTimeout(socket.timeout);
+    const timer = socket[kSocketTimeoutTimer];
+    if (timer !== undefined) timer._idleStart -= sinceLastRead;
+    return;
+  }
   // A fired keep-alive idle timer is dead; drop the reference so the next
   // response-finish re-arms via setTimeout instead of trusting a fired
   // timer whose _idleTimeout still matches (a 'timeout' listener may keep

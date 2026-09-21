@@ -322,6 +322,12 @@ private:
 
         HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext(s);
 
+        /* node:http compat: every read is activity for the inactivity timeout
+         * (see lastReadMs). The message timing below reuses this clock read. */
+        if constexpr (IsNodeHttp) {
+            ((HttpResponseData<SSL, true> *) httpResponseData)->lastReadMs = nodeCompatMonotonicMs();
+        }
+
         /* HTTP/2: a cleartext connection that opens with the prior-knowledge
          * preface (RFC 9113 §3.3) moves to the Http2Context before the
          * HTTP/1 parser ever sees "PRI * HTTP/2.0". Decided on the first
@@ -448,7 +454,7 @@ private:
             if constexpr (IsNodeHttp) {
                 auto *nodeHttpResponseData = (HttpResponseData<SSL, true> *) httpResponseData;
                 if (nodeHttpResponseData->lastMessageStartMs == 0) {
-                    nodeHttpResponseData->lastMessageStartMs = nodeCompatMonotonicMs();
+                    nodeHttpResponseData->lastMessageStartMs = nodeHttpResponseData->lastReadMs;
                 }
                 nodeHttpResponseData->headersCompleted = true;
             }
@@ -713,7 +719,7 @@ private:
                 auto *nodeHttpResponseData = (HttpResponseData<SSL, true> *) httpResponseData;
                 if (trackNodeHttpTimings && nodeHttpResponseData->lastMessageStartMs == 0
                     && httpResponseData->hasBufferedPartialRequestHeaders()) {
-                    nodeHttpResponseData->lastMessageStartMs = nodeCompatMonotonicMs();
+                    nodeHttpResponseData->lastMessageStartMs = nodeHttpResponseData->lastReadMs;
                     nodeHttpResponseData->headersCompleted = false;
                 }
             }

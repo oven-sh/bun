@@ -320,6 +320,28 @@ bool JSNodeHTTPServerSocket::isRequestTimedOut(uint64_t headersTimeoutMs, uint64
     return isRequestTimedOutImpl<false>(socket, headersTimeoutMs, requestTimeoutMs);
 }
 
+template<bool SSL>
+static double msSinceLastReadImpl(us_socket_t* socket)
+{
+    uint64_t lastRead = reinterpret_cast<uWS::NodeHttpResponseData<SSL>*>(us_socket_ext(socket))->lastReadMs;
+    if (lastRead == 0) {
+        return std::numeric_limits<double>::infinity();
+    }
+    uint64_t now = uWS::nodeCompatMonotonicMs();
+    return now > lastRead ? static_cast<double>(now - lastRead) : 0;
+}
+
+double JSNodeHTTPServerSocket::msSinceLastRead()
+{
+    if (!socket || upgraded || us_socket_is_closed(socket)) {
+        return std::numeric_limits<double>::infinity();
+    }
+    if (is_ssl) {
+        return msSinceLastReadImpl<true>(socket);
+    }
+    return msSinceLastReadImpl<false>(socket);
+}
+
 bool JSNodeHTTPServerSocket::isAuthorized() const
 {
     // is secure means that tls was established successfully

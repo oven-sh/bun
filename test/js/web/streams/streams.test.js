@@ -11,7 +11,7 @@ import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isWindows, tempDir, 
 import { mkfifo } from "mkfifo";
 import { closeSync, createReadStream, openSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { PassThrough, Readable, Writable, finished, pipeline } from "node:stream";
+import { Duplex, PassThrough, Readable, Writable, finished, pipeline } from "node:stream";
 import {
   consumers as directConsumers,
   expected as directExpected,
@@ -4397,6 +4397,51 @@ describe("direct stream edge cases", () => {
       expect(out).toEqual({ queueMicrotask: "ab", nextTick: "ab", setImmediate: "ab", setTimeout0: "ab" });
     });
 
+    // A consumer that tears down when reader.closed rejects (Duplex.fromWeb, Node's adapters) drops a chunk
+    // whose read() settles after it.
+    test.each([
+      [
+        "flushed inside pull(), close(error) after an await",
+        async c => {
+          c.write("a");
+          await c.flush();
+          c.close(new Error("source failed"));
+        },
+      ],
+      [
+        "flushed after an await, close(error) in the same tick",
+        async c => {
+          await later();
+          c.write("a");
+          c.flush();
+          c.close(new Error("source failed"));
+        },
+      ],
+      [
+        "flushed inside pull(), error() after an await",
+        async c => {
+          c.write("a");
+          await c.flush();
+          c.error(new Error("source failed"));
+        },
+      ],
+      [
+        "flushed inside pull(), then pull() rejects",
+        async c => {
+          c.write("a");
+          await c.flush();
+          throw new Error("source failed");
+        },
+      ],
+    ])("a read() that received a chunk is observed before reader.closed rejects: %s", async (_, pull) => {
+      const log = [];
+      const reader = direct(tally(), pull).getReader();
+      reader.closed.catch(e => log.push("closed: " + e.message));
+      await reader.read().then(r => log.push("read: " + txt(r.value)));
+      await later();
+      expect(log).toEqual(["read: a", "closed: source failed"]);
+    });
+
     test("a pull() that rejects after close() ran is not an unhandled rejection and does not fail the consumer", async () => {
       await using proc = Bun.spawn({
         cmd: [
@@ -4881,6 +4926,25 @@ describe("direct stream edge cases", () => {
       readable.on("data", d => events.push("data:" + txt(d)));
       readable.on("end", () => events.push("end"));
       const err = await new Promise(resolve => readable.on("error", resolve));
+      expect({ events, err: err.message, pulls: t.pulls }).toEqual({
+        events: ["data:a"],
+        err: "source failed",
+        pulls: 1,
+      });
+    });
+
+    test("Duplex.fromWeb(direct): close(error) after a flushed chunk emits 'data' with it, then 'error'", async () => {
+      const t = tally();
+      const readable = direct(t, async c => {
+        c.write("a");
+        await c.flush();
+        c.close(new Error("source failed"));
+      });
+      const duplex = Duplex.fromWeb({ readable, writable: new WritableStream() });
+      const events = [];
+      duplex.on("data", d => events.push("data:" + txt(d)));
+      duplex.on("end", () => events.push("end"));
+      const err = await new Promise(resolve => duplex.on("error", resolve));
       expect({ events, err: err.message, pulls: t.pulls }).toEqual({
         events: ["data:a"],
         err: "source failed",

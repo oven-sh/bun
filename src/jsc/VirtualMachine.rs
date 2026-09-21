@@ -2301,9 +2301,11 @@ impl VirtualMachine {
 
         // The loop will not tick again, so its pre handler never commits the
         // `publish()` batches and corked frames the last turn left behind.
-        // Write them out now, while the sockets are still open.
-        if self.script_allowed() && self.event_loop_handle.is_some() {
-            self.uws_loop_mut().flush_pending_writes();
+        // Write them out now, while the sockets are still open. Not through
+        // `uws_loop()`: a spawnSync loop it can point at has no uWS LoopData.
+        if self.script_allowed() {
+            // SAFETY: `uws::Loop::get()` returns the live per-thread uws loop.
+            unsafe { (*uws::Loop::get()).flush_pending_writes() };
         }
 
         self.is_shutting_down = true;

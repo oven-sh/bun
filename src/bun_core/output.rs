@@ -507,6 +507,8 @@ pub mod windows_stdio {
     static CONSOLE_CODEPAGE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
     static CONSOLE_OUTPUT_CODEPAGE: core::sync::atomic::AtomicU32 =
         core::sync::atomic::AtomicU32::new(0);
+    // https://learn.microsoft.com/en-us/windows/console/setconsoleoutputcp
+    const CP_UTF8: u32 = 65001;
 
     #[unsafe(no_mangle)]
     extern "C" fn Bun__restoreWindowsStdio() {
@@ -531,12 +533,16 @@ pub mod windows_stdio {
             }
         }
 
+        // Put back only a codepage this process changed. The console is
+        // shared: in `bun a | bun b`, `b` starts after `a` already switched
+        // it to UTF-8. If `b` wrote that value back at exit, the console
+        // would stay at UTF-8 after `a` restored the original (#43660).
         let out_cp = CONSOLE_OUTPUT_CODEPAGE.load(Ordering::Relaxed);
         let in_cp = CONSOLE_CODEPAGE.load(Ordering::Relaxed);
-        if out_cp != 0 {
+        if out_cp != 0 && out_cp != CP_UTF8 {
             let _ = c::SetConsoleOutputCP(out_cp);
         }
-        if in_cp != 0 {
+        if in_cp != 0 && in_cp != CP_UTF8 {
             let _ = c::SetConsoleCP(in_cp);
         }
     }
@@ -575,8 +581,6 @@ pub mod windows_stdio {
             (*BUFFERED_STDIN.get()).fd = Fd::stdin();
         }
 
-        // https://learn.microsoft.com/en-us/windows/console/setconsoleoutputcp
-        const CP_UTF8: u32 = 65001;
         CONSOLE_OUTPUT_CODEPAGE.store(c::GetConsoleOutputCP(), Ordering::Relaxed);
         let _ = c::SetConsoleOutputCP(CP_UTF8);
 

@@ -5639,7 +5639,7 @@ class ClientHttp2Session extends Http2Session {
     this.#pendingSettingsCallbacks.push(typeof callback === "function" ? [callback, Date.now()] : null);
   }
 
-  constructor(url: string | URL, options?: Http2ConnectOptions, listener?: Function) {
+  constructor(url: string | URL, options?: Http2ConnectOptions, listener?: (...args: any[]) => void) {
     super();
 
     if (typeof options === "function") {
@@ -6397,7 +6397,7 @@ class ClientHttp2Session extends Http2Session {
       process.nextTick(emitEventNT, req, "ready");
     }
   }
-  static connect(url: string | URL, options?: Http2ConnectOptions, listener?: Function) {
+  static connect(url: string | URL, options?: Http2ConnectOptions, listener?: (...args: any[]) => void) {
     return new ClientHttp2Session(url, options, listener);
   }
 
@@ -6406,7 +6406,7 @@ class ClientHttp2Session extends Http2Session {
   }
 }
 
-function connect(url: string | URL, options?: Http2ConnectOptions, listener?: Function) {
+function connect(url: string | URL, options?: Http2ConnectOptions, listener?: (...args: any[]) => void) {
   return ClientHttp2Session.connect(url, options, listener);
 }
 

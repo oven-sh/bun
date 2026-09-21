@@ -176,7 +176,7 @@ it.skipIf(!isWindows)("a reply to the last write before end() on a named pipe is
 });
 
 /** Runs node-net-message-pipe-fixture.ts and resolves once its pipe exists. */
-async function messagePipeServer(scenario: "reply-after-end" | "end-first") {
+async function messagePipeServer(scenario: "reply-after-end" | "end-first" | "end-then-close") {
   const name = `\\\\.\\pipe\\bun-test-${randomUUID()}`;
   const proc = Bun.spawn({
     cmd: [bunExe(), join(import.meta.dir, "node-net-message-pipe-fixture.ts"), name, scenario],
@@ -194,6 +194,11 @@ async function messagePipeServer(scenario: "reply-after-end" | "end-first") {
   }
   return {
     name,
+    exited: proc.exited,
+    async [Symbol.asyncDispose]() {
+      proc.kill();
+      await proc.exited;
+    },
     /** Every line the server printed, once it has exited. */
     async lines() {
       while (true) {
@@ -210,7 +215,7 @@ async function messagePipeServer(scenario: "reply-after-end" | "end-first") {
 it.skipIf(!isWindows)(
   "end() on a message-type named pipe tells the server and keeps reading until the server closes",
   async () => {
-    const server = await messagePipeServer("reply-after-end");
+    await using server = await messagePipeServer("reply-after-end");
     const events: string[] = [];
     const { promise, resolve } = Promise.withResolvers<void>();
     const client = connect(server.name, () => {
@@ -230,7 +235,7 @@ it.skipIf(!isWindows)(
 );
 
 it.skipIf(!isWindows)("a zero-length message on a message-type named pipe is the server's end of writing", async () => {
-  const server = await messagePipeServer("end-first");
+  await using server = await messagePipeServer("end-first");
   const events: string[] = [];
   const { promise, resolve } = Promise.withResolvers<void>();
   const client = connect({ path: server.name, allowHalfOpen: true });
@@ -247,6 +252,34 @@ it.skipIf(!isWindows)("a zero-length message on a message-type named pipe is the
     server: ["listening", "data:written after end", "closed"],
   });
 });
+
+it.skipIf(!isWindows)(
+  "shutdown() closes a message-type named pipe whose server ended its writing and then closed",
+  async () => {
+    await using server = await messagePipeServer("end-then-close");
+    const events: string[] = [];
+    const { promise, resolve } = Promise.withResolvers<void>();
+    await Bun.connect({
+      unix: server.name,
+      socket: {
+        data: (_, data) => void events.push("data:" + data),
+        async end(socket) {
+          events.push("end");
+          // The server's handle is closed by the time its process is gone.
+          await server.exited;
+          socket.shutdown();
+        },
+        error: (_, err) => void events.push("error:" + (err as any).code),
+        close() {
+          events.push("close");
+          resolve();
+        },
+      },
+    });
+    await promise;
+    expect(events).toEqual(["data:hello", "end", "close"]);
+  },
+);
 
 describe("net.Socket read", () => {
   var unix_servers = 0;

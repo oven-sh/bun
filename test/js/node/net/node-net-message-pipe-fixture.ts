@@ -1,5 +1,5 @@
 // A message-type named pipe server made of blocking Win32 calls, for node-net.test.ts.
-// argv: <pipe name> <"reply-after-end" | "end-first">. Prints one line per thing it sees.
+// argv: <pipe name> <"reply-after-end" | "end-first" | "end-then-close">. Prints one line per thing it sees.
 import { dlopen, ptr } from "bun:ffi";
 
 const PIPE_ACCESS_DUPLEX = 3;
@@ -28,6 +28,7 @@ const handle = CreateNamedPipeW(
   0,
   null,
 );
+if (handle === -1n || handle === -1) throw new Error("CreateNamedPipeW failed");
 console.log("listening");
 ConnectNamedPipe(handle, null);
 
@@ -64,6 +65,6 @@ if (scenario === "reply-after-end") {
   // Returns once the client has read it: a zero-length message behind unread bytes is merged into them.
   FlushFileBuffers(handle);
   write("");
-  readUntilEndOrClose();
+  if (scenario === "end-first") readUntilEndOrClose();
 }
 CloseHandle(handle);

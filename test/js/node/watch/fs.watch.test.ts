@@ -1575,8 +1575,8 @@ test.skipIf(!isWindows)(
   async () => {
     using dir = tempDir("fswatch-overflow-win", {});
     const watchDir = String(dir);
-    // ~100-char names make ~210-byte FILE_NOTIFY_INFORMATION entries, so ~310
-    // fill the watch's 64KB ReadDirectoryChangesW buffer.
+    // ~100-char names make ~210-byte FILE_NOTIFY_INFORMATION entries, so ~19
+    // fill the watch's 4096-byte ReadDirectoryChangesW buffer.
     const N = 100;
 
     const fixture = /* js */ `

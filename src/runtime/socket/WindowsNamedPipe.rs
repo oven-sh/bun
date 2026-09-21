@@ -306,12 +306,29 @@ impl WindowsNamedPipe {
         let this: *mut Self = self.root_ptr();
         match self.with_pipe(|pipe| pipe.flush_peer(this, Self::on_peer_flushed)) {
             Some(Ok(())) => self.end_of_write.set(EndOfWrite::Flushing),
-            Some(Err(_)) => {
-                self.end_of_write.set(EndOfWrite::Idle);
-                self.arm_end_of_write_timer();
-            }
+            Some(Err(_)) => self.finish_end_of_write(false),
             None => {}
         }
+    }
+
+    /// Writing is over and the other end has read it all (`flushed`), or
+    /// cannot be asked. What is left is telling the other end, or closing.
+    fn finish_end_of_write(&self, flushed: bool) {
+        let _keep_alive = self.keep_alive();
+        if self.peer_ended_writing.get() {
+            // Both directions are done.
+            self.end_of_write.set(EndOfWrite::Told);
+            self.close_writer();
+            return;
+        }
+        if flushed && self.with_pipe(|pipe| pipe.is_message_type()) == Some(true) {
+            self.end_of_write.set(EndOfWrite::Told);
+            let root: *mut Self = self.root_ptr();
+            let _ = self.with_pipe(|pipe| pipe.write_end_marker(root, Self::on_end_marker_written));
+            return;
+        }
+        self.end_of_write.set(EndOfWrite::Idle);
+        self.arm_end_of_write_timer();
     }
 
     /// # Safety
@@ -322,21 +339,7 @@ impl WindowsNamedPipe {
         if this.end_of_write.get() != EndOfWrite::Flushing || this.flags.get().is_closed() {
             return;
         }
-        let _keep_alive = this.keep_alive();
-        if this.peer_ended_writing.get() {
-            // Both directions are done.
-            this.end_of_write.set(EndOfWrite::Told);
-            this.close_writer();
-            return;
-        }
-        if flushed.is_ok() && this.with_pipe(|pipe| pipe.is_message_type()) == Some(true) {
-            this.end_of_write.set(EndOfWrite::Told);
-            let root: *mut Self = this.root_ptr();
-            let _ = this.with_pipe(|pipe| pipe.write_end_marker(root, Self::on_end_marker_written));
-            return;
-        }
-        this.end_of_write.set(EndOfWrite::Idle);
-        this.arm_end_of_write_timer();
+        this.finish_end_of_write(flushed.is_ok());
     }
 
     /// # Safety

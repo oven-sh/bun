@@ -8190,6 +8190,12 @@ impl CloseOnDrop {
     pub fn new(fd: Fd) -> Self {
         Self(fd)
     }
+
+    /// The fd, which is the caller's to close from here on.
+    #[inline]
+    pub fn into_fd(self) -> Fd {
+        core::mem::ManuallyDrop::new(self).0
+    }
 }
 impl Drop for CloseOnDrop {
     #[inline]

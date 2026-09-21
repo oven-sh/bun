@@ -4893,3 +4893,30 @@ it("connections that queued up while the loop was busy are all accepted in one t
   });
   expect(exitCode).toBe(0);
 });
+
+it.skipIf(!isWindows)(
+  "pause() and end() in one tick on a socket over an inherited pipe leave the loop's count right",
+  async () => {
+    // The child's stdin is a synchronous pipe that stays silent, so its read is parked on the reader thread.
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const socket = await Bun.connect({ fd: 0, socket: { data() {}, open() {} } });
+        socket.pause();
+        socket.end();
+        // Kept alive by the loop's count alone.
+        const child = Bun.spawn({ cmd: [process.execPath, "-e", "0"], stdout: "ignore" });
+        console.log("exited", await child.exited);
+      `,
+      ],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "exited 0\n", stderr: "", exitCode: 0 });
+  },
+);

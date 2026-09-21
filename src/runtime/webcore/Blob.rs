@@ -4064,6 +4064,7 @@ pub(crate) fn write_file_with_source_destination(
     source_blob: &mut Blob,
     destination_blob: &mut Blob,
     options: &WriteFileOptions,
+    opened_destination: Option<bun_sys::CloseOnDrop>,
 ) -> JsResult<JSValue> {
     let destination_store = destination_blob
         .store
@@ -4091,12 +4092,15 @@ pub(crate) fn write_file_with_source_destination(
 
         // The borrowed views below are +0 on the store ref;
         // `WriteFile::create` takes its own ref.
-        let file_copier = write_file_mod::WriteFile::create(
+        let mut file_copier = write_file_mod::WriteFile::create(
             destination_blob.borrowed_view(),
             source_blob.borrowed_view(),
             options.mkdirp_if_not_exists.unwrap_or(true),
         )
         .expect("unreachable");
+        if let Some(opened) = opened_destination {
+            file_copier.opened_fd = opened.into_fd();
+        }
         // SAFETY: `write_file_promise` was just produced by heap::alloc above; sole owner.
         let mut write_file_promise = unsafe { bun_core::heap::take(write_file_promise) };
         // Defer promise creation until we're just about to schedule the task.
@@ -4369,6 +4373,8 @@ pub(crate) fn write_file_internal(
     // If you're doing Bun.write(), try to go fast by writing short input on the main thread.
     // This is a heuristic, but it's a good one. It is also what keeps writes that are not awaited
     // in the order they were made: the ones that go to the work pool have no order among them.
+    // A destination the fast path opened and then left to the work pool.
+    let mut opened_destination: Option<bun_sys::CloseOnDrop> = None;
     {
         let mut needs_async = false;
         let fast_path_ok = matches!(*path_or_blob, PathOrBlob::Path(_))
@@ -4398,6 +4404,7 @@ pub(crate) fn write_file_internal(
                             pathlike,
                             &str,
                             &mut needs_async,
+                            &mut opened_destination,
                         )
                     } else {
                         write_string_to_file_fast::<false>(
@@ -4405,6 +4412,7 @@ pub(crate) fn write_file_internal(
                             pathlike,
                             &str,
                             &mut needs_async,
+                            &mut opened_destination,
                         )
                     };
                     if !needs_async {
@@ -4429,6 +4437,7 @@ pub(crate) fn write_file_internal(
                             pathlike,
                             buffer_view.byte_slice(),
                             &mut needs_async,
+                            &mut opened_destination,
                         )
                     } else {
                         write_bytes_to_file_fast::<false>(
@@ -4436,6 +4445,7 @@ pub(crate) fn write_file_internal(
                             pathlike,
                             buffer_view.byte_slice(),
                             &mut needs_async,
+                            &mut opened_destination,
                         )
                     };
                     if !needs_async {
@@ -4706,7 +4716,13 @@ pub(crate) fn write_file_internal(
     // RefPtr<Store> clone+drop keeps the destination store alive across the call.
     let _dest_hold = destination_store;
 
-    write_file_with_source_destination(cx, &mut *source_blob, &mut destination_blob, &options)
+    write_file_with_source_destination(
+        cx,
+        &mut *source_blob,
+        &mut destination_blob,
+        &options,
+        opened_destination,
+    )
 }
 
 fn validate_writable_blob(global_this: &JSGlobalObject, blob: &Blob) -> JsResult<()> {
@@ -4846,12 +4862,13 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     pathlike: &PathOrFileDescriptor,
     str: &BunString,
     needs_async: &mut bool,
+    opened_destination: &mut Option<bun_sys::CloseOnDrop>,
 ) -> JSValue {
+    #[cfg(not(windows))]
+    let _ = opened_destination;
     let fd: Fd = if !NEEDS_OPEN {
-        // A `write` on a handle opened for overlapped I/O returns before the
-        // transfer is done.
         #[cfg(windows)]
-        if !bun_sys::windows::fs::is_synchronous(pathlike.fd()) {
+        if !windows_write_returns_promptly(pathlike.fd()) {
             *needs_async = true;
             return JSValue::ZERO;
         }
@@ -4880,6 +4897,12 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
 
     // Declared before the truncate guard so it drops *after* it (close runs last).
     let _close = NEEDS_OPEN.then(|| bun_sys::CloseOnDrop::new(fd));
+    #[cfg(windows)]
+    if NEEDS_OPEN && !str.is_empty() && !bun_sys::windows::fs::is_disk_file(fd) {
+        *opened_destination = _close;
+        *needs_async = true;
+        return JSValue::ZERO;
+    }
 
     // scopeguard's closure captures borrows at construction, conflicting
     // with later `written += ...` / `truncate = false`. Route through `Cell`
@@ -4931,17 +4954,30 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     JSPromise::resolved_promise_value(global_this, JSValue::js_number(written.get() as f64))
 }
 
+/// Whether a `write` to `fd` on the calling thread is over once the call
+/// returns and cannot wait on this process: a disk file, or the process's own
+/// stdout or stderr, which `console.log` writes the same way. Any other pipe
+/// may be read by this very thread, and a handle opened for overlapped I/O
+/// returns before the transfer is done.
+#[cfg(windows)]
+fn windows_write_returns_promptly(fd: Fd) -> bool {
+    use bun_sys::windows::fs;
+    let own_stdio = fd.native() == Fd::stdout().native() || fd.native() == Fd::stderr().native();
+    (own_stdio || fs::is_disk_file(fd)) && fs::is_synchronous(fd)
+}
+
 fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
     global_this: &JSGlobalObject,
     pathlike: &PathOrFileDescriptor,
     bytes: &[u8],
     needs_async: &mut bool,
+    opened_destination: &mut Option<bun_sys::CloseOnDrop>,
 ) -> JSValue {
+    #[cfg(not(windows))]
+    let _ = opened_destination;
     let fd: Fd = if !NEEDS_OPEN {
-        // A `write` on a handle opened for overlapped I/O returns before the
-        // transfer is done.
         #[cfg(windows)]
-        if !bun_sys::windows::fs::is_synchronous(pathlike.fd()) {
+        if !windows_write_returns_promptly(pathlike.fd()) {
             *needs_async = true;
             return JSValue::ZERO;
         }
@@ -4975,6 +5011,12 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
     };
     let mut written: usize = 0;
     let _close = NEEDS_OPEN.then(|| bun_sys::CloseOnDrop::new(fd));
+    #[cfg(windows)]
+    if NEEDS_OPEN && !bytes.is_empty() && !bun_sys::windows::fs::is_disk_file(fd) {
+        *opened_destination = _close;
+        *needs_async = true;
+        return JSValue::ZERO;
+    }
 
     let mut remain = bytes;
     while !remain.is_empty() {

@@ -362,7 +362,8 @@ struct ReadOp {
 }
 
 const READ_REQUESTED: u8 = 0;
-/// The reader thread is handing the result to the port.
+/// A packet for it is on its way to the loop: the reader thread is handing
+/// the result to the port, or the loop took the request back unanswered.
 const READ_POSTED: u8 = 1;
 /// The pipe closed while the thread had the request: the thread frees it.
 const READ_ORPHANED: u8 = 2;
@@ -1327,6 +1328,9 @@ impl Inner {
         unsafe {
             (*op).zero_wait = false;
             (*op).posted = Some((Win32Error::OPERATION_ABORTED, 0));
+            // No longer the thread's: a close before the packet is dequeued
+            // leaves the read to its packet.
+            *(*op).finisher.get_mut() = READ_POSTED;
             iocp::us_iocp_op_ready((*this).link.loop_, &raw mut (*op).op);
         }
     }
@@ -1883,9 +1887,8 @@ impl Inner {
 
             // Before an idle read is freed below: the thread answers the one it
             // was given (as aborted) and touches no other.
-            let mut taken_back: *mut ReadOp = ptr::null_mut();
             if let Some(reader) = (*this).sync_reader.take() {
-                taken_back = reader.stop();
+                let taken_back = reader.stop();
                 Inner::complete_taken_back(this, taken_back);
             }
             let read = (*this).read_op;
@@ -1897,19 +1900,18 @@ impl Inner {
                         }
                         // The reader thread has it, and may be queued behind
                         // another reader of the pipe for as long as that one
-                        // likes. Unless it is posting the result already, the
-                        // read is the thread's to free from here on.
+                        // likes. Unless a packet for it is on its way already,
+                        // the read is the thread's to free from here on.
                         Mode::Sync | Mode::Unknown
-                            if taken_back.is_null()
-                                && (*read)
-                                    .finisher
-                                    .compare_exchange(
-                                        READ_REQUESTED,
-                                        READ_ORPHANED,
-                                        Ordering::SeqCst,
-                                        Ordering::SeqCst,
-                                    )
-                                    .is_ok() =>
+                            if (*read)
+                                .finisher
+                                .compare_exchange(
+                                    READ_REQUESTED,
+                                    READ_ORPHANED,
+                                    Ordering::SeqCst,
+                                    Ordering::SeqCst,
+                                )
+                                .is_ok() =>
                         {
                             (*this).read_op = ptr::null_mut();
                             (*this).pending -= 1;

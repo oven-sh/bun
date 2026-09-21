@@ -615,6 +615,13 @@ pub fn write(fd: Fd, buf: &[u8]) -> Maybe<usize> {
 ///
 /// The query takes a synchronous file object's lock, which I/O another thread
 /// or process has in flight on it holds, as the read or write would.
+/// Whether `fd` is a file on a disk, where a write is over once the file
+/// system has taken the bytes. A write to anything else (a pipe, a console, a
+/// serial port) waits for as long as whatever is at its other end likes.
+pub fn is_disk_file(fd: Fd) -> bool {
+    super::GetFileType(fd.native()) == super::FILE_TYPE_DISK
+}
+
 pub fn is_synchronous(fd: Fd) -> bool {
     const FILE_SYNCHRONOUS_IO_ALERT: u32 = 0x0000_0010;
     let mut mode: u32 = 0;
@@ -793,17 +800,28 @@ pub fn preadv(fd: Fd, bufs: &[PlatformIoVec], position: i64) -> Maybe<usize> {
         }
         // SAFETY: a `PlatformIoVec` describes a writable buffer of `iov_len`
         // bytes that the caller keeps alive for the call.
-        let slice = unsafe { core::slice::from_raw_parts_mut(buf.iov_base.cast(), buf.iov_len) };
-        let at = (position >= 0).then(|| position as u64 + total as u64);
-        match read_at(fd, slice, at) {
-            Ok(n) => {
-                total += n;
-                if n == 0 {
-                    break;
+        let slice: &mut [u8] =
+            unsafe { core::slice::from_raw_parts_mut(buf.iov_base.cast(), buf.iov_len) };
+        let mut filled: usize = 0;
+        let ended = loop {
+            let at = (position >= 0).then(|| position as u64 + total as u64);
+            match read_at(fd, &mut slice[filled..], at) {
+                Ok(n) => {
+                    total += n;
+                    filled += n;
+                    // `read_at` asks for at most `MAX_COUNT` bytes: a read of
+                    // exactly that many goes on in the same buffer.
+                    if n == crate::MAX_COUNT && filled < slice.len() {
+                        continue;
+                    }
+                    break n == 0;
                 }
+                Err(_) if total > 0 => break true,
+                Err(e) => return Err(e),
             }
-            Err(_) if total > 0 => break,
-            Err(e) => return Err(e),
+        };
+        if ended {
+            break;
         }
     }
     Ok(total)

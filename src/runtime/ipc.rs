@@ -1520,7 +1520,7 @@ impl SendQueue {
                     // shift the queue and try to send the next item immediately.
                     Done::Completed(queue.remove(0))
                 }
-            } else if n > 0 && n < i32::try_from(first.data.list.len()).expect("int cast") {
+            } else if n > 0 && (n as usize) < to_send_len {
                 // the item was partially sent; update the cursor and wait for writable to send the rest
                 // (if we tried to send a handle, a partial write means the handle wasn't sent yet.)
                 first.data.cursor += usize::try_from(n).expect("int cast");
@@ -1800,7 +1800,12 @@ impl SendQueue {
         let _scope = global_this.bun_vm().enter_event_loop_scope();
         for event in events.drain(..) {
             if this.input_failed.get() {
-                break;
+                // Nothing more is delivered: a socket that came with the rest
+                // has no taker.
+                if let FrameEvent::Socket(Some(unclaimed)) = event {
+                    let _ = unclaimed.close_allowing_standard_io(None);
+                }
+                continue;
             }
             match event {
                 FrameEvent::Data(range) => on_data2(this, &chunk[range]),

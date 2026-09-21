@@ -536,9 +536,10 @@ unsafe fn spawn(options: &SpawnOptions, argv: Argv, envp: Envp) -> bun_sys::Resu
                         child_stdio.fds[3 + i] = fd;
                         ExtraPipe::OwnedFd(parent)
                     }
-                    Slot::Supplied(fd, parent) => {
+                    // The caller has its own number for a handle it supplied.
+                    Slot::Supplied(fd, _) => {
                         child_stdio.fds[3 + i] = fd;
-                        ExtraPipe::UnownedFd(parent)
+                        ExtraPipe::Unavailable
                     }
                 });
         }

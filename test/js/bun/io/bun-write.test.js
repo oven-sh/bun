@@ -12,8 +12,10 @@ import {
   tempDir,
   withoutAggressiveGC,
 } from "harness";
+import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import http from "node:http";
+import net from "node:net";
 import { finished } from "node:stream/promises";
 import path, { join } from "path";
 
@@ -1865,4 +1867,43 @@ it('Bun.write(Bun.stdout, "") resolves with 0', async () => {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr }).toEqual({ stdout: "wrote 0\n", stderr: "" });
   expect(exitCode).toBe(0);
+});
+
+it("Bun.write(Bun.stdout, Bun.file(path), { mode }) resolves when stdout is a pipe", async () => {
+  using dir = tempDir("bun-write-mode-to-pipe", { "source.txt": "copied to a pipe\n" });
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `console.error("wrote", await Bun.write(Bun.stdout, Bun.file("source.txt"), { mode: 0o644 }));`,
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "copied to a pipe\n", stderr: "wrote 17\n" });
+  expect(exitCode).toBe(0);
+});
+
+it.skipIf(!isWindows)("Bun.write() to a named pipe this process serves does not wait on its own thread", async () => {
+  const name = "\\\\.\\pipe\\bun-write-test-" + randomUUID();
+  let received = 0;
+  const { promise: all, resolve } = Promise.withResolvers();
+  const server = net.createServer(socket => {
+    socket.on("data", chunk => {
+      received += chunk.length;
+      if (received === 200_000) resolve();
+    });
+  });
+  await new Promise(listening => server.listen(name, listening));
+  try {
+    // More than the pipe holds: the write completes only as the server, which runs on this thread, reads.
+    expect(await Bun.write(name, Buffer.alloc(200_000, "a"))).toBe(200_000);
+    await all;
+  } finally {
+    server.close();
+  }
+  expect(received).toBe(200_000);
 });

@@ -4197,6 +4197,34 @@ test.skipIf(!isWindows)("starting builtins on a stdin that another reader is par
   expect(await proc.exited).toBe(0);
 });
 
+// `yes` never stops by itself and a disk file takes every chunk without waiting, so the builtin has to
+// give the event loop its turn. The child is killed if it does not: it would fill the disk.
+test("a timer fires while `yes` writes to a file", async () => {
+  using dir = tempDir("shell-yes-to-file", {});
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        import { $ } from "bun";
+        setTimeout(() => {
+          console.log("timer fired");
+          process.exit(0);
+        }, 1);
+        await $\`yes > out.txt\`;
+      `,
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const watchdog = setTimeout(() => proc.kill(), 2000);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  clearTimeout(watchdog);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "timer fired\n", stderr: "", exitCode: 0 });
+});
+
 // Whatever runs after a command can open, move or delete the file the command was redirected to: the
 // shell's handle is closed by the time the command settles. An open that shares nothing fails with a
 // sharing violation while any other handle to the file exists.

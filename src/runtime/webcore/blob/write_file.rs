@@ -628,6 +628,7 @@ impl WriteFileWaitFromLockedValueTask {
                         mkdirp_if_not_exists: Some(this.mkdirp_if_not_exists),
                         ..Default::default()
                     },
+                    None,
                 ) {
                     Ok(p) => p,
                     Err(err) => {

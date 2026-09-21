@@ -1380,6 +1380,24 @@ describe("close handling", () => {
       expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "PASS", stderr: "", exitCode: 0 });
     });
 
+    it(".stdio[i] of a file descriptor the caller passed is not a handle value", async () => {
+      using dir = tempDir("spawn-stdio-supplied-fd", {});
+      const fd = openSync(join(String(dir), "out.txt"), "w");
+      try {
+        await using proc = spawn({
+          cmd: [bunExe(), "-e", "require('fs').writeSync(3, 'hi')"],
+          env: bunEnv,
+          stdio: ["ignore", "ignore", "ignore", fd],
+        });
+        // POSIX hands the caller's number back; Windows has no number of its own for it.
+        expect(proc.stdio[3]).toBe(isWindows ? null : fd);
+        expect(await proc.exited).toBe(0);
+      } finally {
+        closeSync(fd);
+      }
+      expect(readFileSync(join(String(dir), "out.txt"), "utf8")).toBe("hi");
+    });
+
     // The child reads fd 3 until EOF, which it only sees once every handle to the parent's end is
     // closed: the one .stdio[3] handed out is the only one there may be.
     describe.if(isWindows)("'pipe' at index >= 3: closing what .stdio exposes is EOF for the child", () => {

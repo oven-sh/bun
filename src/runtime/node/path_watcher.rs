@@ -245,7 +245,9 @@ impl PathWatcher {
     /// `&self`: per-handler state is `Cell`-based, so the emit paths never
     /// need an exclusive `PathWatcher` borrow.
     fn emit(&self, event_type: WatchEventKind, rel_path: &[u8], is_file: bool) {
-        let timestamp = bun_core::time::milli_timestamp();
+        // Monotonic: a wall clock set back would hold back every repeat of the
+        // last event for as long as the step.
+        let timestamp = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime).ms();
         let h = hash(rel_path);
         for (&ctx, ev) in self.handlers.iter() {
             if ev.should_emit(h, timestamp, event_type) {

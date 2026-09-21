@@ -158,7 +158,15 @@ impl CopyFile {
         // open()'s mode argument only affects newly created files.
         // On macOS clonefile path, chmod is called separately after clonefile.
         if let Some(mode) = self.destination_mode {
-            if self.destination_fd != Fd::INVALID && self.system_error.is_none() {
+            // Windows `fchmod` reopens the file by its handle, which a pipe or
+            // a console refuses: there the mode is for a destination opened
+            // by path, which is a disk file.
+            let has_mode = cfg!(not(windows))
+                || matches!(
+                    self.destination_file_store.pathlike,
+                    PathOrFileDescriptor::Path(_)
+                );
+            if has_mode && self.destination_fd != Fd::INVALID && self.system_error.is_none() {
                 match bun_sys::fchmod(self.destination_fd, mode) {
                     bun_sys::Result::Err(err) => {
                         self.system_error = Some(err.to_system_error());

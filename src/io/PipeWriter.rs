@@ -1362,8 +1362,12 @@ impl<Parent: BufferedWriterParent> WindowsBufferedWriter<Parent> {
         let _g = scopeguard::guard(this, |s| Self::r_deref(s));
         let submitted = Self::r(this).pending_payload_size;
         Self::r(this).pending_payload_size = 0;
+        // Closed with the write still out; `close()` told the parent already.
+        // A write that could not be cancelled any more ends with its own result.
+        if Self::r(this).source.is_none() {
+            return;
+        }
         let written = match result {
-            // Closed with the write still out; `close()` told the parent already.
             sys::Result::Err(err) if err.get_errno() == sys::E::ECANCELED => return,
             sys::Result::Err(err) => {
                 Self::r(this).close();
@@ -1881,9 +1885,14 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
                 _ => StreamBuffer::default(),
             };
         }
+        // Closed with the write still out; `close()` told the parent already.
+        // A write that could not be cancelled any more ends with its own result.
+        if Self::r(this).source.is_none() {
+            Self::r(this).current_payload.reset();
+            return;
+        }
         let submitted = Self::r(this).current_payload.size();
         let written = match result {
-            // Closed with the write still out; `close()` told the parent already.
             sys::Result::Err(err) if err.get_errno() == sys::E::ECANCELED => {
                 Self::r(this).current_payload.reset();
                 return;

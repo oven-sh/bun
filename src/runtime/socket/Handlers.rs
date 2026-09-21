@@ -46,7 +46,7 @@ pub(crate) struct Handlers {
 
     pub(crate) binary_type: Cell<BinaryType>,
 
-    /// node:net: see `us_socket_defer_error_until_read`. Applied to each socket in `on_open`.
+    /// node:net: see `us_socket_defer_error_until_read`. Applied to a socket in `on_open` and in its `reload`.
     pub(crate) defer_error_until_read: Cell<bool>,
 
     pub(crate) vm: &'static VirtualMachine,

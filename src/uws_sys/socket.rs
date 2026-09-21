@@ -518,9 +518,9 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     }
 
     /// See `us_socket_defer_error_until_read` in libusockets.h.
-    pub fn defer_error_until_read(&self) {
+    pub fn defer_error_until_read(&self, enabled: bool) {
         if let InternalSocket::Connected(s) = self.socket {
-            sock(s).defer_error_until_read(true);
+            sock(s).defer_error_until_read(enabled);
         }
     }
 

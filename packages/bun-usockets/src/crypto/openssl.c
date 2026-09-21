@@ -2616,6 +2616,53 @@ restart:
           /* Spill-deferred close: the socket is still live; report it so the
            * caller's bookkeeping does not treat it as destroyed. */
           return s;
+        } else if ((err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) &&
+                   (s->ssl_handshake_state == HANDSHAKE_COMPLETED ||
+                    (s->ssl_handshake_state == HANDSHAKE_PENDING && SSL_is_init_finished(s_ssl(s))))) {
+          /* A fatal error on an established session: a peer alert (a TLS 1.3
+           * server that rejects the client certificate sends certificate_required
+           * after the client's handshake is done) or a record that does not
+           * decrypt. No handshake dispatch reports it, so hand the reason to
+           * the socket before the close, like node's ClearOut calls onerror.
+           * Report the first SSL-library entry: for a bad record BoringSSL
+           * queues the cipher's BAD_DECRYPT ahead of the TLS reason. */
+          uint32_t ssl_err = ERR_peek_error();
+          for (uint32_t queued; (queued = ERR_get_error()) != 0;) {
+            if (ERR_GET_LIB(queued) == ERR_LIB_SSL) {
+              ssl_err = queued;
+              break;
+            }
+          }
+          /* Everything that came before the failing record goes first, in wire
+           * order, while the socket is not yet fatal: a fatal socket gives the
+           * handshake dispatch no verify result, and data handlers assert that
+           * the socket is not shut down. The JS this runs may close the socket. */
+          if (s->ssl_handshake_state == HANDSHAKE_PENDING) {
+            /* This read finished the handshake, then failed on the next record.
+             * Report the handshake, as the no-data completion below does. */
+            ssl_trigger_handshake(s, 1);
+            if (ssl_gone(s)) return NULL;
+            loop_ssl_data->ssl_socket = s;
+            if (loop_ssl_data->ssl_write_batch_len &&
+                loop_ssl_data->ssl_write_batch_owner == s) {
+              ssl_flush_write_batch(loop_ssl_data, s);
+            }
+          }
+          /* The same order as the ZERO_RETURN branch above and node's ClearOut. */
+          ssl_flush_pending_session(s);
+          ssl_flush_pending_keylog(s);
+          if (ssl_gone(s)) return NULL;
+          if (read) {
+            s = us_dispatch_data(s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING, read);
+            if (!s || ssl_gone(s)) return NULL;
+          }
+          ssl_park_fatal_reason(s);
+          if (ssl_err) {
+            us_dispatch_ssl_error(s, ssl_err);
+            if (ssl_gone(s)) return NULL;
+          }
+          ssl_close(s, 0, NULL);
+          return NULL;
         }
 
         if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {

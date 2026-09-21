@@ -247,10 +247,12 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     uint32_t nodeHttpQueuedPipelinedCount = 0;
 
     /* Whether the connection should be torn down once the in-flight response (if
-     * any) has completed and all buffered outgoing data has been flushed. */
+     * any) has completed and all buffered outgoing data has been flushed. A peer
+     * that sent its FIN still gets the answers to the requests it sent before
+     * it: the ones parked behind this response are replayed first. */
     bool shouldCloseConnection() const {
         return (state & HTTP_CONNECTION_CLOSE)
-            || ((state & HTTP_NODE_RECEIVED_FIN) && nodeHttpQueuedPipelinedCount == 0)
+            || ((state & HTTP_NODE_RECEIVED_FIN) && nodeHttpQueuedPipelinedCount == 0 && this->parkedRequestBytes.isEmpty())
             || ((state & HTTP_CLOSE_WHEN_IDLE) && this->isIdle);
     }
 };

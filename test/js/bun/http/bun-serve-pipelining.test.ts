@@ -1,6 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import { isPosix, tempDir, tls } from "harness";
+import { once } from "node:events";
+import { connect as netConnect } from "node:net";
 import { join } from "node:path";
+import { connect as tlsConnect } from "node:tls";
 
 // A request pipelined behind a response that was still in flight (the handler had
 // not returned yet, or it had and uWS was still draining a body that did not fit
@@ -413,6 +416,52 @@ describe.each(transports)("$name", transport => {
         responses: [
           { statusLine: "HTTP/1.1 200 OK", framing: "chunked", body: "first,second" },
           { statusLine: "HTTP/1.1 200 OK", framing: "content-length 14", body: "body of /after" },
+        ],
+      });
+    },
+  );
+
+  // The client ends its side right behind the requests and reads on. Over TLS its
+  // close_notify is decrypted in the same read as the requests, so the server sees
+  // the end of the stream while /small is held and /big is still draining. The
+  // requests came before the end, so both are answered before the server closes.
+  it.if(transport.supported)(
+    "a request held behind a draining response is answered for a client that has already ended its side",
+    async () => {
+      using dir = tempDir("serve-pipelining", {});
+      const hits: string[] = [];
+      using server = Bun.serve({
+        ...transport.listen(String(dir)),
+        fetch: recordingHandler(hits, () => new Response(big)),
+      });
+      const socket =
+        transport.name === "tls"
+          ? tlsConnect({ port: server.port!, host: "127.0.0.1", ca: tls.cert, rejectUnauthorized: false })
+          : transport.name === "unix"
+            ? netConnect({ path: join(String(dir), "pipeline.sock") })
+            : netConnect({ port: server.port!, host: "127.0.0.1" });
+      const reader = new ResponseReader();
+      socket.on("data", chunk => reader.push(chunk));
+      // A reset shows up below as a missing response.
+      socket.on("error", () => {});
+      await once(socket, transport.name === "tls" ? "secureConnect" : "connect");
+
+      const closed = once(socket, "close");
+      socket.end(request("/big") + request("/small"));
+      await closed;
+
+      expect({
+        hits,
+        responses: reader.responses.map(({ statusLine, body }) => ({
+          statusLine,
+          bodyLength: body.length,
+          bodyIsIntact: body === big || body === "body of /small",
+        })),
+      }).toEqual({
+        hits: ["/big", "/small"],
+        responses: [
+          { statusLine: "HTTP/1.1 200 OK", bodyLength: BIG_BODY_LENGTH, bodyIsIntact: true },
+          { statusLine: "HTTP/1.1 200 OK", bodyLength: 14, bodyIsIntact: true },
         ],
       });
     },

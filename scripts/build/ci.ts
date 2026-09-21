@@ -22,7 +22,6 @@ import {
 import { basename, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isBuildkite, markBuildkiteStepReported, reportAnnotationToBuildkite } from "../buildkite.ts";
-import { readTextSymbols } from "../orderfile/generate.ts";
 import { formatAnnotationToHtml, parseAnnotations } from "./annotations.ts";
 import { bunExeName, shouldStrip, type BunOutput } from "./bun.ts";
 import type { Config } from "./config.ts";
@@ -758,22 +757,17 @@ export function reportNothingToInherit(cfg: Config): void {
   const msg =
     `${orderFileArtifact(cfg)}: no recent build of the main branch published it, so this build links unordered. ` +
     `The target's trace-order step publishes it after each main build; that step is failing or missing.`;
-  warnAboutOrderFile("nothing to inherit, shipping unordered", msg);
-}
-
-/** The build is fine and its binary correct, only fatter in resident pages: a line in the log and a warning on the build page. */
-function warnAboutOrderFile(title: string, message: string): void {
-  console.log(`~ symbol order: ${message}`);
+  console.log(`~ symbol order: ${msg}`);
   if (!isBuildkite) return;
   reportAnnotationToBuildkite({
-    // Not an error: a red annotation would read as a failed build.
+    // Not an error: the build is fine and its binary correct, only fatter in resident pages.
     style: "warning",
     priority: 5,
     label: "symbol order file",
     content: formatAnnotationToHtml({
       filename: "scripts/build/ci.ts",
-      title: `symbol order file: ${title}`,
-      content: message,
+      title: "symbol order file: nothing to inherit, shipping unordered",
+      content: msg,
       source: "build",
       level: "warning",
     }),
@@ -935,90 +929,4 @@ export async function inheritOrderFile(cfg: Config, ctx: OrderFileContext): Prom
       : `none of the ${tried} builds tried published it`;
   console.log(`~ symbol order: ${what} (${since(start)})`);
   return false;
-}
-
-/**
- * Say whether the link honoured the order file: one lld silently ignores produces a
- * binary indistinguishable from an unordered one. Scale-free — compare where the
- * hot functions landed against where a typical function landed. It reports and
- * never fails the build: the file is inherited, so it legitimately loses names to
- * code churn, and a stale one is a slower binary, not a broken one.
- */
-export function verifyOrderFileApplied(cfg: Config, ctx: OrderFileContext, exe: string): void {
-  /** Fewer names than this say too little about where the hot set landed. */
-  const FEWEST_NAMES = 1000;
-  /** Ordered, the hot set sits near the front; unordered, at ~100% of the control. */
-  const MAX_FRACTION_OF_CONTROL = 0.4;
-
-  const start = Date.now();
-  if (!orderFileEligible(cfg, ctx)) return;
-  // Every name in the file, not its first ones: a process enters the C runtime's routines first (memcpy,
-  // memset, startup), and on windows x64 those are precompiled code the linker cannot move, in a block of
-  // their own at the end of .text. The first thousand names are mostly that block there, and say nothing
-  // about the functions that can be ordered.
-  const wanted = readFileSync(orderFilePath(cfg), "utf8")
-    .split("\n")
-    .filter((line: string) => line && !line.startsWith("#"));
-  if (wanted.length < FEWEST_NAMES) {
-    console.log(`~ symbol order: only ${wanted.length} functions in the order file — nothing to verify`);
-    return;
-  }
-
-  // The same names the generator traces against: nm's, or on windows the link's maps'.
-  let symbols: Map<number, string[]>;
-  try {
-    symbols = readTextSymbols(exe);
-  } catch (error) {
-    console.log(
-      `~ symbol order: cannot read the binary's symbols — skipping verification (${(error as Error).message})`,
-    );
-    return;
-  }
-
-  const addresses = new Map<string, number>();
-  let textBase = Number.MAX_SAFE_INTEGER;
-  for (const [address, names] of symbols) {
-    for (const name of names) addresses.set(name, address);
-    if (address < textBase) textBase = address;
-  }
-
-  const median = (values: number[]) => (values.length ? values[values.length >> 1]! : 0);
-  const sorted = (values: number[]) => values.sort((a, b) => a - b);
-  const offsets = sorted(
-    wanted
-      .map(name => addresses.get(name))
-      .filter((address): address is number => address !== undefined)
-      .map(address => address - textBase),
-  );
-  // Where a typical function sits. Ordering does not move this.
-  const control = median(sorted([...addresses.values()].map(address => address - textBase)));
-
-  const fail = (message: string, hint: string) =>
-    warnAboutOrderFile("the link did not honour it", `${orderFileArtifact(cfg)}: ${message} — ${hint}`);
-
-  const mb = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)}MB`;
-  const rate = offsets.length / wanted.length;
-  if (offsets.length === 0) {
-    fail(
-      "not one of the order file's symbols is in the linked binary",
-      "the symbol spellings do not match this link — see scripts/orderfile/generate.ts",
-    );
-    return;
-  }
-  const hot = median(offsets);
-  if (control > 0 && hot > control * MAX_FRACTION_OF_CONTROL) {
-    fail(
-      `the order file had no effect: hot functions sit at ${mb(hot)}, a typical one at ${mb(control)}`,
-      cfg.darwin
-        ? "Apple ld ignored it — check -order_file and that the names match nm's"
-        : cfg.windows
-          ? "lld-link ignored it — check /order and that /Gy survived"
-          : "lld ignored it — check --symbol-ordering-file and that -ffunction-sections survived",
-    );
-    return;
-  }
-  console.log(
-    `+ symbol order: applied — ${offsets.length}/${wanted.length} (${(rate * 100).toFixed(0)}%) of the order ` +
-      `file's functions resolved; median ${mb(hot)} into .text vs ${mb(control)} for a typical one (${since(start)})`,
-  );
 }

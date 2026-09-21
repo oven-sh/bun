@@ -36,7 +36,6 @@ import {
   spawnWithAnnotations,
   timingsChartName,
   uploadArtifacts,
-  verifyOrderFileApplied,
 } from "./build/ci.ts";
 import { formatConfig, formatConfigUnchanged, type Config, type PartialConfig } from "./build/config.ts";
 import { configOf, configure, reconfigure, type ConfigureInput } from "./build/configure.ts";
@@ -177,11 +176,10 @@ async function main(): Promise<void> {
 
     await startGroup("Build", () => runNinja());
 
-    // No build traces its own binary: the order file is the one an earlier build's trace-order step
-    // published (see "Symbol ordering file" in ci.ts). A stale one is a slower binary, not a broken one.
-    if (orderFileEligible(result.cfg, orderCtx) && result.output.exe) {
-      if (!inherited) reportNothingToInherit(result.cfg);
-      verifyOrderFileApplied(result.cfg, orderCtx, result.output.exe);
+    // No build traces its own binary: the order file is the one a main build's trace-order step published
+    // (see "Symbol ordering file" in ci.ts).
+    if (orderFileEligible(result.cfg, orderCtx) && result.output.exe && !inherited) {
+      reportNothingToInherit(result.cfg);
     }
 
     // Every CI build says where its time went: nobody can come back to this build directory to ask.

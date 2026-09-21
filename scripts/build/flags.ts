@@ -1062,7 +1062,7 @@ export const linkerFlags: Flag[] = [
     // says where each input chunk was placed, which is what tells a function
     // apart from the labels the MSVC CRT leaves on data inside its code. They
     // ship in the profile zip beside the binary, for the trace-order step
-    // (.buildkite/ci.ts) and for verifyOrderFileApplied() in scripts/build/ci.ts.
+    // (.buildkite/ci.ts).
     flag: c => [`/lldmap:${slash(linkerMapPath(c))}`, `/map:${slash(symbolMapPath(c))}`],
     when: c => c.windows && writesLinkerMap(c),
     desc: "Linker maps: the order file tracer's symbol table (see windows-symbols.ts)",

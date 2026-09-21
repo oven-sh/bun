@@ -37,8 +37,8 @@ import {
  *
  * Nothing in the build fails if this wiring rots. All three linkers skip names
  * they cannot resolve, so a dropped flag silently gives the RSS back instead of
- * breaking the link. CI's verifyOrderFileApplied() says so on the build page,
- * as a warning that fails nothing — these checks are what fails a PR.
+ * breaking the link. Nothing in CI looks at where the functions landed, so these
+ * checks are what notices.
  */
 const cfg = (overrides: Partial<Config> = {}) =>
   ({

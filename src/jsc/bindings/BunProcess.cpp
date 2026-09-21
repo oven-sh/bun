@@ -32,6 +32,7 @@
 #include "ScriptExecutionContext.h"
 #include "headers-handwritten.h"
 #include "ZigGlobalObject.h"
+#include "ModuleGraph.h"
 #include "FormatStackTraceForJS.h"
 #include "headers.h"
 #include "JSEnvironmentVariableMap.h"
@@ -1332,6 +1333,8 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     auto& vm = JSC::getVM(globalObject);
     if (vm.hasPendingTerminationException()) [[unlikely]]
         return true;
+    // The process's handlers are the realm's: they run as it, whichever Bun.ModuleGraph's error this is.
+    Bun::ErrorHandlerContextScope inRealmsContext(globalObject, nullptr);
 
     // Node exits with code 6 (InvalidFatalExceptionMonkeyPatching) when process._fatalException
     // is replaced with a non-callable. Top exception scope: no caller declares a ThrowScope
@@ -1486,6 +1489,8 @@ extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalO
     if (vm.hasPendingTerminationException()) [[unlikely]]
         return true;
     auto* process = globalObject->processObject();
+    // As in Bun__handleUncaughtException.
+    Bun::ErrorHandlerContextScope inRealmsContext(globalObject, nullptr);
 
     auto eventType = Identifier::fromString(vm, "unhandledRejection"_s);
     auto& wrapped = process->wrapped();
@@ -2385,10 +2390,12 @@ __attribute__((minsize)) static JSValue constructReportObjectComplete(VM& vm, Zi
         };
 
         for (size_t i = 0; i < std::size(resourceLimits); i++) {
+            // Node leaves out a limit it cannot read.
+            struct rlimit limit;
+            if (getrlimit(resourceLimits[i], &limit) != 0)
+                continue;
             JSC::JSObject* limitObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
             RETURN_IF_EXCEPTION(scope, {});
-            struct rlimit limit;
-            getrlimit(resourceLimits[i], &limit);
 
             JSValue soft = limit.rlim_cur == RLIM_INFINITY ? JSC::jsString(vm, String("unlimited"_s)) : JSC::jsNumber(limit.rlim_cur);
 
@@ -4566,7 +4573,6 @@ JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObjec
     args.append(this);
     args.append(nextTickQueueObject);
     args.append(JSC::JSFunction::create(vm, globalObject, 1, String(), jsFunctionDrainMicrotaskQueue, ImplementationVisibility::Private));
-    args.append(JSC::JSFunction::create(vm, globalObject, 1, String(), jsFunctionReportUncaughtException, ImplementationVisibility::Private));
 
     // Lazy property builder: exceptions must not propagate into
     // reifyStaticProperty, which performs no exception check.
@@ -4722,7 +4728,7 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessTitle, (JSC::JSGlobalObject * globalObject, J
 #endif
 }
 
-static inline JSValue getCachedCwd(JSC::JSGlobalObject* globalObject)
+JSValue getCachedCwd(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);

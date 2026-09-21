@@ -695,6 +695,7 @@ pub fn host_construct_result<R: IntoHostConstructReturn>(
 /// `#[track_caller]` propagates the caller's `Location` through to
 /// `ExceptionValidationScope::init`.
 #[track_caller]
+#[inline]
 pub fn to_js_host_call(
     global_this: &JSGlobalObject,
     f: impl FnOnce() -> JsResult<JSValue>,

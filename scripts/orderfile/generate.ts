@@ -30,17 +30,17 @@
  * terminal than on a pipe, and the functions it reaches are a couple of
  * thousand that no other workload touches.
  *
- * The file is never committed. Release builds generate it from their own pass-1
- * binary and relink against it; canary builds inherit the last successful
- * build's file and re-publish it (scripts/build/ci.ts — inheritOrderFile /
- * packageAndUpload). Locally:
+ * The file is never committed. No CI build traces its own binary: each target's
+ * trace-order step (.buildkite/ci.ts) runs this after the build, on a machine
+ * that can run the binary, and the next build inherits what it published
+ * (scripts/build/ci.ts inheritOrderFile). Locally:
  *
  *   bun run orderfile                      # uses build/release, writes build/release/linker.order
- *   bun run orderfile -- --build-dir=build/release-lto
+ *   bun run orderfile -- --build-dir=<other build dir>
  *
- * Generating against the profile you ship is worth ~1 MB of RSS: the LTO build
- * linked with a file generated from the plain release build lands at 22.6 MB,
- * and at 21.6 MB with its own.
+ * Generate against the profile you ship (release is LTO by default): a file
+ * generated from a non-LTO build and applied to the LTO link is worth ~1 MB
+ * of RSS less (22.6 MB vs 21.6 MB with its own).
  *
  * Linux x86-64/arm64, macOS arm64, and Windows x64/arm64. Linux is the lld
  * `--symbol-ordering-file` input, macOS Apple ld's `-order_file`, Windows

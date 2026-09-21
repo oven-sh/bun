@@ -33,19 +33,23 @@ let dynamicallyAdjustChunkSize = (_?) => (
   (dynamicallyAdjustChunkSize = () => _)
 );
 
-type NativeReadable = typeof import("node:stream").Readable &
-  typeof import("node:stream").Stream & {
-    push: (chunk: any) => boolean;
-    $bunNativePtr?: NativePtr;
-    [kWebStream]: ReadableStream | undefined;
-    [kRefCount]: number;
-    [kCloseState]: [boolean];
-    [kPendingRead]: boolean;
-    [kHighWaterMark]: number;
-    [kHasResized]: boolean;
-    [kRemainingChunk]: Buffer;
-    debugId: number;
-  };
+type NodeReadable = import("node:stream").Readable;
+
+interface NativeReadable extends NodeReadable {
+  $bunNativePtr: NativePtr | undefined;
+  $start?: typeof ensureConstructed;
+  ref: typeof ref;
+  unref: typeof unref;
+  [kWebStream]: ReadableStream | undefined;
+  [kRefCount]: number;
+  [kCloseState]: [boolean];
+  [kConstructed]: boolean;
+  [kPendingRead]: boolean;
+  [kHighWaterMark]: number;
+  [kHasResized]: boolean;
+  [kRemainingChunk]: Buffer | undefined;
+  debugId: number;
+}
 
 interface NativePtr {
   onClose: () => void;
@@ -65,7 +69,7 @@ function constructNativeReadable(readableStream: ReadableStream, options): Nativ
   const bunNativePtr = (readableStream as any).$bunNativePtr;
   $assert(typeof bunNativePtr === "object", "Invalid native ptr");
 
-  const stream = new Readable(options);
+  const stream = new Readable(options) as NativeReadable;
   stream._read = read;
   stream._destroy = destroy;
 
@@ -230,7 +234,7 @@ function readFromHandle(this: NativeReadable, maxToRead: number) {
   }
 }
 
-function handleResult(stream: NativeReadable, result: any, chunk: Buffer, isClosed: boolean) {
+function handleResult(stream: NativeReadable, result: any, chunk: Buffer | undefined, isClosed: boolean) {
   if (typeof result === "number") {
     $debug(`[${stream.debugId}] handleResult(${result})`);
     if (result >= stream[kHighWaterMark] && !stream[kHasResized] && !isClosed) {

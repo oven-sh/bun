@@ -95,6 +95,9 @@ pub struct BundleV2<'a> {
     /// When this bundle's owning loop is a JS event loop (bake / dev server):
     /// how parse worker threads deliver work back to it.
     pub js_poster: Option<bun_event_loop::JsPoster>,
+    /// Whose script the plugins' `onResolve` / `onLoad` callbacks continue: the context that called
+    /// `Bun.build`. Once it has stopped a request is answered as cancelled instead of reaching them.
+    pub plugin_context: bun_event_loop::ContextId,
     /// CYCLEBREAK GENUINE: erased `bake::DevServer` (see `dispatch::DevServerHandle`).
     /// Populated from `transpiler.options.dev_server` + the runtime-registered vtable at
     /// construction. All ~15 DevServer call sites go through this.
@@ -1133,6 +1136,12 @@ pub mod bv2_impl {
                     // SAFETY: released ⇒ the hop never ran; the request is ours alone on this thread.
                     unsafe { (*this).answer_cancelled() };
                 }
+                /// The plugins' callbacks continue the script that started the build.
+                unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
+                    // SAFETY: fn contract; `bv2` is the live bundle waiting for this request, and the
+                    // field is set before any request is dispatched.
+                    unsafe { (*(*this).bv2).plugin_context }
+                }
             }
             impl Resolve {
                 pub(crate) fn init(bv2: &mut BundleV2<'_>, record: MiniImportRecord) -> Self {
@@ -1336,6 +1345,11 @@ pub mod bv2_impl {
                 unsafe fn release_unrun(this: *mut Self) {
                     // SAFETY: as `Resolve::release_unrun`.
                     unsafe { (*this).answer_cancelled() };
+                }
+                /// As `Resolve::context`.
+                unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
+                    // SAFETY: as `Resolve::context`.
+                    unsafe { (*(*this).bv2).plugin_context }
                 }
             }
         }
@@ -2950,6 +2964,7 @@ pub mod bv2_impl {
                 // SAFETY: `event_loop`, when set, points at the caller's live loop
                 // (owning thread == this thread).
                 js_poster: event_loop.and_then(|l| unsafe { l.as_ref() }.js_poster()),
+                plugin_context: bun_event_loop::ContextId::NONE,
                 dev_server: None,
                 file_map: None,
                 source_code_length: 0,
@@ -3046,6 +3061,7 @@ pub mod bv2_impl {
                 this.transpiler.options.min_chunk_size.unwrap_or_else(|| {
                     crate::options::default_min_chunk_size(this.transpiler.options.target)
                 });
+            this.linker.options.fold_chunks = this.transpiler.options.fold_chunks;
             this.linker.options.module_preload = this.transpiler.options.module_preload;
             this.linker.options.source_maps = this.transpiler.options.source_map;
             this.linker.options.tree_shaking = this.transpiler.options.tree_shaking;
@@ -5249,7 +5265,7 @@ pub mod bv2_impl {
                         // SAFETY: worker ptrs are live until `deinit_soon`.
                         unsafe { (**worker).deinit_soon() };
                     }
-                    pool.worker_pool().wake_for_idle_events();
+                    pool.wake_for_idle_events();
                 }
                 // `ThreadPool` is arena-allocated; the arena bulk-free won't
                 // run its `Drop`, so release the map's backing storage here.
@@ -6114,6 +6130,16 @@ pub mod bv2_impl {
             if let Some(err) = resolve_result.last_error {
                 bun_core::scoped_log!(Bundle, "failed with error: {}", err.name());
                 resolve_result.resolve_queue.clear();
+
+                // A failed file's imports are not followed: the queue is cleared
+                // above. That includes the records barrel optimization deferred, so
+                // a later request must not un-defer them. (The graph row keeps only
+                // the records: it has no `target` to resolve them against.)
+                for record in result.ast.import_records.iter_mut() {
+                    record
+                        .flags
+                        .remove(bun_ast::ImportRecordFlags::IS_BARREL_DEFERRED);
+                }
 
                 // Preserve the parsed import_records on the graph so any plugin
                 // onResolve tasks already dispatched for *other* records in this

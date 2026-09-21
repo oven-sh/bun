@@ -143,7 +143,13 @@ function getStackedDiff(actual, expected) {
   return { message };
 }
 
-function getSimpleDiff(originalActual, actual: string, originalExpected, expected: string) {
+interface SimpleDiff {
+  message: string;
+  header?: string;
+  skipped?: boolean;
+}
+
+function getSimpleDiff(originalActual, actual: string, originalExpected, expected: string): SimpleDiff {
   let stringsLen = actual.length + expected.length;
   // Accounting for the quotes wrapping strings
   if (typeof originalActual === "string") {
@@ -249,6 +255,7 @@ function addEllipsis(string) {
 }
 
 class AssertionError extends Error {
+  declare diff: string;
   generatedMessage;
   actual;
   expected;

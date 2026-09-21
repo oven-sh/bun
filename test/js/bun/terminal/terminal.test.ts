@@ -858,6 +858,70 @@ describe("Bun.Terminal", () => {
       expect(JSON.parse(stdout)).toEqual({ exits: 4, collected: 4, callbacksAfterExit: 0, leakedFds: 0 });
       expect(exitCode).toBe(0);
     });
+
+    // On Windows the child's exit leaves the writer open, and the next write()
+    // fails with EPIPE inside the call. The writer reports the error, the
+    // terminal closes itself, and the writer still holds the payload it could
+    // not send. That payload used to pass for input that waits for a drain:
+    // write() rooted the wrapper again, after the last callback that could
+    // release it. On POSIX the write is dropped (see the test above). On every
+    // platform the terminal must become collectable.
+    test("terminal is released after a write() that follows the child's exit", async () => {
+      const childSrc = /* js */ `
+        const N = 4;
+        let collected = 0;
+        const registry = new FinalizationRegistry(() => collected++);
+        let exits = 0;
+        const cmd = process.platform === "win32" ? ["cmd.exe", "/c", "exit 0"] : ["sh", "-c", "exit 0"];
+
+        async function one(i) {
+          const { promise: ptyClosed, resolve } = Promise.withResolvers();
+          let proc = Bun.spawn(cmd, {
+            terminal: {
+              data() {},
+              exit() {
+                exits++;
+                resolve();
+              },
+            },
+          });
+          let terminal = proc.terminal;
+          registry.register(terminal, i);
+          const procExited = proc.exited;
+          proc = null;
+          await procExited;
+          await ptyClosed;
+          try {
+            terminal.write("x");
+          } catch {}
+          terminal = null;
+        }
+
+        for (let i = 0; i < N; i++) await one(i);
+
+        let sink;
+        function churn() {
+          for (let i = 0; i < 500; i++) sink = { i, a: new Array(32).fill(i) };
+        }
+        for (let i = 0; i < 50 && collected < N; i++) {
+          churn();
+          Bun.gc(true);
+          await new Promise(r => setImmediate(r));
+        }
+        console.log(JSON.stringify({ exits, collected }));
+      `;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", childSrc],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ exits: 4, collected: 4 });
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe.concurrent("subprocess interaction", () => {

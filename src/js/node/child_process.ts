@@ -614,9 +614,11 @@ function spawnSync(file, args, options?): SpawnSyncResult {
     error = err;
     stdout = null;
     stderr = null;
-    // Bun.spawnSync puts `pid` and `exitCode` on the error it throws when the process ran and its output was
-    // lost. Any other error means the process never ran, which node reports as `status: null` and `pid: 0`.
+    // Bun.spawnSync puts `pid`, `exitCode` and `signalCode` on the error it throws when the process ran and its
+    // output was lost. Any other error means the process never ran, which node reports as `status: null` and
+    // `pid: 0`.
     exitCode = err?.exitCode ?? null;
+    signalCode = err?.signalCode;
     pid = err?.pid ?? 0;
   }
 

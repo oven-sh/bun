@@ -2020,13 +2020,16 @@ fn spawn_maybe_sync(
     };
     let (stdout, stderr, resource_usage) = output?;
     if let Some(read_error) = read_error {
-        // The process ran to completion and its output was lost. `pid` and `exitCode` on the error
-        // say so: every other error thrown here is from a process that never ran (it could not be
-        // spawned, or its stdin could not be set up and it was killed), and `node:child_process`
-        // reports the two differently, as node does.
+        // The process ran to completion and its output was lost. `pid`, `exitCode` and `signalCode`
+        // on the error say so, as they do on the result: every other error thrown here is from a
+        // process that never ran (it could not be spawned, or its stdin could not be set up and it was
+        // killed), and `node:child_process` reports the two differently, as node does.
         let error = read_error.to_js(cx.global());
         error.put(cx.global(), b"pid", result_pid);
         error.put(cx.global(), b"exitCode", exit_code);
+        if !signal_code.is_empty_or_undefined_or_null() {
+            error.put(cx.global(), b"signalCode", signal_code);
+        }
         return Err(cx.global().throw_value(error));
     }
 

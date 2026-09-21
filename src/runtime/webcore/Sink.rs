@@ -289,24 +289,24 @@ impl<T: JsSinkAbi> JSSink<T> {
         }
         start_pump(global, stream, controller)
     }
+}
 
+impl SourceHandle {
     /// Disconnect the upstream source: JSController → detachPtr; ByteStream → clear its SinkHandle.
-    pub(crate) fn detach(source: &mut SourceHandle, _global: &crate::webcore::jsc::JSGlobalObject) {
-        match *source {
+    pub(crate) fn detach(&mut self, global: &JSGlobalObject) {
+        match *self {
             SourceHandle::JSController(value) => {
-                source.clear();
+                self.clear();
                 // detachPtr leaves m_needExceptionCheck set; wrap to satisfy the verifier.
-                let _ = ::bun_jsc::call_check_slow(_global, || {
-                    streams::controller_abi::detach_ptr(value)
-                });
+                let _ = ::bun_jsc::call_check_slow(global, || controller_abi::detach_ptr(value));
             }
             SourceHandle::ByteStream(bs) => {
                 bs.unpipe_without_deref();
-                source.clear();
+                self.clear();
             }
             SourceHandle::FileReader(fr) => {
                 fr.unpipe_without_deref();
-                source.clear();
+                self.clear();
             }
             _ => {}
         }

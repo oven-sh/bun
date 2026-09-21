@@ -153,7 +153,6 @@
 "generic_body_not_generic:src/runtime/test_runner/pretty_format.rs" = 1
 "generic_body_not_generic:src/runtime/webcore/Blob.rs" = 2
 "generic_body_not_generic:src/runtime/webcore/ReadableStream.rs" = 2
-"generic_body_not_generic:src/runtime/webcore/Sink.rs" = 1
 "generic_body_not_generic:src/runtime/webcore/TextDecoder.rs" = 1
 "parallel_bools:src/runtime/shell/IOWriter.rs" = 1
 "reimplemented_helper:src/runtime/hw_exports.rs" = 1

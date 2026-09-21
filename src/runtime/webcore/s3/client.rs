@@ -49,7 +49,6 @@ use crate::webcore::ReadableStream;
 use crate::webcore::readable_stream::Source as ReadableStreamPtr;
 use crate::webcore::readable_stream::Strong as ReadableStreamStrong;
 use crate::webcore::s3::multipart::State as MultiPartUploadState;
-use crate::webcore::sink::JSSink;
 use crate::webcore::streams::{NetworkSink, NetworkSinkJSSink};
 use bun_collections::IntegerBitSet;
 use bun_io::KeepAlive;
@@ -581,7 +580,7 @@ impl S3UploadStreamWrapper {
         if let Some(sink_ptr) = self.sink.take() {
             // SAFETY: allocated via `Box::leak` in `upload_stream`; consumed once here.
             let mut sink = unsafe { bun_core::heap::take(sink_ptr.as_ptr()) };
-            JSSink::<NetworkSink>::detach(&mut sink.source, &self.global);
+            sink.source.detach(&self.global);
             // releases NetworkSink's counted ref on the MultiPartUpload
             sink.finalize();
         }

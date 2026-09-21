@@ -15,19 +15,14 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<NodeVMSourceTextModule, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForNodeVMSourceTextModule.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNodeVMSourceTextModule = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForNodeVMSourceTextModule.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForNodeVMSourceTextModule = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<NodeVMSourceTextModule, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForNodeVMSourceTextModule, m_subspaceForNodeVMSourceTextModule));
     }
 
     static JSObject* createPrototype(VM& vm, JSGlobalObject* globalObject);
     static void destroy(JSC::JSCell* cell);
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     JSValue createModuleRecord(JSGlobalObject* globalObject);
@@ -42,7 +37,6 @@ public:
     bool hasTopLevelAwait() const { return m_hasTopLevelAwait; }
 
     const SourceCode& sourceCode() const { return m_sourceCode; }
-    ModuleProgramExecutable* cachedExecutable() const { return m_cachedExecutable.get(); }
 
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;
@@ -50,7 +44,6 @@ public:
 private:
     WriteBarrier<JSModuleRecord> m_moduleRecord;
     WriteBarrier<JSArray> m_moduleRequestsArray;
-    WriteBarrier<ModuleProgramExecutable> m_cachedExecutable;
     WriteBarrier<JSUint8Array> m_cachedBytecodeBuffer;
     WriteBarrier<Unknown> m_initializeImportMeta;
     RefPtr<CachedBytecode> m_bytecode;

@@ -8,7 +8,6 @@ import {
   bootstrapToolchain,
   brewInstall,
   disableRemoteManagement,
-  ensureShellProfiles,
   hardenSshd,
   installBuildkiteAgent,
   installSelf,
@@ -85,7 +84,6 @@ async function provision(name: string, mode: "tart" | "bare"): Promise<void> {
 
   step(`hostname ${name}`);
   await setHostname(name);
-  await ensureShellProfiles();
 
   step("tailscale");
   await joinTailnet(name, values.tags);
@@ -142,9 +140,9 @@ async function provisionTart(agent: TartAgentOptions): Promise<void> {
 }
 
 async function provisionBare(): Promise<void> {
-  step("toolchain (scripts/bootstrap.sh)");
-  await bootstrapToolchain();
+  step("toolchain (scripts/build/ci-images)");
+  await bootstrapToolchain(values.ref!);
 
-  step("agent (scripts/agent.mjs)");
+  step("agent (scripts/agent.ts)");
   await installBareAgent();
 }

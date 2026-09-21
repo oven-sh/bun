@@ -11,6 +11,7 @@ import {
   readdirSorted,
   runBunInstall,
 } from "harness";
+import { constants as osConstants } from "os";
 import { join, sep } from "path";
 
 var verdaccio = new VerdaccioRegistry();
@@ -2469,7 +2470,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         });
         const out = await stdout.text();
         expect(await stderr.text()).toBe("");
-        expect(out).toBe(`${packageDir} node_modules (2)
+        expect(out).toBe(`${packageDir} node_modules (2 installed)
 └── electron@1.0.0
 `);
         expect(await exited).toBe(0);
@@ -2514,7 +2515,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         });
         const out = await stdout.text();
         expect(await stderr.text()).toBe("");
-        expect(out).toBe(`${packageDir} node_modules (2)
+        expect(out).toBe(`${packageDir} node_modules (2 installed)
 └── no-deps@1.0.0
 `);
         expect(await exited).toBe(0);
@@ -3103,6 +3104,68 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         expect(trusted![1]).not.toContain(colliderName);
       });
 
+      for (const linker of ["hoisted", "isolated"]) {
+        test(`only trusts packages resolved inside the trusted subtree, not same-named dependencies elsewhere (${linker})`, async () => {
+          using ctx = await setupTest();
+          const { packageDir, packageJson, env } = ctx;
+          const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
+          const localPath = join(packageDir, "local-what-bin");
+          await mkdir(localPath, { recursive: true });
+          await Promise.all([
+            writeFile(
+              join(localPath, "package.json"),
+              JSON.stringify({
+                name: "what-bin",
+                version: "9.9.9",
+                scripts: {
+                  postinstall: `${bunExe()} -e "require('fs').writeFileSync('postinstall-ran.txt', 'ran')"`,
+                },
+              }),
+            ),
+            writeFile(
+              packageJson,
+              JSON.stringify({
+                name: "foo",
+                dependencies: {
+                  "what-bin": "file:./local-what-bin",
+                },
+              }),
+            ),
+          ]);
+
+          const { stderr, exited } = spawn({
+            cmd: [bunExe(), "i", `--linker=${linker}`, "--trust", "uses-what-bin@1.0.0"],
+            cwd: packageDir,
+            stdout: "pipe",
+            stderr: "pipe",
+            stdin: "ignore",
+            env: testEnv,
+          });
+
+          const err = await stderr.text();
+          expect(err).toContain("Saved lockfile");
+          expect(err).not.toContain("error:");
+          expect(await exited).toBe(0);
+
+          expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeTrue();
+          expect(await exists(join(packageDir, "node_modules", "what-bin", "postinstall-ran.txt"))).toBeFalse();
+          expect(await file(join(packageDir, "node_modules", "what-bin", "package.json")).json()).toMatchObject({
+            name: "what-bin",
+            version: "9.9.9",
+          });
+
+          const pkgJson = await file(packageJson).json();
+          expect(pkgJson.trustedDependencies).toEqual(["uses-what-bin"]);
+
+          const lockfile = await file(join(packageDir, "bun.lock")).text();
+          const trusted = lockfile.match(/"trustedDependencies":\s*\[([^\]]*)\]/);
+          expect(trusted).not.toBeNull();
+          expect(trusted![1]).toContain('"uses-what-bin"');
+          expect(trusted![1]).not.toContain('"what-bin"');
+        });
+      }
+
       const trustTests = [
         {
           label: "only name",
@@ -3333,7 +3396,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           // trustedDependencies.
 
           err = await stderr.text();
-          expect(err).toContain("Saved lockfile");
+          expect(err).not.toContain("Saved lockfile");
           expect(err).not.toContain("not found");
           expect(err).not.toContain("error:");
           out = await stdout.text();
@@ -4041,6 +4104,46 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         expect(proc.resourceUsage()?.cpuTime.total).toBeLessThan(750_000 * (isWindows ? 5 : 1));
       });
     });
+
+    // The message names the signal with the OS's name for its number (SIGUSR1
+    // is 30 on macOS, which the Linux table called SIGPWR; 16 on Linux is
+    // SIGSTKFLT, which had no name), and bun install then dies from the same
+    // signal. Signal 40 is a Linux real-time signal with no name at all; it
+    // used to be re-raised as SIGTERM.
+    const signaled: [number, string][] = [
+      [osConstants.signals.SIGUSR1, "terminated by SIGUSR1"],
+      ...(isLinux
+        ? ([
+            [osConstants.signals.SIGSTKFLT, "terminated by SIGSTKFLT"],
+            [40, "terminated by code 40"],
+          ] as [number, string][])
+        : []),
+    ];
+    test.skipIf(isWindows).each(signaled)(
+      "a postinstall killed by signal %d is reported and re-raised",
+      async (signal, message) => {
+        using ctx = await setupTest();
+        const { packageDir, packageJson, env } = ctx;
+        const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
+        await writeFile(
+          packageJson,
+          JSON.stringify({ name: "foo", version: "1.0.0", scripts: { postinstall: `kill -${signal} $$` } }),
+        );
+
+        await using proc = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stderr: "pipe",
+          env: testEnv,
+        });
+        const [, err, exited] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        expect(err).toContain(message);
+        expect(exited).toBe(128 + signal);
+      },
+    );
   });
 
   describe.concurrent("stdout/stderr is inherited from root scripts during install", async () => {

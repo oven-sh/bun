@@ -23,7 +23,7 @@ const hostOnlyEnv = new Set([
   "BUILDKITE_SOCKETS_PATH",
 ]);
 
-if (!command.includes("runner.node.mjs")) {
+if (!command.includes("runner.node.")) {
   console.log("--- running on host (not a test step)");
   // same flags buildkite-agent's own command runner uses, so a failing middle line still fails the step
   process.exit(await runInherit(["bash", "-e", "-o", "pipefail", "-c", command], { cwd: checkout }));

@@ -13,13 +13,13 @@ use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
 #[derive(Default)]
-pub struct Rm {
+pub(crate) struct Rm {
     pub(crate) opts: Opts,
     pub(crate) state: RmState,
 }
 
 #[derive(Default)]
-pub enum RmState {
+pub(crate) enum RmState {
     #[default]
     Idle,
     ParseOpts {
@@ -33,7 +33,7 @@ pub enum RmState {
     Err(ExitCode),
 }
 
-pub struct ExecState {
+pub(crate) struct ExecState {
     /// Index into argv where filepath args start.
     pub(crate) args_start: usize,
     pub(crate) total_tasks: usize,
@@ -53,7 +53,7 @@ impl ExecState {
 }
 
 #[derive(Clone, Copy)]
-pub struct Opts {
+pub(crate) struct Opts {
     /// `-f`, `--force` — ignore nonexistent files and arguments, never prompt.
     pub(crate) force: bool,
     /// Configures how the user should be prompted on removal of files.
@@ -79,12 +79,12 @@ impl Default for Opts {
 }
 
 #[derive(Default, Clone, Copy)]
-pub enum PromptBehaviour {
+pub(crate) enum PromptBehaviour {
     /// `--interactive=never` (default)
     #[default]
     Never,
     /// `-I`, `--interactive=once`
-    Once { removed_count: u32 },
+    Once,
     /// `-i`, `--interactive=always`
     Always,
 }
@@ -171,18 +171,34 @@ impl Rm {
                             // Check that none of the paths will delete the root.
                             {
                                 let cwd = Builtin::shell(interp, cmd).cwd().to_vec();
+                                // Operands are unbounded user input, so neither
+                                // step may use the fixed-size thread-local
+                                // buffers behind `join` / `normalize_string`.
+                                // Normalizing never grows a path by more than
+                                // one byte.
+                                let mut join_spill = Vec::new();
+                                let mut normalize_buf = Vec::new();
 
                                 for i in args_start..argc {
                                     let path = Builtin::of(interp, cmd).arg_bytes(i);
                                     let resolved: &[u8] = if Platform::AUTO.is_absolute(path) {
                                         path
                                     } else {
-                                        resolve_path::join::<platform::Auto>(&[&cwd, path])
+                                        resolve_path::join_spill::<platform::Auto>(
+                                            &mut join_spill,
+                                            &[&cwd, path],
+                                        )
                                     };
-                                    let normalized = resolve_path::normalize_string::<
+                                    if normalize_buf.len() <= resolved.len() {
+                                        normalize_buf.resize(resolved.len() + 1, 0);
+                                    }
+                                    let normalized = resolve_path::normalize_string_buf::<
                                         false,
                                         platform::Auto,
-                                    >(resolved);
+                                        false,
+                                    >(
+                                        resolved, &mut normalize_buf[..]
+                                    );
                                     let dirname =
                                         resolve_path::dirname::<platform::Auto>(normalized);
                                     if dirname.is_empty() {
@@ -511,7 +527,7 @@ impl Rm {
                     RmParseFlag::ContinueParsing
                 }
                 b"--interactive=once" => {
-                    opts.prompt_behaviour = PromptBehaviour::Once { removed_count: 0 };
+                    opts.prompt_behaviour = PromptBehaviour::Once;
                     RmParseFlag::ContinueParsing
                 }
                 b"--interactive=always" => {
@@ -530,7 +546,7 @@ impl Rm {
                 b'r' | b'R' => opts.recursive = true,
                 b'v' => opts.verbose = true,
                 b'd' => opts.remove_empty_dirs = true,
-                b'i' => opts.prompt_behaviour = PromptBehaviour::Once { removed_count: 0 },
+                b'i' => opts.prompt_behaviour = PromptBehaviour::Once,
                 b'I' => opts.prompt_behaviour = PromptBehaviour::Always,
                 _ => return RmParseFlag::IllegalOptionWithFlag,
             }
@@ -556,7 +572,7 @@ impl Rm {
 /// separator the user is using and prefer that. If both are used, pick the
 /// first one.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum JoinStyle {
+pub(crate) enum JoinStyle {
     Posix,
     Windows,
 }
@@ -577,14 +593,14 @@ impl JoinStyle {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum EntryKindHint {
+pub(crate) enum EntryKindHint {
     Idk,
     Dir,
 }
 
 /// One per filepath argument; owns the root
 /// [`DirTask`] and tracks the cross-thread error state.
-pub struct ShellRmTask {
+pub(crate) struct ShellRmTask {
     pub(crate) cmd: NodeId,
     pub(crate) opts: Opts,
     pub(crate) cwd: bun_sys::Fd,
@@ -617,7 +633,7 @@ pub struct ShellRmTask {
 /// One per directory in the recursive
 /// walk; root and children alike are heap-allocated (see the comment on
 /// [`ShellRmTask::root_task`]).
-pub struct DirTask {
+pub(crate) struct DirTask {
     pub(crate) task_manager: *mut ShellRmTask,
     pub(crate) parent_task: *mut DirTask,
     pub path: ZBox,
@@ -710,8 +726,7 @@ impl ShellRmTask {
             let st = &raw mut (*this).task;
             (*st).task.callback = Self::work_pool_callback;
             (*st).keep_alive.ref_((*st).event_loop.as_event_loop_ctx());
-            // Counted until `ShellTask::on_finish` (see `ShellTask::schedule_no_ref`).
-            (*st).poster.embedded_work_scheduled();
+            (*st).arm();
             WorkPool::schedule(&raw mut (*st).task);
         }
     }
@@ -855,11 +870,16 @@ impl ShellRmTask {
     }
 
     /// Join into `buf` honoring [`join_style`].
-    fn buf_join<'a>(&self, buf: &'a mut bun_paths::PathBuffer, parts: &[&[u8]]) -> &'a ZStr {
+    fn buf_join<'a>(
+        &self,
+        buf: &'a mut bun_paths::PathBuffer,
+        spill: &'a mut Vec<u8>,
+        parts: &[&[u8]],
+    ) -> &'a ZStr {
         if self.join_style == JoinStyle::Posix {
-            resolve_path::join_z_buf::<platform::Posix>(buf.as_mut_slice(), parts)
+            resolve_path::join_z_buf_spill::<platform::Posix>(buf.as_mut_slice(), spill, parts)
         } else {
-            resolve_path::join_z_buf::<platform::Windows>(buf.as_mut_slice(), parts)
+            resolve_path::join_z_buf_spill::<platform::Windows>(buf.as_mut_slice(), spill, parts)
         }
     }
 
@@ -893,7 +913,9 @@ impl ShellRmTask {
             }
             return ZBox::from_vec(out);
         }
-        ZBox::from_bytes(resolve_path::join::<platform::Auto>(parts))
+        let mut spill = Vec::new();
+        let joined = resolve_path::join_spill::<platform::Auto>(&mut spill, parts);
+        ZBox::from_bytes(joined)
     }
 
     #[inline]
@@ -912,7 +934,7 @@ impl ShellRmTask {
     /// dereferences `dir_task` to find out.
     fn remove_entry(&self, dir_task: *mut DirTask, is_absolute: bool) -> bun_sys::Maybe<bool> {
         let mut waiting = false;
-        let mut buf = bun_paths::PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         // SAFETY: `dir_task` is live; this thread owns it. `kind_hint` /
         // `path` are read-only after construction.
         let (kind_hint, path) = unsafe { ((*dir_task).kind_hint, (*dir_task).path.as_zstr()) };
@@ -1033,6 +1055,7 @@ impl ShellRmTask {
         // `delete_after_waiting_for_children` on this dir and the owning
         // `ShellRmTask` would never be freed.
         let mut i: usize = 0;
+        let mut join_spill = Vec::new();
         let loop_result: bun_sys::Maybe<()> = loop {
             let current = match iterator.next() {
                 Err(e) => break Err(self.error_with_path(&e, path.as_bytes())),
@@ -1058,7 +1081,7 @@ impl ShellRmTask {
                     // Copy the join into an owned ZBox so `buf` is free to
                     // be re-borrowed by the vtable callback.
                     let file_path = {
-                        let joined = self.buf_join(buf, &[path.as_bytes(), name]);
+                        let joined = self.buf_join(buf, &mut join_spill, &[path.as_bytes(), name]);
                         ZBox::from_bytes(joined.as_bytes())
                     };
                     if let Err(e) = self.remove_entry_file(
@@ -1176,7 +1199,7 @@ impl ShellRmTask {
                     },
                 }
             } else {
-                let mut buf = bun_paths::PathBuffer::uninit();
+                let mut buf = bun_paths::path_buffer_pool::get();
                 self.remove_entry_file(dir_task, path, is_abs, &mut buf, &mut state)?;
                 if state.enqueued {
                     return Ok(false);
@@ -1491,18 +1514,19 @@ impl DirTask {
                 ShellRmTask::decr_pending_and_maybe_deinit(tm);
                 return;
             }
-            let poster = (*me.task_manager).task.poster.clone();
+            // The root rm task is still out (pending > 0), so its poster is set.
+            let poster = (*me.task_manager)
+                .task
+                .poster
+                .as_ref()
+                .expect("rm root task on the pool is armed")
+                .clone();
             (me, poster)
         };
         match &mut me.concurrent_task {
             EventLoopTask::Js(ct) => {
                 ct.from(this, AutoDeinit::ManualDeinit);
-                // Posted while the rm task is counted work: the VM has not closed.
-                let bun_jsc::vm_handle::Posted::Queued =
-                    poster.post_js(core::ptr::NonNull::from(ct))
-                else {
-                    unreachable!("VM handle closed with shell rm work outstanding");
-                };
+                poster.post_js(core::ptr::NonNull::from(ct));
             }
             EventLoopTask::Mini(at) => {
                 let at = at.from(this, dir_task_run_from_main_thread_mini);
@@ -1709,6 +1733,10 @@ impl bun_event_loop::Taskable for ShellRmTask {
             ShellRmTask::decr_pending_and_maybe_deinit(this);
         }
     }
+    /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 impl bun_event_loop::Taskable for DirTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellRmDirTask;
@@ -1724,6 +1752,10 @@ impl bun_event_loop::Taskable for DirTask {
             }
             ShellRmTask::decr_pending_and_maybe_deinit(tm);
         }
+    }
+    /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 

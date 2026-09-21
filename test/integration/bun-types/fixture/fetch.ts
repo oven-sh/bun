@@ -332,3 +332,47 @@ if (typeof process !== "undefined") {
   // @ts-expect-error - Proxy must be string or object, not array
   fetch("https://example.com", { proxy: ["http://proxy.example.com"] });
 }
+
+// Protocol option types
+{
+  // All six values the runtime accepts are valid
+  fetch("https://example.com", { protocol: "http1.1" });
+  fetch("https://example.com", { protocol: "h1" });
+  fetch("https://example.com", { protocol: "http2" });
+  fetch("https://example.com", { protocol: "h2" });
+  fetch("https://example.com", { protocol: "http3" });
+  fetch("https://example.com", { protocol: "h3" });
+}
+
+{
+  // @ts-expect-error - Not a protocol the runtime accepts
+  fetch("https://example.com", { protocol: "spdy" });
+}
+
+{
+  const session = new Bun.FetchSession({
+    tls: { ca: "ca", rejectUnauthorized: true, checkServerIdentity: () => undefined },
+    proxy: { url: "http://proxy:8080", headers: { "x-proxy": "1" }, respectNoProxy: false },
+    keepAlive: { idleTimeout: 30, maxIdleSockets: 4 },
+  });
+  fetch("https://example.com", { session });
+  // The shape libraries declare for a `fetch` they accept.
+  const bound: (input: string | URL | Request, init?: RequestInit) => Promise<Response> = session.fetch;
+  bound("https://example.com", { method: "POST" }).then(r => r.text());
+  fetch("https://example.com", { session, proxy: false });
+  fetch("https://example.com", { proxy: false });
+  fetch("https://93.184.216.34/", {
+    headers: { Host: "example.com" },
+    tls: { serverName: "example.com" },
+    proxy: false,
+    redirect: "manual",
+  });
+  fetch("https://example.com", { proxy: new URL("http://proxy:8080") });
+  new Bun.FetchSession({ proxy: false, keepAlive: false, unix: "/tmp/sock" });
+  session.close();
+  session[Symbol.dispose]();
+  // @ts-expect-error not a session
+  fetch("https://example.com", { session: {} });
+  // @ts-expect-error `true` does not name a proxy
+  fetch("https://example.com", { proxy: true });
+}

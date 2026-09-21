@@ -26,19 +26,24 @@
 #include "config.h"
 #include "PerformanceObserver.h"
 
-// #include "Document.h"
-// #include "InspectorInstrumentation.h"
-// #include "LocalDOMWindow.h"
 #include "Performance.h"
 #include "PerformanceObserverEntryList.h"
+#include <wtf/TZoneMallocInlines.h>
 // #include "WorkerGlobalScope.h"
 
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(PerformanceObserver);
 
 PerformanceObserver::PerformanceObserver(ScriptExecutionContext& scriptExecutionContext, Ref<PerformanceObserverCallback>&& callback)
     : m_callback(WTF::move(callback))
 {
     m_performance = uncheckedDowncast<Zig::GlobalObject>(scriptExecutionContext.globalObject())->performance();
+}
+
+ScriptExecutionContext* PerformanceObserver::scriptExecutionContext() const
+{
+    return m_callback->scriptExecutionContext();
 }
 
 void PerformanceObserver::disassociate()

@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { config, toolchain } from "./config";
 import { ensureHostKey, guest } from "./guest";
+import { generateBootstrap } from "./host";
 import { fail, log, shellQuote, succeeds } from "./shell";
 import { tart } from "./tart";
 
@@ -33,9 +34,12 @@ export async function bake({ base, ref }: BakeOptions): Promise<void> {
 
   const g = guest(ip);
   await g.push(join(import.meta.dir, "..", "guest", "bake.sh"), "/tmp/bake.sh");
+  // The guest has no bun yet, so the host generates its setup script.
+  log(`generate the toolchain script (${config.bun.repo}@${ref})`);
+  await g.push(await generateBootstrap(ref), "/tmp/bootstrap.sh");
 
-  log(`bootstrap toolchain in guest (${config.bun.repo}@${ref})`);
-  const bakeArgs = [config.bun.repo, ref, config.buildkiteAgent.version, toolchain.join(" ")].map(shellQuote);
+  log("install the toolchain in the guest");
+  const bakeArgs = [config.buildkiteAgent.version, toolchain.join(" ")].map(shellQuote);
   const status = await g.run(
     `/bin/bash -l /tmp/bake.sh ${bakeArgs.join(" ")} 2>&1 | tee /tmp/bake.log; grep -qx BAKE_OK /tmp/bake.log`,
   );

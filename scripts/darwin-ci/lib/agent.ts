@@ -1,9 +1,8 @@
 import { join } from "node:path";
 import { ciUserHome, ciUserId } from "./ci-user";
-import { config } from "./config";
+import { config, releaseTier } from "./config";
 import { bootstrapCheckout } from "./host";
 import { plist } from "./launchd";
-import { darwinReleaseTier } from "./release-tier.mjs";
 import {
   consoleUser,
   fail,
@@ -55,7 +54,7 @@ export async function installTartAgent({ release, spawn: workers }: TartAgentOpt
     [
       `token="${await agentToken()}"`,
       `name="%hostname-tart-${release}-%spawn"`,
-      `tags="queue=${config.queue},os=darwin,arch=aarch64,distro=macOS,release=${release},release-tier=${darwinReleaseTier(release)},tart=true"`,
+      `tags="queue=${config.queue},os=darwin,arch=aarch64,distro=macOS,release=${release},release-tier=${releaseTier(release)},tart=true"`,
       `hooks-path="${hooks}"`,
       `build-path="${builds}"`,
       `spawn=${workers}`,
@@ -119,7 +118,7 @@ export async function installTartAgent({ release, spawn: workers }: TartAgentOpt
 export async function installBareAgent(): Promise<void> {
   const token = await agentToken();
   await runInheritOrThrow(
-    ["sudo", "env", `PATH=${path}`, `BUILDKITE_AGENT_TOKEN=${token}`, "node", "scripts/agent.mjs", "install"],
+    ["sudo", "env", `PATH=${path}`, `BUILDKITE_AGENT_TOKEN=${token}`, "node", "scripts/agent.ts", "install"],
     {
       cwd: bootstrapCheckout,
     },

@@ -272,6 +272,37 @@ export async function pgMinimalReadyServer(): Promise<{ port: number; server: ne
   });
 }
 
+/**
+ * Postgres mock that answers the StartupMessage with AuthenticationOk +
+ * ReadyForQuery and then hands every complete frontend message (type as a
+ * one-char string, e.g. "P", "B", "E", "S", "Q", "X") to `respond`; whatever it
+ * returns is written back in order after the whole chunk has been parsed.
+ */
+export async function pgMockServer(
+  respond: (type: string, body: Buffer, socket: net.Socket) => Buffer | Buffer[] | void,
+): Promise<{ port: number; server: net.Server }> {
+  return listeningServer(socket => {
+    let buffered = Buffer.alloc(0);
+    let startup = true;
+    socket.on("data", chunk => {
+      buffered = Buffer.concat([buffered, chunk]);
+      const out: Buffer[] = [];
+      if (startup) {
+        if (buffered.length < 4 || buffered.length < buffered.readInt32BE(0)) return;
+        buffered = buffered.subarray(buffered.readInt32BE(0));
+        startup = false;
+        out.push(pgAuthenticationOk(), pgReadyForQuery());
+      }
+      buffered = pgReadFrontendMessages(buffered, (type, body) => {
+        const reply = respond(String.fromCharCode(type), body, socket);
+        if (reply) out.push(...(Array.isArray(reply) ? reply : [reply]));
+      });
+      if (out.length) socket.write(Buffer.concat(out));
+    });
+    socket.on("error", () => {});
+  });
+}
+
 // ---------------------------------------------------------------------------
 // MySQL client/server protocol — https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_packets.html
 // ---------------------------------------------------------------------------
@@ -354,6 +385,31 @@ export function mysqlHandshakeV10(
 // The header is 0x00, except for the CLIENT_DEPRECATE_EOF result-set terminator, which is an OK packet with a 0xFE header.
 export function mysqlOkPacket(seq: number, header: 0x00 | 0xfe = 0x00): Buffer {
   return mysqlRawPacket(seq, Buffer.from([header, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00]));
+}
+
+// MySQL ERR_Packet — page_protocol_basic_err_packet.html:
+//   Int<1>(0xff) Int<2>(error_code) '#' String<5>(sql_state) String<EOF>(message)
+export function mysqlErrPacket(seq: number, code: number, sqlState: string, message: string): Buffer {
+  const codeBuf = Buffer.alloc(2);
+  codeBuf.writeUInt16LE(code);
+  return mysqlRawPacket(
+    seq,
+    Buffer.concat([Buffer.from([0xff]), codeBuf, Buffer.from("#"), Buffer.from(sqlState), Buffer.from(message)]),
+  );
+}
+
+// The driver sends `SET time_zone = '+00:00'` as a COM_QUERY on every new
+// connection right after authentication (session setup, MySQLConnection.rs)
+// and waits for its OK before it reports itself connected. A mock server must
+// acknowledge it or the client never reaches Connected. Call this first in the
+// post-auth dispatcher; it answers OK and returns true when `payload` is that
+// query.
+export function mysqlAckSessionSetup(socket: { write(data: Buffer): unknown }, payload: Buffer): boolean {
+  if (payload[0] !== 0x03 /* COM_QUERY */ || payload.subarray(1).toString("utf8") !== "SET time_zone = '+00:00'") {
+    return false;
+  }
+  socket.write(mysqlOkPacket(1));
+  return true;
 }
 
 // MySQL Protocol::AuthMoreData — page_protocol_connection_phase_packets_protocol_auth_more_data.html:

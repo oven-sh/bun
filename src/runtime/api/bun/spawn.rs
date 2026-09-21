@@ -14,8 +14,6 @@
 // via `#[path = "api/bun/spawn.rs"]`, which disables the implicit `spawn/`
 // submodule dir.
 #[path = "spawn/stdio.rs"]
-pub mod stdio;
-
-pub use ::bun_spawn::posix_spawn::{BunSpawn, PosixSpawn, bun_spawn, posix_spawn};
+pub(crate) mod stdio;
 
 // `process` is re-exported from the `bun_spawn` workspace crate.

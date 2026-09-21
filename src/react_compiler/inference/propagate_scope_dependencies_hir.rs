@@ -256,16 +256,6 @@ fn is_load_context_mutable(
     false
 }
 
-/// Corresponds to TS `convertHoistedLValueKind` — returns None for non-hoisted kinds.
-fn convert_hoisted_lvalue_kind(kind: InstructionKind) -> Option<InstructionKind> {
-    match kind {
-        InstructionKind::HoistedLet => Some(InstructionKind::Let),
-        InstructionKind::HoistedConst => Some(InstructionKind::Const),
-        InstructionKind::HoistedFunction => Some(InstructionKind::Function),
-        _ => None,
-    }
-}
-
 /// Recursive implementation. Corresponds to TS `collectTemporariesSidemapImpl`.
 fn collect_temporaries_sidemap_impl(
     func: &HirFunction,
@@ -1868,35 +1858,38 @@ impl<'a> DependencyCollectionContext<'a> {
         self.visit_dependency(dep, env);
     }
 
-    fn visit_dependency(&mut self, dep: ReactiveScopeDependency, env: &mut Environment) {
-        let ident = &env.identifiers[dep.identifier.0 as usize];
-        let decl_id = ident.declaration_id;
-
-        // Record scope declarations for values used outside their declaring scope
-        if let Some(original_decl) = self.declarations.get(decl_id) {
-            if !original_decl.scope_stack.is_empty() {
-                let orig_scope_stack = original_decl.scope_stack.clone();
-                for &scope_id in &orig_scope_stack {
-                    if !self.scope_stack.contains(&scope_id) {
-                        // Check if already declared in this scope
-                        let scope = &env.scopes[scope_id.0 as usize];
-                        let already_declared = scope.declarations.iter().any(|(_, d)| {
-                            env.identifiers[d.identifier.0 as usize].declaration_id == decl_id
-                        });
-                        if !already_declared {
-                            let orig_scope_id = *orig_scope_stack.last().unwrap();
-                            let new_decl = crate::hir::ReactiveScopeDeclaration {
-                                identifier: dep.identifier,
-                                scope: orig_scope_id,
-                            };
-                            env.scopes[scope_id.0 as usize]
-                                .declarations
-                                .push((dep.identifier, new_decl));
-                        }
-                    }
-                }
+    /// A value used after its declaring scope ends is an output of that scope.
+    fn declare_outside_original_scope(&self, identifier: IdentifierId, env: &mut Environment) {
+        let decl_id = env.identifiers[identifier.0 as usize].declaration_id;
+        let Some(original_decl) = self.declarations.get(decl_id) else {
+            return;
+        };
+        let Some(&orig_scope_id) = original_decl.scope_stack.last() else {
+            return;
+        };
+        for &scope_id in &original_decl.scope_stack {
+            if self.scope_stack.contains(&scope_id) {
+                continue;
+            }
+            let scope = &env.scopes[scope_id.0 as usize];
+            let already_declared = scope
+                .declarations
+                .iter()
+                .any(|(_, d)| env.identifiers[d.identifier.0 as usize].declaration_id == decl_id);
+            if !already_declared {
+                let new_decl = crate::hir::ReactiveScopeDeclaration {
+                    identifier,
+                    scope: orig_scope_id,
+                };
+                env.scopes[scope_id.0 as usize]
+                    .declarations
+                    .push((identifier, new_decl));
             }
         }
+    }
+
+    fn visit_dependency(&mut self, dep: ReactiveScopeDependency, env: &mut Environment) {
+        self.declare_outside_original_scope(dep.identifier, env);
 
         // Handle ref.current access
         let dep = if crate::hir::is_use_ref_type(
@@ -1925,6 +1918,8 @@ impl<'a> DependencyCollectionContext<'a> {
     }
 
     fn visit_reassignment(&mut self, place: &Place, env: &mut Environment) {
+        // Not in upstream: a store that dead_code_elimination.rs retains can be in a later scope.
+        self.declare_outside_original_scope(place.identifier, env);
         if let Some(current_scope) = self.current_scope() {
             let scope = &env.scopes[current_scope.0 as usize];
             let already = scope.reassignments.iter().any(|id| {
@@ -2087,7 +2082,7 @@ fn handle_instruction(
         }
         InstructionValue::DeclareLocal { lvalue, .. }
         | InstructionValue::DeclareContext { lvalue, .. } => {
-            if convert_hoisted_lvalue_kind(lvalue.kind).is_none() {
+            if lvalue.kind.unhoisted().is_none() {
                 let scope_stack_copy = ctx.scope_stack.clone();
                 ctx.declare(
                     lvalue.place.identifier,

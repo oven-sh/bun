@@ -36,7 +36,7 @@ public:
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(JSPropertyIterator);
 };
 
-extern "C" JSPropertyIterator* Bun__JSPropertyIterator__create(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, size_t* count, bool own_properties_only, bool only_non_index_properties)
+extern "C" JSPropertyIterator* Bun__JSPropertyIterator__create(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, size_t* count, bool own_properties_only, bool only_non_index_properties, bool include_symbols)
 {
     auto& vm = JSC::getVM(globalObject);
     JSC::JSValue value = JSValue::decode(encodedValue);
@@ -45,7 +45,11 @@ extern "C" JSPropertyIterator* Bun__JSPropertyIterator__create(JSC::JSGlobalObje
     ASSERT(count);
 
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::PropertyNameArrayBuilder array(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    // The iterator yields every name as a string. A Symbol key has no string
+    // name: its impl() is the description, so `Symbol.for("s")` would come
+    // out as the key "s". Only callers that merely count or display
+    // properties opt in to symbols.
+    JSC::PropertyNameArrayBuilder array(vm, include_symbols ? PropertyNameMode::StringsAndSymbols : PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
 
     if (object->hasNonReifiedStaticProperties()) [[unlikely]] {
         object->reifyAllStaticProperties(globalObject);
@@ -117,7 +121,7 @@ static EncodedJSValue getOwnProxyObject(JSPropertyIterator* iter, JSObject* obje
     PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty, nullptr);
     auto* globalObject = object->globalObject();
     if (!object->methodTable()->getOwnPropertySlot(object, globalObject, prop, slot)) {
-        return {};
+        RELEASE_AND_RETURN(scope, {});
     }
     RETURN_IF_EXCEPTION(scope, {});
 

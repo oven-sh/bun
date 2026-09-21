@@ -33,7 +33,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSCountQueuingStrategyPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSCountQueuingStrategyPrototype* ptr = new (NotNull, JSC::allocateCell<JSCountQueuingStrategyPrototype>(vm)) JSCountQueuingStrategyPrototype(vm, structure);
+        JSCountQueuingStrategyPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSCountQueuingStrategyPrototype))) JSCountQueuingStrategyPrototype(vm, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -47,7 +47,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -92,23 +92,14 @@ DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<>, JSCountQueuingStrategyConstructo
 
 template<> GCClient::IsoSubspace* JSCountQueuingStrategyConstructor::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSCountQueuingStrategyConstructor, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForCountQueuingStrategyConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCountQueuingStrategyConstructor = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForCountQueuingStrategyConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForCountQueuingStrategyConstructor = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSCountQueuingStrategyConstructor, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForCountQueuingStrategyConstructor, m_subspaceForCountQueuingStrategyConstructor));
 }
 
 template<> void JSCountQueuingStrategyConstructor::finishCreation(VM& vm, JSDOMGlobalObject& globalObject)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-    putDirect(vm, vm.propertyNames->length, jsNumber(1), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "CountQueuingStrategy"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSCountQueuingStrategy::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 1, "CountQueuingStrategy"_s, JSCountQueuingStrategy::prototype(vm, globalObject));
     m_instanceStructure.set(vm, this, getDOMStructure<JSCountQueuingStrategy>(vm, globalObject));
 }
 
@@ -177,9 +168,9 @@ JSC_DEFINE_HOST_FUNCTION(jsCountQueuingStrategyPrototype_inspectCustom, (JSGloba
 void JSCountQueuingStrategyPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSCountQueuingStrategy::info(), JSCountQueuingStrategyPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSCountQueuingStrategy::info(), JSCountQueuingStrategyPrototypeTableValues, *this);
     Bun::WebStreams::installInspectCustom(vm, this, jsCountQueuingStrategyPrototype_inspectCustom);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 // JSCountQueuingStrategy
@@ -207,7 +198,7 @@ JSCountQueuingStrategy* JSCountQueuingStrategy::create(VM& vm, Structure* struct
 
 Structure* JSCountQueuingStrategy::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 JSObject* JSCountQueuingStrategy::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -229,12 +220,7 @@ JSValue JSCountQueuingStrategy::getConstructor(VM& vm, const JSGlobalObject* glo
 
 GCClient::IsoSubspace* JSCountQueuingStrategy::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSCountQueuingStrategy, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForCountQueuingStrategy.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCountQueuingStrategy = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForCountQueuingStrategy.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForCountQueuingStrategy = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSCountQueuingStrategy, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForCountQueuingStrategy, m_subspaceForCountQueuingStrategy));
 }
 
 // Prototype accessors

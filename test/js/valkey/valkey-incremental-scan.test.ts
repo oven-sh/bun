@@ -1,92 +1,265 @@
-import { RedisClient, type TCPSocketListener } from "bun";
+import { RedisClient, type Socket, type TCPSocketListener } from "bun";
 import { describe, expect, test } from "bun:test";
 import net from "node:net";
 
-describe.concurrent("Valkey reply torn across socket reads", () => {
-  const CRLF = "\r\n";
-  const bulk = (s: string) => `$${Buffer.byteLength(s)}${CRLF}${s}${CRLF}`;
-  // Minimal RESP3 HELLO map so the client enters the Connected state.
-  const HELLO =
-    `%3${CRLF}` + bulk("server") + bulk("redis") + bulk("proto") + `:3${CRLF}` + bulk("version") + bulk("7.4.0");
+const CRLF = "\r\n";
+const bulk = (s: string) => `$${Buffer.byteLength(s)}${CRLF}${s}${CRLF}`;
+// Minimal RESP3 HELLO map so the client enters the Connected state.
+const HELLO =
+  `%3${CRLF}` + bulk("server") + bulk("redis") + bulk("proto") + `:3${CRLF}` + bulk("version") + bulk("7.4.0");
 
-  type PerSocket = { buf: Buffer; replied: boolean };
+type PerSocket = { buf: Buffer; replied: boolean };
 
-  /**
-   * Mock server: answers HELLO, then answers the first GET with `reply` split at
-   * `splitAt` across two event-loop turns so the client's empty-read-buffer
-   * stack path sees a partial blob body. Subsequent commands get `+OK`.
-   */
-  function createTornReplyServer(reply: string, splitAt: number): TCPSocketListener<PerSocket> {
-    return Bun.listen<PerSocket>({
-      hostname: "127.0.0.1",
-      port: 0,
-      socket: {
-        open(s) {
-          s.data = { buf: Buffer.alloc(0), replied: false };
-        },
-        error() {},
-        close() {},
-        data(s, raw) {
-          const st = s.data;
-          st.buf = Buffer.concat([st.buf, raw]);
-          // Parse complete client RESP command frames (`*N\r\n($len\r\n...\r\n){N}`).
-          for (;;) {
-            const b = st.buf;
-            if (!b.length || b[0] !== 0x2a) break;
-            const headerEnd = b.indexOf(CRLF);
-            if (headerEnd < 0) break;
-            const argc = parseInt(b.subarray(1, headerEnd).toString("latin1"), 10);
-            let pos = headerEnd + 2;
-            const fields: string[] = [];
-            let complete = true;
-            for (let i = 0; i < argc; i++) {
-              const lenEnd = b.indexOf(CRLF, pos);
-              if (lenEnd < 0 || b[pos] !== 0x24) {
-                complete = false;
-                break;
-              }
-              const len = parseInt(b.subarray(pos + 1, lenEnd).toString("latin1"), 10);
-              const next = lenEnd + 2 + len + 2;
-              if (next > b.length) {
-                complete = false;
-                break;
-              }
-              fields.push(b.subarray(lenEnd + 2, lenEnd + 2 + len).toString("latin1"));
-              pos = next;
-            }
-            if (!complete) break;
-            st.buf = b.subarray(pos);
-            const cmd = fields[0]?.toUpperCase();
-            if (cmd === "HELLO") {
-              s.write(HELLO);
-            } else if (cmd === "GET" && !st.replied) {
-              st.replied = true;
-              s.write(reply.slice(0, splitAt));
-              s.flush();
-              // Yield twice so the first write reaches the client's `on_data`
-              // before the second is sent.
-              setImmediate(() => setImmediate(() => s.write(reply.slice(splitAt))));
-            } else {
-              s.write(`+OK${CRLF}`);
-            }
-          }
-        },
+/**
+ * Mock server: parses the client's RESP command frames
+ * (`*N\r\n($len\r\n...\r\n){N}`) and hands each complete one to `onCommand`.
+ */
+function createCommandServer(
+  onCommand: (fields: string[], s: Socket<PerSocket>) => void,
+): TCPSocketListener<PerSocket> {
+  return Bun.listen<PerSocket>({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      open(s) {
+        s.data = { buf: Buffer.alloc(0), replied: false };
       },
-    });
-  }
+      error() {},
+      close() {},
+      data(s, raw) {
+        const st = s.data;
+        st.buf = Buffer.concat([st.buf, raw]);
+        for (;;) {
+          const b = st.buf;
+          if (!b.length || b[0] !== 0x2a) break;
+          const headerEnd = b.indexOf(CRLF);
+          if (headerEnd < 0) break;
+          const argc = parseInt(b.subarray(1, headerEnd).toString("latin1"), 10);
+          let pos = headerEnd + 2;
+          const fields: string[] = [];
+          let complete = true;
+          for (let i = 0; i < argc; i++) {
+            const lenEnd = b.indexOf(CRLF, pos);
+            if (lenEnd < 0 || b[pos] !== 0x24) {
+              complete = false;
+              break;
+            }
+            const len = parseInt(b.subarray(pos + 1, lenEnd).toString("latin1"), 10);
+            const next = lenEnd + 2 + len + 2;
+            if (next > b.length) {
+              complete = false;
+              break;
+            }
+            fields.push(b.subarray(lenEnd + 2, lenEnd + 2 + len).toString("latin1"));
+            pos = next;
+          }
+          if (!complete) break;
+          st.buf = b.subarray(pos);
+          onCommand(fields, s);
+        }
+      },
+    },
+  });
+}
 
-  async function withClient<T>(server: TCPSocketListener<PerSocket>, body: (client: RedisClient) => Promise<T>) {
+/**
+ * Mock server: answers HELLO, then answers the first GET with `reply`. When
+ * `splitAt` is inside the reply it is split there across two event-loop turns
+ * so the client's empty-read-buffer stack path sees a partial frame; "bytes"
+ * sends one byte per turn so the reply scanner resumes at every offset.
+ * Subsequent commands get `+OK`.
+ */
+function createReplyServer(
+  reply: string,
+  splitAt: number | "bytes" = reply.length,
+  hello: string = HELLO,
+): TCPSocketListener<PerSocket> {
+  return createCommandServer((fields, s) => {
+    const cmd = fields[0]?.toUpperCase();
+    if (cmd === "HELLO") {
+      s.write(hello);
+    } else if (cmd === "GET" && !s.data.replied) {
+      s.data.replied = true;
+      if (splitAt === "bytes") {
+        const bytes = Buffer.from(reply, "latin1");
+        const writeByte = (i: number) => {
+          if (i >= bytes.length) return;
+          s.write(bytes.subarray(i, i + 1));
+          s.flush();
+          setImmediate(() => setImmediate(() => writeByte(i + 1)));
+        };
+        writeByte(0);
+      } else {
+        s.write(reply.slice(0, splitAt));
+        s.flush();
+        if (splitAt < reply.length) {
+          // Yield twice so the first write reaches the client's `on_data`
+          // before the second is sent.
+          setImmediate(() => setImmediate(() => s.write(reply.slice(splitAt))));
+        }
+      }
+    } else {
+      s.write(`+OK${CRLF}`);
+    }
+  });
+}
+
+async function withClient<T>(server: TCPSocketListener<PerSocket>, body: (client: RedisClient) => Promise<T>) {
+  const client = new RedisClient(`redis://127.0.0.1:${server.port}`, { autoReconnect: false });
+  client.onconnect = client.onclose = () => {};
+  try {
+    await client.connect();
+    return await body(client);
+  } finally {
+    client.close();
+    server.stop(true);
+  }
+}
+
+type Decoded = { value: unknown } | { rejects: { code: string; message?: string }; connectionFails?: boolean };
+
+// One entry per RESP frame shape the decoder changed. Each is sent whole and
+// one byte per socket read, so both the tree parser and the reply scanner see
+// every torn prefix.
+const FRAMES: [name: string, frame: string, expected: Decoded][] = [
+  ["RESP2 null array (*-1)", `*-1${CRLF}`, { value: null }],
+  ["RESP2 null array nested in an array", `*2${CRLF}*-1${CRLF}$3${CRLF}abc${CRLF}`, { value: [null, "abc"] }],
+  ["RESP2 null bulk string ($-1)", `$-1${CRLF}`, { value: null }],
+  ["RESP3 null (_)", `_${CRLF}`, { value: null }],
+  [
+    "RESP3 null with trailing bytes (_junk)",
+    `_junk${CRLF}`,
+    { rejects: { code: "ERR_REDIS_INVALID_RESPONSE" }, connectionFails: true },
+  ],
+  ["big number above 2^53", `(9007199254740993${CRLF}`, { value: 9007199254740993n }],
+  ["negative big number", `(-42${CRLF}`, { value: -42n }],
+  ["big number above 2^64", `(340282366920938463463374607431768211456${CRLF}`, { value: 2n ** 128n }],
+  ["big number with a non-integer payload", `(12abc${CRLF}`, { value: "12abc" }],
+  [
+    "simple error (-ERR)",
+    `-ERR unknown command${CRLF}`,
+    { rejects: { code: "ERR_REDIS_SERVER_ERROR", message: "ERR unknown command" } },
+  ],
+  [
+    "blob error (!)",
+    `!21${CRLF}SYNTAX invalid syntax${CRLF}`,
+    { rejects: { code: "ERR_REDIS_SERVER_ERROR", message: "SYNTAX invalid syntax" } },
+  ],
+];
+
+describe.concurrent.each([
+  ["whole", (reply: string) => createReplyServer(reply)],
+  ["one byte per read", (reply: string) => createReplyServer(reply, "bytes")],
+])("Valkey reply decoding, frame sent %s", (_mode, serve) => {
+  test.each(FRAMES)("%s", async (_name, frame, expected) => {
+    await withClient(serve(frame), async client => {
+      const outcome = await client.get("k").then(
+        value => ({ value }),
+        error => ({ error }),
+      );
+      if ("value" in expected) {
+        expect(outcome).toEqual({ value: expected.value });
+        expect(typeof (outcome as { value: unknown }).value).toBe(typeof expected.value);
+      } else {
+        expect(outcome).toHaveProperty("error");
+        const { error } = outcome as { error: Error & { code: string } };
+        expect(error).toBeInstanceOf(Error);
+        expect(error.code).toBe(expected.rejects.code);
+        if (expected.rejects.message !== undefined) expect(error.message).toBe(expected.rejects.message);
+      }
+      if (!("connectionFails" in expected && expected.connectionFails)) {
+        expect(await client.send("PING", [])).toBe("OK");
+      }
+    });
+  });
+});
+
+describe.concurrent("Valkey reply decoding", () => {
+  test("big number resolves a Buffer of the digits for getBuffer", async () => {
+    const server = createReplyServer(`(9007199254740993${CRLF}`);
+    await withClient(server, async client => {
+      const value = await client.getBuffer("k");
+      expect(value).toBeInstanceOf(Buffer);
+      expect(value!.toString()).toBe("9007199254740993");
+    });
+  });
+
+  test.each([
+    ["-", `-NOAUTH nope!${CRLF}`],
+    ["!", `!12${CRLF}NOAUTH nope!${CRLF}`],
+  ])("error reply (%s) to HELLO rejects queued commands with the server text", async (_kind, hello) => {
+    const server = createReplyServer(`+OK${CRLF}`, undefined, hello);
     const client = new RedisClient(`redis://127.0.0.1:${server.port}`, { autoReconnect: false });
     client.onconnect = client.onclose = () => {};
     try {
-      await client.connect();
-      return await body(client);
+      // Queued before the handshake finishes, so the rejection carries the
+      // HELLO error. connect() itself rejects with a generic "Connection closed".
+      const queued = client.get("k").then(
+        () => null,
+        e => e,
+      );
+      await client.connect().catch(() => {});
+      const err = await queued;
+      expect(err).toBeInstanceOf(Error);
+      expect(err.code).toBe("ERR_REDIS_AUTHENTICATION_FAILED");
+      expect(err.message).toBe("NOAUTH nope!");
     } finally {
       client.close();
       server.stop(true);
     }
-  }
+  });
 
+  test.each([
+    ["-", `-WRONGTYPE wrong kind${CRLF}`],
+    ["!", `!20${CRLF}WRONGTYPE wrong kind${CRLF}`],
+  ])("error reply (%s) nested in an array resolves as an ERR_REDIS_SERVER_ERROR element", async (_kind, element) => {
+    const server = createReplyServer(`*2${CRLF}+OK${CRLF}${element}`);
+    await withClient(server, async client => {
+      const result = (await client.get("k")) as unknown as [string, Error & { code: string }];
+      expect(result[0]).toBe("OK");
+      expect(result[1]).toBeInstanceOf(Error);
+      expect({ code: result[1].code, message: result[1].message }).toEqual({
+        code: "ERR_REDIS_SERVER_ERROR",
+        message: "WRONGTYPE wrong kind",
+      });
+      expect(await client.send("PING", [])).toBe("OK");
+    });
+  });
+
+  test("error reply in subscriber mode fails the connection with ERR_REDIS_SERVER_ERROR", async () => {
+    const server = createCommandServer((fields, s) => {
+      switch (fields[0]?.toUpperCase()) {
+        case "HELLO":
+          s.write(HELLO);
+          break;
+        case "SUBSCRIBE":
+          s.write(`>3${CRLF}` + bulk("subscribe") + bulk(fields[1]) + `:1${CRLF}`);
+          break;
+        default:
+          s.write(`-NOPERM no permissions${CRLF}`);
+      }
+    });
+    await withClient(server, async client => {
+      await client.subscribe("ch", () => {});
+      // A subscriber fails the whole connection on an error reply. The PING
+      // that drew the reply is left unsettled (#32858 changes that), so the
+      // code is read from the second PING, which is still in flight when the
+      // connection fails.
+      client.send("PING", []).catch(() => {});
+      const err = await client.send("PING", []).then(
+        () => null,
+        e => e,
+      );
+      expect(err).toBeInstanceOf(Error);
+      expect({ code: err.code, message: err.message }).toEqual({
+        code: "ERR_REDIS_SERVER_ERROR",
+        message: "NOPERM no permissions",
+      });
+    });
+  });
+});
+
+describe.concurrent("Valkey reply torn across socket reads", () => {
   // `$15`/`=15` frames: 5-byte header, 15-byte body at [5,20), trailing CRLF at [20,22).
   // `!21` frame: 5-byte header, 21-byte body at [5,26), trailing CRLF at [26,28).
   // Offsets cover: body start, mid-body, last body byte, and mid-CRLF.
@@ -94,7 +267,7 @@ describe.concurrent("Valkey reply torn across socket reads", () => {
   const LONG_SPLITS = [5, 10, 25, 27] as const;
 
   test.each(SHORT_SPLITS)("BulkString ($) torn at byte %i decodes (baseline)", async splitAt => {
-    const server = createTornReplyServer(`$15${CRLF}xxx:Some string${CRLF}`, splitAt);
+    const server = createReplyServer(`$15${CRLF}xxx:Some string${CRLF}`, splitAt);
     await withClient(server, async client => {
       expect(await client.get("k")).toBe("xxx:Some string");
       expect(await client.send("PING", [])).toBe("OK");
@@ -104,7 +277,7 @@ describe.concurrent("Valkey reply torn across socket reads", () => {
   test.each(SHORT_SPLITS)(
     "VerbatimString (=) torn at byte %i decodes instead of failing the connection",
     async splitAt => {
-      const server = createTornReplyServer(`=15${CRLF}txt:Some string${CRLF}`, splitAt);
+      const server = createReplyServer(`=15${CRLF}txt:Some string${CRLF}`, splitAt);
       await withClient(server, async client => {
         expect(await client.get("k")).toBe("Some string");
         expect(await client.send("PING", [])).toBe("OK");
@@ -113,14 +286,18 @@ describe.concurrent("Valkey reply torn across socket reads", () => {
   );
 
   test.each(LONG_SPLITS)("BlobError (!) torn at byte %i decodes instead of failing the connection", async splitAt => {
-    const server = createTornReplyServer(`!21${CRLF}SYNTAX invalid syntax${CRLF}`, splitAt);
+    const server = createReplyServer(`!21${CRLF}SYNTAX invalid syntax${CRLF}`, splitAt);
     await withClient(server, async client => {
-      // A parsed BlobError resolves (not rejects) with an Error carrying the
-      // server's message. Before the fix this rejected with
-      // "Failed to read data (stack path)" and killed the connection.
-      const result = await client.get("k");
-      expect(result).toBeInstanceOf(Error);
-      expect((result as unknown as Error).message).toBe("SYNTAX invalid syntax");
+      // A parsed BlobError rejects only this command with the server's
+      // message. Before the fix this rejected with "Failed to read data
+      // (stack path)" and killed the connection.
+      const err = await client.get("k").then(
+        () => null,
+        e => e,
+      );
+      expect(err).toBeInstanceOf(Error);
+      expect(err.code).toBe("ERR_REDIS_SERVER_ERROR");
+      expect(err.message).toBe("SYNTAX invalid syntax");
       expect(await client.send("PING", [])).toBe("OK");
     });
   });

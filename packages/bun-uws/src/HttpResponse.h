@@ -53,10 +53,6 @@ public:
         return (HttpResponseData<SSL> *) Super::getAsyncSocketData();
     }
 
-    static HttpResponseData<SSL> *getHttpResponseDataS(us_socket_t *s) {
-        return (HttpResponseData<SSL> *) us_socket_ext(s);
-    }
-
     void setTimeout(uint8_t seconds) {
         auto* data = getHttpResponseData();
         data->idleTimeout = seconds;
@@ -79,7 +75,7 @@ public:
 
     /* Write an unsigned 64-bit integer */
     void writeUnsigned64(uint64_t value) {
-        char buf[20];
+        char buf[utils::U64_MAX_DIGITS];
         int length = utils::u64toa(value, buf);
 
         /* For now we do this copy */
@@ -114,12 +110,57 @@ public:
         return false;
     }
 
+    /* Called when a response completes on a corked socket. Returns true when the
+     * caller has to run the close gate now, false when onData runs it.
+     *
+     * The socket onData is parsing gets onData's uncork and close gate once the
+     * read is consumed: false. A Bun.serve response that needed no JavaScript
+     * (a static route) leaves the cork to onData, so such responses to requests
+     * pipelined in one read share one send(). Bun sends them earlier, with
+     * sendCorked(), when the handler of a later request is about to run
+     * JavaScript. A response that JavaScript produced (sendWhenComplete()) is
+     * sent now, and so is a node:http response: its 'finish' event and end()
+     * callback run before onData gets control back and expect the bytes to be
+     * out.
+     *
+     * Any other socket (an async handler completing, possibly inside another
+     * socket's parse window via a drained microtask) is uncorked here and gets
+     * no later uncork or gate: true. */
+    bool uncorkCompletedResponse() {
+        HttpContext<SSL> *httpContext = HttpContext<SSL>::fromSocket((us_socket_t *) this);
+        if (httpContext->getSocketContextData()->parsingSocket != (us_socket_t *) this) {
+            this->uncork();
+            return true;
+        }
+        if (httpContext->isNodeHttp() || (getHttpResponseData()->state & HttpResponseData<SSL>::HTTP_SEND_WHEN_COMPLETE)) {
+            this->uncork();
+        }
+        return false;
+    }
+
+    /* Marks the response in flight as one that user JavaScript produces. See
+     * HTTP_SEND_WHEN_COMPLETE. */
+    void sendWhenComplete() {
+        getHttpResponseData()->state |= HttpResponseData<SSL>::HTTP_SEND_WHEN_COMPLETE;
+    }
+
+    /* Ends the 101 of upgrade(): terminates the header section and marks the
+     * response done. Not internalEnd(), because the socket leaves HTTP right
+     * after: the connection close gate does not apply (Connection: close,
+     * HTTP/1.0 and close-when-idle describe the HTTP connection, not the
+     * WebSocket that takes over the socket), and the cork stays so the
+     * handshake batches with the first frames written from open(). */
+    void endUpgradeHandshake() {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        writeMark();
+        Super::write("\r\n", 2);
+        httpResponseData->state |= HttpResponseData<SSL>::HTTP_END_CALLED;
+        httpResponseData->markDone(this);
+    }
+
     /* Returns true on success, indicating that it might be feasible to write more data.
-     * Will start timeout if stream reaches totalSize or write failure.
-     * keepCorked: if true, skip the trailing uncork so the caller can batch
-     * more writes (used by upgrade() to batch the handshake with the first
-     * WebSocket frames). */
-    bool internalEnd(std::string_view data, uint64_t totalSize, bool optional, bool allowContentLength = true, bool closeConnection = false, bool keepCorked = false) {
+     * Will start timeout if stream reaches totalSize or write failure. */
+    bool internalEnd(std::string_view data, uint64_t totalSize, bool optional, bool allowContentLength = true, bool closeConnection = false) {
         /* Write status if not already done */
         writeStatus(HTTP_200_OK);
 
@@ -206,21 +247,8 @@ public:
             httpResponseData->markDone(this);
 
             /* We need to check if we should close this socket here now */
-            if (!Super::isCorked()) {
+            if (!Super::isCorked() || uncorkCompletedResponse()) {
                 if (closeIfDoneAndMarked(httpResponseData)) {
-                    return true;
-                }
-            } else if (!keepCorked) {
-                this->uncork();
-                /* That uncork released our cork slot, so the cork() wrapper's
-                 * post-uncork close gate will not run. When THIS socket is the
-                 * one being parsed, onData's post-parse gate closes it once
-                 * the buffer is fully consumed; any other socket (an async
-                 * handler completing, possibly inside another socket's parse
-                 * window via a drained microtask) gets no later gate, so close
-                 * here. */
-                if (HttpContext<SSL>::fromSocket((us_socket_t *) this)->getSocketContextData()->parsingSocket != (us_socket_t *) this
-                    && closeIfDoneAndMarked(httpResponseData)) {
                     return true;
                 }
             }
@@ -231,18 +259,25 @@ public:
         } else {
             /* Write content-length on first call */
             if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_END_CALLED))) {
-                /* Write mark, this propagates to WebSockets too */
-                writeMark();
+                /* Once write() has sent raw body bytes (close-delimited or
+                 * HTTP/1.0 streaming), the header section is already
+                 * terminated: writing a Content-Length here would inject
+                 * header bytes into the body. The connection close delimits
+                 * the message instead. */
+                if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED))) {
+                    /* Write mark, this propagates to WebSockets too */
+                    writeMark();
 
-                /* WebSocket upgrades does not allow content-length */
-                if (allowContentLength) {
-                    /* Even zero is a valid content-length */
-                    Super::write("Content-Length: ", 16);
-                    writeUnsigned64(totalSize);
-                    Super::write("\r\n\r\n", 4);
-                    httpResponseData->state |= HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
-                } else if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED))) {
-                    Super::write("\r\n", 2);
+                    /* WebSocket upgrades does not allow content-length */
+                    if (allowContentLength) {
+                        /* Even zero is a valid content-length */
+                        Super::write("Content-Length: ", 16);
+                        writeUnsigned64(totalSize);
+                        Super::write("\r\n\r\n", 4);
+                        httpResponseData->state |= HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
+                    } else {
+                        Super::write("\r\n", 2);
+                    }
                 }
 
                 /* Mark end called */
@@ -275,36 +310,14 @@ public:
                 httpResponseData->markDone(this);
 
                 /* We need to check if we should close this socket here now */
-                if (!Super::isCorked()) {
+                if (!Super::isCorked() || uncorkCompletedResponse()) {
                     closeIfDoneAndMarked(httpResponseData);
-                }  else if (!keepCorked) {
-                    this->uncork();
-                    /* Same as the chunked arm above: the cork slot is gone, so
-                     * run the close gate here unless THIS socket is the one
-                     * being parsed (then onData's post-parse gate handles it). */
-                    if (HttpContext<SSL>::fromSocket((us_socket_t *) this)->getSocketContextData()->parsingSocket != (us_socket_t *) this) {
-                        closeIfDoneAndMarked(httpResponseData);
-                    }
                 }
             }
 
             return success;
         }
     }
-
-public:
-    /* If we have proxy support; returns the proxed source address as reported by the proxy. */
-#ifdef UWS_WITH_PROXY
-    std::string_view getProxiedRemoteAddress() {
-        return getHttpResponseData()->proxyParser.getSourceAddress();
-    }
-
-    std::string_view getProxiedRemoteAddressAsText() {
-        return Super::addressAsText(getProxiedRemoteAddress());
-    }
-
-
-#endif
 
     /* Manually upgrade to WebSocket. Typically called in upgrade handler. Immediately calls open handler.
      * NOTE: Will invalidate 'this' as socket might change location in memory. Throw away after use. */
@@ -378,9 +391,7 @@ public:
             }
         }
 
-        /* keepCorked so the handshake stays buffered and can batch with the
-         * first WebSocket frames written in the open handler. */
-        internalEnd({nullptr, 0}, 0, false, false, false, true);
+        endUpgradeHandshake();
 
         /* Grab the httpContext from res */
         HttpContext<SSL> *httpContext = HttpContext<SSL>::fromSocket((struct us_socket_t *) this);
@@ -399,6 +410,11 @@ public:
         if (((AsyncSocketData<SSL> *) responseData)->filteredOpen) {
             for (auto &f : httpContextData->filterHandlers) {
                 f((HttpResponse<SSL> *) this, -1);
+            }
+        }
+        if (((AsyncSocketData<SSL> *) responseData)->filteredAccept) {
+            for (auto &f : httpContextData->filterHandlers) {
+                f((HttpResponse<SSL> *) this, -2);
             }
         }
 
@@ -552,15 +568,6 @@ public:
         writeUnsigned64(value);
         Super::write("\r\n", 2);
         return this;
-    }
-
-    /* End without a body (no content-length) or end with a spoofed content-length. */
-    void endWithoutBody(std::optional<size_t> reportedContentLength = std::nullopt, bool closeConnection = false) {
-        if (reportedContentLength.has_value()) {
-            internalEnd({nullptr, 0}, reportedContentLength.value(), false, true, closeConnection);
-        } else {
-            internalEnd({nullptr, 0}, 0, false, false, closeConnection);
-        }
     }
 
     /* End the response with an optional data chunk. Always starts a timeout. */
@@ -848,13 +855,6 @@ public:
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
         return httpResponseData->offset;
-    }
-
-    /* If you are messing around with sendfile you might want to override the offset. */
-    void overrideWriteOffset(uint64_t offset) {
-        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
-
-        httpResponseData->offset = offset;
     }
 
     /* Checking if we have fully responded and are ready for another request */

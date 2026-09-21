@@ -214,7 +214,7 @@ impl UnicodeRange {
     }
 
     fn parse_tokens(input: &mut css::Parser) -> css::Result<()> {
-        let tok = input.next_including_whitespace()?.clone();
+        let tok = *input.next_including_whitespace()?;
         // Tag-only matches on `Dimension`/`Number` — payloads are never inspected.
         match tok {
             css::Token::Dimension { .. } => return Self::parse_question_marks(input),
@@ -238,7 +238,7 @@ impl UnicodeRange {
             }
             css::Token::Delim(c) => {
                 if c == '+' as u32 {
-                    let next = input.next_including_whitespace()?.clone();
+                    let next = *input.next_including_whitespace()?;
                     if !(matches!(next, css::Token::Ident(_))
                         || matches!(next, css::Token::Delim(d) if d == '?' as u32))
                     {

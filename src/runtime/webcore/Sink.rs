@@ -449,6 +449,19 @@ pub trait JsSinkType: Sized + JsSinkAbi {
 // no lut entry and no C++ caller.
 // ──────────────────────────────────────────────────────────────────────────
 
+/// What a flush gave back, for JS: its value, or its error thrown. Outside `JSSink<T>`, which is compiled once
+/// per sink type, because none of this depends on the type.
+fn flushed_to_js(
+    global: &crate::webcore::jsc::JSGlobalObject,
+    flushed: sys::Result<crate::webcore::jsc::JSValue>,
+) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue> {
+    use bun_sys_jsc::ErrorJsc;
+    match flushed {
+        sys::Result::Ok(value) => Ok(value),
+        sys::Result::Err(err) => Err(global.throw_value(err.to_js(global)?)),
+    }
+}
+
 impl<T: JsSinkType> JSSink<T> {
     /// `JSSink.getThis` — recover `&mut JSSink<T>` from `callframe.this()` or
     /// throw the appropriate detached/cast-failed error.
@@ -635,7 +648,7 @@ impl<T: JsSinkType> JSSink<T> {
         }
 
         let Some((operation, promise, _)) = pending else {
-            Self::flush_value(this, global, &cx, true)?;
+            flushed_to_js(global, Self::flush_sink(this, &cx, true))?;
             return Ok(JSValue::from(wrote));
         };
         // The Promise resolves to what the pending operation consumed. The counts are part of this call's total
@@ -648,7 +661,7 @@ impl<T: JsSinkType> JSSink<T> {
         if let Writable::Owned(total) = &mut operation.result {
             *total = operation.consumed;
         }
-        Self::flush_value(this, global, &cx, true)?;
+        flushed_to_js(global, Self::flush_sink(this, &cx, true))?;
         Ok(promise)
     }
 
@@ -671,20 +684,7 @@ impl<T: JsSinkType> JSSink<T> {
         let wait = frame.arguments_count() > 0
             && frame.argument(0).is_boolean()
             && frame.argument(0).as_boolean();
-        Self::flush_value(this, global, &cx, wait)
-    }
-
-    fn flush_value(
-        this: &mut JSSink<T>,
-        global: &crate::webcore::jsc::JSGlobalObject,
-        cx: &bun_jsc::JsThread<'_>,
-        wait: bool,
-    ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue> {
-        use bun_sys_jsc::ErrorJsc;
-        match Self::flush_sink(this, cx, wait) {
-            sys::Result::Ok(value) => Ok(value),
-            sys::Result::Err(err) => Err(global.throw_value(err.to_js(global)?)),
-        }
+        flushed_to_js(global, Self::flush_sink(this, &cx, wait))
     }
 
     fn flush_sink(

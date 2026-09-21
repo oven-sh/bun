@@ -5362,8 +5362,9 @@ impl VirtualMachine {
                 } else {
                     b""
                 };
+                // As strings: bytes that are not UTF-8 do not come back out of the memo's copy.
                 debug_assert!(
-                    answer.to_utf8().slice() == resolved,
+                    answer.eql(&bun_core::String::clone_utf8(resolved)),
                     "the resolution memo answers \"{answer}\" for \"{specifier}\" from \"{source}\", and the resolver \"{}\"",
                     bstr::BStr::new(resolved),
                 );

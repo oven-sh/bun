@@ -2077,6 +2077,25 @@ describe.concurrent("a repeated resolution", () => {
     expect(exitCode).toBe(0);
   });
 
+  // Only Linux lets a file name hold bytes that are not UTF-8.
+  test.skipIf(!isLinux)("gives the same string for a path that is not UTF-8", async () => {
+    const { stdout, stderr, exitCode } = await run({
+      "main.cjs": `
+        const fs = require("node:fs");
+        const path = require("node:path");
+        const target = Buffer.concat([Buffer.from(path.join(__dirname, "f")), Buffer.from([0xff]), Buffer.from(".cjs")]);
+        fs.writeFileSync(target, "module.exports = 1;");
+        fs.symlinkSync(target, path.join(__dirname, "link.cjs"));
+        const out = [];
+        for (let i = 0; i < 4; i++) out.push(require.resolve("./link.cjs"));
+        console.log(JSON.stringify(out.map(resolved => resolved === out[0] && resolved.endsWith("\ufffd.cjs"))));
+      `,
+    });
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([true, true, true, true]);
+    expect(exitCode).toBe(0);
+  });
+
   test("finds a new file once a failed lookup made the resolver read the directory again", async () => {
     const { stdout, stderr, exitCode } = await run({
       "x.json": `{}`,

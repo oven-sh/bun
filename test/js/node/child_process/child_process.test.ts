@@ -950,25 +950,37 @@ it("spawnSync(does-not-exist)", () => {
 });
 
 // On Windows, a .bat or .cmd file without the `shell` option is rejected with EINVAL before anything is spawned.
-it.if(isWindows)("spawnSync(batch-file) reports the never-started result shape", () => {
-  const x = spawnSync("does-not-exist.cmd");
-  expect(x.error?.code).toEqual("EINVAL");
-  expect(x.error.path).toEqual("does-not-exist.cmd");
-  // The rest of the result is what node returns, the same as for a process that could not be spawned.
-  expect({
-    status: x.status,
-    signal: x.signal,
-    output: x.output,
-    pid: x.pid,
-    stdout: x.stdout,
-    stderr: x.stderr,
-  }).toEqual({
-    status: null,
-    signal: null,
-    output: null,
-    pid: 0,
-    stdout: undefined,
-    stderr: undefined,
+describe.skipIf(!isWindows)("spawnSync(batch-file)", () => {
+  it("reports the never-started result shape", () => {
+    const x = spawnSync("does-not-exist.cmd");
+    expect(x.error?.code).toEqual("EINVAL");
+    expect(x.error.path).toEqual("does-not-exist.cmd");
+    // The rest of the result is what node returns, the same as for a process that could not be spawned.
+    expect({
+      status: x.status,
+      signal: x.signal,
+      output: x.output,
+      pid: x.pid,
+      stdout: x.stdout,
+      stderr: x.stderr,
+    }).toEqual({
+      status: null,
+      signal: null,
+      output: null,
+      pid: 0,
+      stdout: undefined,
+      stderr: undefined,
+    });
+  });
+
+  // node validates the options before it rejects the file, so an invalid option throws as it does for any other file.
+  it.each([
+    ["timeout", { timeout: -1 }, "ERR_OUT_OF_RANGE"],
+    ["maxBuffer", { maxBuffer: -1 }, "ERR_OUT_OF_RANGE"],
+    ["killSignal", { killSignal: "NOPE" }, "ERR_UNKNOWN_SIGNAL"],
+    ["input", { input: 5 }, "ERR_INVALID_ARG_TYPE"],
+  ] as [string, any, string][])("throws for an invalid %s option", (_, options, code) => {
+    expect(() => spawnSync("does-not-exist.cmd", [], options)).toThrow(expect.objectContaining({ code }));
   });
 });
 

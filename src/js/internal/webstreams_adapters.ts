@@ -56,8 +56,7 @@ class ReadableFromWeb extends Readable {
       highWaterMark,
       encoding,
     });
-    // Node takes the reader here and never releases it:
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/webstreams/adapters.js#L589
+    // Node takes the reader here and never releases it: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/webstreams/adapters.js#L589
     this.#reader = responseBody ? undefined : stream.getReader();
     this.#stream = responseBody ? stream : undefined;
     this.#closed = false;

@@ -1523,7 +1523,7 @@ function linkRunsLto(c: Config): boolean {
  * lld's LTO-level or ICF options (it runs clang's libLTO at its default level and has no ICF), so those are stated
  * only here.
  */
-function linksWithLld(c: Config): boolean {
+export function linksWithLld(c: Config): boolean {
   return !c.darwin || c.crossTarget !== undefined;
 }
 

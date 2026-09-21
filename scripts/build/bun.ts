@@ -202,6 +202,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // compiled source files (deps like picohttpparser that provide .c files
   // instead of a .a — we compile those alongside bun's own sources).
   const depLibs: string[] = [];
+  const depObjects: string[] = [];
   const depIncludes: string[] = [];
   const depDefines: string[] = [];
   // Outputs of deps that provide headers — used as implicit inputs on PCH/cc/
@@ -209,14 +210,15 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // (the .a is the signal — see comment at the PCH step). Deps with no provided
   // includes (tinycc, lolhtml) are skipped: nothing to invalidate, and a tinycc
   // no-op rebuild (ar has no restat) would otherwise cascade to a full PCH+cxx
-  // rebuild. Link still gets every dep via depLibs.
+  // rebuild. Link still gets every dep via depLibs/depObjects.
   const depHeaderSignal: string[] = [];
-  // forbidUndefined stamps (source.ts): validations of each dep's archive —
-  // a dep that regrows a forbidden reference fails that build without
-  // delaying the link.
+  // forbidUndefined stamps (source.ts): validations of whatever the dep
+  // objects go into next, the archive or the link — a dep that regrows a
+  // forbidden reference fails that build without delaying the link.
   const depChecks: string[] = [];
   for (const d of deps) {
     depLibs.push(...d.libs);
+    depObjects.push(...d.objects);
     depChecks.push(...d.checks);
     depIncludes.push(...d.includes);
     depDefines.push(...d.defines);
@@ -406,8 +408,10 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     n.phony(d.name, d.sources.map(compileC));
   }
 
-  // bun's own objects are linked as objects; every dependency is a library in depLibs.
-  const allObjects = [...cxxObjects, ...cObjects];
+  // Dep objects (when !cfg.archiveDeps) are linked alongside bun's own
+  // objects, in the same response file. With cfg.archiveDeps they live in
+  // depLibs as .a files instead.
+  const allObjects = [...cxxObjects, ...cObjects, ...depObjects];
 
   // ─── Step 6: link ───
   n.comment("─── Link ───");
@@ -424,10 +428,12 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // turn reference JSC/WTF, depLibs satisfies those. Every `#[no_mangle]`
   // export the C++ side touches is reached from those roots.
   const shims = emitShims(n, cfg);
-  const linkObjects = [...allObjects, ...rustObjects, ...windowsRes];
+  const depLink = lazyDepObjects(cfg, depObjects);
+  const linkObjects = [...cxxObjects, ...cObjects, ...depLink.eager, ...rustObjects, ...windowsRes];
   const ldflags = [...flags.ldflags, ...systemLibs(cfg), ...shims.ldflags];
   const exe = link(n, cfg, exeName, linkObjects, {
     libs: depLibs,
+    lazyObjects: depLink.lazy,
     flags: ldflags,
     implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs],
     // Declare the maps the release link writes as side-products (`perf`
@@ -439,9 +445,35 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   });
 
   // ─── Step 7: post-link (strip, dsymutil, smoke test) ───
-  const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags, [...linkObjects, ...depLibs]);
+  const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags, [
+    ...linkObjects,
+    ...depLink.lazy,
+    ...depLibs,
+  ]);
 
   return { exe, strippedExe, dsym, deps, codegen, rustObjects, objects: allObjects };
+}
+
+/**
+ * Split the link's dependency objects into the ones passed eagerly and the ones
+ * the linker may leave out (LinkOpts.lazyObjects): a dependency is a library,
+ * and only the translation units something references belong in bun.
+ *
+ * On COFF the lazy ones are the assembler-produced objects: their sections are
+ * not COMDATs, so /OPT:REF cannot drop them and one nothing calls (BoringSSL's
+ * AES-GCM-SIV, unused on Windows by design) would ship whole. Compiled objects
+ * stay eager there; /OPT:REF drops their unreferenced COMDATs.
+ *
+ * Elsewhere every dependency object is lazy. `--gc-sections` / `-dead_strip`
+ * would remove the unreferenced code anyway, but only after LTO has seen it:
+ * a call from a file nothing uses (spake25519.cc calling
+ * x25519_ge_frombytes_vartime) counts as a second caller and stops the helper
+ * being inlined into the one that ships.
+ */
+function lazyDepObjects(cfg: Config, depObjects: string[]): { eager: string[]; lazy: string[] } {
+  if (!cfg.windows) return { eager: [], lazy: depObjects };
+  const isAssemblerOutput = (obj: string) => /\.(asm|S)\.obj$/i.test(obj);
+  return { eager: depObjects.filter(o => !isAssemblerOutput(o)), lazy: depObjects.filter(isAssemblerOutput) };
 }
 
 /**

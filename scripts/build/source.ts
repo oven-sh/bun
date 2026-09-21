@@ -534,11 +534,17 @@ export interface Dependency {
 export interface ResolvedDep {
   name: DepName;
   /**
-   * Absolute paths to .a/.lib files for link(). A `direct` dep's sources are
-   * compiled in our graph and archived here: a dependency is a library, so
-   * the link takes the members something references and no others.
+   * Absolute paths to .a/.lib files for link(). Populated by nested-cmake/
+   * cargo/prebuilt deps, and by `direct` deps when `cfg.archiveDeps` is on.
    */
   libs: string[];
+  /**
+   * Absolute paths to .o/.obj files for link(). Populated by `direct` deps
+   * when `cfg.archiveDeps` is off (the default) — the dep's sources are
+   * compiled in our graph and the resulting objects go straight into bun's
+   * link line (or CI's object archive) instead of an intermediate `.a`.
+   */
+  objects: string[];
   /** Absolute include paths for -I flags. */
   includes: string[];
   defines: string[];
@@ -556,8 +562,9 @@ export interface ResolvedDep {
   outputs: string[];
   /**
    * Stamps of this dep's `forbidUndefined` checks (static `nm` scans of its
-   * objects). Ninja validations of the dep's archive, so they run with every
-   * build of it and gate nothing.
+   * objects). Ninja validations of whatever the objects go into next — the
+   * per-dep archive here when cfg.archiveDeps, otherwise bun.ts's archive or
+   * link — so they run with every build of it and gate nothing.
    */
   checks: string[];
 }
@@ -913,6 +920,7 @@ export function resolveDep(
 
   // ─── Step 2+3: build ───
   let libs: string[];
+  let objects: string[] = [];
   let outputs: string[];
   let checks: string[] = [];
 
@@ -936,10 +944,11 @@ export function resolveDep(
   } else if (buildSpec.kind === "direct") {
     const result = emitDirect(n, cfg, dep.name, buildSpec, { srcDir, sourceStamp, fetchDepStamps });
     libs = result.libs;
+    objects = result.objects;
     checks = result.checks;
     // outputs is the "downstream needs me built" signal — for direct deps
-    // that's the generated headers + source stamp, NOT the archive (that
-    // is a link input, not an include-order dependency).
+    // that's the generated headers + source stamp, NOT the .o files (those
+    // are link inputs, not include-order dependencies).
     outputs = result.headerOutputs;
   } else {
     // No build step. The fetch stamp (if any) is the only output. For deps
@@ -965,6 +974,7 @@ export function resolveDep(
   return {
     name: dep.name,
     libs,
+    objects,
     includes,
     defines: provides.defines ?? [],
     sources: resolvedSources,
@@ -1095,6 +1105,7 @@ function emitPrebuilt(
   return {
     name,
     libs,
+    objects: [],
     checks: [],
     includes,
     defines: provides.defines ?? [],
@@ -1515,7 +1526,7 @@ function emitDirect(
   name: DepName,
   spec: DirectBuild,
   input: EmitDirectInput,
-): { libs: string[]; headerOutputs: string[]; checks: string[] } {
+): { libs: string[]; objects: string[]; headerOutputs: string[]; checks: string[] } {
   const { srcDir, sourceStamp, fetchDepStamps } = input;
   const buildDir = depBuildDir(cfg, name);
   const hostWin = cfg.host.os === "windows";
@@ -1661,17 +1672,27 @@ function emitDirect(
 
   const checks = spec.forbidUndefined === undefined ? [] : emitForbidUndefined(n, cfg, name, spec, objects, buildDir);
 
-  // ar's output dir + the per-source obj dirs both need pre-creating —
-  // configure.ts:mkdirAll only sees bun's own objects.
-  mkdirSync(buildDir, { recursive: true });
-  for (const o of objects) mkdirSync(resolve(o, ".."), { recursive: true });
-  const lib = ar(n, cfg, join("deps", name, `${cfg.libPrefix}${name}${cfg.libSuffix}`), objects, checks);
-  n.phony(name, [lib]);
+  // Default: hand the objects straight to bun's link line — no intermediate
+  // archive. With cfg.archiveDeps the old per-dep .a is produced instead
+  // (useful for bisecting duplicate-symbol issues, since a .a only
+  // contributes members the linker actually pulls).
+  if (cfg.archiveDeps) {
+    // ar's output dir + the per-source obj dirs both need pre-creating —
+    // configure.ts:mkdirAll only sees `output.objects`, which is empty
+    // in this branch.
+    mkdirSync(buildDir, { recursive: true });
+    for (const o of objects) mkdirSync(resolve(o, ".."), { recursive: true });
+    const lib = ar(n, cfg, join("deps", name, `${cfg.libPrefix}${name}${cfg.libSuffix}`), objects, checks);
+    n.phony(name, [lib]);
+    return { libs: [lib], objects: [], headerOutputs: [lib], checks };
+  }
+  n.phony(name, [...objects, ...checks]);
   // headerOutputs: what downstream needs to wait on for HEADERS to be
-  // ready: the generated header set (subst/literal/codegen) plus the fetch
-  // stamp — not the archive, which would serialize bun's compiles behind it.
+  // ready. For no-archive direct deps that's the generated header set
+  // (subst/literal/codegen) plus the fetch stamp — not the .o files.
   return {
-    libs: [lib],
+    libs: [],
+    objects,
     headerOutputs: sourceStamp === undefined ? generated : [...generated, sourceStamp],
     checks,
   };

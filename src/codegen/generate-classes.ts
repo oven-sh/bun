@@ -9,6 +9,7 @@ import { writeIfNotChanged } from "./helpers.ts";
 
 const require = createRequire(import.meta.url);
 const files = process.argv.slice(2);
+const typesDir = files.pop();
 const outBase = files.pop();
 let externs = "";
 const CommonIdentifiers = {
@@ -2715,7 +2716,7 @@ function writeCppSerializers() {
     initLazyClasses(classes.map(a => generateLazyClassStructureImpl(a.name, a))) + "\n" + visitLazyClasses(classes),
   );
 
-  await writeIfNotChanged(`${outBase}/ZigGeneratedClasses.d.ts`, [generateBuiltinTypes(classes)]);
+  await writeIfNotChanged(`${typesDir}/ZigGeneratedClasses.d.ts`, [generateBuiltinTypes(classes)]);
 }
 
 /**
@@ -2778,7 +2779,7 @@ function getPropertySignatureWithComment(
     }
   } else if ("getter" in propDef) {
     signature = `${tsPropName}: unknown;`; // Getter, possibly with setter
-    isReadOnly = !propDef.writable; // Mark readonly if only getter or explicitly not writable
+    isReadOnly = !propDef.writable && !("setter" in propDef); // Mark readonly if only getter or explicitly not writable
     commentLines.push(
       ` Look for a getter like this:
       * \`\`\`zig

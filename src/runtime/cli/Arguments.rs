@@ -1074,9 +1074,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             // accepted and ignored. Matching is case-insensitive (node uppercases).
             if ctx.debug.hot_reload == HotReload::Watch {
                 let upper = kill_signal.to_ascii_uppercase();
-                match bun_core::SignalCode::from_name(&upper)
-                    .filter(|s| s.platform_number().is_some())
-                {
+                match bun_core::SignalCode::from_name(&upper) {
                     Some(sig) => ctx.debug.watch_kill_signal = sig,
                     None => {
                         Output::print_errorln(format_args!(

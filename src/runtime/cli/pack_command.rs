@@ -1887,7 +1887,7 @@ fn opt_pack_gzip_level(m: &PackageManager) -> Option<&[u8]> {
 // Const generics cannot vary the
 // return type directly, so both instantiations return an Option that is
 // `Some` only when FOR_PUBLISH == true.
-pub(crate) type PackReturn<'a, const FOR_PUBLISH: bool> = Option<Publish::Context<'a, true>>;
+pub(crate) type PackReturn<'a, const FOR_PUBLISH: bool> = Option<Publish::Context<'a>>;
 
 /// Everything `bun pm pack` would put in the tarball besides package.json: bins, then either the `files` list or
 /// the whole tree minus ignores. Shared with `bun pm diff`, whose local side is "what would be published".

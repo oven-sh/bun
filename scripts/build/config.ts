@@ -22,7 +22,7 @@ export type OS = "linux" | "darwin" | "windows" | "freebsd";
 export type Arch = "x64" | "aarch64";
 export type Abi = "gnu" | "musl" | "android";
 export type BuildType = "Debug" | "Release" | "RelWithDebInfo" | "MinSizeRel";
-export type BuildMode = "full" | "cpp-only" | "rust-only" | "link-only" | "rust-and-link" | "archive-link";
+export type BuildMode = "full" | "archive-link";
 /** `codegen` runs the code generators and nothing else; it resolves a {@link CodegenConfig}, not a {@link Config}. */
 export type Mode = BuildMode | "codegen";
 export type WebKitMode = "prebuilt" | "local";
@@ -33,15 +33,13 @@ export type PackageManager = "bun" | "npm";
  * Host platform — what's running the build. Distinguish from target
  * (Config.os/arch/windows) which is what we're building FOR.
  *
- * Host vs target matters for rust-only cross-compile: a linux CI box
- * can cross-compile libbun_runtime.a for any linux abi/arch and (with the
- * right SDK) darwin. Target determines cargo's `--target` triple and
+ * Host vs target matters for cross-compiles: a linux CI box can build for
+ * any linux abi/arch and (with the right SDK or sysroot) darwin and windows. Target determines cargo's `--target` triple and
  * rustflags; host determines shell syntax (cmd vs sh), quoting, and
  * tool executable suffixes.
  *
- * For all other modes (full, cpp-only, link-only), host == target
- * unless cfg.crossTarget is set (currently: Android), in which case
- * the C++ side is cross-compiled via clang's --target/--sysroot.
+ * host == target unless cfg.crossTarget is set, in which case the C++ side
+ * is cross-compiled via clang's --target/--sysroot.
  */
 export interface Host {
   os: OS;
@@ -85,8 +83,8 @@ export interface Config {
   arm64: boolean;
 
   /**
-   * What's running the build. Differs from os/arch/windows (target) in
-   * rust-only cross-compile. Use for: shell syntax in rule commands,
+   * What's running the build. Differs from os/arch/windows (target) in a
+   * cross-compile. Use for: shell syntax in rule commands,
    * quoteArgs(), tool executable suffixes. See Host type docs.
    */
   host: Host;
@@ -119,7 +117,7 @@ export interface Config {
   lto: boolean;
   /**
    * Cross-language LTO: rustc emits LLVM bitcode (`-Clinker-plugin-lto`) into
-   * `libbun_runtime.a` so the final lld `-flto=thin` link sees through Rust↔C++
+   * the rlibs so the final lld `-flto=thin` link sees through Rust↔C++
    * call edges. When false but `lto` is true, both halves still LTO
    * independently (C++ via `-flto=thin`, Rust via `[profile.release] lto =
    * "fat"`); only the cross-language inlining is lost.
@@ -156,8 +154,8 @@ export interface Config {
   unifiedSources: boolean;
   /**
    * Archive each `direct` dep's objects into a per-dep .a (the old
-   * behaviour). Default off — dep .o files go straight into bun's link/
-   * cpp-only archive instead. Turn on to bisect duplicate-symbol issues:
+   * behaviour). Default off — dep .o files go straight into bun's link, or
+   * its archive in an archive-link build, instead. Turn on to bisect duplicate-symbol issues:
    * a .a only contributes members the linker actually pulls.
    */
   archiveDeps: boolean;
@@ -729,8 +727,7 @@ function linkNdkRuntimesIntoClang(cc: string, ndk: string, host: Host, triple: s
       if (!existsSync(dst)) symlinkSync(src, dst);
     }
   } catch (cause) {
-    // Don't throw — rust-only mode doesn't need these, and on CI the image's
-    // bake creates them as root. The actual link step will fail
+    // Don't throw — on CI the image's bake creates them as root. The actual link step will fail
     // loudly later if they're genuinely missing where needed.
     const lnCmds = Object.entries(links)
       .map(([dst, src]) => `sudo ln -sf "${src}" "${dst}"`)
@@ -1027,12 +1024,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // while rustc's LLVM is ahead of clang's. Both halves still LTO
   // independently when this is false — only the Rust↔C++ inlining is lost.
   // CI cross-compiles both from Linux, where the swap below applies.
-  // (aarch64-musl used to be gated too: LLVM's `globalopt` segfaulted on the
-  // per-crate `bun_runtime` bitcode module during the merged link, CI build
-  // #53109. That bitcode shape no longer exists — the Rust side is one fat,
-  // pre-merged module since the CARGO_PROFILE_RELEASE_LTO=fat switch — so
-  // the gate was lifted; see the deleted "globalopt-crash-aarch64-musl"
-  // workarounds.ts entry if it ever needs to come back.)
   // Darwin cross uses the same rust-lld swap as ELF: rustc's sysroot ships
   // `gcc-ld/ld64.lld` (rust-lld in the Mach-O flavor, built against rustc's
   // LLVM), which findRustLld() already resolves for darwin targets, so the
@@ -1302,46 +1293,41 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   if (darwinCross) {
     crossTarget = `${arm64 ? "arm64" : "x86_64"}-apple-macosx`;
     osxDeploymentTarget = partial.osxDeploymentTarget ?? MIN_OSX_DEPLOYMENT_TARGET;
-    // rust-only mode never compiles C/C++ or links, so it doesn't need the
-    // SDK — skip resolution so a rust-only build doesn't download
-    // a ~730 MB sysroot it never reads.
-    if ((partial.mode ?? "full") !== "rust-only") {
-      osxSysroot = resolveMacosSdkPath(partial.macosSdk, cacheDir, cwd);
-      if (toolchain.ld64Lld === undefined) {
-        throw new BuildError("Cross-compiling for macOS requires ld64.lld (lld's Mach-O port)", {
-          hint: "Install lld for the same LLVM version as clang: apt install lld-23 (or equivalent).",
-        });
-      }
-      if (toolchain.llvmStrip === undefined) {
-        throw new BuildError("Cross-compiling for macOS requires llvm-strip (GNU strip can't read Mach-O)", {
-          hint: "Install llvm for the same version as clang: apt install llvm-23 (or equivalent).",
-        });
-      }
-      if (toolchain.clangResourceDir === undefined) {
-        throw new BuildError("Cross-compiling for macOS requires clang's resource directory", {
-          hint: "`clang -print-resource-dir` failed — is the discovered clang runnable?",
-        });
-      }
-      if (toolchain.dsymutil === undefined) {
-        throw new BuildError("Cross-compiling for macOS requires LLVM dsymutil", {
-          hint: "Install llvm for the same version as clang: apt install llvm-23 (or equivalent).",
-        });
-      }
-      // The Mach-O flavor of whichever lld the rest of the config picked.
-      // `toolchain.rustLld` is the flavor matching the *host* (gcc-ld/ld.lld
-      // on a Linux box); rustc's gcc-ld/ directory ships every flavor of the
-      // same rust-lld, so when the cross-language-LTO bitcode skew applies
-      // (see wantRustLld above) the Mach-O link uses the ld64.lld sibling.
-      // Falls back to clang's ld64.lld if rustc ever stops shipping it — the
-      // configure-time assert in validateBunConfig catches the resulting
-      // bitcode-version mismatch with a clear message.
-      const rustLd64Lld =
-        wantRustLld && toolchain.rustLld !== undefined ? join(dirname(toolchain.rustLld), "ld64.lld") : undefined;
-      ld64StripSwap = {
-        ld: rustLd64Lld !== undefined && existsSync(rustLd64Lld) ? rustLd64Lld : toolchain.ld64Lld,
-        strip: toolchain.llvmStrip,
-      };
+    osxSysroot = resolveMacosSdkPath(partial.macosSdk, cacheDir, cwd);
+    if (toolchain.ld64Lld === undefined) {
+      throw new BuildError("Cross-compiling for macOS requires ld64.lld (lld's Mach-O port)", {
+        hint: "Install lld for the same LLVM version as clang: apt install lld-23 (or equivalent).",
+      });
     }
+    if (toolchain.llvmStrip === undefined) {
+      throw new BuildError("Cross-compiling for macOS requires llvm-strip (GNU strip can't read Mach-O)", {
+        hint: "Install llvm for the same version as clang: apt install llvm-23 (or equivalent).",
+      });
+    }
+    if (toolchain.clangResourceDir === undefined) {
+      throw new BuildError("Cross-compiling for macOS requires clang's resource directory", {
+        hint: "`clang -print-resource-dir` failed — is the discovered clang runnable?",
+      });
+    }
+    if (toolchain.dsymutil === undefined) {
+      throw new BuildError("Cross-compiling for macOS requires LLVM dsymutil", {
+        hint: "Install llvm for the same version as clang: apt install llvm-23 (or equivalent).",
+      });
+    }
+    // The Mach-O flavor of whichever lld the rest of the config picked.
+    // `toolchain.rustLld` is the flavor matching the *host* (gcc-ld/ld.lld
+    // on a Linux box); rustc's gcc-ld/ directory ships every flavor of the
+    // same rust-lld, so when the cross-language-LTO bitcode skew applies
+    // (see wantRustLld above) the Mach-O link uses the ld64.lld sibling.
+    // Falls back to clang's ld64.lld if rustc ever stops shipping it — the
+    // configure-time assert in validateBunConfig catches the resulting
+    // bitcode-version mismatch with a clear message.
+    const rustLd64Lld =
+      wantRustLld && toolchain.rustLld !== undefined ? join(dirname(toolchain.rustLld), "ld64.lld") : undefined;
+    ld64StripSwap = {
+      ld: rustLd64Lld !== undefined && existsSync(rustLd64Lld) ? rustLd64Lld : toolchain.ld64Lld,
+      strip: toolchain.llvmStrip,
+    };
   }
 
   return {

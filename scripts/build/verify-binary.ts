@@ -415,6 +415,12 @@ function verifyElf(spec: VerifySpec): void {
       );
     const bindNow = /BIND_NOW|\bNOW\b/.test(info.match(/DynamicSection \[[\s\S]*?\n\]/)?.[0] ?? "");
     if (bindNow !== expect.elf.bindNow) violations.push(`BIND_NOW ${bindNow}, expected ${expect.elf.bindNow}`);
+    const tlsSegment = phdrs.some(b => /PT_TLS/.test(field(b, "Type") ?? ""));
+    if (tlsSegment !== expect.elf.tlsSegment)
+      violations.push(
+        `PT_TLS ${tlsSegment ? "present" : "absent"}, expected ${expect.elf.tlsSegment ? "present" : "absent"}` +
+          (tlsSegment ? ": some thread-locals are not emulated TLS" : ""),
+      );
     const props = [type, "nx-stack", "no-rwx", ...(relro ? ["relro"] : []), ...(bindNow ? ["bind-now"] : [])];
     report("hardening", `${props.length} hardening properties`, violations, props);
   }

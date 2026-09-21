@@ -80,7 +80,7 @@ const _: () = {
 /// `weak_ptr_data` are only written during construction or via raw-ptr
 /// `finalize`, so stay plain.
 #[repr(C)]
-pub struct Request {
+pub(crate) struct Request {
     pub(crate) url: JsCell<BunString>,
 
     headers: JsCell<Option<HeadersRef>>,
@@ -111,7 +111,7 @@ pub struct Request {
 // deterministic and grep-discoverable.
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct Flags {
+pub(crate) struct Flags {
     pub(crate) redirect: FetchRedirect,
     pub(crate) cache: FetchCacheMode,
     pub(crate) mode: FetchRequestMode,
@@ -376,7 +376,7 @@ impl Request {
     }
 
     #[bun_uws::uws_callback(export = "Request__setCookiesOnRequestContext")]
-    pub fn ffi_set_cookies_on_request_context(&self, cookie_map: Option<&CookieMap>) {
+    pub(crate) fn ffi_set_cookies_on_request_context(&self, cookie_map: Option<&CookieMap>) {
         self.request_context
             .set_cookies(cookie_map.map(|c| std::ptr::from_ref::<CookieMap>(c).cast_mut()));
     }
@@ -385,7 +385,7 @@ impl Request {
     /// through `JSBunRequest::clone` -> here, not through [`Self::do_clone`],
     /// so it needs the same fetch-spec step-1 usability check.
     #[bun_uws::uws_callback(export = "Request__clone")]
-    pub fn ffi_clone(&self, global_this: &JSGlobalObject) -> Option<Box<Request>> {
+    pub(crate) fn ffi_clone(&self, global_this: &JSGlobalObject) -> Option<Box<Request>> {
         self.throw_if_body_unusable(global_this).ok()?;
         // `BunRequest.prototype.clone`, a C++ host function, calls this.
         let cx = global_this.js_thread_of_caller_no_frame();
@@ -396,7 +396,7 @@ impl Request {
     /// `routes:` handler that observed `.body` before cloning gets a fresh tee
     /// branch from the next `.body` read instead of the locked tee source.
     #[bun_uws::uws_callback(export = "Request__syncClonedBodyStreamCaches")]
-    pub fn ffi_sync_cloned_body_stream_caches(
+    pub(crate) fn ffi_sync_cloned_body_stream_caches(
         &self,
         global_this: &JSGlobalObject,
         this_value: JSValue,
@@ -456,7 +456,7 @@ impl Request {
     }
 
     #[bun_uws::uws_callback(export = "Bun__JSRequest__calculateEstimatedByteSize")]
-    pub fn calculate_estimated_byte_size(&self) {
+    pub(crate) fn calculate_estimated_byte_size(&self) {
         self.reported_estimated_size.set(
             self.body_value().estimated_size()
                 + self.size_of_url()
@@ -471,7 +471,7 @@ impl Request {
         <Self as BodyMixin>::get_body_readable_stream(self)
     }
 
-    pub fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
+    pub(crate) fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
         self.calculate_estimated_byte_size();
         // R-2: `to_js_unchecked` stores `self` as the C++ `m_ctx` payload (an
         // opaque `void*` never deref'd as `&mut Request` on the C++ side), so
@@ -717,7 +717,7 @@ impl Request {
         self.signal.set(None);
     }
 
-    pub fn finalize(self: Box<Self>) {
+    pub(crate) fn finalize(self: Box<Self>) {
         // weak_ptr_data may have outstanding refs aliasing this allocation;
         // hand ownership back to the raw pointer FIRST so a panic in the work
         // below leaks instead of Box-drop UAF-ing those weak holders.

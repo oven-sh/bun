@@ -53,7 +53,7 @@ const cfg = (overrides: Partial<Config> = {}) =>
     windows: false,
     freebsd: false,
     canary: true,
-    mode: "link-only",
+    mode: "archive-link",
     crossTarget: undefined,
     canRunOnHost: true,
     host: { os: "linux" },
@@ -254,9 +254,7 @@ describe("deciding whether a build links with an inherited order file", () => {
     expect(orderFileEligible(cfg({ canRunOnHost: false } as Partial<Config>), ctx())).toBe(true);
   });
 
-  it("a build that does not link, or whose target has no order file, never does", () => {
-    expect(orderFileEligible(cfg({ mode: "cpp-only" }), ctx())).toBe(false);
-    expect(orderFileEligible(cfg({ mode: "rust-only" }), ctx())).toBe(false);
+  it("a build whose target has no order file never does", () => {
     expect(orderFileEligible(cfg({ abi: "musl" }), ctx())).toBe(false);
   });
 

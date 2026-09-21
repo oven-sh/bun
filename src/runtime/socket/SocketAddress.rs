@@ -20,7 +20,7 @@ use bun_ptr::JsCell;
 // by `address()`) is `JsCell`-wrapped. `_addr` is read-only after
 // construction and stays bare.
 #[bun_jsc::JsClass]
-pub struct SocketAddress {
+pub(crate) struct SocketAddress {
     // NOTE: not C.sockaddr_storage b/c it's _huge_. we need >= 28 bytes for sockaddr_in6,
     // but sockaddr_storage is 128 bytes.
     /// @internal
@@ -41,7 +41,7 @@ impl SocketAddress {
     }
 }
 
-pub struct Options {
+pub(crate) struct Options {
     pub(crate) family: AF,
     /// When `None`, default is determined by address family.
     /// - `127.0.0.1` for IPv4
@@ -65,7 +65,7 @@ impl Default for Options {
 
 impl Options {
     /// NOTE: assumes options object has been normalized and validated by JS code.
-    pub fn from_js(global: &JSGlobalObject, obj: JSValue) -> JsResult<Options> {
+    pub(crate) fn from_js(global: &JSGlobalObject, obj: JSValue) -> JsResult<Options> {
         if !obj.is_object() {
             return Err(global.throw_invalid_argument_type_value(b"options", b"object", obj));
         }
@@ -744,7 +744,7 @@ fn pton_noerr(af: c_int, addr: &[u8], dst: *mut c_void) -> bool {
 
 #[repr(u16)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum AF {
+pub(crate) enum AF {
     INET = inet::AF_INET as u16,
     INET6 = inet::AF_INET6 as u16,
 }
@@ -829,7 +829,7 @@ impl AF {
 #[allow(non_camel_case_types)]
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub union sockaddr {
+pub(crate) union sockaddr {
     pub(crate) sin: inet::sockaddr_in,
     pub(crate) sin6: inet::sockaddr_in6,
 }
@@ -1003,7 +1003,7 @@ const _: () = {
 
 /// Fills `out` with `host`:`port` when `host` is numeric (inet_aton shorthand and `%zone` included) and returns 1, or 0 when it is a name — the one parse behind uSockets' connect paths, so a literal never reaches the resolver; `host` must be NUL-terminated and `out` writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__parseIpAddress(
+pub(crate) unsafe extern "C" fn Bun__parseIpAddress(
     host: *const core::ffi::c_char,
     port: u16,
     out: *mut bun_sys::posix::sockaddr_storage,
@@ -1052,7 +1052,7 @@ fn scope_index(zone: &[u8]) -> u32 {
 }
 
 #[cfg(windows)]
-pub mod inet {
+pub(crate) mod inet {
     #![allow(non_camel_case_types)]
     use bun_sys::windows::ws2_32 as ws2;
     // Note: `bun_windows_sys::ws2_32` does not currently surface
@@ -1060,21 +1060,21 @@ pub mod inet {
     // `ws2ipdef.h` / `ws2def.h` values locally so the Windows build
     // resolves without widening the leaf crate.
     /// `ws2ipdef.h`: `INET6_ADDRSTRLEN == 65` on Windows (vs 46 on POSIX).
-    pub use bun_sys::posix::INET6_ADDRSTRLEN;
+    pub(crate) use bun_sys::posix::INET6_ADDRSTRLEN;
     pub(crate) const IN6ADDR_ANY_INIT: [u8; 16] = [0; 16];
-    pub use bun_sys::net::{in_port_t, sa_family_t, sockaddr_in, sockaddr_in6};
-    pub use ws2::AF_INET;
-    pub use ws2::AF_INET6;
+    pub(crate) use bun_sys::net::{in_port_t, sa_family_t, sockaddr_in, sockaddr_in6};
+    pub(crate) use ws2::AF_INET;
+    pub(crate) use ws2::AF_INET6;
     pub(crate) type socklen_t = super::ares::ares_socklen_t;
 }
 
 #[cfg(not(windows))]
-pub mod inet {
+pub(crate) mod inet {
     #![allow(non_camel_case_types)]
-    pub use bun_sys::posix::INET6_ADDRSTRLEN;
+    pub(crate) use bun_sys::posix::INET6_ADDRSTRLEN;
     // Make sure this is in line with IN6ADDR_ANY_INIT in `netinet/in.h` on all platforms.
     pub(crate) const IN6ADDR_ANY_INIT: [u8; 16] = [0; 16];
-    pub use bun_sys::net::{in_port_t, sa_family_t, sockaddr_in, sockaddr_in6};
-    pub use bun_sys::posix::AF::{INET as AF_INET, INET6 as AF_INET6};
+    pub(crate) use bun_sys::net::{in_port_t, sa_family_t, sockaddr_in, sockaddr_in6};
+    pub(crate) use bun_sys::posix::AF::{INET as AF_INET, INET6 as AF_INET6};
     pub(crate) type socklen_t = super::ares::ares_socklen_t;
 }

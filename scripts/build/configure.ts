@@ -188,6 +188,9 @@ function configureInputs(cwd: string): string[] {
     pins,
     resolve(cwd, "scripts", "glob-sources.ts"),
     resolve(cwd, "package.json"),
+    // The ELF link's export list is written from these (bun.ts linkImplicitInputs).
+    resolve(cwd, "src", "linker.lds"),
+    resolve(cwd, "src", "linker-freebsd.lds"),
   ].sort();
 }
 
@@ -254,9 +257,9 @@ function emitGeneratorRule(n: Ninja, cfg: Config | CodegenConfig, input: Configu
   });
 }
 
-/** Whether this graph compiles bun's Rust crates (and therefore has the plan edges emitRust registers). */
+/** Whether this graph compiles bun's Rust crates (and therefore has the plan edges emitRust registers): every build but `codegen`. */
 function buildsRust(cfg: Config | CodegenConfig): cfg is Config {
-  return cfg.mode !== "codegen" && cfg.mode !== "cpp-only" && cfg.mode !== "link-only";
+  return cfg.mode !== "codegen";
 }
 
 /**
@@ -492,11 +495,7 @@ async function generate<N extends string | undefined>(
   // Perl check: LUT codegen (create-hash-table.ts) shells out to the
   // perl script from JSC. If perl is missing, codegen fails cryptically.
   // Check here so the error is at configure time with a clear hint.
-  // rust-only/link-only don't run LUT codegen — skip the check so split-CI
-  // steps don't require perl on the rust cross-compile box.
-  if (cfg.mode === "full" || cfg.mode === "cpp-only" || cfg.mode === "archive-link") {
-    requirePerl();
-  }
+  requirePerl();
   mark("validate+perl");
 
   // Glob all source lists — one pass, consistent filesystem snapshot.
@@ -513,9 +512,8 @@ async function generate<N extends string | undefined>(
   mark("emitBun");
   emitGeneratorRule(n, cfg, input);
 
-  // Default targets. cpp-only sets its own default inside emitBun (archive,
-  // no smoke test). Full/link-only: `bun` phony (or stripped file); the
-  // smoke test rides along as a validation of the link.
+  // Default targets: the `bun` phony (or stripped file); the smoke test
+  // rides along as a validation of the link.
   // Release builds produce both bun-profile and stripped bun; `bun` is the
   // stripped one. Debug produces bun-debug; `bun` is a phony pointing at it.
   // dsym: darwin release only — pulled into defaults so ninja actually builds

@@ -8,9 +8,9 @@ sudo -n true 2>/dev/null || { echo "needs passwordless sudo for $(whoami)"; exit
 brew_installer_commit=a34ae4ee9151cbce4c3b33bca7043a972b7ae9a5
 brew_installer_sha256=12479a24be3f5307eecac7cde670fad7118640f031229e964f544b1367b52a41
 # https://github.com/oven-sh/bun/releases/download/bun-v$bun_version/SHASUMS256.txt
-bun_version=1.3.14
-bun_sha256_aarch64=d8b96221828ad6f97ac7ac0ab7e95872341af763001e8803e8267652c2652620
-bun_sha256_x64=4183df3374623e5bab315c547cfa0974533cd457d86b73b639f7a87974cd6633
+bun_version=1.4.2
+bun_sha256_aarch64=90987a3a16d7db556d886ac3d551e7b6d3edf0a1cf43acaed622e8676be1d12f
+bun_sha256_x64=80520d7e17526308c9185d261679ac6d27798d3803a0e9f7ff9121ab8affb012
 
 if [ "$(uname -m)" = arm64 ]; then prefix=/opt/homebrew; target=aarch64; bun_sha256=$bun_sha256_aarch64; else prefix=/usr/local; target=x64; bun_sha256=$bun_sha256_x64; fi
 

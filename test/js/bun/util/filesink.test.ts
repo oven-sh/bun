@@ -1146,3 +1146,40 @@ it("start() with invalid options throws instead of silently ignoring them", asyn
   await writer.end();
   expect(await Bun.file(join(dir, "start-invalid.txt")).text()).toBe("ok");
 });
+
+// A write() to a backed-up sink returns the sink's one outstanding promise. When the reader has hung up by the
+// time of the next write(), that write fails on the spot; it used to return a second, already rejected promise,
+// so a script awaiting the first one caught the error and still died of an unhandled rejection. Whether the
+// second write() is that early or not, the script below must catch the error once and exit cleanly.
+it.skipIf(isWindows)("a write() that fails while another is pending rejects the pending promise once", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+const sink = Bun.stdout.writer();
+const first = sink.write(Buffer.alloc(8 * 1024 * 1024, "x").toString());
+sink.write("tail");
+sink.flush(true);
+try {
+  await first;
+  console.error("resolved");
+} catch (e) {
+  console.error("caught " + e.code);
+}
+`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  // Take one chunk, then close the read end while most of the first write is still pending.
+  const reader = proc.stdout.getReader();
+  await reader.read();
+  await reader.cancel();
+
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("caught EPIPE\n");
+  expect(exitCode).toBe(0);
+});

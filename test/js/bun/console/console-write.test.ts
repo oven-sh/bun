@@ -103,14 +103,17 @@ console.error(JSON.stringify({ one, two }));
 
 // The Promise a backed-up console.write() returns is where its write error arrives: a script that
 // awaits it can handle a reader that hung up, instead of dying with an unhandled rejection.
-test.skipIf(isWindows)("an awaited console.write rejects with EPIPE when the reader has hung up", async () => {
+test.skipIf(isWindows).each([
+  ["one argument", ""],
+  ["several arguments", ', "tail"'],
+])("an awaited console.write rejects with EPIPE when the reader has hung up (%s)", async (_label, extra) => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `
 try {
-  await console.write(Buffer.alloc(8 * 1024 * 1024, "x").toString());
+  await console.write(Buffer.alloc(8 * 1024 * 1024, "x").toString()${extra});
   console.error("resolved");
 } catch (e) {
   console.error("caught " + e.code);

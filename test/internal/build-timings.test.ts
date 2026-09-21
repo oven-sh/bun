@@ -498,10 +498,14 @@ describe("chart", () => {
   });
 
   test("the page carries its data and cannot be broken out of by a label", () => {
-    const page = chartHtml(build);
-    const data = /<script id="data" type="application\/json">(.*)<\/script>/.exec(page)![1]!;
+    // A label is a rule's description with an edge's variables in it, and a variable can hold anything.
+    const hostile = loadBuild(buildDir, false);
+    hostile.runs[0]!.executions[0]!.label = "gen </script><script>alert(1)</script>";
+    const page = chartHtml(hostile);
+    const data = /<script id="data" type="application\/json">(.*?)<\/script>/.exec(page)![1]!;
     expect(data).not.toContain("<");
-    expect(JSON.parse(data)).toEqual(JSON.parse(JSON.stringify(chartData(build))));
+    expect(JSON.parse(data)).toEqual(JSON.parse(JSON.stringify(chartData(hostile))));
+    expect(JSON.parse(data).runs.at(-1).bars[0].label).toBe("gen </script><script>alert(1)</script>");
   });
 });
 

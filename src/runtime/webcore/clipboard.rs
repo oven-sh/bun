@@ -101,6 +101,7 @@ enum Op {
 
 struct ClipboardOp {
     op: Op,
+    env: platform::Env,
     outcome: Outcome,
 }
 
@@ -112,9 +113,9 @@ impl JobContext for ClipboardJob {
 
     fn run(this: &mut ClipboardOp, done: Completion<Self>) -> Option<Completion<Self>> {
         this.outcome = match &this.op {
-            Op::ReadText => platform::read_types(&[Mime::TextPlain]),
-            Op::Read => platform::read_types(&Mime::ALL),
-            Op::Write(items) => platform::write_types(items).map(|()| Vec::new()),
+            Op::ReadText => platform::read_types(&[Mime::TextPlain], &this.env),
+            Op::Read => platform::read_types(&Mime::ALL, &this.env),
+            Op::Write(items) => platform::write_types(items, &this.env).map(|()| Vec::new()),
         };
         Some(done)
     }
@@ -128,6 +129,7 @@ impl JobContext for ClipboardJob {
 fn schedule(global: &JSGlobalObject, op: Op, request: *mut c_void) {
     let off = ClipboardOp {
         op,
+        env: platform::Env::snapshot(global),
         outcome: Err(Unavailable::Platform),
     };
     Job::<ClipboardJob>::schedule(
@@ -219,7 +221,16 @@ impl Unavailable {
 mod platform {
     use core::ffi::{CStr, c_char, c_void};
 
-    use super::{Mime, Outcome, Unavailable};
+    use super::{JSGlobalObject, Mime, Outcome, Unavailable};
+
+    /// The pasteboard does not depend on the environment.
+    pub(super) struct Env;
+
+    impl Env {
+        pub(super) fn snapshot(_global: &JSGlobalObject) -> Env {
+            Env
+        }
+    }
 
     const CG_OK: i32 = 0;
     const CG_CLIPBOARD_CHANGED: i32 = 5;
@@ -248,7 +259,7 @@ mod platform {
         }
     }
 
-    pub(super) fn read_types(types: &[Mime]) -> Outcome {
+    pub(super) fn read_types(types: &[Mime], _env: &Env) -> Outcome {
         let utis: Vec<*const c_char> = types.iter().map(|&mime| uti(mime).as_ptr()).collect();
         let mut datas: Vec<*mut c_void> = vec![core::ptr::null_mut(); types.len()];
         let mut lens = vec![0usize; types.len()];
@@ -291,7 +302,7 @@ mod platform {
         Err(Unavailable::Changing)
     }
 
-    pub(super) fn write_types(items: &[(Mime, Vec<u8>)]) -> Result<(), Unavailable> {
+    pub(super) fn write_types(items: &[(Mime, Vec<u8>)], _env: &Env) -> Result<(), Unavailable> {
         if items.is_empty() {
             return Ok(());
         }
@@ -468,7 +479,16 @@ mod platform {
     use bun_sys::windows::user32::CF_UNICODETEXT;
 
     use super::win32::{OpenedClipboard, OwnedGlobal, register_format};
-    use super::{Mime, Outcome, Unavailable};
+    use super::{JSGlobalObject, Mime, Outcome, Unavailable};
+
+    /// The clipboard does not depend on the environment.
+    pub(super) struct Env;
+
+    impl Env {
+        pub(super) fn snapshot(_global: &JSGlobalObject) -> Env {
+            Env
+        }
+    }
 
     const CF_DIBV5: c_uint = 17;
 
@@ -596,7 +616,7 @@ mod platform {
     }
 
     /// One open span, so no other process writes between the types.
-    pub(super) fn read_types(types: &[Mime]) -> Outcome {
+    pub(super) fn read_types(types: &[Mime], _env: &Env) -> Outcome {
         let mut clipboard = OpenedClipboard::open().ok_or(Unavailable::Platform)?;
         Ok(types
             .iter()
@@ -675,7 +695,7 @@ mod platform {
         Some(dib)
     }
 
-    pub(super) fn write_types(items: &[(Mime, Vec<u8>)]) -> Result<(), Unavailable> {
+    pub(super) fn write_types(items: &[(Mime, Vec<u8>)], _env: &Env) -> Result<(), Unavailable> {
         // Everything fallible happens before the clipboard is emptied.
         let mut formats = Vec::with_capacity(items.len() + 1);
         for (mime, bytes) in items {
@@ -704,13 +724,45 @@ mod platform {
 // ─── everything else: `wl-clipboard`, `xclip`, or `xsel` (reading text) ─────
 #[cfg(not(any(target_os = "macos", windows)))]
 mod platform {
+    use core::ffi::{CStr, c_char};
+    use std::ffi::CString;
+
     use bun_core::{env_var, strings};
+    use bun_event_loop::EventLoopHandle;
     use bun_sys::{Fd, File, O};
 
     use crate::api::bun_process::Status as SpawnStatus;
     use crate::api::bun_process::sync as spawn_sync;
 
-    use super::{Mime, Outcome, Unavailable};
+    use super::{JSGlobalObject, Mime, Outcome, Unavailable};
+
+    /// The environment the script's own children get (`process.env`, `.env`
+    /// files), taken on the JS thread: the process's C `environ` has neither.
+    pub(super) struct Env(Vec<CString>);
+
+    impl Env {
+        pub(super) fn snapshot(global: &JSGlobalObject) -> Env {
+            let event_loop =
+                EventLoopHandle::init(global.bun_vm().as_mut().event_loop().cast::<()>());
+            let map = bun_core::handle_oom(event_loop.create_null_delimited_env_map());
+            Env(map.iter().map(CStr::to_owned).collect())
+        }
+
+        fn get(&self, name: &[u8]) -> Option<&[u8]> {
+            self.0
+                .iter()
+                .find_map(|entry| entry.to_bytes().strip_prefix(name)?.strip_prefix(b"="))
+        }
+
+        /// A NULL-terminated `envp` that borrows `self`.
+        fn envp(&self) -> Vec<*const c_char> {
+            self.0
+                .iter()
+                .map(|entry| entry.as_ptr())
+                .chain(core::iter::once(core::ptr::null()))
+                .collect()
+        }
+    }
 
     fn is_set(value: Option<&[u8]>) -> bool {
         value.is_some_and(|value| !value.is_empty())
@@ -724,12 +776,12 @@ mod platform {
     }
 
     /// The helpers for the displays this process can reach, in preference order.
-    fn helpers() -> Result<Vec<Helper>, Unavailable> {
+    fn helpers(env: &Env) -> Result<Vec<Helper>, Unavailable> {
         let mut list = Vec::with_capacity(3);
-        if is_set(env_var::WAYLAND_DISPLAY::get()) {
+        if is_set(env.get(b"WAYLAND_DISPLAY")) {
             list.push(Helper::WlClipboard);
         }
-        if is_set(env_var::DISPLAY::get()) {
+        if is_set(env.get(b"DISPLAY")) {
             list.extend([Helper::Xclip, Helper::Xsel]);
         }
         if list.is_empty() {
@@ -869,7 +921,12 @@ mod platform {
     }
 
     /// Runs a helper under a `/bin/sh` watchdog: a hung X11 selection owner blocks forever.
-    fn run(argv: &[&str], stdin: Option<Fd>, capture: bool) -> Result<HelperRun, Unavailable> {
+    fn run(
+        argv: &[&str],
+        stdin: Option<Fd>,
+        capture: bool,
+        env: &Env,
+    ) -> Result<HelperRun, Unavailable> {
         let mut command = Vec::<u8>::with_capacity(256);
         // An asynchronous command's stdin is /dev/null, so the payload goes through fd 3.
         if stdin.is_some() {
@@ -901,6 +958,7 @@ mod platform {
         } else {
             spawn_sync::SyncStdio::Ignore
         };
+        let envp = env.envp();
         let result = spawn_sync::spawn(&spawn_sync::Options {
             argv: vec![
                 Box::from(b"/bin/sh".as_slice()),
@@ -912,7 +970,7 @@ mod platform {
             // Not for writes: a helper that daemonizes keeps its output open.
             stdout: output,
             stderr: output,
-            envp: None,
+            envp: Some(envp.as_ptr()),
             // A pool thread must not arm the process-wide signal forwarder.
             forward_signals: false,
             ..Default::default()
@@ -930,11 +988,11 @@ mod platform {
         Present(Vec<(Mime, Vec<u8>)>),
     }
 
-    fn read_one(helper: Helper, mime: Mime) -> Result<Answer, Unavailable> {
+    fn read_one(helper: Helper, mime: Mime, env: &Env) -> Result<Answer, Unavailable> {
         let Some(argv) = helper.read_argv(mime) else {
             return Ok(Answer::NotInstalled);
         };
-        Ok(match run(argv, None, true)? {
+        Ok(match run(argv, None, true, env)? {
             HelperRun::NotInstalled => Answer::NotInstalled,
             HelperRun::Failed { clean: false } => Answer::Failed,
             HelperRun::Failed { clean: true } => Answer::Present(Vec::new()),
@@ -947,11 +1005,11 @@ mod platform {
     }
 
     /// Asks the selection owner what it offers, then reads only those types.
-    fn read_offered(helper: Helper, types: &[Mime]) -> Result<Answer, Unavailable> {
+    fn read_offered(helper: Helper, types: &[Mime], env: &Env) -> Result<Answer, Unavailable> {
         let Some(argv) = helper.targets_argv() else {
-            return read_one(helper, Mime::TextPlain);
+            return read_one(helper, Mime::TextPlain, env);
         };
-        let targets = match run(argv, None, true)? {
+        let targets = match run(argv, None, true, env)? {
             HelperRun::NotInstalled => return Ok(Answer::NotInstalled),
             HelperRun::Failed { clean: false } => return Ok(Answer::Failed),
             HelperRun::Failed { clean: true } => return Ok(Answer::Present(Vec::new())),
@@ -959,7 +1017,7 @@ mod platform {
         };
         let mut present = Vec::new();
         for &mime in types.iter().filter(|&&mime| offers(&targets, mime)) {
-            match read_one(helper, mime)? {
+            match read_one(helper, mime, env)? {
                 Answer::Present(mut read) => present.append(&mut read),
                 // An offered type that cannot be delivered is a failed read, not an absent one.
                 Answer::Failed | Answer::NotInstalled => return Ok(Answer::Failed),
@@ -969,12 +1027,12 @@ mod platform {
     }
 
     /// The first helper that reaches the clipboard answers for it.
-    pub(super) fn read_types(types: &[Mime]) -> Outcome {
+    pub(super) fn read_types(types: &[Mime], env: &Env) -> Outcome {
         let mut ran = false;
-        for helper in helpers()? {
+        for helper in helpers(env)? {
             let answer = match types {
-                [mime] => read_one(helper, *mime)?,
-                _ => read_offered(helper, types)?,
+                [mime] => read_one(helper, *mime, env)?,
+                _ => read_offered(helper, types, env)?,
             };
             match answer {
                 Answer::Present(present) => return Ok(present),
@@ -989,12 +1047,12 @@ mod platform {
         })
     }
 
-    pub(super) fn write_types(items: &[(Mime, Vec<u8>)]) -> Result<(), Unavailable> {
+    pub(super) fn write_types(items: &[(Mime, Vec<u8>)], env: &Env) -> Result<(), Unavailable> {
         // WebCore passes exactly one representation on this backend.
         let [(mime, bytes)] = items else {
             return Err(Unavailable::Platform);
         };
-        let helpers = helpers()?;
+        let helpers = helpers(env)?;
         let payload = payload(bytes).ok_or(Unavailable::Platform)?;
         let mut ran = false;
         for helper in helpers {
@@ -1002,7 +1060,7 @@ mod platform {
                 continue;
             };
             payload.seek_to(0).map_err(|_| Unavailable::Platform)?;
-            match run(argv, Some(payload.handle), false)? {
+            match run(argv, Some(payload.handle), false, env)? {
                 HelperRun::Succeeded(_) => return Ok(()),
                 HelperRun::NotInstalled => {}
                 HelperRun::Failed { .. } => ran = true,

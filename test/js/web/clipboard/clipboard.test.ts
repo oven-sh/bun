@@ -961,6 +961,21 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
     });
   });
 
+  // process.env is the environment a script's children get, not the launching
+  // process's: a display set at runtime reaches the helper, and a helper's PATH
+  // is the script's.
+  test("the display and the helper's environment come from process.env", async () => {
+    const { result } = await runWithHelpers(
+      { xclip: `printf 'display=%s' "$DISPLAY"` },
+      `
+        process.env.DISPLAY = ":7";
+        print({ readText: await settle(navigator.clipboard.readText()) });
+      `,
+      { DISPLAY: undefined },
+    );
+    expect(result).toEqual({ readText: { ok: "display=:7" } });
+  });
+
   test("with a display but nothing installed, the rejection says what to install", async () => {
     const { result, log } = await runWithHelpers(
       {},

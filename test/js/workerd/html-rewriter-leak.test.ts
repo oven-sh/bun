@@ -719,7 +719,7 @@ test("a direct-stream pull parked on flush(true) is released when the handler pr
 test("a worker exiting with an unobserved transform's pull queued frees the pipe", async () => {
   using dir = tempDir("html-rewriter-queued-pull", {
     "worker.js": /* js */ `
-      const chunk = new Uint8Array(1024 * 1024).fill(0x61);
+      const chunk = new Uint8Array(4 * 1024 * 1024).fill(0x61);
       const body = new ReadableStream({
         type: "direct",
         pull(c) {
@@ -744,15 +744,15 @@ test("a worker exiting with an unobserved transform's pull queued frees the pipe
         Bun.gc(true);
         return process.memoryUsage.rss();
       }
-      const before = await round(5);
-      const after = await round(15);
+      const before = await round(2);
+      const after = await round(6);
       console.log(JSON.stringify({ deltaMiB: (after - before) / 1024 / 1024 }));
     `,
   });
 
-  // Unfixed: ~130 MiB. Fixed: allocator slack only.
+  // Unfixed: ~145 MiB. Fixed: allocator slack only.
   await expectRssDeltaBelow([join(String(dir), "main.js")], { release: 50, debug: 60 });
-}, 20_000);
+});
 
 test("element.attributes iterator does not leak names/values", async () => {
   const code = /* js */ `

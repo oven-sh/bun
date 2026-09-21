@@ -29,7 +29,7 @@ use bun_which::which;
 
 use crate::cli;
 use crate::cli::arguments;
-use crate::cli::command::{ContextData, Tag as CommandTag};
+use crate::cli::command::ContextData;
 use crate::cli::shell_completions::ShellCompletions;
 
 bun_core::declare_scope!(RUN_LOG, visible);
@@ -926,14 +926,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         entry_path: Box<[u8]>,
         loader: Option<Loader>,
     ) -> crate::Result<()> {
-        if !ctx.debug.loaded_bunfig {
-            arguments::load_config_path(
-                CommandTag::RunCommand,
-                true,
-                bun_core::zstr!("bunfig.toml"),
-                ctx,
-            )?;
-        }
+        arguments::load_cwd_config_or_exit(ctx);
 
         // The shell does not need to initialize JSC (saves 1-3ms).
         if strings::has_suffix_comptime(&entry_path, b".sh") {
@@ -1126,13 +1119,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         // Load bunfig.toml unless disabled by compile flags. Config loading
         // with execArgv is handled earlier in `Command::start` via `init()`.
-        if !ctx.debug.loaded_bunfig && !graph.flags.contains(GraphFlags::DISABLE_AUTOLOAD_BUNFIG) {
-            arguments::load_config_path(
-                CommandTag::RunCommand,
-                true,
-                bun_core::zstr!("bunfig.toml"),
-                ctx,
-            )?;
+        if !graph.flags.contains(GraphFlags::DISABLE_AUTOLOAD_BUNFIG) {
+            arguments::load_cwd_config_or_exit(ctx);
         }
 
         // layering — `Options::graph` is the resolver's trait object
@@ -2313,16 +2301,7 @@ impl RunCommand {
             }
         }
 
-        if !ctx.debug.loaded_bunfig {
-            // `Arguments::load_config_path` — loads global bunfig (if the
-            // command opts in via `read_global_config`) then `bunfig.toml`.
-            let _ = arguments::load_config_path(
-                CommandTag::RunCommand,
-                true,
-                bun_core::zstr!("bunfig.toml"),
-                ctx,
-            );
-        }
+        arguments::load_cwd_config_or_exit(ctx);
 
         // ── try fast run (file exists & not a dir → boot VM) ────────────────
         if try_fast_run && Self::maybe_open_with_bun_js(ctx, target_name) {

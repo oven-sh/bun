@@ -431,9 +431,9 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
 
     /// Vectored raw write: one writev on real sockets; sequential raw writes on
     /// transports without an fd (duplex/pipe). Plain-TCP callers only — raw
-    /// writes bypass TLS framing. The second element is the fatal send error of
-    /// a real socket, as in `write_check_error` (0 = none).
+    /// writes bypass TLS framing.
     pub fn raw_writev(&self, iov: &[crate::UsIoVec]) -> (i32, i32) {
+        // (bytes written, fatal send error) as in `write_check_error`.
         on_socket!(self.socket;
             connected s => s.raw_writev(iov),
             duplex d => {

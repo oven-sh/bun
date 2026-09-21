@@ -415,14 +415,12 @@ impl us_socket_t {
     /// Vectored raw write — all chunks reach the fd in one writev (sequential
     /// sends on platforms without it). Same closed/shutdown gating and
     /// partial-write poll handling as `raw_write`. Plain-TCP only by contract:
-    /// raw writes bypass TLS framing. The second element is the fatal send
-    /// error, as in `write_check_error`.
+    /// raw writes bypass TLS framing.
     pub(crate) fn raw_writev(&mut self, iov: &[UsIoVec]) -> (i32, i32) {
         bun_core::scoped_log!(uws, "us_socket_raw_writev({:p}, {})", self, iov.len());
         let mut fatal: i32 = 0;
         // SAFETY: iov entries reference memory owned by the caller for the
         // duration of this call; the C side only reads them synchronously.
-        // `fatal` outlives the call as the out-parameter.
         let written = unsafe {
             c::us_socket_raw_writev(
                 self,
@@ -431,6 +429,7 @@ impl us_socket_t {
                 &raw mut fatal,
             )
         };
+        // (bytes written, fatal send error) as in `write_check_error`.
         (written, fatal)
     }
 

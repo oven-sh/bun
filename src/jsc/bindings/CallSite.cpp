@@ -57,7 +57,7 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
     }
 
     // Kept for a strict frame too: getTypeName() and isToplevel() read it. getThis() hides it.
-    JSC::JSValue thisValue = stackFrame.stackFrame().thisValue();
+    JSC::JSValue thisValue = Zig::frameReceiver(stackFrame.stackFrame());
     m_thisValue.set(vm, this, thisValue ? thisValue : JSC::jsUndefined());
     if (isStrictFrame) {
         m_flags |= static_cast<unsigned int>(Flags::IsStrict);

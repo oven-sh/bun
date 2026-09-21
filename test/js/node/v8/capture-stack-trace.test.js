@@ -2225,6 +2225,25 @@ describe("a method call frame is named after its receiver", () => {
     expect(await new K().am()).toBe("at K.am");
   });
 
+  // An async arrow function never converts its this slot, so a call resolved
+  // through a scope leaves that scope there. The frame reads as a top-level call.
+  test("an async arrow function called through its scope", async () => {
+    const inner = async () => {
+      await 1;
+      const e = new Error("x");
+      e.message;
+      return e.stack;
+    };
+    const outer = async () => {
+      const stack = await inner();
+      return stack;
+    };
+    const stack = await outer();
+    expect(stack).toMatch(/\n    at <anonymous> \(/);
+    expect(stack).toMatch(/\n    at async <anonymous> \(/);
+    expect(stack).not.toContain("Environment");
+  });
+
   test("Error.captureStackTrace", () => {
     const o = {
       mock() {
@@ -2236,20 +2255,21 @@ describe("a method call frame is named after its receiver", () => {
     expect(o.mock()).toStartWith("at Object.mock (");
   });
 
+  // `method` outlives the collection: only the receiver dies, so the trace
+  // is materialized for the receiver alone.
   test("the trace a collection materialized, after the receiver died", () => {
+    const method = function mock() {
+      const e = new Error("x");
+      e.message;
+      return e;
+    };
     function make() {
-      const error = {
-        mock() {
-          const e = new Error("x");
-          e.message;
-          return e;
-        },
-      }.mock();
+      const error = { [Symbol.toStringTag]: "Short", mock: method }.mock();
       return error;
     }
     const error = make();
     Bun.gc(true);
-    expect(frameName(error)).toBe("at Object.mock");
+    expect(frameName(error)).toBe("at Short.mock");
   });
 
   test("the default Error.prepareStackTrace and CallSite.prototype.toString", () => {
@@ -2327,20 +2347,22 @@ describe("a method call frame is named after its receiver", () => {
         bunExe(),
         "-e",
         `
-        Error.prepareStackTrace = (e, sites) => sites[0].getTypeName();
-        const stack = () => { const e = new Error("x"); e.message; return e.stack; };
-        const o = { m(i) { "use strict"; return (i & 255) === 0 ? stack() : i; } };
-        class K { m(i) { return (i & 255) === 0 ? stack() : i; } static s(i) { return (i & 255) === 0 ? stack() : i; } }
-        function strict(i) { "use strict"; return (i & 255) === 0 ? stack() : i; }
-        function sloppy(i) { return (i & 255) === 0 ? stack() : i; }
+        Error.prepareStackTrace = (e, sites) => String(sites[0].getTypeName());
+        const o = { m(i) { "use strict"; if ((i & 255) === 0) { const e = new Error("x"); e.message; return e.stack; } return i; } };
+        class K {
+          m(i) { if ((i & 255) === 0) { const e = new Error("x"); e.message; return e.stack; } return i; }
+          static s(i) { if ((i & 255) === 0) { const e = new Error("x"); e.message; return e.stack; } return i; }
+        }
+        function strict(i) { "use strict"; if ((i & 255) === 0) { const e = new Error("x"); e.message; return e.stack; } return i; }
+        function sloppy(i) { if ((i & 255) === 0) { const e = new Error("x"); e.message; return e.stack; } return i; }
         const k = new K();
         const bound = strict.bind(true);
         const checks = [
           ["o.m", i => o.m(i), "Object"],
           ["k.m", i => k.m(i), "K"],
           ["K.s", i => K.s(i), "K"],
-          ["strict", i => strict(i), null],
-          ["sloppy", i => sloppy(i), null],
+          ["strict", i => strict(i), "null"],
+          ["sloppy", i => sloppy(i), "null"],
           ["strict.call(string)", i => strict.call("s", i), "String"],
           ["strict.call(number)", i => strict.call(i, i), "Number"],
           ["bound", i => bound(i), "Boolean"],
@@ -2349,14 +2371,17 @@ describe("a method call frame is named after its receiver", () => {
           ["Reflect.apply", i => Reflect.apply(strict, "s", [i]), "String"],
         ];
         let bad = 0;
+        let seen = 0;
         for (let i = 0; i < 4000; i++) {
           for (const [name, f, want] of checks) {
             const got = f(i);
             if (typeof got === "number") continue;
-            if (got !== want && got !== null && got !== undefined) { bad++; if (bad < 5) console.log(name, "got", got, "want", want, "at", i); }
+            seen++;
+            if (got !== want && got !== "null") { bad++; if (bad < 5) console.log(name, "got", got, "want", want, "at", i); }
           }
-          if ((i & 8191) === 0) Bun.gc(true);
+          if ((i & 511) === 0) Bun.gc(true);
         }
+        if (seen !== 16 * checks.length) console.log("seen", seen);
         console.log("bad", bad);
         `,
       ],

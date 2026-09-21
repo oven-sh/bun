@@ -18,6 +18,7 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/JSBoundFunction.h>
+#include <JavaScriptCore/JSScope.h>
 #include <JavaScriptCore/StackVisitor.h>
 #include <JavaScriptCore/NativeCallee.h>
 #include <JavaScriptCore/Interpreter.h>
@@ -538,6 +539,14 @@ static bool isConstructorFunction(JSC::JSObject* object)
     return type == JSC::JSFunctionType && !object->inherits<JSC::JSBoundFunction>();
 }
 
+JSValue frameReceiver(const JSC::StackFrame& frame)
+{
+    JSValue receiver = frame.thisValue();
+    if (receiver && receiver.isObject() && asObject(receiver)->inherits<JSC::JSScope>())
+        return jsUndefined();
+    return receiver;
+}
+
 String receiverTypeName(JSC::VM& vm, JSC::JSValue receiver)
 {
     if (!receiver || receiver.isUndefinedOrNull())
@@ -680,7 +689,7 @@ String functionName(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* fla
     }
 
     if ((flags && (*flags & static_cast<unsigned int>(FunctionNameFlags::AddTypeName))) && isFunction && !isConstructor) {
-        return methodCallName(receiverTypeName(vm, frame.thisValue()), functionName);
+        return methodCallName(receiverTypeName(vm, frameReceiver(frame)), functionName);
     }
 
     return functionName;

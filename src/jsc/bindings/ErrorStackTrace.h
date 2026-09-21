@@ -212,6 +212,8 @@ String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock);
 String functionName(JSC::VM& vm, JSC::JSObject* callee);
 String functionName(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* flags);
 
+// The frame's receiver. A scope object left in the this slot by a call like `f()` reads as undefined.
+JSC::JSValue frameReceiver(const JSC::StackFrame& frame);
 // V8's CallSiteInfo::GetTypeName. Empty for a top-level call (no receiver, or the global object).
 String receiverTypeName(JSC::VM& vm, JSC::JSValue receiver);
 // V8's AppendMethodCall: how a method call frame is named from its type name and function name.

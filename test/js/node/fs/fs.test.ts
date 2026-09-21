@@ -165,6 +165,123 @@ it("writing to 1, 2 are possible", () => {
   expect(fs.writeSync(2, Buffer.from("\nhello-stderr-test\n"))).toBe(19);
 });
 
+// Node's getOptions() asserts the encoding before getValidatedPath() checks the
+// path, so the encoding error wins when both are invalid. Node v26.3.0 reports
+// the encoding for every call below.
+describe("an invalid encoding is reported before an invalid path", () => {
+  const invalidPaths: [label: string, path: any][] = [
+    ["bigint", 123n],
+    ["object", {}],
+    ["null", null],
+    ["undefined", undefined],
+    ["boolean", true],
+    ["symbol", Symbol("path")],
+    ["string with a NUL byte", "a\0b"],
+    ["http: URL", new URL("http://example.com/x")],
+  ];
+  const invalidOptions: [label: string, options: any][] = [
+    ["'bogus'", "bogus"],
+    ["{ encoding: 'bogus' }", { encoding: "bogus" }],
+  ];
+  const encodingError = { code: "ERR_INVALID_ARG_VALUE", name: "TypeError", namesTheEncoding: true };
+  const describeError = (err: any) => ({
+    code: err.code,
+    name: err.name,
+    // A NUL byte in the path is ERR_INVALID_ARG_VALUE too. Only the message tells them apart.
+    namesTheEncoding: String(err.message).includes("encoding"),
+  });
+  const noop = () => {};
+  const anyFs = fs as any;
+
+  const throwing: Record<string, (path: any, options: any) => unknown> = {
+    "readFileSync": (p, o) => fs.readFileSync(p, o),
+    "writeFileSync": (p, o) => fs.writeFileSync(p, "x", o),
+    "appendFileSync": (p, o) => fs.appendFileSync(p, "x", o),
+    "readdirSync": (p, o) => fs.readdirSync(p, o),
+    "readlinkSync": (p, o) => fs.readlinkSync(p, o),
+    "realpathSync": (p, o) => fs.realpathSync(p, o),
+    "realpathSync.native": (p, o) => fs.realpathSync.native(p, o),
+    "mkdtempSync": (p, o) => fs.mkdtempSync(p, o),
+    "mkdtempDisposableSync": (p, o) => anyFs.mkdtempDisposableSync(p, o),
+    "watch": (p, o) => fs.watch(p, o, noop),
+    // The callback forms throw an argument error. They do not pass it to the callback.
+    "readFile": (p, o) => fs.readFile(p, o, noop),
+    "writeFile": (p, o) => fs.writeFile(p, "x", o, noop),
+    "appendFile": (p, o) => fs.appendFile(p, "x", o, noop),
+    "readdir": (p, o) => fs.readdir(p, o, noop),
+    "readlink": (p, o) => fs.readlink(p, o, noop),
+    "realpath": (p, o) => fs.realpath(p, o, noop),
+    "realpath.native": (p, o) => fs.realpath.native(p, o, noop),
+    "mkdtemp": (p, o) => fs.mkdtemp(p, o, noop),
+  };
+  const rejecting: Record<string, (path: any, options: any) => Promise<unknown>> = {
+    "promises.readFile": (p, o) => fs.promises.readFile(p, o),
+    "promises.writeFile": (p, o) => fs.promises.writeFile(p, "x", o),
+    "promises.appendFile": (p, o) => fs.promises.appendFile(p, "x", o),
+    "promises.readdir": (p, o) => fs.promises.readdir(p, o),
+    "promises.readlink": (p, o) => fs.promises.readlink(p, o),
+    "promises.realpath": (p, o) => fs.promises.realpath(p, o),
+    "promises.mkdtemp": (p, o) => fs.promises.mkdtemp(p, o),
+    "promises.mkdtempDisposable": (p, o) => anyFs.promises.mkdtempDisposable(p, o),
+  };
+
+  it.each(Object.keys(throwing))("%s", name => {
+    const actual: Record<string, unknown> = {};
+    const expected: Record<string, unknown> = {};
+    for (const [pathLabel, path] of invalidPaths) {
+      for (const [optionsLabel, options] of invalidOptions) {
+        const label = `${pathLabel}, ${optionsLabel}`;
+        expected[label] = encodingError;
+        try {
+          throwing[name](path, options);
+          actual[label] = "did not throw";
+        } catch (err) {
+          actual[label] = describeError(err);
+        }
+      }
+    }
+    expect(actual).toEqual(expected);
+  });
+
+  it.each(Object.keys(rejecting))("%s", async name => {
+    const actual: Record<string, unknown> = {};
+    const expected: Record<string, unknown> = {};
+    for (const [pathLabel, path] of invalidPaths) {
+      for (const [optionsLabel, options] of invalidOptions) {
+        const label = `${pathLabel}, ${optionsLabel}`;
+        expected[label] = encodingError;
+        actual[label] = await rejecting[name](path, options).then(() => "did not reject", describeError);
+      }
+    }
+    expect(actual).toEqual(expected);
+  });
+
+  // fs.watch validates more options than the other calls. Node v26.3.0 reports
+  // the encoding before each of them too, with a valid path or an invalid one.
+  it("watch, with a second invalid option", () => {
+    using dir = tempDir("fs-watch-encoding-first", {});
+    const otherOptions = { persistent: 1, recursive: 1, verbose: 1, signal: 1, ignore: 5 };
+    const actual: Record<string, unknown> = {};
+    const expected: Record<string, unknown> = {};
+    for (const [pathLabel, path] of [
+      ["valid path", String(dir)],
+      ["bigint", 123n],
+    ] as [string, any][]) {
+      for (const [name, value] of Object.entries(otherOptions)) {
+        const label = `${pathLabel}, { encoding: 'bogus', ${name}: ${value} }`;
+        expected[label] = encodingError;
+        try {
+          fs.watch(path, { encoding: "bogus", [name]: value } as any, noop).close();
+          actual[label] = "did not throw";
+        } catch (err) {
+          actual[label] = describeError(err);
+        }
+      }
+    }
+    expect(actual).toEqual(expected);
+  });
+});
+
 describe("test-fs-assert-encoding-error", () => {
   const testPath = join(tmpdirSync(), "assert-encoding-error");
   const options = "test";

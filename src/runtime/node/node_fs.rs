@@ -3147,8 +3147,10 @@ pub mod args {
     }
     impl Readlink<'static> {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
-            let path = PathLike::from_js_required(ctx, arguments, "path")?;
-            let encoding = parse_encoding_arg(ctx, arguments, Encoding::Utf8)?;
+            let options = arguments.peek_at(1);
+            let path = PathLike::from_js_required(ctx, arguments, "path");
+            let path = or_encoding_error(ctx, options, path)?;
+            let encoding = parse_encoding_arg(ctx, arguments.next_eat(), Encoding::Utf8)?;
             Ok(Readlink { path, encoding })
         }
     }
@@ -3159,8 +3161,10 @@ pub mod args {
     }
     impl Realpath<'static> {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
-            let path = PathLike::from_js_required(ctx, arguments, "path")?;
-            let encoding = parse_encoding_arg(ctx, arguments, Encoding::Utf8)?;
+            let options = arguments.peek_at(1);
+            let path = PathLike::from_js_required(ctx, arguments, "path");
+            let path = or_encoding_error(ctx, options, path)?;
+            let encoding = parse_encoding_arg(ctx, arguments.next_eat(), Encoding::Utf8)?;
             Ok(Realpath { path, encoding })
         }
     }
@@ -3176,19 +3180,18 @@ pub mod args {
         Ok(default)
     }
 
-    /// Consume the next positional argument as a Node.js fs `encoding` option.
+    /// The encoding of a Node.js fs `options` argument.
     /// Accepts either an encoding string (`"utf8"`, `"buffer"`, ...) or an options
     /// object with an `.encoding` property. Any other value (including `undefined`
     /// / `null` / numbers / functions) is silently ignored and `default` is returned.
     /// Shared by `Readlink`/`Realpath`/`MkdirTemp::from_js`.
     fn parse_encoding_arg(
         ctx: &JSGlobalObject,
-        arguments: &mut ArgumentsSlice,
+        options: Option<JSValue>,
         default: Encoding,
     ) -> JsResult<Encoding> {
         let mut encoding = default;
-        if let Some(val) = arguments.next() {
-            arguments.eat();
+        if let Some(val) = options {
             match val.js_type() {
                 bun_jsc::JSType::String
                 | bun_jsc::JSType::StringObject
@@ -3203,6 +3206,23 @@ pub mod args {
             }
         }
         Ok(encoding)
+    }
+
+    /// An invalid encoding wins over an invalid path: Node's `getOptions()` runs first.
+    fn or_encoding_error<T>(
+        ctx: &JSGlobalObject,
+        options: Option<JSValue>,
+        path: JsResult<T>,
+    ) -> JsResult<T> {
+        let Err(bun_jsc::JsError::Thrown) = path else {
+            return path;
+        };
+        if ctx.has_pending_termination_exception() {
+            return path;
+        }
+        let path_error = ctx.take_exception(bun_jsc::JsError::Thrown);
+        parse_encoding_arg(ctx, options, Encoding::Utf8)?;
+        Err(ctx.throw_value(path_error))
     }
 
     pub struct Unlink<'a> {
@@ -3393,14 +3413,18 @@ pub mod args {
     }
     impl MkdirTemp<'static> {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
-            let prefix = PathLike::from_js(ctx, arguments)?.ok_or_else(|| {
-                ctx.throw_invalid_argument_type_value(
-                    b"prefix",
-                    b"string, Buffer, or URL",
-                    arguments.next().unwrap_or(JSValue::UNDEFINED),
-                )
-            })?;
-            let encoding = parse_encoding_arg(ctx, arguments, Encoding::Utf8)?;
+            let options = arguments.peek_at(1);
+            let prefix = PathLike::from_js(ctx, arguments).and_then(|prefix| {
+                prefix.ok_or_else(|| {
+                    ctx.throw_invalid_argument_type_value(
+                        b"prefix",
+                        b"string, Buffer, or URL",
+                        arguments.next().unwrap_or(JSValue::UNDEFINED),
+                    )
+                })
+            });
+            let prefix = or_encoding_error(ctx, options, prefix)?;
+            let encoding = parse_encoding_arg(ctx, arguments.next_eat(), Encoding::Utf8)?;
             Ok(MkdirTemp { prefix, encoding })
         }
     }
@@ -3427,7 +3451,9 @@ pub mod args {
     }
     impl Readdir<'static> {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
-            let path = PathLike::from_js_required(ctx, arguments, "path")?;
+            let options = arguments.peek_at(1);
+            let path = PathLike::from_js_required(ctx, arguments, "path");
+            let path = or_encoding_error(ctx, options, path)?;
             let mut encoding = Encoding::Utf8;
             let mut with_file_types = false;
             let mut recursive = false;
@@ -3983,13 +4009,17 @@ pub mod args {
     }
     impl ReadFile<'static> {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
+            let options = arguments.peek_at(1);
+            let path = PathOrFileDescriptor::from_js(ctx, arguments).and_then(|path| {
+                path.ok_or_else(|| {
+                    ctx.throw_invalid_arguments(format_args!(
+                        "path must be a string or a file descriptor"
+                    ))
+                })
+            });
             // `Drop` on `path` covers every
             // `?`-propagated JsError below.
-            let path = PathOrFileDescriptor::from_js(ctx, arguments)?.ok_or_else(|| {
-                ctx.throw_invalid_arguments(format_args!(
-                    "path must be a string or a file descriptor"
-                ))
-            })?;
+            let path = or_encoding_error(ctx, options, path)?;
             let mut encoding = Encoding::Buffer;
             let mut flag = FileSystemFlags::R;
             let mut abort_signal = scopeguard::guard(None::<AbortSignalRef>, |s| {
@@ -4067,13 +4097,17 @@ pub mod args {
             arguments: &mut ArgumentsSlice,
             default_flag: FileSystemFlags,
         ) -> JsResult<Self> {
+            let options = arguments.peek_at(2);
+            let path = PathOrFileDescriptor::from_js(ctx, arguments).and_then(|path| {
+                path.ok_or_else(|| {
+                    ctx.throw_invalid_arguments(format_args!(
+                        "path must be a string or a file descriptor"
+                    ))
+                })
+            });
             // `Drop` on `path` covers every
             // `?`-propagated JsError below.
-            let path = PathOrFileDescriptor::from_js(ctx, arguments)?.ok_or_else(|| {
-                ctx.throw_invalid_arguments(format_args!(
-                    "path must be a string or a file descriptor"
-                ))
-            })?;
+            let path = or_encoding_error(ctx, options, path)?;
             let data_value = arguments
                 .next_eat()
                 .ok_or_else(|| ctx.throw_invalid_arguments(format_args!("data is required")))?;

@@ -272,6 +272,11 @@ impl<'a> ArgumentsSlice<'a> {
         self.remaining().first().copied()
     }
 
+    /// Peek the argument `index` places after the next one without eating anything.
+    pub fn peek_at(&self, index: usize) -> Option<JSValue> {
+        self.remaining().get(index).copied()
+    }
+
     pub fn next_eat(&mut self) -> Option<JSValue> {
         let v = self.remaining().first().copied()?;
         self.eat();

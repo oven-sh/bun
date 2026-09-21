@@ -129,11 +129,11 @@ export function write(this: Console & { $writer: ConsoleWriter | undefined }, in
     $putByIdDirectPrivate(this, "writer", writer);
   }
 
-  // A write() returns a Promise instead of a count in two cases. A backed-up writer (FileSink) returns its one
+  // The sink's write() returns a count, or a Promise of one in two cases. A backed-up sink returns its one
   // outstanding Promise, the same for every write made while it is backed up, of the bytes those writes added. A
   // write that fails on the spot (the pipe is already broken) returns a rejected Promise of its own. The caller
-  // gets a Promise of the total over every distinct one: awaiting it waits for the drain and is where a write
-  // error (EPIPE) arrives, and none is left for an unhandled rejection.
+  // gets a Promise over every distinct one: awaiting it waits for the drain and is where a write error (EPIPE)
+  // arrives, with none left over for an unhandled rejection. (A finished sink returns `true`: nothing written.)
   var wrote = 0;
   var pending: Promise<number>[] | undefined;
   const count = $argumentCount();
@@ -141,16 +141,18 @@ export function write(this: Console & { $writer: ConsoleWriter | undefined }, in
   do {
     const result = writer.write(arguments[i]);
     if (typeof result === "number") wrote += result;
-    else if (pending === undefined) pending = [result];
-    // The shared Promise comes back from consecutive writes, so the last one is the only possible repeat.
-    else if (pending[pending.length - 1] !== result) pending.push(result);
+    else if ($isPromise<number>(result)) {
+      if (pending === undefined) pending = [result];
+      // The shared Promise comes back from consecutive writes, so the last one is the only possible repeat.
+      else if (pending[pending.length - 1] !== result) $arrayPush(pending, result);
+    }
   } while (++i < count);
 
   writer.flush(true);
   if (pending === undefined) return wrote;
   if (pending.length === 1 && wrote === 0) return pending[0];
-  return Promise.all(pending).then(counts => {
-    for (const n of counts) wrote += n;
+  return Promise.all(pending).$then(counts => {
+    for (var j = 0; j < counts.length; j++) wrote += counts[j];
     return wrote;
   });
 }

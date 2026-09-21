@@ -2722,6 +2722,23 @@ it("http2 respondWithFD/respondWithFile stat failure destroys the stream without
     "respondWithFD(closed fd), statCheck, then destroy()": [],
     // The headers went out synchronously, before the stream was destroyed.
     "respondWithFD(closed fd), no statCheck, then destroy()": ["client 'response': 200"],
+    // Once the headers are out, onError is not consulted any more (node never does on this path).
+    "respondWithFD(closed fd), no statCheck, onError": [
+      "client 'response': 200",
+      "client error: Stream closed with error code NGHTTP2_INTERNAL_ERROR",
+      "server stream error: ERR_HTTP2_STREAM_ERROR",
+    ],
+    "respondWithFD(-1), no statCheck": [
+      "client 'response': 200",
+      "client error: Stream closed with error code NGHTTP2_INTERNAL_ERROR",
+      "server stream error: ERR_HTTP2_STREAM_ERROR",
+    ],
+    "respondWithFD(fd, request pseudo-header), no statCheck": [
+      "client error: Stream closed with error code NGHTTP2_INTERNAL_ERROR",
+      "server stream error: ERR_HTTP2_INVALID_PSEUDOHEADER",
+    ],
+    "close(), then respondWithFD(closed fd)": ["sync throw: ERR_HTTP2_INVALID_STREAM"],
+    "close(), then respondWithFile(directory)": ["sync throw: ERR_HTTP2_INVALID_STREAM"],
   };
 
   const bunRun = await run(bunExe());

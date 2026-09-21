@@ -27,12 +27,29 @@ const calls = {
     st.respondWithFD(closedFd(), { ":status": 200 });
     st.destroy();
   },
+  "respondWithFD(closed fd), no statCheck, onError": st =>
+    st.respondWithFD(closedFd(), { ":status": 200 }, { onError: e => console.log("  onError:", e.code) }),
+  "respondWithFD(-1), no statCheck": st => st.respondWithFD(-1, { ":status": 200 }),
+  "respondWithFD(fd, request pseudo-header), no statCheck": st =>
+    st.respondWithFD(fs.openSync(os.tmpdir(), "r"), { ":status": 200, ":path": "/" }),
+  "close(), then respondWithFD(closed fd)": st => {
+    st.close();
+    st.respondWithFD(closedFd(), { ":status": 200 });
+  },
+  "close(), then respondWithFile(directory)": st => {
+    st.close();
+    st.respondWithFile(os.tmpdir(), { ":status": 200 });
+  },
 };
 
 const server = http2.createServer();
 server.on("stream", (stream, headers) => {
   stream.on("error", e => console.log("  server stream error:", e.code));
-  calls[headers["x-call"]](stream);
+  try {
+    calls[headers["x-call"]](stream);
+  } catch (e) {
+    console.log("  sync throw:", e.code);
+  }
 });
 server.listen(0, "127.0.0.1", async () => {
   const client = http2.connect("http://127.0.0.1:" + server.address().port);

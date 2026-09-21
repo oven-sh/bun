@@ -33,8 +33,6 @@ const { kTimeout, getTimerDuration } = require("internal/timers");
 const tls = require("node:tls");
 const net = require("node:net");
 const fs = require("node:fs");
-const { $data } = require("node:fs/promises");
-const FileHandle = $data.FileHandle;
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const kInfoHeaders = Symbol("sent-info-headers");
 const kStrictSingleValueFields = Symbol("strictSingleValueFields");
@@ -3028,9 +3026,9 @@ function doSendFileFD(options, fd, headers, err, stat) {
       tryClose(fd);
     }
 
-    if (onError) onError(err);
-    else if (statsBeforeHeaders) this.destroy(err);
-    else failFdResponseAsStreamError.$call(this, headers, options);
+    if (!statsBeforeHeaders) failFdResponseAsStreamError.$call(this, headers, options);
+    else if (onError) onError(err);
+    else this.destroy(err);
     return;
   }
 
@@ -3045,7 +3043,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
     ) {
       const err = isDirectory ? $ERR_HTTP2_SEND_FILE() : $ERR_HTTP2_SEND_FILE_NOSEEK();
       if (ownsFd) tryClose(fd);
-      if (onError) onError(err);
+      if (statsBeforeHeaders && onError) onError(err);
       else if (ownsFd) this.destroy(err);
       else failFdResponseAsStreamError.$call(this, headers, options);
       return;
@@ -3378,7 +3376,7 @@ class ServerHttp2Stream extends Http2Stream {
   }
 
   respondWithFile(path, headers?: HeadersObject | null, options?) {
-    if (this.destroyed) {
+    if (this.destroyed || this.closed) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
     if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
@@ -3438,7 +3436,7 @@ class ServerHttp2Stream extends Http2Stream {
         throw err;
       }
     }
-    if (this.destroyed) {
+    if (this.destroyed || this.closed) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
     if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
@@ -3487,14 +3485,22 @@ class ServerHttp2Stream extends Http2Stream {
       // node's processRespondWithFD runs synchronously when no statCheck is given: the
       // user-facing writable side is already closed by the time respondWithFD() returns, so a
       // stream.end() right after it is a no-op instead of ending the stream before the file.
-      this.respond(headers, options);
+      try {
+        this.respond(headers, options);
+      } catch (err: any) {
+        this.destroy(err);
+        return;
+      }
       closeWritableForFileResponse(this);
+      try {
+        fs.fstat(fd, doSendFileFD.bind(this, options, fd, headers));
+      } catch {
+        // node hands the descriptor to the native read, where an out-of-range one fails.
+        this.destroy(streamErrorFromCode(NGHTTP2_INTERNAL_ERROR));
+      }
+      return;
     }
-    if (fd instanceof FileHandle) {
-      fs.fstat(fd.fd, doSendFileFD.bind(this, options, fd, headers));
-    } else {
-      fs.fstat(fd, doSendFileFD.bind(this, options, fd, headers));
-    }
+    fs.fstat(fd, doSendFileFD.bind(this, options, fd, headers));
   }
   additionalHeaders(headers?: HeadersObject | null) {
     if (this.destroyed || this.closed || this.session === undefined) {

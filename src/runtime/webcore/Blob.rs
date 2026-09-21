@@ -5795,7 +5795,11 @@ pub(crate) extern "C" fn Blob__implClearFile(blob: &mut Blob) {
 /// # Safety
 /// `[mime, mime+len)` must be readable.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Blob__implSetContentType(blob: &mut Blob, mime: *const u8, len: usize) {
+pub(crate) unsafe extern "C" fn Blob__implSetContentType(
+    blob: &mut Blob,
+    mime: *const u8,
+    len: usize,
+) {
     if mime.is_null() || len == 0 {
         return;
     }

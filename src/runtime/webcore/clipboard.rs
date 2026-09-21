@@ -130,16 +130,26 @@ fn schedule(global: &JSGlobalObject, op: Op, request: *mut c_void) {
         op,
         outcome: Err(Unavailable::Platform),
     };
-    Job::<ClipboardJob>::schedule(&global.js_thread_of_caller_no_frame(), off, Request(request));
+    Job::<ClipboardJob>::schedule(
+        &global.js_thread_of_caller_no_frame(),
+        off,
+        Request(request),
+    );
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__Clipboard__scheduleReadText(global: &JSGlobalObject, request: *mut c_void) {
+pub(crate) extern "C" fn Bun__Clipboard__scheduleReadText(
+    global: &JSGlobalObject,
+    request: *mut c_void,
+) {
     schedule(global, Op::ReadText, request);
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__Clipboard__scheduleRead(global: &JSGlobalObject, request: *mut c_void) {
+pub(crate) extern "C" fn Bun__Clipboard__scheduleRead(
+    global: &JSGlobalObject,
+    request: *mut c_void,
+) {
     schedule(global, Op::Read, request);
 }
 

@@ -129,23 +129,30 @@ export function write(this: Console & { $writer: ConsoleWriter | undefined }, in
     $putByIdDirectPrivate(this, "writer", writer);
   }
 
-  // A backed-up writer (FileSink) returns a Promise instead of a count: one Promise, the same for every write made
-  // while it is backed up, of the bytes those writes added. The caller gets a Promise of the total then, because
-  // awaiting it waits for the drain and is where a write error (EPIPE from a reader that hung up) arrives.
+  // A write() returns a Promise instead of a count in two cases. A backed-up writer (FileSink) returns its one
+  // outstanding Promise, the same for every write made while it is backed up, of the bytes those writes added. A
+  // write that fails on the spot (the pipe is already broken) returns a rejected Promise of its own. The caller
+  // gets a Promise of the total over every distinct one: awaiting it waits for the drain and is where a write
+  // error (EPIPE) arrives, and none is left for an unhandled rejection.
   var wrote = 0;
-  var pending: Promise<number> | undefined;
+  var pending: Promise<number>[] | undefined;
   const count = $argumentCount();
   var i = 0;
   do {
     const result = writer.write(arguments[i]);
     if (typeof result === "number") wrote += result;
-    else pending = result;
+    else if (pending === undefined) pending = [result];
+    // The shared Promise comes back from consecutive writes, so the last one is the only possible repeat.
+    else if (pending[pending.length - 1] !== result) pending.push(result);
   } while (++i < count);
 
   writer.flush(true);
   if (pending === undefined) return wrote;
-  if (wrote === 0) return pending;
-  return pending.then(n => wrote + n);
+  if (pending.length === 1 && wrote === 0) return pending[0];
+  return Promise.all(pending).then(counts => {
+    for (const n of counts) wrote += n;
+    return wrote;
+  });
 }
 
 // This is the `console.Console` constructor. It is mostly copied from Node.

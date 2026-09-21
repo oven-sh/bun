@@ -103,6 +103,9 @@ console.error(JSON.stringify({ one, two }));
 
 // The Promise a backed-up console.write() returns is where its write error arrives: a script that
 // awaits it can handle a reader that hung up, instead of dying with an unhandled rejection.
+//
+// Not on Windows: a write to a pipe whose reader is alive is accepted whole there and returns its byte
+// count, so whether this script sees a Promise at all depends on whether the reader is already gone.
 test.skipIf(isWindows).each([
   ["one argument", ""],
   ["several arguments", ', "tail"'],
@@ -129,6 +132,45 @@ try {
   const reader = proc.stdout.getReader();
   await reader.read();
   await reader.cancel();
+
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("caught EPIPE\n");
+  expect(exitCode).toBe(0);
+});
+
+// Every write to a pipe that is already broken fails on the spot, with a rejected Promise of its own.
+// console.write() kept only the last one, so a script that awaited it and caught the error still died of the
+// unhandled rejection of an earlier argument's write.
+//
+// The child blocks in a synchronous read of stdin until the parent has closed its end of stdout, and the writes
+// are large enough to go to the pipe at once instead of being buffered.
+test("an awaited console.write with several arguments handles every failed write", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+process.on("unhandledRejection", e => {
+  console.error("unhandledRejection " + e?.code);
+});
+require("node:fs").readSync(0, Buffer.alloc(1));
+try {
+  await console.write(Buffer.alloc(1024 * 1024, "a").toString(), Buffer.alloc(1024 * 1024, "b").toString());
+  console.error("resolved");
+} catch (e) {
+  console.error("caught " + e.code);
+}
+`,
+    ],
+    env: bunEnv,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  await proc.stdout.cancel();
+  proc.stdin.write("x");
+  await proc.stdin.end();
 
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("caught EPIPE\n");

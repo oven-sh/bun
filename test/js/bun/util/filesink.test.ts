@@ -1153,6 +1153,9 @@ it("start() with invalid options throws instead of silently ignoring them", asyn
 //
 // The child blocks in a synchronous read of stdin between its two writes, so no event-loop turn can tell the sink
 // about the hang-up first: the second write() is the one that finds out, with the first still pending.
+//
+// Not on Windows: a write to a pipe whose reader is alive is accepted whole there and returns its byte count, so
+// there is no pending promise for a later write to fail beside.
 it.skipIf(isWindows)("a write() that fails while another is pending rejects the pending promise once", async () => {
   await using proc = Bun.spawn({
     cmd: [

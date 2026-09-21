@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { config, toolchain } from "./config";
 import { ensureHostKey, guest } from "./guest";
+import { generateBootstrap } from "./host";
 import { fail, log } from "./shell";
 import { tart } from "./tart";
 
@@ -32,10 +33,13 @@ export async function bake({ base, ref }: BakeOptions): Promise<void> {
 
   const g = guest(ip);
   await g.push(join(import.meta.dir, "..", "guest", "bake.sh"), "/tmp/bake.sh");
+  // The guest has no bun yet, so the host generates its setup script.
+  log(`generate the toolchain script (${config.bun.repo}@${ref})`);
+  await g.push(await generateBootstrap(ref), "/tmp/bootstrap.sh");
 
-  log(`bootstrap toolchain in guest (${config.bun.repo}@${ref})`);
+  log("install the toolchain in the guest");
   const status = await g.run(
-    `/bin/bash -l /tmp/bake.sh ${config.bun.repo} ${ref} ${config.buildkiteAgent.version} '${toolchain.join(" ")}' 2>&1 | tee /tmp/bake.log; grep -qx BAKE_OK /tmp/bake.log`,
+    `/bin/bash -l /tmp/bake.sh ${config.buildkiteAgent.version} '${toolchain.join(" ")}' 2>&1 | tee /tmp/bake.log; grep -qx BAKE_OK /tmp/bake.log`,
   );
   if (status !== 0) fail(`bake failed in guest; ${image} untouched, ${staging} left running at ${ip} for inspection`);
 

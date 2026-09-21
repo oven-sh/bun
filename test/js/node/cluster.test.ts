@@ -1371,3 +1371,20 @@ if (cluster.isPrimary) {
   });
   expect(exitCode).toBe(0);
 }, 30_000);
+
+test.concurrent("require('cluster') does not throw when NODE_UNIQUE_ID is set after node:net was loaded", async () => {
+  // The worker setup only runs for a script file (process.argv[1]), not for -e.
+  using dir = tempDir("cluster-unique-id-late", {
+    "index.js": `require("node:net"); process.env.NODE_UNIQUE_ID = "1"; require("node:cluster"); console.log("loaded");`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "loaded\n", stderr: "" });
+  expect(exitCode).toBe(0);
+});

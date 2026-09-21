@@ -71,7 +71,7 @@ if (!existsSync(buildOptionsRs) || !existsSync(lolhtmlCargo) || !existsSync(argo
   if (run("bun", ["run", "build", "--configure-only"]).status !== 0) process.exit(1);
   if (
     (!existsSync(lolhtmlCargo) || !existsSync(argon2Cargo)) &&
-    run("ninja", ["-C", "build/debug", "clone-lolhtml", "clone-rust-argon2"]).status !== 0
+    run("bun", ["run", "build", "--target=clone-lolhtml", "--target=clone-rust-argon2"]).status !== 0
   ) {
     process.exit(1);
   }
@@ -80,8 +80,8 @@ if (!existsSync(buildOptionsRs) || !existsSync(lolhtmlCargo) || !existsSync(argo
   // produce a confusing workspace-resolution error.
   for (const [path, hint] of [
     [buildOptionsRs, "bun run build --configure-only"],
-    [lolhtmlCargo, "ninja -C build/debug clone-lolhtml"],
-    [argon2Cargo, "ninja -C build/debug clone-rust-argon2"],
+    [lolhtmlCargo, "bun run build --target=clone-lolhtml"],
+    [argon2Cargo, "bun run build --target=clone-rust-argon2"],
   ] as const) {
     if (!existsSync(path)) {
       console.error(`\x1b[31m[error]\x1b[0m ${path} still missing after setup — try: ${hint}`);

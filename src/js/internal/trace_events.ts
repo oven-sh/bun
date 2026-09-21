@@ -474,7 +474,7 @@ function installTimerInstrumentation() {
   globalThis.clearInterval = wrapClearFunction(globalThis.clearInterval);
 }
 
-function wrapTimerFunction(original, isInterval: boolean) {
+function wrapTimerFunction<T extends (...args: any[]) => any>(original: T, isInterval: boolean): T {
   function wrapped(callback, delay, ...args) {
     let span: { id: number; open: boolean } | null = null;
     if (typeof callback === "function" && isCategoryGroupEnabled(kAsyncHooksCat)) {
@@ -512,7 +512,7 @@ function wrapTimerFunction(original, isInterval: boolean) {
     const desc = Object.getOwnPropertyDescriptor(original, key);
     if (desc) Object.defineProperty(wrapped, key, desc);
   }
-  return wrapped;
+  return wrapped as T;
 }
 
 function wrapClearFunction(original) {

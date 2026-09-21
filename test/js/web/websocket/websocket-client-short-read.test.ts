@@ -645,42 +645,52 @@ describe("WebSocket frames in the same read as the 101", () => {
     }
   });
 
-  test("an open listener that waits synchronously for them", async () => {
-    using server = rawServer({ glued: textFrame("with the 101") });
+  // "split" sends the frame from inside the listener, so a read during the wait brings it.
+  test.each(["glued", "split"])(
+    "%s: an open listener that queues a microtask and then waits synchronously for the message",
+    async segmentation => {
+      const frames = textFrame("greeting");
+      using server = rawServer({ glued: segmentation === "glued" ? frames : new Uint8Array() });
 
-    const order: string[] = [];
-    const opened = Promise.withResolvers<void>();
-    const received = Promise.withResolvers<void>();
-    const ws = new globalThis.WebSocket(server.url);
-    rejectOnFailure(ws, opened, received);
-    ws.addEventListener("open", () => {
-      order.push("open");
-      // Nothing else arrives on the socket. Without the cap, a client that holds the message back hangs here.
-      const { promise: cap, resolve: giveUp } = Promise.withResolvers<void>();
-      const timer = setTimeout(giveUp, 2000);
+      const order: string[] = [];
+      const opened = Promise.withResolvers<void>();
+      const received = Promise.withResolvers<void>();
+      const ws = new globalThis.WebSocket(server.url);
+      rejectOnFailure(ws, opened, received);
+      ws.addEventListener("open", () => {
+        order.push("open");
+        queueMicrotask(() => order.push("microtask from open"));
+        if (segmentation === "split") {
+          server.peer().write(frames);
+          server.peer().flush();
+        }
+        // Without the cap, a client that holds the message back hangs here.
+        const { promise: cap, resolve: giveUp } = Promise.withResolvers<void>();
+        const timer = setTimeout(giveUp, 2000);
+        try {
+          // Ticks the event loop until the message is dispatched.
+          expect(Promise.race([received.promise, cap])).resolves.toBeUndefined();
+          order.push("open returns");
+          opened.resolve();
+        } catch (error) {
+          opened.reject(error);
+        } finally {
+          clearTimeout(timer);
+        }
+      });
+      ws.addEventListener("message", event => {
+        order.push(`message ${event.data}`);
+        received.resolve();
+      });
+
       try {
-        // Ticks the event loop until the message is dispatched.
-        expect(Promise.race([received.promise, cap])).resolves.toBeUndefined();
-        order.push("open returns");
-        opened.resolve();
-      } catch (error) {
-        opened.reject(error);
+        await opened.promise;
+        expect(order).toEqual(["open", "microtask from open", "message greeting", "open returns"]);
       } finally {
-        clearTimeout(timer);
+        ws.close();
       }
-    });
-    ws.addEventListener("message", event => {
-      order.push(`message ${event.data}`);
-      received.resolve();
-    });
-
-    try {
-      await opened.promise;
-      expect(order).toEqual(["open", "message with the 101", "open returns"]);
-    } finally {
-      ws.close();
-    }
-  });
+    },
+  );
 
   // The nested event loop can see the end of the stream before the open listener returns.
   describe("an open listener that ends the peer and spins the event loop", () => {

@@ -104,7 +104,7 @@ pub struct WebSocket<const SSL: bool> {
     pub(crate) payload_length_frame_len: Cell<u8>,
 
     /// Handshake overflow (bytes the upgrade client read past the 101), until parsed.
-    initial_data: Cell<Option<Vec<u8>>>,
+    initial_data: JsCell<Option<Vec<u8>>>,
     pub(crate) deflate: RefCell<Option<Box<WebSocketDeflate>>>,
 
     /// Track if current message is compressed
@@ -543,7 +543,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     /// Returns whether the handshake overflow was still pending. The caller holds a ref guard.
     fn parse_initial_data(&self) -> bool {
-        let Some(initial_data) = self.initial_data.take() else {
+        let Some(initial_data) = self.initial_data.replace(None) else {
             return false;
         };
         // For tunnel mode, tcp is detached but connection is still active through the tunnel
@@ -556,7 +556,12 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     /// Called through C++: after the microtask checkpoint that follows `open`, or from a task if `open` spins the event loop.
     pub(crate) fn deliver_initial_data(this: ThisPtr<Self>) {
+        if this.initial_data.get().is_none() {
+            return;
+        }
         let _guard = RefPtr::from_this(this);
+        // From the task, `open` is still on the stack with its microtasks queued: they come first.
+        microtask_checkpoint();
         this.parse_initial_data();
     }
 
@@ -1430,7 +1435,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             header_fragment: Cell::new(None),
             payload_length_frame_bytes: Cell::new([0u8; 8]),
             payload_length_frame_len: Cell::new(0),
-            initial_data: Cell::new(None),
+            initial_data: JsCell::new(None),
             deflate: RefCell::new(
                 deflate_params.and_then(|params| WebSocketDeflate::init(*params).ok()),
             ),
@@ -1609,6 +1614,12 @@ impl<const SSL: bool> Drop for WebSocket<SSL> {
         self.deflate.replace(None);
         bun_core::scoped_log!(alloc, "destroy({}) = {:p}", Self::ALLOC_TYPE_NAME, self);
     }
+}
+
+fn microtask_checkpoint() {
+    let _ = jsc::virtual_machine::VirtualMachine::get()
+        .event_loop_mut()
+        .drain_microtasks();
 }
 
 /// Transcode a close reason to UTF-8 into `buf`; `None` when it exceeds `MAX_CLOSE_REASON`.

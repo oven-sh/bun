@@ -144,6 +144,14 @@ jobs:
           components: rustc-dev llvm-tools-preview
           ninja-targets: codegen clone-lolhtml clone-rust-argon2
 
+      - name: Add the Windows targets
+        # `unused_pub` says an item is unused when no unit of the run names it.
+        # A run that only compiles the host never sees the `#[cfg(windows)]`
+        # callers, so a helper with only Windows users is reported as dead.
+        # Checking the Windows triples beside the host lets a use on either
+        # count. `cargo check` needs each triple's std and no linker.
+        run: rustup target add --toolchain "$MORDANT_TOOLCHAIN" x86_64-pc-windows-msvc aarch64-pc-windows-msvc
+
       - name: Restore the mordant binaries
         # cargo-mordant and mordant-driver are a pure function of the pinned
         # revision and the nightly they link. What remains uncached is
@@ -179,7 +187,14 @@ jobs:
           MORDANT_RUSTFLAGS: "-A unknown_lints"
         run: |
           rm -f target/mordant/over-baseline.txt
-          cargo +"$MORDANT_TOOLCHAIN" mordant --workspace --keep-going
+          # The host is named too: with any `--target`, cargo checks only the
+          # triples named. Every rustc process weighs its own findings against
+          # the baseline, so a file compiled under three triples is counted
+          # against its recorded count three separate times, not summed.
+          cargo +"$MORDANT_TOOLCHAIN" mordant --workspace --keep-going \
+            --target x86_64-unknown-linux-gnu \
+            --target x86_64-pc-windows-msvc \
+            --target aarch64-pc-windows-msvc
 
       - name: Fail on findings over the baseline
         # In baseline mode mordant reports findings over mordant-baseline.toml

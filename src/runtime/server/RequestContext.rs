@@ -26,14 +26,14 @@ use crate::webcore::{
 ///
 ///    If it did, it would *overwrite* the user data context pointer (this
 ///    is what it did before), causing segfaults.
-pub struct AdditionalOnAbortCallback {
+pub(crate) struct AdditionalOnAbortCallback {
     pub cb: fn(*mut c_void),
     pub(crate) data: NonNull<c_void>,
     pub(crate) deref_fn: fn(*mut c_void),
 }
 
 impl AdditionalOnAbortCallback {
-    pub fn deref(&self) {
+    pub(crate) fn deref(&self) {
         (self.deref_fn)(self.data.as_ptr());
     }
 }
@@ -54,13 +54,13 @@ impl AdditionalOnAbortCallback {
 // chunking, a response never owns the connection (no `Connection: close`,
 // no `Transfer-Encoding`, no upgrade), and the response handle stays valid
 // after `end()` until its `onAborted` fires to say the stream is gone.
-pub type Req<const SSL_ENABLED: bool, const MUX: bool> = c_void;
+pub(crate) type Req<const SSL_ENABLED: bool, const MUX: bool> = c_void;
 
 /// Back-reference to a stack-local "should this RequestContext defer its
 /// deinit until the JS callback returns" flag. The dispatching frame owns the
 /// `Cell<bool>`; `RequestContext` stores a `BackRef` to it (cleared before the
 /// frame unwinds), so reads/writes are safe `Cell` ops — no raw `*mut bool`.
-pub type DeferDeinitFlag = bun_ptr::BackRef<core::cell::Cell<bool>>;
+pub(crate) type DeferDeinitFlag = bun_ptr::BackRef<core::cell::Cell<bool>>;
 
 pub(crate) type ResponseStream<const SSL_ENABLED: bool> =
     crate::webcore::streams::HTTPServerWritable<SSL_ENABLED>;
@@ -77,7 +77,7 @@ const REQUEST_CONTEXT_POOL_CAPACITY: usize = if bun_alloc::heap_breakdown::ENABL
     2048
 };
 
-pub type RequestContextStackAllocator<
+pub(crate) type RequestContextStackAllocator<
     ThisServer,
     const SSL: bool,
     const DBG: bool,
@@ -115,7 +115,7 @@ impl ResponseRoot {
 /// `align(16)`: `NativePromiseContext`'s deferred-deref task packs a 4-bit
 /// type tag into the low bits of a pointer to this.
 #[repr(align(16))]
-pub struct RequestContext<
+pub(crate) struct RequestContext<
     ThisServer,
     const SSL_ENABLED: bool,
     const DEBUG_MODE: bool,
@@ -475,7 +475,7 @@ macro_rules! stream_log { ($($t:tt)*) => { bun_core::scoped_log!(ReadableStream,
 ///
 /// NOTE (layering): expressed as a trait (not inherent consts) so
 /// downstream `where`-clauses that already name it keep type-checking.
-pub trait RequestContextHostFns {
+pub(crate) trait RequestContextHostFns {
     const ON_RESOLVE: bun_jsc::JSHostFn;
     const ON_REJECT: bun_jsc::JSHostFn;
     const ON_RESOLVE_STREAM: bun_jsc::JSHostFn;
@@ -996,7 +996,7 @@ where
         }
     }
 
-    pub fn deref(&self) {
+    pub(crate) fn deref(&self) {
         let ref_count = self.ref_count.get();
         stream_log!("deref {} -> {}", ref_count, ref_count - 1);
         debug_assert!(ref_count > 0);
@@ -1007,7 +1007,7 @@ where
         }
     }
 
-    pub fn ref_(&self) {
+    pub(crate) fn ref_(&self) {
         let ref_count = self.ref_count.get();
         stream_log!("ref {} -> {}", ref_count, ref_count + 1);
         self.ref_count.set(ref_count + 1);
@@ -4469,22 +4469,22 @@ macro_rules! request_ctx_exports {
         // pins the link name.
         #[unsafe(no_mangle)]
         #[bun_jsc::host_call]
-        pub fn $on_resolve(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
+        pub(crate) fn $on_resolve(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
             host_on_resolve::<$srv, $ssl, $dbg, $mux>(g, f)
         }
         #[unsafe(no_mangle)]
         #[bun_jsc::host_call]
-        pub fn $on_reject(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
+        pub(crate) fn $on_reject(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
             host_on_reject::<$srv, $ssl, $dbg, $mux>(g, f)
         }
         #[unsafe(no_mangle)]
         #[bun_jsc::host_call]
-        pub fn $on_resolve_stream(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
+        pub(crate) fn $on_resolve_stream(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
             host_on_resolve_stream::<$srv, $ssl, $dbg, $mux>(g, f)
         }
         #[unsafe(no_mangle)]
         #[bun_jsc::host_call]
-        pub fn $on_reject_stream(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
+        pub(crate) fn $on_reject_stream(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
             host_on_reject_stream::<$srv, $ssl, $dbg, $mux>(g, f)
         }
     )*
@@ -4619,7 +4619,7 @@ where
 // for file-blob bodies; the actual fd/socket bookkeeping lives in
 // `FileResponseStream` now.
 #[derive(Default, Clone, Copy)]
-pub struct SendfileContext {
+pub(crate) struct SendfileContext {
     pub(crate) remain: BlobSizeType,
     pub offset: BlobSizeType,
     /// When non-zero, the Content-Range total (`/{total}` instead of `/*`).
@@ -4659,16 +4659,16 @@ bitflags::bitflags! {
 
 #[repr(transparent)]
 #[derive(Default)]
-pub struct Flags<const DEBUG_MODE: bool>(Cell<FlagsBits>);
+pub(crate) struct Flags<const DEBUG_MODE: bool>(Cell<FlagsBits>);
 
 macro_rules! flag_accessor {
     ($get:ident, $set:ident, $bit:ident) => {
         #[inline]
-        pub fn $get(&self) -> bool {
+        pub(crate) fn $get(&self) -> bool {
             self.0.get().contains(FlagsBits::$bit)
         }
         #[inline]
-        pub fn $set(&self, v: bool) {
+        pub(crate) fn $set(&self, v: bool) {
             let mut bits = self.0.get();
             bits.set(FlagsBits::$bit, v);
             self.0.set(bits);

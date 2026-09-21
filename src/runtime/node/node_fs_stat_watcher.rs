@@ -46,7 +46,7 @@ fn stat_to_js_stats(
 
 /// This is a singleton struct that contains the timer used to schedule re-stat calls.
 #[derive(bun_ptr::ThreadSafeRefCounted)]
-pub struct StatWatcherScheduler {
+pub(crate) struct StatWatcherScheduler {
     current_interval: AtomicI32,
     /// Set by `timer_callback` immediately before scheduling `work_pool_callback`
     /// on the thread pool, cleared by `work_pool_callback` once it has finished
@@ -105,7 +105,7 @@ impl StatWatcherScheduler {
     // opaque-token forwarding.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[inline]
-    pub fn ref_(this: *mut Self) {
+    pub(crate) fn ref_(this: *mut Self) {
         // SAFETY: per fn contract.
         unsafe { ThreadSafeRefCount::<Self>::ref_(this) };
     }
@@ -117,7 +117,7 @@ impl StatWatcherScheduler {
     // opaque-token forwarding.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[inline]
-    pub fn deref(this: *mut Self) {
+    pub(crate) fn deref(this: *mut Self) {
         // SAFETY: per fn contract.
         unsafe { ThreadSafeRefCount::<Self>::deref(this) };
     }
@@ -431,7 +431,7 @@ impl StatWatcherScheduler {
 // JS-thread-only. Read-only-after-construction fields stay bare.
 #[bun_jsc::JsClass(no_constructor)]
 #[derive(bun_ptr::ThreadSafeRefCounted)]
-pub struct StatWatcher {
+pub(crate) struct StatWatcher {
     pub(crate) next: bun_threading::Link<StatWatcher>, // INTRUSIVE link for UnboundedQueue
 
     /// JS-thread uses only.
@@ -911,7 +911,7 @@ fn restat_impl(path: &ZStr) -> bun_sys::Maybe<PosixStat> {
     bun_sys::stat(path).map(|r| PosixStat::init(&r))
 }
 
-pub struct Arguments {
+pub(crate) struct Arguments {
     pub path: PathLike<'static>,
     pub(crate) listener: JSValue,
 
@@ -927,7 +927,7 @@ pub struct Arguments {
 }
 
 impl Arguments {
-    pub fn from_js(
+    pub(crate) fn from_js(
         cx: &bun_jsc::JsThread<'_>,
         arguments: &mut ArgumentsSlice,
     ) -> JsResult<Arguments> {

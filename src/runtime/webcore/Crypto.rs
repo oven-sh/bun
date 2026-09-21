@@ -10,7 +10,7 @@ use crate::node::Encoding;
 // alias block.
 #[bun_jsc::JsClass]
 #[derive(Default)]
-pub struct Crypto {}
+pub(crate) struct Crypto {}
 
 impl Crypto {
     #[bun_jsc::host_fn(method)]

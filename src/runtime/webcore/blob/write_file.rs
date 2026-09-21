@@ -13,11 +13,9 @@ use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, SystemError};
 use bun_sys::{self as sys, Fd};
 use bun_threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask};
 
-use crate::webcore::blob::{
-    self, Blob, FileOpener, MkdirpTarget, Retry, SizeType, mkdir_if_not_exists,
-};
+use crate::webcore::blob::{self, Blob, FileOpener, SizeType};
 #[cfg(not(windows))]
-use crate::webcore::blob::{ClosingState, FileCloser};
+use crate::webcore::blob::{ClosingState, FileCloser, MkdirpTarget, Retry, mkdir_if_not_exists};
 use crate::webcore::body;
 
 bun_output::declare_scope!(WriteFile, hidden);
@@ -36,16 +34,16 @@ pub(crate) enum WriteStep {
     Failed,
 }
 
-pub enum WriteFileResultType {
+pub(crate) enum WriteFileResultType {
     Result(SizeType),
     Err(Box<SystemError>),
 }
 
-pub type WriteFileOnWriteFileCallback =
+pub(crate) type WriteFileOnWriteFileCallback =
     fn(ctx: *mut c_void, count: WriteFileResultType) -> jsc::JsResult<()>;
 
 /// The completion token a `WriteFile` keeps across its async I/O.
-pub type WriteFileTask = bun_jsc::Completion<WriteFile>;
+pub(crate) type WriteFileTask = bun_jsc::Completion<WriteFile>;
 
 // SAFETY: the two blobs are native values holding store refs (atomic counts);
 // io-loop registration state and an opaque completion ctx that only the
@@ -86,12 +84,17 @@ impl bun_jsc::JobContext for WriteFile {
 impl WriteFile {
     /// JS thread: hand a prepared `WriteFile` to the work pool (the job is
     /// its one heap allocation).
-    pub fn schedule(this: WriteFile, promise: Box<WriteFilePromise>, cx: &bun_jsc::JsThread<'_>) {
+    #[cfg(not(windows))]
+    pub(crate) fn schedule(
+        this: WriteFile,
+        promise: Box<WriteFilePromise>,
+        cx: &bun_jsc::JsThread<'_>,
+    ) {
         bun_jsc::Job::<WriteFile>::schedule(cx, this, promise);
     }
 }
 
-pub struct WriteFile {
+pub(crate) struct WriteFile {
     pub(crate) file_blob: Blob,
     #[cfg(not(windows))]
     pub(crate) bytes_blob: Blob,
@@ -113,6 +116,7 @@ pub struct WriteFile {
     #[cfg(not(windows))]
     pub(crate) could_block: bool,
     pub(crate) close_after_io: bool,
+    #[cfg(not(windows))]
     pub(crate) mkdirp_if_not_exists: bool,
 }
 
@@ -150,6 +154,7 @@ impl FileOpener for WriteFile {
             .as_file()
             .pathlike
     }
+    #[cfg(not(windows))]
     fn try_mkdirp(
         &mut self,
         err: bun_sys::Error,
@@ -176,6 +181,7 @@ impl FileOpener for WriteFile {
     }
 }
 
+#[cfg(not(windows))]
 impl MkdirpTarget for WriteFile {
     fn mkdirp_if_not_exists(&self) -> bool {
         self.mkdirp_if_not_exists
@@ -200,7 +206,7 @@ impl WriteFile {
     #[cfg(not(windows))]
     pub(crate) const IO_TAG: io::Tag = io::Tag::WriteFile;
 
-    pub fn on_ready(&mut self) {
+    pub(crate) fn on_ready(&mut self) {
         bun_output::scoped_log!(WriteFile, "WriteFile.onReady()");
         #[cfg(not(windows))]
         if !self.io_parking.fire() {
@@ -1184,7 +1190,7 @@ mod windows_impl {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct WriteFilePromise {
+pub(crate) struct WriteFilePromise {
     pub(crate) promise: jsc::JSPromiseStrong,
     pub global_this: *const JSGlobalObject,
 }
@@ -1233,7 +1239,7 @@ impl WriteFilePromise {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct WriteFileWaitFromLockedValueTask {
+pub(crate) struct WriteFileWaitFromLockedValueTask {
     pub(crate) file_blob: Blob,
     /// The context of the script that asked for the write.
     pub(crate) context: bun_jsc::ContextId,

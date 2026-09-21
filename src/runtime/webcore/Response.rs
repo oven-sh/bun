@@ -21,7 +21,7 @@ use super::{FetchHeaders, ReadableStream, Request};
 // Codegen (`generated_classes.rs`) re-exports `Blob` from
 // `crate::webcore::response` because the `.classes.ts` source path is
 // `bun.jsc.WebCore.response.Blob`. Keep this `pub use` so that resolves.
-pub use super::blob::Blob;
+pub(crate) use super::blob::Blob;
 use bun_ptr::weak_ptr::WeakPtrData;
 
 /// RAII handle to a C++-owned `WebCore::FetchHeaders`.
@@ -34,7 +34,7 @@ use bun_ptr::weak_ptr::WeakPtrData;
 /// exposes is `clone_this()`, which deep-copies a fresh `FetchHeaders` on the
 /// C++ side. Transferring ownership is by-move.
 #[repr(transparent)]
-pub struct HeadersRef(NonNull<FetchHeaders>);
+pub(crate) struct HeadersRef(NonNull<FetchHeaders>);
 
 impl HeadersRef {
     /// Adopt a freshly-created `FetchHeaders*` (refcount already 1).
@@ -171,21 +171,21 @@ impl Drop for BodyAbortListener {
 
 // `jsc.Codegen.JSResponse` — the real bindings, emitted by
 // `js_class_module!` in `bun_jsc::generated`.
-pub mod js {
-    pub use bun_jsc::generated::JSResponse::*;
+pub(crate) mod js {
+    pub(crate) use bun_jsc::generated::JSResponse::*;
 }
 // NOTE: toJS is overridden below.
 // Typed re-exports. The `js::` module erases the payload to `*mut ()`
 // (Response is defined above the `bun_jsc` crate, so `js_class_module!`
 // can't name it); cast at this boundary.
 #[inline]
-pub fn from_js(value: JSValue) -> Option<*mut Response> {
+pub(crate) fn from_js(value: JSValue) -> Option<*mut Response> {
     js::from_js(value).map(<*mut ()>::cast::<Response>)
 }
 
 /// [`from_js`] as a shared borrow; `value` must stay rooted while it is used.
 #[inline]
-pub fn from_js_ref(value: JSValue) -> Option<bun_ptr::ParentRef<Response>> {
+pub(crate) fn from_js_ref(value: JSValue) -> Option<bun_ptr::ParentRef<Response>> {
     from_js(value)
         .and_then(core::ptr::NonNull::new)
         .map(bun_ptr::ParentRef::from)
@@ -212,7 +212,7 @@ bun_jsc::impl_js_class_via_generated!(Response => bun_jsc::generated::JSResponse
 #[repr(C)]
 #[derive(bun_ptr::CellRefCounted)]
 #[ref_count(destroy = Response::destroy)]
-pub struct Response {
+pub(crate) struct Response {
     body: JsCell<Body>,
     init: JsCell<Init>,
     url: JsCell<BunString>,
@@ -467,7 +467,7 @@ impl Response {
         <Self as BodyMixin>::check_body_stream_ref(self, global_object)
     }
 
-    pub fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
+    pub(crate) fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
         self.calculate_estimated_byte_size();
         // `bun_jsc::generated::JSResponse::to_js` ⇒ `Response__create` (C++
         // shim). Payload type is erased (`*mut ()`) at the bun_jsc tier.
@@ -853,7 +853,7 @@ impl Response {
         }
     }
 
-    pub fn finalize(&self) {
+    pub(crate) fn finalize(&self) {
         self.js_ref.with_mut(JsRef::finalize);
     }
 
@@ -1195,7 +1195,7 @@ impl Response {
 // syntax (`Init { status_code: x, ..Default::default() }`) and partial moves
 // (e.g. Request::construct_into reading `response_init.headers`) keep working;
 // the fields' own drop glue releases `headers` and `status_text`.
-pub struct Init {
+pub(crate) struct Init {
     pub(crate) headers: Option<HeadersRef>,
     pub(crate) status_code: u16,
     pub(crate) status_text: BunString,

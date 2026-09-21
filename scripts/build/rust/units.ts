@@ -453,7 +453,7 @@ function rustcUnitManifest(ctx: ManifestContext, unit: RustUnit): RustcUnitManif
   const p = unit.profile;
   if (p.opt_level !== "0") args.push("-C", `opt-level=${p.opt_level}`);
   if (p.panic !== "unwind") args.push("-C", `panic=${p.panic}`);
-  args.push(...ltoArgs(unit));
+  args.push(...ltoArgs(unit, ctx.graph.root));
   if (p.codegen_backend) args.push("-Z", `codegen-backend=${p.codegen_backend}`);
   if (p.codegen_units !== null) args.push("-C", `codegen-units=${p.codegen_units}`);
   const debuginfo = debuginfoArg(p.debuginfo);
@@ -686,10 +686,15 @@ export function requiresUpstreamObjects(unit: RustUnit): boolean {
  * cargo `core::compiler::lto::generate`: with the profile's `lto` unset (`false`) every unit gets
  * `-C embed-bitcode=no` (object code only, no wasted bitcode); `"off"` also says `-C lto=off`; with
  * `thin`/`fat`/`true` the target rlibs carry only bitcode for the linker plugin (`-C linker-plugin-lto`)
- * and a bin root runs the LTO (`-C lto[=…]`); a library root has nothing to run it, so its graph's bitcode is
- * the final link's to optimise. Host units are object-only in every case.
+ * and a bin root runs the LTO (`-C lto[=…]`). Host units are object-only in every case.
+ *
+ * A library root has no rustc to run the LTO: the graph's bitcode is the final link's to optimise, and which LTO
+ * the linker runs is written in each module. `-C linker-plugin-lto` alone writes ThinLTO bitcode; with
+ * `-C lto=fat` beside it rustc writes the module flag `ThinLTO = 0`, and lld merges every such module into one
+ * and runs the full pipeline over it: what rustc's fat LTO did when it linked the crates itself. So under a
+ * library root the libraries carry the profile's `fat` themselves.
  */
-function ltoArgs(unit: RustUnit): string[] {
+function ltoArgs(unit: RustUnit, root: RustUnit): string[] {
   // Host units (build scripts, proc-macros, their deps) are object-only whatever the profile says.
   if (unit.platform === "host") return ["-C", "embed-bitcode=no"];
   const lto = unit.profile.lto;
@@ -697,6 +702,7 @@ function ltoArgs(unit: RustUnit): string[] {
   if (lto === "off") return ["-C", "lto=off", "-C", "embed-bitcode=no"];
   // thin | fat | true
   if (unit.kind === "bin") return lto === "true" ? ["-C", "lto"] : ["-C", `lto=${lto}`];
+  if (root.kind === "lib" && lto !== "thin") return ["-C", "lto=fat", "-C", "linker-plugin-lto"];
   return ["-C", "linker-plugin-lto"];
 }
 

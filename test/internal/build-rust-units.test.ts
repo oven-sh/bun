@@ -481,6 +481,32 @@ describe("buildRustGraph + unitManifest", () => {
     expect(linkedRlibs(unwind).map(u => u.crateName)).toEqual(["my_root", "std", "panic_unwind"]);
   });
 
+  test("under a library root the libraries carry the profile's LTO themselves: nothing else will run it", () => {
+    const lib = (lto: string): UnitGraphUnit => ({ ...unit(registry, "lib", []), profile: { ...profile, lto } });
+    const ltoFlags = (lto: string, root: "lib" | "bin") => {
+      const base = planWith([]);
+      const rootUnit = {
+        ...unit(local, root, [{ index: 0, extern_crate_name: "dep_a", public: false, noprelude: false }]),
+        profile: { ...profile, lto },
+      };
+      const graph = buildRustGraph(
+        { ...base, unitGraph: { version: 1, units: [lib(lto), rootUnit], roots: [1] } },
+        "/build/rust-target",
+      );
+      const { args } = unitManifest(context(graph), graph.units[0]!) as { args: string[] };
+      return args.filter((arg, i) => /^(lto|linker-plugin-lto|embed-bitcode)/.test(arg) && args[i - 1] === "-C");
+    };
+    // A bin root runs the LTO in rustc (cargo's rule): its libraries only have to carry bitcode.
+    expect(ltoFlags("fat", "bin")).toEqual(["linker-plugin-lto"]);
+    // A library root has no rustc to run it. `-C lto=fat` makes the bitcode say `ThinLTO = 0`, and the linker then
+    // merges every such module and runs the full pipeline, as rustc's fat LTO did.
+    expect(ltoFlags("fat", "lib")).toEqual(["lto=fat", "linker-plugin-lto"]);
+    expect(ltoFlags("true", "lib")).toEqual(["lto=fat", "linker-plugin-lto"]);
+    expect(ltoFlags("thin", "lib")).toEqual(["linker-plugin-lto"]);
+    expect(ltoFlags("off", "lib")).toEqual(["lto=off", "embed-bitcode=no"]);
+    expect(ltoFlags("false", "lib")).toEqual(["embed-bitcode=no"]);
+  });
+
   test("target rustflags change where an artifact is written but not how its symbols are mangled", () => {
     const plain = buildRustGraph(planWith([]), "/build/rust-target/shim").units[0];
     const flagged = buildRustGraph(planWith(["-Ctarget-cpu=native"]), "/build/rust-target/shim").units[0];

@@ -1501,6 +1501,14 @@ export const linkerFlags: Flag[] = [
     desc: "Garbage-collect unused sections",
   },
   {
+    // The release objects carry the address-significance table (`-faddrsig` above, `-Cllvm-args=-addrsig` for
+    // Rust) that safe ICF reads. The Rust crates reach this link as one bitcode module each, so the copies of a
+    // generic function that several crates instantiate are only merged if the linker folds them: +0.75 MB without.
+    flag: "-Wl,--icf=safe",
+    when: c => c.freebsd && c.release,
+    desc: "Identical-code-folding (safe)",
+  },
+  {
     flag: c => [
       "-Wl,-Bsymbolic-functions",
       "-rdynamic",

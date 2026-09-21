@@ -116,6 +116,9 @@ pub struct ParseTask {
     pub(crate) package_version: ast::StoreStr,
     pub(crate) package_name: ast::StoreStr,
     pub(crate) is_entry_point: bool,
+    /// Diagnostic build only: ids in `crate::tripwire`, set when the task is scheduled.
+    pub(crate) tripwire_bundle: u64,
+    pub(crate) tripwire_task: u64,
 }
 
 pub enum ParseTaskStage {
@@ -137,6 +140,9 @@ pub(crate) struct Result {
     /// a function pointer and context pointer to free the
     /// returned source code by the plugin.
     pub(crate) external: ExternalFreeFunction,
+    /// Diagnostic build only: ids in `crate::tripwire` (0 = not tracked).
+    pub(crate) tripwire_bundle: u64,
+    pub(crate) tripwire_task: u64,
 }
 // `Result` lives in a bump arena (no Drop on free); boxing the large arm
 // would leak the heap allocation. The size diff is acceptable.
@@ -289,6 +295,8 @@ impl ParseTask {
             },
             stage: ParseTaskStage::NeedsSourceCode,
             is_entry_point: false,
+            tripwire_bundle: 0,
+            tripwire_task: 0,
         }
     }
 
@@ -329,6 +337,8 @@ impl Default for ParseTask {
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
+            tripwire_bundle: 0,
+            tripwire_task: 0,
         }
     }
 }
@@ -608,6 +618,8 @@ pub mod parse_worker {
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
+            tripwire_bundle: 0,
+            tripwire_task: 0,
         };
         let source = Source {
             // `bun_ast::Source.path` is `bun_paths::fs::Path<'static>`, distinct
@@ -2755,6 +2767,7 @@ pub mod parse_worker {
     }
 
     fn run_from_thread_pool_impl(this: &mut ParseTask) {
+        crate::tripwire::task_running(this.tripwire_bundle, this.tripwire_task);
         // SAFETY: ctx backref valid for the bundle pass (outlives this task).
         let ctx = unsafe { this.ctx() };
         let worker: &mut crate::Worker = crate::Worker::get(ctx);
@@ -2861,6 +2874,8 @@ pub mod parse_worker {
             // `ExternalFreeFunction`
             // doesn't derive `Copy`, so move it out (task is consumed here).
             external: core::mem::take(&mut this.external_free_function),
+            tripwire_bundle: this.tripwire_bundle,
+            tripwire_task: this.tripwire_task,
             watcher_data: match this.contents_or_fd {
                 ContentsOrFd::Fd { file, dir } => WatcherData {
                     fd: file,
@@ -2937,6 +2952,8 @@ pub mod parse_worker {
     }
 
     fn on_complete_mini(result: *mut Result, ctx: *mut BundleV2<'static>) {
+        // SAFETY: `result` is the live heap box from `run_from_thread_pool_impl`.
+        unsafe { crate::tripwire::task_completed((*result).tripwire_bundle, (*result).tripwire_task) };
         // SAFETY: callback contract — `result` was heap-allocated above; `ctx` is
         // the BACKREF stashed in `result.ctx`.
         BundleV2::on_parse_task_complete(unsafe { &mut *result }, unsafe { &mut *ctx });
@@ -2964,6 +2981,7 @@ pub mod parse_worker {
     pub(crate) unsafe fn on_complete(result: *mut Result) {
         // SAFETY: result allocated via heap::alloc above; uniquely owned here.
         let r = unsafe { &mut *result };
+        crate::tripwire::task_completed(r.tripwire_bundle, r.tripwire_task);
         let ctx = r.ctx;
         // SAFETY: `ctx` is a ParentRef<BundleV2> stored with write provenance
         // (`from_raw_mut` in `ParseTask::init`); the BundleV2 outlives the bundle

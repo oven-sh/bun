@@ -366,7 +366,20 @@ impl ThreadPool {
 
     // takes `*mut` so callers can pass either a
     // raw heap pointer (e.g. `load.parse_task`) or a `&mut` (auto-coerces).
+    #[track_caller]
     pub(crate) fn schedule(&self, parse_task: *mut ParseTask) {
+        // Diagnostic build only: register the task before the pool can run it.
+        // SAFETY: the task is live and exclusively owned until it is published below;
+        // `self.v2` is the live bundle that owns this pool (main thread).
+        unsafe {
+            let bundle = (*self.v2).tripwire_id;
+            (*parse_task).tripwire_bundle = bundle;
+            (*parse_task).tripwire_task = crate::tripwire::task_scheduled(
+                bundle,
+                (*parse_task).path.text,
+                core::panic::Location::caller(),
+            );
+        }
         // SAFETY: callers pass a live, exclusively-owned ParseTask (heap- or
         // arena-allocated raw pointer); see call sites in bundle_v2.rs.
         unsafe { self.schedule_with_options(parse_task, false) };

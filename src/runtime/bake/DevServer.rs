@@ -3097,13 +3097,20 @@ pub struct ResponseAndMethod {
 }
 
 impl DevServer {
+    #[track_caller]
     pub(crate) fn start_async_bundle(
         &mut self,
         entry_points: EntryPointList,
         had_reload_event: bool,
         timer: Instant,
     ) -> crate::Result<()> {
-        debug_assert!(self.current_bundle.is_none());
+        // Diagnostic build only: an overlap would drop the bundle in flight under its tasks.
+        if self.current_bundle.is_some() {
+            Output::panic(format_args!(
+                "TRIPWIRE: start_async_bundle called from {} while a bundle is in flight",
+                ::core::panic::Location::caller(),
+            ));
+        }
         debug_assert!(!entry_points.set.is_empty());
         self.log.clear_and_free();
 

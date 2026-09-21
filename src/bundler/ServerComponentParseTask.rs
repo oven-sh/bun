@@ -99,6 +99,8 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
         value,
         external: ExternalFreeFunction::NONE,
         watcher_data: WatcherData::NONE,
+        tripwire_bundle: 0,
+        tripwire_task: 0,
     });
     let result = bun_core::heap::into_raw(result);
 

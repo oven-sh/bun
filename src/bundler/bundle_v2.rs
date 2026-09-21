@@ -95,6 +95,8 @@ pub struct BundleV2<'a> {
     /// When this bundle's owning loop is a JS event loop (bake / dev server):
     /// how parse worker threads deliver work back to it.
     pub js_poster: Option<bun_event_loop::JsPoster>,
+    /// Diagnostic build only: id of this bundle in `crate::tripwire`.
+    pub tripwire_id: u64,
     /// Whose script the plugins' `onResolve` / `onLoad` callbacks continue: the context that called
     /// `Bun.build`. Once it has stopped a request is answered as cancelled instead of reaching them.
     pub plugin_context: bun_event_loop::ContextId,
@@ -2964,6 +2966,7 @@ pub mod bv2_impl {
                 // SAFETY: `event_loop`, when set, points at the caller's live loop
                 // (owning thread == this thread).
                 js_poster: event_loop.and_then(|l| unsafe { l.as_ref() }.js_poster()),
+                tripwire_id: crate::tripwire::bundle_created(),
                 plugin_context: bun_event_loop::ContextId::NONE,
                 dev_server: None,
                 file_map: None,
@@ -5166,6 +5169,7 @@ pub mod bv2_impl {
         }
 
         pub fn deinit_without_freeing_arena(&mut self) {
+            crate::tripwire::bundle_teardown(self.tripwire_id, self.graph.pending_items);
             {
                 // We do this first to make it harder for any dangling pointers to data to be used in there.
                 let on_parse_finalizers = core::mem::take(&mut self.finalizers);

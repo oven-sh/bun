@@ -7129,6 +7129,146 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
   });
 });
 
+// Node calls an fs callback from the event loop, then runs the process.nextTick
+// queue, then the microtasks.
+describe("a process.nextTick queued by an fs callback runs before a microtask it queues", () => {
+  type Start = (dir: string, callback: () => void) => void;
+
+  // The first process.nextTick() of a process runs right after the microtask
+  // that queued it, which hides a callback that runs inside a microtask.
+  function tickQueueExists() {
+    return new Promise<void>(resolve => process.nextTick(resolve));
+  }
+
+  function withFd(name: string, flags: string, start: (fd: number, callback: () => void) => void): Start {
+    return (dir, callback) => {
+      const fd = openSync(join(dir, name), flags);
+      start(fd, () => {
+        closeSync(fd);
+        callback();
+      });
+    };
+  }
+
+  const cases: Array<[string, Start]> = [
+    ["access", (dir, cb) => fs.access(join(dir, "file.txt"), cb)],
+    ["appendFile", (dir, cb) => fs.appendFile(join(dir, "file.txt"), "x", cb)],
+    ["chmod", (dir, cb) => fs.chmod(join(dir, "file.txt"), 0o644, cb)],
+    ["close", (dir, cb) => fs.close(openSync(join(dir, "file.txt"), "r"), cb)],
+    ["copyFile", (dir, cb) => fs.copyFile(join(dir, "file.txt"), join(dir, "copy.txt"), cb)],
+    ["cp", (dir, cb) => fs.cp(join(dir, "file.txt"), join(dir, "cp.txt"), cb)],
+    ["exists", (dir, cb) => fs.exists(join(dir, "file.txt"), cb)],
+    ["exists (missing)", (dir, cb) => fs.exists(join(dir, "missing"), cb)],
+    ["fdatasync", withFd("file.txt", "r+", (fd, cb) => fs.fdatasync(fd, cb))],
+    ["fstat", withFd("file.txt", "r", (fd, cb) => fs.fstat(fd, cb))],
+    ["fsync", withFd("file.txt", "r+", (fd, cb) => fs.fsync(fd, cb))],
+    ["ftruncate", withFd("file.txt", "r+", (fd, cb) => fs.ftruncate(fd, 1, cb))],
+    ["futimes", withFd("file.txt", "r+", (fd, cb) => fs.futimes(fd, 1, 1, cb))],
+    ["lstat", (dir, cb) => fs.lstat(join(dir, "file.txt"), cb)],
+    ["lutimes", (dir, cb) => fs.lutimes(join(dir, "file.txt"), 1, 1, cb)],
+    ["mkdir", (dir, cb) => fs.mkdir(join(dir, "a", "b"), { recursive: true }, cb)],
+    ["mkdtemp", (dir, cb) => fs.mkdtemp(join(dir, "tmp-"), cb)],
+    [
+      "open",
+      (dir, cb) =>
+        fs.open(join(dir, "file.txt"), "r", (err, fd) => {
+          closeSync(fd);
+          cb();
+        }),
+    ],
+    ["read", withFd("file.txt", "r", (fd, cb) => fs.read(fd, Buffer.alloc(4), 0, 4, 0, cb))],
+    ["readv", withFd("file.txt", "r", (fd, cb) => fs.readv(fd, [Buffer.alloc(4)], 0, cb))],
+    ["readdir", (dir, cb) => fs.readdir(dir, cb)],
+    ["readdir (recursive)", (dir, cb) => fs.readdir(dir, { recursive: true }, cb)],
+    ["readFile", (dir, cb) => fs.readFile(join(dir, "file.txt"), cb)],
+    ["realpath", (dir, cb) => fs.realpath(join(dir, "file.txt"), cb)],
+    ["realpath.native", (dir, cb) => fs.realpath.native(join(dir, "file.txt"), cb)],
+    ["rename", (dir, cb) => fs.rename(join(dir, "file.txt"), join(dir, "renamed.txt"), cb)],
+    ["rm", (dir, cb) => fs.rm(join(dir, "file.txt"), cb)],
+    ["rmdir", (dir, cb) => fs.rmdir(join(dir, "empty"), cb)],
+    ["stat", (dir, cb) => fs.stat(join(dir, "file.txt"), cb)],
+    ["stat (missing)", (dir, cb) => fs.stat(join(dir, "missing"), cb)],
+    ["statfs", (dir, cb) => fs.statfs(dir, cb)],
+    ["truncate", (dir, cb) => fs.truncate(join(dir, "file.txt"), 1, cb)],
+    ["unlink", (dir, cb) => fs.unlink(join(dir, "file.txt"), cb)],
+    ["utimes", (dir, cb) => fs.utimes(join(dir, "file.txt"), 1, 1, cb)],
+    ["write", withFd("file.txt", "r+", (fd, cb) => fs.write(fd, Buffer.from("x"), 0, 1, 0, cb))],
+    ["write (string)", withFd("file.txt", "r+", (fd, cb) => fs.write(fd, "x", 0, "utf8", cb))],
+    ["writev", withFd("file.txt", "r+", (fd, cb) => fs.writev(fd, [Buffer.from("x")], 0, cb))],
+    ["writeFile", (dir, cb) => fs.writeFile(join(dir, "written.txt"), "x", cb)],
+    [
+      "Dir.read",
+      (dir, cb) => {
+        const handle = fs.opendirSync(dir);
+        handle.read(() => {
+          cb();
+          handle.close(() => {});
+        });
+      },
+    ],
+    ["Dir.close", (dir, cb) => fs.opendirSync(dir).close(cb)],
+  ];
+  if (!isWindows) {
+    cases.push(
+      ["link", (dir, cb) => fs.link(join(dir, "file.txt"), join(dir, "hardlink"), cb)],
+      ["readlink", (dir, cb) => fs.readlink(join(dir, "symlink"), cb)],
+      ["symlink", (dir, cb) => fs.symlink(join(dir, "file.txt"), join(dir, "symlink-2"), cb)],
+    );
+  }
+
+  it.each(cases)("%s", async (_name, start) => {
+    using dir = tempDir("fs-callback-order", { "file.txt": "hello", "empty": {} });
+    if (!isWindows) symlinkSync(join(String(dir), "file.txt"), join(String(dir), "symlink"));
+    await tickQueueExists();
+
+    const { promise, resolve } = Promise.withResolvers<string[]>();
+    const order: string[] = [];
+    const step = (name: string) => () => {
+      order.push(name);
+      if (order.length === 3) resolve(order);
+    };
+    start(String(dir), () => {
+      step("callback")();
+      process.nextTick(step("nextTick"));
+      queueMicrotask(step("microtask"));
+    });
+
+    expect(await promise).toEqual(["callback", "nextTick", "microtask"]);
+  });
+
+  it("and both run before the callback of the next operation", async () => {
+    using dir = tempDir("fs-callback-order", { "file.txt": "hello" });
+    await tickQueueExists();
+
+    const { promise, resolve } = Promise.withResolvers<string[]>();
+    const order: string[] = [];
+    let callbacks = 0;
+    for (let i = 0; i < 3; i++) {
+      fs.stat(join(String(dir), "file.txt"), () => {
+        const n = callbacks++;
+        order.push(`callback ${n}`);
+        process.nextTick(() => order.push(`nextTick ${n}`));
+        queueMicrotask(() => {
+          order.push(`microtask ${n}`);
+          if (n === 2) resolve(order);
+        });
+      });
+    }
+
+    expect(await promise).toEqual([
+      "callback 0",
+      "nextTick 0",
+      "microtask 0",
+      "callback 1",
+      "nextTick 1",
+      "microtask 1",
+      "callback 2",
+      "nextTick 2",
+      "microtask 2",
+    ]);
+  });
+});
+
 describe("fs.Utf8Stream", () => {
   // A write started from the reopen 'ready' listener is still in flight when the
   // reopen path announces 'drain'; the write's own completion is what must emit it.

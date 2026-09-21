@@ -18,6 +18,7 @@ export const interactive: boolean = isatty(2);
 
 const useColor = interactive && (globalThis.Bun?.enableANSIColors ?? true);
 
+export const bold = (s: string): string => (useColor ? `\x1b[1m${s}\x1b[22m` : s);
 export const dim = (s: string): string => (useColor ? `\x1b[2m${s}\x1b[22m` : s);
 export const cyan = (s: string): string => (useColor ? `\x1b[36m${s}\x1b[39m` : s);
 export const green = (s: string): string => (useColor ? `\x1b[32m${s}\x1b[39m` : s);

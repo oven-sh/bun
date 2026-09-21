@@ -160,6 +160,7 @@ function manifestIn(dir: string, over: Partial<RustcUnitManifest>): RustcUnitMan
     depfile: join(dir, "deps", "demo-0123.d.ninja"),
     buildScriptOutput: undefined,
     depBuildScriptOutputs: [],
+    phases: undefined,
     libraryPath: { variable: "LD_LIBRARY_PATH", prepend: [] },
     ...over,
   };
@@ -366,8 +367,8 @@ describe("buildRustGraph + unitManifest", () => {
     host: info(triple),
     target: info(triple),
   });
-  const context = (graph: ReturnType<typeof buildRustGraph>): ManifestContext => ({
-    cfg: { ci: false, debug: false, buildDir: "/build", host: { os: "windows" } } as Config,
+  const context = (graph: ReturnType<typeof buildRustGraph>, timeTrace = false): ManifestContext => ({
+    cfg: { ci: false, debug: false, buildDir: "/build", host: { os: "windows" }, timeTrace } as Config,
     graph,
     baseEnv: { BUN_CODEGEN_DIR: "/build/codegen" },
     linker: { host: "link.exe", target: "link.exe" },
@@ -437,6 +438,16 @@ describe("buildRustGraph + unitManifest", () => {
     expect(depManifest.rmetaNinjaName).toBe(join("rust-target/shim", triple, "deps", `libdep_a-${dep.hash}.rmeta`));
     expect(depManifest.linkArgSelectors).toEqual(["all"]);
     expect(depManifest.args).toEqual(DEP_ARGS(dep));
+  });
+
+  test("--time-trace=on has rustc report its passes, to a file beside the unit's output", () => {
+    const graph = buildRustGraph(planWith(["-Cpanic=immediate-abort"]), "/build/rust-target/shim");
+    const [dep] = graph.units;
+    expect((unitManifest(context(graph), dep) as RustcUnitManifest).phases).toBeUndefined();
+
+    const traced = unitManifest(context(graph, true), dep) as RustcUnitManifest;
+    expect(traced.args).toEqual([...DEP_ARGS(dep), "-Z", "time-passes", "-Z", "time-passes-format=json"]);
+    expect(traced.phases).toBe(`${dep.output}.phases.json`);
   });
 
   test("target rustflags change where an artifact is written but not how its symbols are mangled", () => {

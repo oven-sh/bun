@@ -29,7 +29,8 @@ import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { BuildError } from "../error.ts";
 import { writeIfChanged } from "../fs.ts";
 import { type BuildScriptOutput, envify } from "./cargo-env.ts";
-import type { RustcUnitManifest, UnitManifest } from "./units.ts";
+import type { Phase } from "../timings.ts";
+import type { RustcPhases, RustcUnitManifest, UnitManifest } from "./units.ts";
 
 // Guarded so the tests can import the pieces below without running a unit.
 if (process.argv[1] === import.meta.filename) {
@@ -171,6 +172,8 @@ function runRustc(unit: RustcUnitManifest): void {
         stampOutput(unit.binDestination);
       }
       writeDepfile(unit);
+      if (unit.phases !== undefined)
+        writeFileSync(unit.phases, JSON.stringify({ phases } satisfies RustcPhases) + "\n");
     }
     process.exit(status);
   };
@@ -179,6 +182,7 @@ function runRustc(unit: RustcUnitManifest): void {
   // writes a metadata artifact. A ninja that releases outputs early says so by exporting the edge's
   // `early_output_prefix`; any other ninja leaves the variable unset, and nothing is announced.
   const earlyOutputPrefix = process.env.NINJA_EARLY_OUTPUT_PREFIX || undefined;
+  const phases: Phase[] = [];
   const child = spawn(unit.rustc, spawnableArgv(unit, argv), {
     cwd: unit.cwd,
     env,
@@ -193,6 +197,11 @@ function runRustc(unit: RustcUnitManifest): void {
     while ((newline = pending.indexOf("\n")) >= 0) {
       const line = pending.slice(0, newline);
       pending = pending.slice(newline + 1);
+      const pass = unit.phases === undefined ? undefined : timePass(line);
+      if (pass !== undefined) {
+        phases.push(pass);
+        continue;
+      }
       if (!renderRustcMessage(line) || unit.rmeta === undefined) continue;
       // The .rmeta is complete: give it a current mtime (see stampOutput) and tell ninja, which starts the
       // dependents now instead of when this process exits.
@@ -208,6 +217,17 @@ function runRustc(unit: RustcUnitManifest): void {
     if (pending !== "") renderRustcMessage(pending);
     finish(exitStatus(status, signal));
   });
+}
+
+/**
+ * A line of `-Z time-passes -Z time-passes-format=json`: `time: {"pass":…,"time":<seconds>,…}`, printed as the pass
+ * ends. rustc gives the duration and no clock time, so the end is when the line arrived.
+ */
+function timePass(line: string): Phase | undefined {
+  if (!line.startsWith("time: {")) return undefined;
+  const { pass, time } = JSON.parse(line.slice("time: ".length)) as { pass: string; time: number };
+  const endMs = Date.now();
+  return { name: pass, startMs: endMs - time * 1000, endMs };
 }
 
 /** Print one line of rustc's `--error-format=json` stream the way rustc would have; true if it announces the metadata artifact. */

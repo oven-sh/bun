@@ -582,7 +582,7 @@ describe("spawn()", () => {
         }
       }
 
-      it("a socket accepted by a server", async () => {
+      it.concurrent("a socket accepted by a server", async () => {
         const handedOff = Promise.withResolvers<Awaited<ReturnType<typeof handOff>>>();
         const server = net.createServer(socket => handOff(socket).then(handedOff.resolve, handedOff.reject));
         server.listen(0, "127.0.0.1");
@@ -597,7 +597,7 @@ describe("spawn()", () => {
         }
       });
 
-      it("a socket connected to a server", async () => {
+      it.concurrent("a socket connected to a server", async () => {
         const server = net.createServer(peer => peer.end(payload));
         server.listen(0, "127.0.0.1");
         await once(server, "listening");
@@ -610,6 +610,31 @@ describe("spawn()", () => {
         } finally {
           server.close();
         }
+      });
+
+      // The stopped socket must not hold the event loop. Its peer never closes, so a parent that
+      // still reads it, or that only paused it, never exits. Not concurrent: bun:test kills the
+      // processes of a test that timed out only when the test is serial.
+      it("the parent exits on its own after the child", async () => {
+        const parentSource = `
+          const net = require("net");
+          const { spawn } = require("child_process");
+          const server = net.createServer(socket => {
+            const child = spawn("sh", ["-c", "exit 0"], { stdio: [socket, "inherit", "inherit"] });
+            child.on("close", code => console.log("child closed", code));
+            server.close();
+          });
+          server.listen(0, "127.0.0.1", () => net.connect(server.address().port, "127.0.0.1").unref());
+        `;
+        await using parent = Bun.spawn({
+          cmd: [bunExe(), "-e", parentSource],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "inherit",
+        });
+        const [stdout, exitCode] = await Promise.all([parent.stdout.text(), parent.exited]);
+        expect(stdout).toBe("child closed 0\n");
+        expect(exitCode).toBe(0);
       });
     });
 

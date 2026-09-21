@@ -271,7 +271,7 @@ impl Mv {
                 // Shouldn't happen — driven by batchedMoveTaskDone.
                 Yield::suspended()
             }
-            Tag::WaitingWriteErr => Yield::failed(),
+            Tag::WaitingWriteErr => Yield::suspended(),
             Tag::Done => Builtin::done(interp, cmd, 0),
             Tag::Err => Builtin::done(interp, cmd, 1),
         }
@@ -454,7 +454,7 @@ impl ShellMvBatchedTask {
         }
         // Moving one entry into a directory.
         if let Some(dir) = this.target_fd {
-            let mut buf = PathBuffer::uninit();
+            let mut buf = bun_paths::path_buffer_pool::get();
             if let Err(e) = Self::move_in_dir(
                 this.cwd,
                 dir,
@@ -651,7 +651,7 @@ impl ShellMvBatchedTask {
     }
 
     fn move_multiple_into_dir(&mut self) {
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         // `target_fd` is always Some when sources.len() > 1 — `next` rejected
         // the multi-source-into-non-directory case before scheduling.
         let dir = self.target_fd.expect("target_fd set for multi-source mv");
@@ -687,6 +687,10 @@ impl bun_event_loop::Taskable for ShellMvCheckTargetTask {
         // SAFETY: fn contract; the Mv state outlives the queue entry.
         unsafe { (*this).task.unref_unrun() }
     }
+    /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 impl bun_event_loop::Taskable for ShellMvBatchedTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellMvBatchedTask;
@@ -694,6 +698,10 @@ impl bun_event_loop::Taskable for ShellMvBatchedTask {
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: as above.
         unsafe { (*this).task.unref_unrun() }
+    }
+    /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 

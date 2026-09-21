@@ -80,16 +80,6 @@ pub struct ExecCfg {
     pub(crate) allow_fast_run_for_extensions: bool,
 }
 
-impl Default for ExecCfg {
-    fn default() -> Self {
-        Self {
-            bin_dirs_only: false,
-            log_errors: true,
-            allow_fast_run_for_extensions: true,
-        }
-    }
-}
-
 /// Per-caller knobs for [`RunCommand::configure_env_for_run`] and
 /// [`RunCommand::configure_env_for_run_without_linker`].
 #[derive(Clone, Copy)]
@@ -403,6 +393,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // in the meantime we don't need to free it.
         let envp = env.map.create_null_delimited_env_map()?;
 
+        #[cfg(windows)]
+        bun_spawn::ctrl_c::install();
         let spawn_result = match sync::spawn(&sync::Options {
             argv,
             argv0: Some(shell_bin.as_ptr().cast::<::core::ffi::c_char>()),
@@ -452,14 +444,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         match spawn_result.status {
             SpawnStatus::Exited(exit_code) => {
-                // `.signal` is a raw `u8` here; `signal_code()` range-checks
-                // 1..=31 (i.e. valid).
-                if let Some(sig) = spawn_result.status.signal_code() {
-                    if sig != bun_core::SignalCode::SIGINT && !silent {
+                if let Some(signal) = spawn_result.status.signal() {
+                    if signal != bun_sys::SignalCode::SIGINT && !silent {
                         pretty_errorln!(
                             "<r><red>error<r><d>:<r> script <b>\"{}\"<r> was terminated by signal {}<r>",
                             bstr::BStr::new(name),
-                            bun_sys::SignalCode(sig as u8).fmt(Output::enable_ansi_colors_stderr()),
+                            signal.fmt(Output::enable_ansi_colors_stderr()),
                         );
                         Output::flush();
 
@@ -470,8 +460,18 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                             bun_crash_handler::suppress_reporting();
                         }
 
-                        Global::raise_ignoring_panic_handler(sig);
+                        Global::raise_ignoring_panic_handler_raw(::core::ffi::c_int::from(
+                            signal.0,
+                        ));
                     }
+                }
+
+                // cmd.exe exits 0 after abandoning a line whose command was Ctrl+C'd.
+                #[cfg(windows)]
+                if exit_code.raw == bun_sys::windows::STATUS_CONTROL_C_EXIT
+                    || (bun_spawn::ctrl_c::take_received() && exit_code.raw == 0)
+                {
+                    bun_spawn::ctrl_c::exit_like_child();
                 }
 
                 if exit_code.code != 0 {
@@ -488,20 +488,15 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 }
             }
 
-            SpawnStatus::Signaled(_) => {
-                // Only the *print* is gated on a valid signal code;
-                // `suppress_reporting` + `raise_ignoring_panic_handler`
-                // run unconditionally.
-                let signal_code = spawn_result.status.signal_code();
-                if let Some(sig) = signal_code {
-                    if sig != bun_core::SignalCode::SIGINT && !silent {
-                        pretty_errorln!(
-                            "<r><red>error<r><d>:<r> script <b>\"{}\"<r> was terminated by signal {}<r>",
-                            bstr::BStr::new(name),
-                            bun_sys::SignalCode(sig as u8).fmt(Output::enable_ansi_colors_stderr()),
-                        );
-                        Output::flush();
-                    }
+            SpawnStatus::Signaled(raw_signal) => {
+                let signal = bun_sys::SignalCode(raw_signal);
+                if signal != bun_sys::SignalCode::SIGINT && !silent {
+                    pretty_errorln!(
+                        "<r><red>error<r><d>:<r> script <b>\"{}\"<r> was terminated by signal {}<r>",
+                        bstr::BStr::new(name),
+                        signal.fmt(Output::enable_ansi_colors_stderr()),
+                    );
+                    Output::flush();
                 }
 
                 if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get()
@@ -510,12 +505,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     bun_crash_handler::suppress_reporting();
                 }
 
-                if let Some(sig) = signal_code {
-                    Global::raise_ignoring_panic_handler(sig);
-                }
-                // `.signaled` always carries 1..=31 in practice; fallback only
-                // for type-totality.
-                Global::exit(1);
+                Global::raise_ignoring_panic_handler_raw(::core::ffi::c_int::from(raw_signal));
             }
 
             SpawnStatus::Err(ref err) => {
@@ -874,6 +864,14 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 Global::exit(1);
             }
 
+            // A request to an origin the environment proxies never dials it.
+            if VirtualMachine::get()
+                .env_loader()
+                .get_http_proxy_for(&url)
+                .is_some()
+            {
+                continue;
+            }
             bun_http::async_http::preconnect(url, false);
         }
     }
@@ -911,7 +909,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         mini.top_level_dir = Box::<[u8]>::from(top_level_dir);
 
         // `initAndRunFromFile`: read source then hand off to the interpreter.
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
         path_buf[..entry_path.len()].copy_from_slice(entry_path);
         path_buf[entry_path.len()] = 0;
         // SAFETY: NUL-terminated above; `path_buf` outlives the call.
@@ -948,7 +946,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // dispatch hooks (`jsc_hooks::install_jsc_hooks`) are installed by
         // `main.rs` before `Cli::start`, so `VirtualMachine::init` already sees
         // a populated `RuntimeHooks` table.
-        bun_jsc::initialize(ctx.runtime_options.eval.eval_and_print);
+        bun_jsc::initialize(bun_jsc::InitializeOptions {
+            eval_mode: ctx.runtime_options.eval.eval_and_print,
+            one_shot: bun_jsc::is_one_shot_eval_invocation(),
+            ..Default::default()
+        });
         bun_ast::initialize_store();
 
         let vm_ptr = VirtualMachine::init(VmInitOptions {
@@ -968,8 +970,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // hand the CLI's vectors over wholesale (process-lifetime, never freed).
         vm.preload = std::mem::take(&mut ctx.preloads);
         vm.argv = std::mem::take(&mut ctx.passthrough);
-        // `InitOptions` has no `store_fd` field, so set it on the resolver directly.
-        vm.transpiler.resolver.store_fd = ctx.debug.hot_reload != cli::command::HotReload::None;
         // `vm.dns_result_order` is a `u8` until the b2-cycle widens
         // it to `bun_dns::Order`; the enum is `#[repr(u8)]` so `as u8` is exact.
         vm.dns_result_order =
@@ -1025,7 +1025,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 runner_arena().alloc_slice_copy(cron_script.as_bytes());
 
             // entry_path must end with /[eval] for the transpiler to use eval_source
-            let mut cwd_buf = PathBuffer::uninit();
+            let mut cwd_buf = bun_paths::path_buffer_pool::get();
             let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
             let cwd_bytes = cwd.as_bytes();
             let mut eval_path: Vec<u8> = Vec::with_capacity(cwd_bytes.len() + EVAL_TRIGGER.len());
@@ -1065,7 +1065,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             if !tz.is_empty() {
                 let _ = vm
                     .global()
-                    .set_time_zone(&bun_jsc::zig_string::ZigString::init(tz));
+                    .set_time_zone(&bun_core::EncodedSlice::from_bytes(tz));
             }
         }
 
@@ -1116,8 +1116,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     ) -> crate::Result<()> {
         use bun_standalone_graph::StandaloneModuleGraph::Flags as GraphFlags;
 
-        bun_jsc::initialize(false);
+        // argv belongs to the compiled program, so a `-e` or `-p` in it is not ours.
+        bun_jsc::initialize(bun_jsc::InitializeOptions::default());
         bun_analytics::features::standalone_executable.fetch_add(1, Ordering::Relaxed);
+        if graph.flags.contains(GraphFlags::CROSS_COMPILED_BYTECODE) {
+            bun_analytics::features::cross_compiled_bytecode.fetch_add(1, Ordering::Relaxed);
+        }
         bun_ast::initialize_store();
 
         // Load bunfig.toml unless disabled by compile flags. Config loading
@@ -1160,6 +1164,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // SAFETY: `init_with_module_graph` returns the unique freshly-boxed VM
         // on this thread.
         let vm = unsafe { &mut *vm_ptr };
+        if graph.runtime_options.jit_policy > 1.0 {
+            vm.jsc_vm()
+                .set_startup_jit_deferral_scale(f64::from(graph.runtime_options.jit_policy));
+        }
 
         vm.preload = std::mem::take(&mut ctx.preloads);
         vm.argv = std::mem::take(&mut ctx.passthrough);
@@ -1455,8 +1463,12 @@ impl Run<'_> {
             Err(err) => entry_point_load_failed(vm, &err.into()),
         }
 
-        // don't run the GC if we don't actually need to
-        if vm.is_event_loop_alive() || vm.event_loop_ref().tick_concurrent_with_count() > 0 {
+        // Drop what transpiling and linking the entry graph left behind before settling into the event loop. A
+        // standalone executable has no transpiler garbage, and its unlinked code blocks came from the embedded bytecode
+        // cache — deleting them here only means decoding them again on first call — so leave its heap to the collector.
+        if vm.standalone_module_graph.is_none()
+            && (vm.is_event_loop_alive() || vm.event_loop_ref().tick_concurrent_with_count() > 0)
+        {
             vm.global().vm().release_weak_refs();
             // `bun_alloc::Arena` has no per-heap collect to run alongside this
             // GC; it would only be a memory-usage hint, not correctness.
@@ -1550,7 +1562,11 @@ impl Run<'_> {
         }
 
         vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
-        vm.global().handle_rejected_promises();
+        let _ = vm.global().handle_rejected_promises();
+        // The loop stopped on an uncaught error: Node's fatal-exception exit, not a drain.
+        if vm.unhandled_error_counter > 0 {
+            vm.exit_handler.requested = true;
+        }
         vm.on_exit();
 
         if ANY_UNHANDLED.load(Ordering::Relaxed) {
@@ -1620,6 +1636,7 @@ fn dump_build_error(vm: &mut VirtualMachine) {
 )]
 fn exit_with_unhandled_note(vm: &mut VirtualMachine) -> ! {
     vm.exit_handler.exit_code = 1;
+    vm.exit_handler.requested = true;
     vm.on_exit();
     if ANY_UNHANDLED.load(Ordering::Relaxed) {
         bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();
@@ -1741,8 +1758,8 @@ impl RunCommand {
         }
         #[cfg(windows)]
         {
-            let mut temp_path_buffer = WPathBuffer::uninit();
-            let mut target_path_buffer = PathBuffer::uninit();
+            let mut temp_path_buffer = bun_paths::w_path_buffer_pool::get();
+            let mut target_path_buffer = bun_paths::path_buffer_pool::get();
             // SAFETY: FFI Win32 `GetTempPathW`. `temp_path_buffer` is a valid
             // writable WCHAR[MAX_PATH+] buffer and `nBufferLength` is its
             // capacity in WCHARs; the call writes at most that many wide chars.
@@ -2068,6 +2085,10 @@ impl RunCommand {
         // in the meantime we don't need to free it.
         let envp = env.map.create_null_delimited_env_map()?;
 
+        // POSIX forwards signals inside `sync::spawn`; on Windows the child shares
+        // our console and gets Ctrl+C itself, we just have to outlive it.
+        #[cfg(windows)]
+        bun_spawn::ctrl_c::install();
         let spawn_result = match sync::spawn(&sync::Options {
             argv,
             argv0: Some(executable_z.as_ptr().cast::<c_char>()),
@@ -2141,26 +2162,20 @@ impl RunCommand {
                 Self::run_binary_generic_error(executable, silent, &err);
             }
             Ok(result) => {
-                let signal_code = result.status.signal_code();
                 match result.status {
                     // An error occurred after the process was spawned.
                     SpawnStatus::Err(err) => {
                         Self::run_binary_generic_error(executable, silent, &err);
                     }
 
-                    SpawnStatus::Signaled(signal) => {
-                        // The print is gated on a valid signal code (1..=31 ⇔
-                        // `signal_code.is_some()`); the re-raise is NOT — it
-                        // forwards the raw byte unconditionally so the parent
-                        // observes the real termination signal (incl. RT 32-64).
-                        if let Some(sc) = signal_code {
-                            if sc != bun_core::SignalCode::SIGINT && !silent {
-                                pretty_errorln!(
-                                    "<r><red>error<r>: Failed to run \"<b>{}<r>\" due to signal <b>{}<r>",
-                                    bstr::BStr::new(Self::basename_or_bun(executable)),
-                                    sc.name(),
-                                );
-                            }
+                    SpawnStatus::Signaled(raw_signal) => {
+                        let signal = bun_sys::SignalCode(raw_signal);
+                        if signal != bun_sys::SignalCode::SIGINT && !silent {
+                            pretty_errorln!(
+                                "<r><red>error<r>: Failed to run \"<b>{}<r>\" due to signal <b>{}<r>",
+                                bstr::BStr::new(Self::basename_or_bun(executable)),
+                                signal.fmt(Output::enable_ansi_colors_stderr()),
+                            );
                         }
 
                         if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN
@@ -2170,18 +2185,19 @@ impl RunCommand {
                             bun_crash_handler::suppress_reporting();
                         }
 
-                        Global::raise_ignoring_panic_handler_raw(::core::ffi::c_int::from(signal));
+                        Global::raise_ignoring_panic_handler_raw(::core::ffi::c_int::from(
+                            raw_signal,
+                        ));
                     }
 
                     SpawnStatus::Exited(exit_code) => {
                         // A process can be both signaled and exited.
-                        // Gated on a valid signal code (1..=31).
-                        if let Some(sc) = signal_code {
+                        if let Some(signal) = result.status.signal() {
                             if !silent {
                                 pretty_errorln!(
                                     "<r><red>error<r>: \"<b>{}<r>\" exited with signal <b>{}<r>",
                                     bstr::BStr::new(Self::basename_or_bun(executable)),
-                                    sc.name(),
+                                    signal.fmt(Output::enable_ansi_colors_stderr()),
                                 );
                             }
 
@@ -2192,7 +2208,14 @@ impl RunCommand {
                                 bun_crash_handler::suppress_reporting();
                             }
 
-                            Global::raise_ignoring_panic_handler(sc);
+                            Global::raise_ignoring_panic_handler_raw(::core::ffi::c_int::from(
+                                signal.0,
+                            ));
+                        }
+
+                        #[cfg(windows)]
+                        if exit_code.raw == bun_sys::windows::STATUS_CONTROL_C_EXIT {
+                            bun_spawn::ctrl_c::exit_like_child();
                         }
 
                         let code = exit_code.code;
@@ -2607,7 +2630,7 @@ impl RunCommand {
             }
 
             if !path_for_which.is_empty() {
-                let mut path_buf = PathBuffer::uninit();
+                let mut path_buf = bun_paths::path_buffer_pool::get();
                 if let Some(destination) =
                     which(&mut path_buf, path_for_which, top_level_dir, target_name)
                 {
@@ -2691,7 +2714,7 @@ impl RunCommand {
         // absolute path via `get_fd_path` before booting. The
         // get_fd_path step matters: it resolves symlinks so module-relative
         // resolution sees the real location.
-        let mut script_name_buf = PathBuffer::uninit();
+        let mut script_name_buf = bun_paths::path_buffer_pool::get();
 
         // Build a NUL-terminated path to open (branching for
         // absolute vs. simple-relative vs. `..`/`~`-prefixed).
@@ -2722,7 +2745,7 @@ impl RunCommand {
             target.len()
         } else {
             // `..foo` / `~foo` — resolve against cwd via joinAbsStringBuf.
-            let mut cwd_buf = PathBuffer::uninit();
+            let mut cwd_buf = bun_paths::path_buffer_pool::get();
             let Ok(cwd) = bun_core::getcwd(&mut cwd_buf) else {
                 return false;
             };
@@ -2812,7 +2835,7 @@ impl RunCommand {
         const STDIN_TRIGGER: &[u8] = b"/[stdin]";
 
         let mut entry_point_buf = [0u8; MAX_PATH_BYTES + STDIN_TRIGGER.len()];
-        let mut cwd_buf = PathBuffer::uninit();
+        let mut cwd_buf = bun_paths::path_buffer_pool::get();
         let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
         let cwd_bytes = cwd.as_bytes();
         let cwd_len = cwd_bytes.len();
@@ -2874,7 +2897,7 @@ impl RunCommand {
         }
 
         let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
-        let mut cwd_buf = PathBuffer::uninit();
+        let mut cwd_buf = bun_paths::path_buffer_pool::get();
         let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
         let cwd_bytes = cwd.as_bytes();
         let cwd_len = cwd_bytes.len();
@@ -2909,7 +2932,7 @@ impl RunCommand {
         if !ctx.runtime_options.eval.script.is_empty() {
             // synthetic `[eval]` path under cwd
             let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
-            let mut cwd_buf = PathBuffer::uninit();
+            let mut cwd_buf = bun_paths::path_buffer_pool::get();
             let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
             let cwd_bytes = cwd.as_bytes();
             let cwd_len = cwd_bytes.len();
@@ -2943,11 +2966,11 @@ impl RunCommand {
             // `cwd_buf[cwd_len] = b'/'` (always `/`, NOT the
             // platform separator) and then run the result through
             // `join_abs_string_buf::<Loose>` to collapse `.`/`..`.
-            let mut cwd_buf = PathBuffer::uninit();
+            let mut cwd_buf = bun_paths::path_buffer_pool::get();
             let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
             let cwd_len = cwd.as_bytes().len();
             cwd_buf[cwd_len] = b'/';
-            let mut out_buf = PathBuffer::uninit();
+            let mut out_buf = bun_paths::path_buffer_pool::get();
             let joined = paths::resolve_path::join_abs_string_buf::<paths::platform::Loose>(
                 &cwd_buf[..cwd_len + 1],
                 &mut out_buf.0,
@@ -3316,15 +3339,20 @@ impl RunCommand {
     }
 
     fn render_markdown_file_and_exit(path: &[u8]) -> ! {
-        // No explicit free() on contents / rendered below: every path out
-        // of this function calls Global::exit() or bun.outOfMemory() (both
-        // noreturn), so the OS reclaims the allocations on process exit.
+        // Render in a function that returns so its pooled buffers are dropped
+        // before `exit`; LeakSanitizer reports them otherwise.
+        let code = Self::render_markdown_file(path);
+        Global::exit(code);
+    }
+
+    /// Renders `path` to stdout. Returns the process exit code.
+    fn render_markdown_file(path: &[u8]) -> u32 {
         let contents = match sys::File::read_from(Fd::cwd(), path) {
             Ok(bytes) => bytes,
             Err(err) => {
                 pretty_errorln!("<r><red>error<r>: {}", err);
                 Output::flush();
-                Global::exit(1);
+                return 1;
             }
         };
 
@@ -3332,9 +3360,7 @@ impl RunCommand {
         // hyperlinks when colors are on. Light/dark detected from env.
         let colors = Output::enable_ansi_colors_stdout();
         let columns: u16 = 'brk: {
-            // Output.terminal_size is never populated; query stdout
-            // directly. Honor COLUMNS so piped output and tests can
-            // pin a width.
+            // Honor COLUMNS so piped output and tests can pin a width.
             if let Some(env) = bun_core::getenv_z(bun_core::zstr!("COLUMNS")) {
                 if let Ok(n) = bun_core::fmt::parse_int::<u16>(env, 10) {
                     if n > 0 {
@@ -3395,8 +3421,8 @@ impl RunCommand {
         // `bun ./docs/README.md` from `/home/user` can't find `./img.png`
         // that sits next to README.md. Resolve to an absolute dir first
         // so joinAbsString downstream doesn't double-apply cwd.
-        let mut base_buf = PathBuffer::uninit();
-        let mut cwd_buf = PathBuffer::uninit();
+        let mut base_buf = bun_paths::path_buffer_pool::get();
+        let mut cwd_buf = bun_paths::path_buffer_pool::get();
         let abs_md_path: &[u8] = 'blk: {
             if paths::is_absolute(path) {
                 break 'blk path;
@@ -3438,12 +3464,12 @@ impl RunCommand {
                     "<r><red>error<r>: markdown rendering exceeded the stack — input is too deeply nested",
                 );
                 Output::flush();
-                Global::exit(1);
+                return 1;
             }
             Err(_) | Ok(None) => {
                 pretty_errorln!("<r><red>error<r>: failed to render markdown");
                 Output::flush();
-                Global::exit(1);
+                return 1;
             }
             Ok(Some(r)) => r,
         };
@@ -3458,7 +3484,7 @@ impl RunCommand {
         // silently (q=2 suppresses the error). System tmp cleanup
         // (systemd-tmpfiles, /tmp reboot wipe) eventually removes the
         // bun-md-*.png files, which are small (~100KB each) and rare.
-        Global::exit(0);
+        0
     }
 
     /// Shell-completion entries for `bun run`. Called from
@@ -3552,7 +3578,7 @@ impl RunCommand {
                             .fs
                             .entries_mutex
                             .lock_guard();
-                        let mut path_buf = PathBuffer::uninit();
+                        let mut path_buf = bun_paths::path_buffer_pool::get();
                         let mut iter = entries.data.iter();
                         let mut has_copied = false;
                         let mut dir_slice_len: usize = 0;

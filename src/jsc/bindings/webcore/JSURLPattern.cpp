@@ -96,7 +96,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSURLPatternPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSURLPatternPrototype* ptr = new (NotNull, JSC::allocateCell<JSURLPatternPrototype>(vm)) JSURLPatternPrototype(vm, globalObject, structure);
+        JSURLPatternPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSURLPatternPrototype))) JSURLPatternPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -110,7 +110,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -221,11 +221,7 @@ template<> JSValue JSURLPatternDOMConstructor::prototypeForStructure(JSC::VM& vm
 
 template<> void JSURLPatternDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(0), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "URLPattern"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSURLPattern::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 0, "URLPattern"_s, JSURLPattern::prototype(vm, globalObject));
 }
 
 /* Hash table for prototype */
@@ -250,8 +246,8 @@ const ClassInfo JSURLPatternPrototype::s_info = { "URLPattern"_s, &Base::s_info,
 void JSURLPatternPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSURLPattern::info(), JSURLPatternPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSURLPattern::info(), JSURLPatternPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSURLPattern::s_info = { "URLPattern"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSURLPattern) };
@@ -427,7 +423,9 @@ static inline JSC::EncodedJSValue jsURLPatternPrototypeFunction_testBody(JSC::JS
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto baseURL = argument1.value().isUndefined() ? String() : convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, impl.test(*context, convertToOptionalWTFVariant(WTF::move(input)), WTF::move(baseURL)))));
+    auto result = impl.test(*context, convertToOptionalWTFVariant(WTF::move(input)), WTF::move(baseURL));
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, WTF::move(result))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsURLPatternPrototypeFunction_test, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -451,7 +449,9 @@ static inline JSC::EncodedJSValue jsURLPatternPrototypeFunction_execBody(JSC::JS
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto baseURL = argument1.value().isUndefined() ? String() : convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLNullable<IDLDictionary<URLPatternResult>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.exec(*context, convertToOptionalWTFVariant(WTF::move(input)), WTF::move(baseURL)))));
+    auto result = impl.exec(*context, convertToOptionalWTFVariant(WTF::move(input)), WTF::move(baseURL));
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLNullable<IDLDictionary<URLPatternResult>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(result))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsURLPatternPrototypeFunction_exec, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -461,7 +461,7 @@ JSC_DEFINE_HOST_FUNCTION(jsURLPatternPrototypeFunction_exec, (JSGlobalObject * l
 
 JSC::GCClient::IsoSubspace* JSURLPattern::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSURLPattern, UseCustomHeapCellType::No>(vm, [](auto& spaces) { return spaces.m_clientSubspaceForURLPattern.get(); }, [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForURLPattern = std::forward<decltype(space)>(space); }, [](auto& spaces) { return spaces.m_subspaceForURLPattern.get(); }, [](auto& spaces, auto&& space) { spaces.m_subspaceForURLPattern = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSURLPattern, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForURLPattern, m_subspaceForURLPattern));
 }
 
 void JSURLPattern::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

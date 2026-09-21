@@ -34,7 +34,7 @@ interface SourcePattern {
 const patterns = {
   /** `packages/bun-error/*` — error overlay page */
   bunError: {
-    paths: ["packages/bun-error/*.{json,ts,tsx,css}", "packages/bun-error/img/*"],
+    paths: ["packages/bun-error/*.{json,ts,tsx,css}"],
   },
   /** `*.string-map.ts` — input to generate-string-map codegen */
   stringMaps: {
@@ -123,7 +123,6 @@ const patterns = {
       "packages/bun-usockets/src/crypto/*.c",
       "src/jsc/bindings/uv-posix-polyfills.c",
       "src/jsc/bindings/uv-posix-stubs.c",
-      "src/*.c",
       "src/jsc/bindings/node/http/llhttp/*.c",
     ],
   },

@@ -191,11 +191,6 @@ pub trait CssEql {
 pub use bun_css_derive::CssEql;
 
 #[inline]
-pub fn implement_eql<T: CssEql>(this: &T, other: &T) -> bool {
-    this.eql(other)
-}
-
-#[inline]
 pub(crate) fn eql<T: CssEql>(lhs: &T, rhs: &T) -> bool {
     lhs.eql(rhs)
 }
@@ -303,7 +298,6 @@ macro_rules! css_eql_partialeq {
         }
     )+};
 }
-pub use css_eql_partialeq;
 
 impl CssEql for [u8] {
     #[inline]
@@ -459,17 +453,17 @@ mod inherent_bridge {
     bridge_deep_clone_copy!(UAEnvironmentVariable);
 
     // `Direction` is re-exported from `properties::text` — bridged below as `TextDirection`.
-    use crate::selectors::parser::{ViewTransitionPartName, WebKitScrollbarPseudoElement};
+    use crate::selectors::parser::{ViewTransitionPartSelector, WebKitScrollbarPseudoElement};
     impl CssEql for WebKitScrollbarPseudoElement {
         #[inline]
         fn eql(&self, other: &Self) -> bool {
             WebKitScrollbarPseudoElement::eql(*self, *other)
         }
     }
-    bridge_eql!(ViewTransitionPartName);
+    bridge_eql!(ViewTransitionPartSelector);
     // CssHash for WebKitScrollbarPseudoElement — via #[derive(CssHash)] on the enum.
-    bridge_hash!(ViewTransitionPartName);
-    bridge_deep_clone_copy!(WebKitScrollbarPseudoElement, ViewTransitionPartName);
+    bridge_hash!(ViewTransitionPartSelector);
+    bridge_deep_clone_copy!(WebKitScrollbarPseudoElement, ViewTransitionPartSelector);
 
     // ───────────────────────────────────────────────────────────────────────
     // Property value-type bridges — `Property::deep_clone`/`eql` dispatch via
@@ -1203,11 +1197,6 @@ pub fn parse_with_options<T: ParseWithOptions>(
     options: &ParserOptions,
 ) -> CssResult<T> {
     T::parse_with_options(input, options)
-}
-
-#[inline]
-pub fn parse<T: Parse>(input: &mut Parser) -> CssResult<T> {
-    T::parse(input)
 }
 
 // ── container / primitive Parse impls ────────────────────────────────────────

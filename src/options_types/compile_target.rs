@@ -111,6 +111,12 @@ impl CompileTarget {
         self.eql(&CompileTarget::default())
     }
 
+    /// Same os, arch and libc as this bun (a different bun version for this platform still counts).
+    pub fn is_host_platform(&self) -> bool {
+        let host = CompileTarget::default();
+        self.os == host.os && self.arch == host.arch && self.libc == host.libc
+    }
+
     pub fn to_npm_registry_url<'a>(&self, buf: &'a mut [u8]) -> crate::Result<&'a [u8]> {
         if let Some(url) = env_var::BUN_COMPILE_TARGET_TARBALL_URL.get() {
             if strings::has_prefix(url, b"http://") || strings::has_prefix(url, b"https://") {

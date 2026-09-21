@@ -102,7 +102,7 @@ export async function installTartAgent({ release, spawn }: TartAgentOptions): Pr
 export async function installBareAgent(): Promise<void> {
   const checkout = join(process.env.HOME!, "bun-bootstrap");
   const token = await agentToken();
-  await $`sudo env BUILDKITE_AGENT_TOKEN=${token} PATH=${path} node scripts/agent.mjs install`.cwd(checkout);
+  await $`sudo env BUILDKITE_AGENT_TOKEN=${token} PATH=${path} node scripts/agent.ts install`.cwd(checkout);
   await sleep(4000);
   console.log(
     await output($`tail -4 ${join(process.env.HOME!, "Library", "Logs", "buildkite-agent", "buildkite-agent.log")}`),

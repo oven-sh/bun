@@ -1,6 +1,6 @@
 const { isIPv4 } = require("internal/net/isIP");
 
-const { setServerCustomOptions, setServerAppFlags, drainMicrotasks, setServerIdleTimeout } = $cpp(
+const { setServerCustomOptions, setServerAppFlags, drainMicrotasks } = $cpp(
   "NodeHTTP.cpp",
   "createNodeHTTPInternalBinding",
 ) as {
@@ -21,67 +21,38 @@ const { setServerCustomOptions, setServerAppFlags, drainMicrotasks, setServerIdl
     httpAllowHalfOpen: boolean,
   ) => void;
   drainMicrotasks: () => void;
-  setServerIdleTimeout: (server: any, timeout: number) => void;
 };
 
-const getRawKeys = $newCppFunction("JSFetchHeaders.cpp", "jsFetchHeaders_getRawKeys", 0);
-
-const kBodyChunks = Symbol("bodyChunks");
-const kPath = Symbol("path");
-const kPort = Symbol("port");
-const kMethod = Symbol("method");
-const kHost = Symbol("host");
-const kProtocol = Symbol("protocol");
-const kAgent = Symbol("agent");
-const kFetchRequest = Symbol("fetchRequest");
-const kTls = Symbol("tls");
-const kUseDefaultPort = Symbol("useDefaultPort");
-const kRes = Symbol("res");
-const kUpgradeOrConnect = Symbol("upgradeOrConnect");
-const kParser = Symbol("parser");
-const kMaxHeadersCount = Symbol("maxHeadersCount");
-const kReusedSocket = Symbol("reusedSocket");
-const kTimeoutTimer = Symbol("timeoutTimer");
-const kOptions = Symbol("options");
-const kSocketPath = Symbol("socketPath");
-const kSignal = Symbol("signal");
-const kMaxHeaderSize = Symbol("maxHeaderSize");
 const abortedSymbol = Symbol("aborted");
-const kClearTimeout = Symbol("kClearTimeout");
-
 const headerStateSymbol = Symbol("headerState");
-// used for pretending to emit events in the right order
-const kEmitState = Symbol("emitState");
-
-const bodyStreamSymbol = Symbol("bodyStream");
 const eofInProgress = Symbol("eofInProgress");
 const fakeSocketSymbol = Symbol("fakeSocket");
-const headersSymbol = Symbol("headers");
 const isTlsSymbol = Symbol("is_tls");
 const kHandle = Symbol("handle");
 const kRealListen = Symbol("kRealListen");
 const noBodySymbol = Symbol("noBody");
 const optionsSymbol = Symbol("options");
-const reqSymbol = Symbol("req");
-const timeoutTimerSymbol = Symbol("timeoutTimer");
 const tlsSymbol = Symbol("tls");
 const typeSymbol = Symbol("type");
-const webRequestOrResponse = Symbol("FetchAPI");
-const statusCodeSymbol = Symbol("statusCode");
 const kAbortController = Symbol.for("kAbortController");
-const statusMessageSymbol = Symbol("statusMessage");
 const kInternalSocketData = Symbol.for("::bunternal::");
 const serverSymbol = Symbol.for("::bunternal::");
 const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
 const kCloseCallback = Symbol("closeCallback");
 
-export const enum ClientRequestEmitState {
-  socket = 1,
-  prefinish = 2,
-  finish = 3,
-  response = 4,
-}
+// node:_http_server registers its pipelined-response machinery here at module
+// initialization, letting internal/http1_server_fallback drive the same
+// per-connection queue without widening node:_http_server's exports. The
+// fallback loads node:http (and with it _http_server) before reading these.
+const http1ServerPipeline: {
+  queuePipelinedResponse?: (socket: unknown, res: unknown, isAncient: boolean) => void;
+  advanceResponsePipeline?: (server: unknown, socket: unknown) => void;
+  abortQueuedPipelinedResponses?: (socket: unknown) => void;
+  maybePauseFallbackReads?: (socket: unknown) => void;
+  resumeFallbackReadsOnDrain?: (socket: unknown) => void;
+  kMustCloseConnection?: symbol;
+} = {};
 
 export const enum NodeHTTPResponseAbortEvent {
   none = 0,
@@ -145,15 +116,6 @@ function emitCloseNT(self) {
     callCloseCallback(self);
     self.emit("close");
   }
-}
-function emitCloseNTAndComplete(self) {
-  if (!self._closed) {
-    self._closed = true;
-    callCloseCallback(self);
-    self.emit("close");
-  }
-
-  self.complete = true;
 }
 
 function emitEOFIncomingMessageOuter(self) {
@@ -359,7 +321,7 @@ function hasServerResponseFinished(self, chunk, callback) {
       if (finished) {
         err = $ERR_STREAM_WRITE_AFTER_END();
       } else if (destroyed) {
-        err = $ERR_STREAM_DESTROYED("Stream is destroyed");
+        err = $ERR_STREAM_DESTROYED("write");
       }
 
       if (!destroyed) {
@@ -399,22 +361,22 @@ const kOutHeaders = Symbol("kOutHeaders");
 const kNeedDrain = Symbol("kNeedDrain");
 const kProxyConfig = Symbol("kProxyConfig");
 const kWaitForProxyTunnel = Symbol("kWaitForProxyTunnel");
+const kPerRequestCheckServerIdentity = Symbol("kPerRequestCheckServerIdentity");
 
-// Cached HTTP Date header value, refreshed once a second like Node.js does.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http.js
+// The `date` header, formatted once per second like Node.js does
+// (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http.js). Keyed by the second rather than reset by a timer:
+// a timer belongs to whoever happened to be running when it was set, and if that was a
+// Bun.ModuleGraph disposed within the second, nothing would ever clear the cache again.
 let utcCache;
+let utcCacheSecond = -1;
 function utcDate() {
-  if (!utcCache) cacheUTCDate();
+  const now = Date.now();
+  const second = Math.floor(now / 1000);
+  if (second !== utcCacheSecond) {
+    utcCacheSecond = second;
+    utcCache = new Date(now).toUTCString();
+  }
   return utcCache;
-}
-function cacheUTCDate() {
-  const d = new Date();
-  utcCache = d.toUTCString();
-  const timer = setTimeout(resetUTCCache, 1000 - d.getMilliseconds());
-  if (typeof timer.unref === "function") timer.unref();
-}
-function resetUTCCache() {
-  utcCache = undefined;
 }
 
 function ipToInt(ip) {
@@ -539,88 +501,46 @@ function checkShouldUseProxy(proxyConfig: ProxyConfig, reqOptions: any) {
   return proxyConfig.shouldUseProxy(reqOptions.host || "localhost", reqOptions.port);
 }
 
-function filterEnvForProxies(env) {
-  return {
-    http_proxy: env.http_proxy,
-    HTTP_PROXY: env.HTTP_PROXY,
-    https_proxy: env.https_proxy,
-    HTTPS_PROXY: env.HTTPS_PROXY,
-    no_proxy: env.no_proxy,
-    NO_PROXY: env.NO_PROXY,
-  };
-}
-
 export {
   METHODS,
   STATUS_CODES,
   abortedSymbol,
-  bodyStreamSymbol,
   callCloseCallback,
   checkShouldUseProxy,
   drainMicrotasks,
   emitCloseNT,
-  emitCloseNTAndComplete,
   emitEOFIncomingMessage,
   emitErrorNextTickIfErrorListenerNT,
   eofInProgress,
   fakeSocketSymbol,
-  filterEnvForProxies,
   getMaxHTTPHeaderSize,
-  getRawKeys,
   hasServerResponseFinished,
   headerStateSymbol,
-  headersSymbol,
+  http1ServerPipeline,
   isTlsSymbol,
   kAbortController,
-  kAgent,
-  kBodyChunks,
-  kClearTimeout,
   kCloseCallback,
-  kEmitState,
-  kFetchRequest,
   kHandle,
-  kHost,
   kInternalSocketData,
-  kMaxHeaderSize,
-  kMaxHeadersCount,
-  kMethod,
   kNeedDrain,
-  kOptions,
   kOutHeaders,
-  kParser,
-  kPath,
   kPendingCallbacks,
-  kPort,
-  kProtocol,
+  kPerRequestCheckServerIdentity,
   kProxyConfig,
   kRealListen,
   kRequest,
-  kRes,
-  kReusedSocket,
-  kSignal,
-  kSocketPath,
-  kTimeoutTimer,
-  kTls,
-  kUpgradeOrConnect,
-  kUseDefaultPort,
   kWaitForProxyTunnel,
   noBodySymbol,
   onDataIncomingMessage,
   optionsSymbol,
   parseProxyConfigFromEnv,
   parseProxyUrl,
-  reqSymbol,
   serverSymbol,
   setMaxHTTPHeaderSize,
   setServerAppFlags,
   setServerCustomOptions,
-  setServerIdleTimeout,
-  statusCodeSymbol,
-  statusMessageSymbol,
-  timeoutTimerSymbol,
   tlsSymbol,
   typeSymbol,
   utcDate,
   validateMsecs,
-  webRequestOrResponse,
 };

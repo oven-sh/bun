@@ -281,9 +281,11 @@ pub struct Timeout {
     /// "epoch" is reused.
     pub flags: TimerFlags,
 
-    /// See `swapGlobalForTestIsolation`: timers from a prior isolated test
-    /// file must not fire abort handlers in the new global.
-    pub(crate) generation: u32,
+    /// The context whose script armed the timeout; it does not fire once that
+    /// context is gone (`bun test --isolate`: a prior file's).
+    pub(crate) context: crate::ContextId,
+    /// `VirtualMachine::test_isolation_generation` when it did.
+    generation: u32,
 }
 
 bun_event_loop::impl_timer_owner!(Timeout; from_timer_ptr => event_loop_timer);
@@ -294,6 +296,10 @@ impl Timeout {
         let deadline = bun_core::Timespec::now_allow_mocked_time()
             .add_ms(i64::try_from(milliseconds).expect("AbortSignal.timeout(ms) overflows i64"));
 
+        let jsc_vm = VirtualMachine::get();
+        // `AbortSignal.timeout()`, a C++ host function, calls this.
+        let context = jsc_vm.context_of_caller_no_frame();
+        let graph_context = jsc_vm.as_graph_context(context);
         let this: *mut Timeout = bun_core::heap::into_raw(Box::new(Timeout {
             event_loop_timer: EventLoopTimer {
                 next: ElTimespec {
@@ -307,8 +313,12 @@ impl Timeout {
             },
             signal: signal_,
             flags: TimerFlags::default(),
+            context: context.id(),
             generation: VirtualMachine::get().test_isolation_generation,
         }));
+        if let Some(context) = graph_context {
+            context.track_timer(this.cast(), crate::ContextTimer::AbortSignal);
+        }
 
         #[cfg(debug_assertions)]
         // `AbortSignal` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
@@ -384,7 +394,7 @@ impl Timeout {
             // file's global; firing now would run them against the new global.
             // (The file swap's `cancel_all_timeout_objects` normally discards
             // such timers before they can come due.)
-            if (*this).generation != (*vm).test_isolation_generation {
+            if (*vm).has_outlived_its_script((*this).context, (*this).generation) {
                 Self::discard(this);
                 return;
             }
@@ -420,6 +430,9 @@ impl Timeout {
         // SAFETY: caller guarantees `this` came from `heap::alloc` in `init`.
         unsafe {
             Self::cancel(&mut *this, vm);
+            if let Some(context) = (*vm).timer_context((*this).context) {
+                context.untrack_timer(this.cast());
+            }
             drop(bun_core::heap::take(this));
         }
     }

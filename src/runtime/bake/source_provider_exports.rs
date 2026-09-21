@@ -125,7 +125,7 @@ impl SourceProvider for DevServerSourceProvider {
 }
 
 // HOST_EXPORT(Bun__addBakeSourceProviderSourceMap, c)
-pub fn add_bake_source_provider_source_map(
+pub(crate) fn add_bake_source_provider_source_map(
     vm: &mut VirtualMachine,
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
@@ -142,7 +142,7 @@ pub fn add_bake_source_provider_source_map(
 }
 
 // HOST_EXPORT(Bun__addDevServerSourceProvider, c)
-pub fn add_dev_server_source_provider(
+pub(crate) fn add_dev_server_source_provider(
     vm: &mut VirtualMachine,
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
@@ -159,7 +159,7 @@ pub fn add_dev_server_source_provider(
 }
 
 // HOST_EXPORT(Bun__removeDevServerSourceProvider, c)
-pub fn remove_dev_server_source_provider(
+pub(crate) fn remove_dev_server_source_provider(
     vm: &mut VirtualMachine,
     opaque_source_provider: *mut c_void,
     specifier: &BunString,

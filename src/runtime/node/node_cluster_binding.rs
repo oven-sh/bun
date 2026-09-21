@@ -12,7 +12,7 @@ use crate::api::bun::subprocess::Subprocess;
 // Struct lives in `crate::ipc` —
 // `SendQueue` stores one inline so it must live at that tier. Re-exported here so
 // existing `bun_runtime` paths (`node_cluster_binding::InternalMsgHolder`) keep working.
-pub use crate::ipc::InternalMsgHolder;
+pub(crate) use crate::ipc::InternalMsgHolder;
 
 bun_output::declare_scope!(IPC, visible);
 
@@ -233,6 +233,7 @@ pub(crate) fn handle_internal_message_primary(
             });
             if let Some((cb, worker)) = entry {
                 event_loop.run_callback(
+                    subprocess.context,
                     cb,
                     global,
                     worker,
@@ -250,6 +251,7 @@ pub(crate) fn handle_internal_message_primary(
         (q.cb.get().unwrap(), q.worker.get().unwrap())
     };
     event_loop.run_callback(
+        subprocess.context,
         cb,
         global,
         worker,
@@ -288,7 +290,7 @@ pub(crate) fn set_ref(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
 }
 
 // HOST_EXPORT(Bun__refChannelUnlessOverridden, c)
-pub fn ref_channel_unless_overridden(global: &JSGlobalObject) {
+pub(crate) fn ref_channel_unless_overridden(global: &JSGlobalObject) {
     let vm = global.bun_vm().as_mut();
     if !vm.channel_ref_overridden {
         vm.channel_ref.ref_(bun_io::js_vm_ctx());
@@ -296,7 +298,7 @@ pub fn ref_channel_unless_overridden(global: &JSGlobalObject) {
 }
 
 // HOST_EXPORT(Bun__unrefChannelUnlessOverridden, c)
-pub fn unref_channel_unless_overridden(global: &JSGlobalObject) {
+pub(crate) fn unref_channel_unless_overridden(global: &JSGlobalObject) {
     let vm = global.bun_vm().as_mut();
     if !vm.channel_ref_overridden {
         vm.channel_ref.unref(bun_io::js_vm_ctx());
@@ -314,7 +316,7 @@ pub(crate) fn channel_ignore_one_disconnect_event_listener(
 }
 
 // HOST_EXPORT(Bun__shouldIgnoreOneDisconnectEventListener, c)
-pub fn should_ignore_one_disconnect_event_listener(global: &JSGlobalObject) -> bool {
+pub(crate) fn should_ignore_one_disconnect_event_listener(global: &JSGlobalObject) -> bool {
     let vm = global.bun_vm();
     vm.channel_ref_should_ignore_one_disconnect_event_listener
 }

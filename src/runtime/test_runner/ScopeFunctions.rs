@@ -55,7 +55,7 @@ pub enum Mode {
 // form fresh `&ScopeFunctions` to the same wrapper; aliased `&Self` is sound,
 // aliased `&mut Self` would not be.
 #[bun_jsc::JsClass(no_constructor)]
-pub struct ScopeFunctions {
+pub(crate) struct ScopeFunctions {
     pub(crate) mode: Mode,
     pub(crate) cfg: BaseScopeCfg,
     /// typically `.zero`. not Strong.Optional because codegen visits the C++ `m_each`
@@ -490,33 +490,33 @@ fn error_in_ci(global: &JSGlobalObject, signature: &[u8]) -> JsResult<()> {
     Ok(())
 }
 
-pub struct ParseArgumentsResult {
+pub(crate) struct ParseArgumentsResult {
     pub(crate) description: Option<Vec<u8>>,
     pub callback: Option<JSValue>,
     pub(crate) options: ParseArgumentsOptions,
 }
 
 #[derive(Default, Clone, Copy)]
-pub struct ParseArgumentsOptions {
+pub(crate) struct ParseArgumentsOptions {
     pub(crate) timeout: u32,
     pub(crate) retry: Option<u32>,
     pub(crate) repeats: u32,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum CallbackMode {
+pub(crate) enum CallbackMode {
     Require,
     Allow,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum FunctionKind {
+pub(crate) enum FunctionKind {
     TestOrDescribe,
     Hook,
 }
 
 #[derive(Copy, Clone)]
-pub struct ParseArgumentsCfg {
+pub(crate) struct ParseArgumentsCfg {
     pub callback: CallbackMode,
     pub(crate) kind: FunctionKind,
 }
@@ -720,7 +720,7 @@ pub(crate) fn parse_arguments(
 // `ScopeFunctionsPrototype__each{Set,Get}CachedValue` shims, which write/read the
 // `JSC::WriteBarrier<Unknown> m_each` slot on the JSCell wrapper so the GC visits
 // the `.each(arr)` argument between construction and the trailing `("name", cb)` call.
-pub mod js {
+pub(crate) mod js {
     bun_jsc::codegen_cached_accessors!("ScopeFunctions"; each);
 }
 

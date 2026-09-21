@@ -24,7 +24,7 @@ use crate::webcore::blob::store::Data as StoreData;
 // Canonical re-exports (struct + registry live in bun_http now)
 // ──────────────────────────────────────────────────────────────────────────
 
-pub use bun_http::ssl_config::SSLConfig;
+pub(crate) use bun_http::ssl_config::SSLConfig;
 
 // ──────────────────────────────────────────────────────────────────────────
 // ReadFromBlobError
@@ -120,7 +120,7 @@ fn read_from_blob(
 
 /// JSC-dependent constructors for the canonical `bun_http::SSLConfig`.
 /// Import this trait to call `SSLConfig::from_js(..)` / `::from_generated(..)`.
-pub trait SSLConfigFromJs: Sized {
+pub(crate) trait SSLConfigFromJs: Sized {
     fn from_js(
         vm: &VirtualMachine,
         global: &JSGlobalObject,
@@ -268,7 +268,7 @@ impl SSLConfigFromJs for SSLConfig {
 
 /// The `SSLConfig` for the `tls: true` shorthand: every option at its
 /// documented default, unlike `SSLConfig::zero()`.
-pub fn tls_true_defaults(vm: &VirtualMachine) -> SSLConfig {
+pub(crate) fn tls_true_defaults(vm: &VirtualMachine) -> SSLConfig {
     let mut cfg = SSLConfig::zero();
     cfg.reject_unauthorized = vm.get_tls_reject_unauthorized() as i32;
     cfg
@@ -276,7 +276,7 @@ pub fn tls_true_defaults(vm: &VirtualMachine) -> SSLConfig {
 
 /// Whether a new TLS socket must enforce `rejectUnauthorized`: close the
 /// connection when the peer certificate fails verification.
-pub fn resolve_reject_unauthorized(
+pub(crate) fn resolve_reject_unauthorized(
     vm: &VirtualMachine,
     cfg: Option<&SSLConfig>,
     is_server: bool,

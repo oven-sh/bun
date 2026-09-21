@@ -23,7 +23,7 @@ use crate::test_command::CommandLineReporter;
 // (not the lower-tier `bun_spawn` crate). Worker.exit_status is this type.
 use crate::api::bun::process::Status as SpawnStatus;
 
-pub struct Coordinator<'a> {
+pub(crate) struct Coordinator<'a> {
     pub(crate) vm: &'a VirtualMachine,
     /// Typed enum mirror of `vm.event_loop()` for the io-layer FilePoll vtable
     /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
@@ -228,11 +228,7 @@ impl<'a> Coordinator<'a> {
                 }
             }
         }
-        self.aborted = Some(u32::from(
-            bun_sys::SignalCode(signal as u8)
-                .to_exit_code()
-                .unwrap_or(130),
-        ));
+        self.aborted = Some(u32::from(bun_sys::SignalCode(signal as u8).to_exit_code()));
     }
 
     fn spawn_worker(&mut self) -> bool {
@@ -948,6 +944,7 @@ fn terminate_process_group(pid: libc::pid_t) {
 /// 3, indistinguishable from process.exit(3), and stays a per-file
 /// failure, recognizable only by its banner in stderr.
 fn is_panic_status(status: &SpawnStatus) -> bool {
+    #[cfg(unix)]
     if let Some(sig) = status.signal_code() {
         use bun_core::SignalCode;
         return matches!(

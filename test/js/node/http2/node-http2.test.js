@@ -2101,18 +2101,20 @@ it("http2 padded DATA write survives a re-entrant stream write from a JS Duplex 
   expect(exitCode).toBe(0);
 });
 
-describe("http2 priority fields of a HEADERS frame", () => {
+// node v26.3.0 sends no priority fields. Its nghttp2 (1.69.0) discards the priority spec of a
+// request (nghttp2_submit_request in deps/nghttp2/lib/nghttp2_submit.c), and respond() never had
+// one. Each test here gives the same result on node.
+describe("http2 priority options send no priority fields, like node", () => {
+  const { PADDING_STRATEGY_NONE, PADDING_STRATEGY_ALIGNED, PADDING_STRATEGY_MAX } = http2.constants;
   const HEADERS = 0x1;
   const CONTINUATION = 0x9;
   const END_HEADERS = 0x4;
-  const PADDED = 0x8;
   const PRIORITY = 0x20;
 
-  // Sends one request on a new session over a Duplex transport and resolves with its header
-  // block: the flags and the payload of the HEADERS frame, and the payloads of the CONTINUATION
-  // frames after it. The authority is fixed, so every session encodes the same header block for
-  // the same headers.
-  async function captureRequestHeaderBlock(headers, options) {
+  // A Duplex transport for one session. `headerBlock` settles with the first header block the
+  // session writes: the flags and the payload of the HEADERS frame, and the payloads of the
+  // CONTINUATION frames after it.
+  function captureTransport() {
     const headerBlock = Promise.withResolvers();
     const magic = http2utils.kClientMagic;
     let wire = Buffer.alloc(0);
@@ -2131,7 +2133,11 @@ describe("http2 priority fields of a HEADERS frame", () => {
             frames.push({ flags, payload: wire.subarray(offset + 9, end) });
             if (flags & END_HEADERS) {
               const [first, ...rest] = frames;
-              headerBlock.resolve({ ...first, continuation: Buffer.concat(rest.map(frame => frame.payload)) });
+              headerBlock.resolve({
+                flags: first.flags,
+                payload: first.payload.toString("hex"),
+                continuation: Buffer.concat(rest.map(frame => frame.payload)).toString("hex"),
+              });
             }
           }
           offset = end;
@@ -2139,7 +2145,14 @@ describe("http2 priority fields of a HEADERS frame", () => {
         callback();
       },
     });
-    const session = http2.connect("http://localhost:1", { createConnection: () => transport });
+    return { transport, headerBlock };
+  }
+
+  // Sends one request on a new client session and resolves with its header block. The authority
+  // is fixed, so every session encodes the same header block for the same headers.
+  async function captureRequestHeaderBlock(paddingStrategy, headers, options) {
+    const { transport, headerBlock } = captureTransport();
+    const session = http2.connect("http://localhost:1", { createConnection: () => transport, paddingStrategy });
     session.on("error", headerBlock.reject);
     session.on("close", () => headerBlock.reject(new Error("the session closed before the header block was written")));
     try {
@@ -2154,56 +2167,98 @@ describe("http2 priority fields of a HEADERS frame", () => {
     }
   }
 
-  // RFC 7540 section 6.2, no PADDED flag: E + Stream Dependency (4 octets), Weight (1 octet, the
-  // weight minus one), then the header block fragment.
-  function parseHeaderBlock({ flags, payload, continuation }) {
-    if ((flags & (PADDED | PRIORITY)) !== PRIORITY) {
-      return { priority: null, block: Buffer.concat([payload, continuation]).toString("hex") };
+  // Answers one request on a new server session and resolves with the response header block.
+  async function captureResponseHeaderBlock(options) {
+    const { transport, headerBlock } = captureTransport();
+    const session = http2.performServerHandshake(transport);
+    session.on("error", headerBlock.reject);
+    session.on("stream", stream => {
+      stream.on("error", headerBlock.reject);
+      stream.respond({ ":status": 200 }, { endStream: true, sendDate: false, ...options });
+    });
+    try {
+      // :method: GET, :scheme: http, :path: /, :authority: localhost (literal, name index 1)
+      const request = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01, 9]), Buffer.from("localhost")]);
+      transport.push(
+        Buffer.concat([
+          http2utils.kClientMagic,
+          new http2utils.SettingsFrame().data,
+          new http2utils.HeadersFrame(1, request, 0, true, true).data,
+        ]),
+      );
+      return await headerBlock.promise;
+    } finally {
+      session.destroy();
     }
-    const dependency = payload.readUInt32BE(0);
-    return {
-      priority: { exclusive: dependency >>> 31 === 1, parent: dependency & 0x7fffffff, weight: payload[4] + 1 },
-      block: Buffer.concat([payload.subarray(5), continuation]).toString("hex"),
-    };
   }
 
-  it.each([
-    ["one HEADERS frame", { ":path": "/" }],
-    // The header block is about 22 KiB, more than one 16384-byte frame.
-    ["HEADERS and CONTINUATION frames", { ":path": "/", "x-fill": Buffer.alloc(30000, "p").toString() }],
-  ])("carry the default weight 16 (%s)", async (_, headers) => {
-    const plain = parseHeaderBlock(await captureRequestHeaderBlock(headers, undefined));
-    expect(plain.priority).toBeNull();
+  const small = { ":path": "/" };
+  // The header block is about 22 KiB, more than one 16384-byte frame.
+  const large = { ":path": "/", "x-fill": Buffer.alloc(30000, "p").toString() };
 
-    const frames = await captureRequestHeaderBlock(headers, { exclusive: true, parent: 3 });
-    expect(frames.continuation.length > 0).toBe("x-fill" in headers);
-    expect(parseHeaderBlock(frames)).toEqual({
-      priority: { exclusive: true, parent: 3, weight: 16 },
-      block: plain.block,
-    });
+  it.each([
+    ["one HEADERS frame", PADDING_STRATEGY_NONE, small],
+    ["HEADERS and CONTINUATION frames", PADDING_STRATEGY_NONE, large],
+    ["a padded HEADERS frame", PADDING_STRATEGY_MAX, small],
+  ])(
+    "request() with exclusive and parent sends the bytes of a plain request (%s)",
+    async (_, paddingStrategy, headers) => {
+      const plain = await captureRequestHeaderBlock(paddingStrategy, headers, undefined);
+      const withOptions = await captureRequestHeaderBlock(paddingStrategy, headers, { exclusive: true, parent: 3 });
+      expect(withOptions.flags & PRIORITY).toBe(0);
+      expect(withOptions).toEqual(plain);
+    },
+  );
+
+  it.each([
+    ["exclusive, parent and weight", { exclusive: true, parent: 1, weight: 256 }],
+    ["a weight and a parent out of range", { weight: 0, parent: -1 }],
+  ])("respond() with %s sends the bytes of a plain response", async (_, options) => {
+    const plain = await captureResponseHeaderBlock({});
+    const withOptions = await captureResponseHeaderBlock(options);
+    expect(withOptions.flags & PRIORITY).toBe(0);
+    expect(withOptions).toEqual(plain);
   });
 
-  // The client request() drops `weight` (DEP0194). The options of the server respond() reach the
-  // same native writer, and node ignores a weight there.
-  it("respond() accepts 256, the largest RFC 7540 weight", async () => {
-    const response = Promise.withResolvers();
+  it.each([
+    ["ALIGNED", PADDING_STRATEGY_ALIGNED],
+    ["MAX", PADDING_STRATEGY_MAX],
+  ])("a session with PADDING_STRATEGY_%s survives requests with priority options", async (_, paddingStrategy) => {
     const server = http2.createServer();
-    server.on("error", response.reject);
-    server.on("stream", stream => {
-      stream.on("error", response.reject);
-      stream.respond({ ":status": 200 }, { endStream: true, weight: 256 });
+    server.on("sessionError", () => {});
+    server.on("stream", (stream, headers) => {
+      stream.respond({ ":status": 200 });
+      stream.end(headers[":path"]);
     });
     await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
-    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`, { paddingStrategy });
     try {
-      client.on("error", response.reject);
-      const req = client.request({ ":path": "/" });
-      let status;
-      req.on("response", headers => (status = headers[":status"]));
-      req.on("error", response.reject);
-      req.on("close", () => response.resolve(status));
-      req.resume();
-      expect(await response.promise).toBe(200);
+      const sessionErrors = [];
+      client.on("error", err => sessionErrors.push(err.message));
+      const get = (path, options) =>
+        new Promise(resolve => {
+          const req = client.request({ ":path": path }, options);
+          let status;
+          let body = "";
+          req.setEncoding("utf8");
+          req.on("response", headers => (status = headers[":status"]));
+          req.on("data", chunk => (body += chunk));
+          req.on("error", err => resolve({ error: err.message }));
+          req.on("close", () => resolve({ status, body }));
+        });
+      const results = [
+        await get("/exclusive", { exclusive: true }),
+        await get("/parent", { parent: 1 }),
+        await get("/plain", undefined),
+      ];
+      expect({ results, sessionErrors }).toEqual({
+        results: [
+          { status: 200, body: "/exclusive" },
+          { status: 200, body: "/parent" },
+          { status: 200, body: "/plain" },
+        ],
+        sessionErrors: [],
+      });
     } finally {
       client.destroy();
       server.close();

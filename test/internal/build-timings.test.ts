@@ -288,6 +288,74 @@ describe("analysis", () => {
   });
 });
 
+describe("a build in which ninja started over", () => {
+  // ninja brings build.ninja up to date first; when that rewrote it, ninja starts over and counts from zero again.
+  // Every CI build does: the Rust plan does not exist yet, and a new plan reconfigures.
+  test("is one run on one clock, and everything else waits on the edge that writes build.ninja", async () => {
+    using restarted = tempDir("build-timings-restart", {});
+    const dir = join(String(restarted), "build");
+    mkdirSync(dir, { recursive: true });
+    const n = new Ninja({ buildDir: dir });
+    n.rule("dep_fetch", {
+      command: "fetch $name $repo $commit $dest $cache $patches",
+      description: "fetch $name",
+      restat: true,
+    });
+    n.rule("regen", { command: "configure", description: "reconfigure", generator: true });
+    n.rule("cc", { command: "cc $cflags -c $in -o $out", description: "cc $out" });
+    const stamp = join(String(restarted), "vendor", ".ref");
+    const vars = { name: "dep", repo: "o/dep", commit: "abc", dest: "vendor", cache: "cache", patches: "" };
+    n.build({ outputs: [stamp], rule: "dep_fetch", inputs: [], vars });
+    n.build({ outputs: [join(dir, "build.ninja")], rule: "regen", inputs: [], implicitInputs: [stamp] });
+    // Nothing in the graph says x.o needs build.ninja.
+    n.build({
+      outputs: [join(dir, "x.o")],
+      rule: "cc",
+      inputs: [join(String(restarted), "x.c")],
+      vars: { cflags: "" },
+    });
+    await n.write();
+
+    const ns = (ms: number) => BigInt(ms) * 1_000_000n;
+    writeFileSync(
+      join(dir, ".ninja_log"),
+      [
+        "# ninja log v7",
+        // The first process only fetched and reconfigured. Neither stamp is a start: both rules restat, so each is
+        // the mtime of what the command wrote.
+        `5\t105\t${ns(T0 + 100)}\t${relative(dir, stamp)}\tf00d`,
+        `110\t900\t${ns(T0 + 880)}\tbuild.ninja\tf00d`,
+        // The process it became started 3 ms after that one's last command ended.
+        `20\t520\t${ns(T0 + 903 + 20)}\tx.o\tf00d`,
+        "",
+      ].join("\n"),
+    );
+
+    const b = loadBuild(dir, false);
+    expect(b.runs.map(r => [r.restarts, r.executions.map(x => [x.label, x.start, x.end])])).toEqual([
+      [
+        [900],
+        [
+          ["fetch dep", 5, 105],
+          ["reconfigure", 110, 900],
+          ["cc x.o", 920, 1420],
+        ],
+      ],
+    ]);
+    expect(criticalPath(b).steps.map(s => [s.execution.label, s.blocksNextForMs])).toEqual([
+      ["fetch dep", 100],
+      ["reconfigure", 790],
+      ["cc x.o", 500],
+    ]);
+    expect([...waits(b, b.runs[0]!)].map(([x, w]) => [x.label, w.blocker?.label, w.ms])).toEqual([
+      ["fetch dep", undefined, 5],
+      ["reconfigure", "fetch dep", 5],
+      ["cc x.o", "reconfigure", 20],
+    ]);
+    expect(chartData(b).runs.map(r => r.restarts)).toEqual([[900]]);
+  });
+});
+
 describe("formatReport", () => {
   test("the whole report", () => {
     const plain = { bold: (s: string) => s, dim: (s: string) => s };

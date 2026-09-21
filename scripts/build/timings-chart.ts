@@ -103,6 +103,8 @@ export interface ChartLane {
 export interface ChartRun {
   title: string;
   wallMs: number;
+  /** When ninja started over with a rewritten `build.ninja`. */
+  restarts: number[];
   /** The lanes this run has commands in. */
   lanes: ChartLane[];
   bars: ChartBar[];
@@ -142,6 +144,7 @@ function chartRun(build: Build, run: Run, steps: Map<Execution, { step: number; 
   return {
     title: clock(run.epochMs),
     wallMs: Math.max(...run.executions.map(x => x.end)),
+    restarts: run.restarts,
     lanes: used.map((lane, i) => ({ name: lane.name, color: lane.color, rows: taken[i]!.length })),
     bars: run.executions.map(x => ({
       label: x.label,
@@ -196,13 +199,9 @@ export function chartHtml(build: Build): string {
     <h1>build timings</h1>
     <p id="where"></p>
     <div id="tiles"></div>
-    <div id="controls">
-      <div id="legend"></div>
-      <label>zoom, or scroll over a chart <input id="zoom" type="range" min="1" max="200" step="0.1" value="1"></label>
-    </div>
+    <div id="legend"></div>
   </header>
   <div id="runs"></div>
-  <details id="table"><summary>The critical path as a table</summary><div id="tablebody"></div></details>
 </main>
 <div id="tip" hidden></div>
 <script id="data" type="application/json">${data}</script>
@@ -241,12 +240,11 @@ p, .meta { color: var(--text-2); margin: 2px 0 0; }
 .tile { background: var(--raised); border-radius: 8px; padding: 10px 14px; min-width: 150px; }
 .tile b { display: block; font-size: 22px; font-weight: 600; }
 .tile span { color: var(--text-2); font-size: 12px; }
-#controls { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
 #legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--text-2); }
+#legend .hint { margin-left: auto; }
 #legend i { display: inline-block; width: 18px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
 #legend i.path { background: none; box-shadow: inset 0 0 0 1.5px var(--text); }
 #legend i.tick { background: linear-gradient(to right, var(--k1) 45%, var(--surface) 45% 60%, var(--k1) 60%); }
-label { font-size: 12px; color: var(--text-2); }
 .run { display: flex; margin-top: 8px; border-radius: 8px; background: var(--raised); }
 .gutter { position: relative; flex: none; width: 124px; border-right: 1px solid var(--grid); }
 .lane { position: absolute; left: 10px; right: 6px; font-size: 11px; line-height: 16px; color: var(--text-2); white-space: nowrap; }
@@ -267,15 +265,12 @@ text.dim { opacity: 0.25; }
 .hoverbar { fill: none; stroke: var(--text); stroke-width: 1.5px; stroke-dasharray: 4 3; rx: 2px; pointer-events: none; }
 .tickmark { stroke: var(--surface); stroke-width: 2px; pointer-events: none; }
 .grid { stroke: var(--grid); stroke-width: 1px; }
+.restart { stroke: var(--text-2); stroke-width: 1px; stroke-dasharray: 2 3; }
 .running { opacity: 0.85; }
 #tip { position: fixed; z-index: 1; max-width: 420px; background: var(--surface); color: var(--text); border: 1px solid var(--grid);
   border-radius: 8px; padding: 8px 10px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,.2); pointer-events: none; }
 #tip b { display: block; word-break: break-all; }
 #tip div { color: var(--text-2); }
-details { margin-top: 32px; }
-table { border-collapse: collapse; margin-top: 8px; font-size: 12px; }
-td, th { text-align: left; padding: 3px 14px 3px 0; border-bottom: 1px solid var(--grid); }
-td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
 `;
 
 // Plain JavaScript, kept free of template literals so it can sit inside one.
@@ -284,8 +279,7 @@ const client = `
   var data = JSON.parse(document.getElementById("data").textContent);
   var NS = "http://www.w3.org/2000/svg";
   var ROW = 14, BAR = 12, LEFT = 8, RIGHT = 24, STRIP = 44, AXIS = 18, GAP = 10, LANE_GAP = 12, THIN_ROW = 5, CHAR = 6.05, NAMED_SHARE = 0.03;
-  var zoom = document.getElementById("zoom");
-  var level = 1;
+  var level = 1, MOST_ZOOM = 200;
   var tip = document.getElementById("tip");
 
   function ms(t) { return t < 1000 ? Math.round(t) + "ms" : (t / 1000).toFixed(1) + "s"; }
@@ -313,6 +307,7 @@ const client = `
   var legend = document.getElementById("legend");
   var lp = html("span", undefined, legend); html("i", undefined, lp, "path"); lp.appendChild(document.createTextNode("on the critical path"));
   var lt = html("span", undefined, legend); html("i", undefined, lt, "tick"); lt.appendChild(document.createTextNode("dependents released here"));
+  html("span", "scroll to zoom · hover or click a bar", legend, "hint");
 
   function niceStep(span, width) {
     var steps = [50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 30000, 60000, 120000, 300000, 600000, 1800000, 3600000];
@@ -351,6 +346,11 @@ const client = `
       el("line", { x1: x(t), x2: x(t), y1: 0, y2: height - AXIS, "class": "grid" }, svg);
       el("text", { x: x(t) + 3, y: height - 5 }, svg).textContent = ms(t);
     }
+
+    run.restarts.forEach(function (at) {
+      el("line", { x1: x(at), x2: x(at), y1: STRIP, y2: height - AXIS, "class": "restart" }, svg);
+      el("text", { x: x(at) + 4, y: STRIP + 9 }, svg).textContent = "ninja starts over: build.ninja was rewritten";
+    });
 
     // The lanes, named in the gutter beside the chart so the names stay put when the chart scrolls.
     gutter.style.height = height + "px";
@@ -410,17 +410,10 @@ const client = `
       var gap = y1 < y(to) ? y(to) - 1 : y(to) + h(to) + 1;
       el("path", { d: "M" + x1 + "," + y1 + "V" + gap + "H" + x2, "class": cls }, parent);
     };
-    if (run.pinned === undefined) {
-      run.note.textContent = steps.length === 0 ? "Click a bar to see what it waited on and what it held up." :
-        "Outlined: the critical path, from how long each edge last took. Click a bar to see what it waited on and what it held up.";
-    } else {
-      var back = Object.keys(chain).length - 1, ahead = Object.keys(held).length;
-      var count = function (n) { return n === 1 ? "the 1 command" : "the " + n + " commands"; };
-      run.note.textContent = "Pinned: " + run.bars[run.pinned].label + ". " +
-        (back === 0 ? "It waited on nothing this run built. " : "Outlined: " + count(back) + " this run waited on before it, back to the start. ") +
-        (ahead === 0 ? "Nothing waited on it last. " : "Lit, and joined to what each waited on: " + count(ahead) + " it held up. ") +
-        "Click it again, or press Esc, to unpin.";
-    }
+    // Only while a bar is pinned: what is being shown, in numbers the chart does not give.
+    run.note.textContent = run.pinned === undefined ? "" :
+      run.bars[run.pinned].label + " · waited on " + (Object.keys(chain).length - 1) + " before it · held up " +
+      Object.keys(held).length + " · Esc to unpin";
 
     var outlined = function (b, i) { return run.pinned === undefined ? b.step !== undefined : chain[i]; };
     var lit = function (b, i) { return run.pinned === undefined ? steps.length === 0 : held[i]; };
@@ -511,12 +504,10 @@ const client = `
       var at = host === overHost ? clientX - host.getBoundingClientRect().left : host.clientWidth / 2;
       return { at: at, moment: (host.scrollLeft + at - LEFT) / plotWidth(host) };
     });
-    level = Math.min(Number(zoom.max), Math.max(Number(zoom.min), value));
-    zoom.value = level;
+    level = Math.min(MOST_ZOOM, Math.max(1, value));
     drawAll();
     hosts.forEach(function (host, i) { host.scrollLeft = LEFT + anchors[i].moment * plotWidth(host) - anchors[i].at; });
   }
-  zoom.addEventListener("input", function () { zoomTo(Number(zoom.value)); });
   window.addEventListener("resize", drawAll);
   window.addEventListener("keydown", function (ev) {
     if (ev.key !== "Escape") return;
@@ -542,17 +533,5 @@ const client = `
     }, { passive: false });
   });
   drawAll();
-
-  var all = [];
-  data.runs.forEach(function (run) { run.bars.forEach(function (b) { if (b.step !== undefined) all.push([b, run]); }); });
-  all.sort(function (a, b) { return a[0].step - b[0].step; });
-  var table = html("table", undefined, document.getElementById("tablebody"));
-  var head = html("tr", undefined, table);
-  ["step", "edge", "holds up the next for", "runs for", "in the run at"].forEach(function (h, i) { html("th", h, head, i === 2 || i === 3 ? "n" : ""); });
-  all.forEach(function (p) {
-    var tr = html("tr", undefined, table);
-    html("td", String(p[0].step + 1), tr); html("td", p[0].label, tr);
-    html("td", ms(p[0].blocksNextForMs), tr, "n"); html("td", ms(p[0].end - p[0].start), tr, "n"); html("td", p[1].title, tr);
-  });
 })();
 `;

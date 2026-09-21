@@ -94,6 +94,8 @@ export interface Execution {
   stampMs: number;
   /** `stampMs` is the command's start (see `LogEntry.stamp`). */
   stampIsStart: boolean;
+  /** The command that writes `build.ninja` (a `generator` rule). */
+  writesManifest: boolean;
   run: Run;
   /**
    * Outputs released before the command ended, by absolute path: milliseconds after `start`. Known only for an
@@ -103,11 +105,17 @@ export interface Execution {
   selfReport: Phase[];
 }
 
-/** One ninja process that ran at least one command. */
+/**
+ * One run of ninja: a ninja process that ran at least one command, together with the processes it became. ninja brings
+ * `build.ninja` up to date before anything else, and when that rewrote the file it starts over with the new graph,
+ * counting from zero again. That is one build, so it is one run here, on the first process's clock.
+ */
 export interface Run {
-  /** Unix milliseconds of the ninja process's start: what `start` and `end` of its executions count from. */
+  /** Unix milliseconds of the first process's start: what `start` and `end` of its executions count from. */
   epochMs: number;
   executions: Execution[];
+  /** When ninja started over with a rewritten `build.ninja`, on the run's clock. */
+  restarts: number[];
 }
 
 export const duration = (x: Execution): number => x.end - x.start;
@@ -143,7 +151,7 @@ function describe(buildDir: string, manifest: Manifest, edge: ManifestEdge): str
  * this one: sorted by epoch, an execution belongs to the run before it exactly when its epoch falls before that run's
  * last end so far. When the stamp may be an output's mtime, all it says is that the epoch lies in
  * `[stamp - end, stamp - start]`; such an execution goes to the latest run whose epoch that allows, and the ones no
- * run allows (a ninja that only fetched, planned or reconfigured) are runs of their own.
+ * run allows (a ninja that only fetched, planned or reconfigured) are processes of their own.
  */
 function groupRuns(executions: Omit<Execution, "run">[]): Run[] {
   type Open = Run & { latestEpochMs: number; lastEnd: number };
@@ -158,7 +166,7 @@ function groupRuns(executions: Omit<Execution, "run">[]): Run[] {
   for (const x of executions.filter(x => x.stampIsStart).sort(byEpoch)) {
     let run = runs.at(-1);
     if (run === undefined || epochOf(x) >= run.epochMs + run.lastEnd) {
-      run = { epochMs: epochOf(x), latestEpochMs: epochOf(x), lastEnd: 0, executions: [] };
+      run = { epochMs: epochOf(x), latestEpochMs: epochOf(x), lastEnd: 0, executions: [], restarts: [] };
       runs.push(run);
     }
     run.latestEpochMs = epochOf(x);
@@ -177,14 +185,35 @@ function groupRuns(executions: Omit<Execution, "run">[]): Run[] {
       .at(-1);
     if (run === undefined && runs.length > pinned && lo <= runs.at(-1)!.epochMs) run = runs.at(-1);
     if (run === undefined) {
-      run = { epochMs: epochOf(x), latestEpochMs: epochOf(x), lastEnd: 0, executions: [] };
+      run = { epochMs: epochOf(x), latestEpochMs: epochOf(x), lastEnd: 0, executions: [], restarts: [] };
       runs.push(run);
     }
     add(run, x);
   }
+  runs.sort((a, b) => a.epochMs - b.epochMs);
 
-  for (const run of runs) run.executions.sort((a, b) => a.start - b.start || a.end - b.end);
-  return runs.sort((a, b) => a.epochMs - b.epochMs);
+  // A process whose last command wrote `build.ninja` started over at once: the process that begins where it ended
+  // is the same run. (A process that only fetched and planned has no command that pins its epoch, so its epoch can
+  // be late by up to how long one of its commands took, and the next can seem to begin before it ended.)
+  const joined: Open[] = [];
+  for (const next of runs) {
+    const run = joined.at(-1);
+    const last = run?.executions.reduce((a, b) => (b.end > a.end ? b : a));
+    if (run === undefined || !last!.writesManifest || next.epochMs > run.epochMs + run.lastEnd + STAMP_SLACK_MS) {
+      joined.push(next);
+      continue;
+    }
+    const restart = run.lastEnd;
+    run.restarts.push(restart);
+    for (const x of next.executions) {
+      x.start += restart;
+      x.end += restart;
+      add(run, x);
+    }
+  }
+
+  for (const run of joined) run.executions.sort((a, b) => a.start - b.start || a.end - b.end);
+  return joined;
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -261,6 +290,25 @@ export interface Build {
   last: Map<ManifestEdge, Execution>;
   /** The edge that makes each file (or phony name), by absolute path. */
   producer: Map<string, ManifestEdge>;
+  /** The edge that writes `build.ninja`, and what it needs first: itself and every edge upstream of it. */
+  manifestEdge: ManifestEdge | undefined;
+  beforeManifest: Set<ManifestEdge>;
+}
+
+/**
+ * What an edge waits for, as `[path, the edge that makes it]`: its inputs of every kind, and `build.ninja`. No build
+ * statement names the manifest as an input, but ninja brings it up to date before it builds anything else, so
+ * everything that is not needed for that waits on it.
+ */
+function* producers(build: Build, edge: ManifestEdge): Generator<[string, ManifestEdge]> {
+  for (const input of [...edge.inputs, ...edge.implicitInputs, ...edge.orderOnlyInputs]) {
+    const path = resolve(build.buildDir, input);
+    const from = build.producer.get(path);
+    if (from !== undefined) yield [path, from];
+  }
+  if (build.manifestEdge !== undefined && !build.beforeManifest.has(edge)) {
+    yield [resolve(build.buildDir, build.manifestEdge.outputs[0]!), build.manifestEdge];
+  }
 }
 
 export function loadBuild(buildDir: string, windowsHost: boolean = process.platform === "win32"): Build {
@@ -294,6 +342,7 @@ export function loadBuild(buildDir: string, windowsHost: boolean = process.platf
       stampMs: stampToUnixMs(entry.stamp, windowsHost),
       // A restat or generator rule's stamp is its output's mtime when the command changed the output.
       stampIsStart: rule !== undefined && !rule.restat && !rule.generator,
+      writesManifest: rule?.generator === true,
       released: new Map(),
       selfReport: [],
     });
@@ -306,10 +355,18 @@ export function loadBuild(buildDir: string, windowsHost: boolean = process.platf
     readReleased(buildDir, x);
     x.selfReport = readSelfReport(buildDir, x.edge).filter(
       // A report left by another execution than the logged one (a build that was interrupted) says nothing about it.
-      p => p.startMs >= x.stampMs - STAMP_SLACK_MS && p.endMs <= x.run.epochMs + x.end + STAMP_SLACK_MS,
+      p => p.startMs >= x.stampMs - STAMP_SLACK_MS && p.endMs <= x.stampMs + duration(x) + STAMP_SLACK_MS,
     );
   }
-  return { buildDir, manifest, runs, last, producer };
+  const build: Build = { buildDir, manifest, runs, last, producer, manifestEdge: undefined, beforeManifest: new Set() };
+  build.manifestEdge = manifest.edges.find(e => manifest.rules.get(e.rule)?.generator === true);
+  const upstream = (edge: ManifestEdge): void => {
+    if (build.beforeManifest.has(edge)) return;
+    build.beforeManifest.add(edge);
+    for (const [, from] of producers(build, edge)) upstream(from);
+  };
+  if (build.manifestEdge !== undefined) upstream(build.manifestEdge);
+  return build;
 }
 
 /**
@@ -381,10 +438,7 @@ export function criticalPath(build: Build): { steps: PathStep[]; totalMs: number
     if (t !== undefined) return t;
     t = { ready: 0, via: undefined };
     timings.set(edge, t);
-    for (const input of [...edge.inputs, ...edge.implicitInputs, ...edge.orderOnlyInputs]) {
-      const path = resolve(build.buildDir, input);
-      const from = build.producer.get(path);
-      if (from === undefined) continue; // a source file
+    for (const [path, from] of producers(build, edge)) {
       const x = build.last.get(from);
       const blocksNextForMs = x === undefined ? 0 : (x.released.get(path) ?? duration(x));
       const at = timing(from).ready + blocksNextForMs;
@@ -488,10 +542,7 @@ export function waits(build: Build, run: Run): Map<Execution, Wait> {
     if (r !== undefined) return r;
     r = { at: 0, by: undefined, makers: new Set() };
     memo.set(edge, r);
-    for (const input of [...edge.inputs, ...edge.implicitInputs, ...edge.orderOnlyInputs]) {
-      const path = resolve(build.buildDir, input);
-      const from = build.producer.get(path);
-      if (from === undefined) continue;
+    for (const [path, from] of producers(build, edge)) {
       const x = inRun.get(from);
       const through = x === undefined ? ready(from) : undefined;
       const at = through?.at ?? x!.start + (x!.released.get(path) ?? duration(x!));
@@ -617,6 +668,7 @@ export function formatReport(build: Build, style: ReportStyle): string {
     bold("most recent run of ninja") + `  ${clock(run.epochMs)}`,
     `  ${seconds(wallMs).trim()} wall   ${run.executions.length} edges   ${seconds(sumMs).trim()} of commands   ` +
       `${(sumMs / wallMs).toFixed(1)}× average parallelism`,
+    ...run.restarts.map(at => dim(`  ninja started over at ${seconds(at).trim()}: build.ninja was rewritten`)),
   );
   const windows = lowParallelismWindows(run);
   if (windows.length > 0) {
@@ -734,7 +786,7 @@ export function traceEvents(build: Build): TraceEvent[] {
           tid,
           name: p.name,
           cat: "phase",
-          ts: (p.startMs - run.epochMs) * 1000,
+          ts: (x.start + p.startMs - x.stampMs) * 1000,
           dur: (p.endMs - p.startMs) * 1000,
         });
       }

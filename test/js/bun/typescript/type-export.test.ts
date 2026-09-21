@@ -262,15 +262,14 @@ describe("through export merge", () => {
             ["c." + fmt]: "export const value = 'c';",
           });
 
+          // Both the entry point and a file it imports report the parser's
+          // error. The import path used to hand the file to JSC, which
+          // reported "Cannot export a duplicate name 'value'." instead.
           for (const file of ["main." + fmt, "a." + fmt]) {
             test.concurrent(file, async () => {
               const result = await run([bunExe(), file], dir);
 
-              expect(result.stderr.trim()).toInclude(
-                file === "a." + fmt
-                  ? 'error: Multiple exports with the same name "value"\n' // bun's syntax error
-                  : "SyntaxError: Cannot export a duplicate name 'value'.\n", // jsc's syntax error
-              );
+              expect(result.stderr.trim()).toInclude('error: Multiple exports with the same name "value"\n');
 
               expect(result.exitCode).toBe(1);
             });

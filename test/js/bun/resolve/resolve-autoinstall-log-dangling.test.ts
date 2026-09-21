@@ -57,3 +57,68 @@ test("repeated failing auto-install resolves at varying stack depth don't read a
   expect(stdout.trim()).toBe("ok");
   expect(exitCode).toBe(0);
 });
+
+// Auto-install's `sleep_until` ticks the JS event loop while waiting for the
+// manifest response. JS that runs during that tick (module transpile) swaps
+// `PackageManager.log` (and the related resolver/linker/transpiler log
+// pointers) and restores them from `transpiler.log` — which the outer resolve
+// hadn't swapped — instead of the resolve's scoped log. The next `run_tasks`
+// poll then wrote its 404 diagnostic into the VM's persistent log, which is
+// dumped to stderr at process exit. With enough interleaving across REPRL
+// iterations this escalated to `pm.log` pointing at dead stack memory (ASAN
+// stack-buffer-overflow).
+test("module transpile during auto-install's event-loop tick doesn't desync pm.log", async () => {
+  let hits = 0;
+  await using server = Bun.serve({
+    port: 0,
+    fetch() {
+      hits++;
+      return new Response("Not Found", { status: 404 });
+    },
+  });
+
+  using dir = tempDir("resolve-autoinstall-log-tick", {
+    "index.js": `
+      const Module = require("module");
+      const fs = require("fs");
+      const path = require("path");
+
+      let n = 0;
+      function load() {
+        const f = path.join(import.meta.dir, "dyn" + n++ + ".cjs");
+        fs.writeFileSync(f, "module.exports = 0;");
+        try { require(f); } catch {}
+      }
+
+      for (let i = 0; i < 20; i++) {
+        setImmediate(load);
+        setImmediate(load);
+        try {
+          Module._resolveFilename("autoinstall-missing-pkg-" + i, { filename: import.meta.path });
+        } catch {}
+      }
+
+      console.log("ok " + n);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--install=force", "index.js"],
+    cwd: String(dir),
+    env: {
+      ...bunEnv,
+      BUN_CONFIG_REGISTRY: server.url.href,
+      NPM_CONFIG_REGISTRY: server.url.href,
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout).toMatch(/^ok \d+$/m);
+  expect(Number(stdout.trim().slice(3))).toBeGreaterThan(0);
+  expect(hits).toBeGreaterThan(0);
+  expect(exitCode).toBe(0);
+});

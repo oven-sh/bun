@@ -1,4 +1,4 @@
-import { define } from "../../codegen/class-definitions";
+import { define } from "../../codegen/class-definitions.ts";
 
 export default [
   define({
@@ -27,34 +27,6 @@ export default [
         DOMJIT: {
           returns: "JSString",
           args: ["JSUint8Array"],
-        },
-      },
-    },
-  }),
-  define({
-    name: "TextEncoderStreamEncoder",
-    construct: true,
-    finalize: true,
-    JSType: "0b11101110",
-    configurable: false,
-    klass: {},
-    proto: {
-      encode: {
-        fn: "encode",
-        length: 1,
-
-        DOMJIT: {
-          returns: "JSUint8Array",
-          args: ["JSString"],
-        },
-      },
-      flush: {
-        fn: "flush",
-        length: 0,
-
-        DOMJIT: {
-          returns: "JSUint8Array",
-          args: [],
         },
       },
     },

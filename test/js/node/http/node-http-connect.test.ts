@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, nodeExe, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, bunRun, isLinux, isWindows, nodeExe, tempDir, tls as tlsCert } from "harness";
 import http from "http";
 
 import { once } from "node:events";
@@ -620,6 +620,27 @@ describe("HTTP server CONNECT", () => {
         hasClientClose: true,
         stderr: "",
         exitCode: 0,
+      });
+    },
+  );
+
+  test.skipIf(isWindows)(
+    "AF_UNIX CONNECT sockets whose peer closes first do not spin the loop on EPOLLHUP",
+    async () => {
+      // An AF_UNIX peer close() on a half-open (CONNECT hand-off) socket is EPOLLHUP, which is level-triggered:
+      // the loop must stay idle while the server still holds its side, and each socket ends and closes once.
+      using dir = tempDir("connect-unix-hangup", {});
+      const result = await bunRun(join(import.meta.dir, "node-http-connect-unix-hangup-fixture.js"), {
+        SOCK: join(String(dir), "proxy.sock"),
+      });
+      const perTarget = Object.fromEntries(
+        Array.from({ length: 8 }, (_, i) => [`peer-${i}:443`, { ends: 1, closes: 1 }]),
+      );
+      expect(result).toEqual({
+        stdout: JSON.stringify(perTarget) + "\nidle",
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
       });
     },
   );

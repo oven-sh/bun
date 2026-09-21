@@ -1,4 +1,0 @@
-# we need to commit output files because CI does not have `bun` to build these files.
-!out
-out/modules_dev
-tmp

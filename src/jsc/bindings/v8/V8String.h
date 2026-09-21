@@ -35,6 +35,13 @@ public:
     BUN_EXPORT static MaybeLocal<String> NewFromUtf8(Isolate* isolate, char const* data, NewStringType type, int length = -1);
     BUN_EXPORT static MaybeLocal<String> NewFromOneByte(Isolate* isolate, const uint8_t* data, NewStringType type, int length);
 
+private:
+    // Out-of-line target of V8's inline templated NewFromUtf8Literal overload
+    // in v8-primitive.h. Private to match V8's declaration, which affects the
+    // mangled name on MSVC.
+    BUN_EXPORT static Local<String> NewFromUtf8Literal(Isolate* isolate, const char* literal, NewStringType type, int length);
+
+public:
     // length:     number of bytes in buffer (if negative, assume it is large enough)
     // nchars_ref: store number of code units written here
     // return:     number of bytes copied including null terminator

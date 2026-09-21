@@ -1,6 +1,7 @@
 import type { Subprocess } from "bun";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 
 async function getServerUrl(process: Subprocess) {
   // Read the port number from stdout
@@ -672,4 +673,45 @@ test("importing bun:main from HTML entry preload does not crash", async () => {
 
   proc.kill();
   await proc.exited;
+});
+
+// https://github.com/oven-sh/bun/issues/24031
+test.concurrent("subdirectory routes use forward slashes on Windows", async () => {
+  await using dir = tempDir("html-subdir-routes", {
+    "dist/index.html": `<!DOCTYPE html><html><head><title>Home</title></head><body>Home</body></html>`,
+    "dist/components/buttons.html": `<!DOCTYPE html><html><head><title>Buttons</title></head><body>Buttons</body></html>`,
+  });
+
+  await using process = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "./dist/**/*.html",
+      join(String(dir), "dist", "components", "buttons.html"),
+      "--port=0",
+      "--hostname=127.0.0.1",
+    ],
+    env: { ...bunEnv, NODE_ENV: "production", NO_COLOR: "1" },
+    cwd: String(dir),
+    stdout: "pipe",
+  });
+
+  const decoder = new TextDecoder();
+  let text = "";
+  let serverUrl = "";
+  for await (const chunk of process.stdout as ReadableStream<Uint8Array>) {
+    text += decoder.decode(chunk, { stream: true });
+    if (!serverUrl) {
+      const match = text.match(/http:\/\/\S+/);
+      if (match && URL.canParse(match[0])) serverUrl = match[0];
+    }
+    if (serverUrl && text.includes("Routes:") && text.includes("buttons")) break;
+  }
+
+  expect(serverUrl).toBeTruthy();
+  expect(text).toContain("/components/buttons");
+  expect(text).not.toContain("/components\\");
+
+  const buttons = await fetch(new URL("/components/buttons", serverUrl));
+  expect(buttons.status).toBe(200);
+  expect(await buttons.text()).toContain("<title>Buttons</title>");
 });

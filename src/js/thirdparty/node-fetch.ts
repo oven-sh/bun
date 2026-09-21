@@ -1,18 +1,43 @@
 // Users may override the global fetch implementation, so we need to ensure these are the originals.
 const bindings = $cpp("NodeFetch.cpp", "createNodeFetchInternalBinding");
-const WebResponse: typeof globalThis.Response = bindings[0];
-const WebRequest: typeof globalThis.Request = bindings[1];
+// undici-types declares these members as class properties; at runtime they are prototype accessors and
+// methods, which the subclasses below override and reach through `super`.
+interface WebResponseMembers {
+  readonly body: ReadableStream | null;
+  readonly headers: globalThis.Headers;
+  readonly ok: boolean;
+  readonly type: globalThis.Response["type"];
+  clone(): globalThis.Response;
+  text(): Promise<string>;
+  json(): Promise<any>;
+  arrayBuffer(): Promise<ArrayBuffer>;
+}
+type WebResponseConstructor = new (
+  body?: ConstructorParameters<typeof globalThis.Response>[0],
+  init?: ConstructorParameters<typeof globalThis.Response>[1],
+) => Omit<globalThis.Response, keyof WebResponseMembers> & WebResponseMembers;
+interface WebRequestMembers {
+  readonly url: string;
+}
+type WebRequestConstructor = new (
+  input: string | URL | globalThis.Request,
+  init?: RequestInit,
+) => Omit<globalThis.Request, keyof WebRequestMembers> & WebRequestMembers;
+
+const WebResponse: WebResponseConstructor = bindings[0];
+const WebRequest: WebRequestConstructor = bindings[1];
 const Blob: typeof globalThis.Blob = bindings[2];
 const WebHeaders: typeof globalThis.Headers = bindings[3];
 const FormData: typeof globalThis.FormData = bindings[4];
 const File: typeof globalThis.File = bindings[5];
 const nativeFetch = Bun.fetch;
+const JSONParse = JSON.parse;
 
 // node-fetch extends from URLSearchParams in their implementation...
 // https://github.com/node-fetch/node-fetch/blob/8b3320d2a7c07bce4afc6b2bf6c3bbddda85b01f/src/headers.js#L44
 class Headers extends WebHeaders {
   raw() {
-    const obj = this.toJSON();
+    const obj: Record<string, string | string[]> = this.toJSON();
     for (const key in obj) {
       const val = obj[key];
       if (!$isJSArray(val)) {
@@ -33,15 +58,29 @@ class Headers extends WebHeaders {
 
 const kHeaders = Symbol("kHeaders");
 const kBody = Symbol("kBody");
+// A fetched response has a body stream even when it has no body (204, HEAD):
+// https://github.com/node-fetch/node-fetch/blob/8b3320d2a7c07bce4afc6b2bf6c3bbddda85b01f/src/index.js#L253-L286
+const kFetched = Symbol("kFetched");
 const HeadersPrototype = Headers.prototype;
+
+function closeEmptyBody(controller) {
+  controller.close();
+}
 
 class Response extends WebResponse {
   [kBody]: any;
   [kHeaders];
+  [kFetched]: boolean | undefined;
 
   constructor(body, init) {
-    const { Readable, Stream } = require("node:stream");
+    const { Readable, Stream, PassThrough } = require("node:stream");
     if (body && typeof body === "object" && (body instanceof Stream || body instanceof Readable)) {
+      // An old-style Stream is not a Readable: pipe it through a PassThrough first, as fetch() does below.
+      if (!(body instanceof Readable)) {
+        const passthrough = new PassThrough();
+        body.pipe(passthrough);
+        body = passthrough;
+      }
       body = Readable.toWeb(body);
     }
 
@@ -52,8 +91,11 @@ class Response extends WebResponse {
     let body = this[kBody];
     if (!body) {
       var web = super.body;
-      if (!web) return null;
-      body = this[kBody] = new (require("internal/webstreams_adapters")._ReadableFromWeb)({}, web);
+      if (!web) {
+        if (!this[kFetched]) return null;
+        web = new ReadableStream({ start: closeEmptyBody });
+      }
+      body = this[kBody] = new (require("internal/webstreams_adapters")._ReadableFromWeb)({ responseBody: true }, web);
     }
 
     return body;
@@ -64,45 +106,24 @@ class Response extends WebResponse {
   }
 
   clone() {
-    return Object.setPrototypeOf(super.clone(this), ResponsePrototype);
+    const cloned = Object.setPrototypeOf(super.clone(), ResponsePrototype);
+    // clone() moved the body to a new web stream, so `body` gets a new node stream, as in node-fetch.
+    this[kBody] = undefined;
+    if (this[kFetched]) cloned[kFetched] = true;
+    return cloned;
   }
 
-  async arrayBuffer() {
-    // load the getter
-    void this.body;
-    return await super.arrayBuffer();
-  }
-
-  async blob() {
-    // load the getter
-    void this.body;
-    return await super.blob();
-  }
-
-  async formData() {
-    // load the getter
-    void this.body;
-    return await super.formData();
-  }
-
+  // node-fetch parses the text, so an empty body rejects:
+  // https://github.com/node-fetch/node-fetch/blob/8b3320d2a7c07bce4afc6b2bf6c3bbddda85b01f/src/body.js#L147-L150
+  // The inherited json() resolves null for an empty fetched body (#24955).
   async json() {
-    // load the getter
-    void this.body;
-    return await super.json();
+    return JSONParse(await super.text());
   }
 
   // This is a deprecated function in node-fetch
   // but is still used by some libraries and frameworks (like Astro)
   async buffer() {
-    // load the getter
-    void this.body;
     return new $Buffer(await super.arrayBuffer());
-  }
-
-  async text() {
-    // load the getter
-    void this.body;
-    return await super.text();
   }
 
   get type() {
@@ -167,11 +188,12 @@ async function fetch(
         readable.pipe(passthrough);
         readable = passthrough;
       }
-      init = { ...init, body: Readable.toWeb(readable) };
+      init = { ...init, body: Readable.toWeb(readable as import("node:stream").Readable) };
     }
   }
   const response = await nativeFetch.$call(undefined, url, init);
   Object.setPrototypeOf(response, ResponsePrototype);
+  response[kFetched] = true;
   return response;
 }
 

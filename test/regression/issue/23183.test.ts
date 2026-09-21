@@ -44,6 +44,8 @@ test("process.title should return a non-empty string or fallback to 'bun'", asyn
     // On Windows, we should get either a valid console title or "bun"
     expect(typeof title).toBe("string");
   } else {
-    expect(title).toBe("bun");
+    // The default title is argv[0] as invoked (Node's uv_get_process_title
+    // semantics), which is the executable path we spawned.
+    expect(title).toBe(bunExe());
   }
 });

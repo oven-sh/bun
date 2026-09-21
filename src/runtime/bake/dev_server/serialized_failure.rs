@@ -17,14 +17,14 @@ use crate::bake::Side;
 /// key directly.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Default)]
-pub struct OwnerPacked(pub u32);
+pub(crate) struct OwnerPacked(pub(crate) u32);
 impl OwnerPacked {
     #[inline]
-    pub fn new(side: Side, file: u32) -> Self {
+    pub(crate) fn new(side: Side, file: u32) -> Self {
         Self(file | ((side as u32) << 31))
     }
     #[inline]
-    pub fn side(self) -> Side {
+    pub(crate) fn side(self) -> Side {
         if self.0 >> 31 == 0 {
             Side::Client
         } else {
@@ -32,7 +32,7 @@ impl OwnerPacked {
         }
     }
     #[inline]
-    pub fn file(self) -> u32 {
+    pub(crate) fn file(self) -> u32 {
         self.0 & 0x7FFF_FFFF
     }
 }
@@ -40,7 +40,7 @@ impl OwnerPacked {
 /// The metaphorical owner of an incremental file error. The packed variant is
 /// given to the HMR runtime as an opaque handle.
 #[derive(Copy, Clone)]
-pub enum Owner {
+pub(crate) enum Owner {
     None,
     Route(route_bundle::Index),
     Client(ClientFileIndex),
@@ -48,7 +48,7 @@ pub enum Owner {
 }
 
 impl Owner {
-    pub fn encode(self) -> Packed {
+    pub(crate) fn encode(self) -> Packed {
         match self {
             Owner::None => Packed::new(PackedKind::None, 0),
             Owner::Client(data) => Packed::new(PackedKind::Client, data.get()),
@@ -61,11 +61,11 @@ impl Owner {
 /// Packed u32: `data` = bits 0..30, `kind` = bits 30..32.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub struct Packed(u32);
+pub(crate) struct Packed(u32);
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum PackedKind {
+pub(crate) enum PackedKind {
     None = 0,
     Route = 1,
     Client = 2,
@@ -76,16 +76,16 @@ impl Packed {
     const DATA_MASK: u32 = (1 << 30) - 1;
 
     #[inline]
-    pub const fn new(kind: PackedKind, data: u32) -> Self {
+    pub(crate) const fn new(kind: PackedKind, data: u32) -> Self {
         debug_assert!(data <= Self::DATA_MASK);
         Packed((data & Self::DATA_MASK) | ((kind as u32) << 30))
     }
     #[inline]
-    pub const fn data(self) -> u32 {
+    pub(crate) const fn data(self) -> u32 {
         self.0 & Self::DATA_MASK
     }
     #[inline]
-    pub const fn kind(self) -> PackedKind {
+    pub(crate) const fn kind(self) -> PackedKind {
         match (self.0 >> 30) as u8 {
             0 => PackedKind::None,
             1 => PackedKind::Route,
@@ -94,15 +94,15 @@ impl Packed {
         }
     }
     #[inline]
-    pub const fn bits(self) -> u32 {
+    pub(crate) const fn bits(self) -> u32 {
         self.0
     }
     #[inline]
-    pub const fn from_bits(bits: u32) -> Self {
+    pub(crate) const fn from_bits(bits: u32) -> Self {
         Packed(bits)
     }
 
-    pub fn decode(self) -> Owner {
+    pub(crate) fn decode(self) -> Owner {
         match self.kind() {
             PackedKind::None => Owner::None,
             PackedKind::Client => Owner::Client(ClientFileIndex::init(self.data())),
@@ -120,14 +120,14 @@ const _: () = assert!(Packed::new(PackedKind::None, 1).bits() == 1);
 /// `bundling_failures` and the `failures_added`/`failures_removed` lists —
 /// profile if this shows up on a hot path.
 #[derive(Clone, Default)]
-pub struct SerializedFailure {
+pub(crate) struct SerializedFailure {
     /// Wire-format bytes (length-prefixed; first 4 bytes encode `Owner.Packed`).
-    pub data: Box<[u8]>,
+    pub(crate) data: Box<[u8]>,
 }
 
 impl SerializedFailure {
     /// Decodes the leading 4-byte packed owner from `data`.
-    pub fn get_owner(&self) -> Owner {
+    pub(crate) fn get_owner(&self) -> Owner {
         let raw = u32::from_ne_bytes(
             self.data[0..4]
                 .try_into()
@@ -138,13 +138,13 @@ impl SerializedFailure {
 
     /// Releases `data`. `Box<[u8]>` drop suffices; the signature keeps a
     /// `_dev` parameter so call sites read uniformly.
-    pub fn deinit<D>(&self, _dev: &D) {
+    pub(crate) fn deinit<D>(&self, _dev: &D) {
         // Drop happens via owner; nothing to do for the borrow form used by
         // `index_failures` (which iterates `&SerializedFailure`).
     }
 
     /// `SerializedFailure.initFromLog`.
-    pub fn init_from_log(
+    pub(crate) fn init_from_log(
         owner: Owner,
         // for .client and .server, these are meant to be relative file paths
         owner_display_name: &[u8],
@@ -173,29 +173,13 @@ impl SerializedFailure {
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum ErrorKind {
+pub(crate) enum ErrorKind {
     // A log message. The `logger.Kind` is encoded here.
     BundlerLogErr = 0,
     BundlerLogWarn = 1,
     BundlerLogNote = 2,
     BundlerLogDebug = 3,
     BundlerLogVerbose = 4,
-
-    /// new Error(message)
-    JsError,
-    /// new TypeError(message)
-    JsErrorType,
-    /// new RangeError(message)
-    JsErrorRange,
-    /// Other forms of `Error` objects, including when an error has a
-    /// `code`, and other fields.
-    JsErrorExtra,
-    /// Non-error with a stack trace
-    JsPrimitiveException,
-    /// Non-error JS values
-    JsPrimitive,
-    /// new AggregateError(errors, message)
-    JsAggregate,
 }
 
 // All "write" functions get a corresponding "read" function in ./client/error.ts
@@ -246,21 +230,3 @@ fn write_string32(data: &[u8], w: &mut Writer) {
     _ = w.write_int_le::<u32>(u32::try_from(data.len()).expect("int cast"));
     w.extend_from_slice(data);
 }
-
-// fn writeJsValue(value: JSValue, global: *jsc.JSGlobalObject, w: *Writer) !void {
-//     if (value.isAggregateError(global)) {
-//         //
-//     }
-//     if (value.jsType() == .DOMWrapper) {
-//         if (value.as(bun.api.BuildMessage)) |build_error| {
-//             _ = build_error; // autofix
-//             //
-//         } else if (value.as(bun.api.ResolveMessage)) |resolve_error| {
-//             _ = resolve_error; // autofix
-//             @panic("TODO");
-//         }
-//     }
-//     _ = w; // autofix
-//
-//     @panic("TODO");
-// }

@@ -409,7 +409,7 @@ impl<'a> Scope<'a> {
         }
     }
 
-    pub fn exit(&mut self) {
+    pub(crate) fn exit(&mut self) {
         if !self.entered {
             return;
         }

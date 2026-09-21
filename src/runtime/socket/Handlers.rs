@@ -2,7 +2,7 @@ use core::cell::Cell;
 use core::ptr::NonNull;
 use std::rc::Rc;
 
-use bun_core::zig_string::Slice as ZigStringSlice;
+use bun_core::Utf8Bytes;
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::generated::{
     SocketConfig as GeneratedSocketConfig, SocketConfigHandlers as GeneratedSocketConfigHandlers,
@@ -34,7 +34,7 @@ bun_output::declare_scope!(Listener, visible);
 /// Held as `Rc<Handlers>` by each owner (the `Listener`, each `NewSocket`, and
 /// each in-flight callback [`Scope`]), so a socket that closes while a callback
 /// frame still holds it cannot free it out from under that frame.
-pub struct Handlers {
+pub(crate) struct Handlers {
     /// The cell holding every callback and the pending connect promise. Read
     /// via the named accessors ([`on_data`](Self::on_data), ...); `reload`
     /// rewrites it in place via [`apply_reload`](Self::apply_reload).
@@ -44,14 +44,16 @@ pub struct Handlers {
     /// the first JS wrapper stores it.
     cell: JSSocketHandlers,
 
-    pub binary_type: Cell<BinaryType>,
+    pub(crate) binary_type: Cell<BinaryType>,
 
-    pub vm: &'static VirtualMachine,
-    pub global_object: GlobalRef,
+    pub(crate) vm: &'static VirtualMachine,
+    pub(crate) global_object: GlobalRef,
+    /// The context of the script that gave these handlers: a socket event is dispatched inside it.
+    context: bun_jsc::ContextId,
     /// Live sockets plus in-flight callback [`Scope`]s. Drives the listener's
     /// idle release; ownership itself is the `Rc`.
-    pub active_connections: Cell<u32>,
-    pub mode: SocketMode,
+    pub(crate) active_connections: Cell<u32>,
+    pub(crate) mode: SocketMode,
     /// The listener that accepted these sockets, for `mode == Server`.
     ///
     /// Deliberately a nullable raw pointer and not a `BackRef`: a `BackRef`
@@ -68,9 +70,9 @@ pub struct Handlers {
 
 /// Output of [`Handlers::prepare_reload`]: everything `reload` needs, parsed
 /// and validated before any `Handlers` is touched.
-pub struct ReloadedHandlers {
+pub(crate) struct ReloadedHandlers {
     callbacks: [JSValue; CALLBACK_COUNT],
-    pub binary_type: BinaryType,
+    pub(crate) binary_type: BinaryType,
 }
 
 fn binary_type_from_generated(binary_type: GeneratedBinaryType) -> BinaryType {
@@ -86,7 +88,7 @@ impl Handlers {
     /// `handlers` slot so the callbacks stay reachable from every object that
     /// can still invoke them.
     #[inline]
-    pub fn cell(&self) -> JSValue {
+    pub(crate) fn cell(&self) -> JSValue {
         self.cell.to_js()
     }
 
@@ -96,20 +98,20 @@ impl Handlers {
     /// getters, `SSLConfig` parsing) and JSC allocations run in that window.
     #[inline]
     #[must_use = "the cell is collectable as soon as this drops"]
-    pub fn root_cell(&self, global: &JSGlobalObject) -> Strong {
+    pub(crate) fn root_cell(&self, global: &JSGlobalObject) -> Strong {
         self.cell.root(global)
     }
 
     /// Records the listener that accepted these sockets (server mode only), or
     /// clears it as that listener frees itself.
-    pub fn set_listener(&self, listener: Option<NonNull<SocketListener>>) {
+    pub(crate) fn set_listener(&self, listener: Option<NonNull<SocketListener>>) {
         debug_assert!(self.mode == SocketMode::Server || listener.is_none());
         self.listener.set(listener);
     }
 
     /// The accepting listener, or `None` for client-mode handlers and for a
     /// listener already torn down by `Listener::deinit`.
-    pub fn listener(&self) -> Option<&SocketListener> {
+    pub(crate) fn listener(&self) -> Option<&SocketListener> {
         // SAFETY: `Listener::listen` stores its `heap::into_raw` allocation root
         // here, and `Listener::deinit` clears it before freeing that allocation
         // (after force-closing every accepted socket), so a `Some` is live. The
@@ -118,50 +120,50 @@ impl Handlers {
         self.listener.get().map(|l| unsafe { &*l.as_ptr() })
     }
 
-    pub fn on_open(&self) -> JSValue {
+    pub(crate) fn on_open(&self) -> JSValue {
         self.cell.on_open()
     }
-    pub fn on_close(&self) -> JSValue {
+    pub(crate) fn on_close(&self) -> JSValue {
         self.cell.on_close()
     }
-    pub fn on_data(&self) -> JSValue {
+    pub(crate) fn on_data(&self) -> JSValue {
         self.cell.on_data()
     }
-    pub fn on_writable(&self) -> JSValue {
+    pub(crate) fn on_writable(&self) -> JSValue {
         self.cell.on_writable()
     }
-    pub fn on_timeout(&self) -> JSValue {
+    pub(crate) fn on_timeout(&self) -> JSValue {
         self.cell.on_timeout()
     }
-    pub fn on_connect_error(&self) -> JSValue {
+    pub(crate) fn on_connect_error(&self) -> JSValue {
         self.cell.on_connect_error()
     }
-    pub fn on_end(&self) -> JSValue {
+    pub(crate) fn on_end(&self) -> JSValue {
         self.cell.on_end()
     }
-    pub fn on_error(&self) -> JSValue {
+    pub(crate) fn on_error(&self) -> JSValue {
         self.cell.on_error()
     }
-    pub fn on_handshake(&self) -> JSValue {
+    pub(crate) fn on_handshake(&self) -> JSValue {
         self.cell.on_handshake()
     }
-    pub fn on_session(&self) -> JSValue {
+    pub(crate) fn on_session(&self) -> JSValue {
         self.cell.on_session()
     }
-    pub fn on_keylog(&self) -> JSValue {
+    pub(crate) fn on_keylog(&self) -> JSValue {
         self.cell.on_keylog()
     }
-    pub fn on_server_name(&self) -> JSValue {
+    pub(crate) fn on_server_name(&self) -> JSValue {
         self.cell.on_server_name()
     }
-    pub fn on_alpn_callback(&self) -> JSValue {
+    pub(crate) fn on_alpn_callback(&self) -> JSValue {
         self.cell.on_alpn_callback()
     }
 
     /// Drops the `open` callback for every holder of this `Handlers` — a client
     /// socket does this after its first TLS handshake so renegotiations do not
     /// fire it again.
-    pub fn clear_on_open(&self) {
+    pub(crate) fn clear_on_open(&self) {
         self.cell.clear_on_open(&self.global_object);
     }
 
@@ -183,16 +185,16 @@ impl Handlers {
 
     /// Stores the pending `Bun.connect` promise in the cell. Rooted by the cell
     /// like the callbacks, so settling it is the only release needed.
-    pub fn set_promise(&self, global_object: &JSGlobalObject, promise: JSValue) {
+    pub(crate) fn set_promise(&self, global_object: &JSGlobalObject, promise: JSValue) {
         self.cell.set_promise(global_object, promise);
     }
 
     /// Takes the pending connect promise, detaching it from the cell.
-    pub fn take_promise(&self) -> Option<JSValue> {
+    pub(crate) fn take_promise(&self) -> Option<JSValue> {
         self.cell.take_promise(&self.global_object)
     }
 
-    pub fn mark_active(&self) {
+    pub(crate) fn mark_active(&self) {
         bun_output::scoped_log!(Listener, "markActive");
         self.active_connections
             .set(self.active_connections.get() + 1);
@@ -203,22 +205,19 @@ impl Handlers {
     /// a socket that closes and drops its reference mid-callback cannot free
     /// the `Handlers` the callback is still reading from.
     #[inline]
-    pub fn enter(self: &Rc<Self>) -> Scope {
+    pub(crate) fn enter(self: &Rc<Self>) -> Scope {
         self.mark_active();
+        let context = self.vm.enter_context(self.context);
         self.vm.event_loop_ref().enter();
         Scope {
             handlers: Rc::clone(self),
+            _context: context,
         }
     }
 
     // corker: Corker = .{},
 
-    pub fn resolve_promise(&self, value: JSValue) -> JsResult<()> {
-        let vm = self.vm;
-        if vm.is_shutting_down() {
-            return Ok(());
-        }
-
+    pub(crate) fn resolve_promise(&self, value: JSValue) -> JsResult<()> {
         let Some(promise) = self.take_promise() else {
             return Ok(());
         };
@@ -229,12 +228,7 @@ impl Handlers {
         Ok(())
     }
 
-    pub fn reject_promise(&self, value: JSValue) -> JsResult<bool> {
-        let vm = self.vm;
-        if vm.is_shutting_down() {
-            return Ok(true);
-        }
-
+    pub(crate) fn reject_promise(&self, value: JSValue) -> JsResult<bool> {
         let Some(promise) = self.take_promise() else {
             return Ok(false);
         };
@@ -249,7 +243,7 @@ impl Handlers {
     /// left and this is not a listener's `Handlers` — the socket's cue to drop
     /// its own `Rc` so a later dispatch sees no handlers rather than a stale
     /// callback table. Freeing is the `Rc`'s job, not this function's.
-    pub fn mark_inactive(&self) -> bool {
+    pub(crate) fn mark_inactive(&self) -> bool {
         bun_output::scoped_log!(Listener, "markInactive");
         let remaining = self.active_connections.get() - 1;
         self.active_connections.set(remaining);
@@ -259,33 +253,35 @@ impl Handlers {
         if self.mode != SocketMode::Server {
             return true;
         }
-        // Nothing to release once the process is exiting, and the listener's
-        // JS wrapper may already be gone.
-        if self.vm.is_shutting_down() {
-            return false;
-        }
         // Let the listener's JS wrapper be GC'd once the last connection is
         // closed and it's not listening anymore.
         if let Some(listener) = self.listener() {
             if matches!(listener.listener.get(), ListenerType::None) {
+                listener.abort_handle.leave();
                 listener.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
                 listener.this_value.with_mut(|r| r.downgrade());
+                listener
+                    .strong_data
+                    .with_mut(|s| s.clear_without_deallocation());
             }
         }
         false
     }
 
-    pub fn call_error_handler(&self, this_value: JSValue, args: &[JSValue; 2]) -> bool {
-        let vm = self.vm;
-        if vm.is_shutting_down() {
-            return false;
-        }
-
+    /// Route an error a socket handler produced to the `error` handler, or —
+    /// with none registered — to the VM's uncaught-exception path. The `error`
+    /// handler is a top-level call of its own: what *it* throws is reported here
+    /// and the socket handler goes on (it still has state to settle, and often a
+    /// close to deliver). `Err` is only a termination pending from the preceding
+    /// callback, which nothing may run over.
+    pub(crate) fn call_error_handler(
+        &self,
+        this_value: JSValue,
+        args: &[JSValue; 2],
+    ) -> JsResult<()> {
         let global_object = self.global_object;
-        // Termination raised inside the preceding callback.call() cannot be
-        // cleared; entering JS again trips executeCallImpl's assertNoException.
         if global_object.has_exception() {
-            return false;
+            return Err(bun_jsc::JsError::Thrown);
         }
         let on_error = self.on_error();
 
@@ -296,17 +292,20 @@ impl Handlers {
                     .bun_vm()
                     .as_mut()
                     .uncaught_exception(&global_object, args[1], false);
-            return false;
+            return Ok(());
         }
 
-        if let Err(e) = on_error.call(&global_object, this_value, args) {
-            global_object.report_active_exception_as_unhandled(e);
-        }
-
-        true
+        global_object.bun_vm().event_loop_mut().run_callback(
+            bun_event_loop::ContextId::NONE,
+            on_error,
+            &global_object,
+            this_value,
+            args,
+        );
+        Ok(())
     }
 
-    pub fn from_js(
+    pub(crate) fn from_js(
         global_object: &JSGlobalObject,
         opts: JSValue,
         mode: SocketMode,
@@ -315,7 +314,7 @@ impl Handlers {
         Self::from_generated(global_object, &generated, mode)
     }
 
-    pub fn from_generated(
+    pub(crate) fn from_generated(
         global_object: &JSGlobalObject,
         generated: &GeneratedSocketConfigHandlers,
         mode: SocketMode,
@@ -332,6 +331,7 @@ impl Handlers {
             // VM outlives every `Handlers` (process-lifetime singleton).
             vm: global_object.bun_vm(),
             global_object: GlobalRef::from(global_object),
+            context: global_object.bun_vm().context_of_caller_no_frame().id(),
             active_connections: Cell::new(0),
             mode,
             listener: Cell::new(None),
@@ -402,7 +402,7 @@ impl Handlers {
     /// free or repoint its `Handlers`, so callers must re-check liveness
     /// before [`apply_reload`](Self::apply_reload). On error nothing is
     /// modified.
-    pub fn prepare_reload(
+    pub(crate) fn prepare_reload(
         global_object: &JSGlobalObject,
         opts: JSValue,
     ) -> JsResult<ReloadedHandlers> {
@@ -416,7 +416,7 @@ impl Handlers {
 
     /// Writes the validated callbacks into the existing cell, so the listener
     /// and every live socket sharing it pick them up in place. Runs no user JS.
-    pub fn apply_reload(&self, global_object: &JSGlobalObject, reloaded: &ReloadedHandlers) {
+    pub(crate) fn apply_reload(&self, global_object: &JSGlobalObject, reloaded: &ReloadedHandlers) {
         let wrapped = Self::wrap_with_context(global_object, &reloaded.callbacks);
         self.cell.set_callbacks(global_object, &wrapped);
         self.binary_type.set(reloaded.binary_type);
@@ -425,8 +425,9 @@ impl Handlers {
 
 /// One in-flight dispatch into JS. Holds an `Rc` so the callbacks it is about
 /// to invoke outlive a `close()` from inside them.
-pub struct Scope {
-    pub handlers: Rc<Handlers>,
+pub(crate) struct Scope {
+    pub(crate) handlers: Rc<Handlers>,
+    _context: bun_jsc::virtual_machine::ContextScope<'static>,
 }
 
 impl Scope {
@@ -435,7 +436,7 @@ impl Scope {
     /// because draining microtasks here can synchronously reconnect or
     /// `upgradeTLS` the socket, so the caller must observe the resulting
     /// `handlers` state before deciding whether to decrement.
-    pub fn exit_event_loop(&self) {
+    pub(crate) fn exit_event_loop(&self) {
         self.handlers.vm.event_loop_ref().exit();
     }
 
@@ -444,30 +445,32 @@ impl Scope {
     /// should drop its own `Rc` — see [`Handlers::mark_inactive`].
     ///
     /// Consumes `self`: a `Scope` is single-use (one `enter` ↔ one exit).
-    pub fn mark_inactive(self) -> bool {
+    pub(crate) fn mark_inactive(self) -> bool {
         self.handlers.mark_inactive()
     }
 }
 
 use bun_jsc::generated::SocketConfigHandlersBinaryType as GeneratedBinaryType;
 
-pub struct SocketConfig {
-    pub hostname_or_unix: ZigStringSlice,
-    pub port: Option<u16>,
-    pub fd: Option<Fd>,
-    pub ssl: Option<SSLConfig>,
-    pub handlers: Rc<Handlers>,
-    pub default_data: JSValue,
-    pub exclusive: bool,
-    pub allow_half_open: bool,
-    pub reuse_port: bool,
-    pub ipv6_only: bool,
+pub(crate) struct SocketConfig {
+    pub(crate) hostname_or_unix: Utf8Bytes<'static>,
+    pub(crate) port: Option<u16>,
+    pub(crate) fd: Option<Fd>,
+    pub(crate) ssl: Option<SSLConfig>,
+    pub(crate) handlers: Rc<Handlers>,
+    pub(crate) default_data: JSValue,
+    pub(crate) exclusive: bool,
+    pub(crate) allow_half_open: bool,
+    pub(crate) reuse_port: bool,
+    pub(crate) ipv6_only: bool,
+    /// node:net's `pauseOnConnect`: the socket, or every accepted one, opens paused.
+    pub(crate) pause_on_connect: bool,
 }
 
 impl SocketConfig {
     // Full teardown is handled by Drop (all owned fields impl Drop).
 
-    pub fn socket_flags(&self) -> i32 {
+    pub(crate) fn socket_flags(&self) -> i32 {
         let mut flags: i32 = if self.exclusive {
             uws::LIBUS_LISTEN_EXCLUSIVE_PORT
         } else if self.reuse_port {
@@ -482,14 +485,17 @@ impl SocketConfig {
         if self.ipv6_only {
             flags |= uws::LIBUS_SOCKET_IPV6_ONLY;
         }
+        if self.pause_on_connect {
+            flags |= uws::LIBUS_SOCKET_OPEN_PAUSED;
+        }
 
         flags
     }
 
-    pub fn from_generated(
+    pub(crate) fn from_generated(
         vm: &'static VirtualMachine,
         global: &JSGlobalObject,
-        generated: &GeneratedSocketConfig,
+        generated: GeneratedSocketConfig,
         mode: SocketMode,
     ) -> JsResult<SocketConfig> {
         let mut result: SocketConfig = 'blk: {
@@ -505,9 +511,18 @@ impl SocketConfig {
                 GeneratedTls::Object(ssl) => SSLConfig::from_generated(vm, global, ssl)?,
             };
             break 'blk SocketConfig {
-                hostname_or_unix: ZigStringSlice::empty(),
+                hostname_or_unix: Utf8Bytes::EMPTY,
                 port: None,
-                fd: generated.fd.map(Fd::from_uv),
+                fd: generated.fd.map(|v| {
+                    #[cfg(windows)]
+                    {
+                        Fd::from_system(v as u32 as usize as *mut core::ffi::c_void)
+                    }
+                    #[cfg(not(windows))]
+                    {
+                        Fd::from_uv(v)
+                    }
+                }),
                 ssl,
                 handlers: Handlers::from_generated(global, &generated.handlers, mode)?,
                 default_data: if generated.data.is_undefined() {
@@ -519,35 +534,42 @@ impl SocketConfig {
                 allow_half_open: false,
                 reuse_port: false,
                 ipv6_only: false,
+                pause_on_connect: false,
             };
         };
         // On any `?` below, `result` drops and releases what it owns — no
         // manual error-path cleanup needed.
 
+        result.exclusive = generated.exclusive;
+        result.allow_half_open = generated.allow_half_open;
+        result.reuse_port = generated.reuse_port;
+        result.ipv6_only = generated.ipv6_only;
+        result.pause_on_connect = generated.pause_on_connect;
+
         if result.fd.is_some() {
             // If a user passes a file descriptor then prefer it over hostname or unix
-        } else if let Some(unix) = generated.unix_.get() {
+        } else if let Some(unix) = generated.unix_.into_inner() {
             if unix.length() == 0 {
                 return Err(global
                     .throw_invalid_arguments(format_args!("Expected a non-empty \"unix\" path")));
             }
-            result.hostname_or_unix = unix.to_utf8();
+            result.hostname_or_unix = unix.into_utf8();
             let slice = result.hostname_or_unix.slice();
             if slice.starts_with(b"file://")
                 || slice.starts_with(b"unix://")
                 || slice.starts_with(b"sock://")
             {
                 let without_prefix = slice[7..].to_vec();
-                result.hostname_or_unix = ZigStringSlice::init_owned(without_prefix);
+                result.hostname_or_unix = Utf8Bytes::Owned(without_prefix);
             }
-        } else if let Some(hostname) = generated.hostname.get() {
+        } else if let Some(hostname) = generated.hostname.into_inner() {
             if hostname.length() == 0 {
                 return Err(global
                     .throw_invalid_arguments(format_args!("Expected a non-empty \"hostname\"")));
             }
-            result.hostname_or_unix = hostname.to_utf8();
+            result.hostname_or_unix = hostname.into_utf8();
             let slice = result.hostname_or_unix.slice();
-            if slice.contains(&0) {
+            if bun_core::strings::contains_char(slice, 0) {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "\"hostname\" must not contain null bytes"
                 )));
@@ -563,10 +585,6 @@ impl SocketConfig {
                     }
                 },
             });
-            result.exclusive = generated.exclusive;
-            result.allow_half_open = generated.allow_half_open;
-            result.reuse_port = generated.reuse_port;
-            result.ipv6_only = generated.ipv6_only;
         } else {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Expected either \"hostname\" or \"unix\""
@@ -575,14 +593,14 @@ impl SocketConfig {
         Ok(result)
     }
 
-    pub fn from_js(
+    pub(crate) fn from_js(
         vm: &'static VirtualMachine,
         opts: JSValue,
         global_object: &JSGlobalObject,
         mode: SocketMode,
     ) -> JsResult<SocketConfig> {
         let generated = GeneratedSocketConfig::from_js(global_object, opts)?;
-        Self::from_generated(vm, global_object, &generated, mode)
+        Self::from_generated(vm, global_object, generated, mode)
     }
 }
 

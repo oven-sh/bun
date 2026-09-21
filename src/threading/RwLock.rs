@@ -120,12 +120,6 @@ unsafe impl<T: Send> Send for RwLock<T> {}
 // exclusive `&mut T` (requires `T: Send`). `raw` itself is built from atomics.
 unsafe impl<T: Send + Sync> Sync for RwLock<T> {}
 
-impl<T: Default> Default for RwLock<T> {
-    fn default() -> Self {
-        Self::new(T::default())
-    }
-}
-
 impl<T> RwLock<T> {
     /// Const-init. Parity with `parking_lot::RwLock::new` /
     /// `parking_lot::const_rwlock`.

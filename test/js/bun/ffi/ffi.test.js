@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync } from "fs";
-import { bunEnv, bunExe, compileFixture, isGlibcVersionAtLeast, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, compileFixture, isDebug, isGlibcVersionAtLeast, isWindows, tempDir } from "harness";
 import { platform } from "os";
 
 import {
@@ -325,10 +325,6 @@ function getTypes(fast) {
       returns: "ptr",
       args: [],
     },
-    getNoopDeallocatorCallback: {
-      returns: "ptr",
-      args: [],
-    },
     getDeallocatorBuffer: {
       returns: "ptr",
       args: [],
@@ -382,7 +378,6 @@ function ffiRunner(fast) {
         is_null,
         does_pointer_equal_42_as_int32_t,
         ptr_should_point_to_42_as_int32_t,
-        getNoopDeallocatorCallback,
         cb_identity_true,
         cb_identity_false,
         cb_identity_42_char,
@@ -493,11 +488,12 @@ function ffiRunner(fast) {
       expect(cptr != 0).toBe(true);
       expect(typeof cptr === "number").toBe(true);
       expect(does_pointer_equal_42_as_int32_t(cptr)).toBe(true);
-      const noopDeallocator = getNoopDeallocatorCallback();
       {
-        const buffer = toBuffer(cptr, 0, 4, noopDeallocator);
+        // No finalizer: both views borrow `cptr` (static storage in the fixture),
+        // so the GC below must not free it. See oven-sh/bun#35405.
+        const buffer = toBuffer(cptr, 0, 4);
         expect(buffer.readInt32(0)).toBe(42);
-        expect(new DataView(toArrayBuffer(cptr, 0, 4, noopDeallocator), 0, 4).getInt32(0, true)).toBe(42);
+        expect(new DataView(toArrayBuffer(cptr, 0, 4), 0, 4).getInt32(0, true)).toBe(42);
         expect(ptr(buffer)).toBe(cptr);
       }
       Bun.gc(true);
@@ -932,6 +928,46 @@ it("JSCallback exceptions propagate out of the native call", async () => {
   });
 });
 
+// A `ptr` argument that is a cell but not a typed array view (here: a plain ArrayBuffer) must convert
+// correctly in FTL-compiled callers too. The optimizing tier used to read JSArrayBufferView::m_mode from
+// any cell before checking its type; when the ArrayBuffer was the last cell in its MarkedBlock and the
+// following page was not committed, that read faulted. Allocating many small ArrayBuffers per round makes
+// block-final cells common; the check itself is that every call returns the buffer's data pointer.
+it.skipIf(!FFI_FIXTURE_PATH)("ptr argument: ArrayBuffer cells through an FTL-compiled call site", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `import { dlopen, read } from "bun:ffi";
+      const { symbols } = dlopen(process.env.FFI_FIXTURE_PATH, { identity_ptr: { args: ["ptr"], returns: "ptr" } });
+      function callIt(value) { return symbols.identity_ptr(value); }
+      const view = new Uint8Array(16);
+      for (let i = 0; i < 300_000; i++) callIt(view);
+      const rounds = ${isDebug ? 3 : 60};
+      const perRound = ${isDebug ? 100_000 : 200_000};
+      let mismatches = 0;
+      for (let round = 0; round < rounds; round++) {
+        const buffers = [];
+        for (let i = 0; i < perRound; i++) buffers.push(new ArrayBuffer(8));
+        for (let i = 0; i < buffers.length; i++) if (i % 10 !== 0) buffers[i] = null;
+        Bun.gc(true);
+        for (let i = 0; i < buffers.length; i += 10) {
+          const buffer = buffers[i];
+          new Uint8Array(buffer)[0] = i & 0xff;
+          const address = callIt(buffer);
+          if (read.u8(address, 0) !== (i & 0xff)) mismatches++;
+        }
+      }
+      console.log("mismatches", mismatches);`,
+    ],
+    env: { ...bunEnv, FFI_FIXTURE_PATH },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "mismatches 0\n", stderr: "", exitCode: 0 });
+});
+
 it("worker teardown drops queued threadsafe JSCallback invocations without crashing", async () => {
   using dir = tempDir("ffi-jscallback-terminate-queued", {
     "main.js": `
@@ -1356,6 +1392,148 @@ describe.if(!!libPath)("can open more than 63 symbols via", () => {
       expect(lib.symbols.strlen(Buffer.from("bunbun\0", "ascii"))).toBe(6n);
     });
   }
+});
+
+// oven-sh/bun#35405: toBuffer without a finalizer used to mi_free caller-owned
+// memory on GC. Subprocess because unpatched builds crash.
+describe("toBuffer borrowed-pointer ownership (no bad-free on GC)", () => {
+  async function runsClean(script) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const gcLoop = `for (let i = 0; i < 20; i++) { Bun.gc(true); Buffer.alloc(1024 * 1024); }`;
+
+  // Drops the borrowed view first, then the owner, so an invalid free shows up as
+  // corrupted caller memory rather than only as a crash.
+  const originalSurvives = (index, expected) => `
+      adopted = null;
+      ${gcLoop}
+      if (original[${index}] !== ${expected}) throw new Error("caller memory corrupted after adopted GC: " + original[${index}]);
+      original[${index}] = 0x55;
+      if (original[${index}] !== 0x55) throw new Error("caller memory not writable after adopted GC");
+      original = null;
+      ${gcLoop}
+  `;
+
+  it.concurrent("toBuffer(ptr(buffer)) does not free caller-owned memory on GC", async () => {
+    expect(
+      await runsClean(`
+      import { ptr, toBuffer } from "bun:ffi";
+      let original = Buffer.alloc(64, 0x41);
+      let adopted = toBuffer(ptr(original), 0, 64);
+      if (adopted[0] !== 0x41) throw new Error("expected a zero-copy view");
+      adopted[0] = 0x42;
+      if (original[0] !== 0x42) throw new Error("expected an aliasing view");
+      ${originalSurvives(0, "0x42")}
+      console.log("survived-gc");
+    `),
+    ).toEqual({ stdout: "survived-gc\n", stderr: "", exitCode: 0 });
+  });
+
+  it.concurrent("toBuffer(ptr(buffer), offset) does not free an interior pointer on GC", async () => {
+    expect(
+      await runsClean(`
+      import { ptr, toBuffer } from "bun:ffi";
+      let original = Buffer.alloc(64, 0x41);
+      let adopted = toBuffer(ptr(original), 8, 48);
+      if (adopted[0] !== 0x41) throw new Error("expected a zero-copy view");
+      adopted[0] = 0x42;
+      if (original[8] !== 0x42) throw new Error("expected a view aliasing original[8]");
+      ${originalSurvives(8, "0x42")}
+      console.log("survived-gc");
+    `),
+    ).toEqual({ stdout: "survived-gc\n", stderr: "", exitCode: 0 });
+  });
+
+  it.concurrent("toBuffer(ptr(typedArray)) does not free caller-owned memory on GC", async () => {
+    expect(
+      await runsClean(`
+      import { ptr, toBuffer } from "bun:ffi";
+      let original = new Uint8Array(64).fill(0x41);
+      let adopted = toBuffer(ptr(original), 0, 64);
+      if (adopted[0] !== 0x41) throw new Error("expected a zero-copy view");
+      adopted[0] = 0x42;
+      if (original[0] !== 0x42) throw new Error("expected an aliasing view");
+      ${originalSurvives(0, "0x42")}
+      console.log("survived-gc");
+    `),
+    ).toEqual({ stdout: "survived-gc\n", stderr: "", exitCode: 0 });
+  });
+
+  // Regression guard: an explicit finalizer still controls disposal and runs exactly
+  // once on GC. getDeallocatorBuffer/getDeallocatorCallback each reset the counter.
+  it.skipIf(!FFI_FIXTURE_PATH)(
+    "toBuffer with an explicit finalizer calls the deallocator exactly once on GC",
+    async () => {
+      const {
+        symbols: { getDeallocatorCallback, getDeallocatorBuffer, getDeallocatorCalledCount },
+      } = dlopen(FFI_FIXTURE_PATH, {
+        getDeallocatorCallback: { args: [], returns: "ptr" },
+        getDeallocatorBuffer: { args: [], returns: "ptr" },
+        getDeallocatorCalledCount: { args: [], returns: "int" },
+      });
+      (() => {
+        const bufPtr = getDeallocatorBuffer();
+        let buf = toBuffer(bufPtr, 0, 128, getDeallocatorCallback());
+        expect(buf.length).toBe(128);
+        expect(getDeallocatorCalledCount()).toBe(0);
+        buf = null;
+      })();
+      for (let i = 0; i < 100 && getDeallocatorCalledCount() === 0; i++) {
+        Bun.gc(true);
+        Buffer.alloc(1024 * 1024);
+        await Bun.sleep(0);
+      }
+      expect(getDeallocatorCalledCount()).toBe(1);
+      Bun.gc(true);
+      expect(getDeallocatorCalledCount()).toBe(1);
+    },
+  );
+});
+
+// toBuffer hands an arbitrary (pointer, byteLength) pair straight to the Buffer
+// hand-off that spawnSync, Bun.$ and others use for their output. That makes it
+// the one way to reach the hand-off with a byteLength above kMaxLength (2^32)
+// without 4 GiB of real bytes; the views below never touch the memory they
+// describe. Subprocess because unpatched builds abort inside JSC.
+describe("toBuffer at the Buffer length limit", () => {
+  it.concurrent("throws a RangeError above 2^32 bytes and still creates a view of exactly 2^32 bytes", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import { ptr, toBuffer } from "bun:ffi";
+        const backing = new Uint8Array(16);
+        let aboveLimit;
+        try {
+          aboveLimit = { length: toBuffer(ptr(backing), 0, 2 ** 32 + 1).length };
+        } catch (e) {
+          aboveLimit = { isRangeError: e instanceof RangeError };
+        }
+        const atLimit = { length: toBuffer(ptr(backing), 0, 2 ** 32).length };
+        console.log(JSON.stringify({ aboveLimit, atLimit }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ result: JSON.parse(stdout.trim() || "null"), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      result: { aboveLimit: { isRangeError: true }, atLimit: { length: 2 ** 32 } },
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
 });
 
 describe.skipIf(!FFI_FIXTURE_PATH)("engine-native FFI (single implementation)", () => {

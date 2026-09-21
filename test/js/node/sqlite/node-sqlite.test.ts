@@ -2374,9 +2374,9 @@ test("bun:sqlite still initializes correctly when node:sqlite opens a database f
   void stderr;
 });
 
-// Worker-owned databases are closed via ~VM → lastChanceToFinalize →
-// ~JSDatabaseSync — a completely different path than the main-thread exit
-// sweep. Sibling of "unclosed file-backed database is closed on process exit".
+// Worker-owned databases are checkpointed and closed by the worker's own exit
+// (the same sweep the main thread runs, filtered to that worker's entries).
+// Sibling of "unclosed file-backed database is closed on process exit".
 test("worker-owned unclosed database is checkpointed on worker exit", async () => {
   using dir = tempDir("node-sqlite-worker-exit", {
     "worker.mjs": `import { DatabaseSync } from 'node:sqlite';
@@ -2395,7 +2395,7 @@ test("worker-owned unclosed database is checkpointed on worker exit", async () =
         w.on('error', rej);
         w.on('exit', code => (code === 0 ? res() : rej(new Error('exit ' + code))));
       });
-      // ~JSDatabaseSync on lastChanceToFinalize checkpointed: the -wal is
+      // The worker's exit sweep checkpointed and closed it: the -wal is
       // gone or empty. Checked before the reopen below touches the sidecars.
       console.log(existsSync('exit.db-wal') ? statSync('exit.db-wal').size : 0);
       const { DatabaseSync } = await import('node:sqlite');
@@ -2506,6 +2506,60 @@ test.skipIf(process.platform !== "darwin")("setCustomSQLite() sees a library nod
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "shared", exitCode: 0 });
   void stderr;
+});
+
+test.skipIf(process.platform !== "darwin")("setCustomSQLite() accepts the selected path from a worker", async () => {
+  const workerSource = `
+    const { parentPort, workerData } = require("node:worker_threads");
+    try {
+      const { Database } = require("bun:sqlite");
+      Database.setCustomSQLite(workerData);
+      const db = new Database(":memory:");
+      const version = db.query("SELECT sqlite_version() AS version").get().version;
+      db.close();
+      let differentPathRejected = false;
+      try {
+        Database.setCustomSQLite("libsqlite3.dylib");
+      } catch (error) {
+        differentPathRejected = /already loaded/.test(String(error));
+      }
+      parentPort.postMessage({ version, differentPathRejected });
+    } catch (error) {
+      parentPort.postMessage({ error: String(error) });
+    }
+  `;
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { Worker } = require("node:worker_threads");
+        const path = "/usr/lib/libsqlite3.dylib";
+        const { Database } = require("bun:sqlite");
+        Database.setCustomSQLite(path);
+        const db = new Database(":memory:");
+        const parentVersion = db.query("SELECT sqlite_version() AS version").get().version;
+        db.close();
+        const worker = new Worker(${JSON.stringify(workerSource)}, { eval: true, workerData: path });
+        const message = await new Promise((resolve, reject) => {
+          worker.once("message", resolve);
+          worker.once("error", reject);
+          worker.once("exit", code => {
+            if (code !== 0) reject(new Error("worker exited with " + code));
+          });
+        });
+        if (message.error) throw new Error(message.error);
+        if (message.version !== parentVersion) throw new Error("worker loaded a different SQLite library");
+        if (!message.differentPathRejected) throw new Error("worker accepted a different SQLite path");
+        console.log("idempotent");
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "idempotent", stderr: "" });
+  expect(exitCode).toBe(0);
 });
 
 // process.versions.sqlite must not force-dlopen the system SQLite: that

@@ -208,3 +208,226 @@ describe.concurrent("--shard", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe.concurrent("--timings", () => {
+  test("--shard with --timings: one file bigger than a whole shard doesn't leave earlier shards empty", async () => {
+    using dir = makeFixture("shard-timings-giant", 4);
+    await Bun.write(
+      `${dir}/t.json`,
+      JSON.stringify({
+        version: 1,
+        files: { "f00.test.ts": 1000, "f01.test.ts": 1, "f02.test.ts": 1, "f03.test.ts": 1 },
+      }),
+    );
+    const results = await Promise.all(
+      ["1/4", "2/4", "3/4", "4/4"].map(s => runShard(String(dir), s, ["--timings=t.json"])),
+    );
+    expect(results.map(r => r.ran)).toEqual([["f00"], ["f01"], ["f02"], ["f03"]]);
+    for (const r of results) expect(r.exitCode).toBe(0);
+  });
+
+  test("--shard with --timings: a big file that sorts last doesn't leave trailing shards empty", async () => {
+    using dir = makeFixture("shard-timings-giant-last", 4);
+    await Bun.write(
+      `${dir}/t.json`,
+      JSON.stringify({
+        version: 1,
+        files: { "f00.test.ts": 1, "f01.test.ts": 1, "f02.test.ts": 1, "f03.test.ts": 1000 },
+      }),
+    );
+    const results = await Promise.all(
+      ["1/4", "2/4", "3/4", "4/4"].map(s => runShard(String(dir), s, ["--timings=t.json"])),
+    );
+    expect(results.map(r => r.ran)).toEqual([["f00"], ["f01"], ["f02"], ["f03"]]);
+    for (const r of results) expect(r.exitCode).toBe(0);
+  });
+
+  test("--update-timings creates the timings file's parent directory", async () => {
+    using dir = makeFixture("timings-mkdir", 1);
+    const r = await runShard(String(dir), "1/1", ["--timings=nested/dir/t.json", "--update-timings"]);
+    expect(r.ran).toEqual(["f00"]);
+    expect(Object.keys((await Bun.file(`${dir}/nested/dir/t.json`).json()).files)).toEqual(["f00.test.ts"]);
+    expect(r.exitCode).toBe(0);
+  });
+
+  test("--update-timings under --shard writes only the files that shard ran, to the first --timings path", async () => {
+    using dir = makeFixture("timings-shard-write", 4);
+    const base = { version: 1, files: { "f00.test.ts": 1000, "f01.test.ts": 1, "f02.test.ts": 1, "f03.test.ts": 1 } };
+    await Bun.write(`${dir}/base.json`, JSON.stringify(base));
+    const [s1, s2] = await Promise.all([
+      runShard(String(dir), "1/2", ["--timings=1.json", "--timings=base.json", "--update-timings"]),
+      runShard(String(dir), "2/2", ["--timings=2.json", "--timings=base.json", "--update-timings"]),
+    ]);
+    expect(s1.ran).toEqual(["f00"]);
+    expect(s2.ran).toEqual(["f01", "f02", "f03"]);
+    expect(Object.keys((await Bun.file(`${dir}/1.json`).json()).files)).toEqual(["f00.test.ts"]);
+    expect(Object.keys((await Bun.file(`${dir}/2.json`).json()).files).sort()).toEqual([
+      "f01.test.ts",
+      "f02.test.ts",
+      "f03.test.ts",
+    ]);
+    // base.json is only read.
+    expect(await Bun.file(`${dir}/base.json`).json()).toEqual(base);
+    expect(s1.exitCode).toBe(0);
+    expect(s2.exitCode).toBe(0);
+  });
+
+  test("multiple --timings files are read as one table, in any order", async () => {
+    using dir = makeFixture("timings-multi", 4);
+    // Last run's per-shard outputs: disjoint, together the whole suite.
+    await Bun.write(`${dir}/1.json`, JSON.stringify({ version: 1, files: { "f00.test.ts": 1000 } }));
+    await Bun.write(
+      `${dir}/2.json`,
+      JSON.stringify({ version: 1, files: { "f01.test.ts": 1, "f02.test.ts": 1, "f03.test.ts": 1 } }),
+    );
+    for (const order of [
+      ["1.json", "2.json"],
+      ["2.json", "1.json"],
+    ]) {
+      const flags = ["--timings=out.json", ...order.map(f => `--timings=${f}`)];
+      const [s1, s2] = await Promise.all([runShard(String(dir), "1/2", flags), runShard(String(dir), "2/2", flags)]);
+      expect(s1.ran).toEqual(["f00"]);
+      expect(s2.ran).toEqual(["f01", "f02", "f03"]);
+      expect(s1.exitCode).toBe(0);
+      expect(s2.exitCode).toBe(0);
+    }
+  });
+
+  test("--update-timings under --shard: a shard that gets no files writes an empty table", async () => {
+    using dir = makeFixture("timings-empty-shard", 2);
+    const r = await runShard(String(dir), "3/3", ["--timings=3.json", "--update-timings"]);
+    expect(r.ran).toEqual([]);
+    expect(await Bun.file(`${dir}/3.json`).json()).toEqual({ version: 1, files: {} });
+    expect(r.exitCode).toBe(0);
+  });
+
+  test("--update-timings without --timings is an error", async () => {
+    using dir = tempDir("timings-no-path", { "a.test.ts": `import {test} from "bun:test"; test("t", () => {});` });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--update-timings"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("--update-timings requires --timings");
+    expect(exitCode).toBe(1);
+  });
+
+  test("a --timings file that doesn't exist yet is fine (first run creates it)", async () => {
+    using dir = tempDir("timings-missing", { "a.test.ts": `import {test} from "bun:test"; test("t", () => {});` });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--timings=nope.json", "--update-timings"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("1 pass");
+    expect(Object.keys((await Bun.file(`${dir}/nope.json`).json()).files)).toEqual(["a.test.ts"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a malformed --timings file is rejected", async () => {
+    using dir = tempDir("timings-bad", {
+      "a.test.ts": `import {test} from "bun:test"; test("t", () => {});`,
+      "t.json": JSON.stringify({ "a.test.ts": 5 }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--timings=t.json"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(`"version": 1`);
+    expect(exitCode).toBe(1);
+  });
+
+  test("--shard with --timings cuts path-sorted files into runs of equal total time", async () => {
+    // 8 files; f00..f03 are "slow" (100 each), f04..f07 are "fast" (1 each).
+    // Round-robin would give each of 2 shards two slow + two fast. By time,
+    // shard 1 = f00,f01 (200) and shard 2 = f02..f07 (204): contiguous, balanced.
+    using dir = makeFixture("shard-timings", 8);
+    const files: Record<string, number> = {};
+    for (let i = 0; i < 8; i++) files[`f${String(i).padStart(2, "0")}.test.ts`] = i < 4 ? 100 : 1;
+    await Bun.write(`${dir}/t.json`, JSON.stringify({ version: 1, files }));
+
+    const [s1, s2] = await Promise.all(["1/2", "2/2"].map(s => runShard(String(dir), s, ["--timings=t.json"])));
+    expect(s1.ran).toEqual(["f00", "f01"]);
+    expect(s2.ran).toEqual(["f02", "f03", "f04", "f05", "f06", "f07"]);
+    expect(s1.exitCode).toBe(0);
+    expect(s2.exitCode).toBe(0);
+  });
+
+  test("--shard with --timings: files missing from the table still run exactly once", async () => {
+    using dir = makeFixture("shard-timings-partial", 6);
+    await Bun.write(
+      `${dir}/t.json`,
+      JSON.stringify({ version: 1, files: { "f00.test.ts": 50, "f05.test.ts": 50, "stale.test.ts": 999 } }),
+    );
+    const results = await Promise.all(["1/3", "2/3", "3/3"].map(s => runShard(String(dir), s, ["--timings=t.json"])));
+    expect(results.flatMap(r => r.ran).sort()).toEqual(["f00", "f01", "f02", "f03", "f04", "f05"]);
+    for (const r of results) expect(r.exitCode).toBe(0);
+  });
+
+  test("--parallel with --timings cuts chunks by duration and dispatches each chunk slowest-first", async () => {
+    // Costs 10,40,20,30 (total 100) over path-sorted f0..f3 cut into 2 chunks by
+    // time: [f0,f1] and [f2,f3]. A huge scale-up delay keeps this on one worker,
+    // which runs its own chunk slowest-first (f1,f0) then steals the other
+    // chunk's slowest remaining file each time (f3, then f2).
+    const files: Record<string, string> = {};
+    const timings: Record<string, number> = {};
+    for (let i = 0; i < 4; i++) {
+      files[`f${i}.test.ts`] = `import {test} from "bun:test"; test("t", () => console.log("RAN f${i}"));`;
+      timings[`f${i}.test.ts`] = [10, 40, 20, 30][i];
+    }
+    using dir = tempDir("parallel-timings-order", {
+      ...files,
+      "t.json": JSON.stringify({ version: 1, files: timings }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2", "--parallel-delay=1000000", "--timings=t.json"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const ran = [...(stdout + stderr).matchAll(/RAN (f\d)/g)].map(m => m[1]);
+    expect(ran).toEqual(["f1", "f0", "f3", "f2"]);
+    expect(exitCode).toBe(0);
+  });
+});
+
+// Compares two files' measured wall-clock durations, so keep it away from the concurrent block's CPU contention.
+describe("--timings (serial)", () => {
+  test("--update-timings writes { version, files } sorted slowest-first and merges with existing entries", async () => {
+    using dir = tempDir("timings-write", {
+      "fast.test.ts": `import {test} from "bun:test"; test("t", () => {});`,
+      "slow.test.ts": `import {test} from "bun:test"; test("t", async () => { await Bun.sleep(300); });`,
+      "t.json": JSON.stringify({ version: 1, files: { "gone/elsewhere.test.ts": 7 } }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--timings=t.json", "--update-timings"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("2 pass");
+    const written = await Bun.file(`${dir}/t.json`).json();
+    expect(written.version).toBe(1);
+    // Entries for files this run didn't touch (another shard's, say) survive.
+    expect(Object.keys(written.files).sort()).toEqual(["fast.test.ts", "gone/elsewhere.test.ts", "slow.test.ts"]);
+    expect(written.files["slow.test.ts"]).toBeGreaterThanOrEqual(300);
+    expect(written.files["slow.test.ts"]).toBeGreaterThan(written.files["fast.test.ts"]);
+    // Slowest first.
+    expect(Object.keys(written.files)[0]).toBe("slow.test.ts");
+    expect(exitCode).toBe(0);
+  });
+});

@@ -4781,7 +4781,6 @@ pub(crate) fn write_file_internal(
             use webcore::body::Value as BodyValue;
             enum BodyTag {
                 Use,
-                Error,
                 Locked,
             }
             // `body_value` is `&mut Body::Value` from a live JS heap
@@ -4804,9 +4803,15 @@ pub(crate) fn write_file_internal(
             // A body that is all here (also behind an untouched `.body` stream) is written as a blob.
             // SAFETY: scoped exclusive borrow; runs no JS.
             unsafe { (*body_value).to_blob_if_possible() };
+            // SAFETY: scoped exclusive borrow; making the error runs no script.
+            if let Some(err_js) = unsafe { (*body_value).take_error(cx.global()) } {
+                destination_blob.detach();
+                return Ok(ControlFlow::Break(
+                    JSPromise::rejected_promise(cx.global(), err_js).to_js(),
+                ));
+            }
             // SAFETY: scoped shared read of the variant tag.
             let tag = match unsafe { &*body_value } {
-                BodyValue::Error(_) => BodyTag::Error,
                 BodyValue::Locked(_) => BodyTag::Locked,
                 BodyValue::Used => {
                     destination_blob.detach();
@@ -4818,22 +4823,6 @@ pub(crate) fn write_file_internal(
                 BodyTag::Use => {
                     // SAFETY: exclusive borrow scoped to the call; `use_()` runs no JS.
                     Ok(ControlFlow::Continue(unsafe { (*body_value).use_() }))
-                }
-                BodyTag::Error => {
-                    let err_js = {
-                        // SAFETY: exclusive borrow; ends before `use_()` below.
-                        let BodyValue::Error(err_ref) = (unsafe { &mut *body_value }) else {
-                            unreachable!()
-                        };
-                        err_ref.to_js(cx.global())
-                    };
-                    destination_blob.detach();
-                    // SAFETY: exclusive borrow scoped to the call; no other
-                    // borrow of the body value is live.
-                    let _ = unsafe { (*body_value).use_() };
-                    Ok(ControlFlow::Break(
-                        JSPromise::rejected_promise(cx.global(), err_js).to_js(),
-                    ))
                 }
                 BodyTag::Locked => {
                     if destination_blob.is_s3() {
@@ -4924,20 +4913,16 @@ pub(crate) fn write_file_internal(
                         }
                         // The producer settled the body while the stream was being made.
                         // SAFETY: scoped borrows, as in the arms above.
-                        match unsafe { &mut *body_value } {
-                            BodyValue::Locked(_) => {}
-                            BodyValue::Error(err) => {
-                                let err_js = err.to_js(cx.global());
-                                destination_blob.detach();
-                                // SAFETY: `err` is not used after `to_js`, so this is the only
-                                // live borrow of the value.
-                                let _ = unsafe { (*body_value).use_() };
-                                return Ok(ControlFlow::Break(
-                                    JSPromise::rejected_promise(cx.global(), err_js).to_js(),
-                                ));
-                            }
-                            // SAFETY: the match borrow ended with the pattern; no other borrow is live.
-                            _ => return Ok(ControlFlow::Continue(unsafe { (*body_value).use_() })),
+                        if let Some(err_js) = unsafe { (*body_value).take_error(cx.global()) } {
+                            destination_blob.detach();
+                            return Ok(ControlFlow::Break(
+                                JSPromise::rejected_promise(cx.global(), err_js).to_js(),
+                            ));
+                        }
+                        // SAFETY: scoped shared read of the variant tag.
+                        if !matches!(unsafe { &*body_value }, BodyValue::Locked(_)) {
+                            // SAFETY: the tag borrow ended; no other borrow is live.
+                            return Ok(ControlFlow::Continue(unsafe { (*body_value).use_() }));
                         }
                     }
                     let task =

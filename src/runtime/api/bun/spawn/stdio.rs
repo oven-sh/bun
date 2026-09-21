@@ -331,6 +331,10 @@ impl Stdio {
             return out_stdio.extract_blob(cx.global(), blob, i);
         }
 
+        if let Some(err) = body.take_error(cx.global()) {
+            return Err(cx.global().throw_value(err));
+        }
+
         match body {
             webcore::body::Value::Null | webcore::body::Value::Empty => {
                 *out_stdio = Stdio::Ignore;
@@ -345,14 +349,11 @@ impl Stdio {
                     )
                     .throw());
             }
-            webcore::body::Value::Error(err) => {
-                return Err(cx.global().throw_value(err.to_js(cx.global())));
-            }
-
             // handled above.
             webcore::body::Value::Blob(_)
             | webcore::body::Value::WTFStringImpl(_)
-            | webcore::body::Value::InternalBlob(_) => unreachable!(),
+            | webcore::body::Value::InternalBlob(_)
+            | webcore::body::Value::Error(_) => unreachable!(),
             webcore::body::Value::Locked(_) => {
                 if is_sync {
                     return Err(cx.global().throw_invalid_arguments(format_args!(

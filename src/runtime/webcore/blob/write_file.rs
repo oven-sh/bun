@@ -1265,14 +1265,15 @@ impl WriteFileWaitFromLockedValueTask {
         let global_this = global_ref.get();
         let context = global_this.bun_vm().context_of(this.context);
         let mut file_blob = core::mem::take(&mut this.file_blob);
+        if let Some(err) = value.take_error(global_this) {
+            file_blob.detach();
+            drop(this);
+            JSPromise::opaque_mut(promise).reject_with_async_stack(global_this, Ok(err))?;
+            return Ok(());
+        }
         match value {
-            body::Value::Error(err_ref) => {
-                let err = err_ref.to_js(global_this);
-                file_blob.detach();
-                let _ = value.use_();
-                drop(this);
-                JSPromise::opaque_mut(promise).reject_with_async_stack(global_this, Ok(err))?;
-            }
+            // Taken above.
+            body::Value::Error(_) => unreachable!(),
             body::Value::Used => {
                 file_blob.detach();
                 let _ = value.use_();

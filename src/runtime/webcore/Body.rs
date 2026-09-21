@@ -497,6 +497,7 @@ pub(crate) trait BodyOwnerJs {
     fn body_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
     fn stream_get_cached(this: JSValue) -> Option<JSValue>;
     fn stream_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
+    fn body_error_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -605,7 +606,10 @@ pub enum ValueError {
     /// error" to TypeError, so use this for fetch-layer rejections that
     /// callers feature-detect via `err instanceof TypeError`.
     TypeError(BunString),
+    /// GC-roots the error.
     JSValue(jsc::strong::Optional),
+    /// After [`Self::downgrade`]: a visited slot of the owner's wrapper keeps the error alive, and this reads `None` once it is collected.
+    WeakJSValue(jsc::Weak<()>),
 }
 
 impl ValueError {
@@ -613,6 +617,23 @@ impl ValueError {
     // per PORTING.md (never expose `pub fn deinit(&mut self)`).
     pub fn reset(&mut self) {
         *self = ValueError::JSValue(jsc::strong::Optional::empty());
+    }
+
+    /// Swap the GC root for a `Weak`. `adopt` stores the error in a slot that the owner's wrapper visits, which keeps it alive from here.
+    pub(crate) fn downgrade(
+        &mut self,
+        global_object: &JSGlobalObject,
+        adopt: impl FnOnce(JSValue),
+    ) {
+        let ValueError::JSValue(strong) = self else {
+            return;
+        };
+        // `Weak` holds objects only, and a primitive references nothing.
+        let Some(js_value) = strong.get().filter(|value| value.is_object()) else {
+            return;
+        };
+        adopt(js_value);
+        *self = ValueError::WeakJSValue(jsc::Weak::create_passive(js_value, global_object));
     }
 }
 
@@ -648,6 +669,9 @@ impl ValueError {
             ValueError::JSValue(js_value) => {
                 return js_value.get().unwrap_or(JSValue::UNDEFINED);
             }
+            ValueError::WeakJSValue(js_value) => {
+                return js_value.get().unwrap_or(JSValue::UNDEFINED);
+            }
         };
         *self = ValueError::JSValue(jsc::strong::Optional::create(js_value, global_object));
         js_value
@@ -668,6 +692,11 @@ impl ValueError {
                 }
                 ValueError::JSValue(jsc::strong::Optional::empty())
             }
+            // The copy's owner downgrades it again once it has a wrapper.
+            ValueError::WeakJSValue(js_ref) => ValueError::JSValue(match js_ref.get() {
+                Some(js_value) => jsc::strong::Optional::create(js_value, global_object),
+                None => jsc::strong::Optional::empty(),
+            }),
             ValueError::AbortReason(r) => ValueError::AbortReason(*r),
         }
     }
@@ -1365,13 +1394,15 @@ impl Value {
             // The Promise version goes before the ReadableStream version incase the Promise version is used too.
             // Avoid creating unnecessary duplicate JSValue.
             if let Some(readable) = strong_readable.get() {
+                // The stream gets a copy: made in place, a native error would stay in the body by a Strong that no wrapper takes over.
+                let mut stream_err = err_ref.dupe(global);
                 // BACKREF: see `Source::bytes()` — payload live for the
                 // lifetime of the ReadableStream JS wrapper.
                 if let Some(bytes) = readable.ptr.bytes() {
-                    bytes.on_data(streams::Result::Err(err_ref.to_stream_error(global)));
+                    bytes.on_data(streams::Result::Err(stream_err.to_stream_error(global)));
                 } else {
                     // e.g. a `clone()` tee branch; a cancel would end its reads with `{ done: true }`.
-                    readable.error(global, err_ref.to_js(global))?;
+                    readable.error(global, stream_err.to_js(global))?;
                 }
             }
 
@@ -1387,8 +1418,21 @@ impl Value {
 
             return Ok(());
         }
-        *self = Value::Error(err);
+        // A read already spent this body: a late failure (fetch reports an abort twice) must not make it readable again.
+        if !matches!(self, Value::Used) {
+            *self = Value::Error(err);
+        }
         Ok(())
+    }
+
+    /// The read of a failed body spends it like any other read, so the error that `to_js` just rooted does not stay behind.
+    pub(crate) fn take_error(&mut self, global_object: &JSGlobalObject) -> Option<JSValue> {
+        let Value::Error(err) = self else {
+            return None;
+        };
+        let js_err = err.to_js(global_object);
+        *self = Value::Used;
+        Some(js_err)
     }
 
     // mutates self to Null and is called explicitly at specific protocol points.
@@ -1692,6 +1736,26 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 }
             }
         }
+    }
+
+    /// Migrate a failed body's error into the GC-traced `js.gc.bodyError` slot: it can reach this owner, and a `Strong` would root that cycle.
+    fn check_body_error_ref(&self, global_object: &JSGlobalObject) {
+        let Value::Error(err) = self.get_body_value() else {
+            return;
+        };
+        let Some(js_value) = self.js_ref() else {
+            return;
+        };
+        err.downgrade(global_object, |js_err| {
+            Self::body_error_set_cached(js_value, global_object, js_err);
+        });
+    }
+
+    /// [`Value::to_error_instance`], then [`Self::check_body_error_ref`].
+    fn fail_body(&self, err: ValueError, global_object: &JSGlobalObject) -> JsResult<()> {
+        let result = self.get_body_value().to_error_instance(err, global_object);
+        self.check_body_error_ref(global_object);
+        result
     }
 
     /// After `clone()` replaced this body's stream: point the wrapper's cached
@@ -2264,10 +2328,6 @@ fn handle_body_stream_unusable(
 /// reader must call this before its `Locked` handling: `Value::Error` would
 /// otherwise fall through to `use_as_any_blob_*` and resolve empty.
 fn handle_body_error(value: &mut Value, global_object: &JSGlobalObject) -> Option<JSValue> {
-    let Value::Error(err) = value else {
-        return None;
-    };
-    let js = err.to_js(global_object);
-    *value = Value::Used;
+    let js = value.take_error(global_object)?;
     Some(JSPromise::rejected_promise(global_object, js).to_js())
 }

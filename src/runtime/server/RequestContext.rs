@@ -3080,16 +3080,14 @@ where
         // If it's a WTFStringImpl and it cannot be used as a UTF-8 string, convert it to a Blob.
         value.to_blob_if_possible();
         let global_this = this.server().global_this();
-        match value {
-            Body::Value::Error(err_ref) => {
-                let js_err = err_ref.to_js(global_this);
-                let _ = value.use_();
-                if this.is_aborted_or_ended() {
-                    return;
-                }
-                this.run_error_handler(js_err);
+        if let Some(js_err) = value.take_error(global_this) {
+            if this.is_aborted_or_ended() {
                 return;
             }
+            this.run_error_handler(js_err);
+            return;
+        }
+        match value {
             // The handler returned a Response whose body was already used,
             // usually the same Response object returned for a second request.
             // A disturbed body is an error, not a silent empty 200.

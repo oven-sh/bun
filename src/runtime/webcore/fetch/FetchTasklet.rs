@@ -786,8 +786,7 @@ impl FetchTasklet {
             if let Some(response) = self.current_response_mut() {
                 // body value now owns the error
                 let err = scopeguard::ScopeGuard::into_inner(err);
-                let body = response.get_body_value();
-                body.to_error_instance(err, &global_this)?;
+                response.fail_body(err, &global_this)?;
             }
             // Cancel the request-body sink last: closing the sink signal fires
             // the controller's onClose synchronously, which can re-enter the

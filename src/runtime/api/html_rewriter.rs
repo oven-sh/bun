@@ -473,8 +473,8 @@ impl HTMLRewriter {
             // — the error is the useful bit, and `wire_input` would otherwise
             // treat `Value::Error` as an empty blob and emit an empty document.
             let body_value = response.get_body_value();
-            if let webcore::body::Value::Error(err) = body_value {
-                return Err(cx.global().throw_value(err.to_js(cx.global())));
+            if let Some(err) = body_value.take_error(cx.global()) {
+                return Err(cx.global().throw_value(err));
             }
             if matches!(*body_value, webcore::body::Value::Used) {
                 return Err(cx
@@ -1861,7 +1861,7 @@ impl RewriterPipe {
             {
                 *body_value = webcore::body::Value::Empty;
             }
-            let _ = body_value.to_error_instance(err, &self.global);
+            let _ = response.fail_body(err, &self.global);
         }
         self.release_input_roots(src);
     }

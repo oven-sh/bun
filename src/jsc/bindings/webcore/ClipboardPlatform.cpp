@@ -59,8 +59,12 @@ void scheduleClipboardRead(JSC::JSGlobalObject& globalObject, ClipboardCompletio
 
 void scheduleClipboardWriteText(JSC::JSGlobalObject& globalObject, const String& text, ClipboardCompletion&& completion)
 {
-    Bun::UTF8View utf8(text);
-    auto bytes = utf8.bytes();
+    auto utf8 = Bun::UTF8View::tryCreate(text);
+    if (!utf8) [[unlikely]] {
+        completion(globalObject, {}, "The text is too large to write to the clipboard."_s);
+        return;
+    }
+    auto bytes = utf8->bytes();
     ClipboardRepresentation representation { ClipboardMIMEType::TextPlain, bytes.data(), bytes.size() };
     Bun__Clipboard__scheduleWrite(&globalObject, createRequest(WTF::move(completion)), &representation, 1);
 }

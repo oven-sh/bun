@@ -5678,7 +5678,7 @@ pub(crate) extern "C" fn Blob__getSize(value: JSValue) -> usize {
 /// # Safety
 /// `out_ptr` and `out_len` must be valid for writes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Blob__implGetSpan(
+pub(crate) unsafe extern "C" fn Blob__implGetSpan(
     blob: &Blob,
     out_ptr: *mut *const u8,
     out_len: *mut usize,
@@ -5697,7 +5697,7 @@ pub unsafe extern "C" fn Blob__implGetSpan(
 
 /// Whether reading this Blob would have to touch a file or the network.
 #[unsafe(no_mangle)]
-pub extern "C" fn Blob__implNeedsToReadFile(blob: &Blob) -> bool {
+pub(crate) extern "C" fn Blob__implNeedsToReadFile(blob: &Blob) -> bool {
     blob.needs_to_read_file() || blob.is_s3()
 }
 
@@ -5768,7 +5768,7 @@ impl ReadBytesHandler for ClipboardBlobReadHandler {
 /// # Safety
 /// `callback` must be callable on the JS thread with `ctx` until it runs.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Blob__implReadBytes(
+pub(crate) unsafe extern "C" fn Blob__implReadBytes(
     blob: &Blob,
     global: &JSGlobalObject,
     ctx: *mut c_void,
@@ -5779,14 +5779,14 @@ pub unsafe extern "C" fn Blob__implReadBytes(
     // dispatch hands it to `on_read_bytes` exactly once, also when it returns
     // `Err` (a termination hit while delivering synchronously, i.e. after the
     // handler has already run the callback), so there is nothing to report.
-    let _ = unsafe { blob.read_bytes_to_handler(handler, global) };
+    let _ = unsafe { blob.read_bytes_to_handler(handler, &global.js_thread_of_caller_no_frame()) };
 }
 
 /// Clears the File-specific fields so a dupe of a File surfaces as a plain
 /// Blob; getType() resolves "a new Blob" per
 /// https://w3c.github.io/clipboard-apis/#dom-clipboarditem-gettype
 #[unsafe(no_mangle)]
-pub extern "C" fn Blob__implClearFile(blob: &mut Blob) {
+pub(crate) extern "C" fn Blob__implClearFile(blob: &mut Blob) {
     blob.is_jsdom_file.set(false);
     blob.name.set(BunString::DEAD);
 }
@@ -5795,7 +5795,7 @@ pub extern "C" fn Blob__implClearFile(blob: &mut Blob) {
 /// # Safety
 /// `[mime, mime+len)` must be readable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Blob__implSetContentType(blob: &mut Blob, mime: *const u8, len: usize) {
+pub(crate) unsafe extern "C" fn Blob__implSetContentType(blob: &mut Blob, mime: *const u8, len: usize) {
     if mime.is_null() || len == 0 {
         return;
     }
@@ -5812,7 +5812,7 @@ pub unsafe extern "C" fn Blob__implSetContentType(blob: &mut Blob, mime: *const 
 /// # Safety
 /// `out_ptr` and `out_len` must be valid for writes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Blob__implGetContentType(
+pub(crate) unsafe extern "C" fn Blob__implGetContentType(
     blob: &Blob,
     out_ptr: *mut *const u8,
     out_len: *mut usize,
@@ -5829,7 +5829,7 @@ pub unsafe extern "C" fn Blob__implGetContentType(
 /// # Safety
 /// `[ptr, ptr+len)` and `[mime, mime+mime_len)` must be readable (or null with length 0).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Blob__fromBytesWithNormalizedType(
+pub(crate) unsafe extern "C" fn Blob__fromBytesWithNormalizedType(
     global_this: &JSGlobalObject,
     ptr: *const u8,
     len: usize,

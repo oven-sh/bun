@@ -11,8 +11,8 @@ namespace WebCore {
 
 RefPtr<Blob> Blob::create(std::span<const uint8_t> bytes, const String& type, JSC::JSGlobalObject* globalThis)
 {
-    Bun::UTF8View mime(type);
-    auto mimeBytes = mime.bytes();
+    auto mime = Bun::UTF8View::tryCreate(type);
+    std::span<const uint8_t> mimeBytes = mime ? mime->bytes() : std::span<const uint8_t> {};
     return createAdopted(Blob__fromBytesWithNormalizedType(globalThis, bytes.data(), bytes.size(), mimeBytes.data(), mimeBytes.size()));
 }
 

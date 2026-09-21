@@ -59,7 +59,7 @@ impl Drop for Request {
 
 /// Mirrors `WebCore::ClipboardRepresentation`; the bytes are borrowed for the call.
 #[repr(C)]
-pub struct Representation {
+pub(crate) struct Representation {
     mime: Mime,
     bytes: *const u8,
     len: usize,
@@ -130,23 +130,23 @@ fn schedule(global: &JSGlobalObject, op: Op, request: *mut c_void) {
         op,
         outcome: Err(Unavailable::Platform),
     };
-    Job::<ClipboardJob>::schedule(&global.js_thread(), off, Request(request));
+    Job::<ClipboardJob>::schedule(&global.js_thread_of_caller_no_frame(), off, Request(request));
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__Clipboard__scheduleReadText(global: &JSGlobalObject, request: *mut c_void) {
+pub(crate) extern "C" fn Bun__Clipboard__scheduleReadText(global: &JSGlobalObject, request: *mut c_void) {
     schedule(global, Op::ReadText, request);
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__Clipboard__scheduleRead(global: &JSGlobalObject, request: *mut c_void) {
+pub(crate) extern "C" fn Bun__Clipboard__scheduleRead(global: &JSGlobalObject, request: *mut c_void) {
     schedule(global, Op::Read, request);
 }
 
 /// # Safety
 /// `representations[..count]` and each entry's bytes must be readable for this call.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__Clipboard__scheduleWrite(
+pub(crate) unsafe extern "C" fn Bun__Clipboard__scheduleWrite(
     global: &JSGlobalObject,
     request: *mut c_void,
     representations: *const Representation,

@@ -64,9 +64,10 @@ JSC::JSValue clipboardBlobToJS(JSC::JSGlobalObject* globalObject, Blob& blob, co
     auto* dupe = static_cast<BlobImpl*>(Blob__dupe(blob.impl()));
     Blob__implClearFile(dupe);
     if (!clipboardBlobTypeMatches(clipboardBlobContentType(blob), type)) {
-        Bun::UTF8View requested(type);
-        auto requestedBytes = requested.bytes();
-        Blob__implSetContentType(dupe, requestedBytes.data(), requestedBytes.size());
+        if (auto requested = Bun::UTF8View::tryCreate(type)) {
+            auto requestedBytes = requested->bytes();
+            Blob__implSetContentType(dupe, requestedBytes.data(), requestedBytes.size());
+        }
     }
     return JSC::JSValue::decode(Blob__create(globalObject, dupe));
 }

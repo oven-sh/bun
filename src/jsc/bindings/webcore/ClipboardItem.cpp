@@ -251,12 +251,6 @@ bool ClipboardItem::essenceMatches(const String& serializedKey, const String& es
     return StringView(serializedKey).left(semicolon) == essence;
 }
 
-static Ref<Blob> blobFromString(JSC::JSGlobalObject* globalObject, const String& string, const String& type)
-{
-    Bun::UTF8View utf8(string);
-    return Blob::create(utf8.bytes(), type, globalObject).releaseNonNull();
-}
-
 RefPtr<Blob> ClipboardItem::blobFromSettledValue(JSC::JSGlobalObject* globalObject, JSC::JSValue value, const String& type)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -272,7 +266,11 @@ RefPtr<Blob> ClipboardItem::blobFromSettledValue(JSC::JSGlobalObject* globalObje
 
     auto string = value.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    RELEASE_AND_RETURN(scope, blobFromString(globalObject, string, type));
+    auto utf8 = Bun::UTF8View::tryCreate(globalObject, scope, string);
+    if (!utf8) [[unlikely]]
+        return nullptr;
+    scope.release();
+    return Blob::create(utf8->bytes(), type, globalObject);
 }
 
 void ClipboardItem::collectDataForWriting(CollectCompletionHandler&& completion)

@@ -616,6 +616,62 @@ describe("spawn()", () => {
         }
       });
 
+      // node restarts the reads here on the stream's next read(0), and the parent takes the child's bytes.
+      it.concurrent("a socket handed off from its 'data' listener", async () => {
+        const handedOff = Promise.withResolvers<Awaited<ReturnType<typeof handOff>>>();
+        const server = net.createServer(socket => {
+          socket.on("error", handedOff.reject).once("data", () => {
+            handOff(socket).then(handedOff.resolve, handedOff.reject);
+            peer.end(payload);
+          });
+        });
+        server.on("error", handedOff.reject).listen(0, "127.0.0.1");
+        await once(server, "listening");
+        const peer = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+        try {
+          peer.on("error", handedOff.reject).write("head");
+          expect(await handedOff.promise).toEqual({ childRead: size, parentRead: 4, exitCode: 0 });
+        } finally {
+          peer.destroy();
+          server.close();
+        }
+      });
+
+      // The stop holds only until the user reads again. Not concurrent: a parent that cannot take the
+      // socket back leaves the child waiting, and bun:test kills that child only for a serial test.
+      it.each(["resume", "readable"])("the parent reads the rest with %s after the child exits", async how => {
+        const done = Promise.withResolvers<{ childRead: number; parentRead: number }>();
+        const readFirstChunk = `process.stdin.once("data", d => { console.log(d.length); process.exit(0); });`;
+        const server = net.createServer(socket => {
+          socket.on("error", done.reject);
+          const child = spawn(bunExe(), ["-e", readFirstChunk], { env: bunEnv, stdio: [socket, "pipe", "inherit"] });
+          let stdout = "";
+          child.stdout!.setEncoding("utf8").on("data", chunk => (stdout += chunk));
+          child.on("close", () => {
+            let parentRead = 0;
+            socket.on("end", () => done.resolve({ childRead: Number(stdout), parentRead }));
+            if (how === "resume") {
+              socket.on("data", chunk => (parentRead += chunk.length)).resume();
+            } else {
+              socket.on("readable", () => {
+                for (let chunk; (chunk = socket.read()) !== null; ) parentRead += chunk.length;
+              });
+            }
+            peer.end(payload);
+          });
+        });
+        server.on("error", done.reject).listen(0, "127.0.0.1");
+        await once(server, "listening");
+        const peer = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+        try {
+          peer.on("error", done.reject).write("head");
+          expect(await done.promise).toEqual({ childRead: 4, parentRead: size });
+        } finally {
+          peer.destroy();
+          server.close();
+        }
+      });
+
       it.concurrent("a spawn that fails with ENOENT stops the socket too, as in node", async () => {
         const failed = Promise.withResolvers<{ code?: string; isPaused: boolean }>();
         const server = net.createServer(socket => {

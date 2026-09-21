@@ -310,6 +310,8 @@ const kUserUnrefed = Symbol("kUserUnrefed");
 // held the loop (a wrapped duplex with no fd) would pin the process.
 const kPausedUnref = Symbol("kPausedUnref");
 const kOnreadDeliver = Symbol("kOnreadDeliver");
+// Set by kReadStop while a child reads the socket. 1: no 'readable' listener at the hand-off, 2: one was attached.
+const kHandedOff = Symbol("kHandedOff");
 function noop() {}
 function onUpgradeAttachedWrite(chunk, encoding, callback, onClose) {
   this.off("close", onClose);
@@ -2489,6 +2491,7 @@ function drainOnreadTailNT(socket) {
 }
 
 Socket.prototype.resume = function resume() {
+  this[kHandedOff] = 0;
   // Schedule the Readable flow tick first so its read() runs while
   // kOnreadDraining is still set and does not queue a second drain: Node's
   // override sets handle.reading synchronously for the same reason.
@@ -2515,8 +2518,19 @@ Socket.prototype.pause = function pause() {
 
 Socket.prototype[kReadStop] = function () {
   const handle = this._handle;
-  if (handle) readStop(this, handle);
+  if (!handle) return;
+  readStop(this, handle);
+  this[kHandedOff] = this._readableState.readableListening ? 2 : 1;
 };
+
+// A read(0) is the stream's own kick (maybeReadMore_, resume_, a 'readable' listener's first read). Node restarts the handle on each, and the parent takes the child's bytes.
+function staysHandedOff(self, size) {
+  const handedOff = self[kHandedOff];
+  if (!handedOff) return false;
+  if (size === 0 && (handedOff === 2 || !self._readableState.readableListening)) return true;
+  self[kHandedOff] = 0;
+  return false;
+}
 
 // Server-side TLS upgrade over an accepted socket, for
 // `new tls.TLSSocket(socket, { isServer: true })`. Adopts the connection's fd
@@ -2604,7 +2618,12 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
 
 Socket.prototype.read = function read(size) {
   // See resume(): an ended readable side never restarts the handle.
-  if ((!this.readableEnded || this[kOnreadBuffer] !== undefined) && !this.connecting && !drainOnreadTail(this, true)) {
+  if (
+    !staysHandedOff(this, size) &&
+    (!this.readableEnded || this[kOnreadBuffer] !== undefined) &&
+    !this.connecting &&
+    !drainOnreadTail(this, true)
+  ) {
     this._handle?.resume?.();
     restorePausedHold(this, this._handle);
   }
@@ -2615,6 +2634,8 @@ Socket.prototype._read = function _read(size) {
   const socket = this._handle;
   if (this.connecting || !socket) {
     this.once("connect", () => this._read(size));
+  } else if (this[kHandedOff]) {
+    this._readableState.reading = false;
   } else if (!drainOnreadTail(this, true)) {
     socket?.resume?.();
     restorePausedHold(this, socket);
@@ -4452,6 +4473,7 @@ function initSocketHandle(self) {
   self._sockname = null;
   self[kclosed] = false;
   self[kended] = false;
+  self[kHandedOff] = 0;
 
   // Handle creation may be deferred to bind() or connect() time.
   const handle = self._handle;

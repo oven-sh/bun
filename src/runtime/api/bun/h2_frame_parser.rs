@@ -2877,7 +2877,11 @@ impl H2FrameParser {
             // takes it.
             return 0;
         }
-        self.unregister_auto_flush();
+        // A fatal write latched while the cork filled shares this registration, and its
+        // deferred tick still has to close the transport.
+        if !self.transport_write_fatal.get() {
+            self.unregister_auto_flush();
+        }
         bun_output::scoped_log!(H2FrameParser, "uncork {:p}", corked_ptr);
         // The slot's ref on `self`, released once the corked bytes are written.
         let _slot_ref = Self::set_corked(None);
@@ -2942,8 +2946,9 @@ impl H2FrameParser {
         self.deref();
     }
 
-    /// A `write_maybe_corked` in `generic_write`/`generic_flush` returned a fatal
-    /// errno (< -1: the kernel rejected the send - peer gone). No retry can succeed,
+    /// A `write_maybe_corked` in `generic_write`/`generic_flush`, or the writev in
+    /// `flush_batch_vectored`, returned a fatal errno (< -1: the kernel rejected
+    /// the send - peer gone). No retry can succeed,
     /// and when the failure is only visible on the write side (a peer reset the read
     /// path has not observed yet - routine on Windows, where the RST completes the
     /// send first), nothing else ever closes the socket: the parser would re-buffer
@@ -3142,6 +3147,9 @@ impl H2FrameParser {
                         return 0usize;
                     }
                     let w = socket.get().write_vectored_raw(iov);
+                    if Self::is_transport_fatal_write_result(w) {
+                        self.note_transport_write_fatal(w);
+                    }
                     if w < 0 { 0 } else { w as usize }
                 }),
             _ => {

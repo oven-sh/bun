@@ -294,41 +294,57 @@ describe.skipIf(skip)("node:http2 transport write errors", () => {
   // Only an errno the kernel sets on the socket is reported, because a read would
   // return the same one. ETIMEDOUT is one of those and keeps its identity. Any other
   // send errno keeps the plain close ("sustained errno" in socket-syscall-fault.test.ts).
+  //
+  // The request body decides which write fails. 16374 bytes fill the cork buffer, so the
+  // send() happens under request() and not in the session's deferred flush. 20000 bytes
+  // are more than one DATA frame, and those leave with their HEADERS in one writev().
   const cases = [
-    { errno: "EPIPE", phase: "request", reported: "ECONNRESET" },
-    { errno: "ECONNRESET", phase: "request", reported: "ECONNRESET" },
-    { errno: "ETIMEDOUT", phase: "request", reported: "ETIMEDOUT" },
-    { errno: "ECONNRESET", phase: "connect", reported: "ECONNRESET" },
+    { syscall: "send", errno: "EPIPE", phase: "request", body: 0, reported: "ECONNRESET" },
+    { syscall: "send", errno: "ECONNRESET", phase: "request", body: 0, reported: "ECONNRESET" },
+    { syscall: "send", errno: "ETIMEDOUT", phase: "request", body: 0, reported: "ETIMEDOUT" },
+    { syscall: "send", errno: "ECONNRESET", phase: "connect", body: 0, reported: "ECONNRESET" },
+    { syscall: "send", errno: "ECONNRESET", phase: "request", body: 16374, reported: "ECONNRESET" },
+    { syscall: "writev", errno: "ETIMEDOUT", phase: "request", body: 20000, reported: "ETIMEDOUT" },
   ];
   test.each(cases)(
-    "send → $errno during the $phase flush is reported as $reported",
-    async ({ errno, phase, reported }) => {
+    "$syscall → $errno during the $phase flush of a $body byte body is reported as $reported",
+    async ({ syscall, errno, phase, body, reported }) => {
       // The client runs in a subprocess: the fault rules are process-global, so
       // the raw peer below has to live in a process that is not faulted.
       const fixture = `
       const { socketFaultInjection: fault } = require("bun:internal-for-testing");
       const http2 = require("node:http2");
       const state = { streamError: null, sessionError: null, rstCode: null };
-      const failSends = after =>
-        fault.set({ syscall: "send", action: "errno", errno: process.env.H2_FAULT_ERRNO, after, repeat: -1 });
+      const { H2_FAULT_SYSCALL: syscall, H2_FAULT_ERRNO: errno } = process.env;
+      const body = Number(process.env.H2_BODY_SIZE);
+      const failSends = after => {
+        fault.set({ syscall, action: "errno", errno, after, repeat: -1 });
+        // As in the kernel: the first call that fails takes the socket error, and every
+        // send after it is EPIPE.
+        if (syscall !== "send") fault.set({ syscall: "send", action: "errno", errno: "EPIPE", repeat: -1 });
+      };
       const session = http2.connect("http://127.0.0.1:" + process.env.H2_PEER_PORT);
       session.on("error", err => (state.sessionError = err.code));
       let req;
       function request() {
-        req = session.request({ ":path": "/" });
+        req = session.request({ ":path": "/", ":method": body ? "POST" : "GET" });
         req.on("error", err => (state.streamError = err.code));
         req.on("close", () => (state.rstCode = req.rstCode));
         req.resume();
-        req.end();
+        req.end(body ? Buffer.alloc(body) : undefined);
       }
       if (process.env.H2_FAULT_PHASE === "connect") {
         failSends(1);
         request();
       } else {
-        session.on("remoteSettings", () => {
-          failSends(0);
-          request();
-        });
+        // Not from inside the read callback that emits 'remoteSettings': the session flushes
+        // when that callback returns, and HEADERS would leave before the body is written.
+        session.on("remoteSettings", () =>
+          setTimeout(() => {
+            failSends(0);
+            request();
+          }, 0),
+        );
       }
       process.on("exit", () => {
         const destroyed = { sessionDestroyed: session.destroyed, streamDestroyed: !!req && req.destroyed };
@@ -344,9 +360,10 @@ describe.skipIf(skip)("node:http2 transport write errors", () => {
       await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()));
       try {
         const port = (server.address() as import("node:net").AddressInfo).port;
+        const faultEnv = { H2_FAULT_SYSCALL: syscall, H2_FAULT_ERRNO: errno, H2_FAULT_PHASE: phase };
         await using proc = Bun.spawn({
           cmd: [bunExe(), "-e", fixture],
-          env: { ...bunEnv, H2_PEER_PORT: String(port), H2_FAULT_ERRNO: errno, H2_FAULT_PHASE: phase },
+          env: { ...bunEnv, H2_PEER_PORT: String(port), H2_BODY_SIZE: String(body), ...faultEnv },
           stdout: "pipe",
           stderr: "pipe",
         });

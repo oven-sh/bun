@@ -1395,7 +1395,6 @@ pub struct ScanPassResult {
     pub import_records: Vec<ImportRecord>,
     pub(crate) named_imports: bun_ast::ast_result::NamedImports,
     pub(crate) used_symbols: ParsePassSymbolUsageMap,
-    pub(crate) approximate_newline_count: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -1412,7 +1411,6 @@ impl ScanPassResult {
             import_records: Vec::new(),
             named_imports: Default::default(),
             used_symbols: ParsePassSymbolUsageMap::default(),
-            approximate_newline_count: 0,
         }
     }
 
@@ -1420,7 +1418,6 @@ impl ScanPassResult {
         self.named_imports.clear_retaining_capacity();
         self.import_records.clear();
         self.used_symbols.clear_retaining_capacity();
-        self.approximate_newline_count = 0;
     }
 }
 

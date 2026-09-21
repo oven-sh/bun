@@ -3,7 +3,7 @@ use core::ptr::NonNull;
 use std::cell::UnsafeCell;
 use std::rc::{Rc, Weak};
 
-use bun_collections::LinearFifo;
+use bun_collections::{LinearFifo, StringSet};
 use bun_core::{Output, Timespec};
 use bun_jsc::{self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsResult, Strong, JsClass as _};
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -719,6 +719,50 @@ impl BunTest {
             }
             Phase::Done => RefDataValue::Done,
         }
+    }
+
+    /// Snapshot names of the tests and beforeAll/afterAll hooks that did not run to a pass. `None` when a describe callback threw: tests are missing.
+    pub(crate) fn unfinished_test_names(&self) -> Option<StringSet> {
+        fn collect(
+            scope: &DescribeScope,
+            passed: &[*const ExecutionEntry],
+            names: &mut StringSet,
+        ) -> Option<()> {
+            if scope.failed {
+                return None;
+            }
+            let tests = scope.entries.iter().filter_map(|entry| match entry {
+                TestScheduleEntry::TestCallback(test) => Some(test),
+                TestScheduleEntry::Describe(_) => None,
+            });
+            for entry in scope.before_all.iter().chain(&scope.after_all).chain(tests) {
+                let did_pass = passed.binary_search(&core::ptr::from_ref(&**entry)).is_ok();
+                // A `test.failing` passes when it throws, so it did not reach all of its snapshots.
+                if !did_pass || entry.base.mode == ScopeMode::Failing {
+                    let name = super::expect::Expect::snapshot_name_of(entry, b"");
+                    bun_core::handle_oom(names.insert(&name));
+                }
+            }
+            for entry in &scope.entries {
+                if let TestScheduleEntry::Describe(describe) = entry {
+                    collect(describe, passed, names)?;
+                }
+            }
+            Some(())
+        }
+
+        let mut passed: Vec<*const ExecutionEntry> = self
+            .execution
+            .sequences
+            .iter()
+            .filter(|sequence| sequence.result == Execution::Result::Pass)
+            .filter_map(|sequence| sequence.test_entry.or(sequence.first_entry))
+            .map(|entry| entry.as_ptr().cast_const())
+            .collect();
+        passed.sort_unstable();
+        let mut names = StringSet::new();
+        collect(&self.collection.root_scope, &passed, &mut names)?;
+        Some(names)
     }
 
     pub fn ref_(this_strong: &BunTestPtr, phase: RefDataValue) -> RefPtr<RefData> {

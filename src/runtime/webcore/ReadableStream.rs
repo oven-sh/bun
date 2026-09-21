@@ -36,7 +36,7 @@ pub enum NativeWireResult {
 /// A `ReadableStream` handle for [`crate::webcore::body::PendingValue`] and the
 /// producers that feed it.
 #[derive(Default)]
-pub enum Strong {
+pub(crate) enum Strong {
     #[default]
     Empty,
     /// GC-roots the stream.
@@ -290,6 +290,11 @@ impl ReadableStream {
     /// Like [`Self::cancel`] but pending reads reject with `reason` instead of resolving `{done: true}`.
     pub(crate) fn error(&self, global_this: &JSGlobalObject, reason: JSValue) -> JsResult<()> {
         let result = bun_jsc::cpp::ReadableStream__error(self.value, global_this, reason);
+        if let Some(bytes) = self.ptr.bytes() {
+            bytes.error_native_consumer(reason);
+        } else if let Some(file) = self.ptr.file() {
+            file.error_native_consumer(reason);
+        }
         self.done();
         result
     }
@@ -671,7 +676,7 @@ pub(crate) fn is_locked_value(value: JSValue, global_object: &JSGlobalObject) ->
 
 #[repr(i32)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum Tag {
+pub(crate) enum Tag {
     Invalid = -1,
 
     /// ReadableStreamDefaultController or ReadableByteStreamController

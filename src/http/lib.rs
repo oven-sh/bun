@@ -1874,6 +1874,10 @@ impl<'a> HTTPClient<'a> {
                     self.alpn_offer(),
                 );
 
+                if self.flags.reject_unauthorized {
+                    socket.set_inline_reject();
+                }
+
                 if crate::session_cache::eligible(self) {
                     let want_tunnel = self.http_proxy.is_some() && self.url.is_https();
                     // SAFETY: `ssl_ptr` is live and pre-handshake (guarded by

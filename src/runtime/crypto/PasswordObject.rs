@@ -22,7 +22,7 @@ pub(crate) struct PasswordObject;
 
 #[derive(Copy, Clone)]
 #[repr(u8)]
-pub enum Algorithm {
+pub(crate) enum Algorithm {
     Argon2i,
     Argon2d,
     Argon2id,
@@ -30,7 +30,7 @@ pub enum Algorithm {
 }
 
 #[derive(Copy, Clone)]
-pub enum AlgorithmValue {
+pub(crate) enum AlgorithmValue {
     Argon2i(Argon2Params),
     Argon2d(Argon2Params),
     Argon2id(Argon2Params),
@@ -204,7 +204,7 @@ fn algorithm_from_string(s: &bun_core::String) -> Option<Algorithm> {
 }
 
 #[derive(Copy, Clone)]
-pub struct Argon2Params {
+pub(crate) struct Argon2Params {
     // we don't support the other options right now, but can add them later if someone asks
     pub(crate) memory_cost: u32,
     pub(crate) time_cost: u32,
@@ -232,7 +232,7 @@ impl Default for Argon2Params {
 }
 
 impl Algorithm {
-    pub fn get(pw: &[u8]) -> Option<Algorithm> {
+    pub(crate) fn get(pw: &[u8]) -> Option<Algorithm> {
         if pw[0] != b'$' {
             return None;
         }

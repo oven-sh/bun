@@ -55,7 +55,7 @@ bun_core::comptime_string_map! {
 // mutability (`Cell` for `Copy` flags/signal, `JsCell` for the non-`Copy`
 // `JsRef`) carries the writes.
 #[bun_jsc::JsClass]
-pub struct ServerWebSocket {
+pub(crate) struct ServerWebSocket {
     handler: bun_ptr::BackRef<WebSocketServerHandler>,
     this_value: JsCell<JsRef>,
     flags: Cell<Flags>,
@@ -69,7 +69,7 @@ pub struct ServerWebSocket {
 // ssl:1, closed:1, <unused>:1, binary_type:4, packed_websocket_ptr:57
 #[repr(transparent)]
 #[derive(Copy, Clone, Default)]
-pub struct Flags(u64);
+pub(crate) struct Flags(u64);
 
 impl Flags {
     const SSL_BIT: u64 = 1 << 0;
@@ -92,7 +92,7 @@ impl Flags {
         }
     }
     #[inline]
-    pub fn closed(self) -> bool {
+    pub(crate) fn closed(self) -> bool {
         self.0 & Self::CLOSED_BIT != 0
     }
     #[inline]
@@ -147,7 +147,7 @@ impl Flags {
 // `js::data_{get,set}_cached` are emitted by `.classes.ts` codegen
 // (`generate-classes.ts` → `${T}__data{Get,Set}Cached`).
 #[allow(non_snake_case)]
-pub mod js {
+pub(crate) mod js {
     // Emits `{data,server}_{get,set}_cached`. Getter maps `JSValue::ZERO` → `None`;
     // setter forwards through the JSC `WriteBarrier<Unknown>` slot.
     ::bun_jsc::codegen_cached_accessors!("ServerWebSocket"; data, server);
@@ -691,7 +691,7 @@ impl ServerWebSocket {
     /// `&self` for the same noalias-reentry reason as `on_open` (R-2).
     /// Re-entrant `ws.close()` from the close handler routes through the same
     /// `Cell<Flags>` / `JsCell<JsRef>`, so no `noalias` view is invalidated.
-    pub fn on_close(&self, _ws: AnyWebSocket, code: i32, message: &[u8]) -> JsResult<()> {
+    pub(crate) fn on_close(&self, _ws: AnyWebSocket, code: i32, message: &[u8]) -> JsResult<()> {
         bun_output::scoped_log!(WebSocketServer, "onClose");
         // TODO: Can this called inside finalize?
         let handler = self.handler();
@@ -824,7 +824,7 @@ impl ServerWebSocket {
     // and requires `fn finalize(self: Box<Self>)`; clippy::boxed_local is a
     // false positive on that contract.
     #[allow(clippy::boxed_local)]
-    pub fn finalize(self: Box<Self>) {
+    pub(crate) fn finalize(self: Box<Self>) {
         bun_output::scoped_log!(WebSocketServer, "finalize");
         self.this_value.with_mut(|v| v.finalize());
         if let Some(signal) = self.signal.take() {
@@ -1323,7 +1323,7 @@ impl ServerWebSocket {
     // `passThis: true` — wrapper emitted by generated_classes.rs.
     // R-2: `&self` — `websocket().end()` synchronously dispatches `on_close`
     // on this same `m_ctx`; a `&mut self` here would alias.
-    pub fn close(
+    pub(crate) fn close(
         &self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,

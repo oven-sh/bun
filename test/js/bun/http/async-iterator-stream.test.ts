@@ -81,6 +81,54 @@ describe.concurrent("Streaming body via", () => {
     expect(exitCode).toBe(0);
   });
 
+  // An error from the generator with the ERR_INVALID_STATE code reaches the consumer like any other
+  // error. The subprocess awaits nothing at the top level, so a read() that never settles shows up
+  // as a missing outcome.
+  test("an ERR_INVALID_STATE error from the generator rejects the body", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `async function* coded() {
+          yield "first;";
+          throw Object.assign(new TypeError("coded"), { code: "ERR_INVALID_STATE" });
+        }
+        async function* lockedCancel() {
+          yield "first;";
+          const locked = new ReadableStream();
+          locked.getReader();
+          await locked.cancel();
+        }
+        async function drain(reader) {
+          while (!(await reader.read()).done);
+          return "drained";
+        }
+        const outcomes = {};
+        const record = (name, promise) =>
+          promise.then(v => (outcomes[name] = "resolved " + v), e => (outcomes[name] = "rejected " + e.code));
+        for (const gen of [coded, lockedCancel]) {
+          record(gen.name + " text()", new Response(gen()).text());
+          record(gen.name + " read()", drain(new Response(gen()).body.getReader()));
+        }
+        process.once("beforeExit", () => {
+          for (const name of Object.keys(outcomes).sort()) console.log(name + ": " + outcomes[name]);
+        });`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim().split(/\r?\n/)).toEqual([
+      "coded read(): rejected ERR_INVALID_STATE",
+      "coded text(): rejected ERR_INVALID_STATE",
+      "lockedCancel read(): rejected ERR_INVALID_STATE",
+      "lockedCancel text(): rejected ERR_INVALID_STATE",
+    ]);
+    expect(stderr).not.toContain("ERR_INVALID_STATE");
+    expect(exitCode).toBe(0);
+  });
+
   test("an iterator returning thenables (non-native promises) streams", async () => {
     let n = 0;
     const iterator = {

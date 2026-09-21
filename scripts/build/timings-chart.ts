@@ -174,7 +174,7 @@ export function chartHtml(build: Build): string {
     <div id="tiles"></div>
     <div id="controls">
       <div id="legend"></div>
-      <label>zoom <input id="zoom" type="range" min="1" max="60" step="1" value="1"></label>
+      <label>zoom, or scroll over a chart <input id="zoom" type="range" min="1" max="200" step="0.1" value="1"></label>
     </div>
   </header>
   <div id="runs"></div>
@@ -252,6 +252,7 @@ const client = `
   var NS = "http://www.w3.org/2000/svg";
   var ROW = 14, BAR = 12, LEFT = 8, RIGHT = 24, STRIP = 44, AXIS = 18, GAP = 10, CHAR = 6.05;
   var zoom = document.getElementById("zoom");
+  var level = 1;
   var tip = document.getElementById("tip");
 
   function ms(t) { return t < 1000 ? Math.round(t) + "ms" : (t / 1000).toFixed(1) + "s"; }
@@ -292,8 +293,8 @@ const client = `
 
   function draw(run, host) {
     host.textContent = "";
-    var width = Math.max(320, host.clientWidth) * Number(zoom.value);
-    var plot = width - LEFT - RIGHT;
+    var plot = plotWidth(host);
+    var width = plot + LEFT + RIGHT;
     var x = function (t) { return LEFT + t / run.wallMs * plot; };
     var top = STRIP + GAP;
     var pathGap = run.pathRows > 0 ? GAP : 0;
@@ -379,9 +380,39 @@ const client = `
       (sum / run.wallMs).toFixed(1) + "× average parallelism", runs, "meta");
     return html("div", undefined, runs, "scroll");
   });
+  function plotWidth(host) { return Math.max(320, host.clientWidth) * level - LEFT - RIGHT; }
   function drawAll() { data.runs.forEach(function (run, i) { draw(run, hosts[i]); }); }
-  zoom.addEventListener("input", drawAll);
+  // Zoom every chart, keeping the moment under the cursor (or, away from the cursor, at the middle of the view) still.
+  function zoomTo(value, overHost, clientX) {
+    var anchors = hosts.map(function (host) {
+      var at = host === overHost ? clientX - host.getBoundingClientRect().left : host.clientWidth / 2;
+      return { at: at, moment: (host.scrollLeft + at - LEFT) / plotWidth(host) };
+    });
+    level = Math.min(Number(zoom.max), Math.max(Number(zoom.min), value));
+    zoom.value = level;
+    drawAll();
+    hosts.forEach(function (host, i) { host.scrollLeft = LEFT + anchors[i].moment * plotWidth(host) - anchors[i].at; });
+  }
+  zoom.addEventListener("input", function () { zoomTo(Number(zoom.value)); });
   window.addEventListener("resize", drawAll);
+  hosts.forEach(function (host) {
+    var turned = 0, clientX = 0, queued = false;
+    host.addEventListener("wheel", function (ev) {
+      // A sideways scroll pans the chart.
+      if (Math.abs(ev.deltaX) > Math.abs(ev.deltaY)) return;
+      ev.preventDefault();
+      turned += ev.deltaY * (ev.deltaMode === 1 ? 16 : 1);
+      clientX = ev.clientX;
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(function () {
+        queued = false;
+        // Up zooms in, down zooms out; a notch of a wheel (about 100) is a quarter more or less.
+        zoomTo(level * Math.exp(-turned * 0.0022), host, clientX);
+        turned = 0;
+      });
+    }, { passive: false });
+  });
   drawAll();
 
   var all = [];

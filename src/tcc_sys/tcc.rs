@@ -140,21 +140,6 @@ pub struct Config<ErrCtx> {
     pub err: ConfigErr<ErrCtx>,
 }
 
-impl<ErrCtx> Default for Config<ErrCtx>
-where
-    ConfigErr<ErrCtx>: Default,
-{
-    fn default() -> Self {
-        // `err.handler` has no default, so this Default impl exists only for
-        // `ErrCtx` types whose `ConfigErr` provides a handler default.
-        Self {
-            options: None,
-            output_type: OutputFormat::Memory,
-            err: Default::default(),
-        }
-    }
-}
-
 impl State {
     /// Create a new TCC compilation context
     pub(crate) fn new() -> Result<NonNull<State>, bun_alloc::AllocError> {

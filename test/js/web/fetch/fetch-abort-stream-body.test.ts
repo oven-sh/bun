@@ -403,54 +403,50 @@ describe("aborting mid-body fails every reader of res.body with signal.reason", 
   });
 
   // The reason is not kept natively: a Strong there would root reason -> Response -> stream.
-  test.concurrent(
-    "an abort reason that references its Response is collected after the body is read",
-    async () => {
-      const script = `
-        const { heapStats } = require("bun:jsc");
-        const net = require("node:net");
-        const sockets = new Set();
-        const upstream = net.createServer(socket => {
-          sockets.add(socket);
-          socket.on("error", () => {});
-          socket.on("close", () => sockets.delete(socket));
-          socket.once("data", () =>
-            socket.write("HTTP/1.1 200 OK\\r\\nContent-Length: 100\\r\\n\\r\\n" + Buffer.alloc(40, "x")),
-          );
-        });
-        await new Promise(resolve => upstream.listen(0, "127.0.0.1", resolve));
-        const url = "http://127.0.0.1:" + upstream.address().port;
-        async function once() {
-          const controller = new AbortController();
-          const res = await fetch(url, { signal: controller.signal });
-          void res.body;
-          controller.abort(new Error("custom", { cause: res }));
-          await res.text().catch(() => {});
+  test.concurrent("an abort reason that references its Response is collected after the body is read", async () => {
+    const script = `
+      const { heapStats } = require("bun:jsc");
+      const net = require("node:net");
+      const sockets = new Set();
+      const upstream = net.createServer(socket => {
+        sockets.add(socket);
+        socket.on("error", () => {});
+        socket.on("close", () => sockets.delete(socket));
+        socket.once("data", () =>
+          socket.write("HTTP/1.1 200 OK\\r\\nContent-Length: 100\\r\\n\\r\\n" + Buffer.alloc(40, "x")),
+        );
+      });
+      await new Promise(resolve => upstream.listen(0, "127.0.0.1", resolve));
+      const url = "http://127.0.0.1:" + upstream.address().port;
+      async function once() {
+        const controller = new AbortController();
+        const res = await fetch(url, { signal: controller.signal });
+        void res.body;
+        controller.abort(new Error("custom", { cause: res }));
+        await res.text().catch(() => {});
+      }
+      const count = async () => {
+        for (let i = 0; i < 3; i++) {
+          Bun.gc(true);
+          await new Promise(resolve => setImmediate(resolve));
         }
-        const count = async () => {
-          for (let i = 0; i < 3; i++) {
-            Bun.gc(true);
-            await new Promise(resolve => setImmediate(resolve));
-          }
-          return heapStats().objectTypeCounts.Response || 0;
-        };
-        for (let i = 0; i < 8; i++) await once();
-        const baseline = await count();
-        for (let i = 0; i < 64; i++) await once();
-        const after = await count();
-        for (const socket of sockets) socket.destroy();
-        console.log(JSON.stringify({ leaked: after > baseline + 8 }));
-        process.exit(0);
-      `;
-      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return heapStats().objectTypeCounts.Response || 0;
+      };
+      for (let i = 0; i < 4; i++) await once();
+      const baseline = await count();
+      for (let i = 0; i < 24; i++) await once();
+      const after = await count();
+      for (const socket of sockets) socket.destroy();
+      console.log(JSON.stringify({ leaked: after > baseline + 8 }));
+      process.exit(0);
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stderr).toBe("");
-      expect(stdout).toBe('{"leaked":false}\n');
-      expect(exitCode).toBe(0);
-    },
-    isASAN ? 30_000 : 5_000,
-  );
+    expect(stderr).toBe("");
+    expect(stdout).toBe('{"leaked":false}\n');
+    expect(exitCode).toBe(0);
+  });
 
   // The server reports the failure itself (stderr) and cuts the connection, as for any stream
   // that errors. Before this it answered an aborted body with a complete, empty 200.

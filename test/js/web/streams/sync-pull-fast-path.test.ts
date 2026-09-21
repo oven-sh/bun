@@ -114,7 +114,7 @@ test("writer.write() with a sync sink does not allocate a wrapper promise per ch
 // that new promise. Adopting a native promise takes two more microtasks than reacting to it
 // directly, and the source/sink observes them: they decide whether its own jobs run before or after
 // the stream calls it again.
-describe("a promise returned from pull() / write() is adopted, not reacted to directly", () => {
+describe("a promise returned from pull(), write() or close() is adopted, not reacted to directly", () => {
   // `now` counts passes through the microtask queue.
   function microtaskClock() {
     let now = 0;
@@ -185,6 +185,22 @@ describe("a promise returned from pull() / write() is adopted, not reacted to di
     clock.stop();
     const d = expectedDistance(awaits);
     expect(distances(calledAt)).toEqual([d, d, d]);
+  });
+
+  test.each([0, 1, 2])("async close() with %d await(s)", async awaits => {
+    const clock = microtaskClock();
+    const writer = new WritableStream({
+      async close() {
+        for (let i = 0; i < awaits; i++) await null;
+      },
+    }).getWriter();
+    await writer.ready;
+    // writer.close() calls the sink's close() at once. The stream's reaction settles the promise
+    // that writer.close() returned, and this then() callback runs one tick after that.
+    const before = clock.now;
+    const settledAfter = await writer.close().then(() => clock.now - before);
+    clock.stop();
+    expect(settledAfter).toBe(expectedDistance(awaits) + 1);
   });
 
   // With the default highWaterMark of 1 the pipe reads again once the write of "a" has finished. A

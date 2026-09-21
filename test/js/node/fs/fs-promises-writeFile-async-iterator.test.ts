@@ -51,3 +51,23 @@ test("fs.promises.writeFile async iterator throws on invalid input", async () =>
   expect(() => writeFile(String(dir), fn)).toThrow();
   expect(fn[Symbol.asyncIterator]).not.toBeCalled();
 });
+
+// writeFile adds up what each write reports and truncates the file to that total. A short chunk is buffered and
+// reported as written, and the large chunk after it used to report the short one's bytes again, so the total was
+// too big and the file ended in NUL bytes.
+test("fs.promises.writeFile async iterator writes exactly the chunks, short and long", async () => {
+  await using dir = tempDir("fs-promises-writeFile-async-iterator-sizes", {});
+  const path = dir + "/mixed.bin";
+  const chunks = ["a", Buffer.alloc(40000, "b").toString(), "c", Buffer.alloc(10000, "é").toString()];
+
+  await writeFile(
+    path,
+    (async function* () {
+      yield* chunks;
+    })(),
+  );
+
+  const written = await Bun.file(path).bytes();
+  expect(written.length).toBe(1 + 40000 + 1 + 10000);
+  expect(Buffer.from(written).equals(Buffer.from(chunks.join("")))).toBe(true);
+});

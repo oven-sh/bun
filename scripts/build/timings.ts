@@ -1011,7 +1011,7 @@ text.dim { opacity: 0.25; }
 .hoverbar { fill: none; stroke: var(--text); stroke-width: 1.5px; stroke-dasharray: 4 3; rx: 2px; pointer-events: none; }
 .tickmark { stroke: var(--surface); stroke-width: 2px; pointer-events: none; }
 .grid { stroke: var(--grid); stroke-width: 1px; }
-.rule { position: absolute; left: 0; right: 0; border-top: 1px solid var(--text-2); opacity: 0.45; pointer-events: none; }
+.split { position: absolute; left: 0; right: 0; background: var(--surface); pointer-events: none; }
 .running { opacity: 0.85; }
 #tip { position: fixed; z-index: 1; max-width: 420px; background: var(--surface); color: var(--text); border: 1px solid var(--grid);
   border-radius: 8px; padding: 8px 10px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,.2); pointer-events: none; }
@@ -1024,7 +1024,7 @@ const client = `
 (function () {
   var data = JSON.parse(document.getElementById("data").textContent);
   var NS = "http://www.w3.org/2000/svg";
-  var ROW = 14, BAR = 12, LEFT = 8, RIGHT = 24, STRIP = 50, STRIP_GAP = 20, AXIS = 18, GAP = 10, LANE_GAP = 12, THIN_ROW = 5, NAMED_SHARE = 0.03;
+  var ROW = 14, BAR = 12, LEFT = 8, RIGHT = 24, STRIP = 50, STRIP_GAP = 24, SPLIT = 8, AXIS = 18, GAP = 10, LANE_GAP = 12, THIN_ROW = 5, NAMED_SHARE = 0.03;
   // The width of a character of a bar's name (10px monospace), and the colors a lane can have (--k0 to --k3).
   var CHAR = 6.05, COLORS = 4;
   var level = 1, MOST_ZOOM = 200;
@@ -1232,9 +1232,11 @@ const client = `
       (sum / run.wallMs).toFixed(1) + "× parallel", runs, "meta");
     run.note = html("div", undefined, runs, "meta");
     var row = html("div", undefined, runs, "run");
-    // The strip of running commands is a band of its own above the lanes, on the same time axis: one rule under it,
-    // across the lane names and the chart.
-    html("div", undefined, row, "rule").style.top = STRIP + STRIP_GAP / 2 + "px";
+    // The strip of running commands is a panel of its own above the lanes, on the same time axis: a gap of the
+    // page's own color under it, across the lane names and the chart.
+    var split = html("div", undefined, row, "split");
+    split.style.top = STRIP + (STRIP_GAP - SPLIT) / 2 + "px";
+    split.style.height = SPLIT + "px";
     gutters.push(html("div", undefined, row, "gutter"));
     return html("div", undefined, row, "scroll");
   });

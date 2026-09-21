@@ -1666,18 +1666,15 @@ describe.concurrent("socket that already sent FIN and is paused with unread data
   });
 });
 
-// A reset that reaches a read-stopped handle ends the connection, and the bytes the kernel
-// still holds ahead of it are read off the socket before it is closed rather than discarded
-// with the fd (#39846: a streamed fetch() body was cut short under receive backpressure this
-// way). They land in the paused stream's buffer. Node leaves them in the kernel and meets the
-// reset on the read after them, so its consumer gets them first however late it reads: the
-// error waits until the buffered bytes are read. Windows discards the receive queue on a
-// reset itself.
+// Like libuv, usockets does not look at a node:net socket that neither reads nor has a write
+// pending, so a peer reset waits in the kernel behind the bytes queued ahead of it. The consumer
+// gets those bytes first, however late it reads, and then the error (or the FIN, if one came
+// before the reset). The libuv backend still reports the reset at once, and Windows discards
+// the receive queue on a reset itself.
 describe.concurrent("read-stopped socket whose peer resets behind unread data", () => {
   // Both ends live in one child. `watch(s)` records what the socket under test emits and prints
-  // the result when it has closed. `afterReset` runs `fn` once the peer's reset has reached `s`:
-  // the reads of `s` are stopped, so only the read that takes the queued bytes off the socket
-  // ahead of the error brings bytesRead to `total`.
+  // the result when it has closed. `afterPeerReset(fn)` runs `fn` two turns of the loop after the
+  // peer's reset: a build that reports the reset to a stopped socket has done so by then.
   const prelude = `
     const net = require("net");
     const events = [];
@@ -1692,12 +1689,8 @@ describe.concurrent("read-stopped socket whose peer resets behind unread data", 
         process.exit(0);
       });
     }
-    function afterReset(s, total, fn) {
-      (function poll() {
-        if (events.length !== 0) return;
-        if (process.platform === "win32" ? peer.destroyed : s.bytesRead === total) fn();
-        else setImmediate(poll);
-      })();
+    function afterPeerReset(fn) {
+      peer.on("close", () => setImmediate(() => setImmediate(() => events.length === 0 && fn())));
     }
     function resume(s) {
       events.push("resume");
@@ -1711,12 +1704,13 @@ describe.concurrent("read-stopped socket whose peer resets behind unread data", 
         peer = accepted;
         peer.on("error", () => {});
         peer.once("data", () => reply(peer));
+        afterPeerReset(() => onReset(s));
       });
+      let s;
       server.listen(0, "127.0.0.1", () => {
-        const s = net.connect({ port: server.address().port, host: "127.0.0.1", ...options }, () => {
+        s = net.connect({ port: server.address().port, host: "127.0.0.1", ...options }, () => {
           s.pause();
           s.write("hi");
-          onReset(s);
         });
         watch(s);
       });
@@ -1737,7 +1731,7 @@ describe.concurrent("read-stopped socket whose peer resets behind unread data", 
     return { result: JSON.parse(stdout), exitCode };
   }
 
-  it("delivers the bytes read ahead of the reset before ECONNRESET", async () => {
+  it("delivers the bytes queued ahead of the reset before ECONNRESET", async () => {
     const { result, exitCode } = await run(`
       const HWM = 64 * 1024, TAIL = 32 * 1024;
       const server = net.createServer({ highWaterMark: HWM }, s => {
@@ -1747,8 +1741,8 @@ describe.concurrent("read-stopped socket whose peer resets behind unread data", 
         // 32 KiB and the reset stay in the kernel.
         (function waitReadStopped() {
           if (s.readableLength < HWM) return setImmediate(waitReadStopped);
+          afterPeerReset(() => resume(s));
           peer.write(Buffer.alloc(TAIL, "b"), () => peer.resetAndDestroy());
-          afterReset(s, HWM + TAIL, () => resume(s));
         })();
       });
       server.listen(0, "127.0.0.1", () => {
@@ -1756,17 +1750,17 @@ describe.concurrent("read-stopped socket whose peer resets behind unread data", 
         peer.on("error", () => {});
       });
     `);
-    expect(result).toEqual({
-      events: ["resume", "error ECONNRESET read", "close true"],
-      received: isWindows ? result.bytesRead : 96 * 1024,
-      bytesRead: isWindows ? result.bytesRead : 96 * 1024,
-    });
+    expect(result).toEqual(
+      isWindows
+        ? { events: ["error ECONNRESET read", "close true"], received: 0, bytesRead: result.bytesRead }
+        : { events: ["resume", "error ECONNRESET read", "close true"], received: 96 * 1024, bytesRead: 96 * 1024 },
+    );
     expect(exitCode).toBe(0);
   });
 
   it.skipIf(isWindows)("delivers them to a socket that paused before its reads started", async () => {
     const { result, exitCode } = await run(`
-      pausedClient({}, writeThenReset, s => afterReset(s, TOTAL, () => resume(s)));
+      pausedClient({}, writeThenReset, s => resume(s));
     `);
     expect(result).toEqual({
       events: ["resume", "error ECONNRESET read", "close true"],
@@ -1778,7 +1772,7 @@ describe.concurrent("read-stopped socket whose peer resets behind unread data", 
 
   it.skipIf(isWindows)("reports the reset to a read(n) that asks for more than arrived", async () => {
     const { result, exitCode } = await run(`
-      pausedClient({}, writeThenReset, s => afterReset(s, TOTAL, () => events.push("read " + s.read(TOTAL + 1))));
+      pausedClient({}, writeThenReset, s => events.push("read " + s.read(TOTAL + 1)));
     `);
     expect(result).toEqual({
       events: ["read null", "error ECONNRESET read", "close true"],
@@ -1788,31 +1782,16 @@ describe.concurrent("read-stopped socket whose peer resets behind unread data", 
     expect(exitCode).toBe(0);
   });
 
-  // Node's read() restarts the handle, and so meets the reset, once what stays buffered is below the highWaterMark.
-  it.skipIf(isWindows)("reports the reset to a read(n) that takes only a part of the bytes", async () => {
+  it.skipIf(isWindows)("fails a write on the reset while the socket does not read", async () => {
     const { result, exitCode } = await run(`
       pausedClient({}, writeThenReset, s =>
-        afterReset(s, TOTAL, () => events.push("read " + s.read(TOTAL - 4000).length)),
-      );
-    `);
-    expect(result).toEqual({
-      events: ["read 16000", "error ECONNRESET read", "close true"],
-      received: 0,
-      bytesRead: 20000,
-    });
-    expect(exitCode).toBe(0);
-  });
-
-  it.skipIf(isWindows)("fails a write on the reset while the bytes are still unread", async () => {
-    const { result, exitCode } = await run(`
-      pausedClient({}, writeThenReset, s =>
-        afterReset(s, TOTAL, () => s.write("again", err => events.push("write " + (err ? err.code + " " + err.syscall : "ok")))),
+        s.write("again", err => events.push("write " + (err ? err.code + " " + err.syscall : "ok"))),
       );
     `);
     expect(result).toEqual({
       events: ["write ECONNRESET write", "error ECONNRESET write", "close true"],
       received: 0,
-      bytesRead: 20000,
+      bytesRead: 0,
     });
     expect(exitCode).toBe(0);
   });
@@ -1820,18 +1799,13 @@ describe.concurrent("read-stopped socket whose peer resets behind unread data", 
   it.skipIf(isWindows)("delivers them to an onread callback after resume()", async () => {
     const { result, exitCode } = await run(`
       const onread = { buffer: Buffer.alloc(4096), callback: n => { received += n; return true; } };
-      pausedClient({ onread }, writeThenReset, s =>
-        afterReset(s, TOTAL, () => {
-          events.push("resume");
-          s.resume();
-        }),
-      );
+      pausedClient({ onread }, writeThenReset, s => {
+        events.push("resume");
+        s.resume();
+      });
     `);
-    expect(result).toEqual({
-      events: ["resume", "error ECONNRESET read", "close true"],
-      received: 20000,
-      bytesRead: 20000,
-    });
+    expect(result.events).toEqual(["resume", "error ECONNRESET read", "close true"]);
+    expect(result.received).toBe(20000);
     expect(exitCode).toBe(0);
   });
 
@@ -1841,7 +1815,7 @@ describe.concurrent("read-stopped socket whose peer resets behind unread data", 
   it.skipIf(!isLinux)("ends without an error when the peer's FIN came before its reset", async () => {
     const { result, exitCode } = await run(`
       const endThenReset = peer => peer.end(Buffer.alloc(TOTAL, "M"), () => peer.resetAndDestroy());
-      pausedClient({}, endThenReset, s => afterReset(s, TOTAL, () => resume(s)));
+      pausedClient({}, endThenReset, s => resume(s));
     `);
     expect(result).toEqual({
       events: ["resume", "end", "close false"],
@@ -1860,7 +1834,7 @@ describe.concurrent("read-stopped socket whose peer resets behind unread data", 
           console.log(JSON.stringify({ events, received, bytesRead: s.bytesRead }));
           process.exit(0);
         });
-        afterReset(s, TOTAL, () => resume(s));
+        afterPeerReset(() => resume(s));
       });
       server.listen(0, "127.0.0.1", () => {
         peer = net.connect({ port: server.address().port, host: "127.0.0.1", allowHalfOpen: true }, () =>
@@ -1904,8 +1878,8 @@ describe.concurrent("read-stopped socket whose peer resets behind unread data", 
             peer.write(Buffer.alloc(CHUNK, "b"));
             (function waitReadStopped() {
               if (socket.readableLength < CHUNK) return setImmediate(waitReadStopped);
+              afterPeerReset(() => resume(res));
               peer.write(Buffer.alloc(TAIL, "c"), () => peer.resetAndDestroy());
-              afterReset(socket, head.length + BODY, () => resume(res));
             })();
           })();
         });
@@ -2107,9 +2081,11 @@ describe("paused socket whose peer sends RST", () => {
   // kqueue already normalized the flag to 0/1.
   it("does not surface a bogus errno error", async () => {
     const { promise, resolve } = Promise.withResolvers<void>();
+    const peerClosed = Promise.withResolvers<void>();
     const errors: NodeJS.ErrnoException[] = [];
     const server = createServer(c => {
       c.on("error", () => {});
+      c.on("close", () => peerClosed.resolve());
       // RST only once the client says it has paused.
       c.on("data", () => c.resetAndDestroy());
     });
@@ -2122,19 +2098,24 @@ describe("paused socket whose peer sends RST", () => {
       });
       c.on("error", e => errors.push(e));
       c.on("close", () => resolve());
+      // Like node, the paused socket meets the reset when its reads restart.
+      await peerClosed.promise;
+      c.resume();
       await promise;
     } finally {
       server.close();
     }
-    expect(errors.map(e => e.code)).not.toContain("ENOEXEC");
+    expect(errors.map(e => e.code)).toEqual(["ECONNRESET"]);
   });
   // Like node, an onread socket's pause() stops the handle itself, so the RST
   // arrives at a handle that is not registered for reads at all.
   it("does not surface a bogus errno error for an onread socket", async () => {
     const { promise, resolve } = Promise.withResolvers<void>();
+    const peerClosed = Promise.withResolvers<void>();
     const errors: NodeJS.ErrnoException[] = [];
     const server = createServer(c => {
       c.on("error", () => {});
+      c.on("close", () => peerClosed.resolve());
       c.on("data", () => c.resetAndDestroy());
     });
     try {
@@ -2148,11 +2129,13 @@ describe("paused socket whose peer sends RST", () => {
       // connect() queued, so nothing starts the handle again after this pause.
       c.pause();
       c.write("x");
+      await peerClosed.promise;
+      c.resume();
       await promise;
     } finally {
       server.close();
     }
-    expect(errors.map(e => e.code)).not.toContain("ENOEXEC");
+    expect(errors.map(e => e.code)).toEqual(["ECONNRESET"]);
   });
 });
 
@@ -2285,9 +2268,9 @@ describe.concurrent("pauseOnConnect", () => {
     }
   });
 
-  // A socket that opened paused must notice its peer going away like a socket that
-  // pause()d later does, on every backend (kqueue keeps a read knote for that).
-  it("still reports a peer reset before resume()", async () => {
+  // Like node, a socket that opened paused does not look at its handle, so it meets a peer
+  // reset when it resumes. The libuv backend still reports it before that.
+  it("reports a peer reset when it resumes", async () => {
     const server = createServer({ pauseOnConnect: true });
     const accepted = Promise.withResolvers<Socket>();
     server.on("connection", accepted.resolve);
@@ -2295,12 +2278,22 @@ describe.concurrent("pauseOnConnect", () => {
     try {
       const client = connect((server.address() as import("node:net").AddressInfo).port, "127.0.0.1");
       const [socket] = await Promise.all([accepted.promise, once(client, "connect")]);
-      const errors: NodeJS.ErrnoException[] = [];
-      socket.on("error", e => errors.push(e));
-      const closed = new Promise(resolve => socket.on("close", resolve));
+      const events: string[] = [];
+      socket.on("error", e => events.push(`error ${(e as NodeJS.ErrnoException).code}`));
+      const closed = new Promise<void>(resolve =>
+        socket.on("close", () => {
+          events.push("close");
+          resolve();
+        }),
+      );
       client.resetAndDestroy();
+      await once(client, "close");
+      // Two turns of the loop: a build that reports the reset to a stopped socket has done so.
+      await new Promise(resolve => setImmediate(() => setImmediate(resolve)));
+      if (!isWindows) expect(events).toEqual([]);
+      socket.resume();
       await closed;
-      expect(errors.map(e => e.code).filter(code => code !== "ECONNRESET")).toEqual([]);
+      expect(events).toEqual(["error ECONNRESET", "close"]);
     } finally {
       server.close();
     }

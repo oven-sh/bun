@@ -174,6 +174,7 @@ interface TLSConnectOptions {
 interface InternalSocketHandler<Data> extends SocketHandler<Data> {
   session?(socket: Socket<Data>, session: Buffer): void;
   keylog?(socket: Socket<Data>, line: Buffer): void;
+  deferErrorUntilRead?: boolean;
 }
 
 interface InternalServerHandler<Data> extends InternalSocketHandler<Data> {
@@ -308,13 +309,6 @@ const kUserUnrefed = Symbol("kUserUnrefed");
 // only restore a hold they actually removed - re-refing a handle that never
 // held the loop (a wrapped duplex with no fd) would pin the process.
 const kPausedUnref = Symbol("kPausedUnref");
-// The last flow-control call on the native handle was pause(): node's `!handle.reading`.
-const kReadStopped = Symbol("kReadStopped");
-// Bytes that arrived while kReadStopped are still buffered (their push() can make _read() clear kReadStopped).
-const kReadWhileStopped = Symbol("kReadWhileStopped");
-// See reportReadError.
-const kHeldError = Symbol("kHeldError");
-const kHeldErrorDue = Symbol("kHeldErrorDue");
 const kOnreadDeliver = Symbol("kOnreadDeliver");
 function noop() {}
 function onUpgradeAttachedWrite(chunk, encoding, callback, onClose) {
@@ -413,8 +407,7 @@ function destroyNT(self, err) {
 }
 // Node's wrap 'close' -> destroy(): https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L739-L741
 function onUpgradedClose(self, connection) {
-  // A held error (see reportReadError) closes the socket once the consumer has the bytes ahead of it.
-  if (self[kupgraded] === connection && self[kHeldError] === undefined) self.destroy();
+  if (self[kupgraded] === connection) self.destroy();
 }
 function destroyWhenUpgradedCloses(self, connection) {
   connection.once("close", (self[kOnUpgradedClose] = onUpgradedClose.bind(null, self, connection)));
@@ -605,7 +598,6 @@ function pushDataToSocket(self, socket, buffer) {
     self.destroy();
     return;
   }
-  if (self[kReadStopped]) self[kReadWhileStopped] = true;
   let full;
   try {
     full = self.push(buffer) === false;
@@ -753,12 +745,12 @@ const SocketHandlers = {
     self.emit("timeout", self);
   },
   binaryType: "buffer",
+  deferErrorUntilRead: true,
 } as const satisfies InternalSocketHandler<SocketInstance>;
 
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L191-L198; a stopped handle does not hold the loop, a pending write still does.
 function readStop(self, handle) {
   handle?.pause?.();
-  self[kReadStopped] = true;
   // A socket over a generic duplex has no fd and never held the loop.
   if (self[kupgraded] && !(self[kupgraded] instanceof Socket)) return;
   self[kPausedUnref] = true;
@@ -777,12 +769,6 @@ function restorePausedHold(self, handle) {
   if (!self[kPausedUnref]) return;
   self[kPausedUnref] = false;
   if (!self[kUserUnrefed]) handle?.ref?.();
-}
-
-function readStart(self, handle) {
-  handle?.resume?.();
-  self[kReadStopped] = false;
-  restorePausedHold(self, handle);
 }
 
 // The write that was holding the loop (_write) just drained; a socket whose
@@ -814,40 +800,6 @@ function deferEndForOnreadTail(self) {
   if (self[kOnreadTail] === undefined || self.destroyed) return false;
   self[kOnreadPendingEnd] = true;
   return true;
-}
-
-function hasUnreadBytes(self) {
-  const tail = self[kOnreadTail];
-  return self.readableLength > 0 || (tail !== undefined && tail.length > 0);
-}
-
-// libuv reads nothing after a FIN: https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L931-L934
-function readsEnded(self) {
-  return self[kended] || self[kOnreadPendingEnd];
-}
-
-// Node meets a reset in the read after the unread bytes, or in a write: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L213-L217
-function reportReadError(self, err) {
-  const notReading = self[kReadStopped] || self[kReadWhileStopped] || readsEnded(self);
-  if (notReading && !self[kwriteCallback] && hasUnreadBytes(self)) {
-    self[kHeldError] = err;
-    return;
-  }
-  self.destroy(err);
-}
-
-// A turn of the loop later, like the read that node's _read() starts: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L769-L792
-function scheduleHeldError(self) {
-  if (self[kHeldErrorDue]) return;
-  self[kHeldErrorDue] = true;
-  setImmediate(destroyWithHeldError, self);
-}
-
-function destroyWithHeldError(self) {
-  const err = self[kHeldError];
-  self[kHeldError] = undefined;
-  self[kHeldErrorDue] = false;
-  if (err !== undefined) self.destroy(err);
 }
 
 function SocketEmitEndNT(self, _err?) {
@@ -892,7 +844,7 @@ function SocketEmitEndNT(self, _err?) {
       // of surfacing "Unknown system error N".
       const er = new ErrnoException(errErrno, "read") as Error & { code?: string };
       if (typeof er.code === "string" && /^E[A-Z0-9]+$/.test(er.code)) {
-        reportReadError(self, er);
+        self.destroy(er);
         return;
       }
     }
@@ -906,16 +858,16 @@ function SocketEmitEndNT(self, _err?) {
       };
       er.errno = _err.errno ?? (process.platform === "win32" ? -4077 : process.platform === "linux" ? -104 : -54);
       er.syscall = "read";
-      reportReadError(self, er);
+      self.destroy(er);
     } else {
       // Any other coded error (ETIMEDOUT, EPIPE, ...) keeps its identity.
-      reportReadError(self, _err);
+      self.destroy(_err);
     }
     return;
   }
   if (!self[kended]) {
     finishSocketEnd(self);
-  } else if (_err && !self.destroyed && !hasUnreadBytes(self)) {
+  } else if (_err && !self.destroyed) {
     // An error excluded from the synthesis above (teardown noise, or no
     // listener attached): nothing more is coming, but the socket still has to
     // finish its lifecycle - close it quietly instead of leaving it open with
@@ -1311,6 +1263,7 @@ const ServerHandlers = {
     SocketHandlers.drain(socket);
   },
   binaryType: "buffer",
+  deferErrorUntilRead: true,
 } as const satisfies InternalServerHandler<SocketInstance>;
 
 function applyRejectUnauthorized(self, tls, rejectUnauthorized) {
@@ -1576,7 +1529,7 @@ const SocketHandlers2 = {
         const er = new ConnResetException("read ECONNRESET") as Error & { errno?: number; syscall?: string };
         er.errno = err.errno;
         er.syscall = "read";
-        reportReadError(self, er);
+        self.destroy(er);
       } else {
         // Any other recv errno (ETIMEDOUT, EHOSTUNREACH, ENETUNREACH, ...)
         // keeps its identity — Node's onStreamRead does
@@ -1584,7 +1537,7 @@ const SocketHandlers2 = {
         // is not UV_EOF. The native on_close only passes a non-undefined err
         // when the close was driven by a recv() failure (libus close-code
         // enum values are filtered out in NewSocket::on_close).
-        reportReadError(self, err);
+        self.destroy(err);
       }
       return;
     }
@@ -1637,6 +1590,7 @@ const SocketHandlers2 = {
     }
     req.oncomplete(error.errno, self._handle, req, true, true);
   },
+  deferErrorUntilRead: true,
 } satisfies InternalSocketHandler<ConnectData>;
 
 // The same table minus the per-connection callback members: a listener whose
@@ -1805,10 +1759,6 @@ function Socket(options?): void {
   this[kBytesWritten] = undefined;
   this[kclosed] = false;
   this[kended] = false;
-  this[kReadStopped] = false;
-  this[kReadWhileStopped] = false;
-  this[kHeldError] = undefined;
-  this[kHeldErrorDue] = false;
   this.connecting = false;
   this._host = undefined;
   this._port = undefined;
@@ -1974,16 +1924,10 @@ function Socket(options?): void {
         const { self } = socket.data;
         if (!self) return;
         self._unrefTimer();
-        self.bytesRead += buffer.length;
         if (socket[kAdoptedTLSRaw]) return;
         const tail = self[kOnreadTail];
         if (tail !== undefined) {
           self[kOnreadTail] = Buffer.concat([tail, buffer]);
-          return;
-        }
-        // Read off a stopped handle ahead of a peer reset: node's callback gets nothing until the reads restart.
-        if (self[kReadStopped]) {
-          self[kOnreadTail] = buffer;
           return;
         }
         self[kOnreadDeliver](buffer);
@@ -2545,10 +2489,9 @@ function drainOnreadTailNT(socket) {
   if (socket[kOnreadPendingEnd]) {
     socket[kOnreadPendingEnd] = false;
     finishSocketEnd(socket);
-  } else if (socket[kHeldError] !== undefined) {
-    scheduleHeldError(socket);
   } else if (fromRead || !socket.isPaused()) {
-    readStart(socket, socket._handle);
+    socket._handle?.resume?.();
+    restorePausedHold(socket, socket._handle);
   }
 }
 
@@ -2560,7 +2503,9 @@ Socket.prototype.resume = function resume() {
   // An ended readable side (EOF emitted, or `readable: false`) never restarts the handle: node reaches readStart only from _read.
   // An onread socket is the exception: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L830-L845
   if (this.readableEnded && this[kOnreadBuffer] === undefined) return ret;
-  if (!this.connecting && !drainOnreadTail(this)) readStart(this, this._handle);
+  if (!this.connecting && !drainOnreadTail(this)) {
+    this._handle?.resume?.();
+  }
   // Even while still connecting, so pause-then-resume stays symmetric.
   restorePausedHold(this, this._handle);
   return ret;
@@ -2662,29 +2607,19 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
 Socket.prototype.read = function read(size) {
   // See resume(): an ended readable side never restarts the handle.
   if ((!this.readableEnded || this[kOnreadBuffer] !== undefined) && !this.connecting && !drainOnreadTail(this, true)) {
-    readStart(this, this._handle);
+    this._handle?.resume?.();
+    restorePausedHold(this, this._handle);
   }
-  const chunk = Duplex.prototype.read.$call(this, size);
-  if (this[kReadWhileStopped] || this[kHeldError] !== undefined) afterStoppedRead(this);
-  return chunk;
+  return Duplex.prototype.read.$call(this, size);
 };
-
-function afterStoppedRead(self) {
-  const state = self._readableState;
-  const length = state.length;
-  if (length === 0) self[kReadWhileStopped] = false;
-  // Where node's read() calls _read() and meets the error: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/streams/readable.js#L730-L751
-  if (self[kHeldError] !== undefined && self[kOnreadTail] === undefined && !readsEnded(self)) {
-    if (length === 0 || length < state.highWaterMark) scheduleHeldError(self);
-  }
-}
 
 Socket.prototype._read = function _read(size) {
   const socket = this._handle;
   if (this.connecting || !socket) {
     this.once("connect", () => this._read(size));
   } else if (!drainOnreadTail(this, true)) {
-    readStart(this, socket);
+    socket?.resume?.();
+    restorePausedHold(this, socket);
   }
 };
 
@@ -3001,14 +2936,6 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     return;
   }
   const socket = this._handle;
-  const heldError = this[kHeldError];
-  if (heldError !== undefined) {
-    // The connection is already gone: node's write(2) fails on the reset, and the unread bytes go with the socket.
-    this[kHeldError] = undefined;
-    const errno = heldError.errno;
-    process.nextTick(failWrite, this, typeof errno === "number" && errno < 0 ? errno : uv().UV_ECONNRESET, callback);
-    return false;
-  }
   if (!socket && this[kupgraded] && !this.destroyed) {
     // Node wraps the handle synchronously in the TLSSocket constructor
     // (_wrapHandle), so a banner written in the same tick as the wrap is
@@ -4527,9 +4454,6 @@ function initSocketHandle(self) {
   self._sockname = null;
   self[kclosed] = false;
   self[kended] = false;
-  self[kReadStopped] = false;
-  self[kReadWhileStopped] = false;
-  self[kHeldError] = undefined;
 
   // Handle creation may be deferred to bind() or connect() time.
   const handle = self._handle;

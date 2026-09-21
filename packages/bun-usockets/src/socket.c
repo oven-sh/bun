@@ -89,6 +89,10 @@ void us_socket_set_ssl_raw_tap(struct us_socket_t *s, int enabled) {
     s->ssl_raw_tap = !!enabled;
 }
 
+void us_socket_defer_error_until_read(struct us_socket_t *s, int enabled) {
+    s->defer_error_until_read = !!enabled;
+}
+
 struct us_socket_group_t *us_connecting_socket_group(struct us_connecting_socket_t *c) {
     return c->group;
 }
@@ -468,6 +472,7 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     s->flags.last_write_failed = 0;
     s->unclassified_send_failures = 0;
     s->read_eof = 0;
+    s->defer_error_until_read = 0;
     s->connect_state = NULL;
 
     /* We always use nodelay */

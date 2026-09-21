@@ -336,6 +336,11 @@ impl us_socket_t {
         c::us_socket_set_ssl_raw_tap(self, enabled as c_int);
     }
 
+    /// See `us_socket_defer_error_until_read` in libusockets.h.
+    pub fn defer_error_until_read(&mut self, enabled: bool) {
+        c::us_socket_defer_error_until_read(self, enabled as c_int);
+    }
+
     pub fn write(&mut self, data: &[u8]) -> i32 {
         let rc = unsafe {
             // SAFETY: data.as_ptr() valid for data.len() bytes
@@ -532,6 +537,7 @@ mod c {
         pub(super) safe fn us_socket_kind(s: &us_socket_t) -> u8;
         pub(super) safe fn us_socket_set_kind(s: &mut us_socket_t, kind: u8);
         pub(super) safe fn us_socket_set_ssl_raw_tap(s: &mut us_socket_t, enabled: c_int);
+        pub(super) safe fn us_socket_defer_error_until_read(s: &mut us_socket_t, enabled: c_int);
 
         pub(super) fn us_socket_write(s: *mut us_socket_t, data: *const u8, length: i32) -> i32;
         #[cfg(not(windows))]

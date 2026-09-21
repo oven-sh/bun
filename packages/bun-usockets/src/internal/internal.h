@@ -324,6 +324,8 @@ struct us_socket_t {
   unsigned char ssl_pending_detach : 1;
   /* Peer FIN was dispatched as on_end on a half-open socket; readable interest is never re-added and on_end never re-fires. */
   unsigned char read_eof : 1;
+  /* us_socket_defer_error_until_read. */
+  unsigned char defer_error_until_read : 1;
   /* The close code passed to the deferred close (e.g. a reset requested from
    * inside a handshake callback must still RST, not FIN, when it is finally
    * performed). */

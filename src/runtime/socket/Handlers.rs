@@ -46,6 +46,9 @@ pub(crate) struct Handlers {
 
     pub(crate) binary_type: Cell<BinaryType>,
 
+    /// node:net: see `us_socket_defer_error_until_read`. Applied to each socket in `on_open`.
+    pub(crate) defer_error_until_read: bool,
+
     pub(crate) vm: &'static VirtualMachine,
     pub(crate) global_object: GlobalRef,
     /// The context of the script that gave these handlers: a socket event is dispatched inside it.
@@ -327,6 +330,7 @@ impl Handlers {
         Ok(Rc::new(Handlers {
             cell: JSSocketHandlers::create(global_object, &wrapped),
             binary_type: Cell::new(binary_type_from_generated(generated.binary_type)),
+            defer_error_until_read: generated.defer_error_until_read,
             // SAFETY: `bun_vm()` never returns null for a Bun-owned global; the
             // VM outlives every `Handlers` (process-lifetime singleton).
             vm: global_object.bun_vm(),

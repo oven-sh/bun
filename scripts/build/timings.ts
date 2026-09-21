@@ -1024,7 +1024,7 @@ const client = `
 (function () {
   var data = JSON.parse(document.getElementById("data").textContent);
   var NS = "http://www.w3.org/2000/svg";
-  var ROW = 14, BAR = 12, LEFT = 8, RIGHT = 24, STRIP = 50, SPLIT = 8, AXIS = 18, GAP = 10, LANE_GAP = 12, THIN_ROW = 5, NAMED_SHARE = 0.03;
+  var ROW = 14, BAR = 12, RIGHT = 24, STRIP = 50, SPLIT = 8, AXIS = 18, GAP = 10, LANE_GAP = 12, THIN_ROW = 5, NAMED_SHARE = 0.03;
   // The width of a character of a bar's name (10px monospace), and the colors a lane can have (--k0 to --k3).
   var CHAR = 6.05, COLORS = 4;
   var level = 1, MOST_ZOOM = 200;
@@ -1067,8 +1067,10 @@ const client = `
     host.textContent = "";
     gutter.textContent = "";
     var plot = plotWidth(host);
-    var width = plot + LEFT + RIGHT;
-    var x = function (t) { return LEFT + t / run.wallMs * plot; };
+    // The chart's left edge, which is the lane names' border, is the start of the build.
+    var width = plot + RIGHT;
+    var x = function (t) { return t / run.wallMs * plot; };
+    host.plot = plot;
     // A row is full height when a bar in it is on the critical path or lasts a share of the run that can carry a
     // name with the whole run in view, and thin when it holds only slivers: a burst of short commands then costs
     // little room. Decided from the data, not from the zoom, so zooming only stretches the chart sideways.
@@ -1091,7 +1093,8 @@ const client = `
 
     var step = niceStep(run.wallMs, plot);
     for (var t = 0; t <= run.wallMs; t += step) {
-      el("line", { x1: x(t), x2: x(t), y1: 0, y2: height - AXIS, "class": "grid" }, svg);
+      // The start needs no grid line: the chart's edge is it.
+      if (t > 0) el("line", { x1: x(t), x2: x(t), y1: 0, y2: height - AXIS, "class": "grid" }, svg);
       el("text", { x: x(t) + 3, y: height - 5 }, svg).textContent = ms(t);
     }
 
@@ -1241,19 +1244,20 @@ const client = `
     gutters.push(html("div", undefined, row, "gutter"));
     return html("div", undefined, row, "scroll");
   });
-  function plotWidth(host) { return Math.max(320, host.clientWidth) * level - LEFT - RIGHT; }
+  function plotWidth(host) { return Math.max(320, host.clientWidth) * level - RIGHT; }
   function drawAll() { data.runs.forEach(function (run, i) { draw(run, hosts[i], gutters[i]); }); }
   // Zoom every chart, keeping the moment under the cursor (or, away from the cursor, at the middle of the view) still.
   function zoomTo(value, overHost, clientX) {
     var anchors = hosts.map(function (host) {
       var at = host === overHost ? clientX - host.getBoundingClientRect().left : host.clientWidth / 2;
-      return { at: at, moment: (host.scrollLeft + at - LEFT) / plotWidth(host) };
+      return { at: at, moment: (host.scrollLeft + at) / host.plot };
     });
     level = Math.min(MOST_ZOOM, Math.max(1, value));
     drawAll();
-    hosts.forEach(function (host, i) { host.scrollLeft = LEFT + anchors[i].moment * plotWidth(host) - anchors[i].at; });
+    hosts.forEach(function (host, i) { host.scrollLeft = anchors[i].moment * host.plot - anchors[i].at; });
   }
-  window.addEventListener("resize", drawAll);
+  // The charts are as wide as the page gives them, which changes with the window and when a scroll bar appears.
+  new ResizeObserver(drawAll).observe(runs);
   window.addEventListener("keydown", function (ev) {
     if (ev.key !== "Escape") return;
     data.runs.forEach(function (run) { run.pinned = undefined; });

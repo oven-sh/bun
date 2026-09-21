@@ -149,8 +149,7 @@ try {
 // The child blocks in a synchronous read of stdin until the parent has closed its end of stdout, and checks with
 // a writer of its own that the pipe really is broken, so the test cannot pass by the writes simply being queued.
 //
-// A later console.write() still fails. With a short argument left in the buffer by the failed call, the sink was
-// marked finished when that was flushed, and later writes reported 0 bytes and no error.
+// A later console.write() to the broken pipe fails too.
 const big = `Buffer.alloc(1024 * 1024, "a").toString()`;
 test.concurrent.each([
   ["two large arguments", `${big}, ${big}`],

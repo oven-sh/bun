@@ -1002,22 +1002,34 @@ pub(crate) fn dib_as_bmp(
             continue;
         }
         // BITMAPFILEHEADER: 'BM' · u32 file-size · 2×u16 reserved ·
-        // u32 bfOffBits. bfOffBits = 14 + biSize + colour-table; for the
-        // 24/32-bit DIBs clipboards emit there's no colour table, but a
-        // 40-byte header with BI_BITFIELDS appends 12 bytes of masks.
+        // u32 bfOffBits. bfOffBits = 14 + biSize + colour-table; a 40-byte
+        // header with BI_BITFIELDS appends 12 bytes of masks before it. The
+        // table has biClrUsed entries, or every entry of a paletted (<= 8 bit)
+        // image when that is 0.
         let ih_size: u64 =
             u32::from_le_bytes(buf[14..18].try_into().expect("infallible: size matches")) as u64;
+        let bit_count = u16::from_le_bytes([buf[14 + 14], buf[14 + 15]]);
         let compression = u32::from_le_bytes(
             buf[14 + 16..14 + 16 + 4]
                 .try_into()
                 .expect("infallible: size matches"),
         );
+        let colors_used = u32::from_le_bytes(
+            buf[14 + 32..14 + 32 + 4]
+                .try_into()
+                .expect("infallible: size matches"),
+        ) as u64;
         let masks: u64 = if ih_size == 40 && compression == 3 {
             12
         } else {
             0
         };
-        let off = 14 + ih_size + masks;
+        let table_entries = if colors_used == 0 && (1..=8).contains(&bit_count) {
+            1u64 << bit_count
+        } else {
+            colors_used
+        };
+        let off = 14 + ih_size + masks + table_entries * 4;
         if ih_size < 40 || off > buf.len() as u64 {
             continue;
         }

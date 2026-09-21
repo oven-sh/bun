@@ -9,6 +9,7 @@ import { bunEnv, bunExe, isCI, isLinux, isMacOS, isWindows, tempDir } from "harn
 import { once } from "node:events";
 import { chmodSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { inflateSync } from "node:zlib";
 
 // A valid 1x1 transparent PNG; used to prove binary representations survive
 // the platform round-trip.
@@ -1670,24 +1671,37 @@ describe.skipIf(!isWindows || win32 === null)("Win32 backend", () => {
     }).toEqual({ headerSize: 124, width: 1, height: 1, bitCount: 32, pixel: [255, 0, 0, 127] });
   });
 
-  test("a bitmap-only clipboard (a screenshot, Paint) reads as image/png", async () => {
-    // BITMAPINFOHEADER, then one 24-bit BGR pixel padded to a 4-byte row.
-    const dib = Buffer.alloc(44);
+  // A bitmap-only clipboard (a screenshot, Paint) still reads as image/png:
+  // a BITMAPINFOHEADER, an optional colour table, then one pixel in a
+  // 4-byte-padded row.
+  test.each([
+    { name: "24-bit", bitCount: 24, paletteEntries: 0 },
+    { name: "8-bit with a colour table", bitCount: 8, paletteEntries: 256 },
+  ])("$name DIB reads as image/png", async ({ bitCount, paletteEntries }) => {
+    const dib = Buffer.alloc(40 + paletteEntries * 4 + 4);
     dib.writeUInt32LE(40, 0);
     dib.writeInt32LE(1, 4);
     dib.writeInt32LE(1, 8);
     dib.writeUInt16LE(1, 12);
-    dib.writeUInt16LE(24, 14);
+    dib.writeUInt16LE(bitCount, 14);
     dib.writeUInt32LE(4, 20);
+    // Blue: BGR bytes, or palette entry 0 (the pixel is index 0).
     dib.set([255, 0, 0], 40);
     raw().setRaw([{ format: CF_DIB, bytes: dib }]);
     const [item] = await readAll();
     const png = item["image/png"] as Buffer;
+    // The first scanline of an 8-bit truecolour PNG: a filter byte, then RGB(A).
+    const idat: Buffer[] = [];
+    for (let at = 8; at < png.length; at += 12 + png.readUInt32BE(at)) {
+      if (png.toString("latin1", at + 4, at + 8) === "IDAT")
+        idat.push(png.subarray(at + 8, at + 8 + png.readUInt32BE(at)));
+    }
     expect({
       types: item.types,
       signature: png.subarray(0, 8).toString("hex"),
       size: [png.readUInt32BE(16), png.readUInt32BE(20)],
-    }).toEqual({ types: ["image/png"], signature: "89504e470d0a1a0a", size: [1, 1] });
+      rgb: [...inflateSync(Buffer.concat(idat)).subarray(1, 4)],
+    }).toEqual({ types: ["image/png"], signature: "89504e470d0a1a0a", size: [1, 1], rgb: [0, 0, 255] });
   });
 
   test("a PNG placed by another process reads back byte-exact", async () => {

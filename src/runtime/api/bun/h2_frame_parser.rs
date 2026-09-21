@@ -872,6 +872,8 @@ thread_local! {
     static CORK_BUFFER: RefCell<Box<[u8; H2_CORK_BUFFER_SIZE]>> =
         RefCell::new(Box::new([0u8; H2_CORK_BUFFER_SIZE]));
     static CORK_OFFSET: Cell<u16> = const { Cell::new(0) };
+    // Bumped when the cork is emptied or changes owner; a `CorkMark` is valid while it matches.
+    static CORK_GENERATION: Cell<u32> = const { Cell::new(0) };
     // Multi-frame DATA batches (send_data): all frame headers + payload slices of one
     // write are serialized here and hit the socket in a single _write, instead of one
     // cork flush per 16 KB frame. Reused across calls; capacity is capped after use.
@@ -895,6 +897,24 @@ thread_local! {
     // pool allocation itself.
     static POOL: RefCell<Option<Box<ManuallyDrop<H2FrameParserHiveAllocator>>>> =
         const { RefCell::new(None) };
+}
+
+/// Where a frame starts in `CORK_BUFFER`, valid while `CORK_GENERATION` still matches.
+#[derive(Clone, Copy)]
+struct CorkMark {
+    offset: u16,
+    generation: u32,
+}
+
+/// Corked DATA frames cut out behind a mark, with the tail offset of each END_STREAM frame.
+struct CorkTail {
+    bytes: Vec<u8>,
+    end_streams: Vec<(u32, u16)>,
+}
+
+fn reset_cork_offset() {
+    CORK_OFFSET.with(|c| c.set(0));
+    CORK_GENERATION.with(|c| c.set(c.get().wrapping_add(1)));
 }
 
 /// One wire-order piece of a multi-frame send_data batch (see BATCH_SEGMENTS).
@@ -1334,6 +1354,8 @@ pub struct Stream {
     // The JS readable for this stream is paused (setStreamReading(id, false)): the engine defers
     // replenishing the stream's receive window until reading resumes, backpressuring the peer.
     reading_paused: bool,
+    // Cork position of this stream's END_STREAM DATA frame; `push_promise` writes ahead of it.
+    end_stream_cork: Option<CorkMark>,
 
     // when we have backpressure we queue the data e round robin the Streams
     data_frame_queue: PendingQueue,
@@ -1839,6 +1861,7 @@ impl Stream {
             remote_used_window_size: 0,
             signal: None,
             reading_paused: false,
+            end_stream_cork: None,
             data_frame_queue: PendingQueue::default(),
         }
     }
@@ -2507,7 +2530,7 @@ impl H2FrameParser {
         Self::set_corked(Some(self.ref_guard()));
         self.register_auto_flush();
         bun_output::scoped_log!(H2FrameParser, "cork {:p}", self);
-        CORK_OFFSET.with(|c| c.set(0));
+        reset_cork_offset();
     }
 
     pub(crate) fn generic_flush<S: NativeSocketWrite>(&self, mut socket: S) -> usize {
@@ -2969,6 +2992,10 @@ impl H2FrameParser {
         }
     }
 
+    fn holds_cork(&self) -> bool {
+        Self::corked().is_some_and(|corked| std::ptr::eq(corked, self.as_ctx_ptr()))
+    }
+
     /// Runs from the deferred tick (never under a write): closes the native socket so the
     /// normal socket-close teardown runs (native callback detach, JS 'close', session
     /// destroy) - the same path a peer disconnect takes. Closes WITHOUT detaching: a
@@ -3000,6 +3027,10 @@ impl H2FrameParser {
 
     pub(crate) fn on_auto_flush(&self) -> bool {
         let _keepalive = self.keepalive();
+        if self.transport_write_fatal.get() && !self.has_backpressure() {
+            // A later write drained the buffer: the transport recovered, so this tick flushes.
+            self.transport_write_fatal.set(false);
+        }
         if self.transport_write_fatal.get() {
             // Returning `false` makes DeferredTaskQueue::run remove the entry
             // itself, so only the registration's flag and ref are released here
@@ -3009,14 +3040,7 @@ impl H2FrameParser {
             // early-return instead of removing a map entry run() still owns.
             self.auto_flusher.get().registered.set(false);
             self.deref();
-            // An empty write buffer here means a later write in the same flush()
-            // cycle already drained the bytes the failing send left behind (racy
-            // one-off errnos, e.g. macOS EPROTOTYPE) - the transport recovered.
-            if self.has_backpressure() {
-                self.close_transport_after_fatal_write();
-            } else {
-                self.transport_write_fatal.set(false);
-            }
+            self.close_transport_after_fatal_write();
             return false;
         }
         if self.pending_header_compression_error.get() {
@@ -3041,8 +3065,82 @@ impl H2FrameParser {
             return false;
         }
         let _ = self.flush();
-        // we will unregister ourselves when the buffer is empty
+        let still_owed = self.holds_cork()
+            || self.transport_write_fatal.get()
+            || self.pending_header_compression_error.get();
+        if self.auto_flusher.get().registered.get() && !still_owed {
+            // Only uncork() releases a registration, and nothing is corked.
+            self.auto_flusher.get().registered.set(false);
+            self.deref();
+            return false;
+        }
         true
+    }
+
+    /// The cork position the next `write()` lands at.
+    fn cork_mark(&self) -> CorkMark {
+        self.cork();
+        CorkMark {
+            offset: CORK_OFFSET.with(|c| c.get()),
+            generation: CORK_GENERATION.with(|c| c.get()),
+        }
+    }
+
+    /// Cut the corked bytes from a still-valid `mark` to the end of the cork.
+    fn take_cork_tail(&self, mark: CorkMark) -> Option<CorkTail> {
+        if !ENABLE_AUTO_CORK || Self::corked() != Some(self.as_ctx_ptr()) {
+            return None;
+        }
+        if CORK_GENERATION.with(|c| c.get()) != mark.generation {
+            return None;
+        }
+        let off = CORK_OFFSET.with(|c| c.get());
+        if mark.offset >= off {
+            return None;
+        }
+        let tail = CORK_BUFFER.with_borrow(|buf| buf[mark.offset as usize..off as usize].to_vec());
+        // Only DATA may move behind a header block: HPACK must decode header blocks in encode order.
+        let mut end_streams: Vec<(u32, u16)> = Vec::new();
+        let mut pos = 0usize;
+        while pos < tail.len() {
+            let raw = tail.get(pos..pos + FrameHeader::BYTE_SIZE)?;
+            let header = FrameHeader::decode(raw.try_into().expect("frame header size"));
+            if header.type_ != FrameType::HTTP_FRAME_DATA as u8 {
+                return None;
+            }
+            if header.flags & DataFrameFlags::END_STREAM as u8 != 0 {
+                end_streams.push((header.stream_identifier, pos as u16));
+            }
+            pos += FrameHeader::BYTE_SIZE + header.length as usize;
+        }
+        if pos != tail.len() {
+            return None;
+        }
+        CORK_OFFSET.with(|c| c.set(mark.offset));
+        // Every mark past `mark.offset` now points at shifted bytes.
+        CORK_GENERATION.with(|c| c.set(c.get().wrapping_add(1)));
+        Some(CorkTail {
+            bytes: tail,
+            end_streams,
+        })
+    }
+
+    /// Write `tail` back to the cork and mark its END_STREAM frames again.
+    fn restore_cork_tail(&self, tail: CorkTail) {
+        let base = self.cork_mark();
+        let _ = self.write(&tail.bytes);
+        for (stream_id, offset) in tail.end_streams {
+            // `write` can run JS over a JS-backed transport: look each stream up again.
+            let Some(stream) = self.streams.get().get(&stream_id).copied() else {
+                continue;
+            };
+            let mark = CorkMark {
+                offset: base.offset + offset,
+                generation: base.generation,
+            };
+            // SAFETY: stream is a *mut Stream from self.streams; valid while the map entry exists
+            unsafe { (*stream).end_stream_cork = Some(mark) };
+        }
     }
 
     /// Move the cork buffer's current contents to the front of `out` without flushing
@@ -3062,7 +3160,7 @@ impl H2FrameParser {
         if off == 0 {
             return;
         }
-        CORK_OFFSET.with(|c| c.set(0));
+        reset_cork_offset();
         CORK_BUFFER.with_borrow(|buf| out.extend_from_slice(&buf[0..off]));
     }
 
@@ -5161,8 +5259,10 @@ impl H2FrameParser {
                 enqueued = true;
                 stream.queue_frame(self, b"", callback, close);
             } else {
+                let mark = can_close.then(|| self.cork_mark());
                 let mut writer = self.to_writer();
                 let _ = data_header.write(&mut writer, &self.frames_sent_legacy);
+                stream.end_stream_cork = mark;
             }
         } else {
             let mut offset: usize = 0;
@@ -5249,8 +5349,12 @@ impl H2FrameParser {
                         stream_identifier: stream_id,
                         length: u32::try_from(payload_size).expect("int cast"),
                     };
-                    if payload.len() <= MAX_PAYLOAD_SIZE_WITHOUT_FRAME {
-                        // Single-frame payload: the cork coalesces it with neighbors.
+                    if payload.len() <= MAX_PAYLOAD_SIZE_WITHOUT_FRAME || end_stream {
+                        // The cork coalesces it with neighbors; a body's last frame is corked too.
+                        if payload.len() > MAX_PAYLOAD_SIZE_WITHOUT_FRAME {
+                            self.flush_batch_buffer();
+                        }
+                        let mark = end_stream.then(|| self.cork_mark());
                         let mut writer = self.to_writer();
                         let _ = data_header.write(&mut writer, &self.frames_sent_legacy);
                         if padding != 0 {
@@ -5258,6 +5362,7 @@ impl H2FrameParser {
                         } else {
                             let _ = writer.write_all(slice);
                         }
+                        stream.end_stream_cork = mark;
                     } else {
                         // Multi-frame payload: accumulate header + slice in the batch so
                         // the whole write reaches the socket in one syscall (and, on TLS,
@@ -6203,61 +6308,67 @@ impl H2FrameParser {
                 .map(|s| s.max_frame_size)
                 .unwrap_or_else(|| this.local_settings.get().max_frame_size) as usize;
         let payload_size = 4 + encoded_headers.len();
+        let mut frames: Vec<u8> = Vec::with_capacity(
+            payload_size + FrameHeader::BYTE_SIZE * (1 + payload_size / max_frame.max(1)),
+        );
+        let promised_be = (promised_id & 0x7fff_ffff).swap_bytes();
         if payload_size <= max_frame {
             // PUSH_PROMISE frame: 9-byte header + 4-byte promised stream id + the header block.
-            let mut hdr_buf = [0u8; FrameHeader::BYTE_SIZE + 4];
-            let mut ws = FixedBufferStream::new(&mut hdr_buf);
             let frame = FrameHeader {
                 type_: 0x05,
                 flags: 0x04, // END_HEADERS
                 stream_identifier: parent_id,
                 length: payload_size as u32,
             };
-            let _ = frame.write(&mut ws, &this.frames_sent_legacy);
-            let promised_be = (promised_id & 0x7fff_ffff).swap_bytes();
-            let _ = ws.write_all(&promised_be.to_ne_bytes());
-            let _ = this.write(&hdr_buf);
-            let _ = this.write(&encoded_headers);
+            let _ = frame.write(&mut frames, &this.frames_sent_legacy);
+            frames.extend_from_slice(&promised_be.to_ne_bytes());
+            frames.extend_from_slice(&encoded_headers);
         } else {
             // §6.6/§6.10: an oversized block is split - the PUSH_PROMISE (without END_HEADERS)
             // carries the promised id + the first fragment, then CONTINUATION frames on the
             // parent stream carry the rest; the last one sets END_HEADERS. Mirrors the
             // send_trailers()/request() splitting.
             let first_chunk = max_frame - 4;
-            let mut hdr_buf = [0u8; FrameHeader::BYTE_SIZE + 4];
-            let mut ws = FixedBufferStream::new(&mut hdr_buf);
             let frame = FrameHeader {
                 type_: 0x05,
                 flags: 0, // continued below
                 stream_identifier: parent_id,
                 length: max_frame as u32,
             };
-            let _ = frame.write(&mut ws, &this.frames_sent_legacy);
-            let promised_be = (promised_id & 0x7fff_ffff).swap_bytes();
-            let _ = ws.write_all(&promised_be.to_ne_bytes());
-            let _ = this.write(&hdr_buf);
-            let _ = this.write(&encoded_headers[..first_chunk]);
+            let _ = frame.write(&mut frames, &this.frames_sent_legacy);
+            frames.extend_from_slice(&promised_be.to_ne_bytes());
+            frames.extend_from_slice(&encoded_headers[..first_chunk]);
 
             let mut offset = first_chunk;
             while offset < encoded_headers.len() {
                 let chunk = (encoded_headers.len() - offset).min(max_frame);
                 let is_last = offset + chunk >= encoded_headers.len();
-                let mut cont_buf = [0u8; FrameHeader::BYTE_SIZE];
-                let mut cs = FixedBufferStream::new(&mut cont_buf);
                 let cont = FrameHeader {
                     type_: FrameType::HTTP_FRAME_CONTINUATION as u8,
                     flags: if is_last { 0x04 } else { 0 }, // END_HEADERS on the final fragment
                     stream_identifier: parent_id,
                     length: chunk as u32,
                 };
-                let _ = cont.write(&mut cs, &this.frames_sent_legacy);
-                let _ = this.write(&cont_buf);
-                let _ = this.write(&encoded_headers[offset..offset + chunk]);
+                let _ = cont.write(&mut frames, &this.frames_sent_legacy);
+                frames.extend_from_slice(&encoded_headers[offset..offset + chunk]);
                 offset += chunk;
             }
         }
 
-        let _ = this.flush();
+        // RFC 9113 §6.6: the PUSH_PROMISE must precede the parent's END_STREAM, like nghttp2.
+        let corked_end_stream = this
+            .streams
+            .get()
+            .get(&parent_id)
+            .copied()
+            // SAFETY: stream is a *mut Stream from self.streams; valid while the map entry exists
+            .and_then(|stream| unsafe { (*stream).end_stream_cork.take() })
+            .and_then(|mark| this.take_cork_tail(mark));
+        let _ = this.write(&frames);
+        if let Some(tail) = corked_end_stream {
+            this.restore_cork_tail(tail);
+        }
+        // No flush: a further pushStream() in this tick must also land ahead of the END_STREAM.
         Ok(JSValue::js_number(promised_id as f64))
     }
 
@@ -7733,7 +7844,7 @@ impl H2FrameParser {
         // `uncork()` would `_write()` the corked bytes, which re-enters JS on a non-native
         // socket; the process is exiting, so drop them and just release the slot's ref.
         if Self::corked() == Some(self.as_ctx_ptr()) {
-            CORK_OFFSET.with(|c| c.set(0));
+            reset_cork_offset();
             Self::set_corked(None);
         }
         // Removes the deferred task (its ctx is `self`) and releases the ref it holds.

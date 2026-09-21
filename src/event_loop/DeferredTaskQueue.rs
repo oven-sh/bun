@@ -50,6 +50,8 @@ pub type DeferredRepeatingTask = unsafe extern "C" fn(*mut c_void) -> bool;
 #[derive(Default)]
 pub struct DeferredTaskQueue {
     pub(crate) map: ArrayHashMap<Option<NonNull<c_void>>, DeferredRepeatingTask>,
+    /// An entry was posted since the last pass started.
+    unrun: bool,
 }
 
 impl DeferredTaskQueue {
@@ -60,9 +62,17 @@ impl DeferredTaskQueue {
             bun_collections::hash_map::Entry::Occupied(_) => true,
             bun_collections::hash_map::Entry::Vacant(v) => {
                 v.insert(task);
+                self.unrun = true;
                 false
             }
         }
+    }
+
+    /// Whether an entry may still be waiting for its first run. Clears the mark.
+    pub fn take_unrun(&mut self) -> bool {
+        let unrun = self.unrun && !self.map.is_empty();
+        self.unrun = false;
+        unrun
     }
 
     pub fn unregister_task(&mut self, ctx: Option<NonNull<c_void>>) -> bool {
@@ -72,6 +82,7 @@ impl DeferredTaskQueue {
     }
 
     pub fn run(&mut self) {
+        self.unrun = false;
         // Callbacks may re-entrantly mutate `self.map` (see the re-entrancy
         // note in the file doc), so re-read `len()` every iteration and
         // re-check slot `i` after each callback. `remaining` is a livelock bound.

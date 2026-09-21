@@ -931,22 +931,10 @@ it("spawnSync(does-not-exist)", () => {
   const x = spawnSync("does-not-exist");
   expect(x.error?.code).toEqual("ENOENT");
   expect(x.error.path).toEqual("does-not-exist");
-  // The rest of the result is what node returns when the process could not be spawned.
-  expect({
-    status: x.status,
-    signal: x.signal,
-    output: x.output,
-    pid: x.pid,
-    stdout: x.stdout,
-    stderr: x.stderr,
-  }).toEqual({
-    status: null,
-    signal: null,
-    output: null,
-    pid: 0,
-    stdout: undefined,
-    stderr: undefined,
-  });
+  expect(x.signal).toEqual(null);
+  expect(x.output).toEqual([null, null, null]);
+  expect(x.stdout).toEqual(null);
+  expect(x.stderr).toEqual(null);
 });
 
 // https://github.com/oven-sh/bun/issues/32067

@@ -181,6 +181,9 @@ declare namespace NodeJS {
   }
 }
 
+/** Defined by the fuzzilli build; `src/js/eval/fuzzilli-reprl.ts` calls it and cannot declare it (see its header). */
+declare function resetCoverage(): void;
+
 interface LoaderEntry {
   key: string;
   state: number;

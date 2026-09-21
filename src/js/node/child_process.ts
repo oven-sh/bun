@@ -60,9 +60,9 @@ interface ExecPromiseWithResolvers extends PromiseWithResolvers<ExecResult> {
 
 interface SpawnSyncResult {
   signal: string | null;
-  status: number | null;
-  output: (Buffer | string | null | undefined)[] | null;
-  pid: number;
+  status: number | null | undefined;
+  output: (Buffer | string | null | undefined)[];
+  pid: number | undefined;
   stdout?: Buffer | string | null;
   stderr?: Buffer | string | null;
   error?: SystemError;
@@ -584,8 +584,9 @@ function spawnSync(file, args, options?): SpawnSyncResult {
       exitedDueToTimeout,
       exitedDueToMaxBuffer,
       pid,
-    }: Omit<Bun.SyncSubprocess, "exitCode" | "stdout" | "stderr"> & {
-      exitCode: number | null;
+    }: Omit<Bun.SyncSubprocess, "exitCode" | "pid" | "stdout" | "stderr"> & {
+      exitCode: number | null | undefined;
+      pid: number | undefined;
       stdout?: Buffer | number | null;
       stderr?: Buffer | number | null;
     } = Bun.spawnSync({
@@ -614,8 +615,9 @@ function spawnSync(file, args, options?): SpawnSyncResult {
     error = err;
     stdout = null;
     stderr = null;
-    exitCode = null;
-    pid = 0;
+    // Whether the process ran is not known here: Bun.spawnSync also throws when reading its output failed.
+    exitCode = undefined;
+    pid = undefined;
   }
 
   // When stdio is redirected to a file descriptor, Bun.spawnSync returns the fd number
@@ -628,8 +630,7 @@ function spawnSync(file, args, options?): SpawnSyncResult {
     signal: typeof signalCode === "number" ? "" : (signalCode ?? null),
     status: exitCode,
     // TODO: Need to expose extra pipes from Bun.spawnSync to child_process
-    // node: `output` is null when the process could not be spawned.
-    output: error ? null : [null, outputStdout, outputStderr],
+    output: [null, outputStdout, outputStderr],
     pid,
   };
 
@@ -637,19 +638,16 @@ function spawnSync(file, args, options?): SpawnSyncResult {
     result.error = error;
   }
 
-  const output = result.output;
-  if (output) {
-    if (outputStdout && encoding && encoding !== "buffer") {
-      output[1] = output[1]?.toString(encoding);
-    }
-
-    if (outputStderr && encoding && encoding !== "buffer") {
-      output[2] = output[2]?.toString(encoding);
-    }
+  if (outputStdout && encoding && encoding !== "buffer") {
+    result.output[1] = result.output[1]?.toString(encoding);
   }
 
-  result.stdout = output?.[1];
-  result.stderr = output?.[2];
+  if (outputStderr && encoding && encoding !== "buffer") {
+    result.output[2] = result.output[2]?.toString(encoding);
+  }
+
+  result.stdout = result.output[1];
+  result.stderr = result.output[2];
 
   if (exitedDueToTimeout && error == null) {
     result.error = new SystemError(

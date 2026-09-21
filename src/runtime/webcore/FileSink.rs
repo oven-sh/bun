@@ -558,7 +558,7 @@ impl FileSink {
         let Some(global) = self.js_global() else {
             return;
         };
-        let error = match self.stream_error.replace(None) {
+        let error = match self.stream_error.get() {
             Some(err) => Some(err.to_js(global)),
             None => self.pipe.get().error(),
         };
@@ -871,6 +871,8 @@ impl FileSink {
         }
 
         self.done.set(false);
+        // What the sink failed with before belongs to that run: `finished()` must not report it for this one.
+        self.stream_error.set(None);
         self.started.set(true);
         self.source.with_mut(|s| s.start());
         sys::Result::Ok(())
@@ -1021,7 +1023,8 @@ impl FileSink {
         // A flush takes no new chunk from the caller; a pending one reports the
         // bytes it pushed out. It only reaches here when no write is pending.
         match self.to_result(rc, flushed) {
-            streams::Writable::Err(_) => unreachable!(),
+            // The writer had already finished, with an error: the flush fails with it.
+            streams::Writable::Err(err) => sys::Result::Err(err),
             result => sys::Result::Ok(result.to_js(cx)),
         }
     }
@@ -1109,7 +1112,7 @@ impl FileSink {
 
     pub fn write(&self, data: &streams::Result) -> streams::Writable {
         if self.done.get() {
-            return streams::Writable::Done;
+            return self.finished();
         }
         let buffered_before = self.writer.get().buffered_len();
         // SAFETY(JsCell): `IOWriter::write` buffers/writes to fd; does not call JS.
@@ -1153,7 +1156,7 @@ impl FileSink {
 
     pub(crate) fn write_latin1(&self, data: &streams::Result) -> streams::Writable {
         if self.done.get() {
-            return streams::Writable::Done;
+            return self.finished();
         }
         let buffered_before = self.writer.get().buffered_len();
         // SAFETY(JsCell): `IOWriter::write_latin1` buffers/writes; no JS.
@@ -1170,7 +1173,7 @@ impl FileSink {
 
     pub(crate) fn write_utf16(&self, data: &streams::Result) -> streams::Writable {
         if self.done.get() {
-            return streams::Writable::Done;
+            return self.finished();
         }
         let buffered_before = self.writer.get().buffered_len();
         // SAFETY(JsCell): `IOWriter::write_utf16` buffers/writes; no JS.
@@ -1512,6 +1515,15 @@ impl FileSink {
         (buffered_after + written).saturating_sub(buffered_before) as u64 // @truncate
     }
 
+    /// What a write to a finished sink reports. One that failed reports the error it failed with: `Done` reads
+    /// as "nothing written, nothing wrong", and a write after a reader hung up would be lost without a word.
+    fn finished(&self) -> streams::Writable {
+        match self.stream_error.get() {
+            Some(streams::StreamError::Error(err)) => streams::Writable::Err(err.clone()),
+            _ => streams::Writable::Done,
+        }
+    }
+
     /// `accepted` is what the pending slot is credited with when `write_result`
     /// is `Pending`: a write's full chunk, or the bytes a flush pushed out. It
     /// is ignored for every other result.
@@ -1521,7 +1533,7 @@ impl FileSink {
                 if amt > 0 {
                     return streams::Writable::OwnedAndDone(amt as u64);
                 }
-                streams::Writable::Done
+                self.finished()
             }
             WriteResult::Wrote(amt) => {
                 if amt > 0 {

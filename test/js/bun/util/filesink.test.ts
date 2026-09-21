@@ -1,7 +1,8 @@
 import { createSocketPair, fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isPosix, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isPosix, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
+import { closeSync, constants, openSync } from "node:fs";
 import { join } from "node:path";
 
 describe("FileSink", () => {
@@ -430,9 +431,14 @@ it.skipIf(!isPosix)(
       }
       expect(caught?.code).toBe("EPIPE");
 
-      // The Err arm also moves the sink to its terminal state: further writes
-      // short-circuit to Writable::Done (=> true).
-      expect(sink.write("x")).toBe(true);
+      // The Err arm also moves the sink to its terminal state: a further write
+      // reports the error the sink failed with, and nothing reaches the fd.
+      expect(
+        await Promise.resolve(sink.write("x")).then(
+          () => "resolved",
+          e => e.code,
+        ),
+      ).toBe("EPIPE");
 
       // end() after the error reports the bytes that actually reached the fd;
       // the point is it doesn't claim the full chunk was delivered.
@@ -619,8 +625,15 @@ it.skipIf(!isPosix)("writing after end() fails during flush does not crash", asy
   }
   expect(endErr).toBeDefined();
   // Previously this would attempt to write to an invalid fd and crash with a
-  // debug assertion; now it should behave as if the sink is closed.
-  expect(() => writer.write("y")).not.toThrow();
+  // debug assertion. The sink has failed: a write reports the error it failed
+  // with, and nothing reaches the fd.
+  const outcome = (result: unknown) =>
+    Promise.resolve(result).then(
+      () => "resolved",
+      e => e.code,
+    );
+  expect(await outcome(writer.write("y"))).toBe("EBADF");
+  // Started again, with nothing to write to: that failure was the last run's.
   expect(() => writer.start({})).not.toThrow();
   expect(() => writer.write("z")).not.toThrow();
   expect(() => writer.flush()).not.toThrow();
@@ -1228,4 +1241,62 @@ console.error(JSON.stringify(counts));
     stdoutLength: 1 + 40000 + 7 + 40000,
   });
   expect(exitCode).toBe(0);
+});
+
+// A sink whose write fails later, from the event loop, finishes. A write() after that returned `true`, which
+// is "done, nothing wrong": the bytes were dropped and nothing said so. It reports the error the sink failed with.
+//
+// stdout is a FIFO whose read end this test holds open and never reads. Another writer fills it, so this sink's
+// short write is buffered, its flush stays pending, and the failure arrives when the read end is closed.
+it.skipIf(isWindows)("a write() after the sink failed rejects with that error", async () => {
+  using dir = tempDir("filesink-failed", {});
+  const fifo = join(String(dir), "stdout.fifo");
+  mkfifo(fifo, 0o600);
+  const readEnd = openSync(fifo, constants.O_RDONLY | constants.O_NONBLOCK);
+  const writeEnd = openSync(fifo, constants.O_WRONLY);
+  let readEndOpen = true;
+  try {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+const filler = Bun.stdout.writer().write(Buffer.alloc(4 * 1024 * 1024, "f").toString());
+filler.catch(() => {});
+const sink = Bun.stdout.writer();
+sink.write("line\\n");
+const flushed = sink.flush();
+console.error("READY");
+const settle = p => p.then(v => "resolved " + v, e => "rejected " + e.code);
+console.error("flush: " + (await settle(Promise.resolve(flushed))));
+console.error("later: " + (await settle(Promise.resolve(sink.write("later")))));
+`,
+      ],
+      env: bunEnv,
+      stdout: writeEnd,
+      stderr: "pipe",
+    });
+    closeSync(writeEnd);
+
+    const reader = proc.stderr.getReader();
+    const decoder = new TextDecoder();
+    let stderr = "";
+    while (!stderr.includes("READY")) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      stderr += decoder.decode(value, { stream: true });
+    }
+    closeSync(readEnd);
+    readEndOpen = false;
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      stderr += decoder.decode(value, { stream: true });
+    }
+
+    expect(stderr).toBe("READY\nflush: rejected EPIPE\nlater: rejected EPIPE\n");
+    expect(await proc.exited).toBe(0);
+  } finally {
+    if (readEndOpen) closeSync(readEnd);
+  }
 });

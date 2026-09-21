@@ -40,14 +40,11 @@ pub struct WaitPidResult {}
 /// higher-tier callers (`bun_runtime::api::bun_spawn::stdio`, `Terminal`)
 /// keep their `bun_spawn::process::spawn_sys::*` import path.
 pub mod spawn_sys {
-    // POSIX-only — memfd / FD_CLOEXEC have no Windows equivalent
-    // (`can_use_memfd` is always-false there and `set_close_on_exec` is a
-    // no-op since Win32 handles default to non-inheritable). Gated so the
-    // re-export resolves without `bun_sys` having to ship Windows stubs.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub use bun_sys::{MemfdFlags, MemfdFlags as MemfdFlag, memfd_create};
+    // memfd is Linux; FD_CLOEXEC is POSIX (Win32 handles are non-inheritable unless asked).
     #[cfg(unix)]
-    pub use bun_sys::{can_use_memfd, set_close_on_exec};
+    pub use bun_sys::set_close_on_exec;
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub use bun_sys::{MemfdFlags, MemfdFlags as MemfdFlag, can_use_memfd, memfd_create};
 }
 
 bun_core::declare_scope!(PROCESS, visible);

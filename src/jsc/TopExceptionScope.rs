@@ -242,7 +242,6 @@ impl TopExceptionScope {
     #[cold]
     fn assertion_failure(&mut self, proof: NonNull<Exception>) -> ! {
         let _ = proof;
-        #[cfg(any(debug_assertions, bun_asan))]
         debug_assert!(core::ptr::eq(self.location, &raw const self.bytes[0]));
         TopExceptionScope__assertNoException(&mut self.bytes);
         unreachable!("assertionFailure called without a pending exception");

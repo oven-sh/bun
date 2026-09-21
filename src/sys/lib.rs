@@ -1295,8 +1295,7 @@ impl Tag {
     pub const chmod: Tag = Tag(4);
     pub(crate) const chown: Tag = Tag(5);
     pub const clonefile: Tag = Tag(6);
-    #[cfg(not(target_os = "macos"))]
-    pub(crate) const clonefileat: Tag = Tag(7);
+    // 7: clonefileat (nothing reports it)
     pub const close: Tag = Tag(8);
     pub const copy_file_range: Tag = Tag(9);
     pub const copyfile: Tag = Tag(10);
@@ -1367,6 +1366,7 @@ impl Tag {
     #[cfg(not(windows))]
     pub(crate) const pwritev: Tag = Tag(75);
     pub const readv: Tag = Tag(76);
+    #[cfg(unix)]
     pub(crate) const preadv: Tag = Tag(77);
     pub const ioctl_ficlone: Tag = Tag(78);
     pub const accept: Tag = Tag(79);
@@ -3075,11 +3075,9 @@ mod posix_impl {
     pub fn send_non_block(fd: Fd, buf: &[u8]) -> Maybe<usize> {
         send(fd, buf, SEND_FLAGS_NONBLOCK)
     }
-    #[cfg(unix)]
     pub(crate) const MSG_DONTWAIT: i32 = libc::MSG_DONTWAIT;
     // `MSG_DONTWAIT | MSG_NOSIGNAL` on all Unix including macOS
     // (Darwin defines MSG_NOSIGNAL=0x80000).
-    #[cfg(unix)]
     pub(crate) const SEND_FLAGS_NONBLOCK: i32 = libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL;
     /// `fcntl(F_GETFD)` then OR in `FD_CLOEXEC`.
     pub fn set_close_on_exec(fd: Fd) -> Maybe<()> {
@@ -3402,7 +3400,7 @@ mod posix_impl {
     static MEMFD_ENOSYS: core::sync::atomic::AtomicBool =
         core::sync::atomic::AtomicBool::new(false);
 
-    /// `bun.sys.canUseMemfd()` — false on non-Linux; on Linux, false when
+    /// `bun.sys.canUseMemfd()` — false when
     /// `BUN_FEATURE_FLAG_DISABLE_MEMFD` is set or once `memfd_create` has
     /// returned ENOSYS/EPERM/EACCES.
     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -3415,11 +3413,6 @@ mod posix_impl {
             return false;
         }
         !MEMFD_ENOSYS.load(core::sync::atomic::Ordering::Relaxed)
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    #[inline]
-    pub fn can_use_memfd() -> bool {
-        false
     }
 
     /// `bun.sys.memfd_create(name, flags)` — Linux only.
@@ -4587,168 +4580,143 @@ pub fn platform_iovec_const_create(buf: &[u8]) -> PlatformIoVecConst {
 
 /// `bun.sys.writev` — gather-write. Retries on EINTR
 /// (macOS uses `writev$NOCANCEL`).
+#[cfg(unix)]
 pub fn writev(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
-    #[cfg(unix)]
-    {
-        #[cfg(target_os = "macos")]
-        loop {
-            // SAFETY: `PlatformIoVec` is `libc::iovec`; writev(2) only reads
-            // the descriptor table. `writev$NOCANCEL`, retried on EINTR.
-            let rc = unsafe {
-                nocancel::writev(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int)
-            };
-            if rc < 0 {
-                let e = last_errno();
-                if e == libc::EINTR {
-                    continue;
-                }
-                return Err(Error::from_code_int(e, Tag::writev).with_fd(fd));
+    #[cfg(target_os = "macos")]
+    loop {
+        // SAFETY: `PlatformIoVec` is `libc::iovec`; writev(2) only reads
+        // the descriptor table. `writev$NOCANCEL`, retried on EINTR.
+        let rc =
+            unsafe { nocancel::writev(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int) };
+        if rc < 0 {
+            let e = last_errno();
+            if e == libc::EINTR {
+                continue;
             }
-            return Ok(rc as usize);
+            return Err(Error::from_code_int(e, Tag::writev).with_fd(fd));
         }
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            // SAFETY: `PlatformIoVec` is `libc::iovec`.
-            return unsafe { linux_syscall::writev(fd, vecs.as_ptr(), vecs.len()) }
-                .map_err(|e| Error::from_code_int(e, Tag::writev).with_fd(fd));
-        }
-        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
-        loop {
-            // SAFETY: see above.
-            let rc =
-                unsafe { libc::writev(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int) };
-            if rc < 0 {
-                let e = last_errno();
-                if e == libc::EINTR {
-                    continue;
-                }
-                return Err(Error::from_code_int(e, Tag::writev).with_fd(fd));
-            }
-            return Ok(rc as usize);
-        }
+        return Ok(rc as usize);
     }
-    #[cfg(not(unix))]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        // TODO(windows): route through `uv_fs_write` with `uv_buf_t[]`.
-        let _ = (fd, vecs);
-        Err(Error::from_code_int(libc::ENOSYS, Tag::writev))
+        // SAFETY: `PlatformIoVec` is `libc::iovec`.
+        return unsafe { linux_syscall::writev(fd, vecs.as_ptr(), vecs.len()) }
+            .map_err(|e| Error::from_code_int(e, Tag::writev).with_fd(fd));
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
+    loop {
+        // SAFETY: see above.
+        let rc =
+            unsafe { libc::writev(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int) };
+        if rc < 0 {
+            let e = last_errno();
+            if e == libc::EINTR {
+                continue;
+            }
+            return Err(Error::from_code_int(e, Tag::writev).with_fd(fd));
+        }
+        return Ok(rc as usize);
     }
 }
 
 /// `bun.sys.readv` — scatter-read. Retries on EINTR
 /// (macOS uses `readv$NOCANCEL`).
+#[cfg(unix)]
 pub fn readv(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
     #[cfg(debug_assertions)]
     if vecs.is_empty() {
         bun_core::debug_warn!("readv() called with 0 length buffer");
     }
-    #[cfg(unix)]
-    {
-        #[cfg(target_os = "macos")]
-        loop {
-            // SAFETY: vecs.ptr is `*const iovec`; the kernel writes through
-            // each `iov_base`, never the array itself. `readv$NOCANCEL`,
-            // retried on EINTR.
-            let rc = unsafe {
-                nocancel::readv(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int)
-            };
-            if rc < 0 {
-                let e = last_errno();
-                if e == libc::EINTR {
-                    continue;
-                }
-                return Err(Error::from_code_int(e, Tag::readv).with_fd(fd));
+    #[cfg(target_os = "macos")]
+    loop {
+        // SAFETY: vecs.ptr is `*const iovec`; the kernel writes through
+        // each `iov_base`, never the array itself. `readv$NOCANCEL`,
+        // retried on EINTR.
+        let rc =
+            unsafe { nocancel::readv(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int) };
+        if rc < 0 {
+            let e = last_errno();
+            if e == libc::EINTR {
+                continue;
             }
-            return Ok(rc as usize);
+            return Err(Error::from_code_int(e, Tag::readv).with_fd(fd));
         }
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            // SAFETY: `PlatformIoVec` is `libc::iovec`.
-            return unsafe { linux_syscall::readv(fd, vecs.as_ptr(), vecs.len()) }
-                .map_err(|e| Error::from_code_int(e, Tag::readv).with_fd(fd));
-        }
-        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
-        loop {
-            // SAFETY: see above.
-            let rc =
-                unsafe { libc::readv(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int) };
-            if rc < 0 {
-                let e = last_errno();
-                if e == libc::EINTR {
-                    continue;
-                }
-                return Err(Error::from_code_int(e, Tag::readv).with_fd(fd));
-            }
-            return Ok(rc as usize);
-        }
+        return Ok(rc as usize);
     }
-    #[cfg(not(unix))]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        let _ = (fd, vecs);
-        Err(Error::from_code_int(libc::ENOSYS, Tag::readv))
+        // SAFETY: `PlatformIoVec` is `libc::iovec`.
+        return unsafe { linux_syscall::readv(fd, vecs.as_ptr(), vecs.len()) }
+            .map_err(|e| Error::from_code_int(e, Tag::readv).with_fd(fd));
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
+    loop {
+        // SAFETY: see above.
+        let rc = unsafe { libc::readv(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int) };
+        if rc < 0 {
+            let e = last_errno();
+            if e == libc::EINTR {
+                continue;
+            }
+            return Err(Error::from_code_int(e, Tag::readv).with_fd(fd));
+        }
+        return Ok(rc as usize);
     }
 }
 
 /// `bun.sys.preadv` — scatter-read at `position`. Retries on EINTR
 /// (macOS uses `preadv$NOCANCEL`).
+#[cfg(unix)]
 pub fn preadv(fd: Fd, vecs: &[PlatformIoVec], position: i64) -> Maybe<usize> {
     #[cfg(debug_assertions)]
     if vecs.is_empty() {
         bun_core::debug_warn!("preadv() called with 0 length buffer");
     }
-    #[cfg(unix)]
-    {
-        #[cfg(target_os = "macos")]
-        loop {
-            // SAFETY: see `readv`. `preadv$NOCANCEL`, retried on EINTR.
-            let rc = unsafe {
-                nocancel::preadv(
-                    fd.native(),
-                    vecs.as_ptr(),
-                    vecs.len() as core::ffi::c_int,
-                    position,
-                )
-            };
-            if rc < 0 {
-                let e = last_errno();
-                if e == libc::EINTR {
-                    continue;
-                }
-                return Err(Error::from_code_int(e, Tag::preadv).with_fd(fd));
+    #[cfg(target_os = "macos")]
+    loop {
+        // SAFETY: see `readv`. `preadv$NOCANCEL`, retried on EINTR.
+        let rc = unsafe {
+            nocancel::preadv(
+                fd.native(),
+                vecs.as_ptr(),
+                vecs.len() as core::ffi::c_int,
+                position,
+            )
+        };
+        if rc < 0 {
+            let e = last_errno();
+            if e == libc::EINTR {
+                continue;
             }
-            return Ok(rc as usize);
+            return Err(Error::from_code_int(e, Tag::preadv).with_fd(fd));
         }
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            // SAFETY: `PlatformIoVec` is `libc::iovec`.
-            return unsafe { linux_syscall::preadv(fd, vecs.as_ptr(), vecs.len(), position) }
-                .map_err(|e| Error::from_code_int(e, Tag::preadv).with_fd(fd));
-        }
-        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
-        loop {
-            // SAFETY: see `readv`.
-            let rc = unsafe {
-                libc::preadv(
-                    fd.native(),
-                    vecs.as_ptr(),
-                    vecs.len() as core::ffi::c_int,
-                    position,
-                )
-            };
-            if rc < 0 {
-                let e = last_errno();
-                if e == libc::EINTR {
-                    continue;
-                }
-                return Err(Error::from_code_int(e, Tag::preadv).with_fd(fd));
-            }
-            return Ok(rc as usize);
-        }
+        return Ok(rc as usize);
     }
-    #[cfg(not(unix))]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        let _ = (fd, vecs, position);
-        Err(Error::from_code_int(libc::ENOSYS, Tag::preadv))
+        // SAFETY: `PlatformIoVec` is `libc::iovec`.
+        return unsafe { linux_syscall::preadv(fd, vecs.as_ptr(), vecs.len(), position) }
+            .map_err(|e| Error::from_code_int(e, Tag::preadv).with_fd(fd));
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
+    loop {
+        // SAFETY: see `readv`.
+        let rc = unsafe {
+            libc::preadv(
+                fd.native(),
+                vecs.as_ptr(),
+                vecs.len() as core::ffi::c_int,
+                position,
+            )
+        };
+        if rc < 0 {
+            let e = last_errno();
+            if e == libc::EINTR {
+                continue;
+            }
+            return Err(Error::from_code_int(e, Tag::preadv).with_fd(fd));
+        }
+        return Ok(rc as usize);
     }
 }
 
@@ -4773,6 +4741,7 @@ pub type StatFS = self::windows::libuv::uv_statfs_t;
 /// the `__DARWIN_STRUCT_STATFS64` layout matching `libc::statfs`. Deprecated
 /// on Apple but still exported on x86_64 (unavailable on arm64 macOS, where
 /// unsuffixed `statfs` already writes the 64-bit-inode layout).
+#[cfg(unix)]
 pub fn statfs(path: &ZStr) -> Maybe<StatFS> {
     #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
     unsafe extern "C" {
@@ -4781,7 +4750,6 @@ pub fn statfs(path: &ZStr) -> Maybe<StatFS> {
     }
     #[cfg(all(unix, not(all(target_os = "macos", target_arch = "x86_64"))))]
     use libc::statfs as _statfs;
-    #[cfg(unix)]
     loop {
         // SAFETY: all-zero is a valid `struct statfs` (kernel writes every
         // field on success); `path` is NUL-terminated by `ZStr`.
@@ -4797,11 +4765,6 @@ pub fn statfs(path: &ZStr) -> Maybe<StatFS> {
             return Err(Error::from_code_int(e, Tag::statfs).with_path(path.as_bytes()));
         }
         return Ok(st);
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-        Err(Error::from_code(E::NOSYS, Tag::statfs))
     }
 }
 
@@ -7414,16 +7377,6 @@ pub fn kevent(
             e => return Err(Error::from_code(e, Tag::kevent).with_fd(fd)),
         }
     }
-}
-
-/// `clonefileat` — macOS-only CoW copy relative to directory fds. On
-/// non-Darwin returns ENOTSUP so callers can fall back to a manual copy.
-#[cfg(not(target_os = "macos"))]
-pub fn clonefileat(_from_dir: impl AsFd, from: &ZStr, _to_dir: impl AsFd, to: &ZStr) -> Maybe<()> {
-    let _from_dir = _from_dir.as_fd();
-    let _to_dir = _to_dir.as_fd();
-    Err(Error::from_code_int(libc::ENOTSUP, Tag::clonefileat)
-        .with_path_dest(from.as_bytes(), to.as_bytes()))
 }
 
 // ── getFdPath ──

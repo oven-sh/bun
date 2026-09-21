@@ -844,8 +844,6 @@ impl UpgradeCommand {
                         stdin: spawn_sync::SyncStdio::Inherit,
                         stdout: spawn_sync::SyncStdio::Inherit,
                         stderr: spawn_sync::SyncStdio::Inherit,
-                        #[cfg(windows)]
-                        windows: spawn_windows_options(),
                         ..Default::default()
                     }) {
                         Ok(Ok(r)) => r,
@@ -947,7 +945,6 @@ impl UpgradeCommand {
                         stderr: spawn_sync::SyncStdio::Inherit,
                         stdout: spawn_sync::SyncStdio::Inherit,
                         stdin: spawn_sync::SyncStdio::Inherit,
-                        #[cfg(windows)]
                         windows: spawn_windows_options(),
                         ..Default::default()
                     });

@@ -1508,7 +1508,6 @@ impl BlobExt for Blob {
                 sink.writer
                     .with_mut(|w| w.owns_fd = !matches!(pathlike, PathOrFileDescriptor::Fd(_)));
 
-                #[cfg(windows)]
                 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
                 let started = sink.writer.with_mut(|w| {
                     if is_stdout_or_stderr {

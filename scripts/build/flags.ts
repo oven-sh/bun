@@ -928,34 +928,12 @@ export const linkerFlags: Flag[] = [
     desc: "LTO at link time (matches compile-side -flto=thin)",
   },
   {
-    // Without -O at link time, clang's driver defaults LTO codegen to -O2.
-    // CMake implicitly forwarded CMAKE_CXX_FLAGS (incl. -O2) to the link line;
-    // we must do so explicitly. Dropping this cost ~5 MB of .text on linux-x64
-    // (less unrolling/inlining in JSC — measurable in Yarr, DFG, BuiltinNames).
-    // ELF only: the driver forwards this to lld as -plugin-opt=O2. The Darwin
-    // driver forwards no opt-level flag at all — see the next entry.
-    flag: "-O2",
-    when: c => c.unix && !c.darwin && c.lto && c.release && !c.smol,
-    desc: "LTO codegen at -O2 (ELF: forwarded to lld as -plugin-opt=O2)",
-  },
-  {
-    // The Darwin driver drops a bare -O at link time (`clang++ -### …` shows
-    // no opt-level flag reaching the linker), so Mach-O LTO would codegen at
-    // ld64.lld's built-in defaults: --lto-O2 for the IR pipeline and
-    // --lto-CGO2 (CodeGenOptLevel::Default) for instruction selection —
-    // inline threshold 225 and default isel, while the per-TU build codegens
-    // everything at -O3 + CodeGenOptLevel::Aggressive (threshold 275). Pass
-    // ld64.lld's own options so LTO codegen matches the compile side.
-    // Cross links only: --lto-O/--lto-CGO are lld-specific, and only the
-    // darwin cross link uses lld's Mach-O port (ld64.lld). Native darwin
-    // links go through Apple's ld, which rejects unknown double-dash options,
-    // so they keep the driver's default LTO codegen level.
-    // arm64 only: O3 codegen costs +0.3 MB there but +3.1 MB on x64 (the
-    // higher inline threshold is much more expensive in x86-64's
-    // variable-length encoding); x64 stays at lld's default --lto-O2/CGO2.
-    flag: ["-Wl,--lto-O3", "-Wl,--lto-CGO3"],
-    when: c => c.darwin && c.arm64 && c.crossTarget !== undefined && c.lto && c.release && !c.smol,
-    desc: "LTO codegen at -O3 + aggressive isel (Darwin driver forwards no -O to ld64.lld)",
+    // Said to lld itself. A link-line `-O` reaches lld only through the clang driver, only on ELF, and only beside
+    // `-flto` (as -plugin-opt=O<n>), which a link whose LTO covers the Rust crates alone does not pass; the Darwin
+    // driver forwards none at all.
+    flag: c => [`-Wl,--lto-O${ltoLevel(c)}`, `-Wl,--lto-CGO${ltoLevel(c)}`],
+    when: c => c.unix && linkRunsLto(c) && linksWithLld(c) && !c.smol,
+    desc: "LTO level: IR pipeline and code generation (lld)",
   },
   {
     flag: "-Os",
@@ -971,6 +949,17 @@ export const linkerFlags: Flag[] = [
     flag: "-Wl,-mllvm,-emulated-tls",
     when: c => linkLtoIsRustOnly(c) && c.abi === "android",
     desc: "Rust-only LTO in the link: emulated TLS, as rustc generates for Android",
+  },
+
+  {
+    flag: c => (icfMode(c) === "safe" ? "/OPT:SAFEICF" : "/OPT:NOICF"),
+    when: c => c.windows,
+    desc: "Identical-code-folding (safe in release)",
+  },
+  {
+    flag: c => [`/opt:lldlto=${ltoLevel(c)}`, `/opt:lldltocgo=${ltoLevel(c)}`],
+    when: c => c.windows && linkRunsLto(c),
+    desc: "LTO level: IR pipeline and code generation (lld-link)",
   },
 
   // ─── PGO (link-side) ───
@@ -1038,8 +1027,7 @@ export const linkerFlags: Flag[] = [
       // for identity — stay distinct. /OPT:ICF (aggressive) folded
       // callBigIntConstructor with constructBigInt → "not a constructor",
       // and broke expect.any(Constructor); see commit 218430c731. Mirrors
-      // Linux `-Wl,-icf=safe`.
-      "/OPT:SAFEICF",
+      // Linux `--icf=safe`. The mode itself is the entry below.
       // String-literal tail merging (lld-specific; MSVC link.exe has no
       // equivalent). Helps .rdata the same way --icf handles .rodata.cst on ELF.
       "/OPT:lldtailmerge",
@@ -1136,9 +1124,9 @@ export const linkerFlags: Flag[] = [
     // this is a cross-only divergence (smaller binary than native). The
     // prebuilt WebKit archives are compiled with -faddrsig too, so WebKit
     // code participates in the folding.
-    flag: "-Wl,--icf=safe",
-    when: c => c.darwin && c.crossTarget !== undefined && c.release,
-    desc: "macOS cross-link: fold identical address-insignificant functions",
+    flag: c => `-Wl,--icf=${icfMode(c)}`,
+    when: c => c.darwin && linksWithLld(c),
+    desc: "macOS cross-link: fold identical address-insignificant functions (release)",
   },
   {
     // -ld_new selects Apple's new linker — only meaningful (and only
@@ -1381,17 +1369,14 @@ export const linkerFlags: Flag[] = [
     // with `bun-profile`, so disabling ICF on the profile binary "for perf
     // symbolication" would also bloat the shipped binary's .text — and
     // `perf` symbolicates folded functions fine via the linker-map anyway.
-    flag: c => ["-Wl,-icf=safe", `-Wl,-Map=${linkerMapPath(c)}`],
-    when: c => c.linux && c.release && !c.asan && !c.valgrind,
-    desc: "Identical-code-folding (safe; perf symbolication uses the linker-map)",
+    flag: c => `-Wl,--icf=${icfMode(c)}`,
+    when: c => c.linux || c.freebsd,
+    desc: "Identical-code-folding (safe in release; perf symbolication uses the linker-map)",
   },
   {
-    // The release objects carry the address-significance table safe ICF reads (`-faddrsig` above,
-    // `-Cllvm-args=-addrsig` for Rust). The crates reach this link as one ThinLTO module each, so the copies of a
-    // function that several crates instantiate are only merged if the linker folds them.
-    flag: "-Wl,--icf=safe",
-    when: c => c.freebsd && c.release,
-    desc: "Identical-code-folding (safe)",
+    flag: c => `-Wl,-Map=${linkerMapPath(c)}`,
+    when: c => c.linux && writesLinkerMap(c),
+    desc: "Linker map",
   },
   {
     // When a PGO profile is loaded (`--pgo-use`, e.g. the two-stage
@@ -1527,6 +1512,40 @@ export const linkerFlags: Flag[] = [
  */
 export function rustLtoInLink(c: Config): boolean {
   return c.release && !c.asan;
+}
+
+/** The link optimises bitcode: the C/C++'s (`lto`), the Rust crates', or both. */
+function linkRunsLto(c: Config): boolean {
+  return c.lto || rustLtoInLink(c);
+}
+
+/**
+ * An lld does the link: every one but a native macOS link, which goes through Apple's ld. That linker takes none of
+ * lld's LTO-level or ICF options (it runs clang's libLTO at its default level and has no ICF), so those are stated
+ * only here.
+ */
+function linksWithLld(c: Config): boolean {
+  return !c.darwin || c.crossTarget !== undefined;
+}
+
+/**
+ * The level of the link's LTO, for the IR pipeline and for code generation. 2 is also lld's default; it is stated so
+ * that no link depends on the default. 3 on the macOS arm64 cross link, where it makes LTO codegen match the -O3
+ * compile side for +0.3 MB; on x64 the same costs +3.1 MB (the higher inline threshold is much more expensive in
+ * x86-64's variable-length encoding).
+ */
+function ltoLevel(c: Config): 2 | 3 {
+  return c.darwin && c.arm64 && c.lto && c.release ? 3 : 2;
+}
+
+/**
+ * Identical-code folding. `safe` folds only functions whose address is never taken, which it reads from the
+ * address-significance table the release objects carry (`-faddrsig`, `-Cllvm-args=-addrsig` for Rust): the crates are
+ * one ThinLTO module each, so the copies of a function several of them instantiate are merged only here. Off outside
+ * release and under ASan and valgrind, where every function should stay what the source says.
+ */
+function icfMode(c: Config): "safe" | "none" {
+  return c.release && !c.asan && !c.valgrind ? "safe" : "none";
 }
 
 /** The link's LTO covers the Rust crates and nothing else: the C/C++ is compiled without LTO. */

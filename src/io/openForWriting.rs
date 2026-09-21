@@ -81,7 +81,7 @@ where
     )
 }
 
-pub fn open_for_writing_impl<P, C>(
+pub fn open_for_writing_impl<P, C, F>(
     dir: Fd,
     input_path: &P,
     input_flags: i32,
@@ -93,10 +93,11 @@ pub fn open_for_writing_impl<P, C>(
     ctx: C,
     on_force_sync_or_isa_tty: fn(C),
     is_pollable: fn(mode: Mode) -> bool,
-    openat: fn(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> bun_sys::Result<Fd>,
+    openat: F,
 ) -> bun_sys::Result<Fd>
 where
     P: OpenForWritingInput,
+    F: Fn(Fd, &ZStr, i32, Mode) -> bun_sys::Result<Fd>,
 {
     #[cfg(windows)]
     {

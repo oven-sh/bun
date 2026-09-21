@@ -56,6 +56,85 @@ impl ShellCondExprStatTask {
     }
 }
 
+/// Opens a FIFO redirect target on the work pool, where its `open(2)` can
+/// wait for the other end without stalling the event loop
+/// (`Cmd::open_redirect_on_pool`).
+#[repr(C)]
+pub(crate) struct ShellRedirectOpenTask {
+    pub task: ShellTask,
+    pub cmd: NodeId,
+    pub cwd_fd: bun_sys::Fd,
+    /// NUL-terminated.
+    pub path: Vec<u8>,
+    pub flags: i32,
+    pub perm: bun_sys::Mode,
+    pub result: bun_sys::Result<bun_sys::Fd>,
+}
+
+impl ShellRedirectOpenTask {
+    /// Heap-allocate the task for `cmd` and hand it to the work pool; the
+    /// allocation is freed in `run_from_main_thread`.
+    pub(crate) fn create_and_schedule(
+        interp: &Interpreter,
+        cmd: NodeId,
+        cwd_fd: bun_sys::Fd,
+        path: Vec<u8>,
+        flags: i32,
+        perm: bun_sys::Mode,
+    ) {
+        debug_assert!(path.last() == Some(&0));
+        let mut task = ShellTask::new(interp.event_loop);
+        task.interp = interp.as_ctx_ptr();
+        let this = bun_core::heap::alloc(ShellRedirectOpenTask {
+            task,
+            cmd,
+            cwd_fd,
+            path,
+            flags,
+            perm,
+            // Placeholder, overwritten by `run_from_thread_pool` before the
+            // main thread reads it.
+            result: Err(Default::default()),
+        });
+        // SAFETY: `this` is a fresh heap allocation embedding `ShellTask` at
+        // `TASK_OFFSET`; freed in `run_from_main_thread`.
+        unsafe { ShellTask::schedule::<ShellRedirectOpenTask>(this) };
+    }
+}
+
+impl bun_event_loop::Taskable for ShellRedirectOpenTask {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellRedirectOpenTask;
+    /// A pool completion that will not run: close the fd it opened, drop the
+    /// keep-alive and the box.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — the box `create_and_schedule` scheduled.
+        unsafe {
+            let mut me = bun_core::heap::take(this);
+            me.task.unref_unrun();
+            if let Ok(fd) = me.result {
+                crate::shell::interpreter::closefd(fd);
+            }
+        }
+    }
+}
+
+impl crate::shell::interpreter::ShellTaskCtx for ShellRedirectOpenTask {
+    const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
+    fn run_from_thread_pool(this: &mut Self) {
+        let z = bun_core::ZStr::from_buf(&this.path, this.path.len() - 1);
+        this.result =
+            crate::shell::interpreter::shell_openat(this.cwd_fd, z, this.flags, this.perm);
+    }
+    // Dispatch trampoline: `this` validity is guaranteed by the `run_task`
+    // contract; signature is fixed by the `ShellTaskCtx` trait.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
+        // SAFETY: paired with `heap::alloc` in `create_and_schedule`.
+        let me = unsafe { bun_core::heap::take(this) };
+        crate::shell::states::cmd::Cmd::on_redirect_open_done(interp, me.cmd, me.result);
+    }
+}
+
 /// Error result of a glob-expansion task.
 pub enum ShellGlobErr {
     Syscall(bun_sys::Error),

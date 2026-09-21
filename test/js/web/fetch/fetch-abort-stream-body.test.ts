@@ -213,8 +213,9 @@ test.concurrent("abort() errors a fully-buffered fetch response body", async () 
 // Fetch spec "abort a fetch" step 4 errors the body with the signal's abort reason, so every
 // reader of the body rejects with `signal.reason` itself. The readers that take `res.body`
 // natively (`new Response(res.body).text()` and `Bun.readableStreamTo*()` buffer it without a
-// reader, `Bun.write()` and a fetch() upload wire it to their sink) got a fresh
-// "AbortError: The operation was aborted." instead.
+// reader, `Bun.write()`, a fetch() upload, HTMLRewriter and a Bun.serve response wire it to their
+// sink) got a fresh "AbortError: The operation was aborted." when they had already started, and
+// an empty body that ended cleanly when they started after the abort.
 describe("aborting mid-body fails every reader of res.body with signal.reason", () => {
   // A head, 40 of 100 body bytes, then nothing: the body is still arriving when the signal fires.
   async function stalledBodyServer() {
@@ -281,45 +282,89 @@ describe("aborting mid-body fails every reader of res.body with signal.reason", 
       using dir = tempDir("fetch-abort-reason", {});
       await Bun.write(join(String(dir), "body"), new Response(res.body));
     },
+    "new HTMLRewriter().transform(new Response(res.body)).text()": res =>
+      new HTMLRewriter().transform(new Response(res.body)).text(),
   };
 
-  describe.each(Object.keys(signals))("%s", kind => {
+  const settle = (promise: Promise<unknown>) =>
+    promise.then(
+      () => "resolved",
+      error => error,
+    );
+
+  describe.each(Object.keys(signals))("%s after the reader started", kind => {
     test.concurrent.each(Object.keys(consumers))("%s", async name => {
       using server = await stalledBodyServer();
       const { res, signal, abort } = await signals[kind](server.url);
-      const settled = consumers[name](res).then(
-        () => "resolved",
-        error => error,
-      );
+      const settled = settle(consumers[name](res));
       abort();
       expect(await settled).toBe(signal.reason);
     });
   });
 
-  test.concurrent("fetch(url, { body: res.body })", async () => {
+  describe("abort(new Error()) before the reader starts", () => {
+    test.concurrent.each(Object.keys(consumers))("%s", async name => {
+      using server = await stalledBodyServer();
+      const { res, signal, abort } = await signals["abort(new Error())"](server.url);
+      // The stream exists when the signal fires. Nothing reads it yet.
+      expect(res.body).toBeInstanceOf(ReadableStream);
+      abort();
+      expect(await settle(consumers[name](res))).toBe(signal.reason);
+    });
+  });
+
+  test.concurrent.each(["after the upload started", "before the upload starts"])(
+    "fetch(url, { body: res.body }), abort %s",
+    async timing => {
+      using server = await stalledBodyServer();
+      const uploading = Promise.withResolvers<void>();
+      await using target = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          const reader = req.body!.getReader();
+          // The first body bytes: the upload has wired `res.body` to its sink.
+          await reader.read();
+          uploading.resolve();
+          try {
+            while (!(await reader.read()).done);
+          } catch {}
+          return new Response("ok");
+        },
+      });
+
+      const controller = new AbortController();
+      const reason = new Error("custom");
+      const res = await fetch(server.url, { signal: controller.signal });
+      const body = res.body;
+      if (timing === "before the upload starts") controller.abort(reason);
+      const upload = fetch(target.url, { method: "POST", body });
+      if (timing === "after the upload started") {
+        await uploading.promise;
+        controller.abort(reason);
+      }
+      await expect(upload).rejects.toBe(reason);
+    },
+  );
+
+  // A response that already streams reports the failure on the server and cuts the connection.
+  // One that has not started can still go to the error handler.
+  test.concurrent("Bun.serve response of new Response(res.body), abort before the response starts", async () => {
     using server = await stalledBodyServer();
-    const uploading = Promise.withResolvers<void>();
-    await using target = Bun.serve({
+    const reason = new Error("custom");
+    await using proxy = Bun.serve({
       port: 0,
-      async fetch(req) {
-        const reader = req.body!.getReader();
-        // The first body bytes: the upload has wired `res.body` to its sink.
-        await reader.read();
-        uploading.resolve();
-        try {
-          while (!(await reader.read()).done);
-        } catch {}
-        return new Response("ok");
+      async fetch() {
+        const controller = new AbortController();
+        const res = await fetch(server.url, { signal: controller.signal });
+        const body = res.body;
+        controller.abort(reason);
+        return new Response(body);
       },
+      error: error => new Response(error === reason ? "signal.reason" : `not signal.reason: ${error}`, { status: 502 }),
     });
 
-    const controller = new AbortController();
-    const res = await fetch(server.url, { signal: controller.signal });
-    const upload = fetch(target.url, { method: "POST", body: res.body });
-    await uploading.promise;
-    const reason = new Error("custom");
-    controller.abort(reason);
-    await expect(upload).rejects.toBe(reason);
+    const res = await fetch(proxy.url);
+    expect({ status: res.status, body: await res.text() }).toEqual({ status: 502, body: "signal.reason" });
   });
 });
 

@@ -3162,8 +3162,23 @@ void JSC__VM__collectAsync(JSC::VM* vm, bool full)
 void JSC__VM__collectAsyncIdle(JSC::VM* vm)
 {
     JSC::JSLockHolder lock(*vm);
+    if (!JSC::Options::useGC())
+        return;
+    auto* clientData = WebCore::clientData(*vm);
     JSC::GCRequest request(JSC::CollectionScope::Full);
     request.isIdle = true;
+    // See Bun__JSC_onBeforeWait. The end phase may run on the collector thread while the JS thread is parked, and the
+    // epilogue that sweeps what the collection freed runs when the JS thread takes heap access back: wake it for that. A
+    // request with this hook is never coalesced into another, so the count always comes back down.
+    if (!clientData->idleCollectionDidFinish) {
+        clientData->idleCollectionDidFinish = createSharedTask<void()>([vm, clientData] {
+            clientData->idleCollectionsPending.fetch_sub(1);
+            if (!vm->currentThreadIsHoldingAPILock() && clientData->vmHandle)
+                Bun__VmHandle__wake(clientData->vmHandle);
+        });
+    }
+    request.didFinishEndPhase = clientData->idleCollectionDidFinish;
+    clientData->idleCollectionsPending.fetch_add(1);
     vm->heap.collectAsync(request);
 }
 

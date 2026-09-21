@@ -2200,6 +2200,37 @@ it("ReadableStream rejects pending reads when the lock is released", async () =>
   expect((await reader.read()).value).toBe("456");
 });
 
+// A locked stream fails these with a TypeError (WHATWG) that carries Node's
+// ERR_INVALID_STATE code and message (node compatibility).
+const invalidState = message => expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_STATE", message });
+
+it("a locked ReadableStream fails cancel, pipeTo, pipeThrough, tee and getReader with ERR_INVALID_STATE", async () => {
+  const stream = new ReadableStream();
+  stream.getReader();
+
+  await expect(stream.cancel()).rejects.toThrow(invalidState("Invalid state: ReadableStream is locked"));
+  await expect(stream.pipeTo(new WritableStream())).rejects.toThrow(
+    invalidState("Invalid state: The ReadableStream is locked"),
+  );
+  expect(() => stream.pipeThrough(new TransformStream())).toThrow(
+    invalidState("Invalid state: The ReadableStream is locked"),
+  );
+  expect(() => stream.tee()).toThrow(invalidState("Invalid state: ReadableStream is locked"));
+  expect(() => stream.getReader()).toThrow(invalidState("Invalid state: ReadableStream is locked"));
+});
+
+it("pipeTo and pipeThrough into a locked WritableStream fail with ERR_INVALID_STATE", async () => {
+  const destination = new WritableStream();
+  destination.getWriter();
+
+  await expect(new ReadableStream().pipeTo(destination)).rejects.toThrow(
+    invalidState("Invalid state: The WritableStream is locked"),
+  );
+  expect(() => new ReadableStream().pipeThrough({ readable: new ReadableStream(), writable: destination })).toThrow(
+    invalidState("Invalid state: The WritableStream is locked"),
+  );
+});
+
 it("new Response(stream).arrayBuffer() (bytes)", async () => {
   var queue = [Buffer.from("abdefgh")];
   var stream = new ReadableStream({

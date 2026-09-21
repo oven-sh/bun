@@ -63,3 +63,6 @@ test/js/bun/css/files linguist-vendored
 .vscode/*.json linguist-language=JSON-with-Comments
 src/cli/init/tsconfig.default.json linguist-language=JSON-with-Comments
 scripts/build/deps/*.snapshot text eol=lf
+
+# Every byte of these files is part of a CI image's name (scripts/build/ci-images/spec.ts).
+scripts/build/ci-images/** text eol=lf

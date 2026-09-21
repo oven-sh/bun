@@ -10,7 +10,7 @@ use bun_wyhash::Wyhash;
 
 use bun_http_types::Method as http_method;
 use bun_url::URL;
-pub use http_method::{Method, Optional as MethodOptional};
+pub(crate) use http_method::{Method, Optional as MethodOptional};
 
 use super::server_body::ServerInitContext;
 use super::web_socket_server_context::WebSocketServerContext;
@@ -18,11 +18,11 @@ use super::{AnyRoute, AnyServer};
 use crate::server::jsc::{JSGlobalObject, JSPropertyIterator, JSValue, JsResult, Strong};
 use bun_core::fmt as bun_fmt;
 
-pub use crate::socket::ssl_config::SSLConfig;
+pub(crate) use crate::socket::ssl_config::SSLConfig;
 use crate::socket::ssl_config::SSLConfigFromJs;
 use bun_collections::index_sort;
 
-pub struct ServerConfig {
+pub(crate) struct ServerConfig {
     pub(crate) address: Address,
     pub(crate) idle_timeout: u8, // TODO: should we match websocket default idleTimeout of 120?
     pub(crate) has_idle_timeout: bool,
@@ -109,7 +109,7 @@ impl Default for ServerConfig {
     }
 }
 
-pub enum Address {
+pub(crate) enum Address {
     Tcp {
         port: u16,
         hostname: Option<ZBox>,
@@ -130,7 +130,7 @@ impl Default for Address {
 // ZBox frees on Drop; resetting is `*self = Address::default()`.
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum DevelopmentOption {
+pub(crate) enum DevelopmentOption {
     Development,
     Production,
     DevelopmentWithoutHmr,
@@ -168,12 +168,12 @@ impl ServerConfig {
 }
 
 // We need to be able to apply the route to multiple Apps even when there is only one RouteList.
-pub struct RouteDeclaration {
+pub(crate) struct RouteDeclaration {
     pub path: ZBox,
     pub method: RouteMethod,
 }
 
-pub enum RouteMethod {
+pub(crate) enum RouteMethod {
     Any,
     Specific(Method),
 }
@@ -199,7 +199,7 @@ impl Default for RouteDeclaration {
 }
 
 // TODO: rename to StaticRoute.Entry
-pub struct StaticRouteEntry {
+pub(crate) struct StaticRouteEntry {
     pub path: Box<[u8]>,
     pub(crate) route: AnyRoute,
     pub method: MethodOptional,
@@ -606,7 +606,7 @@ fn convert_file_system_router_type(
 }
 
 impl ServerConfig {
-    pub fn from_js(
+    pub(crate) fn from_js(
         global: &JSGlobalObject,
         arguments: &mut bun_jsc::call_frame::ArgumentsSlice,
         opts: FromJSOptions,
@@ -967,7 +967,7 @@ impl ServerConfig {
 
                     let mut user_options = crate::bake::UserOptions {
                         arena,
-                        allocations: core::mem::replace(
+                        _allocations: core::mem::replace(
                             &mut init_ctx.js_string_allocations,
                             crate::bake::StringRefList::EMPTY,
                         ),
@@ -1473,7 +1473,7 @@ impl ServerConfig {
 }
 
 #[derive(Clone, Copy)]
-pub struct FromJSOptions {
+pub(crate) struct FromJSOptions {
     pub(crate) allow_bake_config: bool,
     pub(crate) is_fetch_required: bool,
     /// What the running server keeps answering with when a `reload()` config
@@ -1486,7 +1486,7 @@ pub struct FromJSOptions {
     pub(crate) previous_routes: bool,
 }
 
-pub struct UserRouteBuilder {
+pub(crate) struct UserRouteBuilder {
     pub(crate) route: RouteDeclaration,
     pub callback: Strong, // jsc.Strong.Optional
 }

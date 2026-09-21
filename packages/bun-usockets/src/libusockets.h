@@ -377,6 +377,11 @@ struct us_socket_t *us_socket_tls_feed(us_socket_r s, const char *data, int leng
 /* Send ClientHello after adopt_tls. Separate so the caller can repoint the
  * ext slot before any dispatch can fire. */
 void us_socket_start_tls_handshake(us_socket_r s) nonnull_fn_decl;
+/* Client TLS socket whose rejectUnauthorized policy is on: refuse a bad chain
+ * during the handshake, so the client's own Certificate flight never reaches a
+ * server that fails verification. Must run before the handshake is driven
+ * (on_open, or between adopt_tls and start_tls_handshake). No-op otherwise. */
+void us_socket_set_inline_reject(us_socket_r s) nonnull_fn_decl;
 
 /* ── Listen ───────────────────────────────────────────────────────────────
  * The listener owns: an embedded group for accepted sockets, the SSL_CTX

@@ -38,7 +38,19 @@ import { allDeps } from "./deps/index.ts";
 import { lolhtml } from "./deps/lolhtml.ts";
 import { rustArgon2 } from "./deps/rust-argon2.ts";
 import { assert } from "./error.ts";
-import { bunIncludes, computeFlags, extraFlagsFor, linkDepends, linkerMapOutputs } from "./flags.ts";
+import {
+  bunIncludes,
+  computeFlags,
+  computeLinkFlags,
+  extraFlagsFor,
+  finalLink,
+  linkDepends,
+  linkerMapOutputs,
+  orderFilePath,
+  unorderedLink,
+  usesOrderFile,
+  type LinkOf,
+} from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
 import { emitRust, rustLibPath, windowsShimPath } from "./rust.ts";
@@ -500,20 +512,10 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // reached transitively from those roots, so no `--whole-archive` wrapping
   // is needed; if a member ever isn't, `rustLinkFlags()` in rust.ts is the
   // wrapping helper.
-  const shims = emitShims(n, cfg);
   const linkObjects = [...(archive !== undefined ? [archive] : allObjects), ...rustObjects, ...windowsRes];
-  const ldflags = [...flags.ldflags, ...systemLibs(cfg), ...shims.ldflags];
-  const exe = link(n, cfg, exeName, linkObjects, {
-    libs: depLibs,
-    flags: ldflags,
-    implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs],
-    // Declare the maps the release link writes as side-products (`perf`
-    // symbolication on linux; the order file tracer's symbol table on windows).
-    linkerMapOutputs: linkerMapOutputs(cfg),
-    // Static scans: the deps' forbidden-symbol checks on the objects going
-    // in, the smoke test on the executable coming out.
-    validations: [...depChecks, ...postLinkChecks(cfg, exeName)],
-  });
+  // Static scans: the deps' forbidden-symbol checks on the objects going
+  // in, the smoke test on the executable coming out.
+  const exe = emitBunLink(n, cfg, linkObjects, depLibs, [...depChecks, ...postLinkChecks(cfg, exeName)]);
 
   // ─── Step 7: post-link (strip, dsymutil, smoke test) ───
   const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags, [...linkObjects, ...depLibs]);
@@ -647,16 +649,8 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
   // knows. Matches cmake's BUN_LINK_ONLY adding WINDOWS_RESOURCES directly.
   const windowsRes = cfg.windows ? [emitWindowsResources(n, cfg)] : [];
 
-  const shims = emitShims(n, cfg);
   const linkObjects = [archive, ...rustObjects, ...windowsRes];
-  const ldflags = [...flags.ldflags, ...systemLibs(cfg), ...shims.ldflags];
-  const exe = link(n, cfg, exeName, linkObjects, {
-    libs: depLibs,
-    flags: ldflags,
-    implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs],
-    linkerMapOutputs: linkerMapOutputs(cfg),
-    validations: postLinkChecks(cfg, exeName),
-  });
+  const exe = emitBunLink(n, cfg, linkObjects, depLibs, postLinkChecks(cfg, exeName));
 
   // Strip + smoke test — same as full mode.
   const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags, [...linkObjects, ...depLibs]);
@@ -725,16 +719,8 @@ function emitRustAndLink(n: Ninja, cfg: Config, sources: Sources): BunOutput {
 
   const windowsRes = cfg.windows ? [emitWindowsResources(n, cfg)] : [];
 
-  const shims = emitShims(n, cfg);
   const linkObjects = [archive, ...rustObjects, ...windowsRes];
-  const ldflags = [...flags.ldflags, ...systemLibs(cfg), ...shims.ldflags];
-  const exe = link(n, cfg, exeName, linkObjects, {
-    libs: depLibs,
-    flags: ldflags,
-    implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs],
-    linkerMapOutputs: linkerMapOutputs(cfg),
-    validations: postLinkChecks(cfg, exeName),
-  });
+  const exe = emitBunLink(n, cfg, linkObjects, depLibs, postLinkChecks(cfg, exeName));
 
   const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags, [...linkObjects, ...depLibs]);
 
@@ -1239,13 +1225,58 @@ function windowsSysrootIncludeDirs(winsysroot: string): string[] {
 }
 
 /**
- * Files the linker reads via ldflags that ninja should track for relinking
- * (symbol lists, linker script). CMake's LINK_DEPENDS equivalent.
- * (The Windows manifest is no longer a link input — it's embedded by the
- * resource compiler; see emitWindowsResources.)
+ * Link bun. Once; or, in a build that traces its own symbol order (`cfg.traceOrderFile`), unordered, then a trace
+ * of that binary, then again against what the trace wrote. `validations` are the checks of the executable that
+ * ships. Returns that executable.
  */
-function linkImplicitInputs(cfg: Config): string[] {
-  return linkDepends(cfg);
+export function emitBunLink(n: Ninja, cfg: Config, objects: string[], libs: string[], validations: string[]): string {
+  const shims = emitShims(n, cfg);
+  const linkAs = (as: LinkOf, checks: string[]): string =>
+    link(n, cfg, as.exeName, objects, {
+      libs,
+      flags: [...computeLinkFlags(cfg, as), ...systemLibs(cfg), ...shims.ldflags],
+      // What the linker reads through its flags (symbol lists, the linker script, the order file): cmake's
+      // LINK_DEPENDS. (The Windows manifest is not one: the resource compiler embeds it, see emitWindowsResources.)
+      implicitInputs: [...linkDepends(cfg, as), ...shims.implicitInputs],
+      // The maps the release link writes beside the executable (`perf` symbolication on linux; the order file
+      // tracer's symbol table on windows).
+      linkerMapOutputs: linkerMapOutputs(cfg, as),
+      validations: checks,
+    });
+  if (cfg.traceOrderFile) emitOrderFileTrace(n, cfg, linkAs(unorderedLink(cfg), []));
+  return linkAs(finalLink(cfg), validations);
+}
+
+/**
+ * Trace the unordered binary and write the symbol ordering file the final link reads: the edge between bun's two
+ * links. One process (scripts/build/trace-order-file.ts), which runs the binary under the tracer for each workload.
+ */
+function emitOrderFileTrace(n: Ninja, cfg: Config, unordered: string): void {
+  assert(usesOrderFile(cfg) && cfg.canRunOnHost, "--traceOrderFile: this build cannot trace its own symbol order", {
+    hint: usesOrderFile(cfg)
+      ? "Tracing runs the binary that was just linked, and this host cannot run this target's."
+      : "This target does not link with a symbol ordering file (flags.ts usesOrderFile).",
+  });
+  const hostWin = cfg.host.os === "windows";
+  const q = (p: string) => quote(p, hostWin);
+  const orderfile = resolve(cfg.cwd, "scripts", "orderfile");
+  const cli = resolve(cfg.cwd, "scripts", "build", "trace-order-file.ts");
+  n.rule("order_file_trace", {
+    command: `${cfg.jsRuntime} ${q(cli)} $in $out`,
+    description: "trace $traced → $out",
+  });
+  n.build({
+    outputs: [orderFilePath(cfg)],
+    rule: "order_file_trace",
+    inputs: [unordered],
+    implicitInputs: [
+      cli,
+      ...["generate.ts", "windows-symbols.ts", "functrace.c", "functrace-windows.c", "ptyrun.c"].map(f =>
+        resolve(orderfile, f),
+      ),
+    ],
+    vars: { traced: unorderedLink(cfg).exeName },
+  });
 }
 
 // ───────────────────────────────────────────────────────────────────────────

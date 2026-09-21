@@ -870,7 +870,31 @@ export const defines: Flag[] = [
 //   For the final bun executable link step only.
 // ═══════════════════════════════════════════════════════════════════════════
 
-export const linkerFlags: Flag[] = [
+/**
+ * One link of bun: the executable it writes, and whether it reads the symbol ordering file. A build has one
+ * (`finalLink`), or, when it traces its own symbol order (`cfg.traceOrderFile`), two: `unorderedLink` writes the
+ * binary that is traced, and `finalLink` links against what the trace wrote.
+ */
+export interface LinkOf {
+  /** The executable's name, without `cfg.exeSuffix`. */
+  exeName: string;
+  ordered: boolean;
+}
+
+/** The link whose executable ships. */
+export const finalLink = (cfg: Config): LinkOf => ({ exeName: bunExeName(cfg), ordered: usesOrderFile(cfg) });
+
+/** The link whose executable is only traced: every flag of the final link but the order file, which does not exist yet. */
+export const unorderedLink = (cfg: Config): LinkOf => ({ exeName: `${bunExeName(cfg)}-unordered`, ordered: false });
+
+/** A linker flag: like `Flag`, and what it says can also depend on which link it is for. */
+export interface LinkFlag {
+  flag: string | string[] | ((cfg: Config, link: LinkOf) => string | string[]);
+  when?: (cfg: Config, link: LinkOf) => boolean;
+  desc: string;
+}
+
+export const linkerFlags: LinkFlag[] = [
   // ─── Sanitizers ───
   {
     flag: "-fsanitize=address",
@@ -1063,7 +1087,7 @@ export const linkerFlags: Flag[] = [
     // apart from the labels the MSVC CRT leaves on data inside its code. They
     // ship in the profile zip beside the binary, for the trace-order step
     // (.buildkite/ci.ts) and for verifyOrderFileApplied() in scripts/build/ci.ts.
-    flag: c => [`/lldmap:${slash(linkerMapPath(c))}`, `/map:${slash(symbolMapPath(c))}`],
+    flag: (c, link) => [`/lldmap:${slash(linkerMapPath(c, link))}`, `/map:${slash(symbolMapPath(c, link))}`],
     when: c => c.windows && writesLinkerMap(c),
     desc: "Linker maps: the order file tracer's symbol table (see windows-symbols.ts)",
   },
@@ -1077,7 +1101,7 @@ export const linkerFlags: Flag[] = [
     // were traced from an earlier build's binary (see usesOrderFile), and each
     // one that no longer exists would otherwise be an LNK4037 warning.
     flag: c => [`/order:@${slash(orderFilePath(c))}`, "/ignore:4037"],
-    when: c => c.windows && usesOrderFile(c),
+    when: (c, link) => c.windows && link.ordered,
     desc: "Sort startup-hot functions to the front of .text (cuts resident binary pages)",
   },
 
@@ -1178,7 +1202,7 @@ export const linkerFlags: Flag[] = [
     desc: "Suppress all linker warnings (workaround: no selective suppress for alignment warnings as of 2025-07)",
   },
   {
-    flag: c => ["-dead_strip", "-dead_strip_dylibs", `-Wl,-map,${linkerMapPath(c)}`],
+    flag: (c, link) => ["-dead_strip", "-dead_strip_dylibs", `-Wl,-map,${linkerMapPath(c, link)}`],
     when: c => c.darwin && c.release,
     desc: "Dead-code strip + emit linker map",
   },
@@ -1196,14 +1220,11 @@ export const linkerFlags: Flag[] = [
   {
     // Mach-O counterpart to lld's --symbol-ordering-file below:
     // <buildDir>/linker.order lists the functions bun actually executes while
-    // starting up, and Apple's linker sorts them to the front of __text. The
-    // file is a build artifact, never committed: configure seeds an empty one
-    // so both link passes share one build.ninja — a release build regenerates
-    // it from its own pass-1 binary and reruns ninja, which relinks and
-    // nothing else. Unknown names are silently skipped, so a stale file only
-    // costs part of the win.
+    // starting up, and Apple's linker sorts them to the front of __text. Where
+    // the file comes from is the same as on linux (see that entry). Unknown
+    // names are silently skipped, so a stale file only costs part of the win.
     flag: c => `-Wl,-order_file,${orderFilePath(c)}`,
-    when: c => c.darwin && usesOrderFile(c),
+    when: (c, link) => c.darwin && link.ordered,
     desc: "Sort startup-hot functions to the front of __text (cuts resident binary pages)",
   },
 
@@ -1373,7 +1394,7 @@ export const linkerFlags: Flag[] = [
     // with `bun-profile`, so disabling ICF on the profile binary "for perf
     // symbolication" would also bloat the shipped binary's .text — and
     // `perf` symbolicates folded functions fine via the linker-map anyway.
-    flag: c => ["-Wl,-icf=safe", `-Wl,-Map=${linkerMapPath(c)}`],
+    flag: (c, link) => ["-Wl,-icf=safe", `-Wl,-Map=${linkerMapPath(c, link)}`],
     when: c => c.linux && c.release && !c.asan && !c.valgrind,
     desc: "Identical-code-folding (safe; perf symbolication uses the linker-map)",
   },
@@ -1404,16 +1425,18 @@ export const linkerFlags: Flag[] = [
     // binary ends up with ~27 MB resident for `bun -e 'console.log(1)'`.
     // Packing them together cuts that by a third for a same-size binary.
     //
-    // The file is a build artifact, never committed: configure seeds an empty one
-    // (a no-op for lld) so this flag is unconditional and both link passes share
-    // one build.ninja — a release build regenerates it from its own pass-1 binary
-    // and reruns ninja, which relinks and nothing else. Symbols lld cannot find
-    // are skipped, so a stale file only costs part of the win.
+    // The file is a build artifact, never committed. A build that traces its own
+    // symbol order (`cfg.traceOrderFile`: releases, see ci.ts) links twice in one
+    // graph: `unorderedLink` without the file, a trace of that binary that writes
+    // it, and `finalLink` against it. Every other build links once, against the
+    // file that is there: an inherited one, or the empty one configure seeds (a
+    // no-op for lld). Symbols lld cannot find are skipped, so a stale file only
+    // costs part of the win.
     //
-    // A local `bun run build:release` therefore links unordered until you run
-    // `bun run orderfile` and build again.
+    // A local `bun run build:release` therefore links unordered: pass
+    // `--traceOrderFile=on`, or run `bun run orderfile` and build again.
     flag: c => [`-Wl,--symbol-ordering-file=${orderFilePath(c)}`, "-Wl,--no-warn-symbol-ordering"],
-    when: c => c.linux && usesOrderFile(c),
+    when: (c, link) => c.linux && link.ordered,
     desc: "Sort startup-hot functions to the front of .text (cuts resident binary pages)",
   },
 
@@ -1516,7 +1539,7 @@ export const linkerFlags: Flag[] = [
  * Whether this target links with a symbol ordering file (lld
  * `--symbol-ordering-file` on linux, `-order_file` on darwin, which both Apple
  * ld and ld64.lld take, lld-link `/order` on windows). Only where the startup
- * win is worth a relink: release builds, not under a sanitizer — the tracer
+ * win is worth a second link: release builds, not under a sanitizer — the tracer
  * swaps `.text` out for a private copy, and nobody measures startup RSS on an
  * ASAN build anyway.
  *
@@ -1549,6 +1572,9 @@ export function orderFilePath(cfg: Pick<Config, "buildDir">): string {
   return join(cfg.buildDir, "linker.order");
 }
 
+/** An order file that orders nothing: every linker takes an empty one as a no-op, and a comment line is empty. */
+export const EMPTY_ORDER_FILE = "# no order file — an empty file is a no-op for the linker\n";
+
 /**
  * Whether the link writes its map(s); mirrors the map flags above (linux: the
  * `-icf=safe` entry, darwin: `-dead_strip`, windows: `/lldmap` + `/map`).
@@ -1565,8 +1591,8 @@ export function writesLinkerMap(
 }
 
 /** `<buildDir>/bun-profile.linker-map`: the linker's own map — lld's `-Map`, ld64's `-map`, lld-link's `/lldmap`. */
-export function linkerMapPath(cfg: Config): string {
-  return join(cfg.buildDir, `${bunExeName(cfg)}.linker-map`);
+export function linkerMapPath(cfg: Config, link: LinkOf = finalLink(cfg)): string {
+  return join(cfg.buildDir, `${link.exeName}.linker-map`);
 }
 
 /**
@@ -1574,14 +1600,14 @@ export function linkerMapPath(cfg: Config): string {
  * address. Windows only; the same name scripts/orderfile/windows-symbols.ts
  * derives from the binary's.
  */
-export function symbolMapPath(cfg: Config): string {
-  return join(cfg.buildDir, `${bunExeName(cfg)}.map`);
+export function symbolMapPath(cfg: Config, link: LinkOf = finalLink(cfg)): string {
+  return join(cfg.buildDir, `${link.exeName}.map`);
 }
 
 /** The map files the link writes (see writesLinkerMap), or none. */
-export function linkerMapOutputs(cfg: Config): string[] {
+export function linkerMapOutputs(cfg: Config, link: LinkOf = finalLink(cfg)): string[] {
   if (!writesLinkerMap(cfg)) return [];
-  return cfg.windows ? [linkerMapPath(cfg), symbolMapPath(cfg)] : [linkerMapPath(cfg)];
+  return cfg.windows ? [linkerMapPath(cfg, link), symbolMapPath(cfg, link)] : [linkerMapPath(cfg, link)];
 }
 
 /**
@@ -1589,18 +1615,17 @@ export function linkerMapOutputs(cfg: Config): string[] {
  * ninja relinks when exported symbols / version script change.
  * CMake tracks these via set_target_properties LINK_DEPENDS.
  *
- * The release symbol ordering file is one of them on every target that uses
- * it: listing it here is what makes regenerating (or inheriting) it relink, and
- * only relink.
+ * The symbol ordering file is one of them for a link that reads it: a new one (inherited, written by
+ * `bun run orderfile`, or by this build's own trace edge) relinks, and only relinks.
  */
-export function linkDepends(cfg: Config): string[] {
+export function linkDepends(cfg: Config, link: LinkOf = finalLink(cfg)): string[] {
   if (cfg.freebsd) return [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker-freebsd.lds")];
   const depends = cfg.windows
     ? [join(cfg.cwd, "src/symbols.def")]
     : cfg.darwin
       ? [join(cfg.cwd, "src/symbols.txt")]
       : [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker.lds")]; // linux: ELF dynamic-list + version script
-  if (usesOrderFile(cfg)) depends.push(orderFilePath(cfg));
+  if (link.ordered) depends.push(orderFilePath(cfg));
   return depends;
 }
 
@@ -1821,16 +1846,20 @@ export function computeFlags(cfg: Config): ComputedFlags {
     if (f.when && !f.when(cfg)) continue;
     defs.push(...resolveFlagValue(f.flag, cfg));
   }
-  for (const f of linkerFlags) {
-    if (f.when && !f.when(cfg)) continue;
-    ldflags.push(...resolveFlagValue(f.flag, cfg));
-  }
+  ldflags.push(...computeLinkFlags(cfg, finalLink(cfg)));
   for (const f of stripFlags) {
     if (f.when && !f.when(cfg)) continue;
     stripflags.push(...resolveFlagValue(f.flag, cfg));
   }
 
   return { cflags, cxxflags, defines: defs, ldflags, stripflags };
+}
+
+/** The linker flags of one of bun's links. `computeFlags().ldflags` is these for the final link. */
+export function computeLinkFlags(cfg: Config, link: LinkOf): string[] {
+  return linkerFlags
+    .filter(f => !f.when || f.when(cfg, link))
+    .flatMap(f => (typeof f.flag === "function" ? f.flag(cfg, link) : f.flag));
 }
 
 /**

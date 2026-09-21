@@ -30,11 +30,13 @@
  * terminal than on a pipe, and the functions it reaches are a couple of
  * thousand that no other workload touches.
  *
- * The file is never committed. Release builds generate it from their own pass-1
- * binary and relink against it; canary builds inherit the last successful
+ * The file is never committed. Release builds link twice in one graph: unordered,
+ * then a trace of that binary (scripts/build/trace-order-file.ts, an edge), then
+ * against what the trace wrote; canary builds inherit the last successful
  * build's file and re-publish it (scripts/build/ci.ts — inheritOrderFile /
  * packageAndUpload). Locally:
  *
+ *   bun run build:release --traceOrderFile=on   # the release way: both links and the trace in one build
  *   bun run orderfile                      # uses build/release, writes build/release/linker.order
  *   bun run orderfile -- --build-dir=<other build dir>
  *

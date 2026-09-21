@@ -22,7 +22,7 @@ import {
 import { basename, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getJson, isBuildkite, markBuildkiteStepReported, reportAnnotationToBuildkite } from "../buildkite.ts";
-import { generateOrderFile, readTextSymbols } from "../orderfile/generate.ts";
+import { readTextSymbols } from "../orderfile/generate.ts";
 import { formatAnnotationToHtml, parseAnnotations } from "./annotations.ts";
 import { bunExeName, shouldStrip, type BunOutput } from "./bun.ts";
 import type { Config } from "./config.ts";
@@ -710,9 +710,12 @@ async function waitForStepOutcome(stepKey: string): Promise<void> {
 // ═══════════════════════════════════════════════════════════════════════════
 // Symbol ordering file
 //
-// A build either generates one (trace its own binary, relink against the result)
-// or inherits an earlier build's and links once. Releases generate, canaries
-// inherit, PRs do neither; one that inherits nothing generates, seeding the chain.
+// A build either generates one or inherits an earlier build's. Releases generate,
+// canaries inherit, PRs do neither; one that inherits nothing generates, seeding
+// the chain. Which it is decides the graph, so build.ts settles it before it
+// configures: a build that generates is configured with `traceOrderFile`, and
+// links unordered, traces that binary and links again, all in its one ninja run
+// (bun.ts emitBunLink). Every other build links once.
 // ═══════════════════════════════════════════════════════════════════════════
 
 /** Cap on probed builds we ask for an order file. The newest passed build is asked on top of these. */
@@ -958,25 +961,10 @@ export async function inheritOrderFile(cfg: Config, ctx: OrderFileContext): Prom
   return false;
 }
 
-/**
- * Trace the binary from pass 1 and overwrite the order file. The caller re-runs
- * ninja, which relinks and nothing else: `linkDepends()` lists the order file,
- * so it is the only edge whose input changed.
- */
-export function regenerateOrderFile(cfg: Config, ctx: OrderFileContext): void {
-  const start = Date.now();
-  const exeName = bunExeName(cfg); // bun-profile, or bun-assertions on an assertions build
-  const why = !cfg.canary
-    ? "release build"
-    : shouldGenerateOrderFile(cfg, ctx)
-      ? "[generate symbol order] in the commit message"
-      : "nothing to inherit";
-  console.log(`Tracing ${exeName} to build a fresh order file (${why})`);
-  console.log("Each workload runs under an injected function-entry tracer, so it is slower than a normal run.\n");
-
-  const { count } = generateOrderFile({ buildDir: cfg.buildDir, exeName, verbose: true });
-
-  console.log(`\n+ symbol order: traced ${count} functions in ${since(start)} — relinking against them`);
+/** Why a build that traces its own symbol order does, for its log. */
+export function orderFileTraceReason(cfg: Config, ctx: OrderFileContext): string {
+  if (!cfg.canary) return "release build";
+  return shouldGenerateOrderFile(cfg, ctx) ? "[generate symbol order] in the commit message" : "nothing to inherit";
 }
 
 /**
@@ -987,7 +975,7 @@ export function reportOrderFileBootstrap(cfg: Config): void {
   if (!cfg.canary) return; // a release always generates — nothing to report
   const message =
     `No earlier build published ${orderFileArtifact(cfg)}, so this build is tracing its own binary and ` +
-    `relinking (one extra link). Expected once, to seed the chain. If every build on this branch says ` +
+    `linking twice. Expected once, to seed the chain. If every build on this branch says ` +
     `this, inheriting is broken — check the "Inherit symbol order file" step.`;
   console.log(`~ symbol order: ${message}`);
   if (!isBuildkite) return;
@@ -1029,7 +1017,7 @@ export function reportOrderFileFailure(error: Error): void {
 }
 
 /**
- * Prove the relink honoured the order file: one lld silently ignores produces a
+ * Prove the link honoured the order file: one lld silently ignores produces a
  * binary indistinguishable from an unordered one. Scale-free — compare where the
  * hot functions landed against where a typical function landed.
  */

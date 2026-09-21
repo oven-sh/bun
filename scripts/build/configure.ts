@@ -24,7 +24,7 @@ import {
   resolveConfig,
 } from "./config.ts";
 import { BuildError } from "./error.ts";
-import { orderFilePath, usesOrderFile } from "./flags.ts";
+import { EMPTY_ORDER_FILE, orderFilePath, usesOrderFile } from "./flags.ts";
 import { mkdirAll, writeIfChanged } from "./fs.ts";
 import { ensureMacosSdk } from "./macos-sdk.ts";
 import { ensureNinja } from "./ninja-release.ts";
@@ -444,13 +444,13 @@ async function generate<N extends string | undefined>(
   mark("mkdirAll");
 
   // Seed an empty symbol ordering file so the link flag always points at
-  // something. lld and Apple ld both treat an empty file as a no-op, which is
-  // exactly the unordered pass-1 link; a later `generateOrderFile()` overwrites
-  // it and ninja relinks (linkDepends lists it). Never clobber an existing one
-  // — that would throw away the file a release relink or a canary download
-  // just put there.
-  if (usesOrderFile(cfg) && !existsSync(orderFilePath(cfg))) {
-    writeIfChanged(orderFilePath(cfg), "# no order file yet — an empty file is a no-op for the linker\n");
+  // something: every linker treats an empty one as a no-op, which is the
+  // unordered link. `bun run orderfile` overwrites it and ninja relinks
+  // (linkDepends lists it). Never clobber an existing one: that would throw
+  // away the file a canary download just put there. Not in a build that traces
+  // its own: there the file is an edge's output (bun.ts emitOrderFileTrace).
+  if (usesOrderFile(cfg) && !cfg.traceOrderFile && !existsSync(orderFilePath(cfg))) {
+    writeIfChanged(orderFilePath(cfg), EMPTY_ORDER_FILE);
   }
   mark("orderFile");
 

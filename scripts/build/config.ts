@@ -137,6 +137,12 @@ export interface Config {
   /** x64-only: target nehalem (no AVX). Default true on x64 — the only x64 build we ship. */
   baseline: boolean;
   canary: boolean;
+  /**
+   * Link twice in this one build: unordered, then, against a symbol ordering file traced from that binary
+   * (flags.ts `unorderedLink` / `finalLink`, bun.ts `emitBunLink`). CI sets it for the builds that generate
+   * an order file (ci.ts `mustGenerateOrderFile`); `--traceOrderFile=on` does the same for a local release.
+   */
+  traceOrderFile: boolean;
   /** MinSizeRel → optimize for size. */
   smol: boolean;
   staticSqlite: boolean;
@@ -365,6 +371,7 @@ export interface PartialConfig {
   logs?: boolean;
   baseline?: boolean;
   canary?: boolean;
+  traceOrderFile?: boolean;
   staticSqlite?: boolean;
   staticLibatomic?: boolean;
   tinycc?: boolean;
@@ -1241,6 +1248,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     logs,
     baseline,
     canary,
+    traceOrderFile: partial.traceOrderFile ?? false,
     smol,
     staticSqlite,
     staticLibatomic,

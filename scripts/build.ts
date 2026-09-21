@@ -23,7 +23,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import {
   canTraceOrderFile,
@@ -32,12 +32,11 @@ import {
   mustGenerateOrderFile,
   orderFileContext,
   orderFileEligible,
+  orderFileTraceReason,
   packageAndUpload,
   publishTimings,
-  regenerateOrderFile,
   reportOrderFileBootstrap,
   reportOrderFileCannotTrace,
-  reportOrderFileFailure,
   shouldGenerateOrderFile,
   spawnWithAnnotations,
   timingsChartName,
@@ -143,27 +142,34 @@ async function main(): Promise<void> {
   if (isCI) {
     // CI: machine/env dump + collapsible groups + annotation-on-failure.
     printEnvironment();
-    const result = await startGroup("Configure", () => configure(input));
+
+    // Whether this build traces its own symbol order is part of its graph (the trace is an edge between two
+    // links), and depends on whether an earlier build's order file could be inherited. So that comes first.
+    const orderCtx = orderFileContext();
+    const planned = configOf(input).cfg;
+    const inherited = await startGroup("Inherit symbol order file", async () => {
+      if (!orderFileEligible(planned, orderCtx) || shouldGenerateOrderFile(planned, orderCtx)) return false;
+      mkdirSync(planned.buildDir, { recursive: true });
+      return inheritOrderFile(planned, orderCtx).catch(e => {
+        console.log(`~ symbol order: inherit failed (${(e as Error)?.message ?? e}); linking unordered`);
+        return false;
+      });
+    });
+    const traces = mustGenerateOrderFile(planned, orderCtx, inherited);
+    if (traces) {
+      console.log(`symbol order: this build traces its own binary (${orderFileTraceReason(planned, orderCtx)})`);
+      if (!shouldGenerateOrderFile(planned, orderCtx)) reportOrderFileBootstrap(planned);
+    }
+
+    const result = await startGroup("Configure", () =>
+      configure(traces ? { ...input, overrides: { ...input.overrides, traceOrderFile: true } } : input),
+    );
     if (args.configureOnly) return;
 
     // link-only: download cpp-only + rust-only artifacts before ninja.
     if (result.cfg.buildkite && result.cfg.mode === "link-only") {
       await startGroup("Download artifacts", () => downloadArtifacts(result.cfg));
     }
-
-    // The order file is a link input, so it must land before the linking ninja
-    // pass. In rust-and-link mode it runs between the Rust build and the build-cpp
-    // poll (whose sleep loop yields cleanly) so it doesn't stall the Rust build.
-    const orderCtx = orderFileContext();
-    const runInherit = () =>
-      (orderFileEligible(result.cfg, orderCtx) && !shouldGenerateOrderFile(result.cfg, orderCtx)
-        ? inheritOrderFile(result.cfg, orderCtx)
-        : Promise.resolve(false)
-      ).catch(e => {
-        console.log(`~ symbol order: inherit failed (${(e as Error)?.message ?? e}); linking unordered`);
-        return false;
-      });
-    let inherited = false;
 
     const ninja = result.ninja;
     const runNinja = (targets: string[] = args.ninjaTargets) =>
@@ -178,37 +184,17 @@ async function main(): Promise<void> {
     // (its artifacts were downloaded above).
     if (result.cfg.buildkite && result.cfg.mode === "rust-and-link") {
       await startGroup("Build Rust", () => runNinja(["bun-rust"]));
-      inherited = (await startGroup("Inherit symbol order file", runInherit)) as boolean;
       await startGroup("Wait for build-cpp & download artifacts", () => downloadArtifacts(result.cfg));
-    } else {
-      inherited = (await startGroup("Inherit symbol order file", runInherit)) as boolean;
     }
 
     await startGroup("Build", () => runNinja());
 
-    // Trace and relink when we are a release, when a commit asked for it, or when
-    // there was nothing to inherit. A failed trace is not fatal: the order file is
-    // an optimization, and a flaky workload must not kill a release 40 minutes in.
-    if (mustGenerateOrderFile(result.cfg, orderCtx, inherited)) {
-      if (!inherited && !shouldGenerateOrderFile(result.cfg, orderCtx)) reportOrderFileBootstrap(result.cfg);
-      let traced = true;
-      await startGroup("Generate symbol order file", () => {
-        try {
-          regenerateOrderFile(result.cfg, orderCtx);
-        } catch (error) {
-          traced = false;
-          reportOrderFileFailure(error as Error);
-        }
-      });
-      if (traced) {
-        await startGroup("Relink against symbol order file", runNinja);
-        // We traced this exact binary: nearly every symbol must resolve. Hard-fail.
-        if (result.output.exe) verifyOrderFileApplied(result.cfg, orderCtx, result.output.exe);
-      }
-    } else if (orderFileEligible(result.cfg, orderCtx) && result.output.exe) {
-      // Inherited: a stale file is a slower binary, not a broken one.
-      if (!inherited && !canTraceOrderFile(result.cfg)) reportOrderFileCannotTrace(result.cfg);
-      verifyOrderFileApplied(result.cfg, orderCtx, result.output.exe, { strict: false });
+    if (orderFileEligible(result.cfg, orderCtx) && result.output.exe) {
+      if (!traces && !inherited && !canTraceOrderFile(result.cfg)) reportOrderFileCannotTrace(result.cfg);
+      // A build that traced this exact binary must find nearly every symbol where the trace put it: hard-fail.
+      // An inherited file legitimately loses symbols to code churn: a stale one is a slower binary, not a broken
+      // one. (A trace that failed left an order file that orders nothing, which there is nothing to verify of.)
+      verifyOrderFileApplied(result.cfg, orderCtx, result.output.exe, { strict: traces });
     }
 
     // Every CI build says where its time went: nobody can come back to this build directory to ask.
@@ -484,6 +470,7 @@ const configFlags: { [K in keyof Required<PartialConfig>]: ConfigFlagKind<NonNul
   logs: "boolean",
   baseline: "boolean",
   canary: "boolean",
+  traceOrderFile: "boolean",
   staticSqlite: "boolean",
   staticLibatomic: "boolean",
   tinycc: "boolean",

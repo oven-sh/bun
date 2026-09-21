@@ -15,9 +15,11 @@ import { describe, expect, test } from "bun:test";
 import { isMacOS, tempDir } from "harness";
 import { join, resolve } from "node:path";
 
-import { binaryChecksWarnOnly, emitPostLink } from "../../scripts/build/bun.ts";
+import { binaryChecksWarnOnly, emitBunLink, emitPostLink } from "../../scripts/build/bun.ts";
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
+import { usesOrderFile } from "../../scripts/build/flags.ts";
 import { Ninja } from "../../scripts/build/ninja.ts";
+import { registerAllRules } from "../../scripts/build/rules.ts";
 
 /** A fully-populated fake toolchain; resolveConfig never spawns any of these. */
 function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
@@ -84,6 +86,64 @@ function buildEdge(ninja: string, rule: string): string {
   if (line === undefined) throw new Error(`no '${rule}' edge in ninja output:\n${ninja}`);
   return line.replace(new RegExp(` \\| \\S+(?=: ${rule} )`), "");
 }
+
+describe("a build that traces its own symbol order", () => {
+  /** Every edge of `rule`, as `outputs: rule inputs`, continuations unwrapped and absolute-path aliases dropped. */
+  const edges = (ninja: string, rule: string): string[] =>
+    ninja
+      .replace(/ \$\n +/g, " ")
+      .split("\n")
+      .filter(l => l.startsWith("build ") && l.includes(`: ${rule} `))
+      .map(l => l.replace(new RegExp(`( \\| [^:]*)?(?=: ${rule} )`), ""));
+
+  test("links unordered, traces that binary, and links again against the trace, in one graph", () => {
+    using dir = tempDir("build-trace-order", {});
+    const buildDir = String(dir);
+    const cfg = hostConfig({ buildType: "Release", traceOrderFile: true }, buildDir);
+    const n = new Ninja({ buildDir });
+    registerAllRules(n, cfg);
+    const emit = () => emitBunLink(n, cfg, [resolve(buildDir, "obj/a.o")], [], ["bun-profile.smoke-test-passed"]);
+
+    // Not every host's target links with an order file (musl, darwin x64): there the option is an error.
+    if (!usesOrderFile(cfg)) {
+      expect(emit).toThrow("cannot trace its own symbol order");
+      return;
+    }
+    const exe = emit();
+    const out = n.toString();
+    const x = cfg.exeSuffix;
+
+    expect(exe).toBe(resolve(buildDir, `bun-profile${x}`));
+    const [unordered, final] = edges(out, "link");
+    // The binary that is traced: no order file among its inputs, and no checks of its own.
+    expect(unordered).toStartWith(`build bun-profile-unordered${x}: link obj/a.o `);
+    expect(unordered).not.toContain("linker.order");
+    expect(unordered).not.toContain("|@");
+    // The trace is the edge between the two links.
+    expect(edges(out, "order_file_trace")[0]).toStartWith(
+      `build linker.order: order_file_trace bun-profile-unordered${x} | `,
+    );
+    // The binary that ships reads what the trace wrote, and carries the checks.
+    expect(final).toStartWith(`build bun-profile${x}: link obj/a.o `);
+    expect(final).toContain(" linker.order");
+    expect(final).toEndWith("|@ bun-profile.smoke-test-passed");
+    // Two links write two sets of maps.
+    expect(out).toContain("bun-profile-unordered.linker-map");
+    expect(out).toContain("bun-profile.linker-map");
+  });
+
+  test("any other build links once", () => {
+    using dir = tempDir("build-trace-order", {});
+    const buildDir = String(dir);
+    const cfg = hostConfig({ buildType: "Release" }, buildDir);
+    const n = new Ninja({ buildDir });
+    registerAllRules(n, cfg);
+    emitBunLink(n, cfg, [resolve(buildDir, "obj/a.o")], [], []);
+    const out = n.toString();
+    expect(edges(out, "link")).toHaveLength(1);
+    expect(edges(out, "order_file_trace")).toHaveLength(0);
+  });
+});
 
 describe("emitPostLink ninja ordering", () => {
   test("release smoke_test is ordered after strip", () => {

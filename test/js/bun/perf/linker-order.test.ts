@@ -12,12 +12,14 @@ import {
 } from "../../../../scripts/build/ci.ts";
 import type { Config } from "../../../../scripts/build/config.ts";
 import {
+  computeLinkFlags,
+  finalLink,
   linkDepends,
-  linkerFlags,
   linkerMapOutputs,
   linkerMapPath,
   orderFilePath,
   symbolMapPath,
+  unorderedLink,
   usesOrderFile,
   writesLinkerMap,
 } from "../../../../scripts/build/flags.ts";
@@ -81,12 +83,8 @@ const windowsArm64 = {
   crossTarget: "aarch64-pc-windows-msvc",
 } as Partial<Config>;
 
-/** Everything the link command line gets from linkerFlags for this config (an entry without `when` always applies). */
-const appliedLinkerFlags = (config: Config): string[] =>
-  linkerFlags
-    .filter(flag => !flag.when || flag.when(config))
-    .flatMap(flag => (typeof flag.flag === "function" ? flag.flag(config) : flag.flag))
-    .flat();
+/** Everything the command line of the link that ships gets from linkerFlags for this config. */
+const appliedLinkerFlags = (config: Config): string[] => computeLinkFlags(config, finalLink(config));
 
 /** A canary build on Buildkite, off a pull request. */
 const ctx = (overrides: Partial<OrderFileContext> = {}): OrderFileContext => ({
@@ -179,10 +177,30 @@ describe("symbol ordering file", () => {
     }
   });
 
-  it("is a link dependency, so regenerating it relinks", () => {
-    // This is what makes the release two-pass work: overwrite the file, re-run
-    // ninja, and the link is the only edge whose input changed. On windows it is
-    // what makes inheriting one relink at all.
+  it("is not read by the link whose binary is traced to write it", () => {
+    // A build that traces its own symbol order links twice in one graph. The
+    // first link cannot name the file: it does not exist yet, and naming it
+    // would make the graph a cycle. Everything else about the two links is the
+    // same, so the trace is of the code that ships; each writes its own maps.
+    for (const config of [cfg(), cfg(darwinArm64), cfg(windowsX64), cfg(windowsArm64)]) {
+      const unordered = computeLinkFlags(config, unorderedLink(config));
+      const final = appliedLinkerFlags(config);
+      expect(unordered.join(" ")).not.toMatch(/--symbol-ordering-file|-order_file|\/order:/);
+      expect(linkDepends(config, unorderedLink(config))).not.toContain(orderFilePath(config));
+      expect(linkerMapOutputs(config, unorderedLink(config))).toEqual(
+        linkerMapOutputs(config).map(map => map.replace("bun-profile", "bun-profile-unordered")),
+      );
+      const sameButForTheOrderFileAndTheMaps = (flags: string[]) =>
+        flags
+          .filter(flag => !/symbol-ordering|order_file|\/order:|\/ignore:4037/.test(flag))
+          .map(flag => flag.replace("bun-profile-unordered", "bun-profile"));
+      expect(sameButForTheOrderFileAndTheMaps(unordered)).toEqual(sameButForTheOrderFileAndTheMaps(final));
+    }
+  });
+
+  it("is a link dependency, so a new one relinks", () => {
+    // Inheriting one, `bun run orderfile`, or this build's own trace edge writing
+    // it: the link is the only edge whose input changed.
     for (const config of [cfg(), cfg(darwinArm64), cfg(windowsX64), cfg(windowsArm64)]) {
       expect(linkDepends(config)).toContain(orderFilePath(config));
     }

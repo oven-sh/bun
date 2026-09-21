@@ -28,8 +28,8 @@ import { availableParallelism, constants as osConstants } from "node:os";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { BuildError } from "../error.ts";
 import { writeIfChanged } from "../fs.ts";
-import { type BuildScriptOutput, envify } from "./cargo-env.ts";
 import type { Phase } from "../timings.ts";
+import { type BuildScriptOutput, envify } from "./cargo-env.ts";
 import type { RustcPhases, RustcUnitManifest, UnitManifest } from "./units.ts";
 
 // Guarded so the tests can import the pieces below without running a unit.

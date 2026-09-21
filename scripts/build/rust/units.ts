@@ -23,8 +23,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import type { Config } from "../config.ts";
 import { assert } from "../error.ts";
-import { dylibPathVar, envify } from "./cargo-env.ts";
 import type { Phase } from "../timings.ts";
+import { dylibPathVar, envify } from "./cargo-env.ts";
 import type { ManifestLints, MetadataPackage, RustPlan, RustcTargetInfo, UnitGraphUnit } from "./plan.ts";
 
 export type UnitKind = "lib" | "proc-macro" | "staticlib" | "bin" | "build-script" | "build-script-run";

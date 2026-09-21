@@ -8,6 +8,8 @@
   "devDependencies": {
     "@lezer/common": "1.5.2",
     "@lezer/cpp": "1.1.6",
+    "@types/react": "18.3.31",
+    "@types/react-dom": "18.3.7",
     "esbuild": "0.21.5",
     "oxlint": "1.70.0",
     "prettier": "3.6.2",

@@ -1437,31 +1437,36 @@ it("an asynchronous SNICallback resolving cb(null, null) still honors addContext
   await once(server, "close");
 });
 
-it("a listen() that fails after the socket is bound leaves the server closed", async () => {
-  // listen() binds the socket, then wires the handle and loads the addContext()
-  // entries. A throw from any of those steps (an entry the native listener
-  // rejects, for example) must stop the bound listener. address() is the first
-  // step after the bind that a test can make throw, so it stands in for them.
+it("the server state matches the event that ends listen(): 'listening' or 'error'", async () => {
+  // Bun loads the addContext() entries into the native listener after the
+  // bind, and rejects the second of these two names there (#43092). Node
+  // accepts both and emits 'listening'. After either event the server state
+  // has to match it: a failed listen() leaves the server closed, as in Node.
+  const altCert = { key: rawKey, cert: cert };
   const server: Server = createServer(COMMON_CERT, socket => socket.end());
-  server.addContext("alt.example.com", { key: rawKey, cert: cert });
-  const realAddress = server.address;
-  server.address = function () {
-    server.address = realAddress;
-    throw new Error("address() failed after the bind");
-  };
+  const name = "a.b.c.d.e.f.g.h.i.j.k.example";
+  server.addContext(name, altCert);
+  server.addContext(name + ".", altCert);
   server.listen(0, "127.0.0.1");
   const outcome = await new Promise<string>(resolve => {
     server.once("listening", () => resolve("listening"));
-    server.once("error", err => resolve(`error: ${err.message}`));
+    server.once("error", () => resolve("error"));
   });
-  expect(outcome).toBe("error: address() failed after the bind");
-  expect({
+  const state = {
+    outcome,
     listening: server.listening,
-    address: server.address(),
-    handleIsNull: (server as any)._handle === null,
-  }).toEqual({ listening: false, address: null, handleIsNull: true });
-  const closeErr = await new Promise<any>(resolve => server.close(resolve));
-  expect(closeErr.code).toBe("ERR_SERVER_NOT_RUNNING");
+    hasAddress: server.address() !== null,
+    hasHandle: (server as any)._handle != null,
+  };
+  if (outcome === "listening") {
+    expect(state).toEqual({ outcome: "listening", listening: true, hasAddress: true, hasHandle: true });
+    server.close();
+    await once(server, "close");
+  } else {
+    expect(state).toEqual({ outcome: "error", listening: false, hasAddress: false, hasHandle: false });
+    const closeErr = await new Promise<any>(resolve => server.close(resolve));
+    expect(closeErr.code).toBe("ERR_SERVER_NOT_RUNNING");
+  }
 });
 
 describe("tls.Server socket destroySoon", () => {

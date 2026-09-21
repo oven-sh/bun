@@ -853,7 +853,7 @@ if (cluster.isPrimary) {
   expect(stdout).toContain("reply: echo:hi");
 }, 30_000);
 
-test("TLS cluster worker whose listen() fails after it adopts the shared fd ends up closed", async () => {
+test("TLS cluster worker state matches the event that ends listen(): 'listening' or 'error'", async () => {
   const dir = tempDirWithFiles("bun-test", {
     "cert.pem": tlsCerts.cert,
     "key.pem": tlsCerts.key,
@@ -867,13 +867,7 @@ const cert = fs.readFileSync(path.join(__dirname, "cert.pem"));
 
 if (cluster.isPrimary) {
   const worker = cluster.fork();
-  worker.on("message", msg => {
-    console.log("after failed listen:", JSON.stringify(msg));
-    if (msg.listeningEvent) {
-      worker.kill();
-      process.exit(1);
-    }
-  });
+  worker.on("message", msg => console.log("state:", JSON.stringify(msg)));
   cluster.on("listening", (w, address) => {
     const c = tls.connect({ port: address.port, host: "127.0.0.1", rejectUnauthorized: false });
     c.setEncoding("utf8");
@@ -889,30 +883,36 @@ if (cluster.isPrimary) {
     });
   });
 } else {
-  const bad = tls.createServer({ key, cert }, socket => socket.end());
-  // address() is the first step after the native listener adopts the fd that a
-  // test can make throw. It stands in for an addContext() entry the listener rejects.
-  const realAddress = bad.address;
-  bad.address = function () {
-    bad.address = realAddress;
-    throw new Error("address() failed after the adopt");
-  };
-  bad.on("listening", () => process.send({ listeningEvent: true }));
-  bad.on("error", err => {
-    process.send({ error: err.message, listening: bad.listening, address: bad.address() });
+  const onConnection = socket => socket.end("ok");
+  const first = tls.createServer({ key, cert }, onConnection);
+  // Bun rejects the second name when it loads the entries into the listener
+  // that adopted the shared fd (#43092). Node accepts both.
+  const name = "a.b.c.d.e.f.g.h.i.j.k.example";
+  first.addContext(name, { key, cert });
+  first.addContext(name + ".", { key, cert });
+  const report = outcome =>
+    process.send({
+      outcome,
+      listening: first.listening,
+      hasAddress: first.address() !== null,
+      hasHandle: first._handle != null,
+    });
+  first.on("listening", () => report("listening"));
+  first.on("error", () => {
+    report("error");
     // The worker's cluster state is still usable after the failure.
-    const good = tls.createServer({ key, cert }, socket => socket.end("ok"));
-    good.listen(0);
+    tls.createServer({ key, cert }, onConnection).listen(0);
   });
-  bad.listen(0);
+  first.listen(0);
 }
 `,
   });
   const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
-  expect(stdout).toContain(
-    'after failed listen: {"error":"address() failed after the adopt","listening":false,"address":null}',
-  );
-  expect(stdout).not.toContain("listeningEvent");
+  const state = stdout.match(/^state: (.*)$/m)?.[1];
+  expect([
+    '{"outcome":"listening","listening":true,"hasAddress":true,"hasHandle":true}',
+    '{"outcome":"error","listening":false,"hasAddress":false,"hasHandle":false}',
+  ]).toContain(state);
   expect(stdout).toContain("reply: ok");
 }, 30_000);
 

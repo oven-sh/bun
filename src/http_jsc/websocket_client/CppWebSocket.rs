@@ -54,6 +54,7 @@ unsafe extern "C" {
         buffered_data: Option<Box<InitialData>>,
         deflate_params: Option<&websocket_deflate::Params>,
     );
+    safe fn WebSocket__deliverInitialData(websocket_context: &CppWebSocket);
     safe fn WebSocket__didAbruptClose(websocket_context: &CppWebSocket, reason: ErrorCode);
     safe fn WebSocket__didReceiveHandshakeResponse(
         websocket_context: &CppWebSocket,
@@ -180,6 +181,13 @@ impl CppWebSocket {
         WebSocket__didConnectWithTunnel(self, tunnel, buffered_data, deflate_params);
         event_loop.exit();
     }
+
+    /// Have the connected client, if there still is one, parse the
+    /// `buffered_data` it got from `did_connect*`. No scope of its own: each
+    /// message it dispatches gets a microtask checkpoint, as on a socket read.
+    pub(crate) fn deliver_initial_data(&self) {
+        WebSocket__deliverInitialData(self);
+    }
 }
 
 impl CppWebSocket {
@@ -202,8 +210,7 @@ impl CppWebSocket {
 /// RAII owner of one pending-activity ref on a C++ `WebCore::WebSocket`.
 ///
 /// Construction calls [`CppWebSocket::r#ref`]; `Drop` calls
-/// [`CppWebSocket::unref`]. For when the ref must outlive the constructing
-/// scope (e.g. stored on a queued task).
+/// [`CppWebSocket::unref`]. C++ has room for one such ref at a time.
 pub struct CppWebSocketRef(core::ptr::NonNull<CppWebSocket>);
 
 impl CppWebSocketRef {
@@ -214,8 +221,16 @@ impl CppWebSocketRef {
     }
 }
 
+impl core::ops::Deref for CppWebSocketRef {
+    type Target = CppWebSocket;
+
+    fn deref(&self) -> &CppWebSocket {
+        CppWebSocket::opaque_ref(self.0.as_ptr())
+    }
+}
+
 impl Drop for CppWebSocketRef {
     fn drop(&mut self) {
-        CppWebSocket::opaque_ref(self.0.as_ptr()).unref();
+        self.unref();
     }
 }

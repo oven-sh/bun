@@ -19,11 +19,11 @@ use bun_core::{EncodedSlice, strings};
 use bun_http::websocket::{Opcode, WebsocketHeader};
 use bun_io::KeepAlive;
 use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject};
-use bun_ptr::{BackRef, JsCell, RefPtr, Root, ThisPtr};
+use bun_ptr::{BackRef, JsCell, RefPtr, ThisPtr};
 use bun_uws::{self as uws, NewSocketHandler, us_bun_verify_error_t};
 use bun_uws_sys::us_socket_t;
 
-use self::cpp_websocket::{CppWebSocket, CppWebSocketRef};
+use self::cpp_websocket::CppWebSocket;
 use self::websocket_deflate::WebSocketDeflate;
 use self::websocket_proxy_tunnel::WebSocketProxyTunnel;
 
@@ -103,10 +103,9 @@ pub struct WebSocket<const SSL: bool> {
     pub(crate) payload_length_frame_bytes: Cell<[u8; 8]>,
     pub(crate) payload_length_frame_len: Cell<u8>,
 
-    /// The queued `InitialDataTask` (handshake-overflow bytes) until it runs or
-    /// `handle_data` drains it first; detached in `Drop` so a task that
-    /// outlives us does nothing.
-    pending_initial_task: Cell<Option<BackRef<InitialDataTask<SSL>, Root>>>,
+    /// Bytes the upgrade client read past the 101 (handshake overflow), until
+    /// `deliver_initial_data` parses them or `handle_data` gets there first.
+    initial_data: Cell<Option<Vec<u8>>>,
     pub(crate) deflate: RefCell<Option<Box<WebSocketDeflate>>>,
 
     /// Track if current message is compressed
@@ -528,17 +527,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         // Bumps the intrusive refcount and derefs on Drop.
         let _guard = RefPtr::from_this(this);
 
-        // Due to scheduling, it is possible for the websocket onData
-        // handler to run with additional data before the microtask queue is
-        // drained.
-        if let Some(task) = this.pending_initial_task.take() {
-            // Deliver the buffered bytes now (this calls `handle_data`); the
-            // queued `InitialDataTask` is detached and will do nothing.
-            task.ws.set(None);
-            if let Some(initial_data) = task.data.replace(None) {
-                initial_data.deliver(this);
-            }
-
+        // An `open` listener that spins the event loop lets a read in before
+        // `deliver_initial_data`; the handshake overflow still comes first.
+        if this.parse_initial_data() {
             // If we disconnected for any reason in the re-entrant case, we should just ignore the data
             if this.cpp_websocket().is_none() || !this.has_tcp() {
                 return;
@@ -546,6 +537,28 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
 
         this.handle_data_loop(data_);
+    }
+
+    /// Parse the handshake overflow if it is still pending. Returns whether it
+    /// was. The caller holds a ref guard.
+    fn parse_initial_data(&self) -> bool {
+        let Some(initial_data) = self.initial_data.take() else {
+            return false;
+        };
+        // For tunnel mode, tcp is detached but connection is still active through the tunnel
+        let is_connected = !self.tcp.get().is_closed() || self.tunnel().is_some();
+        if self.cpp_websocket().is_some() && is_connected && !self.close_received.get() {
+            self.handle_data_loop(&initial_data);
+        }
+        true
+    }
+
+    /// The upgrade client calls this (through C++) after the microtask
+    /// checkpoint that follows the `open` event, so a frame that arrived in
+    /// the same read as the 101 is dispatched like one from a later read.
+    pub(crate) fn deliver_initial_data(this: ThisPtr<Self>) {
+        let _guard = RefPtr::from_this(this);
+        this.parse_initial_data();
     }
 
     fn handle_data_loop(&self, data: &[u8]) {
@@ -1417,7 +1430,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             header_fragment: Cell::new(None),
             payload_length_frame_bytes: Cell::new([0u8; 8]),
             payload_length_frame_len: Cell::new(0),
-            pending_initial_task: Cell::new(None),
+            initial_data: Cell::new(None),
             deflate: RefCell::new(
                 deflate_params.and_then(|params| WebSocketDeflate::init(*params).ok()),
             ),
@@ -1431,7 +1444,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     /// Shared tail of `init`/`init_with_tunnel`: record the I/O-layer ref,
-    /// reserve the I/O buffers, take the keep-alive ref, queue any
+    /// reserve the I/O buffers, take the keep-alive ref, keep any
     /// handshake-buffered bytes, and take the C++-side ref. Returns the
     /// pointer handed back to C++.
     fn finish_init(
@@ -1453,20 +1466,8 @@ impl<const SSL: bool> WebSocket<SSL> {
             ws.poll_ref.set(poll_ref);
         }
 
-        if let Some(buffered_data) = buffered_data.filter(|b| !b.0.is_empty()) {
-            // Use a higher-priority callback for the initial onData handler.
-            let task = Box::new(InitialDataTask {
-                ws: Cell::new(Some(BackRef::from(ws))),
-                data: JsCell::new(Some(InitialDataHandler {
-                    slice: buffered_data.0,
-                    // We need to ref the outgoing websocket so that it doesn't get
-                    // finalized before the initial data handler is called.
-                    _pending_activity: CppWebSocketRef::new(outgoing),
-                })),
-            });
-            ws.pending_initial_task
-                .set(Some(global_this.queue_microtask_boxed(task)));
-        }
+        ws.initial_data
+            .set(buffered_data.map(|b| b.0).filter(|b| !b.is_empty()));
 
         ws.as_ptr()
     }
@@ -1603,16 +1604,6 @@ impl<const SSL: bool> Drop for WebSocket<SSL> {
         self.clear_data();
         // deflate already dropped in clear_data; this is defensive
         self.deflate.replace(None);
-        if let Some(task) = self.pending_initial_task.take() {
-            // Still queued (or abandoned with the VM's microtask queue); it
-            // must not follow its back-reference to us.
-            task.ws.set(None);
-            if self.global_this.bun_vm().is_shutting_down() {
-                // The queue will never run it; release the C++ pending-activity
-                // ref it holds now.
-                task.data.set(None);
-            }
-        }
         bun_core::scoped_log!(alloc, "destroy({}) = {:p}", Self::ALLOC_TYPE_NAME, self);
     }
 }
@@ -1712,6 +1703,12 @@ pub fn bun__websocketclient__init_with_tunnel(
 ) -> *mut crate::websocket_client::WebSocketClient {
     WebSocketClient::init_with_tunnel(outgoing, tunnel, global_this, buffered_data, deflate_params)
 }
+// HOST_EXPORT(Bun__WebSocketClient__deliverInitialData, c)
+pub fn bun__websocketclient__deliver_initial_data(
+    this: ThisPtr<crate::websocket_client::WebSocketClient>,
+) {
+    WebSocketClient::deliver_initial_data(this)
+}
 // HOST_EXPORT(Bun__WebSocketClient__memoryCost, c)
 pub fn bun__websocketclient__memory_cost(this: &crate::websocket_client::WebSocketClient) -> usize {
     this.memory_cost()
@@ -1789,6 +1786,12 @@ pub fn bun__websocketclienttls__init(
         secure,
     )
 }
+// HOST_EXPORT(Bun__WebSocketClientTLS__deliverInitialData, c)
+pub fn bun__websocketclienttls__deliver_initial_data(
+    this: ThisPtr<crate::websocket_client::WebSocketClientTLS>,
+) {
+    WebSocketClientTLS::deliver_initial_data(this)
+}
 // HOST_EXPORT(Bun__WebSocketClientTLS__memoryCost, c)
 pub fn bun__websocketclienttls__memory_cost(
     this: &crate::websocket_client::WebSocketClientTLS,
@@ -1813,52 +1816,12 @@ pub fn bun__websocketclienttls__write_string(
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// InitialDataHandler
+// InitialData
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Bytes the upgrade client read past the end of the handshake response; boxed
 /// so they cross C++ (`WebSocket::didConnect*`) as one opaque pointer.
 pub struct InitialData(pub Vec<u8>);
-
-/// Handshake-overflow bytes plus the pending-activity ref that keeps the C++
-/// `WebSocket` alive until they are delivered.
-struct InitialDataHandler {
-    slice: Vec<u8>,
-    _pending_activity: CppWebSocketRef,
-}
-
-impl InitialDataHandler {
-    /// Feed the buffered bytes to `ws` as if they had just arrived.
-    fn deliver<const SSL: bool>(self, ws: ThisPtr<WebSocket<SSL>>) {
-        // For tunnel mode, tcp is detached but connection is still active through the tunnel
-        let is_connected = !ws.tcp.get().is_closed() || ws.tunnel().is_some();
-        if ws.cpp_websocket().is_some() && is_connected {
-            WebSocket::<SSL>::handle_data(ws, &self.slice);
-        }
-    }
-}
-
-/// Microtask that delivers [`InitialDataHandler`] ahead of fresh socket data.
-pub(crate) struct InitialDataTask<const SSL: bool> {
-    /// Detached by `WebSocket`'s `Drop` (or by `handle_data` draining `data`
-    /// first) so a task that outlives its client does nothing.
-    ws: Cell<Option<BackRef<WebSocket<SSL>, Root>>>,
-    data: JsCell<Option<InitialDataHandler>>,
-}
-
-impl<const SSL: bool> jsc::MicrotaskCallback for InitialDataTask<SSL> {
-    fn run(self: Box<Self>) {
-        let Some(ws) = self.ws.take() else {
-            return;
-        };
-        let ws = ws.this_ptr();
-        ws.pending_initial_task.set(None);
-        if let Some(initial_data) = self.data.replace(None) {
-            let _guard = RefPtr::from_this(ws);
-            initial_data.deliver(ws);
-        }
-    }
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // ErrorCode

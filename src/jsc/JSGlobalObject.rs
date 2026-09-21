@@ -829,37 +829,6 @@ impl JSGlobalObject {
         self.throw_value(instance)
     }
 
-    /// Queue a native callback as a microtask. Callers supply the C-ABI
-    /// trampoline directly; the wrapper only erases the context pointer type.
-    pub fn queue_microtask_callback<C>(
-        &self,
-        ctx_val: *mut C,
-        function: unsafe extern "C" fn(*mut c_void),
-    ) {
-        crate::mark_binding();
-        JSC__JSGlobalObject__queueMicrotaskCallback(self, ctx_val.cast::<c_void>(), function);
-    }
-
-    /// Queue `task` to run as a microtask; the queue owns the box until then
-    /// and the returned back-reference is valid until [`MicrotaskCallback::run`]
-    /// is entered. If the VM is torn down before the microtask queue drains,
-    /// the box is leaked along with the rest of the queue.
-    pub fn queue_microtask_boxed<T: MicrotaskCallback>(
-        &self,
-        task: Box<T>,
-    ) -> bun_ptr::BackRef<T, bun_ptr::Root> {
-        unsafe extern "C" fn run<T: MicrotaskCallback>(ctx: *mut c_void) {
-            // SAFETY: `ctx` is the `Box<T>` leaked below; the microtask queue
-            // invokes each callback exactly once.
-            T::run(unsafe { bun_core::heap::take(ctx.cast::<T>()) });
-        }
-        let task = bun_core::heap::into_raw(task);
-        self.queue_microtask_callback(task, run::<T>);
-        // SAFETY: `task` is the live leaked box; see the doc comment for the
-        // holder's obligation.
-        unsafe { bun_ptr::BackRef::from_root(task) }
-    }
-
     pub fn queue_microtask(&self, function: JSValue, args: &[JSValue]) {
         self.queue_microtask_job(
             function,
@@ -1508,15 +1477,6 @@ unsafe extern "C" {
         target: BunPluginTarget,
     ) -> JSValue;
 
-    // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
-    // ABI-identical to non-null `*const`); `ctx` is an opaque round-trip pointer
-    // C++ only stores and forwards to `function` (never dereferenced as Rust data).
-    safe fn JSC__JSGlobalObject__queueMicrotaskCallback(
-        this: &JSGlobalObject,
-        ctx: *mut c_void,
-        function: unsafe extern "C" fn(*mut c_void),
-    );
-
     safe fn Bun__Process__emitWarning(
         global_object: &JSGlobalObject,
         warning: JSValue,
@@ -1611,9 +1571,4 @@ impl ScriptExecutionContextIdentifier {
 unsafe extern "C" {
     // safe: by-value `u32` in, raw nullable pointer out (caller checks before deref).
     safe fn ScriptExecutionContextIdentifier__getGlobalObject(id: u32) -> *mut JSGlobalObject;
-}
-
-/// A native microtask queued with [`JSGlobalObject::queue_microtask_boxed`].
-pub trait MicrotaskCallback: Sized + 'static {
-    fn run(self: Box<Self>);
 }

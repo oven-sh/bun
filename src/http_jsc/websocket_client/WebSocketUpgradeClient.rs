@@ -39,7 +39,7 @@ use bun_ptr::{BackRef, JsCell, RefPtr, ThisPtr};
 use super::websocket_proxy_tunnel::IntoUpgradeClientRef;
 use bun_uws::{self as uws, SocketHandler, SocketKind};
 
-use super::cpp_websocket::CppWebSocket;
+use super::cpp_websocket::{CppWebSocket, CppWebSocketRef};
 use super::websocket_deflate as WebSocketDeflate;
 use super::websocket_proxy::WebSocketProxy;
 use super::websocket_proxy_tunnel::WebSocketProxyTunnel;
@@ -815,17 +815,34 @@ where
         let head_len = response.bytes_read;
         let is_101 = response.status_code == 101;
 
-        // 101: one scope across 'upgrade'+'open' so microtasks drain after open.
-        let _scope = is_101
-            .then(|| bun_jsc::virtual_machine::VirtualMachine::get().enter_event_loop_scope());
+        // With bytes behind the 101: a ref that keeps the C++ WebSocket alive
+        // whatever the `open` listeners and their microtasks do to it.
+        let overflow_owner = this
+            .cpp_websocket()
+            .filter(|_| is_101 && full.len() > head_len)
+            .map(|ws| CppWebSocketRef::new(&ws));
+        {
+            // 101: one scope across 'upgrade'+'open' so microtasks drain after open.
+            let _scope = is_101
+                .then(|| bun_jsc::virtual_machine::VirtualMachine::get().enter_event_loop_scope());
 
-        if let Some(ws) = this.cpp_websocket() {
-            Self::dispatch_handshake(ws, &response, if is_101 { &[] } else { &full[head_len..] });
-            if this.cpp_websocket().is_none() {
-                return;
+            if let Some(ws) = this.cpp_websocket() {
+                Self::dispatch_handshake(
+                    ws,
+                    &response,
+                    if is_101 { &[] } else { &full[head_len..] },
+                );
+                if this.cpp_websocket().is_none() {
+                    return;
+                }
             }
+            Self::process_response(this, response, &full[head_len..]);
         }
-        Self::process_response(this, response, &full[head_len..]);
+        // The scope above has drained the microtasks of `open`: the connected
+        // client now parses those frames, as it parses the frames of a later read.
+        if let Some(ws) = overflow_owner {
+            ws.deliver_initial_data();
+        }
     }
 
     /// Takes `ThisPtr<Self>` because `terminate`/`handle_data` may free `this`.

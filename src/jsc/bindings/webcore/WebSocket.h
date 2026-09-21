@@ -211,6 +211,9 @@ public:
     void didClose(unsigned unhandledBufferedAmount, unsigned short code, const String& reason);
     void didConnect(us_socket_t* socket, void* bufferedData, const PerMessageDeflateParams* deflate_params, void* customSSLCtx);
     void didConnectWithTunnel(void* tunnel, void* bufferedData, const PerMessageDeflateParams* deflate_params);
+    // The connected client parses the `bufferedData` didConnect*() gave it. The upgrade client
+    // calls this after the microtask checkpoint that follows the open event.
+    void deliverInitialData();
     void didFailWithErrorCode(Bun::WebSocketErrorCode code);
 
     void didReceiveMessage(String&& message);
@@ -227,7 +230,7 @@ public:
     };
     void didReceiveHandshakeResponse(uint16_t statusCode, std::span<const uint8_t> statusMessage, std::span<const HandshakeRawHeader> headers, std::span<const uint8_t> body);
 
-    // A single claim the native client holds while it has queued work that will call back in.
+    // A single claim the native side holds while it has work left that will call back in.
     void holdPendingActivityForClient()
     {
         ASSERT(!m_pendingActivityForClient);

@@ -622,9 +622,11 @@ impl<T: JsSinkType> JSSink<T> {
         // too: a chunk written before the sink backed up, or a small one buffered beside the operation.
         // SAFETY: `operation` is the sink's pending slot, which the sink owns and `this` keeps alive; nothing
         // has run since the write that returned it, so it is still the pending one.
-        unsafe {
-            (*operation).consumed += wrote;
-            (*operation).result = Writable::Owned((*operation).consumed);
+        let operation = unsafe { &mut *operation };
+        operation.consumed += wrote;
+        // `result` is the running total, unless a write failed beside the operation: then it is that error.
+        if let Writable::Owned(total) = &mut operation.result {
+            *total = operation.consumed;
         }
         Self::flush_value(this, global, &cx, true)?;
         Ok(promise)

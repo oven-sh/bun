@@ -131,6 +131,9 @@ extern "C" JSC::EncodedJSValue ReadableStream__proxy(JSC::EncodedJSValue possibl
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stream = toReadableStream(globalObject, scope, possibleReadableStream);
     RETURN_IF_EXCEPTION(scope, {});
+    // Same guard as pipeThrough(): readableStreamPipeTo only asserts this.
+    if (isReadableStreamLocked(stream))
+        return throwVMTypeError(globalObject, scope, "Cannot pipe a locked ReadableStream"_s);
     auto* domGlobalObject = defaultGlobalObject(globalObject);
     auto* transform = WebCore::JSTransformStream::create(vm, WebCore::getDOMStructure<WebCore::JSTransformStream>(vm, *domGlobalObject));
     setUpNativeTransformStream(globalObject, transform, TransformerKind::Identity);

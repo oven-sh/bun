@@ -1608,6 +1608,44 @@ describe("new Request(input) transfers the input body", () => {
     });
   });
 
+  // The two-arg constructor reads `url` from the input after its usability
+  // check. A getter that touches the body in between must make the constructor
+  // throw, not reach the transfer with a locked or disturbed stream.
+  describe.each([
+    ["locks the body", (body: ReadableStream) => void body.getReader()],
+    [
+      "reads from the body and releases the lock",
+      (body: ReadableStream) => {
+        const reader = body.getReader();
+        void reader.read();
+        reader.releaseLock();
+      },
+    ],
+  ] as const)("two-arg new Request(input, init) when the input's `url` getter %s", (_, touch) => {
+    test("throws the used-input TypeError", () => {
+      class Sneaky extends Request {
+        get url() {
+          touch(this.body!);
+          return super.url;
+        }
+      }
+      const input = new Sneaky("http://example.com/", {
+        method: "POST",
+        body: new ReadableStream({
+          start(c) {
+            c.enqueue(new TextEncoder().encode("hello"));
+            c.close();
+          },
+        }),
+        // @ts-expect-error duplex
+        duplex: "half",
+      });
+      expect(() => new Request(input, {})).toThrow(
+        "Cannot construct a Request with a Request object that has already been used.",
+      );
+    });
+  });
+
   // A Bun.serve incoming Request shares its body slot with the RequestContext.
   // The transfer must not move that Locked value out of the shared slot; it
   // materializes the stream in place so chunks still reach the copy. Cover

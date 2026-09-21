@@ -1457,6 +1457,11 @@ impl Request {
             let input = url_or_object
                 .as_class_ref::<Request>()
                 .expect("arguments[0] matched as a Request in the loop above");
+            // Checked again: the `url` / `signal` reads after the loop's check
+            // can run a getter on the input that locks or reads its body.
+            if let Err(e) = input.throw_if_input_body_unusable(cx.global()) {
+                bail!(Err(e));
+            }
             match input.transfer_body_value(cx) {
                 Ok(v) => *req.body_value_mut() = v,
                 Err(e) => bail!(Err(e)),

@@ -345,8 +345,7 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
         }
     }
 
-    // A DONT_CONTEXTIFY context has no sandbox. A proxy of this same global is never its
-    // sandbox: lookups on the global would forward to the proxy and back without end.
+    // No sandbox for DONT_CONTEXTIFY. A global's own proxy as its sandbox would recurse forever.
     auto* globalProxy = dynamicDowncast<JSC::JSGlobalProxy>(contextifiedObject);
     bool isOwnGlobalProxy = globalProxy && globalProxy->target() == globalObject;
     if (!globalObject->isNotContextified() && !isOwnGlobalProxy) {

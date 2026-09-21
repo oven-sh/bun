@@ -296,6 +296,104 @@ describe("bunshell", () => {
       await TestBuilder.command`echo $(echo hi)`.quiet().stdout("hi\n").run();
     });
 
+    // A command substitution captures only stdout. Its stderr goes to the
+    // shell's stderr, also when .quiet() captures that stderr.
+    describe("cmd subst stderr", () => {
+      TestBuilder.command`echo "[$(ls nonexistent-dir-zz)]"`
+        .quiet()
+        .stdout("[]\n")
+        .stderr("ls: nonexistent-dir-zz: No such file or directory\n")
+        .runAsTest("builtin");
+
+      TestBuilder.command`echo "[$(${BUN} -e 'console.log("out"); console.error("err")')]"`
+        .quiet()
+        .stdout("[out]\n")
+        .stderr("err\n")
+        .runAsTest("subprocess");
+
+      TestBuilder.command`echo "[$(nonexistent-command-zz)]"`
+        .quiet()
+        .stdout("[]\n")
+        .stderr("bun: command not found: nonexistent-command-zz\n")
+        .runAsTest("command not found");
+
+      TestBuilder.command`echo "[$(echo "<$(ls nonexistent-dir-zz)>")]"`
+        .quiet()
+        .stdout("[<>]\n")
+        .stderr("ls: nonexistent-dir-zz: No such file or directory\n")
+        .runAsTest("nested");
+
+      TestBuilder.command`VAR=$(ls nonexistent-dir-zz); echo "[$VAR]"`
+        .quiet()
+        .stdout("[]\n")
+        .stderr("ls: nonexistent-dir-zz: No such file or directory\n")
+        .runAsTest("in an assignment");
+
+      TestBuilder.command`(echo "[$(ls nonexistent-dir-zz)]")`
+        .quiet()
+        .stdout("[]\n")
+        .stderr("ls: nonexistent-dir-zz: No such file or directory\n")
+        .runAsTest("in a subshell");
+
+      TestBuilder.command`echo "[$(ls nonexistent-dir-zz)]" | cat`
+        .quiet()
+        .stdout("[]\n")
+        .stderr("ls: nonexistent-dir-zz: No such file or directory\n")
+        .runAsTest("in a pipeline");
+
+      TestBuilder.command`ls before-zz; echo "[$(ls inside-zz)]"; ls after-zz`
+        .quiet()
+        .stdout("[]\n")
+        .stderr(
+          "ls: before-zz: No such file or directory\n" +
+            "ls: inside-zz: No such file or directory\n" +
+            "ls: after-zz: No such file or directory\n",
+        )
+        .exitCode(1)
+        .runAsTest("keeps the order of the stderr writes around it");
+
+      TestBuilder.command`echo "[$(ls nonexistent-dir-zz 2>&1)]"`
+        .quiet()
+        .stdout("[ls: nonexistent-dir-zz: No such file or directory]\n")
+        .stderr("")
+        .runAsTest("2>&1 inside the substitution still captures stderr in the value");
+
+      test("captures the same stderr as without .quiet()", async () => {
+        const quiet = await $`echo "[$(ls nonexistent-dir-zz)]"`.quiet();
+        const loud = await $`echo "[$(ls nonexistent-dir-zz)]"`;
+        expect({
+          stdout: quiet.stdout.toString(),
+          stderr: quiet.stderr.toString(),
+          exitCode: quiet.exitCode,
+        }).toEqual({
+          stdout: loud.stdout.toString(),
+          stderr: loud.stderr.toString(),
+          exitCode: loud.exitCode,
+        });
+        expect(quiet.stderr.toString()).toBe("ls: nonexistent-dir-zz: No such file or directory\n");
+      });
+
+      test("ShellError.stderr from .text() has it", async () => {
+        const err = await $`$(ls nonexistent-dir-zz)`
+          .throws(true)
+          .text()
+          .then(
+            () => undefined,
+            e => e,
+          );
+        expect(err).toBeInstanceOf($.ShellError);
+        expect({
+          stdout: err.stdout.toString(),
+          stderr: err.stderr.toString(),
+          exitCode: err.exitCode,
+        }).toEqual({
+          stdout: "",
+          stderr: "ls: nonexistent-dir-zz: No such file or directory\n",
+          exitCode: 1,
+        });
+      });
+    });
+
     test.each([
       { value: undefined, expectedQuiet: true, description: "quiet()" },
       { value: true, expectedQuiet: true, description: "quiet(true)" },

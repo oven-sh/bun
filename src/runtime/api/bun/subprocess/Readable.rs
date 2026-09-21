@@ -293,13 +293,13 @@ impl Readable {
     /// The error reading this output ended with, taken out of it. `spawnSync` asks before
     /// `to_buffered_value` and throws it: the output that was lost cannot be returned.
     pub(crate) fn take_read_error(&mut self) -> Option<bun_sys::Error> {
-        if !matches!(self, Readable::Errored(..)) {
-            return None;
+        match mem::replace(self, Readable::Closed) {
+            Readable::Errored(_, err) => Some(err),
+            other => {
+                *self = other;
+                None
+            }
         }
-        let Readable::Errored(_, err) = mem::replace(self, Readable::Closed) else {
-            unreachable!()
-        };
-        Some(err)
     }
 }
 

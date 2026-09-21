@@ -786,6 +786,20 @@ impl ByteStream {
         streams::Result::Pending(self.pending.as_ptr())
     }
 
+    /// The JS stream was errored with `reason`. A native reader that waits now fails with it.
+    pub(crate) fn error_native_consumer(&self, reason: JSValue) {
+        let waiting = self.sink.get().is_some()
+            || self.buffer_action.get().is_some()
+            || self.pending.get().state == streams::PendingState::Pending;
+        self.on_data(streams::Result::Err(if waiting {
+            let global = self.parent_const().global_this();
+            streams::StreamError::JSValue(StrongOptional::create(reason, global))
+        } else {
+            // Kept for a reader that already holds this source and pulls later. A stored `reason` would be a GC root.
+            streams::StreamError::AbortReason(jsc::CommonAbortReason::UserAbort)
+        }));
+    }
+
     pub(crate) fn on_cancel(&self) {
         bun_jsc::mark_binding!();
         let view = self.value();
@@ -904,9 +918,7 @@ impl ByteStream {
     }
 
     pub(crate) fn to_any_blob(&self) -> Option<blob::Any> {
-        // A terminal error is a last chunk too, but it is not the whole body.
-        let failed = matches!(self.pending.get().result, streams::Result::Err(_));
-        if self.has_received_last_chunk.get() && !failed {
+        if self.has_received_last_chunk.get() {
             let buffer = self.buffer.replace(Vec::new());
             self.done.set(true);
             self.pending.with_mut(|p| {

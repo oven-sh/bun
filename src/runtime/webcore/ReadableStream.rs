@@ -287,13 +287,11 @@ impl ReadableStream {
         self.cancel(global_this)
     }
 
-    /// Like [`Self::cancel`] but every reader, JS or native, fails with `reason` instead of a clean end.
+    /// Like [`Self::cancel`] but pending reads reject with `reason` instead of resolving `{done: true}`.
     pub(crate) fn error(&self, global_this: &JSGlobalObject, reason: JSValue) -> JsResult<()> {
         let result = bun_jsc::cpp::ReadableStream__error(self.value, global_this, reason);
         if let Some(bytes) = self.ptr.bytes() {
-            bytes.on_data(streams::StreamResult::Err(streams::StreamError::JSValue(
-                jsc::strong::Optional::create(reason, global_this),
-            )));
+            bytes.error_native_consumer(reason);
         }
         self.done();
         result

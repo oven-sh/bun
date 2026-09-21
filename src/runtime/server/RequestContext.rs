@@ -3192,13 +3192,6 @@ where
                                 return;
                             }
                             let resp = this.resp.get().expect("infallible: resp bound");
-                            if let Some(err) = byte_stream.take_pending_error() {
-                                let js_err = err.to_js(global_this);
-                                this.response_body_readable_stream_ref
-                                    .with_mut(|s| s.deinit());
-                                this.run_error_handler(js_err);
-                                return;
-                            }
                             // If we've received the complete body by the time this function is called
                             // we can avoid streaming it and just send it all at once.
                             if byte_stream.has_received_last_chunk.get() {

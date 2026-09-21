@@ -3,6 +3,7 @@ import { bunEnv, bunExe, isASAN, isMacOS, tempDir } from "harness";
 import { once } from "node:events";
 import net from "node:net";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 
 // Aborting a fetch whose request body stream is still uploading must also
 // settle the response side. The failure callback used to return right after
@@ -214,8 +215,9 @@ test.concurrent("abort() errors a fully-buffered fetch response body", async () 
 // reader of the body rejects with `signal.reason` itself. The readers that take `res.body`
 // natively (`new Response(res.body).text()` and `Bun.readableStreamTo*()` buffer it without a
 // reader, `Bun.write()`, a fetch() upload, HTMLRewriter and a Bun.serve response wire it to their
-// sink) got a fresh "AbortError: The operation was aborted." when they had already started, and
-// an empty body that ended cleanly when they started after the abort.
+// sink, `Readable.fromWeb()` pulls from it) got a fresh "AbortError: The operation was aborted."
+// or a clean end when they had already started, and an empty body that ended cleanly when they
+// started after the abort.
 describe("aborting mid-body fails every reader of res.body with signal.reason", () => {
   // A head, 40 of 100 body bytes, then nothing: the body is still arriving when the signal fires.
   async function stalledBodyServer() {
@@ -363,29 +365,99 @@ describe("aborting mid-body fails every reader of res.body with signal.reason", 
     },
   );
 
-  // A response that has not started can still go to the error handler.
-  test.concurrent("Bun.serve response of new Response(res.body), abort before the response starts", async () => {
-    using server = await stalledBodyServer();
-    const reason = new Error("custom");
-    await using proxy = Bun.serve({
-      port: 0,
-      async fetch() {
-        const controller = new AbortController();
-        const res = await fetch(server.url, { signal: controller.signal });
-        const body = res.body;
+  // Readable.fromWeb() takes the native source away from the stream and pulls from it on demand.
+  test.concurrent.each(["while it waits for more", "before Readable.fromWeb()"])(
+    "Readable.fromWeb(res.body), abort %s",
+    async timing => {
+      using server = await stalledBodyServer();
+      const controller = new AbortController();
+      const reason = new Error("custom");
+      const res = await fetch(server.url, { signal: controller.signal });
+      expect(res.body).toBeInstanceOf(ReadableStream);
+      if (timing === "before Readable.fromWeb()") controller.abort(reason);
+      const readable = Readable.fromWeb(res.body as any);
+      const settled = new Promise(resolve => readable.on("error", resolve).on("end", () => resolve("ended")));
+      if (timing === "while it waits for more") {
+        // The 40 bytes arrived, and one turn later the next pull is parked.
+        await once(readable, "data");
+        await new Promise(resolve => setImmediate(resolve));
         controller.abort(reason);
-        return new Response(body);
-      },
-      error: error => new Response(error === reason ? "signal.reason" : `not signal.reason: ${error}`, { status: 502 }),
-    });
+      } else {
+        readable.resume();
+      }
+      expect(await settled).toBe(reason);
+    },
+  );
 
-    const res = await fetch(proxy.url);
-    expect({ status: res.status, body: await res.text() }).toEqual({ status: 502, body: "signal.reason" });
+  // Nothing waits, so nothing can take the reason, and to keep it natively would root it. The
+  // source still has to fail: main ended such a stream as if the body were complete.
+  test.concurrent("Readable.fromWeb(res.body) that has not read yet fails with an AbortError", async () => {
+    using server = await stalledBodyServer();
+    const controller = new AbortController();
+    const res = await fetch(server.url, { signal: controller.signal });
+    const readable = Readable.fromWeb(res.body as any);
+    const settled = new Promise<any>(resolve => readable.on("error", resolve).on("end", () => resolve("ended")));
+    controller.abort(new Error("custom"));
+    readable.resume();
+    expect((await settled)?.name).toBe("AbortError");
   });
 
-  // A response that already streams has sent its status, so the server reports the failure itself
-  // (stderr) and cuts the connection.
-  test.concurrent("Bun.serve response of new Response(res.body), abort after the response started", async () => {
+  // The reason is not kept natively: a Strong there would root reason -> Response -> stream.
+  test.concurrent(
+    "an abort reason that references its Response is collected after the body is read",
+    async () => {
+      const script = `
+        const { heapStats } = require("bun:jsc");
+        const net = require("node:net");
+        const sockets = new Set();
+        const upstream = net.createServer(socket => {
+          sockets.add(socket);
+          socket.on("error", () => {});
+          socket.on("close", () => sockets.delete(socket));
+          socket.once("data", () =>
+            socket.write("HTTP/1.1 200 OK\\r\\nContent-Length: 100\\r\\n\\r\\n" + Buffer.alloc(40, "x")),
+          );
+        });
+        await new Promise(resolve => upstream.listen(0, "127.0.0.1", resolve));
+        const url = "http://127.0.0.1:" + upstream.address().port;
+        async function once() {
+          const controller = new AbortController();
+          const res = await fetch(url, { signal: controller.signal });
+          void res.body;
+          controller.abort(new Error("custom", { cause: res }));
+          await res.text().catch(() => {});
+        }
+        const count = async () => {
+          for (let i = 0; i < 3; i++) {
+            Bun.gc(true);
+            await new Promise(resolve => setImmediate(resolve));
+          }
+          return heapStats().objectTypeCounts.Response || 0;
+        };
+        for (let i = 0; i < 8; i++) await once();
+        const baseline = await count();
+        for (let i = 0; i < 64; i++) await once();
+        const after = await count();
+        for (const socket of sockets) socket.destroy();
+        console.log(JSON.stringify({ leaked: after > baseline + 8 }));
+        process.exit(0);
+      `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(stdout).toBe('{"leaked":false}\n');
+      expect(exitCode).toBe(0);
+    },
+    isASAN ? 30_000 : 5_000,
+  );
+
+  // The server reports the failure itself (stderr) and cuts the connection, as for any stream
+  // that errors. Before this it answered an aborted body with a complete, empty 200.
+  test.concurrent.each([
+    ["before the response starts", '{"rejected":true}'],
+    ["after the response started", '{"status":200,"first":40}'],
+  ])("Bun.serve response of new Response(res.body), abort %s", async (timing, seen) => {
     const script = `
       import net from "node:net";
       const upstream = net.createServer(socket => {
@@ -395,28 +467,42 @@ describe("aborting mid-body fails every reader of res.body with signal.reason", 
         );
       });
       await new Promise(resolve => upstream.listen(0, "127.0.0.1", resolve));
-      let controller;
+      let abort;
       const proxy = Bun.serve({
         port: 0,
         async fetch() {
-          controller = new AbortController();
+          const controller = new AbortController();
+          abort = () => controller.abort(new Error("custom reason"));
           const res = await fetch("http://127.0.0.1:" + upstream.address().port, { signal: controller.signal });
-          return new Response(res.body);
+          const body = res.body;
+          if (process.env.ABORT_TIMING === "before the response starts") abort();
+          return new Response(body);
         },
       });
-      const res = await fetch(proxy.url);
-      const reader = res.body.getReader();
-      const first = await reader.read();
-      controller.abort(new Error("custom reason"));
-      await reader.read().catch(() => {});
-      console.log(JSON.stringify({ status: res.status, first: first.value.length }));
+      let seen;
+      try {
+        const res = await fetch(proxy.url);
+        const reader = res.body.getReader();
+        const first = await reader.read();
+        abort();
+        await reader.read().catch(() => {});
+        seen = { status: res.status, first: first.value?.length ?? null };
+      } catch {
+        seen = { rejected: true };
+      }
+      console.log(JSON.stringify(seen));
       process.exit(0);
     `;
-    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, ABORT_TIMING: timing },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).toContain("error: custom reason");
-    expect(stdout).toBe('{"status":200,"first":40}\n');
+    expect(stdout).toBe(seen + "\n");
     expect(exitCode).toBe(0);
   });
 });

@@ -102,6 +102,34 @@ pub mod TestingAPIs {
         }
     }
 
+    /// The drive-letter fallback of `GetFinalPathNameByHandle` for an fd; `undefined` off Windows or with no letter.
+    #[bun_jsc::host_fn]
+    pub fn final_path_from_drive_letters(
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        use crate::FdJsc as _;
+        let Some(fd) = bun_sys::Fd::from_js_validated(frame.argument(0), global)? else {
+            return Err(global.throw(format_args!(
+                "finalPathFromDriveLetters: expected 1 fd argument"
+            )));
+        };
+        #[cfg(not(windows))]
+        {
+            let _ = fd;
+            return Ok(JSValue::UNDEFINED);
+        }
+        #[cfg(windows)]
+        {
+            use bun_jsc::StringJsc as _;
+            let mut buf = vec![0u16; bun_core::PATH_MAX_WIDE];
+            return match bun_sys::windows::drive_letter_path_for_testing(fd, &mut buf) {
+                Some(path) => bun_core::String::clone_utf16(path).into_js(global),
+                None => Ok(JSValue::UNDEFINED),
+            };
+        }
+    }
+
     /// Exposes the `bun.sys.Sigaction` struct layout via a SIGUSR2 install /
     /// readback / restore round-trip so `test/internal/sigaction-layout.test.ts`
     /// can verify that the libc's sigaction sees the handler+flags we set

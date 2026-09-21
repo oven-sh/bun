@@ -746,6 +746,13 @@ export const translateNtStatusToE: (status: number) => string | undefined = $new
   1,
 );
 
+/** Windows: the `X:\...` path of an fd, composed without the mount manager. `undefined` off Windows or with no letter. */
+export const finalPathFromDriveLetters: (fd: number) => string | undefined = $newRustFunction(
+  "sys.rs",
+  "TestingAPIs.finalPathFromDriveLetters",
+  1,
+);
+
 export const sigactionLayout: () =>
   | undefined
   | {

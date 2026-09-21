@@ -176,6 +176,7 @@ test("WebSocket upgrade should unref body_read_ref from response", async () => {
 
     async function upgradeRequestThatDeclaresABody(upgradeInLaterTask, sendBody) {
       const tasksBefore = getEventLoopStats().activeTasks;
+      let request;
       let requestEnded = false;
       // A request that is not taken for an upgrade gets an answer too, so the client never waits.
       const server = http.createServer((req, res) => res.writeHead(426).end());
@@ -183,7 +184,7 @@ test("WebSocket upgrade should unref body_read_ref from response", async () => {
       server.on("upgrade", (req, socket, head) => {
         const upgrade = () => {
           wsServer.handleUpgrade(req, socket, head, () => {});
-          req.on("end", () => (requestEnded = true)).resume();
+          request = req.on("end", () => (requestEnded = true)).resume();
         };
         if (upgradeInLaterTask) setImmediate(upgrade);
         else upgrade();
@@ -212,7 +213,10 @@ test("WebSocket upgrade should unref body_read_ref from response", async () => {
         if (!received.includes("\\r\\n\\r\\n")) return;
         // The response is in, so the upgrade and the callbacks it queued are over.
         const leakedTasks = getEventLoopStats().activeTasks - tasksBefore;
-        resolve({ status: received.split("\\r\\n")[0], leakedTasks, requestEnded });
+        const observed = { status: received.split("\\r\\n")[0], leakedTasks };
+        // As in Node, a request whose body never arrives stays open. The upgrade does not end it.
+        if (!sendBody) observed.requestOpen = !requestEnded && !request.complete;
+        resolve(observed);
       });
       client.on("error", reject);
       client.on("close", () => reject(new Error("closed before the response: " + JSON.stringify(received))));
@@ -245,7 +249,7 @@ test("WebSocket upgrade should unref body_read_ref from response", async () => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  const upgraded = { status: "HTTP/1.1 101 Switching Protocols", leakedTasks: 0, requestEnded: true };
+  const upgraded = { status: "HTTP/1.1 101 Switching Protocols", leakedTasks: 0 };
   expect({
     results: stdout.startsWith("{") ? JSON.parse(stdout) : stdout,
     stderr,
@@ -253,10 +257,10 @@ test("WebSocket upgrade should unref body_read_ref from response", async () => {
     signalCode: proc.signalCode,
   }).toEqual({
     results: {
-      "in a later task, body not sent": upgraded,
+      "in a later task, body not sent": { ...upgraded, requestOpen: true },
       "in a later task, body sent": upgraded,
       "in the 'upgrade' event, body sent": upgraded,
-      "in the 'upgrade' event, body not sent": upgraded,
+      "in the 'upgrade' event, body not sent": { ...upgraded, requestOpen: true },
     },
     stderr: "",
     // The script calls process.exit() only for a leak: the process has to exit by itself.

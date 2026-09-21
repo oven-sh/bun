@@ -17,7 +17,6 @@ use crate::webcore::blob::{Blob, FileCloser, FileOpener, MAX_SIZE, SizeType, Sto
 use crate::webcore::node_types::PathOrFileDescriptor;
 #[cfg(windows)]
 use bun_collections::ByteVecExt as _;
-use bun_core;
 use bun_core::String as BunString;
 use bun_io as io;
 #[cfg(not(windows))]

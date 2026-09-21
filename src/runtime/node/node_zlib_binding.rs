@@ -16,7 +16,6 @@ use bun_jsc::{
     WorkPoolTask,
 };
 use bun_threading::work_pool::WorkPool;
-use bun_zlib;
 
 bun_output::declare_scope!(zlib, hidden);
 

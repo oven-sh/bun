@@ -15,7 +15,6 @@ use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Sta
 use bun_core::{self, Output};
 #[cfg(windows)]
 use bun_jsc as jsc;
-use bun_sys;
 
 use super::channel::{Channel, ChannelOwner};
 use super::coordinator::Coordinator;

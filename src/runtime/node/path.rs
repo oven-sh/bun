@@ -7,7 +7,6 @@ use crate::node::validators::{validate_object, validate_string};
 use bun_collections::smallvec::SmallVec;
 use bun_core::{Utf8Bytes, strings};
 use bun_paths::{self, MAX_PATH_BYTES, Platform};
-use bun_sys;
 
 /// Create a JS string from a `[T]` slice (T = u8 | u16).
 ///

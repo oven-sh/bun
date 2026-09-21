@@ -24,7 +24,6 @@ use bun_sys::ReturnCodeExt as _;
 use bun_sys::windows::libuv as uv;
 #[cfg(windows)]
 use bun_sys::windows::libuv::{UvHandle as _, UvStream as _};
-use bun_uws;
 
 // `bun.cpp.*` — generated C++ dispatch shims for IPC handle (de)serialization
 // (`IPCSerialize` / `IPCParse`) are declared once in `bun_jsc::cpp` and called

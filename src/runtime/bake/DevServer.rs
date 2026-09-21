@@ -138,7 +138,6 @@ bun_output::declare_scope!(SourceMapStore, visible);
 
 bun_output::define_scoped_log!(debug_log, crate::bake::dev_server_body::DevServer);
 bun_output::define_scoped_log!(map_log, crate::bake::dev_server_body::SourceMapStore);
-pub(crate) use map_log;
 
 pub(crate) struct Options<'a> {
     /// Arena must live until DevServer drops
@@ -2922,6 +2921,8 @@ pub(crate) struct DeferredRequest {
     pub(crate) weakly_referenced_by_requestcontext: bool,
 }
 
+bun_output::define_scoped_log!(debug_log_dr, DlogeferredRequest, hidden);
+
 pub(crate) mod deferred_request {
     use super::*;
 
@@ -2932,9 +2933,6 @@ pub(crate) mod deferred_request {
 
     pub(crate) type List = bun_collections::pool::SinglyLinkedList<DeferredRequest>;
     pub(crate) type Node = bun_collections::pool::Node<DeferredRequest>;
-
-    bun_output::define_scoped_log!(debug_log_dr, DlogeferredRequest, hidden);
-    pub(super) use debug_log_dr;
 
     /// Sometimes we will call `await bundleNewRoute()` and this will either
     /// resolve with the args for the route, or reject with data
@@ -2962,7 +2960,7 @@ pub(crate) mod deferred_request {
         BundledHtmlPage,
     }
 }
-use deferred_request::{DlogeferredRequest, Handler, PromiseResponse};
+use deferred_request::{Handler, PromiseResponse};
 
 // LAYERING: `SavedRequestUnion` was a local mirror because `server_body`'s
 // copy was unnameable; the canonical enum now lives in `crate::server` so
@@ -3013,7 +3011,7 @@ impl DeferredRequest {
     }
 
     fn on_abort_impl(&mut self) {
-        deferred_request::debug_log_dr!(
+        debug_log_dr!(
             "DeferredRequest(0x{:x}) onAbort",
             std::ptr::from_ref(self) as usize
         );
@@ -3038,7 +3036,7 @@ impl DeferredRequest {
 
     /// *WARNING*: Do not call this directly, instead call `.deref_()`
     fn __deinit(&mut self) {
-        deferred_request::debug_log_dr!(
+        debug_log_dr!(
             "DeferredRequest(0x{:x}) deinitImpl",
             std::ptr::from_ref(self) as usize
         );
@@ -3058,14 +3056,14 @@ impl DeferredRequest {
 
     /// Deinitializes state by aborting the connection.
     fn abort(&mut self) {
-        deferred_request::debug_log_dr!(
+        debug_log_dr!(
             "DeferredRequest(0x{:x}) abort",
             std::ptr::from_ref(self) as usize
         );
         let handler = ::core::mem::replace(&mut self.handler, Handler::Aborted);
         match handler {
             Handler::ServerHandler(saved) => {
-                deferred_request::debug_log_dr!(
+                debug_log_dr!(
                     "  request url: {}",
                     // SAFETY: saved.request is a live *mut webcore::Request (held strong by ctx)
                     bstr::BStr::new(unsafe { (*saved.request).url.get() }.byte_slice())

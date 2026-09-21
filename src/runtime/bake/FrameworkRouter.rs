@@ -18,8 +18,6 @@ use bun_jsc::{
 use bun_paths::{self as paths, MAX_PATH_BYTES};
 use bun_resolver::{DirInfo, Resolver};
 
-use bun_wyhash;
-
 use crate::bake::dev_server::route_bundle::IndexOptional as RouteBundleIndexOptional;
 
 /// Metadata for route files is specified out of line, either in DevServer where

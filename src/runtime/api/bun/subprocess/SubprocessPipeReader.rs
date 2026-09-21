@@ -11,7 +11,6 @@ use bun_io::pipe_reader::PosixFlags;
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 use bun_ptr::{ParentRef, RefCount, RefPtr};
-use bun_sys;
 
 use super::readable::Readable;
 use super::{StdioKind, StdioResult, Subprocess};

@@ -20,7 +20,6 @@ use bun_jsc::{
 #[cfg(target_os = "macos")]
 use bun_paths as path;
 use bun_resolver::fs as Fs;
-use bun_sys;
 
 // ─── Local shims for upstream surfaces not yet wired (Phase D) ───────────────
 

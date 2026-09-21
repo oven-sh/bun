@@ -2,7 +2,6 @@ use core::ffi::c_int;
 #[cfg(not(windows))]
 use core::ffi::{c_char, c_uint, c_void};
 
-use bun_core;
 use bun_core::String as BunString;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};

@@ -11,11 +11,12 @@ use bun_core::string_joiner::StringJoiner;
 use bun_core::{Timespec, TimespecMockMode};
 use bun_sourcemap::{self as source_map, SourceMapState};
 
-use crate::bake::dev_server_body::map_log;
 use crate::bake::{self, Side};
 use crate::timer::EventLoopTimerState;
 
 use super::{ChunkKind, DevServer, EventLoopTimer, Magic, TimerTag, packed_map};
+
+bun_output::define_scoped_log!(map_log, crate::bake::dev_server_body::SourceMapStore);
 
 /// See `SourceId` for what the content of u64 is.
 #[repr(transparent)]

@@ -4,7 +4,6 @@ use std::io::Write as _;
 use bun_collections::{HashMap, StringHashMap};
 use bun_core::output as bun_output;
 use bun_core::printer as js_printer;
-use bun_core;
 use crate::Error;
 use bun_core::{ZStr, strings};
 use bun_js_parser::{self as js_parser, lexer as js_lexer};

@@ -1103,7 +1103,9 @@ test("bun pm cache rm warns when the cache holds the global store", async () => 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toInclude("Cleared 'bun install' cache");
-  expect(stderr).toInclude("note: the global store was removed with it. Run 'bun install' again in each project that uses it.");
+  expect(stderr).toInclude(
+    "note: the global store was removed with it. Run 'bun install' again in each project that uses it.",
+  );
   expect(await exists(cacheDir)).toBeFalse();
   expect(exitCode).toBe(0);
 });

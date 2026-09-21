@@ -509,4 +509,4 @@ impl bun_core::output::ErrName for Error {
     }
 }
 
-pub type Result<T, E = Error> = core::result::Result<T, E>;
+pub(crate) type Result<T, E = Error> = core::result::Result<T, E>;

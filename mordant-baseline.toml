@@ -127,11 +127,18 @@
 "generic_body_not_generic:src/router/lib.rs" = 1
 
 [bun_runtime]
+"always_unwrapped_option:src/runtime/bake/production.rs" = 1
+"always_unwrapped_option:src/runtime/cli/init_command.rs" = 1
+"always_unwrapped_option:src/runtime/node/node_fs.rs" = 1
+"always_unwrapped_option:src/runtime/webcore/streams.rs" = 1
 "defaulted_failure:src/runtime/test_runner/pretty_format.rs" = 4
 "error_collapsed_to_bool:src/runtime/api/bun/Terminal.rs" = 1
 "error_collapsed_to_bool:src/runtime/api/bun/h2_frame_parser.rs" = 29
 "error_collapsed_to_bool:src/runtime/ffi/ffi_body.rs" = 1
+"field_valid_only_when:src/runtime/node/zlib/NativeZlib.rs" = 1
 "field_valid_only_when:src/runtime/shell/builtin/rm.rs" = 1
+"field_valid_only_when:src/runtime/socket/udp_socket.rs" = 1
+"field_valid_only_when:src/runtime/timer/mod.rs" = 2
 "generic_body_not_generic:src/runtime/api/bun/h2_frame_parser.rs" = 2
 "generic_body_not_generic:src/runtime/api/cron.rs" = 1
 "generic_body_not_generic:src/runtime/bake/dev_server/incremental_graph.rs" = 2
@@ -158,6 +165,7 @@
 "generic_body_not_generic:src/runtime/webcore/ReadableStream.rs" = 2
 "generic_body_not_generic:src/runtime/webcore/Sink.rs" = 1
 "generic_body_not_generic:src/runtime/webcore/TextDecoder.rs" = 1
+"parallel_bools:src/runtime/shell/IOWriter.rs" = 1
 "reimplemented_helper:src/runtime/hw_exports.rs" = 1
 "same_match_twice:src/runtime/cli/pack_command.rs" = 1
 "same_match_twice:src/runtime/cli/update_interactive_command.rs" = 2

@@ -23,7 +23,7 @@
 // sibling file so this hot-path module stays focused on the task/timer/poll
 // match loops.
 #[path = "dispatch_js2native.rs"]
-pub mod js2native;
+pub(crate) mod js2native;
 
 use bun_event_loop::ManagedTask::ManagedTask;
 use bun_event_loop::{Task, task_tag};

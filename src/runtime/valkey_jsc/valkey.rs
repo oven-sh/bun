@@ -23,12 +23,12 @@ use super::valkey_command_body::{Args, Command};
 /// `RedisClient::method(…)` thunks against it. The actual host type is
 /// `JSValkeyClient` (sibling `js_valkey.rs`); re-export it under the codegen
 /// spelling here so the generated `pub use` and prototype thunks resolve.
-pub use super::js_valkey_body::JSValkeyClient as RedisClient;
+pub(crate) use super::js_valkey_body::JSValkeyClient as RedisClient;
 
 bun_output::define_scoped_log!(debug, Redis, visible);
 
 /// Connection flags to track Valkey client state
-pub struct ConnectionFlags {
+pub(crate) struct ConnectionFlags {
     pub(crate) is_manually_closed: bool,
     pub(crate) is_selecting_db_internal: bool,
     pub(crate) enable_offline_queue: bool,
@@ -74,7 +74,7 @@ impl Default for ConnectionFlags {
 
 /// Valkey connection status
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum Status {
+pub(crate) enum Status {
     /// No socket has been opened yet; the first `connect()`/`send()` opens one.
     /// Every later disconnect lands in `Disconnected` and goes through
     /// `reconnect()` instead.
@@ -87,7 +87,7 @@ pub enum Status {
 
 /// Valkey protocol types (standalone, TLS, Unix socket)
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum Protocol {
+pub(crate) enum Protocol {
     Standalone,
     StandaloneUnix,
     StandaloneTls,
@@ -95,7 +95,7 @@ pub enum Protocol {
 }
 
 bun_core::comptime_string_map! {
-    pub static PROTOCOL_MAP: Protocol = {
+    pub(crate) static PROTOCOL_MAP: Protocol = {
         b"valkey" => Protocol::Standalone,
         b"valkeys" => Protocol::StandaloneTls,
         b"valkey+tls" => Protocol::StandaloneTls,
@@ -120,7 +120,7 @@ impl Protocol {
 }
 
 #[derive(Default)]
-pub enum TLS {
+pub(crate) enum TLS {
     #[default]
     None,
     Enabled,
@@ -146,7 +146,7 @@ impl PartialEq for TLS {
 }
 
 /// Connection options for Valkey client
-pub struct Options {
+pub(crate) struct Options {
     pub(crate) idle_timeout_ms: u32,
     pub(crate) connection_timeout_ms: u32,
     pub(crate) enable_auto_reconnect: bool,
@@ -171,7 +171,7 @@ impl Default for Options {
     }
 }
 
-pub enum Address {
+pub(crate) enum Address {
     Unix(Box<[u8]>),
     Host { host: Box<[u8]>, port: u16 },
 }
@@ -237,7 +237,7 @@ impl Address {
 }
 
 /// Core Valkey client implementation
-pub struct ValkeyClient {
+pub(crate) struct ValkeyClient {
     pub(crate) socket: AnySocket,
     pub(crate) status: Status,
 
@@ -611,7 +611,7 @@ impl ValkeyClient {
     ///
     /// `Err` when the close event left a termination pending, or, for a half-open socket whose `on_close`
     /// runs by hand here, whatever that left.
-    pub fn close(&mut self, code: uws::CloseCode) -> JsResult<()> {
+    pub(crate) fn close(&mut self, code: uws::CloseCode) -> JsResult<()> {
         if self.socket.is_closed() {
             return Ok(());
         }
@@ -658,7 +658,7 @@ impl ValkeyClient {
     }
 
     /// Handle connection closed event
-    pub fn on_close(&mut self) -> JsResult<()> {
+    pub(crate) fn on_close(&mut self) -> JsResult<()> {
         self.unregister_auto_flusher();
         self.write_buffer.clear_and_free();
         // A partial reply can never complete now; left in place it counts as

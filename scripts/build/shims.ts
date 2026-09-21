@@ -166,8 +166,7 @@ export function registerShimRules(n: Ninja, cfg: Config): void {
 }
 
 /**
- * Emit shim build edges and return link flags. Call once per link site
- * (emitBun, emitLinkOnly) before the link() call.
+ * Emit shim build edges and return link flags. Call before the link() call (emitBun).
  *
  * See scripts/build/workarounds.ts for the self-obsoleting check on each.
  */

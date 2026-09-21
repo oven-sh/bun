@@ -3,33 +3,39 @@
 use crate::node::fs as node_fs;
 use crate::node::types::PathLikeExt as _;
 #[cfg(not(windows))]
-use crate::webcore::blob::{self, Retry};
-use crate::webcore::blob::{MAX_SIZE, MkdirpTarget, SizeType, Store, store};
+use crate::webcore::blob::{self, MkdirpTarget, Retry, store};
+use crate::webcore::blob::{MAX_SIZE, SizeType, Store};
 use crate::webcore::node_types::PathOrFileDescriptor;
 #[cfg(windows)]
 use bun_io as aio;
-use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue};
+#[cfg(not(windows))]
+use bun_jsc::JSGlobalObject;
+use bun_jsc::{self as jsc, JSPromise, JSValue};
 use bun_ptr::RefPtr;
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
 #[cfg(not(windows))]
 use bun_sys::Stat;
+#[cfg(not(windows))]
+use bun_sys::SystemError;
 #[cfg(windows)]
 use bun_sys::windows::libuv;
-use bun_sys::{self, Fd, FdExt, Mode, SystemError};
+use bun_sys::{self, Fd, FdExt, Mode};
 #[cfg(windows)]
 use bun_sys_jsc::ErrorJsc as _;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use core::ffi::c_int;
 #[cfg(windows)]
 use core::ffi::c_void;
+#[cfg(not(windows))]
 use core::marker::ConstParamTy;
 
 // ───────────────────────────────────────────────────────────────────────────
 // CopyFile (POSIX, blocking off-thread)
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct CopyFile {
+#[cfg(not(windows))]
+pub(crate) struct CopyFile {
     #[cfg(not(windows))]
     pub(crate) destination_file_store: store::File,
     pub(crate) source_file_store: store::File,
@@ -55,6 +61,7 @@ pub struct CopyFile {
     pub(crate) destination_mode: Option<Mode>,
 }
 
+#[cfg(not(windows))]
 impl MkdirpTarget for CopyFile {
     fn mkdirp_if_not_exists(&self) -> bool {
         self.mkdirp_if_not_exists
@@ -68,8 +75,10 @@ impl MkdirpTarget for CopyFile {
 }
 
 // SAFETY: file stores/paths and blob store refs (atomic counts); nothing thread-affine.
+#[cfg(not(windows))]
 unsafe impl Send for CopyFile {}
 
+#[cfg(not(windows))]
 impl jsc::JobContext for CopyFile {
     type OffThread = Self;
     type Js = jsc::JSPromiseStrong;
@@ -86,6 +95,7 @@ impl jsc::JobContext for CopyFile {
     }
 }
 
+#[cfg(not(windows))]
 impl CopyFile {
     /// Schedule the copy on the work pool; returns its promise.
     #[cfg(not(windows))]
@@ -119,6 +129,7 @@ impl CopyFile {
         value
     }
 
+    #[cfg(not(windows))]
     pub(crate) fn reject(
         &mut self,
         promise: &mut JSPromise,
@@ -146,6 +157,7 @@ impl CopyFile {
         promise.reject(global_this, Ok(instance))
     }
 
+    #[cfg(not(windows))]
     pub(crate) fn then(
         &mut self,
         promise: &mut JSPromise,
@@ -612,6 +624,7 @@ impl CopyFile {
         Ok(())
     }
 
+    #[cfg(not(windows))]
     pub(crate) fn run_async(&mut self) {
         #[cfg(windows)]
         {
@@ -1034,12 +1047,14 @@ const OPEN_DESTINATION_FLAGS: i32 =
 const OPEN_SOURCE_FLAGS: i32 = bun_sys::O::CLOEXEC | bun_sys::O::RDONLY;
 
 #[derive(ConstParamTy, PartialEq, Eq, Clone, Copy)]
-pub enum TryWith {
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub(crate) enum TryWith {
     Sendfile,
     CopyFileRange,
     Splice,
 }
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
 impl TryWith {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) const fn tag(self) -> bun_sys::Tag {
@@ -1056,7 +1071,7 @@ impl TryWith {
 // ───────────────────────────────────────────────────────────────────────────
 
 #[cfg(windows)]
-pub struct CopyFileWindows<'a> {
+pub(crate) struct CopyFileWindows<'a> {
     pub(crate) destination_file_store: RefPtr<Store>,
     pub(crate) source_file_store: RefPtr<Store>,
 
@@ -1084,7 +1099,7 @@ pub struct CopyFileWindows<'a> {
 }
 
 #[cfg(windows)]
-pub struct ReadWriteLoop {
+pub(crate) struct ReadWriteLoop {
     pub(crate) source_fd: Fd,
     pub(crate) must_close_source_fd: bool,
     pub(crate) destination_fd: Fd,
@@ -1165,7 +1180,7 @@ impl<'a> CopyFileWindows<'a> {
 
 #[cfg(windows)]
 impl ReadWriteLoop {
-    pub fn close(&mut self) {
+    pub(crate) fn close(&mut self) {
         if self.must_close_source_fd {
             match self.source_fd.make_libuv_owned() {
                 Ok(fd) => {
@@ -1627,7 +1642,7 @@ impl<'a> CopyFileWindows<'a> {
         self.event_loop.ref_keep_alive();
     }
 
-    pub fn throw(&mut self, err: bun_sys::Error) {
+    pub(crate) fn throw(&mut self, err: bun_sys::Error) {
         let _context = jsc::virtual_machine::VirtualMachine::get().enter_context(self.context);
         let global_this = self.event_loop.global_ref();
         // `swap()` returns a `&mut JSPromise` into a GC-owned cell (not into
@@ -1740,7 +1755,7 @@ impl<'a> CopyFileWindows<'a> {
 
         let mut node_fs_ = node_fs::NodeFS::default();
         let _ = node_fs_.truncate(
-            &node_fs::Arguments::Truncate {
+            &node_fs::args::Truncate {
                 path: self.destination_file_store.data.as_file().pathlike.clone(),
                 len: u64::try_from(self.size).expect("int cast"),
                 flags: 0,
@@ -1944,7 +1959,8 @@ fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>, ticket:
 // ───────────────────────────────────────────────────────────────────────────
 
 #[derive(ConstParamTy, PartialEq, Eq, Clone, Copy)]
-pub enum IOWhich {
+#[cfg(not(windows))]
+pub(crate) enum IOWhich {
     Source,
     Destination,
     Both,

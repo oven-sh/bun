@@ -8319,7 +8319,7 @@ impl NodeFS {
         result
     }
 
-    #[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     fn cp_symlink(&mut self, src: &ZStr, dest: &ZStr) -> Maybe<ret::CopyFile> {
         let mut target_buf = bun_paths::path_buffer_pool::get();
         // `bun_sys::readlink` returns the byte length on every
@@ -8953,11 +8953,8 @@ impl NodeFS {
     /// Tries `open(dest, flags, mode)`; on ENOENT creates the
     /// parent directory and retries once. Any other error is annotated with
     /// `dest` copied into `sync_error_buf`.
-    #[cfg_attr(windows, allow(dead_code))]
+    #[cfg(not(windows))]
     fn cp_open_dest_with_mkdir(&mut self, dest: &ZStr, flags: i32, mode: Mode) -> Maybe<FD> {
-        // PORT: extracted from the mac/linux/freebsd arms of `copy_single_file_sync`
-        // only — there `OSPathSliceZ == ZStr`. Taking `&ZStr` keeps the body
-        // monomorphic (and lets it type-check on Windows where it's dead code).
         match Syscall::open(dest, flags, mode) {
             Ok(result) => Ok(result),
             Err(err) => {

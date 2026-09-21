@@ -524,7 +524,7 @@ macro_rules! encoded_wrap_free {
 }
 
 impl Encoded {
-    #[allow(dead_code)]
+    #[cfg(any(target_os = "macos", windows))]
     pub(crate) fn from_owned(bytes: Vec<u8>) -> Encoded {
         let mut bytes = core::mem::ManuallyDrop::new(bytes);
         // SAFETY: Vec data ptr is non-null; len is valid.

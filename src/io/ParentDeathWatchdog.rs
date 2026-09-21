@@ -330,7 +330,7 @@ pub fn install_on_event_loop(handle: EventLoopCtx) {
         // borrow; `register` does not re-derive the loop.
         match unsafe { &mut *poll }.register(
             handle.loop_mut(),
-            crate::file_poll::Pollable::Process,
+            crate::file_poll::Flags::Process,
             true,
         ) {
             bun_sys::Result::Ok(()) => {

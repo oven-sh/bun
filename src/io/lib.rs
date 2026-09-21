@@ -445,9 +445,6 @@ pub use posix_event_loop::Flags as PollKind;
 pub mod file_poll {
     pub use super::Store;
     pub use super::posix_event_loop::{Flags, FlagsSet};
-    /// Kqueue/epoll watch kind passed to `FilePoll::register`.
-    #[allow(dead_code)]
-    pub(crate) type Pollable = Flags;
 }
 
 // ── bun_io original submodules ──────────────────────────────────────────────
@@ -679,8 +676,8 @@ use bun_sys::{self as sys, E, Fd};
 
 // `loop` is a Rust keyword, so the static is
 // named `io_loop` but the runtime tagname is `"loop"` so `BUN_DEBUG_loop=1` works.
+#[cfg(not(windows))]
 #[allow(non_upper_case_globals)]
-#[allow(dead_code)]
 pub(crate) static io_loop: bun_core::output::ScopedLogger =
     bun_core::output::ScopedLogger::new("loop", bun_core::output::Visibility::Visible);
 // All `log!` call sites are inside epoll/kqueue paths (Linux/macOS/FreeBSD); on

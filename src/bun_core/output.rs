@@ -640,7 +640,7 @@ pub mod stdio {
         /// No preconditions; one-shot stdio fixup at process startup.
         pub(crate) safe fn bun_initialize_process();
         /// No preconditions; restores TTY state on the standard streams.
-        #[allow(dead_code)]
+        #[cfg(not(windows))]
         pub(crate) safe fn bun_restore_stdio();
     }
 

@@ -332,7 +332,7 @@ pub mod debug {
         }
     }
     /// Detect whether stderr supports ANSI color escapes.
-    #[allow(dead_code)]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     pub(crate) fn detect_tty_config_stderr() -> TtyConfig {
         if bun_core::Output::ENABLE_ANSI_COLORS_STDERR.load(core::sync::atomic::Ordering::Relaxed) {
             TtyConfig::EscapeCodes

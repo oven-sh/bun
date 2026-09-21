@@ -22,11 +22,12 @@ use crate::bun_css;
 use crate::bun_fs;
 
 use crate::Graph::Graph;
+#[cfg(debug_assertions)]
+use crate::LinkerContext;
 use crate::html_import_manifest as HTMLImportManifest;
 use crate::options::{self, Loader};
 use crate::{
-    AdditionalFile, CompileResult, LinkerContext, LinkerGraph, PartRange, PathTemplate,
-    cheap_prefix_normalizer,
+    AdditionalFile, CompileResult, LinkerGraph, PartRange, PathTemplate, cheap_prefix_normalizer,
 };
 
 use crate::IndexInt;
@@ -1528,7 +1529,7 @@ impl CssImportOrder {
         }
     }
 
-    #[allow(dead_code)]
+    #[cfg(debug_assertions)]
     pub(crate) fn fmt<'a, 'ctx>(
         &'a self,
         ctx: &'a LinkerContext<'ctx>,
@@ -1537,7 +1538,7 @@ impl CssImportOrder {
     }
 }
 
-#[allow(dead_code)]
+#[cfg(debug_assertions)]
 pub(crate) struct CssImportOrderDebug<'a, 'ctx> {
     inner: &'a CssImportOrder,
     // Note: split lifetimes — `LinkerContext<'ctx>` is invariant over `'ctx`,
@@ -1548,6 +1549,7 @@ pub(crate) struct CssImportOrderDebug<'a, 'ctx> {
     ctx: &'a LinkerContext<'ctx>,
 }
 
+#[cfg(debug_assertions)]
 impl<'a, 'ctx> fmt::Display for CssImportOrderDebug<'a, 'ctx> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(writer, "{} = ", <&'static str>::from(&self.inner.kind))?;

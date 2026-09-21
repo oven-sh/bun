@@ -1503,7 +1503,7 @@ pub(crate) struct PipeReader {
     pub(crate) process: Option<*mut ShellSubprocess>,
     pub(crate) event_loop: EventLoopHandle,
     pub(crate) state: PipeReaderState,
-    #[cfg_attr(windows, allow(dead_code))]
+    #[cfg(not(windows))]
     pub(crate) stdio_result: StdioResult,
     pub(crate) out_type: OutKind,
     pub(crate) captured_writer: CapturedWriter,
@@ -1740,24 +1740,21 @@ impl PipeReader {
             captured_writer.dead = false;
         }
 
-        #[allow(unused_mut)]
-        let mut reader = IOReader::init::<PipeReader>();
         #[cfg(not(windows))]
-        let stdio_result = result;
+        let reader = IOReader::init::<PipeReader>();
+        // With `Box<uv::Pipe>` the pipe cannot be aliased, so ownership transfers to
+        // `reader.source`; `start()` goes through `start_with_current_pipe`.
         #[cfg(windows)]
-        // With `Box<uv::Pipe>` the pipe cannot be aliased, so ownership
-        // transfers to `reader.source` (`stdio_result` is never read again
-        // on Windows — `start()` goes through `start_with_current_pipe`).
-        let stdio_result = match result {
-            StdioResult::Buffer(buf) => {
-                reader.set_source(bun_io::Source::Pipe(buf));
-                StdioResult::Unavailable
+        let reader = {
+            let mut reader = IOReader::init::<PipeReader>();
+            match result {
+                StdioResult::Buffer(buf) => reader.set_source(bun_io::Source::Pipe(buf)),
+                StdioResult::BufferFd(fd) => {
+                    reader.set_source(bun_io::Source::File(bun_io::Source::open_file(fd)))
+                }
+                StdioResult::UnownedFd(_) | StdioResult::Unavailable => panic!("Shouldn't happen."),
             }
-            StdioResult::BufferFd(fd) => {
-                reader.set_source(bun_io::Source::File(bun_io::Source::open_file(fd)));
-                StdioResult::BufferFd(fd)
-            }
-            StdioResult::UnownedFd(_) | StdioResult::Unavailable => panic!("Shouldn't happen."),
+            reader
         };
 
         // Allocate directly into the Arc so the address is stable BEFORE we
@@ -1775,7 +1772,8 @@ impl PipeReader {
             process: Some(process),
             reader,
             event_loop,
-            stdio_result,
+            #[cfg(not(windows))]
+            stdio_result: result,
             out_type,
             state: PipeReaderState::Pending,
             captured_writer,

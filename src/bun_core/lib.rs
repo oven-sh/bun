@@ -2326,14 +2326,6 @@ pub use crate::string::immutable as strings;
 // `true` when mimalloc is the `#[global_allocator]`; `false` under ASAN where
 // `std::alloc::System` is installed instead. Mirrors `bun_alloc::USE_MIMALLOC`.
 pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
-pub(crate) mod debug_allocator_data {
-    /// Only referenced from `debug_assert!` — dead in release builds.
-    #[allow(dead_code)]
-    #[inline]
-    pub(crate) fn deinit_ok() -> bool {
-        true
-    }
-}
 
 pub use env_var::feature_flag;
 /// `bun.linuxKernelVersion()`. Lives in T1 because `bun_sys` calls it from feature probes (copy_file_range,

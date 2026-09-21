@@ -9,6 +9,7 @@ use bun_alloc::{AllocError as OOM, Arena}; // bumpalo::Bump re-export
 use bun_collections::VecExt;
 
 use bun_ast::{Loc, Log, Source};
+use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_threading::thread_pool::Task as ThreadPoolTask;
 
 use bun_ast::ast_result::NamedExports;
@@ -141,7 +142,11 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
             // SAFETY: `result` is a freshly Box-leaked `parse_task::Result` (above) and
             // `offset_of!(parse_task::Result, task)` is the intrusive task field within it.
             unsafe {
-                mini.enqueue_task_concurrent_with_extra_ctx::<parse_task::Result, BundleV2<'static>>(
+                MiniEventLoop::enqueue_task_concurrent_with_extra_ctx::<
+                    parse_task::Result,
+                    BundleV2<'static>,
+                >(
+                    &raw const **mini,
                     result,
                     on_complete_mini,
                     offset_of!(parse_task::Result, task),

@@ -2558,13 +2558,23 @@ describe.each(["tls", "net"])("%s server socket whose peer resets the connection
 
   it("reports the reset that arrives while the socket is paused as ECONNRESET, not 'end'", async () => {
     using t = await acceptPausedSocketAndFill();
+    const tick = () => new Promise<void>(resolve => setImmediate(resolve));
+    // The chunk reaches the highWaterMark, so the socket stops its reads.
+    while (t.socket.readableLength < t.socket.readableHighWaterMark) await tick();
+    const tail = Buffer.alloc(1024, "t");
+    expect(t.peer.write(tail)).toBe(tail.length);
     t.peer.terminate();
+    // Only the read that takes the queued bytes off the socket ahead of the error reads the
+    // tail, so it tells that the reset has arrived. Windows discards the receive queue.
+    const total = 64 * 1024 + tail.length;
+    while (!isWindows && t.socket.bytesRead < total) await tick();
+    // Like node, which meets the reset on the read after the unread bytes, the error waits
+    // for the consumer to take them.
+    expect(t.events).toEqual([]);
+    t.socket.resume();
     await t.settled;
     expect(t.events).toEqual(["error ECONNRESET", "close hadError=true"]);
-    // The data queued ahead of the reset was read off the socket before it closed
-    // (kept in the paused stream's buffer), not discarded with the fd. Windows
-    // discards the receive queue on a reset.
-    if (!isWindows) expect(t.socket.bytesRead).toBe(64 * 1024);
+    expect(t.bytesRead()).toBe(isWindows ? t.socket.bytesRead : total);
   });
 
   it("delivers the data queued ahead of the reset and then reports ECONNRESET, not 'end'", async () => {

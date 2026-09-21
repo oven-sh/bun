@@ -1002,8 +1002,7 @@ pub(crate) fn dib_as_bmp(
             continue;
         }
         // BITMAPFILEHEADER: 'BM' · u32 file-size · 2×u16 reserved ·
-        // u32 bfOffBits. bfOffBits = 14 + biSize + colour-table; a 40-byte
-        // header with BI_BITFIELDS appends 12 bytes of masks before it. The
+        // u32 bfOffBits. bfOffBits = 14 + biSize + masks + colour-table. The
         // table has biClrUsed entries, or every entry of a paletted (<= 8 bit)
         // image when that is 0.
         let ih_size: u64 =
@@ -1019,7 +1018,19 @@ pub(crate) fn dib_as_bmp(
                 .try_into()
                 .expect("infallible: size matches"),
         ) as u64;
-        let masks: u64 = if ih_size == 40 && compression == 3 {
+        // BI_BITFIELDS: three colour masks follow a 40-byte header. A V4/V5
+        // header holds its masks itself, but the CF_DIBV5 that Windows
+        // synthesizes for a bitmap repeats them after the header all the
+        // same, and a producer's own V5 DIB does not. So look for the repeat.
+        const BI_BITFIELDS: u32 = 3;
+        let repeats_header_masks = || {
+            let after_header = usize::try_from(14 + ih_size).ok()?;
+            let repeated = buf.get(after_header..after_header.checked_add(12)?)?;
+            Some(repeated == buf.get(14 + 40..14 + 52)?)
+        };
+        let masks: u64 = if compression == BI_BITFIELDS
+            && (ih_size == 40 || (ih_size >= 52 && repeats_header_masks() == Some(true)))
+        {
             12
         } else {
             0

@@ -1735,6 +1735,93 @@ describe.skipIf(!isWindows || win32 === null)("Win32 backend", () => {
     }).toEqual({ types: ["image/png"], signature: "89504e470d0a1a0a", size: [1, 1], rgb: [0, 0, 255] });
   });
 
+  // The RGB of every pixel of an 8-bit truecolour PNG, row by row:
+  // https://www.w3.org/TR/png-3/#9Filters
+  function pngPixels(png: Buffer) {
+    const width = png.readUInt32BE(16);
+    const height = png.readUInt32BE(20);
+    const channels = png[25] === 6 ? 4 : 3;
+    const idat: Buffer[] = [];
+    for (let at = 8; at < png.length; at += 12 + png.readUInt32BE(at)) {
+      if (png.toString("latin1", at + 4, at + 8) === "IDAT")
+        idat.push(png.subarray(at + 8, at + 8 + png.readUInt32BE(at)));
+    }
+    const data = inflateSync(Buffer.concat(idat));
+    const stride = width * channels;
+    const rows: number[][][] = [];
+    let previous = new Uint8Array(stride);
+    for (let y = 0; y < height; y++) {
+      const filter = data[y * (stride + 1)];
+      const line = Uint8Array.from(data.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1)));
+      for (let i = 0; i < stride; i++) {
+        const a = i >= channels ? line[i - channels] : 0;
+        const b = previous[i];
+        const c = i >= channels ? previous[i - channels] : 0;
+        const [pa, pb, pc] = [Math.abs(b - c), Math.abs(a - c), Math.abs(a + b - 2 * c)];
+        const paeth = pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+        line[i] += [0, a, b, (a + b) >> 1, paeth][filter];
+      }
+      rows.push(Array.from({ length: width }, (_, x) => [...line.subarray(x * channels, x * channels + 3)]));
+      previous = line;
+    }
+    return { width, height, rows };
+  }
+
+  // Windows offers CF_DIBV5 for every bitmap. For a BI_BITFIELDS one that it
+  // synthesizes, it repeats the three colour masks after the V5 header, which
+  // already holds them. A producer's own CF_DIBV5 has no such repeat. A reader
+  // that gets either case wrong shifts the image by three pixels. One pixel
+  // cannot show that: two rows show the bottom-up order, and three 32-bit
+  // columns make a row as long as the masks.
+  test.each([
+    { name: "a CF_DIB, whose synthesized CF_DIBV5 repeats the masks", format: CF_DIB, headerSize: 40 },
+    { name: "a producer's own CF_DIBV5, which does not", format: CF_DIBV5, headerSize: 124 },
+  ])("a BI_BITFIELDS bitmap reads back with every pixel in place: $name", async ({ format, headerSize }) => {
+    const rows = [
+      [
+        [1, 2, 3],
+        [4, 5, 6],
+        [7, 8, 9],
+      ],
+      [
+        [10, 20, 30],
+        [200, 100, 50],
+        [255, 255, 255],
+      ],
+    ];
+    const masks = [0x00ff0000, 0x0000ff00, 0x000000ff];
+    // A 40-byte header is followed by its masks; a V5 header holds them.
+    const pixelsAt = headerSize === 40 ? 52 : 124;
+    const dib = Buffer.alloc(pixelsAt + 24);
+    dib.writeUInt32LE(headerSize, 0);
+    dib.writeInt32LE(3, 4);
+    dib.writeInt32LE(2, 8);
+    dib.writeUInt16LE(1, 12);
+    dib.writeUInt16LE(32, 14);
+    dib.writeUInt32LE(3, 16); // BI_BITFIELDS
+    dib.writeUInt32LE(24, 20);
+    masks.forEach((mask, i) => dib.writeUInt32LE(mask, 40 + i * 4));
+    if (headerSize === 124) {
+      dib.write("BGRs", 56, "latin1"); // LCS_sRGB
+      dib.writeUInt32LE(4, 108); // LCS_GM_IMAGES
+    }
+    // Bottom row first, each pixel as B, G, R and a fourth byte no mask covers.
+    [...rows]
+      .reverse()
+      .flat()
+      .forEach(([r, g, b], i) => dib.set([b, g, r, 255], pixelsAt + i * 4));
+    raw().setRaw([{ format, bytes: dib }]);
+
+    const offered = raw().getRaw(CF_DIBV5)!;
+    expect({
+      headerSize: offered.readUInt32LE(0),
+      masksRepeated: offered.subarray(124, 136).equals(offered.subarray(40, 52)),
+    }).toEqual({ headerSize: 124, masksRepeated: headerSize === 40 });
+
+    const [item] = await readAll();
+    expect(pngPixels(item["image/png"] as Buffer)).toEqual({ width: 3, height: 2, rows });
+  });
+
   test("a PNG placed by another process reads back byte-exact", async () => {
     // Data set by another process arrives through the kernel's copy, where
     // the allocation size is not ours to control.

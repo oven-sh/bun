@@ -3192,8 +3192,6 @@ where
                                 return;
                             }
                             let resp = this.resp.get().expect("infallible: resp bound");
-                            // The body failed before anything read it. That also sets
-                            // `has_received_last_chunk`, but there is no whole body to send.
                             if let Some(err) = byte_stream.take_pending_error() {
                                 let js_err = err.to_js(global_this);
                                 this.response_body_readable_stream_ref

@@ -287,11 +287,10 @@ impl ReadableStream {
         self.cancel(global_this)
     }
 
-    /// Like [`Self::cancel`] but pending reads reject with `reason` instead of resolving `{done: true}`.
+    /// Like [`Self::cancel`] but every reader fails with `reason`: a pending read rejects instead of
+    /// resolving `{done: true}`, and a `ByteStream`'s native consumer gets it as a producer error.
     pub(crate) fn error(&self, global_this: &JSGlobalObject, reason: JSValue) -> JsResult<()> {
         let result = bun_jsc::cpp::ReadableStream__error(self.value, global_this, reason);
-        // A native consumer of a ByteStream does not read the JS stream's state. The cancel below
-        // would end one with a generic AbortError, and a later one would find a clean, empty end.
         if let Some(bytes) = self.ptr.bytes() {
             bytes.on_data(streams::StreamResult::Err(streams::StreamError::JSValue(
                 jsc::strong::Optional::create(reason, global_this),

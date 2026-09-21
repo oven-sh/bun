@@ -275,7 +275,7 @@ describe.skipIf(skip)("node:http2 seeded short-I/O fuzz", () => {
   });
 });
 
-describe.skipIf(skip)("node:http2 transport write errors", () => {
+describe.concurrent.skipIf(skip)("node:http2 transport write errors", () => {
   // A send() the kernel rejects is the only report that the peer is gone: the
   // transport closes before the read side is polled again. A client session and
   // its request have to report it, and the process must not exit before they do

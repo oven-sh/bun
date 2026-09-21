@@ -6476,7 +6476,7 @@ it("originSet is undefined on a destroyed TLS session that never read it", async
   }
 });
 
-describe("a client session reports a peer reset that one of its writes sees first", () => {
+describe.concurrent("a client session reports a peer reset that one of its writes sees first", () => {
   // A failed send() is the only report of the reset: the transport goes away before the read
   // side is polled again. bun closed it as a clean EOF: the request ended with no 'error' and
   // no 'response', and with nothing but the socket holding the loop the process exited

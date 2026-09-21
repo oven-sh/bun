@@ -326,44 +326,47 @@ describe("fs.watch", () => {
   });
 
   // `.resolves` spins the event loop until the promise settles. Here it runs
-  // after the first of the two events of one rename, and the events that
-  // arrive while it spins must not overtake the second one. Linux only: inotify
-  // watches from the moment fs.watch() returns and reports one rename as two events.
-  test.skipIf(!isLinux).each(["the listener", "a continuation of the listener"])(
-    "an event loop spin in %s between two events does not reorder them",
-    async spinSite => {
-      using dir = tempDir("fs-watch-nested-spin", { "before": "x" });
-      const root = String(dir);
-      const seen: string[] = [];
-      const sawLate = Promise.withResolvers<void>();
-      const sawEnd = Promise.withResolvers<void>();
-      let spun: Promise<void> | undefined;
-      async function spin() {
-        // A continuation resumes in the checkpoint that follows the first event.
-        if (spinSite !== "the listener") await undefined;
-        seen.push("spin");
-        fs.writeFileSync(path.join(root, "late"), "x");
-        await expect(sawLate.promise).resolves.toBeUndefined();
-        fs.writeFileSync(path.join(root, "end"), "x");
-      }
-      const watcher = fs.watch(root, (_eventType, filename) => {
-        seen.push(String(filename));
-        if (filename === "late") sawLate.resolve();
-        if (filename === "end") sawEnd.resolve();
-        // The listener runs again while spin() spins, so only the first event starts it.
-        if (seen.length === 1) spun = spin();
-      });
-      watcher.once("error", sawEnd.reject);
-      try {
-        fs.renameSync(path.join(root, "before"), path.join(root, "after"));
-        await sawEnd.promise;
-        await spun;
-      } finally {
-        watcher.close();
-      }
-      expect(seen.slice(0, 4)).toEqual(["before", "spin", "after", "late"]);
-    },
-  );
+  // after the first of the two events of one rename. A spin until "late" checks
+  // that the events that arrive while it spins do not overtake the second event.
+  // A spin until "after" checks that the second event arrives while it spins.
+  // Linux only: inotify watches from the moment fs.watch() returns and reports
+  // one rename as two events.
+  test.skipIf(!isLinux).each([
+    { spinSite: "the listener", until: "late" },
+    { spinSite: "a continuation of the listener", until: "late" },
+    { spinSite: "a continuation of the listener", until: "after" },
+  ])("an event loop spin in $spinSite until '$until' is seen gets the events in order", async ({ spinSite, until }) => {
+    using dir = tempDir("fs-watch-nested-spin", { "before": "x" });
+    const root = String(dir);
+    const seen: string[] = [];
+    const sawUntil = Promise.withResolvers<void>();
+    const sawEnd = Promise.withResolvers<void>();
+    let spun: Promise<void> | undefined;
+    async function spin() {
+      // A continuation resumes in the checkpoint that follows the first event.
+      if (spinSite !== "the listener") await undefined;
+      seen.push("spin");
+      if (until === "late") fs.writeFileSync(path.join(root, "late"), "x");
+      await expect(sawUntil.promise).resolves.toBeUndefined();
+      fs.writeFileSync(path.join(root, "end"), "x");
+    }
+    const watcher = fs.watch(root, (_eventType, filename) => {
+      seen.push(String(filename));
+      if (filename === until) sawUntil.resolve();
+      if (filename === "end") sawEnd.resolve();
+      // The listener runs again while spin() spins, so only the first event starts it.
+      if (seen.length === 1) spun = spin();
+    });
+    watcher.once("error", sawEnd.reject);
+    try {
+      fs.renameSync(path.join(root, "before"), path.join(root, "after"));
+      await sawEnd.promise;
+      await spun;
+    } finally {
+      watcher.close();
+    }
+    expect(seen.slice(0, 3)).toEqual(["before", "spin", "after"]);
+  });
 
   test("should error on invalid path", done => {
     try {

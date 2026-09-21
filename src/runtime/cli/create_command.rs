@@ -30,7 +30,7 @@ use crate::cli::which_npm_client::NPMClient;
 // so `SourceFileProjectGenerator::generate(...)` resolves. The submodule itself
 // reaches back into `crate::cli::create_command::Example` via absolute path.
 #[path = "create/SourceFileProjectGenerator.rs"]
-pub mod SourceFileProjectGenerator;
+pub(crate) mod SourceFileProjectGenerator;
 
 // PORTING.md §Global mutable state: single-thread CLI scratch buffer →
 // RacyCell. Touched on the main thread for `--open` *and* the spawned git
@@ -490,7 +490,6 @@ impl CreateCommand {
 
                 let mut archive_context = archiver::Context {
                     pluckers,
-                    all_files: Default::default(),
                     overwrite_list: bun_collections::StringArrayHashMap::<()>::default(),
                 };
 
@@ -615,7 +614,7 @@ impl CreateCommand {
                 };
 
                 #[cfg(windows)]
-                let mut destination_buf: bun_paths::WPathBuffer = bun_paths::WPathBuffer::uninit();
+                let mut destination_buf = bun_paths::w_path_buffer_pool::get();
                 #[cfg(windows)]
                 let dst_without_trailing_slash: &[u8] =
                     strings::without_trailing_slash(destination);
@@ -626,8 +625,7 @@ impl CreateCommand {
                 }
 
                 #[cfg(windows)]
-                let mut template_path_buf: bun_paths::WPathBuffer =
-                    bun_paths::WPathBuffer::uninit();
+                let mut template_path_buf = bun_paths::w_path_buffer_pool::get();
                 #[cfg(windows)]
                 let src_without_trailing_slash: &[u8] =
                     strings::without_trailing_slash(abs_template_path);
@@ -1536,25 +1534,14 @@ fn file_copier_copy(
                             }
                         }
 
-                        use bun_sys::windows::Win32ErrorExt as _;
-                        if let Some(err) = bun_sys::windows::Win32Error::get().to_system_errno() {
-                            Output::err(
-                                err,
-                                "failed to copy file {}",
-                                format_args!(
-                                    "{}",
-                                    bun_core::fmt::fmt_os_path(entry.path, Default::default())
-                                ),
-                            );
-                        } else {
-                            Output::err_generic(
-                                "failed to copy file {}",
-                                format_args!(
-                                    "{}",
-                                    bun_core::fmt::fmt_os_path(entry.path, Default::default())
-                                ),
-                            );
-                        }
+                        Output::err(
+                            bun_sys::windows::last_system_errno(),
+                            "failed to copy file {}",
+                            format_args!(
+                                "{}",
+                                bun_core::fmt::fmt_os_path(entry.path, Default::default())
+                            ),
+                        );
                         node_.end();
                         progress_.refresh();
                         Global::crash();
@@ -1685,7 +1672,7 @@ fn run_on_entry_point(
     crate::cli::build_command::BuildCommand::exec(crate::cli::Command::get(), Some(&fetcher))
 }
 
-pub struct Example {
+pub(crate) struct Example {
     // `&'static` is sound for these three fields: they borrow either static
     // literals, the process-lifetime CLI arena (`cli_arena()` — remote
     // examples JSON), or `filesystem.filename_store` (local examples).

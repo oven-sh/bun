@@ -30,7 +30,6 @@ use bun_jsc::{
     self as jsc, AnyPromise, JSGlobalObject, JSModuleLoader, JSPromise, JSValue, JsResult,
     StringJsc as _,
 };
-use bun_paths::PathBuffer;
 use bun_paths::resolve_path::{self, platform};
 use bun_resolver as resolver;
 
@@ -71,7 +70,7 @@ struct DotenvSingleton {
 unsafe impl Sync for DotenvSingleton {}
 static DOTENV_SINGLETON: OnceLock<DotenvSingleton> = OnceLock::new();
 
-pub fn build_command(ctx: Context) -> crate::Result<()> {
+pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
     bake::print_warning();
 
     if ctx.args.entry_points.len() > 1 {
@@ -84,7 +83,7 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
         Global::crash();
     }
 
-    let mut cwd_buf = PathBuffer::uninit();
+    let mut cwd_buf = bun_paths::path_buffer_pool::get();
     let cwd = match bun_core::getcwd(&mut cwd_buf) {
         Ok(cwd) => cwd.as_bytes(),
         Err(err) => {
@@ -527,7 +526,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     // trailing slash
     let public_path: &[u8] = b"/";
 
-    let mut root_dir_buf = PathBuffer::uninit();
+    let mut root_dir_buf = bun_paths::path_buffer_pool::get();
     let root_dir_path =
         resolve_path::join_abs_string_buf::<platform::Auto>(cwd, &mut root_dir_buf.0, &[b"dist"]);
     // Note: reshaped for borrowck — copy out so root_dir_buf can drop.
@@ -772,7 +771,8 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                         OutputKind::ModuleInfo
                         | OutputKind::BuiltinBytecode
                         | OutputKind::BytecodeStringTable
-                        | OutputKind::ModuleInfoStringTable => {}
+                        | OutputKind::ModuleInfoStringTable
+                        | OutputKind::PrelinkedModuleGraph => {}
                         OutputKind::MetafileJson | OutputKind::MetafileMarkdown => {}
                     }
                 }
@@ -1419,7 +1419,7 @@ impl framework_router::InsertionHandler for EntryPointMap {
 ///
 /// Owns the backing storage so the value can outlive `build_with_vm` in the
 /// caller's frame without dangling references.
-pub struct PerThread {
+pub(crate) struct PerThread {
     // Shared Data (owned)
     /// Owns `input_files` (keys) and `output_indexes` (values).
     pub(crate) entry_points: EntryPointMap,
@@ -1464,7 +1464,7 @@ impl PerThread {
 
     /// Safe `&'static JSGlobalObject` accessor — `self.vm().global()`.
     #[inline]
-    pub fn global(&self) -> &'static JSGlobalObject {
+    pub(crate) fn global(&self) -> &'static JSGlobalObject {
         self.vm().global()
     }
 

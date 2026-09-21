@@ -310,16 +310,15 @@ private:
     }
 
     /* Bun.serve: whether the next request head on this connection must be parked
-     * instead of parsed (HttpParser::parkAtNextBoundary). Either the connection's
-     * one response slot is still taken, or the response in it is going to close
-     * the connection (Connection: close or HTTP/1.0 request, close requested by
-     * the app): nothing received behind such a request may be processed
-     * (RFC 9112 9.6), and parking it lets the close-after-drain gates discard it
-     * with the socket. Such bytes are never replayed: the only replay site runs
-     * behind onWritable's close gate, which fires on exactly the conditions the
-     * replay needs. */
+     * instead of parsed (HttpParser::parkAtNextBoundary): the connection's one
+     * response slot is still taken. A connection that a complete response marked
+     * close is not parked: the sawConnectionClose latch and the close check at the
+     * top of the request handler discard what follows it (RFC 9112 9.6). Bytes
+     * parked behind a pending response that turns out to close the connection are
+     * never replayed: the only replay site runs behind onWritable's close gate,
+     * which fires on exactly the conditions the replay needs. */
     static bool cannotDispatchAnotherRequest(HttpResponseData<SSL> *httpResponseData) {
-        return (httpResponseData->state & (HttpResponseData<SSL>::HTTP_RESPONSE_PENDING | HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE)) != 0;
+        return (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) != 0;
     }
 
     template <bool IsNodeHttp>
@@ -429,9 +428,6 @@ private:
          * the requestHandler/dataHandler hooks and the post-parse check). */
         const bool trackNodeHttpTimings = IsNodeHttp && !httpResponseData->isConnectRequest;
 
-        // clients need to know the cursor after http parse, not servers!
-        // how far did we read then? we need to know to continue with websocket parsing data? or?
-
         /* The return value is entirely up to us to interpret. The HttpParser cares only for whether the returned value is DIFFERENT from passed user */
 
         /* node:http compat: the trailer capture lives in the IsNodeHttp=true ext
@@ -445,12 +441,28 @@ private:
 
         auto result = httpResponseData->template consumePostPadded<IsNodeHttp>(httpContextData->maxHeaderSize, httpResponseData->isConnectRequest, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, httpContextData->flags.useInsecureHTTPParser, httpContextData->flags.useLenientTransferEncoding, nodeHttpRequestTrailers, &httpResponseData->chunkedExtensionsByteCount, data, (unsigned int) length, s, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
 
+            HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext((us_socket_t *) s);
+
+            /* Bun.serve, RFC 9112 9.6: a complete response marked this connection close
+             * and sawConnectionClose did not see it (a Connection: close response
+             * header). Run onData's tail now: resetResponseState() below drops the mark.
+             * Latch first: a socket that has not drained stays open, and the parser
+             * holds this request's framing, so later bytes must not reach it. Before
+             * the timeout reset, so that socket still times out. */
+            if constexpr (!IsNodeHttp) {
+                constexpr uint32_t closeOrPending = HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE | HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
+                if ((httpResponseData->state & closeOrPending) == HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) [[unlikely]] {
+                    httpResponseData->sawConnectionClose = true;
+                    us_socket_unref((us_socket_t *) s);
+                    ((AsyncSocket<SSL> *) s)->uncork();
+                    ((HttpResponse<SSL> *) s)->closeIfDoneAndMarked(httpResponseData);
+                    return nullptr;
+                }
+            }
 
             /* For every request we reset the timeout and hang until user makes action */
             /* Warning: if we are in shutdown state, resetting the timer is a security issue! */
             us_socket_timeout((us_socket_t *) s, 0);
-
-            HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext((us_socket_t *) s);
 
             /* node:http compat: the JS layer stopped HTTP processing on this
              * connection (the user emitted 'close' on the socket - Node frees
@@ -482,9 +494,10 @@ private:
                      * parks a head that arrives while it is taken (parkAtNextBoundary,
                      * maintained by onData) instead of getting here. Dispatching onto
                      * the in-flight response would interleave the two responses on the
-                     * wire; closing is the backstop. */
+                     * wire; closing is the backstop. close() first sends what earlier
+                     * responses of this read left in the cork buffer. */
                     ASSERT_NOT_REACHED();
-                    us_socket_close((us_socket_t *) s, 0, nullptr);
+                    ((AsyncSocket<SSL> *) s)->close();
                     return nullptr;
                 } else {
 
@@ -526,7 +539,7 @@ private:
                 const bool isAncient = httpRequest->isAncient();
                 if (isAncient) {
                     httpResponseData->state |= HttpResponseData<SSL>::HTTP_ANCIENT_REQUEST | HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
-                } else if (httpRequest->getHeader("connection").length() == 5) {
+                } else if (httpResponseData->sawConnectionClose) {
                     httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
                 }
 
@@ -555,11 +568,23 @@ private:
                 }
             }
 
+            /* Bun.serve: every request of this read is dispatched corked, not only
+             * the first. A response to an earlier request can release the cork
+             * taken above (a response that JavaScript produced, a body larger
+             * than the cork buffer, the sendfile path). The handler writes the
+             * status line, each header and the body as separate writes, and
+             * without the cork each of them is one send(). node:http corks in its
+             * own write calls. */
+            if constexpr (!IsNodeHttp) {
+                ((AsyncSocket<SSL> *) s)->cork();
+            }
+
             /* Route the method and URL */
             selectedRouter->getUserData() = {(HttpResponse<SSL> *) s, httpRequest};
             if (!selectedRouter->route(httpRequest->getCaseSensitiveMethod(), httpRequest->getUrlForRouting())) {
-                /* We have to force close this socket as we have no handler for it */
-                us_socket_close((us_socket_t *) s, 0, nullptr);
+                /* We have to force close this socket as we have no handler for it.
+                 * close() first sends the responses to earlier requests of this read. */
+                ((AsyncSocket<SSL> *) s)->close();
                 return nullptr;
             }
 
@@ -619,6 +644,7 @@ private:
                     auto *nodeHttpResponseData = (HttpResponseData<SSL, true> *) httpResponseData;
                     nodeHttpResponseData->lastMessageStartMs = 0;
                     nodeHttpResponseData->headersCompleted = false;
+                    nodeHttpResponseData->requestTimeoutReported = false;
                 }
             }
 
@@ -709,6 +735,10 @@ private:
             if(httpContextData->onClientError) {
                 httpContextData->onClientError(SSL, s, result.parserError, data, length);
             }
+            /* The error response below bypasses the cork buffer. Responses to
+             * valid requests earlier in this read can still sit there, so send
+             * them first. */
+            ((AsyncSocket<SSL> *) s)->uncork();
             /* For errors, we only deliver them "at most once". We don't care if they get halfways delivered or not. */
             us_socket_write(s, httpErrorResponses[httpErrorStatusCode].data(), (int) httpErrorResponses[httpErrorStatusCode].length());
             us_socket_shutdown(s);
@@ -792,6 +822,19 @@ private:
 
             /* Reset upgradedWebSocket before we return */
             httpContextData->upgradedWebSocket = nullptr;
+
+            /* Frames that a client sent without waiting for the 101 (RFC 6455 4.1) follow the
+             * request head in this read, and the HTTP parser stopped there. Give them to the
+             * WebSocket now, as the loop would have for a read of its own. The parser counts a
+             * body that the request declared as consumed, so that is never taken for frames.
+             * Not when upgradedWebSocket names another connection (upgrade() adopts in place,
+             * so ours is s): the field is per context, and a microtask of this dispatch, or an
+             * earlier upgrade from a request body handler, can set it. */
+            unsigned int consumed = result.consumedBytes();
+            if (consumed < (unsigned int) length && (us_socket_t *) asyncSocket == s
+                && !us_socket_is_closed(s) && !us_socket_is_shut_down(s)) {
+                return us_dispatch_data(s, data + consumed, (int) ((unsigned int) length - consumed));
+            }
 
             /* Return the new upgraded websocket */
             return (us_socket_t *) asyncSocket;

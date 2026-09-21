@@ -23,7 +23,7 @@
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum Orientation {
+pub(crate) enum Orientation {
     Normal = 1,
     Flop = 2, // mirror horizontal
     Rotate180 = 3,

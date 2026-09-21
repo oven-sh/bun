@@ -85,15 +85,11 @@ static ExceptionOr<Vector<uint8_t>> signWithMD(const CryptoAlgorithmRsaPssParams
 
 ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSA_PSS::platformSign(const CryptoAlgorithmRsaPssParams& parameters, const CryptoKeyRSA& key, const Vector<uint8_t>& data)
 {
-#if 1 //  defined(EVP_PKEY_CTX_set_rsa_pss_saltlen) && defined(EVP_PKEY_CTX_set_rsa_mgf1_md)
     const EVP_MD* md = digestAlgorithm(key.hashAlgorithmIdentifier());
     if (!md)
         return Exception { NotSupportedError };
 
     return signWithMD(parameters, key, data, md);
-#else
-    return Exception { NotSupportedError };
-#endif
 }
 
 static ExceptionOr<bool> verifyWithMD(const CryptoAlgorithmRsaPssParams& parameters, const CryptoKeyRSA& key, const Vector<uint8_t>& signature, const Vector<uint8_t>& data, const EVP_MD* md)
@@ -128,15 +124,11 @@ static ExceptionOr<bool> verifyWithMD(const CryptoAlgorithmRsaPssParams& paramet
 
 ExceptionOr<bool> CryptoAlgorithmRSA_PSS::platformVerify(const CryptoAlgorithmRsaPssParams& parameters, const CryptoKeyRSA& key, const Vector<uint8_t>& signature, const Vector<uint8_t>& data)
 {
-#if 1 // defined(EVP_PKEY_CTX_set_rsa_pss_saltlen) && defined(EVP_PKEY_CTX_set_rsa_mgf1_md)
     const EVP_MD* md = digestAlgorithm(key.hashAlgorithmIdentifier());
     if (!md)
         return Exception { NotSupportedError };
 
     return verifyWithMD(parameters, key, signature, data, md);
-#else
-    return Exception { NotSupportedError };
-#endif
 }
 
 } // namespace WebCore

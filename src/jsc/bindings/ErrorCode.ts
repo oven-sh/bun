@@ -150,7 +150,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_IPC_DISCONNECTED", Error],
   ["ERR_IPC_ONE_PIPE", Error],
   ["ERR_LOAD_SQLITE_EXTENSION", Error],
-  ["ERR_MEMORY_ALLOCATION_FAILED", Error],
+  ["ERR_MEMORY_ALLOCATION_FAILED", RangeError],
   ["ERR_METHOD_NOT_IMPLEMENTED", Error],
   ["ERR_MISSING_ARGS", TypeError],
   ["ERR_MISSING_PASSPHRASE", TypeError],
@@ -226,7 +226,6 @@ const errors: ErrorCodeMapping = [
   ["ERR_SOCKET_DGRAM_IS_CONNECTED", Error],
   ["ERR_SOCKET_DGRAM_NOT_CONNECTED", Error],
   ["ERR_SOCKET_DGRAM_NOT_RUNNING", Error],
-  ["ERR_SSR_RESPONSE_EXPECTED", Error],
   ["ERR_STREAM_ALREADY_FINISHED", Error],
   ["ERR_STREAM_CANNOT_PIPE", Error],
   ["ERR_STREAM_DESTROYED", Error],
@@ -361,5 +360,6 @@ const errors: ErrorCodeMapping = [
   ["ERR_INSPECTOR_NOT_WORKER", Error],
   ["ERR_INSPECTOR_COMMAND", Error],
   ["ERR_REDIS_SERVER_ERROR", Error, "RedisError"],
+  ["ERR_FFI_CC_DISABLED", Error],
 ];
 export default errors;

@@ -651,6 +651,8 @@ impl ArrayBuffer {
 pub struct PinnedArrayBuffer {
     buffer: ArrayBuffer,
     rooted: bool,
+    /// The bytes `buffer.ptr` points at when [`copy_if_resizable`](Self::copy_if_resizable) took a copy.
+    copy: Option<Vec<u8>>,
 }
 
 impl PinnedArrayBuffer {
@@ -669,6 +671,7 @@ impl PinnedArrayBuffer {
         Some(Self {
             buffer,
             rooted: false,
+            copy: None,
         })
     }
 
@@ -680,8 +683,36 @@ impl PinnedArrayBuffer {
         Some(this)
     }
 
+    /// [`root`](Self::root) for a job that reads the bytes itself: see [`copy_if_resizable`](Self::copy_if_resizable).
+    pub fn root_read_only(global: &JSGlobalObject, value: JSValue) -> Option<Self> {
+        let mut this = Self::root(global, value)?;
+        this.copy_if_resizable(global).then_some(this)
+    }
+
+    /// A pin stops a detach but not a shrink, which unmaps pages: a resizable non-shared buffer is copied so a later read of the bytes in user space cannot fault (a syscall reader gets `EFAULT` and needs no copy). `false` if the copy cannot be allocated.
+    pub fn copy_if_resizable(&mut self, global: &JSGlobalObject) -> bool {
+        if !self.buffer.resizable
+            || self.buffer.shared
+            || self.buffer.byte_len == 0
+            || self.copy.is_some()
+        {
+            return true;
+        }
+        let bytes = self.buffer.byte_slice();
+        let mut copy = Vec::new();
+        if copy.try_reserve_exact(bytes.len()).is_err() {
+            return false;
+        }
+        copy.extend_from_slice(bytes);
+        global.vm().report_extra_memory(copy.len());
+        self.buffer.ptr = copy.as_mut_ptr();
+        self.copy = Some(copy);
+        true
+    }
+
     #[inline]
     pub fn slice_mut(&mut self) -> &mut [u8] {
+        debug_assert!(self.copy.is_none(), "a read-only root is not writable");
         self.buffer.byte_slice_mut()
     }
 
@@ -690,6 +721,7 @@ impl PinnedArrayBuffer {
     pub fn defuse(&mut self) {
         self.buffer = ArrayBuffer::default();
         self.rooted = false;
+        self.copy = None;
     }
 }
 
@@ -885,13 +917,6 @@ impl Drop for MarkedArrayBuffer {
 }
 
 impl MarkedArrayBuffer {
-    pub fn from_typed_array(ctx: &JSGlobalObject, value: JSValue) -> MarkedArrayBuffer {
-        MarkedArrayBuffer {
-            owns_buffer: false,
-            buffer: ArrayBuffer::from_typed_array(ctx, value),
-        }
-    }
-
     pub fn from_array_buffer(ctx: &JSGlobalObject, value: JSValue) -> MarkedArrayBuffer {
         MarkedArrayBuffer {
             owns_buffer: false,
@@ -909,14 +934,6 @@ impl MarkedArrayBuffer {
         // SAFETY: ptr/len from heap::alloc; backed by the global allocator.
         let bytes = unsafe { bun_core::ffi::slice_mut(ptr, len) };
         Ok(MarkedArrayBuffer::from_bytes(bytes, JSType::Uint8Array))
-    }
-
-    pub fn from_js(global: &JSGlobalObject, value: JSValue) -> Option<MarkedArrayBuffer> {
-        let array_buffer = value.as_array_buffer(global)?;
-        Some(MarkedArrayBuffer {
-            buffer: array_buffer,
-            owns_buffer: false,
-        })
     }
 
     pub fn from_bytes(bytes: &mut [u8], typed_array_type: JSType) -> MarkedArrayBuffer {

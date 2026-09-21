@@ -18,12 +18,16 @@ describe.concurrent("WebKit 3722912ff800 upgrade", () => {
     expect(g().includes(5)).toBe(false);
   });
 
-  test("cyclic Array.prototype.join throws RangeError (f2f2c2ddf637)", () => {
-    // StringRecursionChecker was removed; cyclic join now recurses until the
-    // stack check throws instead of short-circuiting to the empty string.
-    const a: unknown[] = [];
-    a.push(a);
-    expect(() => a.join()).toThrow(RangeError);
+  test("cyclic Array.prototype.join returns the empty string for the cycle (oven-sh/WebKit#559)", () => {
+    // Upstream removed StringRecursionChecker in f2f2c2ddf637; oven-sh/WebKit#559
+    // restores it for the array conversions so a self-containing array matches
+    // V8 instead of throwing RangeError (oven-sh/bun#41198).
+    const a: unknown[] = [1, null, 2];
+    a[1] = a;
+    expect(a.join()).toBe("1,,2");
+    expect(a.toString()).toBe("1,,2");
+    expect(a.toLocaleString()).toBe("1,,2");
+    expect(`${a}`).toBe("1,,2");
   });
 
   test("WebAssembly.Exception gains options.traceStack and stack getter (bf6512f84f7d)", () => {

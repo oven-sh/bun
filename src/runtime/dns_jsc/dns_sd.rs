@@ -19,16 +19,9 @@ pub(crate) const PROTOCOL_IPV4: DNSServiceProtocol = 0x01;
 pub(crate) const PROTOCOL_IPV6: DNSServiceProtocol = 0x02;
 
 pub(crate) const ERR_NO_ERROR: DNSServiceErrorType = 0;
-const ERR_NO_SUCH_NAME: DNSServiceErrorType = -65538;
-const ERR_NO_MEMORY: DNSServiceErrorType = -65539;
-const ERR_REFUSED: DNSServiceErrorType = -65553;
 pub(crate) const ERR_NO_SUCH_RECORD: DNSServiceErrorType = -65554;
-const ERR_SERVICE_NOT_RUNNING: DNSServiceErrorType = -65563;
-const ERR_NO_ROUTER: DNSServiceErrorType = -65566;
 pub(crate) const ERR_TIMEOUT: DNSServiceErrorType = -65568;
 const ERR_DEFUNCT_CONNECTION: DNSServiceErrorType = -65569;
-const ERR_POLICY_DENIED: DNSServiceErrorType = -65570;
-const ERR_NOT_PERMITTED: DNSServiceErrorType = -65571;
 
 type GetAddrInfoReply = unsafe extern "C" fn(
     sd_ref: DNSServiceRef,
@@ -58,19 +51,41 @@ unsafe extern "C" {
     ) -> DNSServiceErrorType;
 }
 
-/// Map a DNSServiceErrorType to the EAI_* code the existing error paths expect.
-pub(crate) fn to_eai(err: DNSServiceErrorType) -> c_int {
-    match err {
-        ERR_NO_ERROR => 0,
-        ERR_NO_SUCH_NAME | ERR_NO_SUCH_RECORD => libc::EAI_NONAME,
-        ERR_TIMEOUT | ERR_NO_ROUTER | ERR_DEFUNCT_CONNECTION | ERR_SERVICE_NOT_RUNNING => {
-            libc::EAI_AGAIN
-        }
-        ERR_NO_MEMORY => libc::EAI_MEMORY,
-        ERR_POLICY_DENIED | ERR_NOT_PERMITTED | ERR_REFUSED => libc::EAI_FAIL,
-        _ => libc::EAI_FAIL,
-    }
+/// SPI: `DNSServiceGetAddrInfo` plus the attribute libinfo's getaddrinfo passes. Absent on macOS 12, so resolved at runtime.
+type GetAddrInfoExFn = unsafe extern "C" fn(
+    sd_ref: *mut DNSServiceRef,
+    flags: DNSServiceFlags,
+    interface_index: u32,
+    protocol: DNSServiceProtocol,
+    hostname: *const c_char,
+    attr: *const DNSServiceAttribute,
+    callback: GetAddrInfoReply,
+    context: *mut c_void,
+) -> DNSServiceErrorType;
+
+/// `DNSServiceGetAddrInfoEx` with `kDNSServiceAttrAllowFailover` (lets mDNSResponder fail a query over to
+/// scoped/supplemental resolvers, as getaddrinfo does), when this OS has both.
+fn getaddrinfo_ex() -> Option<(GetAddrInfoExFn, *const DNSServiceAttribute)> {
+    let f = bun_sys::dlsym_with_handle!(
+        GetAddrInfoExFn,
+        "DNSServiceGetAddrInfoEx",
+        Some(libc::RTLD_DEFAULT)
+    )?;
+    let attr = bun_sys::dlsym_with_handle!(
+        *const DNSServiceAttribute,
+        "kDNSServiceAttrAllowFailover",
+        Some(libc::RTLD_DEFAULT)
+    )?;
+    Some((f, attr))
 }
+
+#[repr(C)]
+pub(crate) struct DNSServiceAttribute {
+    _opaque: [u8; 0],
+}
+
+/// No address: libinfo's `getaddrinfo` reports this as EAI_NONAME whatever the daemon's error was.
+pub(crate) const EMPTY_STATUS: c_int = libc::EAI_NONAME;
 
 pub(crate) fn protocol_for_family(family: bun_dns::Family) -> DNSServiceProtocol {
     match family {
@@ -141,7 +156,7 @@ pub(crate) struct QueryState {
     pub(crate) results: bun_dns::ResultList,
     /// First hard error (NoSuchRecord/Timeout are per-family negatives, not errors).
     pub(crate) sd_error: DNSServiceErrorType,
-    /// A family timed out: with no results this is EAI_AGAIN, not EAI_NONAME.
+    /// A family timed out: an unsuppressed reissue would only wait out the timeout again.
     saw_timeout: bool,
     /// Last reply had `MoreComing` and no other request's reply followed: more is queued daemon-side.
     awaiting_more: bool,
@@ -253,17 +268,6 @@ impl QueryState {
         match self.stragglers {
             Stragglers::Since(t) if self.only_stragglers_left() => Some(t + SECOND_FAMILY_EXTRA_MS),
             _ => None,
-        }
-    }
-
-    /// EAI_* status for a completed query with no results.
-    pub(crate) fn empty_status(&self) -> c_int {
-        if self.sd_error != 0 {
-            to_eai(self.sd_error)
-        } else if self.saw_timeout {
-            libc::EAI_AGAIN
-        } else {
-            libc::EAI_NONAME
         }
     }
 
@@ -435,17 +439,31 @@ impl SharedConnection {
     ) -> Option<DNSServiceRef> {
         // ShareConnection requires `sub` to start as a copy of the primary ref.
         let mut sub: DNSServiceRef = self.main_ref;
+        let flags = FLAGS_SHARE_CONNECTION | FLAGS_TIMEOUT | FLAGS_RETURN_INTERMEDIATES | suppress;
+        let hostname = hostname.as_ptr().cast::<c_char>();
         // SAFETY: FFI; `hostname` is NUL-terminated (copied by dns_sd); `context` is only stored.
         let err = unsafe {
-            DNSServiceGetAddrInfo(
-                &raw mut sub,
-                FLAGS_SHARE_CONNECTION | FLAGS_TIMEOUT | FLAGS_RETURN_INTERMEDIATES | suppress,
-                0,
-                protocol,
-                hostname.as_ptr().cast::<c_char>(),
-                callback,
-                context,
-            )
+            match getaddrinfo_ex() {
+                Some((ex, attr)) => ex(
+                    &raw mut sub,
+                    flags,
+                    0,
+                    protocol,
+                    hostname,
+                    attr,
+                    callback,
+                    context,
+                ),
+                None => DNSServiceGetAddrInfo(
+                    &raw mut sub,
+                    flags,
+                    0,
+                    protocol,
+                    hostname,
+                    callback,
+                    context,
+                ),
+            }
         };
         if err != ERR_NO_ERROR {
             bun_output::scoped_log!(dns, "DNSServiceGetAddrInfo failed: {}", err);
@@ -692,6 +710,7 @@ pub(crate) fn lookup(
     this: &Resolver,
     query: &GetAddrInfo,
     global_this: &JSGlobalObject,
+    context: bun_jsc::ContextId,
 ) -> JSValue {
     bun_core::Environment::only_mac();
 
@@ -699,14 +718,14 @@ pub(crate) fn lookup(
     if getaddrinfo_only_flags(query.options.flags)
         || bun_core::ip_address::to_ip_address(query.name.as_ref()).is_some()
     {
-        return lib_c::lookup(this, query, global_this);
+        return lib_c::lookup(this, query, global_this, context);
     }
 
     let key = get_addr_info_request::PendingCacheKey::init(query);
     let cache = this.get_or_put_into_pending_cache(&key, PendingCacheField::PendingHostCacheNative);
 
     if let CacheHit::Inflight(inflight) = cache {
-        let dns_lookup = DNSLookup::init(this.as_ctx_ptr(), global_this);
+        let dns_lookup = DNSLookup::init(this.as_ctx_ptr(), global_this, context);
         // SAFETY: inflight points into resolver's HiveArray buffer
         unsafe { (*inflight).append(dns_lookup) };
         // SAFETY: `dns_lookup` was just heap-allocated by `DNSLookup::init`.
@@ -720,7 +739,7 @@ pub(crate) fn lookup(
                 unsafe { c.put(new) };
             });
         }
-        return lib_c::lookup(this, query, global_this);
+        return lib_c::lookup(this, query, global_this, context);
     };
 
     let protocol = protocol_for_family(query.options.family);
@@ -729,6 +748,7 @@ pub(crate) fn lookup(
         get_addr_info_request::Backend::DnsSd(get_addr_info_request::BackendDnsSd::new(protocol)),
         Some(this.as_ctx_ptr()),
         global_this,
+        context,
         PendingCacheField::PendingHostCacheNative,
     );
     // SAFETY: request was just heap-allocated in init() and is exclusively owned here.
@@ -754,7 +774,7 @@ pub(crate) fn lookup(
             DNSLookup::destroy(&raw mut (*request).head);
             drop(bun_core::heap::take(request));
         }
-        return lib_c::lookup(this, query, global_this);
+        return lib_c::lookup(this, query, global_this, context);
     };
 
     this.request_sent(this.vm());

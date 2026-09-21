@@ -10,6 +10,7 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/JSFunction.h>
 #include "JSFetchHeaders.h"
+#include "HTTPLatin1String.h"
 #include <bun-uws/src/App.h>
 #include <bun-uws/src/Http3Response.h>
 #include <bun-uws/src/Http2Context.h>
@@ -372,30 +373,10 @@ static EncodedJSValue NodeHTTPServer__onRequest(
 template<bool isSSL>
 static void writeResponseHeader(uWS::HttpResponse<isSSL>* res, const WTF::StringView& name, const WTF::StringView& value)
 {
-    WTF::CString nameStr;
-    WTF::CString valueStr;
-
-    std::string_view nameView;
-    std::string_view valueView;
-
-    if (name.is8Bit()) {
-        const auto nameSpan = name.span8();
-        ASSERT(name.containsOnlyASCII());
-        nameView = std::string_view(reinterpret_cast<const char*>(nameSpan.data()), nameSpan.size());
-    } else {
-        nameStr = name.utf8();
-        nameView = std::string_view(nameStr.data(), nameStr.length());
-    }
-
-    if (value.is8Bit()) {
-        const auto valueSpan = value.span8();
-        valueView = std::string_view(reinterpret_cast<const char*>(valueSpan.data()), valueSpan.size());
-    } else {
-        valueStr = value.utf8();
-        valueView = std::string_view(valueStr.data(), valueStr.length());
-    }
-
-    res->writeHeader(nameView, valueView);
+    ASSERT(name.containsOnlyASCII());
+    HTTPLatin1String nameBytes(name);
+    HTTPLatin1String valueBytes(value);
+    res->writeHeader(nameBytes.view(), valueBytes.view());
 }
 
 // Connection is `1#connection-option` (RFC 9112 §9.3): look for the "close"
@@ -421,14 +402,8 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
     auto& internalHeaders = headers.internalHeaders();
 
     for (auto& value : internalHeaders.getSetCookieHeaders()) {
-
-        if (value.is8Bit()) {
-            const auto valueSpan = value.span8();
-            res->writeHeader(std::string_view("set-cookie", 10), std::string_view(reinterpret_cast<const char*>(valueSpan.data()), valueSpan.size()));
-        } else {
-            WTF::CString valueStr = value.utf8();
-            res->writeHeader(std::string_view("set-cookie", 10), std::string_view(valueStr.data(), valueStr.length()));
-        }
+        HTTPLatin1String valueBytes(value);
+        res->writeHeader(std::string_view("set-cookie", 10), valueBytes.view());
     }
 
     auto* data = res->getHttpResponseData();
@@ -866,33 +841,15 @@ static void writeFetchHeadersToStreamResponse(WebCore::FetchHeaders& headers, Re
     auto* data = res->getHttpResponseData();
 
     auto writeOne = [&](const WTF::StringView& name, const WTF::StringView& value) {
-        WTF::CString nameStr, valueStr;
-        std::string_view nameView, valueView;
-        if (name.is8Bit()) {
-            const auto s = name.span8();
-            nameView = std::string_view(reinterpret_cast<const char*>(s.data()), s.size());
-        } else {
-            nameStr = name.utf8();
-            nameView = std::string_view(nameStr.data(), nameStr.length());
-        }
-        if (value.is8Bit()) {
-            const auto s = value.span8();
-            valueView = std::string_view(reinterpret_cast<const char*>(s.data()), s.size());
-        } else {
-            valueStr = value.utf8();
-            valueView = std::string_view(valueStr.data(), valueStr.length());
-        }
-        res->writeHeader(nameView, valueView);
+        ASSERT(name.containsOnlyASCII());
+        HTTPLatin1String nameBytes(name);
+        HTTPLatin1String valueBytes(value);
+        res->writeHeader(nameBytes.view(), valueBytes.view());
     };
 
     for (auto& value : internalHeaders.getSetCookieHeaders()) {
-        if (value.is8Bit()) {
-            const auto s = value.span8();
-            res->writeHeader(std::string_view("set-cookie", 10), std::string_view(reinterpret_cast<const char*>(s.data()), s.size()));
-        } else {
-            WTF::CString v = value.utf8();
-            res->writeHeader(std::string_view("set-cookie", 10), std::string_view(v.data(), v.length()));
-        }
+        HTTPLatin1String valueBytes(value);
+        res->writeHeader(std::string_view("set-cookie", 10), valueBytes.view());
     }
 
     for (const auto& header : internalHeaders.commonHeaders()) {

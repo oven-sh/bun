@@ -3,34 +3,39 @@
 use crate::node::fs as node_fs;
 use crate::node::types::PathLikeExt as _;
 #[cfg(not(windows))]
-use crate::webcore::blob::{self, Retry};
-use crate::webcore::blob::{MAX_SIZE, MkdirpTarget, SizeType, Store, store};
+use crate::webcore::blob::{self, MkdirpTarget, Retry, store};
+use crate::webcore::blob::{MAX_SIZE, SizeType, Store};
 use crate::webcore::node_types::PathOrFileDescriptor;
 #[cfg(windows)]
 use bun_io as aio;
-use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue};
-use bun_paths::PathBuffer;
+#[cfg(not(windows))]
+use bun_jsc::JSGlobalObject;
+use bun_jsc::{self as jsc, JSPromise, JSValue};
 use bun_ptr::RefPtr;
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
 #[cfg(not(windows))]
 use bun_sys::Stat;
+#[cfg(not(windows))]
+use bun_sys::SystemError;
 #[cfg(windows)]
 use bun_sys::windows::libuv;
-use bun_sys::{self, Fd, FdExt, Mode, SystemError};
+use bun_sys::{self, Fd, FdExt, Mode};
 #[cfg(windows)]
 use bun_sys_jsc::ErrorJsc as _;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use core::ffi::c_int;
 #[cfg(windows)]
 use core::ffi::c_void;
+#[cfg(not(windows))]
 use core::marker::ConstParamTy;
 
 // ───────────────────────────────────────────────────────────────────────────
 // CopyFile (POSIX, blocking off-thread)
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct CopyFile {
+#[cfg(not(windows))]
+pub(crate) struct CopyFile {
     #[cfg(not(windows))]
     pub(crate) destination_file_store: store::File,
     pub(crate) source_file_store: store::File,
@@ -50,14 +55,13 @@ pub struct CopyFile {
     pub(crate) system_error: Option<SystemError>,
 
     pub(crate) read_len: SizeType,
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub(crate) read_off: SizeType,
 
     pub(crate) mkdirp_if_not_exists: bool,
     #[cfg(not(windows))]
     pub(crate) destination_mode: Option<Mode>,
 }
 
+#[cfg(not(windows))]
 impl MkdirpTarget for CopyFile {
     fn mkdirp_if_not_exists(&self) -> bool {
         self.mkdirp_if_not_exists
@@ -71,8 +75,10 @@ impl MkdirpTarget for CopyFile {
 }
 
 // SAFETY: file stores/paths and blob store refs (atomic counts); nothing thread-affine.
+#[cfg(not(windows))]
 unsafe impl Send for CopyFile {}
 
+#[cfg(not(windows))]
 impl jsc::JobContext for CopyFile {
     type OffThread = Self;
     type Js = jsc::JSPromiseStrong;
@@ -89,6 +95,7 @@ impl jsc::JobContext for CopyFile {
     }
 }
 
+#[cfg(not(windows))]
 impl CopyFile {
     /// Schedule the copy on the work pool; returns its promise.
     #[cfg(not(windows))]
@@ -97,7 +104,7 @@ impl CopyFile {
         source_store: RefPtr<Store>,
         off: SizeType,
         max_len: SizeType,
-        global_this: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         mkdirp_if_not_exists: bool,
         destination_mode: Option<Mode>,
     ) -> JSValue {
@@ -115,16 +122,14 @@ impl CopyFile {
             source_fd: Fd::INVALID,
             system_error: None,
             read_len: 0,
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            read_off: 0,
         };
-        let cx = global_this.js_thread();
-        let promise = jsc::JSPromiseStrong::init(global_this);
+        let promise = jsc::JSPromiseStrong::init(cx.global());
         let value = promise.value();
-        jsc::Job::<CopyFile>::schedule(&cx, copy, promise);
+        jsc::Job::<CopyFile>::schedule(cx, copy, promise);
         value
     }
 
+    #[cfg(not(windows))]
     pub(crate) fn reject(
         &mut self,
         promise: &mut JSPromise,
@@ -152,6 +157,7 @@ impl CopyFile {
         promise.reject(global_this, Ok(instance))
     }
 
+    #[cfg(not(windows))]
     pub(crate) fn then(
         &mut self,
         promise: &mut JSPromise,
@@ -220,7 +226,7 @@ impl CopyFile {
 
     #[cfg(not(windows))]
     pub(crate) fn do_open_file<const WHICH: IOWhich>(&mut self) -> Result<(), crate::Error> {
-        let mut path_buf1 = PathBuffer::uninit();
+        let mut path_buf1 = bun_paths::path_buffer_pool::get();
         // open source file first
         // if it fails, we don't want the extra destination file hanging out
         if matches!(WHICH, IOWhich::Both | IOWhich::Source) {
@@ -349,8 +355,6 @@ impl CopyFile {
         &mut self,
     ) -> Result<(), crate::Error> {
         use bun_sys::linux;
-
-        self.read_off += self.offset;
 
         let mut remain: usize = self.max_length as usize;
         let unknown_size = remain == MAX_SIZE as usize || remain == 0;
@@ -526,10 +530,12 @@ impl CopyFile {
         }
     }
 
+    /// Returns the number of bytes copied.
     #[cfg(target_os = "macos")]
     pub(crate) fn do_fcopy_file_with_read_write_loop_fallback(
         &mut self,
-    ) -> Result<(), crate::Error> {
+        source_size: u64,
+    ) -> Result<u64, crate::Error> {
         match bun_sys::fcopyfile(
             self.source_fd,
             self.destination_fd,
@@ -560,26 +566,25 @@ impl CopyFile {
                         ) {
                             bun_sys::Result::Err(err) => {
                                 self.system_error = Some(err.to_system_error());
-                                return Err(bun_errno::from_errno(err.errno as i32).into());
+                                Err(bun_errno::from_errno(err.errno as i32).into())
                             }
-                            bun_sys::Result::Ok(()) => {}
+                            bun_sys::Result::Ok(()) => Ok(total_written),
                         }
                     }
                     _ => {
                         self.system_error = Some(errno.to_system_error());
-                        return Err(bun_errno::from_errno(errno.errno as i32).into());
+                        Err(bun_errno::from_errno(errno.errno as i32).into())
                     }
                 }
             }
-            bun_sys::Result::Ok(()) => {}
+            bun_sys::Result::Ok(()) => Ok(source_size),
         }
-        Ok(())
     }
 
     #[cfg(target_os = "macos")]
     pub(crate) fn do_clonefile(&mut self) -> Result<(), crate::Error> {
-        let mut source_buf = PathBuffer::uninit();
-        let mut dest_buf = PathBuffer::uninit();
+        let mut source_buf = bun_paths::path_buffer_pool::get();
+        let mut dest_buf = bun_paths::path_buffer_pool::get();
 
         loop {
             // reshaped for borrowck — `slice_z(&'a self, &'a mut buf)`
@@ -619,6 +624,7 @@ impl CopyFile {
         Ok(())
     }
 
+    #[cfg(not(windows))]
     pub(crate) fn run_async(&mut self) {
         #[cfg(windows)]
         {
@@ -656,7 +662,7 @@ impl CopyFile {
                         )
                     {
                         'do_clonefile: {
-                            let mut path_buf = PathBuffer::uninit();
+                            let mut path_buf = bun_paths::path_buffer_pool::get();
 
                             // stat the output file, make sure it:
                             // 1. Exists
@@ -878,10 +884,15 @@ impl CopyFile {
                     self.destination_file_store.pathlike,
                     PathOrFileDescriptor::Path(_)
                 ) {
-                    if self.do_fcopy_file_with_read_write_loop_fallback().is_err() {
-                        self.do_close();
-                        return;
-                    }
+                    let copied = match self.do_fcopy_file_with_read_write_loop_fallback(
+                        u64::try_from(stat.st_size).expect("int cast"),
+                    ) {
+                        Ok(copied) => copied,
+                        Err(_) => {
+                            self.do_close();
+                            return;
+                        }
+                    };
                     if stat.st_size != 0
                         && SizeType::try_from(stat.st_size).expect("int cast") > self.max_length
                     {
@@ -889,6 +900,9 @@ impl CopyFile {
                             self.destination_fd,
                             i64::try_from(self.max_length).expect("int cast"),
                         );
+                        self.read_len = copied.min(self.max_length as u64) as SizeType;
+                    } else {
+                        self.read_len = copied as SizeType;
                     }
                 } else if self.do_read_write_loop_capped(self.max_length).is_err() {
                     self.do_close();
@@ -1033,12 +1047,14 @@ const OPEN_DESTINATION_FLAGS: i32 =
 const OPEN_SOURCE_FLAGS: i32 = bun_sys::O::CLOEXEC | bun_sys::O::RDONLY;
 
 #[derive(ConstParamTy, PartialEq, Eq, Clone, Copy)]
-pub enum TryWith {
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub(crate) enum TryWith {
     Sendfile,
     CopyFileRange,
     Splice,
 }
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
 impl TryWith {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) const fn tag(self) -> bun_sys::Tag {
@@ -1055,7 +1071,7 @@ impl TryWith {
 // ───────────────────────────────────────────────────────────────────────────
 
 #[cfg(windows)]
-pub struct CopyFileWindows<'a> {
+pub(crate) struct CopyFileWindows<'a> {
     pub(crate) destination_file_store: RefPtr<Store>,
     pub(crate) source_file_store: RefPtr<Store>,
 
@@ -1067,6 +1083,8 @@ pub struct CopyFileWindows<'a> {
     // TODO(refactor): lifetime — heap-allocated and re-entered from libuv callbacks;
     // likely should be *const jsc::EventLoop.
     pub(crate) event_loop: &'a jsc::event_loop::EventLoop,
+    /// The context of the script that asked for the copy.
+    pub(crate) context: jsc::ContextId,
 
     pub(crate) size: SizeType,
 
@@ -1081,7 +1099,7 @@ pub struct CopyFileWindows<'a> {
 }
 
 #[cfg(windows)]
-pub struct ReadWriteLoop {
+pub(crate) struct ReadWriteLoop {
     pub(crate) source_fd: Fd,
     pub(crate) must_close_source_fd: bool,
     pub(crate) destination_fd: Fd,
@@ -1162,7 +1180,7 @@ impl<'a> CopyFileWindows<'a> {
 
 #[cfg(windows)]
 impl ReadWriteLoop {
-    pub fn close(&mut self) {
+    pub(crate) fn close(&mut self) {
         if self.must_close_source_fd {
             match self.source_fd.make_libuv_owned() {
                 Ok(fd) => {
@@ -1360,6 +1378,7 @@ impl<'a> CopyFileWindows<'a> {
         destination_file_store: RefPtr<Store>,
         source_file_store: RefPtr<Store>,
         event_loop: &'a jsc::event_loop::EventLoop,
+        context: &jsc::ScriptExecutionContext,
         mkdirp_if_not_exists: bool,
         size_: SizeType,
         destination_mode: Option<Mode>,
@@ -1373,6 +1392,7 @@ impl<'a> CopyFileWindows<'a> {
             // SAFETY: all-zero is a valid libuv::fs_t
             io_request: bun_core::ffi::zeroed::<libuv::fs_t>(),
             event_loop,
+            context: context.id(),
             mkdirp_if_not_exists,
             destination_mode,
             size: size_,
@@ -1488,8 +1508,8 @@ impl<'a> CopyFileWindows<'a> {
             return;
         }
 
-        let mut pathbuf1 = PathBuffer::uninit();
-        let mut pathbuf2 = PathBuffer::uninit();
+        let mut pathbuf1 = bun_paths::path_buffer_pool::get();
+        let mut pathbuf2 = bun_paths::path_buffer_pool::get();
         // capture the raw `self` pointer before borrowing the file
         // stores. `slice_z` ties the returned `&ZStr` lifetime to `&self`, so
         // `new_path`/`old_path` keep `self.{destination,source}_file_store`
@@ -1611,24 +1631,19 @@ impl<'a> CopyFileWindows<'a> {
             )
         };
 
-        if let Some(errno) = rc.errno() {
-            self.throw(bun_sys::Error {
-                // #6336
-                errno: if errno == bun_sys::SystemErrno::EPERM as u16 {
-                    bun_sys::SystemErrno::ENOENT as u16
-                } else {
-                    errno
-                },
-                syscall: bun_sys::Tag::copyfile,
-                path: old_path.as_bytes().into(),
-                ..Default::default()
-            });
+        if let Some(mut err) = rc.to_error(bun_sys::Tag::copyfile) {
+            // https://github.com/oven-sh/bun/issues/6336
+            if err.get_errno() == bun_sys::E::EPERM {
+                err = bun_sys::Error::from_code(bun_sys::E::ENOENT, bun_sys::Tag::copyfile);
+            }
+            self.throw(err.with_path(old_path.as_bytes()));
             return;
         }
         self.event_loop.ref_keep_alive();
     }
 
-    pub fn throw(&mut self, err: bun_sys::Error) {
+    pub(crate) fn throw(&mut self, err: bun_sys::Error) {
+        let _context = jsc::virtual_machine::VirtualMachine::get().enter_context(self.context);
         let global_this = self.event_loop.global_ref();
         // `swap()` returns a `&mut JSPromise` into a GC-owned cell (not into
         // `self`), but its lifetime is elided to `&mut self`. Decay to a raw pointer so
@@ -1650,7 +1665,7 @@ impl<'a> CopyFileWindows<'a> {
 
     pub(crate) fn on_complete(&mut self, written_actual: usize) {
         let mut written = written_actual;
-        if written != usize::try_from(self.size).expect("int cast") && self.size != MAX_SIZE {
+        if written > usize::try_from(self.size).expect("int cast") && self.size != MAX_SIZE {
             self.truncate();
             written = usize::try_from(self.size).expect("int cast");
         }
@@ -1662,7 +1677,7 @@ impl<'a> CopyFileWindows<'a> {
                 PathOrFileDescriptor::Path(_)
             ) {
                 self.written_bytes = written;
-                let mut pathbuf = PathBuffer::uninit();
+                let mut pathbuf = bun_paths::path_buffer_pool::get();
                 // Borrowck: `slice_z` ties the returned `&ZStr` to
                 // `&self.destination_file_store`, which would conflict with the
                 // `core::ptr::from_mut(self)` below. Capture the raw C pointer now —
@@ -1697,12 +1712,7 @@ impl<'a> CopyFileWindows<'a> {
                 };
 
                 // chmod failed to start - reject the promise to report the error.
-                // previously `transmute::<c_int, SystemErrno>(errno)` — wrong on
-                // two counts: `errno` is `u16` (size mismatch with `c_int`), and libuv
-                // negative codes are NOT `SystemErrno` discriminants on Windows. Route
-                // through `Error::from_uv_rc` so `from_libuv` is set and translation is
-                // deferred to display, matching the other libuv error paths in this file.
-                if let Some(mut err) = bun_sys::Error::from_uv_rc(rc, bun_sys::Tag::chmod) {
+                if let Some(mut err) = rc.to_error(bun_sys::Tag::chmod) {
                     let destination = &self.destination_file_store.data.as_file();
                     if let PathOrFileDescriptor::Path(p) = &destination.pathlike {
                         err = err.with_path(p.slice());
@@ -1719,6 +1729,7 @@ impl<'a> CopyFileWindows<'a> {
     }
 
     fn resolve_promise(&mut self, written: usize) {
+        let _context = jsc::virtual_machine::VirtualMachine::get().enter_context(self.context);
         let global_this = self.event_loop.global_ref();
         // see `throw` — re-type the GC cell via the ZST opaque deref so it
         // outlives `destroy(self)` for borrowck.
@@ -1744,7 +1755,7 @@ impl<'a> CopyFileWindows<'a> {
 
         let mut node_fs_ = node_fs::NodeFS::default();
         let _ = node_fs_.truncate(
-            &node_fs::Arguments::Truncate {
+            &node_fs::args::Truncate {
                 path: self.destination_file_store.data.as_file().pathlike.clone(),
                 len: u64::try_from(self.size).expect("int cast"),
                 flags: 0,
@@ -1827,7 +1838,7 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
     let rc = this.io_request.result;
 
     bun_sys::syslog!("uv_fs_copyfile() = {}", rc);
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.errno() {
         // ENOENT from uv_fs_copyfile can mean either the source file or the
         // destination directory is missing. Disambiguate so a missing source
         // rejects directly instead of entering the mkdirp+retry path. Only an
@@ -1852,7 +1863,7 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
         }
 
         let mut err = bun_sys::Error::from_code(
-            // #6336
+            // https://github.com/oven-sh/bun/issues/6336
             if errno == bun_sys::E::EPERM {
                 bun_sys::E::ENOENT
             } else {
@@ -1878,8 +1889,22 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
         return;
     }
 
-    let size = this.io_request.statbuf.size();
-    this.on_complete(size as usize);
+    // uv_fs_copyfile leaves `statbuf` empty.
+    let size = match &this.destination_file_store.data.as_file().pathlike {
+        PathOrFileDescriptor::Path(p) => {
+            let mut buf = bun_paths::path_buffer_pool::get();
+            bun_sys::stat(p.slice_z(&mut buf)).map(|stat| stat.size())
+        }
+        PathOrFileDescriptor::Fd(fd) => bun_sys::fstat(*fd).map(|stat| stat.size()),
+    };
+    let size = match size {
+        Ok(size) => size,
+        Err(err) => {
+            this.throw(err);
+            return;
+        }
+    };
+    this.on_complete(usize::try_from(size).expect("int cast"));
 }
 
 #[cfg(windows)]
@@ -1893,8 +1918,7 @@ extern "C" fn on_chmod(req: *mut libuv::fs_t) {
     event_loop.unref_keep_alive();
 
     let rc = this.io_request.result;
-    if let Some(errno) = rc.err_enum_e() {
-        let mut err = bun_sys::Error::from_code(errno, bun_sys::Tag::chmod);
+    if let Some(mut err) = rc.to_error(bun_sys::Tag::chmod) {
         let destination = &this.destination_file_store.data.as_file();
         if let PathOrFileDescriptor::Path(p) = &destination.pathlike {
             err = err.with_path(p.slice());
@@ -1935,7 +1959,8 @@ fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>, ticket:
 // ───────────────────────────────────────────────────────────────────────────
 
 #[derive(ConstParamTy, PartialEq, Eq, Clone, Copy)]
-pub enum IOWhich {
+#[cfg(not(windows))]
+pub(crate) enum IOWhich {
     Source,
     Destination,
     Both,

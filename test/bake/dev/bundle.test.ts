@@ -201,6 +201,60 @@ devTest("default export same-scope handling", {
     c.expectMessage("TWO", "FOUR", "FIVE", "SEVEN", "EIGHT", "NINE", "ELEVEN");
   },
 });
+// An anonymous `export default class` that cannot be moved into the exports
+// object (it has an `extends` clause, a static block, or a computed key) has to
+// stay a class statement, which needs a name. It used to crash the dev server
+// with `called Option::unwrap() on a None value` while visiting the file.
+devTest("anonymous export default class that must stay a statement", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import.meta.hot.accept();
+      import { Base } from "./base";
+      import Derived from "./derived";
+      import StaticBlock from "./static-block";
+      import ComputedKey from "./computed-key";
+      console.log("extends: " + (new Derived() instanceof Base) + " " + new Derived().tag);
+      console.log("static block: " + StaticBlock.initialized);
+      console.log("computed key: " + new ComputedKey().computed);
+    `,
+    "base.ts": `
+      export class Base {
+        tag = "base";
+      }
+    `,
+    "derived.ts": `
+      import { Base } from "./base";
+      export default class extends Base {
+        tag = "derived";
+      }
+    `,
+    "static-block.ts": `
+      export default class {
+        static initialized = false;
+        static {
+          this.initialized = true;
+        }
+      }
+    `,
+    "computed-key.ts": `
+      const key = "computed";
+      export default class {
+        [key] = "value";
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("extends: true derived", "static block: true", "computed key: value");
+
+    await dev.patch("derived.ts", { find: '"derived"', replace: '"updated"' });
+    await c.expectMessage("extends: true updated", "static block: true", "computed key: value");
+  },
+});
 devTest("directory cache bust case #17576", {
   files: {
     "web/index.html": emptyHtmlFile({
@@ -863,5 +917,26 @@ devTest("barrel optimization: namespace re-export cycle through a star-exported 
   async test(dev) {
     await using c = await dev.client("/");
     await c.expectMessage("result: object Y KEEP DEEP OTHER");
+  },
+});
+// The dev server's runtime threw `$ERR_SSR_RESPONSE_EXPECTED(...)`, a name only src/js resolves: what the
+// user saw was "ReferenceError: $ERR_SSR_RESPONSE_EXPECTED is not defined".
+devTest("a render() that does not return a Response is reported as that", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      export default function () {
+        return "not a response";
+      }
+    `,
+  },
+  async test(dev) {
+    const response = await dev.fetch("/");
+    const text = await response.text();
+    expect({
+      status: response.status,
+      saysWhatIsWrong: text.includes("was expected to return a Response object"),
+      referenceError: text.includes("is not defined"),
+    }).toEqual({ status: 500, saysWhatIsWrong: true, referenceError: false });
   },
 });

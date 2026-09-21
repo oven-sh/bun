@@ -1525,6 +1525,34 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     }
   }
 
+  void uws_res_send_corked(int ssl, uws_res_r res)
+  {
+    if (ssl)
+    {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      uwsRes->sendCorked();
+    }
+    else
+    {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      uwsRes->sendCorked();
+    }
+  }
+
+  void uws_res_send_when_complete(int ssl, uws_res_r res)
+  {
+    if (ssl)
+    {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      uwsRes->sendWhenComplete();
+    }
+    else
+    {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      uwsRes->sendWhenComplete();
+    }
+  }
+
 __attribute__((callback (corker, ctx)))
   void uws_res_cork(int ssl, uws_res_r res, void *ctx,
                     void (*corker)(void *ctx)) nonnull_fn_decl;

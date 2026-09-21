@@ -124,24 +124,6 @@ impl Default for CustomLoader {
     }
 }
 
-// `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle; remaining
-// params are by-value `JSValue`/scalars → `safe fn`.
-unsafe extern "C" {
-    pub safe fn JSCommonJSExtensions__appendFunction(
-        global: &JSGlobalObject,
-        value: JSValue,
-    ) -> u32;
-    pub safe fn JSCommonJSExtensions__setFunction(
-        global: &JSGlobalObject,
-        index: u32,
-        value: JSValue,
-    );
-    /// Returns the index of the last value, which must have it's references updated to `index`
-    pub safe fn JSCommonJSExtensions__swapRemove(global: &JSGlobalObject, index: u32) -> u32;
-}
-
-// Memory management is complicated because JSValues are stored in gc-visitable
-// WriteBarriers in C++ but the hash map for extensions is in Rust for flexibility.
 fn on_require_extension_modify(
     global: &JSGlobalObject,
     str: &[u8],

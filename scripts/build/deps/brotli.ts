@@ -10,21 +10,21 @@
 
 import type { Dependency, DirectBuild } from "../source.ts";
 
-// Upstream brotli pins releases by tag, not commit. A retag would change
-// what we fetch — if that ever matters, resolve the tag to a sha and pin that.
-const BROTLI_COMMIT = "v1.1.0";
+const BROTLI_COMMIT = "028fb5a23661f123017c060daa546b55cf4bde29"; // v1.2.0
 
 // prettier-ignore
 const SOURCES = [
   "common/constants", "common/context", "common/dictionary", "common/platform",
   "common/shared_dictionary", "common/transform",
-  "dec/bit_reader", "dec/decode", "dec/huffman", "dec/state",
+  "dec/bit_reader", "dec/decode", "dec/huffman", "dec/prefix", "dec/state",
+  "dec/static_init",
   "enc/backward_references", "enc/backward_references_hq", "enc/bit_cost",
   "enc/block_splitter", "enc/brotli_bit_stream", "enc/cluster", "enc/command",
   "enc/compound_dictionary", "enc/compress_fragment", "enc/compress_fragment_two_pass",
   "enc/dictionary_hash", "enc/encode", "enc/encoder_dict", "enc/entropy_encode",
   "enc/fast_log", "enc/histogram", "enc/literal_cost", "enc/memory",
-  "enc/metablock", "enc/static_dict", "enc/utf8_util",
+  "enc/metablock", "enc/static_dict", "enc/static_dict_lut", "enc/static_init",
+  "enc/utf8_util",
 ];
 
 export const brotli: Dependency = {
@@ -36,20 +36,11 @@ export const brotli: Dependency = {
     commit: BROTLI_COMMIT,
   }),
 
-  build: cfg => {
+  build: () => {
     const spec: DirectBuild = {
       kind: "direct",
       sources: SOURCES.map(s => `c/${s}.c`),
       includes: ["c/include"],
-      // log2 exists everywhere we target; the cmake check only exists for
-      // ancient bionic. OS_* selects the <endian.h> include in platform.h;
-      // Windows is detected via _WIN32 directly so needs no define here.
-      defines: {
-        BROTLI_HAVE_LOG2: 1,
-        ...(cfg.linux && { OS_LINUX: true }),
-        ...(cfg.darwin && { OS_MACOSX: true }),
-        ...(cfg.freebsd && { OS_FREEBSD: true }),
-      },
       pic: true,
     };
 

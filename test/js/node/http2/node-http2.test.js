@@ -3,6 +3,7 @@ import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe } from "harness";
 import { createTest } from "node-harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import dc from "node:diagnostics_channel";
+import { once } from "node:events";
 import fs from "node:fs";
 import http2 from "node:http2";
 import https from "node:https";
@@ -6474,4 +6475,382 @@ it("originSet is undefined on a destroyed TLS session that never read it", async
   } finally {
     server.close();
   }
+});
+
+// The peer in these tests is a hand-written HTTP/2 framer, so the tests control exactly which
+// frames arrive before the RST_STREAM. Expected values are node v26.3.0's.
+describe.concurrent("http2 RST_STREAM from the peer while the readable side is open", () => {
+  const { NGHTTP2_NO_ERROR, NGHTTP2_CANCEL } = http2.constants;
+  const FRAME_HEADERS = 1;
+  const FRAME_SETTINGS = 4;
+  const FRAME_PING = 6;
+  const FLAG_ACK = 1;
+  const BODY = Buffer.alloc(100, "a");
+  // HPACK: ":status: 200".
+  const RESPONSE_HEADERS = Buffer.from([0x88]);
+  // HPACK: ":method: POST", ":scheme: http", ":path: /", ":authority: x".
+  const REQUEST_HEADERS = Buffer.from([0x83, 0x86, 0x84, 0x01, 0x01, 0x78]);
+  // HPACK: "x: y".
+  const TRAILERS = Buffer.from([0x00, 0x01, 0x78, 0x01, 0x79]);
+  const SERVER_PREFACE = Buffer.concat([
+    new http2utils.SettingsFrame(false).data,
+    new http2utils.SettingsFrame(true).data,
+  ]);
+
+  const rstStream = (id, code) => {
+    const payload = Buffer.alloc(4);
+    payload.writeUInt32BE(code, 0);
+    return Buffer.concat([new http2utils.Frame(4, 3, 0, id).data, payload]);
+  };
+
+  // Returns a function to feed the peer's input to. It calls onFrame(type, flags, streamId) for
+  // every complete frame.
+  function frameReader(prefaceLength, onFrame) {
+    let buffered = Buffer.alloc(0);
+    return chunk => {
+      buffered = Buffer.concat([buffered, chunk]);
+      if (prefaceLength > 0) {
+        if (buffered.length < prefaceLength) return;
+        buffered = buffered.subarray(prefaceLength);
+        prefaceLength = 0;
+      }
+      while (buffered.length >= 9) {
+        const length = buffered.readUIntBE(0, 3);
+        if (buffered.length < 9 + length) break;
+        onFrame(buffered[3], buffered[4], buffered.readUInt32BE(5) & 0x7fffffff);
+        buffered = buffered.subarray(9 + length);
+      }
+    };
+  }
+
+  const ping = session =>
+    new Promise((resolve, reject) => session.ping(Buffer.alloc(8), err => (err ? reject(err) : resolve())));
+  // The peer writes the reset before it acks the first PING, so the session has read the reset
+  // when that ping returns. The session handles a reset in process.nextTick(): the second round
+  // trip lets that run.
+  async function resetWasHandled(session) {
+    await ping(session);
+    await ping(session);
+  }
+
+  function recordEvents(stream, names) {
+    const events = [];
+    for (const name of names) stream.on(name, () => events.push(name));
+    return events;
+  }
+
+  // Runs `run(client, req, events)` against a raw server that answers the request with
+  // `responseFrames(id)`.
+  async function withRawServer(responseFrames, requestArgs, run) {
+    const server = net.createServer(socket => {
+      socket.on("error", () => {});
+      socket.write(SERVER_PREFACE);
+      socket.on(
+        "data",
+        frameReader(http2utils.kClientMagic.length, (type, flags, id) => {
+          if (type === FRAME_PING && (flags & FLAG_ACK) === 0) socket.write(new http2utils.PingFrame(true).data);
+          else if (type === FRAME_HEADERS) socket.write(Buffer.concat(responseFrames(id)));
+        }),
+      );
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    const sessionErrors = [];
+    client.on("error", err => sessionErrors.push(err));
+    try {
+      const req = client.request(...requestArgs);
+      await run(client, req, recordEvents(req, ["response", "trailers", "aborted", "end", "error", "close"]));
+      expect(sessionErrors).toEqual([]);
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  }
+
+  const responseThenReset = code => id => [
+    new http2utils.HeadersFrame(id, RESPONSE_HEADERS, 0, true).data,
+    new http2utils.DataFrame(id, BODY).data,
+    rstStream(id, code),
+  ];
+
+  it("a consumer that attaches after RST_STREAM(NO_ERROR) reads the data that arrived before it", async () => {
+    await withRawServer(responseThenReset(NGHTTP2_NO_ERROR), [{ ":path": "/" }], async (client, req, events) => {
+      await once(req, "response");
+      await resetWasHandled(client);
+      // The stream is closed, but it is not destroyed until somebody reads it to 'end'.
+      expect({
+        events,
+        closed: req.closed,
+        destroyed: req.destroyed,
+        rstCode: req.rstCode,
+        readableLength: req.readableLength,
+      }).toEqual({
+        events: ["response"],
+        closed: true,
+        destroyed: false,
+        rstCode: NGHTTP2_NO_ERROR,
+        readableLength: BODY.length,
+      });
+
+      const chunks = [];
+      req.on("data", chunk => chunks.push(chunk));
+      await once(req, "close");
+      expect({ body: Buffer.concat(chunks).toString(), events }).toEqual({
+        body: BODY.toString(),
+        events: ["response", "end", "close"],
+      });
+    });
+  });
+
+  it("a paused consumer gets the data only after it resumes", async () => {
+    await withRawServer(responseThenReset(NGHTTP2_NO_ERROR), [{ ":path": "/" }], async (client, req, events) => {
+      const chunks = [];
+      req.pause();
+      req.on("data", chunk => chunks.push(chunk));
+      await once(req, "response");
+      await resetWasHandled(client);
+      expect({ received: chunks.length, events, destroyed: req.destroyed }).toEqual({
+        received: 0,
+        events: ["response"],
+        destroyed: false,
+      });
+
+      req.resume();
+      await once(req, "close");
+      expect({ body: Buffer.concat(chunks).toString(), events }).toEqual({
+        body: BODY.toString(),
+        events: ["response", "end", "close"],
+      });
+    });
+  });
+
+  it("a response that ends with trailers and RST_STREAM(NO_ERROR) while the request is open", async () => {
+    // RFC 9113 8.1: a server that needs no more of the request sends its complete response and
+    // then RST_STREAM(NO_ERROR). gRPC servers do this.
+    const frames = id => [
+      new http2utils.HeadersFrame(id, RESPONSE_HEADERS, 0, true).data,
+      new http2utils.DataFrame(id, BODY).data,
+      new http2utils.HeadersFrame(id, TRAILERS, 0, true, true).data,
+      rstStream(id, NGHTTP2_NO_ERROR),
+    ];
+    const requestArgs = [{ ":path": "/", ":method": "POST" }, { endStream: false }];
+    await withRawServer(frames, requestArgs, async (client, req, events) => {
+      const chunks = [];
+      req.pause();
+      req.on("data", chunk => chunks.push(chunk));
+      await once(req, "response");
+      await resetWasHandled(client);
+      expect({ received: chunks.length, events, destroyed: req.destroyed }).toEqual({
+        received: 0,
+        events: ["response", "trailers", "aborted"],
+        destroyed: false,
+      });
+
+      req.resume();
+      await once(req, "close");
+      expect({ body: Buffer.concat(chunks).toString(), events }).toEqual({
+        body: BODY.toString(),
+        events: ["response", "trailers", "aborted", "end", "close"],
+      });
+    });
+  });
+
+  it("RST_STREAM(NO_ERROR) with no unread data ends and closes a stream that nobody reads", async () => {
+    const frames = id => [
+      new http2utils.HeadersFrame(id, RESPONSE_HEADERS, 0, true).data,
+      rstStream(id, NGHTTP2_NO_ERROR),
+    ];
+    await withRawServer(frames, [{ ":path": "/" }], async (client, req, events) => {
+      await once(req, "close");
+      expect({ events, rstCode: req.rstCode }).toEqual({
+        events: ["response", "end", "close"],
+        rstCode: NGHTTP2_NO_ERROR,
+      });
+    });
+  });
+
+  it("RST_STREAM(CANCEL) destroys the stream at once: unread data is dropped and there is no 'end'", async () => {
+    await withRawServer(responseThenReset(NGHTTP2_CANCEL), [{ ":path": "/" }], async (client, req, events) => {
+      await once(req, "response");
+      await resetWasHandled(client);
+      const chunks = [];
+      req.on("data", chunk => chunks.push(chunk));
+      await ping(client);
+      expect({ received: chunks.length, events, destroyed: req.destroyed, rstCode: req.rstCode }).toEqual({
+        received: 0,
+        events: ["response", "close"],
+        destroyed: true,
+        rstCode: NGHTTP2_CANCEL,
+      });
+    });
+  });
+
+  it("the reset of a request that is still open, on a transport that delivers two chunks in one tick", async () => {
+    // A session over a user-supplied Duplex reads from JS. The second chunk makes the native side
+    // drop its entry for the stream before the session handles the reset.
+    const transport = new Duplex({
+      read() {},
+      write(chunk, encoding, callback) {
+        onClientBytes(chunk);
+        callback();
+      },
+    });
+    const onClientBytes = frameReader(http2utils.kClientMagic.length, (type, flags, id) => {
+      if (type === FRAME_PING && (flags & FLAG_ACK) === 0) {
+        setImmediate(() => transport.push(new http2utils.PingFrame(true).data));
+      } else if (type === FRAME_HEADERS) {
+        setImmediate(() => {
+          transport.push(Buffer.concat(responseThenReset(NGHTTP2_NO_ERROR)(id)));
+          transport.push(new http2utils.PingFrame(false).data);
+        });
+      }
+    });
+    transport.push(SERVER_PREFACE);
+    const client = http2.connect("http://localhost", { createConnection: () => transport });
+    const sessionErrors = [];
+    client.on("error", err => sessionErrors.push(err));
+    try {
+      const req = client.request({ ":path": "/", ":method": "POST" }, { endStream: false });
+      const events = recordEvents(req, ["aborted", "end", "error", "close"]);
+      await once(req, "response");
+      await resetWasHandled(client);
+      expect({ events, destroyed: req.destroyed, readableLength: req.readableLength }).toEqual({
+        events: ["aborted"],
+        destroyed: false,
+        readableLength: BODY.length,
+      });
+
+      const chunks = [];
+      req.on("data", chunk => chunks.push(chunk));
+      await once(req, "close");
+      expect({ body: Buffer.concat(chunks).toString(), events, sessionErrors }).toEqual({
+        body: BODY.toString(),
+        events: ["aborted", "end", "close"],
+        sessionErrors: [],
+      });
+    } finally {
+      client.destroy();
+      transport.destroy();
+    }
+  });
+
+  // Runs `run(stream, events, chunks, framesFromServer)` for the server stream of a raw client that
+  // sends a request with some data and then RST_STREAM(NO_ERROR). `onStream` sets the stream up
+  // before any data. `framesFromServer` lists "type#streamId" for the frames the server sent,
+  // apart from SETTINGS and PING.
+  async function withRawClient(onStream, run) {
+    const server = http2.createServer();
+    const sessionErrors = [];
+    server.on("sessionError", err => sessionErrors.push(err));
+    const { promise: gotStream, resolve: resolveStream } = Promise.withResolvers();
+    const events = [];
+    const chunks = [];
+    server.on("stream", stream => {
+      for (const name of ["aborted", "end", "error", "close"]) stream.on(name, () => events.push(name));
+      onStream(stream, chunks);
+      resolveStream(stream);
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const socket = net.connect(server.address().port, "127.0.0.1");
+    try {
+      socket.on("error", () => {});
+      const framesFromServer = [];
+      let onPingAck;
+      socket.on(
+        "data",
+        frameReader(0, (type, flags, id) => {
+          if (type === FRAME_SETTINGS) {
+            if ((flags & FLAG_ACK) === 0) socket.write(new http2utils.SettingsFrame(true).data);
+          } else if (type === FRAME_PING) {
+            if ((flags & FLAG_ACK) !== 0) onPingAck();
+          } else {
+            framesFromServer.push(`${type}#${id}`);
+          }
+        }),
+      );
+      const pingRoundTrip = () => {
+        const { promise, resolve } = Promise.withResolvers();
+        onPingAck = resolve;
+        socket.write(new http2utils.PingFrame(false).data);
+        return promise;
+      };
+      // Same two round trips as resetWasHandled(), from the peer's side.
+      const settle = async () => {
+        await pingRoundTrip();
+        await pingRoundTrip();
+      };
+      socket.write(
+        Buffer.concat([
+          http2utils.kClientMagic,
+          new http2utils.SettingsFrame(false).data,
+          new http2utils.HeadersFrame(1, REQUEST_HEADERS, 0, true).data,
+          new http2utils.DataFrame(1, BODY).data,
+          rstStream(1, NGHTTP2_NO_ERROR),
+        ]),
+      );
+      const stream = await gotStream;
+      await settle();
+      await run(stream, events, chunks, framesFromServer, settle);
+      expect(sessionErrors).toEqual([]);
+    } finally {
+      socket.destroy();
+      server.close();
+    }
+  }
+
+  const pausedWithDataListener = (stream, chunks) => {
+    stream.pause();
+    stream.on("data", chunk => chunks.push(chunk));
+  };
+
+  it("a paused server stream keeps the request data across RST_STREAM(NO_ERROR)", async () => {
+    await withRawClient(pausedWithDataListener, async (stream, events, chunks) => {
+      expect({ received: chunks.length, events, closed: stream.closed, destroyed: stream.destroyed }).toEqual({
+        received: 0,
+        events: ["aborted"],
+        closed: true,
+        destroyed: false,
+      });
+
+      stream.resume();
+      await once(stream, "close");
+      expect({ body: Buffer.concat(chunks).toString(), events, rstCode: stream.rstCode }).toEqual({
+        body: BODY.toString(),
+        events: ["aborted", "end", "close"],
+        rstCode: NGHTTP2_NO_ERROR,
+      });
+    });
+  });
+
+  it("respond() throws on a server stream that the peer reset and that still waits for its reader", async () => {
+    await withRawClient(pausedWithDataListener, async (stream, events, chunks, framesFromServer, settle) => {
+      expect({ closed: stream.closed, destroyed: stream.destroyed }).toEqual({ closed: true, destroyed: false });
+      for (const respond of [
+        () => stream.respond({ ":status": 200 }),
+        () => stream.respondWithFile(import.meta.path),
+        () => stream.respondWithFD(0),
+      ]) {
+        expect(respond).toThrow(expect.objectContaining({ code: "ERR_HTTP2_INVALID_STREAM" }));
+      }
+      await settle();
+      expect({ framesFromServer, headersSent: stream.headersSent, events }).toEqual({
+        framesFromServer: [],
+        headersSent: false,
+        events: ["aborted"],
+      });
+    });
+  });
+
+  it("a server stream that nobody has tried to read is dumped and destroyed", async () => {
+    await withRawClient(
+      () => {},
+      async (stream, events) => {
+        expect({ events, destroyed: stream.destroyed, rstCode: stream.rstCode }).toEqual({
+          events: ["aborted", "end", "close"],
+          destroyed: true,
+          rstCode: NGHTTP2_NO_ERROR,
+        });
+      },
+    );
+  });
 });

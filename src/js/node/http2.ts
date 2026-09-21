@@ -2050,8 +2050,9 @@ enum StreamState {
   Closed = 1 << 3, // 01000 = 8
   StreamResponded = 1 << 4, // 10000 = 16
   WritableClosed = 1 << 5, // 100000 = 32
-  // The native side fully closed and freed the stream (state 7 delivered): there is
-  // nothing left to send on the wire for it.
+  // The native side fully closed and freed the stream (state 7 delivered, or the peer reset
+  // it): there is nothing left to send on the wire for it. The write path must not hand it to
+  // the native side, which throws once the stream's entry is evicted.
   NativeClosed = 1 << 6, // 1000000 = 64
   // END_STREAM already rode the final DATA frame from _write/_writev; _final must not
   // emit the empty END_STREAM frame on top of it.
@@ -2722,7 +2723,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
       return;
     }
     const session = this[bunHTTP2Session];
-    if (session) {
+    if (session && (status & StreamState.NativeClosed) === 0) {
       const native = session[bunHTTP2Native];
       if (native) {
         if (this instanceof ServerHttp2Stream && !this.headersSent && (this.id & 1) === 0) {
@@ -2874,7 +2875,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
       }
     }
     const session = this[bunHTTP2Session];
-    if (session) {
+    if (session && (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) === 0) {
       const native = session[bunHTTP2Native];
       if (native) {
         let batchLength = 0;
@@ -2933,7 +2934,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
       writePerf.bytesWritten += typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.length;
     }
     const session = this[bunHTTP2Session];
-    if (session) {
+    if (session && (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) === 0) {
       const native = session[bunHTTP2Native];
       if (native) {
         let wireChunk = chunk;
@@ -3014,7 +3015,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
 
     if (onError) onError(err);
     else {
-      this.respond(headers, options);
+      if (!this.closed) this.respond(headers, options);
       this.destroy(streamErrorFromCode(NGHTTP2_INTERNAL_ERROR));
     }
     return;
@@ -3033,7 +3034,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
       if (ownsFd) tryClose(fd);
       if (onError) onError(err);
       else {
-        this.respond(headers, options);
+        if (!this.closed) this.respond(headers, options);
         this.destroy(err);
       }
       return;
@@ -3361,7 +3362,7 @@ class ServerHttp2Stream extends Http2Stream {
   }
 
   respondWithFile(path, headers?: HeadersObject | null, options?) {
-    if (this.destroyed) {
+    if (this.destroyed || this.closed) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
     if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
@@ -3421,7 +3422,7 @@ class ServerHttp2Stream extends Http2Stream {
         throw err;
       }
     }
-    if (this.destroyed) {
+    if (this.destroyed || this.closed) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
     if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
@@ -3548,7 +3549,7 @@ class ServerHttp2Stream extends Http2Stream {
     session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames);
   }
   respond(headers?: HeadersObject | any[] | null, options?: any) {
-    if (this.destroyed || this.session === undefined) {
+    if (this.destroyed || this.closed || this.session === undefined) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
 
@@ -3749,6 +3750,40 @@ function rejectNoPayloadContentLengthNT(req) {
   req.destroy(streamErrorFromCode(constants.NGHTTP2_PROTOCOL_ERROR));
 }
 
+// node's onStreamClose for RST_STREAM(NO_ERROR) on a stream whose readable side has not ended:
+// the stream closes now, but it is destroyed only after the consumer has read the data that
+// already arrived ('end'). resume() here would hand that data to nobody when the consumer
+// attaches later, and to a paused consumer while it is paused. A server stream nobody has tried
+// to read is the exception: it is dumped so it can be destroyed.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L592-L628
+function closeStreamAndDestroyOnEnd(stream: Http2Stream) {
+  const status = stream[bunHTTP2StreamStatus];
+  // The native side closed the stream before it dispatched the reset.
+  stream[bunHTTP2StreamStatus] = status | StreamState.NativeClosed;
+  if ((status & StreamState.Closed) === 0) {
+    // markStreamClosed() in the order of node's closeStream: closed, then 'aborted' and end(),
+    // then the close diagnostics channel.
+    stream[bunHTTP2StreamStatus] |= StreamState.Closed;
+    stream.rstCode = NGHTTP2_NO_ERROR;
+    if (!stream._writableState.ending && !stream[kPush]) {
+      if (!stream.aborted) {
+        stream[kAborted] = true;
+        stream.emit("aborted");
+      }
+      stream.end();
+    }
+    publishStreamCloseChannel(stream);
+    markWritableDone(stream);
+  }
+  stream.once("end", destroySelfOnEnd);
+  pushToStream(stream, null);
+  if (stream instanceof ServerHttp2Stream && !stream.readableDidRead && stream.readableFlowing === null) {
+    stream.resume();
+  } else {
+    stream.read(0);
+  }
+}
+
 function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
   if (stream) {
     if (stream.destroyed && stream.listenerCount("error") === 0) {
@@ -3779,15 +3814,14 @@ function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
         error_instance = error;
       }
     }
-    if (stream.readable) {
-      stream.resume(); // we have a error we consume and close
-      pushToStream(stream, null);
-    }
-    if (destroy) {
+    if (destroy && error === NGHTTP2_NO_ERROR && stream.readable) {
+      closeStreamAndDestroyOnEnd(stream);
+    } else if (destroy) {
       // node marks the stream closed (and publishes the close diagnostics channel) from inside
       // _destroy, so the publish observes destroyed === true; don't pre-mark it here.
       stream.destroy(error_instance, stream.rstCode);
     } else {
+      if (stream.readable) pushToStream(stream, null);
       markStreamClosed(stream);
       if (error_instance) {
         stream.emit("error", error_instance);

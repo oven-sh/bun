@@ -717,7 +717,6 @@ pub struct TransposeState {
     pub(crate) is_then_catch_target: bool,
     pub(crate) is_require_immediately_assigned_to_decl: bool,
     pub(crate) loc: bun_ast::Loc,
-    pub(crate) import_record_tag: Option<bun_ast::ImportRecordTag>,
     pub(crate) import_loader: Option<bun_ast::Loader>,
     pub(crate) import_options: Expr,
 }
@@ -729,7 +728,6 @@ impl Default for TransposeState {
             is_then_catch_target: false,
             is_require_immediately_assigned_to_decl: false,
             loc: bun_ast::Loc::EMPTY,
-            import_record_tag: None,
             import_loader: None,
             import_options: Expr::EMPTY,
         }
@@ -1360,7 +1358,6 @@ pub(crate) struct ImportClause<'a> {
 }
 
 pub struct PropertyOpts {
-    pub(crate) async_range: bun_ast::Range,
     pub(crate) declare_range: bun_ast::Range,
     pub(crate) is_async: bool,
     pub(crate) is_generator: bool,
@@ -1379,7 +1376,6 @@ pub struct PropertyOpts {
 impl Default for PropertyOpts {
     fn default() -> Self {
         Self {
-            async_range: bun_ast::Range::NONE,
             declare_range: bun_ast::Range::NONE,
             is_async: false,
             is_generator: false,

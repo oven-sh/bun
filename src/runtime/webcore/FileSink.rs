@@ -1412,6 +1412,12 @@ impl FileSink {
 // `Sink.JSSink(@This(), "FileSink")` — generic-fn-returning-type → monomorphized type alias.
 pub(crate) type JSSink = crate::webcore::sink::JSSink<FileSink>;
 
+/// `console.write()` (src/js/builtins/ConsoleObject.ts): `this` is the console's writer, a `Bun.stdout.writer()`.
+#[bun_jsc::host_fn]
+pub(crate) fn console_write(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    JSSink::js_write_all(global, frame)
+}
+
 crate::impl_js_sink_abi!(FileSink, "FileSink");
 
 // `JsSinkType` impl: routes the codegen `FileSink__*` thunks (via

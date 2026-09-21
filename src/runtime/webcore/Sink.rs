@@ -520,7 +520,16 @@ impl<T: JsSinkType> JSSink<T> {
             )));
         }
 
-        let arg = frame.argument(0);
+        Ok(Self::write_value(this, global, frame.argument(0))?.to_js(&cx))
+    }
+
+    /// One chunk from JS into the sink: bytes as they are, a string by its encoding.
+    fn write_value(
+        this: &mut JSSink<T>,
+        global: &crate::webcore::jsc::JSGlobalObject,
+        arg: crate::webcore::jsc::JSValue,
+    ) -> crate::webcore::jsc::JsResult<streams::result::Writable> {
+        use streams::result::Writable;
         arg.ensure_still_alive();
         let _keep = bun_jsc::EnsureStillAlive(arg);
 
@@ -534,14 +543,11 @@ impl<T: JsSinkType> JSSink<T> {
         if let Some(buffer) = arg.as_array_buffer(global) {
             let slice = buffer.slice();
             if slice.is_empty() {
-                return Ok(JSValue::js_number(0.0));
+                return Ok(Writable::Owned(0));
             }
             // Borrowed view over GC-kept buffer for the duration of the call.
             let data = bun_ptr::RawSlice::new(slice);
-            return Ok(this
-                .sink
-                .write_bytes(&streams::Result::Temporary(data))
-                .to_js(&cx));
+            return Ok(this.sink.write_bytes(&streams::Result::Temporary(data)));
         }
 
         if !arg.is_string() {
@@ -553,24 +559,75 @@ impl<T: JsSinkType> JSSink<T> {
 
         let view = arg.to_js_string_view(global)?;
         if view.is_empty() {
-            return Ok(JSValue::js_number(0.0));
+            return Ok(Writable::Owned(0));
         }
 
         if view.is_utf16() {
             let utf16 = view.utf16();
             let bytes: &[u8] = bytemuck::cast_slice(utf16);
             let data = bun_ptr::RawSlice::new(bytes);
-            return Ok(this
-                .sink
-                .write_utf16(&streams::Result::Temporary(data))
-                .to_js(&cx));
+            return Ok(this.sink.write_utf16(&streams::Result::Temporary(data)));
         }
 
         let data = bun_ptr::RawSlice::new(view.latin1());
-        Ok(this
-            .sink
-            .write_latin1(&streams::Result::Temporary(data))
-            .to_js(&cx))
+        Ok(this.sink.write_latin1(&streams::Result::Temporary(data)))
+    }
+
+    /// `console.write(...chunks)`: every argument written in order, one flush, one result.
+    ///
+    /// The sink's results are combined here, where a failed write is still an error value and a backed-up write
+    /// is still the sink's one pending operation. Turned into JS values one write at a time they are a rejected
+    /// Promise each, and a Promise the caller has to recognise as one it already holds.
+    pub(crate) fn js_write_all(
+        global: &crate::webcore::jsc::JSGlobalObject,
+        frame: &crate::webcore::jsc::CallFrame,
+    ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue> {
+        use crate::webcore::jsc::JSValue;
+        use streams::result::Writable;
+        let cx = global.js_thread_of_caller(frame);
+        bun_core::mark_binding!();
+        let Some(this) = Self::get_this(global, frame)? else {
+            return Ok(JSValue::js_number(0.0));
+        };
+
+        if let Some(err) = this.sink.get_pending_error() {
+            return Err(global.throw_value(err));
+        }
+
+        let mut wrote: u64 = 0;
+        let mut pending: Option<(*mut streams::WritablePending, JSValue)> = None;
+        // No argument is one `undefined` chunk, which write_value() rejects as write() does.
+        for i in 0..frame.arguments_count().max(1) as usize {
+            match Self::write_value(this, global, frame.argument(i))? {
+                // Nothing after it can succeed either. The pending operation, if there is one, is given the error
+                // by the sink itself: this is only reached with nothing pending.
+                Writable::Err(err) => return Ok(Writable::Err(err).to_js(&cx)),
+                Writable::Pending(operation) => {
+                    pending = Some((operation, Writable::Pending(operation).to_js(&cx)));
+                }
+                Writable::Owned(n)
+                | Writable::OwnedAndDone(n)
+                | Writable::Temporary(n)
+                | Writable::Backpressure(n) => wrote += n,
+                // A finished sink: nothing written.
+                Writable::Done => {}
+            }
+        }
+
+        let Some((operation, promise)) = pending else {
+            Self::flush_value(this, global, &cx, true)?;
+            return Ok(JSValue::from(wrote));
+        };
+        // The Promise resolves to what the pending operation consumed. The counts are part of this call's total
+        // too: a chunk written before the sink backed up, or a small one buffered beside the operation.
+        // SAFETY: `operation` is the sink's pending slot, which the sink owns and `this` keeps alive; nothing
+        // has run since the write that returned it, so it is still the pending one.
+        unsafe {
+            (*operation).consumed += wrote;
+            (*operation).result = Writable::Owned((*operation).consumed);
+        }
+        Self::flush_value(this, global, &cx, true)?;
+        Ok(promise)
     }
 
     /// `${abi_name}__flush` host-fn body.
@@ -579,8 +636,6 @@ impl<T: JsSinkType> JSSink<T> {
         frame: &crate::webcore::jsc::CallFrame,
     ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue> {
         let cx = global.js_thread_of_caller(frame);
-        use crate::webcore::jsc::JSValue;
-        use bun_sys_jsc::ErrorJsc;
         bun_core::mark_binding!();
 
         let Some(this) = Self::get_this(global, frame)? else {
@@ -591,11 +646,22 @@ impl<T: JsSinkType> JSSink<T> {
             return Err(global.throw_value(err));
         }
 
+        let wait = frame.arguments_count() > 0
+            && frame.argument(0).is_boolean()
+            && frame.argument(0).as_boolean();
+        Self::flush_value(this, global, &cx, wait)
+    }
+
+    fn flush_value(
+        this: &mut JSSink<T>,
+        global: &crate::webcore::jsc::JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
+        wait: bool,
+    ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue> {
+        use crate::webcore::jsc::JSValue;
+        use bun_sys_jsc::ErrorJsc;
         if T::HAS_FLUSH_FROM_JS {
-            let wait = frame.arguments_count() > 0
-                && frame.argument(0).is_boolean()
-                && frame.argument(0).as_boolean();
-            return match this.sink.flush_from_js(&cx, wait) {
+            return match this.sink.flush_from_js(cx, wait) {
                 sys::Result::Ok(value) => Ok(value),
                 sys::Result::Err(err) => Err(global.throw_value(err.to_js(global)?)),
             };

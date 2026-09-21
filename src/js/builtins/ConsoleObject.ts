@@ -119,7 +119,13 @@ interface ConsoleWriter extends Bun.FileSink {
   flush(wait?: boolean): number | Promise<number>;
 }
 
-export function write(this: Console & { $writer: ConsoleWriter | undefined }, input) {
+// The signature of a builtin stays on one line: bundle-functions.ts does not parse a parameter list with braces in it.
+interface ConsoleWithWriter {
+  $writer: ConsoleWriter | undefined;
+  $writeAll: (this: ConsoleWriter, ...chunks: unknown[]) => number | Promise<number>;
+}
+
+export function write(this: ConsoleWithWriter, input) {
   if (!$isObject(this)) throw $ERR_INVALID_THIS("Console");
 
   var writer = $getByIdDirectPrivate(this, "writer");
@@ -127,39 +133,12 @@ export function write(this: Console & { $writer: ConsoleWriter | undefined }, in
     var length = $toLength(input?.length ?? 0);
     writer = Bun.stdout.writer({ highWaterMark: length > 65536 ? length : 65536 });
     $putByIdDirectPrivate(this, "writer", writer);
+    // Writes every argument and flushes once, natively: there a failed write is an error value and a backed-up one
+    // is the sink's one pending operation, where here they would be a Promise each to tell apart and to handle.
+    $putByIdDirectPrivate(this, "writeAll", $newRustFunction("FileSink.rs", "consoleWrite", 1));
   }
 
-  // The sink's write() returns a count, or a Promise of one in two cases. A backed-up sink returns its one
-  // outstanding Promise, the same for every write made while it is backed up, of the bytes those writes added. A
-  // write that fails on the spot (the pipe is already broken) returns a rejected Promise of its own. The caller
-  // gets a Promise over every distinct one: awaiting it waits for the drain and is where a write error (EPIPE)
-  // arrives, with none left over for an unhandled rejection. (A finished sink returns `true`: nothing written.)
-  var wrote = 0;
-  var pending: Promise<number>[] | undefined;
-  const count = $argumentCount();
-  var i = 0;
-  do {
-    const result = writer.write(arguments[i]);
-    if (typeof result === "number") wrote += result;
-    else if ($isPromise<number>(result)) {
-      if (pending === undefined) pending = [result];
-      // The shared Promise comes back from consecutive writes, so the last one is the only possible repeat.
-      else if (pending[pending.length - 1] !== result) $arrayPush(pending, result);
-    }
-  } while (++i < count);
-
-  writer.flush(true);
-  if (pending === undefined) return wrote;
-  // Summed by hand: `Promise.all` is a property a script can replace. Every Promise after the first is marked
-  // handled, because its reaction is only attached once the ones before it have fulfilled; if one of those
-  // rejects instead, that is the error the caller gets, and this one's is not reported a second time.
-  var total = pending[0];
-  for (var j = 1; j < pending.length; j++) {
-    const next = pending[j];
-    $pokePromiseAsHandled(next);
-    total = total.$then(sum => next.$then(n => sum + n));
-  }
-  return wrote === 0 ? total : total.$then(n => wrote + n);
+  return $getByIdDirectPrivate(this, "writeAll").$apply(writer, arguments);
 }
 
 // This is the `console.Console` constructor. It is mostly copied from Node.

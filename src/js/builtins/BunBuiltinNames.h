@@ -197,6 +197,7 @@ using namespace JSC;
     macro(writable) \
     macro(writableType) \
     macro(write) \
+    macro(writeAll) \
     macro(writer) \
     macro(written) \
     BUN_ADDITIONAL_BUILTIN_NAMES(macro)

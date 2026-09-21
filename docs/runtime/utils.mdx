@@ -158,6 +158,25 @@ const base64 = Bun.randomUUIDv7("base64");
 const base64url = Bun.randomUUIDv7("base64url");
 ```
 
+## `Bun.randomULID()`
+
+`Bun.randomULID()` returns a [ULID](https://github.com/ulid/spec). A ULID is a 128-bit identifier with a 48-bit Unix timestamp and 80 bits of cryptographically secure randomness.
+
+```ts
+const id = Bun.randomULID();
+// => "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+```
+
+ULIDs use a 26-character Crockford Base32 representation. The representation is URL-safe and sorts by timestamp. IDs generated within the same millisecond are not guaranteed to be ordered.
+
+Pass a timestamp as a number of milliseconds since the Unix epoch or as a `Date`.
+
+```ts
+const id = Bun.randomULID(new Date("2025-01-01T00:00:00.000Z"));
+```
+
+`crypto.randomUUID()` generates a UUIDv4 without a timestamp. `Bun.randomUUIDv7()` generates a UUIDv7 and keeps calls monotonic. Use ULIDs when you need their compact Base32 representation. UUIDv7 remains useful when you need the standard UUID representation or Bun's monotonic ordering within the same millisecond.
+
 ## `Bun.peek()`
 
 `Bun.peek(prom: Promise)`

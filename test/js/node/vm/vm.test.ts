@@ -1708,6 +1708,28 @@ describe("context options with throwing getters", () => {
   });
 });
 
+// Installing the proxy as the sandbox of its own global recursed natively
+// until the stack overflowed, so this runs in a subprocess.
+test.concurrent("a contextified context runs code given its own global proxy", async () => {
+  const code = `
+    const vm = require("node:vm");
+    const ctx = vm.createContext({ fromSandbox: 1 });
+    const inner = vm.runInContext("this", ctx);
+    console.log(vm.runInContext("typeof missing + ':' + fromSandbox", inner));
+    console.log(new vm.Script("fromSandbox + 1").runInContext(inner));
+    console.log(vm.runInContext("fromSandbox", ctx));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("undefined:1\n2\n1\n");
+  expect(exitCode).toBe(0);
+});
+
 describe("DONT_CONTEXTIFY", () => {
   test("globalThis prototype chain stays inside the sandbox realm", () => {
     const ctx = createContext(constants.DONT_CONTEXTIFY);

@@ -367,8 +367,6 @@ impl MySQLConnection {
         let sock = unsafe { &mut *new_socket };
         *sock.ext::<Option<core::ptr::NonNull<JSMySQLConnection>>>() =
             core::ptr::NonNull::new(js_connection);
-        // `do_handshake` fails these modes on any chain error, so abort the
-        // handshake before the client's own certificate goes out.
         if self.tls_config.reject_unauthorized() != 0
             && matches!(self.ssl_mode, SSLMode::VerifyCa | SSLMode::VerifyFull)
         {

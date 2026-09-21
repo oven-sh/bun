@@ -505,8 +505,6 @@ impl PostgresSQLConnection {
         let sock = unsafe { &mut *new_socket };
         *sock.ext::<Option<core::ptr::NonNull<PostgresSQLConnection>>>() =
             core::ptr::NonNull::new(self.as_ctx_ptr());
-        // `on_handshake` fails these modes on any chain error, so abort the
-        // handshake before the client's own certificate goes out.
         if self.tls_config.reject_unauthorized() != 0
             && matches!(self.ssl_mode, SSLMode::VerifyCa | SSLMode::VerifyFull)
         {

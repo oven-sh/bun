@@ -119,13 +119,7 @@ interface ConsoleWriter extends Bun.FileSink {
   flush(wait?: boolean): number | Promise<number>;
 }
 
-// The signature of a builtin stays on one line: bundle-functions.ts does not parse a parameter list with braces in it.
-interface ConsoleWithWriter {
-  $writer: ConsoleWriter | undefined;
-  $writeAll: (this: ConsoleWriter, ...chunks: unknown[]) => number | Promise<number>;
-}
-
-export function write(this: ConsoleWithWriter, input) {
+export function write(this: Console & { $writer: ConsoleWriter | undefined; $returnedWrite: unknown }, input) {
   if (!$isObject(this)) throw $ERR_INVALID_THIS("Console");
 
   var writer = $getByIdDirectPrivate(this, "writer");
@@ -133,12 +127,44 @@ export function write(this: ConsoleWithWriter, input) {
     var length = $toLength(input?.length ?? 0);
     writer = Bun.stdout.writer({ highWaterMark: length > 65536 ? length : 65536 });
     $putByIdDirectPrivate(this, "writer", writer);
-    // Writes every argument and flushes once, natively: there a failed write is an error value and a backed-up one
-    // is the sink's one pending operation, where here they would be a Promise each to tell apart and to handle.
-    $putByIdDirectPrivate(this, "writeAll", $newRustFunction("FileSink.rs", "consoleWrite", 1));
   }
 
-  return $getByIdDirectPrivate(this, "writeAll").$apply(writer, arguments);
+  // A backed-up writer (FileSink) returns a Promise instead of a count: one Promise, the same for every write made
+  // while it is backed up, of the bytes those writes added. The caller gets a Promise of the total then, because
+  // awaiting it waits for the drain and is where a write error (EPIPE from a reader that hung up) arrives.
+  //
+  // The sink hands out other Promises that the caller never gets: a write that fails on the spot returns a rejected
+  // one of its own, a flush that cannot finish returns one, and a throw (an argument that is not something to write,
+  // a flush that fails) loses the one in hand. Nobody can handle those, so they are marked handled. Not the one an
+  // earlier call returned, which a later write or flush can hand back: that one is its caller's.
+  var wrote = 0;
+  var pending: Promise<number> | undefined;
+  var finished: unknown;
+  const returned = $getByIdDirectPrivate(this, "returnedWrite");
+  const count = $argumentCount();
+  var i = 0;
+  try {
+    do {
+      const result = writer.write(arguments[i]);
+      if (typeof result === "number") wrote += result;
+      else if ($isPromise<number>(result)) {
+        if (pending !== undefined && pending !== result && pending !== returned) $pokePromiseAsHandled(pending);
+        pending = result;
+      } else finished = result;
+    } while (++i < count);
+
+    const flushed = writer.flush(true);
+    if ($isPromise(flushed) && flushed !== pending && flushed !== returned) $pokePromiseAsHandled(flushed);
+  } catch (e) {
+    if (pending !== undefined && pending !== returned) $pokePromiseAsHandled(pending);
+    throw e;
+  }
+
+  // A finished sink's write() is `true`, and that is what a call that wrote nothing to one returns.
+  if (pending === undefined) return wrote === 0 && finished !== undefined ? finished : wrote;
+  $putByIdDirectPrivate(this, "returnedWrite", pending);
+  if (wrote === 0) return pending;
+  return pending.$then(n => wrote + n);
 }
 
 // This is the `console.Console` constructor. It is mostly copied from Node.

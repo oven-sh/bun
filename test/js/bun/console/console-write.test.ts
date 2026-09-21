@@ -199,14 +199,14 @@ try {
 });
 
 // The reader has stalled and the pipe is full, so a short console.write() is buffered and its flush cannot push
-// the buffer out. That left the sink with a pending Promise while console.write() returned the byte count: when
-// the reader then hung up, the Promise was rejected with nobody holding it, and a script that awaited every
-// console.write() still died of an unhandled rejection.
+// the buffer out. The flush leaves the sink with a pending Promise, which console.write() drops as it always has:
+// it returns the byte count. When the reader then hung up, that Promise was rejected with nobody holding it, and a
+// script that awaited every console.write() still died of an unhandled rejection.
 //
 // stdout is a FIFO whose read end this test holds open and never reads. Another writer on the same pipe fills
 // it and stays backed up, so console's own writer has nothing pending when the short write happens.
 test.concurrent.skipIf(isWindows)(
-  "an awaited console.write to a full pipe fails when the stalled reader hangs up",
+  "a short console.write to a full pipe leaves no unhandled rejection when the stalled reader hangs up",
   async () => {
     using dir = tempDir("console-write-stalled", {});
     const fifo = join(String(dir), "stdout.fifo");
@@ -257,7 +257,7 @@ try {
         stderr += decoder.decode(value, { stream: true });
       }
 
-      expect(stderr).toBe("READY Promise\ncaught EPIPE\n");
+      expect(stderr).toBe("READY 5\nresolved\n");
       expect(await proc.exited).toBe(0);
     } finally {
       if (readEndOpen) closeSync(readEnd);

@@ -46,7 +46,6 @@ const sourceFiles = readdirRecursiveWithExclusionsAndExtensionsSync(
 const rustIdentifierPaths: Record<string, string> = {
   "bun.rs": "bun.rs",
   "ipc.rs": "runtime/ipc_host.rs",
-  "FileSink.rs": "runtime/webcore/FileSink.rs",
   "Counters.rs": "jsc/Counters.rs",
   "FrameworkRouter.rs": "runtime/bake/FrameworkRouter.rs",
   "JSBundler.rs": "runtime/api/JSBundler.rs",

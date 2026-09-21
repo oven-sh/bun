@@ -22,10 +22,9 @@ export type SpawnOptions = {
   env?: Record<string, string | undefined>;
 };
 
-export async function spawn(argv: string[], { cwd, stdin, env }: SpawnOptions = {}): Promise<Result> {
+export async function spawn(argv: string[], { stdin, ...where }: SpawnOptions = {}): Promise<Result> {
   const proc = Bun.spawn(argv, {
-    cwd,
-    env,
+    ...where,
     stdin: stdin === undefined ? "ignore" : new Blob([stdin]),
     stdout: "pipe",
     stderr: "pipe",
@@ -48,11 +47,11 @@ export async function run(argv: string[], options?: SpawnOptions): Promise<strin
 }
 
 // stdio passed through, for long-running commands whose progress the operator wants to see
-export function runInherit(argv: string[], { cwd, env }: SpawnOptions = {}): Promise<number> {
-  return Bun.spawn(argv, { cwd, env, stdin: "ignore", stdout: "inherit", stderr: "inherit" }).exited;
+export function runInherit(argv: string[], where: Omit<SpawnOptions, "stdin"> = {}): Promise<number> {
+  return Bun.spawn(argv, { ...where, stdin: "ignore", stdout: "inherit", stderr: "inherit" }).exited;
 }
 
-export async function runInheritOrThrow(argv: string[], options?: SpawnOptions): Promise<void> {
+export async function runInheritOrThrow(argv: string[], options?: Omit<SpawnOptions, "stdin">): Promise<void> {
   const exitCode = await runInherit(argv, options);
   if (exitCode !== 0) throw new Error(`${describe(argv)} exited ${exitCode}`);
 }

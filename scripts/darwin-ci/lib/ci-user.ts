@@ -46,7 +46,7 @@ export async function ensureCiUser(): Promise<void> {
 function kcpassword(password: string): Uint8Array<ArrayBuffer> {
   const bytes = [...Buffer.from(password), 0];
   while (bytes.length % 12) bytes.push(0);
-  return Uint8Array.from(bytes, (byte, i) => byte ^ kcpasswordKey[i % kcpasswordKey.length]);
+  return Uint8Array.from(bytes, (byte, i) => byte ^ kcpasswordKey[i % kcpasswordKey.length]!);
 }
 
 export async function enableAutoLogin(): Promise<void> {

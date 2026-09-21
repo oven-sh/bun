@@ -2264,7 +2264,10 @@ function destroyStreamForSessionDestroy(error: Error | undefined, rstCode: numbe
   // listener would otherwise turn session.destroy(code) into an uncaught
   // exception (e.g. grpc-js forceShutdown destroying sessions with
   // NGHTTP2_CANCEL while unread UNIMPLEMENTED streams are still around).
-  stream.destroy(error !== undefined && stream.listenerCount("error") > 0 ? error : undefined);
+  const observed = error != null && stream.listenerCount("error") > 0;
+  // A stream that does not get the error must not read as cleanly closed. CANCEL raises no error in _destroy.
+  if (error != null && !observed && !stream.closed && !stream.rstCode) stream.rstCode = NGHTTP2_CANCEL;
+  stream.destroy(observed ? error : undefined);
 }
 class Http2Stream extends Duplex {
   #id: number;
@@ -4890,6 +4893,11 @@ function destroySelfOnEnd(this: Http2Stream) {
 function streamCancel(stream: Http2Stream) {
   stream.close(NGHTTP2_CANCEL);
 }
+// An engine-ended session reports no error: the requests that it cuts must not end as if they were complete.
+function cancelStreamForEngineEnd(stream: Http2Stream) {
+  if (stream.destroyed || stream.closed) return;
+  process.nextTick(destroyStreamForSessionDestroy, createPendingStreamCancelError(), NGHTTP2_CANCEL, stream);
+}
 
 // After the socket is gone a graceful close can never complete — the parser
 // is detached, so the stream's writable side has nothing left to flush
@@ -4957,6 +4965,8 @@ class ClientHttp2Session extends Http2Session {
   // (node returns a pending stream with no id and submits it once a slot frees).
   #activeRequestCount: number = 0;
   #pendingRequests: Array<{ req: ClientHttp2Stream; headers: any; sensitiveNames: any; options: any }> | null = null;
+  // True until the 'connect' listener that request() adds has submitted the requests made before the connect.
+  #flushOnConnect: boolean = false;
 
   static #Handlers = {
     binaryType: "buffer",
@@ -5034,6 +5044,11 @@ class ClientHttp2Session extends Http2Session {
       if (!self || typeof stream !== "object") return;
 
       self.#connections--;
+      if (self.#destroying) {
+        // node's closeSession(): https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1234-L1239
+        process.nextTick(destroyStreamForSessionDestroy, self[kSessionDestroyError], error, stream);
+        return;
+      }
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     }),
     streamEnd: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, state: number) => {
@@ -5270,13 +5285,7 @@ class ClientHttp2Session extends Http2Session {
       self.#parser?.forEachStream(rejectStreamAboveGoawayLastId.bind(null, lastStreamId));
       // Requests still queued behind the concurrency limit never got a stream id; they can never
       // be submitted on this session, so reject them the same way.
-      const pendingRequests = self.#pendingRequests;
-      self.#pendingRequests = null;
-      if (pendingRequests !== null) {
-        for (let i = 0; i < pendingRequests.length; i++) {
-          streamRejectedByGoawaySession(pendingRequests[i].req);
-        }
-      }
+      self.#rejectPendingRequests();
       // A GOAWAY carrying an error code is a session error: the session and every open stream
       // error with ERR_HTTP2_SESSION_ERROR; like Node, our own goaway goes out with
       // NGHTTP2_NO_ERROR since this side had no error. A graceful GOAWAY (NO_ERROR) begins a
@@ -5299,6 +5308,8 @@ class ClientHttp2Session extends Http2Session {
     },
     end(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
+      // An engine error destroys the session from the `error` handler first. This is the other case.
+      if (!self.#destroying) self.#parser?.forEachStream(cancelStreamForEngineEnd);
       self.destroy();
     },
     altsvc(self: ClientHttp2Session, origin: string, value: string, streamId: number) {
@@ -5373,19 +5384,19 @@ class ClientHttp2Session extends Http2Session {
       // close() was called while the socket was still connecting: requests made in the meantime
       // never reached the peer, so node rejects them with ERR_HTTP2_GOAWAY_SESSION once the
       // connect completes and then lets the session finish closing.
-      const pendingRequests = this.#pendingRequests;
-      this.#pendingRequests = null;
-      if (pendingRequests !== null) {
-        for (let i = 0; i < pendingRequests.length; i++) {
-          streamRejectedByGoawaySession(pendingRequests[i].req);
-        }
-      }
-      this.#parser?.forEachStream(streamRejectedByGoawaySession);
+      this.#rejectPendingRequests();
       this.destroy();
-      return;
     }
-    // Requests made while the socket was still connecting were queued; submit them now.
-    this.#flushPendingRequests();
+  }
+
+  #rejectPendingRequests() {
+    const pendingRequests = this.#pendingRequests;
+    this.#pendingRequests = null;
+    if (pendingRequests !== null) {
+      for (let i = 0; i < pendingRequests.length; i++) {
+        streamRejectedByGoawaySession(pendingRequests[i].req);
+      }
+    }
   }
 
   #onClose() {
@@ -5408,6 +5419,8 @@ class ClientHttp2Session extends Http2Session {
       return;
     }
     this[bunHTTP2Socket] = null;
+    // Open streams get it on the quiet paths too. Behind a GOAWAY node gives none: a cut response looks complete.
+    this[kSessionDestroyError] = error;
     if (this.#closed) {
       this.destroy();
       return;
@@ -5854,17 +5867,11 @@ class ClientHttp2Session extends Http2Session {
       }
       const parser = this.#parser;
       if (parser) {
-        // node cancels streams still open when their session is destroyed: each gets
-        // ERR_HTTP2_STREAM_CANCEL (or the session error when one was provided), with the CANCEL
-        // rst code.
-        if (this[kSessionDestroyError] == null && error == null) {
-          this[kSessionDestroyError] = createPendingStreamCancelError();
-        }
         // Like Node's Http2Stream._destroy: a received GOAWAY's code takes
         // precedence over the destroy code when streams are torn down.
         this[bunHTTP2SessionTeardownFrame] = $getInternalField($asyncContext, 0);
         try {
-          parser.emitErrorToAllStreams(this[kGoawayCode] || (code !== undefined ? code : constants.NGHTTP2_CANCEL));
+          parser.emitErrorToAllStreams(this[kGoawayCode] || code || constants.NGHTTP2_NO_ERROR);
         } finally {
           this[bunHTTP2SessionTeardownFrame] = kNoSessionTeardown;
         }
@@ -6199,7 +6206,8 @@ class ClientHttp2Session extends Http2Session {
       const maxConcurrentStreams = this.#remoteSettings?.maxConcurrentStreams;
       if (
         !this.#connected ||
-        (this.#pendingRequests !== null && this.#pendingRequests.length > 0) ||
+        // Like node, a request made after the connect goes out ahead of the ones that wait for the 'connect' flush.
+        (this.#pendingRequests !== null && this.#pendingRequests.length > 0 && !this.#flushOnConnect) ||
         (typeof maxConcurrentStreams === "number" && this.#activeRequestCount >= maxConcurrentStreams)
       ) {
         const req = new ClientHttp2Stream(undefined, this, headers);
@@ -6210,6 +6218,11 @@ class ClientHttp2Session extends Http2Session {
         }
         if (this.#pendingRequests === null) {
           this.#pendingRequests = [];
+        }
+        if (!this.#connected && !this.#flushOnConnect) {
+          // node's order: 'connect' listeners added before the first request() still see it pending.
+          this.#flushOnConnect = true;
+          this.once("connect", this.#flushPendingRequestsOnConnect.bind(this));
         }
         // Preserve both forms: the on-wire (array) form keeps duplicate-header interleaving the
         // object form cannot represent; the object form is what diagnostics channels publish.
@@ -6278,11 +6291,18 @@ class ClientHttp2Session extends Http2Session {
     });
   }
 
+  #flushPendingRequestsOnConnect() {
+    this.#flushOnConnect = false;
+    if (!this.#closed) return this.#flushPendingRequests();
+    // A 'connect' listener that ran before this one called close(): node's requestOnConnect rejects the queue.
+    this.#rejectPendingRequests();
+    if (this.#connections === 0) this.destroy();
+  }
   // Submits requests queued behind the peer's SETTINGS_MAX_CONCURRENT_STREAMS limit while slots
   // are available, in the order they were made.
   #flushPendingRequests() {
     const queue = this.#pendingRequests;
-    if (queue === null || queue.length === 0) return;
+    if (queue === null || queue.length === 0 || this.#flushOnConnect) return;
     while (queue.length > 0) {
       const parser = this.#parser;
       if (this.destroyed || !parser) {

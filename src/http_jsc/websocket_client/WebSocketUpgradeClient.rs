@@ -1352,9 +1352,7 @@ where
         let mut saved_secure = this.secure.replace(None); // prevent clear_data from freeing it
         // Any arm below that doesn't hand `saved_secure` to did_connect must
         // release the ref it took out of `self` (SSL_CTX_free at fn end).
-        // `clear_data` also drops the name `handle_handshake` verified the
-        // certificate against. The connected client checks a TLS
-        // renegotiation against that same name.
+        // The connected client checks a TLS renegotiation against this name.
         let verified_hostname = this.hostname.take();
         this.clear_data();
         bun_jsc::mark_binding!();

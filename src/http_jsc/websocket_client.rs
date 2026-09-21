@@ -120,9 +120,7 @@ pub struct WebSocket<const SSL: bool> {
     /// used the shared default context.
     pub(crate) secure: Cell<Option<OwnedSslCtx>>,
 
-    /// The name the upgrade client verified the peer certificate against.
-    /// A TLS renegotiation is checked against it again. The SNI on the
-    /// `SSL*` cannot stand in for it: an IP address host sends none.
+    /// Hostname the upgrade client verified. A renegotiation re-checks it: an IP host has no SNI.
     verified_hostname: Box<[u8]>,
 
     /// Proxy tunnel for wss:// through HTTP proxy.
@@ -246,8 +244,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.cancel_guarded();
     }
 
-    /// The upgrade client owns the socket through its first TLS handshake, so
-    /// this only runs when the server renegotiates (TLS 1.2 and older).
+    /// Only a TLS renegotiation reaches this: the upgrade client handles the first handshake.
     pub fn handle_handshake(
         &self,
         socket: Socket<SSL>,

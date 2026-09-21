@@ -204,3 +204,51 @@ it("poll_oneoff waits on a clock subscription and reports the event", () => {
     type: WASI_EVENTTYPE_CLOCK,
   });
 });
+
+it("fd_pread counts each byte once and reads the next iov from where the last one ended", () => {
+  using dir = tempDir("wasi-fd-pread", { "data.txt": "0123456789abcdef" });
+  const wasi = new WASI({ preopens: { "/": String(dir) } });
+  wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+  const memory = Buffer.from(wasi.memory.buffer);
+  const view = new DataView(wasi.memory.buffer);
+
+  const WASI_ESUCCESS = 0;
+  const WASI_RIGHT_FD_READ = BigInt(2);
+  const WASI_RIGHT_FD_SEEK = BigInt(4);
+  const preopenFd = 3;
+  const pathPtr = 1024;
+  const fdPtr = 1536;
+  const iovsPtr = 2048;
+  const nreadPtr = 3072;
+  const firstBuf = 4096;
+  const secondBuf = 4104;
+
+  const len = memory.write("data.txt", pathPtr);
+  expect(
+    wasi.wasiImport.path_open(
+      preopenFd,
+      0,
+      pathPtr,
+      len,
+      0,
+      WASI_RIGHT_FD_READ | WASI_RIGHT_FD_SEEK,
+      BigInt(0),
+      0,
+      fdPtr,
+    ),
+  ).toBe(WASI_ESUCCESS);
+  const fd = view.getUint32(fdPtr, true);
+
+  // two iovs of 4 bytes: { buf: u32, buf_len: u32 }
+  view.setUint32(iovsPtr, firstBuf, true);
+  view.setUint32(iovsPtr + 4, 4, true);
+  view.setUint32(iovsPtr + 8, secondBuf, true);
+  view.setUint32(iovsPtr + 12, 4, true);
+
+  expect(wasi.wasiImport.fd_pread(fd, iovsPtr, 2, BigInt(2), nreadPtr)).toBe(WASI_ESUCCESS);
+  expect({
+    nread: view.getUint32(nreadPtr, true),
+    first: memory.toString("latin1", firstBuf, firstBuf + 4),
+    second: memory.toString("latin1", secondBuf, secondBuf + 4),
+  }).toEqual({ nread: 8, first: "2345", second: "6789" });
+});

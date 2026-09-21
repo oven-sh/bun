@@ -1035,7 +1035,6 @@ class WASI {
               break outer;
             }
           }
-          read += r;
         }
         this.view.setUint32(nread, read, true);
         return WASI_ESUCCESS;

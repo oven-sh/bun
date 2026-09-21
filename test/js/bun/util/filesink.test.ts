@@ -1196,3 +1196,36 @@ try {
   expect(stderr).toBe("caught EPIPE, same promise: true\n");
   expect(exitCode).toBe(0);
 });
+
+// A chunk below the writer's chunk size is buffered and reported as written. The next, larger write sends the
+// buffer and itself to the fd together, and used to report all of it: the buffered bytes were counted twice.
+// The fourth write is not ASCII, which takes the writer's Latin-1 path.
+it("a write() that flushes earlier buffered chunks reports its own bytes", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+const sink = Bun.stdout.writer();
+const counts = [
+  sink.write("a"),
+  sink.write(Buffer.alloc(40000, "b").toString()),
+  sink.write(new Uint8Array(7)),
+  sink.write(Buffer.alloc(40000, "é").toString()),
+];
+await sink.flush();
+console.error(JSON.stringify(counts));
+`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+  expect({ stderr, stdoutLength: stdout.length }).toEqual({
+    stderr: JSON.stringify([1, 40000, 7, 40000]) + "\n",
+    stdoutLength: 1 + 40000 + 7 + 40000,
+  });
+  expect(exitCode).toBe(0);
+});

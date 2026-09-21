@@ -45,6 +45,7 @@ pub mod shell;
 #[path = "api.rs"]
 pub mod api;
 pub mod dispatch;
+pub mod fast_random_testing;
 pub mod hw_exports;
 pub mod ipc;
 pub mod ipc_host;

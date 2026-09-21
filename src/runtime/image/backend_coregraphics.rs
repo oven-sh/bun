@@ -37,6 +37,8 @@ impl From<codecs::Error> for BackendError {
             codecs::Error::OutOfMemory => Self::OutOfMemory,
             codecs::Error::UnknownFormat => Self::UnknownFormat,
             codecs::Error::UnsupportedOnPlatform => Self::UnsupportedOnPlatform,
+            // Backend ops never crop; arm exists only for totality.
+            codecs::Error::BadExtractArea => Self::DecodeFailed,
         }
     }
 }

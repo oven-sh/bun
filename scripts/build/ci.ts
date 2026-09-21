@@ -354,7 +354,7 @@ export function publishTimings(cfg: Config, chart: string): void {
       priority: 1,
       label: "build timings",
       append: false,
-      content: `<details>\n<summary>⏱️ Build timings — ${steps.length} charts</summary>\n<ul>\n${links.join("\n")}\n</ul>\n</details>\n`,
+      content: `<details>\n<summary>⏱️ Build timings</summary>\n<ul>\n${links.join("\n")}\n</ul>\n</details>\n`,
     });
     written = steps;
   }

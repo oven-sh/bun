@@ -14,9 +14,10 @@ import { join, relative } from "node:path";
 import { BuildError } from "../../scripts/build/error.ts";
 import { type ManifestEdge, Ninja, readManifest } from "../../scripts/build/ninja.ts";
 import { rustcPhasesPath } from "../../scripts/build/rust/units.ts";
-import { chartData, chartHtml } from "../../scripts/build/timings-chart.ts";
 import {
   type Build,
+  chartData,
+  chartHtml,
   criticalPath,
   formatReport,
   loadBuild,
@@ -448,7 +449,7 @@ describe("formatReport", () => {
     const report = formatReport(build, plain).replace(/^build timings .*$/m, "build timings  <buildDir>");
     expect(report).toMatchInlineSnapshot(`
       "build timings  <buildDir>
-        6 edges, last built by 2 runs of ninja between 2026-01-02 03:04:05Z and 2026-01-02 04:04:07Z
+        6 edges, last built by 2 builds between 2026-01-02 03:04:05Z and 2026-01-02 04:04:07Z
 
       by rule                     edges    total  slowest
         rust_rustc                    3     4.0s     2.0s  rustc b
@@ -474,7 +475,7 @@ describe("formatReport", () => {
            1.0s  rustc root → libroot.a
            1.3s  link exe
 
-      most recent run of ninja  2026-01-02 04:04:05Z
+      last build  2026-01-02 04:04:05Z
         3.4s wall   2 commands taking 1.4s   0.4× average parallelism
 
         low parallelism  2 commands or fewer for 1s or more
@@ -484,7 +485,7 @@ describe("formatReport", () => {
            2.0s  pool compile (depth 2)          1 command    longest 2.0s  cxx x.o
            50ms  no pool                         1 command    longest 50ms  link exe
 
-      earlier runs still in the log  ninja drops an edge's older entries when it compacts the log
+      earlier builds still in the log  ninja drops an edge's older entries when it compacts the log
         2026-01-02 03:04:05Z      6 commands     3.9s wall
       "
     `);

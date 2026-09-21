@@ -49,8 +49,7 @@ import { configOf, configure, reconfigure, type ConfigureInput } from "./build/c
 import { BuildError } from "./build/error.ts";
 import { ninjaIfPresent } from "./build/ninja-release.ts";
 import { STREAM_FD } from "./build/stream.ts";
-import { chartHtml } from "./build/timings-chart.ts";
-import { formatReport, loadBuild } from "./build/timings.ts";
+import { chartHtml, formatReport, loadBuild } from "./build/timings.ts";
 import { bold, dim, interactive, nameColor, status } from "./build/tty.ts";
 import { isBuildkite, isCI, printEnvironment, startGroup } from "./buildkite.ts";
 
@@ -360,11 +359,7 @@ function reportTimings(cfg: Config, write: (text: string) => void): void {
   if (build.runs.length === 0) return;
   const chart = join(cfg.buildDir, timingsChartName());
   writeFileSync(chart, chartHtml(build));
-  write(
-    `\n${bold("chart")}  ${relative(process.cwd(), chart)}` +
-      dim("  the most recent runs of ninja, command by command; hover or click a bar") +
-      "\n",
-  );
+  write(`\n${bold("chart")}  ${relative(process.cwd(), chart)}` + dim("  the same, command by command") + "\n");
   if (isBuildkite) publishTimings(cfg, chart);
 }
 
@@ -710,8 +705,8 @@ Options:
   --timings               After the build (or, with --configure-only, without
                           one), report where the time went: totals per rule,
                           the slowest edges, the critical path, and how
-                          parallel the most recent run of ninja was; and write
-                          the same as a chart. It describes the build
+                          parallel the last build was; and write the same as
+                          a chart. It describes the build
                           directory (the last time every edge ran), so it
                           reads the same after a build with nothing to do.
                           With --time-trace=on, the compilers' phases too.

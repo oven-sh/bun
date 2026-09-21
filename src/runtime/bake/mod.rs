@@ -606,7 +606,7 @@ pub(crate) mod framework_router {
     pub(crate) use super::framework_router_body::JSFrameworkRouter as js_framework_router;
     pub(crate) use super::framework_router_body::{
         FileKind, FrameworkRouter, InsertionHandler, JSFrameworkRouter, MatchedParams,
-        OpaqueFileId, OpaqueFileIdOptional, Part, RouteIndex, Style, TinyLog, Type, TypeIndex,
+        OpaqueFileId, OpaqueFileIdOptional, Part, RouteIndex, Style, TinyLog, Type,
     };
 
     /// `wrap` shim over the trait-object form (`&mut dyn InsertionHandler`),

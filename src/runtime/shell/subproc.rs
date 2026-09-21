@@ -394,11 +394,11 @@ impl ShellSubprocess {
                     None
                 }
             };
-            if let Some(buf) = buf {
-                *out = Readable::Buffer(buf);
+            *out = if buf.is_some() {
+                Readable::Buffer
             } else {
-                *out = Readable::Ignore;
-            }
+                Readable::Ignore
+            };
             drop(pipe); // deref
         }
     }
@@ -1169,18 +1169,14 @@ impl Writable {
 // ───────────────────────────────────────────────────────────────────────────
 
 pub(crate) enum Readable {
-    // Borrowed from its owner, which closes it (`finalize`); nothing reads it.
-    #[allow(dead_code)]
-    Fd(Fd),
+    Fd,
     #[cfg_attr(windows, allow(dead_code))]
     Memfd(Fd),
     Pipe(Arc<PipeReader>),
     Inherit,
     Ignore,
     Closed,
-    // What the pipe had read when it finished; nothing reads it yet.
-    #[allow(dead_code)]
-    Buffer(Box<[u8]>),
+    Buffer,
 }
 
 impl Readable {
@@ -1267,7 +1263,7 @@ impl Readable {
                 Stdio::Inherit => Readable::Inherit,
                 Stdio::Ipc | Stdio::Dup2(_) | Stdio::Ignore => Readable::Ignore,
                 Stdio::Path(_) => Readable::Ignore,
-                Stdio::Fd(fd) => Readable::Fd(*fd),
+                Stdio::Fd(_) => Readable::Fd,
                 // blobs are immutable, so we should only ever get the case
                 // where the user passed in a Blob with an fd
                 Stdio::Blob(_) => Readable::Ignore,
@@ -1302,7 +1298,7 @@ impl Readable {
                 Stdio::Inherit => Readable::Inherit,
                 Stdio::Ipc | Stdio::Dup2(_) | Stdio::Ignore => Readable::Ignore,
                 Stdio::Path(_) => Readable::Ignore,
-                Stdio::Fd(_) => Readable::Fd(result.unwrap()),
+                Stdio::Fd(_) => Readable::Fd,
                 // blobs are immutable, so we should only ever get the case
                 // where the user passed in a Blob with an fd
                 Stdio::Blob(_) => Readable::Ignore,
@@ -1348,7 +1344,7 @@ impl Readable {
             }
             // .fd is borrowed from the shell's IOWriter (see IO.OutKind.to_subproc_stdio) or
             // a CowFd redirect; the owner closes it.
-            Readable::Fd(_) => {
+            Readable::Fd => {
                 *self = Readable::Closed;
             }
             Readable::Pipe(pipe) => {

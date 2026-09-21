@@ -21,7 +21,7 @@
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import type { Sources } from "../glob-sources.ts";
-import { binaryExpectations, shimExpectations } from "./binary-expectations.ts";
+import { binaryExpectations, exportList, shimExpectations } from "./binary-expectations.ts";
 import { emitCodegen, type CodegenOutputs } from "./codegen.ts";
 import { ar, cc, cxx, link, pch } from "./compile.ts";
 import { bunExeName, shouldStrip, type Config } from "./config.ts";
@@ -30,7 +30,15 @@ import { allDeps } from "./deps/index.ts";
 import { lolhtml } from "./deps/lolhtml.ts";
 import { rustArgon2 } from "./deps/rust-argon2.ts";
 import { assert } from "./error.ts";
-import { bunIncludes, computeFlags, extraFlagsFor, linkDepends, linkerMapOutputs } from "./flags.ts";
+import {
+  bunIncludes,
+  computeFlags,
+  exportListPath,
+  extraFlagsFor,
+  linkDepends,
+  linkerMapOutputs,
+  versionScriptPath,
+} from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
 import { emitRust, windowsShimPath } from "./rust.ts";
@@ -997,6 +1005,8 @@ function windowsSysrootIncludeDirs(winsysroot: string): string[] {
  * resource compiler; see emitWindowsResources.)
  */
 function linkImplicitInputs(cfg: Config): string[] {
+  // The ELF export list is the version script's `global:` block, written here so the link can take it as a file.
+  if (cfg.linux || cfg.freebsd) writeIfChanged(exportListPath(cfg), exportList(versionScriptPath(cfg)));
   return linkDepends(cfg);
 }
 

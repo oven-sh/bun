@@ -188,6 +188,9 @@ function configureInputs(cwd: string): string[] {
     pins,
     resolve(cwd, "scripts", "glob-sources.ts"),
     resolve(cwd, "package.json"),
+    // The ELF link's export list is written from these (bun.ts linkImplicitInputs).
+    resolve(cwd, "src", "linker.lds"),
+    resolve(cwd, "src", "linker-freebsd.lds"),
   ].sort();
 }
 

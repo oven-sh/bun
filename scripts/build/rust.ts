@@ -505,15 +505,6 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     // The linker has to read rustc's bitcode, which rests on rustc's LLVM and clang's being the same major version.
     rustflags.push("-Clinker-plugin-lto");
     rustflags.push("-Cembed-bitcode=yes");
-    if (cfg.abi === "android") {
-      // Android's thread-locals are emulated TLS, and the pair of symbols that implements one (`__emutls_v.<name>`,
-      // `__emutls_t.<name>`) is made when the linker generates the code: after it has applied linker.lds, which is
-      // what keeps Rust symbols out of the dynamic symbol table. The pair takes the thread-local's visibility, and a
-      // thread-local another crate refers to stays external under ThinLTO, so its pair would be exported. Hidden is
-      // what these are: nothing outside the binary binds to a Rust-mangled name. `#[no_mangle]` items keep default
-      // visibility (rustc's rule), so the exports defined in Rust are unaffected.
-      rustflags.push("-Zdefault-visibility=hidden");
-    }
     // EnableSplitLTOUnit consistency: lld errors with "inconsistent LTO Unit
     // splitting" if any bitcode module in the link disagrees with the others.
     // Every LTO platform now links ThinLTO with the C/C++ side passing

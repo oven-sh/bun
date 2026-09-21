@@ -1456,14 +1456,17 @@ export const linkerFlags: Flag[] = [
     desc: "Exported symbol list",
   },
   {
+    // The link exports the names in the version script's `global:` block, and only those. Not `-rdynamic`: that
+    // exports everything and leaves the hiding to the script's `local: *`, which lld applies before LTO generates
+    // code, so a symbol first made there stayed exported (an emulated thread-local's `__emutls_v.` / `__emutls_t.`
+    // pair, on Android).
     flag: c => [
       "-Wl,-Bsymbolic-functions",
-      "-rdynamic",
-      `-Wl,--dynamic-list=${c.cwd}/src/symbols.dyn`,
-      `-Wl,--version-script=${c.cwd}/src/linker.lds`,
+      `-Wl,--export-dynamic-symbol-list=${exportListPath(c)}`,
+      `-Wl,--version-script=${versionScriptPath(c)}`,
     ],
-    when: c => c.linux,
-    desc: "Dynamic symbol list + version script",
+    when: c => c.linux || c.freebsd,
+    desc: "Export list + version script",
   },
   // ─── FreeBSD ───
   {
@@ -1515,16 +1518,6 @@ export const linkerFlags: Flag[] = [
     flag: "-Wl,--gc-sections",
     when: c => c.freebsd && c.release,
     desc: "Garbage-collect unused sections",
-  },
-  {
-    flag: c => [
-      "-Wl,-Bsymbolic-functions",
-      "-rdynamic",
-      `-Wl,--dynamic-list=${c.cwd}/src/symbols.dyn`,
-      `-Wl,--version-script=${c.cwd}/src/linker-freebsd.lds`,
-    ],
-    when: c => c.freebsd,
-    desc: "Dynamic symbol list + version script (FreeBSD adds environ/__progname)",
   },
 ];
 
@@ -1613,6 +1606,19 @@ export function linkerMapOutputs(cfg: Config): string[] {
 }
 
 /**
+ * The ld version script of an ELF link: the names it exports (the `global:` block), their version node, and that
+ * everything else is local. FreeBSD's adds `environ` and `__progname`, which lld would reject as undefined on Linux.
+ */
+export function versionScriptPath(cfg: Pick<Config, "cwd" | "freebsd">): string {
+  return join(cfg.cwd, "src", cfg.freebsd ? "linker-freebsd.lds" : "linker.lds");
+}
+
+/** `<buildDir>/exports.list`: the version script's `global:` block as lld's export list; configure writes it (bun.ts). */
+export function exportListPath(cfg: Pick<Config, "buildDir">): string {
+  return join(cfg.buildDir, "exports.list");
+}
+
+/**
  * Files the linker reads via flags above. Return as implicit inputs so
  * ninja relinks when exported symbols / version script change.
  * CMake tracks these via set_target_properties LINK_DEPENDS.
@@ -1622,12 +1628,11 @@ export function linkerMapOutputs(cfg: Config): string[] {
  * only relink.
  */
 export function linkDepends(cfg: Config): string[] {
-  if (cfg.freebsd) return [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker-freebsd.lds")];
   const depends = cfg.windows
     ? [join(cfg.cwd, "src/symbols.def")]
     : cfg.darwin
       ? [join(cfg.cwd, "src/symbols.txt")]
-      : [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker.lds")]; // linux: ELF dynamic-list + version script
+      : [exportListPath(cfg), versionScriptPath(cfg)];
   if (usesOrderFile(cfg)) depends.push(orderFilePath(cfg));
   return depends;
 }

@@ -584,12 +584,15 @@ describe("spawn()", () => {
 
       it.concurrent("a socket accepted by a server", async () => {
         const handedOff = Promise.withResolvers<Awaited<ReturnType<typeof handOff>>>();
-        const server = net.createServer(socket => handOff(socket).then(handedOff.resolve, handedOff.reject));
-        server.listen(0, "127.0.0.1");
+        const server = net.createServer(socket => {
+          socket.on("error", handedOff.reject);
+          handOff(socket).then(handedOff.resolve, handedOff.reject);
+        });
+        server.on("error", handedOff.reject).listen(0, "127.0.0.1");
         await once(server, "listening");
         const peer = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
         try {
-          peer.end(payload);
+          peer.on("error", handedOff.reject).end(payload);
           expect(await handedOff.promise).toEqual({ childRead: size, parentRead: 0, exitCode: 0 });
         } finally {
           peer.destroy();
@@ -598,14 +601,15 @@ describe("spawn()", () => {
       });
 
       it.concurrent("a socket connected to a server", async () => {
-        const server = net.createServer(peer => peer.end(payload));
-        server.listen(0, "127.0.0.1");
+        const handedOff = Promise.withResolvers<Awaited<ReturnType<typeof handOff>>>();
+        const server = net.createServer(peer => peer.on("error", handedOff.reject).end(payload));
+        server.on("error", handedOff.reject).listen(0, "127.0.0.1");
         await once(server, "listening");
         try {
-          const handedOff = Promise.withResolvers<Awaited<ReturnType<typeof handOff>>>();
           const socket = net.connect((server.address() as AddressInfo).port, "127.0.0.1", () =>
             handOff(socket).then(handedOff.resolve, handedOff.reject),
           );
+          socket.on("error", handedOff.reject);
           expect(await handedOff.promise).toEqual({ childRead: size, parentRead: 0, exitCode: 0 });
         } finally {
           server.close();

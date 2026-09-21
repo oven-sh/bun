@@ -786,6 +786,19 @@ impl ByteStream {
         streams::Result::Pending(self.pending.as_ptr())
     }
 
+    /// `ReadableStream::error` cancels this source next, and `on_cancel` ends a native consumer
+    /// (a wired sink, a `readableStreamTo*` buffer action) with a generic `AbortError`. Fail it
+    /// with `reason` first.
+    pub(crate) fn error_native_consumer(&self, reason: JSValue) {
+        if self.sink.get().is_none() && self.buffer_action.get().is_none() {
+            return;
+        }
+        let global = self.parent_const().global_this();
+        self.on_data(streams::Result::Err(streams::StreamError::JSValue(
+            StrongOptional::create(reason, global),
+        )));
+    }
+
     pub(crate) fn on_cancel(&self) {
         bun_jsc::mark_binding!();
         let view = self.value();

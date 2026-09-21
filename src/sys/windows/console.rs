@@ -14,8 +14,8 @@
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use super::{BOOL, DWORD, HANDLE};
-use crate::{Fd, Maybe};
+use super::{BOOL, DWORD, HANDLE, Win32Error};
+use crate::{Error, Fd, Maybe, Tag};
 
 mod kernel32 {
     use super::{BOOL, DWORD, HANDLE, c_void};
@@ -88,8 +88,8 @@ fn console_slot(fd: Fd) -> Option<usize> {
     None
 }
 
-/// Returns false when `WriteConsoleW` fails.
-fn write_chunk(handle: HANDLE, bytes: &[u8], utf16: &mut [u16]) -> bool {
+fn write_chunk(fd: Fd, bytes: &[u8], utf16: &mut [u16]) -> Maybe<()> {
+    let handle = fd.native();
     // `bytes.len() <= utf16.len()` and one UTF-8 byte never yields more than
     // one UTF-16 unit, so the conversion always fits.
     let units = bun_core::strings::try_convert_utf8_to_utf16_in_buffer(utf16, bytes)
@@ -109,14 +109,14 @@ fn write_chunk(handle: HANDLE, bytes: &[u8], utf16: &mut [u16]) -> bool {
             )
         };
         if rc == 0 {
-            return false;
+            return Err(Error::from_win32(Win32Error::get(), Tag::write).with_fd(fd));
         }
         if n == 0 {
             break;
         }
         written += n as usize;
     }
-    true
+    Ok(())
 }
 
 /// Write `buf` to the console behind `fd` as UTF-16.
@@ -126,10 +126,11 @@ fn write_chunk(handle: HANDLE, bytes: &[u8], utf16: &mut [u16]) -> bool {
 /// back to `WriteFile`, which reports the error if the handle is bad.
 /// Otherwise returns the number of bytes consumed, which is `buf.len()` on
 /// success: an incomplete trailing sequence is kept in [`PENDING`] and counts
-/// as consumed.
+/// as consumed. A failure after bytes from a previous write were taken out of
+/// [`PENDING`] is an error, not a fallback, so those bytes are never
+/// reordered behind `buf`.
 pub(crate) fn write(fd: Fd, buf: &[u8]) -> Option<Maybe<usize>> {
     let slot = console_slot(fd)?;
-    let handle = fd.native();
     let pending = &PENDING[slot];
     let mut utf16 = [0u16; CHUNK_UNITS];
 
@@ -146,8 +147,8 @@ pub(crate) fn write(fd: Fd, buf: &[u8]) -> Option<Maybe<usize>> {
             pending.store(pack(&head[..head_len]), Ordering::Relaxed);
             return Some(Ok(buf.len()));
         }
-        if !write_chunk(handle, &head[..head_len], &mut utf16) {
-            return None;
+        if let Err(err) = write_chunk(fd, &head[..head_len], &mut utf16) {
+            return Some(Err(err));
         }
     }
 
@@ -167,11 +168,11 @@ pub(crate) fn write(fd: Fd, buf: &[u8]) -> Option<Maybe<usize>> {
                 end -= 1;
             }
         }
-        if !write_chunk(handle, &body[off..end], &mut utf16) {
-            if consumed + off == 0 {
-                return None;
+        if let Err(err) = write_chunk(fd, &body[off..end], &mut utf16) {
+            if consumed + off > 0 {
+                return Some(Ok(consumed + off));
             }
-            return Some(Ok(consumed + off));
+            return if head_len > 0 { Some(Err(err)) } else { None };
         }
         off = end;
     }

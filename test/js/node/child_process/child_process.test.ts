@@ -11,11 +11,24 @@ import {
   runBunInstall,
   shellExe,
   tempDir,
+  tls as tlsCert,
   tmpdirSync,
 } from "harness";
-import { ChildProcess, exec, execFile, execFileSync, execSync, fork, spawn, spawnSync } from "node:child_process";
+import {
+  ChildProcess,
+  exec,
+  execFile,
+  execFileSync,
+  execSync,
+  fork,
+  spawn,
+  spawnSync,
+  type StdioOptions,
+} from "node:child_process";
 import { getEventListeners, once, setMaxListeners } from "node:events";
+import net from "node:net";
 import os from "node:os";
+import tls from "node:tls";
 import { promisify } from "node:util";
 import path from "path";
 const debug = process.env.DEBUG ? console.log : () => {};
@@ -590,6 +603,67 @@ describe("spawn()", () => {
       });
       expect(stdout).toBe("ok\n");
       expect(status).toBe(0);
+    });
+
+    describe("a socket as a stdio entry", () => {
+      // Both ends of an established loopback connection: the socket `connect` returns and the one `server`
+      // accepts for it.
+      async function bothEnds(server: net.Server, connect: (port: number) => net.Socket) {
+        const secure = server instanceof tls.Server;
+        const sockets: net.Socket[] = [];
+        const ends = {
+          sockets,
+          [Symbol.dispose]() {
+            for (const socket of sockets) socket.destroy();
+            server.close();
+          },
+        };
+        try {
+          server.listen(0, "127.0.0.1");
+          await once(server, "listening");
+          const connected = connect((server.address() as net.AddressInfo).port);
+          sockets.push(connected);
+          const [[accepted]] = await Promise.all([
+            once(server, secure ? "secureConnection" : "connection"),
+            once(connected, secure ? "secureConnect" : "connect"),
+          ]);
+          sockets.push(accepted);
+          return ends;
+        } catch (error) {
+          ends[Symbol.dispose]();
+          throw error;
+        }
+      }
+
+      // The descriptor under a TLS session carries TLS records: a child that reads it gets ciphertext, and
+      // what a child writes to it reaches the peer as a broken record. Node throws the same error.
+      it("rejects a tls.TLSSocket", async () => {
+        using ends = await bothEnds(tls.createServer(tlsCert), port =>
+          tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false }),
+        );
+        for (const socket of ends.sockets) {
+          for (const stdio of [
+            [socket, "ignore", "ignore"],
+            ["ignore", socket, "ignore"],
+          ] satisfies StdioOptions[]) {
+            const options = { env: bunEnv, stdio };
+            expect(() => spawn(bunExe(), ["-e", ""], options)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
+            expect(() => spawnSync(bunExe(), ["-e", ""], options)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
+          }
+        }
+      });
+
+      // Windows cannot give a child a socket as stdio: node throws ENOTSUP, Bun throws EBADF.
+      it.skipIf(isWindows)("accepts a net.Socket", async () => {
+        using ends = await bothEnds(net.createServer(), port => net.connect(port, "127.0.0.1"));
+        const closed = ends.sockets.map(socket =>
+          once(spawn(bunExe(), ["-e", ""], { env: bunEnv, stdio: [socket, "ignore", "inherit"] }), "close"),
+        );
+        expect(await Promise.all(closed)).toEqual([
+          [0, null],
+          [0, null],
+        ]);
+      });
     });
   });
 

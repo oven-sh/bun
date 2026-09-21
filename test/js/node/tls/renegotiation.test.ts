@@ -377,13 +377,18 @@ it("should fail if renegotiation fails using tls module", async () => {
 // verified the certificate. After the renegotiation it sends a text frame and a Close frame
 // with code 1000. It answers a CONNECT request first, so it can also play an HTTPS proxy in
 // front of a ws:// target. With OTHER_CERT it presents that certificate in the renegotiation.
+// Its second line of output says how the renegotiation ended, so that a broken fixture
+// does not pass for a client that refused the renegotiation.
 const renegotiatingWebSocketServer = /* js */ `
   const tls = require("tls");
   const crypto = require("crypto");
   const server = tls.createServer(
     { cert: process.env.SERVER_CERT, key: process.env.SERVER_KEY, minVersion: "TLSv1.2", maxVersion: "TLSv1.2" },
     socket => {
-      socket.on("error", () => {});
+      socket.on("error", err => {
+        const alert = /SSL alert number (\\d+)/.exec(err.message);
+        console.log(alert ? "client sent alert " + alert[1] : "error " + err.code);
+      });
       let head = "";
       socket.on("data", function onHead(chunk) {
         head += chunk.toString("latin1");
@@ -406,6 +411,7 @@ const renegotiatingWebSocketServer = /* js */ `
           }
           socket.renegotiate({ rejectUnauthorized: false }, err => {
             if (err) return socket.destroy(err);
+            console.log("renegotiated");
             const text = Buffer.from("after renegotiation");
             socket.write(Buffer.concat([Buffer.from([0x81, text.length]), text, Buffer.from([0x88, 0x02, 0x03, 0xe8])]));
           });
@@ -422,10 +428,10 @@ const otherCertificate = {
   key: readFileSync(join(import.meta.dir, "..", "..", "bun", "http", "fixtures", "cert.key"), "utf8"),
 };
 
-async function webSocketEventsAcrossRenegotiation(
+async function webSocketAcrossRenegotiation(
   url: (port: number) => string,
   options: { proxy?: (port: number) => string; changeCertificate?: boolean } = {},
-): Promise<string[]> {
+): Promise<{ client: string[]; server: string | undefined }> {
   await using server = Bun.spawn({
     cmd: ["node", "-e", renegotiatingWebSocketServer],
     stdout: "pipe",
@@ -438,8 +444,19 @@ async function webSocketEventsAcrossRenegotiation(
       ...(options.changeCertificate && { OTHER_CERT: otherCertificate.cert, OTHER_KEY: otherCertificate.key }),
     },
   });
-  const { value } = await server.stdout.getReader().read();
-  const port = Number(new TextDecoder().decode(value).trim());
+  const reader = server.stdout.getReader();
+  const decoder = new TextDecoder();
+  let output = "";
+  // Line `index` of the server's output, or undefined when the server exits before it prints that line.
+  async function serverLine(index: number): Promise<string | undefined> {
+    while (output.split("\n").length < index + 2) {
+      const { value, done } = await reader.read();
+      if (done) return undefined;
+      output += decoder.decode(value, { stream: true });
+    }
+    return output.split("\n")[index].trim();
+  }
+  const port = Number(await serverLine(0));
 
   const events: string[] = [];
   const closed = Promise.withResolvers<void>();
@@ -457,7 +474,7 @@ async function webSocketEventsAcrossRenegotiation(
     closed.resolve();
   };
   await closed.promise;
-  return events;
+  return { client: events, server: await serverLine(1) };
 }
 
 // An IP address host sends no SNI, so the name for the certificate check of the
@@ -465,8 +482,10 @@ async function webSocketEventsAcrossRenegotiation(
 it.concurrent.each(["localhost", "127.0.0.1", ...(isIPv6() ? ["[::1]"] : [])])(
   "WebSocket to %s stays open when the server renegotiates",
   async host => {
-    const events = await webSocketEventsAcrossRenegotiation(port => `wss://${host}:${port}/`);
-    expect(events).toEqual(["open", "message: after renegotiation", "close 1000"]);
+    expect(await webSocketAcrossRenegotiation(port => `wss://${host}:${port}/`)).toEqual({
+      client: ["open", "message: after renegotiation", "close 1000"],
+      server: "renegotiated",
+    });
   },
 );
 
@@ -475,21 +494,25 @@ it.concurrent.each(["localhost", "127.0.0.1", ...(isIPv6() ? ["[::1]"] : [])])(
 it.concurrent.each(["localhost", "127.0.0.1"])(
   "WebSocket through an HTTPS proxy at %s stays open when the proxy renegotiates",
   async host => {
-    const events = await webSocketEventsAcrossRenegotiation(() => "ws://target.invalid/", {
+    const result = await webSocketAcrossRenegotiation(() => "ws://target.invalid/", {
       proxy: port => `https://${host}:${port}`,
     });
-    expect(events).toEqual(["open", "message: after renegotiation", "close 1000"]);
+    expect(result).toEqual({
+      client: ["open", "message: after renegotiation", "close 1000"],
+      server: "renegotiated",
+    });
   },
 );
 
 // The client trusts both certificates and both are valid for the host. The second one is
 // refused only because a renegotiation must present the certificate of the first handshake.
+// Alert 47 is illegal_parameter, which BoringSSL sends for a changed certificate.
 it.concurrent.each(["localhost", "127.0.0.1"])(
   "WebSocket to %s closes when the server changes its certificate in a renegotiation",
   async host => {
-    const events = await webSocketEventsAcrossRenegotiation(port => `wss://${host}:${port}/`, {
+    const result = await webSocketAcrossRenegotiation(port => `wss://${host}:${port}/`, {
       changeCertificate: true,
     });
-    expect(events).toEqual(["open", "close 1006"]);
+    expect(result).toEqual({ client: ["open", "close 1006"], server: "client sent alert 47" });
   },
 );

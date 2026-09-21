@@ -1435,6 +1435,17 @@ describe("new Request(input) transfers the input body", () => {
     expect(await input.text()).toBe("survivor");
   });
 
+  // Fetch step 36 comes before the transfer. Without it the input lost its
+  // body to a GET/HEAD copy that cannot carry one.
+  describe.each(["GET", "HEAD"])("new Request(inputWithBody, { method: %p })", method => {
+    test("throws and leaves the input body intact", async () => {
+      const input = make("survivor");
+      expect(() => new Request(input, { method })).toThrow("Request with GET/HEAD method cannot have body.");
+      expect(input.bodyUsed).toBe(false);
+      expect(await input.text()).toBe("survivor");
+    });
+  });
+
   test("the user's own ReadableStream passed as the input body is locked by the transfer", async () => {
     const userStream = new ReadableStream({
       start(c) {

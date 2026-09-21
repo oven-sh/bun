@@ -1146,7 +1146,8 @@ impl Request {
                         return Ok(req);
                     }
 
-                    if !fields.contains(Fields::Method) {
+                    let init_set_method = fields.contains(Fields::Method);
+                    if !init_set_method {
                         req.method = request.method;
                         fields.insert(Fields::Method);
                     }
@@ -1181,6 +1182,16 @@ impl Request {
                         match request.body_value() {
                             BodyValue::Null => {}
                             _ if is_input => {
+                                // Fetch step 36, only where it would otherwise cost the
+                                // input its body: init turned a request with a body into
+                                // GET/HEAD. Node's message.
+                                if init_set_method
+                                    && matches!(req.method, Method::GET | Method::HEAD)
+                                {
+                                    bail!(Err(cx.global().throw_type_error(format_args!(
+                                        "Request with GET/HEAD method cannot have body."
+                                    ))));
+                                }
                                 if let Err(e) = request.throw_if_input_body_unusable(cx.global()) {
                                     bail!(Err(e));
                                 }

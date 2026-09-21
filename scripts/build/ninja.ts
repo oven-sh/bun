@@ -48,7 +48,7 @@ const ruleVars = {
   cc: ["cflags"],
   cxx: ["cxxflags"],
   cxx_pch: ["cxxflags", "pch_file", "pch_header"],
-  link: ["ldflags", "object_lists"],
+  link: ["ldflags"],
   mkdir_stamp: ["dir"],
   nasm: ["nasmflags"],
   pch: ["cxxflags", "pch_header"],

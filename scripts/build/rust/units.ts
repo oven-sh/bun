@@ -26,25 +26,7 @@ import { assert } from "../error.ts";
 import { dylibPathVar, envify } from "./cargo-env.ts";
 import type { ManifestLints, MetadataPackage, RustPlan, RustcTargetInfo, UnitGraphUnit } from "./plan.ts";
 
-/**
- * `staticlib` is the graph's root as the final Rust crate: rustc is asked for its objects (`--emit=obj`), never for
- * the archive. Being a final crate type is what makes rustc keep the crate's generic instances to itself while
- * reusing upstream ones, export only its `#[no_mangle]` items, and so fold single-caller code into its callers
- * before the link (rustc_monomorphize partitioning, rustc_passes reachable). As an rlib the root exports every
- * instance it makes, for dependents it does not have, and cross-language ThinLTO then inlines the small `extern "C"`
- * wrappers into their C++ callers and leaves the bodies behind a call.
- *
- * When the profile asks rustc for an LTO the root is a `lib` instead. A final crate runs that LTO itself, and with
- * nothing to link rustc has no dependency formats, so only the root's own exports survive it: the `#[no_mangle]`
- * functions of upstream crates, which the C++ side calls, are internalized and dropped. The linker runs that LTO
- * (ltoArgs), where everything is one module and the same folding happens.
- */
-export type UnitKind = "lib" | "proc-macro" | "staticlib" | "bin" | "build-script" | "build-script-run";
-
-/** Does this profile have a final crate's rustc run an LTO? cargo's `lto`: false | off | thin | fat | true. */
-function profileRunsLto(lto: string): boolean {
-  return lto !== "false" && lto !== "off";
-}
+export type UnitKind = "lib" | "proc-macro" | "bin" | "build-script" | "build-script-run";
 
 /** A dependency edge as rustc sees it. */
 export interface UnitDep {
@@ -94,7 +76,7 @@ export interface RustUnit {
   // ─── derived paths (absolute) ───
   /** `--out-dir` */
   outDir: string;
-  /** The rlib (lib), dylib (proc-macro), executable (bin, build-script) or list of objects (staticlib); the `output` file for a build-script run. */
+  /** The rlib (lib), dylib (proc-macro) or executable (bin, build-script); the `output` file for a build-script run. */
   output: string;
   /** lib units only: the `.rmeta`, which the same rustc writes well ahead of `output` and dependent libraries compile against. */
   rmeta: string | undefined;
@@ -135,8 +117,6 @@ export function buildRustGraph(plan: RustPlan, dir: string): RustGraph {
       `rust plan: unit ${index} (${u.target.name}) has mode ${u.mode}; only build graphs are supported`,
     );
     const tkind = u.target.kind[0];
-    // A workspace says "this crate is the final Rust artifact" with cargo's `staticlib`; see UnitKind.
-    const finalCrate = u.target.crate_types.includes("staticlib");
     const kind: UnitKind =
       u.mode === "run-custom-build"
         ? "build-script-run"
@@ -146,18 +126,11 @@ export function buildRustGraph(plan: RustPlan, dir: string): RustGraph {
             ? "proc-macro"
             : tkind === "bin"
               ? "bin"
-              : finalCrate && !profileRunsLto(u.profile.lto)
-                ? "staticlib"
-                : "lib";
-    if (finalCrate) {
-      assert(
-        u.target.crate_types.length === 1,
-        `rust plan: unit ${u.target.name} has crate types ${u.target.crate_types}; a staticlib is the only type it may have`,
-      );
-    } else if (kind === "lib") {
+              : "lib";
+    if (kind === "lib") {
       assert(
         u.target.crate_types.every(t => t === "lib" || t === "rlib"),
-        `rust plan: unit ${u.target.name} has crate types ${u.target.crate_types}; only rlib libraries, proc-macros and a staticlib or bin root are supported: the build links the rlibs itself, so only the root may be a staticlib`,
+        `rust plan: unit ${u.target.name} has crate types ${u.target.crate_types}; only rlib libraries, proc-macros and a bin root are supported: the build links the rlibs itself, so no crate is a staticlib or cdylib`,
       );
     }
     return {
@@ -172,7 +145,7 @@ export function buildRustGraph(plan: RustPlan, dir: string): RustGraph {
       features: u.features,
       profile: u.profile,
       edition: u.target.edition,
-      crateTypes: kind === "build-script" ? ["bin"] : finalCrate ? [kind] : u.target.crate_types,
+      crateTypes: kind === "build-script" ? ["bin"] : u.target.crate_types,
       srcPath: u.target.src_path,
       deps: [],
       buildScript: undefined,
@@ -274,14 +247,6 @@ export function buildRustGraph(plan: RustPlan, dir: string): RustGraph {
         unit.depInfo = join(unit.outDir, `${unit.crateName}-${unit.hash}.d`);
         break;
       }
-      case "staticlib": {
-        // rustc names the objects, one per codegen unit: `<stem>.o`, or `<stem>.<unit>.rcgu.o` each when there are
-        // several. run.ts lists what rustc wrote in `output`, a response file the link reads.
-        unit.outDir = join(pdir, "deps");
-        unit.output = join(unit.outDir, `${unit.crateName}-${unit.hash}.objects.rsp`);
-        unit.depInfo = join(unit.outDir, `${unit.crateName}-${unit.hash}.d`);
-        break;
-      }
       case "proc-macro": {
         const [pre, suf] = info.fileNames["proc-macro"];
         unit.outDir = join(pdir, "deps");
@@ -318,14 +283,11 @@ export function buildRustGraph(plan: RustPlan, dir: string): RustGraph {
 
   const root = units[g.roots[0]!]!;
   assert(
-    root.kind === "lib" || root.kind === "staticlib" || root.kind === "bin",
-    `rust plan: root unit ${root.crateName} is a ${root.kind}, expected a library, a staticlib or a bin`,
+    root.kind === "lib" || root.kind === "bin",
+    `rust plan: root unit ${root.crateName} is a ${root.kind}, expected a library or a bin`,
   );
   for (const u of units) {
-    assert(
-      u === root || (u.kind !== "bin" && u.kind !== "staticlib"),
-      `rust plan: ${u.crateName} is a ${u.kind} but not the root`,
-    );
+    assert(u === root || u.kind !== "bin", `rust plan: ${u.crateName} is a bin but not the root`);
   }
   return {
     units,
@@ -360,9 +322,9 @@ interface ManifestCommon {
   libraryPath: { variable: string; prepend: string[] };
 }
 
-/** A rustc invocation: lib, proc-macro, staticlib, bin or build-script compile. */
+/** A rustc invocation: lib, proc-macro, bin or build-script compile. */
 export interface RustcUnitManifest extends ManifestCommon {
-  kind: "lib" | "proc-macro" | "staticlib" | "bin" | "build-script";
+  kind: "lib" | "proc-macro" | "bin" | "build-script";
   rustc: string;
   /** rustc argv without the program. Build-script-derived `-L`/`-l`/`-C link-arg`/`--cfg`/`--check-cfg` and `rustc-env` are added by run.ts. */
   args: string[];
@@ -370,14 +332,6 @@ export interface RustcUnitManifest extends ManifestCommon {
   rmeta: string | undefined;
   /** lib units: the name ninja knows the `.rmeta` by (its path from the build directory), which is what an early-output announcement has to say. */
   rmetaNinjaName: string | undefined;
-  /**
-   * staticlib units. rustc writes, beside `output`, `<stem>.o` or with several codegen units one
-   * `<stem>.<unit>.rcgu.o` each, and names `<stem>.o` in its dep-info either way. run.ts removes the previous ones
-   * before rustc runs and lists the new ones in `output` as paths from `linkDir`, the directory the link runs in
-   * (the build directory), which is how the link's other inputs are named: clang-cl reads an absolute POSIX path as
-   * an option when it can (`/opt/…` is `/o`, `/Users/…` is `/U`) and drops the object.
-   */
-  objects: { stem: string; linkDir: string } | undefined;
   /** bin units: where run.ts copies `output` once rustc has linked it (a second output of the edge). */
   binDestination: string | undefined;
   /** Which of the build script's `rustc-link-arg*` directives apply to this target (cargo `LinkArgTarget`). */
@@ -486,10 +440,9 @@ function rustcUnitManifest(ctx: ManifestContext, unit: RustUnit): RustcUnitManif
   // what it turns into ninja's early-output announcement.
   args.push("--error-format=json", "--json=diagnostic-rendered-ansi,artifacts,future-incompat");
   for (const t of unit.crateTypes) args.push("--crate-type", t);
-  // cargo: dep-info,metadata,link for rlib-only libs (pipelining), dep-info,link for everything that links. The
-  // final crate is not linked by rustc: dep-info,obj.
+  // cargo: dep-info,metadata,link for rlib-only libs (pipelining), dep-info,link for everything that links.
   args.push(
-    `--emit=dep-info=${unit.depInfo},${unit.kind === "lib" ? "metadata,link" : unit.kind === "staticlib" ? "obj" : "link"}`,
+    unit.kind === "lib" ? `--emit=dep-info=${unit.depInfo},metadata,link` : `--emit=dep-info=${unit.depInfo},link`,
     // A library's metadata lives in its `.rmeta` alone, not a second time inside the `.rlib` (cargo does the same
     // on nightly): less to write and keep. What links the `.rlib` is given the `.rmeta` beside it (externPaths).
     ...(unit.kind === "lib" ? ["-Z", "embed-metadata=no"] : []),
@@ -503,10 +456,6 @@ function rustcUnitManifest(ctx: ManifestContext, unit: RustUnit): RustcUnitManif
   args.push(...ltoArgs(unit, ctx.graph.root));
   if (p.codegen_backend) args.push("-Z", `codegen-backend=${p.codegen_backend}`);
   if (p.codegen_units !== null) args.push("-C", `codegen-units=${p.codegen_units}`);
-  // Asked for `--emit=obj` with no count on the command line, rustc compiles the crate as one unit (rustc_session
-  // should_override_cgus_and_disable_thinlto): the largest crate would lose its parallel and incremental code
-  // generation. So the final crate is given the count rustc would have used (Session::codegen_units).
-  else if (unit.kind === "staticlib") args.push("-C", `codegen-units=${incrementalFor(cfg, unit) ? 256 : 16}`);
   const debuginfo = debuginfoArg(p.debuginfo);
   if (debuginfo !== undefined) {
     args.push("-C", `debuginfo=${debuginfo}`);
@@ -551,7 +500,9 @@ function rustcUnitManifest(ctx: ManifestContext, unit: RustUnit): RustcUnitManif
   if (!isHost) args.push("--target", unit.platform);
   const linker = isHost ? ctx.linker.host : ctx.linker.target;
   if (linker !== undefined) args.push("-C", `linker=${linker}`);
-  if (incrementalFor(cfg, unit)) args.push("-C", `incremental=${join(graph.dir, unit.platform, "incremental")}`);
+  // cargo: incremental for path packages only, and never when CI is set.
+  if (p.incremental && local && !cfg.ci)
+    args.push("-C", `incremental=${join(graph.dir, unit.platform, "incremental")}`);
   const strip = stripArg(p.strip);
   if (strip !== undefined) args.push("-C", `strip=${strip}`);
   if (unit.isStd) args.push("-Z", "force-unstable-if-unmarked");
@@ -604,7 +555,6 @@ function rustcUnitManifest(ctx: ManifestContext, unit: RustUnit): RustcUnitManif
     output: unit.output,
     rmeta: unit.rmeta,
     rmetaNinjaName: unit.rmeta === undefined ? undefined : relative(cfg.buildDir, unit.rmeta),
-    objects: unit.kind === "staticlib" ? { stem: `${unit.crateName}-${unit.hash}`, linkDir: cfg.buildDir } : undefined,
     binDestination: unit.kind === "bin" ? ctx.binDestination : undefined,
     linkArgSelectors: unit.kind === "bin" ? ["all", "bins", `bin=${unit.targetName}`] : ["all"],
     depInfo: unit.depInfo,
@@ -729,8 +679,7 @@ export function externPaths(unit: RustUnit, dep: RustUnit): string[] {
 
 /** cargo `Unit::requires_upstream_objects`: does compiling this unit link (so it needs deps' object code, not just metadata)? */
 export function requiresUpstreamObjects(unit: RustUnit): boolean {
-  // cargo counts a staticlib, which it has rustc link. Here rustc writes that crate's objects and stops.
-  return unit.kind !== "lib" && unit.kind !== "staticlib";
+  return unit.kind !== "lib";
 }
 
 /**
@@ -757,11 +706,6 @@ function ltoArgs(unit: RustUnit, root: RustUnit): string[] {
   return ["-C", "linker-plugin-lto"];
 }
 
-/** cargo: incremental for path packages only, and never when CI is set. */
-function incrementalFor(cfg: Config, unit: RustUnit): boolean {
-  return unit.profile.incremental && unit.isLocal && !cfg.ci;
-}
-
 /** cargo `TomlDebugInfo` → the `-C debuginfo=` value; undefined for none. */
 function debuginfoArg(d: UnitGraphUnit["profile"]["debuginfo"]): string | undefined {
   if (d === null || d === 0 || d === "none" || d === "0") return undefined;
@@ -779,9 +723,9 @@ function stripArg(s: UnitGraphUnit["profile"]["strip"]): string | undefined {
 }
 
 /**
- * The libraries a link that rustc does not do takes from the graph: every library the root depends on, std's
- * included, and the root too when it is one (a staticlib root is objects: RustGraph.root.output lists them). rustc
- * decides two things only when it links a final artifact, so they are decided here:
+ * What a link that rustc does not do takes from a graph whose root is a library: the root and every library it
+ * depends on, std's included. rustc decides two things only when it links a final artifact, so they are decided
+ * here:
  *  - proc-macros, and what they alone depend on, are host code, compiled into the compiler and not into the program;
  *  - std depends on both panic runtimes, `panic_abort` and `panic_unwind`, and both define `__rust_start_panic`.
  *    rustc links the one the panic strategy names (rustc_metadata `inject_panic_runtime`) and leaves the other out.
@@ -789,10 +733,9 @@ function stripArg(s: UnitGraphUnit["profile"]["strip"]): string | undefined {
  */
 export function linkedRlibs(graph: RustGraph): RustUnit[] {
   const otherPanicRuntime = graph.root.profile.panic === "abort" ? "panic_unwind" : "panic_abort";
-  return [
-    ...(graph.root.kind === "lib" ? [graph.root] : []),
-    ...transitiveLinkInputs(graph.root, "same-platform"),
-  ].filter(unit => unit.crateName !== otherPanicRuntime);
+  return [graph.root, ...transitiveLinkInputs(graph.root, "same-platform")].filter(
+    unit => unit.crateName !== otherPanicRuntime,
+  );
 }
 
 /**

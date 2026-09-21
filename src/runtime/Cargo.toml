@@ -5,11 +5,9 @@ edition.workspace = true
 
 [lib]
 path = "lib.rs"
-# The root of the crate graph the native build plans (scripts/build/rust.ts), and the final Rust crate: a staticlib
-# to rustc, which is what makes it keep this crate's generic instances private and fold single-caller code before
-# the link. The build asks rustc for the crate's objects, never for the archive, and links them beside every other
-# crate's rlib (scripts/build/rust/units.ts UnitKind).
-crate-type = ["staticlib"]
+# The root of the crate graph the native build plans (scripts/build/rust.ts), and a library like every other crate:
+# the link takes each crate's rlib beside the C/C++ objects. No crate is a "final" Rust artifact, so nothing copies
+# every crate into one archive.
 
 [lints]
 workspace = true

@@ -741,16 +741,10 @@ function coffDefinitions(
 function verifyDuplicates(nm: string, objdump: string | undefined, rspfile: string, reportPath: string): number {
   // .res (compiled Windows resources) is a link input with no symbols and
   // no object format nm reads; everything else on the line must scan.
-  // An input that is itself a list (bun_runtime's objects, which the link takes as `@list`: rust/run.ts
-  // writeObjectList, one double-quoted path per line) stands for what it names.
-  const linesOf = (file: string) =>
-    readFileSync(file, "utf8")
-      .split("\n")
-      .map(l => l.trim())
-      .filter(l => l.length > 0);
-  const inputs = linesOf(rspfile)
-    .flatMap(l => (l.endsWith(".objects.rsp") ? linesOf(l).map(o => o.replace(/^"|"$/g, "")) : [l]))
-    .filter(l => !l.endsWith(".res"));
+  const inputs = readFileSync(rspfile, "utf8")
+    .split("\n")
+    .map(l => l.trim())
+    .filter(l => l.length > 0 && !l.endsWith(".res"));
   assert(inputs.length > 0, `duplicates: ${rspfile} lists no inputs`);
   const defs: Definition[] = [];
   // --coff: the target is Windows. COFF members go through objdump (above);

@@ -2,9 +2,9 @@
  * Rust build step — every crate a ninja edge.
  *
  * The Rust port lives in the workspace rooted at the repo's `Cargo.toml`; the root of the crate graph is
- * `src/runtime` (`bun_runtime`), the final Rust crate, with `main` exported `#[no_mangle] extern "C"`. Its
- * objects and every other crate's rlib, std's included, are inputs of bun's own link, beside the C/C++ objects:
- * rustc links nothing, and nothing copies the crate graph into one archive.
+ * `src/runtime` (`bun_runtime`), a library like the rest, with `main` exported `#[no_mangle] extern "C"`.
+ * Every crate's rlib, std's included, is an input of bun's own link, beside the C/C++ objects: no crate is a
+ * final Rust artifact, and nothing copies the crate graph into one archive.
  *
  * cargo plans, ninja executes: `rust/plan.ts` asks cargo for the unit graph it would build for
  * exactly the arguments computed here (`cargoBuildInvocation`: profile, target, `-Zbuild-std`, the
@@ -25,14 +25,12 @@
  *
  * ## How Rust reaches the link
  *
- * Like the C/C++ objects. `bun_runtime` is the final Rust crate (a `staticlib` to cargo and rustc) and rustc
- * writes its objects, not the archive: the link reads the list of them (`rust/units.ts` `UnitKind`, which also
- * says when the root is a library instead). Every crate it depends on is an rlib with a name known at configure, an
- * input of the link edge (`linkedRlibs`) between the C++ objects and the dependency archives. An rlib is an
- * archive, so a member is linked when something needs a symbol it defines: the root's objects, crt1.o's undefined
- * `main` and the C++ side's hundreds of `extern "C"` `Bun__*`/`Zig*` references pull every reachable member, and
- * the release link's `--gc-sections` still DCEs per-function. A member is one codegen unit's object, as it was
- * inside the single archive rustc used to make of all of them, so what gets pulled is unchanged.
+ * Like the C/C++ objects: every crate's rlib has a name known at configure and is an input of the link edge
+ * (`rust/units.ts` `linkedRlibs`), between the C++ objects and the dependency archives. An rlib is an archive, so
+ * a member is linked when something needs a symbol it defines: crt1.o's undefined `main` plus the C++ side's
+ * hundreds of `extern "C"` `Bun__*`/`Zig*` references pull every reachable member, and the release link's
+ * `--gc-sections` still DCEs per-function. A member is one codegen unit's object, as it was inside the single
+ * archive rustc used to make of all of them, so what gets pulled is unchanged.
  */
 
 import { existsSync } from "node:fs";
@@ -284,9 +282,9 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     profile,
     "--locked",
   ];
-  // std is compiled from source (cargoBuildStdArg) in every build: the link is bun's own and takes each library's
-  // rlib as the output of an edge (rust/units.ts linkedRlibs), so std's crates have to be units of the graph like
-  // the rest; the toolchain's prebuilt std is not. It also gives:
+  // std is compiled from source (cargoBuildStdArg) in every build: the link is bun's own and takes each crate's rlib
+  // as the output of an edge (rust/units.ts linkedRlibs), so std's crates have to be units of the graph like the
+  // rest; the toolchain's prebuilt std is not. It also gives:
   // tier3:   a std at all; no prebuilt `rust-std` exists.
   // release: prebuilt std is native code built for generic x86-64 with no
   //          `.llvm_addrsig`. Rebuilding with our RUSTFLAGS gets it
@@ -693,19 +691,12 @@ function shimCargoInvocation(
   return { args, env: { ...main.env, CARGO_ENCODED_RUSTFLAGS: rustflags.join("\x1f") }, rustflags };
 }
 
-/** What bun's link takes from the Rust step. */
-export interface RustLinkInputs {
-  /** The rlib of every library crate the program is made of, std's included. */
-  rlibs: string[];
-  /** A linker response file naming `bun_runtime`'s objects, when the root is the final crate (`rust/units.ts` `UnitKind`). */
-  objectList: string | undefined;
-}
-
 /**
  * Emit the Rust step: for bun_runtime — and on Windows targets the .bin/ shim — a plan edge and, once the plans
- * exist, one edge per unit. Returns what the link takes beside the C/C++ objects.
+ * exist, one edge per unit. Returns what the link takes beside the C/C++ objects: the rlib of `bun_runtime` and of
+ * every library it depends on, std's included. No crate is a final Rust artifact; the link is bun's own.
  */
-export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): RustLinkInputs {
+export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string[] {
   assert(cfg.cargo !== undefined, "building bun's Rust crates requires cargo but no rust toolchain was found", {
     hint: "Install rust: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh",
   });
@@ -771,7 +762,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): RustLi
   if (runtime.plan === undefined || (shim !== undefined && shim.plan === undefined)) {
     n.phony("bun-rust", planFiles);
     n.blank();
-    return { rlibs: [], objectList: undefined };
+    return [];
   }
   const toolchainBin = (tool: string) => join(rustSysroot, "bin", `${tool}${cfg.host.exeSuffix}`);
   const context = {
@@ -810,8 +801,8 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): RustLi
 
   const graph = buildRustGraph(runtime.plan, runtime.dir);
   assert(
-    graph.root.kind === "staticlib" || graph.root.kind === "lib",
-    `rust plan root ${graph.root.crateName} is a ${graph.root.kind}, expected the final crate (a staticlib, or a library under an LTO profile)`,
+    graph.root.kind === "lib",
+    `rust plan root ${graph.root.crateName} is a ${graph.root.kind}, expected a library`,
   );
   emitRustUnits(
     n,
@@ -824,10 +815,9 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): RustLi
     },
   );
   const rlibs = linkedRlibs(graph).map(unit => unit.output);
-  const objectList = graph.root.kind === "staticlib" ? graph.root.output : undefined;
-  n.phony("bun-rust", [...rlibs, ...(objectList !== undefined ? [objectList] : [])]);
+  n.phony("bun-rust", rlibs);
   n.blank();
-  return { rlibs, objectList };
+  return rlibs;
 }
 
 /**

@@ -25,7 +25,7 @@ import {
   writeSync,
 } from "node:fs";
 import { availableParallelism, constants as osConstants } from "node:os";
-import { delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { BuildError } from "../error.ts";
 import { writeIfChanged } from "../fs.ts";
 import { type BuildScriptOutput, envify } from "./cargo-env.ts";
@@ -158,16 +158,11 @@ function runRustc(unit: RustcUnitManifest): void {
     // resolving a dependency, and some linkers truncate a hard-linked output in place.
     rmSync(o, { force: true });
   }
-  // The final crate's objects are rustc's to name and count (one per codegen unit): none of a previous run's may be
-  // left for the list written below.
-  const objects = unit.objects;
-  if (objects !== undefined) for (const o of unitObjects(unit, objects.stem)) rmSync(o, { force: true });
   const { argv, env } = rustcInvocation(unit);
   const exitStatus = (status: number | null, signal: NodeJS.Signals | null) =>
     status ?? 128 + (signal === null ? 0 : (osConstants.signals[signal] ?? 0));
   const finish = (status: number): never => {
     if (status === 0) {
-      if (objects !== undefined) writeObjectList(unit, objects);
       stampOutput(unit.output);
       // A bin is also wanted under its target's name, where its user looks for it (cargo "uplifts" it the same way).
       if (unit.binDestination !== undefined) {
@@ -215,28 +210,6 @@ function runRustc(unit: RustcUnitManifest): void {
   });
 }
 
-/** The objects rustc wrote for a staticlib unit: `<stem>.o`, or one `<stem>.<unit>.rcgu.o` per codegen unit. */
-function unitObjects(unit: RustcUnitManifest, stem: string): string[] {
-  const dir = dirname(unit.output);
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir)
-    .filter(name => name.startsWith(`${stem}.`) && name.endsWith(".o"))
-    .sort()
-    .map(name => join(dir, name));
-}
-
-/**
- * `output` of a staticlib unit: a linker response file naming its objects, from the directory the link runs in
- * (RustcUnitManifest.objects says why not absolutely). Forward slashes inside double quotes read the same
- * to the GNU tokenizer (clang, ld.lld) and the Windows one (clang-cl, lld-link).
- */
-function writeObjectList(unit: RustcUnitManifest, { stem, linkDir }: { stem: string; linkDir: string }): void {
-  const objects = unitObjects(unit, stem);
-  if (objects.length === 0) throw new BuildError(`rustc wrote no ${stem}*.o beside ${unit.output}`);
-  const fromLink = (o: string) => relative(linkDir, o).replace(/\\/g, "/");
-  writeFileSync(unit.output, objects.map(o => `"${fromLink(o)}"\n`).join(""));
-}
-
 /** Print one line of rustc's `--error-format=json` stream the way rustc would have; true if it announces the metadata artifact. */
 function renderRustcMessage(line: string): boolean {
   if (line.trim() === "") return false;
@@ -281,9 +254,6 @@ function stampOutput(path: string): void {
 export function writeDepfile(unit: RustcUnitManifest): void {
   if (!existsSync(unit.depInfo)) throw new BuildError(`rustc did not write ${unit.depInfo}`);
   const abs = (p: string) => (isAbsolute(p) ? p : resolve(unit.cwd, p.replace(/\\ /g, " ")).replace(/ /g, "\\ "));
-  // What rustc calls the artifact: the edge's output, except for a staticlib unit, whose output is the list of the
-  // objects and whose dep-info names `<stem>.o` however many objects there are.
-  const artifact = unit.objects === undefined ? unit.output : join(dirname(unit.output), `${unit.objects.stem}.o`);
   const lines: string[] = [];
   let sawRule = false;
   for (const line of readFileSync(unit.depInfo, "utf8").split("\n")) {
@@ -294,13 +264,13 @@ export function writeDepfile(unit: RustcUnitManifest): void {
     const target = abs(m[1]!);
     const deps = (m[2] ?? "").match(/(?:\\ |[^ ])+/g) ?? [];
     if (deps.length === 0) lines.push(`${target}:`);
-    else if (target.replace(/\\ /g, " ") === artifact) {
-      lines.push(`${unit.output.replace(/ /g, "\\ ")}: ${deps.map(abs).join(" ")}`);
+    else if (target.replace(/\\ /g, " ") === unit.output) {
+      lines.push(`${target}: ${deps.map(abs).join(" ")}`);
       sawRule = true;
     }
   }
   // Without that rule ninja would record no dependencies at all and never rebuild the crate on a source edit.
-  if (!sawRule) throw new BuildError(`${unit.depInfo} has no rule for ${artifact}`);
+  if (!sawRule) throw new BuildError(`${unit.depInfo} has no rule for ${unit.output}`);
   writeFileSync(unit.depfile, lines.join("\n") + "\n");
 }
 

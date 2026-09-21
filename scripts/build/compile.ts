@@ -176,18 +176,14 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   // --ld-path= spelling, and `-fuse-ld=<abs path>` mangles the path with the
   // target triple.
   //
-  // $object_lists: more inputs, named by response files of their own (LinkOpts.objectLists). With the inputs and
-  // not in $ldflags: clang-cl ends `/link`'s arguments at the first end of line a response file brings, and takes
-  // every linker option after it for an input file.
-  //
   // Darwin cross links append `&& macho-postlink $out ...` (the suffix is
   // empty everywhere else): ninja runs the whole command through `sh -c`,
   // so the fixup runs after the link succeeds and the declared output is
   // already the final, patched, re-signed artifact. See shims.ts.
   n.rule("link", {
     command: cfg.windows
-      ? `${cxx} /nologo -fuse-ld=lld ${q(`/clang:-B${dirname(cfg.ld)}`)} @$out.rsp $object_lists /Fe$out /link $ldflags`
-      : `${cxx} @$out.rsp $object_lists $ldflags -o $out${elfDebugCompressPostlinkCommand(cfg)}${machoPostlinkCommand(cfg)}`,
+      ? `${cxx} /nologo -fuse-ld=lld ${q(`/clang:-B${dirname(cfg.ld)}`)} @$out.rsp /Fe$out /link $ldflags`
+      : `${cxx} @$out.rsp $ldflags -o $out${elfDebugCompressPostlinkCommand(cfg)}${machoPostlinkCommand(cfg)}`,
     description: "link $out",
     rspfile: "$out.rsp",
     rspfile_content: "$in_newline",
@@ -455,11 +451,6 @@ export interface LinkOpts {
   /** Linker flags. */
   flags: string[];
   /**
-   * Response files that name more objects to link, for objects whose names are not known when build.ninja is
-   * written (bun_runtime's: rustc names them, rust/run.ts lists them). The link depends on each list.
-   */
-  objectLists?: string[];
-  /**
    * Files the link reads that aren't in $in — symbol lists (symbols.def,
    * symbols.txt, symbols.dyn), linker scripts (linker.lds), manifests.
    * Editing these should trigger relink (cmake's LINK_DEPENDS equivalent).
@@ -480,7 +471,6 @@ export function link(n: Ninja, cfg: Config, out: string, objects: string[], opts
 
   // Linker maps are implicit outputs (ninja tracks them but they're not in $out)
   const implicitOutputs = (opts.linkerMapOutputs ?? []).map(map => resolve(cfg.buildDir, map));
-  const objectLists = opts.objectLists ?? [];
 
   const node: BuildNode = {
     outputs: [absOut],
@@ -488,7 +478,6 @@ export function link(n: Ninja, cfg: Config, out: string, objects: string[], opts
     inputs: [...objects, ...opts.libs],
     vars: {
       ldflags: opts.flags.join(" "),
-      object_lists: objectLists.map(list => `@${n.rel(list)}`).join(" "),
     },
   };
   if (implicitOutputs.length > 0) node.implicitOutputs = implicitOutputs;
@@ -496,7 +485,6 @@ export function link(n: Ninja, cfg: Config, out: string, objects: string[], opts
   node.implicitInputs = [
     toolIdentityFile(cfg, "cxx"),
     ...(cfg.ld !== "" ? [toolIdentityFile(cfg, "ld")] : []),
-    ...objectLists,
     ...(opts.implicitInputs ?? []),
   ];
   // lld-link writes the exe's import library under obj/ (flags.ts /IMPLIB)

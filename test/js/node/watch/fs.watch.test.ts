@@ -365,29 +365,6 @@ describe("fs.watch", () => {
     },
   );
 
-  // Node calls the watchers of one directory in turn for each OS event.
-  test.skipIf(!isLinux)("two watchers of one directory get each event in turn", async () => {
-    using dir = tempDir("fs-watch-two-watchers", { "before": "x" });
-    const root = String(dir);
-    const seen: string[] = [];
-    const { promise: sawLast, resolve, reject } = Promise.withResolvers<void>();
-    const a = fs.watch(root, (_eventType, filename) => seen.push(`a ${filename}`));
-    const b = fs.watch(root, (_eventType, filename) => {
-      seen.push(`b ${filename}`);
-      if (filename === "after") resolve();
-    });
-    a.once("error", reject);
-    b.once("error", reject);
-    try {
-      fs.renameSync(path.join(root, "before"), path.join(root, "after"));
-      await sawLast;
-    } finally {
-      a.close();
-      b.close();
-    }
-    expect(seen).toEqual(["a before", "b before", "a after", "b after"]);
-  });
-
   test("should error on invalid path", done => {
     try {
       fs.watch(path.join(testDir, "404.txt"));

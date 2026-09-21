@@ -668,7 +668,7 @@ export function queueTimes(build: Build, run: Run): QueueTotal[] {
 // ───────────────────────────────────────────────────────────────────────────
 
 /** An elapsed time in a column. */
-const column = (ms: number): string => formatElapsed(ms).padStart(12);
+const column = (ms: number): string => formatElapsed(ms).padStart(10);
 const clock = (unixMs: number): string => new Date(unixMs).toISOString().replace("T", " ").slice(0, 19) + "Z";
 
 export interface ReportStyle {
@@ -696,7 +696,7 @@ export function formatReport(build: Build, style: ReportStyle): string {
 
   out.push(
     "",
-    bold("by rule".padEnd(26)) + dim(`${"edges".padStart(7)}${"total".padStart(14)}  ${"slowest".padStart(12)}`),
+    bold("by rule".padEnd(26)) + dim(`${"edges".padStart(7)}${"total".padStart(12)}  ${"slowest".padStart(10)}`),
   );
   for (const t of totalsByRule(build)) {
     out.push(
@@ -709,7 +709,7 @@ export function formatReport(build: Build, style: ReportStyle): string {
     out.push(`  ${column(duration(x))}  ${x.label}`);
     const phases = largestPhases(x);
     if (phases.length > 0) {
-      out.push(dim(`${"".padStart(16)}${phases.map(([name, ms]) => `${name} ${formatElapsed(ms)}`).join(" · ")}`));
+      out.push(dim(`${"".padStart(14)}${phases.map(([name, ms]) => `${name} ${formatElapsed(ms)}`).join(" · ")}`));
     }
   }
 

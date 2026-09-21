@@ -447,42 +447,42 @@ describe("formatReport", () => {
     const report = formatReport(build, plain).replace(/^build timings .*$/m, "build timings  <buildDir>");
     expect(report).toMatchInlineSnapshot(`
       "build timings  <buildDir>
-        3s 400ms total · 6 edges
+        3.4s total · 6 edges
 
-      by rule                     edges         total       slowest
-        rust_rustc                    3            4s            2s  rustc b
-        link                          1      1s 300ms      1s 300ms  link exe
-        dep_fetch                     1         100ms         100ms  fetch dep
-        cxx                           1          50ms          50ms  cxx x.o
+      by rule                     edges       total     slowest
+        rust_rustc                    3        4.0s        2.0s  rustc b
+        link                          1        1.3s        1.3s  link exe
+        dep_fetch                     1       100ms       100ms  fetch dep
+        cxx                           1        50ms        50ms  cxx x.o
 
       slowest 6 edges
-                  2s  rustc b
-                      LLVM_passes 1s 600ms · analysis 218ms
-            1s 300ms  link exe
-                  1s  rustc a
-                  1s  rustc root → libroot.a
-               100ms  fetch dep
-                50ms  cxx x.o
-                      Frontend 30ms · Backend 15ms
+              2.0s  rustc b
+                    LLVM_passes 1.6s · analysis 218ms
+              1.3s  link exe
+              1.0s  rustc a
+              1.0s  rustc root → libroot.a
+             100ms  fetch dep
+              50ms  cxx x.o
+                    Frontend 30ms · Backend 15ms
 
       critical path  how long each step holds up the next
-               100ms  fetch dep
-               300ms  rustc a  of 1s
-                  2s  rustc b
-                  1s  rustc root → libroot.a
-            1s 300ms  link exe
+             100ms  fetch dep
+             300ms  rustc a  of 1.0s
+              2.0s  rustc b
+              1.0s  rustc root → libroot.a
+              1.3s  link exe
 
       last build  2026-01-02 04:04:05Z  2 commands · 0.4× parallel
 
         low parallelism  ≤ 2 commands, ≥ 1s
-                 0ms –    3s 400ms  (3s 400ms)  link exe, cxx x.o
+               0ms –      3.4s  (3.4s)  link exe, cxx x.o
 
         queued
-                  2s  pool compile (depth 2)          1 command    longest 2s  cxx x.o
-                50ms  no pool                         1 command    longest 50ms  link exe
+              2.0s  pool compile (depth 2)          1 command    longest 2.0s  cxx x.o
+              50ms  no pool                         1 command    longest 50ms  link exe
 
       earlier builds
-        2026-01-02 03:04:05Z      3s 900ms · 6 commands
+        2026-01-02 03:04:05Z        3.9s · 6 commands
       "
     `);
   });

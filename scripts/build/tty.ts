@@ -25,18 +25,15 @@ export const green = (s: string): string => (useColor ? `\x1b[32m${s}\x1b[39m` :
 export const red = (s: string): string => (useColor ? `\x1b[31m${s}\x1b[39m` : s);
 
 /**
- * An elapsed time in minutes, seconds and milliseconds, without the parts that are zero: "412ms", "3s 200ms",
- * "1m 55s 400ms", "2m". The timings page runs this same function (timings.ts puts its source in the page), so it is
- * plain JavaScript that needs nothing from this module.
+ * An elapsed time: "412ms" under a second, then seconds to a tenth, with minutes in front from a minute on: "3.2s",
+ * "1m 55.4s". The timings page runs this same function (timings.ts puts its source in the page), so it is plain
+ * JavaScript that needs nothing from this module.
  */
 export function formatElapsed(ms: number): string {
-  const whole = Math.round(ms);
-  const parts = [
-    [Math.floor(whole / 60000), "m"],
-    [Math.floor(whole / 1000) % 60, "s"],
-    [whole % 1000, "ms"],
-  ].filter(part => part[0] !== 0);
-  return parts.length === 0 ? "0ms" : parts.map(part => `${part[0]}${part[1]}`).join(" ");
+  if (Math.round(ms) < 1000) return `${Math.round(ms)}ms`;
+  const tenths = Math.round(ms / 100);
+  const seconds = `${((tenths % 600) / 10).toFixed(1)}s`;
+  return tenths < 600 ? seconds : `${Math.floor(tenths / 600)}m ${seconds}`;
 }
 
 /**

@@ -5205,7 +5205,7 @@ it("http2 client.request() on a destroyed or closed session uses the right error
   }
 });
 
-describe.concurrent("http2 options.parent", () => {
+describe.concurrent("http2 priority options", () => {
   // Resolves with what one GET observed. A stream or session failure rejects it.
   function get(client, path, options) {
     const { promise, resolve, reject } = Promise.withResolvers();
@@ -5312,9 +5312,11 @@ describe.concurrent("http2 options.parent", () => {
     }
   });
 
-  it("request() sends a PRIORITY field only for a dependency the peer does not already assume", async () => {
-    // Raw-socket h2 server: records the stream id and the priority field of every HEADERS frame
-    // and answers 200.
+  it("request() never sends a PRIORITY field, like node", async () => {
+    // node v26.3.0 validates the priority options and then sends none of them: its nghttp2
+    // discards the priority spec, so every request HEADERS frame here has flags 0x05.
+    // Raw-socket h2 server: records the stream id and the flags of every HEADERS frame and
+    // answers 200.
     const headersFrames = [];
     const server = net.createServer(socket => {
       let buf = Buffer.alloc(0);
@@ -5334,17 +5336,11 @@ describe.concurrent("http2 options.parent", () => {
           const type = buf[3];
           const flags = buf[4];
           const streamId = buf.readUInt32BE(5) & 0x7fffffff;
-          const payload = buf.subarray(9, 9 + length);
           buf = buf.subarray(9 + length);
           if (type === 4 && (flags & 1) === 0) {
             socket.write(new http2utils.SettingsFrame(true).data);
           } else if (type === 1) {
-            const dependency = flags & 0x20 ? payload.readUInt32BE(0) : null;
-            headersFrames.push({
-              streamId,
-              priority:
-                dependency === null ? null : { exclusive: dependency >>> 31 === 1, parent: dependency & 0x7fffffff },
-            });
+            headersFrames.push({ streamId, flags });
             // :status: 200 (static table index 8), END_HEADERS | END_STREAM.
             socket.write(new http2utils.HeadersFrame(streamId, Buffer.from([0x88]), 0, true, true).data);
           }
@@ -5360,27 +5356,24 @@ describe.concurrent("http2 options.parent", () => {
       for (const options of [
         undefined,
         { parent: 0 },
-        { parent: 0, exclusive: false },
         { parent: 0, exclusive: true },
+        { exclusive: true },
         { parent: 1 },
+        { exclusive: true, parent: 3 },
         { parent: 2 ** 31 - 1, exclusive: true },
-        // A stream cannot depend on itself (RFC 7540 5.3.1). A node server ends the session for
-        // it. The requests run one at a time, so these two are streams 13 and 15.
-        { parent: 13 },
-        { parent: 15, exclusive: true },
       ]) {
         statuses.push((await get(client, "/", options)).status);
       }
-      expect(statuses).toEqual([200, 200, 200, 200, 200, 200, 200, 200]);
+      expect(statuses).toEqual([200, 200, 200, 200, 200, 200, 200]);
+      // END_STREAM | END_HEADERS, and no PRIORITY (0x20).
       expect(headersFrames).toEqual([
-        { streamId: 1, priority: null },
-        { streamId: 3, priority: null },
-        { streamId: 5, priority: null },
-        { streamId: 7, priority: { exclusive: true, parent: 0 } },
-        { streamId: 9, priority: { exclusive: false, parent: 1 } },
-        { streamId: 11, priority: { exclusive: true, parent: 2 ** 31 - 1 } },
-        { streamId: 13, priority: null },
-        { streamId: 15, priority: { exclusive: true, parent: 0 } },
+        { streamId: 1, flags: 0x05 },
+        { streamId: 3, flags: 0x05 },
+        { streamId: 5, flags: 0x05 },
+        { streamId: 7, flags: 0x05 },
+        { streamId: 9, flags: 0x05 },
+        { streamId: 11, flags: 0x05 },
+        { streamId: 13, flags: 0x05 },
       ]);
       expect(sessionErrors).toEqual([]);
     } finally {
@@ -5389,33 +5382,98 @@ describe.concurrent("http2 options.parent", () => {
     }
   });
 
-  it("respond() with parent: 0 sends the response, like node", async () => {
+  it("request() with priority options works on a session that pads its frames", async () => {
+    // The PRIORITY field used to go out before the Pad Length octet (RFC 7540 6.2 puts Pad
+    // Length first), so the server could not parse the frame and ended the session.
+    const server = await echoPathServer();
+    try {
+      const results = [];
+      for (const paddingStrategy of [http2.constants.PADDING_STRATEGY_ALIGNED, http2.constants.PADDING_STRATEGY_MAX]) {
+        const client = http2.connect(`http://127.0.0.1:${server.address().port}`, { paddingStrategy });
+        try {
+          const sessionErrors = [];
+          client.on("error", err => sessionErrors.push(err));
+          results.push({
+            paddingStrategy,
+            priority: await get(client, "/priority", { exclusive: true, parent: 3 }),
+            plain: await get(client, "/plain"),
+            sessionErrors,
+          });
+        } finally {
+          client.close();
+        }
+      }
+      expect(results).toEqual(
+        [http2.constants.PADDING_STRATEGY_ALIGNED, http2.constants.PADDING_STRATEGY_MAX].map(paddingStrategy => ({
+          paddingStrategy,
+          priority: { status: 200, body: "/priority" },
+          plain: { status: 200, body: "/plain" },
+          sessionErrors: [],
+        })),
+      );
+    } finally {
+      server.close();
+    }
+  });
+
+  it("respond() ignores the priority options and sends no PRIORITY field, like node", async () => {
     // respond() hands its options to the same native HEADERS writer as request(). node's
-    // respond() does not read `parent`.
-    const serverStreamFailed = Promise.withResolvers();
-    serverStreamFailed.promise.catch(() => {}); // only observed through the races below
+    // respond() reads none of these options. Stream 2n + 1 gets optionsByStream[n].
+    const optionsByStream = [
+      { parent: 0 },
+      { parent: -1 },
+      { parent: 3 },
+      { weight: 0 },
+      { weight: 16 },
+      { exclusive: true },
+    ];
+    const responses = Promise.withResolvers();
     const server = http2.createServer();
-    server.on("stream", (stream, headers) => {
-      stream.on("error", serverStreamFailed.reject);
-      stream.respond({ ":status": 200 }, { parent: 0 });
-      stream.end(headers[":path"]);
+    server.on("stream", stream => {
+      stream.on("error", responses.reject);
+      stream.respond({ ":status": 200 }, optionsByStream[(stream.id - 1) / 2]);
+      stream.end();
     });
     await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
-    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
-    try {
-      const sessionErrors = [];
-      client.on("error", err => sessionErrors.push(err));
-      const results = [];
-      for (const path of ["/first", "/second"]) {
-        results.push(await Promise.race([get(client, path), serverStreamFailed.promise]));
+
+    // Raw-socket h2 client: one GET per entry, then the flags of each response HEADERS frame.
+    // :method: GET, :scheme: http, :path: / (static table), :authority: localhost (literal).
+    const requestBlock = Buffer.from([0x82, 0x86, 0x84, 0x01, 0x09, ...Buffer.from("localhost")]);
+    const headersFrames = [];
+    const socket = net.connect(server.address().port, "127.0.0.1", () => {
+      socket.write(http2utils.kClientMagic);
+      socket.write(new http2utils.SettingsFrame(false).data);
+      for (let n = 0; n < optionsByStream.length; n++) {
+        socket.write(new http2utils.HeadersFrame(2 * n + 1, requestBlock, 0, true, true).data);
       }
-      expect(results).toEqual([
-        { status: 200, body: "/first" },
-        { status: 200, body: "/second" },
-      ]);
-      expect(sessionErrors).toEqual([]);
+    });
+    try {
+      socket.on("error", responses.reject);
+      socket.on("close", () => responses.reject(new Error("the server closed the connection")));
+      let buf = Buffer.alloc(0);
+      socket.on("data", chunk => {
+        buf = Buffer.concat([buf, chunk]);
+        while (buf.length >= 9) {
+          const length = buf.readUIntBE(0, 3);
+          if (buf.length < 9 + length) break;
+          const type = buf[3];
+          const flags = buf[4];
+          const streamId = buf.readUInt32BE(5) & 0x7fffffff;
+          buf = buf.subarray(9 + length);
+          if (type === 4 && (flags & 1) === 0) {
+            socket.write(new http2utils.SettingsFrame(true).data);
+          } else if (type === 1) {
+            headersFrames.push({ streamId, priority: (flags & 0x20) !== 0 });
+            if (headersFrames.length === optionsByStream.length) responses.resolve();
+          }
+        }
+      });
+      await responses.promise;
+      expect(headersFrames.sort((a, b) => a.streamId - b.streamId)).toEqual(
+        optionsByStream.map((_, n) => ({ streamId: 2 * n + 1, priority: false })),
+      );
     } finally {
-      client.close();
+      socket.destroy();
       server.close();
     }
   });

@@ -220,11 +220,11 @@ export interface CodegenOutputs {
   /** All codegen outputs — use for phony target `codegen`. */
   all: string[];
 
-  /** Outputs the cargo step depends on (generated .rs that gets `include!`d). */
+  /**
+   * Outputs a Rust crate reads (`include!`, `include_bytes!`), or needs to exist. The crates' edges are ordered
+   * after all of them (rust.ts); which crate recompiles when one changes comes from rustc's dep-info.
+   */
   rustInputs: string[];
-
-  /** Outputs the cargo step needs to exist but doesn't embed (debug bake runtime). */
-  rustOrderOnly: string[];
 
   /** Generated .cpp files. Compiled alongside handwritten C++ in bun.ts. */
   cppSources: string[];
@@ -291,7 +291,6 @@ export function emitCodegen(n: Ninja, cfg: Config, sources: Sources): CodegenOut
   const o: CodegenOutputs = {
     all: [],
     rustInputs: [],
-    rustOrderOnly: [],
     cppSources: [],
     cppHeaders: [],
     cppAll: [],
@@ -304,8 +303,8 @@ export function emitCodegen(n: Ninja, cfg: Config, sources: Sources): CodegenOut
   const ctx: Ctx = { n, cfg, sources, o, dirStamp };
 
   // Configure-time write (not a ninja edge — it's a constant manifest like
-  // depVersionsHeader). Pushed into rustInputs so the cargo edge implicit-deps
-  // on it; bun_core/build.rs emits the matching `rerun-if-changed`.
+  // depVersionsHeader). bun_core `include!`s it, and bun_core/build.rs emits the
+  // matching `rerun-if-changed`.
   const buildOptionsRs = generateBuildOptionsRs(cfg);
   o.all.push(buildOptionsRs);
   o.rustInputs.push(buildOptionsRs);
@@ -488,8 +487,7 @@ function emitCompressedEmbeds({ n, cfg, o, dirStamp }: Ctx): void {
     });
     o.all.push(out);
     // Debug reads the originals at runtime; only release embeds these.
-    if (cfg.debug) o.rustOrderOnly.push(out);
-    else o.rustInputs.push(out);
+    o.rustInputs.push(out);
   }
 }
 
@@ -663,9 +661,8 @@ function emitGeneratedClasses({ n, cfg, sources, o, dirStamp }: Ctx): void {
     resolve(cfg.codegenDir, "ZigGeneratedClasses+DOMIsoSubspaces.h"),
     resolve(cfg.codegenDir, "ZigGeneratedClasses+lazyStructureImpl.h"),
     // Rust sibling: include!()'d by src/runtime/generated_classes.rs. Must be
-    // a declared output so the cargo edge (which lists this in rustInputs)
-    // re-invokes when generate-classes.ts changes — cargo doesn't track
-    // include!() deps and the includer shim's mtime never moves.
+    // a declared output: bun_runtime's dep-info names it, and ninja can only
+    // rebuild that crate in the same build as this step if it knows the file.
     resolve(cfg.codegenDir, "generated_classes.rs"),
   ];
 
@@ -695,7 +692,7 @@ function emitHostExports({ n, cfg, sources, o, dirStamp }: Ctx): void {
   // `sources.rust` glob already covers these plus Cargo manifests; filter to
   // those crates so unrelated edits (e.g. src/bundler) don't re-run the
   // scrape. restat=1 + writeIfNotChanged means a no-marker-change edit
-  // produces identical output and the cargo step is pruned.
+  // produces identical output and nothing downstream rebuilds.
   const slashed = (p: string) => p.replace(/\\/g, "/");
   const scrapeDirs = [
     slashed(`${cfg.cwd}/src/runtime/`),
@@ -721,9 +718,8 @@ function emitHostExports({ n, cfg, sources, o, dirStamp }: Ctx): void {
   });
 
   o.all.push(output);
-  // bun_runtime/build.rs panics if this file is absent, so the rust_build edge
-  // must wait on it — `rustInputs` is the implicit-dep list the
-  // cargo edge consumes.
+  // bun_runtime `include!`s this file, so the workspace crate edges must wait
+  // on it — `rustInputs` is the list they are ordered after (rust.ts).
   o.rustInputs.push(output);
 }
 
@@ -773,7 +769,7 @@ function emitCppBind({ n, cfg, sources, o, dirStamp }: Ctx): void {
   });
 
   o.all.push(outputRs);
-  // bun_jsc `include!`s cpp.rs — the cargo edge must order after this.
+  // bun_jsc `include!`s cpp.rs.
   o.rustInputs.push(outputRs);
 }
 
@@ -799,8 +795,7 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
     resolve(cfg.codegenDir, "BuiltinModuleKeys.h"),
     resolve(cfg.codegenDir, "GeneratedJS2Native.h"),
     // Rust sibling: include!()'d by src/runtime/generated_js2native.rs. Must be
-    // a declared output so the cargo edge re-invokes when bundle-modules.ts /
-    // generate-js2native.ts changes — the includer shim's mtime never moves.
+    // a declared output, for the same reason as generated_classes.rs.
     resolve(cfg.codegenDir, "generated_js2native.rs"),
     // Specifier → module-ID tag table: include!()'d by the
     // `resolved_source_tag` module in src/jsc/lib.rs. Declared for the same
@@ -864,13 +859,8 @@ function emitBakeCodegen({ n, cfg, sources, o, dirStamp }: Ctx): void {
   });
 
   o.all.push(...outputs);
-  // Debug: read at RUNTIME (not embedded) → the build only needs existence.
-  // Release: embedded into the binary → content changes must trigger a relink.
-  if (cfg.debug) {
-    o.rustOrderOnly.push(...outputs);
-  } else {
-    o.rustInputs.push(...outputs);
-  }
+  // Debug reads these at runtime; release embeds them.
+  o.rustInputs.push(...outputs);
 }
 
 /** Exported (with emitBindgen) for test/internal/build-codegen-declared-outputs.test.ts. */
@@ -1000,12 +990,11 @@ function emitJsSink({ n, cfg, o, dirStamp }: Ctx): void {
   o.all.push(...outputs);
   o.cppSources.push(outputs[0]!); // .cpp
   o.cppHeaders.push(outputs[1]!, outputs[2]!); // .h + .lut.h
-  // bun_runtime/build.rs panics if generated_jssink.rs is absent, so the
-  // rust_build edge must order after this codegen step — `rustInputs` is the
-  // implicit-dep list the cargo edge consumes (same as generated_host_exports).
-  // Without this, `mode: "rust-only"` (CI's build-rust job, which compiles no
-  // C++ so nothing else pulls JSSink.cpp/.h) never runs this edge and cargo
-  // hits the missing file.
+  // bun_runtime `include!`s generated_jssink.rs, so the workspace crate edges
+  // must order after this codegen step — `rustInputs` is the list they wait
+  // on (same as generated_host_exports). Without this, `mode: "rust-only"`
+  // (CI's build-rust job, which compiles no C++ so nothing else pulls
+  // JSSink.cpp/.h) never runs this edge and rustc hits the missing file.
   o.rustInputs.push(jssinkRs);
 }
 

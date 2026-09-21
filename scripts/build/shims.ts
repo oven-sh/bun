@@ -17,6 +17,7 @@ import type { Config } from "./config.ts";
 import { DARWIN_STACK_SIZE } from "./flags.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote } from "./shell.ts";
+import { toolIdentityFile } from "./tools.ts";
 
 export interface ShimLinkOpts {
   /** Extra ldflags to append to the link() call. */
@@ -183,6 +184,7 @@ export function emitShims(n: Ninja, cfg: Config): ShimLinkOpts {
       outputs: [machoPostlinkToolPath(cfg)],
       rule: "host_tool_cc",
       inputs: [resolve(cfg.cwd, "scripts", "build", "shims", "macho-postlink.c")],
+      implicitInputs: [toolIdentityFile(cfg, "cc")],
     });
     implicitInputs.push(...machoPostlinkImplicitInputs(cfg));
   }

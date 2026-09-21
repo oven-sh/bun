@@ -2,7 +2,6 @@
   "src/bun_core_macros/comptime_string_map.rs": 2,
   "src/collections/multi_array_list.rs": 8,
   "src/css_derive/lib.rs": 3,
-  "src/jsc/PosixSignalHandle.rs": 4,
   "src/jsc_macros/lib.rs": 2,
   "src/opaque/lib.rs": 4,
   "src/patch/lib.rs": 2,

@@ -34,6 +34,7 @@ use bun_url::URL;
 // down into `bun_spawn::process` (MOVE_DOWN b0); install just flips it during
 // init. The full waiter-thread machinery (queue, signalfd, loop) lives in
 // `bun_runtime::api::bun::process` and *reads* the same flag.
+#[cfg(unix)]
 use bun_spawn::process::WaiterThread;
 
 use crate::RunCommand;
@@ -1982,6 +1983,7 @@ pub fn init(
         PackageManager::set_verbose_install(true);
     }
 
+    #[cfg(unix)]
     if env.get(b"BUN_FEATURE_FLAG_FORCE_WAITER_THREAD").is_some() {
         WaiterThread::set_should_use_waiter_thread();
     }

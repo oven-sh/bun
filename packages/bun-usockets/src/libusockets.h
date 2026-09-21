@@ -707,6 +707,10 @@ int us_socket_ipc_write_fd(us_socket_r s, const char *data, int length, int fd) 
 /* Dispatches on_writable once the socket is writable, as if a us_socket_write()
  * had come up short. Safe inside on_writable. Leaves a paused read side alone. */
 void us_socket_request_writable(us_socket_r s) nonnull_fn_decl;
+/* Reads and drops up to max_bytes of what the peer already sent, without a
+ * dispatch. For a close while reads are paused: close() over unread bytes resets
+ * the connection, and the kernel then drops what it has not sent yet. */
+void us_socket_discard_unread(us_socket_r s, unsigned int max_bytes) nonnull_fn_decl;
 void *us_listen_socket_ext(struct us_listen_socket_t *ls) nonnull_fn_decl;
 LIBUS_SOCKET_DESCRIPTOR us_listen_socket_get_fd(struct us_listen_socket_t *ls) nonnull_fn_decl;
 int us_listen_socket_port(struct us_listen_socket_t *ls) nonnull_fn_decl;

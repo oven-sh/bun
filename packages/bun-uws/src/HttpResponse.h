@@ -92,6 +92,21 @@ public:
         getHttpResponseData()->state |= HttpResponseData<SSL>::HTTP_WROTE_DATE_HEADER;
     }
 
+    /* Bun.serve, before a close. While requests are parked reads are paused, so
+     * what the peer sent since then is unread. A close over unread bytes resets
+     * the connection, and the kernel then drops what it has not sent yet: the
+     * peer loses the end of a complete response. A connection that closes
+     * dispatches none of those bytes, so they are read and dropped. A socket
+     * receive buffer bounds them. */
+    void discardBytesUnreadBehindParkedRequests(HttpResponseData<SSL> *httpResponseData) {
+        if (httpResponseData->parkedRequestBytes.isEmpty() && !httpResponseData->replayedRequestBytes) [[likely]] {
+            return;
+        }
+        if (!HttpContext<SSL>::fromSocket((us_socket_t *) this)->isNodeHttp()) {
+            us_socket_discard_unread((us_socket_t *) this, 8 * 1024 * 1024);
+        }
+    }
+
     /* Shutdown+close when the connection is marked to close (Connection:
      * close, peer FIN, close-when-idle), the response is complete and every
      * outgoing byte has been flushed. Returns true when the socket was closed. */
@@ -99,6 +114,7 @@ public:
         if (httpResponseData->shouldCloseConnection()) {
             if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
                 if (((AsyncSocket<SSL> *) this)->hasFullyDrained()) {
+                    discardBytesUnreadBehindParkedRequests(httpResponseData);
                     ((AsyncSocket<SSL> *) this)->shutdown();
                     /* We need to force close after sending FIN since we want to hinder
                      * clients from keeping to send their huge data */

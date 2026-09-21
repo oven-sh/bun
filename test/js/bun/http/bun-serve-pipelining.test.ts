@@ -201,6 +201,27 @@ const summarize = ({ statusLine, body }: RawResponse) => ({ statusLine, body });
 // Every handler below answers any path it does not treat specially with this.
 const plainResponse = (req: Request) => new Response(`body of ${new URL(req.url).pathname}`);
 
+// A node:net or node:tls client, for the tests that look at how the stream ends:
+// with the server's FIN (`ended`) or with an error such as ECONNRESET.
+async function connectNodeSocket(transport: Transport, server: Bun.Server<undefined>, dir: string) {
+  const socket =
+    transport.name === "tls"
+      ? tlsConnect({ port: server.port!, host: "127.0.0.1", ca: tls.cert, rejectUnauthorized: false })
+      : transport.name === "unix"
+        ? netConnect({ path: join(dir, "pipeline.sock") })
+        : netConnect({ port: server.port!, host: "127.0.0.1" });
+  const reader = new ResponseReader();
+  const seen: { ended: boolean; error?: string } = { ended: false };
+  socket.on("data", chunk => reader.push(chunk));
+  socket.on("end", () => (seen.ended = true));
+  socket.on("error", (error: NodeJS.ErrnoException) => (seen.error = error.code));
+  const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+  await once(socket, transport.name === "tls" ? "secureConnect" : "connect");
+  // Resolves once the kernel has the bytes.
+  const write = (data: string) => new Promise<void>(resolve => socket.write(data, () => resolve()));
+  return { socket, reader, seen, closed, write };
+}
+
 // A round trip on a separate connection. Anything the pipelining client wrote
 // before this was readable on the server before the probe was even sent, so by
 // the time the probe has been answered the server has read it (and, with the
@@ -439,25 +460,14 @@ describe.each(transports)("$name", transport => {
         ...transport.listen(String(dir)),
         fetch: recordingHandler(hits, () => new Response(big)),
       });
-      const socket =
-        transport.name === "tls"
-          ? tlsConnect({ port: server.port!, host: "127.0.0.1", ca: tls.cert, rejectUnauthorized: false })
-          : transport.name === "unix"
-            ? netConnect({ path: join(String(dir), "pipeline.sock") })
-            : netConnect({ port: server.port!, host: "127.0.0.1" });
-      const reader = new ResponseReader();
-      socket.on("data", chunk => reader.push(chunk));
-      // A reset shows up below as a missing response.
-      socket.on("error", () => {});
-      await once(socket, transport.name === "tls" ? "secureConnect" : "connect");
+      const client = await connectNodeSocket(transport, server, String(dir));
 
-      const closed = once(socket, "close");
-      socket.end(request("/big") + request("/small"));
-      await closed;
+      client.socket.end(request("/big") + request("/small"));
+      await client.closed;
 
       expect({
         hits,
-        responses: reader.responses.map(({ statusLine, body }) => ({
+        responses: client.reader.responses.map(({ statusLine, body }) => ({
           statusLine,
           bodyLength: body.length,
           bodyIsIntact: body === big || body === "body of /small",
@@ -468,6 +478,78 @@ describe.each(transports)("$name", transport => {
           { statusLine: "HTTP/1.1 200 OK", bodyLength: BIG_BODY_LENGTH, bodyIsIntact: true },
           { statusLine: "HTTP/1.1 200 OK", bodyLength: 14, bodyIsIntact: true },
         ],
+      });
+    },
+  );
+
+  // Reads are paused while a request is held, so what the client writes after that
+  // stays unread. A close over unread bytes resets the connection, and the kernel
+  // then drops the part of the response that it has not sent yet. The two tests
+  // below close a connection in that state: the server has to read those bytes
+  // first. In the first test the first /never is the request that is held, and the
+  // second one is what stays unread.
+  it.if(transport.supported)(
+    "a response that closes the connection arrives whole when the client wrote more while it was pending",
+    async () => {
+      using dir = tempDir("serve-pipelining", {});
+      const handler = holdingHandler();
+      using server = Bun.serve({
+        ...transport.listen(String(dir)),
+        async fetch(req) {
+          const response = await handler.fetch(req);
+          return new URL(req.url).pathname === "/hold"
+            ? new Response(big, { headers: { Connection: "close" } })
+            : response;
+        },
+      });
+      const client = await connectNodeSocket(transport, server, String(dir));
+
+      await client.write(request("/hold"));
+      await handler.entered("/hold");
+      for (let i = 0; i < 2; i++) {
+        await client.write(request("/never"));
+        await probe(transport, server, String(dir));
+      }
+
+      handler.release("/hold");
+      await client.closed;
+      expect({
+        hits: handler.hits,
+        seen: client.seen,
+        responses: client.reader.responses.map(({ body }) => ({ bodyLength: body.length, bodyIsIntact: body === big })),
+      }).toEqual({
+        hits: ["/hold", "/probe", "/probe"],
+        seen: { ended: true },
+        responses: [{ bodyLength: BIG_BODY_LENGTH, bodyIsIntact: true }],
+      });
+    },
+  );
+
+  it.if(transport.supported)(
+    "a held Connection: close request is answered and the connection ends cleanly when the client wrote more meanwhile",
+    async () => {
+      using dir = tempDir("serve-pipelining", {});
+      const handler = holdingHandler();
+      using server = Bun.serve({ ...transport.listen(String(dir)), fetch: handler.fetch });
+      const client = await connectNodeSocket(transport, server, String(dir));
+
+      await client.write(request("/hold") + request("/closing", "Connection: close\r\n"));
+      await handler.entered("/hold");
+      for (let i = 0; i < 2; i++) {
+        await client.write(request("/never"));
+        await probe(transport, server, String(dir));
+      }
+
+      handler.release("/hold");
+      await client.closed;
+      expect({
+        hits: handler.hits,
+        seen: client.seen,
+        responses: client.reader.responses.map(summarize),
+      }).toEqual({
+        hits: ["/hold", "/probe", "/probe", "/closing"],
+        seen: { ended: true },
+        responses: [ok("body of /hold"), ok("body of /closing")],
       });
     },
   );
@@ -766,27 +848,19 @@ describe("a request pipelined behind a Connection: close request", () => {
     const unix = transports.find(transport => transport.name === "unix")!;
     const handler = holdingHandler();
     using server = Bun.serve({ ...unix.listen(String(dir)), fetch: handler.fetch });
-    const socket = netConnect({ path: join(String(dir), "pipeline.sock") });
-    const reader = new ResponseReader();
-    const seen: { ended: boolean; error?: string } = { ended: false };
-    socket.on("data", chunk => reader.push(chunk));
-    socket.on("end", () => (seen.ended = true));
-    socket.on("error", (error: NodeJS.ErrnoException) => (seen.error = error.code));
-    const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
-    await once(socket, "connect");
-    const write = (data: string) => new Promise<void>(resolve => socket.write(data, () => resolve()));
+    const client = await connectNodeSocket(unix, server, String(dir));
 
-    await write(request("/hold", "Connection: close\r\n"));
+    await client.write(request("/hold", "Connection: close\r\n"));
     await handler.entered("/hold");
     // Two later reads. The server has taken each one when its probe is answered.
     for (let i = 0; i < 2; i++) {
-      await write(request("/never"));
+      await client.write(request("/never"));
       await probe(unix, server, String(dir));
     }
 
     handler.release("/hold");
-    await closed;
-    expect({ hits: handler.hits, seen, responses: reader.responses.map(summarize) }).toEqual({
+    await client.closed;
+    expect({ hits: handler.hits, seen: client.seen, responses: client.reader.responses.map(summarize) }).toEqual({
       hits: ["/hold", "/probe", "/probe"],
       seen: { ended: true },
       responses: [ok("body of /hold")],

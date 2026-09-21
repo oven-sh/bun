@@ -734,6 +734,9 @@ private:
             ((AsyncSocket<SSL> *) s)->uncork();
             /* For errors, we only deliver them "at most once". We don't care if they get halfways delivered or not. */
             us_socket_write(s, httpErrorResponses[httpErrorStatusCode].data(), (int) httpErrorResponses[httpErrorStatusCode].length());
+            if constexpr (!IsNodeHttp) {
+                ((HttpResponse<SSL> *) s)->discardBytesUnreadBehindParkedRequests(httpResponseData);
+            }
             us_socket_shutdown(s);
             /* Close any socket on HTTP errors */
             us_socket_close(s, 0, nullptr);
@@ -782,6 +785,7 @@ private:
             if (httpResponseData->shouldCloseConnection()) {
                 if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
                     if (((AsyncSocket<SSL> *) s)->hasFullyDrained()) {
+                        ((HttpResponse<SSL> *) s)->discardBytesUnreadBehindParkedRequests(httpResponseData);
                         ((AsyncSocket<SSL> *) s)->shutdown();
                         /* We need to force close after sending FIN since we want to hinder
                          * clients from keeping to send their huge data */
@@ -944,6 +948,7 @@ private:
                 }
             }
             if (responseDone && asyncSocket->hasFullyDrained()) {
+                reinterpret_cast<HttpResponse<SSL> *>(s)->discardBytesUnreadBehindParkedRequests(httpResponseData);
                 asyncSocket->shutdown();
                 /* We need to force close after sending FIN since we want to hinder
                  * clients from keeping to send their huge data */

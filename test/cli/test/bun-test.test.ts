@@ -481,6 +481,21 @@ describe("bun test", () => {
       expect(result, stderr).toEqual({ timeouts: { "a.test.ts": 10, "b.test.ts": 10 }, exitCode: 1 });
     });
 
+    // The preload comes from bunfig and the run names no files (the shape in #43787).
+    test("a [test] preload from bunfig.toml applies to every discovered file", async () => {
+      const { result, stderr } = await timeoutPerFile({
+        "bunfig.toml": `
+          [test]
+          preload = ["./preload.ts"]
+        `,
+        "preload.ts": preload,
+        "a.test.ts": hangingTest,
+        "b.test.ts": hangingTest,
+        "c.test.ts": hangingTest,
+      });
+      expect(result, stderr).toEqual({ timeouts: { "a.test.ts": 10, "b.test.ts": 10, "c.test.ts": 10 }, exitCode: 1 });
+    });
+
     test("setDefaultTimeout(0) turns the timeout off for every file", async () => {
       const outlivesCliTimeout = `
         import { test } from "bun:test";

@@ -33,7 +33,9 @@ function drainQueue() {
 
 export function nextTick(fun, ...args) {
   if (typeof fun !== "function") {
-    throw new TypeError('The "callback" argument must be of type function. Received ' + typeof fun);
+    var err = new TypeError('The "callback" argument must be of type function. Received ' + String(fun));
+    err.code = "ERR_INVALID_ARG_TYPE";
+    throw err;
   }
   queue.push({ fun, args });
   if (queue.length === 1 && !draining) {

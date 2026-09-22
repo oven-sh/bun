@@ -746,27 +746,34 @@ describe("bundler", () => {
           nextTick(() => { log.push("tick"); process.nextTick(value => log.push(value), "nested tick"); });
         });
         console.log(log.join(" < "));
+        try {
+          nextTick(null);
+        } catch (e) {
+          console.log(e.name + " " + e.code + ": " + e.message);
+        }
       `,
     },
     target: "browser",
     run: {
-      stdout: "microtask < tick < nested tick < timeout",
+      stdout:
+        "microtask < tick < nested tick < timeout\n" +
+        'TypeError ERR_INVALID_ARG_TYPE: The "callback" argument must be of type function. Received null',
     },
   });
-  // Each tick queues the next, so the whole chain runs in one drain. A tick
-  // that already ran must not stay reachable until the chain ends.
+  // Each tick queues the next and forwards its payload as an argument, so the
+  // whole chain runs in one drain. A tick that already ran must not stay
+  // reachable until the chain ends.
   itBundled("browser/NodeProcessNextTickChainReleasesCallbacks", {
     files: {
       "/entry.js": /* js */ `
         import { nextTick } from "node:process";
         globalThis.DONE = new Promise(resolve => {
-          let remaining = 5000;
-          function step() {
-            if (remaining-- === 0) return resolve(globalThis.liveAfterGC());
-            const payload = new Float64Array(1);
-            nextTick(() => step(payload));
+          function step(remaining, payload) {
+            if (typeof remaining !== "number") return resolve("nextTick dropped its arguments");
+            if (remaining === 0) return resolve(globalThis.liveAfterGC());
+            nextTick(step, remaining - 1, new Float64Array(1));
           }
-          step();
+          step(5000);
         });
       `,
     },
@@ -780,7 +787,7 @@ describe("bundler", () => {
         globalThis.liveAfterGC = () => (Bun.gc(true), count() - before);
         await import("./out.js");
         const live = await globalThis.DONE;
-        console.log(live < 100 ? "released" : "retained " + live);
+        console.log(typeof live !== "number" ? live : live < 100 ? "released" : "retained " + live);
       `,
     },
     run: {

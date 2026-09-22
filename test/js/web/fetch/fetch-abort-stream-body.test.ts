@@ -398,9 +398,9 @@ describe("aborting mid-body fails every reader of res.body with signal.reason", 
       expect(res.body).toBeInstanceOf(ReadableStream);
       if (timing === "before Readable.fromWeb()") controller.abort(reason);
       const readable = Readable.fromWeb(res.body as any);
-      const settled = new Promise<any>(resolve =>
+      const settled = new Promise(resolve =>
         readable
-          .on("error", resolve)
+          .on("error", (error: any) => resolve({ name: error.name, code: error.code }))
           .on("end", () => resolve("ended"))
           .on("close", () => resolve("closed")),
       );
@@ -411,7 +411,7 @@ describe("aborting mid-body fails every reader of res.body with signal.reason", 
       } else {
         readable.resume();
       }
-      expect((await settled)?.name).toBe("AbortError");
+      expect(await settled).toEqual({ name: "AbortError", code: "ABORT_ERR" });
     });
   });
 

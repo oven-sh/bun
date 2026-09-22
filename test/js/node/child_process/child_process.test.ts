@@ -1459,7 +1459,10 @@ it.concurrent.each(["stdout", "stderr"] as const)(
 // a race (about 1 run in 3 without the fix), so several run at once.
 describe.concurrent("execFile() maxBuffer against a fast writer", () => {
   const maxBuffer = 1024 * 1024;
-  // 3 MiB in 64 KiB blocks, each block filled with its own letter.
+  // 3 MiB in 64 KiB blocks, each block filled with its own letter. ASCII on
+  // purpose: the handler, like Node's, counts bytes but slices a string chunk by
+  // code units, so multi-byte output is over maxBuffer in bytes in Node too
+  // (Node v26.3.0, maxBuffer 1000000, 2-byte characters: 1016960 bytes).
   const writer = `const s=process.stdout;s.on('error',()=>process.exit(0));let k=0;(function f(){while(k<48){if(!s.write(Buffer.alloc(1<<16,65+(k++%26)))){s.once('drain',f);return}}})()`;
   const expected = Buffer.concat(
     Array.from({ length: maxBuffer >> 16 }, (_, k) => Buffer.alloc(1 << 16, 65 + (k % 26))),

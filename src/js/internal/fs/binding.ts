@@ -123,4 +123,12 @@ interface FsBinding
   writev(fd: number, buffers: readonly NodeJS.ArrayBufferView[], position?: number | null): Promise<number>;
 }
 
-export default $rust("node_fs_binding.rs", "createBinding") as FsBinding;
+// `xCb(callback, ...args)`: the promise arm's arguments after the callback. `fs.cp` is a JS chain, so no `cpCb`.
+type FsCallbackArm<T> = {
+  [K in Exclude<keyof T & string, "cp"> as T[K] extends (...args: any[]) => Promise<any> ? `${K}Cb` : never]: (
+    callback: (err: any, value?: any) => void,
+    ...args: any[]
+  ) => void;
+};
+
+export default $rust("node_fs_binding.rs", "createBinding") as FsBinding & FsCallbackArm<FsBinding>;

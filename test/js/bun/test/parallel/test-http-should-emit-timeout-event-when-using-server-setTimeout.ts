@@ -18,7 +18,8 @@ fetch(`http://localhost:${server.address().port}`, { verbose: true })
   });
 
 const [req, res] = await once(server, "request");
-expect(req.complete).toBe(false);
+// Like Node: a request without a body is complete once its 'request' listeners have returned.
+expect(req.complete).toBe(true);
 const [timedOutSocket] = await once(server, "timeout");
 expect(callBackCalled).toBe(true);
 // Like Node, a timeout with a listener attached does not destroy the socket;

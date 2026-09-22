@@ -701,7 +701,7 @@ private:
             if (!httpErrorStatusCode) {
                 readScope.end();
                 if (result.returnedData != nullptr
-                    && (httpContextData->upgradedWebSocket == (void *) s || us_socket_is_closed(s) || us_socket_is_shut_down(s))) {
+                    && (httpContextData->upgradedWebSocket || us_socket_is_closed(s) || us_socket_is_shut_down(s))) {
                     result = HttpParserResult::success(HttpParserResult::WHOLE_READ, nullptr);
                 }
             }
@@ -810,9 +810,7 @@ private:
              * request head in this read, and the HTTP parser stopped there. Give them to the
              * WebSocket now, as the loop would have for a read of its own. The parser counts a
              * body that the request declared as consumed, so that is never taken for frames.
-             * Not when upgradedWebSocket names another connection (upgrade() adopts in place,
-             * so ours is s): the field is per context, and a microtask of this dispatch, or an
-             * earlier upgrade from a request body handler, can set it. */
+             * upgrade() adopts in place, so the WebSocket is s. */
             unsigned int consumed = result.consumedBytes();
             if (consumed < (unsigned int) length && (us_socket_t *) asyncSocket == s
                 && !us_socket_is_closed(s) && !us_socket_is_shut_down(s)) {

@@ -4981,26 +4981,4 @@ describe("node:http server runs nextTicks and promise jobs where Node's parser d
       server.close();
     }
   });
-
-  it("'upgrade' for a body that arrived with the head fires once the body is in the request", async () => {
-    const order: string[] = [];
-    const server = await listenOnLoopback(false);
-    server.on("upgrade", (req: IncomingMessage, socket: Duplex) => {
-      probe(order, `upgrade complete=${req.complete}`);
-      req.on("data", chunk => probe(order, `req.data(${chunk})`));
-      req.on("end", () => probe(order, "req.end"));
-      req.on("close", () => probe(order, "req.close"));
-      socket.end("HTTP/1.1 101 Switching Protocols\r\nUpgrade: x\r\nConnection: Upgrade\r\n\r\n");
-    });
-    try {
-      const head = "GET /u HTTP/1.1\r\nHost: x\r\nUpgrade: x\r\nConnection: Upgrade\r\nContent-Length: 6\r\n\r\n";
-      await send(server, false, new EventEmitter(), [head + "AAAABB"], { canReset: true });
-      expect(order.join(" ")).toBe(
-        "upgrade complete=true req.data(AAAABB) upgrade complete=true.tick req.end req.data(AAAABB).tick " +
-          "req.end.tick req.close req.close.tick upgrade complete=true.job req.data(AAAABB).job req.end.job req.close.job",
-      );
-    } finally {
-      server.close();
-    }
-  });
 });

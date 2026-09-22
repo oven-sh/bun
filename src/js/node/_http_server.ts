@@ -981,25 +981,29 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             http_req.once("end", clearUpgradeIncoming.bind(undefined, socket));
           }
           const upgradeHead = !hasBody && connectHead ? connectHead : kEmptyBuffer;
-          // Like CONNECT: the native callback stays open until the raw socket closes.
-          const upgradePromise = $newPromise();
-          // Node emits 'upgrade' after the read: a body that arrived whole with the head is complete by then.
-          if (hasBody && bodyArrivedWithHead(dispatchBits, http_req, connectHead)) {
-            handle.ondata = function (chunk, isLast, aborted) {
-              onDataIncomingMessage.$call(http_req, chunk, isLast, aborted);
-              if (
-                isLast &&
-                aborted === NodeHTTPResponseAbortEvent.none &&
-                !emitUpgrade(server, http_req, socket, upgradeHead, upgradePromise)
-              ) {
-                resolveHandoffPromise(upgradePromise);
-              }
-            };
-            handle.hasCustomOnData = false;
-            return upgradePromise;
-          }
+          // Node emits 'upgrade' after the read, so a message without a body is complete by then.
           if (!hasBody) completeIncomingMessage(http_req);
-          if (!emitUpgrade(server, http_req, socket, upgradeHead, upgradePromise)) return;
+          let upgradeHandled;
+          try {
+            upgradeHandled = server.emit("upgrade", http_req, socket, upgradeHead);
+          } catch (err) {
+            // A throwing 'upgrade' listener surfaces as an uncaught
+            // exception, like Node.js (the emit happens outside any JS try
+            // frame there).
+            process.nextTick(rethrowUncaught, err);
+            upgradeHandled = true;
+          }
+          if (!upgradeHandled) {
+            // shouldUpgradeCallback accepted the upgrade but no 'upgrade'
+            // listener is installed: Node.js destroys the socket.
+            socket.destroy();
+            return;
+          }
+          // Like CONNECT: the connection is detached from the HTTP request
+          // machinery; hold the native callback open until the raw socket
+          // closes.
+          const upgradePromise = $newPromise();
+          socket.once("close", resolveHandoffPromise.bind(undefined, upgradePromise));
           return upgradePromise;
         } else if (
           server.requireHostHeader &&
@@ -1320,36 +1324,6 @@ const kEnableStreaming = Symbol("kEnableStreaming");
 // resumes this request, like Node.js's UpgradeStream._read, so an unread body
 // can never stall the upgrade data behind it.
 const kUpgradeIncoming = Symbol("kUpgradeIncoming");
-
-// Whether the read that carried the head of a request also carried its whole Content-Length body.
-function bodyArrivedWithHead(dispatchBits: number, req, bytesAfterHead: Buffer | undefined) {
-  if (
-    bytesAfterHead === undefined ||
-    (dispatchBits & DISPATCH_HAS_CONTENT_LENGTH) === 0 ||
-    (dispatchBits & DISPATCH_HAS_TRANSFER_ENCODING) !== 0
-  ) {
-    return false;
-  }
-  return bytesAfterHead.length >= Number(req.headers["content-length"]);
-}
-
-function emitUpgrade(server, req, socket, head, handoffPromise) {
-  let upgradeHandled;
-  try {
-    upgradeHandled = server.emit("upgrade", req, socket, head);
-  } catch (err) {
-    // A throwing listener surfaces as an uncaught exception, like Node (no JS try frame around the emit).
-    process.nextTick(rethrowUncaught, err);
-    upgradeHandled = true;
-  }
-  if (!upgradeHandled) {
-    // Accepted by shouldUpgradeCallback, but no 'upgrade' listener: Node destroys the socket.
-    socket.destroy();
-    return false;
-  }
-  socket.once("close", resolveHandoffPromise.bind(undefined, handoffPromise));
-  return true;
-}
 
 // Like Node.js's net.Socket onReadableStreamEnd: every socket carries one 'end'
 // listener. http server connections have allowHalfOpen: true, so it is a no-op,
@@ -3190,6 +3164,8 @@ ServerResponse.prototype.writeContinue = function (cb) {
 ServerResponse.prototype.end = function (chunk, encoding, callback) {
   const handle = this[kHandle];
   if (handle?.aborted) {
+    // Like Node's end() on a destroyed connection: the message is finished, and no 'finish' follows.
+    this.finished = true;
     return this;
   }
 
@@ -3589,7 +3565,9 @@ Object.defineProperty(ServerResponse.prototype, "writableNeedDrain", {
 
 Object.defineProperty(ServerResponse.prototype, "writableFinished", {
   get() {
-    return !!(this.finished && (!this[kHandle] || this[kHandle].finished));
+    const handle = this[kHandle];
+    // A connection that is gone has nothing left to flush, like Node's writableLength === 0.
+    return !!(this.finished && (!handle || handle.finished || handle.aborted));
   },
 });
 

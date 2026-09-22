@@ -1371,6 +1371,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 break 'brk HttpResult::Exception(err);
             }
 
+            // SAFETY: out-param written by `on_request_ffi`; checked non-null above.
+            let nhr_flags = unsafe { &*node_http_response }.flags.get();
+            if nhr_flags.contains(NhrFlags::TUNNELED) {
+                // Node emits 'upgrade' and 'connect' from the callback that ends the read.
+                let _ = this_ref.vm().event_loop_ref().drain_microtasks();
+                if global.has_exception() {
+                    break 'brk HttpResult::Exception(global.take_error(bun_jsc::JsError::Thrown));
+                }
+            }
+
             if let Some(promise) = result.as_any_promise() {
                 let status = promise.status();
                 if status == jsc::js_promise::Status::Pending {

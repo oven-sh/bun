@@ -1,9 +1,6 @@
 const { isIPv4 } = require("internal/net/isIP");
 
-const { setServerCustomOptions, setServerAppFlags, drainMicrotasks } = $cpp(
-  "NodeHTTP.cpp",
-  "createNodeHTTPInternalBinding",
-) as {
+const { setServerCustomOptions, setServerAppFlags } = $cpp("NodeHTTP.cpp", "createNodeHTTPInternalBinding") as {
   setServerCustomOptions: (
     server: any,
     requireHostHeader: boolean,
@@ -20,7 +17,6 @@ const { setServerCustomOptions, setServerAppFlags, drainMicrotasks } = $cpp(
     lenientHttpFlags: number,
     httpAllowHalfOpen: boolean,
   ) => void;
-  drainMicrotasks: () => void;
 };
 
 const abortedSymbol = Symbol("aborted");
@@ -143,22 +139,7 @@ function emitEOFIncomingMessageOuter(self) {
       self._addHeaderLines(rawTrailers, rawTrailers.length);
     }
   }
-  // The parser shim must not retain the request once it has ended. Node clears
-  // parser.incoming on the tick after 'end' so 'end' listeners still see
-  // `parser.incoming === req` (test-http-server-keepalive-end). push(null)
-  // schedules 'end' via nextTick (endReadableNT); a second nextTick scheduled
-  // here runs after that.
   self.push(null);
-  const socket = self.socket;
-  if (socket != null) {
-    const parser = socket.parser;
-    if (parser != null && parser.incoming === self) {
-      process.nextTick(clearServerParserIncoming, parser, self);
-    }
-  }
-}
-function clearServerParserIncoming(parser, req) {
-  if (parser.incoming === req) parser.incoming = null;
 }
 function emitEOFIncomingMessage(self) {
   self[eofInProgress] = true;
@@ -514,7 +495,6 @@ export {
   callCloseCallback,
   checkShouldUseProxy,
   completeIncomingMessage,
-  drainMicrotasks,
   emitCloseNT,
   emitEOFIncomingMessage,
   emitErrorNextTickIfErrorListenerNT,

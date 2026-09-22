@@ -21,10 +21,17 @@ test("child_process ipc", async () => {
 
 // The channel is not read while there is no 'message' listener, so the messages wait in the kernel buffer.
 describe.concurrent("a 'message' that arrives while there is no 'message' listener is not lost", () => {
-  const stop = child => {
-    if (child.connected) child.disconnect();
-    child.kill();
-  };
+  // A child that exits before the body is done fails the test at once, with its exit status.
+  async function withChild(child, body) {
+    const { promise: exited, reject } = Promise.withResolvers();
+    child.once("exit", (code, signal) => reject(new Error(`the child exited too early: ${code} ${signal}`)));
+    try {
+      return await Promise.race([body(), exited]);
+    } finally {
+      if (child.connected) child.disconnect();
+      child.kill();
+    }
+  }
   const stdoutLines = child => createInterface({ input: child.stdout })[Symbol.asyncIterator]();
 
   // "pong" answers a message that the parent sends once its listener is added, so it arrives after the three.
@@ -47,12 +54,10 @@ describe.concurrent("a 'message' that arrives while there is no 'message' listen
       serialization,
       stdio: ["ignore", "pipe", "inherit", "ipc"],
     });
-    try {
+    await withChild(child, async () => {
       expect((await stdoutLines(child).next()).value).toBe("sent");
       expect(await untilPong(child)).toEqual([{ i: 0 }, { i: 1 }, { i: 2 }, "pong"]);
-    } finally {
-      stop(child);
-    }
+    });
   });
 
   test("parent: last listener removed, next one added late", async () => {
@@ -63,7 +68,7 @@ describe.concurrent("a 'message' that arrives while there is no 'message' listen
       env: bunEnv,
       stdio: ["ignore", "pipe", "inherit", "ipc"],
     });
-    try {
+    await withChild(child, async () => {
       const got = [];
       child.on("message", function first(m) {
         got.push(["first", m]);
@@ -72,9 +77,7 @@ describe.concurrent("a 'message' that arrives while there is no 'message' listen
       child.send("burst");
       expect((await stdoutLines(child).next()).value).toBe("sent");
       expect(await untilPong(child, got)).toEqual([["first", { i: 0 }], { i: 1 }, { i: 2 }, "pong"]);
-    } finally {
-      stop(child);
-    }
+    });
   });
 
   // The child reports that it is ready on an extra pipe, after it sent its messages.
@@ -89,12 +92,10 @@ describe.concurrent("a 'message' that arrives while there is no 'message' listen
       env: bunEnv,
       stdio: ["ignore", "inherit", "inherit", "pipe", "ipc"],
     });
-    try {
+    await withChild(child, async () => {
       await once(child.stdio[3], "data");
       expect(await untilPong(child)).toEqual([{ early: 1 }, { early: 2 }, "pong"]);
-    } finally {
-      stop(child);
-    }
+    });
   });
 
   // The three messages are in the kernel buffer before the child starts, so one read gets them all.
@@ -113,7 +114,7 @@ describe.concurrent("a 'message' that arrives while there is no 'message' listen
       `,
     });
     const child = fork(path.join(String(dir), "child.js"), { env: bunEnv });
-    try {
+    await withChild(child, async () => {
       for (let i = 0; i < 3; i++) child.send({ i });
       expect((await once(child, "message"))[0]).toBe("attached");
       child.send("report");
@@ -122,9 +123,7 @@ describe.concurrent("a 'message' that arrives while there is no 'message' listen
         ["second", { i: 1 }],
         ["second", { i: 2 }],
       ]);
-    } finally {
-      stop(child);
-    }
+    });
   });
 
   test("child: process.send() opens the channel before the first listener is added", async () => {
@@ -142,7 +141,7 @@ describe.concurrent("a 'message' that arrives while there is no 'message' listen
       env: bunEnv,
       stdio: ["pipe", "inherit", "inherit", "ipc"],
     });
-    try {
+    await withChild(child, async () => {
       expect((await once(child, "message"))[0]).toBe("ready");
       for (let i = 0; i < 3; i++) child.send({ i });
       // Written after the messages, so the child gets them first.
@@ -150,9 +149,7 @@ describe.concurrent("a 'message' that arrives while there is no 'message' listen
       expect((await once(child, "message"))[0]).toBe("attached");
       child.send("report");
       expect((await once(child, "message"))[0]).toEqual([{ i: 0 }, { i: 1 }, { i: 2 }]);
-    } finally {
-      stop(child);
-    }
+    });
   });
 
   // node v26.3.0 emits all its held messages at once, so it loses the ones behind the first once() listener.
@@ -171,11 +168,9 @@ describe.concurrent("a 'message' that arrives while there is no 'message' listen
         env: bunEnv,
         stdio: ["ignore", "ignore", "inherit", "ipc"],
       });
-      try {
+      await withChild(child, async () => {
         expect(await takeUntilPong(child)).toEqual([{ i: 0 }, { i: 1 }, { i: 2 }, "pong"]);
-      } finally {
-        stop(child);
-      }
+      });
     });
 
     test("child", async () => {
@@ -187,14 +182,12 @@ describe.concurrent("a 'message' that arrives while there is no 'message' listen
         `,
       });
       const child = fork(path.join(String(dir), "child.js"), { env: bunEnv });
-      try {
+      await withChild(child, async () => {
         const { promise, resolve } = Promise.withResolvers();
         child.on("message", m => (m === "ping" ? child.send("pong") : resolve(m.got)));
         for (let i = 0; i < 3; i++) child.send({ i });
         expect(await promise).toEqual([{ i: 0 }, { i: 1 }, { i: 2 }, "pong"]);
-      } finally {
-        stop(child);
-      }
+      });
     });
   });
 
@@ -226,11 +219,12 @@ describe.concurrent("a 'message' that arrives while there is no 'message' listen
     await once(server.listen(0, "127.0.0.1"), "listening");
     const child = fork(path.join(String(dir), "child.js"), { env: bunEnv });
     try {
-      const { promise, resolve } = Promise.withResolvers();
-      child.send("server", server, resolve);
-      expect(await promise).toBeNull();
+      await withChild(child, async () => {
+        const { promise, resolve } = Promise.withResolvers();
+        child.send("server", server, resolve);
+        expect(await promise).toBeNull();
+      });
     } finally {
-      stop(child);
       server.close();
     }
   });

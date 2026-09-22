@@ -1,12 +1,13 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 // https://github.com/oven-sh/bun/issues/39787
 // On Windows, a rejecting Bun.file() read settled its promise inside a libuv
 // callback with no microtask checkpoint. If the read was the only pending
-// work, the process exited 0 before the await continuation ran.
-test("a rejecting Bun.file() read runs its continuation before the process exits", async () => {
+// work, the process exited 0 before the await continuation ran. The fix is in
+// the Windows-only libuv read path, so the test only runs there.
+test.skipIf(!isWindows)("a rejecting Bun.file() read runs its continuation before the process exits", async () => {
   using dir = tempDir("issue-39787", {});
   const missing = join(String(dir), "definitely-missing-file.txt");
   await using proc = Bun.spawn({

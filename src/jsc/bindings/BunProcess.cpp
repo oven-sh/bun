@@ -1087,6 +1087,7 @@ static const NeverDestroyed<String>* getSignalNames()
         MAKE_STATIC_STRING_IMPL("SIGSTKFLT"),
         MAKE_STATIC_STRING_IMPL("SIGPOLL"),
         MAKE_STATIC_STRING_IMPL("SIGUNUSED"),
+        MAKE_STATIC_STRING_IMPL("SIGPWR"),
     };
 
     return signalNames;
@@ -1099,7 +1100,7 @@ static void loadSignalNumberMap()
     std::call_once(signalNameToNumberMapOnceFlag, [] {
         auto signalNames = getSignalNames();
         signalNameToNumberMap = new HashMap<String, int>();
-        signalNameToNumberMap->reserveInitialCapacity(34);
+        signalNameToNumberMap->reserveInitialCapacity(35);
 #if OS(WINDOWS)
         // libuv-supported console-control signals on Windows:
         // CTRL_C_EVENT → SIGINT, CTRL_BREAK_EVENT → SIGBREAK,
@@ -1197,6 +1198,10 @@ static void loadSignalNumberMap()
 #endif
 #ifdef SIGUNUSED
         signalNameToNumberMap->add(signalNames[34], SIGUNUSED);
+#endif
+#ifdef SIGPWR
+        // JSC suspends threads with it on Linux, so onDidChangeListeners never installs a handler for it.
+        signalNameToNumberMap->add(signalNames[35], SIGPWR);
 #endif
 #endif
     });
@@ -1296,6 +1301,9 @@ static void loadSignalNumberToNamesMap()
 #endif
 #ifdef SIGUNUSED
         add(SIGUNUSED, signalNames[34]);
+#endif
+#ifdef SIGPWR
+        add(SIGPWR, signalNames[35]);
 #endif
     });
 }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, isLinux, isMusl, isWindows, normalizeBunSnapshot } from "harness";
 import { constants } from "node:os";
 
 // When multiple listeners are registered for the same signal, removing one
@@ -142,6 +142,17 @@ done"
 describe.concurrent("signal names", () => {
   type Scenario = { sent: string; events: string[]; removed?: string[]; late?: string[] };
 
+  async function runScript(script: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+  }
+
   // The child adds a listener for each of `events` and sends `sent` to itself.
   // It prints every listener call as [event, name argument, number argument].
   // `removed`: names that get a listener which is removed again before the signal.
@@ -174,14 +185,7 @@ describe.concurrent("signal names", () => {
       // So the SIGUSR2 listener prints after the listeners of the signal under test ran.
       setImmediate(() => process.kill(process.pid, "SIGUSR2"));
     `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+    return runScript(script);
   }
 
   const listenersRan = (events: string[], number: number) => ({
@@ -205,8 +209,7 @@ describe.concurrent("signal names", () => {
 
   // On Windows, process.kill knows only the signals that libuv can send.
   test.skipIf(isWindows)("process.kill knows every name in os.constants.signals", () => {
-    // SIGPWR is not covered: JSC suspends threads with it on Linux, and process.kill does not send it by name.
-    const names = Object.keys(constants.signals).filter(name => name !== "SIGPWR");
+    const names = Object.keys(constants.signals);
     // No process has this pid, so kill(2) fails with ESRCH. An unknown name throws ERR_UNKNOWN_SIGNAL before kill(2).
     const codes = names.map(name => {
       try {
@@ -253,6 +256,67 @@ describe.concurrent("signal names", () => {
       stderr: "",
       exitCode: 128 + 29,
       signalCode: "SIGIO",
+    });
+  });
+
+  // Only Linux has SIGPWR. JSC suspends and resumes threads with it there, so JSC owns its OS handler.
+  describe.skipIf(!("SIGPWR" in constants.signals))("SIGPWR", () => {
+    test("process.kill sends it to another process", async () => {
+      await using proc = Bun.spawn({ cmd: ["sleep", "1000"], stdio: ["ignore", "ignore", "ignore"] });
+      expect(process.kill(proc.pid, "SIGPWR")).toBe(true);
+      expect(await proc.exited).toBe(128 + constants.signals.SIGPWR);
+      expect({ exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({
+        exitCode: null,
+        signalCode: "SIGPWR",
+      });
+    });
+
+    // JSC drops a SIGPWR that it did not send. Node runs the listener.
+    test("process.kill sends it to the own process, which continues", async () => {
+      const script = `process.on("SIGPWR", () => {}); console.log(process.kill(process.pid, "SIGPWR"));`;
+      expect(await runScript(script)).toEqual({ stdout: "true\n", stderr: "", exitCode: 0, signalCode: null });
+    });
+
+    // For every other signal, process.on() installs Bun's forwarding handler and process.off() restores the default action.
+    // With the first, the next thread suspension of JSC never ends. With the second, it ends the process.
+    test("process.on() and process.off() leave the OS handler of JSC in place", async () => {
+      const libc = isMusl
+        ? process.arch === "arm64"
+          ? "libc.musl-aarch64.so.1"
+          : "libc.musl-x86_64.so.1"
+        : "libc.so.6";
+      const script = /*js*/ `
+        const { dlopen, FFIType } = require("bun:ffi");
+        const { sigaction } = dlopen(${JSON.stringify(libc)}, {
+          sigaction: { args: [FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
+        }).symbols;
+
+        // On glibc and musl, struct sigaction has 152 bytes and the handler is its first member.
+        function handler() {
+          const action = new BigUint64Array(32);
+          if (sigaction(${constants.signals.SIGPWR}, null, action) !== 0) throw new Error("sigaction() failed");
+          return action[0];
+        }
+
+        const initial = handler();
+        const listener = () => {};
+        process.on("SIGPWR", listener);
+        const withListener = handler();
+        process.off("SIGPWR", listener);
+        const withoutListener = handler();
+        console.log(JSON.stringify({
+          // 0 is SIG_DFL and 1 is SIG_IGN.
+          jscHasAHandler: initial > 1n,
+          keptByOn: withListener === initial,
+          keptByOff: withoutListener === initial,
+        }));
+      `;
+      expect(await runScript(script)).toEqual({
+        stdout: JSON.stringify({ jscHasAHandler: true, keptByOn: true, keptByOff: true }) + "\n",
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
     });
   });
 });

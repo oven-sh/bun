@@ -20,7 +20,7 @@ extern "C" fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
     let _ = global_object; // bun_vm() retained for future direct field access
 
     // The input is user-controlled and may be arbitrarily long. The
-    // threadlocal `join_buf` is only 4096 bytes, so allocate a buffer sized
+    // threadlocal `join_buf` has a fixed size, so allocate a buffer sized
     // to fit.
     let mut buf = vec![0u8; cwd.len() + str.slice().len() + 2];
 

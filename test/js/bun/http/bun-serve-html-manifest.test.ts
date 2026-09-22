@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 
@@ -264,6 +264,36 @@ describe("Bun.serve HTML manifest", () => {
     await proc.exited;
 
     expect(out).toContain("SUCCESS: Manifest validation failed as expected");
+  });
+
+  it("rejects a manifest file path longer than the join buffer without aborting", async () => {
+    // On Windows MAX_PATH_BYTES is 98302, so a 5000-byte path passes the path
+    // length check and reaches FileSystem::abs(), whose thread-local output
+    // buffer was 4096 bytes: the process aborted with a slice-index panic. On
+    // POSIX MAX_PATH_BYTES <= 4096 and the length check throws ENAMETOOLONG first.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const long = (process.platform === "win32" ? "C:\\\\" : "/") + Buffer.alloc(5000, "a").toString();` +
+          `try {` +
+          `  const s = Bun.serve({ port: 0, routes: { "/": {` +
+          `    index: "./index.html",` +
+          `    files: [{ input: "index.html", path: long, loader: "html", isEntry: true,` +
+          `              headers: { etag: "x", "content-type": "text/html" } }],` +
+          `  } } });` +
+          `  s.stop();` +
+          `  console.log("CAUGHT no-throw");` +
+          `} catch (e) { console.log("CAUGHT", e.code || e.name); }`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // On Windows abs() now succeeds, and route setup rejects the missing file.
+    if (!stdout.startsWith("CAUGHT")) console.error(stderr);
+    expect(stdout.trim()).toBe(isWindows ? "CAUGHT ERR_INVALID_ARG_TYPE" : "CAUGHT ENAMETOOLONG");
+    expect(exitCode).toBe(0);
   });
 
   it("serves manifest with proper headers", async () => {

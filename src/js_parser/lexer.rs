@@ -222,7 +222,6 @@ pub struct Lexer<'a> {
     /// parser, so it applies to every subsequent function in the file.
     pub(crate) has_react_hooks_block_suppression: bool,
     /// Set once a comment that contains `@refresh reset` has been scanned.
-    /// The parser reads this after the parse pass to set `ReactRefresh::force_reset`.
     pub(crate) has_react_refresh_reset_comment: bool,
     pub(crate) preserve_all_comments_before: bool,
     pub(crate) is_legacy_octal_literal: bool,

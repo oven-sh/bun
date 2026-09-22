@@ -1589,7 +1589,7 @@ class ChildProcess extends EventEmitter {
     setSubprocessReading(handle, listeners > 0);
   }
 
-  removeAllListeners(name?) {
+  removeAllListeners() {
     super.removeAllListeners.$apply(this, arguments);
     // That also removed the two listeners of #followIpcListeners.
     if (arguments.length === 0 && this.channel) this.#followIpcListeners();

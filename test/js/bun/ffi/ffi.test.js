@@ -968,82 +968,77 @@ it.skipIf(!FFI_FIXTURE_PATH)("ptr argument: ArrayBuffer cells through an FTL-com
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "mismatches 0\n", stderr: "", exitCode: 0 });
 });
 
-// Marshalling one argument list can run JS in the middle of it: an integer argument coerces
-// through valueOf, and an object passed for "ptr" has its "ptr" property read. That JS can
-// transfer or resize the buffer another argument is read from. The engine reads the address and
-// the buffer_length after that JS has run, so a transferred view marshals as null and a shrunk
-// view marshals its new length. Before the fix C received the address of freed memory, or a
-// 1024-byte length for a 16-byte buffer. Each case also runs hot, so the optimizing tiers marshal
-// it too.
+// A view's address and byte length are read after every other argument's coercion has run its JS
+// (valueOf, a "ptr" getter), cold and in the optimizing tiers.
 it.skipIf(!FFI_FIXTURE_PATH)("reads a buffer argument after the other arguments coerce", () => {
   const {
-    symbols: { identity_ptr: addressThenInt, bl_echo_len: lengthThenInt },
+    symbols: { identity_ptr: addressThenInt, bl_echo_len: lengthThenInt, add_uint64_t: sumOfAddresses },
   } = dlopen(FFI_FIXTURE_PATH, {
     identity_ptr: { args: ["ptr", "i32"], returns: "ptr" },
     bl_echo_len: { args: ["buffer", "buffer_length", "i32"], returns: "u64" },
+    add_uint64_t: { args: ["ptr", "ptr"], returns: "u64" },
   });
   const {
-    symbols: { identity_ptr: addressThenAddress },
-  } = dlopen(FFI_FIXTURE_PATH, { identity_ptr: { args: ["ptr", "ptr"], returns: "ptr" } });
+    symbols: { identity_ptr: cstringAddressThenInt },
+  } = dlopen(FFI_FIXTURE_PATH, { identity_ptr: { args: ["cstring", "i32"], returns: "ptr" } });
 
+  // Stops early once the answers differ, so a failure prints a few values and not one per round.
   const rounds = isDebug ? 1_000 : 20_000;
-
-  const afterValueOf = [];
-  for (let i = 0; i < rounds; i++) {
-    const view = new Uint8Array(64);
-    const address = addressThenInt(view, {
-      valueOf() {
-        view.buffer.transfer();
-        return 1;
-      },
-    });
-    if (address !== null) afterValueOf.push(address);
+  function distinctResults(call) {
+    const results = new Set();
+    for (let i = 0; i < rounds && results.size < 4; i++) results.add(call());
+    return [...results];
   }
-  expect({ stale: afterValueOf.length, first: afterValueOf[0] ?? null }).toEqual({ stale: 0, first: null });
+  // Every call transfers or shrinks the buffer it gets, so each one makes its own.
+  const transfers = view => ({
+    valueOf() {
+      view.buffer.transfer();
+      return 1;
+    },
+  });
 
-  const afterGetter = [];
-  for (let i = 0; i < rounds; i++) {
-    const view = new Uint8Array(64);
-    const address = addressThenAddress(view, {
-      get ptr() {
-        view.buffer.transfer();
-        return 1;
-      },
-    });
-    if (address !== null) afterGetter.push(address);
-  }
-  expect({ stale: afterGetter.length, first: afterGetter[0] ?? null }).toEqual({ stale: 0, first: null });
-
-  const lengths = new Set();
-  for (let i = 0; i < rounds; i++) {
-    const buffer = new ArrayBuffer(1024, { maxByteLength: 1024 });
-    const view = new Uint8Array(buffer);
-    lengths.add(
-      lengthThenInt(view, view, {
+  expect({
+    ptr: distinctResults(() => {
+      const view = new Uint8Array(64);
+      return addressThenInt(view, transfers(view));
+    }),
+    cstring: distinctResults(() => {
+      const view = new Uint8Array(64);
+      return cstringAddressThenInt(view, transfers(view));
+    }),
+    // 0 for the transferred view plus the 1 the getter returned.
+    ptrGetter: distinctResults(() => {
+      const view = new Uint8Array(64);
+      return sumOfAddresses(view, {
+        get ptr() {
+          view.buffer.transfer();
+          return 1;
+        },
+      });
+    }),
+    bufferLength: distinctResults(() => {
+      const buffer = new ArrayBuffer(1024, { maxByteLength: 1024 });
+      const view = new Uint8Array(buffer);
+      return lengthThenInt(view, view, {
         valueOf() {
           buffer.resize(16);
           return 1;
         },
-      }),
-    );
-  }
-  expect([...lengths]).toEqual([16n]);
+      });
+    }),
+  }).toEqual({ ptr: [null], cstring: [null], ptrGetter: [1n], bufferLength: [16n] });
 
-  // A getter on a pointer argument still runs exactly once.
+  // A live view keeps its address, and the getter after it runs once per call.
   const live = new Uint8Array(64);
   let reads = 0;
-  const argument = {
+  const counted = {
     get ptr() {
       reads++;
       return 1;
     },
   };
-  for (let i = 0; i < rounds; i++) {
-    reads = 0;
-    expect(addressThenAddress(live, argument)).not.toBeNull();
-    if (reads !== 1) break;
-  }
-  expect(reads).toBe(1);
+  expect(distinctResults(() => sumOfAddresses(live, counted))).toEqual([BigInt(ptr(live)) + 1n]);
+  expect(reads).toBe(rounds);
 });
 
 it("worker teardown drops queued threadsafe JSCallback invocations without crashing", async () => {

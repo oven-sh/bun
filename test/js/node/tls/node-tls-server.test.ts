@@ -2708,8 +2708,10 @@ describe.skipIf(isWindows)("TLS socket over a net.Socket whose peer resets behin
       });
     })();
     expect(await failed.promise).toBe(`${isLinux ? "ECONNRESET" : "EPIPE"} write`);
+    // The TLS socket closes too. It also reports the reset where the failed send leaves the
+    // socket error in place (the BSDs). On Linux that send takes it.
     await t.closed;
-    expect(t.events).toEqual(["close hadError=false"]);
+    expect(t.events).toEqual(isLinux ? ["close hadError=false"] : ["error ECONNRESET", "close hadError=true"]);
   });
 
   // Like a net write, the send that fails on the reset fails the write. After the peer's FIN the

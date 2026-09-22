@@ -165,9 +165,7 @@ function emitEOFIncomingMessage(self) {
   process.nextTick(emitEOFIncomingMessageOuter, self);
 }
 
-// Node's parserOnMessageComplete: the parser ends the message at the point where it completes,
-// with no tick in between, so endReadableNT ('end') is queued ahead of whatever the next request
-// of the same read queues.
+// Like Node's parserOnMessageComplete: no tick between the end of the message and push(null).
 function completeIncomingMessage(self) {
   self[eofInProgress] = true;
   emitEOFIncomingMessageOuter(self);

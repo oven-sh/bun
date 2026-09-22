@@ -309,10 +309,7 @@ private:
         return us_socket_close(s, 0, nullptr);
     }
 
-    /* node:http compat: Node's parser runs nextTicks and promise jobs after each body
-     * chunk (on_body) and once after the whole read (kOnExecute), not after the requests
-     * it dispatches or completes in between (kSkipTaskQueues). While the scope is open
-     * every JS callback of the read is a nested one; end() is the checkpoint. */
+    /* node:http compat: one read is one event loop scope; end() is its checkpoint (Node's kOnExecute). */
     template <bool IsNodeHttp>
     struct ReadScope {
         bool open = false;
@@ -699,10 +696,7 @@ private:
 
         auto httpErrorStatusCode = result.httpErrorStatusCode();
 
-        /* node:http compat: the checkpoint of the read. It runs inside the parse window and
-         * before the uncork below, like the one that used to follow each dispatch: what it
-         * writes shares this read's cork, and what it does to the socket is handled the way
-         * the parse loop handles it after a callback. */
+        /* Inside the parse window and before the uncork: the socket is checked as after any callback. */
         if constexpr (IsNodeHttp) {
             if (!httpErrorStatusCode) {
                 readScope.end();

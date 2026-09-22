@@ -353,10 +353,10 @@ impl EventLoop {
     /// on drop.
     ///
     /// For a dispatcher that runs the checkpoint itself once the callback has
-    /// returned, at points of its own choosing: the `Bun.serve` request paths
-    /// drain explicitly so that they can look at a returned promise that the
-    /// drain settled (`RequestContext::on_response`), and a checkpoint on exit
-    /// would add an empty one per request.
+    /// returned, at points of its own choosing: the HTTP request paths drain
+    /// explicitly so that they can look at a returned promise that the drain
+    /// settled (`RequestContext::on_response`), and a
+    /// checkpoint on exit would add an empty one per request.
     ///
     /// What the scope is for is the count. Only while it is above zero is the
     /// callback's frame safe from a checkpoint in the middle of it: a native
@@ -458,10 +458,7 @@ impl EventLoop {
         self.drain_microtasks_with_global(global, jsc_vm)
     }
 
-    /// A checkpoint between two callbacks of one entered scope: for a dispatcher that holds the
-    /// scope open over several callbacks (one socket read of a node:http connection) and has to
-    /// run the nextTicks and promise jobs of one of them before it makes the next. Nothing
-    /// happens when a callback is on the stack below that scope, as for `exit()`.
+    /// `exit()`'s checkpoint without the exit, for a scope that stays open over several callbacks.
     pub fn checkpoint_between_callbacks(&mut self) -> Result<(), Stopped> {
         if self.entered_event_loop_count == 1 && !self.vm_ref().is_inside_deferred_task_queue.get()
         {

@@ -1279,9 +1279,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             core::ptr::NonNull::new(this).expect("on_node_http_request: this non-null"),
         );
         let vm = this_ref.vm_mut();
-        // No checkpoint of its own, like Node's on_headers_complete: the socket read this
-        // dispatch belongs to is a scope already (`Bun__NodeHTTP__onReadBegin`), and the
-        // nextTicks and promise jobs of the listener run when that read is done.
+        // Like Node's on_headers_complete, no checkpoint here: the scope of the read runs it.
         let _entered = this_ref.vm().enter_event_loop_scope();
         // The listener and what it starts continue the script that made the server.
         let _context = this_ref.vm().enter_context(this_ref.context.get());

@@ -981,12 +981,9 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             http_req.once("end", clearUpgradeIncoming.bind(undefined, socket));
           }
           const upgradeHead = !hasBody && connectHead ? connectHead : kEmptyBuffer;
-          // Like CONNECT: the connection is detached from the HTTP request
-          // machinery; hold the native callback open until the raw socket
-          // closes.
+          // Like CONNECT: the native callback stays open until the raw socket closes.
           const upgradePromise = $newPromise();
-          // Node emits 'upgrade' after the read (onParserExecuteCommon): a message without a
-          // body is complete by then, and so is one whose body arrived whole with the head.
+          // Node emits 'upgrade' after the read: a body that arrived whole with the head is complete by then.
           if (hasBody && bodyArrivedWithHead(dispatchBits, http_req, connectHead)) {
             handle.ondata = function (chunk, isLast, aborted) {
               onDataIncomingMessage.$call(http_req, chunk, isLast, aborted);
@@ -1039,8 +1036,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           }
         }
 
-        // A message without a body is complete where its head is: Node's parser reports
-        // on_message_complete right after the listener returns.
+        // Node reports on_message_complete right after the listener of a message without a body returns.
         if (!hasBody) completeIncomingMessage(http_req);
 
         socket.cork();
@@ -1342,15 +1338,12 @@ function emitUpgrade(server, req, socket, head, handoffPromise) {
   try {
     upgradeHandled = server.emit("upgrade", req, socket, head);
   } catch (err) {
-    // A throwing 'upgrade' listener surfaces as an uncaught
-    // exception, like Node.js (the emit happens outside any JS try
-    // frame there).
+    // A throwing listener surfaces as an uncaught exception, like Node (no JS try frame around the emit).
     process.nextTick(rethrowUncaught, err);
     upgradeHandled = true;
   }
   if (!upgradeHandled) {
-    // shouldUpgradeCallback accepted the upgrade but no 'upgrade'
-    // listener is installed: Node.js destroys the socket.
+    // Accepted by shouldUpgradeCallback, but no 'upgrade' listener: Node destroys the socket.
     socket.destroy();
     return false;
   }
@@ -2730,8 +2723,7 @@ function advanceResponsePipeline(server, socket) {
           handle.writeInformational(op[1], op[2]);
           if (typeof op[3] === "function") process.nextTick(op[3]);
         } else if (kind === "write") {
-          // The prototype's write()/end() buffered these calls. Replaying through `res.write`
-          // would run a user's replacement (compression middleware) a second time.
+          // The prototype's write()/end() buffered these; `res.write` can be a middleware's replacement.
           lastWriteResult = ServerResponse.prototype.write.$call(res, op[1], op[2], op[3]);
         } else {
           ServerResponse.prototype.end.$call(res, op[1], op[2], op[3]);

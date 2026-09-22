@@ -1662,11 +1662,7 @@ impl NodeHTTPResponse {
             Some(_) => self.get_bytes(global_this, chunk),
             None => JSValue::UNDEFINED,
         };
-        // Node's parser reports the last bytes of a body (on_body) and the end of the message
-        // (on_message_complete) in separate callbacks, so what the 'data' listeners queued
-        // (nextTicks, promise jobs) runs before 'end'. uWS ends a chunked body that way, with an
-        // empty fin, but the last bytes of a Content-Length body carry the fin. The body stays
-        // pending until the fin: a _read() in between would otherwise end the stream itself.
+        // Like Node's on_body then on_message_complete: the body stays pending until its own fin call.
         let fin_follows_bytes = last && event == AbortEvent::None && !bytes.is_undefined();
         if last && !fin_follows_bytes {
             self.body_read_state.set(BodyReadState::Done);
@@ -1698,17 +1694,14 @@ impl NodeHTTPResponse {
                         JSValue::js_number_from_int32(event as u8 as i32),
                     ],
                 );
-                // Inside the read scope the callback was a nested one, so its exit was no
-                // checkpoint. Node's on_body is one after every chunk of the body.
+                // Node's on_body is a checkpoint; the exit of this nested callback was not one.
                 if !bytes.is_undefined() {
                     let _ = event_loop.checkpoint_between_callbacks();
                 }
             };
             if fin_follows_bytes {
                 deliver(bytes, false);
-                // The reader that took the bytes takes the fin, even when what ran in between
-                // (res.destroy(), req.destroy()) released its slot: Node's on_message_complete
-                // follows on_body just the same.
+                // The reader that took the bytes takes the fin, even if res.destroy() released its slot.
                 self.body_read_state.set(BodyReadState::Done);
                 deliver(JSValue::UNDEFINED, true);
             } else {
@@ -2593,12 +2586,7 @@ impl Drop for NodeHTTPResponse {
     }
 }
 
-/// The scope of one socket read of a node:http connection (uWS `HttpContext::onData`). Node's
-/// parser runs nextTicks and promise jobs after each body chunk (`on_body`) and once after the
-/// whole read (`kOnExecute`), not after the requests it dispatches or completes in between
-/// (`kSkipTaskQueues`). While the scope is open every JS callback of the read is a nested one,
-/// so closing the scope is that last checkpoint; [`NodeHTTPResponse::on_data_or_aborted`] runs
-/// the one after a body chunk.
+/// One socket read is one scope, like Node's parser: its callbacks are nested, its end is the checkpoint.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__NodeHTTP__onReadBegin() {
     vm_get().event_loop_ref().enter();

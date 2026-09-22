@@ -757,44 +757,41 @@ describe("concurrent terminals on one Image", () => {
   // crypto task in the process, so the fixture runs in a child. A child that
   // hangs never prints its summary, and the test then fails on the timeout.
   test("a JPEG whose SOF height shrinks mid-decode fails instead of spinning a pool thread", async () => {
-    using dir = tempDir("image-jpeg-sof-shrink", {
-      "swap-fixture.ts": `
-          Bun.Image.backend = "bun"; // the static decoders on every platform
-          const seed = Buffer.from("${Buffer.from(tinyPng).toString("base64")}", "base64");
-          const jpeg = await new Bun.Image(seed).resize(256, 256, { fit: "fill" }).jpeg().bytes();
-          const sof = jpeg.findIndex((b, i) => b === 0xff && jpeg[i + 1] === 0xc0);
-          const heightOffset = sof + 5; // FF C0, length(2), precision(1), height(2)
-          const height = (jpeg[heightOffset] << 8) | jpeg[heightOffset + 1];
-          if (height !== 256) throw new Error("SOF0 height is " + height + ", expected 256");
-          if (jpeg.length <= 1000) throw new Error("a " + jpeg.length + " byte JPEG is copied, not borrowed");
+    const fixture = `
+      Bun.Image.backend = "bun"; // the static decoders on every platform
+      const seed = Buffer.from("${Buffer.from(tinyPng).toString("base64")}", "base64");
+      const jpeg = await new Bun.Image(seed).resize(256, 256, { fit: "fill" }).jpeg().bytes();
+      const sof = jpeg.findIndex((b, i) => b === 0xff && jpeg[i + 1] === 0xc0);
+      const heightOffset = sof + 5; // FF C0, length(2), precision(1), height(2)
+      const height = (jpeg[heightOffset] << 8) | jpeg[heightOffset + 1];
+      if (height !== 256) throw new Error("SOF0 height is " + height + ", expected 256");
+      if (jpeg.length <= 1000) throw new Error("a " + jpeg.length + " byte JPEG is copied, not borrowed");
 
-          const buf = new Uint8Array(jpeg);
-          const total = 256;
-          let settled = 0;
-          const codes = new Set();
-          for (let i = 0; i < total; i++) {
-            new Bun.Image(buf).png().bytes().then(
-              () => void settled++,
-              e => { settled++; codes.add(e?.code ?? String(e)); },
-            );
-          }
-          // Flip the height between its real value and half of it until every
-          // decode settles. Half keeps the width, so only the row count moves.
-          while (settled < total) {
-            for (let i = 0; i < 4096; i++) {
-              const h = i & 1 ? height : height >> 1;
-              buf[heightOffset] = h >> 8;
-              buf[heightOffset + 1] = h & 255;
-            }
-            await Bun.sleep(0);
-          }
-          console.log(JSON.stringify({ settled, codes: [...codes].sort() }));
-        `,
-    });
+      const buf = new Uint8Array(jpeg);
+      const total = 256;
+      let settled = 0;
+      const codes = new Set();
+      for (let i = 0; i < total; i++) {
+        new Bun.Image(buf).png().bytes().then(
+          () => void settled++,
+          e => { settled++; codes.add(e?.code ?? String(e)); },
+        );
+      }
+      // Flip the height between its real value and half of it until every
+      // decode settles. Half keeps the width, so only the row count moves.
+      while (settled < total) {
+        for (let i = 0; i < 4096; i++) {
+          const h = i & 1 ? height : height >> 1;
+          buf[heightOffset] = h >> 8;
+          buf[heightOffset + 1] = h & 255;
+        }
+        await Bun.sleep(0);
+      }
+      console.log(JSON.stringify({ settled, codes: [...codes].sort() }));
+    `;
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "swap-fixture.ts"],
+      cmd: [bunExe(), "-e", fixture],
       env: bunEnv,
-      cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });

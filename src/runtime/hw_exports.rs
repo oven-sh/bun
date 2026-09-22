@@ -40,28 +40,6 @@ pub(crate) fn is_main_thread_vm() -> bool {
     VirtualMachine::get().as_mut().is_main_thread
 }
 
-/// `export fn Bun__drainMicrotasksFromJS(global, callframe) callconv(jsc.conv) JSValue`
-///
-/// Returns plain `JSValue` (not `JsResult`) so the generated thunk is a bare
-/// deref+call with no `ExceptionValidationScope`.
-/// `drain_microtasks()` runs arbitrary microtasks; wrapping in a
-/// scope would trip `assert_exception_presence_matches(false)` if one left an
-/// exception pending while we return `UNDEFINED`.
-// HOST_EXPORT(Bun__drainMicrotasksFromJS)
-pub(crate) fn drain_microtasks_from_js(global: &JSGlobalObject, _cf: &CallFrame) -> JSValue {
-    // Hot path (~2×/request via cork callback chain): pass the incoming
-    // `global` straight through instead of re-deriving it via
-    // TLS→vm→event_loop→vm→global (4 dependent loads — perf root-cause #1).
-    // `as_mut()` ignores its receiver and re-reads the TLS slot anyway, so go
-    // straight to the thread-local for the VM.
-    let vm = VirtualMachine::get_mut();
-    let jsc_vm = global.vm();
-    let _ = vm
-        .event_loop_mut()
-        .drain_microtasks_with_global(global, jsc_vm);
-    JSValue::UNDEFINED
-}
-
 /// `export fn Bun__logUnhandledException(exception: JSValue) void { get().runErrorHandler(exception, null); }`
 // HOST_EXPORT(Bun__logUnhandledException, c)
 pub(crate) fn log_unhandled_exception(exception: JSValue) {

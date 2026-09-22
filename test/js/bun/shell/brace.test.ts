@@ -327,19 +327,15 @@ describe("comma-less brace group is literal (bash 5.2)", () => {
     // still reach the glob walker rather than being taken as the literal word.
     // The walker reads `{x}` as a one-branch group, hence the `x,` fixture.
     using dir = tempDir("shell-brace-literal-glob", { "a.txt": "", "x,a.txt": "" });
-    const matched = await $`echo {x},*.txt`.cwd(String(dir)).nothrow().quiet();
-    expect(matched.stdout.toString().trim().split(" ")).toContain("x,a.txt");
+    const run = async (cmd: ReturnType<typeof $>) => {
+      const { stdout, stderr, exitCode } = await cmd.cwd(String(dir)).nothrow().quiet();
+      return { stdout: stdout.toString(), stderr: stderr.toString(), exitCode };
+    };
+
+    // A brace word emits its variants next to the matches, here the word itself.
+    expect(await run($`echo {x},*.txt`)).toEqual({ stdout: "{x},*.txt x,a.txt\n", stderr: "", exitCode: 0 });
 
     // With no match the word is left unchanged, and it is emitted once.
-    const unmatched = await $`echo {x},*.nomatch`.cwd(String(dir)).nothrow().quiet();
-    expect({
-      stdout: unmatched.stdout.toString(),
-      stderr: unmatched.stderr.toString(),
-      exitCode: unmatched.exitCode,
-    }).toEqual({
-      stdout: "{x},*.nomatch\n",
-      stderr: "",
-      exitCode: 0,
-    });
+    expect(await run($`echo {x},*.nomatch`)).toEqual({ stdout: "{x},*.nomatch\n", stderr: "", exitCode: 0 });
   });
 });

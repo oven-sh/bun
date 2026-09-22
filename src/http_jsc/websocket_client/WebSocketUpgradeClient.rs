@@ -701,8 +701,7 @@ where
         socket.get_native_handle() == self.tcp.get().get_native_handle()
     }
 
-    /// `body` keeps a complete head too: a `handshake` listener that spins the
-    /// event loop lets the next read in here, and it belongs behind that head.
+    /// `body` keeps a complete head: a `handshake` listener can let the next read in behind it.
     fn buffer_and_parse_head(&self, data: &[u8]) -> HeadParse {
         self.body.with_mut(|b| b.extend_from_slice(data));
 

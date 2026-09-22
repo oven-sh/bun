@@ -25,9 +25,6 @@ pub type ErrorFunc<Ctx> = unsafe extern "C" fn(ctx: *mut Ctx, msg: *const c_char
 //
 // Keep this predicate in sync with `cfg.tinycc` in `scripts/build/config.ts`
 // and `ENABLE_TINYCC` in `scripts/build/buildOptionsRs.ts`.
-//
-// Each declared function is reachable only through a same-named wrapper that
-// holds `LIBTCC_LOCK` for the call, so no libtcc entry point can skip the lock.
 macro_rules! tcc_externs {
     ($($(#[$attr:meta])* fn $name:ident($($arg:ident: $ty:ty),* $(,)?) $(-> $ret:ty)?;)*) => {
         mod raw {
@@ -59,25 +56,9 @@ macro_rules! tcc_externs {
     };
 }
 
-/// Serializes every libtcc call in the process; each Worker can call `cc()`.
-///
-/// TinyCC keeps its parser, its code generator and its list of relocated
-/// states in process globals. Nothing else guards them: TinyCC's own locks are
-/// compiled out (`CONFIG_TCC_SEMLOCK=0` in scripts/build/deps/tinycc.ts)
-/// because outside Windows it creates them on first use with an unsynchronized
-/// check (`wait_sem` in tcc.h), so two threads can both get one. Some globals
-/// never had a lock (`file` in `tcc_split_path`, the SDK root cache in
-/// tccmacho.c), so this one covers every call and not only the compiles.
-///
-/// TinyCC calls the error callback with this lock held, so the callback must
-/// not call into libtcc.
-///
-/// The lock is also held while `tcc_add_file` opens the source and while
-/// `tcc_add_library` runs `dlopen` (libtcc.c `tcc_add_binary`). A source that
-/// blocks in `open` or a library with a slow constructor stalls every other
-/// thread's libtcc call, `tcc_delete` from `close()` included. Those calls
-/// also report errors through the global `tcc_state`, so they cannot run
-/// unlocked.
+/// The only lock around TinyCC's process globals: its own are compiled out
+/// (`CONFIG_TCC_SEMLOCK=0`, scripts/build/deps/tinycc.ts). Held across the
+/// error callback, which must not call into libtcc.
 static LIBTCC_LOCK: bun_core::Mutex<()> = bun_core::Mutex::new(());
 
 tcc_externs! {

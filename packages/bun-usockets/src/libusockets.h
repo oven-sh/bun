@@ -382,6 +382,15 @@ void us_socket_start_tls_handshake(us_socket_r s) nonnull_fn_decl;
  * server that fails verification. Must run before the handshake is driven
  * (on_open, or between adopt_tls and start_tls_handshake). No-op otherwise. */
 void us_socket_set_inline_reject(us_socket_r s) nonnull_fn_decl;
+/* For a client that also rejects a certificate which does not name `host`, by
+ * the native matcher: run that check inside the handshake, right before the
+ * client's Certificate message is built, so a server whose chain is valid for
+ * another name never gets it. It runs only when the server asks for a
+ * certificate and the client has one. The handshake then fails with
+ * X509_V_ERR_HOSTNAME_MISMATCH, code ERR_TLS_CERT_ALTNAME_INVALID. Same call
+ * window as us_socket_set_inline_reject. `host` is copied. */
+void us_socket_set_server_identity(us_socket_r s, const char *host, size_t host_len)
+    __attribute__((nonnull(1, 2)));
 
 /* ── Listen ───────────────────────────────────────────────────────────────
  * The listener owns: an embedded group for accepted sockets, the SSL_CTX
@@ -571,10 +580,13 @@ int us_ssl_pop_pending_session(struct ssl_st *ssl, unsigned char *out, int out_c
 int us_ssl_pop_pending_keylog(struct ssl_st *ssl, unsigned char *out, int out_cap);
 /* The same owners as clients whose rejectUnauthorized policy is on.
  * set_inline_reject installs the verify recorder before the handshake starts.
+ * set_server_identity is the SSL-level us_socket_set_server_identity.
  * tripped() is read after each SSL_do_handshake of the initial handshake: 1
- * means the server's chain failed, so the owner drops its queued output (the
- * flight that carries the client certificate) and fails the handshake. */
+ * means the server's chain or its name failed, so the owner drops its queued
+ * output (the flight that carries the client certificate) and fails the
+ * handshake. */
 void us_internal_ssl_set_inline_reject(struct ssl_st *ssl);
+void us_internal_ssl_set_server_identity(struct ssl_st *ssl, const char *host, size_t host_len);
 int us_internal_ssl_inline_reject_tripped(struct ssl_st *ssl);
 /* The resumable session most recently delivered via the new-session callback,
  * or NULL if none. Borrowed; valid until the next NewSessionTicket or SSL_free. */

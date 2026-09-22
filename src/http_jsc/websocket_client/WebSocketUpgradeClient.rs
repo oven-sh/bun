@@ -681,6 +681,8 @@ where
                 .is_some_and(|ws| ws.reject_unauthorized())
             {
                 socket.set_inline_reject();
+                // The name `handle_handshake` checks after the handshake.
+                socket.set_server_identity(hostname.as_bytes());
             }
         }
 

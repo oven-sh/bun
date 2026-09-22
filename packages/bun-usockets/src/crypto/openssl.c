@@ -186,6 +186,9 @@ static int us_ssl_is_socket_ex_idx = -1;
  * (node's ssl.verifyError() verdict) as (void*)(intptr_t). */
 static int us_ssl_inline_reject_enabled_ex_idx = -1;
 static int us_ssl_inline_reject_err_ex_idx = -1;
+/* (SSL) us_ssl_server_identity_t of a client that checks the server's name
+ * inside the handshake - see us_internal_ssl_set_server_identity. */
+static int us_ssl_server_identity_ex_idx = -1;
 /* (SSL_CTX) packed client-certificate policy of a Bun.serve per-serverName
  * entry — see us_ssl_ctx_set_sni_policy. Absent on node:tls SecureContexts,
  * whose policy is server-level. */
@@ -255,6 +258,20 @@ struct us_ssl_reneg_state_t {
   uint64_t window_start_ms;
   uint32_t count;
 };
+
+/* The name a client expects the server's certificate to carry. `rejected` is
+ * set once the in-handshake check found that it does not. */
+struct us_ssl_server_identity_t {
+  int rejected;
+  size_t host_len;
+  char host[];
+};
+
+static void us_ssl_server_identity_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
+                                        int index, long argl, void *argp) {
+  (void)parent; (void)ad; (void)index; (void)argl; (void)argp;
+  us_free(ptr);
+}
 
 static void us_ctx_ex_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
                            int index, long argl, void *argp) {
@@ -459,6 +476,8 @@ static void us_ex_idx_init(void) {
   us_ssl_is_socket_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ssl_inline_reject_enabled_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ssl_inline_reject_err_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
+  us_ssl_server_identity_ex_idx =
+      SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_server_identity_free);
   us_ssl_pending_session_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_pending_session_free);
   us_ssl_pending_keylog_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_pending_session_free);
   us_ssl_new_session_ref_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_new_session_ref_free);
@@ -673,7 +692,9 @@ static int BIO_s_custom_write(BIO *bio, const char *data, int length) {
 
   /* Rejecting client whose chain verification failed: suppress the
    * post-verify flight so the peer never sees the handshake complete
-   * (node's post-verify destroy cancels its queued Finished the same way). */
+   * (node's post-verify destroy cancels its queued Finished the same way).
+   * After a failed server identity check the only output left is the alert
+   * BoringSSL queues for the failed certificate callback; it is dropped too. */
   if (loop_ssl_data->ssl_socket &&
       us_ssl_inline_reject_tripped(loop_ssl_data->ssl_socket)) {
     BIO_clear_retry_flags(bio);
@@ -1211,12 +1232,42 @@ static int us_inline_reject_verify_callback(int preverify_ok, X509_STORE_CTX *ct
   return 1;
 }
 
+/* Defined in src/boringssl/lib.rs: node's tls.checkServerIdentity rules against
+ * the peer's leaf certificate. Returns 1 when it names `host`, else 0. */
+extern int Bun__SSL__checkServerIdentity(SSL *ssl, const char *host, size_t host_len);
+
+static struct us_ssl_server_identity_t *us_ssl_server_identity(const SSL *ssl) {
+  if (us_ssl_server_identity_ex_idx < 0 || !ssl) return NULL;
+  return SSL_get_ex_data(ssl, us_ssl_server_identity_ex_idx);
+}
+
+/* BoringSSL runs this when the server asked for a client certificate, right
+ * before the client's Certificate message is built: after the server's chain
+ * was verified, under TLS 1.2 (ServerHelloDone) and TLS 1.3 (server Finished)
+ * alike. Failing here keeps the certificate away from a server whose chain is
+ * valid for another name. */
+static int us_server_identity_cert_cb(SSL *ssl, void *arg) {
+  (void)arg;
+  struct us_ssl_server_identity_t *identity = us_ssl_server_identity(ssl);
+  if (!identity) return 1;
+  if (identity->rejected) return 0;
+  /* With no client certificate to withhold, or with a failed chain (the verify
+   * recorder's verdict), the handshake goes on and the owner decides after it
+   * as before. */
+  if (!SSL_get_certificate(ssl) || SSL_get_verify_result(ssl) != X509_V_OK) return 1;
+  if (Bun__SSL__checkServerIdentity(ssl, identity->host, identity->host_len)) return 1;
+  identity->rejected = 1;
+  return 0;
+}
+
 /* Whether this SSL belongs to a rejecting client whose chain verification
- * failed. Also the check for a client whose TLS runs in SSLWrapper
- * (src/uws/lib.rs) and so has no us_socket_t; the caller limits it to the
- * initial handshake. */
+ * failed, or whose in-handshake server identity check did. Also the check for
+ * a client whose TLS runs in SSLWrapper (src/uws/lib.rs) and so has no
+ * us_socket_t; the caller limits it to the initial handshake. */
 int us_internal_ssl_inline_reject_tripped(SSL *ssl) {
   if (us_ssl_inline_reject_enabled_ex_idx < 0 || !ssl) return 0;
+  struct us_ssl_server_identity_t *identity = us_ssl_server_identity(ssl);
+  if (identity && identity->rejected) return 1;
   if (!SSL_get_ex_data(ssl, us_ssl_inline_reject_enabled_ex_idx)) return 0;
   if (!SSL_get_ex_data(ssl, us_ssl_inline_reject_err_ex_idx)) return 0;
   /* A per-depth failure may be recovered by an alternate chain: only the
@@ -1224,9 +1275,9 @@ int us_internal_ssl_inline_reject_tripped(SSL *ssl) {
   return SSL_get_verify_result(ssl) != X509_V_OK;
 }
 
-/* Whether this socket is a rejecting client whose chain verification failed:
- * from that point on its handshake output is suppressed and the handshake is
- * reported as failed. */
+/* Whether this socket is a rejecting client whose chain verification or
+ * server identity check failed: from that point on its handshake output is
+ * suppressed and the handshake is reported as failed. */
 static int us_ssl_inline_reject_tripped(struct us_socket_t *s) {
   if (!s->ssl) return 0;
   /* Initial handshake only: renegotiation keeps the deferred JS-side policy,
@@ -1253,6 +1304,31 @@ void us_internal_ssl_set_inline_reject(SSL *ssl) {
 void us_socket_set_inline_reject(struct us_socket_t *s) {
   if (!s->ssl || s->ssl_is_server || s->ssl_handshake_state == HANDSHAKE_COMPLETED) return;
   us_internal_ssl_set_inline_reject(s_ssl(s));
+}
+
+/* For a client whose policy also rejects a certificate that does not name
+ * `host`, and that applies the native matcher (no user checkServerIdentity):
+ * run that check inside the handshake, so a server whose chain is valid for
+ * another name never gets the client's certificate. The handshake then fails
+ * with X509_V_ERR_HOSTNAME_MISMATCH / ERR_TLS_CERT_ALTNAME_INVALID through the
+ * same tripped() path as a failed chain. The owner's check after the handshake
+ * stays: this one only runs when the server asks for a certificate. */
+void us_internal_ssl_set_server_identity(SSL *ssl, const char *host, size_t host_len) {
+  if (!host_len || SSL_is_server(ssl)) return;
+  us_ex_idx_ensure();
+  struct us_ssl_server_identity_t *identity =
+      us_calloc(1, sizeof(struct us_ssl_server_identity_t) + host_len);
+  if (!identity) Bun__outOfMemory();
+  identity->host_len = host_len;
+  memcpy(identity->host, host, host_len);
+  us_free(us_ssl_server_identity(ssl));
+  SSL_set_ex_data(ssl, us_ssl_server_identity_ex_idx, identity);
+  SSL_set_cert_cb(ssl, us_server_identity_cert_cb, NULL);
+}
+
+void us_socket_set_server_identity(struct us_socket_t *s, const char *host, size_t host_len) {
+  if (!s->ssl || s->ssl_is_server || s->ssl_handshake_state == HANDSHAKE_COMPLETED) return;
+  us_internal_ssl_set_server_identity(s_ssl(s), host, host_len);
 }
 
 /* Drop the strdup'd passphrase. Called as soon as private-key load completes
@@ -1926,8 +2002,18 @@ static long us_internal_verify_peer_certificate(const SSL *ssl, long def) {
 struct us_bun_verify_error_t us_ssl_socket_verify_error_from_ssl(SSL *ssl) {
   long x509_verify_error =
       us_internal_verify_peer_certificate(ssl, X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT);
-  if (x509_verify_error == X509_V_OK)
+  if (x509_verify_error == X509_V_OK) {
+    /* The chain verified; the in-handshake identity check may still have
+     * refused the name. */
+    struct us_ssl_server_identity_t *identity = us_ssl_server_identity(ssl);
+    if (identity && identity->rejected) {
+      return (struct us_bun_verify_error_t){
+          .error = X509_V_ERR_HOSTNAME_MISMATCH,
+          .code = "ERR_TLS_CERT_ALTNAME_INVALID",
+          .reason = "Hostname/IP does not match certificate's altnames"};
+    }
     return (struct us_bun_verify_error_t){.error = 0, .code = NULL, .reason = NULL};
+  }
   const char *reason = X509_verify_cert_error_string(x509_verify_error);
   const char *code = us_X509_error_code(x509_verify_error);
   return (struct us_bun_verify_error_t){.error = x509_verify_error, .code = code, .reason = reason};
@@ -1999,8 +2085,9 @@ static void ssl_trigger_handshake(struct us_socket_t *s, int success) {
     success = 0;
   }
   /* An inline-rejected handshake reports the X509 verdict node surfaces
-   * through ssl.verifyError() (UNABLE_TO_VERIFY_LEAF_SIGNATURE, ...), not
-   * the SSL protocol reason that may wrap it. */
+   * through ssl.verifyError() (UNABLE_TO_VERIFY_LEAF_SIGNATURE, ...), or
+   * ERR_TLS_CERT_ALTNAME_INVALID for the server identity check, not the SSL
+   * protocol reason that may wrap it (CERT_CB_ERROR for the latter). */
   if (!success && inline_rejected && s->ssl && s_ssl(s)) {
     struct loop_ssl_data *loop_ssl_data =
         (struct loop_ssl_data *)s->group->loop->data.ssl_data;

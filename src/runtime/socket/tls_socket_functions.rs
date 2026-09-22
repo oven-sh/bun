@@ -177,6 +177,14 @@ pub(super) mod ffi {
         /// the BIO hook + handshake drive then keep a rejected client's
         /// Finished off the wire and fail the handshake with the X509 verdict.
         pub(crate) safe fn us_internal_ssl_set_inline_reject(ssl: &SSL);
+        /// Installs the in-handshake server identity check (usockets
+        /// openssl.c): a certificate that does not name `host` fails the
+        /// handshake before the client certificate is written. Copies `host`.
+        pub(crate) fn us_internal_ssl_set_server_identity(
+            ssl: *mut SSL,
+            host: *const c_char,
+            host_len: usize,
+        );
         pub(crate) safe fn SSL_get_peer_cert_chain(ssl: &SSL) -> *mut struct_stack_st_X509;
         pub(crate) safe fn SSL_get0_alpn_selected(
             ssl: &SSL,
@@ -348,6 +356,7 @@ pub(super) fn set_servername(
         let host_z = bun_core::ZBox::from_bytes(host);
         // SAFETY: `host_z` is NUL-terminated; FFI reads until NUL.
         unsafe { ffi::SSL_set_tlsext_host_name(ssl_ptr, host_z.as_ptr()) };
+        this.install_server_identity(ssl_ptr);
     }
 
     Ok(JSValue::UNDEFINED)

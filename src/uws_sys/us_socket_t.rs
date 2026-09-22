@@ -312,6 +312,14 @@ impl us_socket_t {
         c::us_socket_set_inline_reject(self);
     }
 
+    /// Refuse a server certificate that does not name `host` during the
+    /// handshake, before the client certificate goes out. For a client that
+    /// applies the native matcher. Same call window as `set_inline_reject`.
+    pub fn set_server_identity(&mut self, host: &[u8]) {
+        // SAFETY: `host` is readable for `host.len()` bytes; C copies it.
+        unsafe { c::us_socket_set_server_identity(self, host.as_ptr().cast(), host.len()) };
+    }
+
     /// Feed bytes that were already read off the wire (e.g. a ClientHello the
     /// plain-TCP layer consumed before the upgrade) through the same decrypt
     /// path as bytes arriving from the kernel.
@@ -608,6 +616,11 @@ mod c {
         ) -> *mut us_socket_t;
         pub(super) safe fn us_socket_start_tls_handshake(s: &mut us_socket_t);
         pub(super) safe fn us_socket_set_inline_reject(s: &mut us_socket_t);
+        pub(super) fn us_socket_set_server_identity(
+            s: &mut us_socket_t,
+            host: *const c_char,
+            host_len: usize,
+        );
     }
 }
 

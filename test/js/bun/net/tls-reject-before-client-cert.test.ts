@@ -11,6 +11,10 @@
 // Four clients run TLS in SSLWrapper, not on a usockets socket: fetch and
 // WebSocket through an HTTP CONNECT proxy, tls.connect over a Duplex, and
 // tls.connect over a Windows named pipe.
+//
+// The same holds for a server whose chain verifies but whose certificate names
+// another host. There the server presents agent1 (signed by ca1, names only
+// "agent1") and the client pins ca1.
 import { RedisClient, SQL } from "bun";
 import { afterAll, describe, expect, test } from "bun:test";
 import { tls as harnessTls, isWindows } from "harness";
@@ -57,6 +61,11 @@ const clientKey = pem("agent3-key.pem");
 const identity = { cert: clientCert, key: clientKey };
 const mtls = { ca: untrustedCA, ...identity };
 
+// agent1's only name is its CN (it has no SAN), so it names neither localhost
+// nor 127.0.0.1. A client that pins ca1 accepts its chain.
+const otherHost = { cert: pem("agent1-cert.pem"), key: pem("agent1-key.pem") };
+const otherHostMtls = { ca: pem("ca1-cert.pem"), ...identity };
+
 // `peerCN` is what the server learned about the client's certificate.
 // `clientHelloBytes` is the size of the client's first TLS record and
 // `clientTlsBytes` every TLS byte the client sent, both counted by a plain
@@ -75,11 +84,13 @@ type Seen = {
 // `plain` runs the protocol's cleartext prelude on the raw socket and resolves
 // with the number of cleartext bytes the client sent before TLS starts.
 // `pipe` makes the relay listen on that Windows named pipe, not on a TCP port.
+// `identity` replaces the self-signed harness certificate the server presents.
 async function mtlsServer(opts: {
   plain?: (socket: net.Socket) => Promise<number>;
   onSecure?: (socket: tls.TLSSocket) => void;
   maxVersion?: tls.SecureVersion;
   pipe?: string;
+  identity?: { cert: string; key: string };
 }) {
   const closed = Promise.withResolvers<void>();
   const seen: Seen = { peerCN: null, clientHelloBytes: 0, clientTlsBytes: 0, closed: closed.promise };
@@ -89,8 +100,8 @@ async function mtlsServer(opts: {
     const preludeBytes = opts.plain ? await opts.plain(raw) : 0;
     const secure = new tls.TLSSocket(raw, {
       isServer: true,
-      cert: serverCert,
-      key: serverKey,
+      cert: opts.identity?.cert ?? serverCert,
+      key: opts.identity?.key ?? serverKey,
       ca: untrustedCA,
       requestCert: true,
       rejectUnauthorized: false,
@@ -210,6 +221,35 @@ const tlsOutcome = (socket: tls.TLSSocket) =>
       socket.destroy();
       resolve(null);
     });
+  });
+
+// Resolves with the error the `handshake` callback got, or with null for an
+// authorized handshake. `target` is a TCP port, or the path of a Windows named
+// pipe. `upgrade` connects in plain TCP first and starts TLS with
+// socket.upgradeTLS().
+const bunConnectOutcome = (target: number | string, tlsOpts: object, upgrade = false) =>
+  new Promise<any>(resolve => {
+    const tlsHandlers = {
+      handshake(socket: any, authorized: boolean, error: Error | null) {
+        resolve(error ?? (authorized ? null : new Error("not authorized, and no error")));
+        socket.end();
+      },
+      data() {},
+      error: (_socket: any, error: Error) => resolve(error),
+      connectError: (_socket: any, error: Error) => resolve(error),
+    };
+    Bun.connect({
+      ...(typeof target === "string" ? { unix: target } : { hostname: "localhost", port: target }),
+      ...(upgrade
+        ? {
+            socket: {
+              ...tlsHandlers,
+              handshake: undefined,
+              open: (raw: any) => void raw.upgradeTLS({ tls: tlsOpts, socket: tlsHandlers }),
+            },
+          }
+        : { tls: tlsOpts, socket: tlsHandlers }),
+    } as any).catch(resolve);
   });
 
 // tls.connect over a generic Duplex: the ciphertext moves through JS, here to
@@ -414,6 +454,181 @@ describe.each(["TLSv1.3", "TLSv1.2"] as const)(
       await srv.seen.closed;
       expect(srv.seen.peerCN).toBeNull();
       expect(srv.seen.clientTlsBytes).toBe(srv.seen.clientHelloBytes);
+    });
+  },
+);
+
+// These clients match the server's name with the native checkServerIdentity
+// port. They run it inside the handshake, right before their Certificate
+// message is built (TLS 1.2: after ServerHelloDone, TLS 1.3: after the
+// server's Finished), so it does not depend on the TLS version.
+describe.each(["TLSv1.3", "TLSv1.2"] as const)(
+  "%s: a rejecting client sends no client certificate to a server whose certificate names another host",
+  maxVersion => {
+    test("control: under the name the certificate carries the server does see the client certificate", async () => {
+      await using srv = await mtlsServer({ identity: otherHost, onSecure: httpOk, maxVersion });
+      const res = await fetch(`https://localhost:${srv.port}/`, { tls: { ...otherHostMtls, serverName: "agent1" } });
+      expect(await res.text()).toBe("ok");
+      expect(srv.seen.peerCN).toBe("agent3");
+    });
+
+    test("fetch", async () => {
+      await using srv = await mtlsServer({ identity: otherHost, onSecure: httpOk, maxVersion });
+      const err = await settle(fetch(`https://localhost:${srv.port}/`, { tls: otherHostMtls }));
+      expect(err?.code).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
+      await srv.seen.closed;
+      expect(srv.seen.peerCN).toBeNull();
+      expect(srv.seen.clientTlsBytes).toBe(srv.seen.clientHelloBytes);
+    });
+
+    test("WebSocket", async () => {
+      await using srv = await mtlsServer({ identity: otherHost, maxVersion });
+      expect(await websocketOutcome(srv.port, otherHostMtls)).toBe("error");
+      await srv.seen.closed;
+      expect(srv.seen.peerCN).toBeNull();
+      expect(srv.seen.clientTlsBytes).toBe(srv.seen.clientHelloBytes);
+    });
+
+    test("Bun.connect", async () => {
+      await using srv = await mtlsServer({ identity: otherHost, maxVersion });
+      const err = await bunConnectOutcome(srv.port, otherHostMtls);
+      // The error of the check after the handshake, which a server that asks
+      // for no certificate still gets.
+      expect({ code: err?.code, message: err?.message }).toEqual({
+        code: "ERR_TLS_CERT_ALTNAME_INVALID",
+        message: "Hostname/IP does not match certificate's altnames: Host: localhost. is not cert's CN: agent1",
+      });
+      await srv.seen.closed;
+      expect(srv.seen.peerCN).toBeNull();
+      expect(srv.seen.clientTlsBytes).toBe(srv.seen.clientHelloBytes);
+    });
+
+    test("socket.upgradeTLS", async () => {
+      await using srv = await mtlsServer({ identity: otherHost, maxVersion });
+      const err = await bunConnectOutcome(srv.port, otherHostMtls, true);
+      expect(err?.code).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
+      await srv.seen.closed;
+      expect(srv.seen.peerCN).toBeNull();
+      expect(srv.seen.clientTlsBytes).toBe(srv.seen.clientHelloBytes);
+    });
+
+    test("control: Bun.connect under the name the certificate carries completes the handshake", async () => {
+      await using srv = await mtlsServer({ identity: otherHost, onSecure: dropAfterHandshake, maxVersion });
+      expect(await bunConnectOutcome(srv.port, { ...otherHostMtls, serverName: "agent1" })).toBeNull();
+      await srv.seen.closed;
+      expect(srv.seen.peerCN).toBe("agent3");
+    });
+
+    test("Bun.RedisClient", async () => {
+      await using srv = await mtlsServer({ identity: otherHost, maxVersion });
+      const client = new RedisClient(`rediss://localhost:${srv.port}`, { tls: otherHostMtls, maxRetries: 0 } as any);
+      const err = await settle(client.connect());
+      // connect() settles from the close event, not from the handshake verdict.
+      expect(err?.code).toBe("ERR_REDIS_CONNECTION_CLOSED");
+      client.close();
+      await srv.seen.closed;
+      expect(srv.seen.peerCN).toBeNull();
+      expect(srv.seen.clientTlsBytes).toBe(srv.seen.clientHelloBytes);
+    });
+
+    test("Bun.SQL postgres sslmode=verify-full", async () => {
+      await using srv = await mtlsServer({ identity: otherHost, plain: postgresPrelude, maxVersion });
+      const err = await sqlError(`postgres://user:pass@localhost:${srv.port}/db`, {
+        sslmode: "verify-full",
+        tls: otherHostMtls,
+      });
+      expect(err?.code).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
+      await srv.seen.closed;
+      expect(srv.seen.peerCN).toBeNull();
+      expect(srv.seen.clientTlsBytes).toBe(srv.seen.clientHelloBytes);
+    });
+
+    test("Bun.SQL mysql sslmode=verify-full", async () => {
+      await using srv = await mtlsServer({ identity: otherHost, plain: mysqlPrelude, maxVersion });
+      const err = await sqlError(`mysql://user:pass@localhost:${srv.port}/db`, {
+        sslmode: "verify-full",
+        tls: otherHostMtls,
+      });
+      expect(err?.code).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
+      await srv.seen.closed;
+      expect(srv.seen.peerCN).toBeNull();
+      expect(srv.seen.clientTlsBytes).toBe(srv.seen.clientHelloBytes);
+    });
+
+    test("fetch through a CONNECT proxy", async () => {
+      await using srv = await mtlsServer({ identity: otherHost, onSecure: httpOk, maxVersion });
+      using proxy = await startRecordingProxy();
+      const err = await settle(
+        fetch(`https://127.0.0.1:${srv.port}/`, { tls: otherHostMtls, proxy: `http://127.0.0.1:${proxy.port}` }),
+      );
+      expect(err?.code).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
+      await srv.seen.closed;
+      expect(proxy.requests.map(r => r.requestLine)).toEqual([`CONNECT 127.0.0.1:${srv.port} HTTP/1.1`]);
+      expect(srv.seen.peerCN).toBeNull();
+      expect(srv.seen.clientTlsBytes).toBe(srv.seen.clientHelloBytes);
+    });
+
+    test("WebSocket through a CONNECT proxy", async () => {
+      await using srv = await mtlsServer({ identity: otherHost, maxVersion });
+      using proxy = await startRecordingProxy();
+      expect(await websocketOutcome(srv.port, otherHostMtls, `http://127.0.0.1:${proxy.port}`)).toBe("error");
+      await srv.seen.closed;
+      expect(proxy.requests.map(r => r.requestLine)).toEqual([`CONNECT 127.0.0.1:${srv.port} HTTP/1.1`]);
+      expect(srv.seen.peerCN).toBeNull();
+      expect(srv.seen.clientTlsBytes).toBe(srv.seen.clientHelloBytes);
+    });
+
+    // Windows only: Bun.connect over a named pipe runs TLS in SSLWrapper too,
+    // and matches the name against "localhost" unless tls.serverName is set.
+    test.skipIf(!isWindows)(
+      "control: Bun.connect over a named pipe under the name the certificate carries completes the handshake",
+      async () => {
+        const pipe = pipeName();
+        await using srv = await mtlsServer({ identity: otherHost, onSecure: dropAfterHandshake, maxVersion, pipe });
+        expect(await bunConnectOutcome(pipe, { ...otherHostMtls, serverName: "agent1" })).toBeNull();
+        await srv.seen.closed;
+        expect(srv.seen.peerCN).toBe("agent3");
+      },
+    );
+
+    test.skipIf(!isWindows)("Bun.connect over a named pipe", async () => {
+      const pipe = pipeName();
+      await using srv = await mtlsServer({ identity: otherHost, maxVersion, pipe });
+      const err = await bunConnectOutcome(pipe, otherHostMtls);
+      expect(err?.code).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
+      await srv.seen.closed;
+      expect(srv.seen.peerCN).toBeNull();
+      expect(srv.seen.clientTlsBytes).toBe(srv.seen.clientHelloBytes);
+    });
+
+    // With no certificate to withhold the check stays where it was, after the
+    // handshake: the client's second flight goes out and the error is the same.
+    test("a client with no certificate rejects after the handshake as before", async () => {
+      await using srv = await mtlsServer({ identity: otherHost, onSecure: httpOk, maxVersion });
+      const err = await settle(fetch(`https://localhost:${srv.port}/`, { tls: { ca: otherHostMtls.ca } }));
+      expect(err?.code).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
+      await srv.seen.closed;
+      expect(srv.seen.clientTlsBytes).toBeGreaterThan(srv.seen.clientHelloBytes);
+    });
+
+    // A checkServerIdentity function owns the verdict, and it can accept a
+    // name the native matcher rejects. The in-handshake check must stay out.
+    test("fetch with a checkServerIdentity that accepts the name still completes the request", async () => {
+      await using srv = await mtlsServer({ identity: otherHost, onSecure: httpOk, maxVersion });
+      const res = await fetch(`https://localhost:${srv.port}/`, {
+        tls: { ...otherHostMtls, checkServerIdentity: () => undefined },
+      });
+      expect(await res.text()).toBe("ok");
+      expect(srv.seen.peerCN).toBe("agent3");
+    });
+
+    test("fetch rejectUnauthorized: false still completes the request", async () => {
+      await using srv = await mtlsServer({ identity: otherHost, onSecure: httpOk, maxVersion });
+      const res = await fetch(`https://localhost:${srv.port}/`, {
+        tls: { ...otherHostMtls, rejectUnauthorized: false },
+      });
+      expect(await res.text()).toBe("ok");
+      expect(srv.seen.peerCN).toBe("agent3");
     });
   },
 );

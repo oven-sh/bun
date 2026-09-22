@@ -195,10 +195,13 @@ impl WebSocketProxyTunnel {
 
         debug_assert!(this.wrapper.get().is_none(), "start() called twice");
         let wrapper = this.wrapper.get_or_init(|| wrapper);
-        // The inner connection's form of the `set_inline_reject` call in
-        // `WebSocketUpgradeClient::handle_open`.
+        // The inner connection's form of the `set_inline_reject` and
+        // `set_server_identity` calls in `WebSocketUpgradeClient::handle_open`.
         if this.reject_unauthorized {
             wrapper.set_inline_reject();
+            if let Some(hostname) = this.sni_hostname.as_deref() {
+                wrapper.set_server_identity(hostname);
+            }
         }
         let ssl = wrapper.ssl.get();
 

@@ -1538,7 +1538,12 @@ pub(crate) fn get_cert_error_from_no(error_no: i32) -> crate::Error {
         59 => CertError::SUITE_B_INVALID_SIGNATURE_ALGORITHM,
         60 => CertError::SUITE_B_LOS_NOT_ALLOWED,
         61 => CertError::SUITE_B_CANNOT_SIGN_P_384_WITH_P_256,
-        62 => CertError::HOSTNAME_MISMATCH,
+        // uSockets reports its in-handshake server identity check with this
+        // code (`set_server_identity`). `check_server_identity` gives this
+        // error for the same certificate after the handshake.
+        uws::us_bun_verify_error_t::HOSTNAME_MISMATCH => {
+            return crate::Error::ERR_TLS_CERT_ALTNAME_INVALID;
+        }
         63 => CertError::EMAIL_MISMATCH,
         64 => CertError::IP_ADDRESS_MISMATCH,
         65 => CertError::INVALID_CALL,
@@ -1876,6 +1881,12 @@ impl<'a> HTTPClient<'a> {
 
                 if self.flags.reject_unauthorized {
                     socket.set_inline_reject();
+                    // The name `check_server_identity` matches natively after
+                    // the handshake. A JS `checkServerIdentity` owns the
+                    // verdict for the target's certificate, not for a proxy's.
+                    if self.http_proxy.is_some() || !self.signals.get(signals::Field::CertErrors) {
+                        socket.set_server_identity(raw_hostname);
+                    }
                 }
 
                 if crate::session_cache::eligible(self) {

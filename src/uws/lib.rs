@@ -568,6 +568,21 @@ pub mod ssl_wrapper {
             unsafe { us_internal_ssl_set_inline_reject(ssl.as_ptr()) };
         }
 
+        /// Client that also rejects a certificate which does not name `host`,
+        /// by the native matcher: refuse it during the handshake too, before
+        /// the client certificate goes out. Call it where `set_inline_reject`
+        /// is called. No-op for servers.
+        pub fn set_server_identity(&self, host: &[u8]) {
+            if !self.flags.is_client() {
+                return;
+            }
+            let Some(ssl) = self.ssl.get() else { return };
+            // SAFETY: `ssl` is this wrapper's live `SSL*`; C copies `host`.
+            unsafe {
+                us_internal_ssl_set_server_identity(ssl.as_ptr(), host.as_ptr().cast(), host.len())
+            };
+        }
+
         pub fn start(&self) {
             // trigger the onOpen callback so the user can configure the SSL connection before first handshake
             let handlers = self.handlers.get();
@@ -899,10 +914,12 @@ pub mod ssl_wrapper {
             // SAFETY: ssl is a live SSL*.
             let result = unsafe { boring_sys::SSL_do_handshake(ssl.as_ptr()) };
 
-            // A rejecting client (`set_inline_reject`) saw the server's chain
-            // fail. All output queued since that verdict is the flight that
-            // carries the client certificate. TLS 1.2 queues it before the
-            // server's Finished, so `on_handshake` would be too late to stop it.
+            // A rejecting client saw the server's chain fail (`set_inline_reject`)
+            // or its name not match (`set_server_identity`). All output queued
+            // since that verdict is the flight that carries the client
+            // certificate, or the alert that replaces it. TLS 1.2 queues it
+            // before the server's Finished, so `on_handshake` would be too late
+            // to stop it.
             // SAFETY: ssl is a live SSL*.
             if unsafe { us_internal_ssl_inline_reject_tripped(ssl.as_ptr()) } != 0 {
                 boring_sys::ERR_clear_error();
@@ -1302,7 +1319,16 @@ pub mod ssl_wrapper {
         /// (openssl.c; the usockets handshake drive uses the same recorder).
         // SAFETY (unsafe fn): `ssl` must be a live `SSL*`.
         fn us_internal_ssl_set_inline_reject(ssl: *mut boring_sys::SSL);
-        /// 1 once that recorder saw the chain fail and the final verdict is not OK.
+        /// Installs the in-handshake server identity check (openssl.c), which
+        /// runs right before the client certificate is written. Copies `host`.
+        // SAFETY (unsafe fn): `ssl` must be a live `SSL*`; `host` readable for `host_len` bytes.
+        fn us_internal_ssl_set_server_identity(
+            ssl: *mut boring_sys::SSL,
+            host: *const core::ffi::c_char,
+            host_len: usize,
+        );
+        /// 1 once that recorder saw the chain fail and the final verdict is not
+        /// OK, or once the server identity check refused the name.
         // SAFETY (unsafe fn): `ssl` must be a live `SSL*`.
         fn us_internal_ssl_inline_reject_tripped(ssl: *mut boring_sys::SSL) -> c_int;
         /// Opt this SSL into the parked new-session/keylog queues

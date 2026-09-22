@@ -371,6 +371,10 @@ impl MySQLConnection {
             && matches!(self.ssl_mode, SSLMode::VerifyCa | SSLMode::VerifyFull)
         {
             sock.set_inline_reject();
+            // The name `do_handshake` checks after the handshake.
+            if let (SSLMode::VerifyFull, Some(sni)) = (self.ssl_mode, sni) {
+                sock.set_server_identity(sni.to_bytes());
+            }
         }
         self.socket = Socket::SocketTls(uws::SocketTLS {
             socket: uws::InternalSocket::Connected(new_socket),

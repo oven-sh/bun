@@ -816,6 +816,32 @@ pub fn check_server_identity(ssl_ptr: &mut boring::SSL, hostname: &[u8]) -> bool
         .is_some_and(|x509| check_x509_server_identity(x509, hostname))
 }
 
+/// The message of Node.js's `ERR_TLS_CERT_ALTNAME_INVALID` for the peer's leaf
+/// certificate and `hostname`.
+pub fn server_identity_mismatch_message(ssl_ptr: &mut boring::SSL, hostname: &[u8]) -> String {
+    let mut message = String::from("Hostname/IP does not match certificate's altnames: ");
+    // Infallible: the writer is a `String`.
+    let _ = write_server_identity_mismatch_reason(ssl_ptr, hostname, &mut message);
+    message
+}
+
+/// [`check_server_identity`] for the client certificate callback in
+/// `packages/bun-usockets/src/crypto/openssl.c`, which runs it inside the
+/// handshake. Returns `1` on a match, else `0`.
+///
+/// # Safety
+/// `ssl` must be a live `SSL*` and `host[..host_len]` must be readable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__SSL__checkServerIdentity(
+    ssl: *mut boring::SSL,
+    host: *const u8,
+    host_len: usize,
+) -> c_int {
+    // SAFETY: caller contract.
+    let (ssl, host) = unsafe { (&mut *ssl, core::slice::from_raw_parts(host, host_len)) };
+    c_int::from(check_server_identity(ssl, host))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{NameBytes, is_safe_alt_name};

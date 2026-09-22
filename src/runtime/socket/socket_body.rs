@@ -1530,6 +1530,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                             boringssl_sys::SSL::opaque_ref(ssl_ptr),
                         );
                     }
+                    this.install_server_identity(ssl_ptr);
                     if let Some(protos) = this.protos.get() {
                         if this.acts_as_tls_server() {
                             // Registered above (selector + ex_data); nothing
@@ -1786,40 +1787,36 @@ impl<const SSL: bool> NewSocket<SSL> {
         let mut authorized = success == 1;
         let mut hostname_mismatch = false;
         let mut hostname_mismatch_message: Option<Box<[u8]>> = None;
+        // `install_server_identity` made the same check inside the handshake
+        // and failed it: the verdict and the error of the check below.
+        let rejected_in_handshake = SSL
+            && success == 0
+            && ssl_error.error_no == uws::us_bun_verify_error_t::HOSTNAME_MISMATCH;
 
-        if SSL && authorized && !this.acts_as_tls_server() {
+        if SSL && (authorized || rejected_in_handshake) && !this.acts_as_tls_server() {
             if let Some(ssl_ptr) = this.socket.get().ssl() {
-                let hostname: &[u8] = match this.server_name.get() {
-                    Some(server_name) if !server_name.is_empty() => &server_name[..],
-                    _ => match this.connection.get() {
-                        Some(super::listener::UnixOrHost::Host { host, .. })
-                            if !host.is_empty() =>
-                        {
-                            bun_core::ip_address::strip_ipv6_brackets(host)
-                        }
-                        _ => b"localhost",
-                    },
-                };
-                if !bun_boringssl::check_server_identity(
-                    boringssl_sys::SSL::opaque_mut(ssl_ptr),
-                    hostname,
-                ) {
-                    authorized = false;
-                    hostname_mismatch = true;
-                    let mut message =
-                        String::from("Hostname/IP does not match certificate's altnames: ");
-                    // Infallible: the writer is a `String`.
-                    let _ = bun_boringssl::write_server_identity_mismatch_reason(
+                let hostname = this.server_identity_hostname();
+                if rejected_in_handshake
+                    || !bun_boringssl::check_server_identity(
                         boringssl_sys::SSL::opaque_mut(ssl_ptr),
                         hostname,
-                        &mut message,
+                    )
+                {
+                    authorized = false;
+                    hostname_mismatch = true;
+                    hostname_mismatch_message = Some(
+                        bun_boringssl::server_identity_mismatch_message(
+                            boringssl_sys::SSL::opaque_mut(ssl_ptr),
+                            hostname,
+                        )
+                        .into_bytes()
+                        .into_boxed_slice(),
                     );
-                    hostname_mismatch_message = Some(message.into_bytes().into_boxed_slice());
                 }
             }
         }
 
-        let verify_failed = SSL && ssl_error.error_no != 0;
+        let verify_failed = SSL && ssl_error.error_no != 0 && !rejected_in_handshake;
 
         this.verify_error.set(if verify_failed {
             Some(StoredVerifyError {
@@ -1921,7 +1918,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
         } else {
             // call handhsake callback with authorized and authorization error if has one
-            let authorization_error: JSValue = if ssl_error.error_no == 0 {
+            let authorization_error: JSValue = if ssl_error.error_no == 0 || rejected_in_handshake {
                 // node:tls (DEFERS) builds its own identity error in JS.
                 if hostname_mismatch && !flags.contains(Flags::DEFERS_SERVER_IDENTITY) {
                     this.stored_verify_error_to_js(&global)
@@ -1969,6 +1966,44 @@ impl<const SSL: bool> NewSocket<SSL> {
             );
             f.set(Flags::REJECT_UNAUTHORIZED, reject_unauthorized);
         });
+    }
+
+    /// The name `on_handshake` requires the server's certificate to carry.
+    fn server_identity_hostname(&self) -> &[u8] {
+        match self.server_name.get() {
+            Some(server_name) if !server_name.is_empty() => &server_name[..],
+            _ => match self.connection.get() {
+                Some(super::listener::UnixOrHost::Host { host, .. }) if !host.is_empty() => {
+                    bun_core::ip_address::strip_ipv6_brackets(host)
+                }
+                _ => b"localhost",
+            },
+        }
+    }
+
+    /// A client that rejects a wrong name natively makes that check inside
+    /// the handshake too, before its certificate goes out. node:tls sockets
+    /// defer the verdict to their JS `checkServerIdentity`, which may accept a
+    /// name this matcher rejects. Runs again when `setServername` changes the
+    /// name before the handshake.
+    pub(crate) fn install_server_identity(&self, ssl_ptr: *mut boringssl_sys::SSL) {
+        let flags = self.flags.get();
+        if !SSL
+            || self.acts_as_tls_server()
+            || !flags.contains(Flags::REJECT_UNAUTHORIZED)
+            || flags.contains(Flags::DEFERS_SERVER_IDENTITY)
+        {
+            return;
+        }
+        let hostname = self.server_identity_hostname();
+        // SAFETY: `ssl_ptr` is this socket's live `SSL*`; C copies `hostname`.
+        unsafe {
+            tls_socket_functions::ffi::us_internal_ssl_set_server_identity(
+                ssl_ptr,
+                hostname.as_ptr().cast(),
+                hostname.len(),
+            )
+        };
     }
 
     /// Callers hold `on_handshake`'s ref guard, which outlives the

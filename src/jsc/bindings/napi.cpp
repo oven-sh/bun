@@ -17,6 +17,7 @@
 #include "napi_type_tag.h"
 
 #include "helpers.h"
+#include "ErrorCode.h"
 #include <JavaScriptCore/FrameTracers.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/JSObjectInlines.h>
@@ -1056,8 +1057,7 @@ static JSC::ErrorInstance* createErrorWithCode(JSC::VM& vm, JSC::JSGlobalObject*
     // return the right error code
     ASSERT(!message.isNull());
 
-    // we don't call JSC::createError() as it asserts the message is not an empty string ""
-    auto* error = JSC::ErrorInstance::create(vm, globalObject->errorStructure(type), message, JSValue(), nullptr, RuntimeType::TypeNothing, type);
+    auto* error = Bun::createErrorAllowingEmptyMessage(globalObject, type, message);
     if (!code.isNull()) {
         error->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), JSC::jsString(vm, code), 0);
     }

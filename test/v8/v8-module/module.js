@@ -185,6 +185,22 @@ module.exports = debugMode => {
       }
     },
 
+    test_v8_exception_empty_message() {
+      for (const e of nativeModule.test_v8_exception_empty_message()) {
+        console.log(e.constructor.name, "message =", JSON.stringify(e.message), "own =", Object.hasOwn(e, "message"));
+      }
+    },
+
+    test_v8_throw_error_empty_message() {
+      try {
+        nativeModule.test_v8_throw_error_empty_message();
+        console.log("did not throw");
+      } catch (e) {
+        const own = Object.hasOwn(e, "message");
+        console.log("caught", e.constructor.name, "message =", JSON.stringify(e.message), "own =", own);
+      }
+    },
+
     print_native_function() {
       nativeModule.print_values_from_js(nativeModule.create_function_with_data());
     },

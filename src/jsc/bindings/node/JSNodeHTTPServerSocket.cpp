@@ -320,28 +320,6 @@ bool JSNodeHTTPServerSocket::isRequestTimedOut(uint64_t headersTimeoutMs, uint64
     return isRequestTimedOutImpl<false>(socket, headersTimeoutMs, requestTimeoutMs);
 }
 
-template<bool SSL>
-static double msSinceLastReadImpl(us_socket_t* socket)
-{
-    uint64_t lastRead = reinterpret_cast<uWS::NodeHttpResponseData<SSL>*>(us_socket_ext(socket))->lastReadMs;
-    if (lastRead == 0) {
-        return std::numeric_limits<double>::infinity();
-    }
-    uint64_t now = uWS::nodeCompatMonotonicMs();
-    return now > lastRead ? static_cast<double>(now - lastRead) : 0;
-}
-
-double JSNodeHTTPServerSocket::msSinceLastRead()
-{
-    if (!socket || upgraded || us_socket_is_closed(socket)) {
-        return std::numeric_limits<double>::infinity();
-    }
-    if (is_ssl) {
-        return msSinceLastReadImpl<true>(socket);
-    }
-    return msSinceLastReadImpl<false>(socket);
-}
-
 bool JSNodeHTTPServerSocket::isAuthorized() const
 {
     // is secure means that tls was established successfully
@@ -817,6 +795,39 @@ void JSNodeHTTPServerSocket::onData(const char* data, int length, bool last)
                 callStoredCallback(globalObject, callbackObject, thisObject, args);
         });
     }
+}
+
+void JSNodeHTTPServerSocket::onActivity()
+{
+    if (!m_duplex) {
+        return;
+    }
+    auto* globalObject = defaultGlobalObject(this->globalObject());
+    WebCore::ScriptExecutionContext* scriptExecutionContext = globalObject->scriptExecutionContext();
+    if (!scriptExecutionContext) {
+        return;
+    }
+    JSC::Strong<JSNodeHTTPServerSocket> protectedSocket(globalObject->vm(), this);
+    scriptExecutionContext->postTask([protectedSocket = std::move(protectedSocket)](WebCore::ScriptExecutionContext& context) {
+        auto* globalObject = defaultGlobalObject(context.globalObject());
+        auto* thisObject = protectedSocket.get();
+        auto* duplex = thisObject->m_duplex.get();
+        if (!duplex || globalObject->scriptExecutionStatus(globalObject, thisObject) != ScriptExecutionStatus::Running) {
+            return;
+        }
+        auto& vm = globalObject->vm();
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        JSValue unrefTimer = duplex->get(globalObject, JSC::Identifier::fromString(vm, "_unrefTimer"_s));
+        if (auto* exception = scope.exception()) {
+            (void)scope.tryClearException();
+            globalObject->reportUncaughtExceptionAtEventLoop(globalObject, exception);
+            return;
+        }
+        if (unrefTimer.isCallable()) {
+            MarkedArgumentBuffer args;
+            callStoredCallback(globalObject, unrefTimer.getObject(), duplex, args);
+        }
+    });
 }
 
 JSC::Structure* JSNodeHTTPServerSocket::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)

@@ -1431,11 +1431,6 @@ function socketOnError(this: any, err) {
 }
 function noopOnError() {}
 
-// jest.useFakeTimers() and sinon mark setTimeout with `clock`. msSinceLastRead() measures on the real clock.
-function fakeTimersAreActive() {
-  return "clock" in setTimeout;
-}
-
 function onSocketTimeoutTimerExpired(socket) {
   // The keep-alive idle timer is left armed across the request to avoid a
   // clear + setTimeout cycle per request. A fire while a request is in
@@ -1457,25 +1452,14 @@ function onSocketTimeoutTimerExpired(socket) {
   const idleStart = socket[kKeepAliveIdleStart];
   if (idleStart !== undefined && socket[kKeepAliveTimeoutSet]) {
     socket[kKeepAliveIdleStart] = undefined;
-    const remaining = socket.timeout - (DateNow() - idleStart);
-    if (remaining > 0) {
-      const existingTimer = socket[kSocketTimeoutTimer];
-      if (existingTimer !== undefined) clearTimeout(existingTimer);
-      const timer = setTimeout(onSocketTimeoutTimerExpired, remaining, socket);
-      timer.unref();
-      socket[kSocketTimeoutTimer] = timer;
+    const idleFor = DateNow() - idleStart;
+    const timer = socket[kSocketTimeoutTimer];
+    if (idleFor < socket.timeout && timer !== undefined) {
+      // The timer keeps its full interval for the next refresh(). Moving _idleStart back moves only this deadline.
+      timer.refresh();
+      timer._idleStart -= idleFor;
       return;
     }
-  }
-  // Node.js refreshes this timer on every read, also on the reads that reach no JS callback here.
-  const { timeout } = socket;
-  const sinceLastRead = socket[kHandle]?.msSinceLastRead?.();
-  if (sinceLastRead < timeout && !fakeTimersAreActive()) {
-    socket.setTimeout(timeout);
-    // Moving _idleStart back makes the deadline that read plus the timeout.
-    const timer = socket[kSocketTimeoutTimer];
-    if (timer !== undefined) timer._idleStart -= sinceLastRead;
-    return;
   }
   // A fired keep-alive idle timer is dead; drop the reference so the next
   // response-finish re-arms via setTimeout instead of trusting a fired

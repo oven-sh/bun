@@ -259,9 +259,6 @@ struct HttpResponseData<SSL, true> : HttpResponseData<SSL, false> {
      * Mirrors last_message_start_/headers_completed_ in Node's http parser
      * ConnectionsList, which back server.headersTimeout/requestTimeout. */
     uint64_t lastMessageStartMs = 0;
-    /* When this connection last received bytes; 0 before the first read. The JS
-     * inactivity timer reads it on expiry: not every read reaches a JS callback. */
-    uint64_t lastReadMs = 0;
     /* Trailer fields set via response.addTrailers(), pre-rendered as
      * "name: value\r\n" lines. Written between the terminating 0 chunk and the
      * final CRLF of a chunked response (RFC 9112 7.1.2); non-empty also forces
@@ -277,6 +274,8 @@ struct HttpResponseData<SSL, true> : HttpResponseData<SSL, false> {
     bool headersCompleted = false;
     /* Timeout sweep already reported this message; reset when it completes. */
     bool requestTimeoutReported = false;
+    /* The current read dispatched a request or delivered body bytes, so JS saw it. */
+    bool readDelivered = false;
 };
 
 /* Readable name for the IsNodeHttp=true specialization (used by the node:http

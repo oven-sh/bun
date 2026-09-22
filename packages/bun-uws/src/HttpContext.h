@@ -322,12 +322,6 @@ private:
 
         HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext(s);
 
-        /* node:http compat: every read is activity for the inactivity timeout
-         * (see lastReadMs). The message timing below reuses this clock read. */
-        if constexpr (IsNodeHttp) {
-            ((HttpResponseData<SSL, true> *) httpResponseData)->lastReadMs = nodeCompatMonotonicMs();
-        }
-
         /* HTTP/2: a cleartext connection that opens with the prior-knowledge
          * preface (RFC 9113 §3.3) moves to the Http2Context before the
          * HTTP/1 parser ever sees "PRI * HTTP/2.0". Decided on the first
@@ -454,9 +448,10 @@ private:
             if constexpr (IsNodeHttp) {
                 auto *nodeHttpResponseData = (HttpResponseData<SSL, true> *) httpResponseData;
                 if (nodeHttpResponseData->lastMessageStartMs == 0) {
-                    nodeHttpResponseData->lastMessageStartMs = nodeHttpResponseData->lastReadMs;
+                    nodeHttpResponseData->lastMessageStartMs = nodeCompatMonotonicMs();
                 }
                 nodeHttpResponseData->headersCompleted = true;
+                nodeHttpResponseData->readDelivered = true;
             }
 
             /* Are we not ready for another request yet? Terminate the connection.
@@ -620,6 +615,9 @@ private:
             }
 
             if (httpResponseData->isConnectRequest && httpResponseData->socketData && httpContextData->onSocketData) {
+                if constexpr (IsNodeHttp) {
+                    ((HttpResponseData<SSL, true> *) httpResponseData)->readDelivered = true;
+                }
                 httpContextData->onSocketData(httpResponseData->socketData, SSL, (struct us_socket_t *) user, data.data(), data.length(), fin);
             }
 
@@ -629,6 +627,9 @@ private:
             }
             /* We always get an empty chunk even if there is no data */
             if (httpResponseData->inStream) {
+                if constexpr (IsNodeHttp) {
+                    ((HttpResponseData<SSL, true> *) httpResponseData)->readDelivered = true;
+                }
 
                 /* Todo: can this handle timeout for non-post as well? */
                 if (fin) {
@@ -719,8 +720,17 @@ private:
                 auto *nodeHttpResponseData = (HttpResponseData<SSL, true> *) httpResponseData;
                 if (trackNodeHttpTimings && nodeHttpResponseData->lastMessageStartMs == 0
                     && httpResponseData->hasBufferedPartialRequestHeaders()) {
-                    nodeHttpResponseData->lastMessageStartMs = nodeHttpResponseData->lastReadMs;
+                    nodeHttpResponseData->lastMessageStartMs = nodeCompatMonotonicMs();
                     nodeHttpResponseData->headersCompleted = false;
+                }
+
+                /* node:http compat: this read gave JS nothing (a partial head,
+                 * chunk framing, trailers, a body that nothing reads), so nothing
+                 * there refreshed the socket's inactivity timer. Node does that on
+                 * every read. */
+                if (!std::exchange(nodeHttpResponseData->readDelivered, false)
+                    && httpResponseData->socketData && httpContextData->onSocketActivity) {
+                    httpContextData->onSocketActivity(httpResponseData->socketData, SSL, s);
                 }
             }
 

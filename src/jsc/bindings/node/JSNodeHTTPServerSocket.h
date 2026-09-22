@@ -88,9 +88,6 @@ public:
      * (ms; 0 disables a check). Reports a given message at most once. */
     bool isRequestTimedOut(uint64_t headersTimeoutMs, uint64_t requestTimeoutMs);
 
-    /* Milliseconds since the last read. Infinity before the first read, and once closed or upgraded. */
-    double msSinceLastRead();
-
     /* node:http server compat - HTTP/1.1 pipelining. Responses for requests
      * that were parsed while an earlier response on this connection was still
      * in flight are queued here (in arrival order) and become the connection's
@@ -162,6 +159,8 @@ public:
     void onClose();
     void onDrain();
     void onData(const char* data, int length, bool last);
+    /* A read gave JS nothing: calls the duplex's _unrefTimer(), as Node does on every socket read. */
+    void onActivity();
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
     void finishCreation(JSC::VM& vm);

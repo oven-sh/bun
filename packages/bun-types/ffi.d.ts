@@ -536,7 +536,14 @@ declare module "bun:ffi" {
      *
      * Once called, the library is no longer usable.
      *
-     * Calling a function from a library that has been closed is undefined behavior.
+     * A symbol of a closed {@link cc} library throws a `TypeError` when called.
+     * Calling a symbol of a closed {@link dlopen} or {@link linkSymbols} library is undefined behavior.
+     *
+     * Do not call `close()` on a {@link cc} library while one of its symbols is running,
+     * for example from a {@link JSCallback} that the C code calls.
+     *
+     * If a symbol of a {@link cc} library takes a `napi_env`, `close()` keeps the compiled
+     * code in memory. A callback that the C code gave to Node-API can run later.
      */
     close(): void;
   }

@@ -24,7 +24,10 @@ const sockets: net.Socket[] = [];
 let peerTcp: net.Socket;
 
 function wrap(raw: net.Socket) {
-  if (transport === "queued") raw.write(Buffer.alloc(4 << 20, "x"));
+  if (transport === "queued") {
+    raw.cork();
+    raw.write("unflushed");
+  }
   const socket =
     side === "client"
       ? tls.connect({ socket: raw, rejectUnauthorized: false })

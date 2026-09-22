@@ -2060,6 +2060,9 @@ enum StreamState {
   // callback). Until then no 'error' listener can exist, so stream errors must not be emitted:
   // node never constructs the JS stream object before a complete header block arrives.
   Delivered = 1 << 8, // 100000000 = 256
+  // Set only while markStreamNativeClosed() marks the stream closed. The close channel publishes
+  // there, and node's state getter still reads the live stream inside nghttp2's close callback.
+  InNativeClose = 1 << 9, // 1000000000 = 512
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
 // h2_frame_parser.rs): the chunk was handed to the socket without queueing and the engine did
@@ -2226,12 +2229,14 @@ function markStreamClosed(stream: Http2Stream) {
     markWritableDone(stream);
   }
 }
-// The native side fully closed the stream (state 7). The bit is set after the close channel
-// publishes: a subscriber still reads the live stream.state there, as node does inside
-// nghttp2's close callback. After that the getter reports an idle stream.
+// The native side fully closed the stream (state 7).
 function markStreamNativeClosed(stream: Http2Stream) {
-  markStreamClosed(stream);
-  stream[bunHTTP2StreamStatus] |= StreamState.NativeClosed;
+  stream[bunHTTP2StreamStatus] |= StreamState.NativeClosed | StreamState.InNativeClose;
+  try {
+    markStreamClosed(stream);
+  } finally {
+    stream[bunHTTP2StreamStatus] &= ~StreamState.InNativeClose;
+  }
 }
 function rstNextTick(id: number, rstCode: number) {
   const session = this as Http2Session;
@@ -2512,7 +2517,8 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
       // it in the closed state until the next socket read, then drops its id. node never reports
       // the closed state: it reports an idle stream as soon as nghttp2 has dropped the stream.
       // https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L3161-L3167
-      if ((this[bunHTTP2StreamStatus] & StreamState.NativeClosed) === 0) {
+      const status = this[bunHTTP2StreamStatus];
+      if ((status & StreamState.NativeClosed) === 0 || (status & StreamState.InNativeClose) !== 0) {
         const native = session[bunHTTP2Native];
         if (!native) return {};
         const state = native.getStreamState(this.#id);

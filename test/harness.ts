@@ -656,8 +656,15 @@ export function fakeNodeRun(dir: string, file: string | string[], env?: Record<s
   };
 }
 
+/**
+ * A port for a listener that cannot use `port: 0`. It stays below the ranges
+ * the kernel assigns from (Linux 32768-60999, macOS and Windows 49152-65535).
+ * Inside them the number can be in use: Linux fails the bind with EADDRINUSE,
+ * and macOS lets a `127.0.0.1:<port>` listener share the number with another
+ * process's dual-stack `port: 0` server and take its 127.0.0.1 connections.
+ */
 export function randomPort(): number {
-  return 1024 + Math.floor(Math.random() * (65535 - 1024));
+  return 1024 + Math.floor(Math.random() * (32768 - 1024));
 }
 
 const binaryTypes = {

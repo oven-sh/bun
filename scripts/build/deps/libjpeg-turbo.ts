@@ -90,7 +90,15 @@ export const libjpegTurbo: Dependency = {
     commit: LIBJPEG_TURBO_COMMIT,
   }),
 
-  patches: ["patches/libjpeg-turbo/8bit-only.patch", "patches/libjpeg-turbo/jbun_stubs.c"],
+  patches: [
+    "patches/libjpeg-turbo/8bit-only.patch",
+    // tj3Decompress reads the JPEG header a second time, so the cropping
+    // region tj3SetCroppingRegion validated against the first header can
+    // end past the second header's height. The scanline loop then never
+    // finishes. Re-check the region after jpeg_start_decompress.
+    "patches/libjpeg-turbo/crop-height-recheck.patch",
+    "patches/libjpeg-turbo/jbun_stubs.c",
+  ],
 
   build: cfg => {
     const withSimd: [string, string] = ["#cmakedefine WITH_SIMD 1", "#define WITH_SIMD 1"];

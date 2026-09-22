@@ -1,17 +1,20 @@
 Report TJERR_FATAL when a fatal error follows a libjpeg warning.
 
-my_emit_message() sets jerr.warning on the first libjpeg warning and nothing
-clears it. So tj3GetErrorCode() returns TJERR_WARNING ("non-fatal and
-recoverable") also when the call hit a fatal error after the warning (a
-longjmp from my_error_exit(), or a THROW) and left the destination buffer
-unwritten. Example: a progressive JPEG with junk bytes and then an unsupported
-SOF5 marker before the second scan. tj3Decompress8() returns -1, reports
-TJERR_WARNING, and writes no rows.
+my_emit_message() sets jerr.warning on the first libjpeg warning. One fatal
+exit clears it again: my_progress_monitor() sets it to FALSE before its longjmp
+when a scan limit is exceeded. Every other fatal exit keeps it. So
+tj3GetErrorCode() returns TJERR_WARNING ("non-fatal and recoverable") also
+when the call hit a fatal error after the warning (a longjmp from
+my_error_exit(), or a THROW) and left the destination buffer unwritten.
+Example: a progressive JPEG with junk bytes and then an unsupported SOF5 marker
+before the second scan. tj3Decompress8() returns -1, reports TJERR_WARNING, and
+writes no rows.
 
 At the bailout label, retval is non-zero only after a fatal exit, so clear the
-flag there. TJERR_WARNING then means the call ran to completion:
-tj3DecompressHeader() parsed the whole header, tj3Decompress8() wrote every
-row. src/runtime/image/codec_jpeg.rs accepts a decode on that signal.
+flag there, as my_progress_monitor() does. TJERR_WARNING then means the call
+ran to completion: tj3DecompressHeader() parsed the whole header,
+tj3Decompress8() wrote every row. src/runtime/image/codec_jpeg.rs accepts a
+decode on that signal.
 
 Upstream has the same sticky flag at 3.2.0 and at main (b33c60b4, 2026-09-18).
 There is no upstream issue for it.

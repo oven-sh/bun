@@ -9289,7 +9289,7 @@ declare module "bun" {
      * - `ERR_IMAGE_DECODE_FAILED` / `ERR_IMAGE_ENCODE_FAILED` — codec error.
      *   A damaged JPEG that libjpeg-turbo decodes with only a warning (stray
      *   bytes, a missing end marker, truncated scan data) does not reject.
-     *   Blocks with no data come back mid-grey.
+     *   Blocks with no data come back flat grey.
      * - `ERR_IMAGE_UNKNOWN_FORMAT` — input bytes didn't match any sniffer.
      * - `ERR_INVALID_STATE` — the input ArrayBuffer was transferred between
      *   construction and the terminal call.

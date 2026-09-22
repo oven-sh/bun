@@ -632,29 +632,6 @@ describe.each(["baseline", "progressive"] as const)("%s JPEG that libjpeg decode
     }).toEqual({ bytes: cleanRgba.length, opaque: true, sameAsClean: false });
   });
 
-  // Where the fill shows up differs by kind: a baseline file loses whole MCU
-  // rows from the bottom, a progressive file loses refinement over all of it.
-  test("a detail of the fill", async () => {
-    if (kind === "baseline") {
-      // Half of the one scan's data. The rows before the cut are intact.
-      const rgba = await rgbaOf(clean.subarray(0, scanStart + Math.floor((scanEnd - scanStart) / 2)));
-      const kept = rowsIdenticalFromTop(rgba, cleanRgba, warnW);
-      expect({ kept: kept > 0 && kept < warnH, grey: countPixels(rgba, [128, 128, 128, 255]) > 0 }).toEqual({
-        kept: true,
-        grey: true,
-      });
-    } else {
-      // Every scan but the last, which is a refinement pass, so the error is small.
-      const rgba = await rgbaOf(clean.subarray(0, scanRanges(markers).at(-1)![0]));
-      let total = 0;
-      for (let i = 0; i < rgba.length; i++) total += Math.abs(rgba[i] - cleanRgba[i]);
-      expect({ opaque: everyAlphaOpaque(rgba), meanError: total / rgba.length < 4 }).toEqual({
-        opaque: true,
-        meanError: true,
-      });
-    }
-  });
-
   test("a cut anywhere in the first scan's data gives a fully written image", async () => {
     const partlyWritten: number[] = [];
     for (let cut = scanStart + 1; cut < scanEnd; cut += 13) {
@@ -689,6 +666,81 @@ describe.each(["baseline", "progressive"] as const)("%s JPEG that libjpeg decode
     badDqt[firstDqt + 3] -= 1;
     await expect(new Bun.Image(badDqt).metadata()).rejects.toMatchObject(decodeFailed);
     await expect(new Bun.Image(badDqt).png().bytes()).rejects.toMatchObject(decodeFailed);
+  });
+});
+
+describe("JPEG truncated inside its scan data", () => {
+  // A baseline file loses whole MCU rows from the bottom.
+  test("baseline: the rows above the cut are intact and the rest is libjpeg's grey", async () => {
+    const clean = warnJpegs.baseline;
+    const [[scanStart, scanEnd]] = scanRanges(jpegMarkers(clean));
+    const rgba = await rgbaOf(clean.subarray(0, scanStart + Math.floor((scanEnd - scanStart) / 2)));
+    const kept = rowsIdenticalFromTop(rgba, warnRgba.baseline, warnW);
+    expect({ kept: kept > 0 && kept < warnH, grey: countPixels(rgba, [128, 128, 128, 255]) > 0 }).toEqual({
+      kept: true,
+      grey: true,
+    });
+  });
+
+  // A progressive file has data for every block once its first scan is complete. The last
+  // scan is a refinement pass, so the picture without it is whole and the error is small.
+  test("progressive: without its last scan the whole picture decodes, with less detail", async () => {
+    const clean = warnJpegs.progressive;
+    const rgba = await rgbaOf(clean.subarray(0, scanRanges(jpegMarkers(clean)).at(-1)![0]));
+    let total = 0;
+    for (let i = 0; i < rgba.length; i++) total += Math.abs(rgba[i] - warnRgba.progressive[i]);
+    expect({ opaque: everyAlphaOpaque(rgba), meanError: total / rgba.length < 4 }).toEqual({
+      opaque: true,
+      meanError: true,
+    });
+  });
+});
+
+// Each of these warns and then hits a fatal error, which TurboJPEG reports as a warning
+// unless the fatal exit clears its warning flag. One test per function that clears it.
+describe("JPEG that warns and then fails", () => {
+  const decodeFailed = { code: "ERR_IMAGE_DECODE_FAILED" };
+
+  // tj3Decompress8, the way a real file gets there: a progressive download that stops inside
+  // the DHT or the SOS after the first scan. "Premature end of JPEG file", then "Bogus Huffman
+  // table definition" or "Invalid component ID 255 in SOS", before any row is written.
+  test("a progressive file cut inside the segments after its first scan rejects", async () => {
+    const clean = warnJpegs.progressive;
+    const markers = jpegMarkers(clean);
+    const firstSos = markers.findIndex(m => m.marker === 0xda);
+    const [dht, sos] = [markers[firstSos + 1], markers[firstSos + 2]];
+    expect([dht.marker, sos.marker]).toEqual([0xc4, 0xda]);
+    expect(await new Bun.Image(clean.subarray(0, dht.offset + 10)).metadata()).toMatchObject({ format: "jpeg" });
+    await expect(new Bun.Image(clean.subarray(0, dht.offset + 10)).png().bytes()).rejects.toMatchObject(decodeFailed);
+    await expect(new Bun.Image(clean.subarray(0, sos.offset + 5)).png().bytes()).rejects.toMatchObject(decodeFailed);
+  });
+
+  // tj3DecompressHeader. Its fatal exits through libjpeg leave the dimensions unset, which
+  // rejects on its own. "Could not determine colorspace of JPEG image" comes after they are
+  // set: a 2-component frame, built from the baseline fixture's SOF0 and SOS.
+  test("a header that warns and then fails the colorspace check rejects in metadata()", async () => {
+    const clean = warnJpegs.baseline;
+    const markers = jpegMarkers(clean);
+    const sof = markers.find(m => m.marker === 0xc0)!;
+    const sos = markers.find(m => m.marker === 0xda)!;
+    const sof2 = Buffer.from(clean.subarray(sof.offset, sof.offset + 10 + 2 * 3));
+    sof2[3] = 8 + 2 * 3; // segment length
+    sof2[9] = 2; // component count
+    const sos3 = clean.subarray(sos.offset, sos.end);
+    const sos2 = Buffer.concat([sos3.subarray(0, 5 + 2 * 2), sos3.subarray(5 + 3 * 2)]);
+    sos2[3] = 6 + 2 * 2;
+    sos2[4] = 2;
+    const twoComponents = Buffer.concat([
+      clean.subarray(0, sof.offset),
+      sof2,
+      clean.subarray(sof.end, sos.offset),
+      sos2,
+      clean.subarray(sos.end),
+    ]);
+    const firstDqt = markers.find(m => m.marker === 0xdb)!.offset;
+    const warned = insertBytes(twoComponents, firstDqt, new Array<number>(16).fill(0));
+    await expect(new Bun.Image(twoComponents).metadata()).rejects.toMatchObject(decodeFailed);
+    await expect(new Bun.Image(warned).metadata()).rejects.toMatchObject(decodeFailed);
   });
 });
 
@@ -748,7 +800,11 @@ describe("lossless JPEG", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const stderr = rawStderr
+      .split("\n")
+      .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+      .join("\n");
     expect(stderr).toBe("");
     expect(JSON.parse(stdout || "{}")).toEqual({ scaled: true, withHeaderWarning: true });
     expect(exitCode).toBe(0);

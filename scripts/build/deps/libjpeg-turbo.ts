@@ -90,9 +90,10 @@ export const libjpegTurbo: Dependency = {
     commit: LIBJPEG_TURBO_COMMIT,
   }),
 
-  // fatal-clears-warning.patch: tj3GetErrorCode() reports TJERR_WARNING only
-  // for a call that ran to completion. codec_jpeg.rs commits the decoded rows
-  // on that signal, so do not drop the patch without changing that file.
+  // fatal-clears-warning.patch: after tj3DecompressHeader() and tj3Decompress8(),
+  // tj3GetErrorCode() reports TJERR_WARNING only for a call that ran to
+  // completion. codec_jpeg.rs commits the decoded rows on that signal, so do
+  // not drop the patch without changing that file.
   patches: [
     "patches/libjpeg-turbo/8bit-only.patch",
     "patches/libjpeg-turbo/fatal-clears-warning.patch",

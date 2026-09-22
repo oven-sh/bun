@@ -271,7 +271,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketWrite, (JSC::JSGlobalObje
         return JSValue::encode(JSC::jsNumber(0));
     }
 
-    auto result = us_socket_buffered_js_write(thisObject->socket, thisObject->is_ssl, thisObject->ended, thisObject->hasUnsentResponseBytes(), &thisObject->streamBuffer, globalObject, JSValue::encode(callFrame->argument(0)), JSValue::encode(callFrame->argument(1)));
+    const bool hold = thisObject->hasUnsentResponseBytes();
+    auto result = us_socket_buffered_js_write(thisObject->socket, thisObject->is_ssl, thisObject->ended, hold, &thisObject->streamBuffer, globalObject, JSValue::encode(callFrame->argument(0)), JSValue::encode(callFrame->argument(1)));
+    // JS parks the write callback on false only when it has an ondrain (_write in _http_server.ts).
+    if (hold && thisObject->functionToCallOnDrain && JSValue::decode(result).isFalse()) {
+        thisObject->heldWriteAwaitsDrain = true;
+    }
     thisObject->updateTunnelIdle();
     return result;
 }

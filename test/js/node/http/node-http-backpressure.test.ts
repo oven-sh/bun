@@ -808,6 +808,40 @@ describe("backpressure", () => {
       }
     });
 
+    // These replies are raw socket.write() calls, which do not go through a response.
+    // While the server still holds the rest of the first response, they go out behind it.
+    it.each([
+      ["for a request without a Host header", "GET /second HTTP/1.1\r\n\r\n"],
+      ["from a 'clientError' listener", "BAD REQUEST LINE\r\n\r\n"],
+    ])("a 400 pipelined behind the unfinished response arrives after it: %s", async (_, second) => {
+      const handled = Promise.withResolvers<void>();
+      await using server = createServer(false, (req, res) => {
+        writeBody(res);
+        handled.resolve();
+      });
+      server.on("clientError", (err, socket) => socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n"));
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const { port } = server.address() as AddressInfo;
+      using client = pausedClient(port, "GET /first HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      await Promise.race([handled.promise, client.done]);
+      client.send(second);
+      // The server has read the second request by the time it has answered a whole exchange on another connection.
+      await ping(port);
+      client.resume();
+      const { bytes, ended } = await client.done;
+
+      const firstBody = bytes.indexOf("\r\n\r\n") + 4;
+      expect({
+        intact: bytes.subarray(firstBody, firstBody + BODY).equals(Buffer.alloc(BODY, "a")),
+        reply: bytes
+          .subarray(firstBody + BODY)
+          .toString("latin1")
+          .split("\r\n", 2)
+          .join("\r\n"),
+        ended,
+      }).toEqual({ intact: true, reply: "HTTP/1.1 400 Bad Request\r\nConnection: close", ended: true });
+    });
+
     // The second request's body reader is set up while the first response
     // still drains, and the rest of that body arrives after it. Completing
     // the first response must not take the reader away. The first request has

@@ -60,6 +60,8 @@ public:
     unsigned tunnelReadsQueuedFull : 1 = 0;
     /* onData() got the end of the stream. The task that tells JS can still be queued. */
     unsigned tunnelReadEnded : 1 = 0;
+    /* write() returned false for bytes that went into the uWS buffer, and JS waits for ondrain. streamBuffer does not show them. */
+    unsigned heldWriteAwaitsDrain : 1 = 0;
     /* Tunnel bytes that onData() queued for JS in tasks that have not run yet. */
     size_t queuedTunnelBytes = 0;
     const char* peerCertVerifyErrorCode = nullptr;
@@ -132,7 +134,7 @@ public:
     bool tunnelReadsPaused() const { return tunnelReadsStopped || tunnelReadsQueuedFull; }
     /* Tells uWS whether this tunnel is idle: at read EOF with nothing left to send. See HttpResponse::setNodeHttpTunnelIdle. */
     void updateTunnelIdle();
-    /* uWS still holds bytes of an HTTP response on this connection. A raw write has to wait behind them, or it reaches the wire first. */
+    /* uWS still holds bytes of an HTTP response on this connection. A raw write has to go through the same buffer, or it reaches the wire first. */
     bool hasUnsentResponseBytes() const;
     /* The WebSocket that adopted the connection reads from here on. */
     void releaseTunnelReadsForUpgrade();

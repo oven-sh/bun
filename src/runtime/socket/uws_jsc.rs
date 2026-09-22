@@ -124,6 +124,16 @@ pub(crate) fn any_web_socket_get_topics_as_js_array(
     uws_ws_get_topics_as_js_array(ssl, ws, global_object)
 }
 
+unsafe extern "C" {
+    /// JSNodeHTTPServerSocket.cpp. Writes through the uWS buffer of the connection and returns whether uWS still holds bytes.
+    fn Bun__NodeHTTPServerSocket__writeBehindResponse(
+        socket: *mut us_socket_t,
+        ssl: bool,
+        data: *const u8,
+        length: usize,
+    ) -> bool;
+}
+
 // ── us_socket_buffered_js_write (C-exported, called from JSNodeHTTPServerSocket.cpp) ──
 /// # Safety
 /// `socket` and `buffer` must be valid, non-null pointers for the duration of the call
@@ -131,10 +141,10 @@ pub(crate) fn any_web_socket_get_topics_as_js_array(
 #[unsafe(no_mangle)]
 unsafe extern "C" fn us_socket_buffered_js_write(
     socket: *mut us_socket_t,
-    // kept for ABI parity with the C++ caller; TLS is now per-socket
-    _ssl: bool,
+    ssl: bool,
     ended: bool,
-    // uWS still holds response bytes for this connection: queue behind them, do not write past them.
+    // uWS still holds response bytes for this connection: write through its buffer, which keeps the order of the calls.
+    // A shutdown is the caller's to defer then (`shutdownAfterResponseDrains`).
     hold: bool,
     buffer: *mut us_socket_stream_buffer_t,
     global_object: &JSGlobalObject,
@@ -204,10 +214,22 @@ unsafe extern "C" fn us_socket_buffered_js_write(
         // the top of this fn (raw `socket` is still kept for that reason).
         let socket_ref = us_socket_t::opaque_mut(socket);
         if hold {
-            if !data_slice.is_empty() {
-                stream_buffer.write(data_slice);
-            }
-            break 'body JSValue::FALSE;
+            // SAFETY: the caller guarantees `socket` is live for the call; the slice is valid for its length.
+            let write_behind_response = |bytes: &[u8]| unsafe {
+                Bun__NodeHTTPServerSocket__writeBehindResponse(
+                    socket,
+                    ssl,
+                    bytes.as_ptr(),
+                    bytes.len(),
+                )
+            };
+            // What an earlier write still owes goes first.
+            let owed = stream_buffer.slice().len();
+            write_behind_response(stream_buffer.slice());
+            let still_held = write_behind_response(data_slice);
+            stream_buffer.wrote(owed);
+            total_written = owed.saturating_add(data_slice.len());
+            break 'body JSValue::js_boolean(!still_held);
         }
         if stream_buffer.is_not_empty() {
             let to_flush = stream_buffer.slice();

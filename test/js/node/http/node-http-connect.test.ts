@@ -7,6 +7,7 @@ import https from "node:https";
 import type { AddressInfo } from "node:net";
 import net from "node:net";
 import { join } from "node:path";
+import type { Duplex } from "node:stream";
 import { Writable } from "node:stream";
 import tls from "node:tls";
 import { WebSocketServer } from "ws";
@@ -1912,13 +1913,14 @@ test("a half-open tunnel with bytes left to send keeps the process alive until t
 });
 
 // The handed-off socket writes straight to the kernel. While uWS still holds
-// bytes of the response before the CONNECT, such a write must wait behind them.
-test.each(["http", "https"])(
-  "%s: the bytes of a CONNECT tunnel pipelined behind a response that still drains arrive after that response",
-  async proto => {
-    // More than a loopback socket takes in one write.
-    const size = 64 * 1024 * 1024;
-    const reply = "HTTP/1.1 200 Connection Established\r\n\r\n";
+// bytes of the response before the CONNECT, such a write must go out behind them.
+describe("a CONNECT tunnel pipelined behind a response that still drains", () => {
+  // More than a loopback socket takes in one write.
+  const size = 64 * 1024 * 1024;
+  const reply = "HTTP/1.1 200 Connection Established\r\n\r\n";
+
+  // Runs `onConnect` on the handed-off socket. Then the client reads the connection until it closes.
+  async function readTunnel(proto: string, onConnect: (socket: Duplex) => void) {
     const listener = (req: http.IncomingMessage, res: http.ServerResponse) => {
       if (req.url === "/big") res.end(Buffer.alloc(size, "a"));
       else res.end("pong");
@@ -1929,8 +1931,7 @@ test.each(["http", "https"])(
         : http.createServer(listener);
     const handedOff = Promise.withResolvers<void>();
     server.on("connect", (req, socket) => {
-      socket.write(reply);
-      socket.end("tunnel bytes");
+      onConnect(socket);
       handedOff.resolve();
     });
     await once(server.listen(0, "127.0.0.1"), "listening");
@@ -1964,14 +1965,37 @@ test.each(["http", "https"])(
       await closed;
       const wire = Buffer.concat(chunks);
       const bodyStart = wire.indexOf("\r\n\r\n") + 4;
-      expect({ replyAt: wire.indexOf(reply), tail: wire.subarray(-"tunnel bytes".length).toString() }).toEqual({
-        replyAt: bodyStart + size,
-        tail: "tunnel bytes",
-      });
+      return {
+        bodyBeforeReply: wire.indexOf(reply) - bodyStart,
+        tail: wire.subarray(-"tunnel bytes".length).toString(),
+      };
     } finally {
       client.destroy();
       server.closeAllConnections();
       server.close();
     }
-  },
-);
+  }
+
+  test.each(["http", "https"])("%s: its bytes arrive after that response", async proto => {
+    const received = await readTunnel(proto, socket => {
+      socket.write(reply);
+      socket.end("tunnel bytes");
+    });
+    expect(received).toEqual({ bodyBeforeReply: size, tail: "tunnel bytes" });
+  });
+
+  // A zero-length write puts no bytes on the wire. Its callback still has to run, or the writes after it never start.
+  test("a zero-length write does not hold back the writes after it", async () => {
+    const callbacks: string[] = [];
+    const received = await readTunnel("http", socket => {
+      socket.write("", () => callbacks.push("empty"));
+      socket.write(reply, () => callbacks.push("reply"));
+      socket.end("tunnel bytes", () => callbacks.push("end"));
+    });
+    expect({ ...received, callbacks }).toEqual({
+      bodyBeforeReply: size,
+      tail: "tunnel bytes",
+      callbacks: ["empty", "reply", "end"],
+    });
+  });
+});

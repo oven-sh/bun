@@ -888,6 +888,26 @@ bool JSNodeHTTPServerSocket::hasUnsentResponseBytes() const
     return reinterpret_cast<uWS::AsyncSocket<false>*>(socket)->getBufferedAmount() > 0;
 }
 
+template<bool SSL>
+static bool writeBehindResponse(us_socket_t* socket, const char* data, size_t length)
+{
+    auto* asyncSocket = reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket);
+    while (length > 0) {
+        const int chunk = static_cast<int>(std::min(length, static_cast<size_t>(INT_MAX)));
+        asyncSocket->write(data, chunk);
+        data += chunk;
+        length -= chunk;
+    }
+    return asyncSocket->getBufferedAmount() > 0;
+}
+
+/* The raw bytes of a socket.write() go through the buffer in which uWS still holds response bytes, as a 1xx line does
+ * (HttpResponse::writeRawInformational). Returns whether uWS still holds bytes. */
+extern "C" bool Bun__NodeHTTPServerSocket__writeBehindResponse(us_socket_t* socket, bool is_ssl, const char* data, size_t length)
+{
+    return is_ssl ? writeBehindResponse<true>(socket, data, length) : writeBehindResponse<false>(socket, data, length);
+}
+
 void JSNodeHTTPServerSocket::updateTunnelIdle()
 {
     if (!tunnelReadEnded || upgraded || isClosed()) {
@@ -910,11 +930,13 @@ void JSNodeHTTPServerSocket::onDrain()
     }
 
     // A read pause or resume arms the writable event too: nothing was buffered, so nothing drained.
-    if (this->streamBuffer.bufferedSize() == 0) {
+    if (this->streamBuffer.bufferedSize() == 0 && !heldWriteAwaitsDrain) {
         updateTunnelIdle();
         return;
     }
-    {
+    // uWS calls this with its own buffer empty, so the write it held has left.
+    heldWriteAwaitsDrain = false;
+    if (this->streamBuffer.bufferedSize() > 0) {
         auto* globalObject = defaultGlobalObject(this->globalObject());
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
         us_socket_buffered_js_write(this->socket, this->is_ssl, this->ended, this->hasUnsentResponseBytes(), &this->streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
@@ -929,8 +951,8 @@ void JSNodeHTTPServerSocket::onDrain()
             // need to drain more
             return;
         }
-        updateTunnelIdle();
     }
+    updateTunnelIdle();
     WebCore::ScriptExecutionContext* scriptExecutionContext = globalObject->scriptExecutionContext();
 
     if (scriptExecutionContext) {

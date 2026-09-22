@@ -41,6 +41,10 @@ using namespace JSC;
 // shared module executables on.
 
 static Identifier moduleGraphSlotName(VM& vm) { return WebCore::builtinNames(vm).moduleGraphPrivateName(); }
+// The engine's name for the same thing: the script execution owner of the code made in this scope. A function of
+// the graph's checks itself against it when it is called, and the engine enters the graph's context for a call
+// from outside it (op_jcurrent_script_execution_owner).
+static Identifier scriptExecutionOwnerSlotName(VM& vm) { return vm.propertyNames->builtinNames().scriptExecutionOwnerPrivateName(); }
 static Identifier moduleLoaderSlotName(VM& vm) { return vm.propertyNames->builtinNames().moduleLoaderPrivateName(); }
 
 // The graph whose overlay `scope` is, or null.
@@ -82,6 +86,7 @@ static SymbolTable* overlaySymbolTable(Zig::GlobalObject* globalObject, const Ve
         add(name);
     add(moduleLoaderSlotName(vm));
     add(moduleGraphSlotName(vm));
+    add(scriptExecutionOwnerSlotName(vm));
     symbolTables.set(key, symbolTable);
     return symbolTable;
 }
@@ -424,6 +429,7 @@ void JSModuleGraph::finishCreation(VM& vm, JSGlobalObject* globalObject)
     ASSERT(inherits(info()));
     m_requireMap.set(vm, this, JSMap::create(vm, globalObject->mapStructure()));
     setOverlaySlot(vm, overlay(), moduleGraphSlotName(vm), this);
+    setOverlaySlot(vm, overlay(), scriptExecutionOwnerSlotName(vm), this);
     m_context->setModuleGraph(this);
     // The graph's context travels with the async context: the top-level code of the graph's
     // modules runs in it however their evaluation is reached, and run() enters it.

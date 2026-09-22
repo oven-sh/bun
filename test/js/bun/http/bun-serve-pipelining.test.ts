@@ -202,24 +202,31 @@ const summarize = ({ statusLine, body }: RawResponse) => ({ statusLine, body });
 const plainResponse = (req: Request) => new Response(`body of ${new URL(req.url).pathname}`);
 
 // A node:net or node:tls client, for the tests that look at how the stream ends:
-// with the server's FIN (`ended`) or with an error such as ECONNRESET.
-async function connectNodeSocket(transport: Transport, server: Bun.Server<undefined>, dir: string) {
+// with the server's FIN (`ended`) or with an error such as ECONNRESET. With
+// `allowHalfOpen` the client does not answer the server's FIN with its own, so
+// a lingering close stays open until the test ends the socket.
+async function connectNodeSocket(
+  transport: Transport,
+  server: Bun.Server<undefined>,
+  dir: string,
+  options: { allowHalfOpen?: boolean } = {},
+) {
   const socket =
     transport.name === "tls"
-      ? tlsConnect({ port: server.port!, host: "127.0.0.1", ca: tls.cert, rejectUnauthorized: false })
+      ? tlsConnect({ port: server.port!, host: "127.0.0.1", ca: tls.cert, rejectUnauthorized: false, ...options })
       : transport.name === "unix"
-        ? netConnect({ path: join(dir, "pipeline.sock") })
-        : netConnect({ port: server.port!, host: "127.0.0.1" });
+        ? netConnect({ path: join(dir, "pipeline.sock"), ...options })
+        : netConnect({ port: server.port!, host: "127.0.0.1", ...options });
   const reader = new ResponseReader();
   const seen: { ended: boolean; error?: string } = { ended: false };
   socket.on("data", chunk => reader.push(chunk));
-  socket.on("end", () => (seen.ended = true));
+  const ended = new Promise<void>(resolve => socket.on("end", () => ((seen.ended = true), resolve())));
   socket.on("error", (error: NodeJS.ErrnoException) => (seen.error = error.code));
   const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
   await once(socket, transport.name === "tls" ? "secureConnect" : "connect");
   // Resolves once the kernel has the bytes.
   const write = (data: string) => new Promise<void>(resolve => socket.write(data, () => resolve()));
-  return { socket, reader, seen, closed, write };
+  return { socket, reader, seen, ended, closed, write };
 }
 
 // A round trip on a separate connection. Anything the pipelining client wrote
@@ -995,6 +1002,89 @@ it("a close lingers while the client still sends what it queued behind the parke
   expect(await (await fetch(`${origin}/hits`)).json()).toEqual(
     Array.from({ length: 3 }, () => ["/slow", "/held"]).flat(),
   );
+});
+
+// A request body that fails to parse closes the connection behind a 400. The
+// request came out of the park here, so its handler is still running and the
+// client wrote more meanwhile. That close must not linger: a lingering close
+// keeps the socket open, and the handler does not see the abort until it ends.
+// The client keeps its side open, so only the server can end the connection.
+it("a held request whose body fails to parse is aborted at once when the client wrote more meanwhile", async () => {
+  const handler = holdingHandler();
+  const aborted: string[] = [];
+  using server = Bun.serve({
+    ...tcp,
+    fetch(req) {
+      const path = new URL(req.url).pathname;
+      if (path === "/aborted") return Response.json(aborted);
+      req.signal.addEventListener("abort", () => aborted.push(path));
+      return handler.fetch(req);
+    },
+  });
+  const client = await connectNodeSocket(tcpOnly, server, "", { allowHalfOpen: true });
+
+  await client.write(request("/hold"));
+  await handler.entered("/hold");
+  // Held behind /hold. "Z" is not a chunk size.
+  await client.write("POST /hold-body HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\nZ\r\n");
+  await probe(tcpOnly, server, "");
+  // Stays unread: the server does not read while a request is held.
+  await client.write(request("/never"));
+  await probe(tcpOnly, server, "");
+
+  handler.release("/hold");
+  // The server's FIN, or the close when a reset gets ahead of it.
+  await Promise.race([client.ended, client.closed]);
+  expect({
+    aborted: await (await fetch(`${server.url}aborted`)).json(),
+    hits: handler.hits,
+  }).toEqual({
+    aborted: ["/hold-body"],
+    hits: ["/hold", "/probe", "/probe", "/hold-body"],
+  });
+  handler.release("/hold-body");
+  client.socket.destroy();
+});
+
+// closeIdleConnections() and a graceful stop() close the connections that are
+// idle. A lingering close is not idle: it stays open so that the close does not
+// land on what the client still sends. The request that closes the connection
+// comes out of the park here, the case where the connection counted as idle. A
+// sweep that closes the socket makes the client's next write fail.
+it.if(isPosix)("closeIdleConnections() leaves a lingering close to end by itself", async () => {
+  using dir = tempDir("serve-pipelining", {});
+  const unix = transports.find(transport => transport.name === "unix")!;
+  const socketPath = join(String(dir), "pipeline.sock");
+  const handler = holdingHandler();
+  using server = Bun.serve({
+    ...unix.listen(String(dir)),
+    fetch(req, server) {
+      if (new URL(req.url).pathname !== "/sweep") return handler.fetch(req);
+      server.closeIdleConnections();
+      return new Response("swept");
+    },
+  });
+  const client = await connectNodeSocket(unix, server, String(dir), { allowHalfOpen: true });
+
+  await client.write(request("/hold"));
+  await handler.entered("/hold");
+  // /closing is held. /never stays unread, so the close behind /closing lingers.
+  await client.write(request("/closing", "Connection: close\r\n"));
+  await probe(unix, server, String(dir));
+  await client.write(request("/never"));
+
+  handler.release("/hold");
+  await client.ended;
+  expect(await (await fetch("http://localhost/sweep", { unix: socketPath })).text()).toBe("swept");
+  // The server still reads, and it closes on the client's FIN.
+  await client.write(request("/late"));
+  client.socket.end();
+  await client.closed;
+  expect({ hits: handler.hits, seen: client.seen, responses: client.reader.responses.map(summarize) }).toEqual({
+    hits: ["/hold", "/probe", "/closing"],
+    seen: { ended: true },
+    responses: [ok("body of /hold"), ok("body of /closing")],
+  });
 });
 
 // A graceful stop() closes idle connections and marks busy ones to close once

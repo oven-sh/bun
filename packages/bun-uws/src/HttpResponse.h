@@ -111,13 +111,17 @@ public:
             return;
         }
         bool readsWerePaused = !httpResponseData->parkedRequestBytes.isEmpty() || httpResponseData->replayedRequestBytes;
-        if (readsWerePaused && !HttpContext<SSL>::fromSocket((us_socket_t *) this)->isNodeHttp()
+        /* A parse error closes with a response still pending: closing now aborts its handler. */
+        bool responsePending = httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
+        if (readsWerePaused && !responsePending && !HttpContext<SSL>::fromSocket((us_socket_t *) this)->isNodeHttp()
             && us_socket_queued_input((us_socket_t *) this) == LIBUS_QUEUED_INPUT_DATA) [[unlikely]] {
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_LINGERING_CLOSE;
             httpResponseData->received_bytes_per_timeout = 0;
             /* The teardown of the response still calls resetTimeout(), also with
              * idleTimeout: 0. It has to arm this bound again, not remove it. */
             httpResponseData->idleTimeout = LINGERING_CLOSE_SECONDS;
+            /* markDone() in a replay sees no parked bytes and sets isIdle: keep closeIdle() off this socket. */
+            httpResponseData->isIdle = false;
             /* Can close the socket, which destructs httpResponseData. */
             Super::resume();
             if (!us_socket_is_closed((us_socket_t *) this)) {

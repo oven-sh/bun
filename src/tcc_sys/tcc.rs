@@ -25,25 +25,54 @@ pub type ErrorFunc<Ctx> = unsafe extern "C" fn(ctx: *mut Ctx, msg: *const c_char
 //
 // Keep this predicate in sync with `cfg.tinycc` in `scripts/build/config.ts`
 // and `ENABLE_TINYCC` in `scripts/build/buildOptionsRs.ts`.
+//
+// Each declared function is reachable only through a same-named wrapper that
+// holds `LIBTCC_LOCK` for the call, so no libtcc entry point can skip the lock.
 macro_rules! tcc_externs {
     ($($(#[$attr:meta])* fn $name:ident($($arg:ident: $ty:ty),* $(,)?) $(-> $ret:ty)?;)*) => {
-        #[cfg(not(any(target_os = "android", target_os = "freebsd")))]
-        unsafe extern "C" {
-            $($(#[$attr])* fn $name($($arg: $ty),*) $(-> $ret)?;)*
+        mod raw {
+            use super::*;
+
+            #[cfg(not(any(target_os = "android", target_os = "freebsd")))]
+            unsafe extern "C" {
+                $($(#[$attr])* pub(super) fn $name($($arg: $ty),*) $(-> $ret)?;)*
+            }
+            $(
+                #[cfg(any(target_os = "android", target_os = "freebsd"))]
+                #[allow(unused_variables, clippy::missing_safety_doc)]
+                pub(super) unsafe extern "C" fn $name($($arg: $ty),*) $(-> $ret)? {
+                    unreachable!(concat!(
+                        stringify!($name),
+                        " called but TinyCC is disabled on this target — keep the ",
+                        "ENABLE_TINYCC early-returns in bun_runtime::ffi in sync with this stub"
+                    ));
+                }
+            )*
         }
         $(
-            #[cfg(any(target_os = "android", target_os = "freebsd"))]
-            #[allow(unused_variables, clippy::missing_safety_doc)]
-            unsafe extern "C" fn $name($($arg: $ty),*) $(-> $ret)? {
-                unreachable!(concat!(
-                    stringify!($name),
-                    " called but TinyCC is disabled on this target — keep the ",
-                    "ENABLE_TINYCC early-returns in bun_runtime::ffi in sync with this stub"
-                ));
+            unsafe fn $name($($arg: $ty),*) $(-> $ret)? {
+                let _lock = LIBTCC_LOCK.lock();
+                // SAFETY: same contract as the libtcc function; the caller upholds it.
+                unsafe { raw::$name($($arg),*) }
             }
         )*
     };
 }
+
+/// Serializes every libtcc call in the process; each Worker can call `cc()`.
+///
+/// TinyCC keeps its parser, its code generator and its list of relocated
+/// states in process globals and guards them with its own semaphores. Outside
+/// Windows it creates each semaphore on first use with an unsynchronized check
+/// (`wait_sem` in tcc.h). Two threads whose first compile overlaps both call
+/// `sem_init`, the second call resets the count, and both run inside
+/// `tcc_compile` at once. Other globals have no guard at all (`file` in
+/// `tcc_split_path`, the SDK root cache in tccmacho.c), so the lock covers
+/// every call and not only the compiles.
+///
+/// TinyCC calls the error callback with this lock held, so the callback must
+/// not call into libtcc.
+static LIBTCC_LOCK: bun_core::Mutex<()> = bun_core::Mutex::new(());
 
 tcc_externs! {
     fn tcc_new() -> *mut TCCState;

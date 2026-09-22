@@ -10,7 +10,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "fs";
-import { bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 
 // TODO: we need to install build-essential and Apple SDK in CI.
@@ -1187,6 +1187,88 @@ describe.skipIf(isASAN)("compiler runtime header directory under BUN_TMPDIR", ()
     expect(readFileSync(path.join(fixedDir, "stdbool.h"), "utf8")).toBe(plantedHeader);
     expect(stdout).toBe("3\n");
     expect(exitCode).toBe(0);
+  });
+});
+
+// TinyCC creates the semaphore around its global parser state on first use,
+// without synchronization, so cc() has to serialize its TinyCC calls itself.
+// If it does not, Workers that make their first cc() call together each create
+// the semaphore and then compile at the same time. A process has one first
+// use, so every attempt is a new process.
+describe("cc() called for the first time by several Workers at once", () => {
+  const workers = 8;
+  const files: Record<string, string> = {
+    "fixture.mjs": /* js */ `
+      import { cc } from "bun:ffi";
+      import { join } from "node:path";
+      import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
+
+      const workers = ${workers};
+      if (isMainThread) {
+        // gate[0]: set when every Worker is up. gate[1]: Workers that woke up.
+        const gate = new Int32Array(new SharedArrayBuffer(8));
+        const results = [];
+        let ready = 0;
+        let exited = 0;
+        for (let index = 0; index < workers; index++) {
+          const worker = new Worker(import.meta.filename, { workerData: { gate, index } });
+          worker.on("message", message => {
+            if (message !== "ready") results[index] = message;
+            else if (++ready === workers) {
+              Atomics.store(gate, 0, 1);
+              Atomics.notify(gate, 0);
+            }
+          });
+          worker.on("exit", () => {
+            if (++exited === workers) console.log(JSON.stringify(results));
+          });
+        }
+      } else {
+        const { gate, index } = workerData;
+        const name = "add" + index;
+        const options = {
+          source: join(import.meta.dirname, name + ".c"),
+          symbols: { [name]: { args: ["int", "int"], returns: "int" } },
+        };
+        parentPort.postMessage("ready");
+        Atomics.wait(gate, 0, 0);
+        // The wake-ups arrive microseconds apart. Spin until the last one, so
+        // that every Worker enters its first cc() call together.
+        Atomics.add(gate, 1, 1);
+        while (Atomics.load(gate, 1) < workers);
+        const sums = [];
+        for (let i = 0; i < 2; i++) {
+          const lib = cc(options);
+          sums.push(lib.symbols[name](i, 100));
+          lib.close();
+        }
+        parentPort.postMessage(sums);
+      }
+    `,
+  };
+  for (let index = 0; index < workers; index++) {
+    files[`add${index}.c`] = `int add${index}(int a, int b) { return a + b + ${index}; }\n`;
+  }
+  const expected = JSON.stringify(Array.from({ length: workers }, (_, index) => [100 + index, 101 + index]));
+
+  it("compiles every source correctly", async () => {
+    using dir = tempDir("bun-ffi-cc-workers", files);
+    // One attempt takes seconds on a debug or ASAN build and rarely lines the
+    // Workers up closely enough there. TinyCC's Windows semaphore never had
+    // the race. The other release builds carry the detection.
+    const attempts = isDebug || isASAN || isWindows ? 1 : 10;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout.trim()).toBe(expected);
+      expect(exitCode).toBe(0);
+    }
   });
 });
 

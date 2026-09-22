@@ -426,9 +426,7 @@ fn open_dir_a(dir: Fd, subpath: &[u8]) -> crate::Result<Dir> {
         .map_err(Into::into)
 }
 
-/// The link text of the symlink `dir/name` (at `path` inside the package), or
-/// `None` when the target is absolute or climbs above the package. The rule is
-/// the one the tarball extractor applies.
+/// The link text of `dir/name`, or `None` when the target leaves the package.
 #[cfg(not(windows))]
 pub(crate) fn symlink_target_in_package<'a>(
     dir: Fd,
@@ -447,8 +445,7 @@ pub(crate) fn is_symlink_in_package(dir: Fd, name: &ZStr, path: &ZStr) -> bool {
     symlink_target_in_package(dir, name, path, &mut buf).is_some()
 }
 
-/// Recreate the symlink `src_dir/src_name` at `dest_dir/dest_path`. A symlink
-/// whose target leaves the package is left out.
+/// Recreate the symlink `src_dir/src_name` at `dest_dir/dest_path`.
 #[cfg(not(windows))]
 pub(crate) fn copy_symlink(
     src_dir: Fd,

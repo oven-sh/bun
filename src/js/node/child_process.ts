@@ -1,5 +1,4 @@
 // Hardcoded module "node:child_process"
-import type Dequeue from "internal/fifo";
 const EventEmitter = require("node:events");
 const { kHandle } = require("internal/shared");
 const {
@@ -685,6 +684,7 @@ function spawnSync(file, args, options?): SpawnSyncResult {
 }
 const etimedoutErrorCode = $newRustFunction("node_util_binding.rs", "etimedoutErrorCode", 0);
 const enobufsErrorCode = $newRustFunction("node_util_binding.rs", "enobufsErrorCode", 0);
+const setSubprocessReading = $newRustFunction("ipc.rs", "setSubprocessReading", 2);
 
 /**
  * Spawns a file as a shell synchronously.
@@ -1145,8 +1145,6 @@ class ChildProcess extends EventEmitter {
   #handle;
   #closesNeeded = 1;
   #closesGot = 0;
-  // node's kPendingMessages. null when there is no open IPC channel.
-  #pendingMessages: Dequeue<[message: unknown, handle: unknown]> | null = null;
 
   declare send?: (message, handle?, options?, callback?) => boolean;
   declare disconnect?: () => void;
@@ -1515,9 +1513,9 @@ class ChildProcess extends EventEmitter {
         this.send = this.#send;
         this.disconnect = this.#disconnect;
         this.channel = new Control();
-        this.#pendingMessages = new (require("internal/fifo"))();
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L726-L742
-        this.on("newListener", () => this.#flushPendingMessagesOnNextTick());
+        // With no listener the channel is not read, so a 'message' waits in the kernel buffer and is not emitted to nobody.
+        setSubprocessReading(this.#handle, false);
+        this.#followIpcListeners();
         Object.defineProperty(this, "_channel", {
           get() {
             return this.channel;
@@ -1569,39 +1567,33 @@ class ChildProcess extends EventEmitter {
     }
   }
 
-  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L954-L964
   #emitIpcMessage(message, _, handle) {
-    if (isInternalIpcMessage(message)) {
-      this.emit("internalMessage", message, handle);
-      return;
-    }
-    const pending = this.#pendingMessages;
-    if (pending?.isNotEmpty()) {
-      // The tick that emits the held messages may not have run yet, and they go first.
-      pending.push([message, handle]);
-      this.#flushPendingMessages();
-    } else if (this.listenerCount("message") > 0) {
-      this.emit("message", message, handle);
-    } else {
-      pending?.push([message, handle]);
-    }
+    this.emit(isInternalIpcMessage(message) ? "internalMessage" : "message", message, handle);
   }
 
-  #flushPendingMessages() {
-    try {
-      // node emits the rest to nobody once a once() listener has removed itself. Here the rest stays held.
-      let entry: [message: unknown, handle: unknown] | undefined;
-      while (this.listenerCount("message") > 0 && (entry = this.#pendingMessages?.shift())) {
-        this.emit("message", entry[0], entry[1]);
-      }
-    } finally {
-      // Both a listener and a held message are left only when a listener threw.
-      if (this.listenerCount("message") > 0) this.#flushPendingMessagesOnNextTick();
-    }
+  #followIpcListeners() {
+    this.on("newListener", this.#onNewIpcListener);
+    this.on("removeListener", this.#updateIpcReading);
   }
 
-  #flushPendingMessagesOnNextTick() {
-    if (this.#pendingMessages?.isNotEmpty()) process.nextTick(() => this.#flushPendingMessages());
+  #onNewIpcListener(name) {
+    // On the next tick, like node's flush of kPendingMessages, so each listener added in this tick gets the first message.
+    if (isIpcEvent(name)) process.nextTick(() => this.#updateIpcReading(name));
+  }
+
+  #updateIpcReading(name) {
+    const handle = this.#handle;
+    if (!handle || !isIpcEvent(name)) return;
+    const listeners =
+      this.listenerCount("message") + this.listenerCount("internalMessage") + this.listenerCount("disconnect");
+    setSubprocessReading(handle, listeners > 0);
+  }
+
+  removeAllListeners(name?) {
+    super.removeAllListeners.$apply(this, arguments);
+    // That also removed the two listeners of #followIpcListeners.
+    if (arguments.length === 0 && this.channel) this.#followIpcListeners();
+    return this;
   }
 
   #send(message, handle, options, callback) {
@@ -1645,8 +1637,6 @@ class ChildProcess extends EventEmitter {
       return;
     }
     $assert(!this.connected);
-    // node drops the held messages with the channel.
-    this.#pendingMessages = null;
     process.nextTick(() => this.emit("disconnect"));
     process.nextTick(() => this.#maybeClose());
   }
@@ -1657,7 +1647,6 @@ class ChildProcess extends EventEmitter {
     }
     this.#handle.disconnect();
     this.channel = null;
-    this.#pendingMessages = null;
   }
 
   kill(sig?) {
@@ -1778,6 +1767,11 @@ const nodeToBunLookup = {
   inherit: "inherit",
   ipc: "ipc",
 };
+
+// All three arrive by a read of the channel. 'disconnect' is the read that sees the close.
+function isIpcEvent(name) {
+  return name === "message" || name === "internalMessage" || name === "disconnect";
+}
 
 const INTERNAL_IPC_PREFIX = "NODE_";
 

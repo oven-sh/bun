@@ -5,7 +5,6 @@
 #include "BunBuiltinNames.h"
 #include "BunClientData.h"
 #include "JSEventEmitter.h"
-#include <wtf/Deque.h>
 
 namespace Zig {
 class GlobalObject;
@@ -37,13 +36,6 @@ class Process : public WebCore::JSEventEmitter {
     WriteBarrier<Unknown> m_execArgv;
     // The JS warning printer (ProcessObjectInternals createOnWarning), built on the first warning.
     WriteBarrier<JSObject> m_onWarning;
-
-    // node's kPendingMessages. Mutated and visited under cellLock().
-    struct PendingIPCMessage {
-        WriteBarrier<Unknown> message;
-        WriteBarrier<Unknown> handle;
-    };
-    WTF::Deque<PendingIPCMessage> m_pendingIPCMessages;
 
     void installDefaultWarningListener(JSC::VM&);
 
@@ -89,11 +81,6 @@ public:
     // Some Node.js events want to be emitted on the next tick rather than synchronously.
     // This is equivalent to `process.nextTick(() => process.emit(eventName, event))` from JavaScript.
     void emitOnNextTick(Zig::GlobalObject* globalObject, ASCIILiteral eventName, JSValue event);
-
-    void emitOrHoldIPCMessage(Zig::GlobalObject*, JSValue message, JSValue handle);
-    void flushPendingIPCMessages(Zig::GlobalObject*);
-    void flushPendingIPCMessagesOnNextTick(Zig::GlobalObject*);
-    void clearPendingIPCMessages();
 
     JSObject* ensureOnWarning(Zig::GlobalObject*);
 

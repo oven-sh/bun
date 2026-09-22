@@ -501,7 +501,7 @@ toArrayBuffer(
 );
 ```
 
-The callback can also be the `ptr` of a `JSCallback`. JavaScript cannot run during a garbage collection, so Bun queues the call and runs the function later, on the JavaScript thread that created the `JSCallback`. That is also the case when the buffer was transferred to a `Worker` and freed there. The same applies when a C callback calls a `JSCallback` from inside the collection: the C caller gets `0` back, as it does from a thread-safe callback. Keep the `JSCallback` open until the last call arrives.
+The callback can also be the `ptr` of a `JSCallback`. JavaScript cannot run during a garbage collection, so Bun queues the call and runs the function later, on the JavaScript thread that created the `JSCallback`. That is also the case when the buffer was transferred to a `Worker` and freed there. The same applies when a C callback calls a `JSCallback` from inside the collection: the C caller gets `0` back, as it does from a thread-safe callback. Keep the `JSCallback` open until the last call arrives. Bun drops the call when the thread that created the `JSCallback` exits first, for example a `Worker` that ends while such a buffer is alive.
 
 ```ts
 import { JSCallback, toArrayBuffer } from "bun:ffi";

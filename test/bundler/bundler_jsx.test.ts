@@ -546,14 +546,16 @@ describe("bundler", () => {
         hook: "useState(0) /* remove @refresh reset later */",
       }),
       "jsx-child-comment.jsx": component("JsxChildComment", { openingTag: "<div>{/* @refresh reset */}" }),
+      "jsx-tag-block-comment.tsx": component("JsxTagBlockComment", { openingTag: "<div /* @refresh reset */>" }),
+      "jsx-tag-line-comment.jsx": component("JsxTagLineComment", {
+        openingTag: '<div\n// @refresh reset\nid="a">',
+      }),
       "with-custom-hook.jsx": "// @refresh reset\n" + component("WithCustomHook", { hook: "useCustom()" }),
       "no-comment.tsx": component("NoComment"),
       "no-comment-with-custom-hook.jsx": component("NoCommentWithCustomHook", { hook: "useCustom()" }),
       "only-in-string.jsx": component("OnlyInString", { hook: `useState("// @refresh reset")` }),
+      "only-in-jsx-text.jsx": component("OnlyInJsxText", { openingTag: "<div>// @refresh reset " }),
       "split-across-comments.tsx": "// @refresh\n// reset\n" + component("SplitAcrossComments"),
-      // The lexer skips a comment inside a JSX tag. The lookahead that `.tsx` does at `<` must not count it either.
-      "inside-jsx-tag-jsx.jsx": component("InsideJsxTagJsx", { openingTag: "<div /* @refresh reset */>" }),
-      "inside-jsx-tag-tsx.tsx": component("InsideJsxTagTsx", { openingTag: "<div /* @refresh reset */>" }),
     };
     using dir = tempDir("jsx-react-refresh-reset", files);
 
@@ -576,13 +578,14 @@ describe("bundler", () => {
       TrailingBlockComment: "true",
       InsideLongerComment: "true",
       JsxChildComment: "true",
+      JsxTagBlockComment: "true",
+      JsxTagLineComment: "true",
       WithCustomHook: "true",
       NoComment: null,
       NoCommentWithCustomHook: "false",
       OnlyInString: null,
+      OnlyInJsxText: null,
       SplitAcrossComments: null,
-      InsideJsxTagJsx: null,
-      InsideJsxTagTsx: null,
     });
   });
 

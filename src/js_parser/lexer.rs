@@ -1900,6 +1900,16 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    /// react-refresh/babel and SWC match this text anywhere in any comment of the file.
+    fn scan_react_refresh_reset(&mut self, comment: &[u8]) {
+        if self.track_react_refresh_reset
+            && !self.has_react_refresh_reset_comment
+            && strings::contains(comment, b"@refresh reset")
+        {
+            self.has_react_refresh_reset_comment = true;
+        }
+    }
+
     fn scan_comment_text(&mut self, for_pragma: bool) {
         let text = &self.contents[self.start..self.end];
         let has_legal_annotation = text.len() > 2 && text[2] == b'!';
@@ -1947,13 +1957,7 @@ impl<'a> Lexer<'a> {
             }
         }
 
-        // react-refresh/babel and SWC match this text anywhere in any comment of the file.
-        if self.track_react_refresh_reset
-            && !self.has_react_refresh_reset_comment
-            && strings::contains(text, b"@refresh reset")
-        {
-            self.has_react_refresh_reset_comment = true;
-        }
+        self.scan_react_refresh_reset(text);
 
         if has_legal_annotation || self.preserve_all_comments_before {
             if is_multiline_comment {
@@ -2489,6 +2493,7 @@ impl<'a> Lexer<'a> {
                                     _ => {}
                                 }
                             }
+                            self.scan_react_refresh_reset(&self.contents[self.start..self.end]);
                             continue;
                         }
                         0x2A => {
@@ -2520,6 +2525,7 @@ impl<'a> Lexer<'a> {
                                     }
                                 }
                             }
+                            self.scan_react_refresh_reset(&self.contents[self.start..self.end]);
                             continue;
                         }
                         _ => {

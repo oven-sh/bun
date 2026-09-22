@@ -118,7 +118,7 @@ const dir = String(
         } else if (kind === "nested") {
           const inner = (held.inner = new Bun.ModuleGraph({ globals: { control } }));
           const app = await inner.import(import.meta.path);
-          for (const [innerKind, innerArg] of arg) await inner.run(() => app.begin(innerKind, innerArg));
+          for (const [innerKind, innerArg] of arg) await app.begin(innerKind, innerArg);
         } else if (kind === "peer") {
           const talk = port => { port.onmessage = () => control.recv(); setInterval(() => port.postMessage(1), 1); };
           if (arg.transport === "broadcast") talk(new BroadcastChannel(control.channel));
@@ -138,7 +138,6 @@ const dir = String(
     `,
     "host.mjs": String.raw`
       // Runs on the thread that hosts the cell's graph: puts the graph in the cell's state, then issues the cell's events.
-      import { AsyncLocalStorage } from "node:async_hooks";
       import fs from "node:fs";
       import { parentPort } from "node:worker_threads";
       import { LEAF, S, turn, until } from "./shared.mjs";
@@ -238,7 +237,7 @@ const dir = String(
             if (mode === "handler") { control.held.worker.postMessage("spin"); await until(() => load(S.LEAF_STATE) === LEAF.inHandler); }
             if (mode === "atomics") await until(() => load(S.LEAF_STATE) === LEAF.blocked);
             if (mode === "exit" || mode === "throwing") await until(() => load(S.LEAF_STATE) === LEAF.exiting);
-            if (mode === "terminated") { graph.run(() => app.perform("terminate-leaf")); await until(() => heard.includes("terminate resolved")); }
+            if (mode === "terminated") { app.perform("terminate-leaf"); await until(() => heard.includes("terminate resolved")); }
           }
         };
 
@@ -247,16 +246,14 @@ const dir = String(
           await until(() => control.began);
         } else {
           app = await graph.import(import.meta.dir + "/work.mjs");
-          // (run() throws once the graph is disposed; a snapshot taken inside it still enters its context.)
-          const inGraph = graph.run(() => AsyncLocalStorage.snapshot());
           if (cell.graphState === "disposed") control.dispose();
           for (const [kind, arg] of cell.work) {
-            const began = inGraph(() => app.begin(kind, arg));
+            const began = app.begin(kind, arg);
             if (cell.graphState !== "disposed") await began;
           }
           out.import = Promise.resolve();
         }
-        out.adopt = port => graph.run(() => control.held.adopt(port));
+        out.adopt = port => control.held.adopt(port);
         if (cell.graphState !== "disposed") for (const work of cell.work) await inState(work);
         if (cell.graphState === "unreferenced") {
           graph = app = undefined;

@@ -19,12 +19,8 @@ import { expectType } from "./utilities";
   new Bun.ModuleGraph({ globals: "x" });
   // @ts-expect-error specifier must be a string
   graph.import(1);
-  expectType(graph.run((a: number, b: string) => a + b.length, 1, "x")).is<number>();
-  expectType(graph.run(async () => "done")).is<Promise<string>>();
-  // @ts-expect-error arguments must match fn's parameters
-  graph.run((a: number) => a, "x");
-  // @ts-expect-error fn must be a function
-  graph.run(1);
+  // @ts-expect-error a graph's code is entered by calling it; there is no run()
+  graph.run(() => 1);
   graph.dispose();
   new Bun.ModuleGraph().dispose();
   {

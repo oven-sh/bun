@@ -67,25 +67,12 @@ function isRunning(pid: number): boolean {
 }
 
 describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
-  test("run() calls fn in the graph's context and validates it; a subclass is a ModuleGraph", () => {
-    using graph = new Bun.ModuleGraph();
-    expect(graph.run((a, b) => a + b, 1, 2)).toBe(3);
-    expect(() =>
-      graph.run(() => {
-        throw new RangeError("from fn");
-      }),
-    ).toThrow(RangeError);
-    expect(() => graph.run(1 as any)).toThrow(/fn/);
+  test("a subclass is a ModuleGraph", () => {
     class Tenant extends Bun.ModuleGraph {
       tenant = "t1";
     }
     using tenant = new Tenant();
-    expect([
-      tenant instanceof Bun.ModuleGraph,
-      tenant instanceof Tenant,
-      tenant.tenant,
-      tenant.run(() => "ran"),
-    ]).toEqual([true, true, "t1", "ran"]);
+    expect([tenant instanceof Bun.ModuleGraph, tenant instanceof Tenant, tenant.tenant]).toEqual([true, true, "t1"]);
   });
 
   test("dispose() stops the graph's timers, not the host's", async () => {
@@ -105,7 +92,7 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
     });
     const graph = new Bun.ModuleGraph();
     const app = await graph.import(join(dir, "timers.mjs"));
-    await graph.run(() => app.armLater());
+    await app.armLater();
     await until(() => app.counts().ticks > 0 && app.counts().late > 0 && app.counts().immediates > 0);
 
     graph.dispose();
@@ -180,7 +167,7 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
 
     const graph = new Bun.ModuleGraph();
     const app = await graph.import(join(dir, "clients.mjs"));
-    await graph.run(() => app.connect(listener.port, server.port));
+    await app.connect(listener.port, server.port);
     await requestSeen.promise;
 
     graph.dispose();
@@ -221,7 +208,7 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
     const graph = new Bun.ModuleGraph();
     const app = await graph.import(join(dir, "stubborn.mjs"));
     // The child ignores the SIGTERM dispose() sends and keeps talking (on Windows it is terminated).
-    const child = await graph.run(() => app.start(listener.port, join(dir, "child.mjs")));
+    const child = await app.start(listener.port, join(dir, "child.mjs"));
     try {
       const atDispose = app.counts();
       graph.dispose();
@@ -309,7 +296,7 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
     });
 
     // Armed and disposed in the same turn of the loop: it cannot have fired yet.
-    graph.run(() => app.armTimeout());
+    app.armTimeout();
     graph.dispose();
 
     const stopped = app.counts();
@@ -343,7 +330,7 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
     });
     using graph = new Bun.ModuleGraph();
     const app = await graph.import(join(dir, "listeners.mjs"));
-    await graph.run(() => app.connect(server.port));
+    await app.connect(server.port);
     await until(() => app.tick() > 0);
 
     graph.dispose();
@@ -371,7 +358,7 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
       const graph = new Bun.ModuleGraph();
       keepAlive.push(graph);
       const app = await graph.import(join(dir, "ws.mjs"));
-      return graph.run(() => app.connect(server.port));
+      return app.connect(server.port);
     };
     const collectedAndClosed = (ws: WebSocket) =>
       until(() => {
@@ -423,7 +410,7 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
       Promise.all([fs.promises.readFile(join(dir, "data.txt"), "utf8"), promisify(zlib.gzip)("hello"), Bun.sleep(1)]);
     const graph = new Bun.ModuleGraph();
     const app = await graph.import(join(dir, "jobs.mjs"));
-    const work = graph.run(() => app.work());
+    const work = app.work();
     graph.dispose();
     await hostWork();
     await hostTimerTurns();
@@ -465,7 +452,7 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
       const graph = new Bun.ModuleGraph();
       try {
         const app = await graph.import(join(dir, "sockets.mjs"));
-        const raw = await graph.run(() => app.connect((server.address() as net.AddressInfo).port));
+        const raw = await app.connect((server.address() as net.AddressInfo).port);
         const secure = nodeTls.connect({ socket: raw, rejectUnauthorized: false });
         await secured(secure, "secureConnect");
         const serverSocketClosed = closed(await serverSide.promise);
@@ -485,7 +472,7 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
       const graph = new Bun.ModuleGraph();
       try {
         const app = await graph.import(join(dir, "sockets.mjs"));
-        const { port, accepted } = await graph.run(() => app.accept());
+        const { port, accepted } = await app.accept();
         const client = nodeTls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
         const clientSecured = secured(client, "secureConnect");
         const secure = new nodeTls.TLSSocket(await accepted, { isServer: true, key: tls.key, cert: tls.cert });
@@ -535,7 +522,7 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
     });
     using graph = new Bun.ModuleGraph();
     const app = await graph.import(join(dir, "sql.mjs"));
-    graph.run(() => app.query(server.port));
+    app.query(server.port);
     await redialed.promise;
 
     graph.dispose();
@@ -556,7 +543,7 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
       globals: { viaSnapshot: (entry: string) => asHost(() => work(entry)), direct: work },
     });
     const app = await graph.import(join(dir, "calls.mjs"));
-    graph.run(() => app.call());
+    app.call();
     graph.dispose();
     await until(() => log.includes("kept finished"));
     await hostTimerTurns();
@@ -589,11 +576,8 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
     (globalThis as any).__moduleGraphIoLatePort = listener.port;
     const graph = new Bun.ModuleGraph();
     const app = await graph.import(join(dir, "late.mjs"));
-    // run() throws once the graph is disposed; its code is still entered by what it left behind.
-    const inGraph = graph.run(() => AsyncLocalStorage.snapshot());
     graph.dispose();
-    expect(() => graph.run(() => app.open())).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
-    const port = inGraph(() => app.open());
+    const port = app.open();
     await until(async () => !(await accepts(port)));
     delete (globalThis as any).__moduleGraphIoLatePort;
     await hostTimerTurns();
@@ -666,6 +650,7 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
           }));
         }));
         export const tick = () => ticks;
+        export const call = fn => fn();
       `,
     });
     const outer = new AsyncLocalStorage<string>();
@@ -675,7 +660,7 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
     const appB = await b.import(join(dir, "als.mjs"));
     // b's code entered from inside a's context: what it opens is b's.
     const [storesA, storesB] = await outer.run("host", () =>
-      a.run(() => Promise.all([appA.start(outer), b.run(() => appB.start(outer))])),
+      appA.call(() => Promise.all([appA.start(outer), appB.start(outer)])),
     );
     expect(storesA).toEqual(["entered", undefined]);
     expect(storesB).toEqual(["entered", undefined]);
@@ -1001,13 +986,12 @@ describe.concurrent("ModuleGraph: an error in what a graph opened is the graph's
           out[name] = await told.promise;
           clearTimeout(nobody);
         };
-        for (const [name, start] of Object.entries(cases)) await expect(name, boom => graph.run(() => start(boom, host)));
-        // What run() calls throws synchronously and the host that called run() does not catch it.
-        await expect("run() from a timer of the host's", boom => { setTimeout(() => graph.run(boom), 1); });
-        await expect("run() from a microtask of the host's", boom => { queueMicrotask(() => graph.run(boom)); });
-        await expect("run() from a tick of the host's", boom => { process.nextTick(() => graph.run(boom)); });
-        // A function of the graph's that the host calls directly, or listens with, runs in the graph's context.
+        for (const [name, start] of Object.entries(cases)) await expect(name, boom => start(boom, host));
+        // A function of the graph's that the host calls directly, or listens with, runs in the graph's context. It
+        // throws synchronously and the host that called it does not catch it.
         await expect("a function of the graph's the host calls from its timer", boom => { setTimeout(boom, 1); });
+        await expect("a function of the graph's the host calls from its microtask", boom => { queueMicrotask(boom); });
+        await expect("a function of the graph's the host calls from its tick", boom => { process.nextTick(boom); });
         await expect("a function of the graph's listening on a host EventEmitter", async boom => {
           const { EventEmitter } = await import("node:events");
           const e = new EventEmitter();
@@ -1023,6 +1007,8 @@ describe.concurrent("ModuleGraph: an error in what a graph opened is the graph's
     const calledByTheHost = [
       "a closure of the graph's that a host AsyncResource runs",
       "a function of the graph's the host calls from its timer",
+      "a function of the graph's the host calls from its microtask",
+      "a function of the graph's the host calls from its tick",
       "a function of the graph's listening on a host EventEmitter",
     ];
     expect(Object.keys(out).length).toBeGreaterThan(40);
@@ -1074,7 +1060,7 @@ describe.concurrent("ModuleGraph: an error in what a graph opened is the graph's
         // The client is the host's; the graph only sets its handlers.
         const client = new Bun.RedisClient("redis://127.0.0.1:" + host.redisServer(), { autoReconnect: false });
         const heard = [];
-        graph.run(() => app.listen(client, heard));
+        app.listen(client, heard);
         await client.connect();
         host.dropRedisConnections();
         await until(() => heard.includes("onclose"));
@@ -1156,7 +1142,7 @@ describe.concurrent("ModuleGraph: a request through an Agent of the host's is st
         const app = await graph.import(import.meta.dir + "/tenant.mjs");
 
         told = Promise.withResolvers();
-        graph.run(() => app.get(origin.address().port, current => told.resolve(current === graph ? "the graph's context" : "not the graph's context")));
+        app.get(origin.address().port, current => told.resolve(current === graph ? "the graph's context" : "not the graph's context"));
         out.response = await told.promise;
 
         // Nobody answers on this port (or, with a proxy, the proxy refuses the CONNECT), and the request has no 'error' listener.
@@ -1165,7 +1151,7 @@ describe.concurrent("ModuleGraph: a request through an Agent of the host's is st
         const closedPort = closed.address().port;
         await new Promise(resolve => closed.close(resolve));
         told = Promise.withResolvers();
-        graph.run(() => app.getFromNobody(closedPort));
+        app.getFromNobody(closedPort);
         out.error = await told.promise;
 
         console.log(JSON.stringify(out));

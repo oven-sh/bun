@@ -5400,11 +5400,9 @@ declare module "bun" {
      * `uncaughtException` / `unhandledRejection` handling. `kind` says which.
      *
      * An error is the graph's when it happens in the graph's context, whoever
-     * wrote the code that threw: the graph's modules and what they start, and
-     * what the host calls through {@link ModuleGraph.run}. A function of the
-     * graph's that the host calls directly runs in the host's context, and
-     * its errors are the host's. The promise {@link ModuleGraph.import}
-     * returns is its caller's.
+     * wrote the code that threw: the graph's modules, what they start, and
+     * what a function of the graph's does when the host calls it. The
+     * promise {@link ModuleGraph.import} returns is its caller's.
      *
      * The handler runs in the context the graph was made in, so what it throws
      * or rejects is that context's: the host's, when the host made the graph.
@@ -5442,8 +5440,9 @@ declare module "bun" {
    * listeners of what it made, the way `AsyncLocalStorage` stores do
    * (creating the first graph turns that tracking on for the process). Code
    * of the graph runs in the graph's context whoever calls it: calling a
-   * function the graph exported is enough. {@link ModuleGraph.run} calls a
-   * function of the host's in the graph's context.
+   * function the graph exported is enough. Code of the host's runs in the
+   * context it is called in, so it runs in the graph's when the graph's code
+   * calls it.
    *
    * @experimental
    * @example
@@ -5478,20 +5477,10 @@ declare module "bun" {
      */
     import<T = any>(specifier: string): Promise<T>;
     /**
-     * Call `fn` inside the graph's context: what `fn` and everything it
-     * starts open belongs to the graph. For a function of the host's: the
-     * graph's own functions run in its context however they are called.
-     *
-     * Throws `ERR_INVALID_STATE` once the graph is disposed.
-     *
-     * @returns what `fn` returns
-     */
-    run<A extends unknown[], R>(fn: (...args: A) => R, ...args: A): R;
-    /**
      * Closes everything the graph's code opened (and disposes any graph its
-     * code made), and drops the graph's modules: `graph.import()` and
-     * `graph.run()` fail from here on, the graph's `require()` throws, and
-     * modules that had not run yet never will.
+     * code made), and drops the graph's modules: `graph.import()` fails from
+     * here on, the graph's `require()` throws, and modules that had not run
+     * yet never will.
      *
      * The graph is told nothing, like a worker that was terminated: no
      * `close` handler, `onExit` or `'error'` event is called, and no promise

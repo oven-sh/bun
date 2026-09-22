@@ -59,7 +59,7 @@ const dir = String(
       let hostTurns = 0;
       setInterval(() => hostTurns++, 1);
       const hostTurnsPass = async turns => { for (const from = hostTurns; hostTurns < from + turns; ) await new Promise(resolve => setImmediate(resolve)); };
-      graph.run(() => app.retryForever(name, state, ports));
+      app.retryForever(name, state, ports);
       await hostTurnsPass(10);
       writeSync(1, "armed\\n");
       graph.dispose();
@@ -76,7 +76,7 @@ const dir = String(
       const [kind, state, args] = [process.argv[2], JSON.parse(process.argv[3]), JSON.parse(process.argv[4])];
       const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/app.mjs");
-      await graph.run(() => app.open[kind](state, ...args));
+      await app.open[kind](state, ...args);
       graph.dispose();
       console.log("disposed");
       // Does not keep the process running; says so if something else does.
@@ -145,7 +145,7 @@ const dir = String(
       const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
       // ("control": the same requests with no observer anywhere.)
-      if (process.argv[2] === "observe") graph.run(() => app.observeHttp());
+      if (process.argv[2] === "observe") app.observeHttp();
       graph.dispose();
       const objects = () => { Bun.gc(true); const counts = heapStats().objectTypeCounts; return (counts.Object ?? 0) + (counts.Array ?? 0); };
       for (let i = 0; i < 10; i++) await get();
@@ -161,7 +161,7 @@ const dir = String(
       const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
       const before = descriptors();
-      graph.run(() => app.quietChildren(process.execPath, 8));
+      app.quietChildren(process.execPath, 8);
       const open = descriptors() - before;
       graph.dispose();
       // Killed, then reaped from the event loop: their pipes are closed by then at the latest.
@@ -188,8 +188,8 @@ const dir = String(
       using server = Bun.serve({ port: 0, hostname: "127.0.0.1", tls, fetch: () => new Response("ok") });
       const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/first-to-load-node-http-tenant.mjs");
-      if (how === "used") await graph.run(() => app.get(name, server.port));
-      else graph.run(() => app.loadLater(name));
+      if (how === "used") await app.get(name, server.port);
+      else app.loadLater(name);
       graph.dispose();
       while (how !== "used" && !app.loaded.includes(name)) await new Promise(resolve => setImmediate(resolve));
       const http = await import("node:" + name);
@@ -206,7 +206,7 @@ const dir = String(
       const before = protectedPromises();
       const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
-      graph.run(() => app.uploads(server.port, 16));
+      app.uploads(server.port, 16);
       while (arrived < 16) await new Promise(resolve => setImmediate(resolve));
       const streaming = protectedPromises() - before >= 16;
       graph.dispose();
@@ -219,7 +219,7 @@ const dir = String(
       const said = [];
       const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
-      graph.run(() => app.rewrites(what => said.push(what)));
+      app.rewrites(what => said.push(what));
       await new Promise(resolve => setTimeout(resolve, 1));
       graph.dispose();
       // Nothing is left for the host to do: the process winds down, collecting on the way.
@@ -245,24 +245,25 @@ const dir = String(
       console.log(JSON.stringify({ settled }));
       process.exit(0);
     `,
+    "posts-to-a-channel.mjs": `
+      export const posts = (when, outcomes) => {
+        try { const channel = new BroadcastChannel("of-a-disposed-graph"); channel.postMessage(when); channel.close(); outcomes.push("said nothing"); }
+        catch (error) { outcomes.push("threw " + error.name); }
+      };
+    `,
     "broadcast-channel-of-a-disposed-graph.mjs": `
-      import { AsyncLocalStorage } from "node:async_hooks";
       const heardByTheHost = [];
       const listener = new BroadcastChannel("of-a-disposed-graph");
       const marker = Promise.withResolvers();
       listener.onmessage = event => (event.data === "the host's own" ? marker.resolve() : heardByTheHost.push(event.data));
       const graph = new Bun.ModuleGraph();
-      const inGraph = graph.run(() => AsyncLocalStorage.snapshot());
+      const { posts } = await graph.import(import.meta.dir + "/posts-to-a-channel.mjs");
       const outcomes = [];
-      const posts = when => {
-        try { const channel = new BroadcastChannel("of-a-disposed-graph"); channel.postMessage(when); channel.close(); outcomes.push("said nothing"); }
-        catch (error) { outcomes.push("threw " + error.name); }
-      };
       graph.dispose();
       // In the turn that disposed (the stop has not closed what is made now), and once it has.
-      inGraph(() => posts("in the same turn"));
+      posts("in the same turn", outcomes);
       for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve));
-      inGraph(() => posts("later"));
+      posts("later", outcomes);
       // Messages arrive in the order they were posted: the host's own comes after anything the graph got out.
       const mine = new BroadcastChannel("of-a-disposed-graph");
       mine.postMessage("the host's own");
@@ -278,7 +279,7 @@ const dir = String(
       globalThis.ticks = 0;
       const tenant = new Bun.ModuleGraph();
       const app = await tenant.import(import.meta.dir + "/left-behind-tenant.mjs");
-      await tenant.run(() => app.loadsThroughAGraphOfItsOwn(import.meta.dir + "/ticks-from-its-top-level.mjs"));
+      await app.loadsThroughAGraphOfItsOwn(import.meta.dir + "/ticks-from-its-top-level.mjs");
       while (globalThis.ticks < 3) await new Promise(resolve => setImmediate(resolve));
       tenant.dispose();
       const ticks = globalThis.ticks;
@@ -291,7 +292,7 @@ const dir = String(
       const parked = Promise.withResolvers();
       const tenant = new Bun.ModuleGraph();
       const app = await tenant.import(import.meta.dir + "/left-behind-tenant.mjs");
-      const inner = tenant.run(() => app.makesAGraph({ globals: { gate: new Promise(() => {}), parked: parked.resolve } }));
+      const inner = app.makesAGraph({ globals: { gate: new Promise(() => {}), parked: parked.resolve } });
       let inFlight = "pending";
       inner.import(import.meta.dir + "/parks-in-tla.mjs").then(() => (inFlight = "fulfilled"), error => (inFlight = "rejected: " + error.code));
       await parked.promise;
@@ -318,8 +319,8 @@ const dir = String(
       // long as the handler goes on calling it. It never reaches the host.
       const tenant = new Bun.ModuleGraph({ onError: () => { if (++calls <= 3) inner.rejects(); } });
       const app = await tenant.import(import.meta.dir + "/left-behind-tenant.mjs");
-      inner = await tenant.run(() => app.makesAGraph().import(import.meta.dir + "/rejects-when-called.mjs"));
-      tenant.run(() => inner.startsIt());
+      inner = await app.makesAGraph().import(import.meta.dir + "/rejects-when-called.mjs");
+      inner.startsIt();
       while (hostSaw.length === 0 && calls <= 3) await new Promise(resolve => setImmediate(resolve));
       for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve));
       console.log(JSON.stringify({ callsOfTheTenantsOnError: calls, hostSaw }));
@@ -354,7 +355,7 @@ const dir = String(
       test("a graph whose fetch is still receiving when this file ends", async () => {
         const graph = new Bun.ModuleGraph();
         const app = await graph.import(import.meta.dir + "/../fetches-bodies.mjs");
-        await graph.run(() => app.fetchHeaders(process.env.NEVER_ENDING_URL));
+        await app.fetchHeaders(process.env.NEVER_ENDING_URL);
       });
     `,
     "isolated/second.test.js": `
@@ -425,8 +426,8 @@ const dir = String(
       const use = async () => {
         const graph = new Bun.ModuleGraph();
         const app = await graph.import(import.meta.dir + "/observes-and-connects.mjs");
-        graph.run(() => app.observe());
-        await graph.run(() => app.connect(server.address().port));
+        app.observe();
+        await app.connect(server.address().port);
         graph.dispose();
       };
       // (One first, so the classes' own cells are there before counting.)
@@ -483,7 +484,7 @@ const dir = String(
       const use = async () => {
         const graph = new Bun.ModuleGraph();
         const app = await graph.import(import.meta.dir + "/serves-html-routes.mjs");
-        const server = graph.run(() => app.serve());
+        const server = app.serve();
         // A request for a page starts its build, which holds a pending request on the server until it is
         // done. That is a later turn's business: the build seen here is still going when dispose() runs.
         for (const path of app.paths)
@@ -512,7 +513,7 @@ const dir = String(
     "modules-made-by-a-graph.mjs": `
       const graph = new Bun.ModuleGraph({ globals: { tag: "the graph's" } });
       const app = (await graph.import(import.meta.dir + "/makes-modules.cjs")).default;
-      console.log(JSON.stringify({ compiled: graph.run(app.compiled), required: graph.run(app.required), inTheHostsCache: Object.keys(require.cache).some(key => key.endsWith("says-its-tag.cjs")) }));
+      console.log(JSON.stringify({ compiled: app.compiled(), required: app.required(), inTheHostsCache: Object.keys(require.cache).some(key => key.endsWith("says-its-tag.cjs")) }));
       process.exit(0);
     `,
     "builds-with-a-plugin.mjs": `
@@ -538,7 +539,7 @@ const dir = String(
       const until = async condition => { while (!condition()) await new Promise(resolve => setImmediate(resolve)); };
       const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/builds-with-a-plugin.mjs");
-      graph.run(() => app.build(import.meta.dir + "/chain-entry.js"));
+      app.build(import.meta.dir + "/chain-entry.js");
       await until(() => app.loads.length > 0);
       graph.dispose();
       const atDispose = app.loads.length;
@@ -567,7 +568,7 @@ const dir = String(
     "disposed-while-a-plugin-waits.mjs": `
       const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/waits-in-a-plugin.mjs");
-      graph.run(() => app.build(import.meta.dir + "/chain-entry.js"));
+      app.build(import.meta.dir + "/chain-entry.js");
       while (app.waiting.length === 0) await new Promise(resolve => setImmediate(resolve));
       graph.dispose();
       // Not process.exit(): a build still waiting for the plugin's answer would keep this process here.
@@ -587,7 +588,7 @@ const dir = String(
       const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("", { status: 500 }) });
       const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/streams-to-s3-later.mjs");
-      graph.run(() => app.later(server.url.href));
+      app.later(server.url.href);
       graph.dispose();
       for (let i = 0; i < 20; i++) await new Promise(resolve => setImmediate(resolve));
       // Nothing is going to be sent, so nothing is taken: the stream is asked for the chunk the upload is offered and
@@ -618,7 +619,7 @@ const dir = String(
       const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: request => { asked.push(request.method + " " + new URL(request.url).pathname); return new Response("", { status: 500 }); } });
       const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/uses-s3-later.mjs");
-      graph.run(() => app.later(server.url.href));
+      app.later(server.url.href);
       graph.dispose();
       // The same of the host's own, afterwards, has arrived: the graph's would have too.
       await new Bun.S3Client({ accessKeyId: "a", secretAccessKey: "b", bucket: "bucket", endpoint: server.url.href }).file("the-hosts").stat().catch(() => {});
@@ -643,7 +644,7 @@ const dir = String(
       for (const how of ["streamUp", "writerLeftOpen"]) {
         const graph = new Bun.ModuleGraph();
         const app = await graph.import(import.meta.dir + "/uploads-to-s3.mjs");
-        graph.run(() => app[how](server.url.href));
+        app[how](server.url.href);
         await until(() => app.chunks.pulled > 0);
         graph.dispose();
       }
@@ -681,12 +682,12 @@ const dir = String(
       const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/uses-redis-later.mjs");
       if (process.argv[2] === "a command on a client that never dialed") {
-        const client = graph.run(() => app.make(url));
-        graph.run(() => app.commandLater(client));
+        const client = app.make(url);
+        app.commandLater(client);
         graph.dispose();
       } else {
         // The server drops the connection, the client waits to dial again, and the graph is disposed of while it waits.
-        await graph.run(() => app.connect(url));
+        await app.connect(url);
         for (const socket of sockets) socket.end();
         while (app.state.client.connected) await new Promise(resolve => setImmediate(resolve));
         graph.dispose();
@@ -716,7 +717,7 @@ const dir = String(
       if (process.argv[2] === "disposed") {
         const graph = new Bun.ModuleGraph();
         const app = await graph.import(import.meta.dir + "/subscribes-to-redis.mjs");
-        await graph.run(() => app.subscribe(url));
+        await app.subscribe(url);
         graph.dispose();
       } else {
         const client = new Bun.RedisClient(url);
@@ -764,7 +765,7 @@ const dir = String(
       for (let i = 0; i < 10; i++) {
         const graph = new Bun.ModuleGraph();
         const app = await graph.import(import.meta.dir + "/leaves-things-half-done.mjs");
-        graph.run(() => app.writeAndEnd(fifo, Buffer.alloc(1 << 20, "x")));
+        app.writeAndEnd(fifo, Buffer.alloc(1 << 20, "x"));
         graph.dispose();
       }
       // (No more than before, not as many: the host's own may have outlived that reading.)
@@ -778,7 +779,7 @@ const dir = String(
         const graph = new Bun.ModuleGraph();
         const app = await graph.import(import.meta.dir + "/leaves-things-half-done.mjs");
         const controller = new AbortController();
-        const pid = graph.run(() => app.spawnStubborn(controller.signal));
+        const pid = app.spawnStubborn(controller.signal);
         controller.abort();
         graph.dispose();
         await until(() => !alive(pid));
@@ -788,7 +789,7 @@ const dir = String(
       {
         const graph = new Bun.ModuleGraph();
         const app = await graph.import(import.meta.dir + "/leaves-things-half-done.mjs");
-        graph.run(() => app.tlsOverDuplex());
+        app.tlsOverDuplex();
         graph.dispose();
         for (let turn = 0; turn < 10; turn++) await new Promise(resolve => setImmediate(resolve));
         out.tls = { writes: app.writes, heard: app.heard };
@@ -842,11 +843,11 @@ const dir = String(
       const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/manages-its-files.mjs");
       const before = descriptors();
-      await graph.run(() => app.open(dir, 8));
-      const streams = await graph.run(() => app.openOver(import.meta.path, dir + "/over"));
+      await app.open(dir, 8);
+      const streams = await app.openOver(import.meta.path, dir + "/over");
       const open = descriptors() - before;
       // What the host asks of a tenant before it disposes of it.
-      await graph.run(() => app.close());
+      await app.close();
       graph.dispose();
       console.log(JSON.stringify({ open, leftOpen: descriptors() - before, theHostsReferences: [streams.reader.destroyed, streams.writer.destroyed] }));
       fs.rmSync(dir, { recursive: true });
@@ -858,7 +859,7 @@ const dir = String(
     "cron-job-of-a-disposed-graph.mjs": `
       const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/schedules-a-cron-job.mjs");
-      const job = graph.run(() => app.schedule());
+      const job = app.schedule();
       // One of the host's own, stopped by the host: a graph's going leaves it alone.
       const own = Bun.cron("* * * * *", () => {});
       graph.dispose();
@@ -888,7 +889,7 @@ const dir = String(
       const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/forks-a-cluster-worker.mjs");
       const heard = {};
-      const port = await graph.run(() => app.fork(import.meta.dir + "/cluster-worker-that-listens.mjs", heard));
+      const port = await app.fork(import.meta.dir + "/cluster-worker-that-listens.mjs", heard);
       const answered = await fetch("http://127.0.0.1:" + port + "/").then(response => response.text());
       graph.dispose();
       // The server the primary opened for the graph's worker was the graph's.
@@ -904,8 +905,8 @@ const dir = String(
       // Under --hot a Bun.serve() with the hostname and port of one that is up takes that server over.
       const [first, second] = [new Bun.ModuleGraph(), new Bun.ModuleGraph()];
       const [appOfFirst, appOfSecond] = [await first.import(import.meta.dir + "/serves-who.mjs"), await second.import(import.meta.dir + "/serves-who.mjs")];
-      const server = first.run(() => appOfFirst.serve("the first"));
-      const sameServer = second.run(() => appOfSecond.serve("the second")) === server;
+      const server = appOfFirst.serve("the first");
+      const sameServer = appOfSecond.serve("the second") === server;
       const ask = () => fetch(server.url).then(response => response.text(), () => "nobody");
       const answers = [await ask()];
       first.dispose();
@@ -937,7 +938,7 @@ const dir = String(
       const theHosts = open.size;
       const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/uses-a-fetch-session.mjs");
-      await graph.run(() => app.fetchThroughItsOwnSession(url));
+      await app.fetchThroughItsOwnSession(url);
       const openBeforeDispose = open.size - theHosts;
       graph.dispose();
       // The HTTP thread closes it, whenever the system next runs that thread: no number of this thread's turns bounds that.
@@ -971,7 +972,7 @@ const dir = String(
       const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { open() { arrived++; }, data() {} } });
       const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/dials-the-host.mjs");
-      graph.run(() => app.dialLater(server.port));
+      app.dialLater(server.port);
       graph.dispose();
       // A dial of the host's own, made afterwards, has arrived: the graph's would have too.
       await Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { open(socket) { socket.end(); }, data() {} } });
@@ -993,7 +994,7 @@ const dir = String(
       using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("ok") });
       const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/configures-the-global-agent-tenant.mjs");
-      const used = graph.run(() => app.request(server.port));
+      const used = app.request(server.port);
       graph.dispose();
       console.log(JSON.stringify({ ...used, theHostSeesIt: http.globalAgent.maxSockets }));
       process.exit(0);
@@ -1015,7 +1016,7 @@ const dir = String(
       using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("ok") });
       const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/requests-without-an-agent.mjs");
-      const status = await graph.run(() => app.get(server.port)).catch(error => String(error));
+      const status = await app.get(server.port).catch(error => String(error));
       graph.dispose();
       console.log(JSON.stringify({ status }));
       process.exit(0);
@@ -1039,7 +1040,7 @@ const dir = String(
       // No onError, and no handler of the host's: an error in the graph's leftover code would end this process.
       const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/spawns-and-feeds-a-child.mjs");
-      graph.run(() => app.later());
+      app.later();
       graph.dispose();
       for (let i = 0; i < 20; i++) await new Promise(resolve => setImmediate(resolve));
       console.log(JSON.stringify({ hostStillRuns: true }));
@@ -1058,7 +1059,7 @@ const dir = String(
       // No onError, and no handler of the host's: an error in the graph's leftover code would end this process.
       const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/listens-and-reads-its-address.mjs");
-      graph.run(() => app.listen());
+      app.listen();
       graph.dispose();
       for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve));
       console.log(JSON.stringify({ heard: app.heard }));
@@ -1067,14 +1068,15 @@ const dir = String(
       const until = async condition => { while (!condition()) await new Promise(resolve => setImmediate(resolve)); };
       const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/stops-gracefully.mjs");
-      const server = graph.run(() => app.serve());
+      const server = app.serve();
       const request = fetch(server.url).then(() => "answered", error => error.code);
-      const listener = graph.run(() => app.listen());
+      const listener = app.listen();
       const closed = Promise.withResolvers();
       await Bun.connect({ hostname: "127.0.0.1", port: listener.port, socket: { open() {}, data() {}, close() { closed.resolve("closed"); } } });
       await until(() => app.counts.requests === 1 && app.counts.accepted === 1);
       // Graceful: both stop listening and leave what is connected alone.
-      graph.run(() => (server.stop(), listener.stop()));
+      server.stop();
+      listener.stop();
       graph.dispose();
       console.log(JSON.stringify({ request: await request, client: await closed.promise }));
       process.exit(0);
@@ -1095,7 +1097,7 @@ const dir = String(
       // The host reads the body of a Response a graph was given, after the graph is gone.
       const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/fetches-bodies.mjs");
-      await graph.run(() => app.fetchHeaders(server.url.href));
+      await app.fetchHeaders(server.url.href);
       graph.dispose();
       await hostTurn();
       const text = app.response.text();
@@ -1104,7 +1106,7 @@ const dir = String(
       for (let i = 0; i < 20; i++) {
         const tenant = new Bun.ModuleGraph();
         const its = await tenant.import(import.meta.dir + "/fetches-bodies.mjs");
-        tenant.run(() => void its.awaitBody(server.url.href));
+        void its.awaitBody(server.url.href);
         await until(() => its.bodiesAwaited === 1);
         tenant.dispose();
       }
@@ -1121,7 +1123,7 @@ const dir = String(
       const app = await tenant.import(import.meta.dir + "/left-behind-tenant.mjs");
       // A graph made in the tenant's context that was given no onError of its own: by the tenant's
       // code, or by a function of the host's that the tenant called.
-      const inner = tenant.run(() => (process.argv[2] === "by a host function it called" ? app.hasTheHostMakeAGraph() : app.makesAGraph()));
+      const inner = process.argv[2] === "by a host function it called" ? app.hasTheHostMakeAGraph() : app.makesAGraph();
       await inner.import(import.meta.dir + "/throws-later.mjs");
       while (hostSaw.length + tenantSaw.length < 2) await new Promise(resolve => setImmediate(resolve));
       console.log(JSON.stringify({ hostSaw, tenantSaw: tenantSaw.sort() }));
@@ -1135,7 +1137,7 @@ const dir = String(
       const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
       const before = descriptors();
       // Kept by the host, so no collection lets go of them.
-      const kept = await graph.run(() => app.keepsFilesOpen(dir));
+      const kept = await app.keepsFilesOpen(dir);
       const open = descriptors() - before;
       graph.dispose();
       // (A writer with a write under way closes when that write returns, a few turns later.)
@@ -1159,7 +1161,7 @@ const dir = String(
     "subtle-after-a-disposed-graph.mjs": `
       const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
-      const rejectedInTheGraph = await graph.run(() => app.failingUnwraps(200));
+      const rejectedInTheGraph = await app.failingUnwraps(200);
       graph.dispose();
       // The host's own operations afterwards: many more than the graph's, so their promises reuse those addresses.
       const data = new Uint8Array(64);
@@ -1172,7 +1174,7 @@ const dir = String(
       const keep = new FormData(), baseline = count();
       const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
-      graph.run(() => app.digests(20));
+      app.digests(20);
       const started = count() - baseline;
       graph.dispose();
       // The same work asked for afterwards has finished: the graph's had too.
@@ -1192,7 +1194,7 @@ const dir = String(
       const graph = new Bun.ModuleGraph({ onError: error => console.error("the opener, after dispose():", error) });
       const app = await graph.import(import.meta.dir + "/app.mjs");
       // Not awaited: whatever the opener has under way (a connect, a handshake, a listen) is cut short.
-      graph.run(() => { Promise.resolve(app.open[kind](state, ...args)).catch(() => {}); });
+      Promise.resolve(app.open[kind](state, ...args)).catch(() => {});
       graph.dispose();
       console.log("disposed");
       setTimeout(() => { console.log("and the process is still running"); process.exit(1); }, 3000).unref();
@@ -1202,7 +1204,7 @@ const dir = String(
       const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/app.mjs");
       // Queued inside the graph's context, so it runs there, and after the dispose() below.
-      graph.run(() => app.call(() => queueMicrotask(() => { Promise.resolve(app.open[kind](state, ...args)).catch(() => {}); })));
+      app.call(() => queueMicrotask(() => { Promise.resolve(app.open[kind](state, ...args)).catch(() => {}); }));
       graph.dispose();
       console.log("disposed");
       setTimeout(() => { console.log("and the process is still running"); process.exit(1); }, 3000).unref();
@@ -2280,8 +2282,8 @@ async function newGraph(options: ConstructorParameters<typeof ModuleGraph>[0] = 
   return { graph, app: await graph.import(appPath), [Symbol.dispose]: () => graph.dispose() };
 }
 /** Opens `kind` for `state` and waits until it is up. */
-async function openIn(run: (fn: () => unknown) => unknown, app: any, kind: string, state: State) {
-  await run(() => app.open[kind](state, ...(kinds[kind].args?.(state) ?? [])));
+async function openIn(app: any, kind: string, state: State) {
+  await app.open[kind](state, ...(kinds[kind].args?.(state) ?? []));
   await until(() => kinds[kind].alive(state));
 }
 const runInHost = (fn: () => unknown) => fn();
@@ -2296,9 +2298,9 @@ describe.concurrent("ModuleGraph isolation: disposing a graph closes what it ope
       const dead = (state: State) => until(async () => !(await kinds[kind].alive(state)));
       try {
         await Promise.all([
-          openIn(fn => a.graph.run(fn), a.app, kind, states.a),
-          openIn(fn => b.graph.run(fn), b.app, kind, states.b),
-          openIn(runInHost, hostApp, kind, states.host),
+          openIn(a.app, kind, states.a),
+          openIn(b.app, kind, states.b),
+          openIn(hostApp, kind, states.host),
         ]);
 
         a.graph.dispose();
@@ -2327,14 +2329,12 @@ describe.concurrent("ModuleGraph isolation: what a disposed graph opens is close
       try {
         // Queued inside the graph's context, so it runs there, and after the dispose() below:
         // what a graph had queued as a microtask still runs.
-        made.graph.run(() =>
-          made.app.call(() =>
-            queueMicrotask(() => {
-              opening = true;
-              // (In a stopped context the opener may never learn that it is done.)
-              Promise.resolve(made.app.open[kind](state, ...(kinds[kind].args?.(state) ?? []))).catch(() => {});
-            }),
-          ),
+        made.app.call(() =>
+          queueMicrotask(() => {
+            opening = true;
+            // (In a stopped context the opener may never learn that it is done.)
+            Promise.resolve(made.app.open[kind](state, ...(kinds[kind].args?.(state) ?? []))).catch(() => {});
+          }),
         );
         made.graph.dispose();
         await until(() => opening);
@@ -2381,7 +2381,7 @@ test("ModuleGraph isolation: a disposed graph hears nothing of what it had open"
 
   using made = await newGraph();
   const state = newState("reports") as State & { pids: number[] };
-  await made.graph.run(() => made.app.everythingThatReports(state, ports, bunExe()));
+  await made.app.everythingThatReports(state, ports, bunExe());
   await until(() =>
     ["tcp:reports", "ws:reports", "http:reports-fetch", "http:reports-http"].every(tag => connected.has(tag)),
   );
@@ -2404,19 +2404,17 @@ test("ModuleGraph isolation: a graph made by a graph's code is disposed with it,
   const state = newState("nested") as State & { inner?: InstanceType<typeof ModuleGraph>; later?: () => void };
   const dep = join(dir, "dep-of-nested.mjs");
   await Bun.write(dep, "export default 1;");
-  await made.graph.run(() =>
-    made.app.call(async () => {
-      state.inner = new ModuleGraph();
-      await state.inner.import(dep);
-      // What the disposed graph's leftover code does: a new graph, and a load into it.
-      state.later = () =>
-        void new ModuleGraph().import(dep + "?later").then(
-          () => state.heard.push("fulfilled"),
-          () => state.heard.push("rejected"),
-        );
-    }),
-  );
-  made.graph.run(() => made.app.call(() => queueMicrotask(state.later!)));
+  await made.app.call(async () => {
+    state.inner = new ModuleGraph();
+    await state.inner.import(dep);
+    // What the disposed graph's leftover code does: a new graph, and a load into it.
+    state.later = () =>
+      void new ModuleGraph().import(dep + "?later").then(
+        () => state.heard.push("fulfilled"),
+        () => state.heard.push("rejected"),
+      );
+  });
+  made.app.call(() => queueMicrotask(state.later!));
   made.graph.dispose();
   // The inner graph is disposed, not only stopped: the host is told so.
   expect(
@@ -2432,22 +2430,20 @@ test("ModuleGraph isolation: a graph made by a graph's code is disposed with it,
 test("ModuleGraph isolation: a server a disposed graph was stopping says nothing: not stop()'s promise, not node:http's 'close'", async () => {
   using made = await newGraph();
   const state = newState("stopping");
-  await made.graph.run(() =>
-    made.app.call(async () => {
-      // A request in flight keeps stop() waiting.
-      const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Promise<Response>(() => {}) });
-      fetch(`http://127.0.0.1:${server.port}/`).catch(() => {});
-      const nodeServer = http.createServer(() => {});
-      await new Promise<void>(resolve => nodeServer.listen(0, "127.0.0.1", resolve));
-      nodeServer.on("close", () => state.heard.push("node:http close"));
-      await until(() => server.pendingRequests === 1);
-      server.stop().then(
-        () => state.heard.push("stop() fulfilled"),
-        () => state.heard.push("stop() rejected"),
-      );
-      state.port = server.port;
-    }),
-  );
+  await made.app.call(async () => {
+    // A request in flight keeps stop() waiting.
+    const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Promise<Response>(() => {}) });
+    fetch(`http://127.0.0.1:${server.port}/`).catch(() => {});
+    const nodeServer = http.createServer(() => {});
+    await new Promise<void>(resolve => nodeServer.listen(0, "127.0.0.1", resolve));
+    nodeServer.on("close", () => state.heard.push("node:http close"));
+    await until(() => server.pendingRequests === 1);
+    server.stop().then(
+      () => state.heard.push("stop() fulfilled"),
+      () => state.heard.push("stop() rejected"),
+    );
+    state.port = server.port;
+  });
   made.graph.dispose();
   await until(async () => !(await accepts(state.port!)));
   await hostTimerTurns();
@@ -2468,10 +2464,10 @@ test("ModuleGraph isolation: a Bun.SQL query of a disposed graph reports nothing
   };
   using made = await newGraph();
   const [inFlight, startedAfter] = [newState("sql-in-flight"), newState("sql-started-after")];
-  made.graph.run(() => made.app.call(() => query(inFlight)));
+  made.app.call(() => query(inFlight));
   await until(() => connected.has("tcp:" + inFlight.tag));
   // Queued inside the graph: runs after the dispose() below, as what a graph had queued does.
-  made.graph.run(() => made.app.call(() => queueMicrotask(() => query(startedAfter))));
+  made.app.call(() => queueMicrotask(() => query(startedAfter)));
   made.graph.dispose();
   await until(() => !connected.has("tcp:" + inFlight.tag));
   await hostTimerTurns();
@@ -2506,13 +2502,11 @@ test("ModuleGraph isolation: a query the host makes on a disposed graph's Bun.SQ
     },
   });
   using made = await newGraph();
-  const clients = made.graph.run(() =>
-    made.app.call(() => ({
-      postgres: new Bun.SQL(`postgres://u@127.0.0.1:${postgres.port}/db?sslmode=disable`, { max: 1 }),
-      mysql: new Bun.SQL(`mysql://u@127.0.0.1:${mysql.port}/db`, { max: 1 }),
-    })),
-  ) as Record<"postgres" | "mysql", Bun.SQL>;
-  await made.graph.run(() => made.app.call(() => Promise.all([clients.postgres.connect(), clients.mysql.connect()])));
+  const clients = made.app.call(() => ({
+    postgres: new Bun.SQL(`postgres://u@127.0.0.1:${postgres.port}/db?sslmode=disable`, { max: 1 }),
+    mysql: new Bun.SQL(`mysql://u@127.0.0.1:${mysql.port}/db`, { max: 1 }),
+  })) as Record<"postgres" | "mysql", Bun.SQL>;
+  await made.app.call(() => Promise.all([clients.postgres.connect(), clients.mysql.connect()]));
   made.graph.dispose();
   const codeOf = (query: Promise<unknown>) =>
     query.then(
@@ -2531,17 +2525,15 @@ test("ModuleGraph isolation: child_process.spawn() by a disposed graph starts no
   using made = await newGraph();
   const state = newState("late-spawn");
   const marker = join(dir, "late-spawn-ran.txt");
-  made.graph.run(() =>
-    made.app.call(() =>
-      queueMicrotask(() => {
-        const child = require("node:child_process").spawn(bunExe(), [
-          "-e",
-          `require("fs").writeFileSync(${JSON.stringify(marker)}, "ran")`,
-        ]);
-        for (const event of ["spawn", "exit", "close", "error"]) child.on(event, () => state.heard.push(event));
-        state.pid = child.pid;
-      }),
-    ),
+  made.app.call(() =>
+    queueMicrotask(() => {
+      const child = require("node:child_process").spawn(bunExe(), [
+        "-e",
+        `require("fs").writeFileSync(${JSON.stringify(marker)}, "ran")`,
+      ]);
+      for (const event of ["spawn", "exit", "close", "error"]) child.on(event, () => state.heard.push(event));
+      state.pid = child.pid;
+    }),
   );
   made.graph.dispose();
   // The same child, started afterwards by the host, has run and exited: the graph's would have too.
@@ -2584,7 +2576,7 @@ describe.concurrent("ModuleGraph isolation: a disposed graph sends nothing and a
 
         using made = await newGraph();
         const state = newState("effects");
-        made.graph.run(() => {
+        made.app.call(() => {
           if (order === "disposed in the turn that opens") made.app.effects(state, hostUdp.port, tlsCertificate);
           else made.app.call(() => queueMicrotask(() => made.app.effects(state, hostUdp.port, tlsCertificate)));
         });
@@ -2628,13 +2620,13 @@ describe.concurrent("ModuleGraph isolation: fs.watchFile of one path by several 
       };
       states.live.file = states.host.file = states.disposed.file;
       const watch = {
-        graph: () => disposed.graph.run(() => disposed.app.open.watchFile(states.disposed)),
+        graph: () => disposed.app.open.watchFile(states.disposed),
         host: () => hostApp.open.watchFile(states.host),
       };
       try {
         watch[first]();
         watch[first === "graph" ? "host" : "graph"]();
-        live.graph.run(() => live.app.open.watchFile(states.live));
+        live.app.open.watchFile(states.live);
         // Changes the file until each of `watching` has heard of a change made after the call.
         const allHear = async (watching: State[]) => {
           const before = watching.map(state => state.ticks);
@@ -2663,7 +2655,7 @@ describe("ModuleGraph isolation: what is the host's, or the realm's, survives a 
     const agent = new http.Agent({ keepAlive: true, maxSockets: 1 });
     try {
       using made = await newGraph();
-      made.graph.run(() => made.app.getThrough(agent, hostHttp.port, "/hang?tag=agent-of-the-host")).catch(() => {});
+      made.app.getThrough(agent, hostHttp.port, "/hang?tag=agent-of-the-host").catch(() => {});
       await until(() => connected.has("http:agent-of-the-host"));
       const hosts = hostApp.getThrough(agent, hostHttp.port, "/release?tag=nobody");
       made.graph.dispose();
@@ -2679,9 +2671,7 @@ describe("ModuleGraph isolation: what is the host's, or the realm's, survives a 
 
   test("http.globalAgent: the socket a graph's request made it open is the realm's, and is not closed with the graph", async () => {
     using made = await newGraph();
-    made.graph
-      .run(() => made.app.getThrough(undefined, hostHttp.port, "/hang?tag=through-the-global-agent"))
-      .catch(() => {});
+    made.app.getThrough(undefined, hostHttp.port, "/hang?tag=through-the-global-agent").catch(() => {});
     await until(() => connected.has("http:through-the-global-agent"));
     made.graph.dispose();
     await hostTimerTurns();
@@ -2700,7 +2690,7 @@ describe("ModuleGraph isolation: what is the host's, or the realm's, survives a 
     });
     try {
       using made = await newGraph();
-      made.graph.run(() => made.app.call(() => void sql`select 1`.catch(() => {})));
+      made.app.call(() => void sql`select 1`.catch(() => {}));
       await until(() => connected.has("tcp:sql-of-the-host"));
       made.graph.dispose();
       await hostTimerTurns();
@@ -2724,9 +2714,7 @@ describe("ModuleGraph isolation: what is the host's, or the realm's, survives a 
     });
     try {
       using made = await newGraph();
-      made.graph.run(() =>
-        made.app.call(() => queueMicrotask(() => void sql.listen("channel", () => {}).catch(() => {}))),
-      );
+      made.app.call(() => queueMicrotask(() => void sql.listen("channel", () => {}).catch(() => {})));
       made.graph.dispose();
       await until(() => connected.has("tcp:listen-of-the-host"));
       expect(connected.has("tcp:listen-of-the-host")).toBe(true);
@@ -2764,16 +2752,14 @@ describe("ModuleGraph isolation: what is the host's, or the realm's, survives a 
     let sql: Bun.SQL | undefined;
     try {
       using made = await newGraph();
-      await made.graph.run(() =>
-        made.app.call(() => {
-          sql = new Bun.SQL(`postgres://u@127.0.0.1:${port}/db`, { max: 1 });
-          return sql.listen(
-            "channel",
-            () => {},
-            () => void listeningAs.push(ModuleGraph.current === made.graph ? "the graph" : "somebody else"),
-          );
-        }),
-      );
+      await made.app.call(() => {
+        sql = new Bun.SQL(`postgres://u@127.0.0.1:${port}/db`, { max: 1 });
+        return sql.listen(
+          "channel",
+          () => {},
+          () => void listeningAs.push(ModuleGraph.current === made.graph ? "the graph" : "somebody else"),
+        );
+      });
       expect(listeningAs).toEqual(["the graph"]);
       // The server restarts.
       for (const socket of sockets) socket.destroy();
@@ -2802,7 +2788,7 @@ describe("ModuleGraph isolation: what is the host's, or the realm's, survives a 
     try {
       {
         using made = await newGraph();
-        const graphPort = await made.graph.run(() => made.app.serveHttp2Once(newState("http2-date-graph")));
+        const graphPort = await made.app.serveHttp2Once(newState("http2-date-graph"));
         await dateOf(graphPort); // renders, and caches, the header for this second
       }
       const now = Date.now();
@@ -2821,7 +2807,7 @@ describe("ModuleGraph isolation: what is the host's, or the realm's, survives a 
     try {
       {
         using made = await newGraph();
-        await made.graph.run(() => made.app.getThrough(undefined, hostHttp.port, "/release?tag=nobody"));
+        await made.app.getThrough(undefined, hostHttp.port, "/release?tag=nobody");
       }
       const afterTheGraph = entries;
       await hostApp.getThrough(undefined, hostHttp.port, "/release?tag=nobody");
@@ -2838,8 +2824,8 @@ describe.concurrent("ModuleGraph isolation: whose context a call runs in", () =>
     using b = await newGraph();
     const [viaTimer, viaCall, viaHost] = [newState("via-timer"), newState("via-call"), newState("via-host")];
     // A's timer calls B's function; A's code calls B's function synchronously inside A's context; the host calls it.
-    await a.graph.run(() => a.app.later(b.app.open.interval, viaTimer));
-    a.graph.run(() => a.app.call(b.app.open.interval, viaCall));
+    await a.app.later(b.app.open.interval, viaTimer);
+    a.app.call(b.app.open.interval, viaCall);
     b.app.open.interval(viaHost);
     expect([await ticks(viaTimer), await ticks(viaCall), await ticks(viaHost)]).toEqual([true, true, true]);
     a.graph.dispose();
@@ -2848,13 +2834,13 @@ describe.concurrent("ModuleGraph isolation: whose context a call runs in", () =>
     expect([await ticks(viaTimer), await ticks(viaCall), await ticks(viaHost)]).toEqual([false, false, false]);
   });
 
-  test("run() nests: the innermost graph's context is current, and the outer one is restored", async () => {
+  test("calls nest: the innermost graph's context is current, and the outer one is restored", async () => {
     using a = await newGraph();
     using b = await newGraph();
     const [inner, afterInner, outside] = [newState("inner"), newState("after-inner"), newState("outside")];
     try {
-      a.graph.run(() => {
-        b.graph.run(() => hostApp.open.interval(inner));
+      a.app.call(() => {
+        b.app.call(() => hostApp.open.interval(inner));
         hostApp.open.interval(afterInner);
       });
       hostApp.open.interval(outside);
@@ -2872,9 +2858,9 @@ describe.concurrent("ModuleGraph isolation: whose context a call runs in", () =>
     using b = await newGraph();
     const state = newState("awaited");
     // B makes the promise and later resolves it from its own timer; A awaits it.
-    const { promise, resolve } = b.graph.run(() => b.app.deferred());
-    const opened = a.graph.run(() => a.app.awaitThenOpen(promise, state));
-    b.graph.run(() => b.app.later(resolve));
+    const { promise, resolve } = b.app.deferred();
+    const opened = a.app.awaitThenOpen(promise, state);
+    b.app.later(resolve);
     await opened;
     expect(await ticks(state)).toBe(true);
     b.graph.dispose();
@@ -2889,11 +2875,11 @@ describe.concurrent("ModuleGraph isolation: whose context a call runs in", () =>
     const [emitted, dispatched] = [newState("emitted"), newState("dispatched")];
     const emitter = new EventEmitter();
     // Listener registered by A's code, emitted from B's context.
-    a.graph.run(() => a.app.call(() => emitter.on("go", () => hostApp.open.interval(emitted))));
-    b.graph.run(() => emitter.emit("go"));
+    a.app.call(() => emitter.on("go", () => hostApp.open.interval(emitted)));
+    b.app.call(() => emitter.emit("go"));
     // EventTarget made by A, listener added from B's context, dispatched by the host.
-    const target: EventTarget = a.graph.run(() => a.app.target());
-    b.graph.run(() => target.addEventListener("go", () => hostApp.open.interval(dispatched)));
+    const target: EventTarget = a.app.target();
+    b.app.call(() => target.addEventListener("go", () => hostApp.open.interval(dispatched)));
     target.dispatchEvent(new Event("go"));
     expect([await ticks(emitted), await ticks(dispatched)]).toEqual([true, true]);
     b.graph.dispose();
@@ -2908,12 +2894,12 @@ describe.concurrent("ModuleGraph isolation: whose context a call runs in", () =>
     using b = await newGraph();
     const seen: Record<string, string | undefined> = {};
     await storage.run("host-store", async () => {
-      seen.insideA = a.graph.run(() => storage.getStore());
-      await a.graph.run(() => a.app.later(() => (seen.insideATimer = storage.getStore())));
+      seen.insideA = a.app.call(() => storage.getStore());
+      await a.app.later(() => (seen.insideATimer = storage.getStore()));
     });
-    const aOwn = a.graph.run(() => storage.run("a-store", () => a.app.later(() => (seen.aOwn = storage.getStore()))));
-    seen.bDuringA = b.graph.run(() => storage.getStore());
-    await b.graph.run(() => b.app.later(() => (seen.bTimer = storage.getStore())));
+    const aOwn = a.app.call(() => storage.run("a-store", () => a.app.later(() => (seen.aOwn = storage.getStore()))));
+    seen.bDuringA = b.app.call(() => storage.getStore());
+    await b.app.later(() => (seen.bTimer = storage.getStore()));
     await aOwn;
     expect(seen).toEqual({
       insideA: "host-store",
@@ -2932,9 +2918,9 @@ describe.concurrent("ModuleGraph isolation: errors go to the graph whose code th
       void errors.push(`${who}: ${kind}: ${error.message}`);
     using a = await newGraph({ onError: onError("a") });
     using b = await newGraph({ onError: onError("b") });
-    a.graph.run(() => a.app.throwFromTimer("a's timer"));
-    b.graph.run(() => b.app.throwFromTimer("b's timer"));
-    await a.graph.run(() => a.app.rejectFromSocket(hostTcp.port, "a's socket"));
+    a.app.throwFromTimer("a's timer");
+    b.app.throwFromTimer("b's timer");
+    await a.app.rejectFromSocket(hostTcp.port, "a's socket");
     await until(() => errors.length >= 3);
     await hostTimerTurns();
     expect(errors.sort()).toEqual([
@@ -2957,17 +2943,17 @@ describe.concurrent("ModuleGraph isolation: a graph cannot reach another graph's
       newState("of-host"),
       newState("of-host-set-in-a"),
     ];
-    const idOfA: number = a.graph.run(() => a.app.numericTimer(ofA));
-    const idOfA2: number = a.graph.run(() => a.app.numericTimer(ofA2));
+    const idOfA: number = a.app.numericTimer(ofA);
+    const idOfA2: number = a.app.numericTimer(ofA2);
     const idOfHost: number = hostApp.numericTimer(ofHost);
     // A's code the host calls directly sets a timer of the host's; A's code can clear it later from its own context.
     const idOfHostSetInA: number = a.app.numericTimer(ofHostSetInA);
     try {
-      b.graph.run(() => b.app.clearByNumber(idOfA));
+      b.app.clearByNumber(idOfA);
       expect(await ticks(ofA)).toBe(true);
-      a.graph.run(() => a.app.clearByNumber(idOfA));
+      a.app.clearByNumber(idOfA);
       hostApp.clearByNumber(idOfA2);
-      a.graph.run(() => a.app.clearByNumber(idOfHostSetInA));
+      a.app.clearByNumber(idOfHostSetInA);
       expect([await ticks(ofA), await ticks(ofA2), await ticks(ofHostSetInA), await ticks(ofHost)]).toEqual([
         false,
         false,
@@ -2975,7 +2961,7 @@ describe.concurrent("ModuleGraph isolation: a graph cannot reach another graph's
         true,
       ]);
       // The host's timers are as reachable as its globalThis.
-      b.graph.run(() => b.app.clearByNumber(idOfHost));
+      b.app.clearByNumber(idOfHost);
       expect(await ticks(ofHost)).toBe(false);
     } finally {
       clearInterval(idOfHost);
@@ -2989,15 +2975,13 @@ describe.concurrent("ModuleGraph isolation: graphs that talk to each other", () 
     using server = await newGraph();
     using client = await newGraph();
     const [serving, clientTimer] = [newState("serving"), newState("client-timer")];
-    await openIn(fn => server.graph.run(fn), server.app, "serve", serving);
-    await openIn(fn => client.graph.run(fn), client.app, "interval", clientTimer);
+    await openIn(server.app, "serve", serving);
+    await openIn(client.app, "interval", clientTimer);
     const get = () =>
-      client.graph.run(() =>
-        client.app.call(() =>
-          fetch(`http://127.0.0.1:${serving.port}/`).then(
-            r => r.text(),
-            e => "failed: " + e.code,
-          ),
+      client.app.call(() =>
+        fetch(`http://127.0.0.1:${serving.port}/`).then(
+          r => r.text(),
+          e => "failed: " + e.code,
         ),
       );
     expect(await get()).toBe("serving");
@@ -3013,24 +2997,22 @@ describe.concurrent("ModuleGraph isolation: graphs that talk to each other", () 
     using listener = await newGraph();
     using dialer = await newGraph();
     const [listening, dialed, afterClose] = [newState("listening"), newState("dialed"), newState("after-close")];
-    await openIn(fn => listener.graph.run(fn), listener.app, "listen", listening);
+    await openIn(listener.app, "listen", listening);
     // The dialer's close handler opens a timer: it must be the dialer's.
     const closed = Promise.withResolvers<void>();
-    await dialer.graph.run(() =>
-      dialer.app.call(() =>
-        Bun.connect({
-          hostname: "127.0.0.1",
-          port: listening.port,
-          socket: {
-            data() {},
-            close() {
-              dialed.heard.push("close");
-              hostApp.open.interval(afterClose);
-              closed.resolve();
-            },
+    await dialer.app.call(() =>
+      Bun.connect({
+        hostname: "127.0.0.1",
+        port: listening.port,
+        socket: {
+          data() {},
+          close() {
+            dialed.heard.push("close");
+            hostApp.open.interval(afterClose);
+            closed.resolve();
           },
-        }),
-      ),
+        },
+      }),
     );
     listener.graph.dispose();
     await closed.promise;
@@ -3046,20 +3028,18 @@ describe.concurrent("ModuleGraph isolation: disposing from inside", () => {
     using a = await newGraph();
     using b = await newGraph();
     const [ofA, ofB, afterDisposeInB] = [newState("of-a"), newState("of-b"), newState("after-dispose-in-b")];
-    a.graph.run(() => a.app.open.interval(ofA));
-    b.graph.run(() => b.app.open.interval(ofB));
+    a.app.open.interval(ofA);
+    b.app.open.interval(ofB);
     // B's code calls (through A's function) something that disposes B, then carries on.
-    const result = b.graph.run(() =>
-      b.app.call(() => {
-        a.app.call(() => b.graph.dispose());
-        hostApp.open.interval(afterDisposeInB); // opened by a disposed graph: closed at once
-        return "b carried on";
-      }),
-    );
+    const result = b.app.call(() => {
+      a.app.call(() => b.graph.dispose());
+      hostApp.open.interval(afterDisposeInB); // opened by a disposed graph: closed at once
+      return "b carried on";
+    });
     expect(result).toBe("b carried on");
     expect([await ticks(ofA), await ticks(ofB), await ticks(afterDisposeInB)]).toEqual([true, false, false]);
     // A disposes itself from its own timer.
-    await a.graph.run(() => a.app.later(() => a.graph.dispose()));
+    await a.app.later(() => a.graph.dispose());
     expect(await ticks(ofA)).toBe(false);
     // Again is a no-op.
     a.graph.dispose();
@@ -3070,7 +3050,7 @@ describe.concurrent("ModuleGraph isolation: disposing from inside", () => {
     using made = await newGraph();
     const { graph, app } = made;
     const log: string[] = [];
-    graph.run(() => app.queueEverything(log));
+    app.queueEverything(log);
     graph.dispose();
     // The host's own, queued later, have all run: the graph's would have by now.
     await Promise.all([
@@ -3086,22 +3066,18 @@ describe.concurrent("ModuleGraph isolation: disposing from inside", () => {
     using made = await newGraph();
     const { graph, app } = made;
     const state = newState("held");
-    const server: Bun.Server = graph.run(() =>
-      app.call(() => Bun.serve({ port: 0, fetch: () => new Response("held") })),
-    );
-    await graph.run(() =>
-      app.call(() =>
-        Bun.connect({
-          hostname: "127.0.0.1",
-          port: hostTcp.port,
-          socket: {
-            data() {},
-            close() {
-              state.heard.push("close");
-            },
+    const server: Bun.Server = app.call(() => Bun.serve({ port: 0, fetch: () => new Response("held") }));
+    await app.call(() =>
+      Bun.connect({
+        hostname: "127.0.0.1",
+        port: hostTcp.port,
+        socket: {
+          data() {},
+          close() {
+            state.heard.push("close");
           },
-        }),
-      ),
+        },
+      }),
     );
     const held = { ...state, port: server.port, tag: "held" };
     graph.dispose();
@@ -3123,10 +3099,10 @@ describe.concurrent("ModuleGraph isolation: disposing from inside", () => {
     const hostServer = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
     try {
       // The graph's code calls methods of the host's objects.
-      expect(
-        await graph.run(() => app.call(() => fetch(`http://127.0.0.1:${hostState.port}/`).then(r => r.text()))),
-      ).toBe("handed-over");
-      graph.run(() => app.call(() => hostServer.ref()));
+      expect(await app.call(() => fetch(`http://127.0.0.1:${hostState.port}/`).then(r => r.text()))).toBe(
+        "handed-over",
+      );
+      app.call(() => hostServer.ref());
       graph.dispose();
       await hostTimerTurns();
       expect(await kinds.serve.alive(hostState)).toBe(true);
@@ -3157,7 +3133,7 @@ describe.concurrent("ModuleGraph isolation: competing graphs", () => {
     };
     return storage.run(state.tag, () =>
       made
-        ? made.graph.run(() => made.app.chain(state, allHops, { check, ...options }))
+        ? made.app.chain(state, allHops, { check, ...options })
         : hostApp.chain(state, allHops, { check, ...options }),
     );
   };
@@ -3194,9 +3170,9 @@ describe.concurrent("ModuleGraph isolation: competing graphs", () => {
 
       // 0: by the host. 2: from inside 1's timer. 4: from inside its own microtask. 6: from inside 5's nextTick.
       graphs[0].graph.dispose();
-      await graphs[1].graph.run(() => graphs[1].app.later(() => graphs[2].graph.dispose()));
-      graphs[4].graph.run(() => graphs[4].app.call(() => queueMicrotask(() => graphs[4].graph.dispose())));
-      graphs[5].graph.run(() => graphs[5].app.call(() => process.nextTick(() => graphs[6].graph.dispose())));
+      await graphs[1].app.later(() => graphs[2].graph.dispose());
+      graphs[4].app.call(() => queueMicrotask(() => graphs[4].graph.dispose()));
+      graphs[5].app.call(() => process.nextTick(() => graphs[6].graph.dispose()));
 
       const disposed = [0, 2, 4, 6].map(i => states[i]);
       const live = [1, 3, 5, 7].map(i => states[i]).concat(host);
@@ -3232,10 +3208,10 @@ describe.concurrent("ModuleGraph isolation: competing graphs", () => {
       // A host timer set now fires after anything of B's that was still to fire.
       await hostTimerTurns(3);
     };
-    await race((made, fn) => made.graph.run(() => setTimeout(fn, 1)), "timeout");
+    await race((made, fn) => made.app.call(() => setTimeout(fn, 1)), "timeout");
     await race(
       (made, fn) =>
-        made.graph.run(() => {
+        made.app.call(() => {
           const interval = setInterval(() => {
             clearInterval(interval);
             fn();
@@ -3243,9 +3219,9 @@ describe.concurrent("ModuleGraph isolation: competing graphs", () => {
         }),
       "interval",
     );
-    await race((made, fn) => made.graph.run(() => setImmediate(fn)), "immediate");
-    await race((made, fn) => made.graph.run(() => process.nextTick(fn)), "nextTick");
-    await race((made, fn) => made.graph.run(() => queueMicrotask(fn)), "microtask");
+    await race((made, fn) => made.app.call(() => setImmediate(fn)), "immediate");
+    await race((made, fn) => made.app.call(() => process.nextTick(fn)), "nextTick");
+    await race((made, fn) => made.app.call(() => queueMicrotask(fn)), "microtask");
     expect(log).toEqual([
       ...["timeout", "interval", "immediate"].flatMap(name => [
         name + ": c ran before",
@@ -3269,8 +3245,8 @@ describe.concurrent("ModuleGraph isolation: competing graphs", () => {
     const done = Promise.withResolvers<void>();
     for (let i = 0; i < 30; i++) {
       for (const [who, run] of [
-        ["a", (fn: () => void) => a.graph.run(fn)],
-        ["b", (fn: () => void) => b.graph.run(fn)],
+        ["a", a.app.call],
+        ["b", b.app.call],
         ["host", runInHost],
       ] as const) {
         const label = who + i;
@@ -3313,7 +3289,7 @@ describe.concurrent("ModuleGraph isolation: competing graphs", () => {
     expect(states.map(state => state.wrong)).toEqual([[], [], []]);
   });
 
-  test("a host server routing interleaved requests into graphs with run(): every request stays in its graph across awaits, and what it opened is that graph's", async () => {
+  test("a host server routing interleaved requests into graphs: every request stays in its graph across awaits, and what it opened is that graph's", async () => {
     using stack = new DisposableStack();
     const graphs = await Promise.all(Array.from({ length: 4 }, async () => stack.use(await newGraph())));
     const graphStates = graphs.map((_, i) => newState("routed-" + i));
@@ -3327,7 +3303,7 @@ describe.concurrent("ModuleGraph isolation: competing graphs", () => {
       async fetch(request) {
         const { id, graph, state } = requests[Number(new URL(request.url).searchParams.get("id"))];
         const made = graphs[graph];
-        return new Response(await made.graph.run(() => made.app.handle(id, graphStates[graph], state)));
+        return new Response(await made.app.handle(id, graphStates[graph], state));
       },
     });
     const bodies = await Promise.all(
@@ -3353,9 +3329,7 @@ describe.concurrent("ModuleGraph isolation: competing graphs", () => {
       state: newState("request-" + id),
     }));
     const requestStates = requests.map(request => request.state);
-    const release = graphs.map(
-      (made, i) => made.graph.run(() => made.app.serveRequests(servers[i], requestStates)) as () => void,
-    );
+    const release = graphs.map((made, i) => made.app.serveRequests(servers[i], requestStates) as () => void);
     const get = (graph: number, query: string) =>
       fetch(`http://127.0.0.1:${servers[graph].port}/?${query}`).then(
         r => r.text(),
@@ -3385,7 +3359,7 @@ describe.concurrent("ModuleGraph isolation: competing graphs", () => {
     try {
       void start(first, old);
       await until(() => old.ticks >= allHops.length);
-      const inFirst = first.graph.run(() => AsyncLocalStorage.snapshot());
+      const inFirst = first.app.call(() => AsyncLocalStorage.snapshot());
       first.graph.dispose();
       using second = await newGraph();
       const steps = allHops.length * 3;
@@ -4090,8 +4064,8 @@ test("ModuleGraph isolation: a Bun.$ script of a disposed graph stops: the runni
     }
   };
   try {
-    a.graph.run(() => a.app.open.shellScript(ofA, bunExe()));
-    b.graph.run(() => b.app.open.shellScript(ofB, bunExe()));
+    a.app.open.shellScript(ofA, bunExe());
+    b.app.open.shellScript(ofB, bunExe());
     // Both are on their second command (spawned from a process-exit callback, not from the graph's code).
     await until(() => running(ofA.file) && running(ofB.file));
     a.graph.dispose();
@@ -4154,8 +4128,8 @@ test("ModuleGraph isolation: a DNS query (c-ares) of a disposed graph is never a
       live: newState("resolve-live"),
       host: newState("resolve-host"),
     };
-    disposed.graph.run(() => disposed.app.resolveThrough(states.disposed, server.port));
-    live.graph.run(() => live.app.resolveThrough(states.live, server.port));
+    disposed.app.resolveThrough(states.disposed, server.port);
+    live.app.resolveThrough(states.live, server.port);
     hostApp.resolveThrough(states.host, server.port);
     await until(() => Object.values(states).every(asked));
 
@@ -4177,7 +4151,7 @@ test("ModuleGraph isolation: background work of a disposed graph does not settle
   using made = await newGraph();
   const names = Object.keys(hostApp.background);
   const started: Record<string, Promise<unknown>> = {};
-  made.graph.run(() => {
+  made.app.call(() => {
     for (const name of names) (started[name] = Promise.resolve(made.app.background[name]())).catch(() => {});
   });
   // What finished inside the call that started it is not something the event loop delivers.
@@ -4214,7 +4188,7 @@ describe.concurrent(
       test(name, async () => {
         using made = await newGraph();
         const state = newState("race") as ReturnType<typeof newState> & { settledAtDispose?: number };
-        made.graph.run(() => made.app.race(name, 8, state, () => made.graph.dispose()));
+        made.app.race(name, 8, state, () => made.graph.dispose());
         await until(() => state.ticks > 0);
         // The same work in the host, started afterwards, has all finished: the graph's had too.
         const hostState = newState("race-host");
@@ -4235,7 +4209,7 @@ test("ModuleGraph isolation: a native fs.cp in flight does not settle into a dis
   const state = newState("cp");
   // Disposed from the first copy's own handler: the other 31 are under way, or finished and
   // queued behind it, whatever the speed of the build and the disk.
-  made.graph.run(() => made.app.copies(from, join(dir, "cp-of-the-graph"), 16, state, () => made.graph.dispose()));
+  made.app.copies(from, join(dir, "cp-of-the-graph"), 16, state, () => made.graph.dispose());
   await until(() => state.ticks > 0);
   // The same copies, asked for afterwards by the host, have all finished: the graph's had too.
   const hostState = newState("cp-host");
@@ -4250,7 +4224,7 @@ test("ModuleGraph isolation: work that continues from one thread-pool step to th
   const gzipped = Bun.gzipSync(Buffer.alloc(48 << 20, crypto.getRandomValues(new Uint8Array(1024))));
   using made = await newGraph();
   const [ofGraph, ofHost] = [newState("decompress-graph"), newState("decompress-host")];
-  const inGraph: Promise<ArrayBuffer> = made.graph.run(() => made.app.decompressALot(ofGraph, gzipped));
+  const inGraph: Promise<ArrayBuffer> = made.app.decompressALot(ofGraph, gzipped);
   // Some steps in, not all.
   await until(() => ofGraph.ticks > 2);
   made.graph.dispose();
@@ -4324,9 +4298,9 @@ test("ModuleGraph isolation: a multipart S3 upload is its graph's from the first
     newState("upload-completing"),
   ];
   const endpoint = `http://127.0.0.1:${s3.port}`;
-  disposed.graph.run(() => disposed.app.uploadInParts(ofDisposed, endpoint));
-  const keptUpload: Promise<void> = kept.graph.run(() => kept.app.uploadInParts(ofKept, endpoint));
-  disposedCompleting.graph.run(() => disposedCompleting.app.uploadInParts(ofCompleting, endpoint));
+  disposed.app.uploadInParts(ofDisposed, endpoint);
+  const keptUpload: Promise<void> = kept.app.uploadInParts(ofKept, endpoint);
+  disposedCompleting.app.uploadInParts(ofCompleting, endpoint);
   await inFlight.promise;
   disposed.graph.dispose();
   letGo.resolve();

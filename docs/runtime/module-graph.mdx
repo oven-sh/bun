@@ -19,7 +19,7 @@ const graph = new Bun.ModuleGraph({
 });
 
 const app = await graph.import("./app.ts");
-await graph.run(() => app.handle(new Request("http://localhost/")));
+await app.handle(new Request("http://localhost/"));
 
 graph.dispose();
 ```
@@ -66,7 +66,7 @@ A thread-safe function keeps the process running only for as long as the graph t
 
 `graph.dispose()` also drops the graph's module registry and `require.cache`. Code of the graph that is still referenced keeps working, and an error in what still runs in its context, such as a tick it had queued, still goes to `onError`. From then on:
 
-- `graph.import()`, `graph.run()` and the graph's `require()` fail with `ERR_INVALID_STATE`.
+- `graph.import()` and the graph's `require()` fail with `ERR_INVALID_STATE`.
 - A function of the graph still runs when it is called, in the graph's stopped context: what it computes it returns, and what it starts never completes. A timer it sets never fires, and an `import()` in it stays pending, as one by the graph's own leftover code does.
 - Modules of the graph that had not run yet never will.
 
@@ -80,10 +80,11 @@ A graph's code runs in the graph's context, whoever calls it. Calling a function
 app.start(); // what this opens is the graph's
 ```
 
-The host's own code runs in the context it is called in. `run()` calls a function of the host's in the graph's context:
+The host's own code runs in the context it is called in, so it runs in the graph's context when the graph's code calls it. To have the graph own something the host's code opens, hand that code to a function of the graph's:
 
 ```ts
-graph.run(() => Bun.serve({ port: 0, fetch: app.fetch })); // the server is the graph's and stops with it
+// in the graph: export const call = (fn, ...args) => fn(...args);
+app.call(() => Bun.serve({ port: 0, fetch: app.fetch })); // the server is the graph's and stops with it
 ```
 
 Code made with `new Function()` or indirect `eval` is global code: it belongs to no graph, whichever code made it, and runs in its caller's context.
@@ -111,11 +112,11 @@ const graph = new Bun.ModuleGraph({
 
 ## Errors
 
-Uncaught exceptions and unhandled rejections go to the `onError` of the graph in whose context they happen, instead of the process-wide handlers. It is the same context that owns what the code opens: a graph's code and everything it starts run in the graph's context, and so does what the host calls through `run()`.
+Uncaught exceptions and unhandled rejections go to the `onError` of the graph in whose context they happen, instead of the process-wide handlers. It is the same context that owns what the code opens: a graph's code and everything it starts run in the graph's context.
 
 A function of the graph's that the host calls runs in the graph's context, so what it throws later is the graph's. A host function that the graph's code calls runs in the graph's context too, so what it throws there is the graph's.
 
-`run()` rethrows to its caller what the function throws. If the caller does not catch it either, it is still the graph's: it was thrown in the graph's context, whatever it unwound through afterwards.
+What a function of the graph's throws goes to its caller, like any call. If the caller does not catch it either, it is still the graph's: it was thrown in the graph's context, whatever it unwound through afterwards.
 
 An error that no code threw belongs to whoever opened the thing it happened to. A socket the graph opened that fails with no `error` handler reports to the graph's `onError`.
 

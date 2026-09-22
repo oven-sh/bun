@@ -337,7 +337,7 @@ test("every callback of several graphs and the host, all running at once, finds 
         }
         const start = () => storage.run(tag, () => app.callbacks[name](seen, env));
         return Promise.resolve()
-          .then(() => (graph ? graph.run(start) : start()))
+          .then(start)
           .catch(error => void failures.push(`${name} in ${tag}: ${error}`));
       }),
     ),

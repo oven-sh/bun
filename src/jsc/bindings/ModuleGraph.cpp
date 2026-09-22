@@ -541,7 +541,6 @@ void disposeModuleGraphOfContext(WebCore::ScriptExecutionContext& context)
 
 static JSC_DECLARE_HOST_FUNCTION(jsModuleGraphPrototypeFunction_import);
 static JSC_DECLARE_HOST_FUNCTION(jsModuleGraphPrototypeFunction_dispose);
-static JSC_DECLARE_HOST_FUNCTION(jsModuleGraphPrototypeFunction_run);
 static JSC_DECLARE_CUSTOM_GETTER(jsModuleGraphConstructorGetter_current);
 
 static JSModuleGraph* thisModuleGraph(JSGlobalObject* globalObject, ThrowScope& scope, JSValue thisValue, ASCIILiteral method)
@@ -563,25 +562,6 @@ JSC_DEFINE_HOST_FUNCTION(jsModuleGraphPrototypeFunction_import, (JSGlobalObject 
     if (scope.exception()) [[unlikely]]
         return JSValue::encode(JSPromise::rejectedPromiseWithCaughtException(globalObject, scope));
     return JSValue::encode(result);
-}
-
-// run(fn, ...args): call `fn` inside the graph's context, so what it and everything it starts
-// open belongs to the graph — for calling into the graph's code from outside it.
-JSC_DEFINE_HOST_FUNCTION(jsModuleGraphPrototypeFunction_run, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSModuleGraph* graph = thisModuleGraph(globalObject, scope, callFrame->thisValue(), "run"_s);
-    RETURN_IF_EXCEPTION(scope, {});
-    JSValue function = callFrame->argument(0);
-    V::validateFunction(scope, globalObject, function, "fn"_s);
-    RETURN_IF_EXCEPTION(scope, {});
-    // Inside a disposed graph whatever `fn` starts would silently never complete: say so, as import() does.
-    throwIfModuleGraphDisposed(globalObject, scope, graph);
-    RETURN_IF_EXCEPTION(scope, {});
-    ModuleGraphContextScope context(globalObject, graph);
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::call(globalObject, function, getCallData(function), jsUndefined(), ArgList(callFrame, 1))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsModuleGraphPrototypeFunction_dispose, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -638,7 +618,6 @@ private:
 static const HashTableValue JSModuleGraphPrototypeTableValues[] = {
     { "import"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsModuleGraphPrototypeFunction_import, 1 } },
     { "dispose"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsModuleGraphPrototypeFunction_dispose, 0 } },
-    { "run"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsModuleGraphPrototypeFunction_run, 1 } },
 };
 
 const ClassInfo JSModuleGraphPrototype::s_info = { "ModuleGraph"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSModuleGraphPrototype) };

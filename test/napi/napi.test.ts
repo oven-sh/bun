@@ -1002,14 +1002,14 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
           graphs[name] = { graph, app: await graph.import(import.meta.dir + "/tenant.mjs") };
         }
         const hostRan = [];
-        graphs.disposed.graph.run(() => graphs.disposed.app.start());
-        graphs.live.graph.run(() => graphs.live.app.start());
+        graphs.disposed.app.start();
+        graphs.live.app.start();
         addon.call_back_from_async_work(() => hostRan.push("async work callback"));
         addon.resolve_from_async_work().then(() => hostRan.push("async work promise"));
         addon.call_back_from_threadsafe_function(() => hostRan.push("threadsafe function callback"));
         // A promise of the host's, settled from a completion of work the graph about to be disposed queues.
         addon.promise_the_next_async_work_settles().then(() => hostRan.push("promise settled from the disposed graph's completion"));
-        graphs.disposed.graph.run(() => graphs.disposed.app.settleThePromiseTheHostWasGiven());
+        graphs.disposed.app.settleThePromiseTheHostWasGiven();
         graphs.disposed.graph.dispose();
         // The addon records every completion, the disposed graph's included.
         await until(() => addon.completion_statuses().length === 10);
@@ -1018,7 +1018,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
 
         // What a live graph's completion starts is that graph's: dispose() stops it.
         const state = { ticks: 0, started: false };
-        graphs.live.graph.run(() => graphs.live.app.startIntervalFromCompletion(state));
+        graphs.live.app.startIntervalFromCompletion(state);
         await until(() => state.started && state.ticks > 0);
         graphs.live.graph.dispose();
         const ticksAtDispose = state.ticks;
@@ -1132,23 +1132,23 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         const app = await graph.import(import.meta.dir + "/tenant.mjs");
         const when = process.argv[3];
         if (when === "that the graph's leftover script made") {
-          graph.run(() => app.startLater());
+          app.startLater();
           graph.dispose();
           // (The leftover microtask has run by now, and what closes its function has not.)
           await Promise.resolve();
           addon.ref_that_function();
         } else if (when === "that the host had let go of and the graph reffed again") {
-          graph.run(() => app.startLater.unscheduled());
+          app.startLater.unscheduled();
           addon.ref_that_function();
           addon.unref_that_function();
-          graph.run(() => app.refTheLastOne());
+          app.refTheLastOne();
           graph.dispose();
         } else if (when === "that the host made and the graph reffed") {
           addon.threadsafe_function_that_refs_itself(false);
-          graph.run(() => app.refTheLastOne());
+          app.refTheLastOne();
           graph.dispose();
         } else {
-          graph.run(() => app.start());
+          app.start();
           if (when === "while the graph lived") addon.ref_that_function();
           if (when === "and the host had reffed and let go of it") {
             addon.ref_that_function();

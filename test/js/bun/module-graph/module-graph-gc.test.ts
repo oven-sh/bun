@@ -4,7 +4,6 @@ import { generateHeapSnapshotForDebugging, heapStats, jscDescribe } from "bun:js
 import { afterAll, describe, expect, jest, test } from "bun:test";
 import { rmSync } from "fs";
 import { bunEnv, bunExe, isArm64, isLinux, tempDir } from "harness";
-import { AsyncLocalStorage } from "node:async_hooks";
 import { join } from "path";
 
 const ModuleGraph = Bun.ModuleGraph;
@@ -38,6 +37,10 @@ const dir = String(
     // What the graph opens reports to, and is stopped through, `control` (a host object in
     // `globals`), so the host can stop it without holding anything of the graph.
     "io.mjs": `
+      import { AsyncLocalStorage } from "node:async_hooks";
+      export const pendingTimer = () => setTimeout(() => {}, 1_000_000);
+      export const capturedAsyncContext = () => AsyncLocalStorage.snapshot();
+      export const nothingLeftOpen = () => 1;
       export function serve() {
         const server = Bun.serve({ port: 0, fetch: () => new Response("graph " + TAG) });
         control.httpPort = server.port;
@@ -471,7 +474,7 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
     await (async () => {
       const graph = lifetimes.track("graph", new ModuleGraph({ globals: { TAG: "served", control: state } }));
       const io = await graph.import(file("io.mjs"));
-      graph.run(() => io.serve());
+      io.serve();
     })();
     expect(await lifetimes.survives("graph")).toBe(true);
     expect(await (await fetch(`http://127.0.0.1:${state.httpPort}/`)).text()).toBe("graph served");
@@ -486,7 +489,7 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
     await (async () => {
       const graph = lifetimes.track("graph", new ModuleGraph({ globals: { control: state } }));
       const io = await graph.import(file("io.mjs"));
-      graph.run(() => io.tick());
+      io.tick();
     })();
     expect(await lifetimes.survives("graph")).toBe(true);
     const ticks = state.ticks;
@@ -505,7 +508,7 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
       await (async () => {
         const graph = lifetimes.track("graph", new ModuleGraph({ globals: { control: state } }));
         const io = await graph.import(file("io.mjs"));
-        graph.run(() => io.cronTickThatParks());
+        io.cronTickThatParks();
         jest.advanceTimersByTime(60_000);
         expect(state.ticks).toBe(1);
         graph.dispose();
@@ -536,7 +539,7 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
             }),
           );
           const io = await graph.import(file("io.mjs"));
-          graph.run(() => io.cronTickThatWaitsFor(held.promise));
+          io.cronTickThatWaitsFor(held.promise);
           jest.advanceTimersByTime(60_000);
           expect(state.ticks).toBe(1);
           graph.dispose();
@@ -560,16 +563,16 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
     });
   }
 
-  test("run(): what the host opens inside the graph's context keeps the graph alive until it is closed", async () => {
+  test("what a call into a graph leaves open keeps the graph alive until it is closed", async () => {
     const lifetimes = new Lifetimes();
     let timer: Timer | undefined;
     let snapshot: (<R>(fn: () => R) => R) | undefined;
     await (async () => {
-      const timed = lifetimes.track("with a pending timer", new ModuleGraph());
-      timer = timed.run(() => setTimeout(() => {}, 1_000_000));
-      const snapshotted = lifetimes.track("with a captured async context", new ModuleGraph());
-      snapshot = snapshotted.run(() => AsyncLocalStorage.snapshot());
-      lifetimes.track("ran and returned", new ModuleGraph()).run(() => 1);
+      const io = (label: string) =>
+        lifetimes.track(label, new ModuleGraph({ globals: { TAG: label, control: {} } })).import(file("io.mjs"));
+      timer = (await io("with a pending timer")).pendingTimer();
+      snapshot = (await io("with a captured async context")).capturedAsyncContext();
+      (await io("ran and returned")).nothingLeftOpen();
     })();
     expect(await lifetimes.stillAlive("ran and returned")).toEqual([]);
     expect(await lifetimes.survives("with a pending timer")).toBe(true);
@@ -586,8 +589,8 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
     await (async () => {
       const graph = lifetimes.track("graph", new ModuleGraph({ globals: { control: state } }));
       const io = await graph.import(file("io.mjs"));
-      await graph.run(() => io.connectToOwnServer());
-      await graph.run(() => io.worker());
+      await io.connectToOwnServer();
+      await io.worker();
       graph.dispose();
       Bun.gc(true);
     })();
@@ -604,7 +607,8 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
       for (const [i, state] of states.entries()) {
         const graph = lifetimes.track("graph " + i, new ModuleGraph({ globals: { TAG: "n" + i, control: state } }));
         const io = await graph.import(file("io.mjs"));
-        graph.run(() => (io.serve(), io.tick()));
+        io.serve();
+        io.tick();
       }
     })();
     const open = () => Promise.all(states.map(state => accepts(state.httpPort)));
@@ -620,8 +624,9 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
       for (const [i, state] of states.entries()) {
         const graph = new ModuleGraph({ globals: { TAG: "c" + i, control: state } });
         const io = await graph.import(file("io.mjs"));
-        graph.run(() => (io.serve(), io.tick()));
-        await graph.run(() => io.connectToOwnServer());
+        io.serve();
+        io.tick();
+        await io.connectToOwnServer();
         graph.dispose();
       }
       return states;
@@ -689,7 +694,7 @@ test("ModuleGraph GC: survives collecting continuously", async () => {
         cjs.inc(); cjs.cache();
         const esm = await graph.import(join(dir, "esm.mjs"));
         esm.inc(); await esm.dynamic();
-        if (i % 2 === 0) { const io = await graph.import(join(dir, "io.mjs")); graph.run(() => io.tick()); await graph.run(() => io.connectToOwnServer()); }
+        if (i % 2 === 0) { const io = await graph.import(join(dir, "io.mjs")); io.tick(); await io.connectToOwnServer(); }
         graph.dispose();
         await new Promise(resolve => setImmediate(resolve));
       }

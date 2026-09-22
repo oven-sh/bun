@@ -1018,9 +1018,9 @@ async function collect() {
   await tick();
   Bun.gc(true);
 }
-// graph.run(...args) under a function that is garbage once it returns. Its frame is not one of the
+// fn(...args) under a function that is garbage once it returns. Its frame is not one of the
 // graphs' modules, so graphFrames() leaves it out.
-const underDeadFrame = (graph, args) => new Function("graph", "args", '"use strict"; try { return graph.run(...args); } finally {}')(graph, args);
+const underDeadFrame = (fn, args) => new Function("fn", "args", '"use strict"; try { return fn(...args); } finally {}')(fn, args);
 
 // Whether a root reaches the graph that globalThis.__matrixProbe.weak points at. A WeakRef that still
 // derefs says only that the cell was marked, not that anything holds it; the debugging snapshot has
@@ -1068,13 +1068,13 @@ const otherModule = await other.import(join(dir, "other.mjs"));
 const CANDIDATES = 4;
 
 // One origin graph per state, and CANDIDATES pairs of errors from it per cell. Everything that refers
-// to the origin is made in here, and only "keep" carries it out. No throwaway closures:
-// run(fn, ...args) passes the arguments.
+// to the origin is made in here, and only "keep" carries it out. No throwaway closures: the graphs'
+// functions are called with their arguments.
 async function originIn(gc, cells) {
   const origin = new Bun.ModuleGraph();
   const originModule = await origin.import(join(dir, "origin.mjs"));
   const pairs = [];
-  for (let i = 0; i < cells * CANDIDATES; i++) pairs.push(trace === "origin+other" ? underDeadFrame(other, [otherModule.call, originModule.pair, "boom"]) : underDeadFrame(origin, [originModule.pair, "boom"]));
+  for (let i = 0; i < cells * CANDIDATES; i++) pairs.push(trace === "origin+other" ? underDeadFrame(otherModule.call, [originModule.pair, "boom"]) : underDeadFrame(originModule.pair, ["boom"]));
   const keep = gc === "none" || gc === "alive" ? { origin, originModule } : gc === "disposed, module held" ? { originModule } : {};
   if (gc === "disposed, module held" || gc === "collected") origin.dispose();
   return { pairs, keep, weak: new WeakRef(origin) };
@@ -1104,7 +1104,7 @@ function firstReadPath([, twin]) {
 
 // A cell up to the point where the collection may pass over it. A cell with no collection is done here.
 function begin({ gc, firstRead, reader }, { keep, weak }, candidates) {
-  const read = ([error]) => (reader === "origin" ? keep.origin.run(keep.originModule.read, error) : reader === "other" ? other.run(otherModule.read, error) : error.stack);
+  const read = ([error]) => (reader === "origin" ? keep.originModule.read(error) : reader === "other" ? otherModule.read(error) : error.stack);
   const state = { gc, firstRead, reader, read, weak, candidates, pair: undefined, path: undefined, before: undefined };
   if (firstRead === "before" || gc === "none") {
     state.pair = candidates[0];

@@ -1101,17 +1101,81 @@ describe.skipIf(!canTrace || isWindows)("pty runner", () => {
     return { line: lines.at(-1), stderr, exitCode };
   }
 
+  /**
+   * A workload that leaves something behind in a session of its own, which keeps the terminal open (a
+   * daemon, a detached helper), says `pid=` of it, and then exits 7 once a line is typed, stays up ("stay"),
+   * or never stops writing ("chatty").
+   */
+  const leavesSource = [
+    "#include <stdio.h>",
+    "#include <string.h>",
+    "#include <unistd.h>",
+    "int main(int argc, char **argv) {",
+    "    int in_its_own_session[2];",
+    "    if (pipe(in_its_own_session) != 0) return 2;",
+    "    pid_t left = fork();",
+    "    if (left == 0) {",
+    "        setsid();",
+    "        close(in_its_own_session[0]);",
+    "        close(in_its_own_session[1]);",
+    "        for (;;) pause();",
+    "    }",
+    // Not before it has left: a session leader's exit hangs up on everything still in the session.
+    "    char byte;",
+    "    close(in_its_own_session[1]);",
+    "    if (read(in_its_own_session[0], &byte, 1) != 0) return 2;",
+    '    printf("pid=%d\\n", (int)left);',
+    "    fflush(stdout);",
+    '    if (argc > 1 && strcmp(argv[1], "stay") == 0) for (;;) pause();',
+    '    if (argc > 1 && strcmp(argv[1], "chatty") == 0) for (;;) puts("y");',
+    // Until the line has been read (a newline is typed back): a terminal may drop what its leader's exit finds unread.
+    "    getchar();",
+    "    return 7;",
+    "}",
+    "",
+  ].join("\n");
+
+  // ptyrun, a preload and the workload above, built once for every test here. Made by the first test that
+  // asks: a skipped describe still runs its body, and none of its hooks.
+  let binaries: ReturnType<typeof tempDir> | undefined;
+  afterAll(() => binaries?.[Symbol.dispose]());
+  let built: Promise<{ ptyrun: string; preload: string; leaves: string }> | undefined;
+  const build = () =>
+    (built ??= (async () => {
+      binaries = tempDir("ptyrun", { "empty.c": "int ptyrun_nothing;\n", "leaves.c": leavesSource });
+      const dir = String(binaries);
+      const [ptyrun, leaves] = [join(dir, "ptyrun"), join(dir, "leaves")];
+      // Somewhere for the preload to point that is real but does nothing. In a
+      // trace this is the function tracer, which has to load into the traced
+      // binary and not into ptyrun.
+      const preload = join(dir, darwin ? "empty.dylib" : "empty.so");
+      await Promise.all([
+        compile(["-o", ptyrun, join(orderfile, "ptyrun.c"), ...(darwin ? [] : ["-lutil"])]),
+        compile([...shared, "-o", preload, join(dir, "empty.c")]),
+        compile(["-o", leaves, join(dir, "leaves.c")]),
+      ]);
+      return { ptyrun, preload, leaves };
+    })());
+
+  /**
+   * The `pid=` a command printed. Its output goes on being read, to the end (`rest`): a reader that went
+   * away is an EPIPE for whatever ptyrun writes next.
+   */
+  async function readPid(proc: Bun.Subprocess<"pipe", "pipe", "pipe">) {
+    let output = "";
+    let ended = false;
+    const rest = (async () => {
+      for await (const chunk of proc.stdout) output += Buffer.from(chunk).toString();
+      ended = true;
+    })();
+    while (!ended && !/pid=\d+\s/.test(output)) await Bun.sleep(1);
+    const pid = /pid=(\d+)/.exec(output)?.[1];
+    if (!pid) throw new Error(`the command ended without saying pid=: ${JSON.stringify(output)}`);
+    return { pid: Number(pid), rest };
+  }
+
   it.concurrent("runs the child on a terminal, and hands it the preload it was given", async () => {
-    using dir = tempDir("ptyrun", { "empty.c": "int ptyrun_nothing;\n" });
-    const ptyrun = join(String(dir), "ptyrun");
-    // Somewhere for the preload to point that is real but does nothing. In a
-    // trace this is the function tracer, which has to load into the traced
-    // binary and not into ptyrun.
-    const preload = join(String(dir), darwin ? "empty.dylib" : "empty.so");
-    await Promise.all([
-      compile(["-o", ptyrun, join(orderfile, "ptyrun.c"), ...(darwin ? [] : ["-lutil"])]),
-      compile([...shared, "-o", preload, join(String(dir), "empty.c")]),
-    ]);
+    const { ptyrun, preload } = await build();
 
     const [pty, pipe] = await Promise.all([
       type([ptyrun, bunExe(), "-e", probe], { PTYRUN_PRELOAD: preload }),
@@ -1127,9 +1191,7 @@ describe.skipIf(!canTrace || isWindows)("pty runner", () => {
   });
 
   it.concurrent("takes the terminal's processes with it when it is told to stop", async () => {
-    using dir = tempDir("ptyrun-stop", {});
-    const ptyrun = join(String(dir), "ptyrun");
-    await compile(["-o", ptyrun, join(orderfile, "ptyrun.c"), ...(darwin ? [] : ["-lutil"])]);
+    const { ptyrun } = await build();
 
     // Ignores the hangup that the terminal going away sends, so only being killed ends it.
     await using proc = Bun.spawn({
@@ -1139,21 +1201,16 @@ describe.skipIf(!canTrace || isWindows)("pty runner", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    let output = "";
-    for await (const chunk of proc.stdout) {
-      output += Buffer.from(chunk).toString();
-      if (/pid=\d+\s/.test(output)) break;
-    }
-    const shell = Number(/pid=(\d+)/.exec(output)![1]);
+    const { pid: shell, rest } = await readPid(proc);
     proc.kill("SIGTERM");
     expect(await proc.exited).toBe(1);
+    await rest;
     await expectGone([shell]);
   });
 
   it.concurrent("forwards all of the output to a reader that is slow to start", async () => {
+    const { ptyrun } = await build();
     using dir = tempDir("ptyrun-slow-reader", {});
-    const ptyrun = join(String(dir), "ptyrun");
-    await compile(["-o", ptyrun, join(orderfile, "ptyrun.c"), ...(darwin ? [] : ["-lutil"])]);
 
     // A little more than a pipe holds: ptyrun is blocked writing the last of it when its child, which
     // has nothing left to wait for, exits. The reader starts once that has happened (or, where the
@@ -1172,61 +1229,15 @@ describe.skipIf(!canTrace || isWindows)("pty runner", () => {
   });
 
   /**
-   * A workload may leave something behind in a session of its own that keeps
-   * the terminal open: a daemon, a detached helper. ptyrun is done when its
-   * child is, and when it is told to stop, whoever still holds the terminal.
+   * ptyrun is done when its child is, and when it is told to stop, whoever still holds the terminal. On linux
+   * it adopts what the child left behind and ends it; elsewhere that is left running, and cleaned up here.
    */
   describe("with a descendant that left the session and holds the terminal", () => {
-    const source = [
-      "#include <stdio.h>",
-      "#include <string.h>",
-      "#include <unistd.h>",
-      "int main(int argc, char **argv) {",
-      "    int in_its_own_session[2];",
-      "    if (pipe(in_its_own_session) != 0) return 2;",
-      "    pid_t left = fork();",
-      "    if (left == 0) {",
-      "        setsid();",
-      "        close(in_its_own_session[0]);",
-      "        close(in_its_own_session[1]);",
-      "        for (;;) pause();",
-      "    }",
-      // Not before it has left: a session leader's exit hangs up on everything still in the session.
-      "    char byte;",
-      "    close(in_its_own_session[1]);",
-      "    if (read(in_its_own_session[0], &byte, 1) != 0) return 2;",
-      '    printf("pid=%d\\n", (int)left);',
-      "    fflush(stdout);",
-      '    if (argc > 1 && strcmp(argv[1], "stay") == 0) for (;;) pause();',
-      "    return 7;",
-      "}",
-      "",
-    ].join("\n");
-
-    /** ptyrun's exit code, once the descendant is accounted for: on linux ptyrun adopts and ends it, elsewhere it is left running. */
-    async function run(args: string[], whenStarted: (proc: Bun.Subprocess) => void) {
-      using dir = tempDir("ptyrun-left", { "leaves.c": source });
-      const [ptyrun, leaves] = [join(String(dir), "ptyrun"), join(String(dir), "leaves")];
-      await Promise.all([
-        compile(["-o", ptyrun, join(orderfile, "ptyrun.c"), ...(darwin ? [] : ["-lutil"])]),
-        compile(["-o", leaves, join(String(dir), "leaves.c")]),
-      ]);
-      await using proc = Bun.spawn({ cmd: [ptyrun, leaves, ...args], env: bunEnv, stdin: "pipe", stdout: "pipe", stderr: "pipe" }); // prettier-ignore
-      // Read to the end: a reader that went away would be a SIGPIPE for whatever ptyrun writes next.
-      let output = "";
-      let ended = false;
-      const reading = (async () => {
-        for await (const chunk of proc.stdout) output += Buffer.from(chunk).toString();
-        ended = true;
-      })();
-      while (!ended && !/pid=\d+\s/.test(output)) await Bun.sleep(1);
-      const left = Number(/pid=(\d+)/.exec(output)![1]);
+    async function leftBehind<T>(left: number, check: () => Promise<T>) {
       try {
-        whenStarted(proc);
-        const exitCode = await proc.exited;
-        await reading;
+        const result = await check();
         if (process.platform === "linux") await expectGone([left]);
-        return exitCode;
+        return result;
       } finally {
         try {
           process.kill(left, "SIGKILL");
@@ -1234,12 +1245,56 @@ describe.skipIf(!canTrace || isWindows)("pty runner", () => {
       }
     }
 
+    async function run(mode: string[], whenStarted: (proc: Bun.Subprocess<"pipe", "pipe", "pipe">) => void) {
+      const { ptyrun, leaves } = await build();
+      await using proc = Bun.spawn({ cmd: [ptyrun, leaves, ...mode], env: bunEnv, stdin: "pipe", stdout: "pipe", stderr: "pipe" }); // prettier-ignore
+      const { pid: left, rest } = await readPid(proc);
+      // Awaited here: leaving this scope stops `proc`.
+      return await leftBehind(left, async () => {
+        whenStarted(proc);
+        const exitCode = await proc.exited;
+        await rest;
+        return { exitCode, signalCode: proc.signalCode };
+      });
+    }
+
     it.concurrent("returns when its child exits, with the child's status", async () => {
-      expect(await run([], () => {})).toBe(7);
+      const exited = await run([], proc => {
+        proc.stdin.write("\n");
+        proc.stdin.flush();
+      });
+      expect(exited).toEqual({ exitCode: 7, signalCode: null });
     });
 
     it.concurrent("returns when it is told to stop", async () => {
-      expect(await run(["stay"], proc => proc.kill("SIGTERM"))).toBe(1);
+      expect(await run(["stay"], proc => proc.kill("SIGTERM"))).toEqual({ exitCode: 1, signalCode: null });
+    });
+
+    it.concurrent("is not ended by the alarm it sets for itself before it has cleaned up", async () => {
+      const stopped = await run(["stay"], proc => {
+        proc.kill("SIGALRM");
+        proc.kill("SIGTERM");
+      });
+      expect(stopped).toEqual({ exitCode: 1, signalCode: null });
+    });
+
+    it.concurrent("leaves the same way when its reader goes away, instead of dying of SIGPIPE", async () => {
+      const { ptyrun, leaves } = await build();
+      using dir = tempDir("ptyrun-epipe", {});
+      const status = join(String(dir), "status");
+      await using proc = Bun.spawn({
+        cmd: ["/bin/sh", "-c", `("$0" "$1" chatty < /dev/null; echo $? > "$2") | head -1`, ptyrun, leaves, status],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const stdout = await proc.stdout.text();
+      const left = /pid=(\d+)/.exec(stdout)?.[1];
+      if (!left) throw new Error(`the workload ended without saying pid=: ${JSON.stringify(stdout)}`);
+      await leftBehind(Number(left), async () => {
+        await proc.exited;
+        expect(readFileSync(status, "utf8").trim()).toBe("1");
+      });
     });
   });
 });
@@ -1348,8 +1403,9 @@ describe.skipIf(!canTrace || isWindows)("function tracer, following children", (
     "",
   ].join("\n");
 
-  // The tracer and the two programs, built once for every test here.
-  const binaries = tempDir("functrace-children", {
+  // The tracer and the programs, built once for every test here. Made by the first test that asks: a skipped
+  // describe still runs its body, and none of its hooks.
+  const sources = {
     "self.c": source,
     "other.c": "int main(void) { return 0; }\n",
     // What stands between a shell and an application often enough: env, nice, time, sh -c.
@@ -1367,13 +1423,23 @@ describe.skipIf(!canTrace || isWindows)("function tracer, following children", (
       "}",
       "",
     ].join("\n"),
-  });
-  afterAll(() => binaries[Symbol.dispose]());
+  };
+  let binaries: ReturnType<typeof tempDir> | undefined;
+  afterAll(() => binaries?.[Symbol.dispose]());
   let built:
-    | Promise<{ tracer: string; self: string; other: string; wrapper: string; stay: string; starts: string }>
+    | Promise<{
+        dir: string;
+        tracer: string;
+        self: string;
+        other: string;
+        wrapper: string;
+        stay: string;
+        starts: string;
+      }>
     | undefined;
   const build = () =>
     (built ??= (async () => {
+      binaries = tempDir("functrace-children", sources);
       const dir = String(binaries);
       const tracer = join(dir, darwin ? "functrace.dylib" : "functrace.so");
       const self = join(dir, "self");
@@ -1389,7 +1455,7 @@ describe.skipIf(!canTrace || isWindows)("function tracer, following children", (
         compile(["-o", stay, join(dir, "stay.c")]),
       ]);
       writeStarts(starts, readTextSymbols(self).keys());
-      return { tracer, self, other, wrapper, stay, starts };
+      return { dir, tracer, self, other, wrapper, stay, starts };
     })());
 
   /** The environment that asks for children to be followed. */
@@ -1457,7 +1523,7 @@ describe.skipIf(!canTrace || isWindows)("function tracer, following children", (
   });
 
   it.concurrent("says so when the named executable is not there", async () => {
-    const missing = join(String(binaries), "not-there");
+    const missing = join((await build()).dir, "not-there");
     const { stderr, exitCode, traces } = await traceSelfExec(
       { BUN_FUNCTRACE_CHILDREN: "1", BUN_FUNCTRACE_EXE: missing },
       "trace-%p.bin",

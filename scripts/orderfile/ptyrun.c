@@ -53,16 +53,25 @@
 
 // How long leaving may take once we were told to stop, or have to leave without
 // the child having exited. Less than the generator gives us before its SIGKILL.
-#define LEAVE_GRACE_MS 1000
+#define LEAVE_GRACE_S 1
+#define LEAVE_GRACE_MS (LEAVE_GRACE_S * 1000)
 
 static volatile sig_atomic_t child_group;
 static volatile sig_atomic_t stopping;
+static long long stop_deadline; // written by on_terminate before `stopping`, read by main after it
 static int wake[2]; // written by the signal handlers, polled by main
 
 /** For a write whose failure changes nothing: the child's exit is what ends us, not the terminal's. */
 static void ignore(ssize_t result)
 {
     (void)result;
+}
+
+static long long now_ms(void)
+{
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return now.tv_sec * 1000LL + now.tv_nsec / 1000000;
 }
 
 static void kill_child(void)
@@ -77,18 +86,23 @@ static void on_terminate(int signal)
 {
     (void)signal;
     int saved = errno;
+    // The grace runs from here, not from when main gets to notice: we may have
+    // arrived just before main entered a write that then blocks, with no signal
+    // left to interrupt it. SIGALRM is that signal, when the grace is over.
+    if (!stopping) stop_deadline = now_ms() + LEAVE_GRACE_MS;
     stopping = 1;
     kill_child();
-    // Wherever main is blocked when the grace is over, and whatever it is blocked on.
-    alarm(1 + 2 * LEAVE_GRACE_MS / 1000);
+    alarm(LEAVE_GRACE_S);
     ignore(write(wake[1], "", 1));
     errno = saved;
 }
 
-static void on_child(int signal)
+/** SIGCHLD and SIGALRM: main looks at what happened, once it is out of whatever it was blocked in. */
+static void on_wake(int signal)
 {
-    (void)signal;
     int saved = errno;
+    // Again and again: main may not have been in the write yet that this one was for.
+    if (signal == SIGALRM && stopping) alarm(LEAVE_GRACE_S);
     ignore(write(wake[1], "", 1)); // full means main has plenty to wake up for
     errno = saved;
 }
@@ -113,13 +127,6 @@ static int write_all(int fd, const char *bytes, size_t size)
     return 0;
 }
 
-static long long now_ms(void)
-{
-    struct timespec now;
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    return now.tv_sec * 1000LL + now.tv_nsec / 1000000;
-}
-
 /** Waits for a signal handler to have written to `wake`, until `deadline`. */
 static void wait_for_signal(long long deadline)
 {
@@ -133,11 +140,21 @@ static void wait_for_signal(long long deadline)
 /**
  * Kills and reaps everything we adopted as a subreaper: what the child started
  * and left behind, in whatever session. Whatever those leave behind is adopted
- * in turn, so this goes round until we have no children left, or `deadline`.
+ * in turn, so this goes round until we have no children left, or `deadline`;
+ * once whatever is left of the deadline, so that what we adopted is at least
+ * told to go.
  */
 static void kill_adopted(long long deadline)
 {
-    while (now_ms() < deadline) {
+    // Only if /proc is this pid namespace's: in another's, the numbers are other processes.
+    int self = (int)getpid(), proc_self = 0;
+    FILE *own = fopen("/proc/self/stat", "r");
+    if (own) {
+        if (fscanf(own, "%d", &proc_self) != 1) proc_self = 0;
+        fclose(own);
+    }
+    if (proc_self != self) return;
+    do {
         DIR *proc = opendir("/proc");
         if (!proc) return;
         struct dirent *entry;
@@ -155,7 +172,7 @@ static void kill_adopted(long long deadline)
             // "pid (comm) state ppid …", and comm may itself hold spaces and parentheses.
             char *comm_end = strrchr(stat, ')');
             int parent;
-            if (comm_end && sscanf(comm_end + 1, " %*c %d", &parent) == 1 && parent == (int)getpid()) kill(pid, SIGKILL);
+            if (comm_end && sscanf(comm_end + 1, " %*c %d", &parent) == 1 && parent == self) kill(pid, SIGKILL);
         }
         closedir(proc);
         // Every one that is ready, so that a workload's many orphans cost one scan and not one each.
@@ -164,7 +181,7 @@ static void kill_adopted(long long deadline)
         }
         if (done < 0) return; // ECHILD: none left
         wait_for_signal(deadline);
-    }
+    } while (now_ms() < deadline);
 }
 #endif
 
@@ -198,8 +215,12 @@ int main(int argc, char **argv)
     sigprocmask(SIG_BLOCK, &terminate, &before);
     action.sa_handler = on_terminate;
     sigaction(SIGTERM, &action, NULL);
-    action.sa_handler = on_child;
+    action.sa_handler = on_wake;
     sigaction(SIGCHLD, &action, NULL);
+    sigaction(SIGALRM, &action, NULL);
+    // A reader that went away is an EPIPE to leave by, like any other reason: not
+    // a death that skips the child and what it left behind.
+    signal(SIGPIPE, SIG_IGN);
 
     struct winsize window = { .ws_row = 24, .ws_col = 80 };
     int master = -1;
@@ -210,6 +231,7 @@ int main(int argc, char **argv)
     }
     if (child == 0) {
         sigprocmask(SIG_SETMASK, &before, NULL); // the mask survives exec
+        signal(SIGPIPE, SIG_DFL); // and so does an ignored signal
         const char *preload = getenv("PTYRUN_PRELOAD");
         if (preload && *preload) setenv(PRELOAD_VAR, preload, 1);
         execvp(argv[1], &argv[1]);
@@ -227,9 +249,9 @@ int main(int argc, char **argv)
         { .fd = wake[0], .events = POLLIN } };
     int status = 0;
     int reaped = 0;
-    long long deadline = 0; // set once we are told to stop
+    long long deadline = 0; // none until we are told to stop
     while (!reaped) {
-        if (stopping && !deadline) deadline = now_ms() + LEAVE_GRACE_MS;
+        if (stopping) deadline = stop_deadline;
         if (deadline && now_ms() >= deadline) break; // a child that SIGKILL has not ended is not worth waiting for
         long long left = deadline ? deadline - now_ms() : -1;
         int ready = poll(fds, 3, deadline && left < 0 ? 0 : (int)left);
@@ -259,19 +281,18 @@ int main(int argc, char **argv)
             ignore(read(wake[0], buffer, sizeof buffer));
             pid_t done = waitpid(child, &status, WNOHANG);
             if (done == child) reaped = 1;
-            else if (done < 0 && errno != EINTR) break;
+            else if (done < 0) break;
         }
     }
 
     // Leaving for any other reason than the child's exit: it does not outlive us.
-    if (!deadline) deadline = now_ms() + LEAVE_GRACE_MS;
+    deadline = stopping ? stop_deadline : now_ms() + LEAVE_GRACE_MS;
     if (!reaped) {
         kill_child();
         while (!reaped && now_ms() < deadline) {
-            if (waitpid(child, &status, WNOHANG) != 0) reaped = 1;
+            if (waitpid(child, &status, WNOHANG) == child) reaped = 1;
             else wait_for_signal(deadline);
         }
-        if (!reaped) status = -1;
     }
     child_group = 0; // the id is free to be someone else's now
 
@@ -285,7 +306,9 @@ int main(int argc, char **argv)
         drained += (size_t)n;
     }
 #if defined(__linux__)
-    kill_adopted(deadline);
+    // A grace of its own when there is time: the drain above may have waited on a slow reader.
+    kill_adopted(stopping ? stop_deadline : now_ms() + LEAVE_GRACE_MS);
 #endif
-    return status >= 0 && WIFEXITED(status) ? WEXITSTATUS(status) : 1;
+    // A child we had to kill was signaled, and one that is still there has no status.
+    return reaped && WIFEXITED(status) ? WEXITSTATUS(status) : 1;
 }

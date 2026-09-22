@@ -1920,9 +1920,13 @@ describe("a CONNECT tunnel pipelined behind a response that still drains", () =>
   const reply = "HTTP/1.1 200 Connection Established\r\n\r\n";
 
   // Runs `onConnect` on the handed-off socket. Then the client reads the connection until it closes.
-  async function readTunnel(proto: string, onConnect: (socket: Duplex) => void) {
+  async function readTunnel(
+    proto: string,
+    onConnect: (socket: Duplex) => void,
+    respond = (res: http.ServerResponse) => void res.end(Buffer.alloc(size, "a")),
+  ) {
     const listener = (req: http.IncomingMessage, res: http.ServerResponse) => {
-      if (req.url === "/big") res.end(Buffer.alloc(size, "a"));
+      if (req.url === "/big") respond(res);
       else res.end("pong");
     };
     const server =
@@ -1981,6 +1985,22 @@ describe("a CONNECT tunnel pipelined behind a response that still drains", () =>
       socket.write(reply);
       socket.end("tunnel bytes");
     });
+    expect(received).toEqual({ bodyBeforeReply: size, tail: "tunnel bytes" });
+  });
+
+  // The rest of a large res.write() waits outside the uWS buffer, as a zero-copy tail. The response has not ended.
+  test("its bytes arrive after the rest of a res.write() that is still unsent", async () => {
+    const received = await readTunnel(
+      "http",
+      socket => {
+        socket.write(reply);
+        socket.end("tunnel bytes");
+      },
+      res => {
+        res.setHeader("Content-Length", size);
+        res.write(Buffer.alloc(size, "a"));
+      },
+    );
     expect(received).toEqual({ bodyBeforeReply: size, tail: "tunnel bytes" });
   });
 

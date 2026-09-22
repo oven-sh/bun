@@ -1411,6 +1411,12 @@ impl NodeHTTPResponse {
         self.update_flags(|f| f.insert(Flags::TUNNELED));
     }
 
+    /// A raw write or a FIN on the socket has to go out behind the zero-copy tail of an earlier `write()`.
+    #[uws::uws_callback(export = "Bun__NodeHTTPResponse_spillPendingWrite", no_catch)]
+    pub(crate) fn spill_pending_write(&self) {
+        self.spill_pending_pinned_write(self.server.global_this());
+    }
+
     fn on_timeout(&self, _resp: uws::AnyResponse) {
         scoped_log!(NodeHTTPResponse, "onTimeout");
         self.handle_abort_or_timeout::<{ AbortEvent::Timeout }>(JSValue::ZERO);

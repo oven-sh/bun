@@ -18,6 +18,7 @@
 extern "C" void Bun__NodeHTTPResponse_setClosed(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_onReadParsed(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_markTunneled(void* zigResponse);
+extern "C" void Bun__NodeHTTPResponse_spillPendingWrite(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_onClose(void* zigResponse, JSC::EncodedJSValue jsValue);
 extern "C" void us_socket_free_stream_buffer(us_socket_stream_buffer_t* streamBuffer);
 extern "C" uint64_t uws_res_get_remote_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
@@ -368,6 +369,7 @@ bool JSNodeHTTPServerSocket::shutdownAfterResponseDrains(bool destroySoon)
     if (!socket || upgraded || us_socket_is_closed(socket) || us_socket_is_shut_down(socket)) {
         return false;
     }
+    spillResponseTail();
     if (is_ssl) {
         return deferShutdownUntilResponseDrains<true>(socket, destroySoon);
     }
@@ -875,6 +877,13 @@ void JSNodeHTTPServerSocket::onClose(int readError, bool peerEnded)
         }
         thisObject->detach();
     });
+}
+
+void JSNodeHTTPServerSocket::spillResponseTail()
+{
+    if (auto* res = currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
+        Bun__NodeHTTPResponse_spillPendingWrite(res->m_ctx);
+    }
 }
 
 bool JSNodeHTTPServerSocket::hasUnsentResponseBytes() const

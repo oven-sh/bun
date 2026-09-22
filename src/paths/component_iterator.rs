@@ -207,8 +207,7 @@ pub fn make_path_with<'a, T: PathChar, E>(
     let Some(mut comp) = it.last() else {
         return Ok(());
     };
-    // `NotFound` right after a parent reported `Exists` means that parent is
-    // not a directory (a dangling symlink). Stepping back would loop forever.
+    // `NotFound` below an existing parent: it is not a directory, do not step back.
     let mut parent_exists = false;
     loop {
         match mkdir(comp.path)? {

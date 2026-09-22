@@ -5020,12 +5020,10 @@ describe("direct stream edge cases", () => {
       const events = [];
       duplex.on("data", d => events.push("data:" + txt(d)));
       duplex.on("end", () => events.push("end"));
-      const err = await new Promise(resolve => duplex.on("error", resolve));
-      expect({ events, err: err.message, pulls: t.pulls }).toEqual({
-        events: ["data:a"],
-        err: "source failed",
-        pulls: 1,
-      });
+      duplex.on("error", e => events.push("error:" + e.message));
+      // 'close' follows 'error' and a clean 'end' alike, so a missing 'error' fails the assertion.
+      await new Promise(resolve => duplex.on("close", resolve));
+      expect({ events, pulls: t.pulls }).toEqual({ events: ["data:a", "error:source failed"], pulls: 1 });
     });
 
     test("Readable.fromWeb(direct).destroy(err) cancels the source once", async () => {

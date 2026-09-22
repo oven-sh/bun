@@ -1211,24 +1211,34 @@ static int us_inline_reject_verify_callback(int preverify_ok, X509_STORE_CTX *ct
   return 1;
 }
 
-/* Whether this socket is a rejecting client whose chain verification failed:
- * from that point on its handshake output is suppressed and the handshake is
- * reported as failed. */
-static int us_ssl_inline_reject_tripped(struct us_socket_t *s) {
-  if (us_ssl_inline_reject_enabled_ex_idx < 0 || !s->ssl) return 0;
-  /* Initial handshake only: renegotiation keeps the deferred JS-side policy,
-   * and established sockets exit here before any ex_data lookups. */
-  if (s->ssl_handshake_state == HANDSHAKE_COMPLETED) return 0;
-  SSL *ssl = s_ssl(s);
-  if (!ssl || !SSL_get_ex_data(ssl, us_ssl_inline_reject_enabled_ex_idx)) return 0;
+/* Whether this SSL belongs to a rejecting client whose chain verification
+ * failed. Also the check for a client whose TLS runs in SSLWrapper
+ * (src/uws/lib.rs) and so has no us_socket_t; the caller limits it to the
+ * initial handshake. */
+int us_internal_ssl_inline_reject_tripped(SSL *ssl) {
+  if (us_ssl_inline_reject_enabled_ex_idx < 0 || !ssl) return 0;
+  if (!SSL_get_ex_data(ssl, us_ssl_inline_reject_enabled_ex_idx)) return 0;
   if (!SSL_get_ex_data(ssl, us_ssl_inline_reject_err_ex_idx)) return 0;
   /* A per-depth failure may be recovered by an alternate chain: only the
    * final verdict rejects. */
   return SSL_get_verify_result(ssl) != X509_V_OK;
 }
 
+/* Whether this socket is a rejecting client whose chain verification failed:
+ * from that point on its handshake output is suppressed and the handshake is
+ * reported as failed. */
+static int us_ssl_inline_reject_tripped(struct us_socket_t *s) {
+  if (!s->ssl) return 0;
+  /* Initial handshake only: renegotiation keeps the deferred JS-side policy,
+   * and established sockets exit here before any ex_data lookups. */
+  if (s->ssl_handshake_state == HANDSHAKE_COMPLETED) return 0;
+  return us_internal_ssl_inline_reject_tripped(s_ssl(s));
+}
+
 /* Called from the Rust TLS socket layer for client sockets whose
- * rejectUnauthorized policy must refuse a bad chain during the handshake. */
+ * rejectUnauthorized policy must refuse a bad chain during the handshake.
+ * SSLWrapper installs it on its own SSL the same way; its handshake step
+ * acts on us_internal_ssl_inline_reject_tripped. */
 void us_internal_ssl_set_inline_reject(SSL *ssl) {
   us_ex_idx_ensure();
   SSL_set_ex_data(ssl, us_ssl_inline_reject_enabled_ex_idx, (void *)1);
@@ -1239,7 +1249,7 @@ void us_internal_ssl_set_inline_reject(SSL *ssl) {
  * postgres, mysql, valkey, WebSocket): same policy, installed before the
  * handshake is driven so a rejected chain never sees the client's Certificate
  * flight. A client whose TLS runs in SSLWrapper (proxy tunnels, upgraded
- * duplexes, named pipes) has no handshake drive here and is not covered. */
+ * duplexes, named pipes) uses SSLWrapper::set_inline_reject instead. */
 void us_socket_set_inline_reject(struct us_socket_t *s) {
   if (!s->ssl || s->ssl_is_server || s->ssl_handshake_state == HANDSHAKE_COMPLETED) return;
   us_internal_ssl_set_inline_reject(s_ssl(s));

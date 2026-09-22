@@ -155,16 +155,16 @@ pub mod ssl_wrapper {
     // declares every symbol SSLWrapper needs, so the old local shim is gone.
     mod boring_sys {
         pub(super) use bun_boringssl::c::{
-            BIO_ctrl_pending, BIO_free, BIO_new, BIO_read, BIO_s_mem, BIO_set_mem_eof_return,
-            BIO_write, ERR_clear_error, OwnedSslCtx, SSL, SSL_CTX_get_verify_mode, SSL_ERROR_SSL,
-            SSL_ERROR_SYSCALL, SSL_ERROR_WANT_READ, SSL_ERROR_WANT_RENEGOTIATE,
-            SSL_ERROR_WANT_WRITE, SSL_ERROR_ZERO_RETURN, SSL_RECEIVED_SHUTDOWN,
-            SSL_VERIFY_FAIL_IF_NO_PEER_CERT, SSL_VERIFY_NONE, SSL_VERIFY_PEER, SSL_do_handshake,
-            SSL_free, SSL_get_error, SSL_get_rbio, SSL_get_shutdown, SSL_get_wbio,
-            SSL_is_init_finished, SSL_new, SSL_pending, SSL_read, SSL_renegotiate,
-            SSL_set_accept_state, SSL_set_bio, SSL_set_connect_state, SSL_set_renegotiate_mode,
-            SSL_set_verify, SSL_set0_verify_cert_store, SSL_shutdown, SSL_write, X509_STORE,
-            X509_STORE_CTX, ssl_renegotiate_explicit, ssl_renegotiate_never,
+            BIO_ctrl_pending, BIO_free, BIO_new, BIO_read, BIO_reset, BIO_s_mem,
+            BIO_set_mem_eof_return, BIO_write, ERR_clear_error, OwnedSslCtx, SSL,
+            SSL_CTX_get_verify_mode, SSL_ERROR_SSL, SSL_ERROR_SYSCALL, SSL_ERROR_WANT_READ,
+            SSL_ERROR_WANT_RENEGOTIATE, SSL_ERROR_WANT_WRITE, SSL_ERROR_ZERO_RETURN,
+            SSL_RECEIVED_SHUTDOWN, SSL_VERIFY_FAIL_IF_NO_PEER_CERT, SSL_VERIFY_NONE,
+            SSL_VERIFY_PEER, SSL_do_handshake, SSL_free, SSL_get_error, SSL_get_rbio,
+            SSL_get_shutdown, SSL_get_wbio, SSL_is_init_finished, SSL_new, SSL_pending, SSL_read,
+            SSL_renegotiate, SSL_set_accept_state, SSL_set_bio, SSL_set_connect_state,
+            SSL_set_renegotiate_mode, SSL_set_verify, SSL_set0_verify_cert_store, SSL_shutdown,
+            SSL_write, X509_STORE, X509_STORE_CTX, ssl_renegotiate_explicit, ssl_renegotiate_never,
         };
     }
 
@@ -555,6 +555,19 @@ pub mod ssl_wrapper {
             }
         }
 
+        /// Client whose `rejectUnauthorized` policy is on: refuse a bad server
+        /// chain during the handshake, before the client certificate goes out
+        /// (see the tripped check in `update_handshake_state`). Call it before
+        /// `start()`. No-op for servers.
+        pub fn set_inline_reject(&self) {
+            if !self.flags.is_client() {
+                return;
+            }
+            let Some(ssl) = self.ssl.get() else { return };
+            // SAFETY: `ssl` is this wrapper's live `SSL*`.
+            unsafe { us_internal_ssl_set_inline_reject(ssl.as_ptr()) };
+        }
+
         pub fn start(&self) {
             // trigger the onOpen callback so the user can configure the SSL connection before first handshake
             let handlers = self.handlers.get();
@@ -885,6 +898,29 @@ pub mod ssl_wrapper {
 
             // SAFETY: ssl is a live SSL*.
             let result = unsafe { boring_sys::SSL_do_handshake(ssl.as_ptr()) };
+
+            // A rejecting client (`set_inline_reject`) saw the server's chain
+            // fail. All output queued since that verdict is the flight that
+            // carries the client certificate. TLS 1.2 queues it before the
+            // server's Finished, so `on_handshake` would be too late to stop it.
+            // SAFETY: ssl is a live SSL*.
+            if unsafe { us_internal_ssl_inline_reject_tripped(ssl.as_ptr()) } != 0 {
+                boring_sys::ERR_clear_error();
+                // Reset, not only skip the flush below: a re-entered
+                // `handle_traffic` flushes the write BIO and never gets here.
+                // SAFETY: wbio is the mem BIO bound in init_with_ctx.
+                unsafe {
+                    let _ = boring_sys::BIO_reset(boring_sys::SSL_get_wbio(ssl.as_ptr()));
+                }
+                // The peer never gets our Finished, so it cannot read a close_notify.
+                self.flags.set_fatal_error(true);
+                self.flags
+                    .set_handshake_state(HandshakeState::HandshakeCompleted);
+                let verify = self.get_verify_error();
+                self.trigger_handshake_callback(false, verify);
+                self.trigger_close_callback();
+                return false;
+            }
 
             if result <= 0 {
                 // SAFETY: ssl is still valid.
@@ -1262,6 +1298,13 @@ pub mod ssl_wrapper {
         /// Implemented in uSockets C; reads
         /// `SSL_get_verify_result` and maps it onto the C `us_bun_verify_error_t`.
         fn us_ssl_socket_verify_error_from_ssl(ssl: *mut boring_sys::SSL) -> us_bun_verify_error_t;
+        /// Installs the verify callback that records a failed server chain
+        /// (openssl.c; the usockets handshake drive uses the same recorder).
+        // SAFETY (unsafe fn): `ssl` must be a live `SSL*`.
+        fn us_internal_ssl_set_inline_reject(ssl: *mut boring_sys::SSL);
+        /// 1 once that recorder saw the chain fail and the final verdict is not OK.
+        // SAFETY (unsafe fn): `ssl` must be a live `SSL*`.
+        fn us_internal_ssl_inline_reject_tripped(ssl: *mut boring_sys::SSL) -> c_int;
         /// Opt this SSL into the parked new-session/keylog queues
         /// (openssl.c's `us_ssl_new_session_cb` / `us_ssl_keylog_cb` skip
         /// SSLs without the marker).

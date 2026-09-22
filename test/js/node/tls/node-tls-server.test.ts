@@ -2723,6 +2723,106 @@ describe.skipIf(isWindows)("TLS socket over a net.Socket whose peer resets behin
   });
 });
 
+// The peer ends its stream (data, close_notify, FIN) and resets after the paused socket has read
+// all of it. The socket does not look at that reset, so its next write is what meets it, and node
+// fails that write with EPIPE. Linux only: there the failed send takes the socket error, and epoll
+// then reports a hangup with no error. That once ended as a clean close of the descriptor with no
+// 'error' and no 'close', and the write callback got no error.
+describe.skipIf(!isLinux)("paused TLS socket that writes after it read the peer's FIN and the peer reset", () => {
+  const payload = Buffer.alloc(3000, "M");
+
+  // Each kind resolves after the handshake with the paused socket under test, what it emitted, and
+  // the peer with the net.Socket that carries it.
+  async function connecting(allowHalfOpen: boolean, overNetSocket: boolean) {
+    const peerSecure = Promise.withResolvers<{ peer: TLSSocket; peerRaw: net.Socket }>();
+    const server = net.createServer({ allowHalfOpen: true }, peerRaw => {
+      peerRaw.on("error", () => {});
+      const peer = new TLSSocket(peerRaw, { isServer: true, ...COMMON_CERT });
+      peer.on("error", () => {});
+      peer.resume();
+      peer.once("secure", () => peerSecure.resolve({ peer, peerRaw }));
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const port = (server.address() as AddressInfo).port;
+    const options = { ca: COMMON_CERT.cert, servername: "localhost", allowHalfOpen };
+    let socket: TLSSocket;
+    if (overNetSocket) {
+      const conn = net.connect({ port, host: "127.0.0.1", allowHalfOpen });
+      conn.on("error", () => {});
+      await once(conn, "connect");
+      socket = connect({ socket: conn, ...options });
+    } else {
+      socket = connect({ port, host: "127.0.0.1", ...options });
+    }
+    socket.pause();
+    const watched = watchSocket(socket);
+    await once(socket, "secureConnect");
+    return { socket, server, ...watched, ...(await peerSecure.promise) };
+  }
+
+  async function accepted(allowHalfOpen: boolean) {
+    const secure = Promise.withResolvers<{ socket: TLSSocket } & ReturnType<typeof watchSocket>>();
+    const server = net.createServer({ allowHalfOpen }, conn => {
+      conn.on("error", () => {});
+      const socket = new TLSSocket(conn, { isServer: true, allowHalfOpen, ...COMMON_CERT });
+      socket.pause();
+      const watched = watchSocket(socket);
+      socket.once("secure", () => secure.resolve({ socket, ...watched }));
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const peerRaw = net.connect({
+      port: (server.address() as AddressInfo).port,
+      host: "127.0.0.1",
+      allowHalfOpen: true,
+    });
+    peerRaw.on("error", () => {});
+    await once(peerRaw, "connect");
+    const peer = connect({ socket: peerRaw, ca: COMMON_CERT.cert, servername: "localhost", allowHalfOpen: true });
+    peer.on("error", () => {});
+    peer.resume();
+    await once(peer, "secureConnect");
+    return { server, peer, peerRaw, ...(await secure.promise) };
+  }
+
+  const kinds = {
+    "tls.connect({ port })": (allowHalfOpen: boolean) => connecting(allowHalfOpen, false),
+    "tls.connect({ socket })": (allowHalfOpen: boolean) => connecting(allowHalfOpen, true),
+    "new TLSSocket(socket, { isServer })": accepted,
+  };
+  const cells = Object.keys(kinds).flatMap(kind => [true, false].map(allowHalfOpen => [kind, allowHalfOpen] as const));
+
+  // Not concurrent: this is about the write that spills its ciphertext. A write that finds the
+  // loop's one spill slot taken by another socket goes out record by record instead.
+  it.each(cells)("%s, allowHalfOpen: %p, fails the write with EPIPE", async (kind, allowHalfOpen) => {
+    const { socket, events, closed, peer, peerRaw, server } = await kinds[kind](allowHalfOpen);
+    try {
+      await new Promise<void>(resolve => peer.end(payload, () => resolve()));
+      while (socket.readableLength < payload.length) await tick();
+      // The FIN follows the close_notify: two turns of the loop later the socket has read it too.
+      await tick();
+      await tick();
+      const peerClosed = once(peerRaw, "close");
+      peerRaw.resetAndDestroy();
+      await peerClosed;
+      // Two more turns: a build that reports the reset to a socket that does not read has done so.
+      await tick();
+      await tick();
+      expect(events).toEqual([]);
+      const written = Promise.withResolvers<string>();
+      socket.write("late", (error?: NodeJS.ErrnoException | null) => {
+        written.resolve(error ? `${error.code} ${error.syscall}` : "ok");
+      });
+      expect(await written.promise).toBe("EPIPE write");
+      await closed;
+      expect(events).toEqual(["error EPIPE", "close hadError=true"]);
+    } finally {
+      socket.destroy();
+      peer.destroy();
+      server.close();
+    }
+  });
+});
+
 // Node stops a handle at EOF, so it never meets a reset that follows the peer's close_notify.
 // The peer is a child process. It stops its reads after the handshake, so this side's bytes stay
 // unread in its kernel. On "go" it sends 3000 bytes and close_notify and exits: its kernel answers

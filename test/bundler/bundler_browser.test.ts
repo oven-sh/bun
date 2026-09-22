@@ -118,13 +118,13 @@ describe("bundler", () => {
       api.expectFile("out.js").not.toInclude("import ");
     },
   });
-  // fileURLToPath, pathToFileURL, domainToASCII, domainToUnicode and
-  // urlToHttpOptions were missing from the url polyfill, so they were
-  // undefined. The expected output is what Node.js prints for the same code.
+  // fileURLToPath, pathToFileURL, domainToASCII, domainToUnicode,
+  // urlToHttpOptions and URLPattern were missing from the url polyfill, so they
+  // were undefined. The expected output is what Node.js prints for the same code.
   itBundled("browser/NodeUrlFileAndDomain", {
     files: {
       "/entry.js": /* js */ `
-        import { fileURLToPath, pathToFileURL, domainToASCII, domainToUnicode, urlToHttpOptions } from "node:url";
+        import url, { URLPattern, fileURLToPath, pathToFileURL, domainToASCII, domainToUnicode, urlToHttpOptions } from "node:url";
         const tryCode = f => { try { f(); return "no error"; } catch (e) { return e.code; } };
         console.log(fileURLToPath("file:///a/b%20c"), fileURLToPath("file:///C:/x/y", { windows: true }));
         console.log(fileURLToPath("file://server/share/f", { windows: true }));
@@ -133,12 +133,15 @@ describe("bundler", () => {
         const o = urlToHttpOptions(new URL("https://u%40x:p@[::1]:8080/p?q#h"));
         console.log(o.hostname, o.port, o.path, o.auth, Object.getPrototypeOf(o));
         console.log(tryCode(() => fileURLToPath("http://x/")), tryCode(() => fileURLToPath("file:///a%2Fb")), tryCode(() => fileURLToPath("file://host/a")));
+        const input = f => { try { f(); } catch (e) { return e.input instanceof URL ? e.input.href : String(e.input); } };
+        console.log(input(() => fileURLToPath("file:///a%2Fb")), input(() => fileURLToPath("file:///x", { windows: true })), input(() => fileURLToPath("file://host/a")));
+        console.log(URLPattern === globalThis.URLPattern, url.URLPattern === globalThis.URLPattern);
       `,
     },
     target: "browser",
     run: {
       stdout:
-        '/a/b c C:\\x\\y\n\\\\server\\share\\f\nfile:///a%20b/c%23d%3Fe%25f file:///caf%C3%A9/\nxn--espaol-zwa.com español.com ""\n::1 8080 /p?q u@x:p null\nERR_INVALID_URL_SCHEME ERR_INVALID_FILE_URL_PATH ERR_INVALID_FILE_URL_HOST',
+        '/a/b c C:\\x\\y\n\\\\server\\share\\f\nfile:///a%20b/c%23d%3Fe%25f file:///caf%C3%A9/\nxn--espaol-zwa.com español.com ""\n::1 8080 /p?q u@x:p null\nERR_INVALID_URL_SCHEME ERR_INVALID_FILE_URL_PATH ERR_INVALID_FILE_URL_HOST\nfile:///a%2Fb file:///x undefined\ntrue true',
     },
   });
   // The polyfill is plain JS bundled into the user's output, so it cannot use

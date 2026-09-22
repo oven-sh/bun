@@ -745,11 +745,19 @@ function nodeError(Ctor, code, message) {
   return error;
 }
 
+// Like Node.js, ERR_INVALID_FILE_URL_PATH carries the parsed URL as `input`.
+function invalidFileURLPath(reason, url) {
+  const error = nodeError(TypeError, "ERR_INVALID_FILE_URL_PATH", `File URL path ${reason}`);
+  error.input = url;
+  return error;
+}
+
 function describeReceived(value) {
   if (value == null) return ` Received ${value}`;
   if (typeof value === "function") return ` Received function ${value.name}`;
   if (typeof value === "object") return ` Received an instance of ${value.constructor?.name ?? "Object"}`;
-  return ` Received type ${typeof value} (${String(value).slice(0, 25)})`;
+  const shown = typeof value === "string" ? `'${value}'` : typeof value === "bigint" ? `${value}n` : String(value);
+  return ` Received type ${typeof value} (${shown.length > 28 ? `${shown.slice(0, 25)}...` : shown})`;
 }
 
 function isURL(self) {
@@ -875,14 +883,21 @@ function urlToHttpOptions(url) {
 
 function getPathFromURLPosix(url) {
   if (url.hostname !== "") {
-    throw nodeError(TypeError, "ERR_INVALID_FILE_URL_HOST", 'File URL host must be "localhost" or empty on browser');
+    // Node.js names process.platform. The process polyfill has none, so a
+    // browser without one reports "browser".
+    const platform = typeof globalThis.process?.platform === "string" ? globalThis.process.platform : "browser";
+    throw nodeError(
+      TypeError,
+      "ERR_INVALID_FILE_URL_HOST",
+      `File URL host must be "localhost" or empty on ${platform}`,
+    );
   }
   const pathname = url.pathname;
   for (let n = 0; n < pathname.length; n++) {
     if (pathname[n] === "%") {
       const third = pathname.codePointAt(n + 2) | 0x20;
       if (pathname[n + 1] === "2" && third === 102) {
-        throw nodeError(TypeError, "ERR_INVALID_FILE_URL_PATH", "File URL path must not include encoded / characters");
+        throw invalidFileURLPath("must not include encoded / characters", url);
       }
     }
   }
@@ -896,11 +911,7 @@ function getPathFromURLWin32(url) {
     if (pathname[n] === "%") {
       const third = pathname.codePointAt(n + 2) | 0x20;
       if ((pathname[n + 1] === "2" && third === 102) || (pathname[n + 1] === "5" && third === 99)) {
-        throw nodeError(
-          TypeError,
-          "ERR_INVALID_FILE_URL_PATH",
-          "File URL path must not include encoded \\ or / characters",
-        );
+        throw invalidFileURLPath("must not include encoded \\ or / characters", url);
       }
     }
   }
@@ -911,7 +922,7 @@ function getPathFromURLWin32(url) {
   }
   const letter = pathname.codePointAt(1) | 0x20;
   if (letter < 0x61 || letter > 0x7a || pathname.charAt(2) !== ":") {
-    throw nodeError(TypeError, "ERR_INVALID_FILE_URL_PATH", "File URL path must be absolute");
+    throw invalidFileURLPath("must be absolute", url);
   }
   return pathname.slice(1);
 }
@@ -939,7 +950,7 @@ function resolvePosix(path) {
     throw nodeError(
       TypeError,
       "ERR_INVALID_ARG_TYPE",
-      'The "paths[0]" argument must be of type string.' + describeReceived(path),
+      'The "path" argument must be of type string.' + describeReceived(path),
     );
   }
   let resolved = path;

@@ -233,4 +233,39 @@ describe.concurrent("a later stdin consumer keeps the process alive after the re
     expect(stdout).toBe("DONE\n");
     expect(exitCode).toBe(0);
   });
+
+  // The release dropped a held ref, but the unref() after it is the last word:
+  // the next reader must not bring the ref back. The parent never closes stdin,
+  // so a child that kept the ref would wait for input and time the test out.
+  it("an explicit unref() after the release stays in effect for the next reader", async () => {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        (async () => {
+          for await (const line of console) {
+            console.log("ITER " + line);
+            break;
+          }
+          process.stdin.unref();
+          const reader = Bun.stdin.stream().getReader();
+          console.log("READING");
+          await reader.read();
+          console.log("unexpected read");
+        })();
+        `,
+      ],
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    proc.stdin.write("first\n");
+    proc.stdin.flush();
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("ITER first\nREADING\n");
+    expect(exitCode).toBe(0);
+  });
 });

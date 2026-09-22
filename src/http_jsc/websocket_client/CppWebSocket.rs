@@ -145,14 +145,9 @@ impl CppWebSocket {
         event_loop.exit();
     }
 
+    /// A field read on the C++ side: no JS runs, so no event-loop entry.
     pub(crate) fn reject_unauthorized(&self) -> bool {
-        // SAFETY: VirtualMachine::get() returns the live current-thread VM;
-        // event_loop() yields its raw event-loop pointer (live for VM lifetime).
-        let event_loop = VirtualMachine::get().event_loop_mut();
-        event_loop.enter();
-        let result = WebSocket__rejectUnauthorized(self);
-        event_loop.exit();
-        result
+        WebSocket__rejectUnauthorized(self)
     }
 
     /// `buffered_data` and `secure` are handed on to the connected client.

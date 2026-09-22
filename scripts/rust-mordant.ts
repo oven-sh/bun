@@ -68,7 +68,7 @@ if (!args.includes("--baseline")) {
 // is the other way round: only a run over all the targets sees every use, and
 // `cargo mordant` writes its entries itself, once, after the build.
 type Doc = Record<string, Record<string, number>>;
-const config = readFileSync(join(repo, "dylint.toml"), "utf8");
+const config = readFileSync(join(repo, "mordant.toml"), "utf8");
 const scratch = "target/mordant/baseline";
 rmSync(join(repo, scratch), { recursive: true, force: true });
 mkdirSync(join(repo, scratch), { recursive: true });
@@ -77,7 +77,7 @@ function write(name: string, targets: string[]): Doc {
   const file = `${scratch}/${name}.toml`;
   const toml = config.replace(/^baseline = .*$/m, `baseline = ${JSON.stringify(file)}`);
   if (toml === config) {
-    console.error("rust-mordant: dylint.toml names no baseline");
+    console.error("rust-mordant: mordant.toml names no baseline");
     process.exit(1);
   }
   if (mordant(targets, [], { MORDANT_TOML: toml, MORDANT_BASELINE_WRITE: "1" }) !== 0) process.exit(1);

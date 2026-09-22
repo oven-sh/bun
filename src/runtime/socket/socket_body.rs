@@ -81,6 +81,15 @@ fn read_error_from_close_code(code: c_int) -> sys::Error {
     }
 }
 
+/// `read_error_from_close_code` for C++: the `closeError` getter of `JSNodeHTTPServerSocket`.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__socketReadErrorFromCloseCode(
+    global: &JSGlobalObject,
+    code: c_int,
+) -> JSValue {
+    <sys::Error as jsc::SysErrorJsc>::to_js(&read_error_from_close_code(code), global)
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports
 // ──────────────────────────────────────────────────────────────────────────
@@ -4447,6 +4456,12 @@ impl DuplexUpgradeContext {
                 if this.tls.get().is_none() {
                     // SAFETY: `this` is the task's live context; no borrow of `*this` is live.
                     unsafe { Self::deinit(this.as_ptr()) };
+                    return;
+                }
+                // The transport closed while this task was queued: an engine
+                // started now could never handshake, and nothing would free it.
+                if this.upgrade.pending_close.replace(false) {
+                    Self::on_close(this);
                     return;
                 }
                 log!(

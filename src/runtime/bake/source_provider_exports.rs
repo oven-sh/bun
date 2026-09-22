@@ -39,6 +39,7 @@ unsafe extern "C" {
     // FFI boundary in C++-owned storage that Rust has no provenance over
     // (these types are opaque ZST markers).
     fn BakeSourceProvider__getSourceSlice(this: &BakeSourceProvider) -> bun_core::StringView<'_>;
+    fn BakeSourceProvider__getBunVM(this: &BakeSourceProvider) -> *mut core::ffi::c_void;
     fn DevServerSourceProvider__getSourceSlice(
         this: &DevServerSourceProvider,
     ) -> bun_core::StringView<'_>;
@@ -65,8 +66,12 @@ impl SourceProvider for BakeSourceProvider {
     /// current global is a `Bake::GlobalObject`; `None` otherwise (caller
     /// falls back to reading `<source>.map` from disk).
     fn get_external_data(&self, source_filename: &[u8]) -> Option<&[u8]> {
-        let global = VirtualMachine::get().global;
-        // SAFETY: `global` is the live JSGlobalObject for this VM thread.
+        // The VM the provider was created in, not the calling thread's: a stack trace may be remapped from the collector
+        // thread, which has no VM of its own (its end phase runs with the JS thread parked, so nothing here races it).
+        // SAFETY: opaque FFI handle; the provider does not outlive its VM.
+        let global =
+            unsafe { (*BakeSourceProvider__getBunVM(self).cast::<VirtualMachine>()).global };
+        // SAFETY: `global` is that VM's live JSGlobalObject.
         if !unsafe { BakeGlobalObject__isBakeGlobalObject(global) } {
             return None;
         }

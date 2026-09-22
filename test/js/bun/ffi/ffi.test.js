@@ -968,6 +968,139 @@ it.skipIf(!FFI_FIXTURE_PATH)("ptr argument: ArrayBuffer cells through an FTL-com
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "mismatches 0\n", stderr: "", exitCode: 0 });
 });
 
+// close() unloads the library, so a call after it used to jump to an unmapped address. The function
+// objects outlive close() (a destructured symbol, a caller the JIT compiled with the address baked in),
+// so each of them has to throw. Runs in a child process: without the fix the first call after close()
+// is a segfault.
+it.skipIf(!FFI_FIXTURE_PATH)("a symbol called after its library's close() throws a TypeError", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `import { dlopen, linkSymbols } from "bun:ffi";
+      const definitions = {
+        add_int32_t: { args: ["i32", "i32"], returns: "i32" },
+        returns_true: { args: [], returns: "bool" },
+        identity_ptr: { args: ["ptr"], returns: "ptr" },
+      };
+      const open = () => dlopen(process.env.FFI_FIXTURE_PATH, definitions);
+      const results = {};
+      const attempt = (name, fn) => {
+        try {
+          results[name] = "returned " + fn();
+        } catch (e) {
+          results[name] = e.name + ": " + e.message;
+        }
+      };
+
+      {
+        const lib = open();
+        const { add_int32_t, returns_true } = lib.symbols;
+        function hot(a, b) { return add_int32_t(a, b); }
+        let sum = 0;
+        for (let i = 0; i < 200_000; i++) sum += hot(i, 1);
+        results["before close"] = sum;
+
+        lib.close();
+        lib.close();
+        attempt("optimized caller", () => hot(1, 2));
+        attempt("destructured symbol", () => add_int32_t(1, 2));
+        attempt("through lib.symbols", () => lib.symbols.returns_true());
+        attempt("Function.prototype.call", () => add_int32_t.call(null, 1, 2));
+        attempt("arguments that do not convert", () => add_int32_t("x", Symbol()));
+      }
+
+      {
+        // close() does not find the functions through lib.symbols, which the user can change.
+        const lib = open();
+        const { add_int32_t } = lib.symbols;
+        delete lib.symbols.add_int32_t;
+        lib.close();
+        attempt("symbol deleted from lib.symbols before close", () => add_int32_t(1, 2));
+      }
+
+      {
+        // An argument conversion can run JS, so close() can happen after the call has started.
+        const lib = open();
+        const { add_int32_t } = lib.symbols;
+        let armed = false;
+        const closer = { valueOf() { if (armed) lib.close(); return 1; } };
+        function hot(a, b) { return add_int32_t(a, b); }
+        for (let i = 0; i < 20_000; i++) hot(i & 1 ? closer : 1, 1);
+        armed = true;
+        attempt("close inside valueOf, optimized caller", () => hot(closer, 2));
+      }
+
+      {
+        const lib = open();
+        const { add_int32_t } = lib.symbols;
+        attempt("close inside valueOf", () => add_int32_t({ valueOf() { lib.close(); return 1; } }, 2));
+      }
+
+      {
+        // close() is per handle.
+        const first = open();
+        const second = open();
+        first.close();
+        attempt("closed handle of a file that is open twice", () => first.symbols.add_int32_t(40, 2));
+        results["open handle of a file that is open twice"] = second.symbols.add_int32_t(40, 2);
+
+        // The native callee would call the closed function's address.
+        attempt("closed function as a pointer argument", () => second.symbols.identity_ptr(first.symbols.add_int32_t));
+
+        const linked = linkSymbols({ sum: { ...definitions.add_int32_t, ptr: second.symbols.add_int32_t.ptr } });
+        const { sum } = linked.symbols;
+        results["linkSymbols before close"] = sum(40, 2);
+        linked.close();
+        attempt("linkSymbols", () => sum(40, 2));
+      }
+
+      {
+        // Nor can a setter on a prototype reach the functions close() has to find. Last: an indexed
+        // accessor on a prototype switches every array in the realm to slow puts.
+        let setterCalls = 0;
+        Object.defineProperty(Object.prototype, 0, { get() {}, set(v) { setterCalls++; }, configurable: true });
+        const lib = open();
+        delete Object.prototype[0];
+        const { add_int32_t } = lib.symbols;
+        lib.close();
+        attempt("indexed setter on Object.prototype during dlopen", () => add_int32_t(1, 2));
+        results["indexed setter calls"] = setterCalls;
+      }
+
+      console.log(JSON.stringify(results, null, 2));`,
+    ],
+    env: { ...bunEnv, FFI_FIXTURE_PATH },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const closed = name => `TypeError: bun:ffi: cannot call '${name}' because its library was closed`;
+  expect({ results: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+    results: {
+      "before close": 20000100000,
+      "optimized caller": closed("add_int32_t"),
+      "destructured symbol": closed("add_int32_t"),
+      "through lib.symbols": closed("returns_true"),
+      "Function.prototype.call": closed("add_int32_t"),
+      "arguments that do not convert": closed("add_int32_t"),
+      "symbol deleted from lib.symbols before close": closed("add_int32_t"),
+      "close inside valueOf, optimized caller": closed("add_int32_t"),
+      "close inside valueOf": closed("add_int32_t"),
+      "closed handle of a file that is open twice": closed("add_int32_t"),
+      "open handle of a file that is open twice": 42,
+      "closed function as a pointer argument":
+        "TypeError: bun:ffi: cannot pass 'add_int32_t' as a pointer because its library was closed",
+      "linkSymbols before close": 42,
+      "linkSymbols": closed("sum"),
+      "indexed setter on Object.prototype during dlopen": closed("add_int32_t"),
+      "indexed setter calls": 0,
+    },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 it("worker teardown drops queued threadsafe JSCallback invocations without crashing", async () => {
   using dir = tempDir("ffi-jscallback-terminate-queued", {
     "main.js": `

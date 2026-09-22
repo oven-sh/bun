@@ -192,7 +192,11 @@ function onDataIncomingMessage(this: any, chunk, isLast, aborted: NodeHTTPRespon
       // Upgrade-with-body routes through its own handle so the socket's flow
       // state stays with the upgrade listener; _read() balances it.
       if (this.upgrade) this[kHandle]?.pause();
-      else if (socket && !socket.writableEnded) socket.pause();
+      else if (socket && !socket.writableEnded) {
+        socket.pause();
+        // For a pipelined request the socket's current response is an earlier one, and an ended response does not pause.
+        this[kHandle]?.pause();
+      }
     }
   }
 

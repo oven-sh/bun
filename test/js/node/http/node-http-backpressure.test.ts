@@ -1622,6 +1622,57 @@ describe("backpressure", () => {
         sock.destroy();
       }
     });
+
+    it("stops reading the body of a paused pipelined request while the response before it still drains", async () => {
+      // The connection's current response is the first one. It has ended, so a
+      // pause that goes through it does nothing, and the body of the second
+      // request was read without a bound.
+      const FIRST_RESPONSE = 64 * 1024 * 1024;
+      const UPLOAD = 32 * 1024 * 1024;
+      const firstArrived = Promise.withResolvers<void>();
+      let endFirst = () => {};
+      let bufferedWhilePaused = -1;
+      await using server = http.createServer(async (req, res) => {
+        if (req.url === "/first") {
+          endFirst = () => res.end(Buffer.alloc(FIRST_RESPONSE, "a"));
+          return;
+        }
+        req.pause();
+        endFirst();
+        await firstArrived.promise;
+        bufferedWhilePaused = req.readableLength;
+        let received = 0;
+        req.on("data", (chunk: Buffer) => (received += chunk.byteLength));
+        req.on("end", () => res.end(`second got ${received}`));
+        req.resume();
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+
+      const sock = await transports.http.connect((server.address() as AddressInfo).port);
+      try {
+        let received = 0;
+        let tail = "";
+        sock.on("data", (chunk: Buffer) => {
+          received += chunk.byteLength;
+          tail = (tail + chunk.toString("latin1")).slice(-32);
+          // The upload had the whole transfer of the first response to get ahead.
+          if (received > FIRST_RESPONSE) firstArrived.resolve();
+        });
+        const closed = once(sock, "close");
+        sock.write(
+          "GET /first HTTP/1.1\r\nHost: localhost\r\n\r\n" +
+            `POST /second HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: ${UPLOAD}\r\n\r\n`,
+        );
+        sock.write(Buffer.alloc(UPLOAD, "b"));
+        await closed;
+        expect(tail).toEndWith(`second got ${UPLOAD}`);
+        // One highWaterMark plus one socket read stays far below this.
+        expect(bufferedWhilePaused).toBeGreaterThanOrEqual(0);
+        expect(bufferedWhilePaused).toBeLessThan(UPLOAD / 4);
+      } finally {
+        sock.destroy();
+      }
+    });
   });
 
   // An empty chunk adds no bytes, but it is still a write. While a 'drain' is

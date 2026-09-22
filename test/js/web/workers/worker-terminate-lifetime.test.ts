@@ -973,13 +973,21 @@ test(
     using dir = tempDir("worker-ended-stdin-stream", {
       "child.mjs": `
         const [url, cell] = process.argv.slice(2);
-        // Answered once this child's worker is gone: nothing reads the pipe before that. A parent
-        // that found a leak does not wait for this child, and may be gone already.
-        const gate = await fetch(url + "gate/" + cell).then(response => response.text(), () => "exit");
-        if (gate === "read") {
-          for await (const _ of Bun.stdin.stream()) {}
-          await fetch(url + "eof/" + cell);
+        // The gate answers once this child's worker is gone: nothing reads the pipe before that. Its
+        // response stays open, so the parent hears when this process goes away. No answer: the
+        // parent found a leak and does not wait for this child, or it is gone already.
+        const gate = await fetch(url + "gate/" + cell).then(response => response.body.getReader(), () => null);
+        const answer = gate ? new TextDecoder().decode((await gate.read().catch(() => ({}))).value) : "";
+        if (answer === "read") {
+          let failure = "";
+          try {
+            for await (const _ of Bun.stdin.stream()) {}
+          } catch (error) {
+            failure = String(error);
+          }
+          await fetch(url + (failure ? "failed/" : "eof/") + cell, { method: "POST", body: failure });
         }
+        process.exit(0);
       `,
       "worker.js": `
         const { parentPort, workerData } = require("node:worker_threads");
@@ -1005,42 +1013,60 @@ test(
         const { Worker } = require("node:worker_threads");
         const { fileSinkInternals } = require("bun:internal-for-testing");
         const { join } = require("node:path");
-        const cells = JSON.parse(process.argv[2]);
-        const workerGone = cells.map(() => Promise.withResolvers());
-        const sawEOF = cells.map(() => Promise.withResolvers());
+        const cells = JSON.parse(process.argv[2]).map(how => ({ how, gate: Promise.withResolvers(), eof: Promise.withResolvers() }));
+        // Awaited only when nothing leaked: a child that goes away on the other path is no error.
+        for (const cell of cells) cell.eof.promise.catch(() => {});
         const server = Bun.serve({
           port: 0,
           idleTimeout: 0,
           async fetch(request) {
-            const [, what, cell] = new URL(request.url).pathname.split("/");
+            const [, what, index] = new URL(request.url).pathname.split("/");
+            const cell = cells[index];
             if (what === "eof") {
-              sawEOF[cell].resolve();
+              cell.eof.resolve();
               return new Response();
             }
-            return new Response(await workerGone[cell].promise);
+            if (what === "failed") {
+              cell.eof.reject(new Error("child " + index + " failed: " + (await request.text())));
+              return new Response();
+            }
+            // The response stays open after the answer, so its abort is this child's exit.
+            request.signal.addEventListener("abort", () => cell.eof.reject(new Error("child " + index + " exited before it reported EOF")));
+            const answer = new TextEncoder().encode(await cell.gate.promise);
+            return new Response(new ReadableStream({ start(controller) { controller.enqueue(answer); } }));
           },
         });
+        function ended(w) {
+          return new Promise((res, rej) => {
+            w.once("message", res);
+            w.once("error", rej);
+            w.once("exit", (c) => rej(new Error("worker exited " + c + " before its stream ended")));
+          });
+        }
         (async () => {
           const baseline = fileSinkInternals.liveCount();
-          await Promise.all(cells.map(async (how, cell) => {
-            const w = new Worker(join(__dirname, "worker.js"), { workerData: { url: server.url.href, cell, how } });
+          await Promise.all(cells.map(async (cell, index) => {
+            const w = new Worker(join(__dirname, "worker.js"), { workerData: { url: server.url.href, cell: index, how: cell.how } });
             // The exit event follows the worker's VM teardown.
             const exited = new Promise(resolve => w.once("exit", resolve));
-            await new Promise(resolve => w.once("message", resolve));
+            await ended(w);
             await w.terminate();
             await exited;
           }));
           const leakedFileSinks = fileSinkInternals.liveCount() - baseline;
           // A leaked sink holds its child's stdin open, and that child would wait for EOF for ever.
-          for (const gone of workerGone) gone.resolve(leakedFileSinks === 0 ? "read" : "exit");
+          for (const cell of cells) cell.gate.resolve(leakedFileSinks === 0 ? "read" : "exit");
           let childrenThatSawEOF = 0;
           if (leakedFileSinks === 0) {
-            await Promise.all(sawEOF.map(eof => eof.promise));
+            await Promise.all(cells.map(cell => cell.eof.promise));
             childrenThatSawEOF = cells.length;
           }
           server.stop();
           console.log(JSON.stringify({ leakedFileSinks, childrenThatSawEOF }));
-        })();
+        })().catch(error => {
+          console.error(error);
+          process.exit(1);
+        });
       `,
     });
     await using proc = Bun.spawn({

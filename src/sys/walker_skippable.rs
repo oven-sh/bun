@@ -27,8 +27,7 @@ pub struct Walker {
     skip_all: Box<[u64]>,
     seed: u64,
     pub resolve_unknown_entry_types: bool,
-    /// Report a symlink whose target is a regular file as `File`. A symlink
-    /// to a directory, or a dangling one, stays `SymLink`. POSIX only.
+    /// Report a symlink to a regular file as `File`. POSIX only.
     pub follow_file_symlinks: bool,
 }
 

@@ -1571,6 +1571,60 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
     });
   });
 
+  // lsquic encodes a response's header block into a 64 KB buffer and refuses a
+  // larger one: nothing is sent. The server then resets the stream and ends the
+  // request. It used to leave the stream open: the client waited for ever, and
+  // with a body the server retried the body write on every tick. "x" has a
+  // 7-bit Huffman code, so each set below encodes to more than 64 KB. The
+  // second set has no value over 64 KB.
+  describe("a response with a header block that lsquic cannot encode resets its stream", () => {
+    const headerSets: Record<string, number[]> = {
+      "one 200000 byte value": [200000],
+      "two 60000 byte values": [60000, 60000],
+    };
+
+    const bodies: Record<string, () => Bun.BodyInit | null> = {
+      "no body": () => null,
+      "a string body": () => "body",
+      "a ReadableStream body": () =>
+        new ReadableStream({
+          pull(controller) {
+            controller.enqueue(new TextEncoder().encode("streamed"));
+            controller.close();
+          },
+        }),
+    };
+
+    describe.each(Object.keys(headerSets))("%s", set => {
+      test.each(Object.keys(bodies))("%s", async body => {
+        const headers = Object.fromEntries(
+          headerSets[set].map((size, i) => ["x-large-" + i, Buffer.alloc(size, "x").toString()]),
+        );
+        await using server = Bun.serve({
+          port: 0,
+          tls,
+          http3: true,
+          http1: false,
+          fetch: req =>
+            new URL(req.url).pathname === "/small" ? new Response("small") : new Response(bodies[body](), { headers }),
+        });
+
+        const outcome = await fetchH3(server.port, "/").then(
+          res => "status " + res.status,
+          e => e.code,
+        );
+        const small = await fetchH3(server.port, "/small").then(res => res.text());
+        expect({ outcome, small, pendingRequests: server.pendingRequests }).toEqual({
+          outcome: "HTTP3StreamReset",
+          small: "small",
+          pendingRequests: 0,
+        });
+        // A request that never ends keeps a graceful stop pending.
+        await server.stop();
+      });
+    });
+  });
+
   // C: req.signal fires when the client resets the H3 stream mid-request.
   test("req.signal aborts on client RST", async () => {
     const script = `

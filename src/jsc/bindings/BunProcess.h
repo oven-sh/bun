@@ -38,8 +38,7 @@ class Process : public WebCore::JSEventEmitter {
     // The JS warning printer (ProcessObjectInternals createOnWarning), built on the first warning.
     WriteBarrier<JSObject> m_onWarning;
 
-    // IPC messages that arrived while there was no 'message' listener (node's kPendingMessages).
-    // Mutated and visited under cellLock().
+    // node's kPendingMessages. Mutated and visited under cellLock().
     struct PendingIPCMessage {
         WriteBarrier<Unknown> message;
         WriteBarrier<Unknown> handle;

@@ -1145,8 +1145,7 @@ class ChildProcess extends EventEmitter {
   #handle;
   #closesNeeded = 1;
   #closesGot = 0;
-  // 'message' events that arrived while there was no 'message' listener, like node's kPendingMessages.
-  // null when there is no open IPC channel.
+  // node's kPendingMessages. null when there is no open IPC channel.
   #pendingMessages: Dequeue<[message: unknown, handle: unknown]> | null = null;
 
   declare send?: (message, handle?, options?, callback?) => boolean;
@@ -1570,8 +1569,6 @@ class ChildProcess extends EventEmitter {
     }
   }
 
-  // node holds a 'message' that arrives while there is no 'message' listener, and emits the held ones, in order,
-  // on the tick after a listener is added. It never holds an 'internalMessage'.
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L954-L964
   #emitIpcMessage(message, _, handle) {
     if (isInternalIpcMessage(message)) {
@@ -1580,8 +1577,7 @@ class ChildProcess extends EventEmitter {
     }
     const pending = this.#pendingMessages;
     if (pending?.isNotEmpty()) {
-      // node emits each message on its own tick, behind the tick that flushes. Here a message can arrive
-      // between a listener being added and that tick, so it goes out behind the held ones.
+      // The tick that emits the held messages may not have run yet, and they go first.
       pending.push([message, handle]);
       this.#flushPendingMessages();
     } else if (this.listenerCount("message") > 0) {
@@ -1593,14 +1589,13 @@ class ChildProcess extends EventEmitter {
 
   #flushPendingMessages() {
     try {
-      // node emits every held message even after a once() listener has left nobody to receive the rest,
-      // which loses them. The rest stays held here.
+      // node emits the rest to nobody once a once() listener has removed itself. Here the rest stays held.
       let entry: [message: unknown, handle: unknown] | undefined;
       while (this.listenerCount("message") > 0 && (entry = this.#pendingMessages?.shift())) {
         this.emit("message", entry[0], entry[1]);
       }
     } finally {
-      // A listener and a held message are both left only when a listener threw. The rest goes out on the next tick.
+      // Both a listener and a held message are left only when a listener threw.
       if (this.listenerCount("message") > 0) this.#flushPendingMessagesOnNextTick();
     }
   }

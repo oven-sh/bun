@@ -17,11 +17,9 @@ test("child_process ipc", async () => {
   `);
 });
 
-// node holds these in kPendingMessages and emits them on the tick after a 'message' listener is added:
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L954-L964
+// node's kPendingMessages: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L954-L964
 describe.concurrent("a 'message' that arrives while there is no 'message' listener is held", () => {
-  // The channel is ordered and an 'internalMessage' (a cmd that starts with NODE_) is never held. So when
-  // the marker arrives, every message sent before it has arrived too.
+  // An 'internalMessage' (a NODE_ cmd) is never held, so when the marker arrives the messages before it have arrived.
   const marker = JSON.stringify({ cmd: "NODE_TEST_MARKER" });
   const stop = child => {
     if (child.connected) child.disconnect();
@@ -165,8 +163,7 @@ describe.concurrent("a 'message' that arrives while there is no 'message' listen
     }
   });
 
-  // node v26.3.0 emits all the held messages in one go, also after a once() listener has removed itself, so
-  // it loses every held message but the first here. Bun keeps the rest for the next listener.
+  // node v26.3.0 loses all but the first here: its flush does not stop when once() has removed the listener.
   describe("each once() listener takes one held message", () => {
     async function takeThree(target) {
       const got = [];

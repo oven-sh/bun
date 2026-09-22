@@ -4963,8 +4963,6 @@ extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSVa
     }
 }
 
-// node holds a 'message' that arrives while there is no 'message' listener, and emits the held ones, in order, on
-// the tick after a listener is added. It never holds an 'internalMessage'.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L954-L964
 void Process::emitOrHoldIPCMessage(Zig::GlobalObject* globalObject, JSValue message, JSValue handle)
 {
@@ -4988,8 +4986,7 @@ void Process::emitOrHoldIPCMessage(Zig::GlobalObject* globalObject, JSValue mess
         WTF::Locker locker { cellLock() };
         m_pendingIPCMessages.append(PendingIPCMessage { { vm, this, message }, { vm, this, handle } });
     }
-    // node emits each message on its own tick, behind the tick that flushes. Here a message can arrive
-    // between a listener being added and that tick, so it goes out behind the held ones.
+    // The tick that emits the held messages may not have run yet, and they go first.
     flushPendingIPCMessages(globalObject);
 }
 
@@ -5000,8 +4997,7 @@ void Process::flushPendingIPCMessages(Zig::GlobalObject* globalObject)
     auto& emitter = wrapped();
     const auto& messageEvent = vm.propertyNames->message;
 
-    // node emits every held message even after a once() listener has left nobody to receive the rest,
-    // which loses them. The rest stays held here.
+    // node emits the rest to nobody once a once() listener has removed itself. Here the rest stays held.
     while (!m_pendingIPCMessages.isEmpty() && emitter.hasEventListeners(messageEvent) && Bun__GlobalObject__connectedIPC(globalObject)) {
         JSC::MarkedArgumentBuffer args;
         {

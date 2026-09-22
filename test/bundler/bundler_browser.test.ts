@@ -753,6 +753,41 @@ describe("bundler", () => {
       stdout: "microtask < tick < nested tick < timeout",
     },
   });
+  // Each tick queues the next, so the whole chain runs in one drain. A tick
+  // that already ran must not stay reachable until the chain ends.
+  itBundled("browser/NodeProcessNextTickChainReleasesCallbacks", {
+    files: {
+      "/entry.js": /* js */ `
+        import { nextTick } from "node:process";
+        globalThis.DONE = new Promise(resolve => {
+          let remaining = 5000;
+          function step() {
+            if (remaining-- === 0) return resolve(globalThis.liveAfterGC());
+            const payload = new Float64Array(1);
+            nextTick(() => step(payload));
+          }
+          step();
+        });
+      `,
+    },
+    target: "browser",
+    runtimeFiles: {
+      "/exec.js": /* js */ `
+        import { heapStats } from "bun:jsc";
+        const count = () => heapStats().objectTypeCounts.Float64Array ?? 0;
+        Bun.gc(true);
+        const before = count();
+        globalThis.liveAfterGC = () => (Bun.gc(true), count() - before);
+        await import("./out.js");
+        const live = await globalThis.DONE;
+        console.log(live < 100 ? "released" : "retained " + live);
+      `,
+    },
+    run: {
+      file: "/exec.js",
+      stdout: "released",
+    },
+  });
   // The util polyfill is a hand conversion of the npm `util` package. Each of
   // these exports had a bug from that conversion: an undeclared identifier, a
   // spread into Function#apply, or a dependency on a Node-only global.

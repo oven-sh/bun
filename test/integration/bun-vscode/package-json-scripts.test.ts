@@ -95,21 +95,27 @@ test("scripts with the same name in two packages get separate terminals", async 
 });
 
 test("hover links in a nested package.json carry that package's directory", async () => {
-  using dir = tempDir("vscode-codelens", files);
+  // The command URI must survive a directory name with `#` (a URI fragment delimiter).
+  using dir = tempDir("vscode-codelens", {
+    ...files,
+    "packages/c#/package.json": JSON.stringify({ name: "example-csharp", scripts: { build: "echo c#" } }),
+  });
   state.workspaceRoot = String(dir);
-  const document = makeDocument(join(String(dir), "packages/api/package.json"));
+  const cwd = join(String(dir), "packages/c#");
+  const document = makeDocument(join(cwd, "package.json"));
   const offset = document.getText().indexOf('"build"') + 1;
 
   const { contents } = state.hoverProvider!.provideHover(document, document.positionAt(offset));
   const markdown = contents.find(content => content instanceof MarkdownString) as MarkdownString;
   expect(markdown).toBeDefined();
 
-  const links = [...markdown.value.matchAll(/command:(extension\.bun\.codelens\.\w+\.task)\?([^)]+)\)/g)];
-  expect(links.map(([, command, args]) => [command, JSON.parse(decodeURI(args))])).toEqual([
-    [
-      "extension.bun.codelens.debug.task",
-      { script: "echo api", name: "build", cwd: join(String(dir), "packages/api") },
-    ],
-    ["extension.bun.codelens.run.task", { script: "echo api", name: "build", cwd: join(String(dir), "packages/api") }],
+  // A command link is `[label](command:<id>?<args>)`. VS Code parses it as a URI, so `#` ends the query.
+  const links = [...markdown.value.matchAll(/\]\((command:[^)]+)\)/g)].map(([, link]) => {
+    const { pathname, search } = new URL(link);
+    return [pathname, JSON.parse(decodeURIComponent(search.slice(1)))];
+  });
+  expect(links).toEqual([
+    ["extension.bun.codelens.debug.task", { script: "echo c#", name: "build", cwd }],
+    ["extension.bun.codelens.run.task", { script: "echo c#", name: "build", cwd }],
   ]);
 });

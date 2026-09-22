@@ -181,7 +181,7 @@ function registerHoverProvider(context: vscode.ExtensionContext) {
           contents: scripts.map(script => {
             if (!script.range.contains(position)) return null;
 
-            const command = encodeURI(JSON.stringify({ script: script.command, name: script.name, cwd }));
+            const command = encodeURIComponent(JSON.stringify({ script: script.command, name: script.name, cwd }));
 
             const markdownString = new vscode.MarkdownString(
               `[Debug](command:extension.bun.codelens.debug.task?${command}) | [Run](command:extension.bun.codelens.run.task?${command})`,

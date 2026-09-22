@@ -423,21 +423,21 @@ function destroyWhenUpgradedCloses(self, connection) {
   connection.once("close", (self[kOnUpgradedClose] = onUpgradedClose.bind(null, self, connection)));
 }
 const upgradedErrorForwarders = new WeakSet();
+function onUpgradedError(self, connection, err) {
+  if (connection instanceof Socket) {
+    // An adopted fd closes under both sockets at once, and `self` reports that close from its own handle.
+    if (self[kclosed]) return;
+    // Node throws when only the transport has an 'error' listener. Those listeners have this error, and
+    // a socket without one is told of no read or write error here.
+    if (!hasErrorListener(self) && hasErrorListener(connection)) return;
+  }
+  self._emitTLSError(err);
+}
 // Node's wrap 'error' -> _emitTLSError.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L65
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L977
 function forwardUpgradedError(self, connection) {
-  if (!(connection instanceof Socket)) {
-    connection.on("error", err => self._emitTLSError(err));
-    return;
-  }
-  const forwarder = err => {
-    // An adopted fd closes under both sockets at once, and `self` reports that close from its own handle.
-    if (self[kclosed]) return;
-    // Node throws when only the transport has an 'error' listener. Here a socket without one hears of no reset.
-    if (!hasErrorListener(self) && hasErrorListener(connection)) return;
-    self._emitTLSError(err);
-  };
+  const forwarder = onUpgradedError.bind(null, self, connection);
   upgradedErrorForwarders.add(forwarder);
   connection.on("error", forwarder);
 }

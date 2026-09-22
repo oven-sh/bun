@@ -2055,8 +2055,8 @@ enum StreamState {
   Closed = 1 << 3, // 01000 = 8
   StreamResponded = 1 << 4, // 10000 = 16
   WritableClosed = 1 << 5, // 100000 = 32
-  // The native side closed and freed the stream (state 7, or a peer reset): nothing is left to
-  // send, and the native side no longer knows its id.
+  // The native side fully closed and freed the stream (state 7 delivered): there is
+  // nothing left to send on the wire for it.
   NativeClosed = 1 << 6, // 1000000 = 64
   // END_STREAM already rode the final DATA frame from _write/_writev; _final must not
   // emit the empty END_STREAM frame on top of it.
@@ -3762,8 +3762,7 @@ function rejectNoPayloadContentLengthNT(req) {
   req.destroy(streamErrorFromCode(constants.NGHTTP2_PROTOCOL_ERROR));
 }
 
-// node's onStreamClose for RST_STREAM(NO_ERROR): unread data stays, 'end' destroys the stream.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L592-L628
+// node's onStreamClose for NO_ERROR: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L607-L626
 function closeStreamAndDestroyOnEnd(session: Http2Session, stream: Http2Stream) {
   const status = stream[bunHTTP2StreamStatus];
   stream[bunHTTP2StreamStatus] = status | StreamState.NativeClosed;

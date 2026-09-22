@@ -684,7 +684,7 @@ mod _async_tasks {
                 context: cx.context().id(),
             });
             // Transfer ownership to libuv: the box outlives the async request and is
-            // reclaimed in `destroy()` (run_from_js_thread → scopeguard). `heap::release`
+            // reclaimed in `destroy()` (from `run_from_js_thread`). `heap::release`
             // names that hand-off — it is `Box::leak` under the hood; the reclaim
             // happens in `destroy()`, not in this scope.
             let task: &mut Self = bun_core::heap::release(task);
@@ -940,17 +940,24 @@ mod _async_tasks {
                 .enqueue_task(bun_jsc::Task::init(this_ptr));
         }
 
-        pub(crate) fn run_from_js_thread(&mut self) -> JsResult<()> {
-            let result = core::mem::replace(&mut self.result, Err(sys::Error::default()));
-            let completion = core::mem::replace(
-                &mut self.completion,
-                FsCompletion::Promise(JSPromiseStrong::empty()),
-            );
-            let global_ref = self.global_object;
-            let tracker = self.tracker;
+        /// SAFETY: `this` must be the pointer Box::leak'd in `create()`. The body frees it before it calls back, so it is not `&mut self`.
+        pub(crate) unsafe fn run_from_js_thread(this: *mut Self) -> JsResult<()> {
+            // SAFETY: fn contract. The borrow ends before `destroy` below.
+            let (result, completion, global_ref, tracker) = unsafe {
+                let task = &mut *this;
+                (
+                    core::mem::replace(&mut task.result, Err(sys::Error::default())),
+                    core::mem::replace(
+                        &mut task.completion,
+                        FsCompletion::Promise(JSPromiseStrong::empty()),
+                    ),
+                    task.global_object,
+                    task.tracker,
+                )
+            };
             // The arguments pin their buffers. A callback runs inside `resolve`/`reject`, and a pinned buffer cannot be transferred.
-            // SAFETY: self was Box::leak'd in create(); destroyed exactly once, here, and not read again.
-            unsafe { Self::destroy(core::ptr::from_mut(self)) };
+            // SAFETY: fn contract. `this` is not used again.
+            unsafe { Self::destroy(this) };
 
             let global_object = global_ref.get();
             let success = matches!(result, Ok(_));

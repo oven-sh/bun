@@ -1845,9 +1845,11 @@ impl<'a> PackageInstall<'a> {
                                 entry.path.as_bytes(),
                             );
                         }
-                        EntryKind::SymLink
-                            if !is_symlink_in_package(entry.dir, entry.basename, entry.path) => {}
-                        EntryKind::File | EntryKind::SymLink => {
+                        // Same link text, so a chain resolves under node_modules, not the cache.
+                        EntryKind::SymLink => {
+                            copy_symlink(entry.dir, entry.basename, destination_dir, entry.path)?;
+                        }
+                        EntryKind::File => {
                             let target_len = to_copy_into2_offset + entry.path.len();
                             head2[to_copy_into2_offset..target_len]
                                 .copy_from_slice(entry.path.as_bytes());

@@ -5,7 +5,17 @@
 // https://github.com/oven-sh/bun/issues/43788
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { cpSync, lstatSync, mkdirSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join, relative } from "node:path";
 
 // Move every regular file under `dir` into `dir/.store` and leave a relative
@@ -69,6 +79,7 @@ describe.skipIf(isWindows)("install from a cache whose files are symlinks", () =
         writeFileSync(join(cache, "outside.js"), "module.exports = 1;");
         symlinkSync(join(cache, "outside.js"), join(pkg, "absolute.js"));
         symlinkSync(join("..", "outside.js"), join(pkg, "climbing.js"));
+        symlinkSync("absolute.js", join(pkg, "indirect.js"));
         rmSync(join(String(dir), "node_modules"), { recursive: true });
 
         await install(String(dir), cache, ["--backend", backend, "--linker", linker]);
@@ -80,6 +91,8 @@ describe.skipIf(isWindows)("install from a cache whose files are symlinks", () =
         });
         expect(() => lstatSync(join(installed, "absolute.js"))).toThrow("ENOENT");
         expect(() => lstatSync(join(installed, "climbing.js"))).toThrow("ENOENT");
+        // A link to a left-out link must not resolve through the cache either.
+        expect(() => realpathSync(join(installed, "indirect.js"))).toThrow("ENOENT");
       });
     });
   });

@@ -968,6 +968,84 @@ it.skipIf(!FFI_FIXTURE_PATH)("ptr argument: ArrayBuffer cells through an FTL-com
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "mismatches 0\n", stderr: "", exitCode: 0 });
 });
 
+// Marshalling one argument list can run JS in the middle of it: an integer argument coerces
+// through valueOf, and an object passed for "ptr" has its "ptr" property read. That JS can
+// transfer or resize the buffer another argument is read from. The engine reads the address and
+// the buffer_length after that JS has run, so a transferred view marshals as null and a shrunk
+// view marshals its new length. Before the fix C received the address of freed memory, or a
+// 1024-byte length for a 16-byte buffer. Each case also runs hot, so the optimizing tiers marshal
+// it too.
+it.skipIf(!FFI_FIXTURE_PATH)("reads a buffer argument after the other arguments coerce", () => {
+  const {
+    symbols: { identity_ptr: addressThenInt, bl_echo_len: lengthThenInt },
+  } = dlopen(FFI_FIXTURE_PATH, {
+    identity_ptr: { args: ["ptr", "i32"], returns: "ptr" },
+    bl_echo_len: { args: ["buffer", "buffer_length", "i32"], returns: "u64" },
+  });
+  const {
+    symbols: { identity_ptr: addressThenAddress },
+  } = dlopen(FFI_FIXTURE_PATH, { identity_ptr: { args: ["ptr", "ptr"], returns: "ptr" } });
+
+  const rounds = isDebug ? 1_000 : 20_000;
+
+  const afterValueOf = [];
+  for (let i = 0; i < rounds; i++) {
+    const view = new Uint8Array(64);
+    const address = addressThenInt(view, {
+      valueOf() {
+        view.buffer.transfer();
+        return 1;
+      },
+    });
+    if (address !== null) afterValueOf.push(address);
+  }
+  expect({ stale: afterValueOf.length, first: afterValueOf[0] ?? null }).toEqual({ stale: 0, first: null });
+
+  const afterGetter = [];
+  for (let i = 0; i < rounds; i++) {
+    const view = new Uint8Array(64);
+    const address = addressThenAddress(view, {
+      get ptr() {
+        view.buffer.transfer();
+        return 1;
+      },
+    });
+    if (address !== null) afterGetter.push(address);
+  }
+  expect({ stale: afterGetter.length, first: afterGetter[0] ?? null }).toEqual({ stale: 0, first: null });
+
+  const lengths = new Set();
+  for (let i = 0; i < rounds; i++) {
+    const buffer = new ArrayBuffer(1024, { maxByteLength: 1024 });
+    const view = new Uint8Array(buffer);
+    lengths.add(
+      lengthThenInt(view, view, {
+        valueOf() {
+          buffer.resize(16);
+          return 1;
+        },
+      }),
+    );
+  }
+  expect([...lengths]).toEqual([16n]);
+
+  // A getter on a pointer argument still runs exactly once.
+  const live = new Uint8Array(64);
+  let reads = 0;
+  const argument = {
+    get ptr() {
+      reads++;
+      return 1;
+    },
+  };
+  for (let i = 0; i < rounds; i++) {
+    reads = 0;
+    expect(addressThenAddress(live, argument)).not.toBeNull();
+    if (reads !== 1) break;
+  }
+  expect(reads).toBe(1);
+});
+
 it("worker teardown drops queued threadsafe JSCallback invocations without crashing", async () => {
   using dir = tempDir("ffi-jscallback-terminate-queued", {
     "main.js": `

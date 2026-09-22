@@ -269,78 +269,141 @@ function commandToString(command: SQLCommand): string {
   }
 }
 
+// The longest keyword the scan below can match ("insert" / "update").
+const LONGEST_COMMAND_KEYWORD = 6;
+
+// Compare text.slice(start, end) against an ASCII keyword, case-insensitively,
+// without copying the slice out of the query. Folding only ASCII is exact for
+// these keywords: no code point outside ASCII lowercases into a string made
+// solely of the letters they use, which the test asserts by sweeping every code
+// point. (The ones that do fold to ASCII, U+0131 and U+212A, are already
+// lowercase, so toLowerCase never produced them either.)
+function keywordAt(text: string, start: number, end: number, keyword: string): boolean {
+  if (end - start !== keyword.length) return false;
+  for (let i = 0; i < keyword.length; i++) {
+    let c = text.charCodeAt(start + i);
+    // ASCII uppercase to lowercase
+    if (c >= 65 && c <= 90) c += 32;
+    if (c !== keyword.charCodeAt(i)) return false;
+  }
+  return true;
+}
+
+// Which command, if any, the token at text[start, end) names. Only i/u/w/s can
+// begin one of the keywords, so any other token is rejected on its first
+// character without comparing further.
+function commandAt(text: string, start: number, end: number): SQLCommand {
+  if (end - start > LONGEST_COMMAND_KEYWORD) return SQLCommand.none;
+  let c = text.charCodeAt(start);
+  if (c >= 65 && c <= 90) c += 32;
+  switch (c) {
+    case 105: // i
+      if (keywordAt(text, start, end, "insert")) return SQLCommand.insert;
+      if (keywordAt(text, start, end, "in")) return SQLCommand.in;
+      return SQLCommand.none;
+    case 117: // u
+      return keywordAt(text, start, end, "update") ? SQLCommand.update : SQLCommand.none;
+    case 119: // w
+      return keywordAt(text, start, end, "where") ? SQLCommand.where : SQLCommand.none;
+    case 115: // s
+      return keywordAt(text, start, end, "set") ? SQLCommand.updateSet : SQLCommand.none;
+    default:
+      return SQLCommand.none;
+  }
+}
+
+// As commandAt, plus the ANY/ALL case, which only applies to the token that
+// runs to the start of the query.
+function leadingCommand(text: string, start: number, end: number, anyAndAllMeanIn: boolean): SQLCommand {
+  const command = commandAt(text, start, end);
+  if (command !== SQLCommand.none) return command;
+  // MySQL treats a leading ANY/ALL token like IN; Postgres does not.
+  if (keywordAt(text, start, end, "any") || keywordAt(text, start, end, "all")) {
+    return anyAndAllMeanIn ? SQLCommand.in : SQLCommand.none;
+  }
+  return SQLCommand.none;
+}
+
+// Rebuild a token that had a quoted section inside it, so the quoted characters
+// are dropped as the scan drops them. Walks left from the token's last
+// character, which is never itself inside quotes because a token only starts on
+// an unquoted character, so the quote state starts closed and evolves exactly
+// as the scan's does.
+function tokenWithoutQuotes(text: string, from: number): string {
+  let token = "";
+  let quoted = false;
+  for (let i = from; i >= 0; i--) {
+    const code = text.charCodeAt(i);
+    if (code === 32 || (code >= 9 && code <= 13)) break;
+    if (code === 34) {
+      quoted = !quoted;
+      continue;
+    }
+    if (!quoted) token = text[i] + token;
+  }
+  return token;
+}
+
 function detectCommand(query: string, anyAndAllMeanIn: boolean): SQLCommand {
-  const text = query.toLowerCase().trim();
+  // Only the tokens are compared, so the query is read as it is. Lowercasing
+  // the whole query here copied it on every helper interpolation, while the
+  // scan below normally stops within a few characters of the end.
+  // trim() stays: dropping the LEADING whitespace is what lets a query that is
+  // a single ANY/ALL token reach the check after the loop instead of the one
+  // inside it, and only the one after the loop treats those as IN.
+  const text = query.trim();
   const text_len = text.length;
 
-  let token = "";
-  let command = SQLCommand.none;
+  // The token being scanned, as a half-open range of `text`. end === -1 means
+  // no token has started since the last separator.
+  let start = -1;
+  let end = -1;
+  // A quoted section fell inside the token, so the range covers characters the
+  // token does not. Rare, and handled by rebuilding the token.
+  let quotedInToken = false;
   let quoted = false;
   // we need to reverse search so we find the closest command to the parameter
   for (let i = text_len - 1; i >= 0; i--) {
-    const char = text[i];
-    switch (char) {
-      case " ": // Space
-      case "\n": // Line feed
-      case "\t": // Tab character
-      case "\r": // Carriage return
-      case "\f": // Form feed
-      case "\v": {
-        switch (token) {
-          case "insert": {
-            return SQLCommand.insert;
-          }
-          case "update": {
-            return SQLCommand.update;
-          }
-          case "where": {
-            return SQLCommand.where;
-          }
-          case "set": {
-            return SQLCommand.updateSet;
-          }
-          case "in": {
-            return SQLCommand.in;
-          }
-          default: {
-            token = "";
-            continue;
-          }
+    const code = text.charCodeAt(i);
+    // space, and tab / line feed / vertical tab / form feed / carriage return
+    if (code === 32 || (code >= 9 && code <= 13)) {
+      if (end !== -1) {
+        let command: SQLCommand;
+        if (quotedInToken) {
+          const token = tokenWithoutQuotes(text, end - 1);
+          command = commandAt(token, 0, token.length);
+        } else {
+          command = commandAt(text, start, end);
         }
+        if (command !== SQLCommand.none) return command;
+        start = -1;
+        end = -1;
+        quotedInToken = false;
       }
-      default: {
-        // skip quoted commands
-        if (char === '"') {
-          quoted = !quoted;
-          continue;
-        }
-        if (!quoted) {
-          token = char + token;
-        }
-      }
+      continue;
+    }
+    // skip quoted commands
+    if (code === 34) {
+      quoted = !quoted;
+      if (end !== -1) quotedInToken = true;
+      continue;
+    }
+    if (!quoted) {
+      if (end === -1) end = i + 1;
+      start = i;
     }
   }
-  if (token) {
-    switch (token) {
-      case "insert":
-        return SQLCommand.insert;
-      case "update":
-        return SQLCommand.update;
-      case "where":
-        return SQLCommand.where;
-      case "set":
-        return SQLCommand.updateSet;
-      case "in":
-        return SQLCommand.in;
-      case "any":
-      case "all":
-        // MySQL treats a leading ANY/ALL token like IN; Postgres does not.
-        return anyAndAllMeanIn ? SQLCommand.in : SQLCommand.none;
-      default:
-        return SQLCommand.none;
+
+  // The token that runs to the start of the query is the only one that can be a
+  // bare ANY/ALL, which is why this is not the same check as the one in the loop.
+  if (end !== -1) {
+    if (quotedInToken) {
+      const token = tokenWithoutQuotes(text, end - 1);
+      return leadingCommand(token, 0, token.length, anyAndAllMeanIn);
     }
+    return leadingCommand(text, start, end, anyAndAllMeanIn);
   }
-  return command;
+  return SQLCommand.none;
 }
 
 function getHelperCommandFromDetect(query: string, anyAndAllMeanIn: boolean): SQLCommand {

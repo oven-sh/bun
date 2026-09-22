@@ -546,10 +546,12 @@ describe("bundler", () => {
         hook: "useState(0) /* remove @refresh reset later */",
       }),
       "jsx-child-comment.jsx": component("JsxChildComment", { openingTag: "<div>{/* @refresh reset */}" }),
-      "jsx-tag-block-comment.tsx": component("JsxTagBlockComment", { openingTag: "<div /* @refresh reset */>" }),
+      "jsx-tag-block-comment.jsx": component("JsxTagBlockComment", { openingTag: "<div /* @refresh reset */>" }),
+      "tsx-tag-block-comment.tsx": component("TsxTagBlockComment", { openingTag: "<div /* @refresh reset */>" }),
       "jsx-tag-line-comment.jsx": component("JsxTagLineComment", {
         openingTag: '<div\n// @refresh reset\nid="a">',
       }),
+      "legacy-html-close-comment.jsx": component("LegacyHtmlCloseComment") + "\n--> @refresh reset\n",
       "with-custom-hook.jsx": "// @refresh reset\n" + component("WithCustomHook", { hook: "useCustom()" }),
       "no-comment.tsx": component("NoComment"),
       "no-comment-with-custom-hook.jsx": component("NoCommentWithCustomHook", { hook: "useCustom()" }),
@@ -563,7 +565,7 @@ describe("bundler", () => {
       entrypoints: Object.keys(files).map(file => join(String(dir), file)),
       reactFastRefresh: true,
       target: "browser",
-      external: ["react", "react/jsx-dev-runtime", "react-refresh/runtime"],
+      external: ["react", "react-refresh/runtime"],
     });
 
     // `_s(Component, "<hash>", forceReset, () => [customHooks])`. The last two arguments are optional.
@@ -579,7 +581,9 @@ describe("bundler", () => {
       InsideLongerComment: "true",
       JsxChildComment: "true",
       JsxTagBlockComment: "true",
+      TsxTagBlockComment: "true",
       JsxTagLineComment: "true",
+      LegacyHtmlCloseComment: "true",
       WithCustomHook: "true",
       NoComment: null,
       NoCommentWithCustomHook: "false",

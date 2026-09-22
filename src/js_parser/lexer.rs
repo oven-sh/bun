@@ -1899,7 +1899,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// react-refresh/babel and SWC match this text anywhere in any comment of the file.
+    /// react-refresh/babel matches this text anywhere in any comment of the file.
     fn scan_react_refresh_reset(&mut self, comment: &[u8]) {
         if self.track_react_refresh_reset
             && !self.has_react_refresh_reset_comment
@@ -2077,6 +2077,7 @@ impl<'a> Lexer<'a> {
             }
             self.step();
         }
+        self.scan_react_refresh_reset(&self.contents[self.start..self.end]);
     }
 
     /// This scans a "// comment" in a single pass over the input.

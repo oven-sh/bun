@@ -1642,10 +1642,11 @@ it("reload() cannot turn a Bun.serve server into a node:http server", async () =
 
 it("reload() that drops the node:http handler keeps the server's node:http stop() semantics", async () => {
   // The other direction of the kind invariant: a server created as a node:http
-  // one stays one. node's close() contract is that stop(false) neither sweeps
-  // idle keep-alive connections nor waits for them, and a reload() that routes
-  // requests to fetch instead of the node handler must not switch the server
-  // over to Bun.serve's drain (which closes the idle connection here).
+  // one stays one. stop(false) of a node:http server does not sweep idle
+  // keep-alive connections (http.Server's close() does that in JavaScript), and
+  // a reload() that routes requests to fetch instead of the node handler must
+  // not switch the server over to Bun.serve's drain (which closes the idle
+  // connection here).
   using server = Bun.serve({
     port: 0,
     hostname: "127.0.0.1",
@@ -1704,8 +1705,11 @@ it("reload() that drops the node:http handler keeps the server's node:http stop(
   }
 
   expect(await request()).toBe("HTTP/1.1 200 OK ok");
-  await server.stop(false);
+  // Like Node.js's 'close', the promise settles once every connection is closed.
+  const stopped = server.stop(false);
   expect(await request()).toBe("HTTP/1.1 200 OK ok");
+  connection.end();
+  await stopped;
 });
 
 describe("status code text", () => {

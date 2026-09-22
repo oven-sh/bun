@@ -204,7 +204,7 @@ describe("String search — Highway memMem/indexOfChar", () => {
 });
 
 describe("JPEG codec: libjpeg-turbo jsimd runtime dispatch", () => {
-  // libjpeg-turbo picks its kernels per call from CPUID (simd/x86_64/jsimd.c on
+  // libjpeg-turbo picks its kernels per codec instance from CPUID (simd/jsimd.c; on
   // x64: AVX2, else SSE2; Neon on aarch64). On the emulated baseline CPU the
   // AVX2 kernels must stay unselected, so this traps if that gate breaks.
   // 72 px wide: two full 32-pixel AVX2 / 16-pixel SSE2 column iterations plus an

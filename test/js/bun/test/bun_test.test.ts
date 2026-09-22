@@ -34,8 +34,15 @@ test("describe/test", async () => {
         at <anonymous> (file:NN:NN)
     -------------------------------
 
+    76 | 
+    77 | describe("actual tests", () => {
+    78 |   test("more functions called after delayed done", done => {
+    79 |     process.nextTick(() => {
+    80 |       done();
+    81 |       throw "uh oh";
+                     ^
     error: uh oh
-    uh oh
+        at <anonymous> (file:NN:NN)
     (fail) actual tests > more functions called after delayed done
     (pass) actual tests > another test
     (pass) concurrent describe 1 > item 1

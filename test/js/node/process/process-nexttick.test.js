@@ -2,7 +2,36 @@
 // mess with timers, producing unreliable results. You must manually test this
 // in Node.
 import { expect, it } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 const isBun = !!process.versions.bun;
+
+it("a tick that throws goes to uncaughtException and the ticks queued after it still run, in order", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const order = [];
+        process.on("uncaughtException", error => order.push("uncaught " + error.message));
+        process.nextTick(() => order.push("a"));
+        process.nextTick(() => { throw new Error("b"); });
+        process.nextTick(() => { order.push("c"); process.nextTick(() => order.push("e")); });
+        process.nextTick(() => { throw new Error("d"); });
+        Promise.resolve().then(() => order.push("a microtask"));
+        setImmediate(() => console.log(order.join(", ")));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "a, uncaught b, c, uncaught d, e, a microtask\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
 
 it("process.nextTick", async () => {
   // You can verify this test is correct by copy pasting this into a browser's console and checking it doesn't throw an error.

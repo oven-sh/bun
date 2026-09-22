@@ -1650,8 +1650,8 @@ nativeTests.test_threadsafe_function_orphaned_by_worker = async () => {
   console.log(nativeTests.use_orphaned_threadsafe_functions());
 };
 
-// A finalizer that runs during a worker's env cleanup and registers another
-// finalizer (an external buffer's): the late one runs in that same cleanup.
+// A finalizer that runs during a worker's env cleanup tries to register another
+// finalizer (an external buffer's): the call is refused, so the late one never runs.
 nativeTests.test_finalizer_registered_during_env_cleanup = async () => {
   console.log("worker exited with", await runOrphanWorker({ lateFinalizer: true }));
   console.log("late=" + nativeTests.late_finalizer_run_count());
@@ -1736,6 +1736,29 @@ nativeTests.test_external_buffer_worker_exit = async () => {
   console.log("worker exited with", exitCode);
   console.log("messages:", JSON.stringify(messages));
   console.log("stats after exit:", JSON.stringify(nativeTests.external_for_transfer_stats()));
+};
+
+// Bun-only: an idle collection ends on the collector thread; every finalizer still runs on the JS thread.
+nativeTests.test_external_buffer_finalized_by_idle_collection = async () => {
+  const deferred = require("./build/Debug/external_buffer_finalizer_thread.node");
+  globalThis.live = new Map();
+  for (let i = 0; i < 400_000; i++) live.set(i, { id: i, name: "user-" + i, tags: ["a" + i, "b" + i] });
+  const count = 200;
+  globalThis.buffers = [];
+  for (let i = 0; i < count; i++) {
+    buffers.push(nativeTests.create_external_buffer_for_transfer(8), deferred.create());
+  }
+  // Old objects: only a full collection frees them, and the next one is the idle one.
+  Bun.gc(true);
+  await new Promise(resolve => setTimeout(resolve, 100));
+  globalThis.buffers = null;
+  await new Promise(resolve => setTimeout(resolve, 4000));
+  for (const [name, stats] of [
+    ["experimental", nativeTests.external_for_transfer_stats()],
+    ["deferred", deferred.stats()],
+  ]) {
+    console.log(`${name}: finalized=${stats.finalized === count} finalizedOffThread=${stats.finalizedOffThread}`);
+  }
 };
 
 // Bun-only: an orphaned threadsafe function is freed by whichever thread drops

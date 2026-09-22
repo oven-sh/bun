@@ -7,9 +7,25 @@ const { SafeSet } = require("internal/primordials");
 const kHttp1Connections = Symbol("http1Connections");
 const kHttp1ActiveRequests = Symbol("http1ActiveRequests");
 
+type IncomingMessage = import("node:http").IncomingMessage;
+
+interface Http1FallbackRequest extends IncomingMessage {
+  upgrade: boolean;
+  _dumped: boolean;
+  _addHeaderLines(headers: string[], n: number): void;
+}
+
+interface Http1FallbackResponseHead {
+  statusCode: number;
+  statusMessage: string | undefined;
+  headers: string[];
+  autoHeaderBits: number;
+  keepAliveTimeoutSecs: number;
+}
+
 function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout) {
   const { _checkInvalidHeaderChar: checkInvalidHeaderChar } = require("node:_http_common");
-  let head = null;
+  let head: Http1FallbackResponseHead | null = null;
   let headWritten = false;
   let chunked = false;
   let noBody = false;
@@ -153,7 +169,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     aborted: false,
     bufferedAmount: 0,
     shouldKeepAlive,
-    onfinished: null,
+    onfinished: null as (() => void) | null,
     cork(callback) {
       return callback();
     },
@@ -249,7 +265,8 @@ function connectionListenerHTTP1(server, socket, options) {
   const { allMethods } = process.binding("http_parser");
 
   const http1Options = options.http1Options || {};
-  const IncomingMessageClass = http1Options.IncomingMessage || http.IncomingMessage;
+  const IncomingMessageClass: new (socket) => Http1FallbackRequest =
+    http1Options.IncomingMessage || http.IncomingMessage;
   const ServerResponseClass = http1Options.ServerResponse || http.ServerResponse;
   const keepAliveTimeout = typeof server.keepAliveTimeout === "number" ? server.keepAliveTimeout : 5000;
 
@@ -277,8 +294,8 @@ function connectionListenerHTTP1(server, socket, options) {
     parser.maxHeaderPairs = maxHeadersCount << 1;
   }
 
-  let req = null;
-  let pendingUpgrade = null;
+  let req: Http1FallbackRequest | null = null;
+  let pendingUpgrade: Http1FallbackRequest | null = null;
 
   parser[kOnHeadersComplete] = function onHttp1HeadersComplete(
     versionMajor,

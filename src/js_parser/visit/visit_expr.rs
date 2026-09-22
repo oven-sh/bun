@@ -334,7 +334,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .ref_,
                         ),
                 )
-                .with_was_originally_identifier(true),
+                .with_was_originally_identifier(true)
+                .with_is_property_access_target(in_.is_property_access_target),
         );
     }
     // PERF(port:frame): keep these large, infrequently-taken arms out of the
@@ -361,25 +362,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         break 'tagger _tag;
                     }
                     if p.options.jsx.runtime == options::JSX::Runtime::Classic {
-                        // `jsx_strings_to_member_expression` wants `&[&'a [u8]]`.
-                        // `options.jsx.fragment: Box<[Box<[u8]>]>` is OWNED by
-                        // `P` and dropped when `Parser::parse` returns — but the parts are
-                        // stored in symbols / `E::Dot.name` and read later by the printer.
-                        // Dupe each part into the arena (which backs the AST) so they
-                        // outlive the parse. Build the `&[&'a [u8]]` slice
-                        // directly in the AST arena instead of a throwaway global-heap
-                        // `Vec` — keeps the visitor off the `#[global_allocator]`.
-                        let arena = p.arena;
-                        let parts: &[&'a [u8]] = arena.alloc_slice_fill_iter(
-                            p.options
-                                .jsx
-                                .fragment
-                                .iter()
-                                .map(|b| -> &'a [u8] { arena.alloc_slice_copy(b) }),
-                        );
                         break 'tagger p
-                            .jsx_strings_to_member_expression(expr.loc, parts)
-                            .expect("unreachable");
+                            .jsx_classic_member_expression(expr.loc, |jsx| &jsx.fragment);
                     }
                     break 'tagger p.jsx_import(JSXImport::Fragment, expr.loc);
                 };
@@ -441,20 +425,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     let target: Expr = if runtime == options::JSX::Runtime::Classic {
-                        // see fragment note above — `options.jsx.factory` is
-                        // owned by `P` and freed when the parser drops; dupe each part
-                        // into the arena so the symbol/E::Dot names outlive the printer.
-                        // Build the parts slice in the AST arena (no global-heap `Vec`).
-                        let arena = p.arena;
-                        let parts: &[&'a [u8]] = arena.alloc_slice_fill_iter(
-                            p.options
-                                .jsx
-                                .factory
-                                .iter()
-                                .map(|b| -> &'a [u8] { arena.alloc_slice_copy(b) }),
-                        );
-                        p.jsx_strings_to_member_expression(expr.loc, parts)
-                            .expect("unreachable")
+                        p.jsx_classic_member_expression(expr.loc, |jsx| &jsx.factory)
                     } else {
                         // jsxStringsToMemberExpression(factory) must run
                         // unconditionally before the runtime check; it has the side-effect of
@@ -913,7 +884,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        p.visit_expr_in_out(&mut e_.target, ExprIn::default());
+        p.visit_expr_in_out(
+            &mut e_.target,
+            ExprIn {
+                is_property_access_target: !is_delete_target,
+                ..Default::default()
+            },
+        );
 
         match e_.index.data {
             Data::EPrivateIdentifier(mut private) => {
@@ -1038,7 +1015,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .with_is_call_target(is_call_target)
                                 .with_is_template_tag(is_template_tag)
                                 .with_is_delete_target(is_delete_target)
-                                .with_assign_target(in_.assign_target);
+                                .with_assign_target(in_.assign_target)
+                                .with_is_property_access_target(in_.is_property_access_target);
                             if let Some(rewrite) = p.maybe_rewrite_property_access(
                                 expr.loc,
                                 e_.target,
@@ -1423,6 +1401,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ExprIn {
                 property_access_for_method_call_maybe_should_replace_with_undefined: in_
                     .property_access_for_method_call_maybe_should_replace_with_undefined,
+                is_property_access_target: !is_delete_target,
                 ..Default::default()
             },
         );
@@ -1463,7 +1442,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .with_is_call_target(is_call_target)
                 .with_is_template_tag(is_template_tag)
                 .with_assign_target(in_.assign_target)
-                .with_is_delete_target(is_delete_target);
+                .with_is_delete_target(is_delete_target)
+                .with_is_property_access_target(in_.is_property_access_target);
             if let Some(_expr) = p.maybe_rewrite_property_access(
                 expr.loc,
                 e_.target,
@@ -2599,6 +2579,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.push_scope_for_visit_pass(js_ast::scope::Kind::FunctionArgs, expr.loc)
             .expect("unreachable");
         let dupe: &'a mut [Stmt] = p.arena.alloc_slice_copy(e_.body.stmts.slice());
+        let prev_may_replace_body =
+            p.enter_react_compiler_candidate(None, e_.has_react_hooks_suppression, dupe);
 
         let args_mut: &mut [G::Arg] = e_.args.slice_mut();
         p.visit_args(
@@ -2661,6 +2643,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.pop_scope();
         p.pop_scope();
 
+        p.react_compiler_may_replace_body = prev_may_replace_body;
         p.fn_or_arrow_data_visit = old_fn_or_arrow_data;
 
         // Restore before any further `p.*` call so the stack-local pointer
@@ -2793,7 +2776,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Lower standard decorators for class expressions
         if e_.should_lower_standard_decorators {
-            *e = p.lower_standard_decorators_expr(&mut e_, expr.loc, decorator_name_from_context);
+            *e = p.lower_standard_decorators_expr(expr, &mut e_, decorator_name_from_context);
             return;
         }
 

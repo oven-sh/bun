@@ -428,7 +428,12 @@ public:
             auto *data = (HttpResponseData<SSL> *) ((AsyncSocket<SSL> *) s)->getAsyncSocketData();
             struct us_socket_t *next = s->next;
             if (data->isIdle) {
-                us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
+                /* A socket is idle from the moment its response completes. When
+                 * that happens inside onData's parse loop the response can still
+                 * sit in the cork buffer, and JS that runs before the loop ends
+                 * (a graceful stop() from a microtask) gets here. close() sends
+                 * it first. */
+                ((AsyncSocket<SSL> *) s)->close();
                 closed++;
             } else if (closeWhenIdle) {
                 data->state |= HttpResponseData<SSL>::HTTP_CLOSE_WHEN_IDLE;

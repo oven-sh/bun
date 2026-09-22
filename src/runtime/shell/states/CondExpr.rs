@@ -8,7 +8,7 @@ use crate::shell::states::base::Base;
 use crate::shell::states::expansion::Expansion;
 use crate::shell::yield_::Yield;
 
-pub struct CondExpr {
+pub(crate) struct CondExpr {
     pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::CondExpr>,
     pub(crate) io: IO,
@@ -235,7 +235,7 @@ impl CondExpr {
                 return Self::write_failing_error(interp, this, format_args!("{}\n", err));
             }
             // Defensive fallback — finish via `writeFailingError` with exit 1.
-            debug_assert!(false, "Expansion child failed without an error");
+            debug_assert!(interp.failed(), "Expansion child failed without an error");
             let parent = interp.as_condexpr(this).base.parent;
             return interp.child_done(parent, this, 1);
         }
@@ -342,6 +342,10 @@ impl bun_event_loop::Taskable for crate::shell::dispatch_tasks::ShellCondExprSta
             (*this).task.task.unref_unrun();
             drop(bun_core::heap::take(this));
         }
+    }
+    /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 

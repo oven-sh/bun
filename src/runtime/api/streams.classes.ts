@@ -88,7 +88,8 @@ function source(name) {
     // (`producer` backref); `sinkOwner` roots the peer it pipes into
     // (`sink` backref). A chained transform needs both.
     // `closeAdapter`: the C++ JSNativeStreamSourceAdapter to notify from `on_close` (BunStreamSource.cpp sets it).
-    values: ["pendingPromise", "closeAdapter", "owner", "sinkOwner"],
+    // `lockedStream`: the stream `ReadableStream__lockNative` locked, which `NewSource::end_locked_stream` closes or errors. A Blob source never gets a native sink.
+    values: ["pendingPromise", "closeAdapter", "owner", "sinkOwner", ...(name !== "Blob" ? ["lockedStream"] : [])],
   });
 }
 

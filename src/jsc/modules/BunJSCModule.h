@@ -430,8 +430,9 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateMemoryFootprint,
     mi_process_info(&elapsed_msecs, &user_msecs, &system_msecs, &current_rss,
         &peak_rss, &current_commit, &peak_commit, &page_faults);
 
-    // mi_process_info produces incorrect rss size on linux.
+    // Match process.memoryUsage().rss and resourceUsage().maxRSS: mi_process_info reads resident_size on macOS.
     Bun::getRSS(&current_rss);
+    Bun::getPeakRSS(&peak_rss);
 
     VM& vm = globalObject->vm();
     JSC::JSObject* object = JSC::constructEmptyObject(
@@ -639,8 +640,6 @@ JSC_DEFINE_HOST_FUNCTION(functionReoptimizationRetryCount,
     return JSValue::encode(jsNumber(block->reoptimizationRetryCounter()));
 }
 
-extern "C" void Bun__drainMicrotasks();
-
 JSC_DECLARE_HOST_FUNCTION(functionDrainMicrotasks);
 JSC_DEFINE_HOST_FUNCTION(functionDrainMicrotasks,
     (JSGlobalObject * globalObject, CallFrame*))
@@ -649,7 +648,8 @@ JSC_DEFINE_HOST_FUNCTION(functionDrainMicrotasks,
     auto scope = DECLARE_THROW_SCOPE(vm);
     vm.drainMicrotasks();
     RETURN_IF_EXCEPTION(scope, {});
-    Bun__drainMicrotasks();
+    // Not EventLoop::tick(): it runs queued tasks beneath the caller.
+    defaultGlobalObject()->drainMicrotasks();
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }

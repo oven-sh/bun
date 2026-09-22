@@ -129,6 +129,9 @@ struct addrinfo_result {
  * switch on s->kind decides whether to direct-call into Rust/C++ or fall back
  * to the vtable. Signatures track the vtable entries (us_dispatch_handshake
  * drops the trailing custom_data — dispatch always passes NULL). */
+#ifdef __cplusplus
+extern "C" {
+#endif
 extern struct us_socket_t *us_dispatch_open(us_socket_r s, int is_client, char *ip, int ip_length);
 extern struct us_socket_t *us_dispatch_data(us_socket_r s, char *data, int length);
 extern struct us_socket_t *us_dispatch_fd(us_socket_r s, int fd);
@@ -143,6 +146,9 @@ extern void us_dispatch_handshake(us_socket_r s, int success, struct us_bun_veri
 extern void us_dispatch_session(us_socket_r s, const unsigned char *data, int length);
 extern void us_dispatch_keylog(us_socket_r s, const unsigned char *data, int length);
 extern struct us_socket_t *us_dispatch_ssl_raw_tap(us_socket_r s, char *data, int length);
+#ifdef __cplusplus
+}
+#endif
 
 extern int Bun__addrinfo_get(struct us_loop_t* loop, const char* host, uint16_t port,  struct addrinfo_request** ptr);
 /* Fills *out when host is a numeric address (incl. inet_aton shorthand and %zone); 0 when it is a name. */
@@ -180,10 +186,10 @@ void us_internal_group_maybe_unlink(struct us_socket_group_t *group);
  * SSL path calls _raw once it's actually time to drop the fd. */
 struct us_socket_t *us_internal_socket_close_raw(us_socket_r s, int code, void *reason);
 struct us_socket_t *us_internal_ssl_close(us_socket_r s, int code, void *reason);
-void us_internal_loop_data_init(struct us_loop_t *loop,
-                                void (*wakeup_cb)(us_loop_r loop),
-                                void (*pre_cb)(us_loop_r loop),
-                                void (*post_cb)(us_loop_r loop));
+int us_internal_loop_data_init(struct us_loop_t *loop,
+                               void (*wakeup_cb)(us_loop_r loop),
+                               void (*pre_cb)(us_loop_r loop),
+                               void (*post_cb)(us_loop_r loop));
 void us_internal_loop_data_free(us_loop_r loop);
 void us_internal_loop_pre(us_loop_r loop);
 void us_internal_loop_post(us_loop_r loop);

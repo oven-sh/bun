@@ -445,8 +445,8 @@ describe.concurrent("--sourcemap never writes next to the entry point", () => {
   );
 
   // A standalone html build with no --outdir or --outfile prints the page to
-  // stdout (covered in standalone.test.ts), so a separate .map has nowhere to go.
-  test("a standalone html build with --sourcemap and no --outdir or --outfile is an error", async () => {
+  // stdout (covered in standalone.test.ts), so the rows above apply to it too.
+  test("bare --sourcemap prints a standalone html page with an inline map to stdout", async () => {
     using dir = tempDir("build-sourcemap-standalone-html", fixture);
     const { stdout, stderr, exitCode } = await build(
       join(String(dir), "work"),
@@ -455,12 +455,11 @@ describe.concurrent("--sourcemap never writes next to the entry point", () => {
       "--target=browser",
       "--sourcemap",
     );
-    expect(stdout).toBe("");
-    expect(stderr).toBe(
-      `error: cannot use a linked source map without --outdir or --outfile (use --sourcemap=inline to print it to stdout)\n`,
-    );
+    expect(stderr).toBe("");
+    expect(stdout).toContain("console.log(");
+    expect(stdout).toContain("//# sourceMappingURL=data:application/json;base64,");
     expect(tree(String(dir))).toEqual(fixture);
-    expect(exitCode).toBe(1);
+    expect(exitCode).toBe(0);
   });
 });
 

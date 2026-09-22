@@ -83,7 +83,7 @@ Open `dist/index.html` — the React app works with no server.
 bun build --compile --target=browser ./index.html > page.html
 ```
 
-A page printed to stdout is one file, so `--sourcemap=linked` and `--sourcemap=external` need `--outdir` or `--outfile`. `--sourcemap=inline` works everywhere.
+A page printed to stdout is one file, so `--sourcemap=linked` and `--sourcemap=external` need `--outdir` or `--outfile`. `--sourcemap=inline` works everywhere, and `--sourcemap` with no value means `inline` when the page goes to stdout.
 
 ## Everything gets inlined
 

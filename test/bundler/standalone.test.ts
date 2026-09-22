@@ -504,9 +504,10 @@ body { color: blue; }`,
       expect(exitCode).toBe(0);
     });
 
-    test("--sourcemap=inline keeps it a single page on stdout", async () => {
+    // Bare --sourcemap means inline when the output goes to stdout, as it does for a JS entry point.
+    test.each(["--sourcemap", "--sourcemap=inline"])("%s keeps it a single page on stdout", async flag => {
       using dir = tempDir("compile-browser-cli-stdout-inline", fixture);
-      const { stdout, stderr, exitCode } = await build(String(dir), "./src/index.html", "--sourcemap=inline");
+      const { stdout, stderr, exitCode } = await build(String(dir), "./src/index.html", flag);
 
       expect(stderr).toBe("");
       expect(stdout).toContain('console.log("no outdir")');

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { tls as tlsCert } from "harness";
+import { isWindows, tls as tlsCert } from "harness";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { Agent as HttpsAgent, createServer as createHttpsServer, get as httpsGet } from "node:https";
@@ -208,6 +208,66 @@ test.each(["from the request's 'end' listener", "a turn of the loop later"])(
   },
 );
 
+// The other half: while the body of such a request still arrives, the
+// connection is not idle. Node.js leaves it alone, and the request ends.
+test.each([
+  ["Content-Length", "in the handler"],
+  ["Content-Length", "after the client has the early response"],
+  ["chunked", "in the handler"],
+  ["chunked", "after the client has the early response"],
+])(
+  "server.close() does not reap a connection that still receives a %s request body, called %s",
+  async (framing, where) => {
+    const events: string[] = [];
+    let received = 0;
+    const settled = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
+    const server = createServer((req, res) => {
+      req.on("data", chunk => (received += chunk.length));
+      req.on("end", () => {
+        events.push("end");
+        settled.resolve();
+      });
+      req.on("aborted", () => events.push("aborted"));
+      req.on("error", (error: NodeJS.ErrnoException) => {
+        events.push(`error ${error.code}`);
+        settled.resolve();
+      });
+      res.statusCode = 401;
+      res.end("early");
+      if (where === "in the handler") server.close(() => closed.resolve());
+    });
+    server.keepAliveTimeout = 60000;
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const socket = connect(port, "127.0.0.1");
+    try {
+      await once(socket, "connect");
+      let response = "";
+      socket.on("data", chunk => (response += chunk));
+      socket.on("error", () => {});
+      const chunked = framing === "chunked";
+      socket.write(
+        chunked
+          ? "POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5\r\n01234\r\n"
+          : "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\n01234",
+      );
+      while (!response.includes("early")) await once(socket, "data");
+      if (where !== "in the handler") server.close(() => closed.resolve());
+      socket.write(chunked ? "5\r\n56789\r\n0\r\n\r\n" : "56789");
+      await settled.promise;
+      expect({ events, received }).toEqual({ events: ["end"], received: 10 });
+      socket.destroy();
+      await closed.promise;
+    } finally {
+      socket.destroy();
+      server.closeAllConnections();
+    }
+  },
+);
+
 // The bytes of the first response still drain when one read brings the next
 // request. That request waits behind the unsent bytes, so the connection is
 // not idle, also when the same read completed the body of the first request.
@@ -220,7 +280,7 @@ test.each([
     // More than a loopback socket takes in one write.
     const size = 64 * 1024 * 1024;
     const firstDispatched = Promise.withResolvers<void>();
-    const secondDispatched = Promise.withResolvers<void>();
+    const secondDispatched = Promise.withResolvers<boolean>();
     const closed = Promise.withResolvers<void>();
     const server = createServer((req, res) => {
       if (req.url === "/first") {
@@ -229,9 +289,11 @@ test.each([
         firstDispatched.resolve();
         return;
       }
+      // A queued response has no socket yet.
+      const queued = res.socket === null;
       server.close(() => closed.resolve());
       res.end("second response");
-      secondDispatched.resolve();
+      secondDispatched.resolve(queued);
     });
     server.keepAliveTimeout = 60000;
     server.listen(0, "127.0.0.1");
@@ -248,7 +310,9 @@ test.each([
         await firstDispatched.promise;
       }
       socket.write(restOfFirst + "GET /second HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
-      await secondDispatched.promise;
+      // Winsock can take the whole first response in one send(). Nothing drains then, and the second request is not queued.
+      const queued = await secondDispatched.promise;
+      if (!isWindows) expect(queued).toBe(true);
 
       let received = 0;
       let tail = "";

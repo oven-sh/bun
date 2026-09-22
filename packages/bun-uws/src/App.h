@@ -427,7 +427,14 @@ public:
              * adopted into its own group), so the ext block is an HttpResponseData. */
             auto *data = (HttpResponseData<SSL> *) ((AsyncSocket<SSL> *) s)->getAsyncSocketData();
             struct us_socket_t *next = s->next;
-            if (data->isIdle) {
+            bool idle = data->isIdle;
+            if (idle && httpContext->isNodeHttp()) {
+                /* node:http: a connection that still receives a request body is not idle, also after its response ended (Node.js: last_message_start_).
+                 * In the request handler the parser has not entered a chunked body yet, so the armed body handler tells. */
+                bool bodyHandlerOfOpenMessage = data->inStream != nullptr && ((HttpResponseData<SSL, true> *) data)->lastMessageStartMs != 0;
+                idle = !bodyHandlerOfOpenMessage && !data->hasIncompleteRequestBody();
+            }
+            if (idle) {
                 /* A socket is idle from the moment its response completes. When
                  * that happens inside onData's parse loop the response can still
                  * sit in the cork buffer, and JS that runs before the loop ends

@@ -9,6 +9,8 @@
 // WHEN=late destroys it once the handshake is done.
 // WHEN=reset (SIDE=client): the peer resets the TCP connection once the handshake is done.
 // LISTEN says which sockets get an 'error' listener: tls (the default), raw, both, none.
+// LISTEN=before is both, with the transport's listener attached ahead of the wrap.
+// LISTEN=once is a once() on the transport alone, attached ahead of the wrap.
 // Prints the events of the TLS socket, and the transport's 'error' when it is listened for.
 // KEY and CERT come from the test. Importing "harness" here costs each run
 // about a second of startup on a debug build.
@@ -28,14 +30,19 @@ function wrap(raw: net.Socket) {
     raw.cork();
     raw.write("unflushed");
   }
+  const onRawError = (err: Error) => seen.push(`raw error:${err.message}`);
+  if (listen === "before") raw.on("error", onRawError);
+  if (listen === "once") raw.once("error", onRawError);
   const socket =
     side === "client"
       ? tls.connect({ socket: raw, rejectUnauthorized: false })
       : new tls.TLSSocket(raw, { isServer: true, key, cert });
   sockets.push(raw, socket);
   socket.on("_tlsError", err => seen.push(`_tlsError:${err.message}`));
-  if (listen === "tls" || listen === "both") socket.on("error", err => seen.push(`error:${err.message}`));
-  if (listen === "raw" || listen === "both") raw.on("error", err => seen.push(`raw error:${err.message}`));
+  if (listen === "tls" || listen === "both" || listen === "before") {
+    socket.on("error", err => seen.push(`error:${err.message}`));
+  }
+  if (listen === "raw" || listen === "both") raw.on("error", onRawError);
   socket.on("close", hadError => {
     seen.push(`close:${hadError}`);
     listener.close();

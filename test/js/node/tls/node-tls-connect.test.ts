@@ -1340,6 +1340,19 @@ describe("a TLS socket over a Duplex transport reports that transport's error", 
     const result = await bunRun(fixture, { SIDE: side, WHEN: when, KEY: key, CERT: cert });
     expect(result).toEqual({ stdout, stderr: "", exitCode: 0, signalCode: null });
   });
+
+  // Node throws the forwarded error here: nothing listens on the TLS socket.
+  it.concurrent("an 'error' listener on the transport alone keeps the error", async () => {
+    const fixture = join(import.meta.dir, "node-tls-duplex-transport-error-fixture.ts");
+    const { key, cert } = COMMON_CERT_;
+    const result = await bunRun(fixture, { SIDE: "client", WHEN: "late", LISTEN: "transport", KEY: key, CERT: cert });
+    expect(result).toEqual({
+      stdout: "transport error:transport failed|close:false",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
 });
 
 describe("a TLS socket over a net.Socket transport reports that transport's error", () => {
@@ -1401,8 +1414,12 @@ describe("a TLS socket over a net.Socket transport reports that transport's erro
 
   it.concurrent.each([
     ["both", "_tlsError:transport failed|error:transport failed|raw error:transport failed|close:false"],
-    // Node throws the forwarded error here: nothing listens on the TLS socket.
+    // The forward runs first. Node calls a listener that was attached ahead of the wrap first.
+    ["before", "_tlsError:transport failed|error:transport failed|raw error:transport failed|close:false"],
+    // Node throws the forwarded error in these two: nothing listens on the TLS socket.
     ["raw", "raw error:transport failed|close:false"],
+    // A once() attached ahead of the wrap is gone when an appended forward runs.
+    ["once", "raw error:transport failed|close:false"],
   ])("a listener on the transport still gets the error, once (listeners: %s)", async (listen, stdout) => {
     expect(await run("client", "net", "late", listen)).toEqual({ stdout, stderr: "", exitCode: 0, signalCode: null });
   });

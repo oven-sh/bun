@@ -5,14 +5,15 @@
 // WHEN=early destroys the Duplex in the tick of the wrap, before the TLS engine
 // exists. WHEN=late destroys it once the engine runs: after the ClientHello for
 // a client, one event-loop turn after the wrap for a server.
-// Prints the events that the TLS socket, or the request, emitted.
+// LISTEN=transport listens for 'error' on the Duplex, and not on the TLS socket.
+// Prints the events that the TLS socket, the request, or that listener got.
 // KEY and CERT come from the test. Importing "harness" here costs each run
 // several seconds of startup on a debug build.
 import https from "node:https";
 import { Duplex } from "node:stream";
 import tls from "node:tls";
 
-const { SIDE: side, WHEN: when, KEY: key, CERT: cert } = process.env;
+const { SIDE: side, WHEN: when, LISTEN: listen, KEY: key, CERT: cert } = process.env;
 const seen: string[] = [];
 process.on("exit", () => console.log(seen.join("|")));
 
@@ -27,13 +28,15 @@ const transport = new Duplex({
   },
 });
 
+if (listen === "transport") transport.on("error", err => seen.push(`transport error:${err.message}`));
+
 function kill() {
   transport.destroy(new Error("transport failed"));
 }
 
 function record(socket: tls.TLSSocket) {
   socket.on("_tlsError", err => seen.push(`_tlsError:${err.message}`));
-  socket.on("error", err => seen.push(`error:${err.message}`));
+  if (listen !== "transport") socket.on("error", err => seen.push(`error:${err.message}`));
   socket.on("close", hadError => seen.push(`close:${hadError}`));
 }
 

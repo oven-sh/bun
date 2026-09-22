@@ -624,18 +624,18 @@ pub(crate) fn js_node_test_after_entry(
         return Ok(JSValue::UNDEFINED);
     };
     // SAFETY: arena-owned entry, alive for the lifetime of BunTest.
-    let timeout = unsafe {
-        (*test_entry.as_ptr()).done_is_node_tests = true;
-        test_entry.as_ref().timeout
-    };
+    let timeout = unsafe { test_entry.as_ref() }.timeout;
     let entry = buntest.insert_execution_entry(
         test_entry.as_ptr(),
         Some(callback),
         bun_test::ExecutionEntryCfg { timeout, ..Default::default() },
     );
     // SAFETY: just allocated by `insert_execution_entry`, owned by `buntest`.
-    // Like the test entry, a timeout of this one skips only itself: bun:test's own afterEach entries follow it.
-    unsafe { (*entry).failure_skip_past = Some(entry) };
+    unsafe {
+        (*entry).node_test_wind_down = true;
+        // Like the test entry, a timeout of this one skips only itself: bun:test's own afterEach entries follow it.
+        (*entry).failure_skip_past = Some(entry);
+    }
     Ok(JSValue::UNDEFINED)
 }
 

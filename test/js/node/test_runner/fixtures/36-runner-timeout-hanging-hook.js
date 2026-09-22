@@ -22,4 +22,15 @@ test("I", { timeout: Infinity }, () => {
   log.push("I");
 });
 
+// A bun:test afterEach that the body of a test adds must still run after the
+// node:test hooks of that test, also when the timeout ends the test. It takes
+// `done`: inside an AsyncLocalStorage context bun:test waits for it either way.
+test("R", () => {
+  bunAfterEach(done => {
+    log.push("bun:test afterEach added by R");
+    done();
+  });
+  return new Promise(() => {});
+});
+
 after(() => console.log("ORDER=" + JSON.stringify(log)));

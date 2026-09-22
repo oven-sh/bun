@@ -202,12 +202,15 @@ describe("node:test", () => {
         "I",
         "afterEach(I)",
         "bun:test afterEach",
+        "afterEach(R)",
+        "bun:test afterEach added by R",
+        "bun:test afterEach",
       ]);
       expect(stderr).toContain("a beforeEach/afterEach hook timed out for this test.");
       expect(stderr).toContain("1 pass");
       expect({ exitCode, stderr }).toMatchObject({
         exitCode: 1,
-        stderr: expect.stringContaining("1 fail"),
+        stderr: expect.stringContaining("2 fail"),
       });
     },
     30_000,

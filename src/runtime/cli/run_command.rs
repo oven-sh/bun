@@ -2779,14 +2779,14 @@ impl RunCommand {
 
         // fstat: directories cannot be run. if only there was a faster way to
         // check this
-        let is_dir = match bun_sys::fstat(fd) {
-            Ok(st) => bun_sys::S::ISDIR(st.st_mode as _),
+        let stat = match bun_sys::fstat(fd) {
+            Ok(st) => st,
             Err(_) => {
                 let _ = bun_sys::close(fd);
                 return false;
             }
         };
-        if is_dir {
+        if bun_sys::S::ISDIR(stat.st_mode as _) {
             let _ = bun_sys::close(fd);
             return false;
         }
@@ -2799,7 +2799,13 @@ impl RunCommand {
         // Re-derive the canonical absolute path from the open fd (resolves
         // symlinks).
         let absolute_script_path: Box<[u8]> = {
-            let resolved = match bun_sys::get_fd_path(fd, &mut script_name_buf) {
+            let mut resolved_buf = bun_paths::path_buffer_pool::get();
+            let resolved = match bun_sys::get_fd_path_opened_from(
+                fd,
+                open_z.as_bytes(),
+                Some(&stat),
+                &mut resolved_buf,
+            ) {
                 Ok(p) => p,
                 Err(_) => {
                     let _ = bun_sys::close(fd);

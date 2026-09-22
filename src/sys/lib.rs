@@ -7587,6 +7587,50 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
     }
 }
 
+/// [`get_fd_path`] for an `fd` that was opened from `path`. `stat` is the
+/// `fstat` of `fd` when the caller already has it.
+///
+/// macOS: `F_GETPATH` asks the file system for the parent and the name of the
+/// file. For a file that has several hard links, APFS answers with the link
+/// that any process looked up last, so a lookup of another link between the
+/// `open` and the `fcntl` changes the result. `realpath(3)` walks `path`, so it
+/// names the link that `path` names.
+pub fn get_fd_path_opened_from<'a>(
+    fd: Fd,
+    path: &[u8],
+    stat: Option<&Stat>,
+    out: &'a mut bun_paths::PathBuffer,
+) -> Maybe<&'a mut [u8]> {
+    #[cfg(target_os = "macos")]
+    {
+        let is_hard_linked_file = |st: &Stat| st.st_nlink > 1 && !S::ISDIR(st.st_mode as _);
+        let len = get_fd_path(fd, out)?.len();
+        // When `F_GETPATH` returns `path` itself, it named the link that was opened.
+        let ambiguous = out.0[..len] != *path
+            && match stat {
+                Some(st) => is_hard_linked_file(st),
+                None => fstat(fd).is_ok_and(|st| is_hard_linked_file(&st)),
+            };
+        if !ambiguous || path.len() >= out.0.len() {
+            return Ok(&mut out.0[..len]);
+        }
+        let mut path_z = bun_paths::path_buffer_pool::get();
+        path_z.0[..path.len()].copy_from_slice(path);
+        path_z.0[path.len()] = 0;
+        if let Ok(walked) = realpath(ZStr::from_buf(&path_z.0[..], path.len()), out) {
+            let len = walked.len();
+            return Ok(&mut out.0[..len]);
+        }
+        // realpath(3) left the component that it failed on in `out`.
+        return get_fd_path(fd, out);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (path, stat);
+        get_fd_path(fd, out)
+    }
+}
+
 /// fd → absolute wide path (Windows `GetFinalPathNameByHandleW`).
 /// `\\?\` prefix and `\\?\UNC\` are stripped. Higher-tier callers
 /// (`bun.getFdPathW`) re-export this. A libc/kernel32-only sibling lives at

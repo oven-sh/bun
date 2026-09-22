@@ -3275,8 +3275,10 @@ it.skipIf(!isMacOS)(
     const original = join(root, "original", "original.txt");
     const link = join(root, "linked", "link.txt");
     const symlink = join(root, "linked", "symlink.txt");
+    const throughDirectorySymlink = join(root, "linked-symlink", "link.txt");
     fs.linkSync(original, link);
     symlinkSync(link, symlink);
+    symlinkSync("linked", join(root, "linked-symlink"));
     expect(statSync(link).nlink).toBe(2);
 
     await using lookups = await spawnLookupLoop(original);
@@ -3287,12 +3289,13 @@ it.skipIf(!isMacOS)(
       count(realpathSync(link));
       count(realpathSync.native(link));
       count(realpathSync(symlink));
+      count(realpathSync(throughDirectorySymlink));
     }
     for (let i = 0; i < 100; i++) {
       count(await promises.realpath(link));
     }
     expect(lookups.exitCode).toBeNull();
-    expect(seen).toEqual({ [link]: 6100 });
+    expect(seen).toEqual({ [link]: 8100 });
   },
 );
 

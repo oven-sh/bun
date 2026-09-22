@@ -872,6 +872,37 @@ describe("workload groups", () => {
     },
   );
 
+  it.skipIf(isWindows)("a signal the generator was started ignoring, as under nohup, stays ignored", async () => {
+    using dir = tempDir("orderfile-nohup", {});
+    const [pids, go, out] = ["pids", "go", "out"].map(name => join(String(dir), name));
+    const generate = join(import.meta.dir, "../../../../scripts/orderfile/generate.ts");
+    const script = `
+      const { writeFileSync } = require("node:fs");
+      const { checkpoint, runCommandAsync, withScratch } = await import(${JSON.stringify(generate)});
+      const command = ["/bin/sh", "-c", 'echo $$,$$ > "$1"; until [ -e "$2" ]; do sleep 0.01; done', "sh", ${JSON.stringify(pids)}, ${JSON.stringify(go)}];
+      await withScratch("orderfile-nohup-", async (scratch, interrupted) => {
+        await runCommandAsync(command, { signal: interrupted });
+        await checkpoint(interrupted);
+        writeFileSync(${JSON.stringify(out)}, "written");
+      });`;
+    await using proc = Bun.spawn({
+      cmd: ["/bin/sh", "-c", `trap "" HUP; exec "$0" -e "$1"`, bunExe(), script],
+      env: { ...bunEnv, TMPDIR: String(dir) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    await started(pids, proc.exited);
+    proc.kill("SIGHUP");
+    writeFileSync(go, "");
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode, signalCode: proc.signalCode, written: existsSync(out) }).toEqual({
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+      written: true,
+    });
+  });
+
   it.skipIf(isWindows)(
     "a signal inside a nested scratch directory removes both before the generator ends",
     async () => {
@@ -1214,13 +1245,16 @@ describe.skipIf(!canTrace || isWindows)("pty runner", () => {
 
     // A little more than a pipe holds: ptyrun is blocked writing the last of it when its child, which
     // has nothing left to wait for, exits. The reader starts once that has happened (or, where the
-    // terminal and the pipe hold less than they do on linux, after two seconds).
+    // terminal and the pipe hold less than they do on linux, after twenty tries).
     const written = join(String(dir), "written");
     const writer = `head -c 70000 /dev/zero | tr '\\0' x; : > "${written}"`;
-    const reader = `n=0; until [ -e "${written}" ] || [ $n -ge 200 ]; do sleep 0.01; n=$((n + 1)); done; wc -c`;
+    // Only what the writer wrote is counted. A terminal echoes what it is typed, and how differs:
+    // macOS echoes an end of input as ^D and two backspaces. ptyrun's stdin stays open here, so none is typed.
+    const reader = `n=0; until [ -e "${written}" ] || [ $n -ge 20 ]; do sleep 0.05; n=$((n + 1)); done; tr -cd x | wc -c`;
     await using proc = Bun.spawn({
-      cmd: ["/bin/sh", "-c", `"$0" /bin/sh -c "$1" < /dev/null | (${reader})`, ptyrun, writer],
+      cmd: ["/bin/sh", "-c", `"$0" /bin/sh -c "$1" | (${reader})`, ptyrun, writer],
       env: bunEnv,
+      stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -1604,13 +1638,18 @@ describe.skipIf(!canTrace || isWindows)("function tracer, following children", (
       stderr: "pipe",
     });
     const application = await started(pids, proc.exited);
+    // A record left by a process of the application that exited long ago, whose id is someone else's by now.
+    await using unrelated = Bun.spawn({ cmd: ["sleep", "60"], env: bunEnv });
+    const [scratch] = readdirSync(String(dir)).filter(name => name.startsWith("bun-orderfile-hints-"));
+    writeFileSync(join(String(dir), scratch, "traces", `${unrelated.pid}.bin`), "");
     proc.kill("SIGTERM");
     await proc.exited;
     expect({
       signalCode: proc.signalCode,
       scratch: readdirSync(String(dir)).filter(name => name.startsWith("bun-orderfile-hints-")),
       written: existsSync(join(String(dir), "app.hints")),
-    }).toEqual({ signalCode: "SIGTERM", scratch: [], written: false });
+      unrelated: ![undefined, "Z"].includes(processState(unrelated.pid)),
+    }).toEqual({ signalCode: "SIGTERM", scratch: [], written: false, unrelated: true });
     await expectGone(application);
   });
 
@@ -1657,8 +1696,12 @@ describe.skipIf(!canTrace || isWindows)("function tracer, following children", (
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    expect({ stderr: stderr.includes("error"), exitCode }).toEqual({ stderr: false, exitCode: 0 });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ compiled: /compile\s+\S*app\b/.test(stdout), stderr: stderr.includes("error"), exitCode }).toEqual({
+      compiled: true,
+      stderr: false,
+      exitCode: 0,
+    });
     expect(sameCode(bunExe(), compiled)).toBe(true);
   });
 

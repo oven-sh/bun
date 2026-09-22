@@ -27,9 +27,9 @@
  * Linux and macOS. The Windows tracer is a debugger of one process
  * (functrace-windows.c) and does not follow it into children.
  */
-import { spawn } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { spawn, spawnSync } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { quote } from "../build/shell.ts";
 import {
@@ -60,6 +60,25 @@ export interface HintOptions {
 }
 
 const sh = (text: string) => quote(text, false);
+
+/**
+ * Whether process `pid` is running the file `exe`, by device and inode as in
+ * functrace.c: through /proc on linux, and elsewhere through the path ps gives,
+ * which says no for a process started by a relative path. No is the safe answer.
+ */
+export function runsExecutable(pid: number, exe: string): boolean {
+  try {
+    const running =
+      process.platform === "linux"
+        ? `/proc/${pid}/exe`
+        : spawnSync("ps", ["-o", "comm=", "-p", String(pid)], { encoding: "utf8" }).stdout.trim();
+    if (!isAbsolute(running)) return false;
+    const [ours, theirs] = [statSync(exe), statSync(running)];
+    return ours.dev === theirs.dev && ours.ino === theirs.ino;
+  } catch {
+    return false; // no such process, or not ours to look at
+  }
+}
 
 /**
  * The traces in the order their functions are listed: the process that entered
@@ -138,12 +157,15 @@ export async function traceHints(options: HintOptions): Promise<{ count: number;
     });
     if (interrupted.aborted) {
       // The command may have been a wrapper that left the application running: its records are
-      // named after its processes, which would go on writing them into a directory that is about to go.
+      // named after its processes, which would go on writing them into a directory that is about
+      // to go. Most of those processes exited long ago, and their ids may be someone else's by now.
       for (const file of readdirSync(traces)) {
+        const pid = parseInt(file, 10);
+        if (!runsExecutable(pid, exe)) continue;
         try {
-          process.kill(parseInt(file, 10), "SIGKILL");
+          process.kill(pid, "SIGKILL");
         } catch {
-          // Already gone.
+          // Gone since.
         }
       }
       throw interrupted.reason;

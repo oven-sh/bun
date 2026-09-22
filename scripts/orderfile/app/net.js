@@ -368,7 +368,7 @@ export const features = {
     sink += execFileSync("/bin/cat", { input: "piped" }).length;
   },
   async bun_spawn() {
-    const bs = Bun.spawn(["/bin/sh", "-c", "for i in 1 2 3 4 5; do echo tick $i; sleep 0.05; done; sleep 60"], {
+    const bs = Bun.spawn(["/bin/sh", "-c", "for i in 1 2 3 4 5; do echo tick $i; sleep 0.05; done; exec sleep 60"], {
       stdout: "pipe",
       stderr: "pipe",
       stdin: "pipe",

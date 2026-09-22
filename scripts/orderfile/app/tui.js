@@ -169,7 +169,7 @@ export async function run(selected) {
     clearInterval(spin);
     clearInterval(auto);
     if (state.streaming) clearInterval(state.streaming);
-    w(ESC + (on.has("paste") ? "?2004l" : "") + ESC + "?25h" + ESC + "?1049l");
+    w((on.has("paste") ? ESC + "?2004l" : "") + ESC + "?25h" + ESC + "?1049l");
     inp.setRawMode(false);
     inp.pause();
     inp.removeAllListeners("keypress");

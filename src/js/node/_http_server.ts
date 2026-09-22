@@ -104,6 +104,7 @@ function traceServerRequestEnd() {
 }
 
 const getBunServerAllClosedPromise = $newRustFunction("node_http_binding.rs", "getBunServerAllClosedPromise", 1);
+const getBunServerIsDrained = $newRustFunction("node_http_binding.rs", "getBunServerIsDrained", 1);
 
 const kServerResponse = Symbol("ServerResponse");
 const kChunkedEncoding = Symbol("kChunkedEncoding");
@@ -120,14 +121,18 @@ let cluster;
 function emitCloseServer(self: Server) {
   // A native close promise belongs to one listener; Node's Server 'close' spans overlapping listeners and handed-off sockets (net.js _emitCloseIfDrained).
   if (!self[kPendingDrainClose]) return;
-  if (self[serverSymbol] || self[kTrackedConnections].size > 0) return;
   const pendingGenerations = self[kPendingCloseGenerations];
+  let drainedAtClose = true;
   for (const generation of pendingGenerations) {
     if (!generation.nativeClosed) return;
+    drainedAtClose &&= generation.drainedAtClose;
   }
+  const relistened = !!self[serverSymbol];
+  // Node queues 'close' inside a close() that leaves no connection open. A listen() after it, or a connection to that listener, cannot hold the event back.
+  if ((relistened || self[kTrackedConnections].size > 0) && !drainedAtClose) return;
   self[kPendingDrainClose] = false;
   pendingGenerations.clear();
-  self[kListenerGeneration] = undefined;
+  if (!relistened) self[kListenerGeneration] = undefined;
   self.emit("close");
 }
 function markListenerGenerationClosed(self: Server, generation) {
@@ -564,6 +569,7 @@ Server.prototype.close = function (optionalCallback?) {
   this[serverSymbol] = undefined;
   this[kPendingDrainClose] = true;
   server.closeIdleConnections();
+  if (generation) generation.drainedAtClose = getBunServerIsDrained(server);
   // stop() queues the task that emits 'close', which holds the loop one more turn, as node's uv_close() does.
   server.stop();
   return this;
@@ -1141,6 +1147,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
     listenerGeneration = {
       isUnix: !!socketPath,
       nativeClosed: false,
+      drainedAtClose: false,
     };
     this[kListenerGeneration] = listenerGeneration;
     getBunServerAllClosedPromise(handle).$then(emitCloseNTServer.bind(this, listenerGeneration));

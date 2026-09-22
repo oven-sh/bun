@@ -5513,6 +5513,52 @@ describe("HTTP server transport shutdown", () => {
     }
   });
 
+  it("reports a close() that leaves no connection open, also when listen() follows it at once", async () => {
+    // Node queues 'close' inside close() when the server has no connection. A
+    // listen() in the same tick does not hold it back.
+    const events: string[] = [];
+    const firstClose = Promise.withResolvers<Error | undefined>();
+    const finalClose = Promise.withResolvers<Error | undefined>();
+    const server = createServer((_req, res) => res.end("done"));
+    server.on("close", () => events.push("server close"));
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    try {
+      server.close(error => {
+        events.push("first close callback");
+        firstClose.resolve(error);
+      });
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      expect(await firstClose.promise).toBeUndefined();
+      expect(events).toEqual(["server close", "first close callback"]);
+      expect(server.listening).toBe(true);
+
+      const { port } = server.address() as AddressInfo;
+      const body = await new Promise<string>((resolve, reject) => {
+        get({ host: "127.0.0.1", port, headers: { connection: "close" } }, res => {
+          let text = "";
+          res.setEncoding("utf8");
+          res.on("data", chunk => (text += chunk));
+          res.on("end", () => resolve(text));
+        }).on("error", reject);
+      });
+      expect(body).toBe("done");
+
+      server.close(error => {
+        events.push("final close callback");
+        finalClose.resolve(error);
+      });
+      expect(await finalClose.promise).toBeUndefined();
+      expect(events).toEqual(["server close", "first close callback", "server close", "final close callback"]);
+    } finally {
+      server.closeAllConnections();
+      if (server.listening) {
+        await new Promise<void>(resolve => server.close(() => resolve()));
+      }
+    }
+  });
+
   it("defers a stopped listener's close event while a replacement listener is active", async () => {
     const entered = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();

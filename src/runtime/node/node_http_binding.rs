@@ -1,5 +1,5 @@
 //! `node:http` native binding — `getBunServerAllClosedPromise` /
-//! `{get,set}MaxHTTPHeaderSize`.
+//! `getBunServerIsDrained` / `{get,set}MaxHTTPHeaderSize`.
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
@@ -28,6 +28,45 @@ pub(crate) fn get_bun_server_all_closed_promise(
                 // JS-owned server instance; we hold the JS thread for the duration
                 // of this call so the GC cannot collect it under us.
                 return Ok(unsafe { &mut *server }.get_all_closed_promise(global));
+            }
+        };
+    }
+    try_server!(HTTPServer);
+    try_server!(HTTPSServer);
+    try_server!(DebugHTTPServer);
+    try_server!(DebugHTTPSServer);
+
+    Err(global.throw_invalid_argument_type_value("server", "bun.Server", value))
+}
+
+/// Whether nothing but the listener keeps the server open: no connection (counted from accept), WebSocket or request.
+pub(crate) fn get_bun_server_is_drained(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let arguments = frame.arguments();
+    if arguments.is_empty() {
+        return Err(global.throw_not_enough_arguments(
+            "getBunServerIsDrained",
+            1,
+            arguments.len(),
+        ));
+    }
+
+    let value = arguments[0];
+
+    macro_rules! try_server {
+        ($ty:ty) => {
+            if let Some(server) = value.as_::<$ty>() {
+                // SAFETY: `JSValue::as_` returns a non-null pointer to the live
+                // JS-owned server instance; we hold the JS thread for the duration
+                // of this call so the GC cannot collect it under us.
+                let server = unsafe { &*server };
+                return Ok(JSValue::js_boolean(
+                    server.pending_requests.get() == 0
+                        && !server.has_active_web_sockets()
+                        && !server.has_active_connections(),
+                ));
             }
         };
     }

@@ -2234,8 +2234,7 @@ function markStreamNativeClosed(stream: Http2Stream) {
   markStreamClosed(stream);
   stream[bunHTTP2StreamStatus] |= StreamState.NativeCloseSettled;
 }
-// What node reports for a stream that nghttp2 no longer has:
-// https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L3161-L3167
+// What node's Http2Stream::RefreshState reports once nghttp2 has dropped a stream.
 function droppedStreamState() {
   return {
     state: constants.NGHTTP2_STREAM_STATE_IDLE,

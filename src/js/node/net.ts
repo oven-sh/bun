@@ -441,7 +441,7 @@ function forwardUpgradedError(self, connection) {
 }
 // A forward does not count: only a real 'error' listener opts a socket into its read and write errors.
 function hasErrorListener(self) {
-  const listeners = self.rawListeners("error");
+  const listeners = EventEmitter.prototype.rawListeners.$call(self, "error");
   for (let i = 0; i < listeners.length; i++) {
     if (!upgradedErrorForwarders.has(listeners[i])) return true;
   }

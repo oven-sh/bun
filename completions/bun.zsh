@@ -1281,9 +1281,9 @@ _bunx() {
     local target_cwd="${PWD}"
     local cwd_specified=0
     local i val
-    for (( i=1; i < ${#words[@]}; i++ )); do
+    for (( i=1; i < CURRENT; i++ )); do
         val=""
-        if [[ "${words[i]}" == "--cwd" && -n "${words[i+1]}" ]]; then
+        if [[ "${words[i]}" == "--cwd" ]] && (( i + 1 < CURRENT )) && [[ -n "${words[i+1]}" ]]; then
             val="${words[i+1]}"
             cwd_specified=1
         elif [[ "${words[i]}" == --cwd=* ]]; then
@@ -1291,10 +1291,10 @@ _bunx() {
             cwd_specified=1
         fi
         if [[ -n "${val}" ]]; then
-            val="${val%\\"}"
-            val="${val#\\"}"
-            val="${val%'}"
-            val="${val#'}"
+            val="${val%\"}"
+            val="${val#\"}"
+            val="${val%\'}"
+            val="${val#\'}"
             val="${val/#\~/$HOME}"
             target_cwd="${val}"
         fi
@@ -1316,11 +1316,19 @@ _bunx() {
         builtin cd -q "${orig_pwd}" 2>/dev/null
     fi
 
-    _arguments -C         '(-b --bun)'{-b,--bun}'[Run with Bun runtime]'         '--install[Install package if not found]'         '(-h --help)'{-h,--help}'[Print help]'         '--cwd=[Change working directory]:directory:_files -W ${(q)target_cwd} -/'         '1:package:->pkg'         '*::arguments:->rest' && return 0
+    _arguments -C \
+        '(-b --bun)'{-b,--bun}'[Run with Bun runtime]' \
+        '--install[Install package if not found]' \
+        '(-h --help)'{-h,--help}'[Print help]' \
+        '--cwd=[Change working directory]:directory:_files -W ${(q)target_cwd} -/' \
+        '1:package:->pkg' \
+        '*::arguments:->rest' && return 0
 
     case "$state" in
         pkg)
-            _alternative                 "bin:bin:compadd -a bins"                 "files:file:_files -W ${(q)target_cwd}"
+            _alternative \
+                "bin:bin:compadd -a bins" \
+                "files:file:_files -W ${(q)target_cwd}"
             ;;
         rest)
             _files -W ${(q)target_cwd}

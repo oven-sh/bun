@@ -79,21 +79,25 @@ jobs:
               }
             );
 
-            const robobunCloseEvents = timelineEvents
+            const closeEvents = timelineEvents
               .filter(event =>
                 event.event === "closed" &&
-                event.actor?.login &&
-                roboBunLogins.has(event.actor.login.toLowerCase()) &&
                 event.created_at
               )
               .sort((a, b) =>
                 new Date(b.created_at) - new Date(a.created_at)
               );
 
-            const closeEvent = robobunCloseEvents[0];
+            const closeEvent = closeEvents[0];
 
             if (!closeEvent) {
-              core.info("No closing timeline event performed by robobun.");
+              core.info("No closing timeline event was found.");
+              return;
+            }
+            const closerLogin = closeEvent.actor?.login?.toLowerCase();
+
+            if (!closerLogin || !roboBunLogins.has(closerLogin)) {
+              core.info("The most recent close was not performed by robobun.");
               return;
             }
 

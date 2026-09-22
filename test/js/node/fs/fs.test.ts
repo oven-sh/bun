@@ -7268,32 +7268,31 @@ describe("a process.nextTick queued by an fs callback runs before a microtask it
     ]);
   });
 
+  // In a subprocess: the replacement must not reach the other tests, and a held
+  // callback ends the process with no output instead of a hang.
   it("while user code has replaced process.nextTick", async () => {
     using dir = tempDir("fs-callback-order", { "file.txt": "hello" });
-    await tickQueueExists();
-
-    const original = process.nextTick;
-    const held: Array<() => void> = [];
-    // What a fake-timer library does: hold the job until the fake clock runs.
-    process.nextTick = ((fn: (...args: any[]) => void, ...args: any[]) => {
-      held.push(() => fn(...args));
-    }) as typeof process.nextTick;
-    try {
-      const { promise, resolve } = Promise.withResolvers<string[]>();
-      const order: string[] = [];
-      fs.stat(join(String(dir), "file.txt"), () => {
-        order.push("callback");
-        original(() => order.push("nextTick"));
-        queueMicrotask(() => {
-          order.push("microtask");
-          resolve(order);
+    const script = `
+      const fs = require("fs");
+      const realNextTick = process.nextTick;
+      const order = [];
+      process.on("exit", () => console.log(order.join(" ")));
+      // The tick queue exists before the operation starts.
+      realNextTick(() => {
+        // What a fake-timer library does: hold the job until the fake clock runs.
+        process.nextTick = () => {};
+        fs.stat(${JSON.stringify(join(String(dir), "file.txt"))}, () => {
+          order.push("callback");
+          realNextTick(() => order.push("nextTick"));
+          queueMicrotask(() => order.push("microtask"));
         });
       });
-      expect(await promise).toEqual(["callback", "nextTick", "microtask"]);
-    } finally {
-      process.nextTick = original;
-      for (const job of held) original(job);
-    }
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.trim()).toBe("callback nextTick microtask");
+    expect(exitCode).toBe(0);
   });
 });
 

@@ -1910,3 +1910,68 @@ test("a half-open tunnel with bytes left to send keeps the process alive until t
     client.destroy();
   }
 });
+
+// The handed-off socket writes straight to the kernel. While uWS still holds
+// bytes of the response before the CONNECT, such a write must wait behind them.
+test.each(["http", "https"])(
+  "%s: the bytes of a CONNECT tunnel pipelined behind a response that still drains arrive after that response",
+  async proto => {
+    // More than a loopback socket takes in one write.
+    const size = 64 * 1024 * 1024;
+    const reply = "HTTP/1.1 200 Connection Established\r\n\r\n";
+    const listener = (req: http.IncomingMessage, res: http.ServerResponse) => {
+      if (req.url === "/big") res.end(Buffer.alloc(size, "a"));
+      else res.end("pong");
+    };
+    const server =
+      proto === "https"
+        ? https.createServer({ key: tlsCert.key, cert: tlsCert.cert }, listener)
+        : http.createServer(listener);
+    const handedOff = Promise.withResolvers<void>();
+    server.on("connect", (req, socket) => {
+      socket.write(reply);
+      socket.end("tunnel bytes");
+      handedOff.resolve();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const roundTrip = () =>
+      new Promise<void>((resolve, reject) => {
+        const options = { port, host: "127.0.0.1", path: "/ping", agent: false, rejectUnauthorized: false };
+        (proto === "https" ? https : http)
+          .get(options, res => res.resume().on("end", () => resolve()))
+          .on("error", reject);
+      });
+
+    const client =
+      proto === "https"
+        ? tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false })
+        : net.connect(port, "127.0.0.1");
+    try {
+      await once(client, proto === "https" ? "secureConnect" : "connect");
+      client.pause();
+      client.on("error", () => {});
+      client.write("GET /big HTTP/1.1\r\nHost: x\r\n\r\n");
+      // The kernel gets room for a small write before it reports the socket writable again.
+      for (let i = 0; i < 4; i++) await roundTrip();
+      client.write("CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n");
+      await handedOff.promise;
+
+      const chunks: Buffer[] = [];
+      client.on("data", chunk => chunks.push(chunk));
+      const closed = once(client, "close");
+      client.resume();
+      await closed;
+      const wire = Buffer.concat(chunks);
+      const bodyStart = wire.indexOf("\r\n\r\n") + 4;
+      expect({ replyAt: wire.indexOf(reply), tail: wire.subarray(-"tunnel bytes".length).toString() }).toEqual({
+        replyAt: bodyStart + size,
+        tail: "tunnel bytes",
+      });
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  },
+);

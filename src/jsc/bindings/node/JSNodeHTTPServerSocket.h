@@ -130,6 +130,8 @@ public:
     bool tunnelReadsPaused() const { return tunnelReadsStopped || tunnelReadsQueuedFull; }
     /* Tells uWS whether this tunnel is idle: at read EOF with nothing left to send. See HttpResponse::setNodeHttpTunnelIdle. */
     void updateTunnelIdle();
+    /* uWS still holds bytes of an HTTP response on this connection. A raw write has to wait behind them, or it reaches the wire first. */
+    bool hasUnsentResponseBytes() const;
     /* The WebSocket that adopted the connection reads from here on. */
     void releaseTunnelReadsForUpgrade();
 

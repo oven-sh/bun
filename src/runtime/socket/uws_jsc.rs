@@ -134,6 +134,8 @@ unsafe extern "C" fn us_socket_buffered_js_write(
     // kept for ABI parity with the C++ caller; TLS is now per-socket
     _ssl: bool,
     ended: bool,
+    // uWS still holds response bytes for this connection: queue behind them, do not write past them.
+    hold: bool,
     buffer: *mut us_socket_stream_buffer_t,
     global_object: &JSGlobalObject,
     data: JSValue,
@@ -201,6 +203,12 @@ unsafe extern "C" fn us_socket_buffered_js_write(
         // single `&mut` does not alias the re-entrant write path documented at
         // the top of this fn (raw `socket` is still kept for that reason).
         let socket_ref = us_socket_t::opaque_mut(socket);
+        if hold {
+            if !data_slice.is_empty() {
+                stream_buffer.write(data_slice);
+            }
+            break 'body JSValue::FALSE;
+        }
         if stream_buffer.is_not_empty() {
             let to_flush = stream_buffer.slice();
             let to_flush_len = to_flush.len();

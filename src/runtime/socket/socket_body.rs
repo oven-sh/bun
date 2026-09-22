@@ -2527,9 +2527,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
 
+    /// The raw twin of an `upgradeTLS` pair writes raw bytes, although its us_socket_t has `ssl` set.
     #[inline]
-    /// The raw [raw, tls] upgrade twin shares the TLS half's us_socket_t
-    /// (`s->ssl` is set) but must write raw bytes.
     fn write_check_error(&self, buffer: &[u8]) -> (i32, i32) {
         let socket = self.socket.get();
         if self.flags.get().contains(Flags::BYPASS_TLS) {
@@ -3058,10 +3057,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             let (res, fatal_errno) =
                 self.write_check_error(self.buffered_data_for_node_net.get().slice());
             if fatal_errno != 0 {
-                // Same rule as write_maybe_corked: drop the undeliverable
-                // buffer, stop re-arming the writable retry, and report the
-                // errno so the event-loop caller surfaces it (the data was
-                // already acknowledged to JS, so only an 'error' can).
+                // As in write_maybe_corked. JS already counts this data as written, so only the caller's 'error' can report it.
                 self.buffered_data_for_node_net
                     .with_mut(|b| b.clear_and_free());
                 return fatal_errno;

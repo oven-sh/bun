@@ -271,9 +271,23 @@ describe("JPEG codec: libjpeg-turbo jsimd runtime dispatch", () => {
     const source = png((x, y) => [x * 3, y * 6, (x + y) & 0xff]);
     for (const progressive of [false, true]) {
       const jpeg = await new Bun.Image(source).jpeg({ quality: 90, progressive }).bytes();
-      expect(await new Bun.Image(jpeg).metadata()).toEqual({ width, height, format: "jpeg" });
+      expect(await new Bun.Image(jpeg).metadata()).toEqual({
+        width,
+        height,
+        format: "jpeg",
+        space: "srgb",
+        channels: 3,
+        hasAlpha: false,
+      });
       const decoded = await new Bun.Image(jpeg).png().bytes();
-      expect(await new Bun.Image(decoded).metadata()).toEqual({ width, height, format: "png" });
+      expect(await new Bun.Image(decoded).metadata()).toEqual({
+        width,
+        height,
+        format: "png",
+        space: "srgb",
+        channels: 4,
+        hasAlpha: true,
+      });
     }
   });
 });

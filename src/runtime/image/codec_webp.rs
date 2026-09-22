@@ -28,6 +28,51 @@ unsafe extern "C" {
     pub(crate) fn WebPFree(ptr: *mut c_void);
 }
 
+/// `struct WebPBitstreamFeatures` from libwebp's decode.h.
+#[repr(C)]
+pub(crate) struct WebPBitstreamFeatures {
+    pub width: c_int,
+    pub height: c_int,
+    pub has_alpha: c_int,
+    pub has_animation: c_int,
+    /// 0 = undefined/mixed, 1 = lossy, 2 = lossless.
+    pub format: c_int,
+    pad: [u32; 5],
+}
+
+/// `WEBP_DECODER_ABI_VERSION` from decode.h, pinned like the mux/demux versions below.
+const WEBP_DECODER_ABI_VERSION: c_int = 0x0210;
+
+// `WebPGetFeatures()` is a static-inline wrapper over this version-checked entry point.
+unsafe extern "C" {
+    fn WebPGetFeaturesInternal(
+        data: *const u8,
+        len: usize,
+        features: *mut WebPBitstreamFeatures,
+        version: c_int,
+    ) -> c_int;
+}
+
+/// Header-only probe; accepts exactly the inputs `WebPGetInfo` accepts.
+pub(crate) fn get_features(bytes: &[u8]) -> Option<WebPBitstreamFeatures> {
+    // SAFETY: all-zero is a valid WebPBitstreamFeatures (#[repr(C)] POD ints).
+    let mut f: WebPBitstreamFeatures = unsafe { bun_core::ffi::zeroed_unchecked() };
+    // SAFETY: (ptr,len) from a valid live slice; f is a valid out-param.
+    // VP8_STATUS_OK == 0.
+    if unsafe {
+        WebPGetFeaturesInternal(
+            bytes.as_ptr(),
+            bytes.len(),
+            &raw mut f,
+            WEBP_DECODER_ABI_VERSION,
+        )
+    } != 0
+    {
+        return None;
+    }
+    Some(f)
+}
+
 // ─── libwebpmux / libwebpdemux ──────────────────────────────────────────────
 // WebP carries colour profiles (and EXIF/XMP) in a VP8X RIFF container that
 // wraps the VP8/VP8L bitstream. `WebPEncodeRGBA` only emits the bare

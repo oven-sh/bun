@@ -24,8 +24,8 @@ for (let fileIndex = 0; fileIndex < allFiles.length; fileIndex++) {
     .flatMap(b => [`--external:node:${b}`, `--external:${b}`])
     .join(" ");
 
-  // `module.exports` is the API itself for these; keep it callable from `require()`.
-  const format = ["stream.js", "assert.js", "events.js"].includes(name) ? "cjs" : "esm";
+  // A source that sets `module.exports` stays CommonJS, so `require()` of the polyfill returns that value.
+  const format = /^module\.exports\s*=/m.test(fs.readFileSync(name, "utf8")) ? "cjs" : "esm";
 
   // Free `process` / `Buffer` in the npm packages: rename, then import from the sibling polyfill.
   const injectedGlobals = [

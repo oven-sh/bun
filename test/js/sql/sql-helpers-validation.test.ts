@@ -266,7 +266,7 @@ describe.each(detectionAdapters)("%s helper command detection", (_adapter, noKey
     await using sql = makeSql();
     // The scan only needs the token nearest the helper, so a large body in
     // front of it must not change what is detected.
-    const padding = "x".repeat(100_000);
+    const padding = Buffer.alloc(100_000, "x").toString();
 
     const insert = await sql`INSERT INTO t /* ${sql.unsafe(padding)} */ ${sql({})}`.catch(e => e);
     expect(insert).toBeInstanceOf(SyntaxError);

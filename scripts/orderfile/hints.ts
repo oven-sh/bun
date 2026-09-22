@@ -29,7 +29,7 @@
  */
 import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { quote } from "../build/shell.ts";
 import {
@@ -62,22 +62,31 @@ export interface HintOptions {
 const sh = (text: string) => quote(text, false);
 
 /**
- * Whether process `pid` is running the file `exe`, by device and inode as in
- * functrace.c: through /proc on linux, and elsewhere through the path ps gives,
- * which says no for a process started by a relative path. No is the safe answer.
+ * Which of `pids` are running the file `exe`, by device and inode as in
+ * functrace.c: through /proc on linux, and elsewhere through the paths one ps
+ * gives for all of them (-ww: unclipped), which leaves out a process started
+ * by a relative path. Left out is the safe answer.
  */
-export function runsExecutable(pid: number, exe: string): boolean {
-  try {
-    const running =
-      process.platform === "linux"
-        ? `/proc/${pid}/exe`
-        : spawnSync("ps", ["-o", "comm=", "-p", String(pid)], { encoding: "utf8" }).stdout.trim();
-    if (!isAbsolute(running)) return false;
-    const [ours, theirs] = [statSync(exe), statSync(running)];
-    return ours.dev === theirs.dev && ours.ino === theirs.ino;
-  } catch {
-    return false; // no such process, or not ours to look at
+export function runningExecutable(pids: number[], exe: string): number[] {
+  const paths = new Map<number, string>();
+  if (process.platform === "linux") {
+    for (const pid of pids) paths.set(pid, `/proc/${pid}/exe`);
+  } else if (pids.length) {
+    const ps = spawnSync("ps", ["-ww", "-o", "pid=,comm=", "-p", pids.join(",")], { encoding: "utf8" });
+    for (const line of (ps.stdout ?? "").split("\n")) {
+      const listed = /^\s*(\d+)\s+(\/.*)$/.exec(line);
+      if (listed) paths.set(Number(listed[1]), listed[2]!.trimEnd());
+    }
   }
+  const ours = statSync(exe);
+  return pids.filter(pid => {
+    try {
+      const theirs = statSync(paths.get(pid) ?? "");
+      return ours.dev === theirs.dev && ours.ino === theirs.ino;
+    } catch {
+      return false; // no such process, or not ours to look at
+    }
+  });
 }
 
 /**
@@ -159,9 +168,8 @@ export async function traceHints(options: HintOptions): Promise<{ count: number;
       // The command may have been a wrapper that left the application running: its records are
       // named after its processes, which would go on writing them into a directory that is about
       // to go. Most of those processes exited long ago, and their ids may be someone else's by now.
-      for (const file of readdirSync(traces)) {
-        const pid = parseInt(file, 10);
-        if (!runsExecutable(pid, exe)) continue;
+      const recorded = new Set(readdirSync(traces).map(file => parseInt(file, 10)));
+      for (const pid of runningExecutable([...recorded].filter(Number.isInteger), exe)) {
         try {
           process.kill(pid, "SIGKILL");
         } catch {

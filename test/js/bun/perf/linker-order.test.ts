@@ -646,7 +646,7 @@ function processState(pid: number): string | undefined {
       return undefined;
     }
   }
-  const ps = Bun.spawnSync({ cmd: ["ps", "-o", "stat=", "-p", String(pid)], env: bunEnv });
+  const ps = Bun.spawnSync({ cmd: ["ps", "-ww", "-o", "stat=", "-p", String(pid)], env: bunEnv });
   return ps.exitCode === 0 ? ps.stdout.toString().trim()[0] : undefined;
 }
 

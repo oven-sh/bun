@@ -6860,6 +6860,17 @@ describe.concurrent("http2 RST_STREAM from the peer while the readable side is o
     await withRawServer(responseFrames, [{ ":path": "/" }], run, { preface: ONE_STREAM_PREFACE, onFrame });
   });
 
+  it("an 'aborted' listener that destroys the session also closes the reset stream", async () => {
+    const requestArgs = [{ ":path": "/", ":method": "POST" }, { endStream: false }];
+    await withRawServer(responseThenReset(NGHTTP2_NO_ERROR), requestArgs, async (client, req, events) => {
+      const reqClosed = closed(req);
+      req.on("aborted", () => client.destroy());
+      await reqClosed;
+      // node emits 'response' on a later tick than 'aborted', so its position is not compared.
+      expect(events.filter(name => name !== "response")).toEqual(["aborted", "close"]);
+    });
+  });
+
   it("a stream that its 'aborted' listener destroys is not kept by the session", async () => {
     const COUNT = 24;
     const requestArgs = [{ ":path": "/", ":method": "POST" }, { endStream: false }];

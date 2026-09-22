@@ -3780,8 +3780,9 @@ function closeStreamAndDestroyOnEnd(session: Http2Session, stream: Http2Stream) 
     publishStreamCloseChannel(stream);
     markWritableDone(stream);
   }
-  // A listener above ('aborted', the close channel) can destroy the stream.
+  // A listener above ('aborted', the close channel) can destroy the stream, or the session.
   if (stream.destroyed) return;
+  if (session.destroyed) return stream.destroy();
   stream.once("end", destroySelfOnEnd);
   (session[kUnreadClosedStreams] ??= new SafeSet()).add(stream);
   pushToStream(stream, null);

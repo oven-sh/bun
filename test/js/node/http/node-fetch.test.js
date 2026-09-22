@@ -412,6 +412,16 @@ test("node-fetch fetch() rejects for a Writable request body", async () => {
   expect(await response.catch(e => e.code)).toBe("ERR_STREAM_CANNOT_PIPE");
 });
 
+test("node-fetch fetch() with an old-style Stream body reads the members that init inherits", async () => {
+  using server = serveRequestBody();
+  const init = Object.create({ method: "POST" });
+  init.body = new stream.Stream();
+  const response = fetch2(server.url, init);
+  init.body.emit("data", Buffer.from("hello world"));
+  init.body.emit("end");
+  expect(await (await response).text()).toBe("hello world");
+});
+
 test("node-fetch Request accepts an old-style Stream body", async () => {
   const legacy = new stream.Stream();
   const request = new Request("http://localhost/", { method: "POST", body: legacy });
@@ -526,6 +536,35 @@ test("node-fetch fetch() rejects when the old-style Stream body of a Request fai
   const error = new Error("upload failed");
   legacy.emit("error", error);
   expect(await response.catch(e => e)).toBe(error);
+});
+
+test("node-fetch fetch() unpipes the old-style Stream body of a Request when the fetch is aborted", async () => {
+  const received = Promise.withResolvers();
+  using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const reader = req.body.getReader();
+      received.resolve(await reader.read());
+      await reader.read().catch(() => {});
+      return new Response("done");
+    },
+  });
+  const legacy = new stream.Stream();
+  const unpiped = new Promise(resolve => legacy.on("removeListener", event => event === "data" && resolve()));
+  const controller = new AbortController();
+  const response = fetch2(new Request(server.url, { method: "POST", body: legacy, signal: controller.signal }));
+  const pipedDuringUpload = legacy.listenerCount("data");
+  legacy.emit("data", Buffer.from("hello "));
+  await received.promise;
+  controller.abort();
+  const { name } = await response.catch(e => e);
+  // A build that never pipes the source has nothing to unpipe.
+  if (pipedDuringUpload) await unpiped;
+  expect({ pipedDuringUpload, name, pipedAfterAbort: legacy.listenerCount("data") }).toEqual({
+    pipedDuringUpload: 1,
+    name: "AbortError",
+    pipedAfterAbort: 0,
+  });
 });
 
 test("node-fetch Request rejects the body read for a Writable body", async () => {

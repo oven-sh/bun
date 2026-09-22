@@ -309,7 +309,7 @@ async function fetch(
     const { Readable, Stream } = require("node:stream");
     if (initBody instanceof Stream || initBody instanceof Readable) {
       const readable = initBody instanceof Readable ? initBody : readableFromOldStyleStream(initBody);
-      init = { ...init, body: Readable.toWeb(readable) };
+      init = ObjectCreate(init!, { body: { value: Readable.toWeb(readable) } });
     }
   }
   startTakenBody(url, init, initBody);

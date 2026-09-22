@@ -174,7 +174,10 @@ const nextTurn = () => new Promise(resolve => setImmediate(resolve));
  * while `work` runs; it aborts `interrupted` (which `work` passes on to whatever
  * it is waiting for, and checks between synchronous steps), and once the
  * directory is removed the process ends the way the signal would have ended it.
+ * Inside another withScratch that is left to the outer one, whose directory is
+ * still there.
  */
+let scratchDepth = 0;
 export async function withScratch<T>(
   prefix: string,
   work: (scratch: string, interrupted: AbortSignal) => T | Promise<T>,
@@ -187,16 +190,18 @@ export async function withScratch<T>(
     controller.abort(new Error(`interrupted by ${signal}`));
   };
   for (const name of ENDING_SIGNALS) process.on(name, hold);
+  scratchDepth++;
   try {
     return await work(scratch, controller.signal);
   } finally {
+    scratchDepth--;
     try {
       rmSync(scratch, { recursive: true, force: true });
     } finally {
       // A signal that arrived while a synchronous command had the thread is only delivered on the next turn.
       await nextTurn();
       for (const name of ENDING_SIGNALS) process.removeListener(name, hold);
-      if (ending) {
+      if (ending && scratchDepth === 0) {
         process.kill(process.pid, ending);
         await new Promise(resolve => setTimeout(resolve, 1_000)); // until it lands
       }

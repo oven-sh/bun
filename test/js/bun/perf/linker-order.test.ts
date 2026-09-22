@@ -828,8 +828,13 @@ describe("workload groups", () => {
       const { writeFileSync } = require("node:fs");
       const { checkpoint, runCommandAsync, withScratch } = await import(${JSON.stringify(generate)});
       const command = ["/bin/sh", "-c", ${JSON.stringify(shell)}, "sh", ${JSON.stringify(pids)}, ${JSON.stringify(go)}];
+      const made = [];
+      const record = scratch => {
+        made.push(scratch);
+        writeFileSync(${JSON.stringify(scratchPath)}, made.join("\\n"));
+      };
       await withScratch("orderfile-interrupt-", async (scratch, interrupted) => {
-        writeFileSync(${JSON.stringify(scratchPath)}, scratch);
+        record(scratch);
         ${command};
         await checkpoint(interrupted);
         writeFileSync(${JSON.stringify(out)}, "written");
@@ -841,14 +846,14 @@ describe("workload groups", () => {
       stderr: "pipe",
     });
     const running = await started(pids, proc.exited);
-    const scratch = readFileSync(scratchPath, "utf8");
-    expect(existsSync(scratch)).toBe(true);
+    const scratch = () => readFileSync(scratchPath, "utf8").split("\n").filter(existsSync);
+    expect(scratch()).not.toEqual([]);
     proc.kill("SIGTERM");
     whenStarted(go);
     await proc.exited;
-    expect({ signalCode: proc.signalCode, scratch: existsSync(scratch), written: existsSync(out) }).toEqual({
+    expect({ signalCode: proc.signalCode, scratch: scratch(), written: existsSync(out) }).toEqual({
       signalCode: "SIGTERM",
-      scratch: false,
+      scratch: [],
       written: false,
     });
     return running;
@@ -863,6 +868,18 @@ describe("workload groups", () => {
         `await runCommandAsync(command, { signal: interrupted })`,
         () => {},
       );
+      await expectGone(running);
+    },
+  );
+
+  it.skipIf(isWindows)(
+    "a signal inside a nested scratch directory removes both before the generator ends",
+    async () => {
+      const nested = `await withScratch("orderfile-interrupt-inner-", async (inner, innerInterrupted) => {
+      record(inner);
+      await runCommandAsync(command, { signal: innerInterrupted });
+    })`;
+      const running = await interruptGenerator(`sleep 60 & echo $$,$! > "$1"; wait`, nested, () => {});
       await expectGone(running);
     },
   );

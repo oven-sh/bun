@@ -458,13 +458,21 @@ impl EventLoop {
         self.drain_microtasks_with_global(global, jsc_vm)
     }
 
-    // should be called after exit()
+    /// The checkpoint an outermost exit skipped because its callback threw, run once the error has
+    /// been reported. Call it after that exit.
+    ///
+    /// [`exit`](Self::exit) runs its checkpoint before the count drops, so a native call made from
+    /// a nextTick or a promise job that dispatches a callback through its own `enter()`/`exit()`
+    /// (`socket.destroy()`, `fs.watch().close()`) is a nested pair and returns before the rest of
+    /// the queue runs. The count is zero here, so it is held for the drain to keep that true.
     pub fn maybe_drain_microtasks(&mut self) -> Result<(), Stopped> {
-        if self.entered_event_loop_count == 0 && !self.vm_ref().is_inside_deferred_task_queue.get()
-        {
-            return self.drain_microtasks();
+        if self.entered_event_loop_count != 0 || self.vm_ref().is_inside_deferred_task_queue.get() {
+            return Ok(());
         }
-        Ok(())
+        self.enter();
+        let result = self.drain_microtasks();
+        self.exit_without_checkpoint();
+        result
     }
 
     /// `run_callback*`'s way in: whether `callback` may be called at all, and if so the scope it

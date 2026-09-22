@@ -1,6 +1,6 @@
 import jsc from "bun:jsc";
 import { describe, expect, it, mock, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, isWindows } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows, tempDir } from "harness";
 import path from "node:path";
 import { clearInterval, clearTimeout, promises, setImmediate, setInterval, setTimeout } from "node:timers";
 import { promisify } from "util";
@@ -340,4 +340,237 @@ describe.each(["with", "without"])("setImmediate %s timers running", mode => {
 
 it("should defer microtasks when an exception is thrown in an immediate", async () => {
   expect(await bunRun(["run", path.join(import.meta.dir, "timers-immediate-exception-fixture.js")])).toSpawn();
+});
+
+// A callback that throws leaves without its nextTick and promise job checkpoint. The
+// checkpoint runs once the error has been reported. A native call made from one of its
+// jobs that dispatches a callback of its own must return before the rest of the queue
+// runs, as it does in the checkpoint after a callback that returned, and in Node.
+describe.concurrent("a native call in the checkpoint after a callback that threw", () => {
+  const fixture = /* js */ `
+    import { once } from "node:events";
+    import fs from "node:fs";
+    import http from "node:http";
+    import net from "node:net";
+    import os from "node:os";
+    const [thrower, queuedBy, job] = process.argv.slice(1);
+
+    const server = net.createServer(serverSocket => {
+      serverSocket.unref();
+      serverSocket.on("error", () => {});
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const connect = async () => {
+      const socket = net.connect(server.address().port, "127.0.0.1");
+      await once(socket, "connect");
+      socket.unref();
+      socket.on("error", () => {});
+      return socket;
+    };
+    const order = [];
+    const socket = await connect();
+    const watcher = fs.watch(os.tmpdir()).unref();
+    // terminate() calls this close handler before it returns, and the output shows it. So these
+    // tests cannot pass only because the native calls stopped dispatching a callback.
+    const bunSocket = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.address().port,
+      socket: { data() {}, error() {}, close: () => void order.push("bunSocket close handler") },
+    });
+    bunSocket.unref();
+    server.unref();
+
+    function probe() {
+      for (const [name, nativeCall] of [
+        ["fs.watch().close()", () => watcher.close()],
+        ["socket.destroy()", () => socket.destroy()],
+        ["bunSocket.terminate()", () => bunSocket.terminate()],
+      ]) {
+        Promise.resolve().then(() => order.push("promise job"));
+        process.nextTick(() => order.push("nextTick"));
+        order.push("before " + name);
+        nativeCall();
+        order.push("after " + name);
+      }
+      // First line: what ran before the native calls returned.
+      console.log(JSON.stringify(order));
+      // The checkpoint does not keep the event loop entered: a later callback has its own again.
+      setImmediate(() => {
+        order.push("immediate 1");
+        process.nextTick(() => order.push("nextTick of immediate 1"));
+        Promise.resolve().then(() => order.push("promise job of immediate 1"));
+      });
+      setImmediate(() => order.push("immediate 2"));
+    }
+    // Second line: the final order.
+    process.on("exit", () => console.log(JSON.stringify(order)));
+
+    const queueProbe = () => (job === "nextTick" ? process.nextTick(probe) : Promise.resolve().then(probe));
+    const callback = () => {
+      if (queuedBy === "the callback, before it threw") queueProbe();
+      throw new Error("thrown");
+    };
+    process.once("uncaughtException", () => {
+      if (queuedBy === "the 'uncaughtException' listener") queueProbe();
+    });
+
+    switch (thrower) {
+      case "a setImmediate callback":
+        setImmediate(callback);
+        break;
+      case "a net.Socket 'close' listener": {
+        // node:net emits 'close' from a setImmediate callback.
+        const other = await connect();
+        other.once("close", callback);
+        other.destroy();
+        break;
+      }
+      case "an http.Server 'connection' listener": {
+        // Native code calls this listener, and reports what it threw after its own exit.
+        const httpServer = http.createServer(() => {});
+        httpServer.once("connection", connection => {
+          connection.on("error", () => {});
+          setImmediate(() => {
+            client.destroy();
+            httpServer.close();
+            httpServer.closeAllConnections();
+          });
+          callback();
+        });
+        await once(httpServer.listen(0, "127.0.0.1"), "listening");
+        const client = net.connect(httpServer.address().port, "127.0.0.1");
+        client.on("error", () => {});
+        break;
+      }
+      default:
+        throw new Error("unknown thrower: " + thrower);
+    }
+  `;
+  const beforeTheCallsReturn = [
+    "before fs.watch().close()",
+    "after fs.watch().close()",
+    "before socket.destroy()",
+    "after socket.destroy()",
+    "before bunSocket.terminate()",
+    "bunSocket close handler",
+    "after bunSocket.terminate()",
+  ];
+  const laterCallbacks = ["immediate 1", "nextTick of immediate 1", "promise job of immediate 1", "immediate 2"];
+
+  describe.each(["a setImmediate callback", "a net.Socket 'close' listener", "an http.Server 'connection' listener"])(
+    "%s threw",
+    thrower => {
+      it.each([
+        ["the 'uncaughtException' listener", "nextTick"],
+        ["the 'uncaughtException' listener", "promise job"],
+        ["the callback, before it threw", "nextTick"],
+        ["the callback, before it threw", "promise job"],
+      ])("returns before the queue runs when %s queued a %s", async (queuedBy, job) => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", fixture, thrower, queuedBy, job],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        // The queue that runs probe() runs what probe() added to it first.
+        const afterProbe =
+          job === "nextTick"
+            ? ["nextTick", "nextTick", "nextTick", "promise job", "promise job", "promise job"]
+            : ["promise job", "promise job", "promise job", "nextTick", "nextTick", "nextTick"];
+        expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+          stdout: [
+            JSON.stringify(beforeTheCallsReturn),
+            JSON.stringify([...beforeTheCallsReturn, ...afterProbe, ...laterCallbacks]),
+          ],
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+    },
+  );
+
+  // A Bun.ModuleGraph takes the error, so the runner does not end the test.
+  it("returns before the queue runs in a test that is still running under bun test", async () => {
+    using dir = tempDir("checkpoint-after-throw-bun-test", {
+      "package.json": "{}",
+      "fixture.test.js": /* js */ `
+        import { expect, test } from "bun:test";
+        import fs from "node:fs";
+        import os from "node:os";
+
+        test("the probe", async () => {
+          const order = [];
+          const watcher = fs.watch(os.tmpdir());
+          using listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+          const bunSocket = await Bun.connect({
+            hostname: "127.0.0.1",
+            port: listener.port,
+            socket: { data() {}, error() {}, close: () => void order.push("bunSocket close handler") },
+          });
+          let beforeTheCallsReturn;
+          const { promise: done, resolve } = Promise.withResolvers();
+          function probe() {
+            for (const [name, nativeCall] of [
+              ["fs.watch().close()", () => watcher.close()],
+              ["bunSocket.terminate()", () => bunSocket.terminate()],
+            ]) {
+              Promise.resolve().then(() => order.push("promise job"));
+              process.nextTick(() => order.push("nextTick"));
+              order.push("before " + name);
+              nativeCall();
+              order.push("after " + name);
+            }
+            beforeTheCallsReturn = order.slice();
+            setImmediate(() => {
+              order.push("immediate 1");
+              process.nextTick(() => order.push("nextTick of immediate 1"));
+              Promise.resolve().then(() => order.push("promise job of immediate 1"));
+            });
+            setImmediate(() => {
+              order.push("immediate 2");
+              resolve();
+            });
+          }
+          const graph = new Bun.ModuleGraph({ onError: () => process.nextTick(probe) });
+          graph.run(() =>
+            setImmediate(() => {
+              throw new Error("thrown");
+            }),
+          );
+          await done;
+          graph.dispose();
+          const expected = [
+            "before fs.watch().close()",
+            "after fs.watch().close()",
+            "before bunSocket.terminate()",
+            "bunSocket close handler",
+            "after bunSocket.terminate()",
+          ];
+          expect(beforeTheCallsReturn).toEqual(expected);
+          expect(order).toEqual([
+            ...expected,
+            "nextTick",
+            "nextTick",
+            "promise job",
+            "promise job",
+            "immediate 1",
+            "nextTick of immediate 1",
+            "promise job of immediate 1",
+            "immediate 2",
+          ]);
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "fixture.test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
+  });
 });

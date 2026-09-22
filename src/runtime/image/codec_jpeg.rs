@@ -67,14 +67,9 @@ impl Handle {
         self.0.as_ptr()
     }
 
-    /// Whether a decompress call ran to completion: `rc == 0`, or libjpeg only
-    /// warned (junk between segments, no EOI, truncated scan data it filled
-    /// with grey). Upstream keeps `TJERR_WARNING` set when a fatal error follows
-    /// a warning, with the destination only partly written;
-    /// `patches/libjpeg-turbo/fatal-clears-warning.patch` corrects that. Ask
-    /// straight after the call: `tj3Set*` and `tj3GetICCProfile` reset the code.
+    /// Whether the decompress call that just returned `rc` ran to completion; with fatal-clears-warning.patch a warning alone still does.
     fn completed(&self, rc: c_int) -> bool {
-        // SAFETY: `self` owns a live tjhandle; tj3GetErrorCode only reads handle state.
+        // SAFETY: `self` owns a live tjhandle; this only reads the code, which the next tj3Set*/tj3GetICCProfile call resets.
         rc == 0 || unsafe { tj3GetErrorCode(self.as_ptr()) } == TJERR_WARNING
     }
 
@@ -242,8 +237,6 @@ pub(crate) fn decode(
     //     passes the product check still can't write more rows than fit
     // and post-check the second-parse dims so a smaller swap (which would
     // leave rows unfilled with raw mimalloc bytes) is treated as corrupt.
-    // TurboJPEG refuses the region for some streams; the branch below takes
-    // the product check alone as the bound for those.
     // SAFETY: `h` is live; CropRegion is a plain #[repr(C)] value passed by copy.
     let cropped = unsafe {
         tj3Set(
@@ -261,13 +254,6 @@ pub(crate) fn decode(
             },
         ) == 0
     };
-    // A region that was refused leaves `croppedHeight` at the second parse's
-    // own `output_height` (turbojpeg-mp.c:233), so the rows are bounded only by
-    // the product check. Drop the scaling factor, which libjpeg ignores for a
-    // lossless stream anyway (jdmaster.c:539) while the buffer below would
-    // shrink with it, and pass pitch 0: libjpeg then packs the rows at the
-    // second parse's width, and `w'·h' <= w·ht` bounds the bytes by `out_len`.
-    // The resize pass that the hint comes from still runs.
     let pitch = if cropped {
         c_int::try_from(w * 4).expect("int cast")
     } else {
@@ -279,9 +265,14 @@ pub(crate) fn decode(
     };
     let out_len = w as usize * ht as usize * 4;
     let mut out: Vec<u8> = Vec::with_capacity(out_len);
-    // SAFETY: `h` is live; src ptr/len come from a valid `&[u8]`; dst is `out`'s
-    // exclusive `w*ht*4` bytes of capacity, which the bounds above keep
-    // libjpeg-turbo's writes inside.
+    // SAFETY: `h` is live and src ptr/len come from a valid `&[u8]`. dst is
+    // `out`'s exclusive `w*ht*4` bytes of capacity: the pitch and the cropping
+    // region bound libjpeg-turbo's writes to it. TurboJPEG refuses the region
+    // for a lossless stream and for unknown subsampling (turbojpeg.c:2093), and
+    // the row count then comes from the second parse (turbojpeg-mp.c:233). That
+    // path decodes unscaled (libjpeg ignores the factor for a lossless stream,
+    // jdmaster.c:539) with pitch 0, which packs the rows at that parse's width,
+    // so TJPARAM_MAXPIXELS bounds the bytes written by `out_len`.
     let rc = unsafe {
         tj3Decompress8(
             h,

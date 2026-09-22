@@ -2172,9 +2172,14 @@ describe("http2 priority options send no priority fields, like node", () => {
     const { transport, headerBlock } = captureTransport();
     const session = http2.performServerHandshake(transport);
     session.on("error", headerBlock.reject);
+    session.on("close", () => headerBlock.reject(new Error("the session closed before the header block was written")));
     session.on("stream", stream => {
       stream.on("error", headerBlock.reject);
-      stream.respond({ ":status": 200 }, { endStream: true, sendDate: false, ...options });
+      try {
+        stream.respond({ ":status": 200 }, { endStream: true, sendDate: false, ...options });
+      } catch (err) {
+        headerBlock.reject(err);
+      }
     });
     try {
       // :method: GET, :scheme: http, :path: /, :authority: localhost (literal, name index 1)

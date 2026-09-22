@@ -1290,7 +1290,6 @@ pub(crate) struct Stream {
     end_after_headers: bool,
     padding_strategy: PaddingStrategy,
     rst_code: u32,
-    weight: u16,
     // current window size for the stream
     window_size: u64,
     // used window size for the stream
@@ -1803,9 +1802,6 @@ impl Stream {
             end_after_headers: false,
             padding_strategy,
             rst_code: 0,
-            // RFC 7540 §5.3.5 / nghttp2 NGHTTP2_DEFAULT_WEIGHT: streams default to weight 16,
-            // which is what stream.state.weight reports when no priority was signaled.
-            weight: 16,
             window_size: initial_window_size as u64,
             used_window_size: 0,
             remote_window_size: remote_window_size as u64,
@@ -4968,11 +4964,8 @@ impl H2FrameParser {
             b"sumDependencyWeight",
             JSValue::js_number(0.0),
         );
-        state.put(
-            global_object,
-            b"weight",
-            JSValue::js_number(stream.weight as f64),
-        );
+        // NGHTTP2_DEFAULT_WEIGHT. node reports it for every stream: no priority is signaled.
+        state.put(global_object, b"weight", JSValue::js_number(16.0));
 
         Ok(state)
     }

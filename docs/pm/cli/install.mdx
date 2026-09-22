@@ -449,7 +449,7 @@ build-app:
   cache:
     key:
       files:
-        - bun.lockb
+        - bun.lock
     paths:
       - node_modules/.cache
 ```
@@ -481,7 +481,7 @@ Bun handles peer dependencies like Yarn: `bun install` installs them automatical
 
 `bun.lock` is Bun’s lockfile format. See [our blog post about the text lockfile](https://bun.com/blog/bun-lock-text-lockfile).
 
-Before Bun 1.2, the lockfile was binary and called `bun.lockb`. To upgrade an old lockfile to the new format, run `bun install --save-text-lockfile --frozen-lockfile --lockfile-only`, then delete `bun.lockb`.
+Before Bun 1.2, the lockfile was binary and called `bun.lock`. To upgrade an old lockfile to the new format, run `bun install --save-text-lockfile --frozen-lockfile --lockfile-only`, then delete `bun.lock`.
 
 ## Cache
 

@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { PerformanceObserver } from "node:perf_hooks";
 import tls from "node:tls";
+import util from "node:util";
 import { Duplex, duplexPair } from "stream";
 import http2utils from "./helpers";
 import { nodeEchoServer, TLS_CERT, TLS_OPTIONS } from "./http2-helpers";
@@ -5747,6 +5748,205 @@ it("Http2Stream pull-mode read() after pause() replenishes the receive window", 
     client.close();
     server.close();
   }
+});
+
+// A stream that closes on the wire while its data is unread is destroyed only once the data is
+// read. The native side closes it first, and drops its id at its next socket read. node reports
+// an idle stream from the close on.
+describe("Http2Stream#state", () => {
+  const idle = {
+    state: http2.constants.NGHTTP2_STREAM_STATE_IDLE,
+    weight: 0,
+    sumDependencyWeight: 0,
+    localClose: 0,
+    remoteClose: 0,
+    localWindowSize: 0,
+  };
+  const inspectedIdle =
+    "Http2Stream { id: 1, closed: true, destroyed: false, state: { state: 1, weight: 0, " +
+    "sumDependencyWeight: 0, localClose: 0, remoteClose: 0, localWindowSize: 0 }, readableState:";
+  const snapshot = stream => ({ closed: stream.closed, destroyed: stream.destroyed, state: stream.state });
+  const inspected = stream => util.inspect(stream).replace(/\s+/g, " ");
+  // Returns in the first turn of the event loop that sees the close: before the next socket read.
+  const untilClosed = async stream => {
+    while (!stream.closed) await new Promise(resolve => setImmediate(resolve));
+  };
+  // The ACK of the second PING proves that both sessions read again after the stream closed.
+  const pingTwice = async client => {
+    for (let i = 0; i < 2; i++) {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      client.ping(err => (err ? reject(err) : resolve()));
+      await promise;
+    }
+  };
+  const readToClose = async stream => {
+    const { promise, resolve } = Promise.withResolvers();
+    stream.on("close", resolve);
+    stream.resume();
+    await promise;
+  };
+  const unreadResponseServer = async () => {
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      stream.respond({ ":status": 200 });
+      stream.end(Buffer.alloc(100, "a"));
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    return server;
+  };
+
+  it("client stream closed with unread data", async () => {
+    const server = await unreadResponseServer();
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    try {
+      const { promise: failed, reject } = Promise.withResolvers();
+      client.on("error", reject);
+      const req = client.request({ ":path": "/" });
+      req.on("error", reject);
+      await Promise.race([untilClosed(req), failed]);
+      expect(snapshot(req)).toEqual({ closed: true, destroyed: false, state: idle });
+      await pingTwice(client);
+      expect(snapshot(req)).toEqual({ closed: true, destroyed: false, state: idle });
+      expect(inspected(req)).toStartWith(inspectedIdle);
+      await readToClose(req);
+      expect(snapshot(req)).toEqual({ closed: true, destroyed: true, state: {} });
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
+  it("server stream closed with unread data", async () => {
+    const server = http2.createServer();
+    const { promise: serverStream, resolve: onServerStream } = Promise.withResolvers();
+    server.on("stream", stream => {
+      // A paused consumer keeps the request body unread.
+      stream.on("data", () => {});
+      stream.pause();
+      stream.respond({ ":status": 200 });
+      stream.end("ok");
+      onServerStream(stream);
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    try {
+      const { promise: failed, reject } = Promise.withResolvers();
+      client.on("error", reject);
+      const req = client.request({ ":method": "POST", ":path": "/" });
+      req.on("error", reject);
+      req.resume();
+      req.end(Buffer.alloc(100, "b"));
+      const stream = await Promise.race([serverStream, failed]);
+      await Promise.race([untilClosed(stream), failed]);
+      expect(snapshot(stream)).toEqual({ closed: true, destroyed: false, state: idle });
+      await pingTwice(client);
+      expect(snapshot(stream)).toEqual({ closed: true, destroyed: false, state: idle });
+      expect(inspected(stream)).toStartWith(inspectedIdle);
+      await readToClose(stream);
+      expect(snapshot(stream)).toEqual({ closed: true, destroyed: true, state: {} });
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
+  // node publishes the close channel from inside nghttp2's close callback, where the stream is
+  // still live and both halves read as closed.
+  it("a stream.close channel subscriber reads the live state", async () => {
+    const server = await unreadResponseServer();
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    let req;
+    const { promise: published, resolve, reject } = Promise.withResolvers();
+    const onClose = ({ stream }) => {
+      if (stream !== req) return;
+      try {
+        resolve(stream.state);
+      } catch (err) {
+        reject(err);
+      }
+    };
+    dc.subscribe("http2.client.stream.close", onClose);
+    try {
+      client.on("error", reject);
+      req = client.request({ ":path": "/" });
+      req.on("error", reject);
+      expect(await published).toMatchObject({ localClose: 1, remoteClose: 1 });
+    } finally {
+      dc.unsubscribe("http2.client.stream.close", onClose);
+      client.destroy();
+      server.close();
+    }
+  });
+
+  // close() marks the stream closed at once. The stream is live until the RST_STREAM goes out.
+  it("client stream right after close() reads the live state", async () => {
+    const server = http2.createServer();
+    server.on("stream", stream => stream.on("error", () => {}));
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    try {
+      const { promise: ready, resolve: onReady, reject } = Promise.withResolvers();
+      client.on("error", reject);
+      const req = client.request({ ":method": "POST", ":path": "/" });
+      req.on("error", reject);
+      req.on("ready", onReady);
+      await ready;
+      req.close();
+      expect(snapshot(req)).toEqual({
+        closed: true,
+        destroyed: false,
+        state: expect.objectContaining({ state: 5, weight: 16, localClose: 1, remoteClose: 0 }),
+      });
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
+  it("pushed client stream before its response", async () => {
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      stream.pushStream({ ":path": "/pushed" }, (err, pushed) => {
+        if (err) return stream.destroy(err);
+        pushed.respond({ ":status": 200 });
+        pushed.end("pushed");
+        stream.respond({ ":status": 200 });
+        stream.end("main");
+      });
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    try {
+      const { promise: atStream, resolve, reject } = Promise.withResolvers();
+      client.on("error", reject);
+      client.on("stream", pushed => {
+        pushed.on("error", reject);
+        pushed.resume();
+        try {
+          resolve({ state: pushed.state, inspected: inspected(pushed) });
+        } catch (err) {
+          reject(err);
+        }
+      });
+      const req = client.request({ ":path": "/" });
+      req.on("error", reject);
+      req.resume();
+      expect(await atStream).toEqual({
+        state: {
+          state: expect.any(Number),
+          weight: expect.any(Number),
+          sumDependencyWeight: expect.any(Number),
+          localClose: expect.any(Number),
+          remoteClose: expect.any(Number),
+          localWindowSize: expect.any(Number),
+        },
+        inspected: expect.stringMatching(/^Http2Stream \{ id: 2, closed: false, destroyed: false, state: \{ state: \d/),
+      });
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
 });
 
 // The outbound cork buffer is thread-local across every Http2Session. Interleaving

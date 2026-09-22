@@ -2226,6 +2226,13 @@ function markStreamClosed(stream: Http2Stream) {
     markWritableDone(stream);
   }
 }
+// The native side fully closed the stream (state 7). The bit is set after the close channel
+// publishes: a subscriber still reads the live stream.state there, as node does inside
+// nghttp2's close callback. After that the getter reports an idle stream.
+function markStreamNativeClosed(stream: Http2Stream) {
+  markStreamClosed(stream);
+  stream[bunHTTP2StreamStatus] |= StreamState.NativeClosed;
+}
 function rstNextTick(id: number, rstCode: number) {
   const session = this as Http2Session;
   session[bunHTTP2Native]?.rstStream(id, rstCode);
@@ -2501,7 +2508,24 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
   get state() {
     const session = this[bunHTTP2Session];
     if (session && !session.destroyed && typeof this.#id === "number") {
-      return session[bunHTTP2Native]?.getStreamState(this.#id) ?? {};
+      // A closed stream stays undestroyed until its buffered data is read. The native side keeps
+      // it in the closed state until the next socket read, then drops its id. node never reports
+      // the closed state: it reports an idle stream as soon as nghttp2 has dropped the stream.
+      // https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L3161-L3167
+      if ((this[bunHTTP2StreamStatus] & StreamState.NativeClosed) === 0) {
+        const native = session[bunHTTP2Native];
+        if (!native) return {};
+        const state = native.getStreamState(this.#id);
+        if (state !== undefined) return state;
+      }
+      return {
+        state: constants.NGHTTP2_STREAM_STATE_IDLE,
+        weight: 0,
+        sumDependencyWeight: 0,
+        localClose: 0,
+        remoteClose: 0,
+        localWindowSize: 0,
+      };
     }
     // node reports an empty object while the stream is still pending (no id yet) and once the
     // stream's session has been destroyed.
@@ -4111,8 +4135,7 @@ class ServerHttp2Session extends Http2Session {
       }
       // 7 = closed, in this case we already send everything and received everything
       if (state === 7) {
-        stream[bunHTTP2StreamStatus] |= StreamState.NativeClosed;
-        markStreamClosed(stream);
+        markStreamNativeClosed(stream);
         self.#connections--;
         if (stream.id % 2 === 1) self.#peerInitiatedStreams--;
         if (stream.readable && !stream.rstCode) {
@@ -5112,8 +5135,7 @@ class ClientHttp2Session extends Http2Session {
 
       // 7 = closed, in this case we already send everything and received everything
       if (state === 7) {
-        stream[bunHTTP2StreamStatus] |= StreamState.NativeClosed;
-        markStreamClosed(stream);
+        markStreamNativeClosed(stream);
         self.#connections--;
         if (stream.readable && !stream.rstCode) {
           // Clean close while data is still buffered on the readable side: node defers the

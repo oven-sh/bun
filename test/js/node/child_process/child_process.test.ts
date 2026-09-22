@@ -1406,12 +1406,13 @@ it("child.stdout.pause() after flowing stops native reads and blocks the child",
   }
 });
 
-// child.stdout and child.stderr read ahead: `_read()` pushes each native pull
-// result synchronously, so while the stream flows Readable holds the next chunk
-// in its buffer when a 'data' listener runs. destroy() left that chunk there and
-// flow() emitted it after destroy() returned, with `destroyed === true`. Node's
+// child.stdout and child.stderr used to read ahead: `_read()` pushed each native
+// pull result synchronously, so while the stream flowed Readable held the next
+// chunk in its buffer when a 'data' listener ran. destroy() left that chunk there
+// and flow() emitted it after destroy() returned, with `destroyed === true`. Node's
 // child stdio is a net.Socket that pushes asynchronously, so no 'data' follows
-// destroy() there.
+// destroy() there. Now each read result waits for the listeners of the one
+// before, and destroy() drops what waits.
 it.concurrent.each(["stdout", "stderr"] as const)(
   "child.%s.destroy() inside a 'data' listener stops 'data' and 'end'",
   async name => {

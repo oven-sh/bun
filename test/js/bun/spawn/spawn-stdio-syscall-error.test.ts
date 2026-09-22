@@ -236,6 +236,32 @@ child.on("close", () => {
 });
 `;
 
+// node:child_process: the first read gets bytes and then fails. Both come from one native read, and the
+// bytes reach 'data' before 'error'. The child says when it has written, and the parent blocks until then.
+const CHILD_PROCESS_FIRST_READ_FIXTURE = /* js */ `
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+const marker = process.env.SPAWN_FAULT_MARKER;
+const events = [];
+const child = spawn("sh", ["-c", 'printf AAAABB; : > "$SPAWN_FAULT_MARKER"; exec sleep 60'], { stdio: ["ignore", "pipe", "ignore"] });
+child.stdout.on("data", chunk => events.push("stdout.data:" + chunk));
+child.stdout.on("error", e => events.push("stdout.error:" + e.code));
+child.stdout.on("close", () => {
+  events.push("stdout.close");
+  child.kill();
+});
+child.on("close", () => {
+  events.push("close");
+  console.log(JSON.stringify({ events }));
+});
+const sleeper = new Int32Array(new SharedArrayBuffer(4));
+const deadline = Date.now() + 60_000;
+while (!existsSync(marker)) {
+  if (Date.now() > deadline) throw new Error("the child did not write");
+  Atomics.wait(sleeper, 0, 0, 5);
+}
+`;
+
 // Bun.spawnSync / child_process.spawnSync / execFileSync: the lost output is an error, not a success.
 const SPAWN_SYNC_FIXTURE = /* js */ `
 import { spawnSync, execFileSync } from "node:child_process";
@@ -274,6 +300,7 @@ beforeAll(async () => {
     "stdout-write.mjs": STDOUT_WRITE_FIXTURE,
     "child-process.mjs": CHILD_PROCESS_FIXTURE,
     "child-process-bytes.mjs": CHILD_PROCESS_BYTES_FIXTURE,
+    "child-process-first-read.mjs": CHILD_PROCESS_FIRST_READ_FIXTURE,
     "spawn-sync.mjs": SPAWN_SYNC_FIXTURE,
   });
   shimPath = join(String(dir), "shim.so");
@@ -382,14 +409,26 @@ describe.skipIf(!isLinux || !cc)("subprocess stdio syscall errors", () => {
     });
   });
 
-  // child.stdout reads one chunk ahead of its 'data' listener, so once the stream flows a chunk is still buffered
-  // when a later read fails. The stream is destroyed with the error, and that chunk has to reach 'data' first.
+  // The stream is destroyed with the error of a later read. Every chunk that was read before it has to reach 'data' first.
   test.concurrent("node:child_process: stdout delivers every byte read before the error", async () => {
     const report = join(String(dir), "recv-report.txt");
     expect(
       await runWithFault("child-process-bytes.mjs", { SPAWN_FAULT_RECV_AT: "6", SPAWN_FAULT_REPORT: report }),
     ).toEqual({
       parsed: { receivedSome: true, lost: 0, events: ["stdout.error:EIO", "stdout.close", "close"] },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("node:child_process: stdout delivers the bytes of the read that fails before the error", async () => {
+    expect(
+      await runWithFault("child-process-first-read.mjs", {
+        SPAWN_FAULT_RECV_AT: "2",
+        SPAWN_FAULT_MARKER: join(String(dir), "first-read-written"),
+      }),
+    ).toEqual({
+      parsed: { events: ["stdout.data:AAAABB", "stdout.error:EIO", "stdout.close", "close"] },
       stderr: "",
       exitCode: 0,
     });

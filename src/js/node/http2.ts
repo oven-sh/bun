@@ -1892,8 +1892,13 @@ interface ClientRequestOptions {
   silent?: boolean;
   weight?: number;
 }
-type Socket = import("node:net").Socket & { servername?: undefined; alpnProtocol?: undefined };
-type TLSSocket = import("node:tls").TLSSocket;
+type Socket = import("node:net").Socket & {
+  servername?: undefined;
+  alpnProtocol?: undefined;
+  secureConnecting?: undefined;
+};
+// secureConnecting is true from the TCP connect until the TLS handshake completes.
+type TLSSocket = import("node:tls").TLSSocket & { secureConnecting?: boolean };
 
 abstract class Http2Session extends EventEmitter {
   declare timeout: number | undefined;

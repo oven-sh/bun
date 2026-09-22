@@ -1342,6 +1342,100 @@ describe("a TLS socket over a Duplex transport reports that transport's error", 
   });
 });
 
+describe("a TLS socket over a net.Socket transport reports that transport's error", () => {
+  // Node wraps a connected net.Socket as it is, and TLSSocket._init listens on it too:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L566-L568
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L977
+
+  it.each(["client", "server"])("a %s wrap listens for the transport's 'error'", async side => {
+    const server = net.createServer();
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const raw = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+    const [[accepted]] = await Promise.all([once(server, "connection"), once(raw, "connect")]);
+    const transport: net.Socket = side === "client" ? raw : accepted;
+    const socket =
+      side === "client"
+        ? tls.connect({ socket: transport, rejectUnauthorized: false })
+        : new TLSSocket(transport, { isServer: true, secureContext: tls.createSecureContext(COMMON_CERT_) });
+    try {
+      // Exactly one, like node: the forward to the TLS socket.
+      expect(transport.listenerCount("error")).toBe(1);
+    } finally {
+      socket.destroy();
+      raw.destroy();
+      accepted.destroy();
+      server.close();
+    }
+  });
+
+  async function run(side: string, transport: string, when: string, listen: string) {
+    const fixture = join(import.meta.dir, "node-tls-socket-transport-error-fixture.ts");
+    const { key, cert } = COMMON_CERT_;
+    return bunRun(fixture, { SIDE: side, TRANSPORT: transport, WHEN: when, LISTEN: listen, KEY: key, CERT: cert });
+  }
+
+  // Out of process: with nothing listening on the transport the error is thrown, which takes
+  // the process down. "net" has its fd adopted. The stream-level TLS engine runs over
+  // "queued" (unflushed writes) and "tls" (TLS over TLS). Each list is what node v26.3.0
+  // prints, except for the two marked ones.
+  it.concurrent.each([
+    // Node ends this list with its own second error, 'read EINVAL', and has close:true first.
+    [
+      "client",
+      "net",
+      "early",
+      "_tlsError:transport failed|error:transport failed|error:Client network socket disconnected before secure TLS connection was established|close:true",
+    ],
+    ["client", "net", "late", "_tlsError:transport failed|error:transport failed|close:false"],
+    ["client", "connecting", "late", "_tlsError:transport failed|error:transport failed|close:false"],
+    // Node reads the closed handle here too: close:true first, and 'read EINVAL' last.
+    ["client", "queued", "early", "_tlsError:transport failed|error:transport failed|close:false"],
+    ["client", "tls", "late", "_tlsError:transport failed|error:transport failed|close:false"],
+    // A server wrap still owns its socket, so there is no 'error'.
+    ["server", "net", "early", "_tlsError:transport failed|close:false"],
+    ["server", "net", "late", "_tlsError:transport failed|close:false"],
+    ["server", "tls", "late", "_tlsError:transport failed|close:false"],
+  ])("%s over %s: a transport error %s reaches the TLS socket", async (side, transport, when, stdout) => {
+    expect(await run(side, transport, when, "tls")).toEqual({ stdout, stderr: "", exitCode: 0, signalCode: null });
+  });
+
+  it.concurrent("a listener on the transport still gets the error, once", async () => {
+    expect(await run("client", "net", "late", "both")).toEqual({
+      stdout: "_tlsError:transport failed|error:transport failed|raw error:transport failed|close:false",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  // A socket with no 'error' listener closes without one when its peer resets (node throws
+  // ECONNRESET). The forward to the TLS socket is no such listener: test-tls-inception.js
+  // has none anywhere, and its proxy resets the connection on Windows and macOS.
+  it.concurrent.each(["net", "tls"])("a peer reset over %s with no 'error' listener stays silent", async transport => {
+    expect(await run("client", transport, "reset", "none")).toEqual({
+      stdout: "close:false",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  it.concurrent.each([
+    // An adopted fd closes under both sockets at once: each one reports the reset itself.
+    // Node reports it on the TLS socket alone.
+    ["net", "raw error:read ECONNRESET|error:read ECONNRESET|close:true"],
+    // Only the transport sees the reset. Node: error:read ECONNRESET|close:true.
+    ["tls", "_tlsError:read ECONNRESET|error:read ECONNRESET|raw error:read ECONNRESET|close:false"],
+  ])("a peer reset over %s reaches the TLS socket once", async (transport, stdout) => {
+    expect(await run("client", transport, "reset", "both")).toEqual({
+      stdout,
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+});
+
 it("delivers 'session' even when the data handler destroys the socket immediately", async () => {
   // The TLS1.3 NewSessionTickets ride in the same read pass as the response
   // bytes. If the parked session were only flushed after the data dispatch,

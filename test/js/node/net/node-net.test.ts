@@ -1783,10 +1783,15 @@ describe.concurrent("read-stopped socket whose peer resets behind unread data", 
   });
 
   it.skipIf(isWindows)("fails a write on the reset while the socket does not read", async () => {
+    // The loopback of macOS can deliver the reset a moment after the peer's close, and a write before
+    // that succeeds (node never learns of the reset then either), so write until one fails.
     const { result, exitCode } = await run(`
-      pausedClient({}, writeThenReset, s =>
-        s.write("again", err => events.push("write " + (err ? err.code + " " + err.syscall : "ok"))),
-      );
+      pausedClient({}, writeThenReset, function writeUntilItFails(s) {
+        s.write("again", err => {
+          if (err) events.push("write " + err.code + " " + err.syscall);
+          else setImmediate(writeUntilItFails, s);
+        });
+      });
     `);
     // send() on a reset socket: ECONNRESET on Linux, EPIPE on the BSDs (node reports the same).
     const code = isLinux ? "ECONNRESET" : "EPIPE";

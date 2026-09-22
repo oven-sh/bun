@@ -2703,11 +2703,16 @@ describe.skipIf(isWindows)("TLS socket over a net.Socket whose peer resets behin
         await peerReady.promise;
         await fillThenReset(socket, peer, peerClosed.promise, endFirst);
         expect(events).toEqual([]);
-        const written = Promise.withResolvers<string>();
-        socket.write("late", (error?: NodeJS.ErrnoException | null) => {
-          written.resolve(error ? `${error.code} ${error.syscall}` : "ok");
-        });
-        expect(await written.promise).toBe(`${code} write`);
+        // The loopback of macOS can deliver the reset a moment after the peer's close, and a
+        // write before that succeeds, so write until one fails.
+        const failed = Promise.withResolvers<string>();
+        (function writeUntilItFails() {
+          socket.write("late", (error?: NodeJS.ErrnoException | null) => {
+            if (error) failed.resolve(`${error.code} ${error.syscall}`);
+            else setImmediate(writeUntilItFails);
+          });
+        })();
+        expect(await failed.promise).toBe(`${code} write`);
         await closed;
         expect(events).toEqual([`error ${code}`, "close hadError=true"]);
       } finally {

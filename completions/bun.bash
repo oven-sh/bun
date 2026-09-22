@@ -364,7 +364,7 @@ _bun_completions_inner() {
                 fi
                 local w="${COMP_WORDS[j]}"
                 case "${w}" in
-                    --cwd|-c|--config|--env-file)
+                    --cwd|-c|--config|--env-file|--filter|-F)
                         if [[ "${COMP_WORDS[j+1]}" == "=" ]]; then
                             skip_run=2
                         else
@@ -372,7 +372,7 @@ _bun_completions_inner() {
                         fi
                         continue
                         ;;
-                    --cwd=*|-c=*|--config=*|--env-file=*)
+                    --cwd=*|-c=*|--config=*|--env-file=*|--filter=*|-F=*)
                         continue
                         ;;
                     -*)
@@ -395,7 +395,7 @@ _bun_completions_inner() {
                 _filter_words_reply "${bins}"
             fi
             _file_arguments "!*.@(js|ts|jsx|tsx|mjs|cjs)"
-            _long_short_completion "--version --cwd --help --silent -v -h"
+            _long_short_completion "--version --cwd --filter --help --silent -v -F -h"
             return ;;
         test)
             case "${prev}" in

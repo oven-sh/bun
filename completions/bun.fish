@@ -248,9 +248,9 @@ for i in (seq (count $bun_install_boolean_flags))
                -n "__fish_seen_subcommand_from install add remove dedupe" -l "$bun_install_boolean_flags[$i]" -d "$bun_install_boolean_flags_descriptions[$i]"
 end
 
-complete -c bun -l 'cwd' -r -a '(__fish_complete_directories)' -d 'Change working directory'
+complete -c bun -l 'cwd' -x -a '(__fish_complete_directories)' -d 'Change working directory'
 complete -c bun \
-       -n "__fish_seen_subcommand_from install add remove update dedupe" -l 'cwd' -r -a '(__fish_complete_directories)' -d 'Change working directory'
+       -n "__fish_seen_subcommand_from install add remove update dedupe" -l 'cwd' -x -a '(__fish_complete_directories)' -d 'Change working directory'
 complete -c bun \
        -n "__fish_seen_subcommand_from install add remove update dedupe" -l 'cache-dir' -d 'Choose a cache directory (default: $HOME/.bun/install/cache)'
 complete -c bun \

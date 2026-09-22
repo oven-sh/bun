@@ -158,6 +158,8 @@ __bun_dynamic_comp() {
 }
 
 _bunx() {
+    local curcontext="${curcontext}" context state state_descr line
+    typeset -A opt_args
     local target_cwd="${PWD}"
     local cwd_specified=0
     local i val

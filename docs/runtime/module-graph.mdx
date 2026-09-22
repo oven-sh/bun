@@ -67,26 +67,32 @@ A thread-safe function keeps the process running only for as long as the graph t
 `graph.dispose()` also drops the graph's module registry and `require.cache`. Code of the graph that is still referenced keeps working, and an error in what still runs in its context, such as a tick it had queued, still goes to `onError`. From then on:
 
 - `graph.import()`, `graph.run()` and the graph's `require()` fail with `ERR_INVALID_STATE`.
-- `import()` from a function of the graph that the host calls fails the same way.
-- `import()` by the disposed graph's own leftover code stays pending.
+- A function of the graph still runs when it is called, in the graph's stopped context: what it computes it returns, and what it starts never completes. A timer it sets never fires, and an `import()` in it stays pending, as one by the graph's own leftover code does.
 - Modules of the graph that had not run yet never will.
 
 `dispose()` settles no promise. An `import()` that had not finished may reject or may never settle: what its modules were waiting for, such as a timer or a request, went with the graph. A host that may dispose a graph while importing into it should race the import the same way as a call, as shown below.
 
 ## Calling into a graph
 
-A function runs in its caller's context, whichever graph defined it. Code the host calls directly runs in the host's context, and a function of one graph that another graph's code calls runs in that other graph's. Use `run()` to enter the graph's own:
+A graph's code runs in the graph's context, whoever calls it. Calling a function the graph exported is enough: a method, a getter, a constructor, a callback handed to `Array.prototype.map` or a listener on an emitter of the host's are the same. A function of one graph that another graph's code calls runs in its own graph's context, and the caller's is back when it returns.
 
 ```ts
-app.start(); // what this opens is the host's
-graph.run(() => app.start()); // what this opens is the graph's
+app.start(); // what this opens is the graph's
 ```
 
-A promise that `run()` returns is the graph's: if the graph is disposed before it settles, it never does. When the host awaits a graph's asynchronous function and may dispose the graph meanwhile, race it against a promise of its own:
+The host's own code runs in the context it is called in. `run()` calls a function of the host's in the graph's context:
+
+```ts
+graph.run(() => Bun.serve({ port: 0, fetch: app.fetch })); // the server is the graph's and stops with it
+```
+
+Code made with `new Function()` or indirect `eval` is global code: it belongs to no graph, whichever code made it, and runs in its caller's context.
+
+A promise that a graph's asynchronous function returns is the graph's: if the graph is disposed before it settles, it never does. When the host awaits one and may dispose the graph meanwhile, race it against a promise of its own:
 
 ```ts
 const disposed = Promise.withResolvers<never>();
-const response = await Promise.race([graph.run(() => app.handle(request)), disposed.promise]);
+const response = await Promise.race([app.handle(request), disposed.promise]);
 // elsewhere: graph.dispose(); disposed.reject(new Error("tenant was disposed"));
 ```
 
@@ -105,9 +111,9 @@ const graph = new Bun.ModuleGraph({
 
 ## Errors
 
-Uncaught exceptions and unhandled rejections go to the `onError` of the graph in whose context they happen, instead of the process-wide handlers. It is the same context that owns what the code opens: a graph's modules and everything they start run in the graph's context, and so does what the host calls through `run()`.
+Uncaught exceptions and unhandled rejections go to the `onError` of the graph in whose context they happen, instead of the process-wide handlers. It is the same context that owns what the code opens: a graph's code and everything it starts run in the graph's context, and so does what the host calls through `run()`.
 
-Whose code threw does not matter, only where it ran. A function of the graph's that the host calls directly runs in the host's context, so what it throws later is the host's; call it through `run()` for the graph to get it. A host function that the graph's code calls runs in the graph's context, so what it throws there is the graph's.
+A function of the graph's that the host calls runs in the graph's context, so what it throws later is the graph's. A host function that the graph's code calls runs in the graph's context too, so what it throws there is the graph's.
 
 `run()` rethrows to its caller what the function throws. If the caller does not catch it either, it is still the graph's: it was thrown in the graph's context, whatever it unwound through afterwards.
 
@@ -115,7 +121,7 @@ An error that no code threw belongs to whoever opened the thing it happened to. 
 
 `graph.import()` returns its promise to whoever called it. If a module throws while it is evaluated the promise rejects, and if nobody handles that promise it is the caller's unhandled rejection, like a specifier that does not resolve or an `import()` into a disposed graph.
 
-`onError` itself runs in the context the graph was made in: the host's, or the enclosing graph's for a graph that a graph's code made. What it throws, rejects or starts is that context's, so an error the handler lets escape again goes on to the host and does not come back to the same handler.
+`onError` itself runs in the context the graph was made in: the host's, or the enclosing graph's for a graph that a graph's code made. What it throws, rejects or starts is that context's, so an error the handler lets escape again goes on to the host and does not come back to the same handler. That is the handler's own code: a function of the graph's that the handler calls runs in the graph's context like any other call, so an error in what that function starts comes back to the handler.
 
 A graph that was given no `onError` hands its errors to the `onError` of the graph in whose context it was made, and so on up to the host. It was made in a graph's context if that graph's code made it, or a host function that graph's code called did.
 

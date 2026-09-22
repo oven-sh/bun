@@ -123,7 +123,8 @@ const sites: Record<string, Site> = {
 // onlySomeRun:              g1 never performs its import(); g0/g2 do
 // concurrent:               instances created and their import()s run concurrently
 // host{First,Last}:         the host imports the target itself before / after the graphs
-// disposeMiddleBefore:      g1 is disposed before its import() runs
+// disposeMiddleBefore:      g1 is disposed before its import() runs: its function runs in its stopped context, where
+//                           what it starts never completes, so that import() stays pending
 const orderings = [
   "sequential",
   "firstRunsThenOthersExist",
@@ -185,7 +186,19 @@ describe("ModuleGraph matrix: dynamic import() site × target × ordering", () =
           const mods: any[] = [];
           const namespaces: any[] = new Array(K).fill(null);
           const results: unknown[] = new Array(K).fill("unset");
+          // What `promise` settles to, or "pending" if it has not within a few turns of the event loop.
+          const pendingAfterAFewTurns = async () => {
+            for (let turn = 0; turn < 5; turn++) await new Promise<void>(resolve => setImmediate(resolve));
+            return "pending";
+          };
           const settle = async (i: number) => {
+            if (disposed(i)) {
+              results[i] = await Promise.race([
+                mods[i].dyn().then(() => "fulfilled", errorName),
+                pendingAfterAFewTurns(),
+              ]);
+              return;
+            }
             try {
               const ns = await mods[i].dyn();
               if (ns && ns.__rejected) results[i] = { rejected: ns.__rejected };
@@ -251,10 +264,12 @@ describe("ModuleGraph matrix: dynamic import() site × target × ordering", () =
             mods.map((m: any, i: number) =>
               skipped(i)
                 ? "skipped"
-                : m.dyn().then(
-                    (ns: any) => (ns && ns.__rejected ? `rejected:${ns.__rejected}` : ns === namespaces[i]),
-                    (e: unknown) => `rejected:${errorName(e)}`,
-                  ),
+                : disposed(i)
+                  ? Promise.race([m.dyn().then(() => "fulfilled", errorName), pendingAfterAFewTurns()])
+                  : m.dyn().then(
+                      (ns: any) => (ns && ns.__rejected ? `rejected:${ns.__rejected}` : ns === namespaces[i]),
+                      (e: unknown) => `rejected:${errorName(e)}`,
+                    ),
             ),
           );
 
@@ -282,14 +297,23 @@ describe("ModuleGraph matrix: dynamic import() site × target × ordering", () =
           const expected = {
             results: whos.map((w, i) => {
               if (skipped(i)) return "unset";
-              if (disposed(i)) return { rejected: "Error" }; // ERR_INVALID_STATE: ModuleGraph has been disposed
+              // (fromCjs: the disposed graph's require() throws, which that site reports as a rejection.)
+              if (disposed(i)) return siteName === "fromCjs" ? "Error" : "pending";
               if (rejection) return { rejected: rejection };
               const who = site.hostScope ? target.who(process.env.WHO) : target.who(w);
               const sameAsStatic = site.eager ? "n/a" : !site.hostScope;
               return { who, sameAsStatic };
             }),
             repeat: whos.map((_, i) =>
-              skipped(i) ? "skipped" : disposed(i) ? "rejected:Error" : rejection ? `rejected:${rejection}` : true,
+              skipped(i)
+                ? "skipped"
+                : disposed(i)
+                  ? siteName === "fromCjs"
+                    ? "Error"
+                    : "pending"
+                  : rejection
+                    ? `rejected:${rejection}`
+                    : true,
             ),
             distinctNamespaces: rejection ? 0 : site.hostScope ? 1 : liveWhos.length,
             isolation:
@@ -705,7 +729,7 @@ describe("ModuleGraph matrix: lifecycle and error timing", () => {
     "afterImport",
     "afterDynamicImportStarted",
   ] as const) {
-    test(`dispose ${when}: what that instance starts afterwards rejects, siblings complete, a fresh instance works`, async () => {
+    test(`dispose ${when}: what that instance starts afterwards rejects or never completes, siblings complete, a fresh instance works`, async () => {
       const log: string[] = [];
       const a = graph("a", log),
         b = graph("b", log);
@@ -725,7 +749,8 @@ describe("ModuleGraph matrix: lifecycle and error timing", () => {
       } else if (when === "afterImport") {
         const m = await a.import(join(dir, "slow.mjs"));
         a.dispose();
-        aOutcome = await m.later().then((w: string) => "late:" + w, errorName);
+        // Its function runs in its stopped context, where the import() it starts stays pending.
+        parked = m.later();
       } else {
         const m = await a.import(join(dir, "slow.mjs"));
         const p = m.later();
@@ -745,7 +770,7 @@ describe("ModuleGraph matrix: lifecycle and error timing", () => {
         bLog: log.filter(l => l.endsWith("@b")),
         cLog: log.filter(l => l.endsWith("@c")),
       }).toEqual({
-        aOutcome: when === "duringDependencyTla" ? "pending" : "Error",
+        aOutcome: when === "duringDependencyTla" || when === "afterImport" ? "pending" : "Error",
         bResult: { who: "b", late: "b" },
         cResult: { who: "c", late: "c" },
         bLog: ["slow-start@b", "slow-end@b", "late@b"],

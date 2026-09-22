@@ -313,13 +313,14 @@ const dir = String(
       const hostSaw = [];
       process.on("unhandledRejection", error => hostSaw.push(error.message));
       let calls = 0, inner;
-      // The tenant's onError causes a rejection in the code of a graph the tenant made without an
-      // onError: given back to the same onError it would go round for ever.
-      const tenant = new Bun.ModuleGraph({ onError: () => { if (++calls <= 50) inner.rejects(); } });
+      // The tenant's onError calls code of a graph the tenant made without an onError. That code runs in its
+      // graph's context whoever calls it, so what it rejects is that graph's and comes to the same onError, for as
+      // long as the handler goes on calling it. It never reaches the host.
+      const tenant = new Bun.ModuleGraph({ onError: () => { if (++calls <= 3) inner.rejects(); } });
       const app = await tenant.import(import.meta.dir + "/left-behind-tenant.mjs");
       inner = await tenant.run(() => app.makesAGraph().import(import.meta.dir + "/rejects-when-called.mjs"));
       tenant.run(() => inner.startsIt());
-      while (hostSaw.length === 0 && calls <= 50) await new Promise(resolve => setImmediate(resolve));
+      while (hostSaw.length === 0 && calls <= 3) await new Promise(resolve => setImmediate(resolve));
       for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve));
       console.log(JSON.stringify({ callsOfTheTenantsOnError: calls, hostSaw }));
       process.exit(0);
@@ -2832,19 +2833,19 @@ describe("ModuleGraph isolation: what is the host's, or the realm's, survives a 
 });
 
 describe.concurrent("ModuleGraph isolation: whose context a call runs in", () => {
-  test("what a function opens belongs to the context it was called in, not to the graph that defined it", async () => {
+  test("what a graph's function opens belongs to the graph that defined it, whoever calls it", async () => {
     using a = await newGraph();
     using b = await newGraph();
-    const viaTimer = newState("via-timer");
-    const viaCall = newState("via-call");
-    // A's timer calls B's function; A's code calls B's function synchronously inside A's context.
+    const [viaTimer, viaCall, viaHost] = [newState("via-timer"), newState("via-call"), newState("via-host")];
+    // A's timer calls B's function; A's code calls B's function synchronously inside A's context; the host calls it.
     await a.graph.run(() => a.app.later(b.app.open.interval, viaTimer));
     a.graph.run(() => a.app.call(b.app.open.interval, viaCall));
-    expect([await ticks(viaTimer), await ticks(viaCall)]).toEqual([true, true]);
-    b.graph.dispose();
-    expect([await ticks(viaTimer), await ticks(viaCall)]).toEqual([true, true]);
+    b.app.open.interval(viaHost);
+    expect([await ticks(viaTimer), await ticks(viaCall), await ticks(viaHost)]).toEqual([true, true, true]);
     a.graph.dispose();
-    expect([await ticks(viaTimer), await ticks(viaCall)]).toEqual([false, false]);
+    expect([await ticks(viaTimer), await ticks(viaCall), await ticks(viaHost)]).toEqual([true, true, true]);
+    b.graph.dispose();
+    expect([await ticks(viaTimer), await ticks(viaCall), await ticks(viaHost)]).toEqual([false, false, false]);
   });
 
   test("run() nests: the innermost graph's context is current, and the outer one is restored", async () => {
@@ -3373,7 +3374,7 @@ describe.concurrent("ModuleGraph isolation: competing graphs", () => {
     expect(await ticking(requestStates)).toEqual(requests.map(({ graph }) => graph !== 1));
   });
 
-  test("a new graph of the same files starts and finishes while the disposed one's leftovers are still draining; the host calling the disposed one's code gets the host's context", async () => {
+  test("a new graph of the same files starts and finishes while the disposed one's leftovers are still draining; the disposed one's code, called by the host, opens nothing that lasts", async () => {
     using first = await newGraph();
     const [old, fresh, viaHost, viaRun] = [
       newState("old"),
@@ -3391,11 +3392,11 @@ describe.concurrent("ModuleGraph isolation: competing graphs", () => {
       await start(second, fresh, { steps });
       expect({ ticks: fresh.ticks, wrong: fresh.wrong }).toEqual({ ticks: steps, wrong: [] });
       const stoppedAt = old.ticks;
-      // The disposed graph's functions are still functions: called by the host they run as the host's
-      // code; entered through what the graph left behind, what they open is closed at once.
+      // The disposed graph's functions are still functions: they run in their graph's stopped context, called
+      // by the host or entered through what the graph left behind, and what they open is closed at once.
       first.app.open.interval(viaHost);
       inFirst(() => first.app.open.interval(viaRun));
-      expect([await ticks(viaHost), await ticks(viaRun)]).toEqual([true, false]);
+      expect([await ticks(viaHost), await ticks(viaRun)]).toEqual([false, false]);
       expect(old.ticks).toBe(stoppedAt);
     } finally {
       old.stop = true;
@@ -3749,9 +3750,9 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
       });
     },
   );
-  test("a rejection its onError causes in the code of a graph it made goes to the host, not back to that onError", async () => {
+  test("a rejection its onError causes by calling the code of a graph it made is that graph's, not the host's", async () => {
     expect(await runsFixture("on-error-that-causes-an-inner-rejection.mjs")).toEqual({
-      stdout: `{"callsOfTheTenantsOnError":1,"hostSaw":["rejected by the inner graph's code"]}`,
+      stdout: `{"callsOfTheTenantsOnError":4,"hostSaw":[]}`,
       exitCode: 0,
     });
   });

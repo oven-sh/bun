@@ -7,6 +7,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import net from "node:net";
 import nodeTls from "node:tls";
 import { promisify } from "node:util";
+import vm from "node:vm";
 import zlib from "node:zlib";
 import { join } from "path";
 
@@ -604,24 +605,51 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
     });
   });
 
-  test("code of the graph the host calls directly runs in the host's context; run() enters the graph's", async () => {
+  test("code of the graph the host calls directly runs in the graph's context", async () => {
     const dir = fixture({
       "fn.mjs": `
         export let ticks = 0;
         export const start = () => setInterval(() => { ticks++; }, 1);
         export const tick = () => ticks;
+        export const current = () => Bun.ModuleGraph.current;
+        export function* each() { yield Bun.ModuleGraph.current; yield Bun.ModuleGraph.current; }
+        export class Thing { made = Bun.ModuleGraph.current; get now() { return Bun.ModuleGraph.current; } }
+        // Entered from the host while its loop is hot enough for every tier: its code runs once a call, as the graph.
+        let runs = 0;
+        const step = x => x + 1;
+        export const hot = () => { const atStart = Bun.ModuleGraph.current; runs++; let sum = 0; for (let i = 0; i < 20000; i++) sum = step(sum); return [atStart, Bun.ModuleGraph.current, sum, runs]; };
       `,
     });
     const graph = new Bun.ModuleGraph();
     const app = await graph.import(join(dir, "fn.mjs"));
-    const hostOwned = app.start();
-    try {
-      graph.dispose();
-      const before = app.tick();
-      await until(() => app.tick() > before + 2);
-    } finally {
-      clearInterval(hostOwned);
-    }
+
+    expect(app.current()).toBe(graph);
+    expect([...app.each()]).toEqual([graph, graph]);
+    expect([0].map(app.current)).toEqual([graph]);
+    const thing = new app.Thing();
+    expect([thing.made, thing.now]).toEqual([graph, graph]);
+    for (let call = 1; call <= 300; call++) expect(app.hot()).toEqual([graph, graph, 20000, call]);
+    expect(Bun.ModuleGraph.current).toBeUndefined();
+
+    // What it opens is the graph's: it stops with the graph.
+    app.start();
+    await until(() => app.tick() > 0);
+    graph.dispose();
+    const stopped = app.tick();
+    await hostTimerTurns();
+    expect(app.tick()).toBe(stopped);
+  });
+
+  // A termination runs no finally block: the run that catches it puts back what was current.
+  test("a node:vm run cut short inside a graph's function leaves the caller in its own context", async () => {
+    const dir = fixture({ "spin.mjs": `export const spin = () => { for (;;) {} };` });
+    const graph = new Bun.ModuleGraph();
+    const app = await graph.import(join(dir, "spin.mjs"));
+    expect(() => vm.runInNewContext("spin()", { spin: app.spin }, { timeout: 20 })).toThrow(
+      expect.objectContaining({ code: "ERR_SCRIPT_EXECUTION_TIMEOUT" }),
+    );
+    expect(Bun.ModuleGraph.current).toBeUndefined();
+    graph.dispose();
   });
 
   test("the graph's context survives AsyncLocalStorage run/exit/enterWith inside it, and nests", async () => {
@@ -951,8 +979,8 @@ describe.concurrent("ModuleGraph: an error in what a graph opened is the graph's
           "a MessagePort's 'message'": boom => { const { port1, port2 } = new MessageChannel(); port1.on("message", boom); port2.postMessage(1); },
           "a BroadcastChannel's onmessage": boom => { const a = new BroadcastChannel("module-graph-errors"); const b = new BroadcastChannel("module-graph-errors"); a.onmessage = boom; b.postMessage(1); },
           "a ReadableStream's pull()": boom => { new ReadableStream({ pull: boom }).getReader().read(); },
-          // The context the throw happens in is not the graph's: a closure of the graph's run inside
-          // something the host made.
+          // Run inside something the host made: what throws is still a function of the graph's, which runs in
+          // the graph's context wherever it is called from.
           "a closure of the graph's that a host AsyncResource runs": (boom, host) => setTimeout(() => host.inHostScope(boom), 1),
         };
         export const throws = message => { throw new Error(message); };
@@ -978,7 +1006,7 @@ describe.concurrent("ModuleGraph: an error in what a graph opened is the graph's
         await expect("run() from a timer of the host's", boom => { setTimeout(() => graph.run(boom), 1); });
         await expect("run() from a microtask of the host's", boom => { queueMicrotask(() => graph.run(boom)); });
         await expect("run() from a tick of the host's", boom => { process.nextTick(() => graph.run(boom)); });
-        // A function of the graph's that the host calls directly, or listens with, runs in the host's context.
+        // A function of the graph's that the host calls directly, or listens with, runs in the graph's context.
         await expect("a function of the graph's the host calls from its timer", boom => { setTimeout(boom, 1); });
         await expect("a function of the graph's listening on a host EventEmitter", async boom => {
           const { EventEmitter } = await import("node:events");
@@ -992,16 +1020,14 @@ describe.concurrent("ModuleGraph: an error in what a graph opened is the graph's
     });
     const { stdout, exitCode } = await run(dir);
     const out = JSON.parse(stdout);
-    const hosts = [
+    const calledByTheHost = [
       "a closure of the graph's that a host AsyncResource runs",
       "a function of the graph's the host calls from its timer",
       "a function of the graph's listening on a host EventEmitter",
     ];
     expect(Object.keys(out).length).toBeGreaterThan(40);
-    expect(out).toEqual(
-      Object.fromEntries(Object.keys(out).map(name => [name, hosts.includes(name) ? "host" : "graph"])),
-    );
-    expect(hosts.every(name => name in out)).toBe(true);
+    expect(out).toEqual(Object.fromEntries(Object.keys(out).map(name => [name, "graph"])));
+    expect(calledByTheHost.every(name => name in out)).toBe(true);
     expect(exitCode).toBe(0);
     // One process walks every case in turn (a Worker, a child process, an HTTP/2 session among them).
   }, 60_000);

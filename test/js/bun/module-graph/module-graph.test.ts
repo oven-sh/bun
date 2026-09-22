@@ -1147,17 +1147,20 @@ describe("Bun.ModuleGraph — error attribution matrix", () => {
     using d = tempDir("module-graph-onerror-reentry", {
       "faults.mjs": `
         export function rejectLater(message) { setTimeout(() => { Promise.reject(new Error(message)); }, 0); }
-        export function reject(message) { Promise.reject(new Error(message)); }
-        export function rejectInAsyncFunction(message) { (async () => { await null; throw new Error(message); })(); }
-        export function throwNow(message) { throw new Error(message); }
       `,
       "host.mjs": `const seen = [];
         const done = () => { if (seen.length === 7) { console.log(JSON.stringify(seen)); process.exit(0); } };
         process.on("uncaughtException", e => { seen.push("host:uncaughtException:" + e.message); done(); });
         process.on("unhandledRejection", e => { seen.push("host:unhandledRejection:" + e.message); done(); });
-        let faults, how;
-        const graph = new Bun.ModuleGraph({ onError: (e, kind) => { seen.push("onError:" + e.message); done(); if (e.message.startsWith("first")) faults[how]("from onError by " + how); } });
-        faults = await graph.import(import.meta.dir + "/faults.mjs");
+        // The handler's own code, which runs in the handler's context. (A function of the graph's would run in the graph's.)
+        const answers = {
+          reject(message) { Promise.reject(new Error(message)); },
+          rejectInAsyncFunction(message) { (async () => { await null; throw new Error(message); })(); },
+          throwNow(message) { throw new Error(message); },
+        };
+        let how;
+        const graph = new Bun.ModuleGraph({ onError: (e, kind) => { seen.push("onError:" + e.message); done(); if (e.message.startsWith("first")) answers[how]("from onError by " + how); } });
+        const faults = await graph.import(import.meta.dir + "/faults.mjs");
         for (how of ["reject", "rejectInAsyncFunction", "throwNow"]) {
           const before = seen.length;
           graph.run(() => faults.rejectLater("first, answered by " + how));
@@ -1492,7 +1495,7 @@ describe("Bun.ModuleGraph — an error belongs to the context it happens in, wha
       process.exit(0);
     `,
   });
-  test("inside run() it is the graph's; called by the host directly it is the host's", async () => {
+  test("inside run(), and called by the host directly, it is the graph's", async () => {
     const { stdout, exitCode } = await runBun(["main.mjs"], { cwd: dir });
     expect(JSON.parse(stdout)).toEqual({
       "inside run(): a native function throws, called as a tail call": "graph",
@@ -1500,18 +1503,18 @@ describe("Bun.ModuleGraph — an error belongs to the context it happens in, wha
       "inside run(): EventEmitter 'error' with no listener, emitted as a tail call": "graph",
       "inside run(): the runtime rejects a promise nobody handles": "graph",
       "inside run(): the graph's own throw (control)": "graph",
-      "called by the host: a native function throws, called as a tail call": "host",
-      "called by the host: JSON.parse throws, called as a tail call": "host",
-      "called by the host: EventEmitter 'error' with no listener, emitted as a tail call": "host",
-      "called by the host: the runtime rejects a promise nobody handles": "host",
-      "called by the host: the graph's own throw (control)": "host",
+      "called by the host: a native function throws, called as a tail call": "graph",
+      "called by the host: JSON.parse throws, called as a tail call": "graph",
+      "called by the host: EventEmitter 'error' with no listener, emitted as a tail call": "graph",
+      "called by the host: the runtime rejects a promise nobody handles": "graph",
+      "called by the host: the graph's own throw (control)": "graph",
       "another graph's rejection while an onError runs": "first,second",
     });
     expect(exitCode).toBe(0);
   });
 
-  // Whose code it is does not decide, in any direction: one party's code running in another's context.
-  test("code of one party running in another's context: the error is the context's", async () => {
+  // A graph's code runs in its graph's context whoever calls it; the host's code runs in its caller's.
+  test("a graph's code called from another context: the error is its graph's; the host's code: its caller's", async () => {
     using d = tempDir("module-graph-error-context", {
       "tenant.mjs": `
         export const throwLater = message => { setTimeout(() => { throw new Error(message); }, 0); };
@@ -1534,13 +1537,13 @@ describe("Bun.ModuleGraph — an error belongs to the context it happens in, wha
           ["an async function of the host's that run() called", () => graphA.run(async () => { await null; throw new Error("1"); })],
           ["a host function from globals that A's code called", () => graphA.run(() => a.callsTheHost("2"))],
           ["a host function A's code was handed and called", () => graphA.run(() => a.call(hostThrowsLater, "3"))],
-          // B's code, in A's context
+          // B's code, called by A's
           ["a function of B's that A's code called", () => graphA.run(() => a.call(b.throwLater, "4"))],
           ["an async function of B's that A's code called", () => graphA.run(() => a.call(b.rejectInAsync, "5"))],
-          // A's code, in the host's context
+          // A's code, called by the host
           ["a function of A's that the host called", () => a.throwLater("6")],
           ["an async function of A's that the host called", () => a.rejectInAsync("7")],
-          // A's code, in B's context
+          // A's code, called by the host in B's context
           ["a function of A's that the host called inside B.run()", () => graphB.run(() => a.throwLater("8"))],
         ];
         const out = {};
@@ -1559,11 +1562,11 @@ describe("Bun.ModuleGraph — an error belongs to the context it happens in, wha
       "an async function of the host's that run() called": "A: 1",
       "a host function from globals that A's code called": "A: 2",
       "a host function A's code was handed and called": "A: 3",
-      "a function of B's that A's code called": "A: 4",
-      "an async function of B's that A's code called": "A: 5",
-      "a function of A's that the host called": "host: 6",
-      "an async function of A's that the host called": "host: 7",
-      "a function of A's that the host called inside B.run()": "B: 8",
+      "a function of B's that A's code called": "B: 4",
+      "an async function of B's that A's code called": "B: 5",
+      "a function of A's that the host called": "A: 6",
+      "an async function of A's that the host called": "A: 7",
+      "a function of A's that the host called inside B.run()": "A: 8",
     });
     expect(exitCode).toBe(0);
   });
@@ -1601,9 +1604,9 @@ describe("Bun.ModuleGraph — an error belongs to the context it happens in, wha
           out[kind] = told.join();
           // The error that was just taken leaves nothing behind: what the host starts next is the host's.
           told.length = 0;
-          faults["a timer"]();
+          setTimeout(() => { throw new Error("thrown"); }, 0);
           await until(() => told.length > 0);
-          out[kind + ", then the host's own call"] = told.join();
+          out[kind + ", then the host's own timer"] = told.join();
         }
         // A graph that a graph's code made: its handler runs as that graph, so what it throws is that graph's.
         told.length = 0;
@@ -1620,7 +1623,7 @@ describe("Bun.ModuleGraph — an error belongs to the context it happens in, wha
     const expected: Record<string, string> = {};
     for (const kind of ["a timer", "a tick", "an immediate", "a microtask", "a rejection", "an async function"]) {
       expected[kind] = "the host's context";
-      expected[kind + ", then the host's own call"] = "host: thrown";
+      expected[kind + ", then the host's own timer"] = "host: thrown";
     }
     expected["a nested graph"] =
       "the inner graph's onError ran in the outer graph's context | the outer graph's onError: from the inner graph's onError";
@@ -1726,22 +1729,27 @@ describe("Bun.ModuleGraph — an error belongs to the context it happens in, wha
         };
       `,
       "main.mjs": `
+        import { createRequire } from "node:module";
         const graph = new Bun.ModuleGraph({ globals: { TENANT: true } });
         const tenant = await graph.import(import.meta.dir + "/tenant.mjs");
         console.log(JSON.stringify({
           "createRequire, inside run()": graph.run(() => tenant.viaCreateRequire()),
-          "createRequire, called by the host": tenant.viaCreateRequire(),
+          "createRequire, the graph's function called by the host": tenant.viaCreateRequire(),
+          "createRequire, the host's own": createRequire(import.meta.url)("./who.cjs"),
+          "createRequire, the host's own inside run()": graph.run(() => createRequire(import.meta.url)("./who.cjs")),
           "new Module, inside run()": graph.run(() => tenant.viaNewModule()),
-          "new Module, called by the host": tenant.viaNewModule(),
+          "new Module, the graph's function called by the host": tenant.viaNewModule(),
         }, null, 1));
       `,
     });
     const { stdout, exitCode } = await runBun(["main.mjs"], { cwd: String(d) });
     expect(JSON.parse(stdout)).toEqual({
       "createRequire, inside run()": "the graph's",
-      "createRequire, called by the host": "the host's",
+      "createRequire, the graph's function called by the host": "the graph's",
+      "createRequire, the host's own": "the host's",
+      "createRequire, the host's own inside run()": "the graph's",
       "new Module, inside run()": "the graph's",
-      "new Module, called by the host": "the host's",
+      "new Module, the graph's function called by the host": "the graph's",
     });
     expect(exitCode).toBe(0);
   });
@@ -2512,7 +2520,7 @@ describe("Bun.ModuleGraph — require(): ES modules and CommonJS modules per gra
       delete (globalThis as any).__cjsEvals;
     }
   });
-  test("a CommonJS file as a graph's entry: the namespace wraps the graph's module; after dispose() its require() throws and its import() rejects", async () => {
+  test("a CommonJS file as a graph's entry: the namespace wraps the graph's module; after dispose() its require() throws and its import() stays pending", async () => {
     (globalThis as any).__cjsEvals = [];
     try {
       const g = new ModuleGraphClass({ globals: { T: "G", __cjsEvals: [] } });
@@ -2524,10 +2532,15 @@ describe("Bun.ModuleGraph — require(): ES modules and CommonJS modules per gra
       ]).toEqual([["default", "dyn", "inc", "req", "who"], "G", false]);
       expect((await ns.default.dyn()).who).toBe("G");
       g.dispose();
-      expect([thrown(() => ns.default.req()), await rejection(ns.default.dyn())]).toEqual([
-        "Error [ERR_INVALID_STATE]: ModuleGraph has been disposed",
-        "Error [ERR_INVALID_STATE]: ModuleGraph has been disposed",
-      ]);
+      // The graph's function runs in the graph's stopped context, where what it starts never completes.
+      let settled = "pending";
+      ns.default.dyn().then(
+        () => (settled = "fulfilled"),
+        (error: unknown) => (settled = "rejected: " + described(error)),
+      );
+      expect(thrown(() => ns.default.req())).toBe("Error [ERR_INVALID_STATE]: ModuleGraph has been disposed");
+      for (let turn = 0; turn < 5; turn++) await new Promise(resolve => setImmediate(resolve));
+      expect(settled).toBe("pending");
     } finally {
       delete (globalThis as any).__cjsEvals;
     }

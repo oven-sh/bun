@@ -5441,8 +5441,9 @@ declare module "bun" {
    * the graph's code through `await`, timers, socket handlers and the
    * listeners of what it made, the way `AsyncLocalStorage` stores do
    * (creating the first graph turns that tracking on for the process). Code
-   * of the graph that the host calls directly runs in the host's context;
-   * use {@link ModuleGraph.run} to call it in the graph's.
+   * of the graph runs in the graph's context whoever calls it: calling a
+   * function the graph exported is enough. {@link ModuleGraph.run} calls a
+   * function of the host's in the graph's context.
    *
    * @experimental
    * @example
@@ -5452,7 +5453,7 @@ declare module "bun" {
    *   onError: (err, kind) => console.error(kind, err),
    * });
    * const app = await graph.import("./app.mjs"); // app.mjs's exports, for this graph
-   * graph.run(() => app.start()); // what start() opens is the graph's
+   * app.start(); // what start() opens is the graph's
    * graph.dispose(); // and is closed here
    * ```
    */
@@ -5461,8 +5462,7 @@ declare module "bun" {
     /**
      * The graph whose context the calling code is running in
      * (what it opens now would belong to that graph), or `undefined` in the
-     * host's context. For host functions shared by several graphs, and for
-     * asserting that a call went through {@link ModuleGraph.run}.
+     * host's context. For host functions shared by several graphs.
      */
     static readonly current: ModuleGraph | undefined;
     /**
@@ -5479,7 +5479,8 @@ declare module "bun" {
     import<T = any>(specifier: string): Promise<T>;
     /**
      * Call `fn` inside the graph's context: what `fn` and everything it
-     * starts open belongs to the graph.
+     * starts open belongs to the graph. For a function of the host's: the
+     * graph's own functions run in its context however they are called.
      *
      * Throws `ERR_INVALID_STATE` once the graph is disposed.
      *

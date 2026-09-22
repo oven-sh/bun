@@ -1081,7 +1081,14 @@ describe.skipIf(!hasAdapter)("with a device", () => {
     expect(await device.popErrorScope()).toBeNull();
     device.pushErrorScope("validation");
     expect(await device.popErrorScope()).toBeNull();
+
+    // Every destroy() unmaps, also a buffer that the lost device mapped at creation.
+    const last = device.createBuffer({ size: 16, usage: GPUBufferUsage.COPY_SRC, mappedAtCreation: true });
+    const lastRange = last.getMappedRange();
     device.destroy();
+    expect(last.mapState).toBe("unmapped");
+    expect(lastRange.byteLength).toBe(0);
+    expect(lastRange.detached).toBe(true);
   });
 
   test("objects survive garbage collection of the things that made them", async () => {

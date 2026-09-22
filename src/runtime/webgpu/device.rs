@@ -308,11 +308,8 @@ impl GPUDeviceHandle {
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let state = &self.state;
-        if state.lost.get() {
-            instance().device_destroy(state.id());
-            return Ok(JSValue::UNDEFINED);
-        }
-        state.lost.set(true);
+        let already_lost = state.lost.replace(true);
+        // Every call unmaps: a lost device still hands out buffers that are mapped at creation.
         let mapped = state.mapped_buffers.take();
         for weak in &mapped {
             if let Some(buffer) = weak.get() {
@@ -323,7 +320,9 @@ impl GPUDeviceHandle {
         }
         // Before `lost` resolves: that can run script (a `then` getter on Object.prototype), which has to see a destroyed device.
         instance().device_destroy(state.id());
-        state.resolve_lost(global, "destroyed", "device.destroy() was called")?;
+        if !already_lost {
+            state.resolve_lost(global, "destroyed", "device.destroy() was called")?;
+        }
         Ok(JSValue::UNDEFINED)
     }
 

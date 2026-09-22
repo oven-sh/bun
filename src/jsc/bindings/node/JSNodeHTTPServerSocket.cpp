@@ -901,8 +901,7 @@ static bool writeBehindResponse(us_socket_t* socket, const char* data, size_t le
     return asyncSocket->getBufferedAmount() > 0;
 }
 
-/* The raw bytes of a socket.write() go through the buffer in which uWS still holds response bytes, as a 1xx line does
- * (HttpResponse::writeRawInformational). Returns whether uWS still holds bytes. */
+/* A raw socket.write() takes the path of a 1xx line (HttpResponse::writeRawInformational). Returns whether uWS still holds bytes. */
 extern "C" bool Bun__NodeHTTPServerSocket__writeBehindResponse(us_socket_t* socket, bool is_ssl, const char* data, size_t length)
 {
     return is_ssl ? writeBehindResponse<true>(socket, data, length) : writeBehindResponse<false>(socket, data, length);

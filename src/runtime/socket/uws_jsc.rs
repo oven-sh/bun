@@ -143,8 +143,7 @@ unsafe extern "C" fn us_socket_buffered_js_write(
     socket: *mut us_socket_t,
     ssl: bool,
     ended: bool,
-    // uWS still holds response bytes for this connection: write through its buffer, which keeps the order of the calls.
-    // A shutdown is the caller's to defer then (`shutdownAfterResponseDrains`).
+    // uWS still holds response bytes: write through its buffer. The caller defers a shutdown (`shutdownAfterResponseDrains`).
     hold: bool,
     buffer: *mut us_socket_stream_buffer_t,
     global_object: &JSGlobalObject,

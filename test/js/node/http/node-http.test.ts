@@ -5923,14 +5923,18 @@ describe("HTTP server transport shutdown", () => {
       await once(client, "connect");
       client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
       expect(await writeReturned.promise).toBe(false);
+      // Windows 11 takes the whole body at once. The write is then complete before the reset, and its callback has run.
+      const completedBeforeReset = callbackErrors.length > 0;
+      if (!isWindows) expect(completedBeforeReset).toBe(false);
       client.resetAndDestroy();
       await responseClosed.promise;
       await new Promise<void>(resolve => setImmediate(resolve));
-      expect(callbackErrors).toHaveLength(1);
-      // When Winsock took the whole body, no write is buffered and the callback reports success.
-      expect(["ERR_STREAM_DESTROYED", "ECONNRESET", "EPIPE", ...(isWindows ? ["success"] : [])]).toContain(
-        callbackErrors[0],
-      );
+      if (completedBeforeReset) {
+        expect(callbackErrors).toEqual(["success"]);
+      } else {
+        expect(callbackErrors).toHaveLength(1);
+        expect(["ERR_STREAM_DESTROYED", "ECONNRESET", "EPIPE"]).toContain(callbackErrors[0]);
+      }
     } finally {
       client.destroy();
       server.closeAllConnections();

@@ -1245,12 +1245,18 @@ impl Valid {
         if path.len() < MAX_PATH_BYTES {
             return None;
         }
+        Some(Self::name_too_long(path))
+    }
+
+    /// ENAMETOOLONG for `path`, unconditionally. For a path that fits a
+    /// `PathBuffer` on its own but not once joined onto the cwd.
+    pub(crate) fn name_too_long(path: &[u8]) -> bun_sys::SystemError {
         let mut system_error =
             bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
                 .with_path(path)
                 .to_system_error();
         system_error.syscall = bun_core::String::DEAD;
-        Some(system_error)
+        system_error
     }
 
     /// Sync bindings throw; async ones get it as `arguments.deferred_error` and a placeholder path.

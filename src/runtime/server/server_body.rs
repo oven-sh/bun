@@ -612,7 +612,18 @@ impl AnyRoute {
             FileSystem::instance().top_level_dir
         };
 
-        let abs_path = FileSystem::instance().abs(&[path_slice]);
+        // `path_slice` fits a `PathBuffer` on its own; joined onto the cwd it
+        // may not. `abs()` would slice-index panic on that, so bound the join.
+        let mut abs_buf = paths::path_buffer_pool::get();
+        let Some(abs_path) =
+            FileSystem::instance().abs_buf_checked(&[path_slice], &mut abs_buf[..])
+        else {
+            use bun_sys_jsc::SystemErrorJsc as _;
+            let err = crate::node::types::Valid::name_too_long(path_slice);
+            return Err(init_ctx
+                .global
+                .throw_value(err.to_error_instance(init_ctx.global)));
+        };
         let mut relative_path = FileSystem::instance().relative(cwd, abs_path);
 
         if relative_path.starts_with(b"./") {

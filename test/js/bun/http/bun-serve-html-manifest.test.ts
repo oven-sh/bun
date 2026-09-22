@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 
@@ -266,16 +266,14 @@ describe("Bun.serve HTML manifest", () => {
     expect(out).toContain("SUCCESS: Manifest validation failed as expected");
   });
 
-  it("rejects a manifest file path longer than the join buffer without aborting", async () => {
-    // Windows MAX_PATH_BYTES (98302) >> 4096, so a 5000-byte path passes the
-    // ENAMETOOLONG guard and reaches FileSystem::abs() whose output buffer was
-    // 4096 bytes: process used to abort with a slice-index panic. On POSIX
-    // MAX_PATH_BYTES <= 4096, so the guard rejects it with ENAMETOOLONG first.
+  // Spawns bun with a manifest whose one file has `path` and prints the
+  // error code the Bun.serve call throws, or "no-throw".
+  async function serveWithManifestPath(pathExpr: string) {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
-        `const long = (process.platform === "win32" ? "C:\\\\" : "/") + Buffer.alloc(5000, "a").toString();` +
+        `const long = ${pathExpr};` +
           `try {` +
           `  const s = Bun.serve({ port: 0, routes: { "/": {` +
           `    index: "./index.html",` +
@@ -290,10 +288,30 @@ describe("Bun.serve HTML manifest", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // ENAMETOOLONG on POSIX (the per-part guard fires); ERR_INVALID_ARG_TYPE
-    // on Windows (abs() succeeds; route setup then rejects the missing file).
     if (!stdout.startsWith("CAUGHT")) console.error(stderr);
-    expect(stdout.trim()).toMatch(/^CAUGHT (ENAMETOOLONG|ERR_INVALID_ARG_TYPE)$/);
+    return { stdout: stdout.trim(), exitCode };
+  }
+
+  it("rejects an absolute manifest file path longer than the join buffer without aborting", async () => {
+    // Windows MAX_PATH_BYTES (98302) >> 4096, so a 5000-byte path passes the
+    // ENAMETOOLONG guard and reaches FileSystem::abs() whose output buffer was
+    // 4096 bytes: process used to abort with a slice-index panic. On POSIX
+    // MAX_PATH_BYTES <= 4096, so the guard rejects it with ENAMETOOLONG first.
+    const { stdout, exitCode } = await serveWithManifestPath(
+      `(process.platform === "win32" ? "C:\\\\" : "/") + Buffer.alloc(5000, "a").toString()`,
+    );
+    // On Windows abs() succeeds and route setup then rejects the missing file.
+    expect(stdout).toBe(isWindows ? "CAUGHT ERR_INVALID_ARG_TYPE" : "CAUGHT ENAMETOOLONG");
+    expect(exitCode).toBe(0);
+  });
+
+  it("rejects a relative manifest file path that overflows the join buffer once joined onto the cwd", async () => {
+    // One byte under MAX_PATH_BYTES passes the per-part guard, but cwd + "/" +
+    // part is longer than any host path, and on Linux and Windows longer than
+    // the join buffer: process used to abort with a slice-index panic.
+    const maxPathBytes = isWindows ? 98302 : process.platform === "darwin" ? 1024 : 4096;
+    const { stdout, exitCode } = await serveWithManifestPath(`Buffer.alloc(${maxPathBytes - 1}, "a").toString()`);
+    expect(stdout).toBe("CAUGHT ENAMETOOLONG");
     expect(exitCode).toBe(0);
   });
 

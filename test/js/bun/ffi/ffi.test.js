@@ -1577,6 +1577,9 @@ describe("a JSCallback as the deallocator of toArrayBuffer() and toBuffer()", ()
       env: { ...bunEnv, FFI_FIXTURE_PATH, ...env },
       stdout: "pipe",
       stderr: "pipe",
+      // Ends a deadlocked process, which does not act on SIGTERM, before the test times out.
+      timeout: 25_000,
+      killSignal: "SIGKILL",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { result: JSON.parse(stdout.trim() || "null"), stderr, exitCode, signalCode: proc.signalCode };

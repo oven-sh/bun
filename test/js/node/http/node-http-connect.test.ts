@@ -1912,6 +1912,42 @@ test("a half-open tunnel with bytes left to send keeps the process alive until t
   }
 });
 
+test("a tunnel write that waits for a drain settles its callbacks when the client goes away", async () => {
+  const events: string[] = [];
+  const wrote = Promise.withResolvers<void>();
+  const closed = Promise.withResolvers<void>();
+  const server = http.createServer();
+  server.on("connect", (req, socket) => {
+    socket.on("error", () => {});
+    socket.on("close", () => {
+      events.push("close");
+      closed.resolve();
+    });
+    socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+    // More than a Linux or macOS loopback socket takes in one write, so this write waits for a drain.
+    socket.write(Buffer.alloc(16 * 1024 * 1024, "b"), () => events.push("write callback"));
+    socket.write("after", () => events.push("buffered write callback"));
+    socket.end(() => events.push("end callback"));
+    wrote.resolve();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const client = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+  try {
+    await once(client, "connect");
+    client.pause();
+    client.on("error", () => {});
+    client.write("CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n");
+    await wrote.promise;
+    client.destroy();
+    await closed.promise;
+    expect(events).toEqual(["write callback", "buffered write callback", "end callback", "close"]);
+  } finally {
+    client.destroy();
+    server.closeAllConnections();
+    server.close();
+  }
+});
+
 // The handed-off socket writes straight to the kernel. While uWS still holds
 // bytes of the response before the CONNECT, such a write must go out behind them.
 describe("a CONNECT tunnel pipelined behind a response that still drains", () => {

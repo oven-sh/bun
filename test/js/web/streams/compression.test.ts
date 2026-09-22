@@ -1321,24 +1321,84 @@ describe("bounded output per input chunk", () => {
       },
     );
 
-    // The junk follows an expansion that takes many steps. The last piece comes
-    // before the error for a reader that calls read() again as soon as a read
-    // settles. A slower reader (for await takes an extra microtask) finds the
-    // last piece still queued when the stream errors, and an error discards the queue.
-    test.each(formats)(
-      "DecompressionStream(%s): junk at the end of a chunk that expands over several steps",
-      async format => {
-        const ds = new DecompressionStream(format);
-        const writer = ds.writable.getWriter();
-        writer.write(Buffer.concat([bombs[format](), junk])).catch(() => {});
-        writer.close().catch(() => {});
-
-        const { output, error } = await readUntilError(ds.readable);
-        expect(output.byteLength).toBe(EXPANDED);
-        expect(output.equals(expanded)).toBe(true);
-        expect(error).toMatchObject(trailingJunk);
+    // The junk follows an expansion that takes several steps. The reader paces
+    // those steps, so the junk is reported as one more step, after the reader has
+    // taken the last piece. Thrown together with that piece, the error would
+    // discard it from the readable queue for every reader that is not already
+    // waiting in read(): for await, pipeTo, or a loop that yields between reads.
+    const consumers = {
+      "a read loop": readUntilError,
+      "a read loop that yields between reads": async (readable: ReadableStream<Uint8Array>) => {
+        const reader = readable.getReader();
+        const pieces: Uint8Array[] = [];
+        try {
+          for (;;) {
+            const { value, done } = await reader.read();
+            if (done) return { output: Buffer.concat(pieces), error: undefined };
+            pieces.push(value);
+            await Promise.resolve();
+          }
+        } catch (error) {
+          return { output: Buffer.concat(pieces), error };
+        }
       },
-    );
+      "for await": async (readable: ReadableStream<Uint8Array>) => {
+        const pieces: Uint8Array[] = [];
+        try {
+          for await (const piece of readable) pieces.push(piece);
+          return { output: Buffer.concat(pieces), error: undefined };
+        } catch (error) {
+          return { output: Buffer.concat(pieces), error };
+        }
+      },
+      "pipeTo": async (readable: ReadableStream<Uint8Array>) => {
+        const pieces: Uint8Array[] = [];
+        const error = await readable
+          .pipeTo(
+            new WritableStream({
+              write(piece) {
+                pieces.push(piece);
+              },
+            }),
+          )
+          .then(
+            () => undefined,
+            error => error,
+          );
+        return { output: Buffer.concat(pieces), error };
+      },
+    };
+
+    describe.each([
+      // One pad byte after 100,000 bytes: for gzip, main decoded all of it and failed at close().
+      ["two steps", false, () => expanded.subarray(0, 100_000), Buffer.alloc(1)],
+      ["many steps", false, () => expanded.subarray(0, 1024 * 1024), junk],
+      // An incompressible prefix puts the chunk over the thread-pool threshold.
+      [
+        "many steps on the thread pool",
+        true,
+        () => Buffer.concat([randomBytes(160 * 1024), expanded.subarray(0, 1024 * 1024)]),
+        junk,
+      ],
+    ] as const)("junk at the end of a chunk that expands over %s", (_, threadPool, makePlain, tail) => {
+      test.each(formats.flatMap(format => Object.keys(consumers).map(consumer => [format, consumer] as const)))(
+        "DecompressionStream(%s) read by %s",
+        async (format, consumer) => {
+          const plain = makePlain();
+          const chunk = Buffer.concat([bombs[format](plain), tail]);
+          expect(chunk.byteLength > 128 * 1024).toBe(threadPool);
+          const ds = new DecompressionStream(format);
+          const writer = ds.writable.getWriter();
+          writer.write(chunk).catch(() => {});
+          writer.close().catch(() => {});
+
+          const { output, error } = await consumers[consumer as keyof typeof consumers](ds.readable);
+          expect(output.byteLength).toBe(plain.byteLength);
+          expect(output.equals(plain)).toBe(true);
+          expect(error).toMatchObject(trailingJunk);
+        },
+      );
+    });
 
     // The error is thrown in the transform call that met the junk, never held
     // back until the output is read: with nobody reading, a held error would

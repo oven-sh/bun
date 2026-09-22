@@ -178,7 +178,7 @@ static void* coderOf(JSTransformStream* stream)
 
 // One step, with its output already handed to the consumer.
 struct CodecStepResult {
-    // The coder stopped at its output bound; the chunk needs another step.
+    // The chunk needs another step: the coder stopped at its output bound, or holds junk to report.
     bool more { false };
     bool sinkBackpressure { false };
 };

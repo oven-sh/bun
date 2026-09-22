@@ -2730,9 +2730,11 @@ function advanceResponsePipeline(server, socket) {
           handle.writeInformational(op[1], op[2]);
           if (typeof op[3] === "function") process.nextTick(op[3]);
         } else if (kind === "write") {
-          lastWriteResult = res.write(op[1], op[2], op[3]);
+          // The prototype's write()/end() buffered these calls. Replaying through `res.write`
+          // would run a user's replacement (compression middleware) a second time.
+          lastWriteResult = ServerResponse.prototype.write.$call(res, op[1], op[2], op[3]);
         } else {
-          res.end(op[1], op[2], op[3]);
+          ServerResponse.prototype.end.$call(res, op[1], op[2], op[3]);
         }
       }
     } finally {

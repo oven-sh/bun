@@ -756,8 +756,12 @@ function describeReceived(value) {
   if (value == null) return ` Received ${value}`;
   if (typeof value === "function") return ` Received function ${value.name}`;
   if (typeof value === "object") return ` Received an instance of ${value.constructor?.name ?? "Object"}`;
-  const shown = typeof value === "string" ? `'${value}'` : typeof value === "bigint" ? `${value}n` : String(value);
-  return ` Received type ${typeof value} (${shown.length > 28 ? `${shown.slice(0, 25)}...` : shown})`;
+  if (typeof value === "string") {
+    const truncated = value.length > 28 ? `${value.slice(0, 25)}...` : value;
+    return ` Received type string (${truncated.includes("'") ? JSON.stringify(truncated) : `'${truncated}'`})`;
+  }
+  const shown = typeof value === "bigint" ? `${value}n` : Object.is(value, -0) ? "-0" : String(value);
+  return ` Received type ${typeof value} (${shown})`;
 }
 
 function isURL(self) {

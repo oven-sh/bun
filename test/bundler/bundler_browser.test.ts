@@ -136,12 +136,16 @@ describe("bundler", () => {
         const input = f => { try { f(); } catch (e) { return e.input instanceof URL ? e.input.href : String(e.input); } };
         console.log(input(() => fileURLToPath("file:///a%2Fb")), input(() => fileURLToPath("file:///x", { windows: true })), input(() => fileURLToPath("file://host/a")));
         console.log(URLPattern === globalThis.URLPattern, url.URLPattern === globalThis.URLPattern);
+        const message = v => { try { urlToHttpOptions(v); } catch (e) { return e.message.slice(e.message.indexOf("Received")); } };
+        console.log(["a".repeat(28), "a".repeat(29), "it's", -0, 10n ** 30n].map(message).join("\\n"));
       `,
     },
     target: "browser",
     run: {
       stdout:
-        '/a/b c C:\\x\\y\n\\\\server\\share\\f\nfile:///a%20b/c%23d%3Fe%25f file:///caf%C3%A9/\nxn--espaol-zwa.com español.com ""\n::1 8080 /p?q u@x:p null\nERR_INVALID_URL_SCHEME ERR_INVALID_FILE_URL_PATH ERR_INVALID_FILE_URL_HOST\nfile:///a%2Fb file:///x undefined\ntrue true',
+        '/a/b c C:\\x\\y\n\\\\server\\share\\f\nfile:///a%20b/c%23d%3Fe%25f file:///caf%C3%A9/\nxn--espaol-zwa.com español.com ""\n::1 8080 /p?q u@x:p null\nERR_INVALID_URL_SCHEME ERR_INVALID_FILE_URL_PATH ERR_INVALID_FILE_URL_HOST\nfile:///a%2Fb file:///x undefined\ntrue true\n' +
+        "Received type string ('aaaaaaaaaaaaaaaaaaaaaaaaaaaa')\nReceived type string ('aaaaaaaaaaaaaaaaaaaaaaaaa...')\n" +
+        'Received type string ("it\'s")\nReceived type number (-0)\nReceived type bigint (1000000000000000000000000000000n)',
     },
   });
   // The polyfill is plain JS bundled into the user's output, so it cannot use

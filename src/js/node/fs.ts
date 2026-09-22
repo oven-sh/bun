@@ -24,8 +24,7 @@ function lazyGlob() {
 
 const { guardCallback, kCustomPromisifyArgsSymbol } = require("internal/shared");
 
-// Captured at load. Code that replaces process.nextTick later (fake timers)
-// must not hold back the callbacks of real operations.
+// Captured at load: a process.nextTick that user code replaces later (fake timers) must not hold back fs callbacks.
 const nextTick = process.nextTick;
 
 // guardCallback reroutes a throw inside the user callback to the
@@ -44,21 +43,13 @@ function ensureCallback(callback) {
   return wrapFsCallback(callback);
 }
 
-// An async operation's callback runs from process.nextTick, not from the promise
-// reaction that settles it. A reaction is a microtask, so the callback would run
-// inside the microtask drain, and a microtask it queues would run before a
-// process.nextTick() it queues. Node runs the nextTick first: it calls an fs
-// callback from the event loop, then drains the tick queue, then the microtasks.
-// https://github.com/nodejs/node/blob/v26.3.0/src/api/callback.cc#L165-L204
-//
-// callback(err) or callback(null, value)
+// Via nextTick: called from the reaction itself (a microtask), a callback's microtasks would run before its nextTicks.
 function settleCallback(promise, callback) {
   promise.then(
     value => nextTick(callback, null, value),
     err => nextTick(callback, err),
   );
 }
-// callback(err) or callback(null)
 function settleCallbackWithNull(promise, callback) {
   promise.then(
     () => nextTick(callback, null),
@@ -1261,9 +1252,10 @@ function glob(pattern: string | string[], options, callback) {
   }
   validateFunction(callback, "callback");
 
-  // The callback runs from process.nextTick, so an exception it throws surfaces
-  // as an uncaught exception instead of rejecting the internal promise chain
-  // (and is never routed back into `callback` as an error), matching Node.js.
+  // Invoke the callback from process.nextTick so that an exception thrown by
+  // the callback surfaces as an uncaught exception instead of rejecting the
+  // internal promise chain (and is never routed back into `callback` as an
+  // error), matching Node.js.
   settleCallback(Array.fromAsync(lazyGlob().glob(pattern, options ?? kEmptyObject)), callback);
 }
 

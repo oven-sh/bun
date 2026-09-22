@@ -2703,8 +2703,8 @@ describe.skipIf(isWindows)("TLS socket over a net.Socket whose peer resets behin
       await fillThenReset(socket, peer, peerClosed.promise, endFirst);
       expect(events).toEqual([]);
       const written = Promise.withResolvers<string>();
-      socket.write("late", error => {
-        written.resolve(error ? `${(error as NodeJS.ErrnoException).code} ${(error as NodeJS.ErrnoException).syscall}` : "ok");
+      socket.write("late", (error?: NodeJS.ErrnoException | null) => {
+        written.resolve(error ? `${error.code} ${error.syscall}` : "ok");
       });
       expect(await written.promise).toBe(`${code} write`);
       await closed;

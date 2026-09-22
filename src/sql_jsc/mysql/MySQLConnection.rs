@@ -351,7 +351,7 @@ impl MySQLConnection {
             sni,
             true,  // is_client
             false, // request_cert (server-only)
-            false, // reject_unauthorized (server-only)
+            false, // reject_unauthorized (server-only; the client policy is set_inline_reject below)
             ext_size,
             ext_size,
         ) else {
@@ -367,6 +367,11 @@ impl MySQLConnection {
         let sock = unsafe { &mut *new_socket };
         *sock.ext::<Option<core::ptr::NonNull<JSMySQLConnection>>>() =
             core::ptr::NonNull::new(js_connection);
+        if self.tls_config.reject_unauthorized() != 0
+            && matches!(self.ssl_mode, SSLMode::VerifyCa | SSLMode::VerifyFull)
+        {
+            sock.set_inline_reject();
+        }
         self.socket = Socket::SocketTls(uws::SocketTLS {
             socket: uws::InternalSocket::Connected(new_socket),
         });

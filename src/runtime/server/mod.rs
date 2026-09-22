@@ -1965,27 +1965,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // (non-null for the server's lifetime); single-threaded JS
             // context, `&mut` scoped to this call.
             unsafe {
-                (*self.vm_mut()).enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new(
-                    app,
-                    |app| {
-                        // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                        bun_opaque::opaque_deref_mut(app).close();
-                        Ok(())
-                    },
-                ));
+                (*self.vm_mut())
+                    .enqueue_task(bun_event_loop::Task::init(app.cast::<AppCloseTask<SSL>>()));
             }
         }
 
         // SAFETY: as above — `&mut` scoped to this call.
         unsafe {
-            (*self.vm_mut()).enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new(
-                std::ptr::from_mut::<Self>(self),
-                |this| {
-                    // SAFETY: `this` is the unique owning server pointer enqueued
-                    // above; the task runs once on the JS thread.
-                    Self::deinit(this);
-                    Ok(())
-                },
+            (*self.vm_mut()).enqueue_task(bun_event_loop::Task::init(
+                std::ptr::from_mut::<Self>(self).cast::<ServerDeinitTask<SSL, DEBUG>>(),
             ));
         }
     }
@@ -4272,6 +4260,60 @@ pub(crate) enum SavedRequestUnion<'a> {
     Stack(&'a mut uws::Request),
     /// Heap-allocated copy that persists beyond the initial handler frame.
     Saved(SavedRequest),
+}
+
+// ─── schedule_deinit's tasks ─────────────────────────────────────────────────
+/// `schedule_deinit`'s first task, `app.close()`: same pointer as the app, one tag per `SSL`.
+#[repr(transparent)]
+pub(crate) struct AppCloseTask<const SSL: bool>(uws_sys::NewApp<SSL>);
+
+impl<const SSL: bool> bun_event_loop::Taskable for AppCloseTask<SSL> {
+    const TAG: bun_event_loop::TaskTag = if SSL {
+        bun_event_loop::task_tag::HTTPSAppClose
+    } else {
+        bun_event_loop::task_tag::HTTPAppClose
+    };
+    /// The app goes with its server.
+    unsafe fn release_unrun(_: *mut Self) {}
+    /// Enters no context.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
+}
+
+impl<const SSL: bool> AppCloseTask<SSL> {
+    pub(crate) fn run(this: *mut Self) {
+        // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+        bun_opaque::opaque_deref_mut(this.cast::<uws_sys::NewApp<SSL>>()).close();
+    }
+}
+
+/// `schedule_deinit`'s second task, `deinit()`: same pointer as the server, one tag per
+/// monomorphization.
+#[repr(transparent)]
+pub(crate) struct ServerDeinitTask<const SSL: bool, const DEBUG: bool>(NewServer<SSL, DEBUG>);
+
+impl<const SSL: bool, const DEBUG: bool> bun_event_loop::Taskable for ServerDeinitTask<SSL, DEBUG> {
+    const TAG: bun_event_loop::TaskTag = match (SSL, DEBUG) {
+        (false, false) => bun_event_loop::task_tag::HTTPServerDeinit,
+        (true, false) => bun_event_loop::task_tag::HTTPSServerDeinit,
+        (false, true) => bun_event_loop::task_tag::DebugHTTPServerDeinit,
+        (true, true) => bun_event_loop::task_tag::DebugHTTPSServerDeinit,
+    };
+    /// Frees nothing: a server whose deinit is still queued when its VM stops stays allocated.
+    unsafe fn release_unrun(_: *mut Self) {}
+    /// Enters no context.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
+}
+
+impl<const SSL: bool, const DEBUG: bool> ServerDeinitTask<SSL, DEBUG> {
+    /// # Safety
+    /// `this` is the unique owning server pointer `schedule_deinit` queued.
+    pub(crate) unsafe fn run(this: *mut Self) {
+        NewServer::<SSL, DEBUG>::deinit(this.cast());
+    }
 }
 
 // ─── ServerAllConnectionsClosedTask ──────────────────────────────────────────

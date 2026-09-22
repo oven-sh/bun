@@ -117,12 +117,7 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
         .expect("BundleV2.linker.loop must be set before scheduling ServerComponentParseTask")
     {
         bun_event_loop::AnyEventLoop::Js { .. } => {
-            let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(result, |p| {
-                // SAFETY: `p` is the `result` Box leaked above; ownership
-                // transfers to `on_complete`, which deallocates it.
-                unsafe { on_complete(p) };
-                Ok(())
-            });
+            let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::create_from(result);
             let poster = worker
                 .ctx
                 .js_poster
@@ -133,7 +128,7 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
                 // SAFETY: refused ⇒ we own the task box and the leaked result.
                 unsafe {
                     bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct);
-                    drop(bun_core::heap::take(result));
+                    <parse_task::Result as bun_event_loop::Taskable>::release_unrun(result);
                 }
             }
         }

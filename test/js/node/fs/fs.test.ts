@@ -7267,6 +7267,34 @@ describe("a process.nextTick queued by an fs callback runs before a microtask it
       "microtask 2",
     ]);
   });
+
+  it("while user code has replaced process.nextTick", async () => {
+    using dir = tempDir("fs-callback-order", { "file.txt": "hello" });
+    await tickQueueExists();
+
+    const original = process.nextTick;
+    const held: Array<() => void> = [];
+    // What a fake-timer library does: hold the job until the fake clock runs.
+    process.nextTick = ((fn: (...args: any[]) => void, ...args: any[]) => {
+      held.push(() => fn(...args));
+    }) as typeof process.nextTick;
+    try {
+      const { promise, resolve } = Promise.withResolvers<string[]>();
+      const order: string[] = [];
+      fs.stat(join(String(dir), "file.txt"), () => {
+        order.push("callback");
+        original(() => order.push("nextTick"));
+        queueMicrotask(() => {
+          order.push("microtask");
+          resolve(order);
+        });
+      });
+      expect(await promise).toEqual(["callback", "nextTick", "microtask"]);
+    } finally {
+      process.nextTick = original;
+      for (const job of held) original(job);
+    }
+  });
 });
 
 describe("fs.Utf8Stream", () => {

@@ -24,6 +24,10 @@ function lazyGlob() {
 
 const { guardCallback, kCustomPromisifyArgsSymbol } = require("internal/shared");
 
+// Captured at load. Code that replaces process.nextTick later (fake timers)
+// must not hold back the callbacks of real operations.
+const nextTick = process.nextTick;
+
 // guardCallback reroutes a throw inside the user callback to the
 // uncaughtException path.
 function wrapFsCallback(callback) {
@@ -50,15 +54,15 @@ function ensureCallback(callback) {
 // callback(err) or callback(null, value)
 function settleCallback(promise, callback) {
   promise.then(
-    value => process.nextTick(callback, null, value),
-    err => process.nextTick(callback, err),
+    value => nextTick(callback, null, value),
+    err => nextTick(callback, err),
   );
 }
 // callback(err) or callback(null)
 function settleCallbackWithNull(promise, callback) {
   promise.then(
-    () => process.nextTick(callback, null),
-    err => process.nextTick(callback, err),
+    () => nextTick(callback, null),
+    err => nextTick(callback, err),
   );
 }
 
@@ -79,7 +83,7 @@ var access = function access(path, mode, callback?) {
     }
 
     callback = ensureCallback(callback);
-    const settled = value => process.nextTick(callback, value);
+    const settled = value => nextTick(callback, value);
     fs.access(path, mode).then(settled, settled);
   },
   appendFile = function appendFile(path, data, options, callback?) {
@@ -140,8 +144,8 @@ var access = function access(path, mode, callback?) {
 
     try {
       fs.exists.$apply(fs, [path]).then(
-        existed => process.nextTick(callback, existed),
-        () => process.nextTick(callback, false),
+        existed => nextTick(callback, existed),
+        () => nextTick(callback, false),
       );
     } catch {
       callback(false);
@@ -294,16 +298,16 @@ var access = function access(path, mode, callback?) {
     }
     callback = wrapFsCallback(callback);
     fs.read(fd, buffer, offset, length, position).then(
-      bytesRead => process.nextTick(callback, null, bytesRead, buffer),
-      err => process.nextTick(callback, err),
+      bytesRead => nextTick(callback, null, bytesRead, buffer),
+      err => nextTick(callback, err),
     );
   },
   write = function write(fd, buffer, offsetOrOptions, length?, position?, callback?) {
     function onWritten(bytesWritten) {
-      process.nextTick(callback, null, bytesWritten, buffer);
+      nextTick(callback, null, bytesWritten, buffer);
     }
     function onError(err) {
-      process.nextTick(callback, err);
+      nextTick(callback, err);
     }
 
     // $isTypedArrayView excludes DataView, so a DataView would fall through
@@ -402,7 +406,7 @@ var access = function access(path, mode, callback?) {
 
     const signal = options?.signal;
     if (signal?.aborted) {
-      process.nextTick(callback, $makeAbortError(undefined, { cause: signal.reason }));
+      nextTick(callback, $makeAbortError(undefined, { cause: signal.reason }));
       return;
     }
 
@@ -428,7 +432,7 @@ var access = function access(path, mode, callback?) {
       callback = wrapFsCallback(callback);
     }
 
-    const settled = $isCallable(callback) ? value => process.nextTick(callback, value) : callback;
+    const settled = $isCallable(callback) ? value => nextTick(callback, value) : callback;
     fs.symlink(target, path, type).then(settled, settled);
   },
   truncate = function truncate(path, len, callback?) {
@@ -598,8 +602,8 @@ var access = function access(path, mode, callback?) {
     callback = ensureCallback(callback);
 
     fs.writev(fd, buffers, position).$then(
-      bytesWritten => process.nextTick(callback, null, bytesWritten, buffers),
-      err => process.nextTick(callback, err),
+      bytesWritten => nextTick(callback, null, bytesWritten, buffers),
+      err => nextTick(callback, err),
     );
   },
   writevSync = fs.writevSync.bind(fs),
@@ -612,8 +616,8 @@ var access = function access(path, mode, callback?) {
     callback = ensureCallback(callback);
 
     fs.readv(fd, buffers, position).$then(
-      bytesRead => process.nextTick(callback, null, bytesRead, buffers),
-      err => process.nextTick(callback, err),
+      bytesRead => nextTick(callback, null, bytesRead, buffers),
+      err => nextTick(callback, err),
     );
   },
   readvSync = fs.readvSync.bind(fs),
@@ -875,7 +879,7 @@ const realpath: typeof import("node:fs").realpath =
             LOOP();
           });
         } else {
-          process.nextTick(LOOP);
+          nextTick(LOOP);
         }
 
         // Walk down the path, swapping out linked path parts for their real
@@ -919,7 +923,7 @@ const realpath: typeof import("node:fs").realpath =
           // If not a symlink, skip to the next path part
           if (!stats.isSymbolicLink()) {
             knownHard.add(base);
-            return process.nextTick(LOOP);
+            return nextTick(LOOP);
           }
 
           // Stat & read the link if not read before.
@@ -954,7 +958,7 @@ const realpath: typeof import("node:fs").realpath =
               LOOP();
             });
           } else {
-            process.nextTick(LOOP);
+            nextTick(LOOP);
           }
         }
       } as typeof import("node:fs").realpath);
@@ -1032,13 +1036,13 @@ function _toUnixTimestamp(time: any, name = "time") {
 
 function onOpendirStatFulfilled(callback, path, result, stats) {
   if (!stats.isDirectory()) {
-    process.nextTick(callback, opendirNotDirError(path));
+    nextTick(callback, opendirNotDirError(path));
     return;
   }
-  process.nextTick(callback, null, result);
+  nextTick(callback, null, result);
 }
 function onOpendirStatRejected(callback, path, err) {
-  process.nextTick(callback, typeof err?.errno === "number" ? opendirStatError(err, path) : err);
+  nextTick(callback, typeof err?.errno === "number" ? opendirStatError(err, path) : err);
 }
 
 function opendirSync(path, options) {

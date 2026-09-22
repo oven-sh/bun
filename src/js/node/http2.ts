@@ -2055,9 +2055,8 @@ enum StreamState {
   Closed = 1 << 3, // 01000 = 8
   StreamResponded = 1 << 4, // 10000 = 16
   WritableClosed = 1 << 5, // 100000 = 32
-  // The native side fully closed and freed the stream (state 7 delivered, or the peer reset
-  // it): there is nothing left to send on the wire for it. The write path must not hand it to
-  // the native side, which throws once the stream's entry is evicted.
+  // The native side closed and freed the stream (state 7, or a peer reset): nothing is left to
+  // send, and the native side no longer knows its id.
   NativeClosed = 1 << 6, // 1000000 = 64
   // END_STREAM already rode the final DATA frame from _write/_writev; _final must not
   // emit the empty END_STREAM frame on top of it.
@@ -2515,8 +2514,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
       return session[bunHTTP2Native]?.getStreamState(this.#id) ?? {};
     }
     // node reports an empty object while the stream is still pending (no id yet) and once the
-    // stream's session has been destroyed. A stream the native side already closed has no native
-    // entry left to ask.
+    // stream's session has been destroyed.
     return {};
   }
 
@@ -3764,19 +3762,13 @@ function rejectNoPayloadContentLengthNT(req) {
   req.destroy(streamErrorFromCode(constants.NGHTTP2_PROTOCOL_ERROR));
 }
 
-// node's onStreamClose for RST_STREAM(NO_ERROR) on a stream whose readable side has not ended:
-// the stream closes now, but it is destroyed only after the consumer has read the data that
-// already arrived ('end'). resume() here would hand that data to nobody when the consumer
-// attaches later, and to a paused consumer while it is paused. A server stream nobody has tried
-// to read is the exception: it is dumped so it can be destroyed.
+// node's onStreamClose for RST_STREAM(NO_ERROR): unread data stays, 'end' destroys the stream.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L592-L628
 function closeStreamAndDestroyOnEnd(session: Http2Session, stream: Http2Stream) {
   const status = stream[bunHTTP2StreamStatus];
-  // The native side closed the stream before it dispatched the reset.
   stream[bunHTTP2StreamStatus] = status | StreamState.NativeClosed;
   if ((status & StreamState.Closed) === 0) {
-    // markStreamClosed() in the order of node's closeStream: closed, then 'aborted' and end(),
-    // then the close diagnostics channel.
+    // markStreamClosed(), in the order of node's closeStream.
     stream[bunHTTP2StreamStatus] |= StreamState.Closed;
     stream.rstCode = NGHTTP2_NO_ERROR;
     if (!stream._writableState.ending && !stream[kPush]) {
@@ -3792,6 +3784,7 @@ function closeStreamAndDestroyOnEnd(session: Http2Session, stream: Http2Stream) 
   stream.once("end", destroySelfOnEnd);
   (session[kUnreadClosedStreams] ??= new SafeSet()).add(stream);
   pushToStream(stream, null);
+  // node dumps a server stream that nobody has tried to read, so that it can be destroyed.
   if (stream instanceof ServerHttp2Stream && !stream.readableDidRead && stream.readableFlowing === null) {
     stream.resume();
   } else {
@@ -6408,10 +6401,7 @@ class ClientHttp2Session extends Http2Session {
     req.once("close", () => this.#releaseRequestSlot(req));
   }
 
-  // Only open and half-closed streams count (RFC 9113 5.1.2), so the slot is free once the native
-  // side closed the stream. A closed stream whose data is unread is not destroyed until its
-  // consumer reaches 'end', so 'close' alone would hold the slot until then. 'close' still
-  // releases a stream that is destroyed before the native side closed it.
+  // A closed stream stops counting (RFC 9113 5.1.2), even while unread data delays its 'close'.
   #releaseRequestSlot(req: ClientHttp2Stream) {
     if (req[kHoldsRequestSlot] !== true) return;
     req[kHoldsRequestSlot] = false;

@@ -9,6 +9,7 @@ import {
   isGlibc,
   isIntelMacOS,
   isLinux,
+  isMacOS,
   isPosix,
   isWindows,
   tempDir,
@@ -3262,6 +3263,55 @@ it.skipIf(isWindows)("realpathSync (getFdPath) is implemented on every POSIX tar
   // Idempotent: resolving the canonical path returns itself.
   expect(realpathSync(resolved)).toBe(resolved);
 });
+
+// fcntl(F_GETPATH) names a file that has several hard links by the link that any process looked up
+// last. Linux names the link that was opened.
+it.skipIf(!isMacOS)(
+  "realpath of a hard link names the link that was passed while another process looks up a different link",
+  async () => {
+    using dir = tempDir("fs-realpath-hardlink", { original: { "original.txt": "hard link" }, linked: {} });
+    const root = realpathSync(String(dir));
+    const original = join(root, "original", "original.txt");
+    const link = join(root, "linked", "link.txt");
+    const symlink = join(root, "linked", "symlink.txt");
+    fs.linkSync(original, link);
+    symlinkSync(link, symlink);
+    expect(statSync(link).nlink).toBe(2);
+
+    // Looks the file up under its other name until this test kills it, or until its parent is gone.
+    const lookupLoop = `
+      const { statSync, writeSync } = require("node:fs");
+      const path = process.argv[1];
+      const parent = process.ppid;
+      statSync(path);
+      writeSync(1, "ready\\n");
+      while (process.ppid === parent) for (let i = 0; i < 4096; i++) statSync(path);
+    `;
+    await using lookups = Bun.spawn({
+      cmd: [bunExe(), "-e", lookupLoop, original],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const reader = lookups.stdout.getReader();
+    const { value } = await reader.read();
+    reader.releaseLock();
+    expect(new TextDecoder().decode(value)).toBe("ready\n");
+
+    const seen: Record<string, number> = {};
+    const count = (path: string) => void (seen[path] = (seen[path] ?? 0) + 1);
+    for (let i = 0; i < 2000; i++) {
+      count(realpathSync(link));
+      count(realpathSync.native(link));
+      count(realpathSync(symlink));
+    }
+    for (let i = 0; i < 100; i++) {
+      count(await promises.realpath(link));
+    }
+    expect(lookups.exitCode).toBeNull();
+    expect(seen).toEqual({ [link]: 6100 });
+  },
+);
 
 it("readlink", () => {
   const actual = join(tmpdirSync(), "fs-readlink.txt");

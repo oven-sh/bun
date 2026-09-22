@@ -104,7 +104,7 @@ function traceServerRequestEnd() {
 }
 
 const getBunServerAllClosedPromise = $newRustFunction("node_http_binding.rs", "getBunServerAllClosedPromise", 1);
-const getBunServerIsDrained = $newRustFunction("node_http_binding.rs", "getBunServerIsDrained", 1);
+const getBunServerOpenCount = $newRustFunction("node_http_binding.rs", "getBunServerOpenCount", 1);
 
 const kServerResponse = Symbol("ServerResponse");
 const kChunkedEncoding = Symbol("kChunkedEncoding");
@@ -568,8 +568,10 @@ Server.prototype.close = function (optionalCallback?) {
   if (generation) this[kPendingCloseGenerations].add(generation);
   this[serverSymbol] = undefined;
   this[kPendingDrainClose] = true;
-  server.closeIdleConnections();
-  if (generation) generation.drainedAtClose = getBunServerIsDrained(server);
+  // Like Node, a connection that this sweep closes counts as gone, also a TLS one whose close ends later with the peer's close_notify.
+  const open = getBunServerOpenCount(server);
+  const swept = server.closeIdleConnections();
+  if (generation) generation.drainedAtClose = open === swept;
   // stop() queues the task that emits 'close', which holds the loop one more turn, as node's uv_close() does.
   server.stop();
   return this;

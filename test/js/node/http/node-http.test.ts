@@ -5559,6 +5559,52 @@ describe("HTTP server transport shutdown", () => {
     }
   });
 
+  it.each(["http", "https"])(
+    "%s: reports a close() that closes its only connection as idle, also when listen() follows it at once",
+    async proto => {
+      // Node counts a connection that close() destroys as gone at once. The
+      // close of an idle TLS connection ends later, with the peer's close_notify.
+      const events: string[] = [];
+      const firstClose = Promise.withResolvers<Error | undefined>();
+      const handler = (_req: IncomingMessage, res: ServerResponse) => res.end("done");
+      const server = proto === "https" ? createHttpsServer(tlsCert, handler) : createServer(handler);
+      server.on("close", () => events.push("server close"));
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const client = proto === "https" ? https : http;
+      const agent = new client.Agent({ keepAlive: true });
+      try {
+        const { port } = server.address() as AddressInfo;
+        const body = await new Promise<string>((resolve, reject) => {
+          client
+            .get({ host: "127.0.0.1", port, agent, rejectUnauthorized: false }, res => {
+              let text = "";
+              res.setEncoding("utf8");
+              res.on("data", chunk => (text += chunk));
+              res.on("end", () => resolve(text));
+            })
+            .on("error", reject);
+        });
+        expect(body).toBe("done");
+
+        server.close(error => {
+          events.push("first close callback");
+          firstClose.resolve(error);
+        });
+        server.listen(0, "127.0.0.1");
+        await once(server, "listening");
+        expect(await firstClose.promise).toBeUndefined();
+        expect(events).toEqual(["server close", "first close callback"]);
+        expect(server.listening).toBe(true);
+      } finally {
+        agent.destroy();
+        server.closeAllConnections();
+        if (server.listening) {
+          await new Promise<void>(resolve => server.close(() => resolve()));
+        }
+      }
+    },
+  );
+
   it("defers a stopped listener's close event while a replacement listener is active", async () => {
     const entered = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();

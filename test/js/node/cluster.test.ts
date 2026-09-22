@@ -639,9 +639,13 @@ test.concurrent(
   30_000,
 );
 
-test.concurrent(
-  "primary worker.disconnect() keeps the channel up until the worker's servers have closed",
-  async () => {
+// A repeated request finds the worker's handle table already empty, and must still wait for the first one.
+test.concurrent.each([
+  ["one request", 1],
+  ["a repeated request", 2],
+])(
+  "primary worker.disconnect() keeps the channel up until the worker's servers have closed (%s)",
+  async (_, requests) => {
     const result = await runDisconnectFixture({
       "main.js": `
         const cluster = require("node:cluster");
@@ -656,7 +660,7 @@ test.concurrent(
               client.on("end", () => client.end());
               client.resume();
             } else if (msg === "accepted") {
-              worker.disconnect();
+              for (let i = 0; i < ${requests}; i++) worker.disconnect();
               result.connectedAfterDisconnect = worker.isConnected();
               worker.send("ping", err => {
                 result.ping = err ? err.code : "sent";

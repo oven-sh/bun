@@ -329,7 +329,13 @@ Worker.prototype.disconnect = function () {
   return this;
 };
 
+// A repeated request would find `handles` already empty and close the channel while the first one
+// still waits for its servers.
+let disconnectStarted = false;
+
 Worker.prototype._disconnect = function (this: ClusterWorker, primaryInitiated?) {
+  if (disconnectStarted) return;
+  disconnectStarted = true;
   this.exitedAfterDisconnect = true;
   let waitingCount = 1;
 

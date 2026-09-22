@@ -483,6 +483,7 @@ describe("node:http server timeout enforcement", () => {
       let received = "";
       client.setNoDelay(true);
       client.on("error", () => {});
+      client.on("close", onSettled);
       client.on("data", chunk => {
         received += chunk.toString("latin1");
         if (lastBody !== undefined && received.endsWith(lastBody)) onSettled();
@@ -558,9 +559,18 @@ describe("node:http server timeout enforcement", () => {
     expect(await sendSlowly(client)).toEqual({ bodies: ["/head got 800"], quietAtTimeout: [] });
   });
 
-  test("keepAliveTimeout keeps its full length after the timer granted the rest of an idle period", async () => {
-    // Fake timers make the order exact: the keep-alive timer fires at 1000 with
-    // 500 ms of the idle period left, then an unfinished head arrives.
+  // Fake timers make the order exact. One kept-alive connection with
+  // keepAliveTimeout = 1000 gets a request at 0 and one at 500. The keep-alive
+  // timer that the first response armed fires at 1000, with 500 ms of the idle
+  // period left. `run` starts right after that.
+  type KeptAlive = {
+    port: number;
+    client: net.Socket;
+    send: (url: string) => Promise<void>;
+    timedOut: () => boolean;
+    bodies: () => RegExpMatchArray | null;
+  };
+  async function afterKeepAliveTimerFiredEarly(run: (connection: KeptAlive) => Promise<void>) {
     jest.useFakeTimers();
     const server = http.createServer((req, res) => res.end(`${req.url} ok`));
     server.keepAliveTimeout = 1000;
@@ -572,7 +582,6 @@ describe("node:http server timeout enforcement", () => {
     });
     const port = await listen(server);
     const client = net.connect(port, "127.0.0.1");
-    let ping: net.Socket | undefined;
     try {
       let received = "";
       let closed = false;
@@ -586,44 +595,66 @@ describe("node:http server timeout enforcement", () => {
         closed = true;
         wake.resolve();
       });
-      const responseTo = async (url: string) => {
+      const send = async (url: string) => {
+        client.write(`GET ${url} HTTP/1.1\r\nHost: a\r\n\r\n`);
         while (!closed && !received.includes(`${url} ok`)) {
           wake = Promise.withResolvers<void>();
           await wake.promise;
         }
       };
       const connection = once(server, "connection");
-      client.write("GET /first HTTP/1.1\r\nHost: a\r\n\r\n");
+      await send("/first");
       const [kept] = await connection;
-      await responseTo("/first");
       jest.advanceTimersByTime(500);
-      client.write("GET /second HTTP/1.1\r\nHost: a\r\n\r\n");
-      await responseTo("/second");
+      await send("/second");
       jest.advanceTimersByTime(500);
-
-      // The second connection is a round trip through the server: when it
-      // closes, the server has read the unfinished head.
-      client.write("GET /third HTTP/1.1\r\nHo");
-      ping = net.connect(port, "127.0.0.1");
-      ping.on("error", () => {});
-      ping.write("GET /ping HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n");
-      ping.resume();
-      await once(ping, "close");
-
-      // Longer than the 500 ms that were left, shorter than keepAliveTimeout.
-      jest.advanceTimersByTime(700);
-      client.write("st: a\r\n\r\n");
-      await responseTo("/third");
-      expect({ bodies: received.match(/\/\w+ ok/g), timedOut: timedOut.includes(kept) }).toEqual({
-        bodies: ["/first ok", "/second ok", "/third ok"],
-        timedOut: false,
+      await run({
+        port,
+        client,
+        send,
+        timedOut: () => timedOut.includes(kept),
+        bodies: () => received.match(/\/\w+ ok/g),
       });
     } finally {
       jest.useRealTimers();
       client.destroy();
-      ping?.destroy();
       server.closeAllConnections();
       server.close();
     }
+  }
+
+  test("keepAliveTimeout ends when the rest of the idle period is over", async () => {
+    await afterKeepAliveTimerFiredEarly(async ({ timedOut }) => {
+      jest.advanceTimersByTime(400);
+      const before = timedOut();
+      jest.advanceTimersByTime(200);
+      expect({ before, after: timedOut() }).toEqual({ before: false, after: true });
+    });
+  });
+
+  test("keepAliveTimeout has its full length again after an unfinished head arrives", async () => {
+    await afterKeepAliveTimerFiredEarly(async ({ port, client, send, timedOut, bodies }) => {
+      // The second connection is a round trip through the server: when it
+      // closes, the server has read the unfinished head.
+      client.write("GET /third HTTP/1.1\r\nHo");
+      const ping = net.connect(port, "127.0.0.1");
+      try {
+        ping.on("error", () => {});
+        ping.write("GET /ping HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n");
+        ping.resume();
+        await once(ping, "close");
+      } finally {
+        ping.destroy();
+      }
+
+      // Longer than the 500 ms that were left, shorter than keepAliveTimeout.
+      jest.advanceTimersByTime(700);
+      client.write("st: a\r\n\r\n");
+      await send("/fourth");
+      expect({ bodies: bodies(), timedOut: timedOut() }).toEqual({
+        bodies: ["/first ok", "/second ok", "/third ok", "/fourth ok"],
+        timedOut: false,
+      });
+    });
   });
 });

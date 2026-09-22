@@ -799,35 +799,23 @@ void JSNodeHTTPServerSocket::onData(const char* data, int length, bool last)
 
 void JSNodeHTTPServerSocket::onActivity()
 {
-    if (!m_duplex) {
-        return;
-    }
+    auto* duplex = m_duplex.get();
     auto* globalObject = defaultGlobalObject(this->globalObject());
-    WebCore::ScriptExecutionContext* scriptExecutionContext = globalObject->scriptExecutionContext();
-    if (!scriptExecutionContext) {
+    if (!duplex || globalObject->scriptExecutionStatus(globalObject, this) != ScriptExecutionStatus::Running) {
         return;
     }
-    JSC::Strong<JSNodeHTTPServerSocket> protectedSocket(globalObject->vm(), this);
-    scriptExecutionContext->postTask([protectedSocket = std::move(protectedSocket)](WebCore::ScriptExecutionContext& context) {
-        auto* globalObject = defaultGlobalObject(context.globalObject());
-        auto* thisObject = protectedSocket.get();
-        auto* duplex = thisObject->m_duplex.get();
-        if (!duplex || globalObject->scriptExecutionStatus(globalObject, thisObject) != ScriptExecutionStatus::Running) {
-            return;
-        }
-        auto& vm = globalObject->vm();
-        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        JSValue unrefTimer = duplex->get(globalObject, JSC::Identifier::fromString(vm, "_unrefTimer"_s));
-        if (auto* exception = scope.exception()) {
-            (void)scope.tryClearException();
-            globalObject->reportUncaughtExceptionAtEventLoop(globalObject, exception);
-            return;
-        }
-        if (unrefTimer.isCallable()) {
-            MarkedArgumentBuffer args;
-            callStoredCallback(globalObject, unrefTimer.getObject(), duplex, args);
-        }
-    });
+    auto& vm = globalObject->vm();
+    EnsureStillAliveScope ensureStillAlive(this);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSValue unrefTimer = duplex->get(globalObject, JSC::Identifier::fromString(vm, "_unrefTimer"_s));
+    if (auto* exception = scope.exception()) {
+        (void)scope.tryClearException();
+        globalObject->reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        return;
+    }
+    if (unrefTimer.isCallable()) {
+        Bun__EventLoop__runCallback2(globalObject, JSValue::encode(unrefTimer), JSValue::encode(duplex), JSValue::encode(jsUndefined()), JSValue::encode(jsUndefined()));
+    }
 }
 
 JSC::Structure* JSNodeHTTPServerSocket::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)

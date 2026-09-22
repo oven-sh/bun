@@ -712,6 +712,7 @@ private:
             /* We don't want open sockets to keep the event loop alive between HTTP requests */
             us_socket_unref((us_socket_t *) returnedData);
 
+            [[maybe_unused]] bool readGaveJsNothing = false;
             /* node:http compat: a partial request head was left in the fallback
              * buffer by this read (either fresh bytes on an idle connection or a
              * pipelined request after the previous message completed) - its
@@ -723,15 +724,7 @@ private:
                     nodeHttpResponseData->lastMessageStartMs = nodeCompatMonotonicMs();
                     nodeHttpResponseData->headersCompleted = false;
                 }
-
-                /* node:http compat: this read gave JS nothing (a partial head,
-                 * chunk framing, trailers, a body that nothing reads), so nothing
-                 * there refreshed the socket's inactivity timer. Node does that on
-                 * every read. */
-                if (!std::exchange(nodeHttpResponseData->readDelivered, false)
-                    && httpResponseData->socketData && httpContextData->onSocketActivity) {
-                    httpContextData->onSocketActivity(httpResponseData->socketData, SSL, s);
-                }
+                readGaveJsNothing = !std::exchange(nodeHttpResponseData->readDelivered, false);
             }
 
             /* Timeout on uncork failure */
@@ -750,6 +743,18 @@ private:
                          * clients from keeping to send their huge data */
                         ((AsyncSocket<SSL> *) s)->close();
                     }
+                }
+            }
+
+            /* node:http compat: this read gave JS nothing (a partial head, chunk
+             * framing, trailers, a body that nothing reads), so nothing there
+             * refreshed the socket's inactivity timer. Node does that on every
+             * read. The hook runs JS, so it comes last: nothing below it may
+             * touch the socket. */
+            if constexpr (IsNodeHttp) {
+                if (readGaveJsNothing && !us_socket_is_closed(s)
+                    && httpResponseData->socketData && httpContextData->onSocketActivity) {
+                    httpContextData->onSocketActivity(httpResponseData->socketData, SSL, s);
                 }
             }
             return (us_socket_t *) returnedData;

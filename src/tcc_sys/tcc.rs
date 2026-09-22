@@ -71,6 +71,13 @@ macro_rules! tcc_externs {
 ///
 /// TinyCC calls the error callback with this lock held, so the callback must
 /// not call into libtcc.
+///
+/// The lock is also held while `tcc_add_file` opens the source and while
+/// `tcc_add_library` runs `dlopen` (libtcc.c `tcc_add_binary`). A source that
+/// blocks in `open` or a library with a slow constructor stalls every other
+/// thread's libtcc call, `tcc_delete` from `close()` included. Those calls
+/// also report errors through the global `tcc_state`, so they cannot run
+/// unlocked.
 static LIBTCC_LOCK: bun_core::Mutex<()> = bun_core::Mutex::new(());
 
 tcc_externs! {

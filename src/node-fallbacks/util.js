@@ -436,15 +436,28 @@ function reduceToSingleString(output, base, braces) {
 // util.types checks an object's internal slots, not its Symbol.toStringTag, so
 // `{ [Symbol.toStringTag]: "Date" }` is not a date. Each predicate below uses a
 // brand check: an intrinsic method or getter that throws, or returns a
-// sentinel, when its receiver lacks the slot. None of them call user code or
-// change the value they inspect.
+// sentinel, when its receiver lacks the slot. None of them call a
+// Symbol.toStringTag getter, mark a promise handled, or advance an iterator or
+// generator. A proxy's traps do run, as for any operation on a proxy.
 //
-// Three predicates cannot be exact in plain JavaScript:
+// These predicates cannot be exact in plain JavaScript:
 // - isPromise: the only brand check for [[PromiseState]] is `then`, which
 //   marks the promise as handled and would hide a real unhandled rejection.
 //   It uses `instanceof`, so `Object.create(Promise.prototype)` passes.
 // - isMapIterator / isSetIterator: the only brand check is `next`, which
 //   advances the iterator. They compare the prototype instead.
+// - isAsyncFunction / isGeneratorFunction: they compare the prototype, so an
+//   ordinary function given the intrinsic prototype with Object.setPrototypeOf
+//   passes.
+// - isGeneratorObject: it checks the prototype chain, so an ordinary object
+//   that indirectly inherits a generator prototype passes.
+// - isModuleNamespaceObject: a frozen null-prototype object whose
+//   Symbol.toStringTag is "Module" looks the same as an empty namespace.
+// - isArgumentsObject: an arguments object whose Symbol.toStringTag is a
+//   getter reports false, since reading the tag would run the getter.
+// - isNativeError: for an error whose Symbol.toStringTag hides [[ErrorData]],
+//   it clones the error with structuredClone, which reads its name, message
+//   and stack.
 // - isProxy: a proxy cannot be detected from JavaScript.
 // isExternal and isKeyObject are always false: neither kind of object exists
 // in a browser.
@@ -498,9 +511,33 @@ export const types = /* @__PURE__ */ (() => {
   const isBoxed = valueOf => v => typeof v === "object" && v !== null && brand(valueOf, v);
 
   // Arguments and native errors are the only slots that Object.prototype.toString
-  // reports, and a string Symbol.toStringTag hides them. With no tag, toString is
-  // an exact check that also works across realms.
-  const hasOwnTag = v => typeof v[Symbol.toStringTag] === "string";
+  // reports, and a Symbol.toStringTag hides them. With no tag, toString is an
+  // exact check that also works across realms.
+  // The Symbol.toStringTag the object exposes, found without calling a getter:
+  // undefined when there is no string data property, the string when there is
+  // one, and null for an accessor. Reading the tag through `v[...]` or
+  // Object.prototype.toString would run a getter, which Node.js never does.
+  const tagOf = v => {
+    try {
+      for (let o = v; o !== null; o = getProto(o)) {
+        const d = Object.getOwnPropertyDescriptor(o, Symbol.toStringTag);
+        if (d) return "value" in d ? (typeof d.value === "string" ? d.value : undefined) : null;
+      }
+      return undefined;
+    } catch {
+      return null;
+    }
+  };
+  // structuredClone serializes a value as an error only if it has [[ErrorData]]
+  // (HTML "StructuredSerializeInternal"), which makes it a brand check.
+  const hasErrorData = v => {
+    if (typeof structuredClone !== "function") return false;
+    try {
+      return structuredClone(v) instanceof Error;
+    } catch {
+      return false;
+    }
+  };
 
   const isNumberObject = isBoxed(Number.prototype.valueOf);
   const isStringObject = isBoxed(String.prototype.valueOf);
@@ -512,7 +549,7 @@ export const types = /* @__PURE__ */ (() => {
     sharedArrayBufferByteLength !== undefined && isObject(v) && brand(sharedArrayBufferByteLength, v);
 
   return {
-    isArgumentsObject: v => isObject(v) && !hasOwnTag(v) && objectToString.call(v) === "[object Arguments]",
+    isArgumentsObject: v => isObject(v) && tagOf(v) === undefined && objectToString.call(v) === "[object Arguments]",
     isArrayBuffer,
     isAsyncFunction: v =>
       typeof v === "function" &&
@@ -541,7 +578,12 @@ export const types = /* @__PURE__ */ (() => {
       return tag !== undefined && tag.value === "Module" && !tag.writable && !tag.configurable;
     },
     isNativeError: v =>
-      isObject(v) && (hasOwnTag(v) ? v instanceof Error : objectToString.call(v) === "[object Error]"),
+      isObject(v) &&
+      (tagOf(v) === undefined
+        ? objectToString.call(v) === "[object Error]"
+        : // A tag hides [[ErrorData]] from toString. Only an object on the
+          // Error prototype chain is cloned, so an unrelated spoof is not.
+          Error.prototype.isPrototypeOf(v) && hasErrorData(v)),
     isNumberObject,
     isPromise: v => typeof Promise === "function" && v instanceof Promise,
     isProxy: () => false,

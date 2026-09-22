@@ -2083,9 +2083,7 @@ impl VirtualMachine {
         bun_core::env_var::feature_flag::BUN_DESTRUCT_VM_ON_EXIT::get().unwrap_or(false)
     }
 
-    /// What `uncaught_exception` and `unhandled_rejection_owned` hold while they call the handlers:
-    /// see [`EventLoop::enter_scope_without_checkpoint`]. Nothing under `bun test`, whose runner can
-    /// start the next test from inside the report: that test runs with the count the runner has.
+    /// None under `bun test`: its runner can start the next test from inside the report.
     fn enter_error_handler_scope(
         &self,
     ) -> Option<crate::event_loop::EventLoopEnterNoCheckpointGuard> {

@@ -368,13 +368,6 @@ impl EventLoop {
     /// drains are unconditional, so the held count does not skip them, and the
     /// continuations they run are covered by it as well.
     ///
-    /// The `process` event dispatchers in `VirtualMachine.rs` (`'beforeExit'`,
-    /// `'exit'`, and `'uncaughtException'` / `'unhandledRejection'` with the
-    /// `Bun.ModuleGraph` `onError` they try first) hold it as well: the loop
-    /// can reach them between turns, with the count at zero, and what runs
-    /// once the listeners have returned is theirs to decide (an explicit
-    /// drain, or nothing after `'exit'`).
-    ///
     /// # Safety
     /// As [`Self::enter_scope`].
     #[inline]

@@ -118,6 +118,29 @@ describe("bundler", () => {
       api.expectFile("out.js").not.toInclude("import ");
     },
   });
+  // fileURLToPath, pathToFileURL, domainToASCII, domainToUnicode and
+  // urlToHttpOptions were missing from the url polyfill, so they were
+  // undefined. The expected output is what Node.js prints for the same code.
+  itBundled("browser/NodeUrlFileAndDomain", {
+    files: {
+      "/entry.js": /* js */ `
+        import { fileURLToPath, pathToFileURL, domainToASCII, domainToUnicode, urlToHttpOptions } from "node:url";
+        const tryCode = f => { try { f(); return "no error"; } catch (e) { return e.code; } };
+        console.log(fileURLToPath("file:///a/b%20c"), fileURLToPath("file:///C:/x/y", { windows: true }));
+        console.log(fileURLToPath("file://server/share/f", { windows: true }));
+        console.log(pathToFileURL("/a b/c#d?e%f").href, pathToFileURL("/café/").href);
+        console.log(domainToASCII("español.com"), domainToUnicode("xn--espaol-zwa.com"), JSON.stringify(domainToASCII("a:80")));
+        const o = urlToHttpOptions(new URL("https://u%40x:p@[::1]:8080/p?q#h"));
+        console.log(o.hostname, o.port, o.path, o.auth, Object.getPrototypeOf(o));
+        console.log(tryCode(() => fileURLToPath("http://x/")), tryCode(() => fileURLToPath("file:///a%2Fb")), tryCode(() => fileURLToPath("file://host/a")));
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout:
+        '/a/b c C:\\x\\y\n\\\\server\\share\\f\nfile:///a%20b/c%23d%3Fe%25f file:///caf%C3%A9/\nxn--espaol-zwa.com español.com ""\n::1 8080 /p?q u@x:p null\nERR_INVALID_URL_SCHEME ERR_INVALID_FILE_URL_PATH ERR_INVALID_FILE_URL_HOST',
+    },
+  });
   // The polyfill is plain JS bundled into the user's output, so it cannot use
   // JSC builtin intrinsics ($newPromiseCapability and friends). Those are
   // only rewritten inside src/js; in a browser bundle they are bare globals.

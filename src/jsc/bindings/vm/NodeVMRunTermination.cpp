@@ -16,6 +16,7 @@ static thread_local NodeVMRunTermination* s_innermostRunOnThisThread = nullptr;
 NodeVMRunTermination::NodeVMRunTermination(JSGlobalObject* realm, std::optional<Seconds> timeout, bool breakOnSigint)
     : m_vm(realm->vm())
     , m_realm(realm)
+    , m_scriptExecutionOwner(realm->m_asyncContextData->getInternalField(1))
     , m_timeout(timeout)
     , m_enclosing(std::exchange(s_innermostRunOnThisThread, this))
 {
@@ -65,6 +66,11 @@ void NodeVMRunTermination::finish(ThrowScope& scope)
         vm.notifyNeedTermination();
         return;
     }
+    // A termination runs no finally block: a function of a graph's that the run called from outside the graph entered the
+    // graph's context (JavaScriptCore's @callInScriptExecutionOwner) and was unwound without leaving it. The script that
+    // goes on from here is the one that started the run.
+    m_realm->m_asyncContextData->putInternalField(vm, 1, m_scriptExecutionOwner);
+
     {
         // Whatever else the cut-short run may have left pending: the timeout / interrupt error replaces it.
         auto top = DECLARE_TOP_EXCEPTION_SCOPE(vm);

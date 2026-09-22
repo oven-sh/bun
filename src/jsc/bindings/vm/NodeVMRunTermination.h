@@ -50,6 +50,9 @@ private:
 
     JSC::VM& m_vm;
     JSC::JSGlobalObject* const m_realm;
+    // What was current when the run started (JSGlobalObject::m_asyncContextData field 1). On the stack, where the
+    // collector sees it.
+    const JSC::JSValue m_scriptExecutionOwner;
     const std::optional<Seconds> m_timeout;
     std::atomic<bool> m_sigintReceived { false }; // read on this thread only once disarm()ed
     RefPtr<JSC::TerminationDeadline> m_deadline;

@@ -2012,7 +2012,6 @@ function endInboundHalf(stream: Http2Stream) {
 }
 
 enum StreamState {
-  EndedCalled = 1 << 0, // 00001 = 1
   WantTrailer = 1 << 1, // 00010 = 2
   FinalCalled = 1 << 2, // 00100 = 4
   Closed = 1 << 3, // 01000 = 8
@@ -2316,6 +2315,7 @@ class Http2Stream extends Duplex {
   [kSendingTrailers]: boolean = false;
   [kAborted]: boolean = false;
   [kHeadRequest]: boolean = false;
+  [kEndingWithChunk]: boolean = false;
   constructor(streamId, session, headers) {
     super({
       decodeStrings: false,
@@ -2811,7 +2811,6 @@ class Http2Stream extends Duplex {
   }
 
   end(chunk, encoding, callback) {
-    const status = this[bunHTTP2StreamStatus];
     if (typeof callback === "undefined") {
       if (typeof chunk === "function") {
         callback = chunk;
@@ -2822,12 +2821,6 @@ class Http2Stream extends Duplex {
       }
     }
 
-    if ((status & StreamState.EndedCalled) !== 0) {
-      typeof callback == "function" && callback();
-      // Writable#end always returns the stream (request(...).end() chains rely on it).
-      return this;
-    }
-    this[bunHTTP2StreamStatus] = status | StreamState.EndedCalled;
     // Don't create an empty buffer for end() without data - let the Duplex stream
     // handle it naturally (just calls _final without _write for empty data).
     // Creating an empty buffer here causes an extra empty DATA frame to be sent.
@@ -3201,6 +3194,10 @@ function serverStreamOnFinish(this: ServerHttp2Stream) {
 function callStreamClose(stream: ServerHttp2Stream) {
   if (!stream.destroyed && !stream.closed) stream.close();
 }
+// Completes later: respond() ended the writable side inside this write, and Writable finishes it only then.
+function dropBodyOfHeadResponse(callback: () => void) {
+  process.nextTick(callback);
+}
 class ServerHttp2Stream extends Http2Stream {
   headersSent = false;
   constructor(streamId, session, headers) {
@@ -3221,12 +3218,14 @@ class ServerHttp2Stream extends Http2Stream {
     // synchronously but the stream-level flags only flip on nextTick - respond() would throw.
     if (!this.headersSent && !this.destroyed && !this.closed && this.session !== undefined) {
       this.respond();
+      if (this.headRequest) return dropBodyOfHeadResponse(callback);
     }
     super._write(chunk, encoding, callback);
   }
   _writev(data, callback) {
     if (!this.headersSent && !this.destroyed && !this.closed && this.session !== undefined) {
       this.respond();
+      if (this.headRequest) return dropBodyOfHeadResponse(callback);
     }
     super._writev(data, callback);
   }
@@ -4179,7 +4178,7 @@ class ServerHttp2Session extends Http2Session {
         // Set the StreamResponded bit BEFORE dispatching the 'stream' event
         // synchronously to user code. The user handler may call
         // stream.respond()/stream.end() which set other bits (WantTrailer,
-        // FinalCalled, EndedCalled, WritableClosed). If we captured `status`
+        // FinalCalled, WritableClosed). If we captured `status`
         // and wrote it back AFTER the emit, we'd clobber any bits set by the
         // user handler — in particular, losing WantTrailer/FinalCalled breaks
         // any later `sendTrailers()` with ERR_HTTP2_TRAILERS_NOT_READY.

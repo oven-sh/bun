@@ -538,9 +538,9 @@ devTest("hook signature includes the binding the hook call is assigned to", {
     ]);
   },
 });
-// The parser builds an operator chain in a loop, so its depth has no bound.
-// Hashing it for the signature must not recurse until the stack overflows.
-const operatorChain = Buffer.alloc(200_000, "x+").toString() + "x";
+// The parser builds `x + x + …` in a loop, so its depth has no bound. The hash
+// for the signature must cover all of it and must not overflow the stack.
+const manyTerms = Buffer.alloc(200_000, "+x").toString();
 devTest("hook signature of an operator chain deeper than the stack", {
   framework: minimalFramework,
   files: {
@@ -551,23 +551,30 @@ devTest("hook signature of an operator chain deeper than the stack", {
     }),
     "index.tsx": `
       import { expectHook } from 'bun-devserver-react-mock';
-      import { chain } from './chain.tsx';
+      import { chain, chainWithFirstTermEdited } from './chain.tsx';
 
-      expectHook(chain);
-      console.log("PASS");
+      globalThis.signatures = [expectHook(chain), expectHook(chainWithFirstTermEdited)];
+      console.log("DONE");
     `,
-    // A Buffer, so that the harness writes the long line as it is.
+    // A Buffer, so that the harness writes the long lines as they are.
     "chain.tsx": Buffer.from(`
       import { useState } from "react";
-      const x = 1;
+      const x = 1, y = 2;
       export function chain() {
-        const [a = ${operatorChain}] = useState(${operatorChain});
+        const [a] = useState(x${manyTerms});
+      }
+      // The first term is the deepest node of the expression.
+      export function chainWithFirstTermEdited() {
+        const [a] = useState(y${manyTerms});
       }
     `),
   },
   async test(dev) {
     await using c = await dev.client("/", {});
-    await c.expectMessage("PASS");
+    await c.expectMessage("DONE");
+    const [chain, chainWithFirstTermEdited] = await c.js`globalThis.signatures`;
+    expect(chain).toBeString();
+    expect(chainWithFirstTermEdited).not.toBe(chain);
   },
 });
 

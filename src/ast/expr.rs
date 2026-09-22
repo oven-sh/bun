@@ -2183,7 +2183,8 @@ impl Data {
         H: bun_core::Hasher + ?Sized,
         S: crate::base::SymbolTable + ?Sized,
     {
-        // The parser builds `a + b + …` and `a.b.c…` in a loop, so their depth has no bound.
+        // The parser builds `a.b.c…` in a loop, so its depth has no bound. The visit pass
+        // reports a chain that deep as an error, and the hash of it still runs.
         if !stack_check.is_safe_to_recurse() {
             return;
         }
@@ -2229,13 +2230,31 @@ impl Data {
                     .write_to_hasher_with_check(hasher, symbol_table, stack_check);
             }
             Data::EBinary(e) => {
-                raw(hasher, e.op as u8);
-                e.left
+                // `a + b + …` nests on the left with no depth bound and is valid input, so
+                // walk the left spine on the heap, like the visitor and the printer do.
+                let mut node = *e;
+                let mut parents: Vec<StoreRef<E::Binary>> = Vec::new();
+                loop {
+                    raw(hasher, node.op as u8);
+                    let Data::EBinary(left) = node.left.data else {
+                        break;
+                    };
+                    raw(hasher, node.left.data.tag() as u8);
+                    parents.push(node);
+                    node = left;
+                }
+                node.left
                     .data
                     .write_to_hasher_with_check(hasher, symbol_table, stack_check);
-                e.right
+                node.right
                     .data
                     .write_to_hasher_with_check(hasher, symbol_table, stack_check);
+                while let Some(parent) = parents.pop() {
+                    parent
+                        .right
+                        .data
+                        .write_to_hasher_with_check(hasher, symbol_table, stack_check);
+                }
             }
             Data::EClass(_) => {}
             Data::ENew(_) | Data::ECall(_) => {}

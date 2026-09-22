@@ -498,9 +498,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// uWS filter: `+2` at TCP accept (before any TLS handshake), `-2` on
     /// `HttpContext::onClose` / `HttpResponse::upgrade()` — see
     /// `AsyncSocketData::filteredAccept`. Feeds [`Self::active_connection_count`].
-    /// `-3` when a node:http tunnel becomes idle (at read EOF with nothing left to send), `+3` when it has bytes to
-    /// send again, `-4` in place of `-2` when it closes idle — see `AsyncSocketData::filteredIdleTunnel`.
-    /// Feeds [`Self::idle_tunnel_count`].
+    /// `-3` / `+3`: a node:http tunnel becomes idle / has bytes to send again. `-4`: it closes idle.
     extern "C" fn on_connection_filter(
         _socket: *mut uws_sys::us_socket_t,
         opened: i32,
@@ -521,11 +519,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
                 3 => {
                     this.note_tunnel_idle(false);
-                    // A closed server dropped its loop ref when this tunnel became idle. While a listener is open,
-                    // the ref is the user's (`server.unref()`).
+                    // With a listener open, the loop ref is the user's to drop (`server.unref()`).
                     if !this.has_listener() {
-                        // SAFETY: `this` is not used again. A tunnel write reaches this from JavaScript, never
-                        // from inside `app.close()`, so no outer `&mut self` is live.
+                        // SAFETY: `this` is not used again, and a tunnel write never runs inside `app.close()`.
                         unsafe { &mut *user_data.cast::<Self>() }.ref_();
                     }
                     return;
@@ -1627,8 +1623,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         });
     }
 
-    /// Node.js: a handle at read EOF with no write pending is not active, so it does not hold the event loop.
-    /// Such a tunnel still counts as a connection: 'close' waits for it in JavaScript, and [`Self::is_drained`] waits for it here.
+    /// An idle tunnel is open but, like a libuv handle at EOF with no write pending, does not hold the loop.
     fn has_loop_holding_connections(&self) -> bool {
         self.active_connection_count.get() > self.idle_tunnel_count.get()
     }

@@ -170,9 +170,8 @@ struct AsyncSocketData {
      * same paths that balance +1. A filter that must account for every socket
      * that can still reach a handler counts these. */
     bool filteredAccept = false;
-    /* Whether it has fired the filter with -3 ("idle": a node:http tunnel at
-     * read EOF with nothing left to send, see setNodeHttpTunnelIdle). +3 undoes
-     * it, and an idle socket fires -4 in place of -2. */
+    /* Whether it has fired the filter with -3 (HttpResponse::setNodeHttpTunnelIdle).
+     * +3 undoes it, and an idle socket fires -4 in place of -2. */
     bool filteredIdleTunnel = false;
 };
 

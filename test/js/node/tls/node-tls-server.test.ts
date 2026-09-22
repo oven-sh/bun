@@ -2598,6 +2598,21 @@ describe.each(["tls", "net"])("%s server socket whose peer resets the connection
     // like node, the data is delivered before the error.
     if (!isWindows) expect(t.bytesRead()).toBeGreaterThan(0);
   });
+
+  // The socket reads, but the write runs before the event loop does, so its send() is the first
+  // to meet the reset and takes the socket error. Most of the chunk is still unsent then. Linux
+  // only: its loopback delivers the reset before terminate() returns.
+  it.skipIf(!isLinux)("fails a write that meets the reset before a read does, and calls its callback", async () => {
+    using t = await acceptPausedSocketAndFill();
+    t.socket.resume();
+    t.peer.terminate();
+    t.socket.write(Buffer.alloc(1024 * 1024), error => {
+      const { code, syscall } = (error ?? {}) as NodeJS.ErrnoException;
+      t.events.push(`write ${code} ${syscall}`);
+    });
+    await t.settled;
+    expect(t.events).toEqual(["write ECONNRESET write", "error ECONNRESET", "close hadError=true"]);
+  });
 });
 
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));

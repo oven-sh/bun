@@ -225,9 +225,7 @@ fn is_absolute_symlink_to_file(dir_fd: Fd, name: &bun_core::ZStr) -> bool {
         _ => return false,
     }
     match sys::fstatat(dir_fd, name) {
-        Ok(stat_buf) => {
-            sys::kind_from_mode(stat_buf.st_mode as sys::Mode) == sys::EntryKind::File
-        }
+        Ok(stat_buf) => sys::kind_from_mode(stat_buf.st_mode as sys::Mode) == sys::EntryKind::File,
         Err(_) => false,
     }
 }

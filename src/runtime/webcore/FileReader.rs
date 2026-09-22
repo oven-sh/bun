@@ -910,8 +910,7 @@ impl FileReader {
         self.reader().update_ref(enable);
     }
 
-    /// A reader locked (`true`) or released (`false`) the stream over this source. A released source does not keep the event loop alive.
-    /// The C++ callers are `userJS: no`, so this must not dispatch a read.
+    /// A reader locked (`true`) or released (`false`) the stream over this source. Its C++ callers are `userJS: no`: never dispatch a read here.
     pub(crate) fn set_reader_locked(&self, locked: bool) {
         if self.done.get() {
             return;

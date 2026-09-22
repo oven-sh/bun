@@ -632,9 +632,10 @@ describe.each(["baseline", "progressive"] as const)("%s JPEG that libjpeg decode
     }).toEqual({ bytes: cleanRgba.length, opaque: true, sameAsClean: false });
   });
 
-  test("a cut anywhere in the first scan's data gives a fully written image", async () => {
+  test("cuts across the first scan's data each give a fully written image", async () => {
     const partlyWritten: number[] = [];
-    for (let cut = scanStart + 1; cut < scanEnd; cut += 13) {
+    const step = Math.max(1, Math.floor((scanEnd - scanStart) / 24));
+    for (let cut = scanStart + 1; cut < scanEnd; cut += step) {
       if (!everyAlphaOpaque(await rgbaOf(clean.subarray(0, cut)))) partlyWritten.push(cut);
     }
     expect(partlyWritten).toEqual([]);

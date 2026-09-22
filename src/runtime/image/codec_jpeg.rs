@@ -16,7 +16,7 @@ unsafe extern "C" {
     fn tj3Destroy(h: tjhandle);
     fn tj3Set(h: tjhandle, param: c_int, value: c_int) -> c_int;
     fn tj3Get(h: tjhandle, param: c_int) -> c_int;
-    fn tj3GetErrorCode(h: tjhandle) -> c_int;
+    fn tj3BunCompletedWithWarning(h: tjhandle) -> c_int;
     fn tj3DecompressHeader(h: tjhandle, buf: *const u8, len: usize) -> c_int;
     fn tj3Decompress8(
         h: tjhandle,
@@ -67,10 +67,10 @@ impl Handle {
         self.0.as_ptr()
     }
 
-    /// Whether the decompress call that just returned `rc` ran to completion; with fatal-clears-warning.patch a warning alone still does.
+    /// Whether the decompress call that just returned `rc` ran to completion; a libjpeg warning alone still does.
     fn completed(&self, rc: c_int) -> bool {
-        // SAFETY: `self` owns a live tjhandle; this only reads the code, which the next tj3Set*/tj3GetICCProfile call resets.
-        rc == 0 || unsafe { tj3GetErrorCode(self.as_ptr()) } == TJERR_WARNING
+        // SAFETY: `self` owns a live tjhandle; this only reads a flag, which the next tj3Set*/tj3GetICCProfile call resets.
+        rc == 0 || unsafe { tj3BunCompletedWithWarning(self.as_ptr()) } != 0
     }
 
     /// SOF dimensions from the last header parse.
@@ -152,8 +152,6 @@ const TJPF_CMYK: c_int = 11;
 const TJCS_CMYK: c_int = 3;
 const TJCS_YCCK: c_int = 4;
 const TJSAMP_420: c_int = 2;
-/// `tj3GetErrorCode`: the last non-zero return was not fatal.
-const TJERR_WARNING: c_int = 0;
 
 pub(crate) fn decode(
     bytes: &[u8],

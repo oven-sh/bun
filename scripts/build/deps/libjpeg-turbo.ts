@@ -91,9 +91,10 @@ export const libjpegTurbo: Dependency = {
   }),
 
   // fatal-clears-warning.patch: after tj3DecompressHeader() and tj3Decompress8(),
-  // tj3GetErrorCode() reports TJERR_WARNING only for a call that ran to
-  // completion. codec_jpeg.rs commits the decoded rows on that signal, so do
-  // not drop the patch without changing that file.
+  // TurboJPEG's warning flag stays set only for a call that ran to completion.
+  // codec_jpeg.rs commits the decoded rows on that signal. It reads the flag
+  // through tj3BunCompletedWithWarning(), which the patch adds, so the link
+  // fails without the patch.
   patches: [
     "patches/libjpeg-turbo/8bit-only.patch",
     "patches/libjpeg-turbo/fatal-clears-warning.patch",

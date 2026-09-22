@@ -14,14 +14,34 @@ At the bailout label, retval is non-zero only after a fatal exit, so clear the
 flag there, as my_progress_monitor() does. TJERR_WARNING then means the call
 ran to completion: tj3DecompressHeader() parsed the whole header,
 tj3Decompress8() wrote every row. src/runtime/image/codec_jpeg.rs accepts a
-decode on that signal.
+decode on that signal. It reads the flag through tj3BunCompletedWithWarning(),
+which this patch adds, so a libjpeg-turbo without the patch fails to link.
 
 Upstream has the same sticky flag at 3.2.0 and at main (b33c60b4, 2026-09-18).
 There is no upstream issue for it.
 
 --- a/src/turbojpeg.c
 +++ b/src/turbojpeg.c
-@@ -1924,7 +1924,10 @@
+@@ -714,6 +714,18 @@
+   return tj3GetErrorCode(handle);
+ }
+ 
++/* bun: whether the last tj3DecompressHeader() or tj3Decompress8() call ran to
++ * completion while libjpeg warned.  The bailout hunks of this patch make the
++ * flag mean that.  src/runtime/image/codec_jpeg.rs calls this instead of
++ * tj3GetErrorCode(), so a build without the patch fails to link. */
++DLLEXPORT int tj3BunCompletedWithWarning(tjhandle handle);
++DLLEXPORT int tj3BunCompletedWithWarning(tjhandle handle)
++{
++  tjinstance *this = (tjinstance *)handle;
++
++  return this && this->jerr.warning;
++}
++
+ 
+ #define SET_PARAM(field, minValue, maxValue) { \
+   if (value < minValue || (maxValue > 0 && value > maxValue)) \
+@@ -1924,7 +1936,10 @@
      THROW("Invalid data returned in header");
  
  bailout:

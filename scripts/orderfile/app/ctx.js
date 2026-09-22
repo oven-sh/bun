@@ -67,6 +67,53 @@ export async function socketPath(name) {
   _socketDir ??= fs.mkdtempSync("/tmp/orderfile-");
   return path.join(_socketDir, name);
 }
+/**
+ * Generous next to what the exchanges take (well under a second, traced): they
+ * run eight at a time on a CI machine, and the required ones fail the order file.
+ */
+export const SOCKET_DEADLINE_MS = 30_000;
+
+/**
+ * How many bytes `socket` received by the time it closed. Rejects if it fails,
+ * closes without having received anything, or is still open at the deadline.
+ */
+export function drained(socket, label) {
+  return new Promise((resolve, reject) => {
+    let received = 0;
+    const deadline = setTimeout(
+      () => socket.destroy(new Error(`${label}: still open after ${SOCKET_DEADLINE_MS / 1000} s`)),
+      SOCKET_DEADLINE_MS,
+    );
+    socket.on("data", chunk => (received += chunk.length));
+    socket.on("error", reject);
+    socket.on("close", () => {
+      clearTimeout(deadline);
+      if (received > 0) resolve(received);
+      else reject(new Error(`${label}: closed without a response`));
+    });
+  });
+}
+
+/** The first chunk `socket` receives. Rejects if it fails, closes first, or has received nothing at the deadline. */
+export function firstChunk(socket, label) {
+  return new Promise((resolve, reject) => {
+    const deadline = setTimeout(
+      () => socket.destroy(new Error(`${label}: nothing after ${SOCKET_DEADLINE_MS / 1000} s`)),
+      SOCKET_DEADLINE_MS,
+    );
+    const settle = (settleWith, value) => {
+      clearTimeout(deadline);
+      socket.off("error", reject);
+      socket.off("close", closed);
+      settleWith(value);
+    };
+    const closed = () => settle(reject, new Error(`${label}: closed without a response`));
+    socket.once("data", chunk => settle(resolve, chunk));
+    socket.once("error", reject);
+    socket.once("close", closed);
+  });
+}
+
 export async function cleanTmp() {
   const { fs } = await need("fs");
   for (const dir of [_tmp, _socketDir]) if (dir) fs.rmSync(dir, { recursive: true, force: true });

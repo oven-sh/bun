@@ -8,7 +8,7 @@
 // is the HTTP client itself. fetch_tls and fetch_insecure are the same client
 // over TLS, with the server's certificate pinned and unverified. The servers run
 // in an untraced child (servers.js).
-import { bigObj, cert, need, servers, tmpdir } from "./ctx.js";
+import { bigObj, cert, drained, need, servers, tmpdir } from "./ctx.js";
 let sink = 0;
 // JSON.stringify(bigObj()) compressed with zstd ahead of time: an application decompresses far more than it compresses.
 const ZSTD_JSON =
@@ -50,16 +50,14 @@ export const features = {
   },
   async fetch_post_json() {
     const { base, common } = await env();
-    sink += (
-      await (
-        await fetch(base + "/echo", {
-          ...common,
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(bigObj()),
-        })
-      ).json()
-    ).got;
+    const response = await fetch(base + "/echo", {
+      ...common,
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(bigObj()),
+    });
+    if (!response.ok) throw new Error(`POST /echo: ${response.status}`);
+    sink += (await response.json()).got;
   },
   async fetch_post_blob() {
     const { base, common } = await env();
@@ -84,7 +82,9 @@ export const features = {
     const tls = { ca: CERT };
     sink += (await (await fetch(url + "/json", { tls })).json()).data.length;
     // A second request on the kept-alive connection, streamed.
-    sink += (await (await fetch(url + "/sse", { tls, method: "POST", body: "{}" })).text()).length;
+    const streamed = await fetch(url + "/sse", { tls, method: "POST", body: "{}" });
+    if (!streamed.ok) throw new Error(`POST /sse: ${streamed.status}`);
+    sink += (await streamed.text()).length;
   },
   async fetch_sse_iter() {
     const { base, common } = await env();
@@ -247,51 +247,31 @@ export const features = {
     const { net } = await need("net");
     const { srv } = await env();
     const echo = { address: () => ({ port: srv.echo }), close() {} };
-    await new Promise(resolve => {
-      const c = net.connect(echo.address().port, "127.0.0.1", () => {
-        c.write("hello\n");
-        c.write(Buffer.alloc(70000, 7));
-        c.end();
-      });
-      let n = 0;
-      c.on("data", d => (n += d.length));
-      c.on("close", () => {
-        sink += n;
-        resolve();
-      });
-      c.setKeepAlive(true, 1000);
-      c.setTimeout(4000, () => c.destroy());
+    const c = net.connect(echo.address().port, "127.0.0.1", () => {
+      c.write("hello\n");
+      c.write(Buffer.alloc(70000, 7));
+      c.end();
     });
+    c.setKeepAlive(true, 1000);
+    sink += await drained(c, "net echo");
     echo.close();
   },
   async tls_connect() {
     const { tls } = await need("tls");
     const { CERT, tlsServer } = await env();
-    await new Promise(resolve => {
-      const s = tls.connect(
-        { host: "127.0.0.1", port: tlsServer.port, ca: CERT, servername: "localhost", ALPNProtocols: ["http/1.1"] },
-        () => {
-          sink +=
-            s.authorized +
-            (s.getPeerCertificate()?.subject?.CN?.length | 0) +
-            (s.getProtocol()?.length | 0) +
-            (s.getCipher()?.name?.length | 0) +
-            (s.alpnProtocol?.length | 0);
-          s.write("GET /json HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
-        },
-      );
-      let n = 0;
-      s.on("data", d => (n += d.length));
-      s.on("close", () => {
-        sink += n > 0;
-        resolve();
-      });
-      s.on("error", () => resolve());
-      setTimeout(() => {
-        s.destroy();
-        resolve();
-      }, 4000);
-    });
+    const s = tls.connect(
+      { host: "127.0.0.1", port: tlsServer.port, ca: CERT, servername: "localhost", ALPNProtocols: ["http/1.1"] },
+      () => {
+        if (!s.authorized) return s.destroy(new Error(`tls.connect: ${s.authorizationError}`));
+        sink +=
+          (s.getPeerCertificate()?.subject?.CN?.length | 0) +
+          (s.getProtocol()?.length | 0) +
+          (s.getCipher()?.name?.length | 0) +
+          (s.alpnProtocol?.length | 0);
+        s.write("GET /json HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+      },
+    );
+    sink += await drained(s, "tls.connect");
   },
   async dns() {
     const { dns, util, net } = await need("dns", "util", "net");
@@ -388,7 +368,7 @@ export const features = {
     sink += execFileSync("/bin/cat", { input: "piped" }).length;
   },
   async bun_spawn() {
-    const bs = Bun.spawn(["/bin/sh", "-c", "for i in 1 2 3 4 5; do echo tick $i; sleep 0.05; done; sleep 5"], {
+    const bs = Bun.spawn(["/bin/sh", "-c", "for i in 1 2 3 4 5; do echo tick $i; sleep 0.05; done; sleep 60"], {
       stdout: "pipe",
       stderr: "pipe",
       stdin: "pipe",
@@ -404,9 +384,11 @@ export const features = {
       ticks += new TextDecoder().decode(value).split("tick").length - 1;
     }
     rd.releaseLock();
+    if (ticks < 3) throw new Error(`Bun.spawn: read ${ticks} of the child's lines before its output ended`);
     bs.kill("SIGTERM");
     sink += (await bs.exited) | 0;
-    sink += bs.signalCode?.length | 0;
+    if (bs.signalCode !== "SIGTERM") throw new Error(`Bun.spawn: the child ended with ${bs.signalCode ?? bs.exitCode}`);
+    sink += bs.signalCode.length;
     sink += bs.resourceUsage()?.maxRSS > 0;
   },
   async bun_spawnsync() {

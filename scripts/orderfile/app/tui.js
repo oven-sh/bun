@@ -25,7 +25,7 @@ export async function run(selected) {
   const BUDGET = 3000;
   const out = process.stdout,
     inp = process.stdin;
-  const isTTY = !!out.isTTY;
+  if (!out.isTTY || !inp.isTTY) throw new Error("the tui features need a terminal");
   let cols = out.columns || 100,
     rows = out.rows || 30;
   const ESC = "\x1b[",
@@ -55,6 +55,7 @@ export async function run(selected) {
     spinner: 0,
     streaming: null,
     keys: 0,
+    typed: 0,
     pastes: 0,
     resizes: 0,
     history: [],
@@ -141,9 +142,8 @@ export async function run(selected) {
       frame();
     }, 8);
   }
-  let done = false,
-    resolveDone;
-  const finished = new Promise(r => (resolveDone = r));
+  let done = false;
+  const { promise: finished, resolve: resolveDone, reject: rejectDone } = Promise.withResolvers();
   function onKey(str, key = {}) {
     state.keys++;
     if (key.ctrl && (key.name === "d" || key.name === "c")) return finish();
@@ -169,28 +169,27 @@ export async function run(selected) {
     clearInterval(spin);
     clearInterval(auto);
     if (state.streaming) clearInterval(state.streaming);
-    if (isTTY) {
-      w(ESC + (on.has("paste") ? "?2004l" : "") + ESC + "?25h" + ESC + "?1049l");
-      try {
-        inp.setRawMode(false);
-      } catch {}
-    }
+    w(ESC + (on.has("paste") ? "?2004l" : "") + ESC + "?25h" + ESC + "?1049l");
+    inp.setRawMode(false);
     inp.pause();
     inp.removeAllListeners("keypress");
     inp.removeAllListeners("data");
     console.log(
-      `tui: ${state.keys} keys, ${state.messages.length} messages, ${state.resizes} resizes, ${((performance.now() - T0) / 1000).toFixed(1)} s, tty=${isTTY}`,
+      `tui: ${state.keys} keys (${state.typed} typed), ${state.messages.length} messages, ${state.resizes} resizes, ${((performance.now() - T0) / 1000).toFixed(1)} s`,
     );
-    resolveDone();
+    // The script below types into the stream itself. Whoever runs this types too (the
+    // generator does, through its terminal): none of that arriving means the terminal is not wired up.
+    if (state.typed) resolveDone();
+    else rejectDone(new Error("nothing typed into the terminal arrived"));
   }
-  if (isTTY) {
-    w(ESC + "?1049h" + ESC + "?25l" + (on.has("paste") ? ESC + "?2004h" : "") + ESC + "2J");
-    inp.setRawMode(true);
-  }
+  w(ESC + "?1049h" + ESC + "?25l" + (on.has("paste") ? ESC + "?2004h" : "") + ESC + "2J");
+  inp.setRawMode(true);
   readline.emitKeypressEvents(inp);
   inp.setEncoding("utf8");
   inp.on("keypress", onKey);
+  let scripted = false;
   inp.on("data", d => {
+    if (!scripted) state.typed += d.length;
     if (d.includes("\x1b[200~")) state.pastes++;
   });
   inp.on("end", () => {});
@@ -217,8 +216,11 @@ export async function run(selected) {
   script.push("list the files 👀\r", "run the tests\r");
   let si = 0;
   const auto = setInterval(() => {
-    if (si < script.length) inp.emit("data", script[si++]);
-    else if (si++ === script.length && on.has("resize")) process.kill(process.pid, "SIGWINCH");
+    if (si < script.length) {
+      scripted = true;
+      inp.emit("data", script[si++]);
+      scripted = false;
+    } else if (si++ === script.length && on.has("resize")) process.kill(process.pid, "SIGWINCH");
     if (performance.now() - T0 > BUDGET) finish();
   }, 250);
   frame();

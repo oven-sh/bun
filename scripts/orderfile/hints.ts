@@ -27,9 +27,8 @@
  * Linux and macOS. The Windows tracer is a debugger of one process
  * (functrace-windows.c) and does not follow it into children.
  */
-import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { spawn } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { quote } from "../build/shell.ts";
@@ -38,9 +37,11 @@ import {
   buildTracerLibrary,
   flagValue,
   hostObjectFormat,
+  KILL_GRACE_MS,
   readTextSymbols,
   readTrace,
   sameCode,
+  withScratch,
   writeStarts,
 } from "./generate.ts";
 
@@ -75,7 +76,7 @@ export function busiestFirst(traces: number[][]): number[][] {
   });
 }
 
-export function traceHints(options: HintOptions): { count: number; processes: number } {
+export async function traceHints(options: HintOptions): Promise<{ count: number; processes: number }> {
   if (process.platform === "win32") throw new Error("hints.ts traces on linux and macOS only");
   const profile = resolve(options.profile);
   const exe = resolve(options.exe);
@@ -87,8 +88,7 @@ export function traceHints(options: HintOptions): { count: number; processes: nu
     throw new Error("the command never mentions {}, so nothing in it would start the application under the tracer");
   }
 
-  const scratch = mkdtempSync(join(tmpdir(), "bun-orderfile-hints-"));
-  try {
+  return withScratch("bun-orderfile-hints-", async (scratch, interrupted) => {
     const tracer = buildTracerLibrary(scratch);
     const symbols = readTextSymbols(profile);
     const starts = join(scratch, "starts.bin");
@@ -119,8 +119,35 @@ export function traceHints(options: HintOptions): { count: number; processes: nu
     chmodSync(launcher, 0o755);
 
     const [program, ...args] = options.command.map(arg => arg.replaceAll("{}", launcher));
-    const run = spawnSync(program!, args, { cwd: options.cwd, stdio: "inherit" });
-    if (run.error) throw new Error(`${program}: ${run.error.message}`);
+    // Not spawnSync: a signal held for the scratch directory's sake has to be able to stop the session.
+    const run = await new Promise<{ status: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+      // In our process group, so that it keeps the terminal and a ^C there reaches it as it reaches us.
+      const session = spawn(program!, args, { cwd: options.cwd, stdio: "inherit" });
+      let escalation: ReturnType<typeof setTimeout> | undefined;
+      const stop = () => {
+        session.kill("SIGTERM");
+        escalation = setTimeout(() => session.kill("SIGKILL"), KILL_GRACE_MS);
+      };
+      interrupted.addEventListener("abort", stop);
+      session.on("error", error => reject(new Error(`${program}: ${error.message}`)));
+      session.on("exit", (status, signal) => {
+        clearTimeout(escalation);
+        interrupted.removeEventListener("abort", stop);
+        resolve({ status, signal });
+      });
+    });
+    if (interrupted.aborted) {
+      // The command may have been a wrapper that left the application running: its records are
+      // named after its processes, which would go on writing them into a directory that is about to go.
+      for (const file of readdirSync(traces)) {
+        try {
+          process.kill(parseInt(file, 10), "SIGKILL");
+        } catch {
+          // Already gone.
+        }
+      }
+      throw interrupted.reason;
+    }
     if (run.status !== 0) throw new Error(`${program} exited ${run.status ?? run.signal}`);
     options.verify?.();
 
@@ -149,9 +176,7 @@ export function traceHints(options: HintOptions): { count: number; processes: nu
     ];
     writeFileSync(resolve(options.outPath), header.join("\n") + "\n" + names.join("\n") + "\n");
     return { count: names.length, processes: recorded.length };
-  } finally {
-    rmSync(scratch, { recursive: true, force: true });
-  }
+  });
 }
 
 if (import.meta.main) {
@@ -170,7 +195,12 @@ if (import.meta.main) {
     process.exit(1);
   }
   try {
-    const { count, processes } = traceHints({ profile: join(buildDir, "bun-profile"), exe, command, outPath: out });
+    const { count, processes } = await traceHints({
+      profile: join(buildDir, "bun-profile"),
+      exe,
+      command,
+      outPath: out,
+    });
     console.log(`wrote ${out} (${count} functions from ${processes} process(es))`);
   } catch (error) {
     console.error(`error: ${(error as Error).message}`);

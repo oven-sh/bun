@@ -6,7 +6,7 @@
 // state of an application waiting at its prompt: open sockets, watchers and a
 // listener, garbage from the work so far, then ten quiet seconds so the idle
 // collector and the finalizers it triggers run.
-import { base, cert, need, servers, socketPath, tmpdir } from "./ctx.js";
+import { base, cert, drained, firstChunk, need, servers, SOCKET_DEADLINE_MS, socketPath, tmpdir } from "./ctx.js";
 let sink = 0;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 // bun's idle collector runs its first full collection after ~10 s without heap growth.
@@ -31,53 +31,46 @@ export const features = {
     const { net, tls } = await need("net", "tls");
     const srv = await servers();
     const CERT = await cert();
-    for (let i = 0; i < 2; i++)
-      await new Promise(resolve => {
-        const raw = net.connect(srv.proxy, "127.0.0.1", () =>
-          raw.write(
-            `CONNECT localhost:${srv.tls} HTTP/1.1\r\nHost: localhost:${srv.tls}\r\nProxy-Authorization: Basic ${Buffer.from("u:p").toString("base64")}\r\n\r\n`,
-          ),
-        );
-        raw.once("data", head => {
-          if (!/^HTTP\/1\.[01] 200/.test(head.toString("latin1"))) {
-            raw.destroy();
-            return resolve();
-          }
-          const s = tls.connect({ socket: raw, servername: "localhost", ca: CERT, ALPNProtocols: ["http/1.1"] }, () => {
-            sink += s.authorized ? 1 : 0;
-            s.write("GET /json HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
-          });
-          let n = 0;
-          s.on("data", d => (n += d.length));
-          s.on("end", () => {
-            sink += n;
-          });
-          s.on("close", resolve);
-          s.on("error", () => resolve());
-        });
-        raw.on("error", () => resolve());
+    const tunnel = async headers => {
+      const raw = net.connect(srv.proxy, "127.0.0.1", () =>
+        raw.write(`CONNECT localhost:${srv.tls} HTTP/1.1\r\nHost: localhost:${srv.tls}\r\n${headers}\r\n`),
+      );
+      const status = (await firstChunk(raw, "CONNECT")).toString("latin1").split("\r\n", 1)[0];
+      if (!/^HTTP\/1\.[01] 200/.test(status)) {
+        raw.destroy();
+        throw new Error(`CONNECT: ${status}`);
+      }
+      return raw;
+    };
+    for (let i = 0; i < 2; i++) {
+      const raw = await tunnel(`Proxy-Authorization: Basic ${Buffer.from("u:p").toString("base64")}\r\n`);
+      const s = tls.connect({ socket: raw, servername: "localhost", ca: CERT, ALPNProtocols: ["http/1.1"] }, () => {
+        if (!s.authorized) return s.destroy(new Error(`tls over CONNECT: ${s.authorizationError}`));
+        s.write("GET /json HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
       });
+      sink += await drained(s, "tls over CONNECT");
+    }
     const { https } = await need("https");
     const agent = new https.Agent({ keepAlive: true, ca: CERT });
     agent.createConnection = (opts, cb) => {
-      const raw = net.connect(srv.proxy, "127.0.0.1");
-      raw.write(`CONNECT localhost:${srv.tls} HTTP/1.1\r\nHost: localhost\r\n\r\n`);
-      raw.once("data", () => cb(null, tls.connect({ socket: raw, servername: "localhost", ca: CERT })));
-      raw.on("error", cb);
+      tunnel("").then(raw => cb(null, tls.connect({ socket: raw, servername: "localhost", ca: CERT })), cb);
     };
-    await new Promise(resolve => {
+    await new Promise((resolve, reject) => {
       const req = https.request(
         { host: "127.0.0.1", servername: "localhost", port: srv.tls, path: "/json", agent },
         res => {
           let n = 0;
           res.on("data", d => (n += d.length));
+          res.on("error", reject);
           res.on("end", () => {
             sink += n;
-            resolve();
+            if (res.statusCode === 200 && n > 0) resolve();
+            else reject(new Error(`https over CONNECT: ${res.statusCode}, ${n} bytes`));
           });
         },
       );
-      req.on("error", () => resolve());
+      req.setTimeout(SOCKET_DEADLINE_MS, () => req.destroy(new Error("https over CONNECT: timed out")));
+      req.on("error", reject);
       req.end();
     });
     agent.destroy();
@@ -182,36 +175,30 @@ export const features = {
   async gap_socket_backpressure() {
     const { net } = await need("net");
     const srv = await servers();
-    await new Promise(resolve => {
-      const c = net.connect(srv.echo, "127.0.0.1", () => {
-        let w = 0;
-        const chunk = Buffer.alloc(1 << 20, 97);
-        const pump = () => {
-          while (w < 16) {
-            w++;
-            if (!c.write(chunk)) {
-              c.once("drain", pump);
-              return;
-            }
+    const c = net.connect(srv.echo, "127.0.0.1", () => {
+      let w = 0;
+      const chunk = Buffer.alloc(1 << 20, 97);
+      const pump = () => {
+        while (w < 16) {
+          w++;
+          if (!c.write(chunk)) {
+            c.once("drain", pump);
+            return;
           }
-          c.end();
-        };
-        pump();
-      });
-      let n = 0;
-      c.on("data", d => {
-        n += d.length;
-        if (n > 4 << 20 && !c.isPaused()) {
-          c.pause();
-          setTimeout(() => c.resume(), 5);
         }
-      });
-      c.on("close", () => {
-        sink += n;
-        resolve();
-      });
-      c.on("error", resolve);
+        c.end();
+      };
+      pump();
     });
+    let n = 0;
+    c.on("data", d => {
+      n += d.length;
+      if (n > 4 << 20 && !c.isPaused()) {
+        c.pause();
+        setTimeout(() => c.resume(), 5);
+      }
+    });
+    sink += await drained(c, "echo under backpressure");
   },
   async gap_bodies() {
     const req = new Request("https://example.com/v1/messages", {

@@ -163,22 +163,52 @@ export function runCommand(cmd: string[], options: RunOptions = {}) {
 }
 
 /** How long a command that was told to stop (SIGTERM) has before it is killed. */
-const KILL_GRACE_MS = 2_000;
+export const KILL_GRACE_MS = 2_000;
 
-/** How to stop each running command: they are in process groups of their own, which a signal to ours does not reach. */
-const running = new Set<(why: string) => void>();
 const ENDING_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
-let ending: NodeJS.Signals | undefined;
-const stopRunning = (signal: NodeJS.Signals) => {
-  ending ??= signal;
-  for (const stop of running) stop(`the generator got ${signal}`);
-};
-/** A command is gone. With the last of them, so are we, if that is what we were waiting for. */
-const finished = (stop: (why: string) => void) => {
-  if (!running.delete(stop) || running.size) return;
-  for (const name of ENDING_SIGNALS) process.removeListener(name, stopRunning);
-  if (ending) process.kill(process.pid, ending);
-};
+const nextTurn = () => new Promise(resolve => setImmediate(resolve));
+
+/**
+ * Runs `work` with a scratch directory that is gone afterwards, also when a
+ * signal ends the process: the directory holds a copy of bun. A signal is held
+ * while `work` runs; it aborts `interrupted` (which `work` passes on to whatever
+ * it is waiting for, and checks between synchronous steps), and once the
+ * directory is removed the process ends the way the signal would have ended it.
+ */
+export async function withScratch<T>(
+  prefix: string,
+  work: (scratch: string, interrupted: AbortSignal) => T | Promise<T>,
+): Promise<T> {
+  const scratch = mkdtempSync(join(tmpdir(), prefix));
+  const controller = new AbortController();
+  let ending: NodeJS.Signals | undefined;
+  const hold = (signal: NodeJS.Signals) => {
+    ending ??= signal;
+    controller.abort(new Error(`interrupted by ${signal}`));
+  };
+  for (const name of ENDING_SIGNALS) process.on(name, hold);
+  try {
+    return await work(scratch, controller.signal);
+  } finally {
+    try {
+      rmSync(scratch, { recursive: true, force: true });
+    } finally {
+      // A signal that arrived while a synchronous command had the thread is only delivered on the next turn.
+      await nextTurn();
+      for (const name of ENDING_SIGNALS) process.removeListener(name, hold);
+      if (ending) {
+        process.kill(process.pid, ending);
+        await new Promise(resolve => setTimeout(resolve, 1_000)); // until it lands
+      }
+    }
+  }
+}
+
+/** Between two synchronous steps, neither of which could be interrupted: gives a held signal its turn. */
+export async function checkpoint(interrupted: AbortSignal): Promise<void> {
+  await nextTurn();
+  interrupted.throwIfAborted();
+}
 
 /**
  * `runCommand` without blocking, for workloads traced several at a time. Stdin
@@ -190,8 +220,7 @@ const finished = (stop: (why: string) => void) => {
  * that group: SIGTERM, which ptyrun passes on to its child's group as SIGKILL,
  * then SIGKILL. A stopped command is settled when it exits rather than when its
  * output closes, which a descendant holding the pipe can delay for as long as
- * it lives. A signal that would end the generator stops every running command
- * this way first.
+ * it lives.
  */
 export function runCommandAsync(
   cmd: string[],
@@ -200,7 +229,12 @@ export function runCommandAsync(
   return new Promise((resolve, reject) => {
     const label = options.label ?? cmd[0]!;
     const windows = process.platform === "win32";
-    if (ending) return reject(new Error(`${label}: not started, the generator got ${ending}`));
+    const child = spawn(cmd[0]!, cmd.slice(1), {
+      env: { ...process.env, ...options.env },
+      cwd: options.cwd,
+      stdio: ["pipe", "pipe", "pipe"],
+      detached: !windows,
+    });
 
     let stopped: string | undefined;
     let escalation: ReturnType<typeof setTimeout> | undefined;
@@ -218,17 +252,6 @@ export function runCommandAsync(
       signalGroup("SIGTERM");
       escalation = setTimeout(() => signalGroup("SIGKILL"), KILL_GRACE_MS);
     };
-    // Before the group exists, so that there is never one a signal to us would miss.
-    if (!windows) {
-      if (running.size === 0) for (const name of ENDING_SIGNALS) process.on(name, stopRunning);
-      running.add(stop);
-    }
-    const child = spawn(cmd[0]!, cmd.slice(1), {
-      env: { ...process.env, ...options.env },
-      cwd: options.cwd,
-      stdio: ["pipe", "pipe", "pipe"],
-      detached: !windows,
-    });
     // On a terminal the command's stderr arrives on stdout too. Only the end of
     // it is kept: it is there for an error message.
     let output = "";
@@ -242,21 +265,23 @@ export function runCommandAsync(
         : setTimeout(() => stop(`timed out after ${options.timeout! / 1000} s`), options.timeout);
     const abort = () => stop("stopped with the rest of its group");
     options.signal?.addEventListener("abort", abort);
+    const release = () => {
+      clearTimeout(timer);
+      clearTimeout(escalation);
+      options.signal?.removeEventListener("abort", abort);
+    };
 
     // Goes by what the command did, not by what was asked of it: one that
     // finished just as it was being stopped still finished.
     const settle = (status: number | null, signal: NodeJS.Signals | null) => {
-      clearTimeout(timer);
-      clearTimeout(escalation);
-      options.signal?.removeEventListener("abort", abort);
+      release();
       if (status === 0) resolve({ status, output });
       else if (stopped !== undefined) reject(new Error(`${label}: ${stopped}\n${output}`));
       else if (signal) reject(new Error(`${label}: killed by ${signal}\n${output}`));
       else resolve({ status, output });
-      finished(stop);
     };
     child.on("error", error => {
-      clearTimeout(timer);
+      release();
       reject(new Error(`${label}: ${error.message}`));
     });
     child.on("exit", (status, signal) => {
@@ -816,6 +841,8 @@ export interface GroupPolicy {
   maxFailures: number;
   /** For the whole group, in milliseconds. */
   timeoutMs: number;
+  /** Ends the group with its reason when it aborts. */
+  interrupted?: AbortSignal;
 }
 
 export interface GroupResult<T> {
@@ -861,6 +888,10 @@ export async function runGroup<T>(
     policy.timeoutMs,
   );
 
+  const interrupt = () => stop(policy.interrupted!.reason);
+  policy.interrupted?.addEventListener("abort", interrupt);
+  if (policy.interrupted?.aborted) interrupt();
+
   let next = 0;
   const worker = async () => {
     while (!controller.signal.aborted && next < names.length) {
@@ -902,6 +933,7 @@ export async function runGroup<T>(
     await Promise.all(Array.from({ length: policy.concurrency }, worker));
   } finally {
     clearTimeout(deadline);
+    policy.interrupted?.removeEventListener("abort", interrupt);
   }
   if (fatal) throw fatal;
   return { results, failures };
@@ -924,9 +956,9 @@ export async function generateOrderFile(options: GenerateOptions): Promise<{ cou
     throw new Error(`${bunProfile} not found — build it first (bun run build:release)`);
   }
 
-  const scratch = mkdtempSync(join(tmpdir(), "bun-orderfile-"));
-  try {
+  return withScratch("bun-orderfile-", async (scratch, interrupted) => {
     const tracer = windows ? buildWindowsTracer(scratch) : buildUnixTracer(scratch);
+    await checkpoint(interrupted);
 
     // ── Symbol table and function starts ──────────────────────────────────────
     const symbols = readTextSymbols(bunProfile);
@@ -983,6 +1015,7 @@ export async function generateOrderFile(options: GenerateOptions): Promise<{ cou
     );
     const installEnv = { BUN_INSTALL_CACHE_DIR: join(scratch, "install-cache") };
 
+    await checkpoint(interrupted);
     const steps: (Workload | WorkloadGroup)[] = [
       { name: "bun -e", args: ["-e", "console.log(1)"] },
       ...(windows ? [] : [appWorkloads(bunProfile, scratch)]),
@@ -1048,6 +1081,7 @@ export async function generateOrderFile(options: GenerateOptions): Promise<{ cou
     };
 
     for (const step of steps) {
+      await checkpoint(interrupted);
       if (!("workloads" in step)) {
         const { cmd, options, out } = launch(step);
         const r = runCommand(cmd, { ...options, timeout: WORKLOAD_TIMEOUT_MS });
@@ -1076,6 +1110,7 @@ export async function generateOrderFile(options: GenerateOptions): Promise<{ cou
           required: new Set(step.required),
           maxFailures: Math.floor(names.length * MAX_GROUP_FAILURES),
           timeoutMs: GROUP_TIMEOUT_MS,
+          interrupted,
         },
       );
 
@@ -1120,11 +1155,10 @@ export async function generateOrderFile(options: GenerateOptions): Promise<{ cou
       "# Generated by scripts/orderfile/generate.ts — not committed.",
       `# ${order.length} functions from ${traces} workloads${hinted ? ` and ${hinted} hinted` : ""}.`,
     ];
+    await checkpoint(interrupted);
     writeFileSync(outPath, header.join("\n") + "\n" + order.join("\n") + "\n");
     return { count: order.length, outPath };
-  } finally {
-    rmSync(scratch, { recursive: true, force: true });
-  }
+  });
 }
 
 /** The value of `--name=value` in `argv`, if it is there. */

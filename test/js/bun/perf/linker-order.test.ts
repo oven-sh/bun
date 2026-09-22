@@ -1,6 +1,6 @@
 import { afterAll, afterEach, describe, expect, it, jest } from "bun:test";
-import { bunEnv, bunExe, isMusl, isWindows, nodeExe, tempDir } from "harness";
-import { appendFileSync, chmodSync, copyFileSync, existsSync, readdirSync, readFileSync } from "node:fs";
+import { bunEnv, bunExe, isASAN, isDebug, isMusl, isWindows, nodeExe, tempDir } from "harness";
+import { appendFileSync, chmodSync, copyFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   candidateBuilds,
@@ -625,6 +625,39 @@ describe("app workloads", () => {
   });
 });
 
+/** Waits for a command to have written who it is (`<pid>,<pid of what it started>`) to `pids`, unless `command` ended first. */
+async function started(pids: string, command: Promise<unknown>) {
+  let ended = false;
+  command.then(
+    () => (ended = true),
+    () => (ended = true),
+  );
+  const written = () => (existsSync(pids) ? /^(\d+),(\d+)\n$/.exec(readFileSync(pids, "utf8")) : null);
+  while (!ended && !written()) await Bun.sleep(1);
+  return written()!.slice(1).map(Number);
+}
+
+/** A process's state letter, or undefined if there is no such process. */
+function processState(pid: number): string | undefined {
+  if (process.platform === "linux") {
+    try {
+      return /\) (\S)/.exec(readFileSync(`/proc/${pid}/stat`, "utf8"))?.[1];
+    } catch {
+      return undefined;
+    }
+  }
+  const ps = Bun.spawnSync({ cmd: ["ps", "-o", "stat=", "-p", String(pid)], env: bunEnv });
+  return ps.exitCode === 0 ? ps.stdout.toString().trim()[0] : undefined;
+}
+
+/** A process nobody reaps stays a zombie, which is as gone as it gets. */
+async function expectGone(pids: number[]) {
+  expect(processState(process.pid)).toBeDefined();
+  const alive = () => pids.filter(pid => ![undefined, "Z"].includes(processState(pid)));
+  for (const deadline = Date.now() + 3_000; alive().length && Date.now() < deadline; ) await Bun.sleep(5);
+  expect(alive()).toEqual([]);
+}
+
 /**
  * A group is hundreds of small runs. One failing is worth a warning; a required
  * one failing, too many failing, or the group running out of time ends the
@@ -723,39 +756,6 @@ describe("workload groups", () => {
   // Says who it and its descendant are, which holds the output pipes open and would run for a minute.
   const lingering = (pids: string) => ["/bin/sh", "-c", `sleep 60 & echo $$,$! > "$1"; wait`, "sh", pids];
 
-  /** Waits for `lingering` to have said who it is, unless `command` ended first. */
-  async function started(pids: string, command: Promise<unknown>) {
-    let ended = false;
-    command.then(
-      () => (ended = true),
-      () => (ended = true),
-    );
-    const written = () => (existsSync(pids) ? /^(\d+),(\d+)\n$/.exec(readFileSync(pids, "utf8")) : null);
-    while (!ended && !written()) await Bun.sleep(1);
-    return written()!.slice(1).map(Number);
-  }
-
-  /** A process's state letter, or undefined if there is no such process. */
-  function processState(pid: number): string | undefined {
-    if (process.platform === "linux") {
-      try {
-        return /\) (\S)/.exec(readFileSync(`/proc/${pid}/stat`, "utf8"))?.[1];
-      } catch {
-        return undefined;
-      }
-    }
-    const ps = Bun.spawnSync({ cmd: ["ps", "-o", "stat=", "-p", String(pid)], env: bunEnv });
-    return ps.exitCode === 0 ? ps.stdout.toString().trim()[0] : undefined;
-  }
-
-  /** A process nobody reaps stays a zombie, which is as gone as it gets. */
-  async function expectGone(pids: number[]) {
-    expect(processState(process.pid)).toBeDefined();
-    const alive = () => pids.filter(pid => ![undefined, "Z"].includes(processState(pid)));
-    for (const deadline = Date.now() + 3_000; alive().length && Date.now() < deadline; ) await Bun.sleep(5);
-    expect(alive()).toEqual([]);
-  }
-
   it.skipIf(isWindows)("stops a command, and what it started, when its signal aborts", async () => {
     using dir = tempDir("orderfile-stop", {});
     const controller = new AbortController();
@@ -796,19 +796,96 @@ describe("workload groups", () => {
     expect((await command).status).toBe(0);
   });
 
-  it.skipIf(isWindows)("takes its running commands with it when a signal ends the generator", async () => {
-    using dir = tempDir("orderfile-stop", {});
-    const pids = join(String(dir), "pids");
+  it("ends a group when what it was given to be interrupted by aborts", async () => {
+    const interrupted = new AbortController();
+    const started: number[] = [];
+    const group = runGroup(
+      "test",
+      names(10),
+      (i, signal) => {
+        started.push(i);
+        return untilKilled(signal);
+      },
+      { ...policy, required: new Set(["run 0"]), interrupted: interrupted.signal },
+    );
+    interrupted.abort(new Error("interrupted by SIGTERM"));
+    await expect(group).rejects.toThrow("interrupted by SIGTERM");
+    // The two that were running, and no second try of the required one.
+    expect(started).toEqual([0, 1]);
+  });
+
+  /**
+   * A generator in miniature: withScratch around one command that says who it is, then a checkpoint, then the
+   * output. `shell` is the command ($1 is where it says who it is, $2 appears when it may finish), `command` how
+   * the generator runs it.
+   */
+  async function interruptGenerator(shell: string, command: string, whenStarted: (go: string) => void) {
+    using dir = tempDir("orderfile-interrupt", {});
+    const [pids, go, out, scratchPath] = ["pids", "go", "out", "scratch-path"].map(name => join(String(dir), name));
     const generate = join(import.meta.dir, "../../../../scripts/orderfile/generate.ts");
     const script = `
-      const { runCommandAsync } = await import(${JSON.stringify(generate)});
-      await runCommandAsync(${JSON.stringify(lingering(pids))}, {});`;
-    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const { spawnSync } = require("node:child_process");
+      const { writeFileSync } = require("node:fs");
+      const { checkpoint, runCommandAsync, withScratch } = await import(${JSON.stringify(generate)});
+      const command = ["/bin/sh", "-c", ${JSON.stringify(shell)}, "sh", ${JSON.stringify(pids)}, ${JSON.stringify(go)}];
+      await withScratch("orderfile-interrupt-", async (scratch, interrupted) => {
+        writeFileSync(${JSON.stringify(scratchPath)}, scratch);
+        ${command};
+        await checkpoint(interrupted);
+        writeFileSync(${JSON.stringify(out)}, "written");
+      });`;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, TMPDIR: String(dir) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     const running = await started(pids, proc.exited);
+    const scratch = readFileSync(scratchPath, "utf8");
+    expect(existsSync(scratch)).toBe(true);
     proc.kill("SIGTERM");
+    whenStarted(go);
     await proc.exited;
-    expect(proc.signalCode).toBe("SIGTERM");
-    await expectGone(running);
+    expect({ signalCode: proc.signalCode, scratch: existsSync(scratch), written: existsSync(out) }).toEqual({
+      signalCode: "SIGTERM",
+      scratch: false,
+      written: false,
+    });
+    return running;
+  }
+
+  it.skipIf(isWindows)(
+    "a signal stops what is running, removes the scratch directory, and then ends the generator",
+    async () => {
+      // The command never finishes by itself: the signal has to stop it.
+      const running = await interruptGenerator(
+        `sleep 60 & echo $$,$! > "$1"; wait`,
+        `await runCommandAsync(command, { signal: interrupted })`,
+        () => {},
+      );
+      await expectGone(running);
+    },
+  );
+
+  it.skipIf(isWindows)(
+    "a signal that arrives during a synchronous command ends the generator after it, with nothing written",
+    async () => {
+      // The signal cannot be handled while spawnSync has the thread; the command is let finish afterwards.
+      await interruptGenerator(
+        `echo $$,$$ > "$1"; until [ -e "$2" ]; do sleep 0.01; done`,
+        `spawnSync(command[0], command.slice(1))`,
+        go => writeFileSync(go, ""),
+      );
+    },
+  );
+
+  it.skipIf(isWindows)("a signal that arrives during a synchronous command that then fails still ends it", async () => {
+    // No checkpoint is reached: withScratch itself has to give the signal its turn before letting go of it.
+    await interruptGenerator(
+      `echo $$,$$ > "$1"; until [ -e "$2" ]; do sleep 0.01; done`,
+      `spawnSync(command[0], command.slice(1)); throw new Error("the step failed")`,
+      go => writeFileSync(go, ""),
+    );
   });
 });
 
@@ -1169,9 +1246,23 @@ describe.skipIf(!canTrace || isWindows)("function tracer, following children", (
     // What stands between a shell and an application often enough: env, nice, time, sh -c.
     "wrapper.c":
       "#include <unistd.h>\nint main(int argc, char **argv) { return argc < 2 ? 2 : execv(argv[1], argv + 1); }\n",
+    // An application that says who it is and then stays up.
+    "stay.c": [
+      "#include <stdio.h>",
+      "#include <unistd.h>",
+      "int main(int argc, char **argv) {",
+      '    FILE *f = fopen(argv[1], "w");',
+      '    fprintf(f, "%d,%d\\n", (int)getpid(), (int)getpid());',
+      "    fclose(f);",
+      "    for (;;) pause();",
+      "}",
+      "",
+    ].join("\n"),
   });
   afterAll(() => binaries[Symbol.dispose]());
-  let built: Promise<{ tracer: string; self: string; other: string; wrapper: string; starts: string }> | undefined;
+  let built:
+    | Promise<{ tracer: string; self: string; other: string; wrapper: string; stay: string; starts: string }>
+    | undefined;
   const build = () =>
     (built ??= (async () => {
       const dir = String(binaries);
@@ -1179,15 +1270,17 @@ describe.skipIf(!canTrace || isWindows)("function tracer, following children", (
       const self = join(dir, "self");
       const other = join(dir, "other");
       const wrapper = join(dir, "wrapper");
+      const stay = join(dir, "stay");
       const starts = join(dir, "starts.bin");
       await Promise.all([
         compile([...shared, "-o", tracer, join(orderfile, "functrace.c"), ...(darwin ? [] : ["-ldl", "-lpthread"])]),
         compile(["-o", self, join(dir, "self.c")]),
         compile(["-o", other, join(dir, "other.c")]),
         compile(["-o", wrapper, join(dir, "wrapper.c")]),
+        compile(["-o", stay, join(dir, "stay.c")]),
       ]);
       writeStarts(starts, readTextSymbols(self).keys());
-      return { tracer, self, other, wrapper, starts };
+      return { tracer, self, other, wrapper, stay, starts };
     })());
 
   /** The environment that asks for children to be followed. */
@@ -1299,8 +1392,10 @@ describe.skipIf(!canTrace || isWindows)("function tracer, following children", (
 
     // The fixture is its own "profile": an unstripped binary whose code is the application's.
     const out = join(root, "app.hints");
-    expect(() => traceHints({ profile: self, exe: self, command: [self, other], outPath: out })).toThrow(/\{\}/);
-    const { processes } = traceHints({ profile: self, exe: self, command: ["{}", other], outPath: out });
+    await expect(traceHints({ profile: self, exe: self, command: [self, other], outPath: out })).rejects.toThrow(
+      /\{\}/,
+    );
+    const { processes } = await traceHints({ profile: self, exe: self, command: ["{}", other], outPath: out });
     expect(processes).toBe(2);
 
     const names = readNameList(out).map(name => (darwin ? name.replace(/^_/, "") : name));
@@ -1311,6 +1406,37 @@ describe.skipIf(!canTrace || isWindows)("function tracer, following children", (
       "parent_only",
       "child_only",
     ]);
+  });
+
+  it.concurrent("hints.ts takes the application with it when a signal ends it, wrapper or not", async () => {
+    const { stay } = await build();
+    using dir = tempDir("orderfile-hints-stop", {});
+    const pids = join(String(dir), "pids");
+    const hints = join(import.meta.dir, "../../../../scripts/orderfile/hints.ts");
+    // The session's command is a wrapper: stopping it leaves the application running.
+    const script = `
+      const { traceHints } = await import(${JSON.stringify(hints)});
+      await traceHints({
+        profile: ${JSON.stringify(stay)},
+        exe: ${JSON.stringify(stay)},
+        command: ["/bin/sh", "-c", '"$0" "$1" & wait', "{}", ${JSON.stringify(pids)}],
+        outPath: ${JSON.stringify(join(String(dir), "app.hints"))},
+      });`;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, TMPDIR: String(dir) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const application = await started(pids, proc.exited);
+    proc.kill("SIGTERM");
+    await proc.exited;
+    expect({
+      signalCode: proc.signalCode,
+      scratch: readdirSync(String(dir)).filter(name => name.startsWith("bun-orderfile-hints-")),
+      written: existsSync(join(String(dir), "app.hints")),
+    }).toEqual({ signalCode: "SIGTERM", scratch: [], written: false });
+    await expectGone(application);
   });
 
   it("hints.ts orders two processes that entered as many functions by what they entered, not by which it read first", () => {
@@ -1344,25 +1470,22 @@ describe.skipIf(!canTrace || isWindows)("function tracer, following children", (
 
   // `bun build --compile` rewrites headers around the code it copies (ELF program
   // headers, Mach-O load commands and signature), which a plain append does not model.
-  it.concurrent(
-    "finds bun's own code unchanged in an executable bun compiled",
-    async () => {
-      using dir = tempDir("orderfile-same-code-compiled", { "app.js": "console.log(1);\n" });
-      const compiled = join(String(dir), "app");
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "build", "--compile", join(String(dir), "app.js"), "--outfile", compiled],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-      expect({ stderr: stderr.includes("error"), exitCode }).toEqual({ stderr: false, exitCode: 0 });
-      expect(sameCode(bunExe(), compiled)).toBe(true);
-      // A debug build is a gigabyte to copy and to compare.
-    },
-    60_000,
-  );
+  // Half a second with a release bun, and not alongside the other tests' compilers. Not with a debug or ASAN bun,
+  // which is over a gigabyte to copy and compare: the release lanes rewrite the same headers.
+  it.skipIf(isDebug || isASAN)("finds bun's own code unchanged in an executable bun compiled", async () => {
+    using dir = tempDir("orderfile-same-code-compiled", { "app.js": "console.log(1);\n" });
+    const compiled = join(String(dir), "app");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", join(String(dir), "app.js"), "--outfile", compiled],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ stderr: stderr.includes("error"), exitCode }).toEqual({ stderr: false, exitCode: 0 });
+    expect(sameCode(bunExe(), compiled)).toBe(true);
+  });
 
   it.concurrent("refuses to follow children into one shared file", async () => {
     const { stdout, stderr, exitCode, traces } = await traceSelfExec(await following(), "trace.bin");

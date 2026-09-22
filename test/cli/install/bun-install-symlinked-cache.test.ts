@@ -42,9 +42,9 @@ async function install(cwd: string, cache: string, args: string[]) {
 }
 
 describe.skipIf(isWindows)("install from a cache whose files are symlinks", () => {
-  for (const backend of ["hardlink", "copyfile", "symlink"]) {
-    for (const linker of ["hoisted", "isolated"]) {
-      test.concurrent(`${backend} backend, ${linker} linker`, async () => {
+  describe.each(["hardlink", "copyfile", "symlink"])("%s backend", backend => {
+    describe.each(["hoisted", "isolated"])("%s linker", linker => {
+      test.concurrent("installs the package files", async () => {
         using dir = tempDir(`symlinked-cache-${backend}-${linker}`, {
           "package.json": JSON.stringify({
             name: "symlinked-cache-test",
@@ -69,6 +69,6 @@ describe.skipIf(isWindows)("install from a cache whose files are symlinks", () =
           version: "0.0.2",
         });
       });
-    }
-  }
+    });
+  });
 });

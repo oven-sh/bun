@@ -3064,6 +3064,58 @@ declare module "bun" {
   }
 
   /**
+   * A version 3 source map, as a plain object.
+   *
+   * {@link Transpiler.transformWithSourceMap} and
+   * {@link Transpiler.transformWithSourceMapSync} return it. It is an object,
+   * not text. To write it to a file or into a `sourceMappingURL` comment,
+   * convert it with `JSON.stringify(map)` first.
+   */
+  interface TranspilerSourceMap {
+    version: 3;
+    /**
+     * The name of the input. There is one entry.
+     *
+     * `Bun.Transpiler` receives code, not a file, so the entry is a placeholder
+     * that depends on the loader, such as `"input.ts"`. Replace it with the name
+     * that your tools expect: `map.sources[0] = "src/app.ts"`.
+     */
+    sources: string[];
+    /**
+     * The input code. There is one entry.
+     *
+     * If `code` was a string, the entry is that string. If `code` was bytes, the
+     * entry is the decoded text of the bytes.
+     */
+    sourcesContent: string[];
+    /**
+     * The mappings, as Base64 VLQ. Lines and columns start at 0. A column counts
+     * UTF-16 code units, like an index into a JavaScript string.
+     */
+    mappings: string;
+    /**
+     * Always empty. Bun does not record the original names of identifiers, so
+     * the map cannot restore a name that `minify` changed.
+     */
+    names: string[];
+  }
+
+  /**
+   * The result of {@link Transpiler.transformWithSourceMap} and
+   * {@link Transpiler.transformWithSourceMapSync}.
+   */
+  interface TransformWithSourceMapResult {
+    /**
+     * The transpiled code. It is the same code that {@link Transpiler.transform}
+     * resolves to for the same `code` and `loader`. It has no `sourceMappingURL`
+     * comment.
+     */
+    code: string;
+    /** The source map from `code` back to the input. */
+    map: TranspilerSourceMap;
+  }
+
+  /**
    * Quickly transpile TypeScript, JSX, or JS to modern JavaScript.
    *
    * @example
@@ -3089,18 +3141,21 @@ declare module "bun" {
     /**
      * Transpile code from TypeScript or JSX into valid JavaScript.
      * This function does not resolve imports.
+     * To also get a source map, use {@link Transpiler.transformWithSourceMap}.
      * @param code The code to transpile
      */
     transform(code: Bun.StringOrBuffer, loader?: JavaScriptLoader): Promise<string>;
     /**
      * Transpile code from TypeScript or JSX into valid JavaScript.
      * This function does not resolve imports.
+     * To also get a source map, use {@link Transpiler.transformWithSourceMapSync}.
      * @param code The code to transpile
      */
     transformSync(code: Bun.StringOrBuffer, loader: JavaScriptLoader, ctx: object): string;
     /**
      * Transpile code from TypeScript or JSX into valid JavaScript.
      * This function does not resolve imports.
+     * To also get a source map, use {@link Transpiler.transformWithSourceMapSync}.
      * @param code The code to transpile
      * @param ctx An object to pass to macros
      */
@@ -3109,9 +3164,53 @@ declare module "bun" {
     /**
      * Transpile code from TypeScript or JSX into valid JavaScript.
      * This function does not resolve imports.
+     * To also get a source map, use {@link Transpiler.transformWithSourceMapSync}.
      * @param code The code to transpile
      */
     transformSync(code: Bun.StringOrBuffer, loader?: JavaScriptLoader): string;
+
+    /**
+     * Transpile code from TypeScript or JSX into valid JavaScript, and generate
+     * a source map from the output back to `code`.
+     * This function does not resolve imports.
+     *
+     * It runs in Bun's worker thread pool, like {@link Transpiler.transform}.
+     * It throws if the transpiler has `replMode: true`.
+     *
+     * @param code The code to transpile
+     * @param loader The loader for this call. The default is the `loader` of the constructor.
+     *
+     * @example
+     * ```ts
+     * const transpiler = new Bun.Transpiler({ loader: "ts" });
+     * const { code, map } = await transpiler.transformWithSourceMap("const x: number = 1;");
+     * map.sources[0] = "src/x.ts";
+     * await Bun.write("out/x.js", code + "\n//# sourceMappingURL=x.js.map\n");
+     * await Bun.write("out/x.js.map", JSON.stringify(map));
+     * ```
+     */
+    transformWithSourceMap(code: Bun.StringOrBuffer, loader?: JavaScriptLoader): Promise<TransformWithSourceMapResult>;
+
+    /**
+     * Transpile code from TypeScript or JSX into valid JavaScript, and generate
+     * a source map from the output back to `code`.
+     * This function does not resolve imports.
+     *
+     * It runs in the calling thread, like {@link Transpiler.transformSync}.
+     * Unlike `transformSync`, it takes no macro context: an object in place of
+     * `loader` throws. It throws if the transpiler has `replMode: true`.
+     *
+     * @param code The code to transpile
+     * @param loader The loader for this call. The default is the `loader` of the constructor.
+     *
+     * @example
+     * ```ts
+     * const transpiler = new Bun.Transpiler({ loader: "ts" });
+     * const { code, map } = transpiler.transformWithSourceMapSync("const x: number = 1;");
+     * map.sources[0] = "src/x.ts";
+     * ```
+     */
+    transformWithSourceMapSync(code: Bun.StringOrBuffer, loader?: JavaScriptLoader): TransformWithSourceMapResult;
 
     /**
      * Get a list of import paths and paths from a TypeScript, JSX, TSX, or JavaScript file.

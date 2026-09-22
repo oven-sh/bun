@@ -84,6 +84,95 @@ If your code uses a macro, the transpiler may spawn a new copy of Bun's JavaScri
 
 </Accordion>
 
+---
+
+## `.transformWithSourceMapSync()`
+
+The `.transformWithSourceMapSync()` method transpiles code and returns the output together with a source map. The source map tells a debugger or a stack trace which position in the input each part of the output comes from.
+
+<CodeGroup>
+
+```ts Example
+const transpiler = new Bun.Transpiler({ loader: "ts" });
+
+const { code, map } = transpiler.transformWithSourceMapSync(`interface Foo { x: number }
+const x: number = 5;
+
+interface Bar { y: string }
+
+const y: number = 10;`);
+
+console.log(code);
+console.log(map);
+```
+
+```ts Result
+// code
+const x = 5;
+const y = 10;
+
+// map
+{
+  version: 3,
+  sources: [ "input.ts" ],
+  sourcesContent: [ "interface Foo { x: number }\nconst x: number = 5;\n\ninterface Bar { y: string }\n\nconst y: number = 10;" ],
+  mappings: "AACA,MAAM,IAAY;AAIlB,MAAM,IAAY;",
+  names: [],
+}
+```
+
+</CodeGroup>
+
+`code` is the same code that `.transform()` returns. Bun adds no `sourceMappingURL` comment to it.
+
+`map` is a version 3 source map, as a plain object. You can change it, or pass it to a source map library as it is. `map.names` is always empty.
+
+`Bun.Transpiler` receives code, not a file, so `map.sources[0]` is a placeholder such as `input.ts`. Set it to the name that the next tool in your pipeline expects.
+
+```ts
+map.sources[0] = "src/values.ts";
+```
+
+To override the default loader for one call, pass a loader as the second argument.
+
+```ts
+transpiler.transformWithSourceMapSync("<div>hi!</div>", "tsx");
+```
+
+The second argument is always a loader. This method takes no macro context. It throws when the transpiler has `replMode: true`.
+
+### Write the source map to a file
+
+Convert the map to text with `JSON.stringify()` before you write it. The `sourceMappingURL` comment tells tools where the map is.
+
+```ts
+const { code, map } = transpiler.transformWithSourceMapSync(source);
+map.sources[0] = "../src/values.ts";
+
+await Bun.write("out/values.js", code + "\n//# sourceMappingURL=values.js.map\n");
+await Bun.write("out/values.js.map", JSON.stringify(map));
+```
+
+### Put the source map in the code
+
+```ts
+const base64 = Buffer.from(JSON.stringify(map)).toString("base64");
+const inline = code + "\n//# sourceMappingURL=data:application/json;base64," + base64 + "\n";
+```
+
+---
+
+## `.transformWithSourceMap()`
+
+The `.transformWithSourceMap()` method is an async version of `.transformWithSourceMapSync()`. It returns a `Promise` of the same `{ code, map }` and runs in Bun's worker threadpool, like `.transform()`.
+
+```ts
+const transpiler = new Bun.Transpiler({ loader: "ts" });
+const { code, map } = await transpiler.transformWithSourceMap("const x: number = 5;");
+```
+
+---
+
 ## `.scan()`
 
 The `.scan()` method scans source code and returns a list of its imports and exports, plus metadata about each one. [Type-only](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-3-8.html#type-only-imports-and-export) imports and exports are ignored.
@@ -240,11 +329,26 @@ interface MacroMap {
   },
 }
 
+// A version 3 source map
+interface TranspilerSourceMap {
+  version: 3,
+  // One entry: a placeholder name for the input, such as "input.ts"
+  sources: string[],
+  // One entry: the input code
+  sourcesContent: string[],
+  mappings: string,
+  // Always empty
+  names: string[],
+}
+
 class Bun.Transpiler {
   constructor(options: TranspilerOptions)
 
   transform(code: string, loader?: Loader): Promise<string>
   transformSync(code: string, loader?: Loader): string
+
+  transformWithSourceMap(code: string, loader?: Loader): Promise<{code: string, map: TranspilerSourceMap}>
+  transformWithSourceMapSync(code: string, loader?: Loader): {code: string, map: TranspilerSourceMap}
 
   scan(code: string): {exports: string[], imports: Import[]}
   scanImports(code: string): Import[]

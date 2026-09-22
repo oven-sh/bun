@@ -635,7 +635,10 @@ impl Config {
 /// which the job's Js side keeps alive and the pool borrow keeps valid.
 pub(crate) struct TransformTask {
     pub input_code: ThreadIsolated<StringOrBuffer<'static>>,
+    pub output: Output,
     pub output_code: BunString,
+    /// The VLQ "mappings" of `output_code`, for `Output::CodeAndSourceMap`.
+    pub mappings: Option<Vec<u8>>,
     pub transpiler: core::mem::ManuallyDrop<Transpiler::Transpiler<'static>>,
     pub log: bun_ast::Log,
     pub err: Option<Error>,
@@ -653,6 +656,8 @@ pub(crate) struct TransformJs {
     promise: jsc::JSPromiseStrong,
     /// The `JSTranspiler` wrapper whose config the task reads.
     _transpiler: jsc::Strong,
+    /// `map.sourcesContent[0]`, for `Output::CodeAndSourceMap`.
+    source_text: Option<jsc::Strong>,
 }
 
 impl jsc::JobContext for TransformTask {
@@ -663,7 +668,8 @@ impl jsc::JobContext for TransformTask {
         Some(done)
     }
     fn then(mut this: Self, mut js: TransformJs, cx: &jsc::JsThread<'_>) -> JsResult<()> {
-        TransformTask::then(&mut this, js.promise.swap(), cx.global())
+        let source_text = js.source_text.as_ref().map(jsc::Strong::get);
+        TransformTask::then(&mut this, js.promise.swap(), source_text, cx.global())
     }
 }
 
@@ -671,12 +677,14 @@ impl TransformTask {
     // `pub const new = bun.TrivialNew(@This())` → Box::new
 
     /// Schedule the transform on the work pool; returns its promise.
+    /// `source_text` is `Some` exactly when the promise resolves to `{ code, map }`.
     fn schedule(
         transpiler: &JSTranspiler,
         transpiler_js: JSValue,
         input_code: ThreadIsolated<StringOrBuffer<'static>>,
         cx: &bun_jsc::JsThread<'_>,
         loader: Loader,
+        source_text: Option<JSValue>,
     ) -> JSValue {
         let config = transpiler.config.get();
         let mut log = bun_ast::Log::init();
@@ -690,7 +698,9 @@ impl TransformTask {
 
         let task = TransformTask {
             input_code,
+            output: Output::for_source_text(source_text),
             output_code: BunString::EMPTY,
+            mappings: None,
             transpiler: transpiler_copy,
             macro_map: clone_macro_map(&config.macro_map),
             tsconfig: config
@@ -713,6 +723,7 @@ impl TransformTask {
             TransformJs {
                 promise,
                 _transpiler: jsc::Strong::create(transpiler_js, cx.global()),
+                source_text: source_text.map(|text| jsc::Strong::create(text, cx.global())),
             },
         );
         value
@@ -798,7 +809,8 @@ impl TransformTask {
             return;
         };
 
-        if parse_result.empty {
+        // A source map comes from the printer, so that output always prints.
+        if parse_result.empty && self.output == Output::Code {
             self.output_code = BunString::EMPTY;
             return;
         }
@@ -812,30 +824,31 @@ impl TransformTask {
 
         let mut printer = JSPrinter::BufferPrinter::init(buffer_writer);
         // Same per-call `arena` that `set_arena(&arena)` and `parse()` used.
-        let printed = match self.transpiler.print(
+        self.mappings = match print_output(
+            &mut self.transpiler,
             &arena,
             parse_result,
             &mut printer,
-            Transpiler::transpiler::PrintFormat::EsmAscii,
+            self.output,
         ) {
-            Ok(n) => n,
+            Ok(mappings) => mappings,
             Err(err) => {
                 self.err = Some(err.into());
                 return;
             }
         };
 
-        if printed > 0 {
-            buffer_writer = printer.ctx;
-            // `written()` reslices via `written_len`; copy out the printed
-            // bytes, then the local writer is dropped.
-            self.output_code = BunString::clone_utf8(buffer_writer.written());
-        } else {
-            self.output_code = BunString::EMPTY;
-        }
+        // `written()` reslices via `written_len`; copy out the printed
+        // bytes, then the local writer is dropped.
+        self.output_code = BunString::clone_utf8(printer.ctx.written());
     }
 
-    fn then(&mut self, promise: &mut JSPromise, global: &JSGlobalObject) -> JsResult<()> {
+    fn then(
+        &mut self,
+        promise: &mut JSPromise,
+        source_text: Option<JSValue>,
+        global: &JSGlobalObject,
+    ) -> JsResult<()> {
         // The job drops this `TransformTask` (running its `Drop`: transpiler
         // deref etc.) right after `then` returns.
         if self.log.has_any() || self.err.is_some() {
@@ -862,14 +875,29 @@ impl TransformTask {
             return Ok(());
         }
 
-        self.finish(promise, global)
+        self.finish(promise, source_text, global)
     }
 
-    fn finish(&mut self, promise: &mut JSPromise, global: &JSGlobalObject) -> JsResult<()> {
-        promise.settle(
-            global,
-            core::mem::take(&mut self.output_code).into_js(global),
-        )
+    fn finish(
+        &mut self,
+        promise: &mut JSPromise,
+        source_text: Option<JSValue>,
+        global: &JSGlobalObject,
+    ) -> JsResult<()> {
+        let code = core::mem::take(&mut self.output_code).into_js(global);
+        let result = match source_text {
+            None => code,
+            Some(source_text) => code.and_then(|code| {
+                code_and_source_map_to_js(
+                    global,
+                    code,
+                    self.mappings.take(),
+                    self.loader.stdin_name(),
+                    source_text,
+                )
+            }),
+        };
+        promise.settle(global, result)
     }
 }
 
@@ -1189,10 +1217,10 @@ impl JSTranspiler {
         arena: &'static Arena,
         code: &[u8],
         loader: Option<Loader>,
+        source_name: &'static str,
         macro_js_ctx: MacroJSCtx,
     ) -> Option<ParseResult<'static>> {
         let config = self.config.get();
-        let name = config.default_loader.stdin_name();
 
         // In REPL mode, wrap potential object literals in parentheses
         // If code starts with { and doesn't end with ; it might be an object literal
@@ -1212,8 +1240,10 @@ impl JSTranspiler {
             code
         };
 
-        let source: &bun_ast::Source =
-            arena.alloc(bun_ast::Source::init_path_string(name, processed_code));
+        let source: &bun_ast::Source = arena.alloc(bun_ast::Source::init_path_string(
+            source_name,
+            processed_code,
+        ));
 
         let jsx = match config.tsconfig.as_deref() {
             Some(ts) => ts.merge_jsx(self.transpiler.get().options.jsx.clone()),
@@ -1307,7 +1337,13 @@ impl JSTranspiler {
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
         let _ast_scope = ast_memory_allocator.enter();
 
-        let parse_result = self.get_parse_result(arena_ref, code, loader, MacroJSCtx::ZERO);
+        let parse_result = self.get_parse_result(
+            arena_ref,
+            code,
+            loader,
+            self.config.get().default_loader.stdin_name(),
+            MacroJSCtx::ZERO,
+        );
         let log_ref = self.transpiler.get().log_mut();
         let Some(mut parse_result) = parse_result else {
             if (log_ref.warnings + log_ref.errors) > 0 {
@@ -1345,17 +1381,34 @@ impl JSTranspiler {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        self.transform_async(global, callframe, "transform", Output::Code)
+    }
+
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn transform_with_source_map(
+        &self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        const METHOD: &str = "transformWithSourceMap";
+        self.reject_repl_mode(global, METHOD)?;
+        self.transform_async(global, callframe, METHOD, Output::CodeAndSourceMap)
+    }
+
+    fn transform_async(
+        &self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+        method: &'static str,
+        output: Output,
+    ) -> JsResult<JSValue> {
         let cx = global.js_thread_of_caller(callframe);
         jsc::mark_binding();
         // SAFETY: bun_vm() returns the live VM singleton on this thread.
         let vm = global.bun_vm();
         let mut args = ArgumentsSlice::init(vm, callframe.arguments());
         let Some(code_arg) = args.next() else {
-            return Err(global.throw_invalid_argument_type(
-                "transform",
-                "code",
-                "string or Uint8Array",
-            ));
+            return Err(global.throw_invalid_argument_type(method, "code", "string or Uint8Array"));
         };
 
         let code = if let Some(buffer) = code_arg.as_array_buffer(global) {
@@ -1365,11 +1418,7 @@ impl JSTranspiler {
         } else if let Some(code) = StringOrBuffer::from_js_async(global, code_arg)? {
             code
         } else {
-            return Err(global.throw_invalid_argument_type(
-                "transform",
-                "code",
-                "string or Uint8Array",
-            ));
+            return Err(global.throw_invalid_argument_type(method, "code", "string or Uint8Array"));
         };
 
         args.eat();
@@ -1381,6 +1430,11 @@ impl JSTranspiler {
             break 'brk None;
         };
 
+        let source_text = match output {
+            Output::Code => None,
+            Output::CodeAndSourceMap => Some(source_text_to_js(global, code_arg, code.slice())?),
+        };
+
         let default_loader = self.config.get().default_loader;
         Ok(TransformTask::schedule(
             self,
@@ -1388,7 +1442,22 @@ impl JSTranspiler {
             code,
             &cx,
             loader.unwrap_or(default_loader),
+            source_text,
         ))
+    }
+
+    /// replMode rewrites the input before the parse, and only in the sync path
+    /// (`get_parse_result`), so a source map of it would be wrong.
+    fn reject_repl_mode(&self, global: &JSGlobalObject, method: &'static str) -> JsResult<()> {
+        if !self.config.get().repl_mode {
+            return Ok(());
+        }
+        Err(global
+            .err(
+                jsc::ErrorCode::INVALID_STATE,
+                format_args!("{method} cannot be used when replMode is true"),
+            )
+            .throw())
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1411,7 +1480,6 @@ impl JSTranspiler {
             ));
         };
 
-        let arena = Arena::new();
         let Some(code_holder) = StringOrBuffer::from_js(global, code_arg)? else {
             return Err(global.throw_invalid_argument_type(
                 "transformSync",
@@ -1461,6 +1529,61 @@ impl JSTranspiler {
             None
         };
 
+        self.transform_sync_impl(
+            global,
+            code,
+            loader,
+            self.config.get().default_loader.stdin_name(),
+            js_ctx_value,
+            None,
+        )
+    }
+
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn transform_with_source_map_sync(
+        &self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        jsc::mark_binding();
+        const METHOD: &str = "transformWithSourceMapSync";
+        self.reject_repl_mode(global, METHOD)?;
+
+        let code_arg = callframe.argument(0);
+        // Before `code` borrows a buffer: a String object as the loader runs
+        // user code, which can detach that buffer.
+        let loader = loader_from_js(global, callframe.argument(1))?;
+        let Some(code_holder) = StringOrBuffer::from_js(global, code_arg)? else {
+            return Err(global.throw_invalid_argument_type(METHOD, "code", "string or Uint8Array"));
+        };
+        let _keep_code = bun_jsc::EnsureStillAlive(code_arg);
+        let code = code_holder.slice();
+
+        let source_text = source_text_to_js(global, code_arg, code)?;
+        let _keep_source_text = bun_jsc::EnsureStillAlive(source_text);
+
+        let default_loader = self.config.get().default_loader;
+        self.transform_sync_impl(
+            global,
+            code,
+            loader,
+            loader.unwrap_or(default_loader).stdin_name(),
+            JSValue::ZERO,
+            Some(source_text),
+        )
+    }
+
+    /// `source_text` is `Some` exactly when the result is `{ code, map }`.
+    fn transform_sync_impl(
+        &self,
+        global: &JSGlobalObject,
+        code: &[u8],
+        loader: Option<Loader>,
+        source_name: &'static str,
+        js_ctx_value: JSValue,
+        source_text: Option<JSValue>,
+    ) -> JsResult<JSValue> {
+        let arena = Arena::new();
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
         let _ast_scope = ast_memory_allocator.enter();
 
@@ -1492,7 +1615,8 @@ impl JSTranspiler {
 
         // `MacroJSCtx` carries the encoded `JSValue` bits (`#[repr(transparent)] i64`).
         let macro_js_ctx: MacroJSCtx = MacroJSCtx(js_ctx_value.0 as i64);
-        let parse_result = self.get_parse_result(arena_ref, code, loader, macro_js_ctx);
+        let parse_result =
+            self.get_parse_result(arena_ref, code, loader, source_name, macro_js_ctx);
         let log_ref = self.transpiler.get().log_mut();
         let Some(parse_result) = parse_result else {
             if (log_ref.warnings + log_ref.errors) > 0 {
@@ -1513,24 +1637,130 @@ impl JSTranspiler {
 
         buffer_writer.reset();
         let mut printer = JSPrinter::BufferPrinter::init(buffer_writer);
-        // SAFETY: see `transpiler_mut` — `print` does not re-enter JS.
+        // SAFETY: see `transpiler_mut` — the print does not re-enter JS.
         // Same per-call `arena` that `set_arena(&arena)` and `parse()` used.
-        if let Err(err) = unsafe { self.transpiler_mut() }.print(
+        let mappings = match print_output(
+            unsafe { self.transpiler_mut() },
             &arena,
             parse_result,
             &mut printer,
-            Transpiler::transpiler::PrintFormat::EsmAscii,
+            Output::for_source_text(source_text),
         ) {
-            self.buffer_writer.set(Some(printer.ctx));
-            return Err(global.throw_error(err, "Failed to print code"));
-        }
+            Ok(mappings) => mappings,
+            Err(err) => {
+                self.buffer_writer.set(Some(printer.ctx));
+                return Err(global.throw_error(err, "Failed to print code"));
+            }
+        };
 
         // TODO: benchmark if pooling this way is faster or moving is faster
         buffer_writer = printer.ctx;
-        let result = bun_string_jsc::create_utf8_for_js(global, buffer_writer.written());
+        let code = bun_string_jsc::create_utf8_for_js(global, buffer_writer.written());
         self.buffer_writer.set(Some(buffer_writer));
-        result
+        match source_text {
+            None => code,
+            Some(source_text) => {
+                code_and_source_map_to_js(global, code?, mappings, source_name, source_text)
+            }
+        }
     }
+}
+
+/// What a transform call hands back to JS.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Output {
+    /// `transform` / `transformSync`: the code.
+    Code,
+    /// `transformWithSourceMap` / `transformWithSourceMapSync`: `{ code, map }`.
+    CodeAndSourceMap,
+}
+
+impl Output {
+    /// A call that returns a source map carries the text for `map.sourcesContent`.
+    fn for_source_text(source_text: Option<JSValue>) -> Self {
+        match source_text {
+            Some(_) => Output::CodeAndSourceMap,
+            None => Output::Code,
+        }
+    }
+}
+
+/// Prints `parse_result`. For `Output::CodeAndSourceMap` it also returns the VLQ
+/// "mappings" of the printed code; `None` there means that the printer made no
+/// source map (`BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS`). Touches no JS:
+/// `TransformTask::run` calls it off the JS thread.
+fn print_output(
+    transpiler: &mut Transpiler::Transpiler<'static>,
+    arena: &Arena,
+    parse_result: ParseResult<'static>,
+    printer: &mut JSPrinter::BufferPrinter,
+    output: Output,
+) -> Transpiler::Result<Option<Vec<u8>>> {
+    let format = Transpiler::transpiler::PrintFormat::EsmAscii;
+    match output {
+        Output::Code => {
+            transpiler.print(arena, parse_result, printer, format)?;
+            Ok(None)
+        }
+        Output::CodeAndSourceMap => {
+            let mut chunk: Option<bun_sourcemap::Chunk> = None;
+            transpiler.print_with_source_map(
+                arena,
+                parse_result,
+                printer,
+                format,
+                JSPrinter::SourceMapHandler::for_(&mut chunk),
+                None,
+            )?;
+            Ok(chunk.map(bun_sourcemap::Chunk::into_vlq_mappings))
+        }
+    }
+}
+
+/// `map.sourcesContent[0]`: `code_arg` itself when it is a primitive string,
+/// else `code` decoded as UTF-8.
+fn source_text_to_js(global: &JSGlobalObject, code_arg: JSValue, code: &[u8]) -> JsResult<JSValue> {
+    if code_arg.is_string_literal() {
+        return Ok(code_arg);
+    }
+    bun_string_jsc::create_utf8_for_js(global, code)
+}
+
+/// `{ code, map }`, with `map` a version 3 source map object.
+fn code_and_source_map_to_js(
+    global: &JSGlobalObject,
+    code: JSValue,
+    mappings: Option<Vec<u8>>,
+    source_name: &'static str,
+    source_text: JSValue,
+) -> JsResult<JSValue> {
+    let Some(mappings) = mappings else {
+        return Err(global.throw(format_args!(
+            "Source maps are disabled by BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS"
+        )));
+    };
+
+    let sources = JSValue::create_array_from_slice(
+        global,
+        &[BunString::static_(source_name).to_js(global)?],
+    )?;
+    let sources_content = JSValue::create_array_from_slice(global, &[source_text])?;
+    // VLQ is ASCII, so JSC adopts the buffer as it is.
+    let mappings = bun_string_jsc::owned_latin1_into_js(global, mappings)?;
+    let names = JSValue::create_empty_array(global, 0)?;
+
+    // `create_object2` defines its second key first; `put` keeps this order.
+    let map = JSValue::create_empty_object(global, 5);
+    map.put(global, "version", JSValue::js_number_from_int32(3));
+    map.put(global, "sources", sources);
+    map.put(global, "sourcesContent", sources_content);
+    map.put(global, "mappings", mappings);
+    map.put(global, "names", names);
+
+    let result = JSValue::create_empty_object(global, 2);
+    result.put(global, "code", code);
+    result.put(global, "map", map);
+    Ok(result)
 }
 
 fn named_exports_to_js(

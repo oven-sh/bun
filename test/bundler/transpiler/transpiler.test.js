@@ -1,6 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, bunRun, hideFromStackTrace, tempDir } from "harness";
+import { SourceMap } from "node:module";
 import { join } from "path";
+import { SourceMapConsumer } from "source-map";
 
 describe("Bun.Transpiler", () => {
   const transpiler = new Bun.Transpiler({
@@ -6371,6 +6373,403 @@ describe("same-target destructuring with an unstable target", () => {
       directEval: "a1b2",
       stable: "a1b1",
     });
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe("Bun.Transpiler transformWithSourceMap", () => {
+  // The sample of https://github.com/oven-sh/bun/issues/30538
+  const sample = `interface Foo { x: number }
+const x: number = 5;
+
+interface Bar { y: string }
+
+const y: number = 10;`;
+
+  // 1-based line and 0-based UTF-16 column of the only occurrence of `token` in `text`.
+  // The expected original positions come from the input text, never from the map.
+  function positionOf(text, token) {
+    const index = text.indexOf(token);
+    if (index === -1 || text.indexOf(token, index + 1) !== -1) {
+      throw new Error(`${JSON.stringify(token)} must occur exactly once in ${JSON.stringify(text)}`);
+    }
+    return {
+      line: text.slice(0, index).split("\n").length,
+      column: index - (text.lastIndexOf("\n", index - 1) + 1),
+    };
+  }
+
+  async function originalPositions({ code, map }, tokens) {
+    return await SourceMapConsumer.with(map, null, consumer =>
+      tokens.map(token => {
+        const { source, line, column } = consumer.originalPositionFor(positionOf(code, token));
+        return { token, source, line, column };
+      }),
+    );
+  }
+
+  async function expectTokensToMap(result, source, tokens) {
+    expect(await originalPositions(result, tokens)).toEqual(
+      tokens.map(token => ({ token, source: result.map.sources[0], ...positionOf(source, token) })),
+    );
+  }
+
+  it("returns { code, map } for the sample of #30538", async () => {
+    const transpiler = new Bun.Transpiler({ loader: "ts" });
+    const result = transpiler.transformWithSourceMapSync(sample);
+
+    expect(Object.keys(result)).toEqual(["code", "map"]);
+    expect(Object.keys(result.map)).toEqual(["version", "sources", "sourcesContent", "mappings", "names"]);
+    expect(result.code).toBe("const x = 5;\nconst y = 10;\n");
+    expect(result.code).toBe(transpiler.transformSync(sample));
+    expect(result.map).toEqual({
+      version: 3,
+      sources: ["input.ts"],
+      sourcesContent: [sample],
+      mappings: expect.stringMatching(/^[A-Za-z0-9+/,;]+$/),
+      names: [],
+    });
+
+    // esbuild, oxc and Node's amaro all map these six generated positions to the same originals.
+    const anchors = await SourceMapConsumer.with(result.map, null, consumer =>
+      [
+        [1, 0],
+        [1, 6],
+        [1, 10],
+        [2, 0],
+        [2, 6],
+        [2, 10],
+      ].map(([line, column]) => {
+        const original = consumer.originalPositionFor({ line, column });
+        return [original.source, original.line, original.column];
+      }),
+    );
+    expect(anchors).toEqual([
+      ["input.ts", 2, 0],
+      ["input.ts", 2, 6],
+      ["input.ts", 2, 18],
+      ["input.ts", 6, 0],
+      ["input.ts", 6, 6],
+      ["input.ts", 6, 18],
+    ]);
+  });
+
+  describe("every token maps to its position in the input", () => {
+    const sources = {
+      "removed lines and non-ASCII text before a token": {
+        loader: "ts",
+        tokens: ["probe(111", "111", "probe(222", "222", "probe(333", "333"],
+        source: [
+          "interface Removed { a: number }",
+          "declare function probe(...args: unknown[]): void;",
+          'const greeting: string = "😀😀 café"; probe(111, greeting);',
+          "type AlsoRemoved = string;",
+          'const latin: string = "é"; probe(222, latin);',
+          "export function later(value: number): number {",
+          "  return probe(333, value), value;",
+          "}",
+        ].join("\n"),
+      },
+      "Latin-1 only": {
+        loader: "ts",
+        tokens: ["probe(444", "444"],
+        source: 'declare function probe(...args: unknown[]): void;\nconst text: string = "é"; probe(444, text);\n',
+      },
+      "JSX": {
+        loader: "tsx",
+        tokens: ["probe(555", "555"],
+        source: 'declare function probe(n: number): string;\nconst element = <div className="a">{probe(555)}</div>;\n',
+      },
+      "CRLF line endings": {
+        loader: "ts",
+        tokens: ["probe(777", "777"],
+        source: "interface Removed {}\r\nconst a: number = 1;\r\nprobe(777, a);\r\n",
+      },
+      "a byte order mark": {
+        loader: "ts",
+        tokens: ["probe(668", "668"],
+        source: "\uFEFFprobe(668);\ndeclare function probe(n: number): void;\n",
+      },
+    };
+    const options = [
+      {},
+      { target: "bun" },
+      { target: "node" },
+      { minifyWhitespace: true },
+      { target: "bun", minifyWhitespace: true },
+    ];
+
+    for (const [name, { loader, tokens, source }] of Object.entries(sources)) {
+      for (const option of options) {
+        it(`${name}, ${JSON.stringify(option)}`, async () => {
+          const transpiler = new Bun.Transpiler(option);
+          const expectedCode = transpiler.transformSync(source, loader);
+          for (const input of [source, new TextEncoder().encode(source)]) {
+            const sync = transpiler.transformWithSourceMapSync(input, loader);
+            expect(sync.code).toBe(expectedCode);
+            expect(sync.map.sourcesContent).toEqual([source]);
+            await expectTokensToMap(sync, source, tokens);
+
+            const async_ = await transpiler.transformWithSourceMap(input, loader);
+            expect(async_).toEqual(sync);
+          }
+        });
+      }
+    }
+  });
+
+  it('target "bun" yields the same originals as the default target', async () => {
+    // More than 64 mappings, so the internal format of target "bun" spans several sync windows.
+    // Numerals must print verbatim. Bun prints 100000 as 1e5, so the tokens start at 100001.
+    const tokens = Array.from({ length: 300 }, (_, i) => String(100001 + i));
+    const source = "declare function probe(n: number): void;\n" + tokens.map(n => `probe(${n});`).join("\n") + "\n";
+
+    const byTarget = {};
+    for (const target of ["browser", "bun"]) {
+      const result = new Bun.Transpiler({ loader: "ts", target }).transformWithSourceMapSync(source);
+      expect(result.map.mappings).toMatch(/^[A-Za-z0-9+/,;]+$/);
+      await expectTokensToMap(result, source, tokens);
+      byTarget[target] = await originalPositions(result, tokens);
+    }
+    expect(byTarget.bun).toEqual(byTarget.browser);
+  });
+
+  describe("the sync and the async method return the same result", () => {
+    const transpiler = new Bun.Transpiler({ loader: "ts" });
+    const emptyOutput = ["", "   \n", "interface A {}", "// only a comment"];
+    const inputs = [
+      sample,
+      ...emptyOutput,
+      "const ascii: number = 1;",
+      'const latin1: string = "é";',
+      'const emoji: string = "😀";',
+      'const loneSurrogate = "\ud800";',
+    ];
+
+    for (const input of inputs) {
+      it(JSON.stringify(input), async () => {
+        const sync = transpiler.transformWithSourceMapSync(input);
+        const async_ = await transpiler.transformWithSourceMap(input);
+        expect(async_).toEqual(sync);
+        expect(sync.code).toBe(transpiler.transformSync(input));
+        // A string input is `sourcesContent[0]` itself, not a copy that went through UTF-8.
+        expect(sync.map.sourcesContent[0]).toBe(input);
+        expect(async_.map.sourcesContent[0]).toBe(input);
+        if (emptyOutput.includes(input)) {
+          expect(sync).toEqual({
+            code: "",
+            map: { version: 3, sources: ["input.ts"], sourcesContent: [input], mappings: "", names: [] },
+          });
+        }
+      });
+    }
+
+    it("for bytes", async () => {
+      const bytes = new TextEncoder().encode(sample);
+      for (const input of [bytes, bytes.buffer, new DataView(bytes.buffer)]) {
+        const sync = transpiler.transformWithSourceMapSync(input);
+        expect(sync.map.sourcesContent).toEqual([sample]);
+        expect(await transpiler.transformWithSourceMap(input)).toEqual(sync);
+        expect(sync).toEqual(transpiler.transformWithSourceMapSync(sample));
+      }
+    });
+
+    it("for a per-call loader that differs from the constructor's", async () => {
+      const jsx = new Bun.Transpiler({ loader: "jsx" });
+      const input = "console.log(__filename as string);";
+      const sync = jsx.transformWithSourceMapSync(input, "ts");
+      expect(sync.map.sources).toEqual(["input.ts"]);
+      expect(sync.code).toBe('var __filename = "input.ts";\nconsole.log(__filename);\n');
+      expect(await jsx.transformWithSourceMap(input, "ts")).toEqual(sync);
+      expect(await jsx.transform(input, "ts")).toBe(sync.code);
+
+      for (const loader of [undefined, null, ""]) {
+        expect(jsx.transformWithSourceMapSync("<a />", loader).map.sources).toEqual(["input.jsx"]);
+        expect((await jsx.transformWithSourceMap("<a />", loader)).map.sources).toEqual(["input.jsx"]);
+      }
+    });
+
+    it("for a data loader", async () => {
+      const input = '{ "a": 1 }';
+      const sync = transpiler.transformWithSourceMapSync(input, "json");
+      expect(sync.code).toBe(transpiler.transformSync(input, "json"));
+      expect(sync.map.sources).toEqual(["input.json"]);
+      expect(await transpiler.transformWithSourceMap(input, "json")).toEqual(sync);
+    });
+  });
+
+  it("leaves transformSync and transform as they are", async () => {
+    for (const sourcemap of [undefined, true, "inline", "external", "linked"]) {
+      const transpiler = new Bun.Transpiler({ loader: "ts", sourcemap });
+      const { code } = transpiler.transformWithSourceMapSync(sample);
+      expect(code).toBe("const x = 5;\nconst y = 10;\n");
+      expect(transpiler.transformSync(sample)).toBe(code);
+      expect(await transpiler.transform(sample)).toBe(code);
+    }
+  });
+
+  it("maps a minified output, with empty names", async () => {
+    const source = "declare function probe(n: number): void;\nconst value: number = 1;\nprobe(value + 888);\n";
+    const result = new Bun.Transpiler({ loader: "ts", minify: true }).transformWithSourceMapSync(source);
+    expect(result.code.includes("\n")).toBe(false);
+    expect(result.map.names).toEqual([]);
+    await expectTokensToMap(result, source, ["888"]);
+  });
+
+  it("returns a map that node:module SourceMap accepts", () => {
+    const { map } = new Bun.Transpiler({ loader: "ts" }).transformWithSourceMapSync(sample);
+    expect(new SourceMap(map).findEntry(0, 6)).toMatchObject({
+      originalSource: "input.ts",
+      originalLine: 1,
+      originalColumn: 6,
+    });
+  });
+
+  it("returns objects that the caller can change", () => {
+    const { map } = new Bun.Transpiler({ loader: "ts" }).transformWithSourceMapSync(sample);
+    map.sources[0] = "src/values.ts";
+    map.file = "values.js";
+    delete map.sourcesContent;
+    expect(JSON.parse(JSON.stringify(map))).toEqual({
+      version: 3,
+      sources: ["src/values.ts"],
+      mappings: map.mappings,
+      names: [],
+      file: "values.js",
+    });
+  });
+
+  describe("errors", () => {
+    const methods = ["transformWithSourceMapSync", "transformWithSourceMap"];
+
+    for (const method of methods) {
+      it(`${method} throws for bad arguments`, () => {
+        const transpiler = new Bun.Transpiler({ loader: "ts" });
+        for (const code of [undefined, 1, {}, null]) {
+          expect(() => transpiler[method](code)).toThrow(
+            expect.objectContaining({
+              name: "TypeError",
+              code: "ERR_INVALID_ARG_TYPE",
+              message: `Expected code to be a string or Uint8Array for '${method}'.`,
+            }),
+          );
+        }
+        for (const loader of [{}, { loader: "ts" }, 1, true]) {
+          expect(() => transpiler[method]("let a = 1", loader)).toThrow(
+            expect.objectContaining({
+              name: "TypeError",
+              code: "ERR_INVALID_ARG_TYPE",
+              message: "loader must be a string",
+            }),
+          );
+        }
+        expect(() => transpiler[method]("let a = 1", "not-a-loader")).toThrow(/invalid loader/);
+      });
+
+      it(`${method} throws when replMode is true`, () => {
+        const repl = new Bun.Transpiler({ loader: "ts", replMode: true });
+        expect(() => repl[method]("{ a: 1 }")).toThrow(
+          expect.objectContaining({
+            code: "ERR_INVALID_STATE",
+            message: `${method} cannot be used when replMode is true`,
+          }),
+        );
+        expect(typeof repl.transformSync("{ a: 1 }")).toBe("string");
+      });
+    }
+
+    it("a parse error is the error of transformSync and transform", async () => {
+      const transpiler = new Bun.Transpiler({ loader: "ts" });
+      const bad = "let x = ;";
+      const describeError = error => ({
+        name: error.constructor.name,
+        message: error.message,
+        file: error.position.file,
+        line: error.position.line,
+        column: error.position.column,
+      });
+      const expected = { name: "BuildMessage", message: "Unexpected ;", file: "input.ts", line: 1, column: 9 };
+
+      let syncError;
+      try {
+        transpiler.transformWithSourceMapSync(bad);
+      } catch (error) {
+        syncError = error;
+      }
+      expect(describeError(syncError)).toEqual(expected);
+
+      const asyncError = await transpiler.transformWithSourceMap(bad).then(
+        () => undefined,
+        error => error,
+      );
+      expect(describeError(asyncError)).toEqual(expected);
+    });
+  });
+
+  it("reads the loader before it borrows the bytes of code", () => {
+    const transpiler = new Bun.Transpiler({ loader: "ts" });
+    const bytes = new TextEncoder().encode("let a: number = 1;");
+    const loader = Object.assign(new String("ts"), {
+      toString() {
+        bytes.buffer.transfer();
+        return "ts";
+      },
+    });
+    expect(transpiler.transformWithSourceMapSync(bytes, loader)).toEqual({
+      code: "",
+      map: { version: 3, sources: ["input.ts"], sourcesContent: [""], mappings: "", names: [] },
+    });
+  });
+
+  it("keeps every result valid across a garbage collection", async () => {
+    const transpiler = new Bun.Transpiler({ loader: "ts" });
+    for (let i = 0; i < 200; i++) transpiler.transformWithSourceMapSync(`const dropped${i}: number = ${i + 1};`);
+
+    const sources = Array.from(
+      { length: 100 },
+      (_, i) => `declare function probe(n: number): void;\nprobe(${2001 + i});`,
+    );
+    const pending = sources.map(source => transpiler.transformWithSourceMap(new TextEncoder().encode(source)));
+    Bun.gc(true);
+    const results = await Promise.all(pending);
+    Bun.gc(true);
+
+    for (let i = 0; i < results.length; i++) {
+      expect(results[i].map.sourcesContent).toEqual([sources[i]]);
+      expect(results[i].code).toBe(`probe(${2001 + i});\n`);
+    }
+    await expectTokensToMap(results[99], sources[99], ["2100"]);
+  });
+
+  it("fails when BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS turns source maps off", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const transpiler = new Bun.Transpiler({ loader: "ts" });
+          const messages = [];
+          try {
+            transpiler.transformWithSourceMapSync("const a: number = 1;");
+          } catch (error) {
+            messages.push(error.message);
+          }
+          await transpiler.transformWithSourceMap("const a: number = 1;").catch(error => messages.push(error.message));
+          messages.push(transpiler.transformSync("const a: number = 1;"));
+          console.log(JSON.stringify(messages));
+        `,
+      ],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([
+      "Source maps are disabled by BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS",
+      "Source maps are disabled by BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS",
+      "const a = 1;\n",
+    ]);
     expect(exitCode).toBe(0);
   });
 });

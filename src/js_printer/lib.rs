@@ -1300,6 +1300,18 @@ pub trait OnSourceMapChunk {
     ) -> crate::Result<()>;
 }
 
+/// Keeps the chunk, for a caller that reads it after the print.
+impl OnSourceMapChunk for Option<SourceMap::Chunk> {
+    fn on_source_map_chunk(
+        &mut self,
+        chunk: SourceMap::Chunk,
+        _: &bun_ast::Source,
+    ) -> crate::Result<()> {
+        *self = Some(chunk);
+        Ok(())
+    }
+}
+
 impl<'a> SourceMapHandler<'a> {
     pub(crate) fn on_source_map_chunk(
         &self,

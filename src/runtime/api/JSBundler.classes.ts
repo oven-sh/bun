@@ -27,6 +27,14 @@ export default [
         fn: "transformSync",
         length: 2,
       },
+      transformWithSourceMap: {
+        fn: "transformWithSourceMap",
+        length: 2,
+      },
+      transformWithSourceMapSync: {
+        fn: "transformWithSourceMapSync",
+        length: 2,
+      },
     },
   }),
   define({

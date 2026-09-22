@@ -193,18 +193,6 @@ impl StoreScope {
     }
 }
 
-struct ChunkCollector(Option<bun_sourcemap::Chunk>);
-impl bun_js_printer::OnSourceMapChunk for ChunkCollector {
-    fn on_source_map_chunk(
-        &mut self,
-        chunk: bun_sourcemap::Chunk,
-        _: &bun_ast::Source,
-    ) -> bun_js_printer::Result<()> {
-        self.0 = Some(chunk);
-        Ok(())
-    }
-}
-
 fn parse_js<'a>(
     arena: &'a Arena,
     source: &'a bun_ast::Source,
@@ -247,7 +235,7 @@ fn print_js<'a>(
         .map(|r| r.path.text.to_vec())
         .collect();
 
-    let mut collector = ChunkCollector(None);
+    let mut collector: Option<bun_sourcemap::Chunk> = None;
     let mut printer = bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init());
     let sym_arena = *ast.symbols.allocator();
     let symbols = bun_ast::symbol::Map::init_with_one_list(
@@ -275,7 +263,7 @@ fn print_js<'a>(
     let text = printer.ctx.get_written().to_vec();
 
     let mut map = Vec::new();
-    if let Some(chunk) = collector.0 {
+    if let Some(chunk) = collector {
         let printed_lines = bun_core::strings::count_char(&text, b'\n') + 1;
         if let Ok(parsed) = bun_sourcemap::mapping::parse(
             chunk.buffer.list.as_slice(),

@@ -732,8 +732,7 @@ impl InternalSourceMap {
         Cursor::init(self)
     }
 
-    /// Re-encode the full mapping stream as a standard VLQ "mappings" string. Only
-    /// the inspector's inline-sourcemap path needs this.
+    /// Re-encode the full mapping stream as a standard VLQ "mappings" string.
     pub fn append_vlq_to(self, out: &mut MutableString) {
         let n_sync = self.sync_count();
         // A 4-field VLQ segment averages ~5 bytes plus a separator. Cap by the

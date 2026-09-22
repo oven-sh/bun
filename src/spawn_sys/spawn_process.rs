@@ -730,7 +730,12 @@ pub unsafe fn spawn_process_posix(
     let _ = attr.reset_signals();
 
     // Highest child fd that a file action targets: stderr, or the last extra slot.
-    let max_slot: FdT = FdT::try_from(2 + options.extra_fds.len()).unwrap();
+    let Ok(max_slot) = FdT::try_from(2 + options.extra_fds.len()) else {
+        return Ok(Err(bun_sys::Error::from_code(
+            bun_sys::E::EMFILE,
+            bun_sys::Tag::posix_spawn,
+        )));
+    };
 
     if let Some(ipc) = options.ipc {
         actions.inherit(ipc)?;
@@ -738,6 +743,23 @@ pub unsafe fn spawn_process_posix(
     }
 
     let stdio_options: [&PosixStdio; 3] = [&options.stdin, &options.stdout, &options.stderr];
+    // Probed before this function creates any fd: a socketpair end can land on a closed slot number and make that slot look open.
+    let inherits_closed_fd = |stdio: &PosixStdio, slot: usize| {
+        matches!(stdio, PosixStdio::Inherit)
+            && bun_sys::get_fcntl_flags(Fd::from_native(slot as FdT)).is_err()
+    };
+    let closed_stdio: [bool; 3] = core::array::from_fn(|i| inherits_closed_fd(stdio_options[i], i));
+    if options
+        .extra_fds
+        .iter()
+        .enumerate()
+        .any(|(i, stdio)| inherits_closed_fd(stdio, 3 + i))
+    {
+        return Ok(Err(bun_sys::Error::from_code(
+            bun_sys::E::EBADF,
+            bun_sys::Tag::posix_spawn,
+        )));
+    }
     // Reshaped for borrowck: we
     // index spawned.{stdin,stdout,stderr} via a helper closure.
     let mut dup_stdout_to_stderr: bool = false;
@@ -772,7 +794,7 @@ pub unsafe fn spawn_process_posix(
             }
             PosixStdio::Inherit => {
                 // A closed slot would inherit whatever fd is created later at that number (e.g. the ipc socketpair); libuv gives it /dev/null.
-                if bun_sys::get_fcntl_flags(fileno).is_err() {
+                if closed_stdio[i] {
                     actions.open_z(fileno, c"/dev/null", flag | bun_sys::O::CREAT as u32, 0o664)?;
                 } else {
                     actions.inherit(fileno)?;

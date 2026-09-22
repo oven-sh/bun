@@ -100,22 +100,21 @@ impl Walker {
                             base.kind
                         };
                         #[cfg(not(windows))]
-                        let kind: sys::EntryKind = if kind == sys::EntryKind::SymLink
-                            && self.follow_file_symlinks
-                        {
-                            let dir_fd = self.stack[top_idx].iter.dir();
-                            match sys::fstatat(dir_fd, base.name.as_zstr()) {
-                                Ok(stat_buf)
-                                    if sys::kind_from_mode(stat_buf.st_mode as sys::Mode)
-                                        == sys::EntryKind::File =>
-                                {
-                                    sys::EntryKind::File
+                        let kind: sys::EntryKind =
+                            if kind == sys::EntryKind::SymLink && self.follow_file_symlinks {
+                                let dir_fd = self.stack[top_idx].iter.dir();
+                                match sys::fstatat(dir_fd, base.name.as_zstr()) {
+                                    Ok(stat_buf)
+                                        if sys::kind_from_mode(stat_buf.st_mode as sys::Mode)
+                                            == sys::EntryKind::File =>
+                                    {
+                                        sys::EntryKind::File
+                                    }
+                                    _ => kind,
                                 }
-                                _ => kind,
-                            }
-                        } else {
-                            kind
-                        };
+                            } else {
+                                kind
+                            };
                         #[cfg(windows)]
                         let kind: sys::EntryKind = base.kind;
 

@@ -567,9 +567,7 @@ pub(crate) fn js_node_test_mark_result(
     Ok(JSValue::UNDEFINED)
 }
 
-/// Reached only from `node:test`, when bun:test invokes one of its tests:
-/// registers `handler` for the entry `done` belongs to. See
-/// [`bun_test::BunTest::offer_uncaught_to_node_test`].
+/// Reached only from `node:test`: registers `handler` for `done`'s entry, for [`bun_test::BunTest::offer_uncaught_to_node_test`].
 pub(crate) fn js_node_test_on_uncaught(
     global: &JSGlobalObject,
     callframe: &CallFrame,
@@ -593,8 +591,7 @@ pub(crate) fn js_node_test_on_uncaught(
     Ok(JSValue::UNDEFINED)
 }
 
-/// The entry the `done` that bun:test passed to a `node:test` runner belongs
-/// to, or `None` once that `done` has been called.
+/// The entry that a `node:test` runner's `done` belongs to; `None` once it has been called.
 fn node_test_done_entry(buntest: &bun_test::BunTest, done: JSValue) -> Option<RefDataValue> {
     // `done` is a JSBoundFunction whose bound-this is the DoneCallback wrapper.
     let wrapper = bun_jsc::cpp::Bun__JSBoundFunction__boundThis(done);
@@ -604,13 +601,7 @@ fn node_test_done_entry(buntest: &bun_test::BunTest, done: JSValue) -> Option<Re
     let (dcb_ref, dcb_called) = unsafe { ((*dcb).r#ref.as_deref(), (*dcb).called) };
     match dcb_ref {
         Some(refdata) => Some(refdata.phase),
-        // `r#ref` unset: the runner is still on the stack, or `.then()` fired
-        // inside run_test_callback's microtask drain, before it stamps the
-        // DoneCallback. `get_current_state_data()` can't name a sequence
-        // inside a concurrent group, but `on_stack_entry_data` holds exactly
-        // the `cfg_data` that `run_test_callback` was invoked with
-        // (set/restored around it), so this names the right sequence under
-        // --concurrent too.
+        // Still inside run_test_callback, which stamps `r#ref` last: `on_stack_entry_data` is its `cfg_data`, under --concurrent too.
         None if !dcb_called => Some(match buntest.execution.on_stack_entry_data.get() {
             Some(entry_data) => RefDataValue::Execution {
                 group_index: buntest.execution.group_index,

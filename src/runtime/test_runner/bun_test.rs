@@ -640,8 +640,7 @@ pub(crate) struct BunTest {
     /// Only the Box header may be freed in `Drop` — fields alias `DescribeScope` originals.
     pub(crate) cloned_hook_entries: Vec<*mut ExecutionEntry>,
     pub(crate) wants_wakeup: bool,
-    /// The running `node:test` test's claim on uncaught errors; see
-    /// [`BunTest::offer_uncaught_to_node_test`].
+    /// See [`BunTest::offer_uncaught_to_node_test`].
     pub(crate) node_test_uncaught: Option<NodeTestUncaught>,
 
     pub(crate) phase: Phase,
@@ -1264,21 +1263,14 @@ impl BunTest {
         Some(cfg_data)
     }
 
-    /// `node:test` runs a test's hooks, subtests and mock restore inside the one
-    /// bun:test callback, so advancing past that entry as soon as an uncaught
-    /// error has failed it would start the next test on top of them. While
-    /// `current` is the entry its handler was registered for, the handler hears
-    /// about the error; `true` means `node:test` winds the test down and then
-    /// calls the entry's `done`, which advances the sequence. The entry's
-    /// timeout still bounds that.
+    /// `true`: `node:test` runs the failed entry's hooks and subtests (all inside this one callback) and then calls its `done`, so do not advance yet.
     pub(crate) fn offer_uncaught_to_node_test(
         this_strong: &BunTestPtr,
         global_this: &JSGlobalObject,
         current: &RefDataValue,
         error: JSValue,
     ) -> bool {
-        // Copy the handler out: the call re-enters JS, so no borrow of the
-        // `BunTest` may be live across it.
+        // The call re-enters JS: copy the handler out so that no borrow of the `BunTest` is live across it.
         let handler = match &this_strong.get().node_test_uncaught {
             Some(claim) if claim.entry.is_same_entry(current) => claim.handler.get(),
             _ => return false,
@@ -1301,10 +1293,7 @@ impl BunTest {
         };
         bun_core::scoped_log!(bun_test_group, "offerUncaughtToNodeTest -> taken: {}", taken);
         if taken {
-            // The handler only rejected a promise, and the error can be reported
-            // after the turn's last microtask drain (or under a live JS frame,
-            // where a drain here would be wrong). Keep the loop from sleeping on
-            // the queued reactions; the next turn runs them.
+            // The handler queued promise reactions, possibly after this turn's last drain or under a live JS frame: run them next turn.
             this_strong.get().wants_wakeup = true;
         }
         taken
@@ -1456,8 +1445,7 @@ pub(crate) struct EntryData {
     pub(crate) remaining_repeat_count: i64,
 }
 
-/// Registered by `node:test` (`jest::js_node_test_on_uncaught`) each time
-/// bun:test invokes one of its tests.
+/// Registered through `jest::js_node_test_on_uncaught` each time bun:test invokes a `node:test` test.
 pub(crate) struct NodeTestUncaught {
     /// The entry whose callback registered `handler`.
     pub(crate) entry: RefDataValue,
@@ -1485,8 +1473,7 @@ pub(crate) enum RefDataValue {
 }
 
 impl RefDataValue {
-    /// Both name the same execution entry in the same repeat. A retry of it
-    /// compares equal.
+    /// Same execution entry in the same repeat (a retry of it compares equal).
     pub(crate) fn is_same_entry(&self, other: &RefDataValue) -> bool {
         match (self, other) {
             (

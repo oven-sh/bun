@@ -702,90 +702,6 @@ describe("JPEG truncated inside its scan data", () => {
   });
 });
 
-// The decoder's output buffer is uninitialised capacity, so an accepted decode must not
-// leave a byte of it unwritten. ASAN can fill every new allocation with a chosen byte:
-// an alpha byte that libjpeg never wrote then reads as that byte, whatever the block held
-// before. The child decodes under that fill, and this process reads the alpha back.
-test.skipIf(!isASAN)("an accepted JPEG decode commits no byte that libjpeg did not write", async () => {
-  const cases: { name: string; kind: "baseline" | "progressive"; cut?: number; insert?: [number, number[]] }[] = [];
-  for (const kind of ["baseline", "progressive"] as const) {
-    const clean = warnJpegs[kind];
-    const markers = jpegMarkers(clean);
-    const scans = scanRanges(markers);
-    const [scanStart, scanEnd] = scans[0];
-    const step = Math.max(1, Math.floor((scanEnd - scanStart) / 12));
-    for (let cut = scanStart; cut < scanEnd; cut += step) cases.push({ name: `${kind} cut at ${cut}`, kind, cut });
-    cases.push({ name: `${kind} cut at 95%`, kind, cut: cutInsideScanData(markers, Math.floor(clean.length * 0.95)) });
-    cases.push({ name: `${kind} without its last scan's data`, kind, cut: scans.at(-1)![0] });
-    // A warning and then a fatal error: no row is written for the progressive file.
-    cases.push({
-      name: `${kind} junk and SOF5 after the first scan`,
-      kind,
-      // 16 junk bytes: libjpeg swallows a few without a warning.
-      insert: [scanEnd, [...new Array<number>(16).fill(0), 0xff, 0xc5]],
-    });
-  }
-
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
-        const { files, cases } = await Bun.stdin.json();
-        const out = {};
-        for (const c of cases) {
-          const file = Buffer.from(files[c.kind], "base64");
-          const bytes = c.insert
-            ? Buffer.concat([file.subarray(0, c.insert[0]), Buffer.from(c.insert[1]), file.subarray(c.insert[0])])
-            : file.subarray(0, c.cut);
-          out[c.name] = await new Bun.Image(bytes).png().bytes().then(
-            png => Buffer.from(png).toString("base64"),
-            e => "rejected: " + e.code,
-          );
-        }
-        console.log(JSON.stringify(out));
-      `,
-    ],
-    env: {
-      ...bunEnv,
-      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "malloc_fill_byte=90", "max_malloc_fill_size=1073741824"]
-        .filter(Boolean)
-        .join(":"),
-    },
-    stdin: Buffer.from(
-      JSON.stringify({
-        files: {
-          baseline: Buffer.from(warnJpegs.baseline).toString("base64"),
-          progressive: Buffer.from(warnJpegs.progressive).toString("base64"),
-        },
-        cases,
-      }),
-    ),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const stderr = rawStderr
-    .split("\n")
-    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
-    .join("\n");
-  expect(stderr).toBe("");
-
-  const pngs: Record<string, string> = JSON.parse(stdout || "{}");
-  const got: Record<string, string> = {};
-  for (const { name } of cases) {
-    const png = pngs[name] ?? "missing";
-    if (png.startsWith("rejected") || png === "missing") got[name] = png;
-    else
-      got[name] = everyAlphaOpaque(await rgbaOf(Buffer.from(png, "base64"))) ? "fully written" : "has unwritten bytes";
-  }
-  const want = Object.fromEntries(
-    cases.map(c => [c.name, c.insert ? "rejected: ERR_IMAGE_DECODE_FAILED" : "fully written"]),
-  );
-  expect(got).toEqual(want);
-  expect(exitCode).toBe(0);
-});
-
 // Each of these warns and then hits a fatal error, which TurboJPEG reports as a warning
 // unless the fatal exit clears its warning flag. One test per function that clears it.
 describe("JPEG that warns and then fails", () => {
@@ -899,6 +815,139 @@ describe("lossless JPEG", () => {
     expect(JSON.parse(stdout || "{}")).toEqual({ scaled: true, withHeaderWarning: true });
     expect(exitCode).toBe(0);
   });
+});
+
+// TurboJPEG also refuses a cropping region for sampling factors outside its table. Here the
+// luma is 3x1, which libjpeg decodes and, unlike a lossless stream, also scales. The bytes are
+// `cjpeg -quality 90 -sample 3x1,1x1,1x1` of a 24x16 gradient: Bun's encoder writes 4:2:0 only.
+const unknownSubsamplingJpeg = Buffer.from(
+  "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGB" +
+    "YUGBIUFRT/2wBDAQMEBAUEBQkFBQkUDQsNFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBT/wAARCAAQ" +
+    "ABgDATEAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhBy" +
+    "JxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKT" +
+    "lJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAA" +
+    "AAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRom" +
+    "JygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExc" +
+    "bHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD4u0H4SeRt/c5z7dK9a0D4SeTt/c5z7dK9a0H4SeRt/c5z7dK7" +
+    "cnzr2d9dr/8Aktvzv8j9T8O+IL8nvdjtNB+Enkbf3Ofw6V2egfCTyNv7nP4dK+gdB+Enk7f3Oc+3SvyPJ869nxM9dqb/APJWvzv8j+YvDziC9G" +
+    "GvVH//2Q==",
+  "base64",
+);
+
+describe("JPEG with sampling factors TurboJPEG cannot classify", () => {
+  test("the SOF0 luma factors are 3x1", async () => {
+    const sof0 = unknownSubsamplingJpeg.indexOf(Buffer.from([0xff, 0xc0]));
+    expect([...unknownSubsamplingJpeg.subarray(sof0 + 10, sof0 + 12)]).toEqual([1, 0x31]);
+    expect(await new Bun.Image(unknownSubsamplingJpeg).metadata()).toEqual({ width: 24, height: 16, format: "jpeg" });
+  });
+
+  // Whatever size the decoder picks for this stream, a resize has to show the same picture
+  // as resizing the full-size decode. Rows packed at one width and read at another do not.
+  test("a resize shows the picture of the full-size decode", async () => {
+    const resized = (b: Uint8Array) => new Bun.Image(b).resize(12, 8, { fit: "fill" }).png().bytes();
+    const direct = await rgbaOf(await resized(unknownSubsamplingJpeg));
+    const viaFullSize = await rgbaOf(await resized(await new Bun.Image(unknownSubsamplingJpeg).png().bytes()));
+    let total = 0;
+    for (let i = 0; i < direct.length; i++) total += Math.abs(direct[i] - viaFullSize[i]);
+    expect({ bytes: direct.length, opaque: everyAlphaOpaque(direct), meanError: total / direct.length < 8 }).toEqual({
+      bytes: 12 * 8 * 4,
+      opaque: true,
+      meanError: true,
+    });
+  });
+});
+
+// The decoder's output buffer is uninitialised capacity, so an accepted decode must not
+// leave a byte of it unwritten. ASAN can fill every new allocation with a chosen byte:
+// an alpha byte that libjpeg never wrote then reads as that byte, whatever the block held
+// before. The child decodes under that fill, and this process reads the alpha back.
+test.skipIf(!isASAN)("an accepted JPEG decode commits no byte that libjpeg did not write", async () => {
+  type Case = { name: string; kind: string; cut?: number; insert?: [number, number[]]; resize?: [number, number] };
+  const cases: Case[] = [
+    // TurboJPEG refuses a cropping region for these two, so the decoder sizes the buffer itself.
+    { name: "lossless resized to 2x50", kind: "lossless", resize: [2, 50] },
+    { name: "unknown subsampling resized to 12x8", kind: "unknownSubsampling", resize: [12, 8] },
+  ];
+  for (const kind of ["baseline", "progressive"] as const) {
+    const clean = warnJpegs[kind];
+    const markers = jpegMarkers(clean);
+    const scans = scanRanges(markers);
+    const [scanStart, scanEnd] = scans[0];
+    const step = Math.max(1, Math.floor((scanEnd - scanStart) / 12));
+    for (let cut = scanStart; cut < scanEnd; cut += step) cases.push({ name: `${kind} cut at ${cut}`, kind, cut });
+    cases.push({ name: `${kind} cut at 95%`, kind, cut: cutInsideScanData(markers, Math.floor(clean.length * 0.95)) });
+    cases.push({ name: `${kind} without its last scan's data`, kind, cut: scans.at(-1)![0] });
+    // A warning and then a fatal error: no row is written for the progressive file.
+    cases.push({
+      name: `${kind} junk and SOF5 after the first scan`,
+      kind,
+      // 16 junk bytes: libjpeg swallows a few without a warning.
+      insert: [scanEnd, [...new Array<number>(16).fill(0), 0xff, 0xc5]],
+    });
+  }
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { files, cases } = await Bun.stdin.json();
+        const out = {};
+        for (const c of cases) {
+          const file = Buffer.from(files[c.kind], "base64");
+          const bytes = c.insert
+            ? Buffer.concat([file.subarray(0, c.insert[0]), Buffer.from(c.insert[1]), file.subarray(c.insert[0])])
+            : file.subarray(0, c.cut);
+          const image = new Bun.Image(bytes);
+          if (c.resize) image.resize(c.resize[0], c.resize[1], { fit: "fill" });
+          out[c.name] = await image.png().bytes().then(
+            png => Buffer.from(png).toString("base64"),
+            e => "rejected: " + e.code,
+          );
+        }
+        console.log(JSON.stringify(out));
+      `,
+    ],
+    env: {
+      ...bunEnv,
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "malloc_fill_byte=90", "max_malloc_fill_size=1073741824"]
+        .filter(Boolean)
+        .join(":"),
+    },
+    stdin: Buffer.from(
+      JSON.stringify({
+        files: {
+          baseline: Buffer.from(warnJpegs.baseline).toString("base64"),
+          progressive: Buffer.from(warnJpegs.progressive).toString("base64"),
+          lossless: losslessJpeg.toString("base64"),
+          unknownSubsampling: unknownSubsamplingJpeg.toString("base64"),
+        },
+        cases,
+      }),
+    ),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const stderr = rawStderr
+    .split("\n")
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+  expect(stderr).toBe("");
+
+  const pngs: Record<string, string> = JSON.parse(stdout || "{}");
+  const got: Record<string, string> = {};
+  for (const { name } of cases) {
+    const png = pngs[name] ?? "missing";
+    if (png.startsWith("rejected") || png === "missing") got[name] = png;
+    else
+      got[name] = everyAlphaOpaque(await rgbaOf(Buffer.from(png, "base64"))) ? "fully written" : "has unwritten bytes";
+  }
+  const want = Object.fromEntries(
+    cases.map(c => [c.name, c.insert ? "rejected: ERR_IMAGE_DECODE_FAILED" : "fully written"]),
+  );
+  expect(got).toEqual(want);
+  expect(exitCode).toBe(0);
 });
 
 // ─── 6. lossless roundtrip parity ────────────────────────────────────────────

@@ -1162,9 +1162,9 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
 
     let on_connect = arguments[9];
     let on_close = arguments[10];
-    let idle_timeout = arguments[11].to_int32();
-    let connection_timeout = arguments[12].to_int32();
-    let max_lifetime = arguments[13].to_int32();
+    let idle_timeout = arguments[11].coerce::<i32>(global_object)?.max(0);
+    let connection_timeout = arguments[12].coerce::<i32>(global_object)?.max(0);
+    let max_lifetime = arguments[13].coerce::<i32>(global_object)?.max(0);
     let use_unnamed_prepared_statements = arguments[14].as_boolean();
 
     let ptr: *mut PostgresSQLConnection =

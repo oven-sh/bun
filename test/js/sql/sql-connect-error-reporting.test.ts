@@ -24,6 +24,7 @@
 
 import { SQL } from "bun";
 import { expect, mock, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import type net from "node:net";
 import {
   closedPort,
@@ -413,4 +414,61 @@ test("mysql: connectionTimeout: 0 disables connect retries", async () => {
     await db.close({ timeout: 0 });
     server.close();
   }
+});
+
+// The pool reads `sql.options` again for every new connection, so a value
+// assigned to it after construction reaches the native connection constructor
+// without a pass through the option parser. The child process does the
+// assignments because a regression here aborts the process.
+test.each([
+  ["postgres", "ERR_POSTGRES_CONNECTION_REFUSED"],
+  ["mysql", "ERR_MYSQL_CONNECTION_REFUSED"],
+])("%s: invalid values assigned to sql.options do not crash the next connection", async (adapter, refused) => {
+  const port = await closedPort();
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const keys = ["idleTimeout", "connectionTimeout", "maxLifetime", "sslMode"];
+async function attempt(assign) {
+  const sql = new Bun.SQL({ url: process.env.SQL_URL, max: 1 });
+  assign(sql.options);
+  try {
+    await sql.connect();
+    return "connected";
+  } catch (e) {
+    return e.code ?? e.name;
+  } finally {
+    await sql.close({ timeout: 0 });
+  }
+}
+const results = {};
+for (const [label, value] of [["object", {}], ["string", "abc"], ["negative", -1]]) {
+  results[label] = await attempt(options => {
+    for (const key of keys) options[key] = value;
+  });
+}
+for (const key of keys) {
+  results["symbol " + key] = await attempt(options => {
+    options[key] = Symbol();
+  });
+}
+console.log(JSON.stringify(results));`,
+    ],
+    env: { ...bunEnv, SQL_URL: `${adapter}://user@127.0.0.1:${port}/db` },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    object: refused,
+    string: refused,
+    negative: refused,
+    "symbol idleTimeout": "TypeError",
+    "symbol connectionTimeout": "TypeError",
+    "symbol maxLifetime": "TypeError",
+    "symbol sslMode": "TypeError",
+  });
+  expect(exitCode).toBe(0);
 });

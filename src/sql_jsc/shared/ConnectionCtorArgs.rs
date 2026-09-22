@@ -60,7 +60,7 @@ impl<M: SslModeArg> ConnectionCtorArgs<M> {
         let password_str = arguments[3].to_bun_string(global_object)?;
         let database_str = arguments[4].to_bun_string(global_object)?;
         let modes = M::MODES;
-        let ssl_mode = usize::try_from(arguments[5].to_int32())
+        let ssl_mode = usize::try_from(arguments[5].coerce::<i32>(global_object)?)
             .ok()
             .and_then(|i| modes.get(i))
             .copied()

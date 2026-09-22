@@ -12,6 +12,7 @@
 #pragma once
 
 #include "root.h"
+#include "BunClientData.h"
 #include <JavaScriptCore/JSDestructibleObject.h>
 #include <JavaScriptCore/InternalFunction.h>
 #include <wtf/HashMap.h>

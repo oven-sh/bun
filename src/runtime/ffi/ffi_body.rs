@@ -14,14 +14,12 @@ use bun_core::{EncodedSlice, ZStr};
 use bun_core::{ZBox, env_var, fmt as bun_fmt, zstr};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
-    self as jsc, CallFrame, EncodedSliceJsc, JSGlobalObject, JSObject, JSPropertyIterator, JSValue,
-    JsCell, JsClass, JsError, JsResult, SystemError,
+    self as jsc, CallFrame, EncodedSliceJsc, ErrorCode, JSGlobalObject, JSObject,
+    JSPropertyIterator, JSValue, JsCell, JsClass, JsError, JsResult, SystemError,
 };
 #[cfg(target_os = "macos")]
 use bun_paths as path;
-use bun_paths::PathBuffer;
 use bun_resolver::fs as Fs;
-use bun_sys;
 
 // ─── Local shims for upstream surfaces not yet wired (Phase D) ───────────────
 
@@ -210,7 +208,7 @@ impl Offsets {
 // `UnsafeCell`-backed fields suppresses `noalias` on the `&Self` the codegen
 // shim materialises from `m_ctx`, which is the systemic R-2 guarantee.
 #[bun_jsc::JsClass(no_constructor)]
-pub struct FFI {
+pub(crate) struct FFI {
     pub dylib: JsCell<Option<bun_sys::DynLib>>,
     pub functions: JsCell<StringArrayHashMap<Function>>,
     pub closed: Cell<bool>,
@@ -230,7 +228,7 @@ impl Default for FFI {
 
 impl FFI {
     // Intentional leak when not close()d: dlclose on GC is unsound because .ptr addresses escape the collector's view.
-    pub fn finalize(self: Box<Self>) {
+    pub(crate) fn finalize(self: Box<Self>) {
         if self.closed.get() {
             drop(self);
         } else {
@@ -661,7 +659,7 @@ impl CompileC {
 
         #[cfg(target_os = "macos")]
         {
-            let mut pathbuf = PathBuffer::uninit();
+            let mut pathbuf = bun_paths::path_buffer_pool::get();
             'add_system_include_dir: {
                 let dirs_to_try: [&[u8]; 2] = [
                     env_var::SDKROOT.get().unwrap_or(b""),
@@ -984,7 +982,20 @@ impl FFI {
     // No `#[bun_jsc::host_fn]` here — the `Free` shim it emits is a bare
     // `bun_ffi_cc(__g, __f)` call, which doesn't resolve inside `impl FFI`.
     // The C-ABI shim (`Bun__FFI__cc`) is supplied by the `.classes.ts` codegen.
-    pub fn bun_ffi_cc(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn bun_ffi_cc(
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        if !global_this.bun_vm().allow_ffi_cc() {
+            return Err(global_this
+                .err(
+                    ErrorCode::FFI_CC_DISABLED,
+                    format_args!(
+                        "Cannot compile C code because the bun:ffi C compiler is disabled."
+                    ),
+                )
+                .throw());
+        }
         if !bun_core::Environment::ENABLE_TINYCC {
             return Err(global_this.throw(format_args!(
                 "bun:ffi cc() is not available in this build (TinyCC is disabled)"
@@ -1229,7 +1240,7 @@ impl FFI {
         Ok(js_object)
     }
 
-    pub fn close_jsc_callback(
+    pub(crate) fn close_jsc_callback(
         _global_this: &JSGlobalObject,
         callback: JSValue,
     ) -> JsResult<JSValue> {
@@ -1241,7 +1252,7 @@ impl FFI {
         Ok(JSValue::UNDEFINED)
     }
 
-    pub fn callback(
+    pub(crate) fn callback(
         global_this: &JSGlobalObject,
         interface: JSValue,
         js_callback: JSValue,
@@ -1298,7 +1309,7 @@ impl FFI {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn close(&self, _global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn close(&self, _global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         jsc::mark_binding();
         self.do_close();
         Ok(JSValue::UNDEFINED)
@@ -1319,7 +1330,7 @@ impl FFI {
         self.functions.with_mut(|f| f.clear_retaining_capacity());
     }
 
-    pub fn print_callback(global: &JSGlobalObject, object: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn print_callback(global: &JSGlobalObject, object: JSValue) -> JsResult<JSValue> {
         jsc::mark_binding();
 
         if object.is_empty_or_undefined_or_null() || !object.is_object() {
@@ -1337,7 +1348,7 @@ impl FFI {
         bun_string_jsc::create_utf8_for_js(global, text)
     }
 
-    pub fn print(
+    pub(crate) fn print(
         global: &JSGlobalObject,
         object: JSValue,
         is_callback_val: Option<JSValue>,
@@ -1562,7 +1573,7 @@ impl FFI {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_symbols(_this: &FFI, _: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_symbols(_this: &FFI, _: &JSGlobalObject) -> JSValue {
         // This shouldn't be called. The cachedValue is what should be called.
         JSValue::UNDEFINED
     }
@@ -1644,7 +1655,7 @@ impl FFI {
         Ok(js_object)
     }
 
-    pub fn create_cfunction(
+    pub(crate) fn create_cfunction(
         global: &JSGlobalObject,
         options: JSValue,
         name_value: Option<JSValue>,
@@ -1862,7 +1873,7 @@ pub(super) fn generate_symbols(
 
 // ─── Function ───────────────────────────────────────────────────────────────
 
-pub struct Function {
+pub(crate) struct Function {
     pub symbol_from_dynamic_library: Option<*mut c_void>,
     pub base_name: ZBox,
     pub state: Option<NonNull<TCC::State>>,
@@ -2130,10 +2141,6 @@ impl Function {
             }
         }
 
-        // try writer.writeAll(
-        //     "(JSContext ctx, void* function, void* thisObject, size_t argumentCount, const EncodedJSValue arguments[], void* exception);\n\n",
-        // );
-
         let mut arg_buf = [0u8; 512];
 
         writer.write_all(b"    ")?;
@@ -2224,13 +2231,13 @@ impl Function {
 
 // ─── Step ───────────────────────────────────────────────────────────────────
 
-pub enum Step {
+pub(crate) enum Step {
     Pending,
     Compiled(Compiled),
     Failed { msg: Box<[u8]> },
 }
 
-pub struct Compiled {
+pub(crate) struct Compiled {
     pub ptr: *mut c_void,
 }
 
@@ -2324,7 +2331,7 @@ impl CompilerRT {
     fn fresh_compiler_rt_dir_name() -> Option<ZBox> {
         #[cfg(unix)]
         {
-            let mut name_buf = PathBuffer::uninit();
+            let mut name_buf = bun_paths::path_buffer_pool::get();
             let name = Fs::FileSystem::tmpname(b"bun-cc", &mut name_buf.0, bun_core::fast_random())
                 .ok()?;
             Some(ZBox::from_bytes(name.as_bytes()))
@@ -2362,7 +2369,7 @@ impl CompilerRT {
             }
         }
 
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
         let Ok(path) = bun_sys::get_fd_path(bun_cc.fd(), &mut path_buf) else {
             return false;
         };

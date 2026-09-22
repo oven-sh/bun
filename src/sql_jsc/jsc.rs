@@ -230,7 +230,7 @@ pub struct SqlRuntimeHooks {
         cache: *mut c_void,
         opts: &bun_uws::us_bun_socket_context_options_t,
         err: &mut bun_uws::create_bun_socket_error_t,
-    ) -> *mut bun_uws::SslCtx,
+    ) -> Option<OwnedSslCtx>,
     /// `SSLConfig::fromJS` — parse a JS TLS-options object. Returns a boxed
     /// `bun_runtime::socket::SSLConfig` (caller frees via `ssl_config_free`),
     /// or null when the value contained no TLS config / threw (caller checks
@@ -289,10 +289,16 @@ pub(crate) trait VirtualMachineSqlExt {
     fn ssl_ctx_cache(&mut self) -> &mut SslCtxCache;
     /// bun_io::EventLoopCtx for the JS-thread VM, for KeepAlive::{ref_,unref}.
     fn vm_ctx(&self) -> bun_io::EventLoopCtx;
-    /// Lazy-init `RareData`'s per-protocol uws [`bun_uws::SocketGroup`].
-    fn postgres_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup;
+    /// `context`'s per-protocol uws [`bun_uws::SocketGroup`], for a new connection its script opens.
+    fn postgres_socket_group<const SSL: bool>(
+        &mut self,
+        context: &bun_jsc::ScriptExecutionContext,
+    ) -> &mut bun_uws::SocketGroup;
     /// See [`Self::postgres_socket_group`].
-    fn mysql_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup;
+    fn mysql_socket_group<const SSL: bool>(
+        &mut self,
+        context: &bun_jsc::ScriptExecutionContext,
+    ) -> &mut bun_uws::SocketGroup;
     // NOTE: `event_loop_mut` lives on `VirtualMachine` as a safe inherent
     // accessor (single audited deref under the JS-thread-singleton invariant);
     // the former unsafe trait shim here was dead — inherent methods always win
@@ -323,14 +329,22 @@ impl VirtualMachineSqlExt for VirtualMachine {
         bun_io::js_vm_ctx()
     }
     #[inline]
-    fn postgres_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup {
+    fn postgres_socket_group<const SSL: bool>(
+        &mut self,
+        context: &bun_jsc::ScriptExecutionContext,
+    ) -> &mut bun_uws::SocketGroup {
         let loop_ = self.uws_loop();
-        self.rare_data().postgres_group::<SSL>(loop_)
+        self.client_socket_groups_in(context)
+            .postgres_group::<SSL>(loop_)
     }
     #[inline]
-    fn mysql_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup {
+    fn mysql_socket_group<const SSL: bool>(
+        &mut self,
+        context: &bun_jsc::ScriptExecutionContext,
+    ) -> &mut bun_uws::SocketGroup {
         let loop_ = self.uws_loop();
-        self.rare_data().mysql_group::<SSL>(loop_)
+        self.client_socket_groups_in(context)
+            .mysql_group::<SSL>(loop_)
     }
 }
 
@@ -866,18 +880,18 @@ pub(crate) mod call_frame {
 // Opaque handle to `bun_runtime::api::SSLContextCache` (owned by
 // `RuntimeState`). Reached via [`VirtualMachineSqlExt::ssl_ctx_cache`]; backed
 // by [`SqlRuntimeHooks::ssl_ctx_cache`] / `ssl_ctx_get_or_create`.
+use bun_boringssl_sys::OwnedSslCtx;
+
 bun_opaque::opaque_ffi! { pub struct SslCtxCache; }
 impl SslCtxCache {
     pub(crate) fn get_or_create_opts(
         &mut self,
         opts: &bun_uws::us_bun_socket_context_options_t,
         err: &mut bun_uws::create_bun_socket_error_t,
-    ) -> Option<*mut bun_uws::SslCtx> {
+    ) -> Option<OwnedSslCtx> {
         // SAFETY: `self` is `&mut runtime_state().ssl_ctx_cache`; `opts`/`err`
         // are caller stack locals.
-        let p =
-            unsafe { (hooks().ssl_ctx_get_or_create)(self._p.get().cast::<c_void>(), opts, err) };
-        if p.is_null() { None } else { Some(p) }
+        unsafe { (hooks().ssl_ctx_get_or_create)(self._p.get().cast::<c_void>(), opts, err) }
     }
 }
 

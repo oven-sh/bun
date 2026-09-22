@@ -96,9 +96,6 @@ MonotonicTime Performance::monotonicTimeFromRelativeTime(DOMHighResTimeStamp rel
 
 PerformanceTiming* Performance::timing()
 {
-    // if (!is<Document>(scriptExecutionContext()))
-    //     return nullptr;
-    // ASSERT(isMainThread());
     if (!m_timing)
         m_timing = PerformanceTiming::create();
     return m_timing.get();
@@ -263,6 +260,14 @@ void Performance::registerPerformanceObserver(PerformanceObserver& observer)
 void Performance::unregisterPerformanceObserver(PerformanceObserver& observer)
 {
     m_observers.remove(&observer);
+}
+
+void Performance::disconnectObserversOf(const ScriptExecutionContext& context)
+{
+    for (auto& observer : copyToVector(m_observers)) {
+        if (observer->scriptExecutionContext() == &context)
+            observer->disconnect();
+    }
 }
 
 void Performance::queueEntry(PerformanceEntry& entry)

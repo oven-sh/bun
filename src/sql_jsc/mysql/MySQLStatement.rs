@@ -16,8 +16,6 @@ bun_core::declare_scope!(MySQLStatement, hidden);
 #[derive(bun_ptr::CellRefCounted)]
 pub struct MySQLStatement {
     pub(crate) cached_structure: CachedStructure,
-    // Private — intrusive refcount invariant; reach via `ref_()`/`deref()` or
-    // [`Self::init_exact_refs`] at construction time.
     ref_count: Cell<u32>,
     pub(crate) statement_id: u32,
     pub(crate) params: Vec<Param>,
@@ -79,17 +77,6 @@ impl Default for ExecutionFlags {
 pub use bun_sql::shared::statement_status::Status;
 
 impl MySQLStatement {
-    /// Set the initial intrusive
-    /// refcount at construction time, before any `ref_()`/`deref()`. The
-    /// `ref_count` field is private (refcount invariant), so callers building
-    /// a statement with >1 owner (query + connection-map entry) go through
-    /// this instead of writing the field directly.
-    #[inline]
-    pub(crate) fn init_exact_refs(&mut self, n: u32) {
-        debug_assert!(n > 0);
-        self.ref_count.set(n);
-    }
-
     pub(crate) fn reset(&mut self) {
         self.result_count = 0;
         self.columns_received = 0;

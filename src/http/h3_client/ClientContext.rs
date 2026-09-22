@@ -16,6 +16,7 @@ use super::pending_connect::PendingConnect;
 use super::stream::Stream;
 use crate::HTTPClient;
 use crate::h3_client as H3;
+use crate::http_thread::WriteMessageType;
 
 use crate::h3_client::h3_client;
 
@@ -104,6 +105,7 @@ impl ClientContext {
     }
 
     /// Find or open a connection to `hostname:port` and queue `client` on it.
+    /// `false` leaves `client` on no session, for the caller to fail.
     pub(crate) fn connect(&mut self, client: &mut HTTPClient, hostname: &[u8], port: u16) -> bool {
         let reject = client.flags.reject_unauthorized;
         for &s in self.sessions.iter() {
@@ -111,7 +113,7 @@ impl ClientContext {
             // unregister() before destroy — `session_mut` centralises that
             // backref upgrade.
             let s = session_mut(s);
-            if s.matches(hostname, port, reject) && s.has_headroom() {
+            if s.matches(hostname, port, reject, client.pool.id) && s.has_headroom() {
                 bun_core::scoped_log!(
                     h3_client,
                     "reuse session {}:{}",
@@ -128,10 +130,11 @@ impl ClientContext {
         // it as a C string so an interior NUL truncates on the C side. This is
         // deliberately not `CString::new`, which would reject interior NUL
         // and diverge by returning `false`.
-        let mut host_buf = hostname.to_vec();
+        // Resolution and certificate verification name an IPv6 literal without its brackets.
+        let mut host_buf = bun_url::strip_ipv6_brackets(hostname).to_vec();
         host_buf.push(0);
         let host_z = std::ffi::CStr::from_bytes_until_nul(&host_buf).expect("nul appended above");
-        let session = ClientSession::new(hostname.to_vec(), port, reject);
+        let session = ClientSession::new(hostname.to_vec(), port, reject, client.pool.id);
         let _ = H3::live_sessions.fetch_add(1, Ordering::Relaxed);
         // `session` was just allocated by ClientSession::new — `session_mut`
         // upgrades the fresh heap pointer (sole owner) for these set-up writes.
@@ -174,6 +177,11 @@ impl ClientContext {
                     bstr::BStr::new(hostname),
                     port,
                 );
+                // `fail_session` fails what is queued, and that dispatch frees
+                // the `AsyncHTTP` the caller still holds. Queue nothing.
+                if let Some(stream) = client.h3 {
+                    session_mut(session).detach(stream.as_ptr());
+                }
                 self.unregister(session_mut(session));
                 PendingConnect::fail_session(session, crate::Error::ConnectionRefused);
                 return false;
@@ -213,7 +221,19 @@ impl ClientContext {
         false
     }
 
-    pub(crate) fn stream_body_by_http_id(async_http_id: u32, ended: bool) {
+    /// Close the connections of fetch session `pool_id` that carry no request.
+    pub(crate) fn close_idle_sessions(pool_id: u64) {
+        let Some(this) = Self::get() else {
+            return;
+        };
+        // See `abort_by_http_id` — `BackRef` over the process-lifetime singleton.
+        let ctx = bun_ptr::BackRef::from(this);
+        for &s in ctx.sessions.iter() {
+            session_mut(s).close_if_idle(pool_id);
+        }
+    }
+
+    pub(crate) fn stream_body_by_http_id(async_http_id: u32, message: WriteMessageType) {
         let Some(this) = Self::get() else {
             return;
         };
@@ -221,7 +241,7 @@ impl ClientContext {
         let ctx = bun_ptr::BackRef::from(this);
         for &s in ctx.sessions.iter() {
             // Registry only holds live sessions — `session_mut` upgrade.
-            if session_mut(s).stream_body_by_http_id(async_http_id, ended) {
+            if session_mut(s).stream_body_by_http_id(async_http_id, message) {
                 return;
             }
         }

@@ -1,6 +1,6 @@
 import { randomUUIDv7, S3Client, S3Options } from "bun";
 import { afterAll, describe, expect, it } from "bun:test";
-import { getSecret } from "harness";
+import { bunEnv, bunExe, getSecret } from "harness";
 
 const options: S3Options = {
   accessKeyId: "test",
@@ -1195,6 +1195,71 @@ describe.concurrent("S3 - List Objects", () => {
     } catch (error: any) {
       expect(error.code).toBe("ERR_S3_MISSING_CREDENTIALS");
     }
+  });
+
+  it("result objects survive object spread", async () => {
+    // JSC's object-spread fast path (tryCreateObjectViaCloning) calls
+    // inlineStorage() unconditionally and asserts in debug builds when the
+    // source has zero inline capacity. The list() result objects were built
+    // with a zero inline-capacity hint, so spreading them aborted the process
+    // under a debug/ASAN build. Run in a subprocess so a regressing assert
+    // shows up as a mismatched stdout + nonzero exit instead of killing the
+    // test runner.
+    const fixture = `
+      const { S3Client } = require("bun");
+      const server = Bun.serve({
+        port: 0,
+        fetch: () => new Response(
+          '<?xml version="1.0" encoding="UTF-8"?>' +
+          '<ListBucketResult>' +
+            '<Name>bkt</Name>' +
+            '<Contents>' +
+              '<Key>k</Key>' +
+              '<Owner><ID>oid</ID><DisplayName>dn</DisplayName></Owner>' +
+            '</Contents>' +
+            '<CommonPrefixes><Prefix>p/</Prefix></CommonPrefixes>' +
+          '</ListBucketResult>',
+          { headers: { "Content-Type": "application/xml" }, status: 200 },
+        ),
+      });
+      const client = new S3Client({
+        accessKeyId: "t", secretAccessKey: "t", bucket: "b",
+        endpoint: server.url.href,
+      });
+      const res = await client.list();
+      const entry = res.contents[0];
+      const out = {
+        top: { ...res },
+        entry: { ...entry },
+        owner: { ...entry.owner },
+        common: { ...res.commonPrefixes[0] },
+        assign: Object.assign({}, entry),
+      };
+      out.top.contents = out.top.contents.length;
+      out.top.commonPrefixes = out.top.commonPrefixes.length;
+      console.log(JSON.stringify(out));
+      server.stop(true);
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, HTTP_PROXY: "", HTTPS_PROXY: "", http_proxy: "", https_proxy: "" },
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.trim()).toBe(
+      JSON.stringify({
+        top: { name: "bkt", contents: 1, commonPrefixes: 1 },
+        entry: { key: "k", owner: { id: "oid", displayName: "dn" } },
+        owner: { id: "oid", displayName: "dn" },
+        common: { prefix: "p/" },
+        assign: { key: "k", owner: { id: "oid", displayName: "dn" } },
+      }),
+    );
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 });
 

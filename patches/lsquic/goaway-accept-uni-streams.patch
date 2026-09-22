@@ -1,0 +1,18 @@
+--- a/src/liblsquic/lsquic_full_conn_ietf.c
++++ b/src/liblsquic/lsquic_full_conn_ietf.c
+@@ -5870,7 +5870,14 @@
+                 lsquic_malo_put(stream_frame);
+                 return 0;
+             }
+-            if (conn->ifc_flags & IFC_GOING_AWAY)
++            /* bun: GOAWAY rejects requests only (RFC 9114 Section 5.2).  The
++             * peer can still open its control and QPACK streams: an lsquic
++             * client opens its QPACK encoder stream when our SETTINGS arrive.
++             * STOP_SENDING on one of those makes the peer close the connection
++             * with H3_CLOSED_CRITICAL_STREAM, which kills the requests that
++             * the GOAWAY was supposed to let finish. */
++            if ((conn->ifc_flags & IFC_GOING_AWAY)
++                && SD_BIDI == ((stream_frame->stream_id >> SD_SHIFT) & 1))
+             {
+                 LSQ_DEBUG("going away: reject new incoming stream %"PRIu64,
+                                                     stream_frame->stream_id);

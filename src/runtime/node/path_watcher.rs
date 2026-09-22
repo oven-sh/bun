@@ -40,8 +40,6 @@ use bun_core::strings;
 use bun_core::{Output, zstr};
 use bun_core::{ZStr, handle_oom};
 use bun_paths as path;
-#[cfg(any(target_os = "linux", target_os = "android"))]
-use bun_paths::PathBuffer;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 use bun_paths::platform;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
@@ -189,7 +187,7 @@ impl PathWatcherManager {
 // PathWatcher
 // ────────────────────────────────────────────────────────────────────────────────
 
-pub struct PathWatcher {
+pub(crate) struct PathWatcher {
     manager: Option<&'static PathWatcherManager>,
 
     /// Canonical absolute path (realpath of the user-supplied path). Owned.
@@ -901,7 +899,7 @@ impl Linux {
                 b.assume_init()
             }
         };
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
         let mut rel_spill: Vec<u8> = Vec::new();
 
         while running.load(Ordering::Acquire) {
@@ -1215,7 +1213,7 @@ use bun_watcher::inotify_watcher::Event as InotifyEvent;
 /// libuv), so `fs.watch()` no longer spins up a second kqueue thread.
 #[cfg(target_os = "macos")]
 #[derive(Default)]
-pub struct Darwin {
+pub(crate) struct Darwin {
     // No manager-level state — FSEvents has its own process-global loop.
 }
 

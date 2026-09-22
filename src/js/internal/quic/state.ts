@@ -15,14 +15,10 @@ const DataViewPrototypeSetUint8 = uncurryThis(DataView.prototype.setUint8);
 
 const kIsLittleEndian = require("node:os").endianness() === "LE";
 
-const { kFinishClose, kInspect, kPrivateConstructor } = require("internal/quic/symbols");
-
-function ERR_ILLEGAL_CONSTRUCTOR() {
-  return $ERR_ILLEGAL_CONSTRUCTOR();
-}
-function ERR_INVALID_ARG_TYPE(name, expected, actual) {
-  return $ERR_INVALID_ARG_TYPE(name, expected, actual);
-}
+const symbols = require("internal/quic/symbols");
+const kFinishClose: typeof symbols.kFinishClose = symbols.kFinishClose;
+const kInspect: typeof symbols.kInspect = symbols.kInspect;
+const kPrivateConstructor: typeof symbols.kPrivateConstructor = symbols.kPrivateConstructor;
 
 const {
   IDX_STATE_SESSION_LISTENER_FLAGS,
@@ -83,10 +79,10 @@ class QuicEndpointState {
    */
   constructor(privateSymbol, buffer) {
     if (privateSymbol !== kPrivateConstructor) {
-      throw new ERR_ILLEGAL_CONSTRUCTOR();
+      throw $ERR_ILLEGAL_CONSTRUCTOR();
     }
     if (!isArrayBuffer(buffer)) {
-      throw new ERR_INVALID_ARG_TYPE("buffer", ["ArrayBuffer"], buffer);
+      throw $ERR_INVALID_ARG_TYPE("buffer", ["ArrayBuffer"], buffer);
     }
     this.#handle = new DataView(buffer);
   }
@@ -247,7 +243,7 @@ class QuicSessionState {
    */
   constructor(privateSymbol, view, byteOffset = 0) {
     if (privateSymbol !== kPrivateConstructor) {
-      throw new ERR_ILLEGAL_CONSTRUCTOR();
+      throw $ERR_ILLEGAL_CONSTRUCTOR();
     }
     if (isArrayBuffer(view)) {
       this.#handle = new DataView(view);
@@ -602,7 +598,7 @@ class QuicStreamState {
    */
   constructor(privateSymbol, view, byteOffset = 0) {
     if (privateSymbol !== kPrivateConstructor) {
-      throw new ERR_ILLEGAL_CONSTRUCTOR();
+      throw $ERR_ILLEGAL_CONSTRUCTOR();
     }
     if (isArrayBuffer(view)) {
       this.#handle = new DataView(view);

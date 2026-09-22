@@ -93,17 +93,30 @@ pub(crate) fn assign_unminified(
             .slice();
         let base = bun_core::MutableString::ensure_valid_identifier(original)?;
         let mut name: &[u8] = &base;
-        let mut tries = 1u32;
-        while used.contains_key(name) {
-            tries += 1;
-            buf.clear();
-            buf.extend_from_slice(&base);
-            write!(&mut buf, "{tries}").expect("Vec<u8> write");
+        // `used[base]` remembers the last suffix handed out for `base`, so a
+        // run of bindings sharing one name does not re-probe 2, 3, ... each time.
+        if let Some(last) = used.get(&*base).copied() {
+            let mut tries = last.max(1);
+            loop {
+                tries += 1;
+                buf.clear();
+                buf.extend_from_slice(&base);
+                write!(&mut buf, "{tries}").expect("Vec<u8> write");
+                if !used.contains_key(buf.as_slice()) {
+                    break;
+                }
+            }
+            used.put(&base, tries)?;
             name = &buf;
         }
         used.put(name, 1)?;
         let name = intern(c, name);
         c.cross_chunk_names.insert(ref_, name);
+        // An importing chunk's renamer looks the binding up by the symbol its links lead to.
+        let followed = c.graph.symbols.follow(ref_);
+        if !followed.eql(ref_) {
+            c.cross_chunk_names.insert(followed, name);
+        }
     }
     Ok(())
 }
@@ -172,12 +185,12 @@ pub(crate) fn assign_minified(
 
     // One name sequence for the bundle, tuned to its overall character mix.
     let mut freq = bun_ast::CharFreq { freqs: [0i32; 64] };
-    let (flags, char_freqs) = (c.graph.ast.items_flags(), c.graph.ast.items_char_freq());
+    let char_freqs = c.graph.ast.items_char_freq();
     for chunk in chunks.iter() {
         if let Content::Javascript(js) = &chunk.content {
             for &source_index in js.files_in_chunk_order.iter() {
-                if flags[source_index as usize].contains(crate::bundled_ast::Flags::HAS_CHAR_FREQ) {
-                    freq.include(&char_freqs[source_index as usize]);
+                if let Some(char_freq) = &char_freqs[source_index as usize] {
+                    freq.include(char_freq);
                 }
             }
         }

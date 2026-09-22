@@ -14,7 +14,7 @@ use strings::{u16_is_lead, u16_is_trail};
 const UNICODE_REPLACEMENT_U16: u16 = strings::UNICODE_REPLACEMENT as u16;
 
 #[derive(Default, Clone, Copy)]
-pub struct Buffered {
+pub(crate) struct Buffered {
     pub(crate) buf: [u8; 3],
     pub(crate) len: u8,
 }
@@ -29,7 +29,7 @@ impl Buffered {
 // interior mutability via `Cell` (`RefCell` for the decoder; its borrow is
 // released before anything can call back into JS).
 #[bun_jsc::JsClass]
-pub struct TextDecoder {
+pub(crate) struct TextDecoder {
     // used for utf8 decoding
     pub(crate) buffered: Cell<Buffered>,
 
@@ -97,7 +97,7 @@ impl TextDecoder {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_encoding(&self, global_this: &JSGlobalObject) -> JSValue {
-        EncodedSlice::latin1(EncodingLabel::get_label(self.encoding)).to_js(global_this)
+        self.encoding.to_js(global_this)
     }
 
     #[inline(always)]
@@ -418,7 +418,10 @@ impl TextDecoder {
                         }
 
                         debug_assert!(matches!(err, strings::ToUTF16Error::OutOfMemory));
-                        return Err(global_this.throw_out_of_memory());
+                        return Err(bun_string_jsc::throw_utf16_transcode_failure(
+                            global_this,
+                            input,
+                        ));
                     }
                 };
 
@@ -541,7 +544,7 @@ impl TextDecoder {
                             .throw());
                     }
                     Err(strings::ToUTF16Error::OutOfMemory) => {
-                        return Err(global_this.throw_out_of_memory());
+                        return Err(global_this.throw_memory_allocation_failed());
                     }
                 };
 
@@ -624,13 +627,7 @@ impl TextDecoder {
             }
 
             if let Some(ignore_bom) = options_value.get(global_this, b"ignoreBOM")? {
-                if ignore_bom.is_boolean() {
-                    decoder.ignore_bom = ignore_bom.as_boolean();
-                } else {
-                    return Err(global_this.throw_invalid_arguments(format_args!(
-                        "TextDecoder(options) ignoreBOM is invalid. Expected boolean value",
-                    )));
-                }
+                decoder.ignore_bom = ignore_bom.to_boolean();
             }
         }
 
@@ -653,13 +650,13 @@ impl TextDecoder {
 /// returned with no exception.
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn TextDecoder__createForStream(
+pub(crate) extern "C" fn TextDecoder__createForStream(
     global: &JSGlobalObject,
     label: JSValue,
     fatal: bool,
     ignore_bom: bool,
     out_utf8_fast_path: *mut bool,
-    out_encoding_label: *mut bun_core::String,
+    out_encoding: *mut EncodingLabel,
 ) -> *mut TextDecoder {
     // SAFETY: both out-params are stack locals on the caller's frame.
     unsafe { *out_utf8_fast_path = false };
@@ -687,8 +684,8 @@ pub extern "C" fn TextDecoder__createForStream(
             }
         }
     };
-    // SAFETY: as above; the label borrows a 'static byte slice (no refcount).
-    unsafe { out_encoding_label.write(bun_core::String::static_(encoding.get_label())) };
+    // SAFETY: as above.
+    unsafe { out_encoding.write(encoding) };
     if matches!(encoding, EncodingLabel::Utf8) && !fatal {
         // SAFETY: as above.
         unsafe { *out_utf8_fast_path = true };
@@ -702,9 +699,18 @@ pub extern "C" fn TextDecoder__createForStream(
     }))
 }
 
+/// `TextDecoderStream.prototype.encoding`.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn TextDecoder__encodingToJS(
+    global: &JSGlobalObject,
+    encoding: EncodingLabel,
+) -> JSValue {
+    encoding.to_js(global)
+}
+
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn TextDecoder__destroyForStream(this: *mut TextDecoder) {
+pub(crate) extern "C" fn TextDecoder__destroyForStream(this: *mut TextDecoder) {
     if !this.is_null() {
         // SAFETY: `this` was returned by `TextDecoder__createForStream` and has not been
         // freed (the C++ cell clears its pointer before calling).
@@ -718,7 +724,7 @@ pub extern "C" fn TextDecoder__destroyForStream(this: *mut TextDecoder) {
 /// the exception pending on `global`.
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn TextDecoder__decodeForStream(
+pub(crate) extern "C" fn TextDecoder__decodeForStream(
     this: *mut TextDecoder,
     global: &JSGlobalObject,
     input: *const u8,

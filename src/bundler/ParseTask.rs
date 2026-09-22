@@ -105,7 +105,6 @@ pub struct ParseTask {
     // Used for splitting up the work between the io and parse steps.
     pub(crate) stage: ParseTaskStage,
 
-    pub(crate) tree_shaking: bool,
     pub(crate) known_target: options::Target,
     pub(crate) module_type: options::ModuleType,
     pub(crate) emit_decorator_metadata: bool,
@@ -129,7 +128,7 @@ pub enum ParseTaskStage {
 // ───────────────────────────────────────────────────────────────────────────
 
 /// The information returned to the Bundler thread when a parse finishes.
-pub(crate) struct Result {
+pub struct Result {
     pub(crate) task: EventLoop::Task,
     pub(crate) ctx: bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>,
     pub(crate) value: ResultValue,
@@ -138,6 +137,24 @@ pub(crate) struct Result {
     /// a function pointer and context pointer to free the
     /// returned source code by the plugin.
     pub(crate) external: ExternalFreeFunction,
+}
+impl bun_event_loop::Taskable for Result {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::BundleV2ParseTaskResult;
+    /// The VM that runs the bundle is going: the result goes to nobody.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — the box `run_from_thread_pool_impl` (or
+        // `ServerComponentParseTask`) leaked.
+        let mut result = unsafe { bun_core::heap::take(this) };
+        // A native plugin's source buffer: `on_parse_task_complete` would have handed this to
+        // the bundle's finalizers. The source may borrow the buffer, so it goes first.
+        let external = core::mem::take(&mut result.external);
+        drop(result);
+        external.call();
+    }
+    /// A step of the bundle.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 // `Result` lives in a bump arena (no Drop on free); boxing the large arm
 // would leak the heap allocation. The size diff is acceptable.
@@ -289,7 +306,6 @@ impl ParseTask {
                 callback: io_task_callback,
             },
             stage: ParseTaskStage::NeedsSourceCode,
-            tree_shaking: false,
             is_entry_point: false,
         }
     }
@@ -323,7 +339,6 @@ impl Default for ParseTask {
                 callback: io_task_callback,
             },
             stage: ParseTaskStage::NeedsSourceCode,
-            tree_shaking: false,
             known_target: options::Target::default(),
             module_type: options::ModuleType::Unknown,
             emit_decorator_metadata: false,
@@ -419,6 +434,41 @@ export var __require = /* @__PURE__ */ (x =>
   if (typeof require !== 'undefined') return require.apply(this, arguments)
   throw Error('Dynamic require of \"' + x + '\" is not supported')
 });
+";
+
+// Code splitting, browser (`LinkerContext::module_preload`): an entry chunk
+// registers the chunks it can reach with `__chunks` — `nodes[i]` is chunk
+// `ids[i]`'s path relative to `base`, then indices into `ids` of the chunks it
+// imports — and each split `import()` of chunk `id` first `__preload`s it:
+// a `<link rel=modulepreload>` for every chunk it statically imports, so the
+// whole graph downloads in parallel instead of one module depth per round trip.
+// Globals go through `globalThis` so bundling does not reserve their names.
+const RUNTIME_PRELOAD_BROWSER: &str = "
+var __chunkGraphs, __chunkSeen, __chunkNonce;
+export var __preload = (id, seenOnly) => {
+  for (var [base, graph, ids] of __chunkGraphs || [])
+    for (var stack = [id], g = globalThis, d = g.document, head, j, node, k, link; (j = stack.pop()); )
+      if (!__chunkSeen[j] && (node = graph[j])) {
+        __chunkSeen[j] = 1;
+        for (k = 1; k < node.length; k++) stack.push(ids[node[k]]);
+        if (!seenOnly && j !== id && (head = d && d.head)) {
+          if (__chunkNonce === void 0)
+            __chunkNonce = ((k = d.querySelector('meta[property=csp-nonce]')) && (k.nonce || k.getAttribute('nonce'))) || '';
+          link = d.createElement('link');
+          link.rel = 'modulepreload';
+          link.crossOrigin = '';
+          if (__chunkNonce) link.nonce = __chunkNonce;
+          link.href = new g.URL(node[0], base);
+          head.appendChild(link);
+        }
+      }
+};
+export var __chunks = (base, ids, nodes, entry) => {
+  for (var graph = {}, i = 0; i < ids.length; i++) graph[ids[i]] = nodes[i];
+  (__chunkGraphs ||= []).push([base, graph, ids]);
+  __chunkSeen ||= {};
+  __preload(ids[entry], 1);
+};
 ";
 
 // JavaScriptCore supports `using` / `await using` natively (see
@@ -529,13 +579,17 @@ pub mod parse_worker {
             bun_core::Once::new(),
         ];
         let runtime_code: &'static [u8] = SOURCES[variant as usize].get_or_init(|| {
-            let (require, using): (&str, &str) = match variant {
-                Variant::Bun => (RUNTIME_REQUIRE_BUN, RUNTIME_USING_BUN),
-                Variant::BunMacro => (RUNTIME_REQUIRE_BUN, RUNTIME_USING_OTHER),
-                Variant::Node => (RUNTIME_REQUIRE_NODE, RUNTIME_USING_OTHER),
-                Variant::Other => (RUNTIME_REQUIRE_OTHER, RUNTIME_USING_OTHER),
+            let (require, using, preload): (&str, &str, &str) = match variant {
+                Variant::Bun => (RUNTIME_REQUIRE_BUN, RUNTIME_USING_BUN, ""),
+                Variant::BunMacro => (RUNTIME_REQUIRE_BUN, RUNTIME_USING_OTHER, ""),
+                Variant::Node => (RUNTIME_REQUIRE_NODE, RUNTIME_USING_OTHER, ""),
+                Variant::Other => (
+                    RUNTIME_REQUIRE_OTHER,
+                    RUNTIME_USING_OTHER,
+                    RUNTIME_PRELOAD_BROWSER,
+                ),
             };
-            [include_str!("../runtime.js"), require, using]
+            [include_str!("../runtime.js"), require, using, preload]
                 .concat()
                 .into_bytes()
                 .into_boxed_slice()
@@ -565,7 +619,6 @@ pub mod parse_worker {
                 callback: io_task_callback,
             },
             stage: ParseTaskStage::NeedsSourceCode,
-            tree_shaking: false,
             module_type: options::ModuleType::Unknown,
             emit_decorator_metadata: false,
             experimental_decorators: false,
@@ -1244,7 +1297,7 @@ pub mod parse_worker {
                     let mut parseropts = bun_css::ParserOptions::default(None);
                     parseropts.logger = Some(core::ptr::NonNull::from(&mut temp_log));
                     if enable_css_modules {
-                        parseropts.filename = bun_paths::basename(source.path.pretty);
+                        parseropts.filename = source.path.pretty;
                         parseropts.css_modules = Some(bun_css::CssModuleConfig::default());
                     }
                     parseropts
@@ -2610,7 +2663,14 @@ pub mod parse_worker {
             topts.tree_shaking
         };
         opts.code_splitting = topts.code_splitting;
+        // A task that bypassed the resolver (plugin result, in-memory source).
+        if task.module_type == options::ModuleType::Unknown {
+            if let Some(from_ext) = _resolver::module_type_from_ext(task.path.name().ext) {
+                task.module_type = from_ext;
+            }
+        }
         opts.module_type = task.module_type;
+        opts.is_entry_point = task.is_entry_point;
 
         task.jsx.parse = loader.is_jsx();
 
@@ -2670,6 +2730,7 @@ pub mod parse_worker {
         };
 
         ast.target = target;
+        ast.module_type = task.module_type;
         if ast.parts.len() <= 1
             && ast.css.is_none()
             && (task.loader.is_none() || task.loader.unwrap() != Loader::Html)
@@ -2846,13 +2907,7 @@ pub mod parse_worker {
             .expect("BundleV2.linker.loop must be set before scheduling ParseTask")
         {
             bun_event_loop::AnyEventLoop::Js { .. } => {
-                let ct =
-                    bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(result, |p| {
-                        // SAFETY: `p` is the `result` Box leaked above; ownership
-                        // transfers to `on_complete`, which deallocates it.
-                        unsafe { on_complete(p) };
-                        Ok(())
-                    });
+                let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::create_from(result);
                 let poster = worker
                     .ctx
                     .js_poster
@@ -2863,7 +2918,7 @@ pub mod parse_worker {
                     // SAFETY: refused ⇒ we own the task box and the leaked result.
                     unsafe {
                         bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct);
-                        drop(bun_core::heap::take(result));
+                        <Result as bun_event_loop::Taskable>::release_unrun(result);
                     }
                 }
             }
@@ -2918,7 +2973,7 @@ pub mod parse_worker {
     /// (or `ServerComponentParseTask`'s equivalent). Ownership transfers to
     /// this fn, which deallocates `result` before returning. Must run on the
     /// main/bundler thread (it dereferences `result.ctx` mutably).
-    pub(crate) unsafe fn on_complete(result: *mut Result) {
+    pub unsafe fn on_complete(result: *mut Result) {
         // SAFETY: result allocated via heap::alloc above; uniquely owned here.
         let r = unsafe { &mut *result };
         let ctx = r.ctx;
@@ -2935,4 +2990,4 @@ pub mod parse_worker {
     }
 } // end mod parse_worker
 
-pub(crate) use parse_worker::on_complete;
+pub use parse_worker::on_complete;

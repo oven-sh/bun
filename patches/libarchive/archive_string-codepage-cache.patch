@@ -1,6 +1,6 @@
 --- a/libarchive/archive_string.c
 +++ b/libarchive/archive_string.c
-@@ -1551,10 +1551,10 @@ my_atoi(const char *p)
+@@ -1561,10 +1561,10 @@ make_codepage_from_charset(const char *charset)
  }
  
  /*
@@ -13,7 +13,7 @@
  {
  	char *locale, *p;
  	unsigned cp;
-@@ -1574,6 +1574,28 @@ get_current_codepage(void)
+@@ -1585,6 +1585,28 @@ get_current_codepage(void)
  	return (cp);
  }
  
@@ -42,7 +42,7 @@
  /*
   * Translation table between Locale Name and ACP/OEMCP.
   */
-@@ -1626,10 +1648,10 @@ static struct {
+@@ -1638,10 +1660,10 @@ static struct {
  };
  
  /*
@@ -55,7 +55,7 @@
  {
  	int i;
  	char *locale, *p;
-@@ -1652,6 +1674,23 @@ get_current_oemcp(void)
+@@ -1663,6 +1685,23 @@ get_current_oemcp(void)
  	}
  	return (GetOEMCP());
  }

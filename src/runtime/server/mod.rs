@@ -1616,8 +1616,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     fn note_tunnel_idle(&self, idle: bool) {
         let count = self.idle_tunnel_count.get();
+        // `AsyncSocketData::filteredIdleTunnel` pairs every -3 with one +3 or -4.
+        debug_assert!(idle || count > 0);
         self.idle_tunnel_count.set(if idle {
-            count.saturating_add(1)
+            count + 1
         } else {
             count.saturating_sub(1)
         });

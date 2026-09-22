@@ -248,6 +248,8 @@ pub(crate) mod js_bundler {
         pub(crate) autoload_package_json: bool,
         /// `compile.jitPolicy`: the tier-up threshold scale the executable starts with (1 = normal JIT policy).
         pub(crate) jit_policy: f32,
+        /// `compile.bytecodeOrder`: payload order files, most important first.
+        pub(crate) bytecode_order: Vec<Box<[u8]>>,
     }
 
     impl Default for CompileOptions {
@@ -270,6 +272,7 @@ pub(crate) mod js_bundler {
                 autoload_tsconfig: false,
                 autoload_package_json: false,
                 jit_policy: 1.0,
+                bytecode_order: Vec::new(),
             }
         }
     }
@@ -444,6 +447,32 @@ pub(crate) mod js_bundler {
                 object.get_boolean_loose(global_this, "autoloadPackageJson")?
             {
                 this.autoload_package_json = autoload_package_json;
+            }
+
+            if let Some(bytecode_order) = object.get_truthy(global_this, "bytecodeOrder")? {
+                if bytecode_order.is_string() {
+                    let slice = bytecode_order.to_utf8(global_this)?;
+                    this.bytecode_order.push(Box::from(slice.slice()));
+                } else if bytecode_order.js_type().is_array() {
+                    let mut iter = bytecode_order.array_iterator(global_this)?;
+                    while let Some(path) = iter.next()? {
+                        if !path.is_string() {
+                            return Err(global_this.throw_invalid_property_type_value(
+                                b"compile.bytecodeOrder",
+                                b"string or array of strings",
+                                bytecode_order,
+                            ));
+                        }
+                        let slice = path.to_utf8(global_this)?;
+                        this.bytecode_order.push(Box::from(slice.slice()));
+                    }
+                } else {
+                    return Err(global_this.throw_invalid_property_type_value(
+                        b"compile.bytecodeOrder",
+                        b"string or array of strings",
+                        bytecode_order,
+                    ));
+                }
             }
 
             if let Some(jit_policy) = object.get(global_this, "jitPolicy")? {
@@ -1345,6 +1374,17 @@ pub(crate) mod js_bundler {
             // twice (once for module analysis, once for bytecode), which is a deopt.
             if this.bytecode && this.format == options::Format::Esm && this.compile.is_none() {
                 return Err(global_this.throw_invalid_arguments(format_args!("ESM bytecode requires compile: true. Use format: 'cjs' for bytecode without compile.")));
+            }
+
+            if !this.bytecode
+                && this
+                    .compile
+                    .as_ref()
+                    .is_some_and(|compile| !compile.bytecode_order.is_empty())
+            {
+                return Err(global_this.throw_invalid_arguments(format_args!(
+                    "compile.bytecodeOrder requires bytecode: true"
+                )));
             }
 
             // Validate standalone HTML mode: compile + browser target + all HTML entrypoints

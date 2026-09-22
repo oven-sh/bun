@@ -534,6 +534,53 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     let external_string_table = (c.options.generate_bytecode_cache
         && c.options.compile_mode.is_executable())
     .then(crate::bundle_v2::dispatch::EncoderStringTableHandle::new);
+    // A payload order file: every chunk's bytecode goes into one payload laid out by it, encoded after the chunk loop
+    // (the layout wants the chunks in load order, which is only known then).
+    // `--bytecode-order` / `compile.bytecodeOrder`, else `BUN_BYTECODE_ORDER_FILE` (a path list).
+    let bytecode_order = if external_string_table.is_none() {
+        None
+    } else {
+        let from_env = bun_core::env_var::BUN_BYTECODE_ORDER_FILE
+            .get()
+            .filter(|_| c.options.bytecode_order.is_empty())
+            .unwrap_or_default();
+        let paths = c.options.bytecode_order.iter().map(|path| &path[..]).chain(
+            bun_core::strings::split(from_env, &[bun_paths::DELIMITER])
+                .filter(|path| !path.is_empty()),
+        );
+        match crate::bytecode_order::BytecodeOrder::load(paths) {
+            Ok((order, without_hints)) => {
+                let without_hints: Vec<Vec<u8>> =
+                    without_hints.into_iter().map(<[u8]>::to_vec).collect();
+                for path in &without_hints {
+                    c.log_mut().add_warning_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "the bytecode order file {} has nothing this version of Bun can use",
+                            bstr::BStr::new(path)
+                        ),
+                    );
+                }
+                order
+            }
+            Err((path, err)) => {
+                let path = path.to_vec();
+                c.log_mut().add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "cannot read the bytecode order file {}: {}",
+                        bstr::BStr::new(&path),
+                        err
+                    ),
+                );
+                return Err(crate::Error::BuildFailed);
+            }
+        }
+    };
+    // (chunk index, its `Bytecode` output file, the URL its bytecode is keyed on), for `bytecode_order`.
+    let mut linked_bytecode_chunks: Vec<(usize, u32, BunString)> = Vec::new();
     let mut module_info_strings = analyze_transpiled_module::ModuleInfoSlotTableBuilder::default();
     // (`prelinked_module_graph` blob, chunk index of each graph module), when one was built.
     let mut prelinked_graph: Option<(Vec<u8>, Vec<u32>)> = None;
@@ -1079,6 +1126,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             // Compute side early so it can be used for bytecode, module_info, and main chunk output files
             let side: options::Side = c.chunk_side(chunk);
 
+            let mut linked_bytecode_url: Option<BunString> = None;
             let bytecode_output_file: Option<options::OutputFile> = 'brk: {
                 if c.options.generate_bytecode_cache {
                     let loader: Loader = if chunk.entry_point.is_entry_point() {
@@ -1116,14 +1164,24 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             ))
                         };
 
-                        if let Some(bytecode) = crate::bundle_v2::dispatch::generate_cached_bytecode(
-                            c.options.output_format,
-                            &code_result.buffer,
-                            &source_provider_url,
-                            c.options.bytecode_depth,
-                            c.options.optimize_bytecode,
-                            external_string_table.as_ref().and_then(|table| table.get()),
-                        ) {
+                        // With a payload order file the file holds the chunk's cache-entry offset in the link's one
+                        // payload, filled in once that is encoded (below).
+                        let bytecode = if bytecode_order.is_some() {
+                            Some(Box::<[u8]>::from(0u32.to_le_bytes()))
+                        } else {
+                            crate::bundle_v2::dispatch::generate_cached_bytecode(
+                                c.options.output_format,
+                                &code_result.buffer,
+                                &source_provider_url,
+                                c.options.bytecode_depth,
+                                c.options.optimize_bytecode,
+                                external_string_table.as_ref().and_then(|table| table.get()),
+                            )
+                        };
+                        if let Some(bytecode) = bytecode {
+                            if bytecode_order.is_some() {
+                                linked_bytecode_url = Some(source_provider_url.clone());
+                            }
                             let source_provider_url_str = source_provider_url.to_utf8();
                             debug!(
                                 "Bytecode cache generated {}: {}",
@@ -1242,7 +1300,15 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             };
 
             let bytecode_index: Option<u32> = if let Some(f) = bytecode_output_file {
-                Some(output_files.insert_for_sourcemap_or_bytecode(f)?)
+                let index = output_files.insert_for_sourcemap_or_bytecode(f)?;
+                if let Some(source_provider_url) = linked_bytecode_url {
+                    linked_bytecode_chunks.push((
+                        chunk_index_in_chunks_list,
+                        index,
+                        source_provider_url,
+                    ));
+                }
+                Some(index)
             } else {
                 None
             };
@@ -1360,6 +1426,44 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         }
     }
 
+    // The link's one bytecode payload, and the `Bytecode`/`BuiltinBytecode` output file of each module added to it.
+    let mut linked_bytecode: Option<(
+        crate::bundle_v2::dispatch::BytecodeLinkEncoderHandle,
+        Vec<u32>,
+    )> = None;
+    if let Some(order) = &bytecode_order {
+        let table = external_string_table
+            .as_ref()
+            .and_then(|table| table.get())
+            .expect("an order file is only loaded for --compile --bytecode");
+        let mut encoder = crate::bundle_v2::dispatch::BytecodeLinkEncoderHandle::new(table, order);
+        linked_bytecode_chunks
+            .sort_by_key(|&(chunk_index, _, _)| output_files.output_files[chunk_index].load_order);
+        let mut encoded: Vec<u32> = Vec::with_capacity(linked_bytecode_chunks.len());
+        for (chunk_index, bytecode_index, source_provider_url) in &linked_bytecode_chunks {
+            if encoder.add_module(
+                c.options.output_format,
+                output_files.output_files[*chunk_index].value.as_slice(),
+                source_provider_url,
+                c.options.bytecode_depth,
+                c.options.optimize_bytecode,
+            ) {
+                encoded.push(*bytecode_index);
+                continue;
+            }
+            output_files.output_files[*chunk_index].bytecode_index = u32::MAX;
+            c.log_mut().add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "Failed to generate bytecode for {}",
+                    bstr::BStr::new(&output_files.output_files[*chunk_index].dest_path)
+                ),
+            );
+        }
+        linked_bytecode = Some((encoder, encoded));
+    }
+
     if is_standalone {
         // For standalone mode, filter to HTML output files plus the .map files
         // of the inlined chunks (linked/external sourcemaps).
@@ -1387,7 +1491,55 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             c,
             &mut result,
             external_string_table.as_ref().and_then(|t| t.get()),
+            linked_bytecode.as_mut(),
         );
+    }
+    let mut linked_bytecode_payload: Option<Box<[u8]>> = None;
+    if let Some((mut encoder, encoded)) = linked_bytecode {
+        match encoder.finish() {
+            Some((payload, entry_offsets, region_ends, matched_hot_functions)) => {
+                // An order file of another program moves nothing: say so. (A share is not judged: a recording also lists
+                // functions of Bun's internal modules, which are not part of every link.)
+                let listed = bytecode_order
+                    .as_ref()
+                    .map_or(0, |order| order.hot_functions.len());
+                if listed != 0 && matched_hot_functions == 0 {
+                    c.log_mut().add_warning_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "none of the {listed} functions the bytecode order files list is in this build"
+                        ),
+                    );
+                }
+                debug!(
+                    "Linked bytecode payload: {} modules, {} bytes, regions end at {:?}",
+                    entry_offsets.len(),
+                    payload.len(),
+                    region_ends
+                );
+                // `encoded` holds positions in the output file list (`insert_for_sourcemap_or_bytecode`), which `result`
+                // still is: a chunk's own file comes first, at the chunk's index, its `Bytecode` file after all of those.
+                for (&bytecode_file, entry_offset) in encoded.iter().zip(entry_offsets) {
+                    let file = result
+                        .get_mut(bytecode_file as usize)
+                        .expect("a Bytecode output file of this link");
+                    file.value = options::OutputFileValue::Buffer {
+                        bytes: Box::from(entry_offset.to_le_bytes()),
+                    };
+                }
+                linked_bytecode_payload =
+                    Some(crate::bytecode_order::payload_file(payload, region_ends));
+            }
+            None => {
+                c.log_mut().add_error(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    b"Failed to encode the linked bytecode payload",
+                );
+                return Err(crate::Error::BuildFailed);
+            }
+        }
     }
     if let Some((bytes, chunk_indices)) = prelinked_graph {
         debug!(
@@ -1442,8 +1594,29 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             ..Default::default()
         }));
     }
+    if let Some(bytes) = linked_bytecode_payload {
+        result.push(options::OutputFile::init(options::OutputFileInit {
+            output_path: b".bytecode-payload".to_vec().into_boxed_slice(),
+            input_path: Box::default(),
+            input_loader: Loader::File,
+            hash: None,
+            output_kind: options::OutputKind::BytecodePayload,
+            loader: Loader::File,
+            size: Some(bytes.len()),
+            display_size: bytes.len() as u32,
+            data: options::OutputFileData::Buffer { data: bytes },
+            side: None,
+            entry_point_index: None,
+            is_executable: false,
+            ..Default::default()
+        }));
+    }
     if let Some(table) = external_string_table {
-        let bytes = table.take();
+        let bytes = table.take(
+            bytecode_order
+                .as_ref()
+                .map_or(&[][..], |order| &order.hot_strings),
+        );
         debug!("Bytecode external string table: {} bytes", bytes.len());
         result.push(options::OutputFile::init(options::OutputFileInit {
             output_path: b".bytecode-strings".to_vec().into_boxed_slice(),
@@ -1491,6 +1664,12 @@ fn append_internal_module_bytecode(
     c: &LinkerContext,
     output_files: &mut Vec<options::OutputFile>,
     external_strings: Option<core::ptr::NonNull<crate::bundle_v2::dispatch::EncoderStringTable>>,
+    // With an order file the internal modules are more modules of the link's one payload, and their output files
+    // cache-entry offsets like the chunks'.
+    mut linked_bytecode: Option<&mut (
+        crate::bundle_v2::dispatch::BytecodeLinkEncoderHandle,
+        Vec<u32>,
+    )>,
 ) {
     use crate::bundle_v2::dispatch;
     let target_section = c.options.target_builtins.as_deref();
@@ -1554,6 +1733,23 @@ fn append_internal_module_bytecode(
 
     for id in wanted {
         let bytecode = match target_section {
+            _ if linked_bytecode.is_some() => {
+                let (encoder, encoded) = linked_bytecode.as_deref_mut().expect("checked");
+                let module = target_section.and_then(|_| builtins.module(id));
+                if target_section.is_some() && module.is_none() {
+                    continue;
+                }
+                encoder
+                    .add_internal_module(
+                        id,
+                        module.as_ref().map(|m| (m, builtins.source_stamp)),
+                        c.options.bytecode_depth,
+                    )
+                    .then(|| {
+                        encoded.push(output_files.len() as u32);
+                        Box::<[u8]>::from(0u32.to_le_bytes())
+                    })
+            }
             Some(_) => builtins.module(id).and_then(|m| {
                 dispatch::generate_internal_module_bytecode_from_source(
                     &m,

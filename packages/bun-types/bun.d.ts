@@ -3746,6 +3746,26 @@ declare module "bun" {
      */
     autoloadPackageJson?: boolean;
     /**
+     * Order files to lay the executable's bytecode out by. Requires `bytecode: true`.
+     *
+     * An executable built with `bytecode: true` writes an order file when it exits if
+     * the `BUN_BYTECODE_ORDER_OUT` environment variable names a path (`%p` in the path
+     * becomes the process id). The file lists the functions, strings and modules that
+     * run read from the embedded bytecode, as hashes of their source text. Building
+     * again with that file places what the run read at the front of the bytecode, so
+     * the executable reads fewer pages of itself at startup and keeps fewer in memory.
+     *
+     * An order file only changes where bytecode is placed. Entries that match nothing
+     * in the build are ignored, so an order file from an older version of the app
+     * still helps; functions that are new or changed since the recording are placed
+     * right after the ones the run read. With several files (one per way of starting
+     * the app), what the first file lists comes first in that file's order, then
+     * what the second file adds, and so on. A file that cannot be read fails the build.
+     *
+     * Equivalent CLI flag: `--bytecode-order <file>[,<file>...]`
+     */
+    bytecodeOrder?: string | string[];
+    /**
      * The JIT policy the executable starts with (see {@link Bun.unsafe.setJITPolicy}).
      * `1` is the normal policy. A value `> 1` multiplies JavaScriptCore's tier-up
      * thresholds so code that only runs during startup stays in the interpreter

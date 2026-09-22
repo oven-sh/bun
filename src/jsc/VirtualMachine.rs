@@ -490,17 +490,19 @@ pub unsafe extern "C" fn Bun__standaloneInternalModuleBytecode(
     id: u32,
     bytes: *mut *const u8,
     size: *mut usize,
+    entry_offset: *mut u32,
 ) -> bool {
     let Some(graph) = standalone_module_graph() else {
         return false;
     };
-    let Some(found) = graph.builtin_module_bytecode(id) else {
+    let Some((found, found_entry_offset)) = graph.builtin_module_bytecode(id) else {
         return false;
     };
     // SAFETY: out-params supplied by the C++ caller; `found` points into the executable's mapped section.
     unsafe {
         *bytes = found.cast::<u8>();
         *size = found.len();
+        *entry_offset = found_entry_offset;
     }
     true
 }
@@ -2281,6 +2283,7 @@ impl VirtualMachine {
         // module.enableCompileCache()) after user exit handlers ran.
         if self.is_main_thread() {
             crate::node_compile_cache::persist_at_exit();
+            crate::bytecode_order_recorder::write_at_exit(self, standalone_module_graph());
         }
     }
 
@@ -3328,6 +3331,8 @@ impl VirtualMachine {
         if let Some(graph) = standalone_module_graph() {
             // SAFETY: `vm` is the freshly-initialised per-thread VM singleton.
             unsafe { &*vm }.install_bytecode_string_table(graph);
+            // SAFETY: as above.
+            crate::bytecode_order_recorder::init_vm(unsafe { &*vm }, graph);
         }
 
         Ok(vm)

@@ -1466,6 +1466,8 @@ pub mod bv2_impl {
 
         /// Opaque `JSC::EncoderStringTable` — one instance shared by every chunk's `encodeCodeBlock` in a `--compile --bytecode` build.
         pub(crate) enum EncoderStringTable {}
+        /// Opaque `JSC::BytecodeLinkEncoder` — every chunk of a `--compile --bytecode` link encoded into one payload (`bytecode_order`).
+        pub(crate) enum BytecodeLinkEncoder {}
 
         unsafe extern "Rust" {
             /// Defined `#[no_mangle]` in `bun_jsc::cached_bytecode`. Generic
@@ -1506,7 +1508,48 @@ pub mod bv2_impl {
             pub(crate) safe fn __bun_jsc_destroy_bytecode_cache_vm();
             safe fn __bun_jsc_encoder_string_table_take(
                 table: core::ptr::NonNull<EncoderStringTable>,
+                hot_strings: &[u64],
             ) -> Box<[u8]>;
+            safe fn __bun_jsc_bytecode_link_encoder_new(
+                external_strings: core::ptr::NonNull<EncoderStringTable>,
+                hot_functions: &[u64],
+                known_functions: &[u64],
+                evaluated_modules: &[u64],
+                not_evaluated_modules: &[u64],
+            ) -> core::ptr::NonNull<BytecodeLinkEncoder>;
+            safe fn __bun_jsc_bytecode_link_encoder_destroy(
+                encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
+            );
+            safe fn __bun_jsc_bytecode_link_encoder_add_module(
+                encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
+                format: crate::options_impl::Format,
+                source: &[u8],
+                source_provider_url: &bun_core::String,
+                depth: u32,
+                optimize: bool,
+            ) -> bool;
+            safe fn __bun_jsc_bytecode_link_encoder_add_internal_module(
+                encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
+                id: u32,
+                depth: u32,
+            ) -> bool;
+            safe fn __bun_jsc_bytecode_link_encoder_add_internal_module_from_source(
+                encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
+                source: &[u8],
+                name: &[u8],
+                url: &[u8],
+                source_stamp: u32,
+                depth: u32,
+            ) -> bool;
+            safe fn __bun_jsc_bytecode_link_encoder_finish(
+                encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
+                module_count: usize,
+            ) -> Option<(
+                Vec<u8>,
+                Vec<u32>,
+                [u32; crate::bytecode_order::REGION_COUNT],
+                u32,
+            )>;
             /// The runtime-resolvable slot for one module-info string (`EncoderStringTable::slot_for_wtf8`).
             safe fn __bun_jsc_encoder_string_table_slot(
                 table: core::ptr::NonNull<EncoderStringTable>,
@@ -1588,9 +1631,10 @@ pub mod bv2_impl {
             pub(crate) fn get(&self) -> Option<core::ptr::NonNull<EncoderStringTable>> {
                 self.0
             }
+            /// `hot_strings`: a payload order file's strings (`bytecode_order`), whose records go first.
             #[inline]
-            pub(crate) fn take(mut self) -> Box<[u8]> {
-                __bun_jsc_encoder_string_table_take(self.0.take().expect("taken once"))
+            pub(crate) fn take(mut self, hot_strings: &[u64]) -> Box<[u8]> {
+                __bun_jsc_encoder_string_table_take(self.0.take().expect("taken once"), hot_strings)
             }
             #[inline]
             pub(crate) fn slot(&self, wtf8: &[u8]) -> u32 {
@@ -1601,8 +1645,101 @@ pub mod bv2_impl {
         impl Drop for EncoderStringTableHandle {
             fn drop(&mut self) {
                 if let Some(table) = self.0.take() {
-                    drop(__bun_jsc_encoder_string_table_take(table));
+                    drop(__bun_jsc_encoder_string_table_take(table, &[]));
                 }
+            }
+        }
+
+        /// Owns a `JSC::BytecodeLinkEncoder`. Lives and dies on the thread that created it (it uses that thread's bytecode VM).
+        pub(crate) struct BytecodeLinkEncoderHandle {
+            encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
+            module_count: usize,
+        }
+
+        impl BytecodeLinkEncoderHandle {
+            pub(crate) fn new(
+                external_strings: core::ptr::NonNull<EncoderStringTable>,
+                order: &crate::bytecode_order::BytecodeOrder,
+            ) -> Self {
+                Self {
+                    encoder: __bun_jsc_bytecode_link_encoder_new(
+                        external_strings,
+                        &order.hot_functions,
+                        &order.known_functions,
+                        &order.evaluated_modules,
+                        &order.not_evaluated_modules,
+                    ),
+                    module_count: 0,
+                }
+            }
+            /// Same arguments as `generate_cached_bytecode`; false on a parse error. A module's position among the
+            /// successful calls is its index into `finish()`'s entry offsets.
+            pub(crate) fn add_module(
+                &mut self,
+                format: crate::options_impl::Format,
+                source: &[u8],
+                source_provider_url: &bun_core::String,
+                depth: u32,
+                optimize: bool,
+            ) -> bool {
+                let depth = match format {
+                    crate::options_impl::Format::Cjs => depth.saturating_add(1),
+                    _ => depth,
+                };
+                let ok = __bun_jsc_bytecode_link_encoder_add_module(
+                    self.encoder,
+                    format,
+                    source,
+                    source_provider_url,
+                    depth,
+                    optimize,
+                );
+                self.module_count += ok as usize;
+                ok
+            }
+            /// An internal module (this executable's, or with `target` another executable's as its builtins section
+            /// has it) as one more module of the link.
+            pub(crate) fn add_internal_module(
+                &mut self,
+                id: u32,
+                target: Option<(&bun_exe_format::builtins::Module<'_>, u32)>,
+                depth: u32,
+            ) -> bool {
+                let ok = match target {
+                    Some((module, source_stamp)) => {
+                        __bun_jsc_bytecode_link_encoder_add_internal_module_from_source(
+                            self.encoder,
+                            module.source,
+                            module.name,
+                            module.url,
+                            source_stamp,
+                            depth,
+                        )
+                    }
+                    None => {
+                        __bun_jsc_bytecode_link_encoder_add_internal_module(self.encoder, id, depth)
+                    }
+                };
+                self.module_count += ok as usize;
+                ok
+            }
+            /// (payload, each module's cache-entry offset, where each region of the payload ends, how many of the order
+            /// files' hot functions this link has).
+            pub(crate) fn finish(
+                &mut self,
+            ) -> Option<(
+                Vec<u8>,
+                Vec<u32>,
+                [u32; crate::bytecode_order::REGION_COUNT],
+                u32,
+            )> {
+                __bun_jsc_bytecode_link_encoder_finish(self.encoder, self.module_count)
+            }
+        }
+
+        impl Drop for BytecodeLinkEncoderHandle {
+            fn drop(&mut self) {
+                __bun_jsc_bytecode_link_encoder_destroy(self.encoder);
             }
         }
 
@@ -3148,6 +3285,10 @@ pub mod bv2_impl {
                 };
             this.linker.options.bytecode_depth = this.transpiler.options.bytecode_depth;
             this.linker.options.optimize_bytecode = this.transpiler.options.optimize_bytecode;
+            this.linker
+                .options
+                .bytecode_order
+                .clone_from(&this.transpiler.options.bytecode_order);
             this.linker.options.compile_mode = this.transpiler.options.compile_mode;
             this.linker.options.metafile = this.transpiler.options.metafile;
             // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.

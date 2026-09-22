@@ -5461,18 +5461,8 @@ impl NapiFinalizerTask {
     }
 
     pub(crate) fn schedule(self: Box<Self>) {
-        // SAFETY: env is valid (held by NapiEnvRef).
-        let global_this = unsafe { &*self.finalizer.env.get() }.to_js();
-
-        // Inline of `JSGlobalObject::try_bun_vm` (the full impl lives in the
-        // gated `JSGlobalObject.rs`): the VM pointer is fetched unconditionally
-        // from C++; "main thread" is determined by whether the thread-local VM
-        // holder is populated.
-        // SAFETY: `bun_vm()` returns a valid `*mut VirtualMachine` for this global.
-        let vm: &VirtualMachine = global_this.bun_vm();
-        let is_main_thread = VirtualMachine::get_or_null().is_some();
-
-        if !is_main_thread {
+        // `bun_vm()` reads a thread-local that is null on a GC thread, so check the thread first.
+        if VirtualMachine::get_or_null().is_none() {
             // Off the JS thread (e.g. an external buffer finalized from a GC
             // helper thread): post through the env's VM handle. If the VM is
             // already torn down the finalizer can never run; free the task but
@@ -5494,6 +5484,10 @@ impl NapiFinalizerTask {
             }
             return;
         }
+
+        // SAFETY: env is valid (held by NapiEnvRef).
+        let global_this = unsafe { &*self.finalizer.env.get() }.to_js();
+        let vm: &VirtualMachine = global_this.bun_vm();
 
         if vm.is_shutting_down() {
             if vm.has_run_cleanup_hooks() {

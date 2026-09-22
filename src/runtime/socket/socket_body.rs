@@ -81,6 +81,15 @@ fn read_error_from_close_code(code: c_int) -> sys::Error {
     }
 }
 
+/// `read_error_from_close_code` for C++: the `closeError` getter of `JSNodeHTTPServerSocket`.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__socketReadErrorFromCloseCode(
+    global: &JSGlobalObject,
+    code: c_int,
+) -> JSValue {
+    <sys::Error as jsc::SysErrorJsc>::to_js(&read_error_from_close_code(code), global)
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports
 // ──────────────────────────────────────────────────────────────────────────

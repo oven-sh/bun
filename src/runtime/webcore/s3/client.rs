@@ -1375,12 +1375,12 @@ impl S3DownloadStreamWrapper {
     /// The other half of this rule is in `S3HttpDownloadStreamingTask::process_http_callback`
     /// (HTTP thread).
     fn after_chunk_delivered(&self, bytes: &ByteStream) {
-        use crate::webcore::byte_stream::{AfterDelivery, ProducerHold};
+        use crate::webcore::byte_stream::AfterDelivery;
         let task = self.task.get();
         if task.is_null() {
             return;
         }
-        match ProducerHold::after_delivery(bytes) {
+        match self.stream.after_delivery(bytes) {
             // SAFETY: see `task`.
             AfterDelivery::Resume => unsafe { (*task).resume_receive() },
             // SAFETY: see `task`.
@@ -1389,7 +1389,7 @@ impl S3DownloadStreamWrapper {
                 // SAFETY: see `task`.
                 unsafe { (*task).signal_store.pause_receive() };
                 if self.stream.park() {
-                    // SAFETY: see `task`; `park` touched the stream's source, not the task.
+                    // SAFETY: see `task`.
                     unsafe { (*task).poll_ref.unref(bun_io::js_vm_ctx()) };
                 }
             }
@@ -1417,7 +1417,7 @@ impl S3DownloadStreamWrapper {
         self.unpark();
     }
 
-    /// The parked stream's wrapper was collected: nothing can read the rest. Inside a GC sweep;
+    /// The stream's wrapper was collected: nothing can read the rest. Inside a GC sweep;
     /// touches no JS cell.
     pub(crate) fn on_stream_collected(&self) {
         self.on_stream_cancelled();

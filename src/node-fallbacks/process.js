@@ -15,8 +15,7 @@ function drainQueue() {
   var batch = [];
   var i = 0;
   try {
-    // Callbacks queued while draining run in the same pass, like node. Each
-    // batch is a fresh array, so a finished batch can be collected.
+    // Ticks queued mid-drain run in the same pass, like node. A fresh array per batch lets finished ticks be freed.
     while (queue.length) {
       batch = queue;
       queue = [];

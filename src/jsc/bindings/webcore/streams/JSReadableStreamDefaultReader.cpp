@@ -124,8 +124,7 @@ void readableStreamDefaultReaderRead(JSGlobalObject* globalObject, JSReadableStr
         RELEASE_AND_RETURN(scope, readableStreamAddReadRequest(globalObject, stream, readRequest));
     case ControllerKind::Direct: {
         auto* controller = uncheckedDowncast<WebCore::JSDirectStreamController>(stream->m_controller.get());
-        // The direct pump settles a promise-backed read's promise itself, as its head-of-line
-        // read, instead of the read waiting in [[readRequests]].
+        // The direct pump settles a promise-backed read's promise itself: the read does not wait in [[readRequests]].
         if (readRequest->kind() == ReadRequestKind::Promise) {
             auto* readPromise = uncheckedDowncast<JSPromise>(readRequest->context());
             bool pulled = controller->onPull(globalObject, readPromise);

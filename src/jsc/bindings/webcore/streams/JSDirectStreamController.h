@@ -166,12 +166,7 @@ public:
 
     // The state machine. All userJS: YES.
     // The READ pump: every default-reader read on a Direct stream lands here. A promise-backed
-    // read()/readMany() passes its own promise, and the pump settles that promise itself. A
-    // promise the caller adopted would settle two microtasks after the delivery, behind a
-    // reader.closed that the source settles right after the chunk. false = the pump refused
-    // (the source already ended, or a re-entrant pull): readPromise is untouched and the
-    // caller reports done. A pipeTo / tee / for-await read adds its JSReadRequest to
-    // [[readRequests]] first and passes nullptr: that request is the consumer.
+    // read()/readMany() passes its own promise for the pump to settle (false = refused: the caller reports done); a read that queued a JSReadRequest (pipeTo / tee / for-await) passes nullptr.
     bool onPull(JSC::JSGlobalObject*, JSC::JSPromise* readPromise);
     // `end()` / `close(reason)` — reason may be the empty JSValue (absent).
     void onClose(JSC::JSGlobalObject*, JSC::JSValue reason);

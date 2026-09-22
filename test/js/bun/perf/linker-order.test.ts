@@ -824,9 +824,9 @@ describe("workload groups", () => {
     const [pids, go, out, scratchPath] = ["pids", "go", "out", "scratch-path"].map(name => join(String(dir), name));
     const generate = join(import.meta.dir, "../../../../scripts/orderfile/generate.ts");
     const script = `
-      const { spawnSync } = require("node:child_process");
-      const { writeFileSync } = require("node:fs");
-      const { checkpoint, runCommandAsync, withScratch } = await import(${JSON.stringify(generate)});
+      import { spawnSync } from "node:child_process";
+      import { writeFileSync } from "node:fs";
+      import { checkpoint, runCommandAsync, withScratch } from ${JSON.stringify(generate)};
       const command = ["/bin/sh", "-c", ${JSON.stringify(shell)}, "sh", ${JSON.stringify(pids)}, ${JSON.stringify(go)}];
       const made = [];
       const record = scratch => {
@@ -877,8 +877,8 @@ describe("workload groups", () => {
     const [pids, go, out] = ["pids", "go", "out"].map(name => join(String(dir), name));
     const generate = join(import.meta.dir, "../../../../scripts/orderfile/generate.ts");
     const script = `
-      const { writeFileSync } = require("node:fs");
-      const { checkpoint, runCommandAsync, withScratch } = await import(${JSON.stringify(generate)});
+      import { writeFileSync } from "node:fs";
+      import { checkpoint, runCommandAsync, withScratch } from ${JSON.stringify(generate)};
       const command = ["/bin/sh", "-c", 'echo $$,$$ > "$1"; until [ -e "$2" ]; do sleep 0.01; done', "sh", ${JSON.stringify(pids)}, ${JSON.stringify(go)}];
       await withScratch("orderfile-nohup-", async (scratch, interrupted) => {
         await runCommandAsync(command, { signal: interrupted });
@@ -1624,7 +1624,7 @@ describe.skipIf(!canTrace || isWindows)("function tracer, following children", (
     const hints = join(import.meta.dir, "../../../../scripts/orderfile/hints.ts");
     // The session's command is a wrapper: stopping it leaves the application running.
     const script = `
-      const { traceHints } = await import(${JSON.stringify(hints)});
+      import { traceHints } from ${JSON.stringify(hints)};
       await traceHints({
         profile: ${JSON.stringify(stay)},
         exe: ${JSON.stringify(stay)},

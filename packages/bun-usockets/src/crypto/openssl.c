@@ -2347,7 +2347,6 @@ static struct us_socket_t *ssl_retry_parked_write(struct us_socket_t *s) {
   struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
   if (loop_ssl_data && loop_ssl_data->ssl_spill_owner == s) return s;
   s->ssl_write_wants_read = 0;
-  s->ssl_write_parked = 0;
   return us_internal_ssl_on_writable(s);
 }
 
@@ -2456,6 +2455,7 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
   if (ssl_is_uws_http_tls(s) && us_internal_ssl_is_shut_down(s)) return s;
 
   if (s->ssl_handshake_state == HANDSHAKE_COMPLETED) {
+    s->ssl_write_parked = 0;
     s = us_dispatch_writable(s);
   }
   return s;

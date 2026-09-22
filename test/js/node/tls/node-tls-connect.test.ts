@@ -2030,16 +2030,22 @@ describe("the final handshake flight and a write issued before the handshake lea
   // Runs `client` against a raw TCP proxy in front of a TLS 1.3 server. Resolves
   // with, per connection, the client-to-server chunks the proxy had received
   // when the server first saw plaintext: each send is its own chunk unless the
-  // kernel coalesces two before the proxy reads.
-  async function countClientChunks(client: (proxyPort: number) => Promise<void>) {
+  // kernel coalesces two before the proxy reads. `received` is the count so
+  // far on the latest connection.
+  async function countClientChunks(
+    serverOptions: tls.TlsOptions,
+    client: (proxyPort: number, received: () => number) => Promise<void>,
+  ) {
     const proxied = new Map<number, { chunks: number }>();
     const chunkCounts: number[] = [];
+    let latest = { chunks: 0 };
 
     const server = tls.createServer({
       key: COMMON_CERT_.key,
       cert: COMMON_CERT_.cert,
       minVersion: "TLSv1.3",
       maxVersion: "TLSv1.3",
+      ...serverOptions,
     });
     server.on("secureConnection", socket => {
       socket.once("data", () => {
@@ -2052,7 +2058,7 @@ describe("the final handshake flight and a write issued before the handshake lea
     const serverPort = (server.address() as AddressInfo).port;
 
     const proxy = net.createServer({ allowHalfOpen: true }, downstream => {
-      const counter = { chunks: 0 };
+      const counter = (latest = { chunks: 0 });
       const upstream = net.connect({ port: serverPort, host: "127.0.0.1", allowHalfOpen: true });
       upstream.once("connect", () => proxied.set(upstream.localPort!, counter));
       downstream.on("data", data => {
@@ -2068,7 +2074,7 @@ describe("the final handshake flight and a write issued before the handshake lea
     await once(proxy.listen(0, "127.0.0.1"), "listening");
 
     try {
-      await client((proxy.address() as AddressInfo).port);
+      await client((proxy.address() as AddressInfo).port, () => latest.chunks);
       return chunkCounts;
     } finally {
       proxy.close();
@@ -2081,7 +2087,7 @@ describe("the final handshake flight and a write issued before the handshake lea
     // reach the proxy as one chunk: several connections, each must show 2.
     const connections = 4;
     let result = {};
-    const chunkCounts = await countClientChunks(async proxyPort => {
+    const chunkCounts = await countClientChunks({}, async proxyPort => {
       const script = `
         const tls = require("node:tls");
         let left = ${connections};
@@ -2118,14 +2124,26 @@ describe("the final handshake flight and a write issued before the handshake lea
   // before the handler's write is always its own chunk.
   it.each([
     // write() reports 0 bytes before the handshake; the retry from drain joins the flight.
-    { name: "Bun.connect, retried from drain", writeInOpen: true, chunks: 2 },
+    { name: "Bun.connect, retried from drain", writeInOpen: true, serverOptions: {}, chunks: 2 },
+    // Two reads complete this handshake: HelloRetryRequest, then the server flight.
+    {
+      name: "Bun.connect, retried from drain after a HelloRetryRequest",
+      writeInOpen: true,
+      serverOptions: { ecdhCurve: "P-384" },
+      chunks: 3,
+    },
     // Nothing was refused, so the flight does not wait for the drain handler.
-    { name: "Bun.connect, first write from drain leaves after the flight", writeInOpen: false, chunks: 3 },
-  ])("$name", async ({ writeInOpen, chunks }) => {
+    {
+      name: "Bun.connect, first write from drain leaves after the flight",
+      writeInOpen: false,
+      serverOptions: {},
+      chunks: 3,
+    },
+  ])("$name", async ({ writeInOpen, serverOptions, chunks }) => {
     using dir = tempDir("tls-parked-write", {});
     const proceed = join(String(dir), "proceed");
     let result = {};
-    const chunkCounts = await countClientChunks(async proxyPort => {
+    const chunkCounts = await countClientChunks(serverOptions, async (proxyPort, received) => {
       const script = `
         const fs = require("node:fs");
         let pending = "HELLO";
@@ -2143,6 +2161,7 @@ describe("the final handshake flight and a write issued before the handshake lea
               fs.writeSync(1, "drain\\n");
               const deadline = Date.now() + 10_000;
               while (!fs.existsSync(${JSON.stringify(proceed)}) && Date.now() < deadline) {}
+              if (Date.now() >= deadline) console.log("the parent never released drain");
               pending = pending.slice(socket.write(pending));
             },
             data() {},
@@ -2161,8 +2180,11 @@ describe("the final handshake flight and a write issued before the handshake lea
         stdout += decoder.decode(chunk, { stream: true });
         if (!released && stdout.includes("drain\n")) {
           released = true;
-          // One loop turn: a flight already in the proxy's receive queue is read before the client continues.
-          await new Promise(resolve => setImmediate(resolve));
+          // All but the handler's own write is on the wire by now: wait until the
+          // proxy has read it. One more turn reads a flight that is still queued.
+          const deadline = Date.now() + 2_000;
+          do await new Promise(resolve => setImmediate(resolve));
+          while (received() < chunks - 1 && Date.now() < deadline);
           writeFileSync(proceed, "");
         }
       }

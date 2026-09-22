@@ -458,8 +458,8 @@ static int us_internal_socket_defers_error(struct us_socket_t *s, struct us_loop
     us_poll_stop(&s->p, loop);
     s->p.state.poll_type = us_internal_poll_type(&s->p);
 #else
-    /* The one-shot write filter may have carried this event and is gone then: a later write must register it again. */
-    s->p.state.poll_type = us_internal_poll_type(&s->p) | (s->p.state.poll_type & POLL_TYPE_POLLING_IN);
+    /* Only the EV_CLEAR read filter stays (kqueue_change), and it does not fire again. A resume or a write registers the others. */
+    us_poll_change(&s->p, loop, 0);
 #endif
     return 1;
 #endif

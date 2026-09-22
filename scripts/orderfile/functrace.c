@@ -27,10 +27,13 @@
 // environment instead. Every traced process needs a record of its own then,
 // which is what `%p` in BUN_FUNCTRACE_OUT is for: it expands to the process
 // id (with `.1`, `.2`, … appended if that name is taken: a process that execs
-// itself again keeps its id). Only processes running the same executable file
-// are traced, since the starts describe that one binary. On macOS the loader
-// drops DYLD_INSERT_LIBRARIES when a protected binary such as /bin/sh runs, so
-// a child reached only through one of those is not followed.
+// itself again keeps its id). The starts describe one binary, so that mode
+// also needs BUN_FUNCTRACE_EXE, the absolute path of the executable to trace.
+// A process running any other file (a wrapper such as `env` or `sh -c` in
+// front of the application, a tool it starts) passes the environment on and is
+// otherwise left alone. On macOS the loader drops DYLD_INSERT_LIBRARIES when a
+// protected binary such as /bin/sh runs, so a child reached only through one
+// of those is not followed.
 //
 //   linux: cc -O2 -shared -fPIC -o functrace.so functrace.c -ldl
 //   macos: cc -O2 -dynamiclib -fPIC -o functrace.dylib functrace.c
@@ -535,27 +538,36 @@ static int expand_out_path(char *out, size_t size, const char *template)
     return expanded;
 }
 
-/**
- * With BUN_FUNCTRACE_CHILDREN=1 the first traced process names its executable
- * (device and inode) in BUN_FUNCTRACE_EXE, and a descendant is traced only if
- * it runs that same file.
- */
-static int same_executable_as_root(void)
+/** Takes the tracer out of the environment, so no process started from here loads it. */
+static void leave_environment(void)
 {
-    char path[4096];
 #if defined(__linux__)
-    snprintf(path, sizeof path, "/proc/self/exe");
+    unsetenv("LD_PRELOAD");
 #else
-    uint32_t size = sizeof path;
-    if (_NSGetExecutablePath(path, &size) != 0) return 0;
+    unsetenv("DYLD_INSERT_LIBRARIES");
 #endif
-    struct stat st;
-    if (stat(path, &st) != 0) return 0;
-    char id[64];
-    snprintf(id, sizeof id, "%llu:%llu", (unsigned long long)st.st_dev, (unsigned long long)st.st_ino);
-    const char *root = getenv("BUN_FUNCTRACE_EXE");
-    if (!root) return setenv("BUN_FUNCTRACE_EXE", id, 1) == 0;
-    return strcmp(root, id) == 0;
+    unsetenv("BUN_FUNCTRACE_STARTS");
+    unsetenv("BUN_FUNCTRACE_OUT");
+}
+
+/**
+ * Whether this process runs the file `traced` names: 1, 0, or -1 if there is no
+ * such file. Compared by device and inode, so it does not matter which path
+ * either was reached by.
+ */
+static int runs_traced_executable(const char *traced)
+{
+#if defined(__linux__)
+    const char *self = "/proc/self/exe";
+#else
+    char self[4096];
+    uint32_t size = sizeof self;
+    if (_NSGetExecutablePath(self, &size) != 0) return 0;
+#endif
+    struct stat ours, theirs;
+    if (stat(traced, &theirs) != 0) return -1;
+    if (stat(self, &ours) != 0) return 0;
+    return ours.st_dev == theirs.st_dev && ours.st_ino == theirs.st_ino;
 }
 
 __attribute__((constructor(101))) static void functrace_init(void)
@@ -570,29 +582,31 @@ __attribute__((constructor(101))) static void functrace_init(void)
     if (per_process < 0) return;
 
     const char *children_env = getenv("BUN_FUNCTRACE_CHILDREN");
-    int trace_children = children_env && strcmp(children_env, "1") == 0;
-    if (trace_children && !per_process) {
-        fprintf(stderr, "functrace: BUN_FUNCTRACE_CHILDREN=1 needs %%p in BUN_FUNCTRACE_OUT, "
-                        "or every process overwrites the same trace\n");
-        return;
-    }
-    if (trace_children) {
-        // The starts are one binary's. A child running some other executable
-        // (a shell, a tool) keeps the environment for its own children and is
-        // otherwise left alone.
-        if (!same_executable_as_root()) return;
+    if (children_env && strcmp(children_env, "1") == 0) {
+        // Named rather than taken to be whichever process loads the tracer
+        // first: that is a wrapper as often as it is the application.
+        const char *traced = getenv("BUN_FUNCTRACE_EXE");
+        int runs_it = traced && *traced ? runs_traced_executable(traced) : -1;
+        if (runs_it < 0 || !per_process) {
+            // Said once: nothing started from here can be traced either.
+            if (!per_process) {
+                fprintf(stderr, "functrace: BUN_FUNCTRACE_CHILDREN=1 needs %%p in BUN_FUNCTRACE_OUT, "
+                                "or every process overwrites the same trace\n");
+            } else if (!traced || !*traced) {
+                fprintf(stderr, "functrace: BUN_FUNCTRACE_CHILDREN=1 needs BUN_FUNCTRACE_EXE, "
+                                "the absolute path of the executable to trace\n");
+            } else {
+                fprintf(stderr, "functrace: BUN_FUNCTRACE_EXE=%s: %s\n", traced, strerror(errno));
+            }
+            leave_environment();
+            return;
+        }
+        if (!runs_it) return;
     } else {
-        // Take ourselves out of the environment so a child exec'd by the workload
-        // (lifecycle scripts, shells) does not re-arm over the trace this process
-        // is still writing. ptyrun hands the preload down to the one process that
-        // should have it.
-#if defined(__linux__)
-        unsetenv("LD_PRELOAD");
-#else
-        unsetenv("DYLD_INSERT_LIBRARIES");
-#endif
-        unsetenv("BUN_FUNCTRACE_STARTS");
-        unsetenv("BUN_FUNCTRACE_OUT");
+        // A child exec'd by the workload (lifecycle scripts, shells) must not
+        // re-arm over the trace this process is still writing. ptyrun hands the
+        // preload down to the one process that should have it.
+        leave_environment();
     }
 
 #if defined(__linux__)

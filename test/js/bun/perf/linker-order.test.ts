@@ -1,6 +1,6 @@
-import { afterAll, describe, expect, it, jest } from "bun:test";
+import { afterAll, afterEach, describe, expect, it, jest } from "bun:test";
 import { bunEnv, bunExe, isMusl, isWindows, nodeExe, tempDir } from "harness";
-import { readdirSync, readFileSync } from "node:fs";
+import { appendFileSync, chmodSync, copyFileSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   candidateBuilds,
@@ -21,14 +21,23 @@ import {
 } from "../../../../scripts/build/flags.ts";
 import { slash } from "../../../../scripts/build/shell.ts";
 import {
+  demangleRust,
   generateOrderFile,
+  hintNames,
+  NO_PROXY_SETTINGS,
+  readFeatures,
+  readHintList,
   readNameList,
   readTextSymbols,
   readTrace,
   resolveHints,
+  runCommandAsync,
+  runGroup,
+  sameCode,
   writeStarts as writeStartsFile,
+  type GroupPolicy,
 } from "../../../../scripts/orderfile/generate.ts";
-import { traceHints } from "../../../../scripts/orderfile/hints.ts";
+import { busiestFirst, traceHints } from "../../../../scripts/orderfile/hints.ts";
 import { selfSignedCertificate } from "../../../../scripts/orderfile/self-signed.ts";
 import {
   linkerMapFor,
@@ -466,24 +475,83 @@ describe("order file hints", () => {
     expect(demangler.mock.calls).toEqual([[["_RNvCs2222_3foo3bar", "_RNvCs1111_3foo3bar"]]]);
   });
 
-  it("matches a list traced on linux against Mach-O names, which carry one more underscore", () => {
-    const current = ["__ZN3JSC2VM6createEv", "__RNvCs2222_3foo3bar", "_malloc"];
-    expect(
-      resolveHints(["_ZN3JSC2VM6createEv.cold", "_RNvCs2222_3foo3bar", "malloc"], current, demangle).names,
-    ).toEqual(["__ZN3JSC2VM6createEv", "__RNvCs2222_3foo3bar"]);
+  it("spells a list for the link it is given to, whichever platform it was traced on", () => {
+    using dir = tempDir("orderfile-hint-format", {
+      "elf.hints":
+        "# format: elf\n_ZN3JSC2VM6createEv.cold\n_RNvCs1111_3foo3bar\nSSL_do_handshake\n_mi_heap_malloc_zero\n",
+      "macho.hints": "# format: macho\n__ZN3JSC2VM6createEv\n_SSL_do_handshake\n_mi_heap_malloc_zero\nltmp0\n",
+      "plain.hints": "# a list written by hand\nmain\n",
+    });
+    const read = (file: string, fallback?: "elf" | "macho") => readHintList(join(String(dir), file), fallback);
+    expect(read("plain.hints", "macho")).toEqual({ names: ["main"], format: "macho" });
+    expect(read("plain.hints", "elf").format).toBe("elf");
+
+    // Mach-O puts one underscore before every name, so `_x` there is `x` here, and never ELF's own `_x`.
+    const elf = ["_ZN3JSC2VM6createEv.llvm.7", "SSL_do_handshake", "mi_heap_malloc_zero", "_mi_heap_malloc_zero"];
+    expect(resolveHints(hintNames(read("macho.hints"), "elf"), elf, demangle)).toEqual({
+      names: ["_ZN3JSC2VM6createEv.llvm.7", "SSL_do_handshake", "mi_heap_malloc_zero"],
+      listed: 4,
+      exact: 2,
+      normalized: 1,
+    });
+    const macho = ["__ZN3JSC2VM6createEv", "__RNvCs2222_3foo3bar", "_SSL_do_handshake", "_mi_heap_malloc_zero", "__mi_heap_malloc_zero"]; // prettier-ignore
+    expect(resolveHints(hintNames(read("elf.hints"), "macho"), macho, demangle)).toEqual({
+      names: ["__ZN3JSC2VM6createEv", "__RNvCs2222_3foo3bar", "_SSL_do_handshake", "__mi_heap_malloc_zero"],
+      listed: 4,
+      exact: 2,
+      normalized: 2,
+    });
+    // A missing `_exit` is not `exit`.
+    expect(resolveHints(["_exit"], ["exit"], demangle).names).toEqual([]);
   });
 
   // Whichever demangler the generator would find: their defaults differ (one prints
   // the crate hash, and they disagree about Mach-O's leading underscore).
   const cxxfilt = process.env.CXXFILT || Bun.which("llvm-cxxfilt") || Bun.which("c++filt");
   it.skipIf(!cxxfilt)("matches a Rust name across crate hashes with the installed demangler", () => {
-    const current = ["_RNvCs7kMPyjk15S4_3foo3bar", "__RNvCs7kMPyjk15S4_3foo3baz"];
+    const current = ["_RNvCs7kMPyjk15S4_3foo3bar", "_RNvCs7kMPyjk15S4_3foo3baz"];
     const hints = ["_RNvCsaZ2QR4xGWmr_3foo3bar.llvm.42", "_RNvCsaZ2QR4xGWmr_3foo3baz", "_RNvCsaZ2QR4xGWmr_3foo4quux"];
-    expect(resolveHints(hints, current)).toEqual({
-      names: ["_RNvCs7kMPyjk15S4_3foo3bar", "__RNvCs7kMPyjk15S4_3foo3baz"],
-      listed: 3,
-      exact: 0,
-      normalized: 2,
+    expect(resolveHints(hints, current)).toEqual({ names: current, listed: 3, exact: 0, normalized: 2 });
+    const macho = current.map(name => `_${name}`);
+    expect(resolveHints(hintNames({ names: hints, format: "elf" }, "macho"), macho).names).toEqual(macho);
+  });
+
+  describe("finding a demangler", () => {
+    const names = ["_RNvCs7kMPyjk15S4_3foo3bar"];
+    const warnings = () => {
+      const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+      return () => warn.mock.calls.map(call => String(call[0]));
+    };
+    afterEach(() => jest.restoreAllMocks());
+
+    it.skipIf(!cxxfilt)("passes over one that is not installed", () => {
+      using dir = tempDir("orderfile-cxxfilt", {});
+      const warned = warnings();
+      expect(demangleRust(names, [join(String(dir), "not-installed"), cxxfilt!])).toEqual(["foo::bar"]);
+      expect(warned()).toEqual([]);
+    });
+
+    it.skipIf(isWindows || !cxxfilt)("reports one that cannot run or fails, and goes on to the next", () => {
+      using dir = tempDir("orderfile-cxxfilt", {
+        "not-a-program": "\n",
+        "broken": "#!/bin/sh\necho missing libLLVM >&2\nexit 127\n",
+      });
+      const [notAProgram, broken] = [join(String(dir), "not-a-program"), join(String(dir), "broken")];
+      chmodSync(notAProgram, 0o644);
+      chmodSync(broken, 0o755);
+      const warned = warnings();
+      expect(demangleRust(names, [notAProgram, broken, cxxfilt!])).toEqual(["foo::bar"]);
+      expect(warned()).toEqual([
+        expect.stringMatching(/not-a-program.*EACCES/),
+        expect.stringMatching(/broken exited 127[^]*missing libLLVM/),
+      ]);
+    });
+
+    it("says so when none works, since Rust names then only match by exact crate hash", () => {
+      using dir = tempDir("orderfile-cxxfilt", {});
+      const warned = warnings();
+      expect(demangleRust(names, [join(String(dir), "not-installed")])).toEqual(names);
+      expect(warned()).toEqual([expect.stringContaining("no working demangler")]);
     });
   });
 });
@@ -504,13 +572,43 @@ describe("app workloads", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const listed = readNameList(join(app, "features.txt"));
+    const listed = readFeatures(join(app, "features.txt")).names;
     expect({ features: stdout.trim().split(/\r?\n/).sort(), stderr, exitCode }).toEqual({
       features: listed.toSorted(),
       stderr: "",
       exitCode: 0,
     });
     expect(new Set(listed).size).toBe(listed.length);
+  });
+
+  it("requires one feature of each family", () => {
+    const { names, required } = readFeatures(join(app, "features.txt"));
+    expect(names.filter(name => name.startsWith("!"))).toEqual([]);
+    expect(required.map(name => name.split("_")[0]).sort()).toEqual(["mix", "net", "net", "net", "net", "tui"]);
+  });
+
+  it("keeps the machine's proxy settings away from the app: direct stays direct, and its own proxy is used", async () => {
+    // Stands in for both a proxy the machine has configured and the one the app names itself.
+    await using proxy = Bun.serve({ port: 0, fetch: () => new Response("proxy") });
+    await using origin = Bun.serve({ port: 0, fetch: () => new Response("origin") });
+    const machine = `http://127.0.0.1:${proxy.port}`;
+    const script = `
+      const url = "http://127.0.0.1:${origin.port}/";
+      const direct = await (await fetch(url)).text();
+      const proxied = await (await fetch(url, { proxy: "${machine}" })).text();
+      console.log(JSON.stringify({ direct, proxied }));`;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, ALL_PROXY: machine, all_proxy: machine, NO_PROXY: "127.0.0.1", ...NO_PROXY_SETTINGS },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ direct: "origin", proxied: "proxy" }),
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   it.each(["rsa", "ec"] as const)("serves TLS with a %s certificate its clients can pin", async kind => {
@@ -524,6 +622,193 @@ describe("app workloads", () => {
     await expect(fetch(`https://localhost:${server.port}/`)).rejects.toMatchObject({
       code: "DEPTH_ZERO_SELF_SIGNED_CERT",
     });
+  });
+});
+
+/**
+ * A group is hundreds of small runs. One failing is worth a warning; a required
+ * one failing, too many failing, or the group running out of time ends the
+ * group at once, with what is still running killed, rather than after every
+ * remaining run has had its own timeout.
+ */
+describe("workload groups", () => {
+  const policy: GroupPolicy = { concurrency: 2, required: new Set(), maxFailures: 1, timeoutMs: 60_000 };
+  const names = (count: number) => Array.from({ length: count }, (_, i) => `run ${i}`);
+  /** A run that only ends when the group kills it. */
+  const untilKilled = (signal: AbortSignal) =>
+    new Promise<never>((_, reject) => signal.addEventListener("abort", () => reject(new Error("killed"))));
+
+  it("tolerates a failure, and names it", async () => {
+    const { results, failures } = await runGroup(
+      "test",
+      names(4),
+      async i => {
+        if (i === 2) throw new Error("run 2 broke");
+        return i * 10;
+      },
+      policy,
+    );
+    expect({ results, failures }).toEqual({
+      results: [0, 10, undefined, 30],
+      failures: [{ name: "run 2", message: "run 2 broke" }],
+    });
+  });
+
+  it("stops starting runs, and kills the running ones, once too many have failed", async () => {
+    const started: number[] = [];
+    const group = runGroup(
+      "test",
+      names(50),
+      (i, signal) => {
+        started.push(i);
+        return i === 0 ? untilKilled(signal) : Promise.reject(new Error(`run ${i} broke`));
+      },
+      policy,
+    );
+    await expect(group).rejects.toThrow(/2 of the 50 test workloads failed \(run 1, run 2\); the first:\nrun 1 broke/);
+    expect(started).toEqual([0, 1, 2]);
+  });
+
+  it("tries a required run twice, and fails the group when it fails twice", async () => {
+    using _warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const attempts = [0, 0, 0];
+    const run = async (i: number) => {
+      if (++attempts[i]! <= i) throw new Error(`attempt ${attempts[i]} of run ${i} broke`);
+      return i;
+    };
+    const required = { ...policy, concurrency: 1, required: new Set(["run 1", "run 2"]) };
+    const passing = { ...required, required: new Set(["run 1"]) };
+    expect(await runGroup("test", names(2), run, passing)).toEqual({ results: [0, 1], failures: [] });
+    expect(attempts).toEqual([1, 2, 0]);
+    await expect(runGroup("test", names(3), run, required)).rejects.toThrow(
+      /run 2 failed twice[^]*attempt 2 of run 2 broke/,
+    );
+  });
+
+  it("mentions a required run that only passed on its second try", async () => {
+    using warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    let attempts = 0;
+    const run = async () => {
+      if (++attempts === 1) throw new Error("connection reset");
+      return attempts;
+    };
+    const result = await runGroup("test", ["run 0"], run, { ...policy, required: new Set(["run 0"]) });
+    expect(result).toEqual({ results: [2], failures: [] });
+    expect(warn.mock.calls.map(call => String(call[0]))).toEqual([
+      "warning: run 0 passed on its second try; the first:\nconnection reset",
+    ]);
+  });
+
+  it("refuses a required run the group does not have", async () => {
+    const group = runGroup("test", names(2), async i => i, { ...policy, required: new Set(["run 7"]) });
+    await expect(group).rejects.toThrow("the test workloads require run 7, which they do not have");
+  });
+
+  it("gives up, with the running runs killed, when the whole group is out of time", async () => {
+    let killed = 0;
+    const group = runGroup(
+      "test",
+      names(10),
+      (_, signal) =>
+        untilKilled(signal).catch(error => {
+          killed++;
+          throw error;
+        }),
+      { ...policy, timeoutMs: 1 },
+    );
+    await expect(group).rejects.toThrow(/the test workloads did not finish in 0.001 s \(0 of 10 had\)/);
+    expect(killed).toBe(2);
+  });
+
+  // Says who it and its descendant are, which holds the output pipes open and would run for a minute.
+  const lingering = (pids: string) => ["/bin/sh", "-c", `sleep 60 & echo $$,$! > "$1"; wait`, "sh", pids];
+
+  /** Waits for `lingering` to have said who it is, unless `command` ended first. */
+  async function started(pids: string, command: Promise<unknown>) {
+    let ended = false;
+    command.then(
+      () => (ended = true),
+      () => (ended = true),
+    );
+    const written = () => (existsSync(pids) ? /^(\d+),(\d+)\n$/.exec(readFileSync(pids, "utf8")) : null);
+    while (!ended && !written()) await Bun.sleep(1);
+    return written()!.slice(1).map(Number);
+  }
+
+  /** A process's state letter, or undefined if there is no such process. */
+  function processState(pid: number): string | undefined {
+    if (process.platform === "linux") {
+      try {
+        return /\) (\S)/.exec(readFileSync(`/proc/${pid}/stat`, "utf8"))?.[1];
+      } catch {
+        return undefined;
+      }
+    }
+    const ps = Bun.spawnSync({ cmd: ["ps", "-o", "stat=", "-p", String(pid)], env: bunEnv });
+    return ps.exitCode === 0 ? ps.stdout.toString().trim()[0] : undefined;
+  }
+
+  /** A process nobody reaps stays a zombie, which is as gone as it gets. */
+  async function expectGone(pids: number[]) {
+    expect(processState(process.pid)).toBeDefined();
+    const alive = () => pids.filter(pid => ![undefined, "Z"].includes(processState(pid)));
+    for (const deadline = Date.now() + 3_000; alive().length && Date.now() < deadline; ) await Bun.sleep(5);
+    expect(alive()).toEqual([]);
+  }
+
+  it.skipIf(isWindows)("stops a command, and what it started, when its signal aborts", async () => {
+    using dir = tempDir("orderfile-stop", {});
+    const controller = new AbortController();
+    const command = runCommandAsync(lingering(join(String(dir), "pids")), {
+      env: bunEnv,
+      label: "lingering",
+      signal: controller.signal,
+    });
+    const pids = await started(join(String(dir), "pids"), command);
+    controller.abort();
+    await expect(command).rejects.toThrow("lingering: stopped with the rest of its group");
+    await expectGone(pids);
+  });
+
+  it.skipIf(isWindows)("stops a command whose signal had aborted before it started", async () => {
+    using dir = tempDir("orderfile-stop", {});
+    const command = runCommandAsync(lingering(join(String(dir), "pids")), { env: bunEnv, signal: AbortSignal.abort() });
+    await expect(command).rejects.toThrow("stopped with the rest of its group");
+  });
+
+  it.skipIf(isWindows)("stops a command that runs out of time, and says that is why", async () => {
+    using dir = tempDir("orderfile-stop", {});
+    const command = runCommandAsync(lingering(join(String(dir), "pids")), { env: bunEnv, timeout: 1 });
+    await expect(command).rejects.toThrow("timed out after 0.001 s");
+  });
+
+  it.skipIf(isWindows)("goes by how a command ended, not by whether it was being stopped", async () => {
+    using dir = tempDir("orderfile-stop", {});
+    const pids = join(String(dir), "pids");
+    const controller = new AbortController();
+    // Finishes its work (exit 0) when told to stop.
+    const command = runCommandAsync(
+      ["/bin/sh", "-c", `trap 'exit 0' TERM; echo $$,$$ > "$1"; while :; do sleep 1; done`, "sh", pids],
+      { env: bunEnv, signal: controller.signal },
+    );
+    await started(pids, command);
+    controller.abort();
+    expect((await command).status).toBe(0);
+  });
+
+  it.skipIf(isWindows)("takes its running commands with it when a signal ends the generator", async () => {
+    using dir = tempDir("orderfile-stop", {});
+    const pids = join(String(dir), "pids");
+    const generate = join(import.meta.dir, "../../../../scripts/orderfile/generate.ts");
+    const script = `
+      const { runCommandAsync } = await import(${JSON.stringify(generate)});
+      await runCommandAsync(${JSON.stringify(lingering(pids))}, {});`;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const running = await started(pids, proc.exited);
+    proc.kill("SIGTERM");
+    await proc.exited;
+    expect(proc.signalCode).toBe("SIGTERM");
+    await expectGone(running);
   });
 });
 
@@ -746,6 +1031,31 @@ describe.skipIf(!canTrace || isWindows)("pty runner", () => {
       pipeExit: 0,
     });
   });
+
+  it.concurrent("takes the terminal's processes with it when it is told to stop", async () => {
+    using dir = tempDir("ptyrun-stop", {});
+    const ptyrun = join(String(dir), "ptyrun");
+    await compile(["-o", ptyrun, join(orderfile, "ptyrun.c"), ...(darwin ? [] : ["-lutil"])]);
+
+    // Ignores the hangup that the terminal going away sends, so only being killed ends it.
+    await using proc = Bun.spawn({
+      cmd: [ptyrun, "/bin/sh", "-c", "trap '' HUP; echo pid=$$; while :; do sleep 1; done"],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    let output = "";
+    for await (const chunk of proc.stdout) {
+      output += Buffer.from(chunk).toString();
+      if (/pid=\d+\s/.test(output)) break;
+    }
+    const shell = Number(/pid=(\d+)/.exec(output)![1]);
+    proc.kill("SIGTERM");
+    expect(await proc.exited).toBe(1);
+    // ptyrun reaped the shell before it exited, so the shell is gone by now.
+    expect(() => process.kill(shell, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
+  });
 });
 
 /**
@@ -830,7 +1140,8 @@ describe.skipIf(!canTrace || isWindows)("function tracer, following children", (
     "#include <unistd.h>",
     "__attribute__((noinline)) static int parent_only(int x) { return x + 1; }",
     "__attribute__((noinline)) static int child_only(int x) { return x + 2; }",
-    "static int run(const char *program, const char *arg) {",
+    // Out of line whatever the compiler: it is what the parent enters and the re-executed child does not.
+    "__attribute__((noinline)) static int run(const char *program, const char *arg) {",
     "    pid_t child = fork();",
     "    if (child == 0) { execl(program, program, arg, (char *)NULL); _exit(127); }",
     "    int status = 0;",
@@ -852,33 +1163,45 @@ describe.skipIf(!canTrace || isWindows)("function tracer, following children", (
   ].join("\n");
 
   // The tracer and the two programs, built once for every test here.
-  const binaries = tempDir("functrace-children", { "self.c": source, "other.c": "int main(void) { return 0; }\n" });
+  const binaries = tempDir("functrace-children", {
+    "self.c": source,
+    "other.c": "int main(void) { return 0; }\n",
+    // What stands between a shell and an application often enough: env, nice, time, sh -c.
+    "wrapper.c":
+      "#include <unistd.h>\nint main(int argc, char **argv) { return argc < 2 ? 2 : execv(argv[1], argv + 1); }\n",
+  });
   afterAll(() => binaries[Symbol.dispose]());
-  let built: Promise<{ tracer: string; self: string; other: string; starts: string }> | undefined;
+  let built: Promise<{ tracer: string; self: string; other: string; wrapper: string; starts: string }> | undefined;
   const build = () =>
     (built ??= (async () => {
       const dir = String(binaries);
       const tracer = join(dir, darwin ? "functrace.dylib" : "functrace.so");
       const self = join(dir, "self");
       const other = join(dir, "other");
+      const wrapper = join(dir, "wrapper");
       const starts = join(dir, "starts.bin");
       await Promise.all([
         compile([...shared, "-o", tracer, join(orderfile, "functrace.c"), ...(darwin ? [] : ["-ldl", "-lpthread"])]),
         compile(["-o", self, join(dir, "self.c")]),
         compile(["-o", other, join(dir, "other.c")]),
+        compile(["-o", wrapper, join(dir, "wrapper.c")]),
       ]);
       writeStarts(starts, readTextSymbols(self).keys());
-      return { tracer, self, other, starts };
+      return { tracer, self, other, wrapper, starts };
     })());
 
-  async function traceSelfExec(extraEnv: Record<string, string>, out: string, arg?: string) {
+  /** The environment that asks for children to be followed. */
+  const following = async () => ({ BUN_FUNCTRACE_CHILDREN: "1", BUN_FUNCTRACE_EXE: (await build()).self });
+
+  /** Runs the fixture under the tracer; `through` is a program to start it through. */
+  async function traceSelfExec(extraEnv: Record<string, string>, out: string, arg?: string, through: string[] = []) {
     const { tracer, self, other, starts } = await build();
     using dir = tempDir("functrace-children-traces", {});
     const root = String(dir);
     const symbols = readTextSymbols(self);
 
     await using proc = Bun.spawn({
-      cmd: [self, arg ?? other],
+      cmd: [...through, self, arg ?? other],
       env: { ...bunEnv, ...extraEnv, [preloadVar]: tracer, BUN_FUNCTRACE_STARTS: starts, BUN_FUNCTRACE_OUT: join(root, out) }, // prettier-ignore
       stdout: "pipe",
       stderr: "pipe",
@@ -896,7 +1219,7 @@ describe.skipIf(!canTrace || isWindows)("function tracer, following children", (
   }
 
   it.concurrent("traces a re-executed copy of the same binary into its own file, and no other program", async () => {
-    const { stdout, stderr, exitCode, traces } = await traceSelfExec({ BUN_FUNCTRACE_CHILDREN: "1" }, "trace-%p.bin");
+    const { stdout, stderr, exitCode, traces } = await traceSelfExec(await following(), "trace-%p.bin");
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: ["4", "3"], stderr: "", exitCode: 0 });
     const { parent, ...children } = traces;
     expect({ parent, children: Object.values(children) }).toEqual({
@@ -905,14 +1228,49 @@ describe.skipIf(!canTrace || isWindows)("function tracer, following children", (
     });
   });
 
+  it.concurrent("traces the named executable when some other program loads the tracer first", async () => {
+    const { wrapper } = await build();
+    const { stdout, stderr, exitCode, traces } = await traceSelfExec(await following(), "trace-%p.bin", undefined, [
+      wrapper,
+      wrapper,
+    ]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: ["4", "3"], stderr: "", exitCode: 0 });
+    const { parent, ...children } = traces;
+    expect({ parent, children: Object.values(children) }).toEqual({
+      parent: ["parent_only"],
+      children: [["child_only"]],
+    });
+  });
+
+  it.concurrent("refuses to follow children without being told which executable is the application", async () => {
+    const { stdout, stderr, exitCode, traces } = await traceSelfExec({ BUN_FUNCTRACE_CHILDREN: "1" }, "trace-%p.bin");
+    // Once, from the first of the three processes, not once each.
+    expect({ stdout, stderr, exitCode, traces }).toEqual({
+      stdout: ["4", "3"],
+      stderr:
+        "functrace: BUN_FUNCTRACE_CHILDREN=1 needs BUN_FUNCTRACE_EXE, the absolute path of the executable to trace\n",
+      exitCode: 0,
+      traces: {},
+    });
+  });
+
+  it.concurrent("says so when the named executable is not there", async () => {
+    const missing = join(String(binaries), "not-there");
+    const { stderr, exitCode, traces } = await traceSelfExec(
+      { BUN_FUNCTRACE_CHILDREN: "1", BUN_FUNCTRACE_EXE: missing },
+      "trace-%p.bin",
+    );
+    expect({ stderr, exitCode, traces }).toEqual({
+      stderr: `functrace: BUN_FUNCTRACE_EXE=${missing}: No such file or directory\n`,
+      exitCode: 0,
+      traces: {},
+    });
+  });
+
   it.concurrent(
     "gives a process that execs itself in place a second record instead of truncating the first",
     async () => {
-      const { stdout, exitCode, traces } = await traceSelfExec(
-        { BUN_FUNCTRACE_CHILDREN: "1" },
-        "trace-%p.bin",
-        "again",
-      );
+      const { stdout, exitCode, traces } = await traceSelfExec(await following(), "trace-%p.bin", "again");
       expect({ stdout, exitCode }).toEqual({ stdout: ["3", "4"], exitCode: 0 });
       const { parent, ...again } = traces;
       expect({
@@ -946,8 +1304,8 @@ describe.skipIf(!canTrace || isWindows)("function tracer, following children", (
     expect(processes).toBe(2);
 
     const names = readNameList(out).map(name => (darwin ? name.replace(/^_/, "") : name));
-    // The parent entered more (it forks and waits), so it is listed first; the
-    // re-executed child adds the one function only it reached.
+    // The parent entered more (`run`), so it is listed first; the re-executed
+    // child adds the one function only it reached.
     expect(names.filter(name => name === "main" || name.endsWith("_only"))).toEqual([
       "main",
       "parent_only",
@@ -955,9 +1313,60 @@ describe.skipIf(!canTrace || isWindows)("function tracer, following children", (
     ]);
   });
 
+  it("hints.ts orders two processes that entered as many functions by what they entered, not by which it read first", () => {
+    const [parent, child, helper] = [
+      [0x10, 0x30],
+      [0x10, 0x20],
+      [0x10, 0x20, 0x40],
+    ];
+    const expected = [helper, child, parent];
+    expect(busiestFirst([parent, child, helper])).toEqual(expected);
+    expect(busiestFirst([child, parent, helper])).toEqual(expected);
+    expect(busiestFirst([helper, child, parent, child])).toEqual([helper, child, child, parent]);
+  });
+
+  it.concurrent("tells an executable with the profile's code from one without", async () => {
+    const { self } = await build();
+    using dir = tempDir("orderfile-same-code", { "self.c": source.replace("return x + 2;", "return x + 3;") });
+    const root = String(dir);
+    // What `bun build --compile` does to bun: the same file with a payload after it.
+    const compiled = join(root, "compiled");
+    copyFileSync(self, compiled);
+    appendFileSync(compiled, Buffer.alloc(1 << 16, "payload"));
+    // Another build: one instruction's operand differs, nothing else.
+    const rebuilt = join(root, "rebuilt");
+    await compile(["-o", rebuilt, join(root, "self.c")]);
+
+    expect(sameCode(self, compiled)).toBe(true);
+    expect(sameCode(self, rebuilt)).toBe(false);
+    expect(() => sameCode(self, join(root, "self.c"))).toThrow(/cannot find the code of .*self\.c/);
+  });
+
+  // `bun build --compile` rewrites headers around the code it copies (ELF program
+  // headers, Mach-O load commands and signature), which a plain append does not model.
+  it.concurrent(
+    "finds bun's own code unchanged in an executable bun compiled",
+    async () => {
+      using dir = tempDir("orderfile-same-code-compiled", { "app.js": "console.log(1);\n" });
+      const compiled = join(String(dir), "app");
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", join(String(dir), "app.js"), "--outfile", compiled],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect({ stderr: stderr.includes("error"), exitCode }).toEqual({ stderr: false, exitCode: 0 });
+      expect(sameCode(bunExe(), compiled)).toBe(true);
+      // A debug build is a gigabyte to copy and to compare.
+    },
+    60_000,
+  );
+
   it.concurrent("refuses to follow children into one shared file", async () => {
-    const { stdout, stderr, exitCode, traces } = await traceSelfExec({ BUN_FUNCTRACE_CHILDREN: "1" }, "trace.bin");
-    expect(stderr).toContain("BUN_FUNCTRACE_CHILDREN=1 needs %p in BUN_FUNCTRACE_OUT");
+    const { stdout, stderr, exitCode, traces } = await traceSelfExec(await following(), "trace.bin");
+    expect(stderr.trim().split("\n")).toEqual([expect.stringContaining("needs %p in BUN_FUNCTRACE_OUT")]);
     expect({ stdout, exitCode, traces }).toEqual({ stdout: ["4", "3"], exitCode: 0, traces: {} });
   });
 });

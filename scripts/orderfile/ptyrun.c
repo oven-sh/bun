@@ -15,9 +15,15 @@
 // macOS). The tracer belongs in the binary being traced and nowhere else, and
 // it drops itself from the environment once loaded, so it is handed down here
 // rather than inherited.
+//
+// The child leads a session of its own, so a signal sent to our process group
+// does not reach it, and a child that ignores SIGHUP outlives us. SIGTERM is
+// how the generator stops a run: it becomes SIGKILL for the child's process
+// group, and we exit once the child has.
 #define _GNU_SOURCE
 #include <errno.h>
 #include <poll.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/ioctl.h>
@@ -33,12 +39,30 @@
 
 #define EOT 4 // ^D: how a terminal says end-of-input
 
+static volatile sig_atomic_t child_group;
+
+static void on_terminate(int signal)
+{
+    (void)signal;
+    if (child_group <= 0) return;
+    // Its group, and the child itself in case it has not become the group's leader yet.
+    kill(-(pid_t)child_group, SIGKILL);
+    kill((pid_t)child_group, SIGKILL);
+}
+
 int main(int argc, char **argv)
 {
     if (argc < 2) {
         fprintf(stderr, "usage: ptyrun <command> [args...]\n");
         return 2;
     }
+
+    // Held back until there is a child to pass it on to.
+    sigset_t terminate, before;
+    sigemptyset(&terminate);
+    sigaddset(&terminate, SIGTERM);
+    sigprocmask(SIG_BLOCK, &terminate, &before);
+    signal(SIGTERM, on_terminate);
 
     struct winsize window = { .ws_row = 24, .ws_col = 80 };
     int master = -1;
@@ -48,12 +72,15 @@ int main(int argc, char **argv)
         return 2;
     }
     if (child == 0) {
+        sigprocmask(SIG_SETMASK, &before, NULL); // the mask survives exec
         const char *preload = getenv("PTYRUN_PRELOAD");
         if (preload && *preload) setenv(PRELOAD_VAR, preload, 1);
         execvp(argv[1], &argv[1]);
         perror(argv[1]);
         _exit(127);
     }
+    child_group = child;
+    sigprocmask(SIG_SETMASK, &before, NULL);
 
     // Drain the child's output — a full pty buffer would block it — and type
     // whatever arrives on our stdin into the terminal.
@@ -83,7 +110,9 @@ int main(int argc, char **argv)
     }
 
     int status = 0;
-    if (waitpid(child, &status, 0) < 0) {
+    pid_t reaped = waitpid(child, &status, 0);
+    child_group = 0; // the id is free to be someone else's now
+    if (reaped < 0) {
         perror("waitpid");
         return 2;
     }

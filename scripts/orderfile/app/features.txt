@@ -4,8 +4,11 @@
 # is most likely to use come first and the ones that drag in code it rarely needs come last.
 # It was chosen by scoring candidate orders against a function-entry trace of such an
 # application; when adding a feature, put it next to the features it most resembles.
+# A `!` marks one feature of each family (terminal UI, fetch with and without TLS, a TLS
+# socket, a child process, JIT-hot code): the generator fails if one of those cannot be
+# traced, where any other feature failing only costs the order file that feature.
 net_http_client
-net_fetch_post_json
+!net_fetch_post_json
 net_diagnostics_channel
 idm_collections_misc
 idm_jitpolicy
@@ -13,7 +16,7 @@ lib_modns
 tui_paste
 mix_recursion
 tui_keys
-tui_core
+!tui_core
 tui_slice
 net_hash
 lib_json
@@ -92,9 +95,9 @@ lib_bigint64
 net_hmac_random
 lib_jit_regexp_statics
 idm_zstd_fetch
-mix_poly
+!mix_poly
 hot_put_megamorphic
-net_bun_spawn
+!net_bun_spawn
 idm_error_messages
 mix_intl_misc
 lib_regex
@@ -154,7 +157,7 @@ net_kdf
 lib_lru
 lib_schema
 lib_jit_global_put
-net_tls_connect
+!net_tls_connect
 idm_request
 hot_set_iter
 mix_coll_maps
@@ -193,4 +196,4 @@ net_node_message_channel
 idm_searchparams
 net_message_channel
 net_fetch_insecure
-net_fetch_tls
+!net_fetch_tls

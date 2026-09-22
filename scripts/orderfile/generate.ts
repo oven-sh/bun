@@ -122,10 +122,12 @@ interface Workload {
   env?: Record<string, string>;
 }
 
-/** Many small workloads reported as one line, where one of them failing is a warning rather than an error. */
+/** Many small workloads, run several at a time and reported as one line. */
 interface WorkloadGroup {
   group: string;
   workloads: Workload[];
+  /** Names of the workloads the order file is not worth publishing without. */
+  required: string[];
 }
 
 export interface RunOptions {
@@ -135,6 +137,8 @@ export interface RunOptions {
   timeout?: number | undefined;
   /** How the command is named in errors. Defaults to the executable. */
   label?: string | undefined;
+  /** Stops the command and its process group when it aborts (runCommandAsync only). */
+  signal?: AbortSignal | undefined;
 }
 
 /**
@@ -154,23 +158,76 @@ export function runCommand(cmd: string[], options: RunOptions = {}) {
     maxBuffer: 1 << 29, // nm prints ~10 MB of symbols
   });
   // A timeout arrives here too: spawnSync reports it as an ETIMEDOUT error.
-  if (r.error) throw new Error(`${options.label ?? cmd[0]}: ${r.error.message}`);
+  if (r.error) throw new Error(`${options.label ?? cmd[0]}: ${r.error.message}`, { cause: r.error });
   return r;
 }
+
+/** How long a command that was told to stop (SIGTERM) has before it is killed. */
+const KILL_GRACE_MS = 2_000;
+
+/** How to stop each running command: they are in process groups of their own, which a signal to ours does not reach. */
+const running = new Set<(why: string) => void>();
+const ENDING_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
+let ending: NodeJS.Signals | undefined;
+const stopRunning = (signal: NodeJS.Signals) => {
+  ending ??= signal;
+  for (const stop of running) stop(`the generator got ${signal}`);
+};
+/** A command is gone. With the last of them, so are we, if that is what we were waiting for. */
+const finished = (stop: (why: string) => void) => {
+  if (!running.delete(stop) || running.size) return;
+  for (const name of ENDING_SIGNALS) process.removeListener(name, stopRunning);
+  if (ending) process.kill(process.pid, ending);
+};
 
 /**
  * `runCommand` without blocking, for workloads traced several at a time. Stdin
  * is a pipe that stays open until the command exits: on a terminal (ptyrun.c)
  * an end of input is typed as ^D, which an application sitting at its prompt
  * never sees.
+ *
+ * The command leads a process group of its own, and a timeout or an abort stops
+ * that group: SIGTERM, which ptyrun passes on to its child's group as SIGKILL,
+ * then SIGKILL. A stopped command is settled when it exits rather than when its
+ * output closes, which a descendant holding the pipe can delay for as long as
+ * it lives. A signal that would end the generator stops every running command
+ * this way first.
  */
-function runCommandAsync(cmd: string[], options: RunOptions = {}): Promise<{ status: number | null; output: string }> {
+export function runCommandAsync(
+  cmd: string[],
+  options: RunOptions = {},
+): Promise<{ status: number | null; output: string }> {
   return new Promise((resolve, reject) => {
     const label = options.label ?? cmd[0]!;
+    const windows = process.platform === "win32";
+    if (ending) return reject(new Error(`${label}: not started, the generator got ${ending}`));
+
+    let stopped: string | undefined;
+    let escalation: ReturnType<typeof setTimeout> | undefined;
+    const signalGroup = (signal: NodeJS.Signals) => {
+      try {
+        if (windows || child.pid === undefined) child.kill(signal);
+        else process.kill(-child.pid, signal);
+      } catch {
+        // Already gone.
+      }
+    };
+    const stop = (why: string) => {
+      if (stopped !== undefined) return;
+      stopped = why;
+      signalGroup("SIGTERM");
+      escalation = setTimeout(() => signalGroup("SIGKILL"), KILL_GRACE_MS);
+    };
+    // Before the group exists, so that there is never one a signal to us would miss.
+    if (!windows) {
+      if (running.size === 0) for (const name of ENDING_SIGNALS) process.on(name, stopRunning);
+      running.add(stop);
+    }
     const child = spawn(cmd[0]!, cmd.slice(1), {
       env: { ...process.env, ...options.env },
       cwd: options.cwd,
       stdio: ["pipe", "pipe", "pipe"],
+      detached: !windows,
     });
     // On a terminal the command's stderr arrives on stdout too. Only the end of
     // it is kept: it is there for an error message.
@@ -178,19 +235,39 @@ function runCommandAsync(cmd: string[], options: RunOptions = {}): Promise<{ sta
     const keep = (chunk: Buffer) => (output = (output + chunk).slice(-2000));
     child.stdout.on("data", keep);
     child.stderr.on("data", keep);
-    const timer = options.timeout === undefined ? undefined : setTimeout(() => child.kill("SIGKILL"), options.timeout);
+
+    const timer =
+      options.timeout === undefined
+        ? undefined
+        : setTimeout(() => stop(`timed out after ${options.timeout! / 1000} s`), options.timeout);
+    const abort = () => stop("stopped with the rest of its group");
+    options.signal?.addEventListener("abort", abort);
+
+    // Goes by what the command did, not by what was asked of it: one that
+    // finished just as it was being stopped still finished.
+    const settle = (status: number | null, signal: NodeJS.Signals | null) => {
+      clearTimeout(timer);
+      clearTimeout(escalation);
+      options.signal?.removeEventListener("abort", abort);
+      if (status === 0) resolve({ status, output });
+      else if (stopped !== undefined) reject(new Error(`${label}: ${stopped}\n${output}`));
+      else if (signal) reject(new Error(`${label}: killed by ${signal}\n${output}`));
+      else resolve({ status, output });
+      finished(stop);
+    };
     child.on("error", error => {
       clearTimeout(timer);
       reject(new Error(`${label}: ${error.message}`));
     });
-    child.on("close", (status, signal) => {
-      clearTimeout(timer);
-      if (signal)
-        reject(new Error(`${label}: killed by ${signal}${signal === "SIGKILL" ? " (timed out?)" : ""}\n${output}`));
-      else resolve({ status, output });
+    child.on("exit", (status, signal) => {
+      if (stopped === undefined) return;
+      signalGroup("SIGKILL"); // what the command left behind
+      settle(status, signal);
     });
+    child.on("close", settle);
     child.stdin.on("error", () => {}); // the command may exit without reading
     if (options.input !== undefined) child.stdin.write(options.input);
+    if (options.signal?.aborted) abort();
   });
 }
 
@@ -375,40 +452,66 @@ function buildWindowsTracer(scratch: string): Tracer {
 
 const CLONE_SUFFIXES = /(\.llvm\.\d+|\.cold(\.\d+)?|\.isra\.\d+|\.part\.\d+|\.constprop\.\d+|\.\d+)+$/;
 
-/**
- * A name without what differs between two links of the same function: the
- * suffixes the optimizer gives its clones (`.llvm.123`, `.cold`, `.isra.0`, …),
- * and the extra underscore Mach-O puts before an Itanium or Rust mangled name,
- * so that a list traced on linux also serves a macOS link.
- */
-const canonicalName = (name: string) => name.replace(CLONE_SUFFIXES, "").replace(/^_(?=_[ZR])/, "");
+/** A name without the suffixes the optimizer gives a function's clones (`.llvm.123`, `.cold`, `.isra.0`, …), which differ from build to build. */
+const withoutCloneSuffix = (name: string) => name.replace(CLONE_SUFFIXES, "");
 
-/** Whether a canonical name is in Rust's v0 mangling. */
-const isRustName = (canonical: string) => canonical.startsWith("_R");
+/** Mach-O puts an underscore before every C-level name: `malloc` is `_malloc` there, `_ZN3JSC…` is `__ZN3JSC…`. */
+export type ObjectFormat = "elf" | "macho";
+
+export const hostObjectFormat: ObjectFormat = process.platform === "darwin" ? "macho" : "elf";
+
+export interface HintList {
+  names: string[];
+  format: ObjectFormat;
+}
+
+/**
+ * A symbol list, and the object format its names are spelled for: a `# format:`
+ * line says (hints.ts writes one), and a list without one is taken to be
+ * spelled for the link it is given to.
+ */
+export function readHintList(path: string, fallback: ObjectFormat = hostObjectFormat): HintList {
+  const format = /^#\s*format:\s*(elf|macho)\s*$/m.exec(readFileSync(path, "utf8"))?.[1] as ObjectFormat | undefined;
+  return { names: readNameList(path), format: format ?? fallback };
+}
+
+/** The list's names as `format` spells them. A Mach-O name with no underscore has no ELF spelling and stays as it is. */
+export function hintNames(list: HintList, format: ObjectFormat): string[] {
+  if (list.format === format) return list.names;
+  return list.names.map(name => (format === "macho" ? `_${name}` : name.replace(/^_/, "")));
+}
+
+const DEMANGLERS = [process.env.CXXFILT, "llvm-cxxfilt", "c++filt"].filter((tool): tool is string => !!tool);
 
 /**
  * Demangles Rust names, for comparing them across builds: the mangled form
  * carries a per-build hash for every crate (`Cs7kMPyjk15S4_15bun_collections`),
  * and the demangled form either omits it (llvm-cxxfilt) or brackets it
  * (`bun_collections[55704760041dd906]`, GNU c++filt), which is stripped here.
- * One run of $CXXFILT, llvm-cxxfilt or c++filt; with none installed the names
- * come back unchanged and only names from the same build of a crate match.
+ * With no working tool the names come back unchanged, and only names from the
+ * same build of a crate match: fewer hints, not a wrong order file.
  */
-function demangleRust(input: string[]): string[] {
-  for (const tool of [process.env.CXXFILT, "llvm-cxxfilt", "c++filt"]) {
-    if (!tool) continue;
-    let r: ReturnType<typeof runCommand>;
+export function demangleRust(input: string[], tools: string[] = DEMANGLERS): string[] {
+  for (const tool of tools) {
+    let failure: string;
     try {
-      // -n: the names are canonical already, and the tools' defaults about a leading underscore differ by host.
-      r = runCommand([tool, "-n"], { input: input.join("\n") + "\n" });
-    } catch {
-      continue; // not installed
+      // -n: the tools' defaults about a leading underscore differ by host.
+      const r = runCommand([tool, "-n"], { input: input.join("\n") + "\n" });
+      const lines = r.stdout.toString().split("\n");
+      if (r.status === 0 && lines.length >= input.length) {
+        return lines.slice(0, input.length).map(line => line.replace(/\[[0-9a-f]{8,}\]/g, ""));
+      }
+      failure = `${tool} exited ${r.status} after ${lines.length - 1} of ${input.length} names\n${r.stderr}`;
+    } catch (error) {
+      if (((error as Error).cause as NodeJS.ErrnoException | undefined)?.code === "ENOENT") continue; // not installed
+      failure = (error as Error).message;
     }
-    const lines = r.stdout.toString().split("\n");
-    if (r.status === 0 && lines.length >= input.length) {
-      return lines.slice(0, input.length).map(line => line.replace(/\[[0-9a-f]{8,}\]/g, ""));
-    }
+    console.warn(`warning: ${failure.trim()}`);
   }
+  console.warn(
+    `warning: no working demangler (${tools.join(", ")}): Rust hints only match names with the same crate hashes, ` +
+      "so most of those from another build of bun are dropped",
+  );
   return input;
 }
 
@@ -421,13 +524,14 @@ export interface ResolvedHints {
 }
 
 /**
- * Maps hint names onto the current build's symbols. A name the build still has
- * is taken as it is. One it does not have is matched by canonical name
- * (`canonicalName`), and, for a Rust name, by its demangled form; every current symbol that
- * matches is taken, since they are clones of one function and which one runs
- * is not knowable from here. Names that match nothing are dropped, as the
- * linker drops them. The demangler only runs if a Rust name is left unmatched,
- * and only over the Rust names.
+ * Maps hint names onto the current build's symbols; both are spelled for the
+ * same object format (`hintNames`). A name the build still has is taken as it
+ * is. One it does not have is matched without its clone suffix, and, for a Rust
+ * name, by its demangled form; every current symbol that matches is taken,
+ * since they are clones of one function and which one runs is not knowable
+ * from here. Names that match nothing are dropped, as the linker drops them.
+ * The demangler only runs if a Rust name is left unmatched, and only over the
+ * Rust names.
  */
 export function resolveHints(
   hints: string[],
@@ -446,15 +550,18 @@ export function resolveHints(
   };
 
   const currentNames = [...have];
-  const byCanonical = index(currentNames, currentNames.map(canonicalName));
+  const byName = index(currentNames, currentNames.map(withoutCloneSuffix));
+  /** A Rust (v0) mangled name as the demanglers take it: without its clone suffix or Mach-O's underscore. */
+  const rustName = (name: string) => /^_?(_R.*)$/.exec(withoutCloneSuffix(name))?.[1];
+
   const unmatchedRust = hints.filter(
-    hint => !have.has(hint) && isRustName(canonicalName(hint)) && !byCanonical.has(canonicalName(hint)),
+    hint => !have.has(hint) && rustName(hint) && !byName.has(withoutCloneSuffix(hint)),
   );
   let byDemangled = new Map<string, string[]>();
   const demangledHints = new Map<string, string>();
   if (unmatchedRust.length) {
-    const currentRust = currentNames.filter(name => isRustName(canonicalName(name)));
-    const demangled = demangle([...currentRust, ...unmatchedRust].map(canonicalName));
+    const currentRust = currentNames.filter(rustName);
+    const demangled = demangle([...currentRust, ...unmatchedRust].map(name => rustName(name)!));
     byDemangled = index(currentRust, demangled.slice(0, currentRust.length));
     for (const [i, hint] of unmatchedRust.entries()) demangledHints.set(hint, demangled[currentRust.length + i]!);
   }
@@ -464,7 +571,7 @@ export function resolveHints(
   for (const hint of hints) {
     const matches = have.has(hint)
       ? [hint]
-      : (byCanonical.get(canonicalName(hint)) ?? byDemangled.get(demangledHints.get(hint)!) ?? []);
+      : (byName.get(withoutCloneSuffix(hint)) ?? byDemangled.get(demangledHints.get(hint)!) ?? []);
     if (!matches.length) continue;
     if (have.has(hint)) resolved.exact++;
     else resolved.normalized++;
@@ -477,26 +584,92 @@ export function resolveHints(
   return resolved;
 }
 
+interface CodeRange {
+  /** Link-time address. */
+  address: bigint;
+  /** Where its bytes are in the file. */
+  offset: number;
+  size: number;
+}
+
+const readAt = (fd: number, offset: number, size: number): Buffer => {
+  const buffer = Buffer.alloc(size);
+  return buffer.subarray(0, readSync(fd, buffer, 0, size, offset));
+};
+
 /**
- * Whether `exe` carries the code of `profile`. The starts are link-time
- * addresses in the profile, and a breakpoint planted at one of them in any
- * other build lands mid-instruction. Stripping and `bun build --compile` both
- * leave the loaded segments where they were and append to the file, so one
- * build is byte-identical over any window early in the file, where two builds'
- * read-only data differs. Checked on ELF only, where that layout was verified.
+ * Where an executable's code is: the executable PT_LOAD segments of a 64-bit
+ * ELF, or `__TEXT,__text` of a thin 64-bit Mach-O. Read through the program
+ * headers and load commands, which no tool can strip and the loader itself
+ * goes by.
+ */
+function codeRanges(fd: number, path: string): CodeRange[] {
+  const header = readAt(fd, 0, 64);
+  const ranges: CodeRange[] = [];
+  try {
+    if (header.readUInt32BE(0) === 0x7f454c46 && header[4] === 2 && header[5] === 1) {
+      const [phoff, phentsize, phnum] = [Number(header.readBigUInt64LE(32)), header.readUInt16LE(54), header.readUInt16LE(56)]; // prettier-ignore
+      const table = readAt(fd, phoff, phentsize * phnum);
+      for (let at = 0; at < phentsize * phnum; at += phentsize) {
+        const [type, flags] = [table.readUInt32LE(at), table.readUInt32LE(at + 4)];
+        if (type !== 1 /* PT_LOAD */ || !(flags & 1) /* PF_X */) continue;
+        ranges.push({
+          address: table.readBigUInt64LE(at + 16),
+          offset: Number(table.readBigUInt64LE(at + 8)),
+          size: Number(table.readBigUInt64LE(at + 32)),
+        });
+      }
+    } else if (header.readUInt32LE(0) === 0xfeedfacf) {
+      const commands = readAt(fd, 32, header.readUInt32LE(20));
+      for (let at = 0; at < commands.length; at += Math.max(8, commands.readUInt32LE(at + 4))) {
+        if (commands.readUInt32LE(at) !== 0x19 /* LC_SEGMENT_64 */) continue;
+        const sections = commands.readUInt32LE(at + 64);
+        for (let section = at + 72; section < at + 72 + sections * 80; section += 80) {
+          const name = (from: number) => commands.toString("latin1", from, from + 16).replace(/\0+$/, "");
+          if (name(section) !== "__text" || name(section + 16) !== "__TEXT") continue;
+          ranges.push({
+            address: commands.readBigUInt64LE(section + 32),
+            offset: commands.readUInt32LE(section + 48),
+            size: Number(commands.readBigUInt64LE(section + 40)),
+          });
+        }
+      }
+    } else if (header.readUInt32BE(0) === 0xcafebabe) {
+      throw new Error(`${path} is a universal Mach-O; the tracer follows one architecture (lipo -thin)`);
+    }
+  } catch (error) {
+    if (!(error instanceof RangeError)) throw error; // a header that points past the end of the file
+  }
+  if (!ranges.length) throw new Error(`cannot find the code of ${path}: not a 64-bit ELF or Mach-O executable?`);
+  return ranges;
+}
+
+/**
+ * Whether `exe` carries the code of `profile`: the same bytes at the same
+ * link-time addresses. The starts are addresses in the profile, and a
+ * breakpoint planted at one of them in any other build lands mid-instruction.
+ * Stripping and `bun build --compile` both leave the code as it was.
  */
 export function sameCode(profile: string, exe: string): boolean {
-  if (process.platform !== "linux") return true;
-  const window = (path: string) => {
-    const buffer = Buffer.alloc(1 << 20);
-    const fd = openSync(path, "r");
-    try {
-      return buffer.subarray(0, readSync(fd, buffer, 0, buffer.length, 1 << 20));
-    } finally {
-      closeSync(fd);
+  const [a, b] = [openSync(profile, "r"), openSync(exe, "r")];
+  try {
+    const [ours, theirs] = [codeRanges(a, profile), codeRanges(b, exe)];
+    if (ours.length !== theirs.length) return false;
+    for (const [i, range] of ours.entries()) {
+      const other = theirs[i]!;
+      if (range.address !== other.address || range.size !== other.size) return false;
+      const step = 1 << 22;
+      for (let done = 0; done < range.size; done += step) {
+        const size = Math.min(step, range.size - done);
+        const bytes = readAt(a, range.offset + done, size);
+        if (bytes.length !== size || !bytes.equals(readAt(b, other.offset + done, size))) return false;
+      }
     }
-  };
-  return window(profile).equals(window(exe));
+    return true;
+  } finally {
+    closeSync(a);
+    closeSync(b);
+  }
 }
 
 /**
@@ -535,13 +708,32 @@ export function readNameList(path: string): string[] {
 }
 
 /**
+ * Empty reads as unset. The workloads talk to servers on 127.0.0.1, and one app
+ * feature names a proxy of its own: a proxy the machine has configured would
+ * take the direct requests, and its NO_PROXY would take that feature off its proxy.
+ */
+export const NO_PROXY_SETTINGS: Record<string, string> = Object.fromEntries(
+  ["http_proxy", "https_proxy", "all_proxy", "no_proxy"].flatMap(name => [
+    [name, ""],
+    [name.toUpperCase(), ""],
+  ]),
+);
+
+/** app/features.txt: the features in traced order; a `!` marks one the group is required to trace. */
+export function readFeatures(path: string): { names: string[]; required: string[] } {
+  const listed = readNameList(path);
+  const names = listed.map(name => name.replace(/^!/, ""));
+  return { names, required: names.filter((_, i) => listed[i]!.startsWith("!")) };
+}
+
+/**
  * Builds the app the app workloads run (app/scaffold.js) into one executable
  * with the binary under trace, and returns a workload per feature, in the
  * order app/features.txt gives. Each is a run of that executable on a terminal
  * with one feature selected, so what the order file takes from a run is that
  * feature's code and whatever earlier runs had not already entered.
  */
-function appWorkloads(bunProfile: string, scratch: string): Workload[] {
+function appWorkloads(bunProfile: string, scratch: string): WorkloadGroup {
   const source = join(here, "app");
   const tree = join(scratch, "app");
   const data = join(scratch, "app-data");
@@ -584,39 +776,136 @@ function appWorkloads(bunProfile: string, scratch: string): Workload[] {
     throw new Error(`bun build --compile did not leave ${basename(bunProfile)}'s code where the symbols say it is`);
   }
 
-  const features = readNameList(join(source, "features.txt"));
-  const env = {
-    ORDERFILE_APP_DATA: data,
-    TMPDIR: temp,
-    TERM: "xterm-256color",
-    // The features talk to servers on 127.0.0.1. A proxy configured on the machine
-    // would take those requests (and fail them); an empty value means none.
-    http_proxy: "",
-    HTTP_PROXY: "",
-    https_proxy: "",
-    HTTPS_PROXY: "",
+  const features = readFeatures(join(source, "features.txt"));
+  const env = { ORDERFILE_APP_DATA: data, TMPDIR: temp, TERM: "xterm-256color" };
+  const name = (feature: string) => `app ${feature}`;
+  return {
+    group: "app",
+    required: ["startup", ...features.required].map(name),
+    workloads: ["startup", ...features.names].map(feature => ({
+      name: name(feature),
+      exe,
+      args: [],
+      // Not wherever the generator was started: a bunfig.toml or package.json there would be read on every start.
+      cwd: temp,
+      tty: true,
+      // The terminal features read keys; everything else ignores its stdin.
+      ...(feature.startsWith("tui_") ? { input: "hello\r" } : {}),
+      env: { ...env, ORDERFILE_FEATURES: feature },
+    })),
   };
-  return ["startup", ...features].map(feature => ({
-    name: `app ${feature}`,
-    exe,
-    args: [],
-    // Not wherever the generator was started: a bunfig.toml or package.json there would be read on every start.
-    cwd: temp,
-    tty: true,
-    // The terminal features read keys; everything else ignores its stdin.
-    ...(feature.startsWith("tui_") ? { input: "hello\r" } : {}),
-    env: { ...env, ORDERFILE_FEATURES: feature },
-  }));
 }
-
-/** More failures than this in a group means the group is broken, not that a feature had a bad day. */
-const MAX_GROUP_FAILURES = 0.1;
 
 /** The longest of a group's runs takes ~15 s under trace (the app's idle feature waits 11.5 s). */
 const GROUP_WORKLOAD_TIMEOUT_MS = 60_000;
 
+/** For a whole group (~30 s on a developer's machine). CI kills the trace-order step at 15 minutes without a word (.buildkite/ci.ts). */
+const GROUP_TIMEOUT_MS = 8 * 60_000;
+
+/** More failures than this share of a group means the group is broken, not that a feature had a bad day. */
+const MAX_GROUP_FAILURES = 0.1;
+
 /** A group's runs mostly wait (on timers, a terminal, a local server), so more of them than cores is fine; the cap keeps JIT-heavy runs from starving each other's compiler threads. */
 const GROUP_CONCURRENCY = Math.max(2, Math.min(8, availableParallelism()));
+
+export interface GroupPolicy {
+  concurrency: number;
+  /** Tried twice, and the group fails if the second try fails too. */
+  required: ReadonlySet<string>;
+  /** How many of the other runs may fail before the group does. */
+  maxFailures: number;
+  /** For the whole group, in milliseconds. */
+  timeoutMs: number;
+}
+
+export interface GroupResult<T> {
+  /** By index; `undefined` where the run failed. */
+  results: (T | undefined)[];
+  failures: { name: string; message: string }[];
+}
+
+/**
+ * One of hundreds of small runs failing costs the order file a few functions,
+ * and failing the release's order file over it would cost all of them. So a
+ * failure is tolerated unless the run is required, too many have failed, or the
+ * group is out of time: then nothing more starts, the signal stops what is
+ * running, and the group throws.
+ */
+export async function runGroup<T>(
+  group: string,
+  names: string[],
+  run: (index: number, signal: AbortSignal) => Promise<T>,
+  policy: GroupPolicy,
+): Promise<GroupResult<T>> {
+  const unknown = [...policy.required].filter(name => !names.includes(name));
+  if (unknown.length) throw new Error(`the ${group} workloads require ${unknown.join(", ")}, which they do not have`);
+
+  const results: (T | undefined)[] = new Array(names.length).fill(undefined);
+  const failures: GroupResult<T>["failures"] = [];
+  const controller = new AbortController();
+  let fatal: Error | undefined;
+  const stop = (error: Error) => {
+    fatal ??= error;
+    controller.abort();
+  };
+  let finished = 0;
+  const deadline = setTimeout(
+    () =>
+      stop(
+        new Error(
+          `the ${group} workloads did not finish in ${policy.timeoutMs / 1000} s ` +
+            `(${finished} of ${names.length} had)` +
+            (failures.length ? `; the first failure:\n${failures[0]!.message}` : ""),
+        ),
+      ),
+    policy.timeoutMs,
+  );
+
+  let next = 0;
+  const worker = async () => {
+    while (!controller.signal.aborted && next < names.length) {
+      const i = next++;
+      const name = names[i]!;
+      const required = policy.required.has(name);
+      let failure: string | undefined;
+      for (let attempt = 1; attempt <= (required ? 2 : 1) && !controller.signal.aborted; attempt++) {
+        try {
+          results[i] = await run(i, controller.signal);
+          // Said even though it passed: a required run that fails every other time is news.
+          if (failure !== undefined) console.warn(`warning: ${name} passed on its second try; the first:\n${failure}`);
+          failure = undefined;
+          break;
+        } catch (error) {
+          failure = (error as Error).message;
+        }
+      }
+      // A run the group stopped on its way out did not fail on its own account.
+      if (controller.signal.aborted) return;
+      finished++;
+      if (failure === undefined) continue;
+      failures.push({ name, message: failure });
+      if (required) {
+        stop(
+          new Error(`${name} failed twice, and the ${group} workloads are not worth tracing without it:\n${failure}`),
+        );
+      } else if (failures.length > policy.maxFailures) {
+        stop(
+          new Error(
+            `${failures.length} of the ${names.length} ${group} workloads failed ` +
+              `(${failures.map(f => f.name).join(", ")}); the first:\n${failures[0]!.message}`,
+          ),
+        );
+      }
+    }
+  };
+  try {
+    await Promise.all(Array.from({ length: policy.concurrency }, worker));
+  } finally {
+    clearTimeout(deadline);
+  }
+  if (fatal) throw fatal;
+  return { results, failures };
+}
 
 export async function generateOrderFile(options: GenerateOptions): Promise<{ count: number; outPath: string }> {
   const buildDir = resolve(options.buildDir);
@@ -696,7 +985,7 @@ export async function generateOrderFile(options: GenerateOptions): Promise<{ cou
 
     const steps: (Workload | WorkloadGroup)[] = [
       { name: "bun -e", args: ["-e", "console.log(1)"] },
-      ...(windows ? [] : [{ group: "app", workloads: appWorkloads(bunProfile, scratch) }]),
+      ...(windows ? [] : [appWorkloads(bunProfile, scratch)]),
       { name: "bun hello.ts", args: [join(fixtures, "hello.ts")] },
       { name: "bun server.js", args: [join(fixtures, "server.js")] },
       { name: "bun test", args: ["test", join(fixtures, "tests", "example.test.ts")] },
@@ -716,7 +1005,8 @@ export async function generateOrderFile(options: GenerateOptions): Promise<{ cou
     const order: string[] = [];
     const seen = new Set<string>();
     if (options.hints?.length) {
-      const hints = resolveHints(options.hints.flatMap(readNameList), [...symbols.values()].flat());
+      const listed = options.hints.flatMap(path => hintNames(readHintList(path), hostObjectFormat));
+      const hints = resolveHints(listed, [...symbols.values()].flat());
       for (const name of hints.names) {
         seen.add(name);
         order.push(name);
@@ -729,11 +1019,11 @@ export async function generateOrderFile(options: GenerateOptions): Promise<{ cou
     const hinted = order.length;
 
     // ── Trace each workload, emit every name not yet seen ─────────────────────
-    let runs = 0;
+    let launches = 0;
     const tracedAddresses = new Set<number>();
     /** What one workload runs as, its environment, and where its trace goes. */
     const launch = (workload: Workload) => {
-      const out = join(scratch, `trace-${runs++}.bin`);
+      const out = join(scratch, `trace-${launches++}.bin`);
       const { cmd, env } = tracer.launch(workload, workload.exe ?? bunProfile);
       const options = {
         env: {
@@ -741,6 +1031,7 @@ export async function generateOrderFile(options: GenerateOptions): Promise<{ cou
           BUN_FUNCTRACE_STARTS: startsPath,
           BUN_FUNCTRACE_OUT: out,
           BUN_DEBUG_QUIET_LOGS: "1",
+          ...NO_PROXY_SETTINGS,
           ...workload.env,
         },
         cwd: workload.cwd,
@@ -749,7 +1040,9 @@ export async function generateOrderFile(options: GenerateOptions): Promise<{ cou
       };
       return { cmd, options, out };
     };
+    let traces = 0;
     const emit = (addresses: number[]) => {
+      traces++;
       for (const address of addresses) tracedAddresses.add(address);
       return appendNames(order, seen, symbols, addresses);
     };
@@ -767,50 +1060,47 @@ export async function generateOrderFile(options: GenerateOptions): Promise<{ cou
 
       // A group's runs are independent processes with a trace each, so they run
       // several at a time; their traces are still taken in the group's order.
-      const traces: (number[] | Error)[] = new Array(step.workloads.length);
-      let next = 0;
-      const worker = async () => {
-        while (next < step.workloads.length) {
-          const i = next++;
+      const names = step.workloads.map(workload => workload.name);
+      const { results, failures } = await runGroup(
+        step.group,
+        names,
+        async (i, signal) => {
           const workload = step.workloads[i]!;
           const { cmd, options, out } = launch(workload);
-          try {
-            const r = await runCommandAsync(cmd, { ...options, timeout: GROUP_WORKLOAD_TIMEOUT_MS });
-            if (r.status !== 0) throw new Error(`workload "${workload.name}" exited ${r.status}\n${r.output}`);
-            traces[i] = readTrace(out, workload.name);
-          } catch (error) {
-            traces[i] = error as Error;
-          }
-        }
-      };
-      await Promise.all(Array.from({ length: GROUP_CONCURRENCY }, worker));
+          const r = await runCommandAsync(cmd, { ...options, timeout: GROUP_WORKLOAD_TIMEOUT_MS, signal });
+          if (r.status !== 0) throw new Error(`workload "${workload.name}" exited ${r.status}\n${r.output}`);
+          return readTrace(out, workload.name);
+        },
+        {
+          concurrency: GROUP_CONCURRENCY,
+          required: new Set(step.required),
+          maxFailures: Math.floor(names.length * MAX_GROUP_FAILURES),
+          timeoutMs: GROUP_TIMEOUT_MS,
+        },
+      );
 
-      // One of a group's hundreds of small runs failing costs the order file a few
-      // functions; failing the release's order file over it would cost all of them.
       let added = 0;
       let unresolved = 0;
       let resolved = 0;
-      const failures: string[] = [];
-      for (const trace of traces) {
-        if (trace instanceof Error) {
-          failures.push(trace.message);
-          continue;
-        }
+      for (const trace of results) {
+        if (!trace) continue;
         const result = emit(trace);
         added += result.added;
         unresolved += result.unresolved;
         resolved += trace.length - result.unresolved;
       }
+      const ran = `${names.length - failures.length} of ${names.length} runs`;
       const note = unresolved ? ` (${unresolved} unresolved)` : "";
-      log(`  ${`${step.group} (${step.workloads.length} runs)`.padEnd(21)} +${added} functions${note}`);
-      for (const failure of failures) console.warn(`warning: ${failure}`);
-      if (failures.length > step.workloads.length * MAX_GROUP_FAILURES) {
-        throw new Error(
-          `${failures.length} of the ${step.workloads.length} ${step.group} workloads failed; the first:\n${failures[0]}`,
+      log(`  ${`${step.group} (${ran})`.padEnd(21)} +${added} functions${note}`);
+      if (failures.length) {
+        console.warn(
+          `warning: what only these ${step.group} workloads enter is missing from the order file: ` +
+            failures.map(failure => failure.name).join(", "),
         );
+        for (const failure of failures) console.warn(failure.message);
       }
-      // The group's executable is not the file the symbols were read from. If its
-      // code ever stops lining up with them, this is where it shows.
+      // sameCode compared the group's executable with the profile byte for byte;
+      // what only shows at run time (a load address the tracer got wrong) shows here.
       if (unresolved > resolved) {
         throw new Error(`the ${step.group} workloads' traces do not match ${basename(bunProfile)}'s symbols`);
       }
@@ -828,7 +1118,7 @@ export async function generateOrderFile(options: GenerateOptions): Promise<{ cou
       `# ${tracer.linker}: functions bun executes while starting up,`,
       "# in first-entry order, so they land together at the front of .text.",
       "# Generated by scripts/orderfile/generate.ts — not committed.",
-      `# ${order.length} functions from ${runs} workloads${hinted ? ` and ${hinted} hinted` : ""}.`,
+      `# ${order.length} functions from ${traces} workloads${hinted ? ` and ${hinted} hinted` : ""}.`,
     ];
     writeFileSync(outPath, header.join("\n") + "\n" + order.join("\n") + "\n");
     return { count: order.length, outPath };

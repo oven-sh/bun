@@ -45,9 +45,7 @@ export async function main() {
     if (!byModule.has(group.load)) byModule.set(group.load, []);
     byModule.get(group.load).push(group.strip ? name.slice(group.prefix.length) : name);
   }
-  // A feature that throws ends the process with its error: the generator reports
-  // the run as failed and leaves its trace out, which is the one place failures
-  // are tolerated.
+  // A feature that throws ends the process with its error, and the generator leaves the run's trace out.
   try {
     for (const [load, names] of byModule) {
       const module = await load();

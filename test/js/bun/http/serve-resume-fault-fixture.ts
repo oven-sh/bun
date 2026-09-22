@@ -10,13 +10,10 @@
 // `mode` picks what the handler does at that point. Every mode must end with a
 // live server, a settled request and exit code 0.
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
-import { rmSync } from "node:fs";
 import { connect } from "node:net";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 
-const mode = process.argv[2];
-const unix = join(tmpdir(), `serve-resume-fault-${process.pid}.sock`);
+// The socket path is in a directory that the test owns and removes.
+const [mode, unix] = process.argv.slice(2);
 // Above REQUEST_BODY_HIGH_WATER_MARK, so the server pauses the socket.
 const BODY_CHUNK = 1024 * 1024 + 4096;
 
@@ -39,7 +36,7 @@ function ping(label: string) {
   return promise;
 }
 
-using server = Bun.serve({
+const server = Bun.serve({
   unix,
   idleTimeout: 0,
   maxRequestBodySize: 64 * 1024 * 1024,
@@ -96,5 +93,4 @@ await ping("after");
 // Graceful: it resolves once every connection is gone, including the one the
 // failed resume owns.
 await server.stop();
-rmSync(unix, { force: true });
 log("done");

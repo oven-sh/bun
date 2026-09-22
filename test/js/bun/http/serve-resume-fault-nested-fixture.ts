@@ -5,12 +5,10 @@
 // owes has to come from that inner tick, or the wait never ends.
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
-import { rmSync } from "node:fs";
 import { connect } from "node:net";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 
-const unix = join(tmpdir(), `serve-resume-fault-nested-${process.pid}.sock`);
+// In a directory that the test which spawns this file owns and removes.
+const unix = process.env.SERVE_RESUME_FAULT_SOCKET!;
 // Above REQUEST_BODY_HIGH_WATER_MARK, so the server pauses the socket.
 const BODY_CHUNK = 1024 * 1024 + 4096;
 
@@ -30,7 +28,7 @@ test("a dispatch that waits on the loop gets the close of the socket it resumed"
   let aborted = false;
   const release = Promise.withResolvers<void>();
 
-  using server = Bun.serve({
+  const server = Bun.serve({
     unix,
     idleTimeout: 0,
     maxRequestBodySize: 64 * 1024 * 1024,
@@ -70,6 +68,5 @@ test("a dispatch that waits on the loop gets the close of the socket it resumed"
     release.resolve();
     fault.clear();
     await server.stop();
-    rmSync(unix, { force: true });
   }
 });

@@ -1,6 +1,6 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tls as certs, isLinux, isWindows } from "harness";
+import { bunEnv, bunExe, tls as certs, isLinux, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
 const skip = !fault.available() || isWindows;
@@ -162,10 +162,14 @@ describe.skipIf(skip)("Bun.serve under injected syscall faults", () => {
 // filter/poll change with nothing for the hook to fail. Each case runs in a
 // subprocess so a use-after-free surfaces as a non-zero exit.
 describe.skipIf(skip || !isLinux)("Bun.serve: a request-socket resume that fails the socket", () => {
-  async function spawnFixture(...args: string[]) {
+  // The unix socket lives in a directory of the test, so a fixture that
+  // crashes, which is the failure these cases catch, leaves nothing behind.
+  async function spawnFixture(args: (socket: string) => string[]) {
+    using dir = tempDir("serve-resume-fault", {});
+    const socket = join(String(dir), "s.sock");
     await using proc = Bun.spawn({
-      cmd: [bunExe(), ...args],
-      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+      cmd: [bunExe(), ...args(socket)],
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1", SERVE_RESUME_FAULT_SOCKET: socket },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -174,10 +178,11 @@ describe.skipIf(skip || !isLinux)("Bun.serve: a request-socket resume that fails
   }
 
   async function run(mode: string, expected: string[]) {
-    const { stdout, stderr, exitCode, signalCode } = await spawnFixture(
+    const { stdout, stderr, exitCode, signalCode } = await spawnFixture(socket => [
       join(import.meta.dir, "serve-resume-fault-fixture.ts"),
       mode,
-    );
+      socket,
+    ]);
     expect({
       stdout: stdout.trim().split("\n"),
       signalCode,
@@ -208,10 +213,10 @@ describe.skipIf(skip || !isLinux)("Bun.serve: a request-socket resume that fails
   // the loop from inside a dispatch. The close has to come from that inner
   // tick, so a fixture that never finishes is the failure here.
   test("a dispatch that waits on the loop for the failed socket gets its close", async () => {
-    const { stderr, exitCode, signalCode } = await spawnFixture(
+    const { stderr, exitCode, signalCode } = await spawnFixture(() => [
       "test",
       join(import.meta.dir, "serve-resume-fault-nested-fixture.ts"),
-    );
+    ]);
     expect({
       passed: stderr.includes(" 1 pass") && stderr.includes(" 0 fail"),
       signalCode,

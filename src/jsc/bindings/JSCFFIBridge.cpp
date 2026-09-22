@@ -68,7 +68,8 @@ extern "C" JSC::EncodedJSValue Bun__CreateJSCFFIFunction(
             RETURN_IF_EXCEPTION(scope, {});
             library->m_functionsValue.set(vm, library, functions);
         }
-        functions->push(globalObject, function);
+        // Not push(): that is a [[Set]], and a setter on a prototype would be handed this array.
+        functions->putDirectIndex(globalObject, functions->length(), function);
         RETURN_IF_EXCEPTION(scope, {});
     }
 
@@ -87,7 +88,8 @@ extern "C" void Bun__JSCFFILibraryCloseFunctions(Zig::GlobalObject* globalObject
     if (!functions)
         return;
     for (unsigned i = 0, length = functions->length(); i < length; ++i) {
-        if (auto* function = dynamicDowncast<JSC::JSFFIFunction>(functions->getIndexQuickly(i)))
+        JSC::JSValue value = functions->tryGetIndexQuickly(i);
+        if (auto* function = value ? dynamicDowncast<JSC::JSFFIFunction>(value) : nullptr)
             function->close(vm);
     }
     library->m_functionsValue.clear();

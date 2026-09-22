@@ -602,8 +602,7 @@ fn node_test_on_stack_sequence(
     Some(sequence)
 }
 
-/// Reached only from `node:test`, from the callback of one of its tests: adds `callback` as the entry right after that test entry.
-/// `node:test` runs the test's hooks inside that one callback, so a timeout that ends it early needs an entry that still holds the next test back.
+/// Reached only from `node:test`, from the callback of one of its tests: adds `callback` as the entry right after that test entry, so the next test waits for the hooks `node:test` runs inside that one callback.
 pub(crate) fn js_node_test_after_entry(
     _global: &JSGlobalObject,
     callframe: &CallFrame,

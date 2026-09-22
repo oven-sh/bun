@@ -2150,8 +2150,7 @@ function invokeTestFn(fn: Function, arg: unknown) {
 
 type StopController = ReturnType<typeof createStopController>;
 
-// Node's stopPromise: never resolves, rejects on the arm()ed timeout or on reject(). Callers must dispose().
-// Intrinsics only: every test goes through it, and a test body may stub Promise.race or Promise.withResolvers.
+// Node's stopPromise, on intrinsics because a test body may stub Promise.race or Promise.withResolvers. Callers must dispose().
 function createStopController() {
   const promise = $newPromise<never>();
   // Swallow the rejection when nothing is racing it anymore.
@@ -2163,8 +2162,7 @@ function createStopController() {
     reject,
     arm(timeout: number | undefined) {
       if (typeof timeout !== "number" || !Number.isFinite(timeout)) return;
-      // Not unref'd: dispose() always clears it, and on Windows an unref'd timer
-      // alone under bun:test leaves the uws loop inactive so auto_tick busy-spins.
+      // Not unref'd: on Windows an unref'd timer alone under bun:test leaves the uws loop inactive, so auto_tick busy-spins.
       timer = realSetTimeout(() => reject(makeTestFailure(`test timed out after ${timeout}ms`)), timeout);
     },
     dispose: () => realClearTimeout(timer),

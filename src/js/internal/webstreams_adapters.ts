@@ -44,6 +44,9 @@ function tryTransferToNativeReadable(stream, options) {
 
 class ReadableFromWeb extends Readable {
   #reader;
+  #reading;
+  // `{ error }` when `reader.closed` rejected during a read(). That read reports the error.
+  #closedError;
   #closed;
   // node-fetch, undici: a Response body that no read has opened. Until then text(), json(), ... can lock it for good.
   #stream;
@@ -56,10 +59,23 @@ class ReadableFromWeb extends Readable {
       highWaterMark,
       encoding,
     });
+    this.#reading = false;
     // Node takes the reader here and never releases it: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/webstreams/adapters.js#L589
-    this.#reader = responseBody ? undefined : stream.getReader();
+    this.#reader = responseBody ? undefined : this.#open(stream);
     this.#stream = responseBody ? stream : undefined;
     this.#closed = false;
+  }
+
+  // An error of the web stream rejects read() only while _read() waits on one. `closed` rejects in
+  // every state, so a paused or full Readable learns of the error at once, as in Node.
+  #open(stream) {
+    const reader = stream.getReader();
+    PromisePrototypeThen.$call(reader.closed, undefined, error => {
+      // On a direct stream, a read() that got a chunk before the error settles after `closed`. Push it first.
+      if (this.#reading) this.#closedError = { error };
+      else this.#handleError(error);
+    });
+    return reader;
   }
 
   // Locked before this wrapper opened it: a body method has the contents, nothing to read or cancel.
@@ -76,7 +92,7 @@ class ReadableFromWeb extends Readable {
   #handleError(error) {
     this.#reader = undefined;
     this.#closed = true;
-    this.destroy(error);
+    destroyer(this, error);
   }
 
   // One reader.read() per _read(). readMany() would drain a start()-enqueued
@@ -94,20 +110,28 @@ class ReadableFromWeb extends Readable {
         this.push(null);
         return;
       }
-      reader = this.#reader = stream.getReader();
+      reader = this.#reader = this.#open(stream);
       this.#stream = undefined;
     }
+    this.#reading = true;
     PromisePrototypeThen.$call(
       reader.read(),
       chunk => {
+        this.#reading = false;
         if (this.#closed) return;
         if (chunk.done) {
           this.#handleDone();
         } else {
           this.push(chunk.value);
         }
+        const closedError = this.#closedError;
+        if (closedError) this.#handleError(closedError.error);
       },
-      error => this.#handleError(error),
+      error => {
+        this.#reading = false;
+        const closedError = this.#closedError;
+        this.#handleError(closedError ? closedError.error : error);
+      },
     );
   }
 

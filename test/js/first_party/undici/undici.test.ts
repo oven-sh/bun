@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { once } from "node:events";
 import { Readable } from "node:stream";
 import { request, fetch as undiciFetch } from "undici";
 
@@ -166,6 +167,37 @@ describe("undici", () => {
         }
         expect(chunks.join("")).toBe("first second");
       });
+    });
+
+    // From its first read on, the body holds the reader of the response stream. The reader
+    // reports an abort without a pending read.
+    it("body reports an abort while its buffer is full", async () => {
+      await using server = Bun.serve({
+        port: 0,
+        // More than the body buffers, and the response stays open.
+        fetch: () => new Response(new ReadableStream({ start: c => c.enqueue(new Uint8Array(256 * 1024)) })),
+      });
+      const controller = new AbortController();
+      const { body } = await request(server.url.href, { signal: controller.signal });
+      await once(body, "readable");
+      // Full: the body stopped reading the response stream.
+      while (!body.destroyed && body.readableLength < body.readableHighWaterMark) {
+        await new Promise(resolve => setImmediate(resolve));
+      }
+
+      const events: string[] = [];
+      body.on("error", error => events.push(`error:${error.name}`));
+      const closed = new Promise(resolve => body.once("close", resolve));
+      // abort() errors the response stream before it returns.
+      controller.abort();
+      // The consumer drains one event-loop turn later. "read" comes first when only a read reports the abort.
+      const lateRead = setImmediate(() => {
+        events.push("read");
+        body.read();
+      });
+      await closed;
+      clearImmediate(lateRead);
+      expect(events).toEqual(["error:AbortError"]);
     });
 
     it("should make a POST request when provided a body and POST method", async () => {

@@ -213,7 +213,7 @@ async function opendir(dir: string, options?) {
 let fileHandleRegistry: FinalizationRegistry<{ fd: number; path: string | undefined }> | undefined;
 function onFileHandleCollected(held: { fd: number; path: string | undefined }) {
   const { fd, path } = held;
-  const suffix = path !== undefined ? ` (${path})` : "";
+  const suffix = ` (${path ?? "<unknown path>"})`;
   let err: NodeJS.ErrnoException;
   try {
     fs.closeSync(fd);

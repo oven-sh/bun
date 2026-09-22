@@ -448,8 +448,9 @@ static int us_internal_socket_defers_error(struct us_socket_t *s, struct us_loop
     (void) s;
     return 0;
 #else
-    if (!s->defer_error_until_read || s->flags.last_write_failed || s->flags.low_prio_state == 1 ||
-        !(s->flags.is_paused || s->read_eof)) {
+    /* The reads are over once the peer's FIN, or its close_notify, was delivered as on_end. */
+    const int reads = !s->flags.is_paused && !s->read_eof && !(s->ssl && s->ssl_end_delivered);
+    if (!s->defer_error_until_read || reads || s->flags.last_write_failed || s->flags.low_prio_state == 1) {
         return 0;
     }
 #ifdef LIBUS_USE_EPOLL

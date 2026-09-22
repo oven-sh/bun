@@ -570,6 +570,20 @@ describe("Bun's own stdin readers after process.stdin pauses", () => {
     }
   }
 
+  test.concurrent("pause() leaves a Bun.stdin.stream() reader that holds the lock alone", async () => {
+    const script = `
+      (async () => {
+        const reader = Bun.stdin.stream().getReader();
+        const pending = reader.read();
+        process.stdin.pause();
+        await new Promise(resolve => setImmediate(resolve));
+        console.log("READY");
+        console.log(JSON.stringify(Buffer.from((await pending).value).toString()));
+      })();
+    `;
+    expect(await run(script, [["READY\n", "one"]])).toEqual({ stdout: 'READY\n"one"\n', stderr: "", exitCode: 0 });
+  });
+
   test.concurrent("process.stdin takes stdin back after the Bun reader releases it", async () => {
     const script = `
       const got = [];

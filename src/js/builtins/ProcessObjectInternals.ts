@@ -162,6 +162,8 @@ export function getStdinStream(
 
   function disown() {
     $debug("unref();");
+    // Another reader of Bun.stdin.stream() holds the lock: the source is theirs.
+    if (!reader && native.locked) return;
     source?.setFlowing?.(false);
 
     if (reader) {

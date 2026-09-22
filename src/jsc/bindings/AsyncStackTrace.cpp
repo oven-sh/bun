@@ -105,8 +105,20 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
     };
 
     auto computeBytecodeIndex = [&](JSC::CodeBlock* codeBlock, JSC::JSAsyncFunctionGenerator* generator) -> JSC::BytecodeIndex {
+        JSC::BytecodeIndex bytecodeIndex(0);
         JSC::JSValue stateValue = generator->internalField(JSC::JSAsyncFunctionGenerator::Field::State).get();
-        return stateValue.isInt32() ? codeBlock->bytecodeIndexForGeneratorState(stateValue.asInt32()) : JSC::BytecodeIndex(0);
+        if (stateValue.isInt32()) {
+            int32_t state = stateValue.asInt32();
+            size_t numberOfJumpTables = codeBlock->numberOfUnlinkedSwitchJumpTables();
+            if (state > 0 && numberOfJumpTables > 0) {
+                size_t lastTableIndex = numberOfJumpTables - 1;
+                const JSC::UnlinkedSimpleJumpTable& jumpTable = codeBlock->unlinkedSwitchJumpTable(lastTableIndex);
+                int32_t offset = jumpTable.offsetForValue(state);
+                if (offset)
+                    bytecodeIndex = JSC::BytecodeIndex(offset);
+            }
+        }
+        return bytecodeIndex;
     };
 
     auto appendFrame = [&](JSC::JSAsyncFunctionGenerator* generator) {

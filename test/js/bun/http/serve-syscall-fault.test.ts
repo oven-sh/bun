@@ -162,36 +162,75 @@ describe.skipIf(skip)("Bun.serve under injected syscall faults", () => {
 // filter/poll change with nothing for the hook to fail. Each case runs in a
 // subprocess so a use-after-free surfaces as a non-zero exit.
 describe.skipIf(skip || !isLinux)("Bun.serve: a request-socket resume that fails the socket", () => {
-  async function run(mode: string, expected: string[]) {
+  async function spawnFixture(...args: string[]) {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), join(import.meta.dir, "serve-resume-fault-fixture.ts"), mode],
+      cmd: [bunExe(), ...args],
       env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+  }
+
+  async function run(mode: string, expected: string[]) {
+    const { stdout, stderr, exitCode, signalCode } = await spawnFixture(
+      join(import.meta.dir, "serve-resume-fault-fixture.ts"),
+      mode,
+    );
     expect({
       stdout: stdout.trim().split("\n"),
-      signalCode: proc.signalCode,
+      signalCode,
       exitCode,
       // Only populated when the assertion is about to fail, so the diff shows why.
       stderrTail: exitCode === 0 ? "" : stderr.slice(-3000),
     }).toEqual({ stdout: expected, signalCode: null, exitCode: 0, stderrTail: "" });
   }
 
+  // Each ping is a connection of its own. The one after the handler fails if
+  // the resume did not consume the injected failure.
+  const ping = "HTTP/1.1 200 OK, pong";
   // The body the handler waits for can no longer arrive, so the read rejects
   // like any other connection that dies mid-body.
-  const bodyFails = ["before: 200 pong", "abort", "body: rejected AbortError", "after: 200 pong", "done"];
+  const bodyFails = [`before: ${ping}`, "abort", "body: rejected AbortError", `after: ${ping}`, "done"];
 
-  test.concurrent("req.arrayBuffer() rejects and the server stays up", () => run("body-buffered", bodyFails));
+  // The failure these tests exist to catch is a sanitizer report from a debug
+  // binary, and symbolizing one takes several seconds on its own.
+  const timeout = 30_000;
 
-  test.concurrent("req.text() on a materialized body rejects and the server stays up", () =>
-    run("body-stream", bodyFails),
+  test.concurrent("req.arrayBuffer() rejects and the server stays up", () => run("body-buffered", bodyFails), timeout);
+
+  test.concurrent(
+    "req.text() on a materialized body rejects and the server stays up",
+    () => run("body-stream", bodyFails),
+    timeout,
   );
 
   // The handler answered, so the request is complete: ending it must not
   // deliver an abort, and the connection closes with the response.
-  test.concurrent("a response that ends while the body is paused completes", () =>
-    run("response-ends", ["before: 200 pong", "after: 200 pong", "done"]),
+  test.concurrent(
+    "a response that ends while the body is paused completes",
+    () => run("response-ends", [`before: ${ping}`, `after: ${ping}`, "done"]),
+    timeout,
+  );
+
+  // The fixture is a test file of its own: expect().rejects is what waits on
+  // the loop from inside a dispatch. The close has to come from that inner
+  // tick, so a fixture that never finishes is the failure here.
+  test.concurrent(
+    "a dispatch that waits on the loop for the failed socket gets its close",
+    async () => {
+      const { stderr, exitCode, signalCode } = await spawnFixture(
+        "test",
+        join(import.meta.dir, "serve-resume-fault-nested-fixture.ts"),
+      );
+      expect({
+        passed: stderr.includes(" 1 pass") && stderr.includes(" 0 fail"),
+        signalCode,
+        exitCode,
+        stderrTail: exitCode === 0 ? "" : stderr.slice(-3000),
+      }).toEqual({ passed: true, signalCode: null, exitCode: 0, stderrTail: "" });
+    },
+    timeout,
   );
 });

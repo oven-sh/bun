@@ -466,15 +466,16 @@ void us_internal_loop_post(struct us_loop_t *loop) {
     if (loop->data.quic_head) us_quic_loop_process(loop);
 #endif
     if (loop->data.nq_head) us_nq_loop_flush_if_pending(loop);
+    /* At every depth, unlike the free below: a tick that a callback started can
+     * be the one waiting for this close, and its own dispatch closes sockets at
+     * that depth too. */
+    us_internal_close_unresumable_sockets(loop);
     /* A poll callback may re-enter the loop (e.g. expect().toThrow() →
      * waitForPromise → us_loop_run_bun_tick). The inner tick must not free
      * closed sockets: the outer tick's dispatch is mid-iteration and may still
      * hold a pointer to one (it reads s->flags right after on_data returns).
-     * Defer to the outermost tick's loop_post. The unresumable sockets wait for
-     * the same point, and for the same reason: the owner that resumed one is on
-     * the outer stack, and the close handler frees the state it still uses. */
+     * Defer to the outermost tick's loop_post. */
     if (loop->data.tick_depth <= 1) {
-        us_internal_close_unresumable_sockets(loop);
         us_internal_free_closed_sockets(loop);
     }
     loop->data.post_cb(loop);

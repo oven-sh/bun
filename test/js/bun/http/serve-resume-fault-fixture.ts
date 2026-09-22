@@ -21,12 +21,23 @@ const unix = join(tmpdir(), `serve-resume-fault-${process.pid}.sock`);
 const BODY_CHUNK = 1024 * 1024 + 4096;
 
 const faultArmed = Promise.withResolvers<void>();
-const handlerDone = Promise.withResolvers<void>();
 const log = (line: string) => console.log(line);
-const ping = async (label: string) => {
-  const response = await fetch("http://localhost/ping", { unix });
-  log(`${label}: ${response.status} ${await response.text()}`);
-};
+
+// One request on a connection of its own. Not fetch(): it keeps unix
+// connections alive and reuses them, and a reused connection registers nothing.
+function ping(label: string) {
+  const { promise, resolve } = Promise.withResolvers<void>();
+  let response = "";
+  const client = connect({ path: unix });
+  client.on("connect", () => client.write("GET /ping HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"));
+  client.on("data", chunk => (response += chunk));
+  client.on("error", (error: NodeJS.ErrnoException) => log(`${label}: error ${error.code}`));
+  client.on("close", () => {
+    if (response) log(`${label}: ${response.slice(0, response.indexOf("\r\n"))}, ${response.split("\r\n\r\n")[1]}`);
+    resolve();
+  });
+  return promise;
+}
 
 using server = Bun.serve({
   unix,
@@ -51,7 +62,6 @@ using server = Bun.serve({
       log(`body: rejected ${error?.name}`);
     }
 
-    handlerDone.resolve();
     if (mode === "response-ends") {
       // A null-body status ends the response without writing a body, which is
       // the shortest path from the handler to detach_response().
@@ -75,11 +85,13 @@ await new Promise<void>(resolve => socket.once("close", resolve));
 await ping("before");
 
 // One shot. The ping after the handler proves the resume consumed it: a rule
-// still armed would fail the next connection's first poll registration.
+// still armed fails the first poll registration of that connection.
 fault.set({ syscall: "poll_start", action: "errno", errno: "ENOMEM", repeat: 1 });
 faultArmed.resolve();
 
-await handlerDone.promise;
+// The server releases the request after the resume in every mode: the body
+// reads settle on the close that follows it, and the response end makes it.
+while (server.pendingRequests > 0) await new Promise<void>(resolve => setImmediate(resolve));
 await ping("after");
 // Graceful: it resolves once every connection is gone, including the one the
 // failed resume owns.

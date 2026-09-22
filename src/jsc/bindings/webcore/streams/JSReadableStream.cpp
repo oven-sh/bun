@@ -594,7 +594,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_cancel, (JSGlobalObje
     if (!stream) [[unlikely]]
         RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "ReadableStream.prototype.cancel can only be called on a ReadableStream"_s))));
     if (isReadableStreamLocked(stream))
-        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "Cannot cancel a locked ReadableStream"_s))));
+        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: ReadableStream is locked"_s))));
     auto* promise = readableStreamCancel(lexicalGlobalObject, stream, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(promise);
@@ -667,9 +667,9 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_pipeThrough, (JSGloba
     RETURN_IF_EXCEPTION(scope, {});
 
     if (isReadableStreamLocked(stream))
-        return throwVMTypeError(lexicalGlobalObject, scope, "Cannot pipe a locked ReadableStream"_s);
+        return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: The ReadableStream is locked"_s);
     if (isWritableStreamLocked(transformWritable))
-        return throwVMTypeError(lexicalGlobalObject, scope, "Cannot pipe to a locked WritableStream"_s);
+        return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: The WritableStream is locked"_s);
 
     auto* promise = readableStreamPipeTo(lexicalGlobalObject, stream, transformWritable, options.preventClose, options.preventAbort, options.preventCancel, options.signal);
     RETURN_IF_EXCEPTION(scope, {});
@@ -694,9 +694,9 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_pipeTo, (JSGlobalObje
         ConvertedStreamPipeOptions options = convertStreamPipeOptions(vm, lexicalGlobalObject, callFrame->argument(1));
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (isReadableStreamLocked(stream))
-            RELEASE_AND_RETURN(scope, promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "Cannot pipe a locked ReadableStream"_s)));
+            RELEASE_AND_RETURN(scope, promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: The ReadableStream is locked"_s)));
         if (isWritableStreamLocked(destination))
-            RELEASE_AND_RETURN(scope, promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "Cannot pipe to a locked WritableStream"_s)));
+            RELEASE_AND_RETURN(scope, promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: The WritableStream is locked"_s)));
         RELEASE_AND_RETURN(scope, readableStreamPipeTo(lexicalGlobalObject, stream, destination, options.preventClose, options.preventAbort, options.preventCancel, options.signal));
     })));
 }

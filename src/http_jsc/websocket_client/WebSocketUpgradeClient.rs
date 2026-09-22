@@ -676,6 +676,12 @@ where
                     );
                 }
             }
+            if this
+                .cpp_websocket()
+                .is_some_and(|ws| ws.reject_unauthorized())
+            {
+                socket.set_inline_reject();
+            }
         }
 
         // If using proxy, set state to proxy_handshake

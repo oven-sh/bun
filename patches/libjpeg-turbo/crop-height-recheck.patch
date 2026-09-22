@@ -1,0 +1,26 @@
+--- a/src/turbojpeg-mp.c
++++ b/src/turbojpeg-mp.c
+@@ -231,10 +231,22 @@
+     THROW("Invalid argument");
+ 
+   croppedHeight = dinfo->output_height;
+ #if BITS_IN_JSAMPLE != 16
+-  if (this->croppingRegion.y != 0 || this->croppingRegion.h != 0)
++  if (this->croppingRegion.y != 0 || this->croppingRegion.h != 0) {
++    /* tj3SetCroppingRegion() validated the cropping region against the
++       dimensions from an earlier jpeg_read_header() call.  This function
++       reads the header again, so output_height can be smaller now.  The
++       loop below reads scanlines until output_scanline reaches
++       croppingRegion.y + croppingRegion.h, and _jpeg_read_scanlines()
++       returns 0 without advancing output_scanline once output_scanline
++       reaches output_height, so a region that ends past output_height
++       would loop forever. */
++    if (this->croppingRegion.y + this->croppingRegion.h >
++        (int)dinfo->output_height)
++      THROW("The cropping region exceeds the scaled image dimensions");
+     croppedHeight = this->croppingRegion.h;
++  }
+ #endif
+   if ((row_pointer =
+        (_JSAMPROW *)malloc(sizeof(_JSAMPROW) * croppedHeight)) == NULL)
+     THROW("Memory allocation failure");

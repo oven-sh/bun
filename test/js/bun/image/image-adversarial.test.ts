@@ -10,7 +10,7 @@
 // Kept in its own file so the happy-path image.test.ts stays readable.
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { gcTick, isASAN, rss, tempDir } from "harness";
+import { bunEnv, bunExe, gcTick, isASAN, rss, tempDir } from "harness";
 import { join } from "node:path";
 import zlib from "node:zlib";
 
@@ -747,6 +747,76 @@ describe("concurrent terminals on one Image", () => {
     const out = await p;
     expect(out[0]).toBe(0xff);
     expect(out[1]).toBe(0xd8); // still JPEG
+  });
+
+  // The JPEG decoder reads the header twice: once for the dimensions, then
+  // again inside the full decode. An input over 1000 bytes is borrowed from
+  // JS instead of copied, so the JS thread can shrink the SOF height between
+  // the two parses. That decode must fail. It used to spin its work-pool
+  // thread forever, and the pool is shared with every other Bun.Image, fs and
+  // crypto task in the process, so the fixture runs in a child. A child that
+  // hangs never prints its summary, and the test then fails on the timeout.
+  test("a JPEG whose SOF height shrinks mid-decode fails instead of spinning a pool thread", async () => {
+    const fixture = `
+      Bun.Image.backend = "bun"; // the static decoders on every platform
+      const seed = Buffer.from("${Buffer.from(tinyPng).toString("base64")}", "base64");
+      const jpeg = await new Bun.Image(seed).resize(256, 256, { fit: "fill" }).jpeg().bytes();
+      const sof = jpeg.findIndex((b, i) => b === 0xff && jpeg[i + 1] === 0xc0);
+      const heightOffset = sof + 5; // FF C0, length(2), precision(1), height(2)
+      const height = (jpeg[heightOffset] << 8) | jpeg[heightOffset + 1];
+      if (height !== 256) throw new Error("SOF0 height is " + height + ", expected 256");
+      if (jpeg.length <= 1000) throw new Error("a " + jpeg.length + " byte JPEG is copied, not borrowed");
+
+      const buf = new Uint8Array(jpeg);
+      let scheduled = 0;
+      let settled = 0;
+      let failed = 0;
+      let rounds = 0;
+      const codes = new Set();
+      // One round of 64 decodes reaches the window 35 to 58 times, idle or
+      // under a load average of 48, so the later rounds are headroom. Every
+      // rejection here means the two parses of one decode disagreed, which is
+      // what the patched check fails on.
+      while (failed === 0 && rounds < 8) {
+        rounds++;
+        for (let i = 0; i < 64; i++) {
+          scheduled++;
+          new Bun.Image(buf).png().bytes().then(
+            () => void settled++,
+            e => { settled++; failed++; codes.add(e?.code ?? String(e)); },
+          );
+        }
+        // Flip the height between its real value and half of it until the
+        // round settles. Half keeps the width, so only the row count moves.
+        while (settled < scheduled) {
+          for (let i = 0; i < 4096; i++) {
+            const h = i & 1 ? height : height >> 1;
+            buf[heightOffset] = h >> 8;
+            buf[heightOffset + 1] = h & 255;
+          }
+          await Bun.sleep(0);
+        }
+      }
+      console.log(JSON.stringify({ scheduled, settled, failed, codes: [...codes].sort() }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const summary = JSON.parse(stdout || "{}");
+    // `sawTheShrink` is the clause that fails if the decoder stops rejecting a
+    // short re-parse: a decode that reaches the window settles as a decode
+    // error instead of taking a pool thread forever.
+    expect({
+      allSettled: summary.scheduled > 0 && summary.settled === summary.scheduled,
+      sawTheShrink: summary.failed > 0,
+      unexpected: (summary.codes ?? []).filter((c: string) => c !== "ERR_IMAGE_DECODE_FAILED"),
+    }).toEqual({ allSettled: true, sawTheShrink: true, unexpected: [] });
+    expect(exitCode).toBe(0);
   });
 });
 

@@ -818,7 +818,8 @@ bool JSDirectStreamController::onPull(JSGlobalObject* globalObject, JSPromise* r
         if (!readPromise)
             return true;
         if (stream && stream->m_state == ReadableStreamState::Errored) {
-            rejectPromise(globalObject, readPromise, stream->m_storedError.get());
+            JSValue storedError = stream->m_storedError.get();
+            rejectPromise(globalObject, readPromise, storedError ? storedError : jsUndefined());
             RETURN_IF_EXCEPTION(scope, false);
             return true;
         }

@@ -964,10 +964,12 @@ it("replies to a requestCert client whose certificate chain is larger than 32 Ki
   const paddedChain = agent1Cert + Buffer.alloc(ca1.length * 52, ca1).toString();
 
   const accepted = Promise.withResolvers<{ authorized: boolean; protocol: string | null }>();
+  const failed = Promise.withResolvers<never>();
   await using server = createServer(
     { key: agent1Key, cert: agent1Cert, ca: [ca1], requestCert: true, minVersion: "TLSv1.3", maxVersion: "TLSv1.3" },
     socket => {
       accepted.resolve({ authorized: socket.authorized, protocol: socket.getProtocol() });
+      socket.on("error", failed.reject);
       socket.on("data", chunk => socket.write(`pong:${chunk}`));
     },
   );
@@ -978,13 +980,21 @@ it("replies to a requestCert client whose certificate chain is larger than 32 Ki
   const client = connect({ port, host: "127.0.0.1", key: agent1Key, cert: paddedChain, rejectUnauthorized: false });
   let tickets = 0;
   client.on("session", () => tickets++);
-  await once(client, "secureConnect");
-  expect(await accepted.promise).toEqual({ authorized: true, protocol: "TLSv1.3" });
+  client.on("error", failed.reject);
+  // A regression in the write path shows up as a bare close, not an error.
+  // Without this the test would sit in its timeout with no diagnostic.
+  client.on("close", () => failed.reject(new Error("client closed before the reply")));
+  const [, verdict] = await Promise.race([
+    Promise.all([once(client, "secureConnect"), accepted.promise]),
+    failed.promise,
+  ]);
+  expect(verdict).toEqual({ authorized: true, protocol: "TLSv1.3" });
 
   // Without the fix this is where it hangs: the server's write() returns true,
   // but nothing reaches the wire.
   client.write("ping");
-  const [reply] = await once(client, "data");
+  const [reply] = await Promise.race([once(client, "data"), failed.promise]);
+  client.removeAllListeners("close");
   client.end();
   await once(client, "close");
 

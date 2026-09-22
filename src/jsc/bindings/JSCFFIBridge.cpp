@@ -73,12 +73,11 @@ extern "C" JSC::EncodedJSValue Bun__CreateJSCFFICallback(
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (threadsafe) {
-        static std::once_flag registerDispatch;
-        std::call_once(registerDispatch, [] {
-            JSC::FFI::FFIContext::setThreadsafeDispatch(Bun__jscFFIThreadsafeDispatch);
-        });
-    }
+    // For every JSCallback: the engine also queues a call to one that is not threadsafe when it cannot run JS inline.
+    static std::once_flag registerDispatch;
+    std::call_once(registerDispatch, [] {
+        JSC::FFI::FFIContext::setThreadsafeDispatch(Bun__jscFFIThreadsafeDispatch);
+    });
 
     JSC::JSObject* callable = JSC::JSValue::decode(callableValue).getObject();
     if (!callable || !callable->isCallable()) [[unlikely]] {
@@ -97,15 +96,12 @@ extern "C" JSC::EncodedJSValue Bun__CreateJSCFFICallback(
         RELEASE_AND_RETURN(scope, {});
     }
 
-    void* embedderContext = nullptr;
-    if (threadsafe) {
-        auto* scriptExecutionContext = globalObject->scriptExecutionContext();
-        if (!scriptExecutionContext) [[unlikely]] {
-            JSC::throwTypeError(globalObject, scope, "bun:ffi: no script execution context for a threadsafe JSCallback"_s);
-            RELEASE_AND_RETURN(scope, {});
-        }
-        embedderContext = reinterpret_cast<void*>(static_cast<uintptr_t>(scriptExecutionContext->identifier()));
+    auto* scriptExecutionContext = globalObject->scriptExecutionContext();
+    if (!scriptExecutionContext) [[unlikely]] {
+        JSC::throwTypeError(globalObject, scope, "bun:ffi: no script execution context for a JSCallback"_s);
+        RELEASE_AND_RETURN(scope, {});
     }
+    void* embedderContext = reinterpret_cast<void*>(static_cast<uintptr_t>(scriptExecutionContext->identifier()));
     JSC::JSFFICallback* callback = JSC::FFI::createCallback(globalObject, signature.releaseNonNull(), callable, threadsafe, embedderContext);
     RETURN_IF_EXCEPTION(scope, {});
     if (!callback)

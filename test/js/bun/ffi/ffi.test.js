@@ -1498,6 +1498,183 @@ describe("toBuffer borrowed-pointer ownership (no bad-free on GC)", () => {
   );
 });
 
+// The collector calls the deallocator, and JS cannot run during a collection, so the call is queued for
+// the JS thread. Subprocess because unpatched builds crash when the collection runs on the JS thread, and
+// deadlock when it runs on another thread.
+describe("a JSCallback as the deallocator of toArrayBuffer() and toBuffer()", () => {
+  async function exec(cmd, { cwd, env = {} } = {}) {
+    await using proc = Bun.spawn({
+      cmd,
+      cwd,
+      env: { ...bunEnv, FFI_FIXTURE_PATH, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+      // Ends a deadlocked process, which does not act on SIGTERM, before the test times out.
+      timeout: 25_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+  }
+
+  // Makes 64 buffers over one backing array, each with the JSCallback as its deallocator and its index + 1
+  // as the context. `report()` prints what the JSCallback received.
+  const makeBuffers = `
+    import { dlopen, JSCallback, ptr, toArrayBuffer, toBuffer } from "bun:ffi";
+    const count = 64, size = 16;
+    const backing = new Uint8Array(count * size);
+    const base = ptr(backing);
+    const freed = new Map();
+    const { promise: allFreed, resolve } = Promise.withResolvers();
+    let repeated = 0;
+    const deallocator = new JSCallback(
+      (bytes, context) => {
+        if (freed.has(context)) repeated++;
+        freed.set(context, bytes);
+        if (freed.size === count) resolve();
+      },
+      { args: ["ptr", "ptr"], returns: "void" },
+    );
+    const makeBuffers = (deallocatorPointer, make = i => (i & 1 ? toBuffer : toArrayBuffer)) =>
+      Array.from({ length: count }, (_, i) => make(i)(base, i * size, size, i + 1, deallocatorPointer));
+    const nextTick = () => new Promise(resolve => setImmediate(resolve));
+    function report() {
+      let wrongArguments = 0;
+      for (let i = 0; i < count; i++) if (freed.get(i + 1) !== base + i * size) wrongArguments++;
+      console.log(JSON.stringify({ calls: freed.size, repeated, wrongArguments }));
+      deallocator.close();
+    }
+  `;
+  const allCallsArrived = {
+    stdout: JSON.stringify({ calls: 64, repeated: 0, wrongArguments: 0 }) + "\n",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  };
+
+  const collectOnJSThread = `
+    Bun.gc(true);
+    if (freed.size) throw new Error("the deallocator ran inside the collection");
+    for (let i = 0; i < 100 && freed.size < count; i++) {
+      await nextTick();
+      Bun.gc(true);
+    }
+    report();
+  `;
+
+  it.concurrent("a collection on the JS thread", async () => {
+    const script = `${makeBuffers}
+      makeBuffers(deallocator.ptr);
+      ${collectOnJSThread}`;
+    expect(await exec([bunExe(), "-e", script])).toEqual(allCallsArrived);
+  });
+
+  it.concurrent.skipIf(!FFI_FIXTURE_PATH)("a C deallocator that calls the JSCallback", async () => {
+    const script = `${makeBuffers}
+      const { symbols } = dlopen(process.env.FFI_FIXTURE_PATH, {
+        setForwardedDeallocator: { args: ["ptr"], returns: "void" },
+        getForwardingDeallocator: { args: [], returns: "ptr" },
+      });
+      symbols.setForwardedDeallocator(deallocator.ptr);
+      makeBuffers(symbols.getForwardingDeallocator());
+      ${collectOnJSThread}`;
+    expect(await exec([bunExe(), "-e", script])).toEqual(allCallsArrived);
+  });
+
+  // The JS thread parks without heap access during an idle collection, so its end phase runs on the collector
+  // thread. Windows keeps the collection on the JS thread.
+  it.concurrent.skipIf(isWindows)(
+    "an idle collection that ends on the collector thread",
+    async () => {
+      const script = `${makeBuffers}
+        globalThis.buffers = makeBuffers(deallocator.ptr);
+        // Old objects: only a full collection frees them, and the next one is the idle one.
+        Bun.gc(true);
+        await nextTick();
+        globalThis.buffers = null;
+        // Keeps the parked process alive, and ends it if the calls never arrive.
+        const deadline = setTimeout(() => process.exit(1), 20_000);
+        await allFreed;
+        clearTimeout(deadline);
+        report();`;
+      const env = {
+        BUN_IDLE_GC_SECONDS: "1",
+        BUN_GC_TIMER_DISABLE: undefined,
+        BUN_GC_TIMER_INTERVAL: undefined,
+        BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS: "0",
+      };
+      expect(await exec([bunExe(), "-e", script], { env })).toEqual(allCallsArrived);
+    },
+    30_000,
+  );
+
+  // The collection that frees a transferred buffer runs on the Worker's thread, which cannot run the JS of this one.
+  it.concurrent(
+    "a buffer transferred to a Worker",
+    async () => {
+      using dir = tempDir("ffi-jscallback-deallocator-transfer", {
+        "main.js": `${makeBuffers}
+          const worker = new Worker(new URL("./worker.js", import.meta.url).href);
+          const reply = () => new Promise((resolve, reject) => {
+            worker.onmessage = resolve;
+            worker.onerror = reject;
+          });
+          const buffers = makeBuffers(deallocator.ptr, () => toArrayBuffer);
+          let replied = reply();
+          worker.postMessage(buffers, buffers);
+          await replied;
+          // The buffers are garbage in the worker once its first handler returns. It collects on each message.
+          for (let i = 0; i < 100 && freed.size < count; i++) {
+            replied = reply();
+            worker.postMessage("collect");
+            await replied;
+          }
+          report();
+          worker.terminate();
+        `,
+        "worker.js": `
+          onmessage = () => {
+            Bun.gc(true);
+            postMessage("collected");
+          };
+        `,
+      });
+      expect(await exec([bunExe(), "main.js"], { cwd: String(dir) })).toEqual(allCallsArrived);
+    },
+    30_000,
+  );
+
+  // The last sweep of a worker's heap frees the buffers that are still alive. JS cannot run in a VM that is
+  // being destroyed, so those calls are dropped. 'close' fires after the worker's VM is destroyed.
+  it.concurrent("a Worker that exits while its buffers are alive", async () => {
+    using dir = tempDir("ffi-jscallback-deallocator-worker", {
+      "main.js": `
+        const worker = new Worker(new URL("./worker.js", import.meta.url).href);
+        await new Promise((resolve, reject) => {
+          worker.onmessage = resolve;
+          worker.onerror = reject;
+        });
+        const closed = new Promise(resolve => worker.addEventListener("close", resolve));
+        worker.terminate();
+        await closed;
+        console.log("done");
+      `,
+      "worker.js": `${makeBuffers}
+        // A first call that resolves a variable (the callback reads \`freed\`) is what a debug build asserts on
+        // in a VM that is shutting down.
+        globalThis.buffers = makeBuffers(deallocator.ptr);
+        postMessage("made");
+      `,
+    });
+    expect(await exec([bunExe(), "main.js"], { cwd: String(dir) })).toEqual({
+      stdout: "done\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+});
+
 // toBuffer hands an arbitrary (pointer, byteLength) pair straight to the Buffer
 // hand-off that spawnSync, Bun.$ and others use for their output. That makes it
 // the one way to reach the hand-off with a byteLength above kMaxLength (2^32)

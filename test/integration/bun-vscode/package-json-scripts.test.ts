@@ -72,6 +72,19 @@ test("Bun: Run skips script entries that are not strings", async () => {
   expect(terminalsAsSeen()).toEqual([[String(dir), ["bun run build"]]]);
 });
 
+test("Bun: Run quotes a script name that contains whitespace", async () => {
+  using dir = tempDir("vscode-codelens", {
+    "package.json": JSON.stringify({ scripts: { "build docs": "echo docs", "test:unit": "bun test" } }),
+  });
+  await clickCodeLens(String(dir), "package.json", "Bun: Run", "build docs");
+  await clickCodeLens(String(dir), "package.json", "Bun: Run", "test:unit");
+
+  expect(terminalsAsSeen()).toEqual([
+    [String(dir), ['bun run "build docs"']],
+    [String(dir), ["bun run test:unit"]],
+  ]);
+});
+
 test("Bun: Run falls back to the lenient parser when the package.json is not strict JSON", async () => {
   using dir = tempDir("vscode-codelens", {
     "package.json": `{

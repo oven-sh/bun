@@ -210,7 +210,9 @@ function registerHoverProvider(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand("extension.bun.codelens.run.task", async ({ name, cwd }: CommandArgs) => {
       // Run the script by name from the package directory, so bun applies pre/post hooks and env assignments.
-      const command = `bun run ${name}`;
+      // Double quotes are the one quoting form that sh, PowerShell and cmd all accept.
+      const argument = /^[\w.:@/-]+$/.test(name) ? name : `"${name}"`;
+      const command = `bun run ${argument}`;
       const terminalName = `Bun Task: ${name}`;
 
       const terminals = getActiveTerminal(terminalName, cwd);

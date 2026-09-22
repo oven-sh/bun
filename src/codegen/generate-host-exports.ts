@@ -416,9 +416,7 @@ ${body}
 function emitThunk(e: Export): string {
   const impl = `${e.modPath}::${e.fnName}`;
   const loc = `${path.relative(repoRoot, e.file)}:${e.line}`;
-  // `JsResult<JSValue>` impls need `to_js_host_call` (exception-scope assert +
-  // panic barrier + Err→empty mapping). Plain-`JSValue` lazy impls are bare
-  // bodies (no exception-scope wrapper): deref + call, no scope.
+  // A `JsResult<JSValue>` impl goes through `to_js_host_call`; a bare-`JSValue` lazy impl is called with no scope.
   const retIsJsResult = /^(?:bun_jsc::)?JsResult\s*<\s*JSValue\s*>$/.test(e.ret);
   switch (e.shape) {
     case "host": {

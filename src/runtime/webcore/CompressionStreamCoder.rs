@@ -141,9 +141,7 @@ pub(crate) struct CompressionStreamCoder {
     high_water_mark: usize,
     /// Set while a chunk's transform spans steps; `None` between chunks.
     pending: Option<Pending>,
-    /// Junk met in a later step of a multi-step chunk. That step was delivered as an ordinary
-    /// one and the next reports the junk: the reader paces such a chunk, so it takes the last
-    /// piece before the error discards the readable queue.
+    /// Junk met in a later step of a chunk; the next step reports it, after the reader took this output.
     junk_held: bool,
     /// The context of the script that made the stream: its off-thread steps belong to it, also
     /// the ones a native sink asks for.
@@ -325,9 +323,9 @@ impl CompressionStreamCoder {
 
     /// One step of the chunk (or, with `finish`, the final flush) in progress:
     /// collects at most `max(high_water_mark, chunk length)` bytes into `out` and
-    /// returns `true` if the codec stopped at that cap (or see `junk_held`), in which case
-    /// the caller must step again (with no input) before feeding the next chunk.
-    /// On `Err`, `out` is empty unless it was decoded ahead of trailing junk: that is delivered first.
+    /// returns `true` if the codec stopped at that cap, in which case the caller
+    /// must step again (with no input) before feeding the next chunk.
+    /// Also `true` for `junk_held`. On `Err`, `out` is only what was decoded ahead of trailing junk.
     fn step(&mut self, input: &[u8], finish: bool, out: &mut Vec<u8>) -> Result<bool, CodecError> {
         out.clear();
         if self.junk_held {

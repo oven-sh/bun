@@ -229,8 +229,9 @@ class Request extends WebRequest {
       super(input, init);
     }
     if (startBody) this[kStartBody] = startBody;
-    // Without a body in init, the new Request takes over the body of a Request input, which reads it.
-    else if (body == null) input?.[kStartBody]?.();
+    // The new Request takes the body of a Request input when init has no `body` (null is a body), or the body
+    // of a Request that is the init. The native side tees that body, which reads it at once.
+    else (body === undefined ? input : init)?.[kStartBody]?.();
   }
 
   get url() {
@@ -240,7 +241,9 @@ class Request extends WebRequest {
   // clone() and the body methods use the body. Each begins the read before it returns.
   clone() {
     this?.[kStartBody]?.();
-    return super.clone();
+    const cloned = Object.setPrototypeOf(super.clone(), RequestPrototype);
+    if (this[kUrl] !== undefined) cloned[kUrl] = this[kUrl];
+    return cloned;
   }
 
   arrayBuffer() {
@@ -278,6 +281,7 @@ class Request extends WebRequest {
     return super.textStream();
   }
 }
+var RequestPrototype = Request.prototype;
 
 /**
  * `node-fetch` works like the browser-fetch API, except it's a little more strict on some features,
@@ -305,8 +309,9 @@ async function fetch(
       init = { ...init, body: Readable.toWeb(readable) };
     }
   }
-  // A Request sends its own body unless init has one.
-  if (initBody == null) url?.[kStartBody]?.();
+  // The fetch sends the body of a Request input when init has no `body` (null is a body), or the body of a
+  // Request that is the init.
+  (initBody === undefined ? url : init)?.[kStartBody]?.();
   const response = await nativeFetch.$call(undefined, url, init);
   Object.setPrototypeOf(response, ResponsePrototype);
   response[kFetched] = true;

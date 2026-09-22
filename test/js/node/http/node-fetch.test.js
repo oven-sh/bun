@@ -465,19 +465,29 @@ test("node-fetch Request clone() reads an old-style Stream body that sends at on
   expect([await text, await request.text()]).toEqual(["hello world", "hello world"]);
 });
 
-test("node-fetch Request takes over the old-style Stream body of a Request that sends at once", async () => {
+test.each([
+  ["new Request(request, init)", request => new Request(request, { headers: { "x-id": "1" } })],
+  ["new Request(url, request)", request => new Request("http://localhost/other", request)],
+])("node-fetch %s takes over an old-style Stream body that sends at once", async (_, copy) => {
   const legacy = new stream.Stream();
-  const input = new Request("http://localhost/", { method: "POST", body: legacy });
-  const text = new Request(input, { headers: { "x-id": "1" } }).text();
+  const text = copy(new Request("http://localhost/", { method: "POST", body: legacy })).text();
   legacy.emit("data", Buffer.from("hello world"));
   legacy.emit("end");
   expect(await text).toBe("hello world");
 });
 
-test("node-fetch fetch() sends the old-style Stream body of a Request", async () => {
+test("node-fetch Request clone() returns a node-fetch Request", () => {
+  const clone = new Request("/api", { method: "POST", body: "x" }).clone();
+  expect({ isRequest: clone instanceof Request, url: clone.url }).toEqual({ isRequest: true, url: "/api" });
+});
+
+test.each([
+  ["fetch(request)", request => fetch2(request)],
+  ["fetch(url, request)", request => fetch2(request.url, request)],
+])("node-fetch %s sends the old-style Stream body of a Request", async (_, send) => {
   using server = serveRequestBody();
   const legacy = new stream.Stream();
-  const response = fetch2(new Request(server.url, { method: "POST", body: legacy }));
+  const response = send(new Request(server.url, { method: "POST", body: legacy }));
   legacy.emit("data", Buffer.from("hello "));
   legacy.emit("data", Buffer.from("world"));
   legacy.emit("end");
@@ -549,11 +559,24 @@ test("node-fetch Request leaves an old-style Stream body alone until the body is
   expect(await response.text()).toBe("hello world");
 });
 
-test("node-fetch fetch() with a body in init leaves the old-style Stream body of the Request alone", async () => {
-  using server = serveRequestBody();
+test.each([
+  ["from init", "from init"],
+  [null, ""],
+])(
+  "node-fetch fetch() with `body: %p` in init leaves the old-style Stream body of the Request alone",
+  async (body, text) => {
+    using server = serveRequestBody();
+    const source = new SendsWhenPiped();
+    const response = await fetch2(new Request(server.url, { method: "POST", body: source }), { body });
+    expect({ text: await response.text(), sent: source.sent }).toEqual({ text, sent: undefined });
+  },
+);
+
+test("node-fetch Request with `body: null` in init leaves the old-style Stream body of the input alone", () => {
   const source = new SendsWhenPiped();
-  const response = await fetch2(new Request(server.url, { method: "POST", body: source }), { body: "from init" });
-  expect({ text: await response.text(), sent: source.sent }).toEqual({ text: "from init", sent: undefined });
+  const input = new Request("http://localhost/", { method: "POST", body: source });
+  const request = new Request(input, { body: null });
+  expect({ body: request.body, sent: source.sent }).toEqual({ body: null, sent: undefined });
 });
 
 test("node-fetch Request does not read an old-style Stream body that was canceled", async () => {

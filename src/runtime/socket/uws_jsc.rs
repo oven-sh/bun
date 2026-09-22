@@ -145,6 +145,8 @@ unsafe extern "C" fn us_socket_buffered_js_write(
     ended: bool,
     // uWS still holds response bytes: write through its buffer. The caller defers a shutdown (`shutdownAfterResponseDrains`).
     hold: bool,
+    // A drain call flushes `buffer` (a tunnel). On any other socket the uWS buffer takes what the kernel does not.
+    flushes_buffer_on_drain: bool,
     buffer: *mut us_socket_stream_buffer_t,
     global_object: &JSGlobalObject,
     data: JSValue,
@@ -212,16 +214,11 @@ unsafe extern "C" fn us_socket_buffered_js_write(
         // single `&mut` does not alias the re-entrant write path documented at
         // the top of this fn (raw `socket` is still kept for that reason).
         let socket_ref = us_socket_t::opaque_mut(socket);
+        // SAFETY: the caller guarantees `socket` is live for the call; the slice is valid for its length.
+        let write_behind_response = |bytes: &[u8]| unsafe {
+            Bun__NodeHTTPServerSocket__writeBehindResponse(socket, ssl, bytes.as_ptr(), bytes.len())
+        };
         if hold {
-            // SAFETY: the caller guarantees `socket` is live for the call; the slice is valid for its length.
-            let write_behind_response = |bytes: &[u8]| unsafe {
-                Bun__NodeHTTPServerSocket__writeBehindResponse(
-                    socket,
-                    ssl,
-                    bytes.as_ptr(),
-                    bytes.len(),
-                )
-            };
             // What an earlier write still owes goes first.
             let owed = stream_buffer.slice().len();
             write_behind_response(stream_buffer.slice());
@@ -248,7 +245,13 @@ unsafe extern "C" fn us_socket_buffered_js_write(
             let written: u32 = u32::try_from(socket_ref.write(data_slice).max(0)).unwrap();
             total_written = total_written.saturating_add(written as usize);
             if (written as usize) < data_slice.len() {
-                stream_buffer.write(&data_slice[written as usize..]);
+                let rest = &data_slice[written as usize..];
+                if flushes_buffer_on_drain {
+                    stream_buffer.write(rest);
+                } else {
+                    write_behind_response(rest);
+                    total_written = total_written.saturating_add(rest.len());
+                }
                 break 'body JSValue::FALSE;
             }
         }

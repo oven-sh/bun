@@ -1477,7 +1477,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         _original_cwd: &[u8],         // Reserved for future use
         is_retry: bool,
     ) -> Result<ScanAttemptResult, Error> {
-        // `defer { ipc_data.deinit(); }` — Vec fields drop with self.
+        // `defer { ipc_data.deinit(); }`: Vec fields drop with self.
 
         let Some(status) = self.exit_status.clone() else {
             Output::err_generic(

@@ -1470,9 +1470,10 @@ function onSocketTimeoutTimerExpired(socket) {
   // _idleStart back moves the deadline. The handle measures on the real
   // clock, so a timer that fake timers fired (they mark setTimeout with
   // `clock`) keeps its deadline.
+  const { timeout } = socket;
   const sinceLastRead = socket[kHandle]?.msSinceLastRead?.();
-  if (sinceLastRead < socket.timeout && !("clock" in setTimeout)) {
-    socket.setTimeout(socket.timeout);
+  if (sinceLastRead < timeout && !("clock" in setTimeout)) {
+    socket.setTimeout(timeout);
     const timer = socket[kSocketTimeoutTimer];
     if (timer !== undefined) timer._idleStart -= sinceLastRead;
     return;

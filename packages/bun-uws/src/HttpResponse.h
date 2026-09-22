@@ -151,6 +151,33 @@ public:
         return true;
     }
 
+    /* Closes this connection if it is idle: no request is being received, and no response is in flight or queued. Returns whether it closed it. */
+    bool closeIfIdle() {
+        HttpResponseData<SSL> *data = getHttpResponseData();
+        bool idle = data->isIdle;
+        if (idle && HttpContext<SSL>::fromSocket((us_socket_t *) this)->isNodeHttp()) {
+            /* node:http: a connection that still receives a request (a body, or the head of the next one) is not idle, also after its
+             * response ended (Node.js: last_message_start_). In the request handler the parser has not entered a chunked body yet, so the armed body handler tells. */
+            const bool messageOpen = ((HttpResponseData<SSL, true> *) data)->lastMessageStartMs != 0;
+            idle = !(messageOpen && data->inStream != nullptr) && !data->hasIncompleteRequestBody() && !data->hasBufferedPartialRequestHeaders();
+            if (idle && messageOpen && !Super::hasFullyDrained()) {
+                /* The handler of this request still runs and its response has unsent bytes: close when they are out. */
+                data->state |= HttpResponseData<SSL>::HTTP_CLOSE_WHEN_IDLE;
+                idle = false;
+            }
+        }
+        if (!idle) {
+            return false;
+        }
+        /* A socket is idle from the moment its response completes. When
+         * that happens inside onData's parse loop the response can still
+         * sit in the cork buffer, and JS that runs before the loop ends
+         * (a graceful stop() from a microtask) gets here. close() sends
+         * it first. */
+        Super::close();
+        return true;
+    }
+
     /* node:http: an idle tunnel is at read EOF and has nothing left to send. Like a libuv handle in that state, it does not hold
      * the event loop. The filter hears -3 when a tunnel becomes idle and +3 when it has bytes to send again. */
     void setNodeHttpTunnelIdle(bool idle) {

@@ -363,6 +363,66 @@ test("server.close() in the handler of a response that still drains does not cut
   }
 });
 
+// After close() the server has no native handle, and closeIdleConnections()
+// asks each connection. A busy one stays, and one that became idle goes.
+test("closeIdleConnections() after close() reaps an idle connection, not one that receives a request head", async () => {
+  const releases: (() => void)[] = [];
+  const server = createServer((req, res) => {
+    if (req.url === "/hold") releases.push(() => res.end("held"));
+    else res.end("second response");
+  });
+  server.keepAliveTimeout = 60000;
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const open = async () => {
+    const socket = connect(port, "127.0.0.1");
+    socket.on("error", () => {});
+    let response = "";
+    socket.on("data", chunk => (response += chunk));
+    await once(socket, "connect");
+    return {
+      socket,
+      closed: once(socket, "close"),
+      response: () => response,
+      async until(text: string) {
+        while (!response.includes(text)) await once(socket, "data");
+      },
+    };
+  };
+  const idle = await open();
+  const busy = await open();
+  try {
+    // Both are busy during close(), so both survive it.
+    idle.socket.write("GET /hold HTTP/1.1\r\nHost: x\r\n\r\n");
+    busy.socket.write("GET /hold HTTP/1.1\r\nHost: x\r\n\r\n");
+    while (releases.length < 2) await new Promise<void>(r => setImmediate(r));
+    const closed = Promise.withResolvers<void>();
+    server.close(() => closed.resolve());
+    for (const release of releases) release();
+    await Promise.all([idle.until("held"), busy.until("held")]);
+
+    busy.socket.write("GET /second HTTP/1.1\r\nHo");
+    // One round trip on the other connection: the server has read the partial head by then.
+    idle.socket.write("GET /hold HTTP/1.1\r\nHost: x\r\n\r\n");
+    while (releases.length < 3) await new Promise<void>(r => setImmediate(r));
+    releases[2]();
+    while (idle.response().split("held").length < 3) await once(idle.socket, "data");
+
+    server.closeIdleConnections();
+    await idle.closed;
+    busy.socket.write("st: x\r\nConnection: close\r\n\r\n");
+    await busy.closed;
+    expect(busy.response().slice(-"second response".length)).toBe("second response");
+    await closed.promise;
+  } finally {
+    idle.socket.destroy();
+    busy.socket.destroy();
+    server.closeAllConnections();
+  }
+});
+
 // The bytes of the first response still drain when one read brings the next
 // request. That request waits behind the unsent bytes, so the connection is
 // not idle, also when the same read completed the body of the first request.

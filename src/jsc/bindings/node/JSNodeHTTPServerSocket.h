@@ -116,6 +116,8 @@ public:
 
     /* Close once the bytes of the responses that ended have left. close() discards them, end() waits for the peer. */
     void closeWhenDrained();
+    /* Closes the connection if uWS counts it as idle (HttpResponse::closeIfIdle). Returns whether it closed it. */
+    bool closeIfIdle();
 
     /* Switch the connection into CONNECT-style tunnel mode after an accepted
      * Upgrade: subsequent bytes bypass the HTTP parser and stream to the

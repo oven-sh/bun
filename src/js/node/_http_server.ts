@@ -540,8 +540,9 @@ Server.prototype.closeIdleConnections = function () {
   }
   const tracked = this[kTrackedConnections];
   if (tracked && tracked.size > 0) {
-    for (const socket of $Array.from(tracked)) {
-      if (!socket[kHandedOff] && !socket._httpMessage) socket.destroy();
+    for (const socket of $Array.from(tracked) as NodeHTTPServerSocket[]) {
+      // uWS knows whether a request is arriving on the connection. A missing _httpMessage does not tell.
+      if (!socket[kHandedOff]) socket[kHandle]?.closeIfIdle();
     }
   }
 };

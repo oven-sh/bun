@@ -397,6 +397,17 @@ void JSNodeHTTPServerSocket::closeWhenDrained()
     }
 }
 
+bool JSNodeHTTPServerSocket::closeIfIdle()
+{
+    if (upgraded || isClosed()) {
+        return false;
+    }
+    if (is_ssl) {
+        return reinterpret_cast<uWS::HttpResponse<true>*>(socket)->closeIfIdle();
+    }
+    return reinterpret_cast<uWS::HttpResponse<false>*>(socket)->closeIfIdle();
+}
+
 template<bool SSL>
 static bool isRequestTimedOutImpl(us_socket_t* socket, uint64_t headersTimeoutMs, uint64_t requestTimeoutMs)
 {

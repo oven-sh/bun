@@ -427,25 +427,7 @@ public:
              * adopted into its own group), so the ext block is an HttpResponseData. */
             auto *data = (HttpResponseData<SSL> *) ((AsyncSocket<SSL> *) s)->getAsyncSocketData();
             struct us_socket_t *next = s->next;
-            bool idle = data->isIdle;
-            if (idle && httpContext->isNodeHttp()) {
-                /* node:http: a connection that still receives a request (a body, or the head of the next one) is not idle, also after its
-                 * response ended (Node.js: last_message_start_). In the request handler the parser has not entered a chunked body yet, so the armed body handler tells. */
-                const bool messageOpen = ((HttpResponseData<SSL, true> *) data)->lastMessageStartMs != 0;
-                idle = !(messageOpen && data->inStream != nullptr) && !data->hasIncompleteRequestBody() && !data->hasBufferedPartialRequestHeaders();
-                if (idle && messageOpen && !((AsyncSocket<SSL> *) s)->hasFullyDrained()) {
-                    /* The handler of this request still runs and its response has unsent bytes: close when they are out. */
-                    data->state |= HttpResponseData<SSL>::HTTP_CLOSE_WHEN_IDLE;
-                    idle = false;
-                }
-            }
-            if (idle) {
-                /* A socket is idle from the moment its response completes. When
-                 * that happens inside onData's parse loop the response can still
-                 * sit in the cork buffer, and JS that runs before the loop ends
-                 * (a graceful stop() from a microtask) gets here. close() sends
-                 * it first. */
-                ((AsyncSocket<SSL> *) s)->close();
+            if (((HttpResponse<SSL> *) s)->closeIfIdle()) {
                 closed++;
             } else if (closeWhenIdle) {
                 data->state |= HttpResponseData<SSL>::HTTP_CLOSE_WHEN_IDLE;

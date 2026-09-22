@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { isPosix, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isPosix, tempDir, tls } from "harness";
 import { once } from "node:events";
 import { connect as netConnect } from "node:net";
 import { join } from "node:path";
@@ -915,6 +915,87 @@ it.if(isPosix)(
     });
   },
 );
+
+// More behind the parked requests than the server's receive buffer takes: the rest
+// waits in the client's kernel and arrives when the server reads. A close right
+// after one read is ahead of those bytes, and they reset the connection while
+// the end of the big response is still unsent. So the close lingers: the server
+// sends its FIN, drops what still comes, and closes on the client's FIN. The
+// server runs in its own process, because a client on the server's event loop
+// cannot write while the server closes.
+it("a close lingers while the client still sends what it queued behind the parked requests", async () => {
+  const serverSource = `
+    const big = Buffer.alloc(${BIG_BODY_LENGTH}, "x");
+    const gates = new Map();
+    const gate = name => gates.get(name) ?? gates.set(name, Promise.withResolvers()).get(name);
+    const hits = [];
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        const { pathname, searchParams } = new URL(req.url);
+        const id = searchParams.get("id");
+        if (pathname === "/hits") return Response.json(hits);
+        if (pathname === "/entered") return gate("entered" + id).promise.then(() => new Response("entered"));
+        if (pathname === "/release") return gate("release" + id).resolve(), new Response("released");
+        hits.push(pathname);
+        if (pathname !== "/slow") return new Response("body of " + pathname);
+        gate("entered" + id).resolve();
+        await gate("release" + id).promise;
+        return new Response(big);
+      },
+    });
+    console.log(server.port);
+  `;
+  await using server = Bun.spawn({
+    cmd: [bunExe(), "-e", serverSource],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const stdout = server.stdout.getReader();
+  const port = parseInt(new TextDecoder().decode((await stdout.read()).value));
+  const origin = `http://127.0.0.1:${port}`;
+  const upload = Buffer.alloc(4 * 1024 * 1024, "a");
+
+  const results = [];
+  for (let id = 0; id < 3; id++) {
+    const socket = netConnect({ port, host: "127.0.0.1" });
+    const reader = new ResponseReader();
+    const seen: { ended: boolean; error?: string } = { ended: false };
+    socket.on("data", chunk => reader.push(chunk));
+    socket.on("end", () => (seen.ended = true));
+    socket.on("error", (error: NodeJS.ErrnoException) => (seen.error = error.code));
+    const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+    await once(socket, "connect");
+
+    socket.write(request(`/slow?id=${id}`) + request("/held", "Connection: close\r\n"));
+    expect(await (await fetch(`${origin}/entered?id=${id}`)).text()).toBe("entered");
+    // Not awaited: the server does not read while /held is parked, so this write
+    // completes only once the close lingers.
+    socket.write(`POST /upload HTTP/1.1\r\nHost: x\r\nContent-Length: ${upload.length}\r\n\r\n`);
+    socket.write(upload);
+    expect(await (await fetch(`${origin}/release?id=${id}`)).text()).toBe("released");
+    await closed;
+    results.push({
+      seen,
+      responses: reader.responses.map(({ statusLine, body }) => ({ statusLine, bodyLength: body.length })),
+    });
+  }
+
+  expect(results).toEqual(
+    Array.from({ length: 3 }, () => ({
+      seen: { ended: true },
+      responses: [
+        { statusLine: "HTTP/1.1 200 OK", bodyLength: BIG_BODY_LENGTH },
+        { statusLine: "HTTP/1.1 200 OK", bodyLength: 13 },
+      ],
+    })),
+  );
+  expect(await (await fetch(`${origin}/hits`)).json()).toEqual(
+    Array.from({ length: 3 }, () => ["/slow", "/held"]).flat(),
+  );
+});
 
 // A graceful stop() closes idle connections and marks busy ones to close once
 // their work is done. A request that was received and held behind the response

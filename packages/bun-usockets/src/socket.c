@@ -423,24 +423,6 @@ void us_socket_request_writable(struct us_socket_t *s) {
     us_internal_rearm_writable(s);
 }
 
-/* See libusockets.h. Reads the raw socket: for TLS the dropped bytes are
- * ciphertext, which is fine for a socket that is closed next. */
-void us_socket_discard_unread(struct us_socket_t *s, unsigned int max_bytes) {
-    if (us_socket_is_closed(s)) return;
-#ifdef _WIN32
-    const int recv_flags = MSG_PUSH_IMMEDIATE;
-#else
-    const int recv_flags = MSG_DONTWAIT;
-#endif
-    char buf[16 * 1024];
-    while (max_bytes) {
-        int length = max_bytes < sizeof(buf) ? (int) max_bytes : (int) sizeof(buf);
-        ssize_t received = bsd_recv(us_poll_fd(&s->p), buf, length, recv_flags);
-        if (received <= 0) break;
-        max_bytes -= (unsigned int) received;
-    }
-}
-
 /* See libusockets.h: whether a zero-progress write on a writable event proves
  * the peer is gone. Only the libuv backend has to ask the kernel. */
 int us_socket_stalled_write_means_peer_gone(struct us_socket_t *s) {

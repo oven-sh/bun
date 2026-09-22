@@ -164,6 +164,9 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
          * that runs after it (microtasks, the request body callback) can block,
          * reset the connection or end the process. */
         HTTP_SEND_WHEN_COMPLETE = 1 << 18,
+        /* Bun.serve: a close gate sent the FIN and left the socket open to drop
+         * what the peer still sends (HttpResponse::shutdownAndClose). */
+        HTTP_LINGERING_CLOSE = 1 << 19,
 
         /* Bits that describe the connection rather than the response in flight.
          * There is one HttpResponseData per socket, reused by every request on a

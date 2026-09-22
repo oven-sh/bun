@@ -56,12 +56,18 @@ public:
     void setTimeout(uint8_t seconds) {
         auto* data = getHttpResponseData();
         data->idleTimeout = seconds;
+        /* A lingering close owns the timeout (shutdownAndClose). */
+        if (data->state & HttpResponseData<SSL>::HTTP_LINGERING_CLOSE) [[unlikely]] {
+            return;
+        }
         Super::timeout(data->idleTimeout);
     }
 
     void resetTimeout() {
         auto* data = getHttpResponseData();
-
+        if (data->state & HttpResponseData<SSL>::HTTP_LINGERING_CLOSE) [[unlikely]] {
+            return;
+        }
         Super::timeout(data->idleTimeout);
     }
     /* Write an unsigned 32-bit integer in hex */
@@ -92,33 +98,55 @@ public:
         getHttpResponseData()->state |= HttpResponseData<SSL>::HTTP_WROTE_DATE_HEADER;
     }
 
-    /* Bun.serve, before a close. While requests are parked reads are paused, so
-     * what the peer sent since then is unread. A close over unread bytes resets
-     * the connection, and the kernel then drops what it has not sent yet: the
-     * peer loses the end of a complete response. A connection that closes
-     * dispatches none of those bytes, so they are read and dropped. A socket
-     * receive buffer bounds them. */
-    void discardBytesUnreadBehindParkedRequests(HttpResponseData<SSL> *httpResponseData) {
-        if (httpResponseData->parkedRequestBytes.isEmpty() && !httpResponseData->replayedRequestBytes) [[likely]] {
+    /* How long a close lingers, and how much it drops (onData counts). The
+     * timeout sweep runs every 4 seconds, so this is between 4 and 8 seconds. */
+    static constexpr unsigned int LINGERING_CLOSE_SECONDS = 8;
+    static constexpr unsigned int LINGERING_CLOSE_MAX_BYTES = 8 * 1024 * 1024;
+
+    /* Sends the FIN and closes: the end of every close gate. Bun.serve: reads are
+     * paused while requests are parked, so what the peer wrote since then is
+     * unread, and more can wait behind its closed receive window. A close over
+     * those bytes, or ahead of them, resets the connection, and the kernel then
+     * drops what it has not sent yet: the peer loses the end of a complete
+     * response. A connection that closes dispatches none of those bytes. So when
+     * some are queued the close lingers: FIN now, reads stay open and onData
+     * drops them, and the peer's FIN, the timeout or the byte limit closes the
+     * socket. */
+    void shutdownAndClose(HttpResponseData<SSL> *httpResponseData) {
+        if (httpResponseData->state & HttpResponseData<SSL>::HTTP_LINGERING_CLOSE) [[unlikely]] {
             return;
         }
-        if (!HttpContext<SSL>::fromSocket((us_socket_t *) this)->isNodeHttp()) {
-            us_socket_discard_unread((us_socket_t *) this, 8 * 1024 * 1024);
+        bool readsWerePaused = !httpResponseData->parkedRequestBytes.isEmpty() || httpResponseData->replayedRequestBytes;
+        if (readsWerePaused && !HttpContext<SSL>::fromSocket((us_socket_t *) this)->isNodeHttp()
+            && us_socket_queued_input((us_socket_t *) this) == LIBUS_QUEUED_INPUT_DATA) [[unlikely]] {
+            httpResponseData->state |= HttpResponseData<SSL>::HTTP_LINGERING_CLOSE;
+            httpResponseData->received_bytes_per_timeout = 0;
+            /* Can close the socket, which destructs httpResponseData. */
+            Super::resume();
+            if (!us_socket_is_closed((us_socket_t *) this)) {
+                Super::shutdown();
+                Super::timeout(LINGERING_CLOSE_SECONDS);
+            }
+            return;
         }
+        Super::shutdown();
+        /* We need to force close after sending FIN since we want to hinder
+         * clients from keeping to send their huge data */
+        Super::close();
     }
 
     /* Shutdown+close when the connection is marked to close (Connection:
      * close, peer FIN, close-when-idle), the response is complete and every
-     * outgoing byte has been flushed. Returns true when the socket was closed. */
+     * outgoing byte has been flushed. Returns true when the socket was closed or
+     * left to a lingering close: the caller is done with it either way. */
     bool closeIfDoneAndMarked(HttpResponseData<SSL> *httpResponseData) {
+        if (httpResponseData->state & HttpResponseData<SSL>::HTTP_LINGERING_CLOSE) [[unlikely]] {
+            return true;
+        }
         if (httpResponseData->shouldCloseConnection()) {
             if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
                 if (((AsyncSocket<SSL> *) this)->hasFullyDrained()) {
-                    discardBytesUnreadBehindParkedRequests(httpResponseData);
-                    ((AsyncSocket<SSL> *) this)->shutdown();
-                    /* We need to force close after sending FIN since we want to hinder
-                     * clients from keeping to send their huge data */
-                    ((AsyncSocket<SSL> *) this)->close();
+                    shutdownAndClose(httpResponseData);
                     return true;
                 }
             }

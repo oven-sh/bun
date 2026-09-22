@@ -336,6 +336,17 @@ private:
             /* Balance the us_socket_ref above — every other return path
              * reaches the unref via returnedData. */
             us_socket_unref(s);
+            /* Bun.serve: a lingering close drops what the peer still sends, up to
+             * a limit (HttpResponse::shutdownAndClose). */
+            if constexpr (!IsNodeHttp) {
+                auto *lingering = (HttpResponseData<SSL> *) us_socket_ext(s);
+                if (lingering->state & HttpResponseData<SSL>::HTTP_LINGERING_CLOSE) {
+                    lingering->received_bytes_per_timeout += (unsigned int) length;
+                    if (lingering->received_bytes_per_timeout > HttpResponse<SSL>::LINGERING_CLOSE_MAX_BYTES) {
+                        return ((AsyncSocket<SSL> *) s)->close();
+                    }
+                }
+            }
             return s;
         }
 
@@ -734,12 +745,13 @@ private:
             ((AsyncSocket<SSL> *) s)->uncork();
             /* For errors, we only deliver them "at most once". We don't care if they get halfways delivered or not. */
             us_socket_write(s, httpErrorResponses[httpErrorStatusCode].data(), (int) httpErrorResponses[httpErrorStatusCode].length());
-            if constexpr (!IsNodeHttp) {
-                ((HttpResponse<SSL> *) s)->discardBytesUnreadBehindParkedRequests(httpResponseData);
-            }
-            us_socket_shutdown(s);
             /* Close any socket on HTTP errors */
-            us_socket_close(s, 0, nullptr);
+            if constexpr (!IsNodeHttp) {
+                ((HttpResponse<SSL> *) s)->shutdownAndClose(httpResponseData);
+            } else {
+                us_socket_shutdown(s);
+                us_socket_close(s, 0, nullptr);
+            }
         }
 
         auto returnedData = result.returnedData;
@@ -785,11 +797,7 @@ private:
             if (httpResponseData->shouldCloseConnection()) {
                 if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
                     if (((AsyncSocket<SSL> *) s)->hasFullyDrained()) {
-                        ((HttpResponse<SSL> *) s)->discardBytesUnreadBehindParkedRequests(httpResponseData);
-                        ((AsyncSocket<SSL> *) s)->shutdown();
-                        /* We need to force close after sending FIN since we want to hinder
-                         * clients from keeping to send their huge data */
-                        ((AsyncSocket<SSL> *) s)->close();
+                        ((HttpResponse<SSL> *) s)->shutdownAndClose(httpResponseData);
                     }
                 }
             }
@@ -948,11 +956,7 @@ private:
                 }
             }
             if (responseDone && asyncSocket->hasFullyDrained()) {
-                reinterpret_cast<HttpResponse<SSL> *>(s)->discardBytesUnreadBehindParkedRequests(httpResponseData);
-                asyncSocket->shutdown();
-                /* We need to force close after sending FIN since we want to hinder
-                 * clients from keeping to send their huge data */
-                asyncSocket->close();
+                reinterpret_cast<HttpResponse<SSL> *>(s)->shutdownAndClose(httpResponseData);
             }
         }
 

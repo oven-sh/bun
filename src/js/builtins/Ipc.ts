@@ -23,7 +23,11 @@ export function serialize(message, handle: IpcHandle, options) {
   const net = require("node:net");
   if (handle instanceof net.Server) {
     const native = handle._handle;
-    if (!native) return null;
+    if (!native) {
+      // An http.Server listens through Bun.serve: it has no listener handle to send.
+      if (handle instanceof require("node:http").Server) throw $ERR_INVALID_HANDLE_TYPE();
+      return null;
+    }
     return [native, { cmd: "NODE_HANDLE", msg: message, type: "net.Server" }];
   }
   if (handle instanceof net.Socket) {

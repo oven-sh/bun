@@ -15,6 +15,7 @@ import {
 } from "harness";
 import { ChildProcess, exec, execFile, execFileSync, execSync, fork, spawn, spawnSync } from "node:child_process";
 import { getEventListeners, once, setMaxListeners } from "node:events";
+import net, { type AddressInfo } from "node:net";
 import os from "node:os";
 import { promisify } from "node:util";
 import path from "path";
@@ -558,6 +559,168 @@ describe("spawn()", () => {
       } finally {
         for (const p of [writer, p3]) p?.kill();
       }
+    });
+
+    // spawn() stops the parent's reads on a socket it hands to a child. A parent that keeps reading
+    // takes what arrives until its Readable is full, and those bytes never reach the child.
+    // Windows: spawn() does not accept a socket handle yet (EBADF from uv_spawn).
+    describe.skipIf(isWindows)("a net.Socket as the child's stdin", () => {
+      const size = 200_000;
+      const payload = Buffer.alloc(size, "a");
+      const countStdin = `let n = 0; process.stdin.on("data", d => (n += d.length)).on("end", () => console.log(n));`;
+
+      // Call this from the listener that receives the socket. It resolves once the child has read to EOF.
+      async function handOff(socket: net.Socket) {
+        const child = spawn(bunExe(), ["-e", countStdin], { env: bunEnv, stdio: [socket, "pipe", "inherit"] });
+        try {
+          let stdout = "";
+          child.stdout!.setEncoding("utf8").on("data", chunk => (stdout += chunk));
+          const [exitCode] = await once(child, "close");
+          return { childRead: Number(stdout), parentRead: socket.bytesRead, exitCode };
+        } finally {
+          socket.destroy();
+        }
+      }
+
+      it.concurrent("a socket accepted by a server", async () => {
+        const handedOff = Promise.withResolvers<Awaited<ReturnType<typeof handOff>>>();
+        const server = net.createServer(socket => {
+          socket.on("error", handedOff.reject);
+          handOff(socket).then(handedOff.resolve, handedOff.reject);
+        });
+        server.on("error", handedOff.reject).listen(0, "127.0.0.1");
+        await once(server, "listening");
+        const peer = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+        try {
+          peer.on("error", handedOff.reject).end(payload);
+          expect(await handedOff.promise).toEqual({ childRead: size, parentRead: 0, exitCode: 0 });
+        } finally {
+          peer.destroy();
+          server.close();
+        }
+      });
+
+      it.concurrent("a socket connected to a server", async () => {
+        const handedOff = Promise.withResolvers<Awaited<ReturnType<typeof handOff>>>();
+        const server = net.createServer(peer => peer.on("error", handedOff.reject).end(payload));
+        server.on("error", handedOff.reject).listen(0, "127.0.0.1");
+        await once(server, "listening");
+        try {
+          const socket = net.connect((server.address() as AddressInfo).port, "127.0.0.1", () =>
+            handOff(socket).then(handedOff.resolve, handedOff.reject),
+          );
+          socket.on("error", handedOff.reject);
+          expect(await handedOff.promise).toEqual({ childRead: size, parentRead: 0, exitCode: 0 });
+        } finally {
+          server.close();
+        }
+      });
+
+      // node restarts the reads here on the stream's next read(0), and the parent takes the child's bytes.
+      it.concurrent("a socket handed off from its 'data' listener", async () => {
+        const handedOff = Promise.withResolvers<Awaited<ReturnType<typeof handOff>>>();
+        const server = net.createServer(socket => {
+          socket.on("error", handedOff.reject).once("data", () => {
+            handOff(socket).then(handedOff.resolve, handedOff.reject);
+            peer.end(payload);
+          });
+        });
+        server.on("error", handedOff.reject).listen(0, "127.0.0.1");
+        await once(server, "listening");
+        const peer = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+        try {
+          peer.on("error", handedOff.reject).write("head");
+          expect(await handedOff.promise).toEqual({ childRead: size, parentRead: 4, exitCode: 0 });
+        } finally {
+          peer.destroy();
+          server.close();
+        }
+      });
+
+      // The stop holds only until the user reads again. Not concurrent: a parent that cannot take the
+      // socket back leaves the child waiting, and bun:test kills that child only for a serial test.
+      const takeBack = ["resume", "readable", "read(0)"];
+      it.each(takeBack)("the parent reads the rest with %s after the child exits", async how => {
+        const done = Promise.withResolvers<{ childRead: number; parentRead: number }>();
+        const readFirstChunk = `process.stdin.once("data", d => { console.log(d.length); process.exit(0); });`;
+        const server = net.createServer(socket => {
+          socket.on("error", done.reject);
+          let parentRead = 0;
+          const readAll = () => {
+            for (let chunk; (chunk = socket.read()) !== null; ) parentRead += chunk.length;
+          };
+          // read(0) restarts the reads for a 'readable' listener that was there before the hand-off.
+          if (how === "read(0)") socket.on("readable", readAll);
+          const child = spawn(bunExe(), ["-e", readFirstChunk], { env: bunEnv, stdio: [socket, "pipe", "inherit"] });
+          let stdout = "";
+          child.stdout!.setEncoding("utf8").on("data", chunk => (stdout += chunk));
+          child.on("close", () => {
+            socket.on("end", () => done.resolve({ childRead: Number(stdout), parentRead }));
+            if (how === "resume") socket.on("data", chunk => (parentRead += chunk.length)).resume();
+            else if (how === "readable") socket.on("readable", readAll);
+            else socket.read(0);
+            peer.end(payload);
+          });
+        });
+        server.on("error", done.reject).listen(0, "127.0.0.1");
+        await once(server, "listening");
+        const peer = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+        try {
+          peer.on("error", done.reject).write("head");
+          expect(await done.promise).toEqual({ childRead: 4, parentRead: size });
+        } finally {
+          peer.destroy();
+          server.close();
+        }
+      });
+
+      it.concurrent("a spawn that fails with ENOENT stops the socket too, as in node", async () => {
+        const failed = Promise.withResolvers<{ code?: string; isPaused: boolean }>();
+        const server = net.createServer(socket => {
+          socket.on("error", failed.reject);
+          const child = spawn("/does-not-exist/child", [], { stdio: [socket, "pipe", "inherit"] });
+          const isPaused = socket.isPaused();
+          child.on("error", (error: NodeJS.ErrnoException) => {
+            socket.destroy();
+            failed.resolve({ code: error.code, isPaused });
+          });
+        });
+        server.on("error", failed.reject).listen(0, "127.0.0.1");
+        await once(server, "listening");
+        const peer = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+        try {
+          peer.on("error", failed.reject);
+          expect(await failed.promise).toEqual({ code: "ENOENT", isPaused: true });
+        } finally {
+          peer.destroy();
+          server.close();
+        }
+      });
+
+      // The stopped socket must not hold the event loop. Its peer never closes, so a parent that
+      // still reads it, or that only paused it, never exits. Not concurrent: bun:test kills the
+      // processes of a test that timed out only when the test is serial.
+      it("the parent exits on its own after the child", async () => {
+        const parentSource = `
+          const net = require("net");
+          const { spawn } = require("child_process");
+          const server = net.createServer(socket => {
+            const child = spawn("sh", ["-c", "exit 0"], { stdio: [socket, "inherit", "inherit"] });
+            child.on("close", code => console.log("child closed", code));
+            server.close();
+          });
+          server.listen(0, "127.0.0.1", () => net.connect(server.address().port, "127.0.0.1").unref());
+        `;
+        await using parent = Bun.spawn({
+          cmd: [bunExe(), "-e", parentSource],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "inherit",
+        });
+        const [stdout, exitCode] = await Promise.all([parent.stdout.text(), parent.exited]);
+        expect(stdout).toBe("child closed 0\n");
+        expect(exitCode).toBe(0);
+      });
     });
 
     it("overlapped string shorthand behaves like pipe", async () => {

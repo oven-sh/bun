@@ -2624,7 +2624,7 @@ fn init_with_runtime_once(
     if Output::enable_ansi_colors_stderr() {
         manager.progress = Progress::default();
         manager.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
-        manager.progress.start(b"", 0);
+        let _ = manager.progress.start(b"", 0);
     } else {
         manager.options.log_level = package_manager_options::LogLevel::DefaultNoProgress;
     }

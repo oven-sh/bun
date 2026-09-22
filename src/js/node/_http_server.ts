@@ -2698,8 +2698,8 @@ function advanceResponsePipeline(server, socket) {
         if (kind === "raw") {
           // Buffered 1xx bytes: route through the same AsyncSocket buffer the
           // response's own writeHead/end use so they precede the final response.
-          noteResponseWrite(res);
           handle.writeInformational(op[1], op[2]);
+          noteResponseWrite(res);
           if (typeof op[3] === "function") process.nextTick(op[3]);
         } else if (kind === "write") {
           lastWriteResult = res.write(op[1], op[2], op[3]);
@@ -3033,7 +3033,8 @@ Object.defineProperty(ServerResponse.prototype, "headersSent", {
 });
 
 // A response write is activity on the connection's inactivity timeout
-// (socket.setTimeout / server.timeout), see kLastResponseWrite.
+// (socket.setTimeout / server.timeout), see kLastResponseWrite. Callers run
+// it after the native write: a write that throws is no activity, as in Node.js.
 function noteResponseWrite(res) {
   const socket = res[kSocket];
   if (socket == null || !socket.timeout) return;
@@ -3069,8 +3070,8 @@ ServerResponse.prototype._writeRaw = function (chunk, encoding, callback) {
   // Write through the response handle's AsyncSocket buffer (same path as
   // writeHead/end) so 1xx lines share ordering with the final response bytes;
   // socket.write() would land in the socket handle's separate stream buffer.
-  noteResponseWrite(this);
   this[kHandle].writeInformational(chunk, encoding);
+  noteResponseWrite(this);
   if (typeof callback === "function") process.nextTick(callback);
   return true;
 };
@@ -3170,10 +3171,10 @@ ServerResponse.prototype.writeContinue = function (cb) {
     this._sent100 = true;
     return;
   }
-  noteResponseWrite(this);
   const native = this.socket?.[kHandle]?.response;
   if (native) native.writeContinue();
   else this[kHandle]?.writeContinue?.();
+  noteResponseWrite(this);
   this._sent100 = true;
   cb?.();
 };
@@ -3270,7 +3271,6 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     // and will not throw or emit an error
     return true;
   }
-  noteResponseWrite(this);
   const sentState = NodeHTTPHeaderState.sent;
   if (headerState !== sentState) {
     {
@@ -3318,6 +3318,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
       handle.end(chunk, encoding, undefined, strictContentLength(this));
     }
   }
+  noteResponseWrite(this);
   this._header = " ";
   const req = this.req;
   if (!req._consuming && !req?._readableState?.resumeScheduled) {
@@ -3441,10 +3442,6 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
     return true;
   }
 
-  // Node's write_() drops a write to a response without a body (HEAD, 204, 304)
-  // before it reaches the socket, so it is no activity.
-  // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L983
-  if (this._hasBody) noteResponseWrite(this);
   if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
     handle.cork(() => {
       const renderedHeaders = renderNativeHeaders(this);
@@ -3470,6 +3467,11 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
   } else {
     result = handle.write(chunk, encoding, allowWritesToContinue.bind(this), strictContentLength(this));
   }
+
+  // Node's write_() drops a write to a response without a body (HEAD, 204, 304)
+  // before it reaches the socket, so it is no activity.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L983
+  if (this._hasBody) noteResponseWrite(this);
 
   if (result < 0) {
     if (callback) {
@@ -3629,7 +3631,6 @@ ServerResponse.prototype._send = function (data, encoding, callback, _byteLength
     return OutgoingMessagePrototype._send.$apply(this, arguments);
   }
 
-  noteResponseWrite(this);
   if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
     handle.cork(() => {
       const renderedHeaders = renderNativeHeaders(this);
@@ -3652,6 +3653,7 @@ ServerResponse.prototype._send = function (data, encoding, callback, _byteLength
   } else {
     handle.write(data, encoding, callback, strictContentLength(this));
   }
+  noteResponseWrite(this);
 };
 
 const kSnapshotStatusCode = Symbol("kSnapshotStatusCode");
@@ -3760,7 +3762,6 @@ ServerResponse.prototype.flushHeaders = function () {
 
   const handle = this[kHandle];
   if (handle) {
-    noteResponseWrite(this);
     if (this[headerStateSymbol] === NodeHTTPHeaderState.assigned) {
       this[headerStateSymbol] = NodeHTTPHeaderState.sent;
 
@@ -3780,6 +3781,7 @@ ServerResponse.prototype.flushHeaders = function () {
       }
     }
     handle.flushHeaders();
+    noteResponseWrite(this);
   } else {
     // Standalone path: _storeHeader rendered this._header; _send('') pushes
     // it to the assigned socket like OutgoingMessage.flushHeaders does.

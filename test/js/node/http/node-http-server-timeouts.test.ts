@@ -574,15 +574,32 @@ describe("node:http response writes restart the socket inactivity timeout", () =
     }
   });
 
-  test.concurrent("a write that a response without a body discards does not restart the timer", async () => {
-    // Node drops a write to a HEAD response before it reaches the socket (write_), so a
-    // handler that keeps writing is still timed out. A server that ignores every write
-    // passes this too: it guards against counting the writes that Node drops.
+  // Writes that never reach the socket in Node: write_() drops a write to a response without
+  // a body, and it validates before it sends anything. A server that ignores every write
+  // passes these too. They guard against counting such a write as activity, which keeps the
+  // connection of a handler that writes forever open.
+  const noActivity: Record<string, { request: string; setup: (res: http.ServerResponse) => void }> = {
+    "a write that a HEAD response discards": {
+      request: "HEAD / HTTP/1.1\r\nHost: a\r\n\r\n",
+      setup: res => res.writeHead(200, { "Content-Type": "text/event-stream" }),
+    },
+    "a write that throws": {
+      request: GET,
+      // The implicit header is invalid, so every write throws before it sends anything.
+      setup: res => (res.statusCode = 1000),
+    },
+  };
+
+  test.concurrent.each(Object.keys(noActivity))("%s does not restart the timer", async name => {
     let reference: ReturnType<typeof setTimeout> | undefined;
     const { promise: settled, resolve: onSettled } = Promise.withResolvers<string>();
     const server = http.createServer((req, res) => {
-      res.writeHead(200, { "Content-Type": "text/event-stream" });
-      const interval = setInterval(() => res.write("data: ping\n\n"), TIMEOUT / 8);
+      noActivity[name].setup(res);
+      const interval = setInterval(() => {
+        try {
+          res.write("data: ping\n\n");
+        } catch {}
+      }, TIMEOUT / 8);
       res.on("close", () => clearInterval(interval));
       // Long after the 'timeout' of a connection without activity.
       reference = setTimeout(() => onSettled("the reference timer"), TIMEOUT * 2.5);
@@ -595,7 +612,7 @@ describe("node:http response writes restart the socket inactivity timeout", () =
     const port = await listen(server);
     let client: net.Socket | undefined;
     try {
-      client = await send(port, "HEAD / HTTP/1.1\r\nHost: a\r\n\r\n");
+      client = await send(port, noActivity[name].request);
       expect(await settled).toBe("'timeout'");
     } finally {
       clearTimeout(reference);

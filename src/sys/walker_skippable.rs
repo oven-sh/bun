@@ -99,21 +99,16 @@ impl Walker {
                             base.kind
                         };
                         #[cfg(not(windows))]
-                        let kind: sys::EntryKind =
-                            if kind == sys::EntryKind::SymLink && self.follow_file_symlinks {
-                                let dir_fd = self.stack[top_idx].iter.dir();
-                                match sys::fstatat(dir_fd, base.name.as_zstr()) {
-                                    Ok(stat_buf)
-                                        if sys::kind_from_mode(stat_buf.st_mode as sys::Mode)
-                                            == sys::EntryKind::File =>
-                                    {
-                                        sys::EntryKind::File
-                                    }
-                                    _ => kind,
-                                }
-                            } else {
-                                kind
-                            };
+                        let kind: sys::EntryKind = if kind == sys::EntryKind::SymLink
+                            && self.follow_file_symlinks
+                            && is_absolute_symlink_to_file(
+                                self.stack[top_idx].iter.dir(),
+                                base.name.as_zstr(),
+                            ) {
+                            sys::EntryKind::File
+                        } else {
+                            kind
+                        };
                         #[cfg(windows)]
                         let kind: sys::EntryKind = base.kind;
 
@@ -217,6 +212,23 @@ impl Walker {
             }
         }
         Ok(None)
+    }
+}
+
+/// A relative symlink resolves differently once it is linked or copied
+/// elsewhere, so only an absolute one can stand in for its target file.
+#[cfg(not(windows))]
+fn is_absolute_symlink_to_file(dir_fd: Fd, name: &bun_core::ZStr) -> bool {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    match sys::readlinkat(dir_fd, name, &mut buf[..]) {
+        Ok(len) if len > 0 && buf[0] == b'/' => {}
+        _ => return false,
+    }
+    match sys::fstatat(dir_fd, name) {
+        Ok(stat_buf) => {
+            sys::kind_from_mode(stat_buf.st_mode as sys::Mode) == sys::EntryKind::File
+        }
+        Err(_) => false,
     }
 }
 

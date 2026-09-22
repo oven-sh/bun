@@ -5,7 +5,7 @@
 // https://github.com/oven-sh/bun/issues/43788
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { cpSync, lstatSync, mkdirSync, readdirSync, renameSync, rmSync, symlinkSync } from "node:fs";
+import { cpSync, lstatSync, mkdirSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 // Replace every regular file under `dir` with a symlink to a copy of it in `store`.
@@ -61,13 +61,19 @@ describe.skipIf(isWindows)("install from a cache whose files are symlinks", () =
         const cached = readdirSync(cache).filter(name => name.startsWith("@T@"));
         expect(cached).toHaveLength(1);
         expect(symlinkFiles(join(cache, cached[0]), store)).toBeGreaterThan(0);
+        // A relative symlink resolves somewhere else once it is linked into
+        // node_modules, so the installer leaves it out instead of dangling.
+        writeFileSync(join(cache, "outside.js"), "module.exports = 1;");
+        symlinkSync(join("..", "outside.js"), join(cache, cached[0], "relative.js"));
         rmSync(join(String(dir), "node_modules"), { recursive: true });
 
         await install(String(dir), cache, ["--backend", backend, "--linker", linker]);
-        expect(await Bun.file(join(String(dir), "node_modules", "bar", "package.json")).json()).toMatchObject({
+        const installed = join(String(dir), "node_modules", "bar");
+        expect(await Bun.file(join(installed, "package.json")).json()).toMatchObject({
           name: "bar",
           version: "0.0.2",
         });
+        expect(() => lstatSync(join(installed, "relative.js"))).toThrow("ENOENT");
       });
     });
   });

@@ -1154,8 +1154,8 @@ it.skipIf(isWindows)("a write() that fails while another is pending rejects the 
       bunExe(),
       "-e",
       `
-const { createSocketPair } = require("bun:internal-for-testing");
-const fs = require("node:fs");
+import { createSocketPair } from "bun:internal-for-testing";
+import fs from "node:fs";
 process.on("unhandledRejection", e => {
   console.error("unhandledRejection " + e?.code);
 });

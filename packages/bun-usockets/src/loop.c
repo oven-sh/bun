@@ -878,12 +878,6 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
              * that end()ed before reading the reply), the case that truncated; once
              * read_eof is set there is nothing left to drain and deferring would only
              * lose the close. Error-flagged events keep the error path. */
-            if (hangup && s && s->defer_error_until_read && s->flags.last_write_failed &&
-                !us_socket_is_closed(s) && !us_socket_is_shut_down(s)) {
-                /* Not our shutdown, so the peer reset, and the send that failed on it took the socket error: the pending write cannot complete. */
-                s = us_internal_socket_close_raw(s, LIBUS_ECONNRESET, NULL);
-                return;
-            }
             const int eof_deferrable = eof && s && !error && !us_socket_is_closed(s) && !s->read_eof;
             if (eof_deferrable && s->flags.is_paused) {
 #ifdef LIBUS_USE_EPOLL

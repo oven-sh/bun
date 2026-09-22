@@ -76,8 +76,6 @@ extern "C" JSC::EncodedJSValue Bun__CreateJSCFFIFunction(
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(function));
 }
 
-// After this, a call to a function of the library throws a TypeError. It must run before the code the
-// functions point into goes away.
 extern "C" void Bun__JSCFFILibraryCloseFunctions(Zig::GlobalObject* globalObject, JSC::EncodedJSValue libraryValue)
 {
     auto& vm = JSC::getVM(globalObject);

@@ -9578,11 +9578,7 @@ pub(crate) fn zig_delete_tree(
 ) -> crate::Result<()> {
     let initial_iterable_dir =
         match zig_delete_tree_open_initial_subpath(self_, sub_path, kind_hint) {
-            // `unlinkat` reports EINVAL for a name NT rejects. That is a name
-            // no file can have (`a*b`, ENOENT in node), or a path that exists
-            // (#13523), so the open path decides. Not for listed entries: the
-            // walkers below treat ENOENT on one as "already removed".
-            // https://github.com/libuv/libuv/blob/5152db2cbfeb5582e9c27c5ea1dba2cd9e10759b/src/win/error.c#L138
+            // Operand only: `unlinkat` reports EINVAL for a name NT rejects (#13523).
             #[cfg(windows)]
             Err(crate::Error::BadPathName)
                 if matches!(dt_open_dir(self_, sub_path), Err(E::ENOENT)) =>

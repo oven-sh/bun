@@ -959,8 +959,7 @@ impl ShellRmTask {
         Ok(waiting)
     }
 
-    /// `unlinkat` reports EINVAL for a name NT rejects. That is a name no file
-    /// can have (`a*b`), or a file that exists (#13523), so lstat decides.
+    /// `unlinkat` reports EINVAL for a name NT rejects, also when the file exists (#13523).
     #[cfg(windows)]
     fn missing_if_name_rejected(
         &self,
@@ -968,11 +967,10 @@ impl ShellRmTask {
         path: &ZStr,
         e: bun_sys::Error,
     ) -> bun_sys::Maybe<()> {
-        // Operands only: a listed entry exists, even with a name NT cannot open.
         // SAFETY: `dir_task` is live; `remove_entry_file` failed before any hand-off.
-        debug_assert!(unsafe { (*dir_task).parent_task.is_null() });
-        // Not `shell_lstatat`: its Win32 path stops at MAX_PATH, so it reports
-        // ENOENT for a deep file that the NT path of the unlink did reach.
+        let is_operand = unsafe { (*dir_task).parent_task.is_null() };
+        debug_assert!(is_operand, "a listed entry exists, whatever its name");
+        // `shell_lstatat` stops at MAX_PATH. The unlink does not.
         let missing = e.get_errno() == E::EINVAL
             && bun_sys::lstatat(self.cwd, path).is_err_and(|err| err.get_errno() == E::ENOENT);
         if !missing {

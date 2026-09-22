@@ -133,6 +133,8 @@ describe("bundler", () => {
         console.log(types.isMap(new Map()), types.isSet(new Set()), types.isWeakMap(new WeakMap()), types.isMap(new Set()));
         console.log(types.isPromise(Promise.resolve()), types.isPromise({ then() {} }));
         console.log(types.isNativeError(new TypeError()), types.isNativeError(tag("Error")), types.isNativeError(Object.create(Error.prototype)));
+        const masked = Object.defineProperties(new Error(), { [Symbol.toStringTag]: { value: "X" }, message: { get() { throw 1; } } });
+        console.log(types.isNativeError(masked));
         console.log(types.isAsyncFunction(async () => {}), types.isAsyncFunction(async function () {}.bind(null)), types.isGeneratorFunction(function* () {}));
         console.log(types.isGeneratorObject((function* () {})()), types.isGeneratorObject([].values()));
         console.log(types.isArgumentsObject((function () { return arguments; })()), types.isArgumentsObject(tag("Arguments")));
@@ -144,7 +146,7 @@ describe("bundler", () => {
     target: "browser",
     run: {
       stdout:
-        "object true\ntrue false false\ntrue false false\ntrue true true false\ntrue false\ntrue false false\ntrue false true\ntrue false\ntrue false\ntrue false true\ntrue false false\ntrue true true",
+        "object true\ntrue false false\ntrue false false\ntrue true true false\ntrue false\ntrue false false\ntrue\ntrue false true\ntrue false\ntrue false\ntrue false true\ntrue false false\ntrue true true",
     },
   });
   // The polyfill is plain JS bundled into the user's output, so it cannot use

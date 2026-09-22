@@ -455,9 +455,8 @@ function reduceToSingleString(output, base, braces) {
 //   Symbol.toStringTag is "Module" looks the same as an empty namespace.
 // - isArgumentsObject: an arguments object whose Symbol.toStringTag is a
 //   getter reports false, since reading the tag would run the getter.
-// - isNativeError: for an error whose Symbol.toStringTag hides [[ErrorData]],
-//   it clones the error with structuredClone, which reads its name, message
-//   and stack.
+// - isNativeError: it uses Error.isError where the browser has it. Without
+//   it, an error whose Symbol.toStringTag hides [[ErrorData]] reports false.
 // - isProxy: a proxy cannot be detected from JavaScript.
 // isExternal and isKeyObject are always false: neither kind of object exists
 // in a browser.
@@ -528,16 +527,6 @@ export const types = /* @__PURE__ */ (() => {
       return null;
     }
   };
-  // structuredClone serializes a value as an error only if it has [[ErrorData]]
-  // (HTML "StructuredSerializeInternal"), which makes it a brand check.
-  const hasErrorData = v => {
-    if (typeof structuredClone !== "function") return false;
-    try {
-      return structuredClone(v) instanceof Error;
-    } catch {
-      return false;
-    }
-  };
 
   const isNumberObject = isBoxed(Number.prototype.valueOf);
   const isStringObject = isBoxed(String.prototype.valueOf);
@@ -577,13 +566,10 @@ export const types = /* @__PURE__ */ (() => {
       const tag = Object.getOwnPropertyDescriptor(v, Symbol.toStringTag);
       return tag !== undefined && tag.value === "Module" && !tag.writable && !tag.configurable;
     },
-    isNativeError: v =>
-      isObject(v) &&
-      (tagOf(v) === undefined
-        ? objectToString.call(v) === "[object Error]"
-        : // A tag hides [[ErrorData]] from toString. Only an object on the
-          // Error prototype chain is cloned, so an unrelated spoof is not.
-          Error.prototype.isPrototypeOf(v) && hasErrorData(v)),
+    isNativeError:
+      typeof Error.isError === "function"
+        ? v => Error.isError(v)
+        : v => isObject(v) && tagOf(v) === undefined && objectToString.call(v) === "[object Error]",
     isNumberObject,
     isPromise: v => typeof Promise === "function" && v instanceof Promise,
     isProxy: () => false,

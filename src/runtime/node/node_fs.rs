@@ -941,39 +941,32 @@ mod _async_tasks {
         }
 
         pub(crate) fn run_from_js_thread(&mut self) -> JsResult<()> {
-            // SAFETY: self was Box::leak'd in create(); destroy() runs exactly once on scope exit
-            let _deinit =
-                scopeguard::guard(core::ptr::from_mut(self), |p| unsafe { Self::destroy(p) });
-            // Move `result` out so the `global_object()` `&self` borrow can coexist
-            // with consuming it below; the sentinel left behind is dropped in `destroy()`.
             let result = core::mem::replace(&mut self.result, Err(sys::Error::default()));
-            let global_object = self.global_object();
+            let completion = core::mem::replace(
+                &mut self.completion,
+                FsCompletion::Promise(JSPromiseStrong::empty()),
+            );
+            let global_ref = self.global_object;
+            let tracker = self.tracker;
+            // The arguments pin their buffers. A callback runs inside `resolve`/`reject`, and a pinned buffer cannot be transferred.
+            // SAFETY: self was Box::leak'd in create(); destroyed exactly once, here, and not read again.
+            unsafe { Self::destroy(core::ptr::from_mut(self)) };
+
+            let global_object = global_ref.get();
             let success = matches!(result, Ok(_));
-            let completion = &self.completion;
-            let result = match result {
-                Err(err) => match completion.error_to_js(global_object, &err) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        return completion.reject(global_object, Err(e));
-                    }
-                },
-                Ok(res) => match FsReturn::fs_to_js(res, global_object) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        return completion.reject(global_object, Err(e));
-                    }
-                },
+            let converted = match result {
+                Err(err) => completion.error_to_js(global_object, &err),
+                Ok(res) => FsReturn::fs_to_js(res, global_object),
             };
             completion.ensure_still_alive();
 
-            let _dispatch = self.tracker.dispatch(global_object);
+            let _dispatch = tracker.dispatch(global_object);
 
-            if success {
-                completion.resolve(global_object, result)?;
-            } else {
-                completion.reject(global_object, Ok(result))?;
+            match converted {
+                Err(e) => completion.reject(global_object, Err(e)),
+                Ok(result) if success => completion.resolve(global_object, result),
+                Ok(result) => completion.reject(global_object, Ok(result)),
             }
-            Ok(())
         }
 
         /// SAFETY: `this` must be the pointer Box::leak'd in `create()`; called exactly once.
@@ -1313,15 +1306,20 @@ mod _async_tasks {
         ) -> JsResult<()> {
             match self {
                 Self::Promise(promise) => promise.get().reject(global, value),
+                // The error value is built exactly as `JSPromise::reject` builds it.
                 Self::Callback(callback) => {
                     let error = match value {
                         Ok(error) => error,
-                        Err(thrown) => {
-                            let exception = global.take_exception(thrown);
+                        Err(bun_jsc::JsError::OutOfMemory) => global.create_out_of_memory_error(),
+                        Err(bun_jsc::JsError::Terminated) => {
+                            return Err(bun_jsc::JsError::Terminated);
+                        }
+                        Err(bun_jsc::JsError::Thrown) => {
+                            let exception = global.take_exception(bun_jsc::JsError::Thrown);
                             if exception.is_termination_exception() {
-                                return Err(bun_jsc::JsError::Terminated);
+                                return Err(bun_jsc::top_exception_scope::thrown(global));
                             }
-                            exception
+                            exception.to_error().unwrap_or(exception)
                         }
                     };
                     Self::call(global, callback.get(), &[error]);
@@ -1375,36 +1373,29 @@ mod _async_tasks {
 
             let success = this.result.is_ok();
             let completion = &js.completion;
-            let result = match core::mem::replace(&mut this.result, Err(sys::Error::default())) {
-                Err(err) => match completion.error_to_js(global_object, &err) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        return completion.reject(global_object, Err(e));
-                    }
-                },
-                Ok(res) => match FsReturn::fs_to_js(res, global_object) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        return completion.reject(global_object, Err(e));
-                    }
-                },
+            let converted = match core::mem::replace(&mut this.result, Err(sys::Error::default())) {
+                Err(err) => completion.error_to_js(global_object, &err),
+                Ok(res) => FsReturn::fs_to_js(res, global_object),
             };
             completion.ensure_still_alive();
 
-            if Self::HAVE_ABORT_SIGNAL {
-                if let Some(signal) = this.args.signal() {
-                    if let Some(abort_error) = signal.node_abort_error_if_aborted(global_object) {
-                        return completion.reject(global_object, Ok(abort_error));
-                    }
-                }
-            }
-
-            if success {
-                completion.resolve(global_object, result)?;
+            let aborted = if Self::HAVE_ABORT_SIGNAL && converted.is_ok() {
+                this.args
+                    .signal()
+                    .and_then(|signal| signal.node_abort_error_if_aborted(global_object))
             } else {
-                completion.reject(global_object, Ok(result))?;
+                None
+            };
+
+            // The arguments pin their buffers. A callback runs inside `resolve`/`reject`, and a pinned buffer cannot be transferred.
+            drop(this);
+
+            match (converted, aborted) {
+                (Err(e), _) => completion.reject(global_object, Err(e)),
+                (Ok(_), Some(abort_error)) => completion.reject(global_object, Ok(abort_error)),
+                (Ok(result), None) if success => completion.resolve(global_object, result),
+                (Ok(result), None) => completion.reject(global_object, Ok(result)),
             }
-            Ok(())
         }
     }
 
@@ -2333,13 +2324,8 @@ mod _async_tasks {
             let global_object = cx.global();
             let success = this.pending_err.is_none();
             let completion = &js.completion;
-            let result = if let Some(err) = &this.pending_err {
-                match completion.error_to_js(global_object, err) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        return completion.reject(global_object, Err(e));
-                    }
-                }
+            let converted = if let Some(err) = &this.pending_err {
+                completion.error_to_js(global_object, err)
             } else {
                 let res = match core::mem::replace(
                     &mut this.result_list,
@@ -2351,22 +2337,16 @@ mod _async_tasks {
                     ResultListEntryValue::Buffers(v) => ret::Readdir::Buffers(v.into_boxed_slice()),
                     ResultListEntryValue::Files(v) => ret::Readdir::Files(v.into_boxed_slice()),
                 };
-                match res.to_js(global_object) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        return completion.reject(global_object, Err(e));
-                    }
-                }
+                res.to_js(global_object)
             };
             completion.ensure_still_alive();
             let _dispatch = js.tracker.dispatch(global_object);
             drop(this);
-            if success {
-                completion.resolve(global_object, result)?;
-            } else {
-                completion.reject(global_object, Ok(result))?;
+            match converted {
+                Err(e) => completion.reject(global_object, Err(e)),
+                Ok(result) if success => completion.resolve(global_object, result),
+                Ok(result) => completion.reject(global_object, Ok(result)),
             }
-            Ok(())
         }
     }
 

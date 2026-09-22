@@ -7297,6 +7297,33 @@ describe("a process.nextTick queued by an fs callback runs before a microtask it
   });
 });
 
+// The operation pins the buffer while it runs. Node can transfer it from the callback.
+describe("the buffer of a finished operation can be transferred from its callback", () => {
+  type Start = (fd: number, view: Uint8Array, callback: () => void) => void;
+  const cases: Array<[string, Start]> = [
+    ["read", (fd, view, cb) => fs.read(fd, view, 0, view.byteLength, 0, cb)],
+    ["readv", (fd, view, cb) => fs.readv(fd, [view], 0, cb)],
+    ["write", (fd, view, cb) => fs.write(fd, view, 0, view.byteLength, 0, cb)],
+    ["writev", (fd, view, cb) => fs.writev(fd, [view], 0, cb)],
+  ];
+
+  it.each(cases)("%s", async (_name, start) => {
+    using dir = tempDir("fs-callback-transfer", { "file.txt": "hello world" });
+    const fd = openSync(join(String(dir), "file.txt"), "r+");
+    try {
+      const buffer = new ArrayBuffer(8);
+      const { promise, resolve } = Promise.withResolvers<{ source: number; moved: number }>();
+      start(fd, new Uint8Array(buffer), () => {
+        const moved = structuredClone(buffer, { transfer: [buffer] });
+        resolve({ source: buffer.byteLength, moved: moved.byteLength });
+      });
+      expect(await promise).toEqual({ source: 0, moved: 8 });
+    } finally {
+      closeSync(fd);
+    }
+  });
+});
+
 describe("fs.Utf8Stream", () => {
   // A write started from the reopen 'ready' listener is still in flight when the
   // reopen path announces 'drain'; the write's own completion is what must emit it.

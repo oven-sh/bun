@@ -12,6 +12,7 @@ import {
   isMacOS,
   isPosix,
   isWindows,
+  spawnLookupLoop,
   tempDir,
   tempDirWithFiles,
   tmpdirSync,
@@ -3278,25 +3279,7 @@ it.skipIf(!isMacOS)(
     symlinkSync(link, symlink);
     expect(statSync(link).nlink).toBe(2);
 
-    // Looks the file up under its other name until this test kills it, or until its parent is gone.
-    const lookupLoop = `
-      const { statSync, writeSync } = require("node:fs");
-      const path = process.argv[1];
-      const parent = process.ppid;
-      statSync(path);
-      writeSync(1, "ready\\n");
-      while (process.ppid === parent) for (let i = 0; i < 4096; i++) statSync(path);
-    `;
-    await using lookups = Bun.spawn({
-      cmd: [bunExe(), "-e", lookupLoop, original],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "inherit",
-    });
-    const reader = lookups.stdout.getReader();
-    const { value } = await reader.read();
-    reader.releaseLock();
-    expect(new TextDecoder().decode(value)).toBe("ready\n");
+    await using lookups = await spawnLookupLoop(original);
 
     const seen: Record<string, number> = {};
     const count = (path: string) => void (seen[path] = (seen[path] ?? 0) + 1);

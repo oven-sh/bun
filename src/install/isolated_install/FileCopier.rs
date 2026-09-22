@@ -203,8 +203,7 @@ impl FileCopier {
                     }
                 };
 
-                // A stale symlink from an earlier install of the same folder must not
-                // redirect the write: ELOOP from O_NOFOLLOW replaces it.
+                // O_NOFOLLOW: a stale symlink from an earlier install is replaced, not written through.
                 let create = || {
                     let flags = bun_sys::O::CREAT
                         | bun_sys::O::WRONLY

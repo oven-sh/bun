@@ -1498,6 +1498,157 @@ describe("toBuffer borrowed-pointer ownership (no bad-free on GC)", () => {
   );
 });
 
+// The collector calls the deallocator, and JS cannot run during a collection, so the call is queued for
+// the JS thread. Subprocess because unpatched builds crash when the collection runs on the JS thread, and
+// deadlock when it ends on the collector thread.
+describe("a JSCallback as the deallocator of toArrayBuffer() and toBuffer()", () => {
+  const passedDirectly = `deallocator.ptr`;
+  // The deallocator is a C function, which calls the JSCallback from inside the collection.
+  const calledFromC = `(() => {
+    const { symbols } = dlopen(process.env.FFI_FIXTURE_PATH, {
+      setForwardedDeallocator: { args: ["ptr"], returns: "void" },
+      getForwardingDeallocator: { args: [], returns: "ptr" },
+    });
+    symbols.setForwardedDeallocator(deallocator.ptr);
+    return symbols.getForwardingDeallocator();
+  })()`;
+
+  const collectOnJSThread = `
+    globalThis.buffers = null;
+    Bun.gc(true);
+    if (freed.size) throw new Error("the deallocator ran inside the collection");
+    for (let i = 0; i < 100 && freed.size < count; i++) {
+      await nextTick();
+      Bun.gc(true);
+    }
+  `;
+  // The JS thread parks without heap access during an idle collection, so its end phase runs on the collector thread.
+  const collectWhileParked = `
+    // Old objects: only a full collection frees them, and the next one is the idle one.
+    Bun.gc(true);
+    await nextTick();
+    globalThis.buffers = null;
+    // Keeps the parked process alive, and ends it if the calls never arrive.
+    const deadline = setTimeout(() => process.exit(1), 20_000);
+    await allFreed;
+    clearTimeout(deadline);
+  `;
+  const idleCollectionEnv = {
+    BUN_IDLE_GC_SECONDS: "1",
+    BUN_GC_TIMER_DISABLE: undefined,
+    BUN_GC_TIMER_INTERVAL: undefined,
+    BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS: "0",
+  };
+
+  async function run(deallocatorPointer, collect, env = {}) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import { dlopen, JSCallback, ptr, toArrayBuffer, toBuffer } from "bun:ffi";
+        const count = 64, size = 16;
+        const backing = new Uint8Array(count * size);
+        const base = ptr(backing);
+        const freed = new Map();
+        const { promise: allFreed, resolve } = Promise.withResolvers();
+        let repeated = 0;
+        const deallocator = new JSCallback(
+          (bytes, context) => {
+            if (freed.has(context)) repeated++;
+            freed.set(context, bytes);
+            if (freed.size === count) resolve();
+          },
+          { args: ["ptr", "ptr"], returns: "void" },
+        );
+        const deallocatorPointer = ${deallocatorPointer};
+        globalThis.buffers = [];
+        for (let i = 0; i < count; i++) {
+          buffers.push((i & 1 ? toBuffer : toArrayBuffer)(base, i * size, size, i + 1, deallocatorPointer));
+        }
+        const nextTick = () => new Promise(resolve => setImmediate(resolve));
+        ${collect}
+        let wrongArguments = 0;
+        for (let i = 0; i < count; i++) if (freed.get(i + 1) !== base + i * size) wrongArguments++;
+        console.log(JSON.stringify({ calls: freed.size, repeated, wrongArguments }));
+        deallocator.close();
+        `,
+      ],
+      env: { ...bunEnv, FFI_FIXTURE_PATH, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { result: JSON.parse(stdout.trim() || "null"), stderr, exitCode, signalCode: proc.signalCode };
+  }
+  const allCallsArrived = {
+    result: { calls: 64, repeated: 0, wrongArguments: 0 },
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  };
+
+  it.concurrent("a collection on the JS thread", async () => {
+    expect(await run(passedDirectly, collectOnJSThread)).toEqual(allCallsArrived);
+  });
+
+  it.concurrent.skipIf(!FFI_FIXTURE_PATH)("a C deallocator that calls the JSCallback", async () => {
+    expect(await run(calledFromC, collectOnJSThread)).toEqual(allCallsArrived);
+  });
+
+  // Windows keeps the collection on the JS thread.
+  it.concurrent.skipIf(isWindows)(
+    "an idle collection that ends on the collector thread",
+    async () => {
+      expect(await run(passedDirectly, collectWhileParked, idleCollectionEnv)).toEqual(allCallsArrived);
+    },
+    30_000,
+  );
+
+  // The last sweep of a worker's heap frees the buffers that are still alive. JS cannot run in a VM that is
+  // being destroyed, so those calls are dropped. 'close' fires after the worker's VM is destroyed.
+  it.concurrent("a Worker that exits while its buffers are alive", async () => {
+    using dir = tempDir("ffi-jscallback-deallocator-worker", {
+      "main.js": `
+        const worker = new Worker(new URL("./worker.js", import.meta.url).href);
+        await new Promise((resolve, reject) => {
+          worker.onmessage = resolve;
+          worker.onerror = reject;
+        });
+        const closed = new Promise(resolve => worker.addEventListener("close", resolve));
+        worker.terminate();
+        await closed;
+        console.log("done");
+      `,
+      "worker.js": `
+        import { JSCallback, ptr, toArrayBuffer } from "bun:ffi";
+        const count = 64, size = 16;
+        const backing = new Uint8Array(count * size);
+        // A first call that resolves a variable is what a debug build asserts on in a VM that is shutting down.
+        let calls = 0;
+        const deallocator = new JSCallback(() => { calls++; }, { args: ["ptr", "ptr"], returns: "void" });
+        globalThis.buffers = [];
+        for (let i = 0; i < count; i++) buffers.push(toArrayBuffer(ptr(backing), i * size, size, deallocator.ptr));
+        postMessage("made");
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "done\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+});
+
 // toBuffer hands an arbitrary (pointer, byteLength) pair straight to the Buffer
 // hand-off that spawnSync, Bun.$ and others use for their output. That makes it
 // the one way to reach the hand-off with a byteLength above kMaxLength (2^32)

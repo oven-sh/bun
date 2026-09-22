@@ -501,6 +501,22 @@ toArrayBuffer(
 );
 ```
 
+The callback can also be the `ptr` of a `JSCallback`. JavaScript cannot run during a garbage collection, so Bun queues the call and runs the function on the JavaScript thread after the collection. The same applies when a C callback calls a `JSCallback` from inside the collection: the C caller gets `0` back, as it does from a thread-safe callback. Keep the `JSCallback` open until the last call arrives.
+
+```ts
+import { JSCallback, toArrayBuffer } from "bun:ffi";
+
+const deallocator = new JSCallback(
+  (bytes, deallocatorContext) => {
+    // runs on the JavaScript thread, after the collection that freed the ArrayBuffer
+    myNativeLibraryFree(bytes);
+  },
+  { args: ["ptr", "ptr"], returns: "void" },
+);
+
+toArrayBuffer(bytes, byteOffset, byteLength, deallocator.ptr);
+```
+
 ### Memory safety
 
 Don't use raw pointers outside of FFI. A future version of Bun may add a CLI flag to disable `bun:ffi`.

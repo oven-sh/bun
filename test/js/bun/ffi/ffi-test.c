@@ -135,6 +135,13 @@ FFI_EXPORT void *getDeallocatorBuffer() {
 }
 FFI_EXPORT int getDeallocatorCalledCount() { return deallocatorCalled; }
 
+// A C deallocator that calls a second one. A test sets the second one to a JSCallback.
+typedef void (*deallocator_fn)(void *ptr, void *userData);
+static deallocator_fn forwardedDeallocator;
+FFI_EXPORT void setForwardedDeallocator(deallocator_fn fn) { forwardedDeallocator = fn; }
+FFI_EXPORT void forwardingDeallocator(void *ptr, void *userData) { forwardedDeallocator(ptr, userData); }
+FFI_EXPORT void *getForwardingDeallocator() { return &forwardingDeallocator; }
+
 FFI_EXPORT bool is_null(int32_t *ptr) { return ptr == NULL; }
 FFI_EXPORT bool does_pointer_equal_42_as_int32_t(int32_t *ptr);
 bool does_pointer_equal_42_as_int32_t(int32_t *ptr) { return *ptr == 42; }

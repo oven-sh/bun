@@ -176,7 +176,8 @@ function read(this: NativeReadable, maxToRead: number) {
         this[kRemainingChunk] = handleResult(this, result, chunk, this[kCloseState][0]);
       },
       reason => {
-        errorOrDestroy(this, reason);
+        // destroy(falsy) emits no 'error'. Node's adapter makes it an AbortError (destroyer()).
+        errorOrDestroy(this, reason || $makeAbortError());
       },
     );
   } else {

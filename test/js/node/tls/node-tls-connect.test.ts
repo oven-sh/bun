@@ -2026,7 +2026,7 @@ it.skipIf(!nodeExe())(
 // that way) must leave in the same TCP segment as the final handshake flight,
 // like Node. As a second segment it lets a server with Nagle on send its
 // session tickets first and then hold the reply until they are acknowledged.
-describe("the final handshake flight and a write issued before the handshake leave in one segment", () => {
+describe.concurrent("the final handshake flight and a write issued before the handshake leave in one segment", () => {
   // Runs `client` against a raw TCP proxy in front of a TLS 1.3 server. Resolves
   // with, per connection, the client-to-server chunks the proxy had received
   // when the server first saw plaintext: each send is its own chunk unless the

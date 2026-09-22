@@ -320,6 +320,98 @@ test("node-fetch Response accepts an old-style Stream body", async () => {
   expect(await text).toBe("hello world");
 });
 
+// Not expect(promise).rejects: it blocks on a promise that stays pending, so the test cannot time out (#14950).
+test.each([true, false])(
+  "node-fetch Response rejects the body read when an old-style Stream body fails (own error listener: %p)",
+  async ownListener => {
+    const legacy = new stream.Stream();
+    // Without a listener of its own, the source throws out of emit("error") unless the body handles the error.
+    if (ownListener) legacy.on("error", () => {});
+    const response = new Response(legacy);
+    const text = response.text();
+    legacy.emit("data", Buffer.from("hello "));
+    const error = new Error("integrity check failed");
+    legacy.emit("error", error);
+    expect(await text.catch(e => e)).toBe(error);
+  },
+);
+
+test("node-fetch Response rejects the body read when an old-style Stream body failed before the read", async () => {
+  const legacy = new stream.Stream();
+  const response = new Response(legacy);
+  const error = new Error("integrity check failed");
+  legacy.emit("error", error);
+  expect(await response.text().catch(e => e)).toBe(error);
+});
+
+test.each([true, false])(
+  "node-fetch Response keeps a complete old-style Stream body when the source fails after its end (own error listener: %p)",
+  async ownListener => {
+    const legacy = new stream.Stream();
+    if (ownListener) legacy.on("error", () => {});
+    const response = new Response(legacy);
+    legacy.emit("data", Buffer.from("hello world"));
+    legacy.emit("end");
+    legacy.emit("error", new Error("close failed"));
+    expect(await response.text()).toBe("hello world");
+  },
+);
+
+test("node-fetch Response body stream emits the error of an old-style Stream body", async () => {
+  const legacy = new stream.Stream();
+  const { body } = new Response(legacy);
+  const failed = once(body, "error");
+  body.resume();
+  const error = new Error("integrity check failed");
+  legacy.emit("error", error);
+  expect((await failed)[0]).toBe(error);
+});
+
+const discard = () => new stream.Writable({ write: (chunk, encoding, callback) => callback() });
+
+test("node-fetch Response rejects the body read for a Writable body", async () => {
+  const response = new Response(discard());
+  expect(await response.text().catch(e => e.code)).toBe("ERR_STREAM_CANNOT_PIPE");
+});
+
+function serveRequestBody() {
+  return Bun.serve({ port: 0, fetch: async req => new Response(await req.text().catch(() => "aborted")) });
+}
+
+test.each([true, false])(
+  "node-fetch fetch() rejects when an old-style Stream request body fails (own error listener: %p)",
+  async ownListener => {
+    using server = serveRequestBody();
+    const legacy = new stream.Stream();
+    if (ownListener) legacy.on("error", () => {});
+    const response = fetch2(server.url, { method: "POST", body: legacy });
+    legacy.emit("data", Buffer.from("hello "));
+    const error = new Error("upload failed");
+    legacy.emit("error", error);
+    expect(await response.catch(e => e)).toBe(error);
+  },
+);
+
+test.each([true, false])(
+  "node-fetch fetch() sends a complete old-style Stream request body when the source fails after its end (own error listener: %p)",
+  async ownListener => {
+    using server = serveRequestBody();
+    const legacy = new stream.Stream();
+    if (ownListener) legacy.on("error", () => {});
+    const response = fetch2(server.url, { method: "POST", body: legacy });
+    legacy.emit("data", Buffer.from("hello world"));
+    legacy.emit("end");
+    legacy.emit("error", new Error("close failed"));
+    expect(await (await response).text()).toBe("hello world");
+  },
+);
+
+test("node-fetch fetch() rejects for a Writable request body", async () => {
+  using server = serveRequestBody();
+  const response = fetch2(server.url, { method: "POST", body: discard() });
+  expect(await response.catch(e => e.code)).toBe("ERR_STREAM_CANNOT_PIPE");
+});
+
 test("node-fetch json() resolves null for a body that is the JSON text null", async () => {
   using server = Bun.serve({ port: 0, fetch: () => new Response("null") });
   expect(await (await fetch2(server.url)).json()).toBeNull();

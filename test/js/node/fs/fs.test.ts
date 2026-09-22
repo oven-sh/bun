@@ -517,7 +517,7 @@ describe("FileHandle", () => {
       const file = path.join(dir, "f.txt");
       fs.writeFileSync(file, "x");
       const diags = [];
-      process.on("uncaughtException", e => diags.push({ code: e.code, errno: e.errno, syscall: e.syscall, path: e.path, message: e.message }));
+      process.on("uncaughtException", e => diags.push({ code: e.code, errno: e.errno, syscall: e.syscall, hasPath: "path" in e, message: e.message }));
 
       (async () => {
         const fd = await (async () => {
@@ -547,7 +547,7 @@ describe("FileHandle", () => {
           code: "EBADF",
           errno: expect.any(Number),
           syscall: "close",
-          path: file,
+          hasPath: false,
           message: `EBADF: Closing file descriptor ${fd} on garbage collection failed (${file}), close`,
         },
       ],

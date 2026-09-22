@@ -229,7 +229,6 @@ function onFileHandleCollected(held: { fd: number; path: string | undefined }) {
     err.errno = closeError?.errno;
     err.code = code;
     err.syscall = "close";
-    if (path !== undefined) err.path = path;
   }
   process.nextTick(() => {
     throw err;

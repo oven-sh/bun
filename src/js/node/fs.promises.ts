@@ -212,16 +212,26 @@ async function opendir(dir: string, options?) {
 // Mirror that with a FinalizationRegistry so dropped handles don't leak fds.
 let fileHandleRegistry: FinalizationRegistry<{ fd: number; path: string | undefined }> | undefined;
 function onFileHandleCollected(held: { fd: number; path: string | undefined }) {
+  const suffix = held.path !== undefined ? ` (${held.path})` : "";
+  let err: NodeJS.ErrnoException;
   try {
     fs.closeSync(held.fd);
-  } catch {}
-  const suffix = held.path !== undefined ? ` (${held.path})` : "";
-  const err: NodeJS.ErrnoException = new Error(
-    "A FileHandle object was closed during garbage collection. This used to be allowed " +
-      "with a deprecation warning but is now considered an error. Please close FileHandle " +
-      `objects explicitly. File descriptor: ${held.fd}${suffix}`,
-  );
-  err.code = "ERR_INVALID_STATE";
+    err = new Error(
+      "A FileHandle object was closed during garbage collection. This used to be allowed " +
+        "with a deprecation warning but is now considered an error. Please close FileHandle " +
+        `objects explicitly. File descriptor: ${held.fd}${suffix}`,
+    );
+    err.code = "ERR_INVALID_STATE";
+  } catch (closeError: any) {
+    // Node's FileHandle::Close throws a UVException for the failed close here,
+    // not ERR_INVALID_STATE. EBADF means the user already closed the fd.
+    const code = closeError?.code ?? "UNKNOWN";
+    err = new Error(`${code}: Closing file descriptor ${held.fd} on garbage collection failed${suffix}, close`);
+    err.errno = closeError?.errno;
+    err.code = code;
+    err.syscall = "close";
+    if (held.path !== undefined) err.path = held.path;
+  }
   process.nextTick(() => {
     throw err;
   });

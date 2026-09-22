@@ -501,7 +501,7 @@ it.each([[null], [undefined], [0], [""]])(
 
 // An HTMLRewriter output is a native stream, which Readable.fromWeb pulls from directly. If the
 // input failed before the first pull, pull() throws the stored value. If it fails later, the pull rejects.
-it.each([[null], [0], [""]])(
+it.each([[null], [undefined], [0], [""]])(
   "Readable.fromWeb on a native stream that failed with %p emits an AbortError",
   async reason => {
     let controller;

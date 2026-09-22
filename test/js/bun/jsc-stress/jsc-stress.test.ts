@@ -155,6 +155,7 @@ const ffiFixturesDir = path.join(fixturesDir, "ffi");
 const ffiFixtures = [
   "ffi-align.js",
   "ffi-arena-depth.js",
+  "ffi-argument-buffer-snapshot.js",
   "ffi-arity-ladders.js",
   "ffi-arity.js",
   "ffi-buffer-length.js",

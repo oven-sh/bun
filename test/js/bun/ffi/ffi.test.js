@@ -969,76 +969,80 @@ it.skipIf(!FFI_FIXTURE_PATH)("ptr argument: ArrayBuffer cells through an FTL-com
 });
 
 // A view's address and byte length are read after every other argument's coercion has run its JS
-// (valueOf, a "ptr" getter), cold and in the optimizing tiers.
-it.skipIf(!FFI_FIXTURE_PATH)("reads a buffer argument after the other arguments coerce", () => {
-  const {
-    symbols: { identity_ptr: addressThenInt, bl_echo_len: lengthThenInt, add_uint64_t: sumOfAddresses },
-  } = dlopen(FFI_FIXTURE_PATH, {
-    identity_ptr: { args: ["ptr", "i32"], returns: "ptr" },
-    bl_echo_len: { args: ["buffer", "buffer_length", "i32"], returns: "u64" },
-    add_uint64_t: { args: ["ptr", "ptr"], returns: "u64" },
-  });
-  const {
-    symbols: { identity_ptr: cstringAddressThenInt },
-  } = dlopen(FFI_FIXTURE_PATH, { identity_ptr: { args: ["cstring", "i32"], returns: "ptr" } });
-
-  // Stops early once the answers differ, so a failure prints a few values and not one per round.
-  const rounds = isDebug ? 1_000 : 20_000;
-  function distinctResults(call) {
-    const results = new Set();
-    for (let i = 0; i < rounds && results.size < 4; i++) results.add(call());
-    return [...results];
-  }
-  // Every call transfers or shrinks the buffer it gets, so each one makes its own.
-  const transfers = view => ({
-    valueOf() {
-      view.buffer.transfer();
-      return 1;
-    },
-  });
-
-  expect({
-    ptr: distinctResults(() => {
-      const view = new Uint8Array(64);
-      return addressThenInt(view, transfers(view));
-    }),
-    cstring: distinctResults(() => {
-      const view = new Uint8Array(64);
-      return cstringAddressThenInt(view, transfers(view));
-    }),
-    // 0 for the transferred view plus the 1 the getter returned.
-    ptrGetter: distinctResults(() => {
-      const view = new Uint8Array(64);
-      return sumOfAddresses(view, {
-        get ptr() {
-          view.buffer.transfer();
-          return 1;
-        },
+// (valueOf, a "ptr" getter). The child lowers the tier-up thresholds and turns the concurrent JIT
+// off so that the same call sites also run in the optimizing tiers. That the DFG and the FTL
+// compiled them is asserted by jsc-stress/fixtures/ffi/ffi-argument-buffer-snapshot.js.
+it.skipIf(!FFI_FIXTURE_PATH)("reads a buffer argument after the other arguments coerce", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import { dlopen, ptr } from "bun:ffi";
+      const path = process.env.FFI_FIXTURE_PATH;
+      const { symbols: { identity_ptr: addressThenInt, bl_echo_len: lengthThenInt, add_uint64_t: sumOfAddresses } } = dlopen(path, {
+        identity_ptr: { args: ["ptr", "i32"], returns: "ptr" },
+        bl_echo_len: { args: ["buffer", "buffer_length", "i32"], returns: "u64" },
+        add_uint64_t: { args: ["ptr", "ptr"], returns: "u64" },
       });
-    }),
-    bufferLength: distinctResults(() => {
-      const buffer = new ArrayBuffer(1024, { maxByteLength: 1024 });
-      const view = new Uint8Array(buffer);
-      return lengthThenInt(view, view, {
-        valueOf() {
-          buffer.resize(16);
-          return 1;
-        },
+      const { symbols: { identity_ptr: cstringAddressThenInt } } = dlopen(path, {
+        identity_ptr: { args: ["cstring", "i32"], returns: "ptr" },
       });
-    }),
-  }).toEqual({ ptr: [null], cstring: [null], ptrGetter: [1n], bufferLength: [16n] });
 
-  // A live view keeps its address, and the getter after it runs once per call.
-  const live = new Uint8Array(64);
-  let reads = 0;
-  const counted = {
-    get ptr() {
-      reads++;
-      return 1;
+      // One caller per case keeps each FFI call site monomorphic, which is what the DFG needs to
+      // compile the call itself. Collecting a set stops a failure printing one line per round.
+      const distinctResults = (label, call) => {
+        const results = new Set();
+        for (let i = 0; i < 3000 && results.size < 4; i++) results.add(call());
+        return [label, [...results].map(String)];
+      };
+      const transfers = view => ({ valueOf() { view.buffer.transfer(); return 1; } });
+
+      const live = new Uint8Array(64);
+      let reads = 0;
+      const counted = { get ptr() { reads++; return 1; } };
+
+      console.log(JSON.stringify(Object.fromEntries([
+        distinctResults("ptr", () => { const view = new Uint8Array(64); return addressThenInt(view, transfers(view)); }),
+        distinctResults("cstring", () => { const view = new Uint8Array(64); return cstringAddressThenInt(view, transfers(view)); }),
+        // 0 for the transferred view plus the 1 the getter returned.
+        distinctResults("ptrGetter", () => {
+          const view = new Uint8Array(64);
+          return sumOfAddresses(view, { get ptr() { view.buffer.transfer(); return 1; } });
+        }),
+        distinctResults("bufferLength", () => {
+          const buffer = new ArrayBuffer(1024, { maxByteLength: 1024 });
+          const view = new Uint8Array(buffer);
+          return lengthThenInt(view, view, { valueOf() { buffer.resize(16); return 1; } });
+        }),
+        // A live view keeps its address, and the getter after it runs once per call.
+        distinctResults("liveView", () => sumOfAddresses(live, counted) === BigInt(ptr(live)) + 1n),
+        ["getterReads", [String(reads)]],
+      ])));
+      `,
+    ],
+    env: {
+      ...bunEnv,
+      FFI_FIXTURE_PATH,
+      BUN_JSC_useConcurrentJIT: "0",
+      BUN_JSC_thresholdForJITAfterWarmUp: "10",
+      BUN_JSC_thresholdForOptimizeAfterWarmUp: "100",
+      BUN_JSC_thresholdForFTLOptimizeAfterWarmUp: "1000",
     },
-  };
-  expect(distinctResults(() => sumOfAddresses(live, counted))).toEqual([BigInt(ptr(live)) + 1n]);
-  expect(reads).toBe(rounds);
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout || "{}")).toEqual({
+    ptr: ["null"],
+    cstring: ["null"],
+    ptrGetter: ["1"],
+    bufferLength: ["16"],
+    liveView: ["true"],
+    getterReads: ["3000"],
+  });
+  expect(exitCode).toBe(0);
 });
 
 it("worker teardown drops queued threadsafe JSCallback invocations without crashing", async () => {

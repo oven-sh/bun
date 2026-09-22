@@ -426,8 +426,7 @@ fn open_dir_a(dir: Fd, subpath: &[u8]) -> crate::Result<Dir> {
         .map_err(Into::into)
 }
 
-/// Recreate the symlink `src_dir/src_name` (at `src_path` inside the package)
-/// as `dest_dir/dest_path`. A target that leaves the package is left out.
+/// Recreate the symlink `src_dir/src_name` as `dest_dir/dest_path`.
 #[cfg(not(windows))]
 pub(crate) fn copy_symlink(
     src_dir: Fd,

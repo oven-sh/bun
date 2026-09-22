@@ -441,10 +441,19 @@ describe("node:http response writes restart the socket inactivity timeout", () =
     const client = net.connect(port, "127.0.0.1");
     if (stalled) client.pause();
     else client.resume();
-    client.on("error", () => {});
     await once(client, "connect");
     client.write(request);
     return client;
+  }
+
+  // Rejects when the connection fails or closes before the awaited event, so a regression
+  // fails at once with the cause. The close at the end of a passing test settles nothing.
+  function lost(client: net.Socket) {
+    const { promise, reject } = Promise.withResolvers<never>();
+    promise.catch(() => {});
+    client.on("error", reject);
+    client.on("close", () => reject(new Error("the connection closed before the awaited event")));
+    return promise;
   }
   const GET = "GET / HTTP/1.1\r\nHost: a\r\n\r\n";
 
@@ -482,7 +491,7 @@ describe("node:http response writes restart the socket inactivity timeout", () =
         client = await send(port, GET);
         // A server that ignores writes fires within TIMEOUT / 8 of one. A machine that stalls
         // between two writes can only make this longer.
-        expect(await firstTimeout).toBeGreaterThanOrEqual(TIMEOUT - SLACK);
+        expect(await Promise.race([firstTimeout, lost(client)])).toBeGreaterThanOrEqual(TIMEOUT - SLACK);
       } finally {
         client?.destroy();
         server.closeAllConnections();
@@ -527,7 +536,7 @@ describe("node:http response writes restart the socket inactivity timeout", () =
     let client: net.Socket | undefined;
     try {
       client = await send(port, GET);
-      const quietFor = (await timedOut) - activityAt;
+      const quietFor = (await Promise.race([timedOut, lost(client)])) - activityAt;
       expect(quietFor).toBeGreaterThanOrEqual(TIMEOUT - SLACK);
       expect(referenceFired).toBe(false);
     } finally {
@@ -562,7 +571,7 @@ describe("node:http response writes restart the socket inactivity timeout", () =
     let client: net.Socket | undefined;
     try {
       client = await send(port, GET);
-      const quietFor = (await timedOutAgain) - writeAt;
+      const quietFor = (await Promise.race([timedOutAgain, lost(client)])) - writeAt;
       expect(events).toEqual(["timeout", "write", "timeout"]);
       expect(quietFor).toBeGreaterThanOrEqual(TIMEOUT - SLACK);
     } finally {
@@ -618,7 +627,7 @@ describe("node:http response writes restart the socket inactivity timeout", () =
     let client: net.Socket | undefined;
     try {
       client = await send(port, noActivity[name].request, noActivity[name].stalled);
-      expect(await settled).toBe("'timeout'");
+      expect(await Promise.race([settled, lost(client)])).toBe("'timeout'");
     } finally {
       clearTimeout(reference);
       client?.destroy();
@@ -658,12 +667,13 @@ describe("node:http response writes restart the socket inactivity timeout", () =
     let client: net.Socket | undefined;
     try {
       client = await send(port, "POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 100\r\n\r\nearly");
-      await wrote;
+      const connectionLost = lost(client);
+      await Promise.race([wrote, connectionLost]);
       setTimeout(() => {
         chunkSentAt = performance.now();
         client!.write("late");
       }, TIMEOUT * 0.7);
-      const quietFor = (await timedOut) - chunkSentAt;
+      const quietFor = (await Promise.race([timedOut, connectionLost])) - chunkSentAt;
       expect(quietFor).toBeGreaterThanOrEqual(TIMEOUT - SLACK);
     } finally {
       client?.destroy();

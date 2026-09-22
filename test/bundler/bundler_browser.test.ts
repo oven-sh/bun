@@ -746,10 +746,12 @@ describe("bundler", () => {
           nextTick(() => { log.push("tick"); process.nextTick(value => log.push(value), "nested tick"); });
         });
         console.log(log.join(" < "));
-        try {
-          nextTick(null);
-        } catch (e) {
-          console.log(e.name + " " + e.code + ": " + e.message);
+        for (const notCallable of [null, Object.create(null)]) {
+          try {
+            nextTick(notCallable);
+          } catch (e) {
+            console.log(e.name + " " + e.code + ": " + e.message);
+          }
         }
       `,
     },
@@ -757,7 +759,8 @@ describe("bundler", () => {
     run: {
       stdout:
         "microtask < tick < nested tick < timeout\n" +
-        'TypeError ERR_INVALID_ARG_TYPE: The "callback" argument must be of type function. Received null',
+        'TypeError ERR_INVALID_ARG_TYPE: The "callback" argument must be of type function. Received null\n' +
+        'TypeError ERR_INVALID_ARG_TYPE: The "callback" argument must be of type function. Received object',
     },
   });
   // Each tick queues the next and forwards its payload as an argument, so the

@@ -267,7 +267,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         )
     }
 
-    /// `raw_write` with the fatal signal of `write_check_error`.
+    /// Bypass TLS: raw bytes to the fd even on a TLS socket, with the fatal signal of `write_check_error`.
     pub fn raw_write_check_error(&self, data: &[u8]) -> (i32, i32) {
         on_socket!(self.socket;
             connected s => s.raw_write_check_error(data),
@@ -454,16 +454,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
                 }
                 total
             },
-            else => 0,
-        )
-    }
-
-    /// Bypass TLS — raw bytes to the fd even on a TLS socket.
-    pub fn raw_write(&self, data: &[u8]) -> i32 {
-        on_socket!(self.socket;
-            connected s => s.raw_write(data),
-            duplex d => d.raw_write(data),
-            pipe p => p.raw_write(data),
             else => 0,
         )
     }

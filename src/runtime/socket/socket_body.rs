@@ -2529,12 +2529,16 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     /// The raw twin of an `upgradeTLS` pair writes raw bytes, although its us_socket_t has `ssl` set.
     #[inline]
-    fn write_check_error(&self, buffer: &[u8]) -> (i32, i32) {
+    fn write_check_error(&self, buffer: &[u8]) -> CheckedWrite {
         let socket = self.socket.get();
-        if self.flags.get().contains(Flags::BYPASS_TLS) {
+        let (written, fatal_errno) = if self.flags.get().contains(Flags::BYPASS_TLS) {
             socket.raw_write_check_error(buffer)
         } else {
             socket.write_check_error(buffer)
+        };
+        CheckedWrite {
+            written,
+            fatal_errno,
         }
     }
 
@@ -2566,7 +2570,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             return -1;
         }
 
-        let (res, fatal_errno) = self.write_check_error(buffer);
+        let CheckedWrite {
+            written: res,
+            fatal_errno,
+        } = self.write_check_error(buffer);
         if fatal_errno != 0 {
             // Kernel rejected the send (peer gone): return the negative errno so
             // JS fails the write; never close from under the caller's stack, and
@@ -3054,8 +3061,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             // the initial write does: once the peer is gone the kernel rejects
             // every retry (EPIPE/ECONNRESET), and treating that as would-block
             // kept this buffer parked forever (the FIN-terminated-response hang).
-            let (res, fatal_errno) =
-                self.write_check_error(self.buffered_data_for_node_net.get().slice());
+            let CheckedWrite {
+                written: res,
+                fatal_errno,
+            } = self.write_check_error(self.buffered_data_for_node_net.get().slice());
             if fatal_errno != 0 {
                 // As in write_maybe_corked. JS already counts this data as written, so only the caller's 'error' can report it.
                 self.buffered_data_for_node_net
@@ -4082,6 +4091,12 @@ impl NativeCallbacks {
 enum WriteResult {
     Fail,
     Success { wrote: i32, total: usize },
+}
+
+struct CheckedWrite {
+    written: i32,
+    /// The errno of a send that can never succeed, or 0.
+    fatal_errno: i32,
 }
 
 pub(crate) struct StoredVerifyError {

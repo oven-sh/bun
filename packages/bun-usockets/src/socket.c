@@ -656,6 +656,7 @@ int us_internal_socket_raw_write(struct us_socket_t *s, const char *data, int le
         *peer_gone_errno = errno;
     }
 #else
+    /* Windows keeps the old contract: its send errors are not classified yet (see the Windows note in NewSocket::on_writable), and the libuv backend defers no reset. */
     (void) peer_gone_errno;
 #endif
     if (written != length) {

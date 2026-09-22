@@ -2649,10 +2649,11 @@ describe.skipIf(isWindows)("TLS socket over a net.Socket whose peer resets behin
     await tick();
   }
 
-  it("tls.connect({ socket }) delivers the unread bytes, then ECONNRESET", async () => {
+  // A paused tls.connect({ socket }) client after its handshake, and its Bun.listen peer.
+  async function pausedClientOverNetSocket() {
     const peerReady = Promise.withResolvers<Bun.Socket>();
     const peerClosed = Promise.withResolvers<void>();
-    using listener = Bun.listen({
+    const listener = Bun.listen({
       hostname: "127.0.0.1",
       port: 0,
       tls: COMMON_CERT,
@@ -2660,26 +2661,52 @@ describe.skipIf(isWindows)("TLS socket over a net.Socket whose peer resets behin
     });
     const conn = net.connect(listener.port, "127.0.0.1");
     conn.on("error", () => {});
-    await once(conn, "connect");
     const socket = connect({ socket: conn, ca: COMMON_CERT.cert, servername: "localhost" });
-    const { events, closed } = watchSocket(socket);
+    const dispose = () => {
+      socket.destroy();
+      listener.stop(true);
+    };
     try {
+      const watched = watchSocket(socket);
       await once(socket, "secureConnect");
       socket.pause();
       socket.write("go");
-      await fillThenReset(socket, await peerReady.promise, peerClosed.promise);
-      expect(events).toEqual([]);
-      let received = 0;
-      socket.on("data", data => (received += data.length));
-      socket.resume();
-      await closed;
-      expect({ events, received }).toEqual({
-        events: ["error ECONNRESET", "close hadError=true"],
-        received: chunk.length + tail.length,
-      });
-    } finally {
-      socket.destroy();
+      const peer = await peerReady.promise;
+      return { conn, socket, peer, peerClosed: peerClosed.promise, ...watched, [Symbol.dispose]: dispose };
+    } catch (error) {
+      dispose();
+      throw error;
     }
+  }
+
+  it("tls.connect({ socket }) delivers the unread bytes, then ECONNRESET", async () => {
+    using t = await pausedClientOverNetSocket();
+    await fillThenReset(t.socket, t.peer, t.peerClosed);
+    expect(t.events).toEqual([]);
+    let received = 0;
+    t.socket.on("data", data => (received += data.length));
+    t.socket.resume();
+    await t.closed;
+    expect({ events: t.events, received }).toEqual({
+      events: ["error ECONNRESET", "close hadError=true"],
+      received: chunk.length + tail.length,
+    });
+  });
+
+  // A write to the net.Socket under the TLS socket does not report a failed send. The hangup
+  // behind that send has to close the pair, or the write waits forever. The write repeats
+  // because the loopback of macOS can deliver the reset a moment after the peer's close.
+  it("tls.connect({ socket }) closes when a write to its net.Socket meets the reset", async () => {
+    using t = await pausedClientOverNetSocket();
+    await fillThenReset(t.socket, t.peer, t.peerClosed);
+    expect(t.events).toEqual([]);
+    (function writeUntilClosed() {
+      if (t.conn.destroyed || t.socket.destroyed) return;
+      t.conn.write("x");
+      setImmediate(writeUntilClosed);
+    })();
+    await t.closed;
+    expect(t.events).toEqual(["error ECONNRESET", "close hadError=true"]);
   });
 
   // Like a net write, the send that fails on the reset fails the write. After the peer's FIN the
@@ -2735,6 +2762,68 @@ describe.skipIf(isWindows)("TLS socket over a net.Socket whose peer resets behin
         server.close();
       }
     });
+  });
+
+  // The ciphertext of the failed write stays in userland. A close that waits for it to drain
+  // never happens, because the socket is out of the poll set. Runs in a child so that the
+  // count of open descriptors is its own.
+  it("closes the descriptor after the write that failed", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const net = require("net"), tls = require("tls"), fs = require("fs");
+        const cert = JSON.parse(process.env.TEST_TLS);
+        const openDescriptors = () => fs.readdirSync("/dev/fd").length;
+        const events = [];
+        let peerRaw;
+        const server = net.createServer(raw => {
+          peerRaw = raw;
+          raw.on("error", () => {});
+          const peer = new tls.TLSSocket(raw, { isServer: true, ...cert });
+          peer.on("error", () => {});
+          peer.once("secure", () => peer.write(Buffer.alloc(256 * 1024, "p")));
+        });
+        server.listen(0, "127.0.0.1", () => {
+          const before = openDescriptors();
+          const socket = tls.connect({ port: server.address().port, host: "127.0.0.1", ca: cert.cert, servername: "localhost" });
+          socket.pause();
+          socket.on("error", error => events.push("error " + error.code));
+          socket.on("close", hadError => {
+            events.push("close " + hadError);
+            let turns = 0;
+            (function settle() {
+              const leaked = openDescriptors() > before;
+              if (leaked && ++turns < 1000) return setImmediate(settle);
+              console.log(JSON.stringify({ events, leaked }));
+              process.exit(0);
+            })();
+          });
+          socket.once("secureConnect", function waitReadStopped() {
+            if (socket.readableLength < socket.readableHighWaterMark) return setImmediate(waitReadStopped);
+            peerRaw.on("close", () => setImmediate(() => setImmediate(function writeUntilItFails() {
+              socket.write("late", error => {
+                if (error) events.push("write " + error.code + " " + error.syscall);
+                else setImmediate(writeUntilItFails);
+              });
+            })));
+            peerRaw.resetAndDestroy();
+          });
+        });
+        `,
+      ],
+      env: { ...bunEnv, TEST_TLS: JSON.stringify(COMMON_CERT) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const code = isLinux ? "ECONNRESET" : "EPIPE";
+    expect({ stderr, result: stdout && JSON.parse(stdout) }).toEqual({
+      stderr: "",
+      result: { events: [`write ${code} write`, `error ${code}`, "close true"], leaked: false },
+    });
+    expect(exitCode).toBe(0);
   });
 });
 

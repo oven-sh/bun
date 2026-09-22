@@ -322,15 +322,6 @@ pub(crate) fn should_ignore_one_disconnect_event_listener(global: &JSGlobalObjec
 }
 
 #[bun_jsc::host_fn]
-pub(crate) fn take_unique_id_from_env(
-    global: &JSGlobalObject,
-    _frame: &CallFrame,
-) -> JsResult<JSValue> {
-    global.bun_vm().as_mut().take_cluster_unique_id_from_env();
-    Ok(JSValue::UNDEFINED)
-}
-
-#[bun_jsc::host_fn]
 pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     #[cfg(windows)]
     {

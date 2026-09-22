@@ -157,6 +157,15 @@ static String parseDomainAsHost(const String& domain)
     return parsedHost;
 }
 
+// url.domainToASCII for src/boringssl/lib.rs, on any thread. Dead when the host does not parse.
+extern "C" BunString Bun__domainToASCII(const BunString* domain)
+{
+    auto host = parseDomainAsHost(domain->toWTFString());
+    if (host.isNull())
+        return { BunStringTag::Dead };
+    return Bun::toStringRef(host);
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsDomainToASCII, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);

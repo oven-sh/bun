@@ -10,14 +10,14 @@ use bun_http_jsc::headers_jsc::from_fetch_headers;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsCellRefExt as _, JsClass as _,
-    JsRef, JsResult, URLJsc as _,
+    JsError, JsRef, JsResult, URLJsc as _,
 };
 
 use crate::socket::ssl_config::{SSLConfig, SSLConfigFromJs as _};
 use crate::webcore::FetchHeaders;
 use crate::webcore::response::HeadersRef;
 
-pub use crate::generated_classes::js_FetchSession as js;
+pub(crate) use crate::generated_classes::js_FetchSession as js;
 
 /// `proxy` as given to `fetch()` or to a session. Absent means "inherit".
 #[derive(Clone)]
@@ -37,6 +37,8 @@ pub(crate) struct TlsOption {
     pub(crate) ssl_config: Option<http::ssl_config::SharedPtr>,
     pub(crate) reject_unauthorized: Option<bool>,
     pub(crate) check_server_identity: Option<JSValue>,
+    /// A `checkServerIdentity` that is not a function.
+    pub(crate) unusable_check_server_identity: Option<JSValue>,
 }
 
 pub(crate) fn parse_tls(
@@ -48,6 +50,7 @@ pub(crate) fn parse_tls(
         ssl_config: None,
         reject_unauthorized: None,
         check_server_identity: None,
+        unusable_check_server_identity: None,
     };
     if let Some(reject) = tls.get(global, "rejectUnauthorized")? {
         if reject.is_boolean() {
@@ -59,6 +62,8 @@ pub(crate) fn parse_tls(
     if let Some(callback) = tls.get(global, "checkServerIdentity")? {
         if callback.is_cell() && callback.is_callable() {
             parsed.check_server_identity = Some(callback);
+        } else if !callback.is_null() {
+            parsed.unusable_check_server_identity = Some(callback);
         }
     }
     if let Some(config) = SSLConfig::from_js(vm, global, tls)? {
@@ -80,41 +85,52 @@ fn proxy_href(global: &JSGlobalObject, value: JSValue) -> JsResult<Box<[u8]>> {
     Ok(href.to_owned_slice().into_boxed_slice())
 }
 
-/// `None`: the value does not select a proxy policy (`undefined`, `null`,
-/// `""`, an object without `url`), so the caller's default applies.
-pub(crate) fn parse_proxy(
-    global: &JSGlobalObject,
-    proxy_arg: JSValue,
-) -> JsResult<Option<ProxyOption>> {
+fn invalid_proxy(global: &JSGlobalObject, proxy_arg: JSValue) -> JsError {
+    global.throw_invalid_argument_type_value2(
+        "proxy",
+        "a string, a URL, an object with a \"url\", or false",
+        proxy_arg,
+    )
+}
+
+/// What a `proxy` value says.
+pub(crate) enum ProxyArg {
+    /// `undefined`, `null` or `""`: the caller's default applies.
+    Absent,
+    /// Names no proxy, such as a number or an object without `url`.
+    Unusable,
+    Policy(ProxyOption),
+}
+
+pub(crate) fn parse_proxy(global: &JSGlobalObject, proxy_arg: JSValue) -> JsResult<ProxyArg> {
     if proxy_arg.is_boolean() {
         // `true` names no proxy; treating it as "inherit" would go direct
         // wherever the environment has none.
         if proxy_arg.as_boolean() {
-            return Err(global.throw_invalid_argument_type_value2(
-                "proxy",
-                "a string, a URL, an object with a \"url\", or false",
-                proxy_arg,
-            ));
+            return Err(invalid_proxy(global, proxy_arg));
         }
-        return Ok(Some(ProxyOption::Direct));
+        return Ok(ProxyArg::Policy(ProxyOption::Direct));
     }
     // A URL instance has no `.url` own property; treat it as its href.
     let is_url_instance = bun_jsc::DOMURL::cast_(proxy_arg, global.vm()).is_some();
     if is_url_instance || (proxy_arg.is_string() && proxy_arg.get_length(global)? > 0) {
-        return Ok(Some(ProxyOption::Explicit {
+        return Ok(ProxyArg::Policy(ProxyOption::Explicit {
             href: proxy_href(global, proxy_arg)?,
             headers: None,
             respect_no_proxy: true,
         }));
     }
+    if proxy_arg.is_undefined_or_null() || proxy_arg.is_string() {
+        return Ok(ProxyArg::Absent);
+    }
     if !proxy_arg.is_object() {
-        return Ok(None);
+        return Ok(ProxyArg::Unusable);
     }
     let Some(url_arg) = proxy_arg.get(global, "url")? else {
-        return Ok(None);
+        return Ok(ProxyArg::Unusable);
     };
     if url_arg.is_undefined_or_null() {
-        return Ok(None);
+        return Ok(ProxyArg::Unusable);
     }
     // `href_from_js` accepts a string or a `URL` and is the sole validator.
     let href = proxy_href(global, url_arg)?;
@@ -132,7 +148,7 @@ pub(crate) fn parse_proxy(
     let respect_no_proxy = proxy_arg
         .get_boolean_strict(global, "respectNoProxy")?
         .unwrap_or(true);
-    Ok(Some(ProxyOption::Explicit {
+    Ok(ProxyArg::Policy(ProxyOption::Explicit {
         href,
         headers,
         respect_no_proxy,
@@ -142,7 +158,7 @@ pub(crate) fn parse_proxy(
 static NEXT_POOL_ID: AtomicU64 = AtomicU64::new(1);
 
 #[bun_jsc::JsClass]
-pub struct FetchSession {
+pub(crate) struct FetchSession {
     pool: http::PoolOptions,
     keep_alive: bool,
     ssl_config: Option<http::ssl_config::SharedPtr>,
@@ -156,7 +172,15 @@ pub struct FetchSession {
     this_value: JsCell<JsRef>,
     /// Requests that hold a `SessionHold`.
     in_flight: Cell<u32>,
+    /// Armed in the context whose script made the session: the connections its pool keeps
+    /// alive are that context's, and close with it. (The session itself stays usable.)
+    abort_handle: bun_jsc::AbortHandle,
 }
+
+bun_jsc::impl_abort_handle_owner!(FetchSession, abort_handle, |this, _cause| {
+    // SAFETY: trait contract: `this` is live (the wrapper's `m_ctx`; `finalize` drops the handle).
+    unsafe { &*this }.close_idle_sockets()
+});
 
 /// One request's hold on its session, from the moment `fetch()` reads the
 /// `session` option: the option is a property of `init`, so nothing else keeps
@@ -231,7 +255,7 @@ impl Drop for SessionHold {
 }
 
 impl FetchSession {
-    pub fn constructor(
+    pub(crate) fn constructor(
         global: &JSGlobalObject,
         frame: &CallFrame,
         this_value: JSValue,
@@ -252,7 +276,13 @@ impl FetchSession {
             used: Cell::new(false),
             this_value: JsCell::new(JsRef::init_weak(this_value)),
             in_flight: Cell::new(0),
+            abort_handle: bun_jsc::AbortHandle::for_owner::<FetchSession>(),
         });
+        // SAFETY: a heap allocation at its final address; its `Drop` (in `finalize`, or when
+        // this constructor fails) disarms the handle.
+        unsafe {
+            bun_jsc::AbortHandle::arm_owner(&raw mut *this, vm.context_of_caller(frame));
+        }
         if options.is_undefined_or_null() {
             return Ok(this);
         }
@@ -264,6 +294,13 @@ impl FetchSession {
         if let Some(tls) = options.get(global, "tls")? {
             if tls.is_object() {
                 let parsed = parse_tls(vm, global, tls)?;
+                if let Some(value) = parsed.unusable_check_server_identity {
+                    return Err(global.throw_invalid_property_type_value(
+                        b"tls.checkServerIdentity",
+                        b"function",
+                        value,
+                    ));
+                }
                 this.ssl_config = parsed.ssl_config;
                 this.reject_unauthorized = parsed.reject_unauthorized;
                 if let Some(callback) = parsed.check_server_identity {
@@ -277,7 +314,11 @@ impl FetchSession {
         }
 
         if let Some(proxy) = options.get(global, "proxy")? {
-            this.proxy = parse_proxy(global, proxy)?;
+            match parse_proxy(global, proxy)? {
+                ProxyArg::Policy(policy) => this.proxy = Some(policy),
+                ProxyArg::Absent => {}
+                ProxyArg::Unusable => return Err(invalid_proxy(global, proxy)),
+            }
         }
 
         if let Some(unix) = options.get(global, "unix")? {
@@ -305,13 +346,26 @@ impl FetchSession {
                         http::normalize_idle_timeout_seconds(seconds.ceil() as u64);
                 }
                 if let Some(count) = keep_alive.get(global, "maxIdleSockets")? {
+                    const FIELD_NAME: &[u8] = b"keepAlive.maxIdleSockets";
+                    // `validate_integer_range` takes NaN for the default.
+                    if count.is_number() && count.as_number().is_nan() {
+                        return Err(global.throw_range_error(
+                            f64::NAN,
+                            jsc::RangeErrorOptions {
+                                field_name: FIELD_NAME,
+                                min: 1,
+                                max: i64::from(u16::MAX),
+                                ..Default::default()
+                            },
+                        ));
+                    }
                     this.pool.max_idle_sockets = global.validate_integer_range::<u16>(
                         count,
                         this.pool.max_idle_sockets,
                         bun_jsc::IntegerRange {
                             min: 1,
                             max: i128::from(u16::MAX),
-                            field_name: b"keepAlive.maxIdleSockets",
+                            field_name: FIELD_NAME,
                             always_allow_zero: false,
                         },
                     )?;
@@ -352,7 +406,7 @@ impl FetchSession {
     /// Close this session's idle keep-alive connections. Requests in flight
     /// finish, and the session stays usable.
     #[bun_jsc::host_fn(method)]
-    pub fn close(&self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn close(&self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         self.close_idle_sockets();
         Ok(JSValue::UNDEFINED)
     }
@@ -367,7 +421,7 @@ impl FetchSession {
         clippy::boxed_local,
         reason = "reclaim point for the generated finalizer"
     )]
-    pub fn finalize(self: Box<Self>) {
+    pub(crate) fn finalize(self: Box<Self>) {
         self.this_value.with_mut(|this| this.finalize());
         self.close_idle_sockets();
         // Only when the VM is torn down under requests in flight: their holds

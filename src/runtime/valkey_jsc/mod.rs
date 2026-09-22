@@ -11,31 +11,30 @@ use crate::jsc::{JSGlobalObject, JSValue};
 // ─── submodules ──────────────────────────────────────────────────────────────
 
 #[path = "valkey.rs"]
-pub mod valkey; // ValkeyClient state machine, fail/reject paths, auto-flush
+pub(crate) mod valkey; // ValkeyClient state machine, fail/reject paths, auto-flush
 
 #[path = "js_valkey.rs"]
-pub mod js_valkey; // JSValkeyClient host fns, SocketHandler, constructor
+pub(crate) mod js_valkey; // JSValkeyClient host fns, SocketHandler, constructor
 
 #[path = "js_valkey_functions.rs"]
-pub mod js_valkey_functions; // 200+ prototype methods (get/set/hget/…)
+pub(crate) mod js_valkey_functions; // 200+ prototype methods (get/set/hget/…)
 
 #[path = "ValkeyCommand.rs"]
-pub mod valkey_command_body; // Command::serialize, Promise::resolve/reject
+pub(crate) mod valkey_command_body; // Command::serialize, Promise::resolve/reject
 
 #[path = "protocol_jsc.rs"]
-pub mod protocol_jsc; // RESPValue → JSValue, RedisError → JS Error
+pub(crate) mod protocol_jsc; // RESPValue → JSValue, RedisError → JS Error
 
 // ─── back-compat aliases ─────────────────────────────────────────────────────
 // Sibling files were written against `*_body` module names (`valkey.rs`
 // imports `super::js_valkey_body`); keep the alias so it doesn't need to churn.
-pub use self::js_valkey as js_valkey_body;
+pub(crate) use self::js_valkey as js_valkey_body;
 
 // ─── public re-exports ───────────────────────────────────────────────────────
-pub use js_valkey::JSValkeyClient;
-pub use valkey::{Options, Protocol, Status, ValkeyClient};
+pub(crate) use js_valkey::JSValkeyClient;
 
-pub mod valkey_command {
-    pub use super::valkey_command_body::{Entry, Meta, Promise, PromisePair, entry, promise_pair};
+pub(crate) mod valkey_command {
+    pub(crate) use super::valkey_command_body::{Entry, PromisePair};
 }
 
 // ── JsClass wiring (codegen name = "RedisClient", see valkey.classes.ts) ────

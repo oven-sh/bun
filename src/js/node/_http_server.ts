@@ -1635,6 +1635,8 @@ function getNodeHTTPServerSocket() {
       handle.close();
     }
     #onClose() {
+      // Read before anything below can destroy this socket again with a different error.
+      const errored = this.errored;
       // freeParser equivalent: runs before 'close' listeners so they observe the
       // released parser (free() invoked, kOnTimeout nulled).
       releaseServerParserShim(this);
@@ -1674,6 +1676,9 @@ function getNodeHTTPServerSocket() {
       const pending = this.#pendingAbortMessage;
       this.#pendingAbortMessage = undefined;
       const message = this._httpMessage ?? (pending?.destroyed ? pending : undefined);
+      if (message) {
+        failPendingWriteCallbacks(message, errored);
+      }
       const req = message?.req;
 
       if (req && !req.destroyed && !req[kHandle]?.upgraded) {
@@ -1697,6 +1702,13 @@ function getNodeHTTPServerSocket() {
       // the in-flight response are aborted, like Node.js's socketOnClose
       // (abortIncoming + abortOutgoing).
       abortQueuedPipelinedResponses(this);
+
+      // Queued ahead of the 'close' tick that destroy() below schedules; Writable fails the writes queued behind it.
+      const pendingWrite = this.#pendingCallback;
+      if (pendingWrite) {
+        this.#pendingCallback = null;
+        process.nextTick(pendingWrite, errored ?? $ERR_STREAM_DESTROYED("write"));
+      }
 
       // Node's server connection socket emits 'close' whenever the TCP
       // connection closes, even with no request in flight (this also covers
@@ -3789,6 +3801,17 @@ function callWriteHeadIfObservable(self, headerState, fromEnd?) {
 function allowWritesToContinue() {
   this._callPendingCallbacks();
   this.emit("drain");
+}
+
+// Node's Writable errorBuffer(): the native drain callback never fires once the socket is closed.
+function failPendingWriteCallbacks(res, errored) {
+  const callbacks = res[kPendingCallbacks];
+  const length = callbacks ? callbacks.length : 0;
+  if (length === 0) return;
+  res[kPendingCallbacks] = [];
+  for (let i = 0; i < length; i++) {
+    process.nextTick(callbacks[i], errored ?? $ERR_STREAM_DESTROYED("write"));
+  }
 }
 
 OriginalWriteHeadFn = ServerResponse.prototype.writeHead;

@@ -480,8 +480,14 @@ devTest("hook signature includes the binding the hook call is assigned to", {
       function insideInitializer() {
         const a = [useState(0)];
       }
-      function insideInitializerRenamed() {
-        const b = [useState(0)];
+      function insideCall() {
+        const a = String(useState(0));
+      }
+      function hookArgument() {
+        const a = useCustom(useState(0));
+      }
+      function hookArgumentRenamed() {
+        const b = useCustom(useState(0));
       }
       function object() {
         const { a } = useCustom();
@@ -497,7 +503,8 @@ devTest("hook signature includes the binding the hook call is assigned to", {
         array, arrayAgain, arrayRenamed, arrayShorter, arrayDefault,
         identifier, identifierRenamed,
         twoDeclarators, twoDeclaratorsRenamed,
-        unassigned, insideInitializer, insideInitializerRenamed,
+        unassigned, insideInitializer, insideCall,
+        hookArgument, hookArgumentRenamed,
         object, objectRenamed, objectAliased,
       };
       globalThis.signatures = Object.entries(functions).map(([name, fn]) => [name, expectHook(fn)]);
@@ -509,12 +516,11 @@ devTest("hook signature includes the binding the hook call is assigned to", {
     await c.expectMessage("DONE");
     const signatures: [name: string, signature: string][] = await c.js`globalThis.signatures`;
 
-    // The functions, grouped by equal signature.
-    const groups = new Map<string, string[]>();
+    const sameSignature = new Map<string, string[]>();
     for (const [name, signature] of signatures) {
-      groups.set(signature, [...(groups.get(signature) ?? []), name]);
+      sameSignature.set(signature, [...(sameSignature.get(signature) ?? []), name]);
     }
-    expect([...groups.values()]).toEqual([
+    expect([...sameSignature.values()]).toEqual([
       ["array", "arrayAgain"],
       ["arrayRenamed"],
       ["arrayShorter"],
@@ -523,11 +529,45 @@ devTest("hook signature includes the binding the hook call is assigned to", {
       ["identifierRenamed"],
       ["twoDeclarators"],
       ["twoDeclaratorsRenamed"],
-      ["unassigned", "insideInitializer", "insideInitializerRenamed"],
+      ["unassigned", "insideInitializer", "insideCall"],
+      ["hookArgument"],
+      ["hookArgumentRenamed"],
       ["object"],
       ["objectRenamed"],
       ["objectAliased"],
     ]);
+  },
+});
+// The parser builds an operator chain in a loop, so its depth has no bound.
+// Hashing it for the signature must not recurse until the stack overflows.
+const operatorChain = Buffer.alloc(200_000, "x+").toString() + "x";
+devTest("hook signature of an operator chain deeper than the stack", {
+  framework: minimalFramework,
+  files: {
+    ...reactAndRefreshStub,
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.tsx"],
+    }),
+    "index.tsx": `
+      import { expectHook } from 'bun-devserver-react-mock';
+      import { chain } from './chain.tsx';
+
+      expectHook(chain);
+      console.log("PASS");
+    `,
+    // A Buffer, so that the harness writes the long line as it is.
+    "chain.tsx": Buffer.from(`
+      import { useState } from "react";
+      const x = 1;
+      export function chain() {
+        const [a = ${operatorChain}] = useState(${operatorChain});
+      }
+    `),
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {});
+    await c.expectMessage("PASS");
   },
 });
 

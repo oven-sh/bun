@@ -169,8 +169,7 @@ class FSWatcher extends EventEmitter {
       try {
         this.addListener("change", listener);
       } catch (e) {
-        // Deliberate divergence: node leaves the started handle open here. Nothing can reach
-        // that handle to close it, and a persistent one keeps the process alive, so close it.
+        // node leaks the started handle here, which keeps the process alive
         closeNativeWatcherWithoutEvent(this);
         throw e;
       }

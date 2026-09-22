@@ -1620,9 +1620,7 @@ pub(crate) mod testing_apis {
         Ok(JSValue::TRUE)
     }
 
-    /// Close the stdin pipe's writer as a Windows worker's stop phase does
-    /// (`stop_for_vm_teardown`): natively, with no JS wrapper and no ref taken.
-    /// Returns false if stdin is not (or no longer) a pipe.
+    /// Close the stdin pipe's writer as a Windows worker's stop phase does: no JS wrapper, no ref.
     #[bun_jsc::host_fn]
     pub(crate) fn close_stdin_writer(
         global_this: &JSGlobalObject,

@@ -12,16 +12,21 @@ function scheduleDrain() {
 
 function drainQueue() {
   draining = true;
+  var batch = [];
   var i = 0;
   try {
-    // Callbacks queued while draining run in the same pass, like node.
-    for (; i < queue.length; i++) {
-      var item = queue[i];
-      item.fun.apply(null, item.args);
+    // Callbacks queued while draining run in the same pass, like node. Each
+    // batch is a fresh array, so a finished batch can be collected.
+    while (queue.length) {
+      batch = queue;
+      queue = [];
+      for (i = 0; i < batch.length; i++) {
+        batch[i].fun.apply(null, batch[i].args);
+      }
     }
   } finally {
-    // On a throw, drop the callback that threw and keep the rest.
-    queue = queue.slice(i + 1);
+    // On a throw, drop the callback that threw and keep the rest in order.
+    if (i < batch.length) queue = batch.slice(i + 1).concat(queue);
     draining = false;
     if (queue.length) scheduleDrain();
   }

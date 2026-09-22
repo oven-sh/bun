@@ -1,0 +1,183 @@
+// A minimal stand-in for the `vscode` module, enough to drive the package.json
+// CodeLens and hover providers of packages/bun-vscode outside of VS Code.
+// Import this file before the module under test so the mocks are registered first.
+import { mock } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+export const vscodeSrc = join(import.meta.dirname, "../../../packages/bun-vscode/src");
+
+export class Uri {
+  constructor(public fsPath: string) {}
+  static file(path: string) {
+    return new Uri(path);
+  }
+  toString() {
+    return `file://${this.fsPath}`;
+  }
+}
+
+export class Position {
+  constructor(
+    public line: number,
+    public character: number,
+  ) {}
+  isBeforeOrEqual(other: Position) {
+    return this.line < other.line || (this.line === other.line && this.character <= other.character);
+  }
+}
+
+export class Range {
+  constructor(
+    public start: Position,
+    public end: Position,
+  ) {}
+  contains(position: Position) {
+    return this.start.isBeforeOrEqual(position) && position.isBeforeOrEqual(this.end);
+  }
+}
+
+export class CodeLens {
+  constructor(
+    public range: Range,
+    public command: { title: string; command: string; arguments: unknown[] },
+  ) {}
+}
+
+export class MarkdownString {
+  isTrusted = false;
+  constructor(public value: string) {}
+}
+
+class ShellExecution {
+  constructor(public commandLine: string) {}
+}
+
+class Task {
+  detail?: string;
+  constructor(
+    public definition: { type: string; script: string },
+    public scope: unknown,
+    public name: string,
+    public source: string,
+    public execution?: unknown,
+  ) {}
+}
+
+export interface Terminal {
+  name: string;
+  creationOptions: { name: string; cwd?: string };
+  sent: string[];
+  show(): void;
+  sendText(text: string): void;
+}
+
+export interface QuickPickItem {
+  label: string;
+  detail?: string;
+}
+
+export interface TextDocument {
+  uri: Uri;
+  getText(): string;
+  positionAt(offset: number): Position;
+}
+
+export const commands = new Map<string, (...args: any[]) => unknown>();
+
+export const state = {
+  workspaceRoot: "",
+  pickLabel: "",
+  quickPickItems: [] as QuickPickItem[],
+  terminals: [] as Terminal[],
+  debugCalls: [] as { script: string; cwd?: string }[],
+  codeLensProvider: null as null | { provideCodeLenses(document: TextDocument): CodeLens[] },
+  hoverProvider: null as null | { provideHover(document: TextDocument, position: Position): { contents: unknown[] } },
+  provideTasks: async (): Promise<Task[]> => [],
+};
+
+export function makeDocument(fsPath: string): TextDocument {
+  const text = readFileSync(fsPath, "utf8");
+  return {
+    uri: Uri.file(fsPath),
+    getText: () => text,
+    positionAt(offset: number) {
+      const before = text.slice(0, offset);
+      const line = before.split("\n").length - 1;
+      const character = offset - (before.lastIndexOf("\n") + 1);
+      return new Position(line, character);
+    },
+  };
+}
+
+mock.module("vscode", () => ({
+  Uri,
+  Position,
+  Range,
+  CodeLens,
+  MarkdownString,
+  ShellExecution,
+  Task,
+  TaskScope: { Global: 1, Workspace: 2 },
+  workspace: {
+    get workspaceFolders() {
+      return [{ uri: Uri.file(state.workspaceRoot) }];
+    },
+    fs: {
+      readFile: async (uri: Uri) => readFileSync(uri.fsPath),
+    },
+    openTextDocument: async (uri: Uri) => makeDocument(uri.fsPath),
+  },
+  window: {
+    get terminals() {
+      return state.terminals;
+    },
+    showQuickPick: async (items: QuickPickItem[]) => {
+      state.quickPickItems = items;
+      return items.find(item => item.label === state.pickLabel);
+    },
+    createTerminal: (options: { name: string; cwd?: string }) => {
+      const terminal: Terminal = {
+        name: options.name,
+        creationOptions: options,
+        sent: [],
+        show() {},
+        sendText(text: string) {
+          this.sent.push(text);
+        },
+      };
+      state.terminals.push(terminal);
+      return terminal;
+    },
+  },
+  commands: {
+    registerCommand: (id: string, fn: (...args: any[]) => unknown) => {
+      commands.set(id, fn);
+      return { dispose() {} };
+    },
+    executeCommand: (id: string, ...args: unknown[]) => commands.get(id)!(...args),
+  },
+  languages: {
+    registerCodeLensProvider: (_selector: unknown, provider: typeof state.codeLensProvider) => {
+      state.codeLensProvider = provider;
+      return { dispose() {} };
+    },
+    registerHoverProvider: (_selector: unknown, provider: typeof state.hoverProvider) => {
+      state.hoverProvider = provider;
+      return { dispose() {} };
+    },
+  },
+  tasks: {
+    fetchTasks: async () => state.provideTasks(),
+  },
+  debug: {
+    startDebugging: async () => true,
+  },
+}));
+
+// debug.ts pulls in the debug adapter and its dependencies. Only debugCommand matters here.
+mock.module(join(vscodeSrc, "features/debug.ts"), () => ({
+  debugCommand: (script: string, cwd?: string) => {
+    state.debugCalls.push({ script, cwd });
+  },
+}));

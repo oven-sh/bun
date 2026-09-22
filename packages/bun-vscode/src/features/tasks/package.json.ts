@@ -1,6 +1,7 @@
 /**
  * Automatically generates tasks from package.json scripts.
  */
+import * as path from "node:path";
 import * as vscode from "vscode";
 import { debugCommand } from "../debug";
 import { BunTask } from "./tasks";
@@ -59,7 +60,7 @@ function extractScriptsFromPackageJson(document: vscode.TextDocument) {
     if (elements?.length != 2) return null;
     const [name, command] = elements;
     return {
-      name: name.replace('"', "").trim(),
+      name: name.replace(/(?<!\\)"/g, "").trim(),
       command: command.replace(/(?<!\\)"/g, "").trim(),
       range: new vscode.Range(
         document.positionAt(startIndex + matches[0].indexOf(name)),
@@ -97,13 +98,13 @@ function registerCodeLensProvider(context: vscode.ExtensionContext) {
               title: "$(breakpoints-view-icon) Bun: Debug",
               tooltip: "Debug a script using bun",
               command: "extension.bun.codelens.run",
-              arguments: [{ type: "debug" }],
+              arguments: [{ type: "debug", uri: document.uri }],
             }),
             new vscode.CodeLens(range, {
               title: "$(debug-start) Bun: Run",
               tooltip: "Run a script using bun",
               command: "extension.bun.codelens.run",
-              arguments: [{ type: "run" }],
+              arguments: [{ type: "run", uri: document.uri }],
             }),
           );
           return codeLenses;
@@ -114,40 +115,55 @@ function registerCodeLensProvider(context: vscode.ExtensionContext) {
       },
     ),
     // Register the commands that are executed when clicking the CodeLens buttons
-    vscode.commands.registerCommand("extension.bun.codelens.run", async ({ type }: { type: "debug" | "run" }) => {
-      const tasks = (await vscode.tasks.fetchTasks({ type: "bun" })) as BunTask[];
-      if (tasks.length === 0) return;
+    vscode.commands.registerCommand(
+      "extension.bun.codelens.run",
+      async ({ type, uri }: { type: "debug" | "run"; uri: vscode.Uri }) => {
+        const document = await vscode.workspace.openTextDocument(uri);
+        const scripts = parseScripts(document.getText());
+        const entries = Object.entries(scripts);
+        if (entries.length === 0) return;
 
-      const pick = await vscode.window.showQuickPick(
-        tasks
-          .filter(task => task.detail.endsWith("package.json"))
-          .map(task => ({
-            label: task.name,
-            detail: task.detail,
+        const pick = await vscode.window.showQuickPick(
+          entries.map(([name, script]) => ({
+            label: name,
+            detail: script,
           })),
-      );
-      if (!pick) return;
+        );
+        if (!pick) return;
 
-      const task = tasks.find(task => task.name === pick.label);
-      if (!task) return;
+        const command = type === "debug" ? "extension.bun.codelens.debug.task" : "extension.bun.codelens.run.task";
 
-      const command = type === "debug" ? "extension.bun.codelens.debug.task" : "extension.bun.codelens.run.task";
-
-      vscode.commands.executeCommand(command, {
-        script: task.definition.script,
-        name: task.name,
-      });
-    }),
+        vscode.commands.executeCommand(command, {
+          script: pick.detail,
+          name: pick.label,
+          cwd: path.dirname(uri.fsPath),
+        });
+      },
+    ),
   );
 }
 
-function getActiveTerminal(name: string) {
-  return vscode.window.terminals.filter(terminal => terminal.name === name);
+function parseScripts(packageJson: string): Record<string, string> {
+  try {
+    const scripts = JSON.parse(packageJson).scripts;
+    return scripts && typeof scripts === "object" ? scripts : {};
+  } catch {
+    return {};
+  }
+}
+
+function getActiveTerminal(name: string, cwd: string) {
+  return vscode.window.terminals.filter(terminal => {
+    if (terminal.name !== name) return false;
+    const { cwd: terminalCwd } = terminal.creationOptions as vscode.TerminalOptions;
+    return (typeof terminalCwd === "string" ? terminalCwd : terminalCwd?.fsPath) === cwd;
+  });
 }
 
 interface CommandArgs {
   script: string;
   name: string;
+  cwd: string;
 }
 
 /**
@@ -159,12 +175,13 @@ function registerHoverProvider(context: vscode.ExtensionContext) {
     vscode.languages.registerHoverProvider("json", {
       provideHover(document, position) {
         const { scripts } = extractScriptsFromPackageJson(document);
+        const cwd = path.dirname(document.uri.fsPath);
 
         return {
           contents: scripts.map(script => {
             if (!script.range.contains(position)) return null;
 
-            const command = encodeURI(JSON.stringify({ script: script.command, name: script.name }));
+            const command = encodeURI(JSON.stringify({ script: script.command, name: script.name, cwd }));
 
             const markdownString = new vscode.MarkdownString(
               `[Debug](command:extension.bun.codelens.debug.task?${command}) | [Run](command:extension.bun.codelens.run.task?${command})`,
@@ -176,24 +193,24 @@ function registerHoverProvider(context: vscode.ExtensionContext) {
         };
       },
     }),
-    vscode.commands.registerCommand("extension.bun.codelens.debug.task", async ({ script, name }: CommandArgs) => {
+    vscode.commands.registerCommand("extension.bun.codelens.debug.task", async ({ script, cwd }: CommandArgs) => {
       if (script.startsWith("bun run ")) script = script.slice(8);
       if (script.startsWith("bun ")) script = script.slice(4);
 
-      debugCommand(script);
+      debugCommand(script, cwd);
     }),
-    vscode.commands.registerCommand("extension.bun.codelens.run.task", async ({ script, name }: CommandArgs) => {
+    vscode.commands.registerCommand("extension.bun.codelens.run.task", async ({ script, name, cwd }: CommandArgs) => {
       if (script.startsWith("bun run ")) script = script.slice(8);
 
       name = `Bun Task: ${name}`;
-      const terminals = getActiveTerminal(name);
+      const terminals = getActiveTerminal(name, cwd);
       if (terminals.length > 0) {
         terminals[0].show();
         terminals[0].sendText(`bun run ${script}`);
         return;
       }
 
-      const terminal = vscode.window.createTerminal({ name });
+      const terminal = vscode.window.createTerminal({ name, cwd });
       terminal.show();
       terminal.sendText(`bun run ${script}`);
     }),

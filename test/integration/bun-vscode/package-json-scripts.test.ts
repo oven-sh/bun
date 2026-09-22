@@ -1,0 +1,115 @@
+// The "Bun: Run" and "Bun: Debug" CodeLens buttons above `scripts` in a
+// package.json must offer the scripts of that file, and run them from the
+// directory of that file. Before the fix they always read the workspace root
+// package.json and ran from the workspace root.
+// https://github.com/oven-sh/bun/issues/43783
+import { beforeEach, expect, test } from "bun:test";
+import { tempDir } from "harness";
+import { join } from "node:path";
+import { commands, makeDocument, MarkdownString, state, vscodeSrc } from "./vscode.mock";
+
+// `vscode` exists only inside VS Code. The mock for it must be registered before
+// the module under test is resolved, so a static import cannot be used here.
+const { providePackageJsonTasks, registerPackageJsonProviders } = await import(
+  join(vscodeSrc, "features/tasks/package.json.ts")
+);
+
+state.provideTasks = providePackageJsonTasks;
+registerPackageJsonProviders({ subscriptions: [] } as any);
+
+const files = {
+  "package.json": JSON.stringify({
+    private: true,
+    workspaces: ["packages/*"],
+    scripts: { "root-script": "echo root" },
+  }),
+  "packages/api/package.json": JSON.stringify({
+    name: "example-api",
+    scripts: { build: "echo api" },
+  }),
+  "packages/web/package.json": JSON.stringify({
+    name: "example-web",
+    scripts: { build: "echo web" },
+  }),
+};
+
+beforeEach(() => {
+  state.pickLabel = "";
+  state.quickPickItems = [];
+  state.terminals = [];
+  state.debugCalls = [];
+});
+
+async function clickCodeLens(root: string, relativePath: string, title: "Bun: Run" | "Bun: Debug", pick: string) {
+  state.workspaceRoot = root;
+  state.pickLabel = pick;
+  const document = makeDocument(join(root, relativePath));
+  const lenses = state.codeLensProvider!.provideCodeLenses(document);
+  const lens = lenses.find(lens => lens.command.title.endsWith(title));
+  expect(lens).toBeDefined();
+  await commands.get(lens!.command.command)!(...lens!.command.arguments);
+}
+
+function terminalsAsSeen() {
+  return state.terminals.map(terminal => [terminal.creationOptions.cwd, terminal.sent]);
+}
+
+test("Bun: Run in a nested package.json offers the scripts of that file", async () => {
+  using dir = tempDir("vscode-codelens", files);
+  await clickCodeLens(String(dir), "packages/api/package.json", "Bun: Run", "build");
+
+  expect(state.quickPickItems.map(item => item.label)).toEqual(["build"]);
+});
+
+test("Bun: Run in a nested package.json runs the script in that package's directory", async () => {
+  using dir = tempDir("vscode-codelens", files);
+  await clickCodeLens(String(dir), "packages/api/package.json", "Bun: Run", "build");
+
+  expect(terminalsAsSeen()).toEqual([[join(String(dir), "packages/api"), ["bun run echo api"]]]);
+});
+
+test("Bun: Debug in a nested package.json debugs the script in that package's directory", async () => {
+  using dir = tempDir("vscode-codelens", files);
+  await clickCodeLens(String(dir), "packages/api/package.json", "Bun: Debug", "build");
+
+  expect(state.debugCalls).toEqual([{ script: "echo api", cwd: join(String(dir), "packages/api") }]);
+});
+
+test("Bun: Run in the root package.json still offers the root scripts", async () => {
+  using dir = tempDir("vscode-codelens", files);
+  await clickCodeLens(String(dir), "package.json", "Bun: Run", "root-script");
+
+  expect(state.quickPickItems.map(item => item.label)).toEqual(["root-script"]);
+  expect(terminalsAsSeen()).toEqual([[String(dir), ["bun run echo root"]]]);
+});
+
+test("scripts with the same name in two packages get separate terminals", async () => {
+  using dir = tempDir("vscode-codelens", files);
+  await clickCodeLens(String(dir), "packages/api/package.json", "Bun: Run", "build");
+  await clickCodeLens(String(dir), "packages/web/package.json", "Bun: Run", "build");
+
+  expect(terminalsAsSeen()).toEqual([
+    [join(String(dir), "packages/api"), ["bun run echo api"]],
+    [join(String(dir), "packages/web"), ["bun run echo web"]],
+  ]);
+});
+
+test("hover links in a nested package.json carry that package's directory", async () => {
+  using dir = tempDir("vscode-codelens", files);
+  state.workspaceRoot = String(dir);
+  const document = makeDocument(join(String(dir), "packages/api/package.json"));
+  const offset = document.getText().indexOf('"build"') + 1;
+
+  const { contents } = state.hoverProvider!.provideHover(document, document.positionAt(offset));
+  const markdown = contents.find(content => content instanceof MarkdownString) as MarkdownString;
+  expect(markdown).toBeDefined();
+
+  const links = [...markdown.value.matchAll(/command:(extension\.bun\.codelens\.\w+\.task)\?([^)]+)\)/g)];
+  expect(links.map(([, command, args]) => [command, JSON.parse(decodeURI(args))])).toEqual([
+    [
+      "extension.bun.codelens.debug.task",
+      { script: "echo api", name: "build", cwd: join(String(dir), "packages/api") },
+    ],
+    ["extension.bun.codelens.run.task", { script: "echo api", name: "build", cwd: join(String(dir), "packages/api") }],
+  ]);
+});

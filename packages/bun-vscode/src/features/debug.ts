@@ -84,11 +84,13 @@ function runFileCommand(resource?: vscode.Uri): void {
   }
 }
 
-export function debugCommand(command: string) {
+export function debugCommand(command: string, cwd?: string) {
+  const scope = cwd ? vscode.Uri.file(cwd) : undefined;
   vscode.debug.startDebugging(undefined, {
     ...DEBUG_CONFIGURATION,
     program: command,
-    runtime: getRuntime(),
+    runtime: getRuntime(scope),
+    cwd: cwd ?? DEBUG_CONFIGURATION.cwd,
   });
 }
 

@@ -224,8 +224,6 @@ function onFileHandleCollected(held: { fd: number; path: string | undefined }) {
     );
     err.code = "ERR_INVALID_STATE";
   } catch (closeError: any) {
-    // Node's FileHandle::Close throws a UVException for the failed close here,
-    // not ERR_INVALID_STATE. EBADF means the user already closed the fd.
     const code = closeError?.code ?? "UNKNOWN";
     err = new Error(`${code}: Closing file descriptor ${fd} on garbage collection failed${suffix}, close`);
     err.errno = closeError?.errno;

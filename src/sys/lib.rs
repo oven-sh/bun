@@ -7589,9 +7589,6 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
 
 /// [`get_fd_path`] for an `fd` that was opened from `path`. `stat` is the
 /// `fstat` of `fd` when the caller already has it.
-///
-/// macOS: `F_GETPATH` names a file that has several hard links by the link
-/// that any process looked up last. `realpath(3)` walks `path` instead.
 pub fn get_fd_path_opened_from<'a>(
     fd: Fd,
     path: &[u8],
@@ -7602,7 +7599,7 @@ pub fn get_fd_path_opened_from<'a>(
     {
         let is_hard_linked_file = |st: &Stat| st.st_nlink > 1 && !S::ISDIR(st.st_mode as _);
         let len = get_fd_path(fd, out)?.len();
-        // When `F_GETPATH` returns `path` itself, it named the link that was opened.
+        // `F_GETPATH` names a hard-linked file by the link that any process looked up last.
         let ambiguous = out.0[..len] != *path
             && match stat {
                 Some(st) => is_hard_linked_file(st),
@@ -7614,6 +7611,7 @@ pub fn get_fd_path_opened_from<'a>(
         let mut path_z = bun_paths::path_buffer_pool::get();
         path_z.0[..path.len()].copy_from_slice(path);
         path_z.0[path.len()] = 0;
+        // realpath(3) walks `path`, so it names the link that was opened.
         if let Ok(walked) = realpath(ZStr::from_buf(&path_z.0[..], path.len()), out) {
             let len = walked.len();
             return Ok(&mut out.0[..len]);

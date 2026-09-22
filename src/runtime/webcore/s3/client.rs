@@ -496,6 +496,7 @@ pub(crate) fn writable_stream(
         current_part_number: Cell::new(1),
         ref_count: Cell::new(2), // +1 for the stream
         ended: Cell::new(false),
+        parts_in_flight: Cell::new(0),
         options: Cell::new(options),
         acl: None,
         storage_class,
@@ -916,6 +917,7 @@ pub(crate) fn upload_stream(
         current_part_number: Cell::new(1),
         ref_count: Cell::new(2), // +1 for the stream ctx (only deinit after task and context ended)
         ended: Cell::new(false),
+        parts_in_flight: Cell::new(0),
         options: Cell::new(options),
         acl,
         storage_class,

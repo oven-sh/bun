@@ -180,6 +180,8 @@ describe.concurrent("child.stdout and child.stderr event order", () => {
     readable: `read(AAAABB) read(null) ${chain("AAAABB")} read(null) ${end}`,
     // The listener destroys the stream from a promise job: no 'end' follows, and the rest of that job comes before 'close'.
     destroy: "data(AAAABB) destroy job(destroy) tick(destroy) job2(destroy) job3(destroy) close",
+    // destroy() swallows the throw of its callback, and 'close' still comes.
+    "destroy-callback-throws": "data(AAAABB) destroy-callback close",
     // The throw is an uncaught exception, and the stream reads on.
     throw: `data(AAAABB) uncaughtException(uncaughtException) ${chain("AAAABB")} ${end}`,
     // Nobody listens: a read() call gets the bytes at once.
@@ -200,6 +202,7 @@ describe.concurrent("child.stdout and child.stderr event order", () => {
     ["stdout", "waiting-read", "readable"],
     ["stdout", "waiting-read", "destroy"],
     ["stdout", "waiting-read", "throw"],
+    ["stdout", "waiting-read", "destroy-callback-throws"],
     // two-chunks: the second chunk and the EOF are in the pipe while the first 'data' listener runs.
     ["stdout", "two-chunks", "data"],
     // Not on Windows. There Node runs the promise jobs of a listener that threw after 'end', when

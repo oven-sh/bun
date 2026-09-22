@@ -12,6 +12,7 @@
 //   readable      a 'readable' listener that calls read()
 //   destroy       a 'data' listener that destroys the stream from a promise job
 //   throw         a 'data' listener that throws
+//   destroy-callback-throws  a 'data' listener that calls destroy() with a callback that throws
 //   read-on-exit  no listener, and a read() call when the child exits
 // "both" reads stdout and stderr, and prints only their 'data' events.
 const { spawn } = require("node:child_process");
@@ -95,6 +96,16 @@ for (const fd of fds) {
       stream.destroy();
       events.push("destroy");
       queueTickAndJobs("destroy");
+    });
+  } else if (consumer === "destroy-callback-throws") {
+    // destroy() swallows what its callback throws, and 'close' still comes.
+    process.on("uncaughtException", () => events.push("uncaughtException"));
+    stream.on("data", chunk => {
+      events.push(`data(${chunk})`);
+      stream.destroy(undefined, () => {
+        events.push("destroy-callback");
+        throw new Error("the callback threw");
+      });
     });
   } else if (consumer === "throw") {
     // Node calls the listener from a libuv callback, so the throw is an uncaught exception, and the handle reads on.

@@ -399,10 +399,11 @@ function destroy(this: NativeReadable, error: any, cb: (error?: any) => void) {
     ptr.cancel(error);
   }
   if (this[kReadEvents] !== undefined) {
-    // As net.Socket: `_destroy` calls back at once, so 'error' comes in the next tick, and 'close'
-    // comes from the close callback of the handle, a libuv callback of its own.
-    if (cb) cb(error);
+    // As net.Socket: 'close' comes from the close callback of the handle, a libuv callback of its
+    // own, and `_destroy` calls back at once, so 'error' comes in the next tick. 'close' is queued
+    // first: the callback runs the one that destroy() got, and that one can throw.
     runAfterTickDrain(emitClose, this);
+    if (cb) cb(error);
     return;
   }
   dropReadAhead(this);

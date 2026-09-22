@@ -598,7 +598,7 @@ static int ssl_flush_write_batch(struct loop_ssl_data *loop_ssl_data, struct us_
 static int us_ssl_inline_reject_tripped(struct us_socket_t *s);
 static inline int ssl_gone(struct us_socket_t *s);
 
-/* Every ciphertext send goes through here. */
+/* Sends ciphertext. Keeps the errno of a send that found the peer gone, for us_internal_ssl_write_check_error. */
 static int ssl_raw_write(struct loop_ssl_data *loop_ssl_data, struct us_socket_t *s, const char *data, int length) {
   int peer_gone_errno = 0;
   int written = us_internal_socket_raw_write(s, data, length, &peer_gone_errno);

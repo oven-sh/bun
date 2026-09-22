@@ -981,6 +981,7 @@ it.skipIf(!FFI_FIXTURE_PATH)("a symbol called after its library's close() throws
       const definitions = {
         add_int32_t: { args: ["i32", "i32"], returns: "i32" },
         returns_true: { args: [], returns: "bool" },
+        identity_ptr: { args: ["ptr"], returns: "ptr" },
       };
       const open = () => dlopen(process.env.FFI_FIXTURE_PATH, definitions);
       const results = {};
@@ -1010,6 +1011,15 @@ it.skipIf(!FFI_FIXTURE_PATH)("a symbol called after its library's close() throws
       }
 
       {
+        // close() does not find the functions through lib.symbols, which the user can change.
+        const lib = open();
+        const { add_int32_t } = lib.symbols;
+        delete lib.symbols.add_int32_t;
+        lib.close();
+        attempt("symbol deleted from lib.symbols before close", () => add_int32_t(1, 2));
+      }
+
+      {
         // An argument conversion can run JS, so close() can happen after the call has started.
         const lib = open();
         const { add_int32_t } = lib.symbols;
@@ -1035,11 +1045,27 @@ it.skipIf(!FFI_FIXTURE_PATH)("a symbol called after its library's close() throws
         attempt("closed handle of a file that is open twice", () => first.symbols.add_int32_t(40, 2));
         results["open handle of a file that is open twice"] = second.symbols.add_int32_t(40, 2);
 
+        // The native callee would call the closed function's address.
+        attempt("closed function as a pointer argument", () => second.symbols.identity_ptr(first.symbols.add_int32_t));
+
         const linked = linkSymbols({ sum: { ...definitions.add_int32_t, ptr: second.symbols.add_int32_t.ptr } });
         const { sum } = linked.symbols;
         results["linkSymbols before close"] = sum(40, 2);
         linked.close();
         attempt("linkSymbols", () => sum(40, 2));
+      }
+
+      {
+        // Nor can a setter on a prototype reach the functions close() has to find. Last: an indexed
+        // accessor on a prototype switches every array in the realm to slow puts.
+        let setterCalls = 0;
+        Object.defineProperty(Object.prototype, 0, { get() {}, set(v) { setterCalls++; }, configurable: true });
+        const lib = open();
+        delete Object.prototype[0];
+        const { add_int32_t } = lib.symbols;
+        lib.close();
+        attempt("indexed setter on Object.prototype during dlopen", () => add_int32_t(1, 2));
+        results["indexed setter calls"] = setterCalls;
       }
 
       console.log(JSON.stringify(results, null, 2));`,
@@ -1058,12 +1084,17 @@ it.skipIf(!FFI_FIXTURE_PATH)("a symbol called after its library's close() throws
       "through lib.symbols": closed("returns_true"),
       "Function.prototype.call": closed("add_int32_t"),
       "arguments that do not convert": closed("add_int32_t"),
+      "symbol deleted from lib.symbols before close": closed("add_int32_t"),
       "close inside valueOf, optimized caller": closed("add_int32_t"),
       "close inside valueOf": closed("add_int32_t"),
       "closed handle of a file that is open twice": closed("add_int32_t"),
       "open handle of a file that is open twice": 42,
+      "closed function as a pointer argument":
+        "TypeError: bun:ffi: cannot pass 'add_int32_t' as a pointer because its library was closed",
       "linkSymbols before close": 42,
       "linkSymbols": closed("sum"),
+      "indexed setter on Object.prototype during dlopen": closed("add_int32_t"),
+      "indexed setter calls": 0,
     },
     stderr: "",
     exitCode: 0,

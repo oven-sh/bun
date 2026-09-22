@@ -964,6 +964,9 @@ test(
 // `.stdin`: the Subprocess then holds the only ref on the stdin FileSink. On Windows the stop phase
 // closes that pipe, and the close notifies the Subprocess, which drops its ref: the sink was freed
 // while FileSink::on_close still used it (debug build: "misaligned pointer dereference ... 0xdfdfdfdfdfdf").
+// Only a Windows debug build fails here without the fix: a release build reads the freed sink
+// silently, and no other platform closes the pipe in the stop phase. filesink.test.ts has the same
+// close through a testing hook, which ASAN catches on every platform.
 test(
   "worker terminate with a live spawned child whose stdin pipe was never read from script",
   async () => {

@@ -1219,3 +1219,63 @@ _bun_remove_param_package_completion() {
         fi
     fi
 }
+_bun_test_param_script_completion() {
+    local -a scripts_list
+
+    _alternative "files:file:_files -g '*(_|.)(test|spec).(js|ts|jsx|tsx)'"
+}
+
+_set_remove() {
+    comm -23 <(echo $1 | sort | tr " " "\n") <(echo $2 | sort | tr " " "\n") 2>/dev/null
+}
+
+_bun_add_param_package_completion() {
+    IFS=$'\n' inexact=($(history -n bun | grep -E "^bun add " | cut -c 9- | uniq))
+    IFS=$'\n' exact=($($inexact | grep -E "^$words[$CURRENT]"))
+    IFS=$'\n' packages=($(SHELL=zsh bun getcompletes a $words[$CURRENT]))
+
+    to_print=$inexact
+    if [ ! -z "$exact" -a "$exact" != " " ]; then
+        to_print=$exact
+    fi
+
+    if [ ! -z "$to_print" -a "$to_print" != " " ]; then
+        if [ ! -z "$packages" -a "$packages" != " " ]; then
+            _describe -1 -t to_print 'History' to_print
+            _describe -1 -t packages "Popular" packages
+            return
+        fi
+
+        _describe -1 -t to_print 'History' to_print
+        return
+    fi
+
+    if [ ! -z "$packages" -a "$packages" != " " ]; then
+        _describe -1 -t packages "Popular" packages
+        return
+    fi
+}
+
+__bun_dynamic_comp() {
+    local comp=""
+
+    for arg in scripts; do
+        local line
+        while read -r line; do
+            local name="$line"
+            local desc="$line"
+            name="${name%$'\t'*}"
+            desc="${desc/*$'\t'/}"
+            echo
+        done <<<"$arg"
+    done
+
+    return $comp
+}
+
+if ! command -v compinit >/dev/null; then
+    autoload -U compinit && compinit
+fi
+
+compdef _bun bun
+compdef _bun bunx

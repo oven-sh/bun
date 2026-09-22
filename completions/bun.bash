@@ -95,7 +95,7 @@ _read_scripts_in_package_json() {
                 if [[ "${rest}" =~ ^[[:space:]]*\}[[:space:]]*,? ]]; then
                     in_scripts=0
                     break
-                elif [[ "${rest}" =~ ^[[:space:]]*,?[[:space:]]*\"([^\"\\]+)\"[[:space:]]*:[[:space:]]*\"([^\"]*)\"(.*) ]]; then
+                elif [[ "${rest}" =~ ^[[:space:]]*,?[[:space:]]*\"([^\"\\]+)\"[[:space:]]*:[[:space:]]*\"([^\"\\]|\\.)*\"(.*) ]]; then
                     script_names+=( "${BASH_REMATCH[1]}" )
                     rest="${BASH_REMATCH[3]}"
                 else
@@ -311,9 +311,23 @@ _bun_completions() {
     local working_dir cwd_specified=0
     _extract_cwd
 
+    local cur_word="${COMP_WORDS[${COMP_CWORD}]}"
+    local prev="" prev_prev=""
+    if (( COMP_CWORD > 0 )); then
+        prev="${COMP_WORDS[$(( COMP_CWORD - 1 ))]}"
+    fi
+    if (( COMP_CWORD >= 2 )); then
+        prev_prev="${COMP_WORDS[$(( COMP_CWORD - 2 ))]}"
+    fi
+
+    local completing_cwd=0
+    if [[ "${prev}" == "--cwd" ]] || [[ "${prev}" == "=" && "${prev_prev}" == "--cwd" ]] || [[ "${cur_word}" == --cwd=* ]]; then
+        completing_cwd=1
+    fi
+
     local orig_pwd="${PWD}"
     local switched=0
-    if (( cwd_specified )); then
+    if (( cwd_specified && ! completing_cwd )); then
         if [[ ! -d "${working_dir}" ]] || ! builtin cd "${working_dir}" 2>/dev/null; then
             return
         fi
@@ -327,7 +341,17 @@ _bun_completions() {
     fi
 
     if [[ ${#COMPREPLY[@]} -eq 1 && "${COMPREPLY[0]}" == */ ]]; then
-        compopt -o nospace 2>/dev/null
+        if type compopt &>/dev/null; then
+            compopt -o nospace 2>/dev/null
+        else
+            complete -o nospace -F _bun_completions bun
+        fi
+    else
+        if type compopt &>/dev/null; then
+            compopt +o nospace 2>/dev/null
+        else
+            complete +o nospace -F _bun_completions bun
+        fi
     fi
 }
 
@@ -336,24 +360,27 @@ _bunx_completions() {
     local working_dir cwd_specified=0
     _extract_cwd
 
+    local cur_word="${COMP_WORDS[${COMP_CWORD}]}"
+    local prev="" prev_prev=""
+    if (( COMP_CWORD > 0 )); then
+        prev="${COMP_WORDS[$(( COMP_CWORD - 1 ))]}"
+    fi
+    if (( COMP_CWORD >= 2 )); then
+        prev_prev="${COMP_WORDS[$(( COMP_CWORD - 2 ))]}"
+    fi
+
+    local completing_cwd=0
+    if [[ "${prev}" == "--cwd" ]] || [[ "${prev}" == "=" && "${prev_prev}" == "--cwd" ]] || [[ "${cur_word}" == --cwd=* ]]; then
+        completing_cwd=1
+    fi
+
     local orig_pwd="${PWD}"
     local switched=0
-    if (( cwd_specified )); then
+    if (( cwd_specified && ! completing_cwd )); then
         if [[ ! -d "${working_dir}" ]] || ! builtin cd "${working_dir}" 2>/dev/null; then
             return
         fi
         switched=1
-    fi
-
-    local cur_word="${COMP_WORDS[${COMP_CWORD}]}"
-    local prev=""
-    if (( COMP_CWORD > 0 )); then
-        prev="${COMP_WORDS[$(( COMP_CWORD - 1 ))]}"
-    fi
-
-    local prev_prev=""
-    if (( COMP_CWORD >= 2 )); then
-        prev_prev="${COMP_WORDS[$(( COMP_CWORD - 2 ))]}"
     fi
 
     if [[ "${prev}" == "=" && "${prev_prev}" == "--cwd" ]] || [[ "${prev}" == "--cwd" ]]; then
@@ -374,7 +401,17 @@ _bunx_completions() {
     fi
 
     if [[ ${#COMPREPLY[@]} -eq 1 && "${COMPREPLY[0]}" == */ ]]; then
-        compopt -o nospace 2>/dev/null
+        if type compopt &>/dev/null; then
+            compopt -o nospace 2>/dev/null
+        else
+            complete -o nospace -F _bunx_completions bunx
+        fi
+    else
+        if type compopt &>/dev/null; then
+            compopt +o nospace 2>/dev/null
+        else
+            complete +o nospace -F _bunx_completions bunx
+        fi
     fi
 }
 

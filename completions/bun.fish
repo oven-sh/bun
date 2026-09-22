@@ -76,10 +76,6 @@ function __fish__get_bun_packages
     end
 
     awk '
-        /"(dependencies|devDependencies|peerDependencies|optionalDependencies)"[[:space:]]*:[[:space:]]*\{/ {
-            in_deps = 1
-            sub(/^[^{]*\{/, "")
-        }
         in_deps {
             while (in_deps) {
                 sub(/^[[:space:]]+/, "", $0)
@@ -90,7 +86,7 @@ function __fish__get_bun_packages
                     in_deps = 0
                     break
                 }
-                if (match($0, /^"([^"\\]+)"[[:space:]]*:[[:space:]]*"[^"]*"/)) {
+                if (match($0, /^"([^"\\]+)"[[:space:]]*:[[:space:]]*"([^"\\]|\\.)*"/)) {
                     key = substr($0, RSTART, RLENGTH)
                     sub(/^"/, "", key)
                     sub(/"[[:space:]]*:.*$/, "", key)
@@ -98,6 +94,31 @@ function __fish__get_bun_packages
                     $0 = substr($0, RSTART + RLENGTH)
                 } else {
                     break
+                }
+            }
+        }
+        {
+            while (match($0, /"(dependencies|devDependencies|peerDependencies|optionalDependencies)"[[:space:]]*:[[:space:]]*\{/)) {
+                $0 = substr($0, RSTART + RLENGTH)
+                in_deps = 1
+                while (in_deps) {
+                    sub(/^[[:space:]]+/, "", $0)
+                    if (sub(/^,/, "", $0)) {
+                        sub(/^[[:space:]]+/, "", $0)
+                    }
+                    if (sub(/^\}/, "", $0)) {
+                        in_deps = 0
+                        break
+                    }
+                    if (match($0, /^"([^"\\]+)"[[:space:]]*:[[:space:]]*"([^"\\]|\\.)*"/)) {
+                        key = substr($0, RSTART, RLENGTH)
+                        sub(/^"/, "", key)
+                        sub(/"[[:space:]]*:.*$/, "", key)
+                        print key
+                        $0 = substr($0, RSTART + RLENGTH)
+                    } else {
+                        break
+                    }
                 }
             }
         }
@@ -202,7 +223,7 @@ for i in (seq (count $bun_install_boolean_flags))
 end
 
 complete -c bun \
-       -n "__fish_seen_subcommand_from install add remove update dedupe" -l 'cwd' -d 'Change working directory'
+       -n "__fish_seen_subcommand_from install add remove update dedupe" -l 'cwd' -r -a '(__fish_complete_directories)' -d 'Change working directory'
 complete -c bun \
        -n "__fish_seen_subcommand_from install add remove update dedupe" -l 'cache-dir' -d 'Choose a cache directory (default: $HOME/.bun/install/cache)'
 complete -c bun \
@@ -261,7 +282,7 @@ complete -c bun -n "__fish_seen_subcommand_from prune" -l "cpu" -r -d "Prune for
 complete -c bun -n "__fish_seen_subcommand_from prune" -l "linker" -r -a "isolated hoisted" -d "Linker to assume when node_modules mixes isolated and hoisted installs" -f
 complete -c bun -n "__fish_seen_subcommand_from prune" -s "F" -l "filter" -r -d "Prune only the matching workspaces" -f
 complete -c bun -n "__fish_seen_subcommand_from prune" -l "silent" -d "Don't log anything" -f
-complete -c bun -n "__fish_seen_subcommand_from audit prune" -l "cwd" -r -d "Set a specific cwd"
+complete -c bun -n "__fish_seen_subcommand_from audit prune" -l "cwd" -r -a '(__fish_complete_directories)' -d "Set a specific cwd"
 complete -c bun -n "__fish_use_subcommand" -a "update" -d "Update dependencies to their latest versions" -f
 complete -c bun -n "__fish_seen_subcommand_from update" -s "p" -l "production" -d "Only update dependencies and optionalDependencies" -f
 complete -c bun -n "__fish_seen_subcommand_from update" -s "P" -l "prod" -d "Only update dependencies and optionalDependencies" -f
@@ -288,6 +309,6 @@ complete -c bun -n "__fish_seen_subcommand_from repl" -s "p" -l "print" -r -d "E
 complete -c bun -n "__fish_seen_subcommand_from repl" -s "r" -l "preload" -r -d "Import a module before other modules are loaded"
 complete -c bun -n "__fish_seen_subcommand_from repl" -l "smol" -d "Use less memory, but run garbage collection more often" -f
 complete -c bun -n "__fish_seen_subcommand_from repl" -s "c" -l "config" -r -d "Specify path to Bun config file"
-complete -c bun -n "__fish_seen_subcommand_from repl" -l "cwd" -r -d "Absolute path to resolve files & entry points from"
+complete -c bun -n "__fish_seen_subcommand_from repl" -l "cwd" -r -a '(__fish_complete_directories)' -d "Absolute path to resolve files & entry points from"
 complete -c bun -n "__fish_seen_subcommand_from repl" -l "env-file" -r -d "Load environment variables from the specified file(s)"
 complete -c bun -n "__fish_seen_subcommand_from repl" -l "no-env-file" -d "Disable automatic loading of .env files" -f

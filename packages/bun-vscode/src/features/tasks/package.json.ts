@@ -43,6 +43,15 @@ export function registerPackageJsonProviders(context: vscode.ExtensionContext) {
   registerHoverProvider(context);
 }
 
+/** Turns a quoted JSON string token into its value, including escapes such as \" and \uXXXX. */
+function unquote(token: string): string {
+  try {
+    return JSON.parse(token);
+  } catch {
+    return token.replace(/(?<!\\)"/g, "").trim();
+  }
+}
+
 /**
  * Utility function to extract the scripts from a package.json file, including their name and position in the document.
  */
@@ -60,8 +69,8 @@ function extractScriptsFromPackageJson(document: vscode.TextDocument) {
     if (elements?.length != 2) return [];
     const [name, command] = elements;
     return {
-      name: name.replace(/(?<!\\)"/g, "").trim(),
-      command: command.replace(/(?<!\\)"/g, "").trim(),
+      name: unquote(name),
+      command: unquote(command),
       range: new vscode.Range(
         document.positionAt(startIndex + matches[0].indexOf(name)),
         document.positionAt(startIndex + matches[0].indexOf(name) + name.length + command.length),
@@ -134,7 +143,7 @@ function registerCodeLensProvider(context: vscode.ExtensionContext) {
 
         const command = type === "debug" ? "extension.bun.codelens.debug.task" : "extension.bun.codelens.run.task";
 
-        vscode.commands.executeCommand(command, {
+        await vscode.commands.executeCommand(command, {
           script: pick.detail,
           name: pick.label,
           cwd: path.dirname(uri.fsPath),
@@ -160,11 +169,29 @@ function parseScripts(document: vscode.TextDocument): Record<string, string> {
   return Object.fromEntries(Object.entries(scripts).filter(([, script]) => typeof script === "string"));
 }
 
-async function saveManifest(cwd: string) {
+/**
+ * bun reads the package.json from disk, while the picker and the hover show the editor buffer.
+ * Returns false when the manifest is dirty and could not be saved.
+ */
+async function saveManifest(cwd: string): Promise<boolean> {
   const manifest = vscode.workspace.textDocuments.find(
     document => document.uri.scheme === "file" && document.uri.fsPath === path.join(cwd, "package.json"),
   );
-  if (manifest?.isDirty) await manifest.save();
+  if (!manifest?.isDirty) return true;
+  if (await manifest.save()) return true;
+  vscode.window.showErrorMessage(`Could not save ${manifest.uri.fsPath}. The script was not run.`);
+  return false;
+}
+
+/** Quotes a script name for the default terminal shell, so that bun receives it as one argument. */
+function quoteScriptName(name: string): string {
+  if (/^[\w.:@/-]+$/.test(name)) return name;
+  const shell = vscode.env.shell.split(/[\\/]/).pop()!.toLowerCase();
+  // cmd.exe has no single quotes. The C runtime reads \" inside double quotes as a literal quote.
+  if (shell === "cmd.exe") return `"${name.replace(/"/g, '\\"')}"`;
+  // Single quotes are literal in sh and in PowerShell. PowerShell escapes a quote as '', sh as '\''.
+  const quote = shell.startsWith("pwsh") || shell.startsWith("powershell") ? "''" : "'\\''";
+  return `'${name.replace(/'/g, quote)}'`;
 }
 
 function getActiveTerminal(name: string, cwd: string) {
@@ -188,7 +215,7 @@ interface CommandArgs {
 function registerHoverProvider(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.languages.registerHoverProvider(
-      { language: "json", scheme: "file" },
+      { language: "json", scheme: "file", pattern: "**/package.json" },
       {
         provideHover(document, position) {
           const scripts = extractScriptsFromPackageJson(document)?.scripts ?? [];
@@ -218,13 +245,10 @@ function registerHoverProvider(context: vscode.ExtensionContext) {
       debugCommand(script, cwd);
     }),
     vscode.commands.registerCommand("extension.bun.codelens.run.task", async ({ name, cwd }: CommandArgs) => {
-      // bun reads the package.json from disk, while the picker and the hover show the editor buffer.
-      await saveManifest(cwd);
+      if (!(await saveManifest(cwd))) return;
 
       // Run the script by name from the package directory, so bun applies pre/post hooks and env assignments.
-      // Double quotes, with \" for an embedded quote, are the one quoting form that sh, PowerShell and cmd all accept.
-      const argument = /^[\w.:@/-]+$/.test(name) ? name : `"${name.replace(/"/g, '\\"')}"`;
-      const command = `bun run ${argument}`;
+      const command = `bun run ${quoteScriptName(name)}`;
       const terminalName = `Bun Task: ${name}`;
 
       const terminals = getActiveTerminal(terminalName, cwd);

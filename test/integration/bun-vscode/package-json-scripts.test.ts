@@ -36,6 +36,9 @@ beforeEach(() => {
   state.debugSessions = [];
   state.configScopes = [];
   state.openDocuments = [];
+  state.events = [];
+  state.errorMessages = [];
+  state.shell = "/bin/bash";
 });
 
 async function clickCodeLens(root: string, relativePath: string, title: "Bun: Run" | "Bun: Debug", pick: string) {
@@ -70,21 +73,36 @@ test("Bun: Run skips script entries that are not strings", async () => {
   expect(terminalsAsSeen()).toEqual([[String(dir), ["bun run build"]]]);
 });
 
-test("Bun: Run quotes a script name that contains whitespace", async () => {
+test.each([
+  ["/bin/bash", "bun run 'build docs'", "bun run 'it'\\''s $x'"],
+  ["C:\\Program Files\\PowerShell\\7\\pwsh.exe", "bun run 'build docs'", "bun run 'it''s $x'"],
+  ["C:\\Windows\\System32\\cmd.exe", 'bun run "build docs"', 'bun run "it\'s $x"'],
+])("Bun: Run quotes a script name for the default shell %s", async (shell, spaced, quoted) => {
   using dir = tempDir("vscode-codelens", {
     "package.json": JSON.stringify({
-      scripts: { "build docs": "echo docs", "test:unit": "bun test", 'say "hi"': "echo hi" },
+      scripts: { "build docs": "echo docs", "test:unit": "bun test", "it's $x": "echo hi" },
     }),
   });
+  state.shell = shell;
   await clickCodeLens(String(dir), "package.json", "Bun: Run", "build docs");
   await clickCodeLens(String(dir), "package.json", "Bun: Run", "test:unit");
-  await clickCodeLens(String(dir), "package.json", "Bun: Run", 'say "hi"');
+  await clickCodeLens(String(dir), "package.json", "Bun: Run", "it's $x");
 
   expect(terminalsAsSeen()).toEqual([
-    [String(dir), ['bun run "build docs"']],
+    [String(dir), [spaced]],
     [String(dir), ["bun run test:unit"]],
-    [String(dir), ['bun run "say \\"hi\\""']],
+    [String(dir), [quoted]],
   ]);
+});
+
+test("Bun: Run on cmd.exe escapes an embedded double quote", async () => {
+  using dir = tempDir("vscode-codelens", {
+    "package.json": JSON.stringify({ scripts: { 'say "hi"': "echo hi" } }),
+  });
+  state.shell = "C:\\Windows\\System32\\cmd.exe";
+  await clickCodeLens(String(dir), "package.json", "Bun: Run", 'say "hi"');
+
+  expect(terminalsAsSeen()).toEqual([[String(dir), ['bun run "say \\"hi\\""']]]);
 });
 
 test("Bun: Run saves an edited package.json first, so bun sees the script the picker showed", async () => {
@@ -99,6 +117,22 @@ test("Bun: Run saves an edited package.json first, so bun sees the script the pi
   expect(state.quickPickItems.map(item => item.label)).toEqual(["build", "lint"]);
   expect(edited).toMatchObject({ isDirty: false, saved: 1 });
   expect(terminalsAsSeen()).toEqual([[join(String(dir), "packages/api"), ["bun run lint"]]]);
+  // The command is sent only after the save has settled.
+  expect(state.events).toEqual(["save:true", "send:bun run lint"]);
+});
+
+test("Bun: Run does not run the script when the edited package.json cannot be saved", async () => {
+  using dir = tempDir("vscode-codelens", files);
+  const path = join(String(dir), "packages/api/package.json");
+  const edited = makeDocument(path, JSON.stringify({ scripts: { lint: "eslint ." } }));
+  edited.isDirty = true;
+  edited.saveResult = false;
+  state.openDocuments = [edited];
+
+  await clickCodeLens(String(dir), "packages/api/package.json", "Bun: Run", "lint");
+
+  expect(state.terminals).toEqual([]);
+  expect(state.errorMessages).toEqual([`Could not save ${path}. The script was not run.`]);
 });
 
 test("Bun: Run falls back to the lenient parser when the package.json is not strict JSON", async () => {
@@ -169,8 +203,8 @@ test("scripts with the same name in two packages get separate terminals", async 
   ]);
 });
 
-test("hover links are only offered for documents on disk", () => {
-  expect(state.hoverSelector).toEqual({ language: "json", scheme: "file" });
+test("hover links are only offered for a package.json on disk", () => {
+  expect(state.hoverSelector).toEqual({ language: "json", scheme: "file", pattern: "**/package.json" });
 });
 
 test("hover links in a nested package.json carry that package's directory", async () => {
@@ -214,4 +248,22 @@ test("hover and CodeLens tolerate a trailing comma and a document without script
   const other = makeDocument(join(String(dir), "tsconfig.json"));
   expect(state.codeLensProvider!.provideCodeLenses(other)).toEqual([]);
   expect(state.hoverProvider!.provideHover(other, other.positionAt(0))).toEqual({ contents: [] });
+});
+
+test("hover links carry the unescaped script name", () => {
+  using dir = tempDir("vscode-codelens", {
+    "package.json": JSON.stringify({ scripts: { 'say "hi"': 'echo "hi"' } }),
+  });
+  state.workspaceRoot = String(dir);
+  const manifest = makeDocument(join(String(dir), "package.json"));
+  const offset = manifest.getText().indexOf("say") + 1;
+
+  const { contents } = state.hoverProvider!.provideHover(manifest, manifest.positionAt(offset));
+  const markdown = contents.find(content => content instanceof MarkdownString) as MarkdownString;
+  const [, link] = markdown.value.match(/\]\((command:[^)]+)\)/)!;
+  expect(JSON.parse(decodeURIComponent(new URL(link).search.slice(1)))).toEqual({
+    script: 'echo "hi"',
+    name: 'say "hi"',
+    cwd: String(dir),
+  });
 });

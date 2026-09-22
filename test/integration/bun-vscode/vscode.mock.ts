@@ -79,6 +79,8 @@ export interface TextDocument {
   uri: Uri;
   isDirty: boolean;
   saved: number;
+  /** What the next save() reports. */
+  saveResult: boolean;
   getText(): string;
   positionAt(offset: number): Position;
   save(): Promise<boolean>;
@@ -98,6 +100,10 @@ export const state = {
   hoverProvider: null as null | { provideHover(document: TextDocument, position: Position): { contents: unknown[] } },
   // Documents open in an editor. An entry here wins over the file on disk, like a dirty editor buffer.
   openDocuments: [] as TextDocument[],
+  // The order of saves and terminal commands, to check that a run waits for the save.
+  events: [] as string[],
+  errorMessages: [] as string[],
+  shell: "/bin/bash",
 };
 
 export function makeDocument(fsPath: string, text = readFileSync(fsPath, "utf8")): TextDocument {
@@ -105,6 +111,7 @@ export function makeDocument(fsPath: string, text = readFileSync(fsPath, "utf8")
     uri: Uri.file(fsPath),
     isDirty: false,
     saved: 0,
+    saveResult: true,
     getText: () => text,
     positionAt(offset: number) {
       const before = text.slice(0, offset);
@@ -113,9 +120,12 @@ export function makeDocument(fsPath: string, text = readFileSync(fsPath, "utf8")
       return new Position(line, character);
     },
     async save() {
+      // A real save is a round trip to the main thread, so it settles on a later tick.
+      await new Promise(resolve => setImmediate(resolve));
       this.saved++;
-      this.isDirty = false;
-      return true;
+      if (this.saveResult) this.isDirty = false;
+      state.events.push(`save:${this.saveResult}`);
+      return this.saveResult;
     },
   };
 }
@@ -142,6 +152,9 @@ mock.module("vscode", () => ({
     get terminals() {
       return state.terminals;
     },
+    showErrorMessage: (message: string) => {
+      state.errorMessages.push(message);
+    },
     showQuickPick: async (items: QuickPickItem[]) => {
       state.quickPickItems = items;
       return items.find(item => item.label === state.pickLabel);
@@ -154,10 +167,16 @@ mock.module("vscode", () => ({
         show() {},
         sendText(text: string) {
           this.sent.push(text);
+          state.events.push(`send:${text}`);
         },
       };
       state.terminals.push(terminal);
       return terminal;
+    },
+  },
+  env: {
+    get shell() {
+      return state.shell;
     },
   },
   commands: {

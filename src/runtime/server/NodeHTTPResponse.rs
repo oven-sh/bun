@@ -1698,6 +1698,11 @@ impl NodeHTTPResponse {
                         JSValue::js_number_from_int32(event as u8 as i32),
                     ],
                 );
+                // Inside the read scope the callback was a nested one, so its exit was no
+                // checkpoint. Node's on_body is one after every chunk of the body.
+                if !bytes.is_undefined() {
+                    let _ = event_loop.checkpoint_between_callbacks();
+                }
             };
             if fin_follows_bytes {
                 deliver(bytes, false);
@@ -2586,6 +2591,22 @@ impl Drop for NodeHTTPResponse {
 
         self.promise.with_mut(|p| p.deinit());
     }
+}
+
+/// The scope of one socket read of a node:http connection (uWS `HttpContext::onData`). Node's
+/// parser runs nextTicks and promise jobs after each body chunk (`on_body`) and once after the
+/// whole read (`kOnExecute`), not after the requests it dispatches or completes in between
+/// (`kSkipTaskQueues`). While the scope is open every JS callback of the read is a nested one,
+/// so closing the scope is that last checkpoint; [`NodeHTTPResponse::on_data_or_aborted`] runs
+/// the one after a body chunk.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__NodeHTTP__onReadBegin() {
+    vm_get().event_loop_ref().enter();
+}
+
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__NodeHTTP__onReadEnd() {
+    vm_get().event_loop_ref().exit();
 }
 
 /// # Safety

@@ -50,7 +50,7 @@ const {
   hasServerResponseFinished,
   NodeHTTPBodyReadState,
   eofInProgress,
-  drainMicrotasks,
+  completeIncomingMessage,
   setServerCustomOptions,
   setServerAppFlags,
   getMaxHTTPHeaderSize,
@@ -766,6 +766,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             http_req.upgrade = true;
             // Node frees the parser before handing the raw socket to 'connect'.
             releaseServerParserShim(socket, http_req);
+            // Node emits 'connect' after the read, so the message is complete by then.
+            completeIncomingMessage(http_req);
             server.emit("connect", http_req, socket, head);
             // Attach the internal close listener after the user's "connect"
             // handler ran: Node.js hands the socket over with no listeners and
@@ -847,7 +849,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           handle.ondata = onDataIncomingMessage.bind(http_req);
           handle.hasCustomOnData = false;
         }
-        drainMicrotasks();
 
         let pendingPromise: Promise<void> | undefined;
         let didFinish = false;
@@ -980,27 +981,28 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             http_req.once("end", clearUpgradeIncoming.bind(undefined, socket));
           }
           const upgradeHead = !hasBody && connectHead ? connectHead : kEmptyBuffer;
-          let upgradeHandled;
-          try {
-            upgradeHandled = server.emit("upgrade", http_req, socket, upgradeHead);
-          } catch (err) {
-            // A throwing 'upgrade' listener surfaces as an uncaught
-            // exception, like Node.js (the emit happens outside any JS try
-            // frame there).
-            process.nextTick(rethrowUncaught, err);
-            upgradeHandled = true;
-          }
-          if (!upgradeHandled) {
-            // shouldUpgradeCallback accepted the upgrade but no 'upgrade'
-            // listener is installed: Node.js destroys the socket.
-            socket.destroy();
-            return;
-          }
           // Like CONNECT: the connection is detached from the HTTP request
           // machinery; hold the native callback open until the raw socket
           // closes.
           const upgradePromise = $newPromise();
-          socket.once("close", resolveHandoffPromise.bind(undefined, upgradePromise));
+          // Node emits 'upgrade' after the read (onParserExecuteCommon): a message without a
+          // body is complete by then, and so is one whose body arrived whole with the head.
+          if (hasBody && bodyArrivedWithHead(dispatchBits, http_req, connectHead)) {
+            handle.ondata = function (chunk, isLast, aborted) {
+              onDataIncomingMessage.$call(http_req, chunk, isLast, aborted);
+              if (
+                isLast &&
+                aborted === NodeHTTPResponseAbortEvent.none &&
+                !emitUpgrade(server, http_req, socket, upgradeHead, upgradePromise)
+              ) {
+                resolveHandoffPromise(upgradePromise);
+              }
+            };
+            handle.hasCustomOnData = false;
+            return upgradePromise;
+          }
+          if (!hasBody) completeIncomingMessage(http_req);
+          if (!emitUpgrade(server, http_req, socket, upgradeHead, upgradePromise)) return;
           return upgradePromise;
         } else if (
           server.requireHostHeader &&
@@ -1036,6 +1038,10 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             server.emit("request", http_req, http_res);
           }
         }
+
+        // A message without a body is complete where its head is: Node's parser reports
+        // on_message_complete right after the listener returns.
+        if (!hasBody) completeIncomingMessage(http_req);
 
         socket.cork();
 
@@ -1318,6 +1324,39 @@ const kEnableStreaming = Symbol("kEnableStreaming");
 // resumes this request, like Node.js's UpgradeStream._read, so an unread body
 // can never stall the upgrade data behind it.
 const kUpgradeIncoming = Symbol("kUpgradeIncoming");
+
+// Whether the read that carried the head of a request also carried its whole Content-Length body.
+function bodyArrivedWithHead(dispatchBits: number, req, bytesAfterHead: Buffer | undefined) {
+  if (
+    bytesAfterHead === undefined ||
+    (dispatchBits & DISPATCH_HAS_CONTENT_LENGTH) === 0 ||
+    (dispatchBits & DISPATCH_HAS_TRANSFER_ENCODING) !== 0
+  ) {
+    return false;
+  }
+  return bytesAfterHead.length >= Number(req.headers["content-length"]);
+}
+
+function emitUpgrade(server, req, socket, head, handoffPromise) {
+  let upgradeHandled;
+  try {
+    upgradeHandled = server.emit("upgrade", req, socket, head);
+  } catch (err) {
+    // A throwing 'upgrade' listener surfaces as an uncaught
+    // exception, like Node.js (the emit happens outside any JS try
+    // frame there).
+    process.nextTick(rethrowUncaught, err);
+    upgradeHandled = true;
+  }
+  if (!upgradeHandled) {
+    // shouldUpgradeCallback accepted the upgrade but no 'upgrade'
+    // listener is installed: Node.js destroys the socket.
+    socket.destroy();
+    return false;
+  }
+  socket.once("close", resolveHandoffPromise.bind(undefined, handoffPromise));
+  return true;
+}
 
 // Like Node.js's net.Socket onReadableStreamEnd: every socket carries one 'end'
 // listener. http server connections have allowHalfOpen: true, so it is a no-op,
@@ -2413,10 +2452,15 @@ function stopServerResponsePerf(this: any) {
 // arm keep-alive) runs first because onResponseFinishHandleSocket's guards
 // read pre-detach state, then detach the socket and advance the pipeline.
 function emitResponseFinish() {
+  const req = this.req;
+  // Like Node's resOnFinish: a request that nothing reads is dumped when its response finishes.
+  if (req && !req._consuming && !req._readableState?.resumeScheduled) {
+    req._dump();
+  }
   // req.socket is nulled by the stream destroyer (pipeline/compose cleanup);
   // the response's own socket (set by assignSocket, cleared only by
   // detachSocket) still references the connection then.
-  const socket = this.req?.socket ?? this.socket;
+  const socket = req?.socket ?? this.socket;
   onResponseFinishHandleSocket(socket?.server, socket, this);
   // The dispatcher detached a synchronously-finished response itself;
   // advancing the pipeline again here would skip a queued response.
@@ -3287,10 +3331,6 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     }
   }
   this._header = " ";
-  const req = this.req;
-  if (!req._consuming && !req?._readableState?.resumeScheduled) {
-    req._dump();
-  }
   // The socket is NOT detached here: like Node.js, res.socket stays assigned
   // until the response 'finish' machinery runs (the dispatcher detaches it
   // right after a synchronously-finished handler returns, or via its 'finish'

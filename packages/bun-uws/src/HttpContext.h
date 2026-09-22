@@ -37,6 +37,8 @@
 
 
 extern "C" void Bun__NodeHTTP__onReadsResumable(int ssl, struct us_socket_t *s);
+extern "C" void Bun__NodeHTTP__onReadBegin();
+extern "C" void Bun__NodeHTTP__onReadEnd();
 
 namespace uWS {
 
@@ -307,6 +309,30 @@ private:
         return us_socket_close(s, 0, nullptr);
     }
 
+    /* node:http compat: Node's parser runs nextTicks and promise jobs after each body
+     * chunk (on_body) and once after the whole read (kOnExecute), not after the requests
+     * it dispatches or completes in between (kSkipTaskQueues). While the scope is open
+     * every JS callback of the read is a nested one; end() is the checkpoint. */
+    template <bool IsNodeHttp>
+    struct ReadScope {
+        bool open = false;
+        void begin() {
+            if constexpr (IsNodeHttp) {
+                Bun__NodeHTTP__onReadBegin();
+                open = true;
+            }
+        }
+        void end() {
+            if constexpr (IsNodeHttp) {
+                if (open) {
+                    open = false;
+                    Bun__NodeHTTP__onReadEnd();
+                }
+            }
+        }
+        ~ReadScope() { end(); }
+    };
+
     template <bool IsNodeHttp>
     static us_socket_t *onData(us_socket_t *s, char *data, int length) {
         // ref the socket to make sure we process it entirely before it is closed
@@ -414,6 +440,9 @@ private:
             auto *nodeHttpResponseData = (HttpResponseData<SSL, true> *) httpResponseData;
             nodeHttpRequestTrailers = &nodeHttpResponseData->nodeHttpRequestTrailers;
         }
+
+        ReadScope<IsNodeHttp> readScope;
+        readScope.begin();
 
         auto result = httpResponseData->template consumePostPadded<IsNodeHttp>(httpContextData->maxHeaderSize, httpResponseData->isConnectRequest, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, httpContextData->flags.useInsecureHTTPParser, httpContextData->flags.useLenientTransferEncoding, nodeHttpRequestTrailers, &httpResponseData->chunkedExtensionsByteCount, data, (unsigned int) length, s, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
 
@@ -670,6 +699,20 @@ private:
 
         auto httpErrorStatusCode = result.httpErrorStatusCode();
 
+        /* node:http compat: the checkpoint of the read. It runs inside the parse window and
+         * before the uncork below, like the one that used to follow each dispatch: what it
+         * writes shares this read's cork, and what it does to the socket is handled the way
+         * the parse loop handles it after a callback. */
+        if constexpr (IsNodeHttp) {
+            if (!httpErrorStatusCode) {
+                readScope.end();
+                if (result.returnedData != nullptr
+                    && (httpContextData->upgradedWebSocket == (void *) s || us_socket_is_closed(s) || us_socket_is_shut_down(s))) {
+                    result = HttpParserResult::success(HttpParserResult::WHOLE_READ, nullptr);
+                }
+            }
+        }
+
         /* Mark that we are no longer parsing Http */
         httpContextData->flags.isParsingHttp = false;
         httpContextData->parsingSocket = prevParsingSocket;
@@ -683,6 +726,8 @@ private:
             if (IsNodeHttp && httpContextData->onClientError) {
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED;
                 httpContextData->onClientError(SSL, s, result.parserError, data, length);
+                /* Node emits 'clientError' from the callback that ends the read (kOnExecute). */
+                readScope.end();
                 if (!us_socket_is_closed(s)) {
                     /* Balance the parsing ref taken at the top of onData (the
                      * success path does this through returnedData). */

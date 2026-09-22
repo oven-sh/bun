@@ -4697,13 +4697,15 @@ it("req.socket.setKeepAlive() and resetAndDestroy() return the socket", async ()
   }
 });
 
-// Node's parser reports the last bytes of a body (on_body) and the end of the
-// message (on_message_complete) in separate callbacks, each followed by a full
-// drain, so whatever the consumer of the last chunk queued runs before 'end'.
-describe("request 'end' runs after the nextTicks and promise jobs queued with the last chunk", () => {
+// Node's parser runs nextTicks and promise jobs after each chunk of a body
+// (on_body) and once after each socket read (kOnExecute). It runs none after the
+// 'request' listener (on_headers_complete) or after the end of a message
+// (on_message_complete), which pushes the EOF where the message completes.
+// Every order below is what Node v26.3.0 prints.
+describe("node:http server runs nextTicks and promise jobs where Node's parser does", () => {
   type Handler = (req: IncomingMessage, res: ServerResponse) => void;
 
-  function listenOnLoopback(secure: boolean, handler: Handler) {
+  function listenOnLoopback(secure: boolean, handler?: Handler) {
     const server = secure
       ? createHttpsServer({ key: tlsCert.key, cert: tlsCert.cert }, handler)
       : createServer(handler);
@@ -4713,7 +4715,13 @@ describe("request 'end' runs after the nextTicks and promise jobs queued with th
   // Sends one write at a time, each after the server reported a "step" for the
   // one before it, so the chunk boundaries do not depend on timing. Resolves
   // with everything the server sent once the connection has closed.
-  async function send(server: Server, secure: boolean, progress: EventEmitter, writes: string[], canReset = false) {
+  async function send(
+    server: Server,
+    secure: boolean,
+    progress: EventEmitter,
+    writes: string[],
+    options: { canReset?: boolean; endAfter?: string } = {},
+  ) {
     const port = (server.address() as AddressInfo).port;
     const client = secure
       ? tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false })
@@ -4721,10 +4729,14 @@ describe("request 'end' runs after the nextTicks and promise jobs queued with th
     const { promise: response, resolve, reject } = Promise.withResolvers<string>();
     let raw = "";
     client.setEncoding("utf8");
-    client.on("data", data => (raw += data));
+    client.on("data", data => {
+      raw += data;
+      // A kept-alive connection is ended from here once the last response is in.
+      if (options.endAfter !== undefined && raw.endsWith(options.endAfter)) client.end();
+    });
     // A connection that the server destroys can reset; 'close' follows either way.
     client.on("error", error => {
-      if (!canReset) reject(error);
+      if (!options.canReset) reject(error);
     });
     client.on("close", () => resolve(raw));
     await Promise.race([once(client, secure ? "secureConnect" : "connect"), response]);
@@ -4736,81 +4748,134 @@ describe("request 'end' runs after the nextTicks and promise jobs queued with th
     return await response;
   }
 
-  const head = "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 6\r\nConnection: close\r\n\r\n";
+  // Logs an event, a nextTick and a promise job queued from its listener.
+  function probe(order: string[], name: string) {
+    order.push(name);
+    process.nextTick(() => order.push(`${name}.tick`));
+    Promise.resolve().then(() => order.push(`${name}.job`));
+  }
 
-  // Each consumer logs the chunk, a nextTick and a promise job queued with it.
-  const consumers: Record<string, (req: IncomingMessage, log: (chunk: Buffer) => Promise<void>) => void> = {
-    "'data' listener": (req, log) => req.on("data", log),
-    "'readable' listener": (req, log) =>
-      req.on("readable", () => {
-        for (let chunk; (chunk = req.read()) !== null; ) log(chunk);
+  const consumers: Record<string, (req: IncomingMessage, order: string[], progress: EventEmitter) => void> = {
+    "'data' listener": (req, order, progress) =>
+      req.on("data", chunk => {
+        probe(order, `${req.url}.data(${chunk.length})`);
+        progress.emit("step");
       }),
-    "for await": async (req, log) => {
-      for await (const chunk of req) await log(chunk);
+    "'readable' listener": (req, order, progress) =>
+      req.on("readable", () => {
+        for (let chunk; (chunk = req.read()) !== null; ) {
+          probe(order, `${req.url}.data(${chunk.length})`);
+          progress.emit("step");
+        }
+      }),
+    "for await": async (req, order, progress) => {
+      for await (const chunk of req) {
+        probe(order, `${req.url}.data(${chunk.length})`);
+        progress.emit("step");
+      }
     },
   };
 
-  async function trace(secure: boolean, consumer: string, writes: string[]) {
+  // Every request is answered in its 'end' listener.
+  async function trace(secure: boolean, consumer: string, writes: string[], lastResponse: string) {
     const order: string[] = [];
-    const seen: number[] = [];
     const progress = new EventEmitter();
     const server = await listenOnLoopback(secure, (req, res) => {
-      consumers[consumer](req, async chunk => {
-        order.push(`chunk(${chunk.length})`);
-        process.nextTick(() => order.push(`tick(${chunk.length})`));
-        await null;
-        order.push(`job(${chunk.length})`);
-        // The whole chain of promise jobs settles before 'end', not only its first link.
-        await null;
-        await null;
-        seen.push(chunk.length);
-        progress.emit("step");
-      });
-      // A handler that answers in 'end' has to have every chunk by then.
+      probe(order, `${req.url}.request`);
       req.on("end", () => {
-        order.push("end");
-        res.end(JSON.stringify(seen));
+        probe(order, `${req.url}.end`);
+        res.end(`${req.url};`);
       });
+      req.on("close", () => probe(order, `${req.url}.close`));
+      consumers[consumer](req, order, progress);
       progress.emit("step");
     });
     try {
-      const response = await send(server, secure, progress, writes);
-      return { order, body: response.split("\r\n\r\n")[1] };
+      const response = await send(server, secure, progress, writes, { endAfter: lastResponse });
+      return { order: order.join(" "), responses: response.match(/\/\w;/g) };
     } finally {
       server.close();
     }
   }
 
+  const post = (path: string, body: string) =>
+    `POST ${path} HTTP/1.1\r\nHost: x\r\nContent-Length: ${body.length}\r\n\r\n${body}`;
+  const postHead = (path: string, length: number) => post(path, Buffer.alloc(length, "x").toString()).slice(0, -length);
+  const get = (path: string) => `GET ${path} HTTP/1.1\r\nHost: x\r\n\r\n`;
+  const ended = (path: string) =>
+    `${path}.end ${path}.end.tick ${path}.close ${path}.close.tick ${path}.end.job ${path}.close.job`;
+
   describe.each(["http", "https"])("%s", protocol => {
     const secure = protocol === "https";
 
-    it("a body sent in separate writes", async () => {
-      expect(await trace(secure, "'data' listener", [head, "AAAA", "BB"])).toEqual({
-        order: ["chunk(4)", "tick(4)", "job(4)", "chunk(2)", "tick(2)", "job(2)", "end"],
-        body: "[4,2]",
+    it("a body sent in separate writes: the jobs of each chunk run before the next event", async () => {
+      expect(await trace(secure, "'data' listener", [postHead("/a", 6), "AAAA", "BB"], "/a;")).toEqual({
+        order:
+          "/a.request /a.request.tick /a.request.job " +
+          "/a.data(4) /a.data(4).tick /a.data(4).job " +
+          "/a.data(2) /a.data(2).tick /a.data(2).job " +
+          ended("/a"),
+        responses: ["/a;"],
       });
     });
 
-    it("a body sent with the head", async () => {
-      expect(await trace(secure, "'data' listener", [head + "AAAABB"])).toEqual({
-        order: ["chunk(6)", "tick(6)", "job(6)", "end"],
-        body: "[6]",
+    it("a body sent with the head: the listener's jobs wait for the first chunk", async () => {
+      expect(await trace(secure, "'data' listener", [post("/a", "AAAABB")], "/a;")).toEqual({
+        order: "/a.request /a.request.tick /a.data(6) /a.data(6).tick /a.request.job /a.data(6).job " + ended("/a"),
+        responses: ["/a;"],
       });
     });
   });
 
   it("a 'readable' listener", async () => {
-    expect(await trace(false, "'readable' listener", [head, "AAAA", "BB"])).toEqual({
-      order: ["chunk(4)", "tick(4)", "job(4)", "chunk(2)", "tick(2)", "job(2)", "end"],
-      body: "[4,2]",
+    expect(await trace(false, "'readable' listener", [postHead("/a", 6), "AAAA", "BB"], "/a;")).toEqual({
+      order:
+        "/a.request /a.request.tick /a.request.job " +
+        "/a.data(4) /a.data(4).tick /a.data(4).job " +
+        "/a.data(2) /a.data(2).tick /a.data(2).job " +
+        ended("/a"),
+      responses: ["/a;"],
     });
   });
 
   it("for await", async () => {
     // The loop body is itself a promise job, so its own jobs run before its nextTicks.
-    expect(await trace(false, "for await", [head, "AAAA", "BB"])).toEqual({
-      order: ["chunk(4)", "job(4)", "tick(4)", "chunk(2)", "job(2)", "tick(2)", "end"],
-      body: "[4,2]",
+    expect(await trace(false, "for await", [postHead("/a", 6), "AAAA", "BB"], "/a;")).toEqual({
+      order:
+        "/a.request /a.request.tick /a.request.job " +
+        "/a.data(4) /a.data(4).job /a.data(4).tick " +
+        "/a.data(2) /a.data(2).job /a.data(2).tick " +
+        ended("/a"),
+      responses: ["/a;"],
+    });
+  });
+
+  it("a request without a body ends where its head does, before the listener's jobs", async () => {
+    expect(await trace(false, "for await", [get("/a")], "/a;")).toEqual({
+      order:
+        "/a.request /a.request.tick /a.end /a.end.tick /a.close /a.close.tick /a.request.job /a.end.job /a.close.job",
+      responses: ["/a;"],
+    });
+  });
+
+  it("pipelined requests in one read are all dispatched before the one checkpoint", async () => {
+    expect(await trace(false, "'data' listener", [get("/a") + get("/b")], "/b;")).toEqual({
+      order:
+        "/a.request /b.request /a.request.tick /b.request.tick /a.end /b.end /a.end.tick /b.end.tick " +
+        "/a.close /b.close /a.close.tick /b.close.tick " +
+        "/a.request.job /b.request.job /a.end.job /b.end.job /a.close.job /b.close.job",
+      responses: ["/a;", "/b;"],
+    });
+  });
+
+  it("pipelined bodies in one read: 'end' of the first is queued ahead of the second request's ticks", async () => {
+    expect(await trace(false, "'data' listener", [post("/a", "AAAABB") + post("/b", "CCCC")], "/b;")).toEqual({
+      order:
+        "/a.request /a.request.tick /a.data(6) /a.data(6).tick /a.request.job /a.data(6).job " +
+        "/b.request /a.end /b.request.tick /b.data(4) /a.end.tick /b.data(4).tick /a.close /a.close.tick " +
+        "/b.request.job /a.end.job /b.data(4).job /a.close.job " +
+        ended("/b"),
+      responses: ["/a;", "/b;"],
     });
   });
 
@@ -4876,8 +4941,9 @@ describe("request 'end' runs after the nextTicks and promise jobs queued with th
         progress.emit("step");
       });
       try {
+        const head = "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 6\r\nConnection: close\r\n\r\n";
         const [response] = await Promise.all([
-          send(server, false, progress, [head, "AAAA", "BB"], true),
+          send(server, false, progress, [head, "AAAA", "BB"], { canReset: true }),
           requestClosed,
         ]);
         expect({ order, body: response.split("\r\n\r\n")[1] }).toEqual({
@@ -4890,42 +4956,49 @@ describe("request 'end' runs after the nextTicks and promise jobs queued with th
     });
   });
 
-  it("the connection serves the next request", async () => {
+  // Node emits 'upgrade' and 'connect' after the read, so a message without a
+  // body is complete, with its EOF pushed, before the listener runs.
+  it.each([
+    ["upgrade", "GET /u HTTP/1.1\r\nHost: x\r\nUpgrade: x\r\nConnection: Upgrade\r\n\r\n"],
+    ["connect", "CONNECT example.com:80 HTTP/1.1\r\nHost: example.com:80\r\n\r\n"],
+  ])("a request without a body is complete inside the '%s' listener", async (event, head) => {
     const order: string[] = [];
-    const server = await listenOnLoopback(false, (req, res) => {
-      req.on("data", async chunk => {
-        order.push(`${req.url} data(${chunk.length})`);
-        await null;
-        order.push(`${req.url} job(${chunk.length})`);
-      });
-      req.on("end", () => {
-        order.push(`${req.url} end`);
-        res.end(`${req.url};`);
-      });
+    const server = await listenOnLoopback(false);
+    server.on(event, (req: IncomingMessage, socket: Duplex) => {
+      probe(order, `${event} complete=${req.complete}`);
+      req.on("end", () => probe(order, "req.end"));
+      req.on("close", () => probe(order, "req.close"));
+      req.resume();
+      socket.end("HTTP/1.1 200 OK\r\n\r\n");
     });
     try {
-      const { promise: closed, resolve, reject } = Promise.withResolvers<void>();
-      const client = connect((server.address() as AddressInfo).port, "127.0.0.1");
-      let raw = "";
-      client.setEncoding("utf8");
-      client.on("error", reject);
-      client.on("close", () => resolve());
-      client.on("data", data => {
-        raw += data;
-        // One request at a time: the second one goes out once the first is answered.
-        if (raw.endsWith("/first;")) client.write("POST /second HTTP/1.1\r\nHost: x\r\nContent-Length: 2\r\n\r\nCC");
-        else if (raw.endsWith("/second;")) client.end();
-      });
-      client.write("POST /first HTTP/1.1\r\nHost: x\r\nContent-Length: 6\r\n\r\nAAAABB");
-      await closed;
-      expect(order).toEqual([
-        "/first data(6)",
-        "/first job(6)",
-        "/first end",
-        "/second data(2)",
-        "/second job(2)",
-        "/second end",
-      ]);
+      await send(server, false, new EventEmitter(), [head], { canReset: true });
+      expect(order.join(" ")).toBe(
+        `${event} complete=true ${event} complete=true.tick req.end req.end.tick req.close req.close.tick ` +
+          `${event} complete=true.job req.end.job req.close.job`,
+      );
+    } finally {
+      server.close();
+    }
+  });
+
+  it("'upgrade' for a body that arrived with the head fires once the body is in the request", async () => {
+    const order: string[] = [];
+    const server = await listenOnLoopback(false);
+    server.on("upgrade", (req: IncomingMessage, socket: Duplex) => {
+      probe(order, `upgrade complete=${req.complete}`);
+      req.on("data", chunk => probe(order, `req.data(${chunk})`));
+      req.on("end", () => probe(order, "req.end"));
+      req.on("close", () => probe(order, "req.close"));
+      socket.end("HTTP/1.1 101 Switching Protocols\r\nUpgrade: x\r\nConnection: Upgrade\r\n\r\n");
+    });
+    try {
+      const head = "GET /u HTTP/1.1\r\nHost: x\r\nUpgrade: x\r\nConnection: Upgrade\r\nContent-Length: 6\r\n\r\n";
+      await send(server, false, new EventEmitter(), [head + "AAAABB"], { canReset: true });
+      expect(order.join(" ")).toBe(
+        "upgrade complete=true req.data(AAAABB) upgrade complete=true.tick req.end req.data(AAAABB).tick " +
+          "req.end.tick req.close req.close.tick upgrade complete=true.job req.data(AAAABB).job req.end.job req.close.job",
+      );
     } finally {
       server.close();
     }

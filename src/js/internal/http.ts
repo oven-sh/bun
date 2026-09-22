@@ -165,6 +165,14 @@ function emitEOFIncomingMessage(self) {
   process.nextTick(emitEOFIncomingMessageOuter, self);
 }
 
+// Node's parserOnMessageComplete: the parser ends the message at the point where it completes,
+// with no tick in between, so endReadableNT ('end') is queued ahead of whatever the next request
+// of the same read queues.
+function completeIncomingMessage(self) {
+  self[eofInProgress] = true;
+  emitEOFIncomingMessageOuter(self);
+}
+
 function onDataIncomingMessage(this: any, chunk, isLast, aborted: NodeHTTPResponseAbortEvent) {
   if (aborted === NodeHTTPResponseAbortEvent.abort) {
     // The request is aborted from the socket's #onClose (like Node.js's
@@ -191,7 +199,7 @@ function onDataIncomingMessage(this: any, chunk, isLast, aborted: NodeHTTPRespon
   }
 
   if (isLast) {
-    emitEOFIncomingMessage(this);
+    completeIncomingMessage(this);
     // Like Node's parserOnMessageComplete: any readStop above left the shared
     // socket's flowing=false, which would swallow the next request's 'pause'.
     if (!this.upgrade && socket && !socket._paused && socket.readable) socket.resume();
@@ -507,6 +515,7 @@ export {
   abortedSymbol,
   callCloseCallback,
   checkShouldUseProxy,
+  completeIncomingMessage,
   drainMicrotasks,
   emitCloseNT,
   emitEOFIncomingMessage,

@@ -157,12 +157,6 @@ _bun_completions_inner() {
 
     local PM_OPTIONS="--config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --no-progress --no-summary --no-verify --ignore-scripts --global --cwd --backend --link-native-bins --json --help -c -y -p -f -g"
 
-    local cur_word="${COMP_WORDS[${COMP_CWORD}]}"
-    local prev=""
-    if (( COMP_CWORD > 0 )); then
-        prev="${COMP_WORDS[$(( COMP_CWORD - 1 ))]}"
-    fi
-
     if [[ "${prev}" == "=" ]] && (( COMP_CWORD >= 2 )) && [[ "${COMP_WORDS[$(( COMP_CWORD - 2 ))]}" == "--cwd" ]]; then
         _compgen_reply -d -S / -- "${cur_word}"
         return
@@ -319,88 +313,17 @@ _bun_completions_inner() {
     esac
 }
 
-_bun_completions() {
-    COMPREPLY=()
-    local working_dir cwd_specified=0
-    _extract_cwd
-
-    local cur_word="${COMP_WORDS[${COMP_CWORD}]}"
-    local prev="" prev_prev=""
-    if (( COMP_CWORD > 0 )); then
-        prev="${COMP_WORDS[$(( COMP_CWORD - 1 ))]}"
-    fi
-    if (( COMP_CWORD >= 2 )); then
-        prev_prev="${COMP_WORDS[$(( COMP_CWORD - 2 ))]}"
-    fi
-
-    local completing_cwd=0
-    if [[ "${prev}" == "--cwd" ]] || [[ "${prev}" == "=" && "${prev_prev}" == "--cwd" ]] || [[ "${cur_word}" == --cwd=* ]]; then
-        completing_cwd=1
-    fi
-
-    local orig_pwd="${PWD}"
-    local switched=0
-    if (( cwd_specified && ! completing_cwd )); then
-        if [[ ! -d "${working_dir}" ]] || ! builtin cd "${working_dir}" 2>/dev/null; then
-            return
-        fi
-        switched=1
-    fi
-
-    _bun_completions_inner
-
-    if (( switched )); then
-        builtin cd "${orig_pwd}" 2>/dev/null
-    fi
-
-    if [[ ${#COMPREPLY[@]} -eq 1 && "${COMPREPLY[0]}" == */ ]]; then
-        if type compopt &>/dev/null; then
-            compopt -o nospace 2>/dev/null
-        else
-            complete -o nospace -F _bun_completions bun
-        fi
-    else
-        if type compopt &>/dev/null; then
-            compopt +o nospace 2>/dev/null
-        else
-            complete +o nospace -F _bun_completions bun
-        fi
-    fi
-}
-
-_bunx_completions() {
-    COMPREPLY=()
-    local working_dir cwd_specified=0
-    _extract_cwd
-
-    local cur_word="${COMP_WORDS[${COMP_CWORD}]}"
-    local prev="" prev_prev=""
-    if (( COMP_CWORD > 0 )); then
-        prev="${COMP_WORDS[$(( COMP_CWORD - 1 ))]}"
-    fi
-    if (( COMP_CWORD >= 2 )); then
-        prev_prev="${COMP_WORDS[$(( COMP_CWORD - 2 ))]}"
-    fi
-
-    local completing_cwd=0
-    if [[ "${prev}" == "--cwd" ]] || [[ "${prev}" == "=" && "${prev_prev}" == "--cwd" ]] || [[ "${cur_word}" == --cwd=* ]]; then
-        completing_cwd=1
-    fi
-
-    local orig_pwd="${PWD}"
-    local switched=0
-    if (( cwd_specified && ! completing_cwd )); then
-        if [[ ! -d "${working_dir}" ]] || ! builtin cd "${working_dir}" 2>/dev/null; then
-            return
-        fi
-        switched=1
-    fi
+_bunx_completions_inner() {
+    local BUNX_OPTIONS="--bun --install --help --cwd -h"
 
     if [[ "${prev}" == "=" && "${prev_prev}" == "--cwd" ]] || [[ "${prev}" == "--cwd" ]]; then
         _compgen_reply -d -S / -- "${cur_word}"
-    elif [[ "${cur_word}" == -* ]]; then
-        _compgen_reply -W "--bun --install --help -h" -- "${cur_word}"
-    else
+        return
+    fi
+
+    _long_short_completion "${BUNX_OPTIONS}"
+
+    if [[ -z "${cur_word}" || "${cur_word}" != -* ]]; then
         local bins
         bins=$(bun getcompletes b 2>/dev/null)
         if [[ -n "${bins}" ]]; then
@@ -408,7 +331,41 @@ _bunx_completions() {
         fi
         _file_arguments
     fi
+}
 
+_wrapper_preamble() {
+    COMPREPLY=()
+    working_dir="${PWD}"
+    cwd_specified=0
+    _extract_cwd
+
+    cur_word="${COMP_WORDS[${COMP_CWORD}]}"
+    prev="" prev_prev=""
+    if (( COMP_CWORD > 0 )); then
+        prev="${COMP_WORDS[$(( COMP_CWORD - 1 ))]}"
+    fi
+    if (( COMP_CWORD >= 2 )); then
+        prev_prev="${COMP_WORDS[$(( COMP_CWORD - 2 ))]}"
+    fi
+
+    completing_cwd=0
+    if [[ "${prev}" == "--cwd" ]] || [[ "${prev}" == "=" && "${prev_prev}" == "--cwd" ]] || [[ "${cur_word}" == --cwd=* ]]; then
+        completing_cwd=1
+    fi
+
+    orig_pwd="${PWD}"
+    switched=0
+    if (( cwd_specified && ! completing_cwd )); then
+        if [[ ! -d "${working_dir}" ]] || ! builtin cd "${working_dir}" 2>/dev/null; then
+            return 1
+        fi
+        switched=1
+    fi
+    return 0
+}
+
+_wrapper_finalizer() {
+    local cmd="${1}" func="${2}"
     if (( switched )); then
         builtin cd "${orig_pwd}" 2>/dev/null
     fi
@@ -417,15 +374,29 @@ _bunx_completions() {
         if type compopt &>/dev/null; then
             compopt -o nospace 2>/dev/null
         else
-            complete -o nospace -F _bunx_completions bunx
+            complete -o nospace -F "${func}" "${cmd}"
         fi
     else
         if type compopt &>/dev/null; then
             compopt +o nospace 2>/dev/null
         else
-            complete +o nospace -F _bunx_completions bunx
+            complete -F "${func}" "${cmd}"
         fi
     fi
+}
+
+_bun_completions() {
+    local cur_word prev prev_prev completing_cwd orig_pwd switched working_dir cwd_specified
+    _wrapper_preamble || return 0
+    _bun_completions_inner
+    _wrapper_finalizer bun _bun_completions
+}
+
+_bunx_completions() {
+    local cur_word prev prev_prev completing_cwd orig_pwd switched working_dir cwd_specified
+    _wrapper_preamble || return 0
+    _bunx_completions_inner
+    _wrapper_finalizer bunx _bunx_completions
 }
 
 complete -F _bun_completions bun

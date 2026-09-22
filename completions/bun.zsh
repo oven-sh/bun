@@ -1291,8 +1291,8 @@ _bunx() {
             cwd_specified=1
         fi
         if [[ -n "${val}" ]]; then
-            val="${val%"}"
-            val="${val#"}"
+            val="${val%\\"}"
+            val="${val#\\"}"
             val="${val%'}"
             val="${val#'}"
             val="${val/#\~/$HOME}"

@@ -33,6 +33,9 @@ end
 
 function __fish__get_bun_bins
     set -l target_cwd (__fish__bun_extract_cwd)
+    if not string match -q '/*' -- "$target_cwd"
+        set target_cwd "$PWD/$target_cwd"
+    end
     if not test -d "$target_cwd"
         return
     end
@@ -45,6 +48,9 @@ end
 
 function __fish__get_bun_scripts
     set -l target_cwd (__fish__bun_extract_cwd)
+    if not string match -q '/*' -- "$target_cwd"
+        set target_cwd "$PWD/$target_cwd"
+    end
     if not test -d "$target_cwd"
         return
     end
@@ -59,6 +65,9 @@ end
 
 function __fish__get_bun_packages
     set -l target_cwd (__fish__bun_extract_cwd)
+    if not string match -q '/*' -- "$target_cwd"
+        set target_cwd "$PWD/$target_cwd"
+    end
     if not test -d "$target_cwd"
         return
     end
@@ -134,6 +143,9 @@ end
 
 function __fish__get_bun_bun_js_files
     set -l target_cwd (__fish__bun_extract_cwd)
+    if not string match -q '/*' -- "$target_cwd"
+        set target_cwd "$PWD/$target_cwd"
+    end
     if not test -d "$target_cwd"
         return
     end
@@ -229,6 +241,7 @@ for i in (seq (count $bun_install_boolean_flags))
                -n "__fish_seen_subcommand_from install add remove dedupe" -l "$bun_install_boolean_flags[$i]" -d "$bun_install_boolean_flags_descriptions[$i]"
 end
 
+complete -c bun -l 'cwd' -r -a '(__fish_complete_directories)' -d 'Change working directory'
 complete -c bun \
        -n "__fish_seen_subcommand_from install add remove update dedupe" -l 'cwd' -r -a '(__fish_complete_directories)' -d 'Change working directory'
 complete -c bun \

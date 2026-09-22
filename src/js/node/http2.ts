@@ -2060,9 +2060,8 @@ enum StreamState {
   // callback). Until then no 'error' listener can exist, so stream errors must not be emitted:
   // node never constructs the JS stream object before a complete header block arrives.
   Delivered = 1 << 8, // 100000000 = 256
-  // Set only while markStreamNativeClosed() marks the stream closed. The close channel publishes
-  // there, and node's state getter still reads the live stream inside nghttp2's close callback.
-  InNativeClose = 1 << 9, // 1000000000 = 512
+  // The native close has been published: `state` reports an idle stream from here on.
+  NativeCloseSettled = 1 << 9, // 1000000000 = 512
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
 // h2_frame_parser.rs): the chunk was handed to the socket without queueing and the engine did
@@ -2231,12 +2230,21 @@ function markStreamClosed(stream: Http2Stream) {
 }
 // The native side fully closed the stream (state 7).
 function markStreamNativeClosed(stream: Http2Stream) {
-  stream[bunHTTP2StreamStatus] |= StreamState.NativeClosed | StreamState.InNativeClose;
-  try {
-    markStreamClosed(stream);
-  } finally {
-    stream[bunHTTP2StreamStatus] &= ~StreamState.InNativeClose;
-  }
+  stream[bunHTTP2StreamStatus] |= StreamState.NativeClosed;
+  markStreamClosed(stream);
+  stream[bunHTTP2StreamStatus] |= StreamState.NativeCloseSettled;
+}
+// What node reports for a stream that nghttp2 no longer has:
+// https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L3161-L3167
+function droppedStreamState() {
+  return {
+    state: constants.NGHTTP2_STREAM_STATE_IDLE,
+    weight: 0,
+    sumDependencyWeight: 0,
+    localClose: 0,
+    remoteClose: 0,
+    localWindowSize: 0,
+  };
 }
 function rstNextTick(id: number, rstCode: number) {
   const session = this as Http2Session;
@@ -2513,25 +2521,13 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
   get state() {
     const session = this[bunHTTP2Session];
     if (session && !session.destroyed && typeof this.#id === "number") {
-      // A closed stream stays undestroyed until its buffered data is read. The native side keeps
-      // it in the closed state until the next socket read, then drops its id. node never reports
-      // the closed state: it reports an idle stream as soon as nghttp2 has dropped the stream.
-      // https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L3161-L3167
-      const status = this[bunHTTP2StreamStatus];
-      if ((status & StreamState.NativeClosed) === 0 || (status & StreamState.InNativeClose) !== 0) {
+      if ((this[bunHTTP2StreamStatus] & StreamState.NativeCloseSettled) === 0) {
         const native = session[bunHTTP2Native];
         if (!native) return {};
         const state = native.getStreamState(this.#id);
         if (state !== undefined) return state;
       }
-      return {
-        state: constants.NGHTTP2_STREAM_STATE_IDLE,
-        weight: 0,
-        sumDependencyWeight: 0,
-        localClose: 0,
-        remoteClose: 0,
-        localWindowSize: 0,
-      };
+      return droppedStreamState();
     }
     // node reports an empty object while the stream is still pending (no id yet) and once the
     // stream's session has been destroyed.

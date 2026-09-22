@@ -1085,6 +1085,9 @@ declare module "bun:ffi" {
      * Free the memory allocated for the callback
      *
      * If called multiple times, does nothing after the first call.
+     *
+     * After `close()`, {@link JSCallback.prototype.ptr} is `null`, and passing
+     * the `JSCallback` to a native function throws a `TypeError`.
      */
     close(): void;
   }

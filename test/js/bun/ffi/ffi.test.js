@@ -1662,6 +1662,33 @@ describe.skipIf(!FFI_FIXTURE_PATH)("engine-native FFI (single implementation)", 
     }
   });
 
+  it("a closed JSCallback OBJECT passed as an argument throws instead of handing out its entrypoint", () => {
+    const asCallback = dlopen(lib, { cb_identity_42_double: { args: ["callback"], returns: "double" } }).symbols
+      .cb_identity_42_double;
+    const asPtr = dlopen(lib, { cb_identity_42_double: { args: ["ptr"], returns: "double" } }).symbols
+      .cb_identity_42_double;
+    let runs = 0;
+    const cb = new JSCallback(
+      () => {
+        runs++;
+        return 42.42;
+      },
+      { returns: "double", args: [] },
+    );
+    expect(asCallback(cb)).toBe(42.42);
+    expect(asPtr(cb)).toBe(42.42);
+
+    cb.close();
+    expect(cb.ptr).toBeNull();
+    const closed = "bun:ffi: cannot pass a JSCallback as a pointer because it was closed";
+    for (const call of [asCallback, asPtr]) {
+      expect(() => call(cb)).toThrow(TypeError);
+      expect(() => call(cb)).toThrow(closed);
+    }
+    // The native function calls what it is given, so a third run means it got the entrypoint.
+    expect(runs).toBe(2);
+  });
+
   it("a JSCallback instance is the engine cell (instanceof + own ptr) and close() is idempotent", () => {
     const cb = new JSCallback(a => a * 2, { args: ["i32"], returns: "i32" });
     expect(cb instanceof JSCallback).toBe(true);

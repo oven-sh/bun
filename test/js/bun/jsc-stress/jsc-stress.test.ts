@@ -158,6 +158,7 @@ const ffiFixtures = [
   "ffi-arity-ladders.js",
   "ffi-arity.js",
   "ffi-buffer-length.js",
+  "ffi-callback-closed-argument.js",
   "ffi-callback-throw-unwind.js",
   "ffi-callbacks.js",
   "ffi-callffi-was-compiled.js",

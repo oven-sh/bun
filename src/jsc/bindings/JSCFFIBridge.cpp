@@ -73,8 +73,7 @@ extern "C" JSC::EncodedJSValue Bun__CreateJSCFFICallback(
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // Not only for a threadsafe callback: any JSCallback the collector calls (the deallocator of a toArrayBuffer()
-    // buffer) goes through the dispatch, with the context below, because JS cannot run during a collection.
+    // For every JSCallback: the engine also queues a call to one that is not threadsafe when it cannot run JS inline.
     static std::once_flag registerDispatch;
     std::call_once(registerDispatch, [] {
         JSC::FFI::FFIContext::setThreadsafeDispatch(Bun__jscFFIThreadsafeDispatch);

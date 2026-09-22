@@ -177,7 +177,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
          * word (resetResponseState) - these have to survive that. */
         HTTP_CONNECTION_SCOPED = HTTP_NODE_PARSING_STOPPED | HTTP_NODE_READS_PAUSED
             | HTTP_NODE_TUNNEL_AFTER_BODY | HTTP_NODE_RECEIVED_FIN | HTTP_CLOSE_WHEN_IDLE
-            | HTTP_NODE_PEER_ENDED,
+            | HTTP_NODE_PEER_ENDED | HTTP_LINGERING_CLOSE,
     };
 
     /* Begin a new response on this connection. Clearing the word in one go is

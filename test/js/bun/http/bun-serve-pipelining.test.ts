@@ -220,9 +220,14 @@ async function connectNodeSocket(
   const reader = new ResponseReader();
   const seen: { ended: boolean; error?: string } = { ended: false };
   socket.on("data", chunk => reader.push(chunk));
-  const ended = new Promise<void>(resolve => socket.on("end", () => ((seen.ended = true), resolve())));
-  socket.on("error", (error: NodeJS.ErrnoException) => (seen.error = error.code));
-  const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+  // `ended` settles on every terminal event, not on 'end' alone: a connection
+  // that is reset never ends, and a test awaiting it would reach its timeout
+  // instead of failing on what `seen` recorded.
+  const terminal = Promise.withResolvers<void>();
+  const ended = terminal.promise;
+  socket.on("end", () => ((seen.ended = true), terminal.resolve()));
+  socket.on("error", (error: NodeJS.ErrnoException) => ((seen.error = error.code), terminal.resolve()));
+  const closed = new Promise<void>(resolve => socket.on("close", () => (terminal.resolve(), resolve())));
   await once(socket, transport.name === "tls" ? "secureConnect" : "connect");
   // Resolves once the kernel has the bytes.
   const write = (data: string) => new Promise<void>(resolve => socket.write(data, () => resolve()));

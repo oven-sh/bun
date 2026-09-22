@@ -75,8 +75,7 @@ public:
 
     const CFFIFunction function() const { return m_function; }
 
-    // For a function from createForFFI. Its library calls this before it frees the compiled code.
-    // After it, a call throws a TypeError.
+    // Only for a function from createForFFI: a later call throws a TypeError.
     void close();
 
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES trampoline(JSGlobalObject* globalObject, CallFrame* callFrame);

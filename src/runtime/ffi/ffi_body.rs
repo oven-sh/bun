@@ -1326,7 +1326,6 @@ impl FFI {
             fn Bun__FFI__closeFunctions(global: *const JSGlobalObject, library: JSValue) -> bool;
         }
         jsc::mark_binding();
-        // Before `do_close` frees the code that the functions call.
         // SAFETY: thin FFI wrapper; the C++ side type-checks the cell (dynamicDowncast) before use.
         let is_running = unsafe { Bun__FFI__closeFunctions(global_this, callframe.this()) };
         if is_running {
@@ -1350,8 +1349,7 @@ impl FFI {
         if let Some(dylib) = self.dylib.replace(None) {
             dylib.close();
         }
-        // C code that got a `napi_env` can leave callbacks with the engine: a function, a
-        // finalizer, a cleanup hook. Nothing takes those back, so that code is never freed.
+        // With a `napi_env` the C code can give the engine callbacks into this code, and nothing takes them back.
         let has_napi_env = self
             .functions
             .get()

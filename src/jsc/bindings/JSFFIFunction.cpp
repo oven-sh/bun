@@ -85,10 +85,7 @@ extern "C" JSC::EncodedJSValue Bun__CreateFFIFunctionValue(Zig::GlobalObject* gl
     return Bun__CreateFFIFunctionWithDataValue(globalObject, symbolName, argCount, functionPointer, nullptr);
 }
 
-// Closes the functions that cc() made for this library. It must run before the library frees their code.
-// `symbols` cannot be the list: JS can change it.
-// Returns true when one of the functions is on the stack (its C code called back into JS, and that JS
-// closes the library). That call returns into the compiled code, so the library must not free it.
+// Returns true if one of the functions is on the stack. Then the caller must keep the compiled code.
 extern "C" bool Bun__FFI__closeFunctions(Zig::GlobalObject* globalObject, JSC::EncodedJSValue libraryValue)
 {
     auto* library = dynamicDowncast<WebCore::JSFFI>(JSC::JSValue::decode(libraryValue));
@@ -156,18 +153,14 @@ JSFFIFunction* JSFFIFunction::create(VM& vm, Zig::GlobalObject* globalObject, un
     return function;
 }
 
-// The host function of every createForFFI function. The compiled code is reached through the function
-// object, never through the NativeExecutable or JIT code, so close() takes effect on every caller.
-// On Windows this is also where the ABI changes: JSC calls a host function with SYSV_ABI and TinyCC
-// emits the Microsoft x64 ABI.
+// Every call reads m_function, so close() reaches all callers. On Windows x64 this is also the SYSV_ABI to MS ABI bridge.
 JSC_DEFINE_HOST_FUNCTION(JSFFIFunction::trampoline, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     const auto* function = uncheckedDowncast<JSFFIFunction>(callFrame->jsCallee());
     return function->function()(globalObject, callFrame);
 }
 
-// What the trampoline calls after close(). It takes the place of compiled code, so it has the ABI of
-// CFFIFunction and not that of a host function.
+// Stands in for compiled code after close(), so it has the ABI of CFFIFunction, not of a host function.
 static JSC::EncodedJSValue closedLibraryFunction(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
 {
     auto& vm = JSC::getVM(globalObject);

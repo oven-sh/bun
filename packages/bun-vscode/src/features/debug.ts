@@ -86,12 +86,13 @@ function runFileCommand(resource?: vscode.Uri): void {
 
 export function debugCommand(command: string, cwd?: string) {
   const scope = cwd ? vscode.Uri.file(cwd) : undefined;
-  vscode.debug.startDebugging(undefined, {
+  const configuration: vscode.DebugConfiguration = {
     ...DEBUG_CONFIGURATION,
     program: command,
     runtime: getRuntime(scope),
-    cwd: cwd ?? DEBUG_CONFIGURATION.cwd,
-  });
+  };
+  if (cwd) configuration.cwd = cwd;
+  vscode.debug.startDebugging(undefined, configuration);
 }
 
 function debugFileCommand(resource?: vscode.Uri) {

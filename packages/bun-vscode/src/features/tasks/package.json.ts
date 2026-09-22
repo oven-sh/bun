@@ -119,8 +119,7 @@ function registerCodeLensProvider(context: vscode.ExtensionContext) {
       "extension.bun.codelens.run",
       async ({ type, uri }: { type: "debug" | "run"; uri: vscode.Uri }) => {
         const document = await vscode.workspace.openTextDocument(uri);
-        const scripts = parseScripts(document.getText());
-        const entries = Object.entries(scripts);
+        const entries = Object.entries(parseScripts(document));
         if (entries.length === 0) return;
 
         const pick = await vscode.window.showQuickPick(
@@ -143,14 +142,20 @@ function registerCodeLensProvider(context: vscode.ExtensionContext) {
   );
 }
 
-function parseScripts(packageJson: string): Record<string, string> {
+/**
+ * Reads the scripts of a package.json document. A document that is not strict JSON (comments, a trailing comma,
+ * an unsaved edit) falls back to the same lenient extractor that places the CodeLens and hover buttons.
+ */
+function parseScripts(document: vscode.TextDocument): Record<string, string> {
+  let scripts: unknown;
   try {
-    const scripts = JSON.parse(packageJson).scripts;
-    if (!scripts || typeof scripts !== "object" || Array.isArray(scripts)) return {};
-    return Object.fromEntries(Object.entries(scripts).filter(([, script]) => typeof script === "string"));
+    scripts = JSON.parse(document.getText()).scripts;
   } catch {
-    return {};
+    const extracted = extractScriptsFromPackageJson(document)?.scripts ?? [];
+    return Object.fromEntries(extracted.filter(script => script !== null).map(({ name, command }) => [name, command]));
   }
+  if (!scripts || typeof scripts !== "object" || Array.isArray(scripts)) return {};
+  return Object.fromEntries(Object.entries(scripts).filter(([, script]) => typeof script === "string"));
 }
 
 function getActiveTerminal(name: string, cwd: string) {
@@ -173,47 +178,51 @@ interface CommandArgs {
  */
 function registerHoverProvider(context: vscode.ExtensionContext) {
   context.subscriptions.push(
-    vscode.languages.registerHoverProvider("json", {
-      provideHover(document, position) {
-        const { scripts } = extractScriptsFromPackageJson(document);
-        const cwd = path.dirname(document.uri.fsPath);
+    vscode.languages.registerHoverProvider(
+      { language: "json", scheme: "file" },
+      {
+        provideHover(document, position) {
+          const { scripts } = extractScriptsFromPackageJson(document);
+          const cwd = path.dirname(document.uri.fsPath);
 
-        return {
-          contents: scripts.map(script => {
-            if (!script.range.contains(position)) return null;
+          return {
+            contents: scripts.map(script => {
+              if (!script.range.contains(position)) return null;
 
-            const command = encodeURIComponent(JSON.stringify({ script: script.command, name: script.name, cwd }));
+              const command = encodeURIComponent(JSON.stringify({ script: script.command, name: script.name, cwd }));
 
-            const markdownString = new vscode.MarkdownString(
-              `[Debug](command:extension.bun.codelens.debug.task?${command}) | [Run](command:extension.bun.codelens.run.task?${command})`,
-            );
-            markdownString.isTrusted = true;
+              const markdownString = new vscode.MarkdownString(
+                `[Debug](command:extension.bun.codelens.debug.task?${command}) | [Run](command:extension.bun.codelens.run.task?${command})`,
+              );
+              markdownString.isTrusted = true;
 
-            return markdownString;
-          }),
-        };
+              return markdownString;
+            }),
+          };
+        },
       },
-    }),
+    ),
     vscode.commands.registerCommand("extension.bun.codelens.debug.task", async ({ script, cwd }: CommandArgs) => {
       if (script.startsWith("bun run ")) script = script.slice(8);
       if (script.startsWith("bun ")) script = script.slice(4);
 
       debugCommand(script, cwd);
     }),
-    vscode.commands.registerCommand("extension.bun.codelens.run.task", async ({ script, name, cwd }: CommandArgs) => {
-      if (script.startsWith("bun run ")) script = script.slice(8);
+    vscode.commands.registerCommand("extension.bun.codelens.run.task", async ({ name, cwd }: CommandArgs) => {
+      // Run the script by name from the package directory, so bun applies pre/post hooks and env assignments.
+      const command = `bun run ${name}`;
+      const terminalName = `Bun Task: ${name}`;
 
-      name = `Bun Task: ${name}`;
-      const terminals = getActiveTerminal(name, cwd);
+      const terminals = getActiveTerminal(terminalName, cwd);
       if (terminals.length > 0) {
         terminals[0].show();
-        terminals[0].sendText(`bun run ${script}`);
+        terminals[0].sendText(command);
         return;
       }
 
-      const terminal = vscode.window.createTerminal({ name, cwd });
+      const terminal = vscode.window.createTerminal({ name: terminalName, cwd });
       terminal.show();
-      terminal.sendText(`bun run ${script}`);
+      terminal.sendText(command);
     }),
   );
 }

@@ -90,8 +90,10 @@ export const state = {
   pickLabel: "",
   quickPickItems: [] as QuickPickItem[],
   terminals: [] as Terminal[],
-  debugCalls: [] as { script: string; cwd?: string }[],
+  debugSessions: [] as Record<string, unknown>[],
+  configScopes: [] as (Uri | undefined)[],
   codeLensProvider: null as null | { provideCodeLenses(document: TextDocument): CodeLens[] },
+  hoverSelector: null as unknown,
   hoverProvider: null as null | { provideHover(document: TextDocument, position: Position): { contents: unknown[] } },
   provideTasks: async (): Promise<Task[]> => [],
 };
@@ -162,7 +164,8 @@ mock.module("vscode", () => ({
       state.codeLensProvider = provider;
       return { dispose() {} };
     },
-    registerHoverProvider: (_selector: unknown, provider: typeof state.hoverProvider) => {
+    registerHoverProvider: (selector: unknown, provider: typeof state.hoverProvider) => {
+      state.hoverSelector = selector;
       state.hoverProvider = provider;
       return { dispose() {} };
     },
@@ -171,13 +174,29 @@ mock.module("vscode", () => ({
     fetchTasks: async () => state.provideTasks(),
   },
   debug: {
-    startDebugging: async () => true,
+    startDebugging: async (_folder: unknown, configuration: Record<string, unknown>) => {
+      state.debugSessions.push(configuration);
+      return true;
+    },
   },
 }));
 
-// debug.ts pulls in the debug adapter and its dependencies. Only debugCommand matters here.
-mock.module(join(vscodeSrc, "features/debug.ts"), () => ({
-  debugCommand: (script: string, cwd?: string) => {
-    state.debugCalls.push({ script, cwd });
+// features/debug.ts is loaded for real. Its imports below are only used inside the debug adapter
+// session classes, which this test never instantiates.
+mock.module("@vscode/debugadapter", () => ({
+  DebugSession: class {},
+  OutputEvent: class {},
+}));
+mock.module(join(vscodeSrc, "../../bun-debug-adapter-protocol/index.ts"), () => ({
+  getAvailablePort: async () => 0,
+  getRandomId: () => "",
+  TCPSocketSignal: class {},
+  UnixSignal: class {},
+  WebSocketDebugAdapter: class {},
+}));
+mock.module(join(vscodeSrc, "extension.ts"), () => ({
+  getConfig: (_path: string, scope?: Uri) => {
+    state.configScopes.push(scope);
+    return undefined;
   },
 }));

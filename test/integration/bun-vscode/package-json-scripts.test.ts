@@ -37,7 +37,8 @@ beforeEach(() => {
   state.pickLabel = "";
   state.quickPickItems = [];
   state.terminals = [];
-  state.debugCalls = [];
+  state.debugSessions = [];
+  state.configScopes = [];
 });
 
 async function clickCodeLens(root: string, relativePath: string, title: "Bun: Run" | "Bun: Debug", pick: string) {
@@ -68,21 +69,55 @@ test("Bun: Run skips script entries that are not strings", async () => {
   await clickCodeLens(String(dir), "package.json", "Bun: Run", "build");
 
   expect(state.quickPickItems.map(item => item.label)).toEqual(["build"]);
-  expect(terminalsAsSeen()).toEqual([[String(dir), ["bun run echo ok"]]]);
+  expect(terminalsAsSeen()).toEqual([[String(dir), ["bun run build"]]]);
 });
 
-test("Bun: Run in a nested package.json runs the script in that package's directory", async () => {
+test("Bun: Run falls back to the lenient parser when the package.json is not strict JSON", async () => {
+  using dir = tempDir("vscode-codelens", {
+    "package.json": `{
+  // bun accepts comments and trailing commas in package.json
+  "scripts": {
+    "build": "echo ok",
+    "test": "bun test",
+  },
+}`,
+  });
+  await clickCodeLens(String(dir), "package.json", "Bun: Run", "test");
+
+  expect(state.quickPickItems).toEqual([
+    { label: "build", detail: "echo ok" },
+    { label: "test", detail: "bun test" },
+  ]);
+  expect(terminalsAsSeen()).toEqual([[String(dir), ["bun run test"]]]);
+});
+
+test("Bun: Run in a nested package.json runs the script by name in that package's directory", async () => {
   using dir = tempDir("vscode-codelens", files);
   await clickCodeLens(String(dir), "packages/api/package.json", "Bun: Run", "build");
 
-  expect(terminalsAsSeen()).toEqual([[join(String(dir), "packages/api"), ["bun run echo api"]]]);
+  expect(terminalsAsSeen()).toEqual([[join(String(dir), "packages/api"), ["bun run build"]]]);
 });
 
 test("Bun: Debug in a nested package.json debugs the script in that package's directory", async () => {
   using dir = tempDir("vscode-codelens", files);
+  const cwd = join(String(dir), "packages/api");
   await clickCodeLens(String(dir), "packages/api/package.json", "Bun: Debug", "build");
 
-  expect(state.debugCalls).toEqual([{ script: "echo api", cwd: join(String(dir), "packages/api") }]);
+  expect(state.debugSessions).toEqual([
+    {
+      type: "bun",
+      internalConsoleOptions: "neverOpen",
+      request: "launch",
+      name: "Debug File",
+      program: "echo api",
+      cwd,
+      stopOnEntry: false,
+      watchMode: false,
+      runtime: "bun",
+    },
+  ]);
+  // The `bun.runtime` setting is read with the package folder as scope.
+  expect(state.configScopes.map(scope => scope?.fsPath)).toEqual([cwd]);
 });
 
 test("Bun: Run in the root package.json still offers the root scripts", async () => {
@@ -90,18 +125,23 @@ test("Bun: Run in the root package.json still offers the root scripts", async ()
   await clickCodeLens(String(dir), "package.json", "Bun: Run", "root-script");
 
   expect(state.quickPickItems.map(item => item.label)).toEqual(["root-script"]);
-  expect(terminalsAsSeen()).toEqual([[String(dir), ["bun run echo root"]]]);
+  expect(terminalsAsSeen()).toEqual([[String(dir), ["bun run root-script"]]]);
 });
 
 test("scripts with the same name in two packages get separate terminals", async () => {
   using dir = tempDir("vscode-codelens", files);
   await clickCodeLens(String(dir), "packages/api/package.json", "Bun: Run", "build");
   await clickCodeLens(String(dir), "packages/web/package.json", "Bun: Run", "build");
+  await clickCodeLens(String(dir), "packages/api/package.json", "Bun: Run", "build");
 
   expect(terminalsAsSeen()).toEqual([
-    [join(String(dir), "packages/api"), ["bun run echo api"]],
-    [join(String(dir), "packages/web"), ["bun run echo web"]],
+    [join(String(dir), "packages/api"), ["bun run build", "bun run build"]],
+    [join(String(dir), "packages/web"), ["bun run build"]],
   ]);
+});
+
+test("hover links are only offered for documents on disk", () => {
+  expect(state.hoverSelector).toEqual({ language: "json", scheme: "file" });
 });
 
 test("hover links in a nested package.json carry that package's directory", async () => {

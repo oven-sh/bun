@@ -2202,18 +2202,40 @@ describe("http2 priority options send no priority fields, like node", () => {
   const large = { ":path": "/", "x-fill": Buffer.alloc(30000, "p").toString() };
 
   it.each([
-    ["one HEADERS frame", PADDING_STRATEGY_NONE, small],
-    ["HEADERS and CONTINUATION frames", PADDING_STRATEGY_NONE, large],
-    ["a padded HEADERS frame", PADDING_STRATEGY_MAX, small],
+    ["one HEADERS frame", PADDING_STRATEGY_NONE, small, { exclusive: true, parent: 3 }],
+    ["HEADERS and CONTINUATION frames", PADDING_STRATEGY_NONE, large, { exclusive: true, parent: 3 }],
+    ["a padded HEADERS frame", PADDING_STRATEGY_MAX, small, { exclusive: true, parent: 3 }],
+    ["parent: 0", PADDING_STRATEGY_NONE, small, { parent: 0 }],
   ])(
-    "request() with exclusive and parent sends the bytes of a plain request (%s)",
-    async (_, paddingStrategy, headers) => {
+    "request() with priority options sends the bytes of a plain request (%s)",
+    async (_, paddingStrategy, headers, options) => {
       const plain = await captureRequestHeaderBlock(paddingStrategy, headers, undefined);
-      const withOptions = await captureRequestHeaderBlock(paddingStrategy, headers, { exclusive: true, parent: 3 });
+      const withOptions = await captureRequestHeaderBlock(paddingStrategy, headers, options);
       expect(withOptions.flags & PRIORITY).toBe(0);
       expect(withOptions).toEqual(plain);
     },
   );
+
+  it.each([-1, -0.5, NaN])("request() throws ERR_OUT_OF_RANGE for parent: %p", parent => {
+    const { transport } = captureTransport();
+    const session = http2.connect("http://localhost:1", { createConnection: () => transport });
+    session.on("error", () => {});
+    try {
+      let error;
+      try {
+        session.request(small, { parent });
+      } catch (err) {
+        error = err;
+      }
+      expect({ name: error?.name, code: error?.code, message: error?.message }).toEqual({
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message: `The value of "options.parent" is out of range. It must be >= 0. Received ${parent}`,
+      });
+    } finally {
+      session.destroy();
+    }
+  });
 
   it.each([
     ["exclusive, parent and weight", { exclusive: true, parent: 1, weight: 256 }],

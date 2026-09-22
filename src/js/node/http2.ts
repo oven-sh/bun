@@ -5959,7 +5959,7 @@ class ClientHttp2Session extends Http2Session {
       // a destroyed session (lib/internal/http2/core.js request()).
       if (options !== undefined) {
         if (options.endStream !== undefined) validateBoolean(options.endStream, "options.endStream");
-        if (options.parent !== undefined) validateNumber(options.parent, "options.parent");
+        if (options.parent !== undefined) validateNumber(options.parent, "options.parent", 0);
         if (options.exclusive !== undefined) validateBoolean(options.exclusive, "options.exclusive");
         if (options.silent !== undefined) validateBoolean(options.silent, "options.silent");
       }

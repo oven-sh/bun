@@ -16,7 +16,7 @@ use bun_sys as syscall;
 // Codegen hooks (JSGlob): toJS / fromJS / fromJSDirect are provided by the
 // generated C++ wrapper. See PORTING.md §JSC ".classes.ts-backed types".
 #[bun_jsc::JsClass]
-pub struct Glob {
+pub(crate) struct Glob {
     pattern: Box<[u8]>,
     has_pending_activity: AtomicUsize,
 }
@@ -607,7 +607,7 @@ impl Glob {
                 Ok(Some(gw)) => gw,
             };
 
-        let cx = global_this.js_thread();
+        let cx = global_this.js_thread_of_caller(callframe);
         let promise = JSPromiseStrong::init(global_this);
         let value = promise.value();
         Job::<WalkTask>::schedule(
@@ -659,7 +659,7 @@ impl Glob {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn r#match(
+    pub(crate) fn r#match(
         &self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,

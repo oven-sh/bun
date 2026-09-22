@@ -3417,6 +3417,11 @@ extern "C" void Bun__napi_check_gc(napi_env env)
     env->checkGC();
 }
 
+extern "C" bool NapiEnv__setCompletingForStoppedContext(napi_env env, bool value)
+{
+    return std::exchange(env->m_isCompletingForStoppedContext, value);
+}
+
 extern "C" bool NapiEnv__hasPendingException(napi_env env)
 {
     if (env->hasPendingException()) {

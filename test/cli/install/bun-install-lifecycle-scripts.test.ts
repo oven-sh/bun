@@ -11,6 +11,7 @@ import {
   readdirSorted,
   runBunInstall,
 } from "harness";
+import { constants as osConstants } from "os";
 import { join, sep } from "path";
 
 var verdaccio = new VerdaccioRegistry();
@@ -4103,6 +4104,46 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         expect(proc.resourceUsage()?.cpuTime.total).toBeLessThan(750_000 * (isWindows ? 5 : 1));
       });
     });
+
+    // The message names the signal with the OS's name for its number (SIGUSR1
+    // is 30 on macOS, which the Linux table called SIGPWR; 16 on Linux is
+    // SIGSTKFLT, which had no name), and bun install then dies from the same
+    // signal. Signal 40 is a Linux real-time signal with no name at all; it
+    // used to be re-raised as SIGTERM.
+    const signaled: [number, string][] = [
+      [osConstants.signals.SIGUSR1, "terminated by SIGUSR1"],
+      ...(isLinux
+        ? ([
+            [osConstants.signals.SIGSTKFLT, "terminated by SIGSTKFLT"],
+            [40, "terminated by code 40"],
+          ] as [number, string][])
+        : []),
+    ];
+    test.skipIf(isWindows).each(signaled)(
+      "a postinstall killed by signal %d is reported and re-raised",
+      async (signal, message) => {
+        using ctx = await setupTest();
+        const { packageDir, packageJson, env } = ctx;
+        const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
+        await writeFile(
+          packageJson,
+          JSON.stringify({ name: "foo", version: "1.0.0", scripts: { postinstall: `kill -${signal} $$` } }),
+        );
+
+        await using proc = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stderr: "pipe",
+          env: testEnv,
+        });
+        const [, err, exited] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        expect(err).toContain(message);
+        expect(exited).toBe(128 + signal);
+      },
+    );
   });
 
   describe.concurrent("stdout/stderr is inherited from root scripts during install", async () => {

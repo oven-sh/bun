@@ -23,23 +23,23 @@ pub(crate) fn fetch_type_error_string(value: bun_jsc::JSValue) -> &'static str {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[path = "fetch/FetchTasklet.rs"]
-pub mod fetch_tasklet;
+pub(crate) mod fetch_tasklet;
 
 #[path = "fetch/FetchRequestBodySink.rs"]
-pub mod fetch_request_body_sink;
-pub use self::fetch_request_body_sink::FetchRequestBodySink;
+pub(crate) mod fetch_request_body_sink;
+pub(crate) use self::fetch_request_body_sink::FetchRequestBodySink;
 
 #[path = "fetch/compress_body.rs"]
-pub mod compress_body;
+pub(crate) mod compress_body;
 
 #[path = "fetch/FetchSession.rs"]
-pub mod fetch_session;
-pub use self::fetch_session::FetchSession;
+pub(crate) mod fetch_session;
+pub(crate) use self::fetch_session::FetchSession;
 
 /// `proxyInternals` of `bun:internal-for-testing`. `generated_js2native.rs`
 /// snake-cases `TestingAPIs` as `testing_ap_is`.
 #[path = "fetch/proxy_testing.rs"]
-pub mod testing_ap_is;
+pub(crate) mod testing_ap_is;
 
 // ──────────────────────────────────────────────────────────────────────────
 // fetch() implementation
@@ -49,6 +49,7 @@ use crate::webcore::jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
 };
 use bun_core::{String as BunString, Tag as BunStringTag};
+use bun_http::http_request_body::StreamFraming;
 use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _, MimeType};
 use bun_http_jsc::method_jsc;
 use bun_http_types::Method::Method;
@@ -80,7 +81,9 @@ use bun_url::PercentEncoding;
 use bun_url::URL as ZigURL;
 
 use self::fetch_tasklet::{FetchOptions, HTTPRequestBody};
-pub use self::fetch_tasklet::{FetchTasklet, FetchTaskletDeinitHop};
+pub(crate) use self::fetch_tasklet::{
+    FetchTasklet, FetchTaskletDeinitHop, FetchTaskletRequestDrain,
+};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Local extension shims (upstream methods not yet ported / not in scope)
@@ -382,6 +385,21 @@ enum URLType {
 // fetchImpl — shared implementation
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Nothing was queued yet: cancel a stream body with `reason` and reject with it.
+fn reject_before_send(
+    global_this: &JSGlobalObject,
+    body: &mut HTTPRequestBody,
+    reason: JSValue,
+) -> JsResult<JSValue> {
+    if let HTTPRequestBody::ReadableStream(stream_ref) = &*body {
+        if let Some(stream) = stream_ref.get() {
+            stream.cancel_with_reason(global_this, reason)?;
+        }
+    }
+    body.detach();
+    Ok(JSPromise::rejected_promise(global_this, reason).to_js())
+}
+
 /// Shared implementation of fetch
 fn fetch_impl<const ALLOW_GET_BODY: bool>(
     ctx: &JSGlobalObject,
@@ -389,6 +407,12 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // `session.fetch()`: the session, which a `session` in the init does not replace.
     bound_session: Option<JSValue>,
 ) -> JsResult<JSValue> {
+    let context = ctx.bun_vm().context_of_caller(callframe);
+    // What script of a disposed `Bun.ModuleGraph` starts does not start, and reports nothing: no
+    // connection goes out, and the promise stays pending.
+    if context.is_stopped() {
+        return Ok(JSPromise::create(ctx).to_js());
+    }
     jsc::mark_binding();
     let global_this = ctx;
     bun_core::analytics::Features::FETCH.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
@@ -1038,7 +1062,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         if let Some(options) = options_object {
             if let Some(body__) = options.fast_get(global_this, jsc::BuiltinName::Body)? {
                 if !body__.is_undefined() {
-                    break 'extract_body Some(HTTPRequestBody::from_js(ctx, body__)?);
+                    break 'extract_body Some(HTTPRequestBody::from_js(
+                        &ctx.js_thread(context),
+                        body__,
+                    )?);
                 }
             }
         }
@@ -1088,7 +1115,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         ));
                     }
                 }
-                let readable = body_value.to_readable_stream(global_this)?;
+                let readable = body_value.to_readable_stream(&global_this.js_thread(context))?;
                 if !readable.is_empty_or_undefined_or_null() {
                     if let BodyValue::Locked(locked) = body_value {
                         if locked.readable.has() {
@@ -1111,7 +1138,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         if let Some(req) = request_init_object {
             if let Some(body__) = req.fast_get(global_this, jsc::BuiltinName::Body)? {
                 if !body__.is_undefined() {
-                    break 'extract_body Some(HTTPRequestBody::from_js(ctx, body__)?);
+                    break 'extract_body Some(HTTPRequestBody::from_js(
+                        &ctx.js_thread(context),
+                        body__,
+                    )?);
                 }
             }
         }
@@ -1451,13 +1481,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     if let Some(sig) = &signal {
         if sig.aborted() {
             let reason = sig.js_reason(global_this);
-            if let HTTPRequestBody::ReadableStream(stream_ref) = &body {
-                if let Some(stream) = stream_ref.get() {
-                    stream.cancel_with_reason(global_this, reason)?;
-                }
-            }
-            body.detach();
-            return Ok(JSPromise::rejected_promise(global_this, reason).to_js());
+            return reject_before_send(global_this, &mut body, reason);
         }
     }
 
@@ -1492,7 +1516,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
             if let Some(stream) = ReadableStream::from_js(
                 ReadableStream::from_blob_copy_ref(
-                    global_this,
+                    &global_this.js_thread(context),
                     body.any_blob().blob(),
                     s3::MultiPartUploadOptions::DEFAULT_PART_SIZE as crate::webcore::blob::SizeType,
                 )?,
@@ -1782,7 +1806,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 credentials_with_options.credentials.dupe(),
                 s3_path,
                 readable_stream.get().unwrap(),
-                global_this,
+                &global_this.js_thread(context),
                 credentials_with_options.options,
                 credentials_with_options.acl,
                 credentials_with_options.storage_class,
@@ -1865,6 +1889,31 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
     }
 
+    // Decided before anything is queued, so an unusable framing header rejects up front.
+    let mut stream_framing = StreamFraming::default();
+    if matches!(body, HTTPRequestBody::ReadableStream(_))
+        && let Some(request_headers) = &headers
+    {
+        stream_framing = if upgraded_connection {
+            StreamFraming::for_upgrade(request_headers)
+        } else {
+            match StreamFraming::for_body(request_headers) {
+                Ok(framing) => framing,
+                Err(invalid) => {
+                    let err = global_this.to_type_error(
+                        jsc::ErrorCode::HTTP_INVALID_HEADER_VALUE,
+                        format_args!(
+                            "Invalid value \"{}\" for header \"{}\"",
+                            bstr::BStr::new(invalid.value),
+                            invalid.name
+                        ),
+                    );
+                    return reject_before_send(global_this, &mut body, err);
+                }
+            }
+        };
+    }
+
     // Only create this after we have validated all the input.
     // or else we will leak it
     let promise = jsc::JSPromiseStrong::init(global_this);
@@ -1901,6 +1950,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         url: url_static,
         headers: headers.take().unwrap_or_default(),
         body,
+        stream_framing,
         disable_keepalive,
         disable_timeout,
         idle_timeout_seconds,
@@ -1938,7 +1988,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     };
 
     let _ = FetchTasklet::queue(
-        global_this,
+        &global_this.js_thread(context),
         fetch_options,
         // Pass the Strong value instead of creating a new one, or else we
         // will leak it

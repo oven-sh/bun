@@ -1248,8 +1248,7 @@ impl Valid {
         Some(Self::name_too_long(path))
     }
 
-    /// ENAMETOOLONG for `path`, unconditionally. For a path that fits a
-    /// `PathBuffer` on its own but not once joined onto the cwd.
+    /// ENAMETOOLONG for `path`, with no length check.
     pub(crate) fn name_too_long(path: &[u8]) -> bun_sys::SystemError {
         let mut system_error =
             bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)

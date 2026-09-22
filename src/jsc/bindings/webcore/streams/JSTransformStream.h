@@ -77,6 +77,8 @@ public:
     // the consumer drives it on (WebStreamsInternals.h: nativeCodecContinue / Abandon). While
     // set, the coder holds that chunk's state and ClearAlgorithms defers the coder release.
     JSC::WriteBarrier<JSC::JSPromise> m_codecPromise;
+    // A codec's trailing-junk error, kept while the output decoded ahead of it is still queued: the readable errors with it once drained.
+    JSC::WriteBarrier<JSC::Unknown> m_readableErrorAfterDrain;
     void* m_nativeSinkPtr { nullptr };
     uint8_t m_nativeSinkId { 0 };
 

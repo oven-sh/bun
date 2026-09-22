@@ -178,7 +178,7 @@ static void* coderOf(JSTransformStream* stream)
 
 // One step, with its output already handed to the consumer.
 struct CodecStepResult {
-    // The chunk needs another step: the coder stopped at its output bound, or holds junk to report.
+    // The coder stopped at its output bound; the chunk needs another step.
     bool more { false };
     bool sinkBackpressure { false };
 };
@@ -206,8 +206,10 @@ static CodecStepResult runStepHere(JSGlobalObject* globalObject, JSTransformStre
         }
     }
     // Output decoded ahead of trailing junk is delivered first: the spec enqueues, then throws.
-    if (junkError) [[unlikely]]
+    if (junkError) [[unlikely]] {
+        transformStreamKeepQueuedOutputReadable(vm, stream, JSValue::decode(junkError));
         throwException(globalObject, scope, JSValue::decode(junkError));
+    }
     return step;
 }
 
@@ -464,8 +466,11 @@ extern "C" void Bun__CompressionStream__deliverAsync(JSC::JSGlobalObject* global
             return;
         }
     }
-    if (error && !thrown)
+    if (error && !thrown) {
         thrown = JSValue::decode(error);
+        if (stream->m_codecPromise)
+            transformStreamKeepQueuedOutputReadable(vm, stream, thrown);
+    }
 
     stream->m_asyncCodecInFlight = false;
     // A terminal abandoned the chunk while this step ran (the delivery above may have been it).

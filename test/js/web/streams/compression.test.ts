@@ -1243,8 +1243,10 @@ describe("bounded output per input chunk", () => {
   // thrown, in the same transform call: the spec's "decompress and enqueue a
   // chunk" enqueues before it throws, and WPT
   // compression/decompression-extra-input.any.js reads the output first, then
-  // expects the rejection. For gzip, bytes after a member are junk unless they
-  // start another member (0x1f).
+  // expects the rejection. The write fails at once. The readable fails once the
+  // reader has taken that output: an error discards whatever a readable still
+  // has queued, and the output is queued whenever no read() is pending. For
+  // gzip, bytes after a member are junk unless they start another member (0x1f).
   describe("output decoded ahead of trailing junk in the same chunk is delivered first", () => {
     const junk = Buffer.alloc(8);
     const trailingJunk = { name: "TypeError", code: "ERR_TRAILING_JUNK_AFTER_STREAM_END" };
@@ -1321,11 +1323,9 @@ describe("bounded output per input chunk", () => {
       },
     );
 
-    // The junk follows an expansion that takes several steps. The reader paces
-    // those steps, so the junk is reported as one more step, after the reader has
-    // taken the last piece. Thrown together with that piece, the error would
-    // discard it from the readable queue for every reader that is not already
-    // waiting in read(): for await, pipeTo, or a loop that yields between reads.
+    // The junk follows an expansion that takes several steps. The last piece is
+    // enqueued from the reader's pull, so no read() is pending for it, whichever
+    // way the readable is consumed.
     const consumers = {
       "a read loop": readUntilError,
       "a read loop that yields between reads": async (readable: ReadableStream<Uint8Array>) => {
@@ -1400,15 +1400,56 @@ describe("bounded output per input chunk", () => {
       );
     });
 
-    // The error is thrown in the transform call that met the junk, never held
-    // back until the output is read: with nobody reading, a held error would
-    // leave this write, and a close() queued behind it, pending forever.
-    test("with nobody reading, the write that carried the junk still rejects", async () => {
-      const ds = new DecompressionStream("deflate");
-      const writer = ds.writable.getWriter();
-      const chunk = Buffer.concat([bombs.deflate(Buffer.from("hello")), junk]);
-      expect(await rejection(writer.write(chunk))).toMatchObject(trailingJunk);
-      expect(await rejection(writer.closed)).toMatchObject(trailingJunk);
+    // The write side never waits for a reader: with nobody reading, a held error
+    // would leave this write, and a close() queued behind it, pending forever. A
+    // reader that comes later still gets the output, then the error.
+    test.each(formats)(
+      "DecompressionStream(%s): with nobody reading, the write rejects and a late reader gets the output",
+      async format => {
+        const plain = Buffer.from("hello hello hello hello");
+        const ds = new DecompressionStream(format);
+        const writer = ds.writable.getWriter();
+        const chunk = Buffer.concat([bombs[format](plain), junk]);
+        expect(await rejection(writer.write(chunk))).toMatchObject(trailingJunk);
+        expect(await rejection(writer.closed)).toMatchObject(trailingJunk);
+
+        const { output, error } = await readUntilError(ds.readable);
+        expect(output.toString()).toBe(plain.toString());
+        expect(error).toMatchObject(trailingJunk);
+      },
+    );
+
+    // The producer awaits each 64 KiB write, so the last write (the tail of the
+    // stream plus one pad byte, a one-step chunk) is transformed between two
+    // reads of the consumer. For gzip, main decoded all of it and failed at close().
+    describe("junk at the end of the last of several awaited writes", () => {
+      // Three quarters random, so the compressed stream spans two 64 KiB writes.
+      const plain = Buffer.alloc(100_000);
+      for (let i = 0, x = 1; i < plain.length; i++) {
+        x = (Math.imul(x, 1664525) + 1013904223) >>> 0;
+        plain[i] = (i & 8191) < 6144 ? x >>> 24 : 97 + (i % 7);
+      }
+
+      test.each(formats.flatMap(format => Object.keys(consumers).map(consumer => [format, consumer] as const)))(
+        "DecompressionStream(%s) read by %s",
+        async (format, consumer) => {
+          const input = Buffer.concat([bombs[format](plain), Buffer.alloc(1)]);
+          expect(input.byteLength).toBeGreaterThan(64 * 1024);
+          const ds = new DecompressionStream(format);
+          const writer = ds.writable.getWriter();
+          const written = (async () => {
+            for (let offset = 0; offset < input.byteLength; offset += 64 * 1024) {
+              await writer.write(input.subarray(offset, offset + 64 * 1024));
+            }
+          })();
+
+          const { output, error } = await consumers[consumer as keyof typeof consumers](ds.readable);
+          expect(output.byteLength).toBe(plain.byteLength);
+          expect(output.equals(plain)).toBe(true);
+          expect(error).toMatchObject(trailingJunk);
+          expect(await rejection(written)).toBe(error);
+        },
+      );
     });
 
     // Only trailing junk delivers first. A data error throws without the step's

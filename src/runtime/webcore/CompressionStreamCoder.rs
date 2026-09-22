@@ -141,8 +141,6 @@ pub(crate) struct CompressionStreamCoder {
     high_water_mark: usize,
     /// Set while a chunk's transform spans steps; `None` between chunks.
     pending: Option<Pending>,
-    /// Junk met in a later step of a chunk; the next step reports it, after the reader took this output.
-    junk_held: bool,
     /// The context of the script that made the stream: its off-thread steps belong to it, also
     /// the ones a native sink asks for.
     context: bun_jsc::ContextId,
@@ -298,7 +296,6 @@ impl CompressionStreamCoder {
             zstd_head_len: 0,
             high_water_mark,
             pending: None,
-            junk_held: false,
             context: bun_jsc::virtual_machine::VirtualMachine::get()
                 .context_of_caller_no_frame()
                 .id(),
@@ -325,25 +322,14 @@ impl CompressionStreamCoder {
     /// collects at most `max(high_water_mark, chunk length)` bytes into `out` and
     /// returns `true` if the codec stopped at that cap, in which case the caller
     /// must step again (with no input) before feeding the next chunk.
-    /// Also `true` for `junk_held`. On `Err`, `out` is only what was decoded ahead of trailing junk.
+    /// On `Err`, `out` is empty unless it was decoded ahead of trailing junk: that is delivered first.
     fn step(&mut self, input: &[u8], finish: bool, out: &mut Vec<u8>) -> Result<bool, CodecError> {
         out.clear();
-        if self.junk_held {
-            return Err(CodecError::TrailingJunk);
-        }
-        let continuing = self.pending.is_some();
         let result = self.advance(input, finish, out);
-        match result {
-            Err(CodecError::TrailingJunk) if continuing && !out.is_empty() => {
-                self.junk_held = true;
-                Ok(true)
-            }
-            Ok(_) | Err(CodecError::TrailingJunk) => result,
-            Err(_) => {
-                out.clear();
-                result
-            }
+        if !matches!(result, Ok(_) | Err(CodecError::TrailingJunk)) {
+            out.clear();
         }
+        result
     }
 
     fn advance(

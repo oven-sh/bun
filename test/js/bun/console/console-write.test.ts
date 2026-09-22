@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, libcPathForDlopen, tempDir } from "harness";
 import { mkfifo } from "mkfifo";
 import { closeSync, constants, openSync, readSync } from "node:fs";
 import { join } from "node:path";
@@ -218,7 +218,8 @@ test.concurrent.skipIf(!isLinux)("console.write counts a write that settled befo
         `
 const { dlopen } = require("bun:ffi");
 const F_GETPIPE_SZ = 1032;
-const capacity = dlopen("libc.so.6", { fcntl: { args: ["int", "int"], returns: "int" } }).symbols.fcntl(1, F_GETPIPE_SZ);
+const libc = ${JSON.stringify(libcPathForDlopen())};
+const capacity = dlopen(libc, { fcntl: { args: ["int", "int"], returns: "int" } }).symbols.fcntl(1, F_GETPIPE_SZ);
 const a = Buffer.alloc(capacity + 100, "a").toString();
 const b = Buffer.alloc(1024 * 1024, "b").toString();
 const total = console.write(a, "s", b);

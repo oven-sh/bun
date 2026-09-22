@@ -878,9 +878,7 @@ pub struct NewSource<C: SourceContext> {
     /// `Finalized` so [`Self::on_close`] reads `None` instead of a
     /// dead-but-unswept cell.
     pub this_jsvalue: jsc::JsRef,
-    /// The producer holding a native ref does not root the wrapper
-    /// ([`Self::unroot_wrapper`]): its ref keeps this allocation only, so a stream
-    /// nothing can read is collected. Cleared by [`Self::root_wrapper`].
+    /// The producer's native ref does not root the wrapper ([`Self::unroot_wrapper`]).
     pub wrapper_unrooted: Cell<bool>,
     /// R-2: written by context methods (`ByteStream::to_any_blob`,
     /// `ByteBlobLoader::to_any_blob`) through their parent accessor, so
@@ -1187,9 +1185,8 @@ impl<C: SourceContext> NewSource<C> {
         }
     }
 
-    /// The producer keeps its native ref but does not root the wrapper: whatever
-    /// reads the stream holds it, so one nothing can read is collected.
-    /// [`SourceContext::wrapper_finalized`] tells the producer if that happens.
+    /// The producer's ref leaves the wrapper collectable. [`SourceContext::wrapper_finalized`]
+    /// tells the producer if that happens.
     ///
     /// Takes a raw pointer: the producer reaches this while it holds a `&C` into
     /// `this` (the chunk it is delivering to), so only the fields written here

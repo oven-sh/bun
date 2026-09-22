@@ -1703,14 +1703,8 @@ describe.serial("fetch() receive backpressure — an unread body hands its conne
   }
 });
 
-// A body stream nothing can read any more has to go away in whatever state its body is, also
-// one that never reaches the mark. Before, the fetch rooted its stream until it parked at the
-// mark, so against a body that stalls under it the stream, its connection and its request slot
-// lived until the peer gave up: 256 status probes of an event stream (`if (!res.body) throw`)
-// and every later fetch() pended.
-//
-// Serial on purpose: every test here runs full collections. Among the concurrent blocks above
-// they would wait seconds for a turn of the loop on a debug build, and stall the others.
+// A body stream nothing can read is collected and its fetch aborted, even under the mark.
+// Serial: every test here runs full collections, which would stall the concurrent blocks above.
 describe.serial("fetch() receive backpressure — an abandoned body stream under the mark", () => {
   const N = 4;
   const shapes: [string, (res: Response) => Promise<unknown>, "quiet" | "trickle"][] = [

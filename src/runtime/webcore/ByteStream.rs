@@ -68,10 +68,7 @@ pub(crate) type Source = readable_stream::NewSource<ByteStream>;
 /// A network body producer's (fetch, S3) hold on the stream it feeds: a counted ref on the stream's
 /// `Source`, so delivery and unhooking go through memory the producer keeps alive rather than the
 /// JS wrapper (which the VM's last sweep destroys in no particular order), plus the parked bit of
-/// the receive backpressure. The ref roots the wrapper only for a consumer that takes the bytes
-/// without holding the stream (a native sink, a whole-body read). Any other reader holds the
-/// stream from JS, so one nothing can read is collected (`SourceHandle::consumer_collected`),
-/// whether or not its body ever reaches the mark.
+/// the receive backpressure. It roots the wrapper only for a native sink or a whole-body read.
 #[derive(Default)]
 pub(crate) struct ProducerHold {
     source: Cell<Option<core::ptr::NonNull<Source>>>,
@@ -99,10 +96,11 @@ impl ProducerHold {
         // SAFETY: fn contract; the ref keeps the Source alive past this call.
         unsafe {
             let source = Source::from_context_ptr(bytes);
-            (*source).increment_count();
             self.source.set(core::ptr::NonNull::new(source));
+            // Before the ref, so `increment_count` only roots a wrapper that stays rooted.
+            self.sync_wrapper_root();
+            (*source).increment_count();
         }
-        self.sync_wrapper_root();
     }
 
     fn sync_wrapper_root(&self) {
@@ -172,8 +170,7 @@ impl ProducerHold {
         !self.parked.replace(true)
     }
 
-    /// A consumer attached or took bytes. Returns whether this call unparked (the caller then
-    /// re-takes its loop ref).
+    /// A consumer attached or took bytes; returns whether this unparked (re-take the loop ref).
     pub(crate) fn unpark(&self) -> bool {
         self.sync_wrapper_root();
         self.parked.replace(false)

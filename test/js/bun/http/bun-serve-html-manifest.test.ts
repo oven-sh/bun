@@ -266,10 +266,13 @@ describe("Bun.serve HTML manifest", () => {
     expect(out).toContain("SUCCESS: Manifest validation failed as expected");
   });
 
+  const maxPathBytes = isWindows ? 98302 : process.platform === "darwin" ? 1024 : 4096;
+
   // Spawns bun with a manifest whose one file has `path` and prints the
   // error code the Bun.serve call throws, or "no-throw".
-  async function serveWithManifestPath(pathExpr: string) {
+  async function serveWithManifestPath(pathExpr: string, cwd?: string) {
     await using proc = Bun.spawn({
+      cwd,
       cmd: [
         bunExe(),
         "-e",
@@ -309,9 +312,22 @@ describe("Bun.serve HTML manifest", () => {
     // One byte under MAX_PATH_BYTES passes the per-part guard, but cwd + "/" +
     // part is longer than any host path, and on Linux and Windows longer than
     // the join buffer: process used to abort with a slice-index panic.
-    const maxPathBytes = isWindows ? 98302 : process.platform === "darwin" ? 1024 : 4096;
     const { stdout, exitCode } = await serveWithManifestPath(`Buffer.alloc(${maxPathBytes - 1}, "a").toString()`);
     expect(stdout).toBe("CAUGHT ENAMETOOLONG");
+    expect(exitCode).toBe(0);
+  });
+
+  it("rejects an absolute manifest file path outside the cwd that overflows the relative buffer", async () => {
+    // The path fits the join buffer, but relative(cwd, path) prepends one
+    // "/.." per cwd segment, and that output did not fit its own buffer:
+    // process used to abort with a slice-index panic.
+    using dir = tempDir("serve-html-deep", {});
+    const { stdout, exitCode } = await serveWithManifestPath(
+      `(process.platform === "win32" ? "C:\\\\" : "/") + Buffer.alloc(${maxPathBytes - 4}, "a").toString()`,
+      String(dir),
+    );
+    // abs() succeeds, so route setup then rejects the missing file.
+    expect(stdout).toBe("CAUGHT ERR_INVALID_ARG_TYPE");
     expect(exitCode).toBe(0);
   });
 

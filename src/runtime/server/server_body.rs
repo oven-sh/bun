@@ -622,7 +622,12 @@ impl AnyRoute {
                 .global
                 .throw_value(err.to_error_instance(init_ctx.global)));
         };
-        let mut relative_path = FileSystem::instance().relative(cwd, abs_path);
+        // Worst case: one "/.." per `cwd` segment, then a separator and `abs_path`.
+        let mut relative_buf = vec![0u8; abs_path.len() + 3 * cwd.len() + 4];
+        let mut relative_path = paths::resolve_path::relative_platform_buf::<
+            paths::resolve_path::platform::Auto,
+            false,
+        >(&mut relative_buf, cwd, abs_path);
 
         if relative_path.starts_with(b"./") {
             relative_path = &relative_path[2..];

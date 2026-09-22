@@ -341,6 +341,11 @@ function Server(options, callback): void {
       this[isTlsSymbol] = true;
     }
 
+    const crl = options.crl;
+    if (crl && this[isTlsSymbol]) {
+      tlsHelpers.throwOnInvalidTLSArray("options.crl", crl);
+    }
+
     let passphrase = options.passphrase;
     if (passphrase && typeof passphrase !== "string") {
       throw $ERR_INVALID_ARG_TYPE("options.passphrase", "string", passphrase);
@@ -357,11 +362,19 @@ function Server(options, callback): void {
     }
 
     if (this[isTlsSymbol]) {
-      const { validateSecureProtocol, secureProtocolToVersionRange, tlsStringToProtocolVersion } = tlsHelpers;
+      const {
+        validateSecureContextOptions,
+        secureProtocolToVersionRange,
+        tlsStringToProtocolVersion,
+        SSL_OP_CIPHER_SERVER_PREFERENCE,
+      } = tlsHelpers;
+      // The same checks tls.createServer runs.
+      validateSecureContextOptions(options);
+      // Node's tls.Server defaults honorCipherOrder to true.
+      if (options.honorCipherOrder !== false) secureOptions |= SSL_OP_CIPHER_SERVER_PREFERENCE;
       // Translate minVersion/maxVersion/secureProtocol into the integer
       // protocol range the native layer applies (secureProtocol wins, like
       // Node's SecureContext::Init); 0 keeps the native defaults.
-      validateSecureProtocol(options.secureProtocol);
       let minVersion, maxVersion;
       const range = secureProtocolToVersionRange(options.secureProtocol);
       if (range) {
@@ -376,6 +389,7 @@ function Server(options, callback): void {
         key,
         cert,
         ca,
+        crl,
         passphrase,
         secureOptions,
         minVersion,
@@ -383,6 +397,10 @@ function Server(options, callback): void {
         ciphers: typeof options.ciphers === "string" && options.ciphers ? options.ciphers : undefined,
         requestCert: options.requestCert,
         rejectUnauthorized: options.rejectUnauthorized,
+        sessionTimeout: options.sessionTimeout ?? undefined,
+        ecdhCurve: options.ecdhCurve ?? require("node:tls").DEFAULT_ECDH_CURVE,
+        sigalgs: options.sigalgs,
+        allowPartialTrustChain: !!options.allowPartialTrustChain,
       });
     } else {
       this[tlsSymbol] = null;

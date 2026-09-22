@@ -1068,6 +1068,193 @@ it("createServer({pfx, requestCert}) verifies client certificates against the pf
   }
 });
 
+describe("https.createServer forwards every TLS server option", () => {
+  // ca2 signs agent3 and agent4; ca2-crl-agent3.pem revokes agent3 only.
+  const fixtures = join(import.meta.dir, "../test/fixtures/keys");
+  const read = (name: string) => readFileSync(join(fixtures, name), "utf8");
+  const mtls = {
+    key: read("agent1-key.pem"),
+    cert: read("agent1-cert.pem"),
+    ca: read("ca2-cert.pem"),
+    crl: read("ca2-crl-agent3.pem"),
+    requestCert: true,
+  };
+
+  type Verdict = { authorized: boolean | undefined; authorizationError: unknown };
+
+  async function httpsRequest(port: number, agent: string) {
+    const outcome = Promise.withResolvers<string>();
+    const req = https.request(
+      {
+        host: "127.0.0.1",
+        port,
+        path: `/${agent}`,
+        key: read(`${agent}-key.pem`),
+        cert: read(`${agent}-cert.pem`),
+        rejectUnauthorized: false,
+      },
+      res => {
+        const chunks: Buffer[] = [];
+        res.on("data", chunk => chunks.push(chunk));
+        res.on("end", () => outcome.resolve(`served ${Buffer.concat(chunks)}`));
+      },
+    );
+    req.on("error", () => outcome.resolve("refused"));
+    req.end();
+    return outcome.promise;
+  }
+
+  it("refuses a client certificate that the crl revokes", async () => {
+    const verdicts: Record<string, Verdict> = {};
+    await using server = https.createServer({ ...mtls, rejectUnauthorized: true }, (req, res) => {
+      const socket = req.socket as TLSSocket;
+      const name = req.url!.slice(1);
+      verdicts[name] = { authorized: socket.authorized, authorizationError: socket.authorizationError };
+      res.end(name);
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+
+    expect({
+      revoked: await httpsRequest(port, "agent3"),
+      good: await httpsRequest(port, "agent4"),
+      verdicts,
+    }).toEqual({
+      revoked: "refused",
+      good: "served agent4",
+      verdicts: { agent4: { authorized: true, authorizationError: null } },
+    });
+  });
+
+  it("reports CERT_REVOKED on req.socket when rejectUnauthorized is false", async () => {
+    const verdicts: Record<string, Verdict> = {};
+    await using server = https.createServer({ ...mtls, rejectUnauthorized: false }, (req, res) => {
+      const socket = req.socket as TLSSocket;
+      const name = req.url!.slice(1);
+      verdicts[name] = { authorized: socket.authorized, authorizationError: socket.authorizationError };
+      res.end(name);
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+
+    expect({
+      revoked: await httpsRequest(port, "agent3"),
+      good: await httpsRequest(port, "agent4"),
+      verdicts,
+    }).toEqual({
+      revoked: "served agent3",
+      good: "served agent4",
+      verdicts: {
+        agent3: { authorized: false, authorizationError: "CERT_REVOKED" },
+        agent4: { authorized: true, authorizationError: null },
+      },
+    });
+  });
+
+  const ecdhHandshake = async (port: number, ecdhCurve: string) => {
+    const outcome = Promise.withResolvers<string>();
+    const client = connect({ port, host: "127.0.0.1", rejectUnauthorized: false, ecdhCurve });
+    client.once("secureConnect", () => {
+      client.destroy();
+      outcome.resolve("ok");
+    });
+    client.once("error", err => {
+      client.destroy();
+      const code = (err as Error & { code?: string }).code ?? "error";
+      outcome.resolve(code.includes("HANDSHAKE_FAILURE") ? "handshake_failure" : code);
+    });
+    client.once("close", () => outcome.resolve("closed"));
+    return outcome.promise;
+  };
+
+  it("restricts the key-share groups to ecdhCurve", async () => {
+    await using server = https.createServer({ ...COMMON_CERT, ecdhCurve: "P-384" }, (_req, res) => res.end("ok"));
+    server.on("tlsClientError", () => {});
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+
+    expect({
+      x25519Only: await ecdhHandshake(port, "X25519"),
+      p384Only: await ecdhHandshake(port, "P-384"),
+    }).toEqual({
+      x25519Only: "handshake_failure",
+      p384Only: "ok",
+    });
+  });
+
+  it("falls back to tls.DEFAULT_ECDH_CURVE when ecdhCurve is omitted", async () => {
+    const saved = tls.DEFAULT_ECDH_CURVE;
+    tls.DEFAULT_ECDH_CURVE = "P-384";
+    try {
+      await using server = https.createServer({ ...COMMON_CERT }, (_req, res) => res.end("ok"));
+      server.on("tlsClientError", () => {});
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const { port } = server.address() as AddressInfo;
+
+      expect({
+        x25519Only: await ecdhHandshake(port, "X25519"),
+        p384Only: await ecdhHandshake(port, "P-384"),
+      }).toEqual({
+        x25519Only: "handshake_failure",
+        p384Only: "ok",
+      });
+    } finally {
+      tls.DEFAULT_ECDH_CURVE = saved;
+    }
+  });
+
+  it("honors the server cipher order unless honorCipherOrder is false", async () => {
+    const aes256 = "ECDHE-RSA-AES256-GCM-SHA384";
+    const aes128 = "ECDHE-RSA-AES128-GCM-SHA256";
+    const negotiated = async (honorCipherOrder: boolean | undefined) => {
+      await using server = https.createServer(
+        { ...COMMON_CERT, ciphers: `${aes256}:${aes128}`, honorCipherOrder },
+        (_req, res) => res.end("ok"),
+      );
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const { port } = server.address() as AddressInfo;
+      const client = connect({
+        port,
+        host: "127.0.0.1",
+        rejectUnauthorized: false,
+        ciphers: `${aes128}:${aes256}`,
+        maxVersion: "TLSv1.2",
+      });
+      await once(client, "secureConnect");
+      const name = client.getCipher().name;
+      client.destroy();
+      return name;
+    };
+    expect({
+      default: await negotiated(undefined),
+      honored: await negotiated(true),
+      clientOrder: await negotiated(false),
+    }).toEqual({ default: aes256, honored: aes256, clientOrder: aes128 });
+  });
+
+  it("validates the secure context options like tls.createServer", () => {
+    const check = (options: object) => {
+      try {
+        https.createServer({ ...COMMON_CERT, ...options });
+      } catch (e: any) {
+        return e.code;
+      }
+      return "no error";
+    };
+    expect({
+      ecdhCurve: check({ ecdhCurve: "not-a-curve" }),
+      sessionTimeout: check({ sessionTimeout: -1 }),
+      sigalgs: check({ sigalgs: "" }),
+      crl: check({ crl: 42 }),
+    }).toEqual({
+      ecdhCurve: "ERR_CRYPTO_OPERATION_FAILED",
+      sessionTimeout: "ERR_OUT_OF_RANGE",
+      sigalgs: "ERR_INVALID_ARG_VALUE",
+      crl: "ERR_INVALID_ARG_TYPE",
+    });
+  });
+});
+
 it("SNICallback errors abort the handshake and surface as tlsClientError", async () => {
   // Node drops the connection before the handshake completes (no TLS alert is
   // sent) and emits 'tlsClientError' on the server with the callback's error.

@@ -62,13 +62,12 @@ macro_rules! tcc_externs {
 /// Serializes every libtcc call in the process; each Worker can call `cc()`.
 ///
 /// TinyCC keeps its parser, its code generator and its list of relocated
-/// states in process globals and guards them with its own semaphores. Outside
-/// Windows it creates each semaphore on first use with an unsynchronized check
-/// (`wait_sem` in tcc.h). Two threads whose first compile overlaps both call
-/// `sem_init`, the second call resets the count, and both run inside
-/// `tcc_compile` at once. Other globals have no guard at all (`file` in
-/// `tcc_split_path`, the SDK root cache in tccmacho.c), so the lock covers
-/// every call and not only the compiles.
+/// states in process globals. Nothing else guards them: TinyCC's own locks are
+/// compiled out (`CONFIG_TCC_SEMLOCK=0` in scripts/build/deps/tinycc.ts)
+/// because outside Windows it creates them on first use with an unsynchronized
+/// check (`wait_sem` in tcc.h), so two threads can both get one. Some globals
+/// never had a lock (`file` in `tcc_split_path`, the SDK root cache in
+/// tccmacho.c), so this one covers every call and not only the compiles.
 ///
 /// TinyCC calls the error callback with this lock held, so the callback must
 /// not call into libtcc.

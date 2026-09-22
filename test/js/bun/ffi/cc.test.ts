@@ -10,7 +10,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 
 // TODO: we need to install build-essential and Apple SDK in CI.
@@ -1190,12 +1190,11 @@ describe.skipIf(isASAN)("compiler runtime header directory under BUN_TMPDIR", ()
   });
 });
 
-// TinyCC creates the semaphore around its global parser state on first use,
-// without synchronization, so cc() has to serialize its TinyCC calls itself.
-// If it does not, Workers that make their first cc() call together each create
-// the semaphore and then compile at the same time. A process has one first
-// use, so every attempt is a new process.
-describe("cc() called for the first time by several Workers at once", () => {
+// TinyCC keeps its parser and code generator in process globals, and bun builds
+// it without its own locks. The lock cc() holds around every TinyCC call is the
+// only thing that stops Workers that compile at the same time from corrupting
+// that state.
+describe("cc() called by several Workers at once", () => {
   const workers = 8;
   const files: Record<string, string> = {
     "fixture.mjs": /* js */ `
@@ -1233,7 +1232,7 @@ describe("cc() called for the first time by several Workers at once", () => {
         parentPort.postMessage("ready");
         Atomics.wait(gate, 0, 0);
         // The wake-ups arrive microseconds apart. Spin until the last one, so
-        // that every Worker enters its first cc() call together.
+        // that every Worker starts to compile together.
         Atomics.add(gate, 1, 1);
         while (Atomics.load(gate, 1) < workers);
         const sums = [];
@@ -1253,22 +1252,16 @@ describe("cc() called for the first time by several Workers at once", () => {
 
   it("compiles every source correctly", async () => {
     using dir = tempDir("bun-ffi-cc-workers", files);
-    // One attempt takes seconds on a debug or ASAN build and rarely lines the
-    // Workers up closely enough there. TinyCC's Windows semaphore never had
-    // the race. The other release builds carry the detection.
-    const attempts = isDebug || isASAN || isWindows ? 1 : 10;
-    for (let attempt = 0; attempt < attempts; attempt++) {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "fixture.mjs"],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "inherit",
-      });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect(stdout.trim()).toBe(expected);
-      expect(exitCode).toBe(0);
-    }
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe(expected);
+    expect(exitCode).toBe(0);
   });
 });
 

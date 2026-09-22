@@ -10,8 +10,9 @@ pub(crate) fn close_now(socket: &AnySocket) {
         socket.shutdown();
     }
     socket.close(CloseCode::FastShutdown);
-    // usockets defers a fast shutdown while ciphertext is stuck behind a full kernel buffer
+    // usockets defers a fast shutdown once, behind ciphertext the kernel would not take; the
+    // second one drops that ciphertext and closes with a FIN, so no reset discards sent bytes
     if !socket.is_closed() {
-        socket.close(CloseCode::Failure);
+        socket.close(CloseCode::FastShutdown);
     }
 }

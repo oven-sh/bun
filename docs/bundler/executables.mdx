@@ -338,6 +338,8 @@ An order file from an earlier version of the program still applies. Entries that
 
 Pass several files to cover several ways of starting the program, such as an interactive mode and a one-shot command: `--bytecode-order=interactive.order,oneshot.order` or `bytecodeOrder: ["interactive.order", "oneshot.order"]`. Bun places what the first file lists in that file's order, then what the second file adds in its order, and so on. List the most important way of starting the program first. Its functions are placed as if it were the only file.
 
+To check how well an order file still fits, call `bytecodeOrderStats()` from `bun:jsc` in the running executable. It counts the functions the current thread has loaded from the part the order file listed (`hot`), from functions new since the recording (`unknown`), and from everything else (`cold`). A growing share of `cold` means it is time to record again.
+
 ### JIT policy
 
 Code that only runs during startup rarely pays back the time the JIT spends compiling it. `--compile-jit-policy <n>` (`compile: { jitPolicy: n }` in `Bun.build`) starts the executable with JavaScriptCore's tier-up thresholds multiplied by `n`, so startup code stays in the interpreter longer. The default, `1`, is the normal JIT policy. The scale stays in effect until the program calls `Bun.unsafe.setJITPolicy(1)`, which it should do once it is interactive:

@@ -1469,35 +1469,43 @@ impl FFI {
 
         let dylib: bun_sys::DynLib = 'brk: {
             // First try using the name directly
-            match bun_sys::DynLib::open(name) {
+            let mut loader_ran = match bun_sys::DynLib::open(name) {
                 Ok(d) => break 'brk d,
-                Err(_) => {
-                    let backup_name = Fs::FileSystem::instance().abs(&[name]);
-                    // if that fails, try resolving the filepath relative to the current working directory
-                    match bun_sys::DynLib::open(backup_name) {
-                        Ok(d) => break 'brk d,
-                        Err(_) => {
-                            // Then, if that fails, report an error with the library name and system error
-                            let dlerror_msg = get_dl_error();
-
-                            let mut msg = Vec::new();
-                            let _ = write!(
-                                &mut msg,
-                                "Failed to open library \"{}\": {}",
-                                BStr::new(name),
-                                BStr::new(&dlerror_msg)
-                            );
-                            let system_error = SystemError {
-                                code: bun_core::String::clone_utf8(b"ERR_DLOPEN_FAILED"),
-                                message: bun_core::String::clone_utf8(&msg),
-                                syscall: bun_core::String::clone_utf8(b"dlopen"),
-                                ..Default::default()
-                            };
-                            return Ok(system_error.to_error_instance(global));
-                        }
-                    }
+                // ENAMETOOLONG means `DynLib::open` returned before it called the loader.
+                Err(e) => e != bun_sys::SystemErrno::ENAMETOOLONG,
+            };
+            // if that fails, try resolving the filepath relative to the current working directory
+            let mut backup_buf = bun_paths::path_buffer_pool::get();
+            if let Some(backup_name) =
+                Fs::FileSystem::instance().abs_buf_checked(&[name], &mut backup_buf[..])
+            {
+                match bun_sys::DynLib::open(backup_name) {
+                    Ok(d) => break 'brk d,
+                    Err(e) => loader_ran |= e != bun_sys::SystemErrno::ENAMETOOLONG,
                 }
             }
+            // Then, if that fails, report an error with the library name and system error
+            let dlerror_msg = if loader_ran {
+                get_dl_error()
+            } else {
+                // dlerror() / GetLastError() holds nothing for a name that never reached the loader.
+                Box::<[u8]>::from(b"file name too long".as_slice())
+            };
+
+            let mut msg = Vec::new();
+            let _ = write!(
+                &mut msg,
+                "Failed to open library \"{}\": {}",
+                BStr::new(name),
+                BStr::new(&dlerror_msg)
+            );
+            let system_error = SystemError {
+                code: bun_core::String::clone_utf8(b"ERR_DLOPEN_FAILED"),
+                message: bun_core::String::clone_utf8(&msg),
+                syscall: bun_core::String::clone_utf8(b"dlopen"),
+                ..Default::default()
+            };
+            return Ok(system_error.to_error_instance(global));
         };
 
         let mut size = symbols.values().len();

@@ -1,6 +1,6 @@
 import { CString, dlopen, linkSymbols, ptr, toArrayBuffer, toBuffer } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { isMusl } from "harness";
+import { bunEnv, bunExe, isLinux, isMusl, isWindows } from "harness";
 
 // Not `toThrow()`: it also accepts an Error that the function returns, which is
 // what `toBuffer()` and `toArrayBuffer()` did with their TypeError before they
@@ -101,6 +101,56 @@ describe("FFI error messages", () => {
       expect(err.message).toContain("libnonexistent12345.so");
       expect(err.message).toMatch(/Failed to open library/i);
     }
+  });
+
+  // When the direct open fails, dlopen retries with the name resolved against
+  // the cwd. That join went through FileSystem::abs(), which writes into a
+  // 4096-byte thread-local buffer, so a longer result aborted the process:
+  //   panic: range end index 5003 out of range for slice of length 4095
+  // The relative name just under MAX_PATH_BYTES (the length of bun's path
+  // buffers) fits on its own and overflows only once the cwd is joined in front.
+  const maxPathBytes = isWindows ? 98302 : isLinux ? 4096 : 1024;
+  test.concurrent.each([
+    ["absolute", 5000],
+    ["absolute", 100_000],
+    ["relative", maxPathBytes - 6],
+    ["relative", 100_000],
+  ] as const)("dlopen with a %s %d-byte library path reports an error instead of aborting", async (kind, len) => {
+    const prefix = kind === "relative" ? "" : process.platform === "win32" ? "C:\\" : "/";
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { dlopen } = require("bun:ffi");` +
+          `const name = ${JSON.stringify(prefix)} + Buffer.alloc(${len}, "a").toString() + ".so";` +
+          `try { dlopen(name, { f: { args: [], returns: "void" } }); }` +
+          `catch (e) { const m = String(e.message);` +
+          `  console.log("CAUGHT", e.code || e.name, m.slice(0, 30), "|", m.slice(-25)); }`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({
+      stdout: expect.stringMatching(/^CAUGHT ERR_DLOPEN_FAILED Failed to open library/),
+      stderr: "",
+    });
+    // 100k exceeds MAX_PATH_BYTES on every platform, so no open reaches the
+    // loader and dlerror()/GetLastError() has nothing for this name ("unknown
+    // error" / "error code 0"). The message gives the real reason instead.
+    if (len === 100_000) expect(stdout).toContain("file name too long");
+    expect(exitCode).toBe(0);
+  });
+
+  test("dlopen reports the loader's reason when a long name normalizes to a short path", () => {
+    // 6000 bytes of "./" exceed MAX_PATH_BYTES on POSIX, so the direct open never
+    // reaches the loader. The retry resolves the name to <cwd>/libnonexistent12345.so,
+    // the loader rejects that, and its reason is the one to report.
+    const name = Buffer.alloc(6000, "./").toString() + "libnonexistent12345.so";
+    const err = thrownBy(() => dlopen(name, { test: { args: [], returns: "int" } }));
+    expect(err?.code).toBe("ERR_DLOPEN_FAILED");
+    expect(err.message).toStartWith('Failed to open library "./././');
+    expect(err.message).not.toContain("file name too long");
   });
 
   test("dlopen shows which symbol is missing when symbol not found", () => {

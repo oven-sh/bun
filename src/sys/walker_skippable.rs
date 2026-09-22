@@ -84,9 +84,7 @@ impl Walker {
                         // d_type and return DT_UNKNOWN. Optionally resolve via
                         // fstatat so callers get accurate types for recursion.
                         // This only affects POSIX; Windows always provides types.
-                        // DT_LNK is checked too: proot's link2symlink turns hardlinks
-                        // into symlinks that it then presents to lstat as regular files,
-                        // but getdents still reports DT_LNK for them.
+                        // DT_LNK too: proot link2symlink entries lstat as regular files.
                         #[cfg(not(windows))]
                         let kind: sys::EntryKind = if self.resolve_unknown_entry_types
                             && matches!(

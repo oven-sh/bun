@@ -426,10 +426,8 @@ fn open_dir_a(dir: Fd, subpath: &[u8]) -> crate::Result<Dir> {
         .map_err(Into::into)
 }
 
-/// Recreate the symlink `src_dir/src_name` as `dest_dir/dest_path` with the
-/// same link text. The copy backends use this instead of reading through the
-/// link, so a symlink that points outside the package never has its target
-/// copied into `node_modules`.
+/// Recreate the symlink `src_dir/src_name` at `dest_dir/dest_path`. Never
+/// reads through the link.
 #[cfg(not(windows))]
 pub(crate) fn copy_symlink(
     src_dir: Fd,

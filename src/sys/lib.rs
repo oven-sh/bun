@@ -7590,11 +7590,8 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
 /// [`get_fd_path`] for an `fd` that was opened from `path`. `stat` is the
 /// `fstat` of `fd` when the caller already has it.
 ///
-/// macOS: `F_GETPATH` asks the file system for the parent and the name of the
-/// file. For a file that has several hard links, APFS answers with the link
-/// that any process looked up last, so a lookup of another link between the
-/// `open` and the `fcntl` changes the result. `realpath(3)` walks `path`, so it
-/// names the link that `path` names.
+/// macOS: `F_GETPATH` names a file that has several hard links by the link
+/// that any process looked up last. `realpath(3)` walks `path` instead.
 pub fn get_fd_path_opened_from<'a>(
     fd: Fd,
     path: &[u8],

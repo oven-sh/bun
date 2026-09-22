@@ -38,9 +38,6 @@ use crate::hoisted_install as HoistedInstall;
 use crate::isolated_install as IsolatedInstall;
 use crate::package_manager_real::package_manager_options::Do;
 
-/// Signal name for a raw signal byte.
-/// `Status::Signaled` carries the raw byte; named range 1..=31 maps via
-/// `SignalCode::name()`, RT/out-of-range values fall back to "UNKNOWN".
 #[inline]
 fn signal_name(raw: u8) -> &'static str {
     bun_sys::SignalCode(raw).name().unwrap_or("UNKNOWN")

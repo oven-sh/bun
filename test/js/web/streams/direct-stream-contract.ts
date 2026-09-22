@@ -11,6 +11,7 @@ export type Shape = {
 };
 
 const later = () => new Promise<void>(r => setImmediate(r));
+const never = () => new Promise<never>(() => {});
 
 function direct(t: Tally, pull: (c: ReadableStreamDirectController) => void | Promise<void>): ReadableStream {
   return new ReadableStream({
@@ -150,6 +151,37 @@ export const shapes: Record<string, Shape> = {
       direct(t, c => {
         c.write("hello world");
         Promise.resolve(new Error("not a failure")).then(v => (c.end as any)(v));
+      }),
+  },
+  // pull() keeps running after its own end()/close(error). The stream is over at that call: no consumer waits for pull() to return.
+  "async pull: write, await, write, end(), then never returns": {
+    expect: { body: "hello world" },
+    make: t =>
+      direct(t, async c => {
+        c.write("hello ");
+        await later();
+        c.write("world");
+        c.end();
+        await never();
+      }),
+  },
+  "async pull: write, end(), then never returns": {
+    expect: { body: "hello world" },
+    make: t =>
+      direct(t, async c => {
+        c.write("hello world");
+        c.end();
+        await never();
+      }),
+  },
+  "async pull: write, await, close(error), then never returns": {
+    expect: { error: "source failed" },
+    make: t =>
+      direct(t, async c => {
+        c.write("hello ");
+        await later();
+        c.close(new Error("source failed"));
+        await never();
       }),
   },
   "async pull: rejects after close() already ran": {

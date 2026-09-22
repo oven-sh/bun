@@ -48,6 +48,9 @@ using namespace Bun::WebStreams;
 // A JSReadableStream's tag and native source. Pure: no scope, no traps, no script.
 static int32_t tagOfStream(JSReadableStream* stream, void** ptr)
 {
+    // An errored stream reads as a JS stream: its readers get the stored error, which the native source does not have.
+    if (stream->m_state == ReadableStreamState::Errored)
+        return 0;
     // The RAW handle slot, not nativePtrForJS(): a transferred stream still tags.
     JSValue handle = stream->m_nativePtr.get();
     if (handle.isEmpty() || !handle.isCell())
@@ -195,8 +198,7 @@ extern "C" void ReadableStream__markConsumedAsBody(JSC::EncodedJSValue possibleR
     auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
     if (!stream) [[unlikely]]
         return;
-    stream->m_disturbed = true;
-    stream->m_consumedAsBody = true;
+    stream->markConsumedAsBody();
 }
 
 // markConsumedAsBody for Rust `to_any_blob`, which took the payload of a stream nothing started: no reader exists to close it.
@@ -205,8 +207,7 @@ extern "C" void ReadableStream__closeConsumedAsBody(JSC::EncodedJSValue possible
     auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
     if (!stream) [[unlikely]]
         return;
-    stream->m_disturbed = true;
-    stream->m_consumedAsBody = true;
+    stream->markConsumedAsBody();
     ASSERT(!stream->m_reader);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
     readableStreamCloseIfPossible(globalObject, stream);

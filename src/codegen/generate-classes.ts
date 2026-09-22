@@ -9,6 +9,7 @@ import { writeIfNotChanged } from "./helpers.ts";
 
 const require = createRequire(import.meta.url);
 const files = process.argv.slice(2);
+const typesDir = files.pop();
 const outBase = files.pop();
 let externs = "";
 const CommonIdentifiers = {
@@ -1153,7 +1154,10 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
         }
 
         static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
-        static ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(${name}, m_ctx); }
+        // constexpr: the extern "C" <Type>__ptrOffset constants initialized from
+        // this are then constant-initialized in every build mode (no static
+        // initializer at -O0; the link-time initializer audit relies on it).
+        static constexpr ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(${name}, m_ctx); }
 
         /**
          * Estimated size of the object from Zig including the JS wrapper.
@@ -1692,10 +1696,10 @@ const rustModuleResolver = (() => {
   // Index both `pub struct Name` and `pub type Name = …` — several JS classes
   // (HTTPServer/HTTPSServer/MD4/MD5/…) are generic instantiations exposed as
   // type aliases; the thunks call `Name::method` either way.
-  const structRe = /\bpub\s+(?:struct|type)\s+([A-Z]\w*)\b/g;
+  const structRe = /\bpub(?:\([^)]*\))?\s+(?:struct|type)\s+([A-Z]\w*)\b/g;
   // `pub use a::b::{Name, Name as Alias};` — only the *exported* identifier is
   // indexed, at the current module path.
-  const pubUseRe = /\bpub\s+use\s+((?:\w+::)*)\{?([^;{}]+?)\}?\s*;/g;
+  const pubUseRe = /\bpub(?:\([^)]*\))?\s+use\s+((?:\w+::)*)\{?([^;{}]+?)\}?\s*;/g;
 
   const segs = (p: string) => p.split("::").length;
   function register(name: string, fullPath: string) {
@@ -2227,7 +2231,7 @@ ${gcAccessors}
 /// struct so the thunks below call its inherent methods directly. A missing
 /// method is a compile error — fix it in \`${rustPath}\`, not here.
 #[allow(dead_code, unreachable_pub, unused)]
-pub use ${rustPath} as ${typeName};
+pub(crate) use ${rustPath} as ${typeName};
 
 ${thunks.join("\n\n")}
 
@@ -2712,7 +2716,7 @@ function writeCppSerializers() {
     initLazyClasses(classes.map(a => generateLazyClassStructureImpl(a.name, a))) + "\n" + visitLazyClasses(classes),
   );
 
-  await writeIfNotChanged(`${outBase}/ZigGeneratedClasses.d.ts`, [generateBuiltinTypes(classes)]);
+  await writeIfNotChanged(`${typesDir}/ZigGeneratedClasses.d.ts`, [generateBuiltinTypes(classes)]);
 }
 
 /**
@@ -2775,7 +2779,7 @@ function getPropertySignatureWithComment(
     }
   } else if ("getter" in propDef) {
     signature = `${tsPropName}: unknown;`; // Getter, possibly with setter
-    isReadOnly = !propDef.writable; // Mark readonly if only getter or explicitly not writable
+    isReadOnly = !propDef.writable && !("setter" in propDef); // Mark readonly if only getter or explicitly not writable
     commentLines.push(
       ` Look for a getter like this:
       * \`\`\`zig

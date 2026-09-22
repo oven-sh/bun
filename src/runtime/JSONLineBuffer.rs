@@ -11,7 +11,7 @@ use bun_core::strings;
 /// When we consume a message, we just advance `head` instead of copying.
 /// Compaction only happens when head exceeds a threshold.
 #[derive(Default)]
-pub struct JSONLineBuffer {
+pub(crate) struct JSONLineBuffer {
     pub(crate) data: Vec<u8>,
     /// Offset into data where unconsumed content starts.
     pub(crate) head: u32,

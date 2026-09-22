@@ -274,12 +274,6 @@ impl IntoHostSetterReturn for JsResult<bool> {
 pub trait IntoHostConstructReturn {
     fn into_host_construct_return(self) -> JsResult<*mut c_void>;
 }
-impl<T> IntoHostConstructReturn for *mut T {
-    #[inline]
-    fn into_host_construct_return(self) -> JsResult<*mut c_void> {
-        Ok(self.cast())
-    }
-}
 impl<T> IntoHostConstructReturn for Box<T> {
     #[inline]
     fn into_host_construct_return(self) -> JsResult<*mut c_void> {
@@ -695,6 +689,7 @@ pub fn host_construct_result<R: IntoHostConstructReturn>(
 /// `#[track_caller]` propagates the caller's `Location` through to
 /// `ExceptionValidationScope::init`.
 #[track_caller]
+#[inline]
 pub fn to_js_host_call(
     global_this: &JSGlobalObject,
     f: impl FnOnce() -> JsResult<JSValue>,

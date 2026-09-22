@@ -52,6 +52,7 @@ describe("arguments in the parameters of a function in a class field initializer
     // The function is in an arrow function in the initializer, or in the parameters of another function.
     ["() => function (p = arguments.length) { return p; }", "f()(undefined, 1)", 2],
     ["(a = function (p = arguments.length) { return p; }) => a", "f()(undefined, 1, 2)", 3],
+    ["[() => 1, function (p = arguments.length) { return p; }]", "f[1](undefined, 1)", 2],
     ["function (p = function (q = arguments.length) { return q; }) { return p(undefined, 1, 2); }", "f()", 3],
     // A computed key and a class heritage in the parameters belong to the function too.
     [
@@ -107,6 +108,11 @@ describe("still a SyntaxError in a class field initializer", () => {
     "function (p = class { g = arguments; }) { }",
     "function (p = class { g = () => arguments; }) { }",
     "{ m(p = class { static g = arguments.length; }) { } }",
+    // After the function, the rest of the initializer is checked as before.
+    "[function (p = arguments) { }, arguments]",
+    "(a = function (p = arguments) { }, b = arguments) => a",
+    "{ m(p = arguments) { }, [arguments]: 1 }",
+    "() => { (function (p = arguments) { }); return arguments; }",
   ])("f = %s", initializer => {
     const error = new SyntaxError(
       "Unexpected identifier 'arguments'. Cannot reference 'arguments' in class field initializer.",
@@ -122,6 +128,9 @@ describe("still a SyntaxError in a class field initializer", () => {
     "{ [super()]: 1 }",
     "class extends super() { }",
     "class extends Object { constructor(p = class { g = super(); }) { } }",
+    // After the constructor, the rest of the initializer is checked as before.
+    "[class extends Object { constructor(p = super()) { } }, super()]",
+    "[class extends Object { constructor(p = super()) { } }, () => super()]",
   ])("f = %s", initializer => {
     const error = new SyntaxError("Unexpected token '('. super call is not valid in class field initializer context.");
     expect(parse(`(class extends Object { f = ${initializer}; })`)).toThrow(error);

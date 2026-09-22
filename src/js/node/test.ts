@@ -2554,10 +2554,21 @@ function currentCollectionParent(): TestNode {
   return getRootNode();
 }
 
-function createTopLevelTestRunner(node: TestNode, fn: TestFn, declaredTodo = false) {
+function createTopLevelTestRunner(declared: TestNode, fn: TestFn, declaredTodo = false) {
+  const { todoFlag } = declared;
+  let ran = false;
   // bun:test invokes this with a `done` callback because the function declares
   // one parameter.
   return (done: (error?: unknown) => void) => {
+    // A retry calls this again, and a node keeps its run's state (finished, failed subtests, added hooks).
+    let node = declared;
+    if (ran) {
+      node = new TestNode(declared.name, declared.parent, declared.options, false, false);
+      node.filePath = declared.filePath;
+      node.ownTags = declared.ownTags;
+      node.todoFlag = todoFlag;
+    }
+    ran = true;
     // Under plain bun:test a describe.todo scope already handles its children's
     // todo verdict (FailBecauseTodoPassed under --todo), so don't override when
     // the flag was only inherited; under a run() child the suite registers as a
@@ -2569,10 +2580,10 @@ function createTopLevelTestRunner(node: TestNode, fn: TestFn, declaredTodo = fal
     let abandoned = false;
     afterTestEntry(() => {
       if (finished) return;
+      abandoned = true;
       const timeout = timedOutAfter();
       // Ended by an uncaught error: bun:test moves on, as before.
       if (timeout === undefined) return;
-      abandoned = true;
       stop.reject(makeTestFailure(`test timed out after ${timeout}ms`));
       return run;
     });
@@ -2580,7 +2591,7 @@ function createTopLevelTestRunner(node: TestNode, fn: TestFn, declaredTodo = fal
     run.$then(
       failure => {
         finished = true;
-        // bun:test has failed this entry for its timeout and no longer listens to its `done`.
+        // bun:test ended this entry first; a late `done` would land on a retry of it.
         if (abandoned) return;
         // A runtime t.skip()/t.todo() overrides bun:test's pass/fail accounting
         // (Node counts these as skip/todo even when the body threw); a declared

@@ -196,7 +196,13 @@ describe("node:test", () => {
         "250",
       ]);
       const order = /^ORDER=(.*)$/m.exec(stdout)?.[1] ?? "null";
-      expect(JSON.parse(order)).toEqual(["afterEach(H)", "I", "afterEach(I)"]);
+      expect(JSON.parse(order)).toEqual([
+        "afterEach(H)",
+        "bun:test afterEach",
+        "I",
+        "afterEach(I)",
+        "bun:test afterEach",
+      ]);
       expect(stderr).toContain("a beforeEach/afterEach hook timed out for this test.");
       expect(stderr).toContain("1 pass");
       expect({ exitCode, stderr }).toMatchObject({
@@ -235,6 +241,48 @@ describe("node:test", () => {
       ]);
       const order = /^ORDER=(.*)$/m.exec(stdout)?.[1] ?? "null";
       expect(JSON.parse(order)).toEqual(["afterEach(S)", "t.after(S)", "T", "afterEach(T)"]);
+      expect(stderr).toContain("1 pass");
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 1,
+        stderr: expect.stringContaining("1 fail"),
+      });
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "should retry a test that the bun:test timeout ended on a clean node, so its subtests run",
+    async () => {
+      const { exitCode, stdout, stderr } = await runTests(["39-runner-timeout-retry.js"], {}, [
+        "--retry",
+        "1",
+        "--timeout",
+        "250",
+      ]);
+      const order = /^ORDER=(.*)$/m.exec(stdout)?.[1] ?? "null";
+      expect(JSON.parse(order)).toEqual([
+        "afterEach(F) attempt=1",
+        "check attempt=2",
+        "afterEach(check) attempt=2",
+        "afterEach(F) attempt=2",
+      ]);
+      expect(stderr).toContain("error: 1 subtest failed");
+      expect(stderr).toContain("0 pass");
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 1,
+        stderr: expect.stringContaining("1 fail"),
+      });
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "should not let the late completion of an attempt that an unhandled rejection ended complete its retry",
+    async () => {
+      const { exitCode, stdout, stderr } = await runTests(["40-uncaught-error-retry.js"], {}, ["--retry", "1"]);
+      const order = /^ORDER=(.*)$/m.exec(stdout)?.[1] ?? "null";
+      expect(JSON.parse(order)).toEqual(["attempt 2 end", "Z"]);
+      expect(stderr).toContain("AssertionError: attempt 2 fails");
       expect(stderr).toContain("1 pass");
       expect({ exitCode, stderr }).toMatchObject({
         exitCode: 1,

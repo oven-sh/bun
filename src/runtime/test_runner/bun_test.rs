@@ -290,7 +290,7 @@ pub(crate) mod js_fns {
                         }
                     };
 
-                    bun_test.insert_execution_entry(append_point, args.callback, cfg);
+                    let _ = bun_test.insert_execution_entry(append_point, args.callback, cfg);
 
                     Ok(JSValue::UNDEFINED)
                 }
@@ -1252,7 +1252,7 @@ impl BunTest {
         after: *mut ExecutionEntry,
         callback: Option<JSValue>,
         cfg: ExecutionEntryCfg,
-    ) {
+    ) -> *mut ExecutionEntry {
         let new_item = ExecutionEntry::create(
             None,
             callback,
@@ -1268,6 +1268,7 @@ impl BunTest {
             (*after).next = Some(new_item_ptr);
         }
         self.extra_execution_entries.push(new_item_ptr);
+        new_item_ptr
     }
 
     /// called from the uncaught exception handler, or if a test callback rejects or throws an error

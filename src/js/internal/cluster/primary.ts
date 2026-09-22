@@ -366,7 +366,9 @@ function send(worker, message, handle?, cb?) {
 Worker.prototype.disconnect = function () {
   this.exitedAfterDisconnect = true;
   send(this, { act: "disconnect" });
-  this.process.disconnect();
+  // An online worker closes the channel itself, after its servers. The worker setup only runs once the worker's
+  // script loads node:cluster, so a worker that is not online may never read the request: close its channel from here.
+  if (this.state === "none" && this.isConnected()) this.process.disconnect();
   removeHandlesForWorker(this, false);
   removeWorker(this);
   return this;

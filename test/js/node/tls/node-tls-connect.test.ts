@@ -1399,35 +1399,31 @@ describe("a TLS socket over a net.Socket transport reports that transport's erro
     expect(await run(side, transport, when, "tls")).toEqual({ stdout, stderr: "", exitCode: 0, signalCode: null });
   });
 
-  it.concurrent("a listener on the transport still gets the error, once", async () => {
-    expect(await run("client", "net", "late", "both")).toEqual({
-      stdout: "_tlsError:transport failed|error:transport failed|raw error:transport failed|close:false",
-      stderr: "",
-      exitCode: 0,
-      signalCode: null,
-    });
-  });
-
-  // A socket with no 'error' listener closes without one when its peer resets (node throws
-  // ECONNRESET). The forward to the TLS socket is no such listener: test-tls-inception.js
-  // has none anywhere, and its proxy resets the connection on Windows and macOS.
-  it.concurrent.each(["net", "tls"])("a peer reset over %s with no 'error' listener stays silent", async transport => {
-    expect(await run("client", transport, "reset", "none")).toEqual({
-      stdout: "close:false",
-      stderr: "",
-      exitCode: 0,
-      signalCode: null,
-    });
-  });
-
   it.concurrent.each([
+    ["both", "_tlsError:transport failed|error:transport failed|raw error:transport failed|close:false"],
+    // Node throws the forwarded error here: nothing listens on the TLS socket.
+    ["raw", "raw error:transport failed|close:false"],
+  ])("a listener on the transport still gets the error, once (listeners: %s)", async (listen, stdout) => {
+    expect(await run("client", "net", "late", listen)).toEqual({ stdout, stderr: "", exitCode: 0, signalCode: null });
+  });
+
+  // A socket with no 'error' listener closes without one when its peer resets, where node
+  // throws ECONNRESET. "raw" and "tls" name the socket that listens.
+  it.concurrent.each([
+    // test-tls-inception.js: no listener anywhere, and its proxy resets on Windows and macOS.
+    ["tls", "none", "close:false"],
+    // The forward to the TLS socket does not make the transport report the reset.
+    // Node: error:read ECONNRESET|close:true.
+    ["tls", "tls", "close:false"],
+    // Node throws the forwarded error here: nothing listens on the TLS socket.
+    ["tls", "raw", "raw error:read ECONNRESET|close:false"],
+    // Only the transport sees the reset. Node: error:read ECONNRESET|close:true.
+    ["tls", "both", "_tlsError:read ECONNRESET|error:read ECONNRESET|raw error:read ECONNRESET|close:false"],
     // An adopted fd closes under both sockets at once: each one reports the reset itself.
     // Node reports it on the TLS socket alone.
-    ["net", "raw error:read ECONNRESET|error:read ECONNRESET|close:true"],
-    // Only the transport sees the reset. Node: error:read ECONNRESET|close:true.
-    ["tls", "_tlsError:read ECONNRESET|error:read ECONNRESET|raw error:read ECONNRESET|close:false"],
-  ])("a peer reset over %s reaches the TLS socket once", async (transport, stdout) => {
-    expect(await run("client", transport, "reset", "both")).toEqual({
+    ["net", "both", "raw error:read ECONNRESET|error:read ECONNRESET|close:true"],
+  ])("a peer reset over %s with an 'error' listener on %s", async (transport, listen, stdout) => {
+    expect(await run("client", transport, "reset", listen)).toEqual({
       stdout,
       stderr: "",
       exitCode: 0,

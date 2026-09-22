@@ -431,9 +431,12 @@ function forwardUpgradedError(self, connection) {
     connection.on("error", err => self._emitTLSError(err));
     return;
   }
-  // An adopted fd closes under both sockets at once, and `self` reports that close from its own handle.
   const forwarder = err => {
-    if (!self[kclosed]) self._emitTLSError(err);
+    // An adopted fd closes under both sockets at once, and `self` reports that close from its own handle.
+    if (self[kclosed]) return;
+    // Node throws when only the transport has an 'error' listener. Here a socket without one hears of no reset.
+    if (!hasErrorListener(self) && hasErrorListener(connection)) return;
+    self._emitTLSError(err);
   };
   upgradedErrorForwarders.add(forwarder);
   connection.on("error", forwarder);

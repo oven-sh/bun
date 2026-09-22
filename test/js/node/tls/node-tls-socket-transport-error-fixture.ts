@@ -8,8 +8,8 @@
 // WHEN=early destroys the transport with an error in the tick of the wrap. The peer never answers.
 // WHEN=late destroys it once the handshake is done.
 // WHEN=reset (SIDE=client): the peer resets the TCP connection once the handshake is done.
-// LISTEN says which sockets get an 'error' listener: tls (the default), both, none.
-// Prints the events of the TLS socket, and the transport's 'error' for LISTEN=both.
+// LISTEN says which sockets get an 'error' listener: tls (the default), raw, both, none.
+// Prints the events of the TLS socket, and the transport's 'error' when it is listened for.
 // KEY and CERT come from the test. Importing "harness" here costs each run
 // about a second of startup on a debug build.
 import net from "node:net";
@@ -34,8 +34,8 @@ function wrap(raw: net.Socket) {
       : new tls.TLSSocket(raw, { isServer: true, key, cert });
   sockets.push(raw, socket);
   socket.on("_tlsError", err => seen.push(`_tlsError:${err.message}`));
-  if (listen !== "none") socket.on("error", err => seen.push(`error:${err.message}`));
-  if (listen === "both") raw.on("error", err => seen.push(`raw error:${err.message}`));
+  if (listen === "tls" || listen === "both") socket.on("error", err => seen.push(`error:${err.message}`));
+  if (listen === "raw" || listen === "both") raw.on("error", err => seen.push(`raw error:${err.message}`));
   socket.on("close", hadError => {
     seen.push(`close:${hadError}`);
     listener.close();

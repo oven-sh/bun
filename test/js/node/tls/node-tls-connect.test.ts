@@ -1317,10 +1317,13 @@ describe("a TLS socket over a Duplex transport reports that transport's error", 
       side === "client"
         ? tls.connect({ socket: transport, rejectUnauthorized: false })
         : new TLSSocket(transport, { isServer: true, secureContext: tls.createSecureContext(COMMON_CERT_) });
-    // Exactly one, like node's wrap: the forward to the TLS socket.
-    expect(transport.listenerCount("error")).toBe(1);
-    socket.destroy();
-    transport.destroy();
+    try {
+      // Exactly one, like node's wrap: the forward to the TLS socket.
+      expect(transport.listenerCount("error")).toBe(1);
+    } finally {
+      socket.destroy();
+      transport.destroy();
+    }
   });
 
   // Out of process: with nothing listening on the transport the error is

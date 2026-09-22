@@ -7587,8 +7587,7 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
     }
 }
 
-/// [`get_fd_path`] for an `fd` that was opened from `path`. `stat` is the
-/// `fstat` of `fd` when the caller already has it.
+/// [`get_fd_path`] for an `fd` opened from `path`. `stat` is the `fstat` of `fd`, when known.
 pub fn get_fd_path_opened_from<'a>(
     fd: Fd,
     path: &[u8],

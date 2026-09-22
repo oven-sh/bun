@@ -1251,7 +1251,7 @@ describe("automatic content-disposition is sent only for a basename that is vali
 
   // For each name, the status line and the content-disposition line of a GET
   // whose response body is `body(name)`.
-  async function heads(body: (name: string) => Blob) {
+  async function heads(names: string[], body: (name: string) => Blob) {
     await using server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
@@ -1288,16 +1288,34 @@ describe("automatic content-disposition is sent only for a basename that is vali
   // Windows file names cannot hold `\`, `"` or a control byte.
   test.skipIf(isWindows)("Bun.file() body", async () => {
     using dir = tempDir("serve-file-disposition", Object.fromEntries(names.map(name => [name, "x"])));
-    expect(await heads(name => Bun.file(join(String(dir), name)))).toEqual(expected);
+    expect(await heads(names, name => Bun.file(join(String(dir), name)))).toEqual(expected);
   });
 
+  const file = (name: string) => new File(["x"], name, { type: "application/octet-stream" });
+
   test("File body", async () => {
-    expect(await heads(name => new File(["x"], name, { type: "application/octet-stream" }))).toEqual(
+    expect(await heads(names, file)).toEqual(
       isWindows
         ? // `\` is a path separator on Windows, so it never reaches the basename.
           { ...expected, "report\\": sent("report"), "back\\slash.bin": sent("slash.bin") }
         : expected,
     );
+  });
+
+  // The header carries the first 992 bytes of a longer name, and only those
+  // bytes decide. A file name on disk cannot be this long.
+  test("File body with a name longer than the header carries", async () => {
+    const a = (count: number) => Buffer.alloc(count, "a").toString();
+    const lastWritten = a(991) + "\x01tail.bin";
+    const firstCut = a(992) + "\x01tail.bin";
+    const seen = await heads([lastWritten, firstCut], file);
+    expect({
+      "bad byte is the last one written": seen[lastWritten],
+      "bad byte is the first one cut off": seen[firstCut],
+    }).toEqual({
+      "bad byte is the last one written": [ok],
+      "bad byte is the first one cut off": sent(a(992)),
+    });
   });
 });
 

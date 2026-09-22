@@ -1198,8 +1198,17 @@ function emitNestedCmake(
     if (cfg.mt !== undefined) args.push(`-DCMAKE_MT=${slash(cfg.mt)}`);
   }
   if (cfg.ccache !== undefined) {
-    args.push(`-DCMAKE_C_COMPILER_LAUNCHER=${slash(cfg.ccache)}`);
-    args.push(`-DCMAKE_CXX_COMPILER_LAUNCHER=${slash(cfg.ccache)}`);
+    // No ccache for a pch compile, for the reason given at the pch rule in
+    // compile.ts: the .pch holds absolute header paths, and ccache serves one
+    // build dir's .pch to another. cmake has one launcher per target, so the
+    // launcher is a script that sends `-emit-pch` commands straight to the
+    // compiler. Windows hosts have no sh; the only nested cmake build there
+    // is WebKit, which turns pch off on Windows.
+    const launcher = hostWin
+      ? slash(cfg.ccache)
+      : `${resolve(cfg.cwd, "scripts/build/ccache-launcher.sh")};${cfg.ccache}`;
+    args.push(`-DCMAKE_C_COMPILER_LAUNCHER=${launcher}`);
+    args.push(`-DCMAKE_CXX_COMPILER_LAUNCHER=${launcher}`);
   }
   // Both may be undefined; if the rules are pulled without an SDK, cmake fails with its own clear error.
   if (cfg.darwin && cfg.osxDeploymentTarget !== undefined && cfg.osxSysroot !== undefined) {

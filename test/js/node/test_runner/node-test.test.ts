@@ -410,8 +410,15 @@ describe("node:test", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("should retry from a clean test after an error thrown outside the test's promise", async () => {
-    const { exitCode, stderr } = await runTests(["33-outside-error-retry.js"], {}, ["--retry=2"]);
+  test("should retry from a clean test, after the first attempt's hooks, when the error is thrown outside the test's promise", async () => {
+    const { exitCode, stdout, stderr } = await runTests(["33-outside-error-retry.js"], {}, ["--retry=2"]);
+    const order = /^ORDER=(.*)$/m.exec(stdout)?.[1] ?? "null";
+    expect(JSON.parse(order)).toEqual([
+      "attempt 1 start",
+      "t.after of attempt 1",
+      "attempt 2 start",
+      "t.after of attempt 2",
+    ]);
     expect(errorsAndVerdicts(stderr)).toEqual([
       "error: thrown in the first attempt",
       "(pass) flaky parent (attempt 2)",

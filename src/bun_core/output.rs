@@ -1225,7 +1225,7 @@ fn with_dest_writer<R>(dest: Destination, f: impl FnOnce(*mut io::Writer) -> R) 
     // SAFETY: `w` points into a `QuietWriterAdapter` field of the thread-local
     // `Source`, whose address is stable for the thread's lifetime once
     // `Source::init` has run (asserted via SOURCE_SET above). These same raw
-    // pointers are handed out by `writer()`/`error_writer()` — this is the
+    // pointers are handed out by `writer()`/`error_writer()`. This is the
     // established pattern, not a lifetime extension of borrowed data.
     // We pass the raw pointer through unchanged; `f` is responsible for not
     // forming a `&mut` that outlives a single non-reentrant vtable call.

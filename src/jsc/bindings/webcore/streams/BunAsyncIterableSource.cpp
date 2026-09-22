@@ -168,8 +168,7 @@ static void asyncIterReturnIteratorAndSettle(JSGlobalObject* globalObject, JSAsy
     settlePullPromiseResolved(globalObject, op);
 }
 
-// Error tail (the original `finally` with a closingError): notify the iterator via
-// iterator.throw(error) and settle once that settles.
+// The error tail: iterator.throw(error), then reject the pull promise (resolve it if cancelled).
 static void asyncIterFinishWithError(JSGlobalObject* globalObject, JSAsyncIteratorSourceOperation* op, JSValue error)
 {
     auto& vm = getVM(globalObject);

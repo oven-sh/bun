@@ -194,43 +194,29 @@ describe.skipIf(skip || !isLinux)("Bun.serve: a request-socket resume that fails
   // like any other connection that dies mid-body.
   const bodyFails = [`before: ${ping}`, "abort", "body: rejected AbortError", `after: ${ping}`, "done"];
 
-  // The failure these tests exist to catch is a sanitizer report from a debug
-  // binary, and symbolizing one takes several seconds on its own.
-  const timeout = 30_000;
+  // Not concurrent: each case starts a debug + ASAN binary, and four at once push each other past the default timeout.
+  test("req.arrayBuffer() rejects and the server stays up", () => run("body-buffered", bodyFails));
 
-  test.concurrent("req.arrayBuffer() rejects and the server stays up", () => run("body-buffered", bodyFails), timeout);
-
-  test.concurrent(
-    "req.text() on a materialized body rejects and the server stays up",
-    () => run("body-stream", bodyFails),
-    timeout,
-  );
+  test("req.text() on a materialized body rejects and the server stays up", () => run("body-stream", bodyFails));
 
   // The handler answered, so the request is complete: ending it must not
   // deliver an abort, and the connection closes with the response.
-  test.concurrent(
-    "a response that ends while the body is paused completes",
-    () => run("response-ends", [`before: ${ping}`, `after: ${ping}`, "done"]),
-    timeout,
-  );
+  test("a response that ends while the body is paused completes", () =>
+    run("response-ends", [`before: ${ping}`, `after: ${ping}`, "done"]));
 
   // The fixture is a test file of its own: expect().rejects is what waits on
   // the loop from inside a dispatch. The close has to come from that inner
   // tick, so a fixture that never finishes is the failure here.
-  test.concurrent(
-    "a dispatch that waits on the loop for the failed socket gets its close",
-    async () => {
-      const { stderr, exitCode, signalCode } = await spawnFixture(
-        "test",
-        join(import.meta.dir, "serve-resume-fault-nested-fixture.ts"),
-      );
-      expect({
-        passed: stderr.includes(" 1 pass") && stderr.includes(" 0 fail"),
-        signalCode,
-        exitCode,
-        stderrTail: exitCode === 0 ? "" : stderr.slice(-3000),
-      }).toEqual({ passed: true, signalCode: null, exitCode: 0, stderrTail: "" });
-    },
-    timeout,
-  );
+  test("a dispatch that waits on the loop for the failed socket gets its close", async () => {
+    const { stderr, exitCode, signalCode } = await spawnFixture(
+      "test",
+      join(import.meta.dir, "serve-resume-fault-nested-fixture.ts"),
+    );
+    expect({
+      passed: stderr.includes(" 1 pass") && stderr.includes(" 0 fail"),
+      signalCode,
+      exitCode,
+      stderrTail: exitCode === 0 ? "" : stderr.slice(-3000),
+    }).toEqual({ passed: true, signalCode: null, exitCode: 0, stderrTail: "" });
+  });
 });

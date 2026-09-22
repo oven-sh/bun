@@ -203,6 +203,7 @@ impl<'a> Options<'a> {
                 auto_polyfill_require: f.auto_polyfill_require,
                 replace_exports: Default::default(),
                 dont_bundle_twice: f.dont_bundle_twice,
+                stop_on_ill_formed_utf8: f.stop_on_ill_formed_utf8,
                 unwrap_commonjs_packages: f.unwrap_commonjs_packages,
                 commonjs_at_runtime: f.commonjs_at_runtime,
                 unwrap_commonjs_to_esm: f.unwrap_commonjs_to_esm,
@@ -329,8 +330,9 @@ impl<'a> Parser<'a> {
         // Must be set before the priming `next()` so leading comments are seen.
         lexer.track_comments = options.features.minify_identifiers;
         lexer.track_react_suppressions = options.features.react_compiler.is_enabled();
+        lexer.stop_on_ill_formed_utf8 = options.features.stop_on_ill_formed_utf8;
         lexer.step();
-        lexer.next()?;
+        lexer.next_first()?;
         // Copy the lexer's `NonNull<Log>` so both handles share one provenance
         // chain (the `&'a mut Log` was consumed by `Lexer::init`).
         let log_ptr = lexer.log;
@@ -735,6 +737,16 @@ fn lower_one_date_time_literal<'a>(
 }
 
 impl<'a> Parser<'a> {
+    #[cold]
+    fn not_utf8(options: &mut Options<'a>) -> crate::Result<'a> {
+        // `cache.get` below may have keyed the entry on the undecoded bytes; the next parse keys it again.
+        if let Some(cache) = options.features.runtime_transpiler_cache_mut() {
+            cache.input_hash = None;
+            cache.input_byte_length = None;
+        }
+        crate::Result::NotUtf8(Box::new(core::mem::take(options)))
+    }
+
     fn _parse<const TS: bool>(self) -> Result<crate::Result<'a>, Error> {
         // `Source.path` is `Path<'static>`, so
         // `path.text` satisfies `Action::Parse(&'static [u8])` directly.
@@ -755,6 +767,11 @@ impl<'a> Parser<'a> {
             bump,
             orig_error_count,
         } = self;
+
+        if lexer.must_restart_decoded() {
+            let mut options = options;
+            return Ok(Self::not_utf8(&mut options));
+        }
 
         // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
         // field docs), so handing the same raw pointer to both is defined —
@@ -782,7 +799,11 @@ impl<'a> Parser<'a> {
         let mut hashbang: &[u8] = b"";
         if p.lexer.token == js_lexer::T::THashbang {
             hashbang = p.lexer.identifier;
-            p.lexer.next()?;
+            let next = p.lexer.next();
+            if p.lexer.must_restart_decoded() {
+                return Ok(Self::not_utf8(&mut p.options));
+            }
+            next?;
         }
 
         // The first token may already have logged an error; halt before the early returns below.
@@ -838,6 +859,9 @@ impl<'a> Parser<'a> {
             Ok(s) => s.into_bump_slice_mut(),
             Err(e) => {
                 parse_tracer.end();
+                if p.lexer.must_restart_decoded() {
+                    return Ok(Self::not_utf8(&mut p.options));
+                }
                 if e == crate::Error::StackOverflow {
                     // The lexer location won't be totally accurate, but it's kind of helpful.
                     p.log().add_error(
@@ -855,6 +879,11 @@ impl<'a> Parser<'a> {
         };
 
         parse_tracer.end();
+
+        // The whole file is lexed by now. Nothing past this point may see text that is not UTF-8.
+        if p.lexer.must_restart_decoded() {
+            return Ok(Self::not_utf8(&mut p.options));
+        }
 
         // Halt parsing right here if there were any errors
         // This fixes various conditions that would cause crashes due to the AST being in an invalid state while visiting

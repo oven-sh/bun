@@ -5,7 +5,7 @@ use core::cmp::Ordering;
 
 use crate::BoundedArray;
 use crate::CrateError as Error;
-use bun_alloc::AllocError;
+use bun_alloc::{AllocError, ArenaVec, ArenaVecExt, MimallocArena};
 use bun_highway as highway;
 use bun_simdutf_sys::simdutf;
 
@@ -198,18 +198,55 @@ pub mod lexer_step {
         wtf8_byte_sequence_length_with_invalid,
     };
 
-    /// Non-ASCII tail of [`next_codepoint`]. Kept out-of-line so the hot
-    /// ASCII path stays small enough to inline into every `step()` site.
-    ///
-    /// `#[cold]` is required: with fat LTO + `codegen-units = 1`, LLVM's
-    /// single-caller heuristic merges an `#[inline(never)]`-only callee back
-    /// into its sole caller, which then makes `next_codepoint` too large to
-    /// inline into `next()` (perf showed it as a separate ~2.6% symbol with
-    /// the multibyte decode folded in). `cold` parks this in `.text.unlikely`
-    /// and survives LTO's IPO inliner.
+    /// The lexer's non-ASCII step. `#[inline]`: `Lexer::next_codepoint_multibyte` is the out-of-line copy.
+    #[inline]
+    pub fn next_codepoint_multibyte(
+        contents: &[u8],
+        current: &mut usize,
+        first: u8,
+        ill_formed: &mut bool,
+    ) -> CodePoint {
+        let at = *current;
+        // Well-formed UTF-8 with four readable bytes: one load and no call.
+        if let Some(chunk) = contents.get(at..).and_then(|tail| tail.first_chunk::<4>()) {
+            let word = u32::from_le_bytes(*chunk);
+            if first < 0xE0 {
+                if first >= 0xC2 && word & 0xC000 == 0x8000 {
+                    *current = at + 2;
+                    return (((word & 0x1F) << 6) | ((word >> 8) & 0x3F)) as CodePoint;
+                }
+            } else if first < 0xF0 {
+                if word & 0x00C0_C000 == 0x0080_8000 {
+                    let cp = ((word & 0x0F) << 12) | ((word >> 2) & 0x0FC0) | ((word >> 16) & 0x3F);
+                    // Neither overlong (below U+0800) nor a surrogate (U+D800..=U+DFFF).
+                    if !matches!(cp >> 11, 0 | 0x1B) {
+                        *current = at + 3;
+                        return cp as CodePoint;
+                    }
+                }
+            } else if first <= 0xF4 && word & 0xC0C0_C000 == 0x8080_8000 {
+                let cp = ((word & 0x07) << 18)
+                    | ((word << 4) & 0x3_F000)
+                    | ((word >> 10) & 0x0FC0)
+                    | ((word >> 24) & 0x3F);
+                if cp.wrapping_sub(0x1_0000) < 0x10_0000 {
+                    *current = at + 4;
+                    return cp as CodePoint;
+                }
+            }
+        }
+        next_codepoint_ill_formed_or_at_end(contents, current, first, ill_formed)
+    }
+
+    /// Sets `*ill_formed` for bytes that are not UTF-8. The lexer learns that nowhere else.
     #[cold]
     #[inline(never)]
-    pub fn next_codepoint_multibyte(contents: &[u8], current: &mut usize, first: u8) -> CodePoint {
+    fn next_codepoint_ill_formed_or_at_end(
+        contents: &[u8],
+        current: &mut usize,
+        first: u8,
+        ill_formed: &mut bool,
+    ) -> CodePoint {
         let len = contents.len();
         let cp_len = wtf8_byte_sequence_length_with_invalid(first) as usize;
         let avail = len - *current;
@@ -218,33 +255,31 @@ pub mod lexer_step {
         // may still be 1 for invalid lead bytes (0x80-0xBF, 0xF8-0xFF) — those must yield the
         // raw byte, NOT the EOF sentinel, so the main lex loop falls through to its syntax-error
         // arm instead of silently emitting TEndOfFile mid-stream.
-        let code_point: CodePoint = if cp_len == 1 {
-            first as CodePoint
-        } else if avail < cp_len {
+        if cp_len == 1 {
+            *ill_formed = true;
+            *current += 1;
+            return first as CodePoint;
+        }
+        if avail < cp_len {
             // truncated multibyte at EOF
-            -1
-        } else {
-            let mut quad = [0u8; 4];
-            // SAFETY: `*current < len` (checked by caller), `cp_len ∈ 2..=4`, and
-            // `avail >= cp_len`, so `contents[current..current + cp_len]` is in-bounds.
-            // `decode_wtf8_rune_t_multibyte` only dereferences `p[0..len]`; pad bytes are
-            // never read.
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    contents.as_ptr().add(*current),
-                    quad.as_mut_ptr(),
-                    cp_len,
-                );
-            }
-            decode_wtf8_rune_t_multibyte(quad, cp_len as u8, UNICODE_REPLACEMENT as CodePoint)
-        };
+            *ill_formed = true;
+            *current += cp_len;
+            return -1;
+        }
 
-        *current += if code_point != UNICODE_REPLACEMENT as CodePoint {
-            cp_len
-        } else {
-            1
-        };
-
+        let mut quad = [0u8; 4];
+        quad[..cp_len].copy_from_slice(&contents[*current..*current + cp_len]);
+        let code_point: CodePoint = decode_wtf8_rune_t_multibyte(quad, cp_len as u8, -1);
+        if code_point < 0 {
+            *ill_formed = true;
+            *current += 1;
+            return UNICODE_REPLACEMENT as CodePoint;
+        }
+        // An encoded surrogate is WTF-8, not UTF-8.
+        if (0xD800..=0xDFFF).contains(&code_point) {
+            *ill_formed = true;
+        }
+        *current += cp_len;
         code_point
     }
 }
@@ -1354,6 +1389,30 @@ pub fn str_utf8(bytes: &[u8]) -> Option<&str> {
     } else {
         None
     }
+}
+
+/// `bytes` if already valid UTF-8, else an `arena` copy with each ill-formed sequence replaced by U+FFFD.
+pub fn replace_invalid_utf8<'a>(bytes: &'a [u8], arena: &'a MimallocArena) -> &'a [u8] {
+    if is_valid_utf8(bytes) {
+        return bytes;
+    }
+    const REPLACEMENT: &[u8] = "\u{FFFD}".as_bytes();
+    let mut out_len = 0;
+    for chunk in bytes.utf8_chunks() {
+        out_len += chunk.valid().len();
+        if !chunk.invalid().is_empty() {
+            out_len += REPLACEMENT.len();
+        }
+    }
+    let mut out = ArenaVec::<u8>::with_capacity_in(out_len, arena);
+    for chunk in bytes.utf8_chunks() {
+        out.extend_from_slice(chunk.valid().as_bytes());
+        if !chunk.invalid().is_empty() {
+            out.extend_from_slice(REPLACEMENT);
+        }
+    }
+    debug_assert_eq!(out.len(), out_len);
+    out.into_bump_slice()
 }
 
 pub use index_of_newline_or_non_ascii as index_of_newline_or_non_ascii_or_ansi;

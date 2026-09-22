@@ -940,3 +940,25 @@ devTest("a render() that does not return a Response is reported as that", {
     }).toEqual({ status: 500, saysWhatIsWrong: true, referenceError: false });
   },
 });
+// 0xFB is a letter in Latin-1: it used to join the identifier and reach the client script raw.
+devTest("an export name with a byte that is not UTF-8 is a syntax error", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import * as m from './m0';
+      console.log('keys: ' + Object.keys(m));
+    `,
+    "m0.ts": Buffer.from("export const v\xFB0 = 1;\n", "latin1"),
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: [
+        `m0.ts:1:14: error: The constant "v" must be initialized`,
+        `m0.ts:1:15: error: Expected ";" but found "\uFFFD"`,
+      ],
+    });
+  },
+});

@@ -452,6 +452,13 @@ for (const key of keys) {
   results["symbol " + key] = await attempt(options => {
     options[key] = Symbol();
   });
+  results["valueOf throws " + key] = await attempt(options => {
+    options[key] = {
+      valueOf() {
+        throw Object.assign(new Error("from valueOf"), { code: "FROM_VALUE_OF" });
+      },
+    };
+  });
 }
 console.log(JSON.stringify(results));`,
     ],
@@ -466,9 +473,13 @@ console.log(JSON.stringify(results));`,
     string: refused,
     negative: refused,
     "symbol idleTimeout": "TypeError",
+    "valueOf throws idleTimeout": "FROM_VALUE_OF",
     "symbol connectionTimeout": "TypeError",
+    "valueOf throws connectionTimeout": "FROM_VALUE_OF",
     "symbol maxLifetime": "TypeError",
+    "valueOf throws maxLifetime": "FROM_VALUE_OF",
     "symbol sslMode": "TypeError",
+    "valueOf throws sslMode": "FROM_VALUE_OF",
   });
   expect(exitCode).toBe(0);
 });

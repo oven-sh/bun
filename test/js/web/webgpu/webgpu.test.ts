@@ -1391,8 +1391,13 @@ describe.skipIf(!hasAdapter)("with a device", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("a resolve target of the wrong dimension is a validation error", async () => {
+  test("a resolve target of the wrong dimension is one validation error, which names the mistake", async () => {
     const device = await requestDevice();
+    const uncaptured: string[] = [];
+    device.addEventListener("uncapturederror", (event: any) => {
+      event.preventDefault();
+      uncaptured.push(event.error.message);
+    });
     for (const size of [[4, 4, 4], [4]]) {
       const color = device.createTexture({
         size: [4, 4],
@@ -1400,23 +1405,36 @@ describe.skipIf(!hasAdapter)("with a device", () => {
         sampleCount: 4,
         usage: GPUTextureUsage.RENDER_ATTACHMENT,
       });
-      const wrong = device.createTexture({
-        size,
-        dimension: size.length === 1 ? "1d" : "3d",
-        format: "rgba8unorm",
-        usage: GPUTextureUsage.RENDER_ATTACHMENT,
-      });
+      // A 1d texture cannot be a render attachment, so the texture and its view are errors of their own.
       device.pushErrorScope("validation");
-      const encoder = device.createCommandEncoder();
-      encoder
-        .beginRenderPass({
-          colorAttachments: [
-            { view: color.createView(), resolveTarget: wrong.createView(), loadOp: "clear", storeOp: "store" },
-          ],
+      const wrong = device
+        .createTexture({
+          size,
+          dimension: size.length === 1 ? "1d" : "3d",
+          format: "rgba8unorm",
+          usage: GPUTextureUsage.RENDER_ATTACHMENT,
         })
-        .end();
-      encoder.finish();
-      expect(await device.popErrorScope()).toBeInstanceOf(GPUValidationError);
+        .createView();
+      await device.popErrorScope();
+      const record = () => {
+        const encoder = device.createCommandEncoder();
+        encoder
+          .beginRenderPass({
+            colorAttachments: [{ view: color.createView(), resolveTarget: wrong, loadOp: "clear", storeOp: "store" }],
+          })
+          .end();
+        encoder.finish();
+      };
+
+      const error = await validationError(device, record);
+      expect(error).toBeInstanceOf(GPUValidationError);
+      expect(error.message).toContain("resolve target has to be a 2d");
+
+      // With no scope open, the one mistake is one event.
+      uncaptured.length = 0;
+      record();
+      await device.queue.onSubmittedWorkDone();
+      expect(uncaptured).toEqual([expect.stringContaining("resolve target has to be a 2d")]);
     }
     device.destroy();
   });

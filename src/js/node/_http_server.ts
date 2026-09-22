@@ -1355,11 +1355,12 @@ const kKeepAliveTimeoutSet = Symbol("keepAliveTimeoutSet");
 // the socket timer on every response; onSocketTimeoutTimerExpired reads it to
 // grant the remaining idle budget when the timer actually fires.
 const kKeepAliveIdleStart = Symbol("keepAliveIdleStart");
-// When a response last wrote to the connection. Node.js restarts the socket's
-// inactivity timer on every write (net.Socket._writeGeneric and onWriteComplete
-// call _unrefTimer()). noteResponseWrite records the write instead, for the same
-// reason as kKeepAliveIdleStart, and onSocketTimeoutTimerExpired moves the
-// deadline when the timer fires.
+// When a response last wrote to the connection, on performance.now() (monotonic,
+// like the timer). Node.js restarts the socket's inactivity timer on every write
+// (net.Socket._writeGeneric and onWriteComplete call _unrefTimer()).
+// noteResponseWrite records the write instead, for the same reason as
+// kKeepAliveIdleStart, and onSocketTimeoutTimerExpired moves the deadline when
+// the timer fires.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L1019
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L101
 const kLastResponseWrite = Symbol("lastResponseWrite");
@@ -1481,7 +1482,7 @@ function onSocketTimeoutTimerExpired(socket) {
   const lastWrite = socket[kLastResponseWrite];
   if (lastWrite !== undefined) {
     socket[kLastResponseWrite] = undefined;
-    const sinceWrite = DateNow() - lastWrite;
+    const sinceWrite = performance.now() - lastWrite;
     const timer = socket[kSocketTimeoutTimer];
     if (sinceWrite < socket.timeout && timer !== undefined) {
       timer.refresh();
@@ -3040,7 +3041,7 @@ function noteResponseWrite(res) {
     socket[kSocketTimeoutEmitted] = false;
     socket._unrefTimer();
   } else {
-    socket[kLastResponseWrite] = DateNow();
+    socket[kLastResponseWrite] = performance.now();
   }
 }
 
@@ -3440,7 +3441,10 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
     return true;
   }
 
-  noteResponseWrite(this);
+  // Node's write_() drops a write to a response without a body (HEAD, 204, 304)
+  // before it reaches the socket, so it is no activity.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L983
+  if (this._hasBody) noteResponseWrite(this);
   if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
     handle.cork(() => {
       const renderedHeaders = renderNativeHeaders(this);

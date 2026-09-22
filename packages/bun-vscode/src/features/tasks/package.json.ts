@@ -146,7 +146,8 @@ function registerCodeLensProvider(context: vscode.ExtensionContext) {
 function parseScripts(packageJson: string): Record<string, string> {
   try {
     const scripts = JSON.parse(packageJson).scripts;
-    return scripts && typeof scripts === "object" ? scripts : {};
+    if (!scripts || typeof scripts !== "object" || Array.isArray(scripts)) return {};
+    return Object.fromEntries(Object.entries(scripts).filter(([, script]) => typeof script === "string"));
   } catch {
     return {};
   }

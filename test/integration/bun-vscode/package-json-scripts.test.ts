@@ -61,6 +61,16 @@ test("Bun: Run in a nested package.json offers the scripts of that file", async 
   expect(state.quickPickItems.map(item => item.label)).toEqual(["build"]);
 });
 
+test("Bun: Run skips script entries that are not strings", async () => {
+  using dir = tempDir("vscode-codelens", {
+    "package.json": JSON.stringify({ scripts: { build: "echo ok", broken: ["not", "a", "string"], count: 1 } }),
+  });
+  await clickCodeLens(String(dir), "package.json", "Bun: Run", "build");
+
+  expect(state.quickPickItems.map(item => item.label)).toEqual(["build"]);
+  expect(terminalsAsSeen()).toEqual([[String(dir), ["bun run echo ok"]]]);
+});
+
 test("Bun: Run in a nested package.json runs the script in that package's directory", async () => {
   using dir = tempDir("vscode-codelens", files);
   await clickCodeLens(String(dir), "packages/api/package.json", "Bun: Run", "build");

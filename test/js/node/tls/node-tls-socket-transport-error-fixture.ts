@@ -5,9 +5,13 @@
 // The stream-level TLS engine runs over these two.
 // SIDE=client wraps with tls.connect({ socket }), SIDE=server with
 // new tls.TLSSocket(socket, { isServer: true }).
-// WHEN=early destroys the transport with an error in the tick of the wrap. The peer never answers.
+// WHEN=early destroys the transport with an error in the tick of the wrap, WHEN=hello one turn later.
+// The peer never answers these two, so the handshake stays pending.
 // WHEN=late destroys it once the handshake is done.
-// WHEN=reset (SIDE=client): the peer resets the TCP connection once the handshake is done.
+// WHEN=closed does the same, right after it destroyed the TLS socket. Node has destroyed the
+// transport by then, so it has no error to report.
+// WHEN=reset: the peer resets the TCP connection. For SIDE=client once the handshake is done,
+// for SIDE=server one turn after the wrap.
 // LISTEN says which sockets get an 'error' listener: tls (the default), raw, both, none.
 // LISTEN=before is both, with the transport's listener attached ahead of the wrap.
 // LISTEN=once is a once() on the transport alone, attached ahead of the wrap.
@@ -24,11 +28,14 @@ process.on("exit", () => console.log(seen.join("|")));
 const sockets: net.Socket[] = [];
 // What WHEN=reset resets: the peer's end of the TCP connection.
 let peerTcp: net.Socket;
+// The peer of these never speaks TLS.
+const silentPeer = when === "early" || when === "hello" || (when === "reset" && side === "server");
 
 function wrap(raw: net.Socket) {
   if (transport === "queued") {
     raw.cork();
     raw.write("unflushed");
+    process.nextTick(() => raw.uncork());
   }
   const onRawError = (err: Error) => seen.push(`raw error:${err.message}`);
   if (listen === "before") raw.on("error", onRawError);
@@ -51,13 +58,16 @@ function wrap(raw: net.Socket) {
   socket.resume();
   const kill = () => raw.destroy(new Error("transport failed"));
   if (when === "early") kill();
+  else if (when === "hello") setImmediate(kill);
   else if (when === "late") socket.once(side === "client" ? "secureConnect" : "secure", kill);
+  else if (when === "closed") socket.once("secureConnect", () => (socket.destroy(), kill()));
+  else if (silentPeer) setImmediate(() => peerTcp.resetAndDestroy());
 }
 
 function answer(raw: net.Socket) {
   sockets.push(raw);
   raw.on("error", () => {});
-  if (when === "early") return raw.resume();
+  if (silentPeer) return raw.resume();
   const socket =
     side === "client"
       ? new tls.TLSSocket(raw, { isServer: true, key, cert })
@@ -72,7 +82,7 @@ const onAccept = side === "server" ? wrap : answer;
 const onConnect = side === "client" ? wrap : answer;
 const listener = transport === "tls" ? tls.createServer({ key, cert }, onAccept) : net.createServer(onAccept);
 listener.on("connection", tcp => {
-  peerTcp = tcp;
+  if (side === "client") peerTcp = tcp;
   sockets.push(tcp);
 });
 listener.listen(0, "127.0.0.1", () => {
@@ -82,4 +92,5 @@ listener.listen(0, "127.0.0.1", () => {
     transport === "tls"
       ? tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false }, () => onConnect(raw))
       : net.connect(port, "127.0.0.1", () => onConnect(raw));
+  if (side === "server") peerTcp = raw;
 });

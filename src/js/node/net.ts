@@ -424,10 +424,12 @@ function destroyWhenUpgradedCloses(self, connection) {
 }
 const upgradedErrorForwarders = new WeakSet();
 function onUpgradedError(self, connection, err) {
-  // An adopted fd closes under both sockets at once, and `self` reports that close from its own handle.
+  // `self` reports the close of an adopted fd itself, and node destroys `connection` with `self`: nothing is left.
   if (connection instanceof Socket && self[kclosed]) return;
   // Node throws here when only the transport has an 'error' listener. Bun keeps the error on that listener.
   if (!hasErrorListener(self) && hasErrorListener(connection)) return;
+  // The close that follows a transport's own failure is no second error, also not for a pending handshake.
+  if (connection.destroyed) self._hadError = true;
   self._emitTLSError(err);
 }
 // Node's wrap 'error' -> _emitTLSError: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L977

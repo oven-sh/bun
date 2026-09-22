@@ -1392,16 +1392,12 @@ describe("a TLS socket over a net.Socket transport reports that transport's erro
 
   // Out of process: with nothing listening on the transport the error is thrown, which takes
   // the process down. "net" has its fd adopted. The stream-level TLS engine runs over
-  // "queued" (unflushed writes) and "tls" (TLS over TLS). Each list is what node v26.3.0
-  // prints, except for the two marked ones.
+  // "queued" (unflushed writes) and "tls" (TLS over TLS). "early" and "hello" leave the
+  // handshake pending. Each list is what node v26.3.0 prints, except for the two marked ones.
   it.concurrent.each([
-    // Node ends this list with its own second error, 'read EINVAL', and has close:true first.
-    [
-      "client",
-      "net",
-      "early",
-      "_tlsError:transport failed|error:transport failed|error:Client network socket disconnected before secure TLS connection was established|close:true",
-    ],
+    // Node reads the handle that the same-tick destroy closed: close:true first, 'read EINVAL' last.
+    ["client", "net", "early", "_tlsError:transport failed|error:transport failed|close:false"],
+    ["client", "net", "hello", "_tlsError:transport failed|error:transport failed|close:false"],
     ["client", "net", "late", "_tlsError:transport failed|error:transport failed|close:false"],
     ["client", "connecting", "late", "_tlsError:transport failed|error:transport failed|close:false"],
     // Node reads the closed handle here too: close:true first, and 'read EINVAL' last.
@@ -1409,10 +1405,21 @@ describe("a TLS socket over a net.Socket transport reports that transport's erro
     ["client", "tls", "late", "_tlsError:transport failed|error:transport failed|close:false"],
     // A server wrap still owns its socket, so there is no 'error'.
     ["server", "net", "early", "_tlsError:transport failed|close:false"],
+    ["server", "net", "hello", "_tlsError:transport failed|close:false"],
     ["server", "net", "late", "_tlsError:transport failed|close:false"],
     ["server", "tls", "late", "_tlsError:transport failed|close:false"],
   ])("%s over %s: a transport error %s reaches the TLS socket", async (side, transport, when, stdout) => {
     expect(await run(side, transport, when, "tls")).toEqual({ stdout, stderr: "", exitCode: 0, signalCode: null });
+  });
+
+  // Node destroys the transport with the TLS socket, so it has no error left to report.
+  it.concurrent("a transport error after the TLS socket was destroyed is not reported", async () => {
+    expect(await run("client", "tls", "closed", "tls")).toEqual({
+      stdout: "close:false",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
   });
 
   it.concurrent.each([
@@ -1427,28 +1434,24 @@ describe("a TLS socket over a net.Socket transport reports that transport's erro
     expect(await run("client", "net", "late", listen)).toEqual({ stdout, stderr: "", exitCode: 0, signalCode: null });
   });
 
-  // A socket with no 'error' listener closes without one when its peer resets, where node
-  // throws ECONNRESET. "raw" and "tls" name the socket that listens.
+  // A socket with no 'error' listener closes without one when its peer resets. In node the TLS
+  // socket reads the reset itself: error:read ECONNRESET|close:true, thrown when nothing
+  // listens on it. "raw" and "tls" name the socket that listens.
   it.concurrent.each([
     // test-tls-inception.js: no listener anywhere, and its proxy resets on Windows and macOS.
-    ["tls", "none", "close:false"],
+    ["client", "tls", "none", "close:false"],
     // The forward to the TLS socket does not make the transport report the reset.
-    // Node: error:read ECONNRESET|close:true.
-    ["tls", "tls", "close:false"],
-    // Node throws the forwarded error here: nothing listens on the TLS socket.
-    ["tls", "raw", "raw error:read ECONNRESET|close:false"],
-    // Only the transport sees the reset. Node: error:read ECONNRESET|close:true.
-    ["tls", "both", "_tlsError:read ECONNRESET|error:read ECONNRESET|raw error:read ECONNRESET|close:false"],
+    ["client", "tls", "tls", "close:false"],
+    // The same for an accepted socket, which takes the other close path.
+    ["server", "queued", "tls", "close:false"],
+    // Nothing listens on the TLS socket, so the reset stays on the transport.
+    ["client", "tls", "raw", "raw error:read ECONNRESET|close:false"],
+    // Only the transport sees the reset.
+    ["client", "tls", "both", "_tlsError:read ECONNRESET|error:read ECONNRESET|raw error:read ECONNRESET|close:false"],
     // An adopted fd closes under both sockets at once: each one reports the reset itself.
-    // Node reports it on the TLS socket alone.
-    ["net", "both", "raw error:read ECONNRESET|error:read ECONNRESET|close:true"],
-  ])("a peer reset over %s with an 'error' listener on %s", async (transport, listen, stdout) => {
-    expect(await run("client", transport, "reset", listen)).toEqual({
-      stdout,
-      stderr: "",
-      exitCode: 0,
-      signalCode: null,
-    });
+    ["client", "net", "both", "raw error:read ECONNRESET|error:read ECONNRESET|close:true"],
+  ])("%s: a peer reset over %s with an 'error' listener on %s", async (side, transport, listen, stdout) => {
+    expect(await run(side, transport, "reset", listen)).toEqual({ stdout, stderr: "", exitCode: 0, signalCode: null });
   });
 });
 

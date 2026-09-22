@@ -872,11 +872,14 @@ describe("workload groups", () => {
     },
   );
 
-  it.skipIf(isWindows)("a signal the generator was started ignoring, as under nohup, stays ignored", async () => {
-    using dir = tempDir("orderfile-nohup", {});
-    const [pids, go, out] = ["pids", "go", "out"].map(name => join(String(dir), name));
-    const generate = join(import.meta.dir, "../../../../scripts/orderfile/generate.ts");
-    const script = `
+  // Only linux says which signals a process was started ignoring; elsewhere all of them are held.
+  it.skipIf(process.platform !== "linux")(
+    "a signal the generator was started ignoring, as under nohup, stays ignored",
+    async () => {
+      using dir = tempDir("orderfile-nohup", {});
+      const [pids, go, out] = ["pids", "go", "out"].map(name => join(String(dir), name));
+      const generate = join(import.meta.dir, "../../../../scripts/orderfile/generate.ts");
+      const script = `
       import { writeFileSync } from "node:fs";
       import { checkpoint, runCommandAsync, withScratch } from ${JSON.stringify(generate)};
       const command = ["/bin/sh", "-c", 'echo $$,$$ > "$1"; until [ -e "$2" ]; do sleep 0.01; done', "sh", ${JSON.stringify(pids)}, ${JSON.stringify(go)}];
@@ -885,23 +888,24 @@ describe("workload groups", () => {
         await checkpoint(interrupted);
         writeFileSync(${JSON.stringify(out)}, "written");
       });`;
-    await using proc = Bun.spawn({
-      cmd: ["/bin/sh", "-c", `trap "" HUP; exec "$0" -e "$1"`, bunExe(), script],
-      env: { ...bunEnv, TMPDIR: String(dir) },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    await started(pids, proc.exited);
-    proc.kill("SIGHUP");
-    writeFileSync(go, "");
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    expect({ stderr, exitCode, signalCode: proc.signalCode, written: existsSync(out) }).toEqual({
-      stderr: "",
-      exitCode: 0,
-      signalCode: null,
-      written: true,
-    });
-  });
+      await using proc = Bun.spawn({
+        cmd: ["/bin/sh", "-c", `trap "" HUP; exec "$0" -e "$1"`, bunExe(), script],
+        env: { ...bunEnv, TMPDIR: String(dir) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      await started(pids, proc.exited);
+      proc.kill("SIGHUP");
+      writeFileSync(go, "");
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect({ stderr, exitCode, signalCode: proc.signalCode, written: existsSync(out) }).toEqual({
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+        written: true,
+      });
+    },
+  );
 
   it.skipIf(isWindows)(
     "a signal inside a nested scratch directory removes both before the generator ends",

@@ -170,21 +170,15 @@ const ENDING_SIGNALS = { SIGHUP: 1, SIGINT: 2, SIGTERM: 15 } as const;
 /**
  * The ending signals this process was started ignoring (under nohup, as a
  * background job of a script): a listener would make them end it after all.
- * Read from the kernel on linux and from ps on macOS. Where that cannot be read
- * (no /proc, a sandbox that denies ps, Windows) none counts as ignored: removing
- * the scratch directory matters more than honouring a nohup nobody can see.
- * All of this under bun: node resets the dispositions it inherits when it starts.
+ * Only linux says which those are (SigIgn in /proc/self/status), and only under
+ * bun: node resets the dispositions it inherits when it starts. Everywhere else
+ * none counts as ignored, so every ending signal is held: removing the scratch
+ * directory matters more than honouring a nohup nobody can see.
  */
 function ignoredEndingSignals(): Set<string> {
+  if (process.platform !== "linux") return new Set();
   try {
-    const hex =
-      process.platform === "linux"
-        ? /^SigIgn:\s*([0-9a-f]+)$/m.exec(readFileSync("/proc/self/status", "utf8"))?.[1]
-        : process.platform === "win32"
-          ? undefined
-          : /^\s*(?:0x)?([0-9a-f]+)\s*$/i.exec(
-              runCommand(["ps", "-ww", "-o", "ignored=", "-p", String(process.pid)]).stdout.toString(),
-            )?.[1];
+    const hex = /^SigIgn:\s*([0-9a-f]+)$/m.exec(readFileSync("/proc/self/status", "utf8"))?.[1];
     if (!hex) return new Set();
     // The ending signals are all among the first 32.
     const mask = parseInt(hex.slice(-8), 16);
@@ -212,8 +206,7 @@ export async function withScratch<T>(
   prefix: string,
   work: (scratch: string, interrupted: AbortSignal) => T | Promise<T>,
 ): Promise<T> {
-  // Asked before the first listener is added, which replaces the disposition it asks about, and
-  // before there is a directory: asking may take a ps, and a signal meanwhile still ends the process.
+  // Asked before the first listener is added, which replaces the disposition it asks about.
   if (scratchDepth === 0) {
     const ignored = ignoredEndingSignals();
     heldSignals = (Object.keys(ENDING_SIGNALS) as NodeJS.Signals[]).filter(name => !ignored.has(name));

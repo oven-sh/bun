@@ -9,10 +9,6 @@
 // Currently only TickObject `init` events are delivered (enough for
 // console.log/stream.write tick-coalescing tests); promise, timer and native
 // resource events are still unimplemented.
-//
-// `ensureTickLoop` and `runAfterTickDrainCallback` connect the tick loop and
-// internal/process/after_tick_drain.ts. The tick loop does not load that
-// module, so a process that never uses it pays one property read for each drain.
 const tickInitHooks: Array<(asyncId: number, type: string, triggerAsyncId: number, resource: object) => void> = [];
 let nextAsyncId = 1;
 
@@ -21,7 +17,7 @@ export default {
   newAsyncId() {
     return ++nextAsyncId;
   },
-  // Set when process.nextTick is first read, which creates the tick queue.
+  // For internal/process/after_tick_drain.ts. Set when process.nextTick is first read, which creates the tick queue.
   ensureTickLoop: undefined as (() => void) | undefined,
   // Set by internal/process/after_tick_drain.ts. The tick loop calls it each time both queues are empty.
   runAfterTickDrainCallback: undefined as (() => boolean) | undefined,

@@ -404,8 +404,7 @@ export function initializeNextTickQueue(process: typeof globalThis.process, next
     setup = undefined;
   };
 
-  // For internal/process/after_tick_drain.ts: makes the next drain call the tick loop, without a call of
-  // process.nextTick, which fake timers replace. JSNextTickQueue::drain only calls in while field 0 is set.
+  // For internal/process/after_tick_drain.ts. JSNextTickQueue::drain only calls the tick loop while field 0 is set.
   asyncHooksTick.ensureTickLoop = () => {
     if (setup) {
       setup();

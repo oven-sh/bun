@@ -60,8 +60,7 @@ interface NativeReadable extends NodeReadable {
   [kHasResized]: boolean;
   [kRemainingChunk]: Buffer | undefined;
   [kSawEof]: boolean;
-  // "libuv-handle" only: pairs of (kind, value) that wait for a drain of their own, from `kReadEventsHead` on.
-  // At most the results of one `_read`: the next pull waits until they are delivered.
+  // "libuv-handle" only: (kind, value) pairs from `kReadEventsHead` on. At most the results of one `_read`.
   [kReadEvents]: unknown[] | undefined;
   [kReadEventsHead]: number;
   [kReadEventQueued]: boolean;
@@ -81,22 +80,7 @@ interface NativePtr {
 
 let debugId = 0;
 
-// `nodeSource` names what feeds the equivalent stream in Node.
-//
-// "libuv-handle": child_process stdio, a net.Socket over a pipe in Node. Node
-// reports each chunk, the EOF, a read error and the close from a libuv
-// callback of its own, and runs every nextTick and promise job between two of
-// them (internal/process/after_tick_drain.ts). One native read here can give
-// several of those events, and `_read` runs inside a nextTick or a promise
-// job. So each event waits for `runAfterTickDrain`, unless nobody listens.
-// https://github.com/nodejs/node/blob/v24.9.0/lib/internal/stream_base_commons.js#L166-L233
-//
-// "webstream": Readable.fromWeb. Node pushes each chunk from the promise job
-// of a `reader.read()`, and gets the EOF from a later read. Here a chunk is
-// pushed as it arrives: inside `_read` when the read is synchronous (so a
-// 'data' listener's nextTicks run before its promise jobs, unlike Node),
-// inside the promise job otherwise. Only the EOF waits for `runAfterTickDrain`.
-// https://github.com/nodejs/node/blob/v24.9.0/lib/internal/webstreams/adapters.js#L544-L555
+// `nodeSource`: what feeds the equivalent stream in Node. "libuv-handle" is child_process stdio, a net.Socket there.
 function constructNativeReadable(
   readableStream: ReadableStream,
   options,
@@ -269,8 +253,7 @@ function handleResult(stream: NativeReadable, result: any, chunk: Buffer | undef
   }
 }
 
-// The EOF waits for the nextTicks and promise jobs of the last chunk's listeners. After a destroy()
-// in between, Node emits 'close' without 'end'.
+// After a destroy() before the EOF gets its turn, Node emits 'close' without 'end'.
 function pushEof(stream: NativeReadable) {
   if (!stream.destroyed) stream.push(null);
 }
@@ -287,8 +270,7 @@ function pushAndCheck(stream: NativeReadable, chunk: any) {
 
 function deliverChunk(stream: NativeReadable, chunk: any) {
   const events = stream[kReadEvents];
-  // Without a 'data' or 'readable' listener nobody sees an order, and a read() call must get the
-  // bytes now: Node reads a child's pipe from the start, so there they are in the buffer already.
+  // Nobody listens, so nobody sees an order, and a read() call gets the bytes now: Node has them buffered already.
   if (
     events === undefined ||
     (events.length === 0 && stream.listenerCount("data") === 0 && stream.listenerCount("readable") === 0)
@@ -299,8 +281,7 @@ function deliverChunk(stream: NativeReadable, chunk: any) {
   }
 }
 
-// The EOF can come in the same read as the last chunk. Node gets it in a read
-// of its own, after the nextTicks and promise jobs of that chunk's listeners.
+// Node gets the EOF in a read of its own, after the nextTicks and promise jobs of the last chunk's listeners.
 function deliverEof(stream: NativeReadable) {
   stream[kSawEof] = true;
   const events = stream[kReadEvents];
@@ -399,9 +380,7 @@ function destroy(this: NativeReadable, error: any, cb: (error?: any) => void) {
     ptr.cancel(error);
   }
   if (this[kReadEvents] !== undefined) {
-    // As net.Socket: 'close' comes from the close callback of the handle, a libuv callback of its
-    // own, and `_destroy` calls back at once, so 'error' comes in the next tick. 'close' is queued
-    // first: the callback runs the one that destroy() got, and that one can throw.
+    // As net.Socket: 'close' comes from the handle's close callback. It is queued before cb(), which can throw.
     runAfterTickDrain(emitClose, this);
     if (cb) cb(error);
     return;

@@ -1,23 +1,4 @@
-// Node calls into JS once for each libuv event, and after each call it runs
-// every process.nextTick callback and every promise job, until both queues
-// are empty. So the next event of a handle (the next chunk, the EOF) never
-// runs ahead of a tick or a promise job that a listener of the previous event
-// queued, however long the chain of ticks and jobs is.
-// https://github.com/nodejs/node/blob/v24.9.0/lib/internal/process/task_queues.js#L72-L109
-//
-// A module that gets several of Node's events out of one native call gives
-// each of them a drain of its own with `runAfterTickDrain`. The tick loop
-// (processTicksAndRejections in builtins/ProcessObjectInternals.ts) runs one
-// of these callbacks each time both queues are empty, where Node's loop calls
-// processPromiseRejections(). That happens inside the drain that is running,
-// so no other I/O callback runs in between.
-//
-// Only nextTicks and promise jobs run between two callbacks. Bun reports
-// unhandled rejections after the whole drain, and Node reads a pipe once for
-// each turn of the event loop, so there a setImmediate() of a listener also
-// runs before the next event. A setImmediate() here would wait for that too,
-// but fake timers replace it, and it costs a turn of the event loop for each
-// chunk.
+// Node empties the nextTick queue and the promise job queue between two libuv callbacks: https://github.com/nodejs/node/blob/v24.9.0/lib/internal/process/task_queues.js#L72-L109
 const asyncHooksTick = require("internal/async_hooks_tick");
 
 type AfterTickDrainCallback = {
@@ -30,6 +11,7 @@ type AfterTickDrainCallback = {
 const entries: (AfterTickDrainCallback | undefined)[] = [];
 let head = 0;
 
+// Runs `callback` once both queues are empty, inside the drain that is running. One callback for each such point.
 function runAfterTickDrain(callback: (arg: any) => void, arg?: unknown) {
   let ensureTickLoop = asyncHooksTick.ensureTickLoop;
   if (ensureTickLoop === undefined) {
@@ -54,8 +36,7 @@ function runAfterTickDrainCallback() {
   }
   const restore = $getInternalField($asyncContext, 0);
   $putInternalField($asyncContext, 0, frame);
-  // No catch and no finally, as for a tick: JSNextTickQueue::drain reports a throw inside the
-  // callback's async context, puts the context back, and calls the tick loop again.
+  // No catch and no finally, as for a tick: JSNextTickQueue::drain reports the throw and calls the tick loop again.
   callback(arg);
   $putInternalField($asyncContext, 0, restore);
   return true;

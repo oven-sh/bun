@@ -752,10 +752,14 @@ impl TransformTask {
         // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
         // Transpiler<'static> forces the borrow to 'static, so launder through a raw ptr.
         let arena_ref: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
-        let source: &bun_ast::Source = arena_ref.alloc(bun_ast::Source::init_path_string(
-            name,
+        let code = repl_mode_source(
+            self.transpiler.options.repl_mode,
+            self.loader,
             self.input_code.slice(),
-        ));
+            arena_ref,
+        );
+        let source: &bun_ast::Source =
+            arena_ref.alloc(bun_ast::Source::init_path_string(name, code));
         self.transpiler.set_arena(arena_ref);
         self.transpiler.set_log(&raw mut self.log);
         // self.log.msgs.allocator = bun.default_allocator → no-op
@@ -1194,26 +1198,10 @@ impl JSTranspiler {
         let config = self.config.get();
         let name = config.default_loader.stdin_name();
 
-        // In REPL mode, wrap potential object literals in parentheses
-        // If code starts with { and doesn't end with ; it might be an object literal
-        // that would otherwise be parsed as a block statement
-        //
-        // Allocated in the
-        // CALLER's arena so the bytes outlive `parse()` and the returned `ParseResult`
-        // (whose AST may hold slices into the source). A stack-local `Vec` would drop at
-        // the end of this fn and leave dangling references.
-        let processed_code: &[u8] = if config.repl_mode && is_likely_object_literal(code) {
-            let mut buf = ArenaVec::<u8>::with_capacity_in(code.len() + 2, arena);
-            buf.push(b'(');
-            buf.extend_from_slice(code);
-            buf.push(b')');
-            buf.into_bump_slice()
-        } else {
-            code
-        };
+        let loader = loader.unwrap_or(config.default_loader);
+        let code = repl_mode_source(config.repl_mode, loader, code, arena);
 
-        let source: &bun_ast::Source =
-            arena.alloc(bun_ast::Source::init_path_string(name, processed_code));
+        let source: &bun_ast::Source = arena.alloc(bun_ast::Source::init_path_string(name, code));
 
         let jsx = match config.tsconfig.as_deref() {
             Some(ts) => ts.merge_jsx(self.transpiler.get().options.jsx.clone()),
@@ -1225,7 +1213,7 @@ impl JSTranspiler {
             macro_remappings: clone_macro_map(&config.macro_map),
             dirname_fd: bun_sys::Fd::INVALID,
             file_descriptor: None,
-            loader: loader.unwrap_or(config.default_loader),
+            loader,
             jsx,
             path: source.path,
             virtual_source: Some(source),
@@ -1663,6 +1651,7 @@ impl JSTranspiler {
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
         let _ast_scope = ast_memory_allocator.enter();
 
+        let code = repl_mode_source(self.config.get().repl_mode, loader, code, &arena);
         let source = bun_ast::Source::init_path_string(loader.stdin_name(), code);
         let jsx = match self.config.get().tsconfig.as_deref() {
             Some(ts) => ts.merge_jsx(self.transpiler.get().options.jsx.clone()),
@@ -1728,10 +1717,37 @@ impl JSTranspiler {
     }
 }
 
+/// The bytes to parse for `code`. The object literal heuristic is for JavaScript
+/// only: a data loader reads the source bytes as they are.
+fn repl_mode_source<'a>(
+    repl_mode: bool,
+    loader: Loader,
+    code: &'a [u8],
+    arena: &'a Arena,
+) -> &'a [u8] {
+    if repl_mode && loader.is_java_script_like() {
+        wrap_likely_object_literal(code, arena)
+    } else {
+        code
+    }
+}
+
+/// The copy lives in `arena` because the AST can hold slices into the source.
+pub(crate) fn wrap_likely_object_literal<'a>(code: &'a [u8], arena: &'a Arena) -> &'a [u8] {
+    if !is_likely_object_literal(code) {
+        return code;
+    }
+    let mut buf = ArenaVec::<u8>::with_capacity_in(code.len() + 2, arena);
+    buf.push(b'(');
+    buf.extend_from_slice(code);
+    buf.push(b')');
+    buf.into_bump_slice()
+}
+
 /// Heuristic used by the REPL: returns true if `code` starts with `{` (after
 /// whitespace) and doesn't end with `;` — i.e. should be wrapped in `()` to
 /// parse as an object literal rather than a block statement. Mirrors Node.js.
-pub(crate) fn is_likely_object_literal(code: &[u8]) -> bool {
+fn is_likely_object_literal(code: &[u8]) -> bool {
     // Skip leading whitespace
     let mut start: usize = 0;
     while start < code.len() && matches!(code[start], b' ' | b'\t' | b'\n' | b'\r') {

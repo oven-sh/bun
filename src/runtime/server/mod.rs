@@ -268,6 +268,8 @@ pub(crate) struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// ([`NewServer::is_drained`]); for Bun.serve it also holds the
     /// graceful-stop promise open ([`NewServer::is_closed`]).
     pub(crate) active_connection_count: core::cell::Cell<u32>,
+    /// The node:http tunnels in `active_connection_count` that are at read EOF and have nothing left to send.
+    pub(crate) idle_tunnel_count: core::cell::Cell<u32>,
     /// Live `ServerWebSocket` count. Lives on the server (not the websocket
     /// context) so a reload's context swap cannot reset it, and sits in a
     /// `Cell` because the open/close accounting arrives through shared
@@ -496,6 +498,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// uWS filter: `+2` at TCP accept (before any TLS handshake), `-2` on
     /// `HttpContext::onClose` / `HttpResponse::upgrade()` — see
     /// `AsyncSocketData::filteredAccept`. Feeds [`Self::active_connection_count`].
+    /// `-3` when a node:http tunnel becomes idle (at read EOF with nothing left to send), `+3` when it has bytes to
+    /// send again, `-4` in place of `-2` when it closes idle — see `AsyncSocketData::filteredIdleTunnel`.
+    /// Feeds [`Self::idle_tunnel_count`].
     extern "C" fn on_connection_filter(
         _socket: *mut uws_sys::us_socket_t,
         opened: i32,
@@ -514,10 +519,28 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     this.note_connection_opened();
                     return;
                 }
-                -2 => {}
+                3 => {
+                    this.note_tunnel_idle(false);
+                    // A closed server dropped its loop ref when this tunnel became idle. While a listener is open,
+                    // the ref is the user's (`server.unref()`).
+                    if !this.has_listener() {
+                        // SAFETY: `this` is not used again. A tunnel write reaches this from JavaScript, never
+                        // from inside `app.close()`, so no outer `&mut self` is live.
+                        unsafe { &mut *user_data.cast::<Self>() }.ref_();
+                    }
+                    return;
+                }
+                -3 => this.note_tunnel_idle(true),
+                -4 => {
+                    this.note_tunnel_idle(false);
+                    this.note_connection_closed();
+                }
+                -2 => this.note_connection_closed(),
                 _ => return,
             }
-            this.note_connection_closed() && !this.has_listener() && !this.deinit_running.get()
+            !this.has_loop_holding_connections()
+                && !this.has_listener()
+                && !this.deinit_running.get()
         };
         if drained {
             // SAFETY: no `&Self` outlives the block above; `deinit_running`
@@ -1590,15 +1613,24 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             .set(self.active_connection_count.get().saturating_add(1));
     }
 
-    /// Returns true when this close drained the last live HTTP connection.
-    pub(crate) fn note_connection_closed(&self) -> bool {
-        let prev = self.active_connection_count.get();
-        if prev == 0 {
-            return false;
-        }
-        let remaining = prev - 1;
-        self.active_connection_count.set(remaining);
-        remaining == 0
+    pub(crate) fn note_connection_closed(&self) {
+        self.active_connection_count
+            .set(self.active_connection_count.get().saturating_sub(1));
+    }
+
+    fn note_tunnel_idle(&self, idle: bool) {
+        let count = self.idle_tunnel_count.get();
+        self.idle_tunnel_count.set(if idle {
+            count.saturating_add(1)
+        } else {
+            count.saturating_sub(1)
+        });
+    }
+
+    /// Node.js: a handle at read EOF with no write pending is not active, so it does not hold the event loop.
+    /// Such a tunnel still counts as a connection: 'close' waits for it in JavaScript, and [`Self::is_drained`] waits for it here.
+    fn has_loop_holding_connections(&self) -> bool {
+        self.active_connection_count.get() > self.idle_tunnel_count.get()
     }
 
     fn note_websocket_opened(&self) {
@@ -1628,7 +1660,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.pending_requests.get() == 0
             && !self.has_listener()
             && !self.has_active_web_sockets()
-            && !self.has_active_connections()
+            && !self.has_loop_holding_connections()
     }
 
     /// Nothing is left that can dispatch a handler: [`Self::is_closed`] and
@@ -2193,6 +2225,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             js_value: jsc::JsRef::empty(),
             pending_requests: core::cell::Cell::new(0),
             active_connection_count: core::cell::Cell::new(0),
+            idle_tunnel_count: core::cell::Cell::new(0),
             active_websocket_count: core::cell::Cell::new(0),
             deinit_running: core::cell::Cell::new(false),
             abort_handle: jsc::AbortHandle::for_owner::<Self>(),

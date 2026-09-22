@@ -280,7 +280,7 @@ private:
         }
         if (httpResponseData->filteredAccept) {
             for (auto &f : httpContextData->filterHandlers) {
-                f((HttpResponse<SSL> *) s, -2);
+                f((HttpResponse<SSL> *) s, httpResponseData->filteredIdleTunnel ? -4 : -2);
             }
         }
 

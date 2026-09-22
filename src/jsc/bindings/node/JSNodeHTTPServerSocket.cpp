@@ -866,6 +866,19 @@ void JSNodeHTTPServerSocket::onClose(int readError, bool peerEnded)
     });
 }
 
+void JSNodeHTTPServerSocket::updateTunnelIdle()
+{
+    if (!tunnelReadEnded || upgraded || isClosed()) {
+        return;
+    }
+    const bool sent = streamBuffer.bufferedSize() == 0;
+    if (is_ssl) {
+        reinterpret_cast<uWS::HttpResponse<true>*>(socket)->setNodeHttpTunnelIdle(sent && reinterpret_cast<uWS::AsyncSocket<true>*>(socket)->hasFullyDrained());
+    } else {
+        reinterpret_cast<uWS::HttpResponse<false>*>(socket)->setNodeHttpTunnelIdle(sent && reinterpret_cast<uWS::AsyncSocket<false>*>(socket)->hasFullyDrained());
+    }
+}
+
 void JSNodeHTTPServerSocket::onDrain()
 {
     // This function can be called during GC!
@@ -876,6 +889,7 @@ void JSNodeHTTPServerSocket::onDrain()
 
     // A read pause or resume arms the writable event too: nothing was buffered, so nothing drained.
     if (this->streamBuffer.bufferedSize() == 0) {
+        updateTunnelIdle();
         return;
     }
     {
@@ -893,6 +907,7 @@ void JSNodeHTTPServerSocket::onDrain()
             // need to drain more
             return;
         }
+        updateTunnelIdle();
     }
     WebCore::ScriptExecutionContext* scriptExecutionContext = globalObject->scriptExecutionContext();
 
@@ -950,7 +965,12 @@ void JSNodeHTTPServerSocket::onData(const char* data, int length, bool last)
             EnsureStillAliveScope ensureChunkStillAlive(chunk);
             gcUnprotect(chunk);
             // After the callback: a readStop() from it keeps the reads paused, with no resume in between.
-            auto delivered = WTF::makeScopeExit([&] { thisObject->didDeliverQueuedTunnelBytes(length); });
+            auto delivered = WTF::makeScopeExit([&] {
+                thisObject->didDeliverQueuedTunnelBytes(length);
+                if (last) {
+                    thisObject->updateTunnelIdle();
+                }
+            });
             if (!callbackObject) {
                 return;
             }

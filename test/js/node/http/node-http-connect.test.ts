@@ -1771,3 +1771,142 @@ test("CONNECT: process exits after the tunnel socket is re-emitted as a connecti
     signalCode: null,
   });
 });
+
+// The socket is half-open after the peer's FIN (an http.Server socket has allowHalfOpen) and has
+// nothing to send. In Node.js such a handle is not active, so it does not keep the process alive.
+test.concurrent.each([
+  [
+    "connect",
+    "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n",
+    "HTTP/1.1 200 Connection Established\r\n\r\n",
+  ],
+  [
+    "upgrade",
+    "GET / HTTP/1.1\r\nHost: a\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
+    "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
+  ],
+])(
+  "'%s': the process exits after server.close() when the peer closed a tunnel that the listener never reads or ends",
+  async (event, request, response) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const http = require("node:http");
+         const net = require("node:net");
+         const events = [];
+         const server = http.createServer();
+         server.on(${JSON.stringify(event)}, (req, socket) => {
+           socket.on("end", () => events.push("socket end"));
+           socket.on("close", () => events.push("socket close"));
+           socket.write(${JSON.stringify(response)});
+         });
+         server.listen(0, "127.0.0.1", () => {
+           const client = net.connect(server.address().port, "127.0.0.1", () => client.write(${JSON.stringify(request)}));
+           client.once("data", () => {
+             client.destroy();
+             server.close(() => events.push("server close"));
+           });
+         });
+         process.on("exit", () => console.log(JSON.stringify(events)));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The socket is still open, so neither it nor the server emits 'close'.
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: '["socket end"]\n', stderr: "", exitCode: 0 });
+  },
+);
+
+test("server.close(cb) still waits for a tunnel that is half-open after the peer's FIN", async () => {
+  const server = http.createServer();
+  const tunnel = Promise.withResolvers<net.Socket>();
+  server.on("connect", (req, socket) => {
+    socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+    tunnel.resolve(socket);
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const client = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+  try {
+    await once(client, "connect");
+    client.write("CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n");
+    const serverSocket = await tunnel.promise;
+    await once(client, "data");
+    const ended = once(serverSocket, "end");
+    serverSocket.resume();
+    client.end();
+    await ended;
+
+    let serverClosed = false;
+    const closed = Promise.withResolvers<void>();
+    server.close(() => {
+      serverClosed = true;
+      closed.resolve();
+    });
+    // The native close promise settles in one turn of the loop, and 'close' follows it by a tick.
+    await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => setImmediate(resolve));
+    expect(serverClosed).toBe(false);
+
+    serverSocket.end();
+    await closed.promise;
+  } finally {
+    client.destroy();
+  }
+});
+
+test("a half-open tunnel with bytes left to send keeps the process alive until they are sent", async () => {
+  // More than a loopback socket takes in one write, so the rest waits for a writable event.
+  const size = 64 * 1024 * 1024;
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const http = require("node:http");
+       const server = http.createServer();
+       server.on("connect", (req, socket) => {
+         socket.write("HTTP/1.1 200 Connection Established\\r\\n\\r\\n");
+         // From here on, only the tunnel can keep the process alive.
+         server.close();
+         socket.on("end", () => socket.end(Buffer.alloc(${size}, "x")));
+         socket.resume();
+       });
+       server.listen(0, "127.0.0.1", () => console.log(server.address().port));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const stdout = proc.stdout.getReader();
+  let firstLine = "";
+  while (!firstLine.includes("\n")) {
+    const { value, done } = await stdout.read();
+    if (done) break;
+    firstLine += Buffer.from(value).toString();
+  }
+  stdout.releaseLock();
+
+  const client = net.connect(Number(firstLine), "127.0.0.1");
+  try {
+    await once(client, "connect");
+    client.write("CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n");
+    let received = -1;
+    const closed = once(client, "close");
+    client.on("data", chunk => {
+      if (received < 0) {
+        // The 200. Half-close: the server answers from its 'end' listener.
+        received = 0;
+        client.end();
+      } else {
+        received += chunk.length;
+      }
+    });
+    await closed;
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ received, stderr, exitCode }).toEqual({ received: size, stderr: "", exitCode: 0 });
+  } finally {
+    client.destroy();
+  }
+});

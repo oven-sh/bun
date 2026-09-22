@@ -151,6 +151,19 @@ public:
         return true;
     }
 
+    /* node:http: an idle tunnel is at read EOF and has nothing left to send. Like a libuv handle in that state, it does not hold
+     * the event loop. The filter hears -3 when a tunnel becomes idle and +3 when it has bytes to send again. */
+    void setNodeHttpTunnelIdle(bool idle) {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        if (!httpResponseData->filteredAccept || httpResponseData->filteredIdleTunnel == idle) {
+            return;
+        }
+        httpResponseData->filteredIdleTunnel = idle;
+        for (auto &f : HttpContext<SSL>::getSocketContextDataS((us_socket_t *) this)->filterHandlers) {
+            f(this, idle ? -3 : 3);
+        }
+    }
+
     /* Marks the response in flight as one that user JavaScript produces. See
      * HTTP_SEND_WHEN_COMPLETE. */
     void sendWhenComplete() {
@@ -427,7 +440,7 @@ public:
         }
         if (((AsyncSocketData<SSL> *) responseData)->filteredAccept) {
             for (auto &f : httpContextData->filterHandlers) {
-                f((HttpResponse<SSL> *) this, -2);
+                f((HttpResponse<SSL> *) this, ((AsyncSocketData<SSL> *) responseData)->filteredIdleTunnel ? -4 : -2);
             }
         }
 

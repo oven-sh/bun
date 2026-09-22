@@ -1,5 +1,5 @@
 // HTML tests are tests relating to HTML files themselves.
-import { devTest, emptyHtmlFile } from "../bake-harness";
+import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("html file is watched", {
   files: {
@@ -223,6 +223,76 @@ devTest("chrome devtools automatic workspace folders", {
         uuid: expect.any(String),
       },
     });
+  },
+});
+
+const nodeModulesPathCases = [
+  ["relativeLibrary", "node_modules/pkg/index.js", true],
+  ["posixLibrary", "/x/node_modules/pkg/index.js", true],
+  ["windowsLibrary", "C:\\x\\node_modules\\pkg\\index.js", true],
+  ["windowsDoubleSlashLibrary", "C://node_modules/pkg/index.js", true],
+  ["mixedAfterLibrary", "C:\\x\\node_modules/pkg/index.js", true],
+  ["mixedBeforeLibrary", "C:/x/node_modules\\pkg\\index.js", true],
+  ["urlLibrary", "https://example.test/x/node_modules/pkg/index.js?from=app", true],
+  ["posixQuestionFilename", "/x/name?part/node_modules/pkg/index.js", true],
+  ["posixHashFilename", "/x/name#part/node_modules/pkg/index.js", true],
+  ["urlAuthority", "https://node_modules/pkg/index.js", false],
+  ["urlAuthorityThenPath", "https://node_modules/node_modules/pkg/index.js", true],
+  ["componentPrefix", "/x/my_node_modules_backup/index.js", false],
+  ["componentSuffix", "/x/node_modules_backup/index.js", false],
+  ["posixBackslashFilename", "file:///x/foo\\node_modules\\bar.js", false],
+  ["urlQuery", "https://example.test/app.js?q=/node_modules/pkg", false],
+  ["urlFragment", "https://example.test/app.js#/node_modules/pkg", false],
+  ["bareComponent", "node_modules", false],
+] as const;
+
+devTest("runtime errors identify node_modules path components", {
+  framework: minimalFramework,
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (input, init) => {
+        // happy-dom stringifies ArrayBuffer bodies; browsers preserve the bytes.
+        if (String(input).includes("/_bun/report_error")) {
+          init = { ...init, body: new Uint8Array(init.body) };
+        }
+        return originalFetch(input, init);
+      };
+      const pathCases = ${JSON.stringify(nodeModulesPathCases)};
+      const error = new Error("stack path fixture");
+      error.stack = "Error: stack path fixture\\n" + pathCases.map(([fn, file], index) =>
+        "    at " + fn + " (" + file + ":" + (index + 1) + ":1)"
+      ).join("\\n");
+      queueMicrotask(() => { throw error; });
+    `,
+  },
+  async test(dev) {
+    await using client = await dev.client("/", { errors: ["error: stack path fixture"] });
+
+    const overlayFrames = await client.js<
+      { text: string; isLibrary: boolean; opacity: number | null }[]
+    >`Array.from(document.querySelector("bun-hmr").shadowRoot.querySelectorAll(".r-error .trace-frame")).map(frame => {
+      const opacity = getComputedStyle(frame).opacity;
+      return {
+        text: frame.textContent,
+        isLibrary: frame.classList.contains("library-frame"),
+        opacity: opacity === "" ? null : Number(opacity),
+      };
+    })`;
+    const stripAnsi = (line: string) => line.replace(/\x1b\[[0-9;]*m/g, "");
+
+    for (const [fn, , isLibrary] of nodeModulesPathCases) {
+      const overlayFrame = overlayFrames.find(frame => frame.text.includes(fn));
+      expect(overlayFrame, fn).toMatchObject({
+        isLibrary,
+        opacity: isLibrary ? 0.5 : null,
+      });
+
+      const terminalLine = dev.output.lines.find(line => stripAnsi(line).includes(`at ${fn} (`));
+      expect(terminalLine, fn).toBeDefined();
+      expect(terminalLine!.includes(`\x1b[2mat ${fn}`), fn).toBe(isLibrary);
+    }
   },
 });
 

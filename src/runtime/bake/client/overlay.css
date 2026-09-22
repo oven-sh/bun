@@ -235,6 +235,9 @@ header {
 .trace-frame + .trace-frame {
   margin-top: -0.5rem;
 }
+.trace-frame.library-frame {
+  opacity: 0.5;
+}
 .function-name {
   color: var(--syntax-cyan);
   font-style: italic;

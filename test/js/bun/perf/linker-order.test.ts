@@ -1147,8 +1147,100 @@ describe.skipIf(!canTrace || isWindows)("pty runner", () => {
     const shell = Number(/pid=(\d+)/.exec(output)![1]);
     proc.kill("SIGTERM");
     expect(await proc.exited).toBe(1);
-    // ptyrun reaped the shell before it exited, so the shell is gone by now.
-    expect(() => process.kill(shell, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
+    await expectGone([shell]);
+  });
+
+  it.concurrent("forwards all of the output to a reader that is slow to start", async () => {
+    using dir = tempDir("ptyrun-slow-reader", {});
+    const ptyrun = join(String(dir), "ptyrun");
+    await compile(["-o", ptyrun, join(orderfile, "ptyrun.c"), ...(darwin ? [] : ["-lutil"])]);
+
+    // A little more than a pipe holds: ptyrun is blocked writing the last of it when its child, which
+    // has nothing left to wait for, exits. The reader starts once that has happened (or, where the
+    // terminal and the pipe hold less than they do on linux, after two seconds).
+    const written = join(String(dir), "written");
+    const writer = `head -c 70000 /dev/zero | tr '\\0' x; : > "${written}"`;
+    const reader = `n=0; until [ -e "${written}" ] || [ $n -ge 200 ]; do sleep 0.01; n=$((n + 1)); done; wc -c`;
+    await using proc = Bun.spawn({
+      cmd: ["/bin/sh", "-c", `"$0" /bin/sh -c "$1" < /dev/null | (${reader})`, ptyrun, writer],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ bytes: Number(stdout.trim()), stderr, exitCode }).toEqual({ bytes: 70000, stderr: "", exitCode: 0 });
+  });
+
+  /**
+   * A workload may leave something behind in a session of its own that keeps
+   * the terminal open: a daemon, a detached helper. ptyrun is done when its
+   * child is, and when it is told to stop, whoever still holds the terminal.
+   */
+  describe("with a descendant that left the session and holds the terminal", () => {
+    const source = [
+      "#include <stdio.h>",
+      "#include <string.h>",
+      "#include <unistd.h>",
+      "int main(int argc, char **argv) {",
+      "    int in_its_own_session[2];",
+      "    if (pipe(in_its_own_session) != 0) return 2;",
+      "    pid_t left = fork();",
+      "    if (left == 0) {",
+      "        setsid();",
+      "        close(in_its_own_session[0]);",
+      "        close(in_its_own_session[1]);",
+      "        for (;;) pause();",
+      "    }",
+      // Not before it has left: a session leader's exit hangs up on everything still in the session.
+      "    char byte;",
+      "    close(in_its_own_session[1]);",
+      "    if (read(in_its_own_session[0], &byte, 1) != 0) return 2;",
+      '    printf("pid=%d\\n", (int)left);',
+      "    fflush(stdout);",
+      '    if (argc > 1 && strcmp(argv[1], "stay") == 0) for (;;) pause();',
+      "    return 7;",
+      "}",
+      "",
+    ].join("\n");
+
+    /** ptyrun's exit code, once the descendant is accounted for: on linux ptyrun adopts and ends it, elsewhere it is left running. */
+    async function run(args: string[], whenStarted: (proc: Bun.Subprocess) => void) {
+      using dir = tempDir("ptyrun-left", { "leaves.c": source });
+      const [ptyrun, leaves] = [join(String(dir), "ptyrun"), join(String(dir), "leaves")];
+      await Promise.all([
+        compile(["-o", ptyrun, join(orderfile, "ptyrun.c"), ...(darwin ? [] : ["-lutil"])]),
+        compile(["-o", leaves, join(String(dir), "leaves.c")]),
+      ]);
+      await using proc = Bun.spawn({ cmd: [ptyrun, leaves, ...args], env: bunEnv, stdin: "pipe", stdout: "pipe", stderr: "pipe" }); // prettier-ignore
+      // Read to the end: a reader that went away would be a SIGPIPE for whatever ptyrun writes next.
+      let output = "";
+      let ended = false;
+      const reading = (async () => {
+        for await (const chunk of proc.stdout) output += Buffer.from(chunk).toString();
+        ended = true;
+      })();
+      while (!ended && !/pid=\d+\s/.test(output)) await Bun.sleep(1);
+      const left = Number(/pid=(\d+)/.exec(output)![1]);
+      try {
+        whenStarted(proc);
+        const exitCode = await proc.exited;
+        await reading;
+        if (process.platform === "linux") await expectGone([left]);
+        return exitCode;
+      } finally {
+        try {
+          process.kill(left, "SIGKILL");
+        } catch {}
+      }
+    }
+
+    it.concurrent("returns when its child exits, with the child's status", async () => {
+      expect(await run([], () => {})).toBe(7);
+    });
+
+    it.concurrent("returns when it is told to stop", async () => {
+      expect(await run(["stay"], proc => proc.kill("SIGTERM"))).toBe(1);
+    });
   });
 });
 

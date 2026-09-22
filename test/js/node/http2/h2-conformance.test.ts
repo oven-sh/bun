@@ -1289,9 +1289,9 @@ describe("request pseudo-header requirements (RFC 9113 §8.3.1)", () => {
   });
 });
 
-describe("a response header field over the send limit (RFC 9113 §8.1)", () => {
-  // Verified against node v26.3.0: nghttp2 refuses a block over maxSendHeaderBlockLength (65536
-  // when unset) before it deflates it, so the stream gets 'frameError' and RST_STREAM
+describe("a response header block over the send limit (RFC 9113 §8.1)", () => {
+  // Every expectation here is node v26.3.0's: nghttp2 refuses a block over maxSendHeaderBlockLength
+  // (65536 when unset) before it deflates it, so the stream gets 'frameError' and RST_STREAM
   // FRAME_SIZE_ERROR, the session sends GOAWAY NO_ERROR, and no DATA goes out without HEADERS.
   const big = (size: number) => Buffer.alloc(size, "B").toString();
   type Track = (stream: http2.ServerHttp2Stream) => void;
@@ -1342,11 +1342,11 @@ describe("a response header field over the send limit (RFC 9113 §8.1)", () => {
   }
 
   const respondWith =
-    (headers: any) =>
+    (headers: any, options?: http2.ServerStreamResponseOptions) =>
     (srv: http2.Http2Server, track: Track): void => {
       srv.on("stream", stream => {
         track(stream);
-        stream.respond(headers);
+        stream.respond(headers, options);
         stream.end("body");
       });
     };
@@ -1368,9 +1368,13 @@ describe("a response header field over the send limit (RFC 9113 §8.1)", () => {
     expect(await wireFor(respondWith(headers))).toEqual(refused);
   });
 
-  // "x-big" is 5 bytes: 65531 puts name plus value at 65536, and 65532 puts it one past.
-  test("bun still sends a field of exactly 65536 bytes, its encoder limit (node refuses that block)", async () => {
-    const wire = await wireFor(respondWith({ ":status": 200, "x-big": big(65_531) }), {}, sawEndOfBody);
+  // nghttp2 compares the limit with 12 + 12 per field + every name and value byte, plus 5 priority bytes.
+  // Without the date field the block is ":status" + "200" and "x-big" + its value: 12 + 24 + 10 + 5 + 5 = 56.
+  const valueAtLimit = 65_536 - 56;
+
+  test("a block whose bound is exactly 65536 is sent", async () => {
+    const headers = { ":status": 200, "x-big": big(valueAtLimit) };
+    const wire = await wireFor(respondWith(headers, { sendDate: false }), {}, sawEndOfBody);
     expect({ ...wire, stream1: wire.stream1[0] }).toEqual({
       stream1: `type ${FrameType.HEADERS}`,
       goaway: null,
@@ -1381,8 +1385,15 @@ describe("a response header field over the send limit (RFC 9113 §8.1)", () => {
     });
   });
 
-  test("a field of 65537 bytes is refused", async () => {
-    expect(await wireFor(respondWith({ ":status": 200, "x-big": big(65_532) }))).toEqual(refused);
+  test("a block whose bound is 65537 is refused", async () => {
+    const headers = { ":status": 200, "x-big": big(valueAtLimit + 1) };
+    expect(await wireFor(respondWith(headers, { sendDate: false }))).toEqual(refused);
+  });
+
+  test("a block of many small fields over 65536 is refused", async () => {
+    const headers: Record<string, string | number> = { ":status": 200 };
+    for (let i = 0; i < 70; i++) headers[`x-field-${i}`] = big(1000);
+    expect(await wireFor(respondWith(headers))).toEqual(refused);
   });
 
   test("a field over a user-set maxSendHeaderBlockLength takes the same path", async () => {
@@ -1401,17 +1412,20 @@ describe("a response header field over the send limit (RFC 9113 §8.1)", () => {
     expect(wire).toEqual(refused);
   });
 
-  test("a refused 1xx block leaves the stream open for the final response", async () => {
+  test.each([
+    ["a 103 status", { ":status": 103, "x-big": big(200_000) }],
+    ["no :status", { "x-big": big(200_000) }],
+  ])("a refused additionalHeaders() block with %s leaves the stream open for the response", async (_, info) => {
     const wire = await wireFor((srv, track) => {
       srv.on("stream", stream => {
         track(stream);
-        stream.additionalHeaders({ ":status": 103, "x-big": big(200_000) });
+        stream.additionalHeaders(info);
         stream.respond({ ":status": 200 });
         stream.end("body");
       });
     });
-    expect({ ...wire, stream1: wire.stream1[0] }).toEqual({
-      stream1: `type ${FrameType.HEADERS}`,
+    expect(wire).toEqual({
+      stream1: [`type ${FrameType.HEADERS}`, `type ${FrameType.DATA}`],
       goaway: ErrorCode.NO_ERROR,
       frameErrors: [[FrameType.HEADERS, ErrorCode.FRAME_SIZE_ERROR]],
       streamErrors: [],
@@ -1420,8 +1434,7 @@ describe("a response header field over the send limit (RFC 9113 §8.1)", () => {
     });
   });
 
-  // Verified against node v26.3.0: respond() throws for a 1xx status, so a refused block that
-  // keeps the stream open can only come from additionalHeaders().
+  // respond() throws for a 1xx status, so only additionalHeaders() can send a block that is not the response.
   test("respond() throws for a 1xx status and the stream still sends its response", async () => {
     let thrown: unknown;
     const wire = await wireFor(
@@ -1448,19 +1461,6 @@ describe("a response header field over the send limit (RFC 9113 §8.1)", () => {
       sessionErrors: [],
       rstCode: ErrorCode.NO_ERROR,
     });
-  });
-
-  // additionalHeaders() without ":status" sends a block that is not 1xx, so the refusal resets the stream.
-  test("respond() in the tick of a reset sends nothing on the stream", async () => {
-    const wire = await wireFor((srv, track) => {
-      srv.on("stream", stream => {
-        track(stream);
-        stream.additionalHeaders({ "x-big": big(200_000) });
-        stream.respond({ ":status": 200 });
-        stream.end("body");
-      });
-    });
-    expect(wire).toEqual(refused);
   });
 
   // The refused block also carries "x-shared". The client can only decode that field on the second

@@ -4081,9 +4081,11 @@ class ServerHttp2Session extends Http2Session {
     },
     streamError(self: ServerHttp2Session, stream: ServerHttp2Stream, error: number) {
       if (!self || typeof stream !== "object") return;
+      endWritableOnReset(stream);
+      // node's onStreamClose: a reset with NO_ERROR closes like END_STREAM, the destroy waits for 'end'.
+      if (error === NGHTTP2_NO_ERROR) return ServerHttp2Session.#Handlers.streamEnd(self, stream, 7);
       self.#connections--;
       if (stream.id % 2 === 1) self.#peerInitiatedStreams--;
-      endWritableOnReset(stream);
       emitStreamErrorNT(self, stream, error, true, false);
       if (self.#connections === 0 && self.#closed) process.nextTick(destroyIfNotDestroyedNT, self);
     },
@@ -5089,8 +5091,10 @@ class ClientHttp2Session extends Http2Session {
     streamError: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, error: number) => {
       if (!self || typeof stream !== "object") return;
 
-      self.#connections--;
       endWritableOnReset(stream);
+      // node's onStreamClose: a reset with NO_ERROR closes like END_STREAM, the destroy waits for 'end'.
+      if (error === NGHTTP2_NO_ERROR) return ClientHttp2Session.#Handlers.streamEnd(self, stream, 7);
+      self.#connections--;
       emitStreamErrorNT(self, stream, error, true, false);
       if (self.#connections === 0 && self.#closed) process.nextTick(destroyIfNotDestroyedNT, self);
     }),

@@ -6174,9 +6174,10 @@ describe.concurrent("write() after end()", () => {
       expect(result).toEqual([lateWriteEvents, 4]);
     });
 
-    // node handles the RST_STREAM at once and emits 'response' one tick later, so the writes
-    // below reach a stream that is already destroyed.
-    it("peer reset in the same read as the response headers", async () => {
+    // The peer is a raw HTTP/2 endpoint over a JS Duplex. It answers the request with HEADERS
+    // (:status 200), `body` as one DATA frame with END_STREAM, and RST_STREAM, all in one read.
+    // Resolves with the request's events once it has closed.
+    async function resetInSameReadAsResponse(rstCode, body, onResponse) {
       function frame(type, flags, streamId, payload = Buffer.alloc(0)) {
         const header = Buffer.alloc(9);
         header.writeUIntBE(payload.length, 0, 3);
@@ -6185,10 +6186,11 @@ describe.concurrent("write() after end()", () => {
         header.writeUInt32BE(streamId, 5);
         return Buffer.concat([header, payload]);
       }
-      const rstCode = Buffer.alloc(4);
-      rstCode.writeUInt32BE(http2.constants.NGHTTP2_INTERNAL_ERROR);
-      // Raw HTTP/2 peer: acks SETTINGS, then answers the request with HEADERS (:status 200) and
-      // RST_STREAM in one chunk.
+      const code = Buffer.alloc(4);
+      code.writeUInt32BE(rstCode);
+      const answer = [frame(1, 4, 1, Buffer.from([0x88]))];
+      if (body !== undefined) answer.push(frame(0, 1, 1, Buffer.from(body)));
+      answer.push(frame(3, 0, 1, code));
       let received = Buffer.alloc(0);
       let sawPreface = false;
       const transport = new Duplex({
@@ -6206,7 +6208,7 @@ describe.concurrent("write() after end()", () => {
             const flags = received[4];
             received = received.subarray(9 + length);
             if (type === 4 && (flags & 1) === 0) this.push(frame(4, 1, 0));
-            if (type === 1) this.push(Buffer.concat([frame(1, 4, 1, Buffer.from([0x88])), frame(3, 0, 1, rstCode)]));
+            if (type === 1) this.push(Buffer.concat(answer));
           }
           callback();
         },
@@ -6214,26 +6216,47 @@ describe.concurrent("write() after end()", () => {
       const session = http2.connect("http://localhost", { createConnection: () => transport });
       try {
         const closed = Promise.withResolvers();
-        const lateWrite = Promise.withResolvers();
+        const events = [];
         session.on("error", closed.reject);
         session.on("connect", () => transport.push(frame(4, 0, 0)));
         const req = session.request({ ":method": "POST", ":path": "/" }, { endStream: false });
-        record(req, closed);
-        let destroyedInResponse;
+        for (const name of ["aborted", "finish", "end"]) req.on(name, () => events.push(name));
+        req.on("error", err => events.push(`error:${err.code}`));
+        req.on("close", () => closed.resolve(events.concat("close")));
         req.on("response", () => {
-          destroyedInResponse = req.destroyed;
-          req.write("body");
-          req.end();
-          req.write("late", err => lateWrite.resolve(err.code));
+          events.push(req.destroyed ? "response on a destroyed stream" : "response on a live stream");
+          onResponse(req, events);
         });
-        expect([await closed.promise, destroyedInResponse, await lateWrite.promise]).toEqual([
-          ["finish", "error:ERR_HTTP2_STREAM_ERROR", "close"],
-          true,
-          "ERR_STREAM_WRITE_AFTER_END",
-        ]);
+        return await closed.promise;
       } finally {
         session.destroy();
       }
+    }
+
+    // node handles the RST_STREAM inside the read and emits 'response' one tick later, so the
+    // writes in 'response' reach a stream that is already destroyed.
+    it("peer reset with an error code in the same read as the response", async () => {
+      const lateWrite = Promise.withResolvers();
+      const events = await resetInSameReadAsResponse(http2.constants.NGHTTP2_INTERNAL_ERROR, undefined, req => {
+        req.write("body");
+        req.end();
+        req.write("late", err => lateWrite.resolve(err.code));
+      });
+      expect([events, await lateWrite.promise]).toEqual([
+        ["aborted", "response on a destroyed stream", "finish", "error:ERR_HTTP2_STREAM_ERROR", "close"],
+        "ERR_STREAM_WRITE_AFTER_END",
+      ]);
+    });
+
+    // A reset with NO_ERROR closes the stream like END_STREAM: the body is still delivered and
+    // the stream is destroyed after 'end'.
+    it("peer reset with NO_ERROR in the same read as the whole response", async () => {
+      let body = "";
+      const events = await resetInSameReadAsResponse(http2.constants.NGHTTP2_NO_ERROR, "hello", req => {
+        req.setEncoding("utf8");
+        req.on("data", chunk => (body += chunk));
+      });
+      expect([events, body]).toEqual([["aborted", "response on a live stream", "finish", "end", "close"], "hello"]);
     });
   });
 });

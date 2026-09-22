@@ -186,7 +186,7 @@ bun_jsc::impl_abort_handle_owner!(MultiPartUpload, abort_handle, |this, _cause| 
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum State {
+pub(crate) enum State {
     WaitStreamCheck,
     NotStarted,
     MultipartStarted,
@@ -236,7 +236,7 @@ impl MultiPartUpload {
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum PartState {
+pub(crate) enum PartState {
     NotAssigned = 0,
     Pending = 1,
     Started = 2,
@@ -244,7 +244,7 @@ pub enum PartState {
     Canceled = 4,
 }
 
-pub struct UploadPart {
+pub(crate) struct UploadPart {
     /// Raw owned slice; backing allocation length is `allocated_size` (may exceed `data.len()`).
     /// Freed via `free_allocated_slice`. Default is a static empty slice.
     pub(crate) data: Cell<*const [u8]>,
@@ -256,7 +256,7 @@ pub struct UploadPart {
     pub(crate) index: Cell<u8>,
 }
 
-pub struct UploadPartResult {
+pub(crate) struct UploadPartResult {
     pub(crate) number: u16,
     pub(crate) etag: Box<[u8]>,
 }
@@ -1200,7 +1200,7 @@ impl MultiPartUpload {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum UploadBackpressure {
+pub(crate) enum UploadBackpressure {
     WantMore,
     Backpressure,
     Done,

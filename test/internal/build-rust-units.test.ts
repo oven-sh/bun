@@ -10,15 +10,21 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { Config } from "../../scripts/build/config.ts";
-import type { MetadataPackage, RustPlan, UnitGraphUnit } from "../../scripts/build/rust/plan.ts";
-import { parseBuildScriptOutput, rustcInvocation, writeDepfile } from "../../scripts/build/rust/run.ts";
+import {
+  PLAN_VERSION,
+  type MetadataPackage,
+  type RustPlan,
+  type UnitGraphUnit,
+} from "../../scripts/build/rust/plan.ts";
+import { parseBuildScriptOutput, rustcInvocation, timePass, writeDepfile } from "../../scripts/build/rust/run.ts";
 import { parseToml } from "../../scripts/build/rust/toml.ts";
 import {
+  buildRustGraph,
+  linkedRlibs,
+  unitManifest,
   type ManifestContext,
   type RustUnit,
   type RustcUnitManifest,
-  buildRustGraph,
-  unitManifest,
 } from "../../scripts/build/rust/units.ts";
 
 describe("parseToml", () => {
@@ -160,6 +166,7 @@ function manifestIn(dir: string, over: Partial<RustcUnitManifest>): RustcUnitMan
     depfile: join(dir, "deps", "demo-0123.d.ninja"),
     buildScriptOutput: undefined,
     depBuildScriptOutputs: [],
+    phases: undefined,
     libraryPath: { variable: "LD_LIBRARY_PATH", prepend: [] },
     ...over,
   };
@@ -205,6 +212,20 @@ describe("writeDepfile", () => {
     const unit = manifestIn(root, {});
     writeFileSync(unit.depInfo, `${join(root, "deps", "libother.rlib")}: src/lib.rs\n`);
     expect(() => writeDepfile(unit)).toThrow(/has no rule for/);
+  });
+});
+
+describe("timePass", () => {
+  test("reads a `-Z time-passes` line as a phase that ends now, and leaves every other line alone", () => {
+    const before = Date.now();
+    const phase = timePass(`time: {"pass":"type_check_crate","time":1.5,"rss_start":1,"rss_end":2}`)!;
+    expect(phase.name).toBe("type_check_crate");
+    expect(phase.endMs).toBeGreaterThanOrEqual(before);
+    expect(phase.endMs - phase.startMs).toBe(1500);
+    // A diagnostic, an artifact notice, and rustc's text form of the same flag.
+    expect(timePass(`{"$message_type":"diagnostic","rendered":"warning: time: {"}`)).toBeUndefined();
+    expect(timePass(`{"$message_type":"artifact","emit":"metadata"}`)).toBeUndefined();
+    expect(timePass(`time:   0.001; rss:   46MB ->   49MB (   +2MB)\tparse_crate`)).toBeUndefined();
   });
 });
 
@@ -323,13 +344,12 @@ describe("buildRustGraph + unitManifest", () => {
     fileNames: {
       rlib: ["lib", ".rlib"],
       "proc-macro": ["", ".dll"],
-      staticlib: ["", ".lib"],
       bin: ["", ".exe"],
     } as RustPlan["target"]["fileNames"],
     splitDebuginfo: [],
   });
   const planWith = (rustflags: string[]): RustPlan => ({
-    version: 4,
+    version: PLAN_VERSION,
     plannedWith: {
       cwd: "/ws",
       cargo: "cargo",
@@ -366,8 +386,8 @@ describe("buildRustGraph + unitManifest", () => {
     host: info(triple),
     target: info(triple),
   });
-  const context = (graph: ReturnType<typeof buildRustGraph>): ManifestContext => ({
-    cfg: { ci: false, debug: false, buildDir: "/build", host: { os: "windows" } } as Config,
+  const context = (graph: ReturnType<typeof buildRustGraph>, timeTrace = false): ManifestContext => ({
+    cfg: { ci: false, debug: false, buildDir: "/build", host: { os: "windows" }, timeTrace } as Config,
     graph,
     baseEnv: { BUN_CODEGEN_DIR: "/build/codegen" },
     linker: { host: "link.exe", target: "link.exe" },
@@ -437,6 +457,58 @@ describe("buildRustGraph + unitManifest", () => {
     expect(depManifest.rmetaNinjaName).toBe(join("rust-target/shim", triple, "deps", `libdep_a-${dep.hash}.rmeta`));
     expect(depManifest.linkArgSelectors).toEqual(["all"]);
     expect(depManifest.args).toEqual(DEP_ARGS(dep));
+  });
+
+  test("a library root's link takes the target libraries, with one panic runtime and no host code", () => {
+    // What a `-Zbuild-std` graph looks like: std depends on both panic runtimes, and a proc-macro brings host-only crates.
+    const names = ["panic_abort", "panic_unwind", "std", "macro_dep", "my_macro", "my-root"] as const;
+    const pkgs = Object.fromEntries(names.map(name => [name, pkg(name, null, `/ws/src/${name}/Cargo.toml`)]));
+    const dep = (index: number, name: string) => ({ index, extern_crate_name: name, public: false, noprelude: false });
+    const lib = (name: (typeof names)[number], platform: string | null, deps: UnitGraphUnit["dependencies"]) => ({
+      ...unit(pkgs[name]!, "lib", deps),
+      platform,
+    });
+    const procMacro: UnitGraphUnit = {
+      ...unit(pkgs.my_macro!, "lib", [dep(3, "macro_dep")]),
+      target: { ...unit(pkgs.my_macro!, "lib", []).target, kind: ["proc-macro"], crate_types: ["proc-macro"] },
+      platform: null,
+    };
+    const base = planWith([]);
+    const plan = (panic: "abort" | "unwind"): RustPlan => ({
+      ...base,
+      unitGraph: {
+        version: 1,
+        units: [
+          lib("panic_abort", triple, []),
+          lib("panic_unwind", triple, []),
+          lib("std", triple, [dep(0, "panic_abort"), dep(1, "panic_unwind")]),
+          lib("macro_dep", null, []),
+          procMacro,
+          lib("my-root", triple, [dep(2, "std"), dep(4, "my_macro")]),
+        ].map(u => ({ ...u, profile: { ...u.profile, panic } })),
+        roots: [5],
+      },
+      packages: Object.fromEntries(Object.values(pkgs).map(p => [p.id, p])),
+    });
+
+    const abort = buildRustGraph(plan("abort"), "/build/rust-target");
+    expect(abort.root.kind).toBe("lib");
+    // The root is named like every other library: by its crate and its hash.
+    expect(abort.root.output).toBe(join("/build/rust-target", triple, "deps", `libmy_root-${abort.root.hash}.rlib`));
+    expect(linkedRlibs(abort).map(u => u.crateName)).toEqual(["my_root", "std", "panic_abort"]);
+
+    const unwind = buildRustGraph(plan("unwind"), "/build/rust-target");
+    expect(linkedRlibs(unwind).map(u => u.crateName)).toEqual(["my_root", "std", "panic_unwind"]);
+  });
+
+  test("--time-trace=on has rustc report its passes, to a file beside the unit's output", () => {
+    const graph = buildRustGraph(planWith(["-Cpanic=immediate-abort"]), "/build/rust-target/shim");
+    const [dep] = graph.units;
+    expect((unitManifest(context(graph), dep) as RustcUnitManifest).phases).toBeUndefined();
+
+    const traced = unitManifest(context(graph, true), dep) as RustcUnitManifest;
+    expect(traced.args).toEqual([...DEP_ARGS(dep), "-Z", "time-passes", "-Z", "time-passes-format=json"]);
+    expect(traced.phases).toBe(`${dep.output}.phases.json`);
   });
 
   test("target rustflags change where an artifact is written but not how its symbols are mangled", () => {

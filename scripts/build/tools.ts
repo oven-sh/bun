@@ -789,9 +789,7 @@ export function findRustLld(os: OS): {
       : findTool({ names: ["rustc"], paths: [join(cargoHome, "bin")], required: false })?.path;
   if (rustc === undefined) return none;
 
-  // The link-only CI mode runs `findRustLld()` on an agent that downloads
-  // `libbun_runtime.a` rather than building it, so the pinned nightly may not be
-  // installed there yet. `rustc --print sysroot` (a rustup proxy invocation)
+  // The pinned nightly may not be installed on this machine yet. `rustc --print sysroot` (a rustup proxy invocation)
   // would auto-install — but the download blows past a short spawnSync timeout
   // and the silent failure leaves `rustLld` undefined, which falls back to the
   // system lld. With cross-language LTO that means an older lld reading newer

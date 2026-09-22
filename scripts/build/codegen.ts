@@ -25,8 +25,9 @@
  * of the step one build late. That is why emitBindgen/emitBindgenV2 declare
  * the per-file Generated*.h headers and not just the .cpp that gets compiled.
  *
- * Files nothing compiles may stay undeclared (.d.ts twins, bundle-modules'
- * eval/ dir, JSSink.lut.txt consumed within its own step). The remaining
+ * Files nothing compiles may stay undeclared (bundle-modules' eval/ dir,
+ * JSSink.lut.txt consumed within its own step). The .d.ts files src/js is
+ * typechecked against are declared, in cfg.typesDir: see `generatedTypes`. The remaining
  * #included exception is BunBuiltinNames+extras.h from bundle-functions.ts,
  * reached through the PCH.
  */
@@ -36,7 +37,7 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { basename, dirname, relative, resolve } from "node:path";
 import type { Sources } from "../glob-sources.ts";
 import { generateBuildOptionsRs } from "./buildOptionsRs.ts";
-import type { Config } from "./config.ts";
+import type { CodegenFields } from "./config.ts";
 import { BuildError, assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
 import { generateJsonByteClass } from "./jsonByteClass.ts";
@@ -48,7 +49,7 @@ import { generateXmlByteClass } from "./xmlByteClass.ts";
 // signatures short.
 interface Ctx {
   n: Ninja;
-  cfg: Config;
+  cfg: CodegenFields;
   sources: Sources;
   o: CodegenOutputs;
   dirStamp: string;
@@ -84,7 +85,7 @@ function readPackageDeps(pkgDir: string): string[] {
  * codegen). Passed as TARGET_PLATFORM/TARGET_ARCH so scripts that inline
  * `process.platform` into bundled JS use the target's value.
  */
-function codegenTarget(cfg: Config): { platform: string; arch: string } {
+function codegenTarget(cfg: CodegenFields): { platform: string; arch: string } {
   const platform =
     cfg.abi === "android"
       ? "android"
@@ -99,9 +100,8 @@ function codegenTarget(cfg: Config): { platform: string; arch: string } {
   return { platform, arch };
 }
 
-export function registerCodegenRules(n: Ninja, cfg: Config): void {
-  // Shell syntax: HOST platform, not target. rust-only cross-compiles on
-  // a linux box for other linux/freebsd targets; these rules run on the host.
+export function registerCodegenRules(n: Ninja, cfg: CodegenFields): void {
+  // Shell syntax: HOST platform, not target; these rules run on the host.
   const hostWin = cfg.host.os === "windows";
   const q = (p: string) => quote(p, hostWin);
   const bun = q(cfg.bun);
@@ -204,7 +204,7 @@ export function registerCodegenRules(n: Ninja, cfg: Config): void {
   });
 }
 
-function codegenDirStamp(cfg: Config): string {
+function codegenDirStamp(cfg: CodegenFields): string {
   return resolve(cfg.codegenDir, ".dir");
 }
 
@@ -219,6 +219,13 @@ function codegenDirStamp(cfg: Config): string {
 export interface CodegenOutputs {
   /** All codegen outputs — use for phony target `codegen`. */
   all: string[];
+
+  /**
+   * The generated TypeScript a typecheck needs: phony target `generated-types`. The type declarations
+   * `src/js/builtins.d.ts` references, in cfg.typesDir, and `src/runtime/bake/generated.ts`. Made from
+   * source alone, so every profile's graph declares the same files (like a dep's `vendor/<name>/.ref`).
+   */
+  generatedTypes: string[];
 
   /**
    * Outputs a Rust crate reads (`include!`, `include_bytes!`), or needs to exist. The crates' edges are ordered
@@ -241,10 +248,7 @@ export interface CodegenOutputs {
    * ALL cpp-relevant codegen outputs — the union of cppHeaders, cppSources,
    * bindgenV2Cpp. cxx compilation order-depends on THIS (not `all`): cxx
    * doesn't need bake.*.js, runtime.out.js, or any other rust-side embedded
-   * outputs. Using `all` would pull bake-codegen in cpp-only CI mode, which
-   * fails on old CI bun versions (bake-codegen shells out to `bun build`
-   * whose CSS url() handling changed between versions). cmake only wired
-   * bake outputs into BUN_ZIG_GENERATED_SOURCES, never C++ deps — same here.
+   * outputs: those are inputs of the Rust crates, not of any C++ object.
    *
    * The "undeclared .h files" issue (some scripts emit .h alongside their
    * declared outputs): those steps also emit a .cpp or .h that IS declared
@@ -279,7 +283,7 @@ export interface CodegenOutputs {
  * Call after registerCodegenRules() and after registerDirStamps() (we use
  * the `mkdir_stamp` rule for the codegen dir).
  */
-export function emitCodegen(n: Ninja, cfg: Config, sources: Sources): CodegenOutputs {
+export function emitCodegen(n: Ninja, cfg: CodegenFields, sources: Sources): CodegenOutputs {
   n.comment("─── Codegen ───");
   n.blank();
 
@@ -290,6 +294,7 @@ export function emitCodegen(n: Ninja, cfg: Config, sources: Sources): CodegenOut
 
   const o: CodegenOutputs = {
     all: [],
+    generatedTypes: [],
     rustInputs: [],
     cppSources: [],
     cppHeaders: [],
@@ -337,6 +342,7 @@ export function emitCodegen(n: Ninja, cfg: Config, sources: Sources): CodegenOut
   emitCompressedEmbeds(ctx);
 
   n.phony("codegen", o.all);
+  n.phony("generated-types", o.generatedTypes);
   n.blank();
 
   // Assemble cppAll — the cxx-relevant subset. See field docstring.
@@ -357,7 +363,7 @@ export function emitCodegen(n: Ninja, cfg: Config, sources: Sources): CodegenOut
  * implicit output (so deleting node_modules/ correctly retriggers install,
  * and restat prunes downstream when install was a no-op).
  */
-function emitPackageInstall(n: Ninja, cfg: Config, pkgDir: string): string {
+function emitPackageInstall(n: Ninja, cfg: CodegenFields, pkgDir: string): string {
   const rule = cfg.packageManager === "npm" ? "npm_install" : "bun_install";
   const depPackageJsons = readPackageDeps(pkgDir);
   assert(depPackageJsons.length > 0, `package.json has no dependencies: ${pkgDir}/package.json`);
@@ -397,7 +403,7 @@ function emitPackageInstall(n: Ninja, cfg: Config, pkgDir: string): string {
 
 /**
 /** `--debug=ON` / `--debug=OFF` flag used by several scripts. */
-function debugFlag(cfg: Config): string {
+function debugFlag(cfg: CodegenFields): string {
   return cfg.debug ? "--debug=ON" : "--debug=OFF";
 }
 
@@ -405,7 +411,7 @@ function debugFlag(cfg: Config): string {
  * Shell-quote args for a codegen rule command string. These rules wrap in
  * `cmd /c` on a Windows HOST, so quoting follows the host shell.
  */
-function shJoin(cfg: Config, args: string[]): string {
+function shJoin(cfg: CodegenFields, args: string[]): string {
   return quoteArgs(args, cfg.host.os === "windows");
 }
 
@@ -627,11 +633,14 @@ function emitErrorCode({ n, cfg, o, dirStamp }: Ctx): void {
     // for the same reason.
     resolve(cfg.cwd, "src", "jsc", "bindings", "ErrorCode.cpp"),
     resolve(cfg.cwd, "src", "jsc", "bindings", "ErrorCode.h"),
+    // Read by the script: ErrorCode.d.ts leaves out every $ERR_* that builtins.d.ts declares by hand.
+    resolve(cfg.cwd, "src", "js", "builtins.d.ts"),
   ];
 
   const cppOutputs = [resolve(cfg.codegenDir, "ErrorCode+List.h"), resolve(cfg.codegenDir, "ErrorCode+Data.h")];
   const rustOutput = resolve(cfg.codegenDir, "ErrorCode.generated.rs");
-  const outputs = [...cppOutputs, rustOutput];
+  const types = resolve(cfg.typesDir, "ErrorCode.d.ts");
+  const outputs = [...cppOutputs, rustOutput, types];
 
   n.build({
     outputs,
@@ -641,12 +650,13 @@ function emitErrorCode({ n, cfg, o, dirStamp }: Ctx): void {
     vars: {
       cwd: cfg.cwd,
       desc: "ErrorCode+*.h",
-      args: shJoin(cfg, [script, cfg.codegenDir]),
+      args: shJoin(cfg, [script, cfg.codegenDir, cfg.typesDir]),
     },
   });
 
   o.all.push(...outputs);
-  o.rustInputs.push(...outputs);
+  o.generatedTypes.push(types);
+  o.rustInputs.push(...cppOutputs, rustOutput);
   o.cppHeaders.push(...cppOutputs);
 }
 
@@ -665,20 +675,22 @@ function emitGeneratedClasses({ n, cfg, sources, o, dirStamp }: Ctx): void {
     // rebuild that crate in the same build as this step if it knows the file.
     resolve(cfg.codegenDir, "generated_classes.rs"),
   ];
+  const types = resolve(cfg.typesDir, "ZigGeneratedClasses.d.ts");
 
   n.build({
-    outputs,
+    outputs: [...outputs, types],
     rule: "codegen",
     inputs: [script, ...sources.zigGeneratedClasses],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
       desc: "ZigGeneratedClasses.{cpp,h,rs}",
-      args: shJoin(cfg, [script, ...sources.zigGeneratedClasses, cfg.codegenDir]),
+      args: shJoin(cfg, [script, ...sources.zigGeneratedClasses, cfg.codegenDir, cfg.typesDir]),
     },
   });
 
-  o.all.push(...outputs);
+  o.all.push(...outputs, types);
+  o.generatedTypes.push(types);
   o.rustInputs.push(...outputs);
   o.cppSources.push(outputs[1]!); // .cpp
   o.cppHeaders.push(outputs[0]!, outputs[2]!, outputs[3]!, outputs[4]!, outputs[5]!); // .h files
@@ -806,9 +818,11 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
     o.internalModulesAsm,
     o.internalModulesBin,
   ];
+  // generated.d.ts from bundle-modules.ts, WebCoreJSBuiltins.d.ts from the bundle-functions.ts it calls.
+  const types = [resolve(cfg.typesDir, "generated.d.ts"), resolve(cfg.typesDir, "WebCoreJSBuiltins.d.ts")];
 
   n.build({
-    outputs,
+    outputs: [...outputs, ...types],
     rule: "codegen_bun",
     inputs: [script, ...sources.js, ...sources.jsCodegen, extraInput, errorCodeInput],
     orderOnlyInputs: [dirStamp],
@@ -817,11 +831,12 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
       desc: "JS modules (bundle-modules)",
       // Note: arg is BUILD_PATH (buildDir), not CODEGEN_PATH. The script
       // derives CODEGEN_DIR = join(BUILD_PATH, "codegen") internally.
-      args: shJoin(cfg, ["run", script, debugFlag(cfg), cfg.buildDir]),
+      args: shJoin(cfg, ["run", script, debugFlag(cfg), cfg.buildDir, cfg.typesDir]),
     },
   });
 
-  o.all.push(...outputs);
+  o.all.push(...outputs, ...types);
+  o.generatedTypes.push(...types);
   o.rustInputs.push(...outputs);
   o.cppSources.push(outputs[0]!); // WebCoreJSBuiltins.cpp
   o.cppHeaders.push(...outputs.filter(p => p.endsWith(".h")));
@@ -845,9 +860,12 @@ function emitBakeCodegen({ n, cfg, sources, o, dirStamp }: Ctx): void {
     resolve(cfg.codegenDir, "bake.server.js"),
     resolve(cfg.codegenDir, "bake.error.js"),
   ];
+  // The enums of dev_server/mod.rs as TypeScript, written beside the runtime sources that import it. It is the
+  // same in every profile, like the declarations in cfg.typesDir.
+  const generatedTs = resolve(cfg.cwd, "src", "runtime", "bake", "generated.ts");
 
   n.build({
-    outputs,
+    outputs: [...outputs, generatedTs],
     rule: "codegen_bun",
     inputs: [script, ...sources.bakeRuntime],
     orderOnlyInputs: [dirStamp],
@@ -858,7 +876,8 @@ function emitBakeCodegen({ n, cfg, sources, o, dirStamp }: Ctx): void {
     },
   });
 
-  o.all.push(...outputs);
+  o.all.push(...outputs, generatedTs);
+  o.generatedTypes.push(generatedTs);
   // Debug reads these at runtime; release embeds them.
   o.rustInputs.push(...outputs);
 }
@@ -992,9 +1011,7 @@ function emitJsSink({ n, cfg, o, dirStamp }: Ctx): void {
   o.cppHeaders.push(outputs[1]!, outputs[2]!); // .h + .lut.h
   // bun_runtime `include!`s generated_jssink.rs, so the workspace crate edges
   // must order after this codegen step — `rustInputs` is the list they wait
-  // on (same as generated_host_exports). Without this, `mode: "rust-only"`
-  // (CI's build-rust job, which compiles no C++ so nothing else pulls
-  // JSSink.cpp/.h) never runs this edge and rustc hits the missing file.
+  // on (same as generated_host_exports).
   o.rustInputs.push(jssinkRs);
 }
 

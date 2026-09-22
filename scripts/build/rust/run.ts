@@ -1,7 +1,7 @@
 /**
  * Build-time driver for one Rust unit. ninja runs
  *
- *   run.ts rustc        <unit.json>   compile: a library, a proc-macro, a build script, the staticlib or bin root
+ *   run.ts rustc        <unit.json>   compile: a library, a proc-macro, a build script, a bin root
  *   run.ts build-script <unit.json>   run a compiled build script, record its `cargo:` directives
  *
  * `<unit.json>` is the `UnitManifest` configure wrote (units.ts): argv, env, cwd, outputs. This process lives
@@ -28,6 +28,7 @@ import { availableParallelism, constants as osConstants } from "node:os";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { BuildError } from "../error.ts";
 import { writeIfChanged } from "../fs.ts";
+import type { Phase } from "../timings.ts";
 import { type BuildScriptOutput, envify } from "./cargo-env.ts";
 import type { RustcUnitManifest, UnitManifest } from "./units.ts";
 
@@ -164,6 +165,12 @@ function runRustc(unit: RustcUnitManifest): void {
   const finish = (status: number): never => {
     if (status === 0) {
       stampOutput(unit.output);
+      // A ninja that was not told of the `.rmeta` early released it now, with the rest: same time as the output, so
+      // that the timings do not read an early release that did not happen.
+      if (unit.rmeta !== undefined && earlyOutputPrefix === undefined && existsSync(unit.rmeta)) {
+        const { mtime } = statSync(unit.output);
+        utimesSync(unit.rmeta, mtime, mtime);
+      }
       // A bin is also wanted under its target's name, where its user looks for it (cargo "uplifts" it the same way).
       if (unit.binDestination !== undefined) {
         mkdirSync(dirname(unit.binDestination), { recursive: true });
@@ -171,6 +178,7 @@ function runRustc(unit: RustcUnitManifest): void {
         stampOutput(unit.binDestination);
       }
       writeDepfile(unit);
+      if (unit.phases !== undefined) writeFileSync(unit.phases, JSON.stringify(phases) + "\n");
     }
     process.exit(status);
   };
@@ -179,6 +187,7 @@ function runRustc(unit: RustcUnitManifest): void {
   // writes a metadata artifact. A ninja that releases outputs early says so by exporting the edge's
   // `early_output_prefix`; any other ninja leaves the variable unset, and nothing is announced.
   const earlyOutputPrefix = process.env.NINJA_EARLY_OUTPUT_PREFIX || undefined;
+  const phases: Phase[] = [];
   const child = spawn(unit.rustc, spawnableArgv(unit, argv), {
     cwd: unit.cwd,
     env,
@@ -193,11 +202,17 @@ function runRustc(unit: RustcUnitManifest): void {
     while ((newline = pending.indexOf("\n")) >= 0) {
       const line = pending.slice(0, newline);
       pending = pending.slice(newline + 1);
+      const pass = unit.phases === undefined ? undefined : timePass(line);
+      if (pass !== undefined) {
+        phases.push(pass);
+        continue;
+      }
       if (!renderRustcMessage(line) || unit.rmeta === undefined) continue;
       // The .rmeta is complete: give it a current mtime (see stampOutput) and tell ninja, which starts the
-      // dependents now instead of when this process exits.
+      // dependents now instead of when this process exits. Any other ninja gets it stamped with the output.
+      if (earlyOutputPrefix === undefined) continue;
       stampOutput(unit.rmeta);
-      if (earlyOutputPrefix !== undefined) emit(1, `${earlyOutputPrefix}${unit.rmetaNinjaName}\n`);
+      emit(1, `${earlyOutputPrefix}${unit.rmetaNinjaName}\n`);
     }
   });
   child.on("error", e => {
@@ -208,6 +223,17 @@ function runRustc(unit: RustcUnitManifest): void {
     if (pending !== "") renderRustcMessage(pending);
     finish(exitStatus(status, signal));
   });
+}
+
+/**
+ * A line of `-Z time-passes -Z time-passes-format=json`: `time: {"pass":…,"time":<seconds>,…}`, printed as the pass
+ * ends. rustc gives the duration and no clock time, so the end is when the line arrived.
+ */
+export function timePass(line: string): Phase | undefined {
+  if (!line.startsWith("time: {")) return undefined;
+  const { pass, time } = JSON.parse(line.slice("time: ".length)) as { pass: string; time: number };
+  const endMs = Date.now();
+  return { name: pass, startMs: endMs - time * 1000, endMs };
 }
 
 /** Print one line of rustc's `--error-format=json` stream the way rustc would have; true if it announces the metadata artifact. */

@@ -96,12 +96,6 @@ describe.skipIf(isMacOS)("macOS cross-compile config (non-darwin host)", () => {
     expect(() => resolveDarwin({}, mockToolchain({ llvmStrip: undefined }))).toThrow(/llvm-strip/);
   });
 
-  test("rust-only mode skips SDK resolution (no Mach-O tools needed)", () => {
-    const cfg = resolveDarwin({ mode: "rust-only" }, mockToolchain({ ld64Lld: undefined, llvmStrip: undefined }));
-    expect(cfg.crossTarget).toBe("arm64-apple-macosx");
-    expect(cfg.osxSysroot).toBeUndefined();
-  });
-
   test("deployment target is overridable", () => {
     const cfg = resolveDarwin({ osxDeploymentTarget: "14.0" });
     expect(cfg.osxDeploymentTarget).toBe("14.0");

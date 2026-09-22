@@ -1234,18 +1234,6 @@ impl<K: Default, V: Default, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     }
 }
 
-impl<K, V, C, A: MapAllocator> ArrayHashMapExt for ArrayHashMap<K, V, C, A> {
-    type Key = K;
-    type Value = V;
-    type Iterator<'a>
-        = Iter<'a, K, V>
-    where
-        Self: 'a;
-    fn iterator(&mut self) -> Iter<'_, K, V> {
-        ArrayHashMap::iterator(self)
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // StringArrayHashMap<V, C> — `[]const u8`-keyed wrapper
 // ──────────────────────────────────────────────────────────────────────────

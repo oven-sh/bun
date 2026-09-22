@@ -50,7 +50,7 @@ function check() {
   }
 }
 
-export function generateJsonByteClass(cfg: Config): { h: string; rs: string } {
+export function generateJsonByteClass(cfg: Pick<Config, "codegenDir">): { h: string; rs: string } {
   check();
 
   const banner = (comment: string) => [

@@ -11,13 +11,13 @@ use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
 #[derive(Default)]
-pub struct Mv {
+pub(crate) struct Mv {
     pub args: MvArgs,
     pub(crate) state: MvState,
 }
 
 #[derive(Default)]
-pub struct MvArgs {
+pub(crate) struct MvArgs {
     /// Index into argv where source paths start.
     pub(crate) sources_start: usize,
     /// argv[sources_start..target_idx] are sources; argv[target_idx] is dest.
@@ -26,7 +26,7 @@ pub struct MvArgs {
 }
 
 #[derive(Default)]
-pub enum MvState {
+pub(crate) enum MvState {
     #[default]
     Idle,
     CheckTarget(Box<ShellMvCheckTargetTask>),
@@ -401,7 +401,7 @@ enum MvFlag {
 
 /// `openat(target, O_RDONLY|O_DIRECTORY)`
 /// on a worker thread to learn whether the destination is a directory.
-pub struct ShellMvCheckTargetTask {
+pub(crate) struct ShellMvCheckTargetTask {
     pub(crate) cmd: NodeId,
     pub(crate) cwd: bun_sys::Fd,
     pub(crate) target: ZBox,
@@ -425,7 +425,7 @@ impl ShellMvCheckTargetTask {
 }
 
 /// renameat() each source into the target.
-pub struct ShellMvBatchedTask {
+pub(crate) struct ShellMvBatchedTask {
     pub(crate) cmd: NodeId,
     /// Index into `MvState::Executing::tasks` so the main-thread completion
     /// can route to `Mv::batched_move_task_done`.

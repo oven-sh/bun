@@ -2878,7 +2878,7 @@ async function getExecPathFromBuildkite(target: string, buildId?: string): Promi
 
   let zipPath: string | undefined;
   downloadLoop: for (let i = 0; i < 10; i++) {
-    // build-bun also uploads libbun-*.a / libbun_runtime.a / dep libs; only the zips are wanted here.
+    // build-bun also uploads libbun-*.a / dep libs; only the zips are wanted here.
     const args = ["artifact", "download", "*.zip", releasePath, "--step", target];
     if (buildId) {
       args.push("--build", buildId);

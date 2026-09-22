@@ -124,7 +124,7 @@ where
 // `&T` so the impls below compile against either.
 #[bun_jsc::JsClass(name = "NodeJSFS", no_constructor)]
 #[derive(Default)]
-pub struct Binding {
+pub(crate) struct Binding {
     pub(crate) node_fs: JsCell<NodeFS>,
 }
 
@@ -137,7 +137,7 @@ impl Binding {
         Box::new(init)
     }
 
-    pub fn finalize(self: Box<Self>) {
+    pub(crate) fn finalize(self: Box<Self>) {
         if self.node_fs.get().vm.is_some() {
             // `node_fs.vm` is always the per-thread VM when set; route the
             // read through the safe singleton accessor.
@@ -288,9 +288,9 @@ macro_rules! node_fs_bindings {
     ( $( $sync:ident / $async_:ident => $F:ident, $Args:ty, $Ret:ty ; )* ) => {
         impl Binding {
             $(
-                pub const $sync: NodeFSFunction =
+                pub(crate) const $sync: NodeFSFunction =
                     call_sync::<$Ret, $Args, { NodeFSFunctionEnum::$F }>();
-                pub fn $async_(
+                pub(crate) fn $async_(
                     this: &Self,
                     global: &JSGlobalObject,
                     frame: &CallFrame,

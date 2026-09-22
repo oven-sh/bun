@@ -106,24 +106,29 @@ static bool transcodeDecodeToUtf16(std::span<const uint8_t> input, TranscodeEnco
 // Returns nullptr with an exception pending when the result cannot be allocated.
 static JSC::JSUint8Array* transcodeEncodeNarrow(JSGlobalObject* globalObject, const WTF::Vector<char16_t>& units, char16_t maxCodePoint)
 {
-    // One byte per code point: the lead of a surrogate pair writes the '?' of the pair, and its trail writes nothing.
-    constexpr auto writesByte = [](char16_t unit) { return !U16_IS_TRAIL(unit); };
-    size_t length = 0;
-    for (const char16_t unit : units)
-        length += writesByte(unit);
-    auto* result = WebCore::createUninitializedBuffer(globalObject, length);
-    if (!result) [[unlikely]]
-        return nullptr;
-    const std::span<uint8_t> out = result->typedSpan();
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSC::JSUint8Array* result = nullptr;
 
     // Fast path: a latin1 target with in-range contents converts in bulk.
-    if (maxCodePoint == 0xFF && length == units.size()) {
-        auto converted = simdutf::convert_utf16le_to_latin1_with_errors(units.begin(), units.size(), reinterpret_cast<char*>(out.data()));
+    if (maxCodePoint == 0xFF) {
+        result = WebCore::createUninitializedBuffer(globalObject, units.size());
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        auto converted = simdutf::convert_utf16le_to_latin1_with_errors(units.begin(), units.size(), reinterpret_cast<char*>(result->typedVector()));
         if (converted.error == simdutf::error_code::SUCCESS)
             return result;
     }
     // Substitution path: simdutf conversions are strict, so out-of-range
     // code points ('?' in ICU) are handled per unit.
+    constexpr auto writesByte = [](char16_t unit) { return !U16_IS_TRAIL(unit); };
+    size_t length = 0;
+    for (const char16_t unit : units)
+        length += writesByte(unit);
+    // A surrogate pair writes one '?', so a source with pairs needs a shorter result than the bulk attempt allocated.
+    if (!result || length != units.size()) {
+        result = WebCore::createUninitializedBuffer(globalObject, length);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    const std::span<uint8_t> out = result->typedSpan();
     size_t written = 0;
     for (const char16_t unit : units) {
         if (writesByte(unit))

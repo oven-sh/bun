@@ -84,11 +84,12 @@ impl GPUCommandEncoder {
         const WHAT: &str = "copyBufferToBuffer";
         let mut held = Held::default();
         let source = held.id::<GPUBuffer>(global, callframe.argument(0), WHAT, "GPUBuffer")?;
+        // WebIDL picks the overload by argument count, so a call that mixes the two forms is a TypeError.
         let (source_offset, destination, destination_offset, size) =
-            if let Some(destination) = held.try_id::<GPUBuffer>(callframe.argument(1)) {
+            if callframe.arguments_count() <= 3 {
                 (
                     0,
-                    destination,
+                    held.id::<GPUBuffer>(global, callframe.argument(1), WHAT, "GPUBuffer")?,
                     0,
                     args::optional_u64(global, callframe.argument(2), "copyBufferToBuffer: size")?,
                 )

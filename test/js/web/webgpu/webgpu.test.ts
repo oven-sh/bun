@@ -1046,6 +1046,21 @@ describe.skipIf(!hasAdapter)("with a device", () => {
         encoder.finish(null);
       }),
     ).toBeNull();
+
+    // The argument count picks the overload, so a call that mixes the two forms of copyBufferToBuffer throws.
+    const source = device.createBuffer({ size: 16, usage: GPUBufferUsage.COPY_SRC });
+    const target = device.createBuffer({ size: 16, usage: GPUBufferUsage.COPY_DST });
+    const copies = device.createCommandEncoder();
+    expect(() => copies.copyBufferToBuffer(source, target, 0, 0, 16)).toThrow(TypeError);
+    expect(() => copies.copyBufferToBuffer(source, target, 16, 0)).toThrow(TypeError);
+    expect(() => copies.copyBufferToBuffer(source, 0, target)).toThrow(TypeError);
+    expect(() => copies.copyBufferToBuffer(source)).toThrow(TypeError);
+    copies.copyBufferToBuffer(source, target);
+    copies.copyBufferToBuffer(source, target, 8);
+    copies.copyBufferToBuffer(source, target, undefined);
+    copies.copyBufferToBuffer(source, 0, target, 0);
+    copies.copyBufferToBuffer(source, 4, target, 8, 8);
+    expect(await validationError(device, () => copies.finish())).toBeNull();
     device.destroy();
   });
 

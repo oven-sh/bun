@@ -27,6 +27,9 @@ pub struct Walker {
     skip_all: Box<[u64]>,
     seed: u64,
     pub resolve_unknown_entry_types: bool,
+    /// Report a symlink whose target is a regular file as `File`. A symlink
+    /// to a directory, or a dangling one, stays `SymLink`. POSIX only.
+    pub follow_file_symlinks: bool,
 }
 
 /// The directory a walk starts from. The walker never closes a borrowed
@@ -95,6 +98,23 @@ impl Walker {
                             }
                         } else {
                             base.kind
+                        };
+                        #[cfg(not(windows))]
+                        let kind: sys::EntryKind = if kind == sys::EntryKind::SymLink
+                            && self.follow_file_symlinks
+                        {
+                            let dir_fd = self.stack[top_idx].iter.dir();
+                            match sys::fstatat(dir_fd, base.name.as_zstr()) {
+                                Ok(stat_buf)
+                                    if sys::kind_from_mode(stat_buf.st_mode as sys::Mode)
+                                        == sys::EntryKind::File =>
+                                {
+                                    sys::EntryKind::File
+                                }
+                                _ => kind,
+                            }
+                        } else {
+                            kind
                         };
                         #[cfg(windows)]
                         let kind: sys::EntryKind = base.kind;
@@ -276,5 +296,6 @@ fn walk_root(
         skip_filenames: skip_filenames_,
         skip_dirnames: skip_dirnames_,
         resolve_unknown_entry_types: false,
+        follow_file_symlinks: false,
     })
 }

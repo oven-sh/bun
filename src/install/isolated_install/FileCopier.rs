@@ -43,6 +43,7 @@ impl FileCopier {
                     skip_dirnames,
                 )?;
                 w.resolve_unknown_entry_types = true;
+                w.follow_file_symlinks = true;
                 w
             },
         })

@@ -1024,6 +1024,7 @@ impl<'a> PackageInstall<'a> {
             Err(err) => return Ok(InstallResult::fail(err.into(), Step::OpeningCacheDir, None)),
         };
         walker_.resolve_unknown_entry_types = true;
+        walker_.follow_file_symlinks = true;
 
         fn copy(destination_dir_: &Dir, walker: &mut Walker) -> crate::Result<()> {
             let mut stackpath = [0u8; path::MAX_PATH_BYTES];
@@ -1186,6 +1187,7 @@ impl<'a> PackageInstall<'a> {
             skip_dirs,
         ));
         walker.resolve_unknown_entry_types = true;
+        walker.follow_file_symlinks = true;
 
         #[cfg(not(windows))]
         {

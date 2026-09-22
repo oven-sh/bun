@@ -211,7 +211,7 @@ _bun_completions_inner() {
             --jsx-runtime|--jsx-factory|--jsx-fragment|--jsx-import-source|\
             --omit|--linker|--define|-d|--external|--inject|-i|--tsconfig-override|\
             --main-fields|--extension-order|--conditions|-e|--eval|-u|--use|\
-            --outdir|--outfile|--format|--timeout|--rerun-each)
+            --outdir|--outfile|--format|--timeout|--rerun-each|--package)
                 if [[ "${COMP_WORDS[i+1]}" == "=" ]]; then
                     skip=2
                 else
@@ -300,7 +300,7 @@ _bun_completions_inner() {
                 _filter_words_reply "${bins}"
             fi
             _file_arguments
-            _long_short_completion "--bun --install --help -h"
+            _long_short_completion "${BUNX_OPTIONS}"
             return ;;
         "")
             _compgen_reply -W "${SUBCOMMANDS}" -- "${cur_word}"
@@ -314,8 +314,7 @@ _bun_completions_inner() {
 }
 
 _bunx_completions_inner() {
-    local BUNX_OPTIONS="--bun --install --help --cwd -h"
-
+    
     if [[ "${prev}" == "=" && "${prev_prev}" == "--cwd" ]] || [[ "${prev}" == "--cwd" ]]; then
         _compgen_reply -d -S / -- "${cur_word}"
         return

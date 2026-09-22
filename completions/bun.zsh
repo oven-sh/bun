@@ -1318,7 +1318,10 @@ _bunx() {
 
     _arguments -C \
         '(-b --bun)'{-b,--bun}'[Run with Bun runtime]' \
-        '--install[Install package if not found]' \
+        '(-p --package)'{-p,--package}'[Explicit package name]:package:' \
+        '--no-install[Do not install package]' \
+        '--verbose[Show verbose output]' \
+        '--silent[Silence output]' \
         '(-h --help)'{-h,--help}'[Print help]' \
         '--cwd=[Change working directory]:directory:_files -W ${(q)target_cwd} -/' \
         '1:package:->pkg' \

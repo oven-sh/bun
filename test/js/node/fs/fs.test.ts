@@ -513,7 +513,8 @@ describe("FileHandle", () => {
       const fs = require("node:fs");
       const os = require("node:os");
       const path = require("node:path");
-      const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "fh-gc-closed-")), "f.txt");
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fh-gc-closed-"));
+      const file = path.join(dir, "f.txt");
       fs.writeFileSync(file, "x");
       const diags = [];
       process.on("uncaughtException", e => diags.push({ code: e.code, errno: e.errno, syscall: e.syscall, path: e.path, message: e.message }));
@@ -529,6 +530,7 @@ describe("FileHandle", () => {
           await new Promise(r => setTimeout(r, 25));
         }
         console.log(JSON.stringify({ fd, file, diags }));
+        fs.rmSync(dir, { recursive: true, force: true });
       })();
     `;
     await using proc = Bun.spawn({

@@ -90,7 +90,14 @@ export const libjpegTurbo: Dependency = {
     commit: LIBJPEG_TURBO_COMMIT,
   }),
 
-  patches: ["patches/libjpeg-turbo/8bit-only.patch", "patches/libjpeg-turbo/jbun_stubs.c"],
+  // simd-probe-once.patch: simd/jsimd.c runs cpuid for every compress and
+  // decompress object. cpuid is a VM exit under a hypervisor (about 2 us each,
+  // three per object), so the patch asks once per process.
+  patches: [
+    "patches/libjpeg-turbo/8bit-only.patch",
+    "patches/libjpeg-turbo/simd-probe-once.patch",
+    "patches/libjpeg-turbo/jbun_stubs.c",
+  ],
 
   build: cfg => {
     const withSimd: [string, string] = ["#cmakedefine WITH_SIMD 1", "#define WITH_SIMD 1"];

@@ -7289,8 +7289,9 @@ describe("a process.nextTick queued by an fs callback runs before a microtask it
       });
     `;
     await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+    expect(stderr).toBe("");
     expect(stdout.trim()).toBe("callback nextTick microtask");
     expect(exitCode).toBe(0);
   });

@@ -863,6 +863,12 @@ pub mod ssl_wrapper {
                 self.handle_traffic();
                 return Ok(0);
             }
+            // SSL_write would run the pending handshake itself: unreported if it completes it, and
+            // re-entrant when ALPNCallback writes. Owners retry the write after on_handshake.
+            if self.flags.handshake_state() == HandshakeState::HandshakePending {
+                self.handle_traffic();
+                return Err(WriteDataError::WantRead);
+            }
             // SAFETY: ssl is a live SSL*; data is a valid &[u8] for len bytes.
             let written = unsafe {
                 boring_sys::SSL_write(
@@ -974,6 +980,10 @@ pub mod ssl_wrapper {
             // SAFETY: ssl is a live SSL*.
             if unsafe { boring_sys::SSL_is_init_finished(ssl.as_ptr()) } != 0 {
                 // handshake already completed nothing to do here
+                debug_assert!(
+                    self.flags.handshake_state() != HandshakeState::HandshakePending,
+                    "the initial handshake completed outside update_handshake_state, unreported"
+                );
                 // SAFETY: ssl is a live SSL*.
                 if (unsafe { boring_sys::SSL_get_shutdown(ssl.as_ptr()) }
                     & boring_sys::SSL_RECEIVED_SHUTDOWN)

@@ -1707,36 +1707,34 @@ describe.serial("fetch() receive backpressure — an unread body hands its conne
 // Serial: every test here runs full collections, which would stall the concurrent blocks above.
 describe.serial("fetch() receive backpressure — an abandoned body stream under the mark", () => {
   const N = 4;
-  const shapes: [string, (res: Response) => Promise<unknown>, "quiet" | "trickle"][] = [
-    ["res.body touched", async res => res.body, "quiet"],
-    ["getReader(), never read", async res => void res.body!.getReader(), "quiet"],
+  const shapes: [string, "quiet" | "trickle", (res: Response) => Promise<unknown>][] = [
+    ["res.body touched", "quiet", async res => res.body],
+    ["getReader(), never read", "quiet", async res => void res.body!.getReader()],
     // A pull that is in flight when the stream is dropped waits for bytes, and holds the
     // stream until some arrive for it.
     [
       "one read(), then releaseLock()",
+      "trickle",
       async res => {
         const reader = res.body!.getReader();
         await reader.read();
         reader.releaseLock();
       },
-      "trickle",
     ],
-    ["dropped while a reader holds the lock", async res => void (await res.body!.getReader().read()), "trickle"],
+    ["dropped while a reader holds the lock", "trickle", async res => void (await res.body!.getReader().read())],
   ];
 
-  for (const [name, shape, peer] of shapes) {
-    test(`${name}, ${peer} peer: the stream is collected and its fetch is aborted`, async () => {
-      await using origin = await quietOrigin();
-      // Its own frame, so that nothing on this one still refers to a response afterwards.
-      async function abandonOne() {
-        await shape(await fetch(origin.url));
-      }
-      for (let i = 0; i < N; i++) await abandonOne();
-      await origin.respondedTo(N);
-      if (peer === "trickle") await origin.trickle();
-      await collectUntil(origin.closedAtLeast(N));
-    });
-  }
+  test.each(shapes)("%s, %s peer: the stream is collected and its fetch is aborted", async (_name, peer, shape) => {
+    await using origin = await quietOrigin();
+    // Its own frame, so that nothing on this one still refers to a response afterwards.
+    async function abandonOne() {
+      await shape(await fetch(origin.url));
+    }
+    for (let i = 0; i < N; i++) await abandonOne();
+    await origin.respondedTo(N);
+    if (peer === "trickle") await origin.trickle();
+    await collectUntil(origin.closedAtLeast(N));
+  });
 
   test("an S3 stream, trickle peer: the stream is collected and its download is aborted", async () => {
     await using origin = await quietOrigin();
@@ -1794,22 +1792,20 @@ describe.serial("fetch() receive backpressure — an abandoned body stream under
     ],
   ];
 
-  for (const [name, consume] of consumers) {
-    test(`${name} gets a whole body that trickles in while the collector runs`, async () => {
-      using dir = tempDir("fetch-trickle-consumer", {});
-      await using origin = await quietOrigin();
-      // Its own frame: once it returns, the consumer's promise is all that is held.
-      const received = (async () => consume(await fetch(origin.url), String(dir)))();
-      await origin.respondedTo(1);
-      for (let i = 1; i < PIECES; i++) {
-        await stat(import.meta.path);
-        Bun.gc(true);
-        await origin.trickle();
-      }
+  test.each(consumers)("%s gets a whole body that trickles in while the collector runs", async (_name, consume) => {
+    using dir = tempDir("fetch-trickle-consumer", {});
+    await using origin = await quietOrigin();
+    // Its own frame: once it returns, the consumer's promise is all that is held.
+    const received = (async () => consume(await fetch(origin.url), String(dir)))();
+    await origin.respondedTo(1);
+    for (let i = 1; i < PIECES; i++) {
       await stat(import.meta.path);
       Bun.gc(true);
-      await origin.finish();
-      expect(await received).toBe(PIECES * PIECE);
-    });
-  }
+      await origin.trickle();
+    }
+    await stat(import.meta.path);
+    Bun.gc(true);
+    await origin.finish();
+    expect(await received).toBe(PIECES * PIECE);
+  });
 });

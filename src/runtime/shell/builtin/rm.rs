@@ -971,9 +971,10 @@ impl ShellRmTask {
         // Operands only: a listed entry exists, even with a name NT cannot open.
         // SAFETY: `dir_task` is live; `remove_entry_file` failed before any hand-off.
         debug_assert!(unsafe { (*dir_task).parent_task.is_null() });
+        // Not `shell_lstatat`: its Win32 path stops at MAX_PATH, so it reports
+        // ENOENT for a deep file that the NT path of the unlink did reach.
         let missing = e.get_errno() == E::EINVAL
-            && crate::shell::interpreter::shell_lstatat(self.cwd, path)
-                .is_err_and(|err| err.get_errno() == E::ENOENT);
+            && bun_sys::lstatat(self.cwd, path).is_err_and(|err| err.get_errno() == E::ENOENT);
         if !missing {
             return Err(e);
         }

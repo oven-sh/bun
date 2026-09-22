@@ -1,5 +1,5 @@
 import { jscDescribe } from "bun:jsc";
-import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe } from "harness";
+import { bunEnv, bunExe, gcTick, isASAN, isCI, isDebug, nodeExe } from "harness";
 import { createTest } from "node-harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import dc from "node:diagnostics_channel";
@@ -6485,6 +6485,7 @@ describe.concurrent("http2 RST_STREAM from the peer while the readable side is o
   const FRAME_HEADERS = 1;
   const FRAME_SETTINGS = 4;
   const FRAME_PING = 6;
+  const FRAME_GOAWAY = 7;
   const FLAG_ACK = 1;
   const BODY = Buffer.alloc(100, "a");
   // HPACK: ":status: 200".
@@ -6495,6 +6496,12 @@ describe.concurrent("http2 RST_STREAM from the peer while the readable side is o
   const TRAILERS = Buffer.from([0x00, 0x01, 0x78, 0x01, 0x79]);
   const SERVER_PREFACE = Buffer.concat([
     new http2utils.SettingsFrame(false).data,
+    new http2utils.SettingsFrame(true).data,
+  ]);
+  // SETTINGS with SETTINGS_MAX_CONCURRENT_STREAMS (0x3) = 1, then the ACK of the client's SETTINGS.
+  const ONE_STREAM_PREFACE = Buffer.concat([
+    new http2utils.Frame(6, FRAME_SETTINGS, 0, 0).data,
+    Buffer.from([0x00, 0x03, 0x00, 0x00, 0x00, 0x01]),
     new http2utils.SettingsFrame(true).data,
   ]);
 
@@ -6551,7 +6558,7 @@ describe.concurrent("http2 RST_STREAM from the peer while the readable side is o
     responseFrames,
     requestArgs,
     run,
-    { preface = SERVER_PREFACE, sessionErrors = [] } = {},
+    { preface = SERVER_PREFACE, sessionErrors = [], onFrame = () => {}, connectOptions } = {},
   ) {
     const framesFromClient = [];
     const server = net.createServer(socket => {
@@ -6566,12 +6573,13 @@ describe.concurrent("http2 RST_STREAM from the peer while the readable side is o
             socket.write(Buffer.concat(responseFrames(id)));
           } else if (type !== FRAME_SETTINGS) {
             framesFromClient.push(`${type}#${id}`);
+            onFrame(type, socket);
           }
         }),
       );
     });
     await once(server.listen(0, "127.0.0.1"), "listening");
-    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`, connectOptions);
     const seenSessionErrors = [];
     client.on("error", err => seenSessionErrors.push(err.message));
     try {
@@ -6786,12 +6794,6 @@ describe.concurrent("http2 RST_STREAM from the peer while the readable side is o
             new http2utils.HeadersFrame(id, RESPONSE_HEADERS, 0, true).data,
             new http2utils.DataFrame(id, BODY, 0, true).data,
           ];
-    // SETTINGS with SETTINGS_MAX_CONCURRENT_STREAMS (0x3) = 1, then the ACK of the client's SETTINGS.
-    const preface = Buffer.concat([
-      new http2utils.Frame(6, FRAME_SETTINGS, 0, 0).data,
-      Buffer.from([0x00, 0x03, 0x00, 0x00, 0x00, 0x01]),
-      new http2utils.SettingsFrame(true).data,
-    ]);
     const run = async (client, first) => {
       await once(first, "response");
       await resetWasHandled(client);
@@ -6804,7 +6806,79 @@ describe.concurrent("http2 RST_STREAM from the peer while the readable side is o
       await once(second, "close");
       expect(Buffer.concat(chunks).toString()).toBe(BODY.toString());
     };
-    await withRawServer(responseFrames, [{ ":path": "/" }], run, { preface });
+    await withRawServer(responseFrames, [{ ":path": "/" }], run, { preface: ONE_STREAM_PREFACE });
+  });
+
+  it("a lost transport destroys a reset stream whose readable side errored", async () => {
+    let socket;
+    const connectOptions = { createConnection: url => (socket = net.connect(Number(url.port), url.hostname)) };
+    const requestArgs = [{ ":path": "/", ":method": "POST" }, { endStream: false }];
+    const run = async (client, req, events) => {
+      req.pause();
+      req.on("data", () => {});
+      await once(req, "response");
+      await resetWasHandled(client);
+      // The reset ended the writable side. This error also stops the readable side, so no 'end' comes.
+      req.write("late");
+      await resetWasHandled(client);
+      expect({ events, destroyed: req.destroyed }).toEqual({
+        events: ["response", "aborted", "error"],
+        destroyed: false,
+      });
+
+      const reqClosed = closed(req);
+      socket.destroy();
+      await reqClosed;
+      expect(events).toEqual(["response", "aborted", "error", "close"]);
+    };
+    await withRawServer(responseThenReset(NGHTTP2_NO_ERROR), requestArgs, run, { connectOptions });
+  });
+
+  it("a closed session that is about to destroy itself does not submit a queued request", async () => {
+    const requested = [];
+    const responseFrames = id => {
+      requested.push(id);
+      return [new http2utils.HeadersFrame(id, RESPONSE_HEADERS, 0, true).data, new http2utils.DataFrame(id, BODY).data];
+    };
+    // The peer resets the request in flight when it sees the GOAWAY of close().
+    const onFrame = (type, socket) => {
+      if (type === FRAME_GOAWAY) socket.write(rstStream(1, NGHTTP2_NO_ERROR));
+    };
+    const run = async (client, first) => {
+      first.resume();
+      await once(first, "response");
+      const second = client.request({ ":path": "/second" });
+      const events = recordEvents(second, ["response", "end", "close"]);
+      second.on("error", err => events.push(err.code));
+      expect(second.pending).toBe(true);
+
+      const allClosed = Promise.all([closed(first), closed(second), closed(client)]);
+      client.close();
+      await allClosed;
+      expect({ events, requested }).toEqual({ events: ["ERR_HTTP2_STREAM_CANCEL", "close"], requested: [1] });
+    };
+    await withRawServer(responseFrames, [{ ":path": "/" }], run, { preface: ONE_STREAM_PREFACE, onFrame });
+  });
+
+  it("a stream that its 'aborted' listener destroys is not kept by the session", async () => {
+    const COUNT = 24;
+    const requestArgs = [{ ":path": "/", ":method": "POST" }, { endStream: false }];
+    await withRawServer(responseThenReset(NGHTTP2_NO_ERROR), requestArgs, async (client, first) => {
+      const refs = [];
+      for (let req = first; ; req = client.request(...requestArgs)) {
+        req.on("aborted", () => req.destroy());
+        await closed(req);
+        if (refs.push(new WeakRef(req)) === COUNT) break;
+      }
+      // A WeakRef target survives the job that made it, so every pass gets a fresh turn.
+      let live = COUNT;
+      for (let pass = 0; pass < 30 && live > COUNT / 2; pass++) {
+        await new Promise(resolve => setImmediate(resolve));
+        await gcTick();
+        live = refs.filter(ref => ref.deref() !== undefined).length;
+      }
+      expect(live).toBeLessThanOrEqual(COUNT / 2);
+    });
   });
 
   it("the reset of a request that is still open, on a transport that delivers two chunks in one tick", async () => {
@@ -6912,7 +6986,7 @@ describe.concurrent("http2 RST_STREAM from the peer while the readable side is o
       );
       const stream = await gotStream;
       await settle();
-      await run(stream, events, chunks, framesFromServer, settle);
+      await run(stream, events, chunks, framesFromServer, settle, socket);
       expect(sessionErrors).toEqual([]);
     } finally {
       socket.destroy();
@@ -6954,6 +7028,21 @@ describe.concurrent("http2 RST_STREAM from the peer while the readable side is o
         events: ["aborted", "close"],
         rstCode: NGHTTP2_NO_ERROR,
       });
+    });
+  });
+
+  it("a lost transport destroys a server stream that was reset and has no reader", async () => {
+    // read() from a one-time 'readable' listener: the stream was read, and nothing reads it now.
+    const onStream = stream => stream.once("readable", () => stream.read(10));
+    await withRawClient(onStream, async (stream, events, chunks, framesFromServer, settle, socket) => {
+      expect({
+        destroyed: stream.destroyed,
+        readableDidRead: stream.readableDidRead,
+        readableFlowing: stream.readableFlowing,
+      }).toEqual({ destroyed: false, readableDidRead: true, readableFlowing: null });
+      socket.destroy();
+      await closed(stream);
+      expect(events).toEqual(["aborted", "close"]);
     });
   });
 

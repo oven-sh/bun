@@ -3775,11 +3775,13 @@ function closeStreamAndDestroyOnEnd(session: Http2Session, stream: Http2Stream) 
         stream[kAborted] = true;
         stream.emit("aborted");
       }
-      stream.end();
+      if (!stream.destroyed) stream.end();
     }
     publishStreamCloseChannel(stream);
     markWritableDone(stream);
   }
+  // A listener above ('aborted', the close channel) can destroy the stream.
+  if (stream.destroyed) return;
   stream.once("end", destroySelfOnEnd);
   (session[kUnreadClosedStreams] ??= new SafeSet()).add(stream);
   pushToStream(stream, null);
@@ -4390,12 +4392,15 @@ class ServerHttp2Session extends Http2Session {
   }
   #onClose() {
     const parser = this.#parser;
+    // Read before the sweep and close(): both make a lost transport look like a graceful close.
+    const closedAndIdle = this.#closed && this.#connections === 0;
     if (parser) {
       parser.emitAbortToAllStreams();
       parser.forEachStream(streamSocketClosed);
       parser.detach();
       this.#parser = null;
     }
+    settleUnreadClosedStreams(this, null, closedAndIdle, true);
     // Like Node's socketOnClose, a dead socket always tears the session down
     // (close() followed by closeSession() upstream). close() alone is not
     // enough: it early-returns once a received GOAWAY has already marked the
@@ -4990,11 +4995,10 @@ function settleUnreadClosedStreams(
   const streams = session[kUnreadClosedStreams];
   if (streams === null) return;
   session[kUnreadClosedStreams] = null;
-  // Unlike node, a graceful close completes without waiting for unread streams, so they stay readable.
-  if (error == null && closedAndIdle) return;
   for (const stream of streams) {
-    // Unlike node, a lost transport with no error to report keeps the data of a stream that has a reader.
-    if (error == null && transportGone && stream.readableFlowing !== null) continue;
+    // Unlike node, a stream that can still drain survives a graceful close, or a lost transport if it has a reader.
+    const keepsData = closedAndIdle || (transportGone && stream.readableFlowing !== null);
+    if (error == null && keepsData && stream.readable) continue;
     // Same guard as destroyStreamForSessionDestroy: a stream nobody listens to gets no 'error'.
     stream.destroy(error != null && stream.listenerCount("error") > 0 ? error : undefined);
   }
@@ -6406,8 +6410,11 @@ class ClientHttp2Session extends Http2Session {
     req[kHoldsRequestSlot] = false;
     this.#activeRequestCount--;
     const queue = this.#pendingRequests;
+    if (queue === null || queue.length === 0) return;
+    // A closed session with no open stream is about to destroy itself, which cancels the queue.
+    if (this.#closed && this.#connections === 0) return;
     // Deferred: inside a native dispatch the frame that closes this stream may not be written yet.
-    if (queue !== null && queue.length > 0) process.nextTick(ClientHttp2Session.#flushPendingRequestsNT, this);
+    process.nextTick(ClientHttp2Session.#flushPendingRequestsNT, this);
   }
   static #flushPendingRequestsNT(self: ClientHttp2Session) {
     self.#flushPendingRequests();

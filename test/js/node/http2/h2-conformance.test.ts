@@ -1948,10 +1948,12 @@ describe("a header block over maxSendHeaderBlockLength (node's onFrameError)", (
     ]);
   }
 
+  // events.once() would reject on the 'error' that these streams are expected to emit.
+  const closed = (emitter: http2.Http2Session | http2.Http2Stream) =>
+    new Promise<void>(resolve => emitter.once("close", () => resolve()));
+
   // What a handler runs on the stream whose block is over the limit: the call that fails, then
-  // the calls that normally follow it in the same tick. None of them may reach the wire. (node
-  // resets the stream one setImmediate later, so it still sends a respond() that follows a failed
-  // additionalHeaders() in the same tick, and resets the stream if respond() comes later.)
+  // the calls that normally follow it in the same tick. None of them may reach the wire.
   const answers: Record<string, (server: http2.Http2Server) => void> = {
     "respond() then end()": server =>
       server.on("stream", (stream, headers) => {
@@ -1966,12 +1968,10 @@ describe("a header block over maxSendHeaderBlockLength (node's onFrameError)", (
         stream.respond({ ":status": 200, "x-big": OVER_LIMIT }, { waitForTrailers: true });
         stream.end("body");
       }),
-    "additionalHeaders() then respond() and end()": server =>
+    "additionalHeaders()": server =>
       server.on("stream", (stream, headers) => {
         if (headers[":path"] !== "/over") return;
         stream.additionalHeaders({ ":status": 103, "x-big": OVER_LIMIT });
-        stream.respond({ ":status": 200 });
-        stream.end("body");
       }),
     "Http2ServerResponse setHeader() then end()": server =>
       server.on("request", (req, res) => {
@@ -2013,15 +2013,10 @@ describe("a header block over maxSendHeaderBlockLength (node's onFrameError)", (
         c.sendFrame(FrameType.HEADERS, 0x5, 1, requestFor("/in-flight"));
         await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
 
-        // Frames are answered in order, so once the PING is acknowledged everything the handler
-        // wrote for stream 3 has arrived. One write, so that the server reads both frames at once.
-        c.send(
-          Buffer.concat([
-            encodeFrame(FrameType.HEADERS, 0x5, 3, requestFor("/over")),
-            encodeFrame(FrameType.PING, 0, 0, Buffer.alloc(8)),
-          ]),
-        );
-        await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) === 1);
+        // node resets the stream one setImmediate after the frame error, so no other frame marks
+        // the point where the reset has arrived. Nothing may come before it on stream 3.
+        c.sendFrame(FrameType.HEADERS, 0x5, 3, requestFor("/over"));
+        await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 3);
         const onStream3 = () =>
           c.frames
             .filter(f => f.streamId === 3)
@@ -2061,18 +2056,68 @@ describe("a header block over maxSendHeaderBlockLength (node's onFrameError)", (
     },
   );
 
+  // node resets the stream one setImmediate after the frame error, so it still sends a respond()
+  // that follows a refused additionalHeaders() in the same tick. Bun resets the stream at once and
+  // drops that respond(). Either way the connection has to stay usable for the open streams.
+  test("server additionalHeaders() then respond() in the same tick: the open request still completes", async () => {
+    const server = http2.createServer({ maxSendHeaderBlockLength: LIMIT });
+    let inFlight!: http2.ServerHttp2Stream;
+    server.on("stream", (stream, headers) => {
+      stream.on("error", () => {});
+      if (headers[":path"] === "/in-flight") {
+        inFlight = stream;
+        stream.respond({ ":status": 200 });
+        return;
+      }
+      stream.additionalHeaders({ ":status": 103, "x-big": OVER_LIMIT });
+      stream.respond({ ":status": 200 });
+      stream.end("body");
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const client = http2.connect(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}`);
+    try {
+      const events: unknown[][] = [];
+      client.on("error", err => events.push(["session error", (err as NodeJS.ErrnoException).code]));
+      const sessionClosed = closed(client);
+      const goaway = Promise.race([
+        new Promise<number>(resolve => client.once("goaway", code => resolve(code))),
+        sessionClosed.then(() => "closed without a GOAWAY"),
+      ]);
+      const first = client.request({ ":path": "/in-flight" });
+      let body = "";
+      first.setEncoding("utf8");
+      first.on("data", chunk => (body += chunk));
+      first.on("error", err => events.push(["in-flight error", (err as NodeJS.ErrnoException).code]));
+      const firstClosed = closed(first);
+      await once(first, "response");
+
+      const over = client.request({ ":path": "/over" });
+      over.on("error", () => {});
+      over.resume();
+      await closed(over);
+      expect(await goaway).toBe(ErrorCode.NO_ERROR);
+
+      inFlight.end("still delivered");
+      await firstClosed;
+      await sessionClosed;
+      expect({ events, body }).toEqual({ events: [], body: "still delivered" });
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
   // The stream's _destroy asks the native side for a reset of its own, one setImmediate later.
   // When the failing call runs from a setImmediate callback, the server reads the peer's next
   // frames in between, and that read releases the native stream entry.
   test("server respond() from a setImmediate callback while the peer keeps sending: one RST_STREAM", async () => {
     const server = http2.createServer({ maxSendHeaderBlockLength: LIMIT });
-    const responded = Promise.withResolvers<void>();
     server.on("stream", stream => {
       stream.on("error", () => {});
       setImmediate(() => {
         stream.respond({ ":status": 200, "x-big": OVER_LIMIT });
         stream.end("body");
-        responded.resolve();
       });
     });
     server.listen(0);
@@ -2092,10 +2137,7 @@ describe("a header block over maxSendHeaderBlockLength (node's onFrameError)", (
       c.sendFrame(FrameType.HEADERS, 0x5, 1, requestFor("/over"));
       keepSending();
 
-      await responded.promise;
-      const barrier = Buffer.alloc(8, 0xff);
-      c.sendFrame(FrameType.PING, 0, 0, barrier);
-      await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) === 1 && f.payload.equals(barrier));
+      await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
       const onStream1 = () =>
         c.frames
           .filter(f => f.streamId === 1)
@@ -2129,9 +2171,6 @@ describe("a header block over maxSendHeaderBlockLength (node's onFrameError)", (
     const client = http2.connect(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}`, {
       maxSendHeaderBlockLength: LIMIT,
     });
-    // events.once() would reject on the 'error' the refused stream is expected to emit.
-    const closed = (emitter: http2.ClientHttp2Session | http2.ClientHttp2Stream) =>
-      new Promise<void>(resolve => emitter.once("close", () => resolve()));
     try {
       const sessionClosed = closed(client);
       const events: unknown[][] = [];

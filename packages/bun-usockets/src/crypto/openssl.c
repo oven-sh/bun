@@ -1817,6 +1817,7 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
   s->ssl = ssl;
   s->ssl_handshake_state = HANDSHAKE_PENDING;
   s->ssl_write_wants_read = 0;
+  s->ssl_write_parked = 0;
   s->ssl_read_wants_write = 0;
   s->ssl_fatal_error = 0;
   s->ssl_raw_tap = 0;
@@ -2468,6 +2469,7 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
   if (ssl_is_uws_http_tls(s) && us_internal_ssl_is_shut_down(s)) return s;
 
   if (s->ssl_handshake_state == HANDSHAKE_COMPLETED) {
+    s->ssl_write_parked = 0;
     s = us_dispatch_writable(s);
   }
   return s;
@@ -2656,9 +2658,17 @@ restart:
         if (s->ssl_handshake_state == HANDSHAKE_PENDING && SSL_is_init_finished(s_ssl(s))) {
           ssl_trigger_handshake(s, 1);
           if (ssl_gone(s)) return NULL;
+          /* A write parked before the handshake (node:https queues its request
+           * that way) is retried with the flight still held, so both leave in
+           * one segment, like a write from the callback. */
+          if (s->ssl_write_parked) {
+            s = ssl_retry_parked_write(s);
+            if (!s || ssl_gone(s)) return NULL;
+          }
           loop_ssl_data->ssl_socket = s;
-          /* The callback ran with the flight held: a write it issued already
-           * flushed flight + data together; send whatever is still held. */
+          /* The callback and the retry ran with the flight held: a write they
+           * issued already flushed flight + data together; send whatever is
+           * still held. */
           if (loop_ssl_data->ssl_write_batch_len &&
               loop_ssl_data->ssl_write_batch_owner == s) {
             ssl_flush_write_batch(loop_ssl_data, s);
@@ -2700,8 +2710,9 @@ restart:
       loop_ssl_data->ssl_read_input_length = saved_length;
       loop_ssl_data->ssl_read_input_offset = saved_offset;
       loop_ssl_data->ssl_socket = s;
-      /* Same as the no-data completion above: send what the callback's own
-       * write did not already flush of the held flight. */
+      /* Send what the callback's own write did not already flush of the held
+       * flight. No parked-write retry here: its writable dispatch would run
+       * before the data this read decrypted reaches the caller. */
       if (loop_ssl_data->ssl_write_batch_len &&
           loop_ssl_data->ssl_write_batch_owner == s) {
         ssl_flush_write_batch(loop_ssl_data, s);
@@ -2799,6 +2810,7 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
    * ssl_update_handshake drains it. Mirrors the SEMI_SOCKET guard in
    * us_internal_ssl_close above. */
   if ((us_internal_poll_type(&s->p) & POLL_TYPE_KIND_MASK) == POLL_TYPE_SEMI_SOCKET) {
+    s->ssl_write_parked = 1;
     return 0;
   }
 
@@ -2806,6 +2818,7 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
    * callback writing): wait for the handshake, same as WANT_READ below. */
   if (s->ssl_in_use) {
     s->ssl_write_wants_read = 1;
+    s->ssl_write_parked = 1;
     return 0;
   }
 
@@ -2871,6 +2884,7 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
     int err = SSL_get_error(s_ssl(s), last_ssl_written);
     if (err == SSL_ERROR_WANT_READ) {
       s->ssl_write_wants_read = 1;
+      s->ssl_write_parked = 1;
     } else if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
       /* SSL_write drives the handshake when it has not finished, so this is
        * where a handshake-configuration failure (impossible version window,

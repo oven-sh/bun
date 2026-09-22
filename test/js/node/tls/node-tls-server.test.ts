@@ -2808,33 +2808,35 @@ describe.skipIf(!isLinux)("paused TLS socket that writes after it read the peer'
 
   // Not concurrent: this is about the write that spills its ciphertext. A write that finds the
   // loop's one spill slot taken by another socket goes out record by record instead.
-  it.each(cells)("%s, allowHalfOpen: %p, fails the write with EPIPE", async (kind, allowHalfOpen) => {
-    const { socket, events, closed, peer, peerRaw, server } = await kinds[kind](allowHalfOpen);
-    try {
-      await new Promise<void>(resolve => peer.end(payload, () => resolve()));
-      while (socket.readableLength < payload.length) await tick();
-      // The FIN follows the close_notify: two turns of the loop later the socket has read it too.
-      await tick();
-      await tick();
-      const peerClosed = once(peerRaw, "close");
-      peerRaw.resetAndDestroy();
-      await peerClosed;
-      // Two more turns: a build that reports the reset to a socket that does not read has done so.
-      await tick();
-      await tick();
-      expect(events).toEqual([]);
-      const written = Promise.withResolvers<string>();
-      socket.write("late", (error?: NodeJS.ErrnoException | null) => {
-        written.resolve(error ? `${error.code} ${error.syscall}` : "ok");
-      });
-      expect(await written.promise).toBe("EPIPE write");
-      await closed;
-      expect(events).toEqual(["error EPIPE", "close hadError=true"]);
-    } finally {
-      socket.destroy();
-      peer.destroy();
-      server.close();
-    }
+  describe.each(cells)("%s, allowHalfOpen: %p", (kind, allowHalfOpen) => {
+    it("fails the write with EPIPE", async () => {
+      const { socket, events, closed, peer, peerRaw, server } = await kinds[kind](allowHalfOpen);
+      try {
+        await new Promise<void>(resolve => peer.end(payload, () => resolve()));
+        while (socket.readableLength < payload.length) await tick();
+        // The FIN follows the close_notify: two turns of the loop later the socket has read it too.
+        await tick();
+        await tick();
+        const peerClosed = once(peerRaw, "close");
+        peerRaw.resetAndDestroy();
+        await peerClosed;
+        // Two more turns: a build that reports the reset to a socket that does not read has done so.
+        await tick();
+        await tick();
+        expect(events).toEqual([]);
+        const written = Promise.withResolvers<string>();
+        socket.write("late", (error?: NodeJS.ErrnoException | null) => {
+          written.resolve(error ? `${error.code} ${error.syscall}` : "ok");
+        });
+        expect(await written.promise).toBe("EPIPE write");
+        await closed;
+        expect(events).toEqual(["error EPIPE", "close hadError=true"]);
+      } finally {
+        socket.destroy();
+        peer.destroy();
+        server.close();
+      }
+    });
   });
 });
 

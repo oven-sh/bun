@@ -1192,7 +1192,7 @@ impl JSTranspiler {
         macro_js_ctx: MacroJSCtx,
     ) -> Option<ParseResult<'static>> {
         let config = self.config.get();
-        let name = config.default_loader.stdin_name();
+        let name = loader.unwrap_or(config.default_loader).stdin_name();
 
         // In REPL mode, wrap potential object literals in parentheses
         // If code starts with { and doesn't end with ; it might be an object literal

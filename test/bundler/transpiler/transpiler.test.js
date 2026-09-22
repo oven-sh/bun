@@ -4859,6 +4859,84 @@ console.log(foo, array);
     });
   });
 
+  describe("the name of the in-memory source comes from the loader of the call", () => {
+    // "ts" is not the default loader, and it is the loader of a call only in the control row.
+    const tsTranspiler = new Bun.Transpiler({ loader: "ts" });
+
+    async function thrownBy(transpiler, apis, code, loader) {
+      const thrown = {};
+      for (const api of apis) {
+        try {
+          await transpiler[api](code, loader);
+          thrown[api] = "did not throw";
+        } catch (e) {
+          thrown[api] = { name: e.name, message: e.message, file: e.position?.file };
+        }
+      }
+      return thrown;
+    }
+
+    it.each([
+      ["js", "input.js"],
+      ["jsx", "input.jsx"],
+      ["tsx", "input.tsx"],
+      // Control: the call gives no loader, so the constructor loader names the source.
+      [undefined, "input.ts"],
+    ])("loader %p: position.file of a parse error is %p from every API", async (loader, file) => {
+      const thrown = { name: "BuildMessage", message: "Unexpected ;", file };
+      const apis = ["scan", "scanImports", "transformSync", "transform"];
+      expect(await thrownBy(tsTranspiler, apis, "let x = ;", loader)).toEqual({
+        scan: thrown,
+        scanImports: thrown,
+        transformSync: thrown,
+        transform: thrown,
+      });
+    });
+
+    // scanImports() accepts only the JavaScript-like loaders.
+    it.each([
+      ["json", "input.json", '{"a": ', "Unexpected end of file"],
+      ["jsonc", "input.jsonc", '{"a": ', "Unexpected end of file"],
+      ["json5", "input.json5", '{"a": ', "Unexpected end of input"],
+      ["toml", "input.toml", '{"a": ', "Expected a key but found '{'"],
+      ["yaml", "input.yaml", '{"a": ', "Unexpected token"],
+      ["xml", "input.xml", "<a>", "Missing closing tag for element 'a'"],
+    ])(
+      "loader %p: position.file of a parse error is %p from every API that takes it",
+      async (loader, file, code, message) => {
+        const thrown = { name: "BuildMessage", message, file };
+        expect(await thrownBy(tsTranspiler, ["scan", "transformSync", "transform"], code, loader)).toEqual({
+          scan: thrown,
+          transformSync: thrown,
+          transform: thrown,
+        });
+      },
+    );
+
+    it("the wasm loader puts the same name in its error message from every API that takes it", async () => {
+      const transpiler = new Bun.Transpiler({ loader: "ts", target: "bun" });
+      const thrown = {
+        name: "BuildMessage",
+        message: 'Invalid wasm file "input.wasm" (missing magic header)',
+        file: undefined,
+      };
+      expect(await thrownBy(transpiler, ["scan", "transformSync", "transform"], "not wasm", "wasm")).toEqual({
+        scan: thrown,
+        transformSync: thrown,
+        transform: thrown,
+      });
+    });
+
+    it("transformSync() and transform() inline the same __filename", async () => {
+      const code = "console.log(__filename);";
+      const printed = 'var __filename = "input.tsx";\nconsole.log(__filename);\n';
+      expect({
+        transformSync: tsTranspiler.transformSync(code, "tsx"),
+        transform: await tsTranspiler.transform(code, "tsx"),
+      }).toEqual({ transformSync: printed, transform: printed });
+    });
+  });
+
   describe("transform", () => {
     // Async transform doesn't work in the test runner. Skipping for now.
     // This might be caused by incorrectly using shared memory between the two files.

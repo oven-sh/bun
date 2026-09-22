@@ -969,11 +969,7 @@ mod _async_tasks {
 
             let _dispatch = tracker.dispatch(global_object);
 
-            match converted {
-                Err(e) => completion.reject(global_object, Err(e)),
-                Ok(result) if success => completion.resolve(global_object, result),
-                Ok(result) => completion.reject(global_object, Ok(result)),
-            }
+            completion.settle(global_object, converted, success)
         }
 
         /// SAFETY: `this` must be the pointer Box::leak'd in `create()`; called exactly once.
@@ -1335,6 +1331,19 @@ mod _async_tasks {
             }
         }
 
+        /// Reports a converted result. `success` says that `converted` holds the value of the operation, not its error.
+        pub(crate) fn settle(
+            &self,
+            global: &JSGlobalObject,
+            converted: JsResult<JSValue>,
+            success: bool,
+        ) -> JsResult<()> {
+            match converted {
+                Ok(value) if success => self.resolve(global, value),
+                error => self.reject(global, error),
+            }
+        }
+
         fn call(global: &JSGlobalObject, callback: JSValue, arguments: &[JSValue]) {
             global.bun_vm().event_loop_mut().run_callback(
                 bun_event_loop::ContextId::NONE,
@@ -1397,11 +1406,9 @@ mod _async_tasks {
             // The arguments pin their buffers. A callback runs inside `resolve`/`reject`, and a pinned buffer cannot be transferred.
             drop(this);
 
-            match (converted, aborted) {
-                (Err(e), _) => completion.reject(global_object, Err(e)),
-                (Ok(_), Some(abort_error)) => completion.reject(global_object, Ok(abort_error)),
-                (Ok(result), None) if success => completion.resolve(global_object, result),
-                (Ok(result), None) => completion.reject(global_object, Ok(result)),
+            match aborted {
+                Some(abort_error) => completion.reject(global_object, Ok(abort_error)),
+                None => completion.settle(global_object, converted, success),
             }
         }
     }
@@ -2349,11 +2356,7 @@ mod _async_tasks {
             completion.ensure_still_alive();
             let _dispatch = js.tracker.dispatch(global_object);
             drop(this);
-            match converted {
-                Err(e) => completion.reject(global_object, Err(e)),
-                Ok(result) if success => completion.resolve(global_object, result),
-                Ok(result) => completion.reject(global_object, Ok(result)),
-            }
+            completion.settle(global_object, converted, success)
         }
     }
 

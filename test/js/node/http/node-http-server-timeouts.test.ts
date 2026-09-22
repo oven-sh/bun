@@ -456,6 +456,8 @@ describe("node:http server timeout enforcement", () => {
   // how long the client had been quiet each time the server emitted 'timeout'.
   async function sendSlowly({ knob, secure = false, parts, lastBody }: SlowClient) {
     const onRequest = (req: http.IncomingMessage, res: http.ServerResponse) => {
+      // Answered at once: nothing reads this body, so it never reaches JS.
+      if (req.url === "/unread") return void res.end(`${req.url} got 0`);
       let received = 0;
       req.on("data", chunk => (received += chunk.length));
       req.on("end", () => res.end(`${req.url} got ${received}`));
@@ -527,6 +529,15 @@ describe("node:http server timeout enforcement", () => {
         ...inPieces(`GET /second HTTP/1.1\r\nHost: a\r\nX-Pad: ${pad}\r\n\r\n`),
       ],
       bodies: ["/first got 0", "/second got 0"],
+    },
+    {
+      name: "keepAliveTimeout, a request body that nothing reads",
+      knob: "keepAliveTimeout",
+      parts: [
+        "POST /unread HTTP/1.1\r\nHost: a\r\nContent-Length: 1300\r\n\r\n",
+        ...inPieces(Buffer.alloc(1300, "b").toString(), 13),
+      ],
+      bodies: ["/unread got 0"],
     },
   ])("bytes that arrive in pieces keep the connection active ($name)", async ({ name, bodies, ...client }) => {
     expect(await sendSlowly({ ...client, lastBody: bodies.at(-1) })).toEqual({ bodies, quietAtTimeout: [] });

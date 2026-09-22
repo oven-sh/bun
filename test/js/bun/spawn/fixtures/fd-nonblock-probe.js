@@ -12,12 +12,13 @@ if (existsSync("/proc/self/fdinfo")) {
     return (parseInt(flags, 8) & 0o4000) !== 0;
   };
 } else {
-  // F_GETFL is 3 everywhere; O_NONBLOCK is 4 on the BSDs and macOS.
-  const libc = process.platform === "darwin" ? "libSystem.B.dylib" : "libc.so.7";
+  // F_GETFL is 3 on every platform here. O_NONBLOCK is 0o4000 on Linux and 4 on macOS and the BSDs.
+  const libc = { darwin: "libSystem.B.dylib", freebsd: "libc.so.7" }[process.platform] ?? "libc.so.6";
+  const O_NONBLOCK = process.platform === "linux" ? 0o4000 : 4;
   const { fcntl } = dlopen(libc, {
     fcntl: { args: ["i32", "i32", "i32"], returns: "i32" },
   }).symbols;
-  isNonblocking = fd => (fcntl(fd, 3, 0) & 4) !== 0;
+  isNonblocking = fd => (fcntl(fd, 3, 0) & O_NONBLOCK) !== 0;
 }
 
 const out = process.argv

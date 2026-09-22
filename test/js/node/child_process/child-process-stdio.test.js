@@ -172,7 +172,7 @@ describe.skipIf(!isPosix)("stdio handed to the child", () => {
   // Prints whether O_NONBLOCK is set on each fd number given in argv.
   const probe = join(import.meta.dir, "..", "..", "bun", "spawn", "fixtures", "fd-nonblock-probe.js");
 
-  it.concurrent("inherited stdio and the ipc fd are blocking after the parent used process.stdout", async () => {
+  it.concurrent("inherited stdio is blocking after the parent used process.stdout", async () => {
     // The parent's fd 1 and 2 are pipes here. process.stdout.write() sets
     // O_NONBLOCK on the shared open file description; a child that is not
     // bun or node then fails a plain write(2) with EAGAIN once the pipe fills.
@@ -180,13 +180,11 @@ describe.skipIf(!isPosix)("stdio handed to the child", () => {
       cmd: [
         bunExe(),
         "-e",
-        `const { spawnSync, spawn } = require("node:child_process");
+        `const { spawnSync } = require("node:child_process");
          process.stdout.write("out\\n");
          process.stderr.write("err\\n");
          const sync = spawnSync(process.execPath, [${JSON.stringify(probe)}, "0", "1", "2"], { stdio: "inherit" });
-         if (sync.status !== 0) process.exit(sync.status ?? 1);
-         const child = spawn(process.execPath, [${JSON.stringify(probe)}, "1", "2", "3"], { stdio: ["inherit", "inherit", "inherit", "ipc"] });
-         child.on("exit", code => process.exit(code ?? 1));`,
+         process.exit(sync.status ?? 1);`,
       ],
       env: bunEnv,
       stdin: "pipe",
@@ -195,7 +193,28 @@ describe.skipIf(!isPosix)("stdio handed to the child", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("err\n");
-    expect(stdout).toBe("out\n0:blocking 1:blocking 2:blocking\n1:blocking 2:blocking 3:blocking\n");
+    expect(stdout).toBe("out\n0:blocking 1:blocking 2:blocking\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("the ipc fd is blocking", async () => {
+    // A child that is not bun or node does a plain write(2) on NODE_CHANNEL_FD.
+    // On an O_NONBLOCK socket a large message is cut short and lost.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { spawn } = require("node:child_process");
+         const child = spawn(process.execPath, [${JSON.stringify(probe)}, "3"], { stdio: ["inherit", "inherit", "inherit", "ipc"] });
+         child.on("exit", code => process.exit(code ?? 1));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("3:blocking\n");
     expect(exitCode).toBe(0);
   });
 

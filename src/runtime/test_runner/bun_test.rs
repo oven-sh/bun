@@ -290,21 +290,7 @@ pub(crate) mod js_fns {
                         }
                     };
 
-                    let new_item = ExecutionEntry::create(
-                        None,
-                        args.callback,
-                        cfg,
-                        None,
-                        BaseScopeCfg::default(),
-                        AddedInPhase::Execution,
-                    );
-                    let new_item_ptr = bun_core::heap::into_raw(new_item);
-                    // SAFETY: append_point is a valid linked-list node; new_item_ptr just allocated
-                    unsafe {
-                        (*new_item_ptr).next = (*append_point).next;
-                        (*append_point).next = Some(new_item_ptr);
-                    }
-                    bun_test.extra_execution_entries.push(new_item_ptr);
+                    bun_test.insert_execution_entry(append_point, args.callback, cfg);
 
                     Ok(JSValue::UNDEFINED)
                 }
@@ -1260,6 +1246,30 @@ impl BunTest {
         Some(cfg_data)
     }
 
+    /// Links a new entry right after `after` in a running sequence; `reset_sequence` unlinks it before a retry or repeat.
+    pub(crate) fn insert_execution_entry(
+        &mut self,
+        after: *mut ExecutionEntry,
+        callback: Option<JSValue>,
+        cfg: ExecutionEntryCfg,
+    ) {
+        let new_item = ExecutionEntry::create(
+            None,
+            callback,
+            cfg,
+            None,
+            BaseScopeCfg::default(),
+            AddedInPhase::Execution,
+        );
+        let new_item_ptr = bun_core::heap::into_raw(new_item);
+        // SAFETY: `after` is a live node of the sequence's entry list; `new_item_ptr` was just allocated.
+        unsafe {
+            (*new_item_ptr).next = (*after).next;
+            (*after).next = Some(new_item_ptr);
+        }
+        self.extra_execution_entries.push(new_item_ptr);
+    }
+
     /// called from the uncaught exception handler, or if a test callback rejects or throws an error
     pub(crate) fn on_uncaught_exception(
         &mut self,
@@ -1875,6 +1885,8 @@ pub(crate) struct ExecutionEntry {
     /// 0 = unlimited timeout
     pub(crate) timeout: u32,
     pub(crate) has_done_parameter: bool,
+    /// Set by `jest::js_node_test_after_entry`: the callback is `node:test`'s wrapper, so a timeout must not blame its `done` parameter on the user.
+    pub(crate) done_is_node_tests: bool,
     /// '.epoch' = not set
     /// when this entry begins executing, the timespec will be set to the current time plus the timeout(ms).
     pub(crate) timespec: Timespec,
@@ -1903,6 +1915,7 @@ impl ExecutionEntry {
             callback: None,
             timeout: cfg.timeout,
             has_done_parameter: cfg.has_done_parameter,
+            done_is_node_tests: false,
             added_in_phase: phase,
             retry_count: cfg.retry_count,
             repeat_count: cfg.repeat_count,
@@ -1936,7 +1949,7 @@ impl ExecutionEntry {
                 .test_entry
                 .is_some_and(|p| core::ptr::eq(p.as_ptr().cast_const(), self));
             sequence.result = if is_test_entry {
-                if self.has_done_parameter {
+                if self.has_done_parameter && !self.done_is_node_tests {
                     Execution::Result::FailBecauseTimeoutWithDoneCallback
                 } else {
                     Execution::Result::FailBecauseTimeout

@@ -177,6 +177,7 @@ jobs:
               core.warning(
                 `Could not reopen ${owner}/${repo}#${issueNumber}: ${error.message}`
               );
+              return;
             }
 
             core.info(

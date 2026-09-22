@@ -687,7 +687,7 @@ int us_socket_ipc_write_fd(struct us_socket_t *s, const char *data, int length, 
     if (sent < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS) {
             s->flags.last_write_failed = 1;
-            us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+            us_internal_rearm_writable(s);
             return 0;
         }
         return -1;

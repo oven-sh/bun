@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gcTick, isWindows } from "harness";
+import { bunEnv, bunExe, gcTick, isWindows, tempDir } from "harness";
 import path from "path";
 
 describe.each(["advanced", "json"])("ipc mode %s", mode => {
@@ -119,6 +119,43 @@ describe.each(["advanced", "json"])("ipc mode %s", mode => {
           ? { name: "TypeError", message: "JSON.stringify cannot serialize cyclic structures." }
           : { name: "DataCloneError", message: "The object can not be cloned." },
     });
+  });
+
+  it("a message sent right after spawn reaches the entry's listener when a preload already listens", async () => {
+    // The preload opens the channel before the entry's module graph loads, and the import chain keeps the event loop
+    // turning while it does. "late" is only sent once the entry's listener exists, so the child reports in either case.
+    using dir = tempDir("ipc-preload-early-message", {
+      "preload.cjs": `process.on("message", () => {});`,
+      "main.mjs": `
+import "./a.mjs";
+const seen = [];
+process.on("message", message => {
+  seen.push(message);
+  if (message === "late") process.send(seen);
+});
+process.send("ready");
+`,
+      "a.mjs": `import "./b.mjs";`,
+      "b.mjs": `import "./c.mjs";`,
+      "c.mjs": `import "./d.mjs";`,
+      "d.mjs": `export {};`,
+    });
+    const { promise, resolve, reject } = Promise.withResolvers<any>();
+    await using child = spawn([bunExe(), "--preload", "./preload.cjs", "main.mjs"], {
+      cwd: String(dir),
+      env: bunEnv,
+      stdio: ["ignore", "inherit", "inherit"],
+      serialization: mode,
+      ipc(message, subprocess) {
+        if (message === "ready") subprocess.send("late");
+        else resolve(message);
+      },
+      onExit(_subprocess, exitCode, signalCode) {
+        reject(new Error(`child exited (${exitCode}, ${signalCode}) before it reported`));
+      },
+    });
+    child.send("early");
+    expect(await promise).toEqual(["early", "late"]);
   });
 });
 

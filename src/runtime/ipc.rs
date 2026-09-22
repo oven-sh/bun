@@ -928,6 +928,7 @@ pub(crate) struct SendQueue {
     pub(crate) pending_after_close: Cell<bool>,
     pub(crate) write_in_progress: Cell<bool>,
     pub close_event_sent: Cell<bool>,
+    reads_paused: Cell<bool>,
 
     #[cfg(windows)]
     pub windows: JsCell<WindowsState>,
@@ -1053,6 +1054,7 @@ impl SendQueue {
             pending_after_close: Cell::new(false),
             write_in_progress: Cell::new(false),
             close_event_sent: Cell::new(false),
+            reads_paused: Cell::new(false),
             #[cfg(windows)]
             windows: JsCell::new(WindowsState::default()),
         });
@@ -1081,6 +1083,45 @@ impl SendQueue {
             return false;
         }
         self.socket_is_open() && !self.pending_close.get() && !self.close_after_flush.get()
+    }
+
+    /// Stops or restarts reading from the channel; writes are unaffected. What
+    /// the peer sends meanwhile waits in the kernel, and so does its close.
+    pub(crate) fn set_reads_paused(&self, paused: bool) {
+        if self.reads_paused.replace(paused) == paused {
+            return;
+        }
+        log!("SendQueue#setReadsPaused {}", paused);
+        let SocketUnion::Open(socket) = *self.socket.get() else {
+            return;
+        };
+        #[cfg(not(windows))]
+        {
+            if paused {
+                socket.pause_stream();
+            } else {
+                socket.resume_stream();
+            }
+        }
+        #[cfg(windows)]
+        {
+            // SAFETY: an `Open` pipe is live until `windows_on_closed`.
+            let stream: *mut uv::uv_stream_t = unsafe { (*socket).as_stream() };
+            if paused {
+                // SAFETY: as above.
+                unsafe { (*stream).read_stop() };
+                return;
+            }
+            // `close_socket` stopped the reads for good and only waits for its last write.
+            if self.windows.get().try_close_after_write {
+                return;
+            }
+            // SAFETY: as above; `root_ptr()` is the context `windows_configure_*` registered.
+            let started = unsafe { (*stream).read_start_ctx::<SendQueue>(self.root_ptr()) };
+            if started.to_error(bun_sys::Tag::listen).is_some() {
+                self.close_socket(CloseReason::Failure, CloseFrom::User);
+            }
+        }
     }
 
     fn close_socket(&self, reason: CloseReason, from: CloseFrom) {

@@ -575,9 +575,19 @@ pub(crate) fn get_ipc_instance(
     };
 
     // SAFETY: `instance` is the live boxed IPCInstance.
-    unsafe { (*instance).data().write_version_packet(vm.global()) };
+    let send_queue = unsafe { (*instance).data() };
+    send_queue.set_reads_paused(vm.entry_graph_loading);
+    send_queue.write_version_packet(vm.global());
 
     Some(instance)
+}
+
+/// `RuntimeHooks::entry_graph_loading_changed`.
+pub(crate) fn entry_graph_loading_changed(loading: bool) {
+    if let Some(inst) = CHANNEL.get() {
+        // SAFETY: `CHANNEL` holds the live boxed instance until deinit.
+        unsafe { inst.as_ref() }.data().set_reads_paused(loading);
+    }
 }
 
 // HOST_EXPORT(Bun__GlobalObject__connectedIPC, c)

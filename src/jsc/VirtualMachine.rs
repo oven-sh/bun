@@ -238,6 +238,15 @@ pub struct VirtualMachine {
     /// does not count). What is still pending on the entry promise after that
     /// is a top-level await.
     pub entry_evaluation_started: bool,
+    /// The main thread's entry module graph is being fetched and linked and
+    /// none of it has run: from `reload_entry_point` handing the root to the
+    /// module loader until `entry_evaluation_started`, or until the load ends
+    /// without evaluating. The event loop turns meanwhile (imports are
+    /// transpiled off-thread), so the inherited IPC channel does not read
+    /// (`RuntimeHooks::entry_graph_loading_changed`): a message the parent
+    /// sent right after the spawn has to reach the listeners the entry
+    /// registers at its top level, as in Node.
+    pub entry_graph_loading: bool,
 
     pub(crate) had_errors: bool,
 
@@ -751,13 +760,15 @@ impl ExitHandler {
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__VM__noteEntryEvaluationStarted(vm: &mut VirtualMachine) {
         vm.entry_evaluation_started = true;
+        vm.set_entry_graph_loading(false);
     }
 
-    /// Only a worker's start waits on this (`wait_for_worker_entry_evaluation`);
-    /// any other VM answers `true` so the hook's registry probe never runs there.
+    /// A worker's start waits on this (`wait_for_worker_entry_evaluation`) and
+    /// the main thread's entry load ends `entry_graph_loading` on it; a VM doing
+    /// neither answers `true` so the hook's registry probe never runs there.
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__VM__entryEvaluationStarted(vm: &VirtualMachine) -> bool {
-        vm.entry_evaluation_started || vm.worker.is_none()
+        vm.entry_evaluation_started || (vm.worker.is_none() && !vm.entry_graph_loading)
     }
 
     /// The module-registry key of the current entry load's root: the
@@ -2741,6 +2752,9 @@ pub struct RuntimeHooks {
     /// (resolver failures / `ModuleNotFound`).
     pub load_preloads:
         unsafe fn(vm: *mut VirtualMachine) -> crate::CrateResult<*mut JSInternalPromise>,
+    /// `VirtualMachine::entry_graph_loading` changed on the calling (main)
+    /// thread. The inherited IPC channel lives in `bun_runtime::ipc_host`.
+    pub entry_graph_loading_changed: fn(loading: bool),
     /// `ensureDebugger(block_until_connected)` — no-op when no debugger.
     pub ensure_debugger: unsafe fn(vm: *mut VirtualMachine, block_until_connected: bool),
     /// `eventLoop().autoTick()` — needs `Timer::All` for the timeout calc.
@@ -3502,9 +3516,7 @@ impl VirtualMachine {
             let global_ref = self.global();
             let promise = if !self.main_is_html_entrypoint {
                 let name = bun_core::String::borrow_utf8(MAIN_FILE_NAME);
-                jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, Some(&name))
-                    .map(NonNull::as_ptr)
-                    .ok_or(crate::CrateError::JSError)?
+                self.load_and_evaluate_entry_graph(global, &name)?
             } else {
                 let p: *mut JSInternalPromise = jsc::from_js_host_call_generic(global_ref, || {
                     Bun__loadHTMLEntryPoint(global_ref)
@@ -3524,14 +3536,42 @@ impl VirtualMachine {
             self.entry_evaluation_started = false;
             let global = self.global;
             let main_str = bun_core::String::from_bytes(self.main());
-            let promise =
-                jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, Some(&main_str))
-                    .map(NonNull::as_ptr)
-                    .ok_or(crate::CrateError::JSError)?;
+            let promise = self.load_and_evaluate_entry_graph(global, &main_str)?;
             self.pending_internal_promise = Some(promise);
             self.pending_internal_promise_is_protected = false;
             JSValue::from_cell(promise).ensure_still_alive();
             Ok(promise)
+        }
+    }
+
+    /// Hands the entry root to the module loader. `entry_graph_loading` spans
+    /// from here to the root's evaluation.
+    fn load_and_evaluate_entry_graph(
+        &mut self,
+        global: *mut JSGlobalObject,
+        root_key: &bun_core::String,
+    ) -> crate::CrateResult<*mut JSInternalPromise> {
+        if self.is_main_thread {
+            self.set_entry_graph_loading(true);
+        }
+        match jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, Some(root_key)) {
+            Some(promise) => Ok(promise.as_ptr()),
+            None => {
+                self.set_entry_graph_loading(false);
+                Err(crate::CrateError::JSError)
+            }
+        }
+    }
+
+    /// Cleared by `Bun__VM__noteEntryEvaluationStarted`. A load that ends
+    /// without evaluating anything (a failed fetch or link) never gets there,
+    /// so whoever sees the entry promise settled clears it too.
+    pub(crate) fn set_entry_graph_loading(&mut self, loading: bool) {
+        if core::mem::replace(&mut self.entry_graph_loading, loading) == loading {
+            return;
+        }
+        if let Some(hooks) = runtime_hooks() {
+            (hooks.entry_graph_loading_changed)(loading);
         }
     }
 
@@ -3565,11 +3605,13 @@ impl VirtualMachine {
         } else {
             // SAFETY: `promise` is a live JSC heap cell.
             if crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Rejected {
+                self.set_entry_graph_loading(false);
                 return Ok(promise);
             }
             let _ = self.wait_for_promise(jsc::AnyPromise::Internal(promise));
         }
 
+        self.set_entry_graph_loading(false);
         Ok(self.pending_internal_promise.unwrap_or(promise))
     }
 }
@@ -4464,6 +4506,7 @@ impl VirtualMachine {
             }
             crate::js_promise::Status::Fulfilled => {}
         }
+        self.set_entry_graph_loading(false);
 
         if self.hot_reload_deferred {
             self.reload(None);

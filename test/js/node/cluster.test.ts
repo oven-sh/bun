@@ -1388,3 +1388,62 @@ test.concurrent("require('cluster') does not throw when NODE_UNIQUE_ID is set af
   expect({ stdout, stderr }).toEqual({ stdout: "loaded\n", stderr: "" });
   expect(exitCode).toBe(0);
 });
+
+test.concurrent.each([
+  {
+    name: "listener",
+    worker: `
+  const seen = [];
+  process.on("message", message => {
+    seen.push(message);
+    if (message === "late") {
+      console.log(JSON.stringify(seen));
+      process.disconnect();
+    }
+  });
+  process.send("ready");`,
+    expected: ["early", "late"],
+  },
+  {
+    name: "await",
+    worker: `
+  process.send("ready");
+  const first = await new Promise(resolve => process.once("message", resolve));
+  console.log(JSON.stringify([first]));
+  process.disconnect();`,
+    expected: ["early"],
+  },
+])("an ESM worker's top-level $name gets a message sent right after fork()", async ({ worker, expected }) => {
+  // The import chain keeps the worker's module graph loading, with the event loop turning, after node:cluster has
+  // opened the IPC channel. "late" is only sent once the worker has run, so the worker reports in either case.
+  using dir = tempDir("cluster-esm-early-message", {
+    "main.mjs": `
+import cluster from "node:cluster";
+import "./a.mjs";
+
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  worker.send("early");
+  worker.on("message", message => {
+    if (message === "ready") worker.send("late");
+  });
+  worker.on("exit", code => process.exit(code));
+} else {${worker}
+}
+`,
+    "a.mjs": `import "./b.mjs";`,
+    "b.mjs": `import "./c.mjs";`,
+    "c.mjs": `import "./d.mjs";`,
+    "d.mjs": `export {};`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: JSON.stringify(expected) + "\n", stderr: expect.any(String) });
+  expect(exitCode).toBe(0);
+});

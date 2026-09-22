@@ -1389,99 +1389,54 @@ test.concurrent("require('cluster') does not throw when NODE_UNIQUE_ID is set af
   expect(exitCode).toBe(0);
 });
 
-// fork(env) resolves with the first message of a new worker. report(lines) prints them, kills the workers and exits.
-const forkAndReportFixture = `
-const cluster = require("node:cluster");
-const workers = [];
-exports.fork = env =>
-  new Promise((resolve, reject) => {
-    const worker = cluster.fork(env);
-    workers.push(worker);
-    worker.on("message", resolve);
-    worker.on("exit", (code, signal) => reject(new Error("a worker sent no message: " + (signal ?? code))));
-  });
-exports.report = lines =>
-  lines
-    .then(
-      lines => {
-        console.log(lines.join("\\n"));
-        return 0;
-      },
-      error => {
-        console.error(error);
-        return 1;
-      },
-    )
-    .then(exitCode => {
-      for (const worker of workers) worker.kill();
-      process.exit(exitCode);
-    });
-`;
-
+// A worker is a process that starts with NODE_UNIQUE_ID, which cluster.fork() sets.
 test.concurrent("a process that a worker starts with Bun.spawn and no env option is not a worker", async () => {
   // Bun.spawn with no `env` passes the startup env on, not process.env, where the worker setup deletes NODE_UNIQUE_ID.
   using dir = tempDir("cluster-spawn-default-env", {
-    "fork-and-report.js": forkAndReportFixture,
-    "main.js": `
-const cluster = require("node:cluster");
-if (cluster.isPrimary) {
-  const { fork, report } = require("./fork-and-report.js");
-  const afterWorkerSetup = fork();
-  // This worker never loads node:cluster, so its worker setup never runs.
-  cluster.setupPrimary({ exec: require.resolve("./no-cluster-worker.js") });
-  const beforeWorkerSetup = fork();
-  report(Promise.all([afterWorkerSetup, beforeWorkerSetup]).then(messages => messages.flat()));
-} else {
-  const cmd = [process.execPath, "grandchild.js"];
-  const proc = Bun.spawn({ cmd, stdout: "pipe", stderr: "inherit" });
-  const thread = new Worker(require.resolve("./thread.js"));
-  const fromThread = new Promise((resolve, reject) => {
-    thread.onmessage = event => resolve(event.data);
-    thread.onerror = reject;
-  });
-  const spawnSync = Bun.spawnSync({ cmd, stderr: "inherit" }).stdout.toString();
-  Promise.all([proc.stdout.text(), fromThread]).then(([spawn, workerThread]) =>
-    process.send(["spawn " + spawn.trim(), "spawnSync " + spawnSync.trim(), "workerThread " + workerThread.trim()]),
-  );
-}
+    "worker.js": `
+const cmd = [process.execPath, "child.js"];
+const spawn = () => Bun.spawn({ cmd, stdout: "pipe", stderr: "inherit" }).stdout.text();
+const beforeWorkerSetup = spawn();
+require("node:cluster");
+const afterWorkerSetup = spawn();
+const thread = new Worker(require.resolve("./thread.js"));
+const fromThread = new Promise((resolve, reject) => {
+  thread.onmessage = event => resolve(event.data);
+  thread.onerror = reject;
+});
+const spawnSync = Bun.spawnSync({ cmd, stderr: "inherit" }).stdout.toString();
+Promise.all([beforeWorkerSetup, afterWorkerSetup, fromThread]).then(([before, after, inThread]) => {
+  console.log("Bun.spawn before the worker setup:", before.trim());
+  console.log("Bun.spawn:", after.trim());
+  console.log("Bun.spawnSync:", spawnSync.trim());
+  console.log("Bun.spawnSync in a worker thread:", inThread.trim());
+  process.exit(0);
+});
 `,
     "thread.js": `
-postMessage(Bun.spawnSync({ cmd: [process.execPath, "grandchild.js"], stderr: "inherit" }).stdout.toString());
+postMessage(Bun.spawnSync({ cmd: [process.execPath, "child.js"], stderr: "inherit" }).stdout.toString());
 `,
-    "no-cluster-worker.js": `
-// Without the worker setup nothing else ends this process when the primary goes away.
-process.on("disconnect", () => process.exit(0));
-const { stdout } = Bun.spawnSync({ cmd: [process.execPath, "grandchild.js"], stderr: "inherit" });
-process.send(["beforeWorkerSetup " + stdout.toString().trim()]);
-`,
-    "grandchild.js": `
-// Read now: a process that takes itself for a worker deletes the variable when node:cluster loads.
+    "child.js": `
+// Read first: a process that takes itself for a worker deletes the variable when node:cluster loads.
 const uniqueId = process.env.NODE_UNIQUE_ID ?? null;
-let listening = false;
-// A worker asks the primary to listen. This process has no IPC channel, so as a worker it never listens.
-const server = require("node:net").createServer();
-server.listen(0, () => {
-  listening = true;
-  server.close();
-});
-process.on("exit", () => console.log(JSON.stringify({ uniqueId, listening })));
+console.log(JSON.stringify({ uniqueId, isWorker: require("node:cluster").isWorker }));
 `,
   });
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "main.js"],
-    env: bunEnv,
+    cmd: [bunExe(), "worker.js"],
+    env: { ...bunEnv, NODE_UNIQUE_ID: "1" },
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const notAWorker = '{"uniqueId":null,"listening":true}';
+  const notAWorker = '{"uniqueId":null,"isWorker":false}';
   expect({ stdout, stderr, exitCode }).toEqual({
     stdout:
-      `spawn ${notAWorker}\n` +
-      `spawnSync ${notAWorker}\n` +
-      `workerThread ${notAWorker}\n` +
-      `beforeWorkerSetup ${notAWorker}\n`,
+      `Bun.spawn before the worker setup: ${notAWorker}\n` +
+      `Bun.spawn: ${notAWorker}\n` +
+      `Bun.spawnSync: ${notAWorker}\n` +
+      `Bun.spawnSync in a worker thread: ${notAWorker}\n`,
     stderr: "",
     exitCode: 0,
   });
@@ -1489,42 +1444,33 @@ process.on("exit", () => console.log(JSON.stringify({ uniqueId, listening })));
 
 test.concurrent.skipIf(!isLinux)("Bun.serve in a worker defaults reusePort to true", async () => {
   // docs/guides/http/cluster.mdx: reusePort is Linux only.
-  // Bun.serve reads NODE_UNIQUE_ID from the startup env, so the worker setup has to leave it there.
+  await using server = Bun.serve({ port: 0, reusePort: true, fetch: () => new Response("ok") });
   using dir = tempDir("cluster-serve-reuse-port", {
-    "fork-and-report.js": forkAndReportFixture,
-    "main.js": `
-const cluster = require("node:cluster");
-// Bun.serve with no reusePort option.
-function serve(port) {
-  try {
-    Bun.serve({ port: Number(port), fetch: () => new Response("ok") });
-    return "listening";
-  } catch (error) {
-    return error.code ?? String(error);
-  }
+    "serve.js": `
+require("node:cluster");
+try {
+  Bun.serve({ port: Number(process.env.SERVE_PORT), fetch: () => new Response("ok") });
+  console.log("listening");
+} catch (error) {
+  console.log(error.code ?? String(error));
 }
-if (cluster.isPrimary) {
-  const { fork, report } = require("./fork-and-report.js");
-  // Explicit here: only a worker has the default.
-  const server = Bun.serve({ port: 0, reusePort: true, fetch: () => new Response("ok") });
-  const inThePrimary = serve(server.port);
-  report(fork({ SERVE_PORT: String(server.port) }).then(inAWorker => ["primary: " + inThePrimary, "worker: " + inAWorker]));
-} else {
-  process.send(serve(process.env.SERVE_PORT));
-}
+process.exit(0);
 `,
   });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "main.js"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr, exitCode }).toEqual({
-    stdout: "primary: EADDRINUSE\nworker: listening\n",
-    stderr: "",
-    exitCode: 0,
+  async function serve(env: Record<string, string>) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "serve.js"],
+      env: { ...bunEnv, SERVE_PORT: String(server.port), ...env },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+  const [notAWorker, worker] = await Promise.all([serve({}), serve({ NODE_UNIQUE_ID: "1" })]);
+  expect({ notAWorker, worker }).toEqual({
+    notAWorker: { stdout: "EADDRINUSE\n", stderr: "", exitCode: 0 },
+    worker: { stdout: "listening\n", stderr: "", exitCode: 0 },
   });
 });

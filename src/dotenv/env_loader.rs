@@ -1289,8 +1289,7 @@ pub struct Map {
     pub map: HashTable,
 }
 
-/// A node:cluster worker keeps `NODE_UNIQUE_ID` in its env map, where `process.env` and `Bun.serve` read it.
-/// A child that inherits it takes itself for a worker. Node deletes it from the real environment instead.
+/// A child that inherits `NODE_UNIQUE_ID` from a node:cluster worker takes itself for a worker.
 static OMIT_CLUSTER_UNIQUE_ID_FROM_CHILD_ENV: AtomicBool = AtomicBool::new(false);
 
 pub fn omit_cluster_unique_id_from_child_env() {

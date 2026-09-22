@@ -4271,8 +4271,7 @@ impl VirtualMachine {
             }
         }
 
-        // Node deletes it from the real environment of a cluster worker at bootstrap. It stays in this map,
-        // where `process.env` and `Bun.serve` read it, and only the env of a child leaves it out.
+        // Not removed from the map: `process.env` and `Bun.serve` read it there.
         if map.get(b"NODE_UNIQUE_ID").is_some() {
             bun_dotenv::omit_cluster_unique_id_from_child_env();
         }

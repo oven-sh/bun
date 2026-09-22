@@ -81,35 +81,46 @@ describe.concurrent("Streaming body via", () => {
     expect(exitCode).toBe(0);
   });
 
-  // An error from the generator with the ERR_INVALID_STATE code reaches the consumer like any other
-  // error. The subprocess awaits nothing at the top level, so a read() that never settles shows up
-  // as a missing outcome.
-  test("an ERR_INVALID_STATE error from the generator rejects the body", async () => {
+  // An error from the generator with one of these codes reaches the consumer like any other error,
+  // whether the generator throws it or a native call in the generator does. An upload fails as well:
+  // the server must not take the truncated body for a complete request. The subprocess awaits
+  // nothing at the top level, so a read() that never settles shows up as a missing outcome.
+  test.each([
+    ["ERR_INVALID_STATE", "const locked = new ReadableStream(); locked.getReader(); await locked.cancel();"],
+    ["ERR_INVALID_THIS", "ReadableStream.prototype.tee.call({});"],
+  ])("an %s error from the generator rejects the body", async (code, nativeThrow) => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `async function* coded() {
           yield "first;";
-          throw Object.assign(new TypeError("coded"), { code: "ERR_INVALID_STATE" });
+          throw Object.assign(new TypeError("coded"), { code: "${code}" });
         }
-        async function* lockedCancel() {
+        async function* native() {
           yield "first;";
-          const locked = new ReadableStream();
-          locked.getReader();
-          await locked.cancel();
+          ${nativeThrow}
         }
         async function drain(reader) {
           while (!(await reader.read()).done);
           return "drained";
         }
+        const server = Bun.serve({
+          port: 0,
+          fetch: async req => new Response("complete " + (await req.text().catch(() => "")).length),
+        });
         const outcomes = {};
         const record = (name, promise) =>
           promise.then(v => (outcomes[name] = "resolved " + v), e => (outcomes[name] = "rejected " + e.code));
-        for (const gen of [coded, lockedCancel]) {
+        const uploads = [];
+        for (const gen of [coded, native]) {
           record(gen.name + " text()", new Response(gen()).text());
           record(gen.name + " read()", drain(new Response(gen()).body.getReader()));
+          uploads.push(
+            record(gen.name + " upload", fetch(server.url, { method: "POST", body: gen() }).then(r => r.text())),
+          );
         }
+        Promise.all(uploads).then(() => server.stop(true));
         process.once("beforeExit", () => {
           for (const name of Object.keys(outcomes).sort()) console.log(name + ": " + outcomes[name]);
         });`,
@@ -120,12 +131,14 @@ describe.concurrent("Streaming body via", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout.trim().split(/\r?\n/)).toEqual([
-      "coded read(): rejected ERR_INVALID_STATE",
-      "coded text(): rejected ERR_INVALID_STATE",
-      "lockedCancel read(): rejected ERR_INVALID_STATE",
-      "lockedCancel text(): rejected ERR_INVALID_STATE",
+      `coded read(): rejected ${code}`,
+      `coded text(): rejected ${code}`,
+      `coded upload: rejected ${code}`,
+      `native read(): rejected ${code}`,
+      `native text(): rejected ${code}`,
+      `native upload: rejected ${code}`,
     ]);
-    expect(stderr).not.toContain("ERR_INVALID_STATE");
+    expect(stderr).not.toContain(code);
     expect(exitCode).toBe(0);
   });
 

@@ -1,6 +1,6 @@
-import { describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it, jest } from "bun:test";
 import { bunEnv, bunExe, isMusl, isWindows, nodeExe, tempDir } from "harness";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   candidateBuilds,
@@ -20,7 +20,16 @@ import {
   writesLinkerMap,
 } from "../../../../scripts/build/flags.ts";
 import { slash } from "../../../../scripts/build/shell.ts";
-import { generateOrderFile, readTextSymbols } from "../../../../scripts/orderfile/generate.ts";
+import {
+  generateOrderFile,
+  readNameList,
+  readTextSymbols,
+  readTrace,
+  resolveHints,
+  writeStarts as writeStartsFile,
+} from "../../../../scripts/orderfile/generate.ts";
+import { traceHints } from "../../../../scripts/orderfile/hints.ts";
+import { selfSignedCertificate } from "../../../../scripts/orderfile/self-signed.ts";
 import {
   linkerMapFor,
   parseChunkStarts,
@@ -380,14 +389,8 @@ async function compileMsvc(cwd: string, source: string, out: string, link: strin
 /** The linker options that write a binary's two maps where the generator looks for them (see windows-symbols.ts). */
 const mapsFor = (exe: string): string[] => [`/map:${symbolMapFor(exe)}`, `/lldmap:${linkerMapFor(exe)}`];
 
-/** The starts file the generator writes: magic, version, count, then every function's link-time address. */
-async function writeStarts(path: string, addresses: Iterable<number | bigint>) {
-  const list = [...addresses].map(BigInt);
-  const words = new BigUint64Array(3 + list.length);
-  words.set([STARTS_MAGIC, 1n, BigInt(list.length)], 0);
-  words.set(list, 3);
-  await Bun.write(path, new Uint8Array(words.buffer));
-}
+/** The starts file, written by the generator's own writer. */
+const writeStarts = (path: string, addresses: Iterable<number>) => writeStartsFile(path, [...addresses]);
 
 /** The trace's header: magic, version, slide, start count, entry count. */
 async function readTraceHeader(path: string) {
@@ -396,13 +399,131 @@ async function readTraceHeader(path: string) {
 }
 
 describe("order file generator", () => {
-  it.skipIf(!supported)("refuses a build directory with no binary to trace", () => {
-    expect(() => generateOrderFile({ buildDir: "/tmp/definitely-not-a-build-dir" })).toThrow(/not found/);
+  it.skipIf(!supported)("refuses a build directory with no binary to trace", async () => {
+    await expect(generateOrderFile({ buildDir: "/tmp/definitely-not-a-build-dir" })).rejects.toThrow(/not found/);
   });
 
-  it.skipIf(supported)("refuses to run on an unsupported platform", () => {
+  it.skipIf(supported)("refuses to run on an unsupported platform", async () => {
     // The tracers are x86-64 INT3 / arm64 BRK on linux and windows, arm64 BRK on macOS.
-    expect(() => generateOrderFile({ buildDir: "/tmp/build" })).toThrow(/linux|macOS|Windows/);
+    await expect(generateOrderFile({ buildDir: "/tmp/build" })).rejects.toThrow(/linux|macOS|Windows/);
+  });
+});
+
+/**
+ * `--hints` lists come from a trace of some other build of bun, so most names
+ * still match and the rest differ only in what a rebuild changes: the hash
+ * Rust's mangling gives a crate, and the suffixes the optimizer gives a clone.
+ */
+describe("order file hints", () => {
+  // Stands in for c++filt: what matters here is what happens to its output.
+  const demangled: Record<string, string> = {
+    _RNvCs1111_3foo3bar: "foo::bar",
+    _RNvCs2222_3foo3bar: "foo::bar",
+    _RNvCs2222_3foo3baz: "foo::baz",
+  };
+  const suffix = /(\.llvm\.\d+|\.cold)+$/;
+  const demangle = (names: string[]) =>
+    names.map(name => demangled[name.replace(suffix, "")] ?? name.replace(suffix, ""));
+
+  it("keeps exact names, matches the rest by normalised name, and drops what is gone", () => {
+    const current = [
+      "main",
+      "_RNvCs2222_3foo3bar",
+      "_RNvCs2222_3foo3baz",
+      "_ZN3JSC2VM6createEv.llvm.999",
+      "_ZN3JSC2VM6createEv.cold",
+      "unrelated",
+    ];
+    const hints = [
+      "_ZN3JSC2VM6createEv.llvm.123", // same function, another build's clone suffix: both current clones
+      "_RNvCs1111_3foo3bar", // same function, another build's crate hash
+      "removed_since",
+      "main",
+      "main", // listed twice, emitted once
+    ];
+    expect(resolveHints(hints, current, demangle)).toEqual({
+      names: ["_ZN3JSC2VM6createEv.llvm.999", "_ZN3JSC2VM6createEv.cold", "_RNvCs2222_3foo3bar", "main"],
+      listed: 5,
+      exact: 2,
+      normalized: 2,
+    });
+  });
+
+  it("runs the demangler only for a Rust name nothing else matched, and only over Rust names", () => {
+    const demangler = jest.fn(demangle);
+    const current = ["a", "_ZN3JSC2VM6createEv.llvm.999", "_RNvCs2222_3foo3bar"];
+    // Still there, or there under another clone suffix: no demangler.
+    expect(resolveHints(["a", "_ZN3JSC2VM6createEv.llvm.1"], current, demangler).names).toEqual([
+      "a",
+      "_ZN3JSC2VM6createEv.llvm.999",
+    ]);
+    expect(demangler).not.toHaveBeenCalled();
+    // A C++ name that is gone has no hash to look past, so it is not worth a run either.
+    expect(resolveHints(["_ZN3JSC2VM7destroyEv"], current, demangler).names).toEqual([]);
+    expect(demangler).not.toHaveBeenCalled();
+
+    expect(resolveHints(["_RNvCs1111_3foo3bar"], current, demangler).names).toEqual(["_RNvCs2222_3foo3bar"]);
+    expect(demangler.mock.calls).toEqual([[["_RNvCs2222_3foo3bar", "_RNvCs1111_3foo3bar"]]]);
+  });
+
+  it("matches a list traced on linux against Mach-O names, which carry one more underscore", () => {
+    const current = ["__ZN3JSC2VM6createEv", "__RNvCs2222_3foo3bar", "_malloc"];
+    expect(
+      resolveHints(["_ZN3JSC2VM6createEv.cold", "_RNvCs2222_3foo3bar", "malloc"], current, demangle).names,
+    ).toEqual(["__ZN3JSC2VM6createEv", "__RNvCs2222_3foo3bar"]);
+  });
+
+  // Whichever demangler the generator would find: their defaults differ (one prints
+  // the crate hash, and they disagree about Mach-O's leading underscore).
+  const cxxfilt = process.env.CXXFILT || Bun.which("llvm-cxxfilt") || Bun.which("c++filt");
+  it.skipIf(!cxxfilt)("matches a Rust name across crate hashes with the installed demangler", () => {
+    const current = ["_RNvCs7kMPyjk15S4_3foo3bar", "__RNvCs7kMPyjk15S4_3foo3baz"];
+    const hints = ["_RNvCsaZ2QR4xGWmr_3foo3bar.llvm.42", "_RNvCsaZ2QR4xGWmr_3foo3baz", "_RNvCsaZ2QR4xGWmr_3foo4quux"];
+    expect(resolveHints(hints, current)).toEqual({
+      names: ["_RNvCs7kMPyjk15S4_3foo3bar", "__RNvCs7kMPyjk15S4_3foo3baz"],
+      listed: 3,
+      exact: 0,
+      normalized: 2,
+    });
+  });
+});
+
+/**
+ * The app workloads are traced one feature per process, in the order
+ * app/features.txt lists them. A feature missing from the list is never traced,
+ * and a name the app does not know runs nothing; neither fails the trace.
+ */
+describe("app workloads", () => {
+  const app = join(import.meta.dir, "../../../../scripts/orderfile/app");
+
+  it("lists exactly the features the app has", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `(await import(${JSON.stringify(join(app, "features.js"))})).main()`],
+      env: { ...bunEnv, ORDERFILE_FEATURES: "list" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const listed = readNameList(join(app, "features.txt"));
+    expect({ features: stdout.trim().split(/\r?\n/).sort(), stderr, exitCode }).toEqual({
+      features: listed.toSorted(),
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(new Set(listed).size).toBe(listed.length);
+  });
+
+  it.each(["rsa", "ec"] as const)("serves TLS with a %s certificate its clients can pin", async kind => {
+    const { cert, key } = selfSignedCertificate(kind);
+    using server = Bun.serve({ port: 0, tls: { cert, key }, fetch: () => new Response("ok") });
+    const pinned = await fetch(`https://localhost:${server.port}/`, { tls: { ca: cert } });
+    expect(await pinned.text()).toBe("ok");
+    const byAddress = await fetch(`https://127.0.0.1:${server.port}/`, { tls: { ca: cert } });
+    expect(await byAddress.text()).toBe("ok");
+    // Trusted only by whoever pins it.
+    await expect(fetch(`https://localhost:${server.port}/`)).rejects.toMatchObject({
+      code: "DEPTH_ZERO_SELF_SIGNED_CERT",
+    });
   });
 });
 
@@ -679,7 +800,7 @@ describe.skipIf(!canTrace || isWindows)("function tracer", () => {
     // The starts file the generator would write, from the same symbol reader.
     const symbols = readTextSymbols(fixture);
     expect(symbols.size).toBeGreaterThan(33);
-    await writeStarts(starts, symbols.keys());
+    writeStarts(starts, symbols.keys());
 
     // The child is dynamically linked, so it inherits the preload.
     await using proc = Bun.spawn({
@@ -692,6 +813,152 @@ describe.skipIf(!canTrace || isWindows)("function tracer", () => {
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "497", stderr: "", exitCode: 0 });
 
     await expectFixtureTrace(trace, symbols);
+  });
+});
+
+/**
+ * An application that re-executes itself does its work in a child, which the
+ * tracer normally stays out of. BUN_FUNCTRACE_CHILDREN=1 follows it there, with
+ * a trace per process (`%p`), and only into the same executable: the starts
+ * mean nothing in any other.
+ */
+describe.skipIf(!canTrace || isWindows)("function tracer, following children", () => {
+  const source = [
+    "#include <stdio.h>",
+    "#include <string.h>",
+    "#include <sys/wait.h>",
+    "#include <unistd.h>",
+    "__attribute__((noinline)) static int parent_only(int x) { return x + 1; }",
+    "__attribute__((noinline)) static int child_only(int x) { return x + 2; }",
+    "static int run(const char *program, const char *arg) {",
+    "    pid_t child = fork();",
+    "    if (child == 0) { execl(program, program, arg, (char *)NULL); _exit(127); }",
+    "    int status = 0;",
+    "    return waitpid(child, &status, 0) == child ? status : -1;",
+    "}",
+    "int main(int argc, char **argv) {",
+    '    if (argc > 1 && strcmp(argv[1], "leaf") == 0) { printf("%d\\n", child_only(argc)); return 0; }',
+    // Replaces itself without forking: the same process id, a second traced image.
+    '    if (argc > 1 && strcmp(argv[1], "again") == 0) {',
+    '        printf("%d\\n", parent_only(argc)); fflush(stdout);',
+    '        execl(argv[0], argv[0], "leaf", (char *)NULL); return 5;',
+    "    }",
+    // argv[1] is some other program: it inherits the tracer's environment too.
+    '    if (run(argv[1], "x") != 0 || run(argv[0], "leaf") != 0) return 4;',
+    '    printf("%d\\n", parent_only(argc));',
+    "    return 0;",
+    "}",
+    "",
+  ].join("\n");
+
+  // The tracer and the two programs, built once for every test here.
+  const binaries = tempDir("functrace-children", { "self.c": source, "other.c": "int main(void) { return 0; }\n" });
+  afterAll(() => binaries[Symbol.dispose]());
+  let built: Promise<{ tracer: string; self: string; other: string; starts: string }> | undefined;
+  const build = () =>
+    (built ??= (async () => {
+      const dir = String(binaries);
+      const tracer = join(dir, darwin ? "functrace.dylib" : "functrace.so");
+      const self = join(dir, "self");
+      const other = join(dir, "other");
+      const starts = join(dir, "starts.bin");
+      await Promise.all([
+        compile([...shared, "-o", tracer, join(orderfile, "functrace.c"), ...(darwin ? [] : ["-ldl", "-lpthread"])]),
+        compile(["-o", self, join(dir, "self.c")]),
+        compile(["-o", other, join(dir, "other.c")]),
+      ]);
+      writeStarts(starts, readTextSymbols(self).keys());
+      return { tracer, self, other, starts };
+    })());
+
+  async function traceSelfExec(extraEnv: Record<string, string>, out: string, arg?: string) {
+    const { tracer, self, other, starts } = await build();
+    using dir = tempDir("functrace-children-traces", {});
+    const root = String(dir);
+    const symbols = readTextSymbols(self);
+
+    await using proc = Bun.spawn({
+      cmd: [self, arg ?? other],
+      env: { ...bunEnv, ...extraEnv, [preloadVar]: tracer, BUN_FUNCTRACE_STARTS: starts, BUN_FUNCTRACE_OUT: join(root, out) }, // prettier-ignore
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // Which of the two marker functions each trace file recorded.
+    const traces: Record<string, string[]> = {};
+    for (const file of readdirSync(root).filter(file => file.startsWith("trace"))) {
+      const names = readTrace(join(root, file), file).flatMap(address => symbols.get(address) ?? []);
+      const plain = names.map(name => (darwin ? name.replace(/^_/, "") : name));
+      traces[file === `trace-${proc.pid}.bin` ? "parent" : file] = plain.filter(name => name.endsWith("_only"));
+    }
+    return { stdout: stdout.trim().split("\n"), stderr, exitCode, traces };
+  }
+
+  it.concurrent("traces a re-executed copy of the same binary into its own file, and no other program", async () => {
+    const { stdout, stderr, exitCode, traces } = await traceSelfExec({ BUN_FUNCTRACE_CHILDREN: "1" }, "trace-%p.bin");
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: ["4", "3"], stderr: "", exitCode: 0 });
+    const { parent, ...children } = traces;
+    expect({ parent, children: Object.values(children) }).toEqual({
+      parent: ["parent_only"],
+      children: [["child_only"]],
+    });
+  });
+
+  it.concurrent(
+    "gives a process that execs itself in place a second record instead of truncating the first",
+    async () => {
+      const { stdout, exitCode, traces } = await traceSelfExec(
+        { BUN_FUNCTRACE_CHILDREN: "1" },
+        "trace-%p.bin",
+        "again",
+      );
+      expect({ stdout, exitCode }).toEqual({ stdout: ["3", "4"], exitCode: 0 });
+      const { parent, ...again } = traces;
+      expect({
+        parent,
+        again: Object.entries(again).map(([file, names]) => [file.replace(/\d+/, "PID"), names]),
+      }).toEqual({
+        parent: ["parent_only"],
+        again: [["trace-PID.bin.1", ["child_only"]]],
+      });
+    },
+  );
+
+  it.concurrent("leaves children alone unless asked, whatever the file is called", async () => {
+    const { stdout, exitCode, traces } = await traceSelfExec({}, "trace-%p.bin");
+    expect({ stdout, exitCode, traces }).toEqual({
+      stdout: ["4", "3"],
+      exitCode: 0,
+      traces: { parent: ["parent_only"] },
+    });
+  });
+
+  it.concurrent("hints.ts lists what an application entered, the busiest process first", async () => {
+    const { self, other } = await build();
+    using dir = tempDir("orderfile-hints", {});
+    const root = String(dir);
+
+    // The fixture is its own "profile": an unstripped binary whose code is the application's.
+    const out = join(root, "app.hints");
+    expect(() => traceHints({ profile: self, exe: self, command: [self, other], outPath: out })).toThrow(/\{\}/);
+    const { processes } = traceHints({ profile: self, exe: self, command: ["{}", other], outPath: out });
+    expect(processes).toBe(2);
+
+    const names = readNameList(out).map(name => (darwin ? name.replace(/^_/, "") : name));
+    // The parent entered more (it forks and waits), so it is listed first; the
+    // re-executed child adds the one function only it reached.
+    expect(names.filter(name => name === "main" || name.endsWith("_only"))).toEqual([
+      "main",
+      "parent_only",
+      "child_only",
+    ]);
+  });
+
+  it.concurrent("refuses to follow children into one shared file", async () => {
+    const { stdout, stderr, exitCode, traces } = await traceSelfExec({ BUN_FUNCTRACE_CHILDREN: "1" }, "trace.bin");
+    expect(stderr).toContain("BUN_FUNCTRACE_CHILDREN=1 needs %p in BUN_FUNCTRACE_OUT");
+    expect({ stdout, exitCode, traces }).toEqual({ stdout: ["4", "3"], exitCode: 0, traces: {} });
   });
 });
 
@@ -729,7 +996,7 @@ describe.skipIf(!canTrace || !isWindows)("windows tracer", () => {
     // breakpoint on one of those tables is what this test crashes on otherwise.
     const listed = parseSymbolMap(readFileSync(symbolMapFor(fixture), "utf8")).symbols.length;
     expect([...symbols.values()].flat().length).toBeLessThan(listed);
-    await writeStarts(starts, symbols.keys());
+    writeStarts(starts, symbols.keys());
 
     await using proc = Bun.spawn({
       cmd: [tracer, fixture, child],
@@ -758,10 +1025,10 @@ describe.skipIf(!canTrace || !isWindows)("windows tracer", () => {
     ]);
     const env = { ...bunEnv, BUN_FUNCTRACE_STARTS: starts, BUN_FUNCTRACE_OUT: join(root, "trace.bin") };
 
-    await writeStarts(starts, readTextSymbols(exit).keys());
+    writeStarts(starts, readTextSymbols(exit).keys());
     await using traced = Bun.spawn({ cmd: [tracer, exit, "a", "b"], env, stdout: "pipe", stderr: "pipe" });
     // Addresses far outside any code section: a starts file for some other binary.
-    await writeStarts(join(root, "elsewhere.bin"), [0x7ff600000000, 0x7ff600000010]);
+    writeStarts(join(root, "elsewhere.bin"), [0x7ff600000000, 0x7ff600000010]);
     await using refused = Bun.spawn({
       cmd: [tracer, exit],
       env: { ...env, BUN_FUNCTRACE_STARTS: join(root, "elsewhere.bin") },
@@ -808,7 +1075,7 @@ describe.skipIf(!canTrace || !isWindows)("windows tracer", () => {
       compileMsvc(root, join(orderfile, "functrace-windows.c"), tracer),
       compileMsvc(root, join(root, "probe.c"), probe, mapsFor(probe)),
     ]);
-    await writeStarts(starts, readTextSymbols(probe).keys());
+    writeStarts(starts, readTextSymbols(probe).keys());
 
     async function type(name: string, env: Record<string, string>) {
       const trace = join(root, `${name}.bin`);

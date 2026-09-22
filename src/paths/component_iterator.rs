@@ -207,14 +207,19 @@ pub fn make_path_with<'a, T: PathChar, E>(
     let Some(mut comp) = it.last() else {
         return Ok(());
     };
+    // `NotFound` right after a parent reported `Exists` means that parent is
+    // not a directory (a dangling symlink). Stepping back would loop forever.
+    let mut parent_exists = false;
     loop {
         match mkdir(comp.path)? {
             MakePathStep::Created | MakePathStep::Exists => {
+                parent_exists = true;
                 comp = match it.next() {
                     Some(c) => c,
                     None => return Ok(()),
                 };
             }
+            MakePathStep::NotFound(e) if parent_exists => return Err(e),
             MakePathStep::NotFound(e) => {
                 comp = match it.previous() {
                     Some(c) => c,

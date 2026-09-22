@@ -251,6 +251,12 @@ impl Hardlinker {
                 let err: Option<sys::Error> = 'body: {
                     match entry.kind {
                         EntryKind::Directory => {
+                            // A symlink left by an earlier install must not stand in for the directory.
+                            if let Ok(st) = sys::lstatat(Fd::cwd(), self.dest.slice_z())
+                                && sys::S::ISLNK(st.st_mode as _)
+                            {
+                                let _ = sys::unlinkat(Fd::cwd(), self.dest.slice_z());
+                            }
                             let _ = Fd::cwd().make_path(self.dest.slice());
                         }
                         EntryKind::SymLink => {

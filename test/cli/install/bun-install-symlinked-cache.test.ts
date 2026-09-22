@@ -130,3 +130,30 @@ test.skipIf(isWindows)("isolated store follows a folder dependency whose symlink
   expect(await Bun.file(join(installed, "index.js")).text()).toBe("module.exports = 'file';");
   expect(await Bun.file(join(installed, "lib", "real.js")).text()).toBe("module.exports = 'real';");
 });
+
+test.skipIf(isWindows)(
+  "isolated store follows a folder dependency whose dangling symlink becomes a directory",
+  async () => {
+    using dir = tempDir("symlink-to-dir", {
+      "package.json": JSON.stringify({
+        name: "symlink-to-dir-test",
+        dependencies: { dep: "file:./dep" },
+      }),
+      "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+    });
+    const cache = join(String(dir), "cache");
+    const dep = join(String(dir), "dep");
+    symlinkSync(join("build", "dist"), join(dep, "dist"));
+
+    await install(String(dir), cache, ["--linker", "isolated"]);
+    const installed = join(String(dir), "node_modules", "dep");
+    expect(lstatSync(join(installed, "dist")).isSymbolicLink()).toBe(true);
+
+    rmSync(join(dep, "dist"));
+    mkdirSync(join(dep, "dist", "esm"), { recursive: true });
+    writeFileSync(join(dep, "dist", "esm", "index.js"), "module.exports = 'esm';");
+    await install(String(dir), cache, ["--linker", "isolated"]);
+    expect(lstatSync(join(installed, "dist")).isDirectory()).toBe(true);
+    expect(await Bun.file(join(installed, "dist", "esm", "index.js")).text()).toBe("module.exports = 'esm';");
+  },
+);

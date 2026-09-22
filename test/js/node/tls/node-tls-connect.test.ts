@@ -2026,7 +2026,7 @@ it.skipIf(!nodeExe())(
 // that way) must leave in the same TCP segment as the final handshake flight,
 // like Node. As a second segment it lets a server with Nagle on send its
 // session tickets first and then hold the reply until they are acknowledged.
-describe("a write issued before the handshake leaves with the final handshake flight in one segment", () => {
+describe("the final handshake flight and a write issued before the handshake leave in one segment", () => {
   // Runs `client` against a raw TCP proxy in front of a TLS 1.3 server. Resolves
   // with, per connection, the client-to-server chunks the proxy had received
   // when the server first saw plaintext: each send is its own chunk unless the
@@ -2113,15 +2113,19 @@ describe("a write issued before the handshake leaves with the final handshake fl
     });
   });
 
-  it("Bun.connect, retried from drain", async () => {
+  // With a handshake callback, open runs before the handshake. drain blocks
+  // until the proxy has read everything sent so far, so a flight that left
+  // before the handler's write is always its own chunk.
+  it.each([
+    // write() reports 0 bytes before the handshake; the retry from drain joins the flight.
+    { name: "Bun.connect, retried from drain", writeInOpen: true, chunks: 2 },
+    // Nothing was refused, so the flight does not wait for the drain handler.
+    { name: "Bun.connect, first write from drain leaves after the flight", writeInOpen: false, chunks: 3 },
+  ])("$name", async ({ writeInOpen, chunks }) => {
     using dir = tempDir("tls-parked-write", {});
     const proceed = join(String(dir), "proceed");
     let result = {};
     const chunkCounts = await countClientChunks(async proxyPort => {
-      // With a handshake callback, open runs before the handshake: write()
-      // reports 0 bytes and the caller retries from drain. drain blocks until
-      // the proxy has read everything sent so far, so a flight that left on
-      // its own is always its own chunk.
       const script = `
         const fs = require("node:fs");
         let pending = "HELLO";
@@ -2131,7 +2135,7 @@ describe("a write issued before the handshake leaves with the final handshake fl
           tls: { rejectUnauthorized: false },
           socket: {
             open(socket) {
-              pending = pending.slice(socket.write(pending));
+              if (${writeInOpen}) pending = pending.slice(socket.write(pending));
             },
             handshake() {},
             drain(socket) {
@@ -2169,7 +2173,7 @@ describe("a write issued before the handshake leaves with the final handshake fl
       stdout: "drain\n",
       exitCode: 0,
       failureDetail: "",
-      chunkCounts: [2],
+      chunkCounts: [chunks],
     });
   });
 });

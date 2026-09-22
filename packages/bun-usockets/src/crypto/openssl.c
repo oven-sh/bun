@@ -1807,6 +1807,7 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
   s->ssl = ssl;
   s->ssl_handshake_state = HANDSHAKE_PENDING;
   s->ssl_write_wants_read = 0;
+  s->ssl_write_parked = 0;
   s->ssl_read_wants_write = 0;
   s->ssl_fatal_error = 0;
   s->ssl_raw_tap = 0;
@@ -2346,6 +2347,7 @@ static struct us_socket_t *ssl_retry_parked_write(struct us_socket_t *s) {
   struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
   if (loop_ssl_data && loop_ssl_data->ssl_spill_owner == s) return s;
   s->ssl_write_wants_read = 0;
+  s->ssl_write_parked = 0;
   return us_internal_ssl_on_writable(s);
 }
 
@@ -2645,8 +2647,10 @@ restart:
           /* A write parked before the handshake (node:https queues its request
            * that way) is retried with the flight still held, so both leave in
            * one segment, like a write from the callback. */
-          s = ssl_retry_parked_write(s);
-          if (!s || ssl_gone(s)) return NULL;
+          if (s->ssl_write_parked) {
+            s = ssl_retry_parked_write(s);
+            if (!s || ssl_gone(s)) return NULL;
+          }
           loop_ssl_data->ssl_socket = s;
           /* The callback and the retry ran with the flight held: a write they
            * issued already flushed flight + data together; send whatever is
@@ -2792,6 +2796,7 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
    * ssl_update_handshake drains it. Mirrors the SEMI_SOCKET guard in
    * us_internal_ssl_close above. */
   if ((us_internal_poll_type(&s->p) & POLL_TYPE_KIND_MASK) == POLL_TYPE_SEMI_SOCKET) {
+    s->ssl_write_parked = 1;
     return 0;
   }
 
@@ -2799,6 +2804,7 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
    * callback writing): wait for the handshake, same as WANT_READ below. */
   if (s->ssl_in_use) {
     s->ssl_write_wants_read = 1;
+    s->ssl_write_parked = 1;
     return 0;
   }
 
@@ -2864,6 +2870,7 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
     int err = SSL_get_error(s_ssl(s), last_ssl_written);
     if (err == SSL_ERROR_WANT_READ) {
       s->ssl_write_wants_read = 1;
+      s->ssl_write_parked = 1;
     } else if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
       /* SSL_write drives the handshake when it has not finished, so this is
        * where a handshake-configuration failure (impossible version window,

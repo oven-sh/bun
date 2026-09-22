@@ -963,10 +963,7 @@ booga"
         .stdout("*.nomatch\n*.nomatch\n")
         .runAsTest("does not fail the command");
 
-      TestBuilder.command`export FOO=*.nomatch; echo $FOO`
-        .ensureTempDir()
-        .stdout("*.nomatch\n")
-        .runAsTest("export");
+      TestBuilder.command`export FOO=*.nomatch; echo $FOO`.ensureTempDir().stdout("*.nomatch\n").runAsTest("export");
 
       // Windows does not allow `*` in a file name.
       if (isPosix) {

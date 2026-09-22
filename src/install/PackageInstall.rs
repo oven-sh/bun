@@ -426,7 +426,29 @@ fn open_dir_a(dir: Fd, subpath: &[u8]) -> crate::Result<Dir> {
         .map_err(Into::into)
 }
 
-/// Recreate the symlink `src_dir/src_name` at `dest_dir/dest_path`.
+/// The link text of the symlink `dir/name` (at `path` inside the package), or
+/// `None` when the target is absolute or climbs above the package. The rule is
+/// the one the tarball extractor applies.
+#[cfg(not(windows))]
+pub(crate) fn symlink_target_in_package<'a>(
+    dir: Fd,
+    name: &ZStr,
+    path: &ZStr,
+    buf: &'a mut path::PathBuffer,
+) -> Option<&'a ZStr> {
+    let len = sys::readlinkat(dir, name, &mut buf[..]).ok()?;
+    let target = ZStr::from_buf(buf, len);
+    bun_libarchive::is_symlink_target_safe(path.as_bytes(), target, &mut None).then_some(target)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn is_symlink_in_package(dir: Fd, name: &ZStr, path: &ZStr) -> bool {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    symlink_target_in_package(dir, name, path, &mut buf).is_some()
+}
+
+/// Recreate the symlink `src_dir/src_name` at `dest_dir/dest_path`. A symlink
+/// whose target leaves the package is left out.
 #[cfg(not(windows))]
 pub(crate) fn copy_symlink(
     src_dir: Fd,
@@ -435,8 +457,9 @@ pub(crate) fn copy_symlink(
     dest_path: &ZStr,
 ) -> sys::Result<()> {
     let mut buf = bun_paths::path_buffer_pool::get();
-    let len = sys::readlinkat(src_dir, src_name, &mut buf[..])?;
-    let target = ZStr::from_buf(&buf, len);
+    let Some(target) = symlink_target_in_package(src_dir, src_name, dest_path, &mut buf) else {
+        return Ok(());
+    };
 
     let link = || sys::symlinkat(target, dest_dir.fd(), dest_path);
     match link() {
@@ -1637,6 +1660,8 @@ impl<'a> PackageInstall<'a> {
                                 entry.path.as_bytes(),
                             );
                         }
+                        EntryKind::SymLink
+                            if !is_symlink_in_package(entry.dir, entry.basename, entry.path) => {}
                         // `linkat` without AT_SYMLINK_FOLLOW links the symlink itself.
                         EntryKind::File | EntryKind::SymLink => {
                             // EACCES/EPERM: FUSE (e.g. Android SDCARD) does not support hardlinks
@@ -1823,6 +1848,8 @@ impl<'a> PackageInstall<'a> {
                                 entry.path.as_bytes(),
                             );
                         }
+                        EntryKind::SymLink
+                            if !is_symlink_in_package(entry.dir, entry.basename, entry.path) => {}
                         EntryKind::File | EntryKind::SymLink => {
                             let target_len = to_copy_into2_offset + entry.path.len();
                             head2[to_copy_into2_offset..target_len]

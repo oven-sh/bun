@@ -1,36 +1,30 @@
 // A symlink in the package cache must still reach node_modules. Every backend
-// recreates it as a symlink, the way the macOS clonefile backend already does.
-// The hardlink backend in proot's link2symlink (Termux proot-distro) leaves
-// the cache full of such entries after the first install.
+// recreates it as a symlink when its target stays inside the package, the
+// rule the tarball extractor already applies. A symlink that leaves the
+// package is left out.
 // https://github.com/oven-sh/bun/issues/43788
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import {
-  cpSync,
-  lstatSync,
-  mkdirSync,
-  readdirSync,
-  realpathSync,
-  renameSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from "node:fs";
-import { join } from "node:path";
+import { cpSync, lstatSync, mkdirSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
 
-// Replace every regular file under `dir` with a symlink to a copy of it in `store`.
-function symlinkFiles(dir: string, store: string) {
+// Move every regular file under `dir` into `dir/.store` and leave a relative
+// symlink in its place.
+function symlinkFiles(dir: string) {
+  const store = join(dir, ".store");
+  mkdirSync(store);
   let n = 0;
   const walk = (cur: string) => {
     for (const name of readdirSync(cur)) {
       const p = join(cur, name);
+      if (p === store) continue;
       const st = lstatSync(p);
       if (st.isDirectory()) {
         walk(p);
       } else if (st.isFile()) {
         const backing = join(store, `${n++}`);
         renameSync(p, backing);
-        symlinkSync(backing, p);
+        symlinkSync(relative(dirname(p), backing), p);
       }
     }
   };
@@ -63,28 +57,29 @@ describe.skipIf(isWindows)("install from a cache whose files are symlinks", () =
         });
         cpSync(join(import.meta.dir, "bar-0.0.2.tgz"), join(String(dir), "bar-0.0.2.tgz"));
         const cache = join(String(dir), "cache");
-        const store = join(String(dir), "store");
-        mkdirSync(store);
 
         // Populate the cache, then turn every cached file into a symlink.
         await install(String(dir), cache, ["--backend", "copyfile"]);
         const cached = readdirSync(cache).filter(name => name.startsWith("@T@"));
         expect(cached).toHaveLength(1);
-        expect(symlinkFiles(join(cache, cached[0]), store)).toBeGreaterThan(0);
-        // A symlink that points outside the package must stay a symlink in
-        // node_modules. The installer never copies its target.
+        const pkg = join(cache, cached[0]);
+        expect(symlinkFiles(pkg)).toBeGreaterThan(0);
+        // Symlinks that leave the package, by an absolute or a climbing
+        // relative target, must not reach node_modules.
         writeFileSync(join(cache, "outside.js"), "module.exports = 1;");
-        symlinkSync(join(cache, "outside.js"), join(cache, cached[0], "outside.js"));
+        symlinkSync(join(cache, "outside.js"), join(pkg, "absolute.js"));
+        symlinkSync(join("..", "outside.js"), join(pkg, "climbing.js"));
         rmSync(join(String(dir), "node_modules"), { recursive: true });
 
         await install(String(dir), cache, ["--backend", backend, "--linker", linker]);
         const installed = join(String(dir), "node_modules", "bar");
+        expect(lstatSync(join(installed, "package.json")).isSymbolicLink()).toBe(true);
         expect(await Bun.file(join(installed, "package.json")).json()).toMatchObject({
           name: "bar",
           version: "0.0.2",
         });
-        expect(lstatSync(join(installed, "outside.js")).isSymbolicLink()).toBe(true);
-        expect(realpathSync(join(installed, "outside.js"))).toBe(realpathSync(join(cache, "outside.js")));
+        expect(() => lstatSync(join(installed, "absolute.js"))).toThrow("ENOENT");
+        expect(() => lstatSync(join(installed, "climbing.js"))).toThrow("ENOENT");
       });
     });
   });

@@ -511,9 +511,7 @@ impl FileSink {
         bun_core::scoped_log!(FileSink, "onClose()");
         // SAFETY: caller contract — `this` is live with write+dealloc provenance.
         unsafe {
-            // `source.close()` below tells the owner, and `Writable::on_close` drops the
-            // Subprocess's ref on this sink: the only one when script never took `.stdin`
-            // (a Windows worker's stop phase closes the pipe in that state).
+            // `source.close()` may drop the last ref (a Subprocess whose `.stdin` was never read).
             let _guard = RefPtr::init_ref(this);
 
             (*this).abort_handle.leave();

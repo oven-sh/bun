@@ -102,8 +102,6 @@ export const subprocessInternals = {
     subprocess: import("bun").Subprocess,
     kind: "stdout" | "stderr",
   ) => boolean,
-  // Close the writer of the stdin pipe natively, as a Windows worker's stop phase does: no JS
-  // wrapper, and no ref on the sink but the Subprocess's when script never read `.stdin`.
   closeStdinWriter: $newRustFunction("subprocess.rs", "TestingAPIs.closeStdinWriter", 1) as (
     subprocess: import("bun").Subprocess,
   ) => boolean,

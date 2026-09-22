@@ -1620,14 +1620,9 @@ pub(crate) mod testing_apis {
         Ok(JSValue::TRUE)
     }
 
-    /// Close the writer of a subprocess's stdin pipe the way a Windows worker's
-    /// stop phase does (`stop_for_vm_teardown`): natively, with no JS wrapper
-    /// and no ref held by the caller. When script never read `.stdin`, the
-    /// Subprocess then holds the only ref on the sink while `FileSink::on_close`
-    /// runs. No other platform closes the writer in that state.
-    ///
-    /// Returns true if the writer was closed, false if stdin is not (or no
-    /// longer) a pipe.
+    /// Close the stdin pipe's writer as a Windows worker's stop phase does
+    /// (`stop_for_vm_teardown`): natively, with no JS wrapper and no ref taken.
+    /// Returns false if stdin is not (or no longer) a pipe.
     #[bun_jsc::host_fn]
     pub(crate) fn close_stdin_writer(
         global_this: &JSGlobalObject,
@@ -1646,9 +1641,8 @@ pub(crate) mod testing_apis {
             return Ok(JSValue::FALSE);
         };
         let writer = pipe.writer.as_ptr();
-        // SAFETY: the Subprocess's ref keeps the sink (and its embedded writer)
-        // live on entry. `close()` re-enters `FileSink::on_close`, which may free
-        // both; nothing touches them afterwards.
+        // SAFETY: the Subprocess's ref keeps the sink and its writer live on entry;
+        // `close()` may free both, and nothing touches them afterwards.
         unsafe { (*writer).close() };
         Ok(JSValue::TRUE)
     }

@@ -1311,22 +1311,6 @@ pub fn print_to(dest: Destination, args: fmt::Arguments<'_>) {
     });
 }
 
-/// Print to stdout
-/// This will appear in the terminal, including in production.
-/// Text automatically buffers
-#[macro_export]
-macro_rules! println {
-    ($fmt:expr $(, $arg:expr)* $(,)?) => {{
-        // `:expr` (not `:literal`) so `concat!(..)` templates compile.
-        // `concat!` accepts a nested `concat!`, so the trailing-`{}` join works.
-        const __NL: &str = $crate::output::_needs_nl($fmt);
-        $crate::output::print_to(
-            $crate::output::Destination::Stdout,
-            ::core::format_args!(concat!($fmt, "{}"), $($arg,)* __NL),
-        )
-    }};
-}
-
 /// Print to stdout, but only in debug builds.
 /// Text automatically buffers
 #[macro_export]
@@ -1795,21 +1779,6 @@ impl FmtTuple for fmt::Arguments<'_> {
     #[inline]
     fn len(&self) -> usize {
         1
-    }
-}
-impl<T: fmt::Display> FmtTuple for &[T] {
-    fn write_nth(&self, idx: usize, f: &mut dyn fmt::Write) -> Result<bool, fmt::Error> {
-        match self.get(idx) {
-            Some(v) => {
-                write!(f, "{}", v)?;
-                Ok(true)
-            }
-            None => Ok(false),
-        }
-    }
-    #[inline]
-    fn len(&self) -> usize {
-        (*self).len()
     }
 }
 impl<T: fmt::Display, const N: usize> FmtTuple for &[T; N] {

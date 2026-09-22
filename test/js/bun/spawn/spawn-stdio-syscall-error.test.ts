@@ -212,11 +212,13 @@ try {
   const r = Bun.spawnSync(${JSON.stringify(WRITER_CMD)}, { stderr: "inherit" });
   out.bun = { stdout: r.stdout?.constructor?.name, success: r.success };
 } catch (e) {
-  out.bun = "threw:" + e.code;
+  // The process ran, so the error says which one and how it exited. How it exited is not fixed: once the
+  // parent's read fails the pipe is closed, and the writer dies of SIGPIPE or exits on EPIPE.
+  out.bun = { threw: e.code, pid: typeof e.pid, exited: e.exitCode !== null || typeof e.signalCode === "string" };
 }
 {
   const r = spawnSync(${JSON.stringify(WRITER_CMD[0])}, ${JSON.stringify(WRITER_CMD.slice(1))}, { stdio: ["ignore", "pipe", "inherit"], maxBuffer: 64 << 20 });
-  out.spawnSync = { stdout: r.stdout, error: r.error?.code };
+  out.spawnSync = { stdout: r.stdout, error: r.error?.code, pid: r.pid > 0, output: r.output, exited: r.status !== null || typeof r.signal === "string" };
 }
 try {
   const r = execFileSync(${JSON.stringify(WRITER_CMD[0])}, ${JSON.stringify(WRITER_CMD.slice(1))}, { stdio: ["ignore", "pipe", "inherit"], maxBuffer: 64 << 20 });
@@ -333,8 +335,11 @@ describe.skipIf(!isLinux || !cc)("subprocess stdio syscall errors", () => {
     test.concurrent("spawnSync: the lost output is reported as an error", async () => {
       expect(await runWithFault("spawn-sync.mjs", { SPAWN_FAULT_RECV_AT: at })).toEqual({
         parsed: {
-          bun: "threw:EIO",
-          spawnSync: { stdout: null, error: "EIO" },
+          bun: { threw: "EIO", pid: "number", exited: true },
+          // node's result for a process that ran: its pid and an output array, not the `pid: 0` and
+          // `output: null` of one that could not be spawned.
+          // It exited or was killed by a signal: `status` and `signal` are never both null.
+          spawnSync: { stdout: null, error: "EIO", pid: true, output: [null, null, null], exited: true },
           execFileSync: "threw:EIO",
         },
         stderr: "",

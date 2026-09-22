@@ -273,6 +273,8 @@ class Module {
     return this[kNative].getError();
   }
 
+  // SyntheticModule's link() is synchronous, as in node.
+  link(linker?): Promise<void> | void;
   async link(linker) {
     validateModule(this);
     validateFunction(linker, "linker");

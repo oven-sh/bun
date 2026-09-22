@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, hideFromStackTrace, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, hideFromStackTrace, tempDir } from "harness";
 import { join } from "path";
 
 describe("Bun.Transpiler", () => {
@@ -266,6 +266,85 @@ describe("Bun.Transpiler", () => {
       expect(lastLine(ts.parsed(pre + 'export let y = Bar?.["a-b"];', false))).toBe('export let y = Bar?.["a-b"];');
       expect(lastLine(ts.parsedMin(pre + 'export let y = Foo?.["A"];', false))).toBe("export let y = Foo?.A;");
       expect(lastLine(ts.parsedMin(pre + 'export let y = Bar?.["a-b"];', false))).toBe('export let y = Bar?.["a-b"];');
+    });
+
+    // `B = "a" + "b"` is folded into a rope, and every inlined `A.B` pointed at
+    // that rope. Folding a template literal around it used to append the
+    // template's text onto the rope itself, so the member's declaration and all
+    // of its other uses changed too.
+    describe("template literal around an inlined string enum member", () => {
+      const pre = 'enum A { B = "a" + "b", C = B + "c" }\n';
+      const decl = 'var A;\n((A) => {\n  A.B = "ab";\n  A.C = "abc";\n})(A ||= {});\n';
+
+      it("member as the first part of the literal", () => {
+        expect(ts.parsedMin(pre + "console.log(`${A.B}-x`, A.B);", false)).toBe(
+          decl + 'console.log("ab-x", "ab" /* B */);\n',
+        );
+      });
+      it("member after a part that cannot be folded", () => {
+        expect(ts.parsedMin(pre + "console.log(`${y}${A.B}-x`, A.B);", false)).toBe(
+          decl + 'console.log(`${y}ab-x`, "ab" /* B */);\n',
+        );
+      });
+      it("member derived from another rope member", () => {
+        expect(ts.parsedMin(pre + "console.log(`${A.C}-x`, A.C);", false)).toBe(
+          decl + 'console.log("abc-x", "abc" /* C */);\n',
+        );
+      });
+      it("template inside the enum body, which folds even without minification", () => {
+        expect(ts.parsed('enum A { B = "a" + "b", C = `${B}-c`, D = `${B}` }\nconsole.log(A.B);', false)).toBe(
+          'var A;\n((A) => {\n  A["B"] = "ab";\n  A["C"] = "ab-c";\n  A["D"] = "ab";\n})(A ||= {});\nconsole.log("ab" /* B */);\n',
+        );
+      });
+      it("at runtime, including the same member in several templates", async () => {
+        // Not concurrent: before the fix the second template crashed the
+        // transpiler and the fourth one made it loop forever, and the test
+        // runner only kills a dangling child of a non-concurrent test.
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `enum Routes {
+              Base = "/api" + "/v1",
+              Users = Base + "/users",
+              Health = "/health",
+            }
+            function tail(prefix: string) {
+              return \`\${prefix}\${Routes.Base}/y\`;
+            }
+            console.log(
+              [
+                \`\${Routes.Base}/posts\`,
+                tail("q"),
+                \`\${Routes.Users}!\`,
+                \`\${Routes.Base}\${Routes.Base}\`,
+                Routes.Base,
+                Routes.Users,
+                Routes.Health,
+                JSON.stringify(Routes),
+              ].join("\\n"),
+            );`,
+          ],
+          env: bunEnv,
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({
+          stdout: [
+            "/api/v1/posts",
+            "q/api/v1/y",
+            "/api/v1/users!",
+            "/api/v1/api/v1",
+            "/api/v1",
+            "/api/v1/users",
+            "/health",
+            '{"Base":"/api/v1","Users":"/api/v1/users","Health":"/health"}',
+            "",
+          ].join("\n"),
+          stderr: "",
+          exitCode: 0,
+        });
+      });
     });
   });
 
@@ -1595,6 +1674,90 @@ function foo() {}
       // TODO: why doesn't this one fail?
       // err("async <const const T,>() => {}", "Unexpected const");
       // err("async <const const T extends X>() => {}", "Unexpected const");
+    });
+
+    describe("a signature parameter in a type literal that is not a binding", () => {
+      // [code, message, line, column]
+      const cases = [
+        ["type T = { foo(1): void }", "Unexpected 1", 1, 16],
+        ["let x: { foo(1): void }", "Unexpected 1", 1, 14],
+        ["interface I { foo(1): void }", "Unexpected 1", 1, 19],
+        ['function g() :{ a("/y") }', 'Unexpected "/y"', 1, 19],
+        ["function f(a: { m(1): void }) {}", "Unexpected 1", 1, 19],
+        ["x as { m(1): void }", "Unexpected 1", 1, 10],
+        ["type T = { (1): void }", "Unexpected 1", 1, 13],
+        ["type T = { new (1): void }", "Unexpected 1", 1, 17],
+        ["type T = { foo(...1): void }", "Unexpected 1", 1, 19],
+        ["type T = { foo([1]): void }", "Unexpected 1", 1, 17],
+        ["type T = { foo({ a: 1 }): void }", "Unexpected 1", 1, 21],
+        ["const a = 1;\n\ntype T = { foo(a, true): void };\n", "Unexpected true", 3, 19],
+        ["type T = { foo(", "Unexpected end of file", 1, 15],
+      ];
+
+      it.each(cases)("%j is a located syntax error from every API", async (code, message, line, column) => {
+        const thrown = { name: "BuildMessage", message, line, column };
+        const actual = {};
+        for (const api of ["scan", "scanImports", "transformSync", "transform"]) {
+          try {
+            await transpiler[api](code, "ts");
+            actual[api] = "did not throw";
+          } catch (e) {
+            actual[api] = { name: e.name, message: e.message, line: e.position?.line, column: e.position?.column };
+          }
+        }
+        expect(actual).toEqual({ scan: thrown, scanImports: thrown, transformSync: thrown, transform: thrown });
+      });
+
+      it("logs nothing when the parameter list is a speculative parse", () => {
+        const exp = ts.expectPrinted_;
+        const err = ts.expectParseError;
+
+        // "(" starts arrow function arguments or a parenthesized type. The
+        // failed attempt at the first must not report the token it stopped on.
+        exp("let x: (1 | 2)[] = []", "let x = [];\n");
+        exp('let x: ("a" | "b")[] = []', "let x = [];\n");
+        exp("let x: (typeof y)[] = []", "let x = [];\n");
+        exp("let x: (() => void)[] = []", "let x = [];\n");
+
+        // The type literal is inside a failed attempt at an arrow function
+        // return type or at type arguments. The error comes from the parse
+        // that follows the attempt.
+        err('const f = () :{ a("/y") } => 1', 'Expected "=>" but found ":"');
+        err("f<{ m(1): void }>()", 'Expected identifier but found "1"');
+
+        exp("let x: (a: number, [b]: [number], { c, d: [e] }: T, ...f: any[]) => void = y", "let x = y;\n");
+        exp("type T = { foo(this: Window, a?: number, [b]: [number], { c, d: [e] }: T, ...f: any[]): void }", "");
+      });
+
+      it("bun run and bun build print the located error", async () => {
+        using dir = tempDir("ts-signature-parameter", {
+          "in.ts": "const a = 1;\n\ntype T = { foo(1): void };\nconsole.log(a);\n",
+        });
+        const results = await Promise.all(
+          [
+            ["run", "in.ts"],
+            ["build", "in.ts"],
+          ].map(async args => {
+            await using proc = Bun.spawn({
+              cmd: [bunExe(), ...args],
+              env: { ...bunEnv, NO_COLOR: "1" },
+              cwd: String(dir),
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+            const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+            const lines = stderr.split("\n").map(l => l.trim());
+            return {
+              stdout,
+              error: lines.find(l => l.startsWith("error: ")),
+              at: lines.find(l => l.startsWith("at "))?.slice(-"in.ts:3:16".length),
+              exitCode,
+            };
+          }),
+        );
+        const printed = { stdout: "", error: "error: Unexpected 1", at: "in.ts:3:16", exitCode: 1 };
+        expect(results).toEqual([printed, printed]);
+      });
     });
 
     it("non-null assertion with new operator", () => {
@@ -2966,6 +3129,45 @@ console.log(<div {...obj} key="after" />);`),
       );
     });
 
+    it("first token of the output", async () => {
+      // The printer tracks "position after the previous operator / number /
+      // regexp" to decide when a space or parentheses are required. Those
+      // positions start out as "none", which must not match the empty output.
+      expectPrintedNoTrim("++x;", "++x;\n");
+      expectPrintedNoTrim("--x;", "--x;\n");
+      expectPrintedNoTrim("+x;", "+x;\n");
+      expectPrintedNoTrim("-x;", "-x;\n");
+      expectPrintedNoTrim("let;", "let;\n");
+      expectPrintedNoTrim("delete x.y;", "delete x.y;\n");
+      expectPrintedNoTrim("/a/.test(x);", "/a/.test(x);\n");
+
+      // The same statements later in the output
+      expectPrintedNoTrim("x;\n++x;", "x;\n++x;\n");
+      expectPrintedNoTrim("x;\nlet;", "x;\nlet;\n");
+
+      // The async form uses the printer's returned byte count to decide whether the output is empty
+      const plain = new Bun.Transpiler({ loader: "js" });
+      expect(await plain.transform("++x;")).toBe("++x;\n");
+      expect(await plain.transform("x;")).toBe("x;\n");
+      expect(await plain.transform("1;")).toBe("");
+
+      // The rules themselves still apply between two tokens
+      const minify = new Bun.Transpiler({ loader: "js", minifyWhitespace: true });
+      const print = code => minify.transformSync(code);
+      expect(print("++x;")).toBe("++x;");
+      expect(print("+x;")).toBe("+x;");
+      expect(print("x + ++y;")).toBe("x+ ++y;");
+      expect(print("x - --y;")).toBe("x- --y;");
+      expect(print("x + +y;")).toBe("x+ +y;");
+      expect(print("x - -y;")).toBe("x- -y;");
+      expect(print("x < !--y;")).toBe("x<! --y;");
+      expect(print("x-- > y;")).toBe("x-- >y;");
+      expect(print("x instanceof y;")).toBe("x instanceof y;");
+      expect(print("a / /b/;")).toBe("a/ /b/;");
+      expect(print("/a/ in b;")).toBe("/a/ in b;");
+      expect(print("x = 1..toString();")).toBe("x=1 .toString();");
+    });
+
     it("await", () => {
       expectPrinted("await x", "await x");
       expectPrinted("await +x", "await +x");
@@ -3024,6 +3226,22 @@ console.log(<div {...obj} key="after" />);`),
       expectPrinted_(`export { z as "" } from "m"`, `export { z as "" } from "m"`);
       expectPrinted_(`export { "" as "" } from "m"`, `export { "" } from "m"`);
       expectPrinted_(`export * as "" from "m"`, `export * as "" from "m"`);
+    });
+
+    it("import clause with more than 65535 names", () => {
+      // "a0000, a0001, ... affff": 65536 distinct names. Byte writes into one
+      // Buffer keep this fast on debug builds, where per-name string concat is slow.
+      const hex = Buffer.from("0123456789abcdef");
+      const names = Buffer.alloc(65536 * 7, "a0000, ");
+      for (let i = 0; i < 65536; i++) {
+        names[i * 7 + 1] = hex[i >> 12];
+        names[i * 7 + 2] = hex[(i >> 8) & 15];
+        names[i * 7 + 3] = hex[(i >> 4) & 15];
+        names[i * 7 + 4] = hex[i & 15];
+      }
+      const list = names.toString("latin1", 0, names.length - 2);
+      const out = new Bun.Transpiler({ loader: "js" }).transformSync("import def, {" + list + '} from "./m.js";');
+      expect(out).toBe("import def, { " + list + ' } from "./m.js";\n');
     });
 
     it("string quote selection", () => {
@@ -5083,6 +5301,45 @@ it("does not crash with --minify-syntax and revisiting dot expressions", () => {
   expect(exitCode).toBe(0);
 });
 
+// The printer aborted the process on these inputs, so they run in subprocesses.
+describe.concurrent("minify.identifiers on an empty source or a data loader", () => {
+  const printed = stdout => ({ stdout, stderr: "", exitCode: 0, signalCode: null });
+  const minified = "var key=1;export{key};export default {key};";
+
+  it.each([
+    [`new Bun.Transpiler({ minify: { identifiers: true } }).transformSync("")`, ""],
+    [`new Bun.Transpiler({ minify: true }).transformSync(" ")`, ""],
+    [`new Bun.Transpiler({ minify: true }).transformSync('{"key":1}', "json")`, minified],
+    [`await new Bun.Transpiler({ minify: true }).transform('{"key":1}', "json")`, minified],
+  ])("%s", async (expression, output) => {
+    const result = await bunRun(["-e", `console.log(JSON.stringify(${expression}))`]);
+    expect(result).toEqual(printed(JSON.stringify(output)));
+  });
+
+  it("the toml, yaml and text loaders", async () => {
+    const result = await bunRun([
+      "-e",
+      `const browser = new Bun.Transpiler({ minify: true });
+      const bun = new Bun.Transpiler({ minify: true, target: "bun" });
+      console.log(JSON.stringify([
+        browser.transformSync("key = 1", "toml"),
+        bun.transformSync("key: 1", "yaml"),
+        browser.transformSync("key", "text"),
+      ]));`,
+    ]);
+    expect(result).toEqual(printed(JSON.stringify([minified, minified, 'export default "key";'])));
+  });
+
+  it.each([
+    ["--minify", "data.json", '{"key":1}\n', minified],
+    ["--minify-identifiers", "empty.js", "", ""],
+  ])("bun build --no-bundle %s %s", async (flag, file, contents, output) => {
+    using dir = tempDir("minify-identifiers-no-char-freq", { [file]: contents });
+    const result = await bunRun(["build", "--no-bundle", flag, join(String(dir), file)]);
+    expect(result).toEqual(printed(output));
+  });
+});
+
 it("runtime transpiler stack overflows", async () => {
   expect(async () => await import("./fixtures/lots-of-for-loop.js")).toThrow(`Maximum call stack size exceeded`);
 });
@@ -6115,338 +6372,5 @@ describe("same-target destructuring with an unstable target", () => {
       stable: "a1b1",
     });
     expect(exitCode).toBe(0);
-  });
-});
-
-// oven-sh/bun#30538 — `sourcemap` option now threads a v3 source map
-// through to the JS-visible output. Behaviour matches `Bun.build`'s
-// `sourcemap` option:
-//   - unset / false / "none"  → returns string (unchanged)
-//   - "inline" / true         → string + inline `//# sourceMappingURL=data:...`
-//   - "external" / "linked"   → `{ code, map }` (map is v3 JSON text)
-describe("Bun.Transpiler sourcemap option", () => {
-  // Shared input: 6 lines, two `interface` declarations that the TS
-  // transpiler drops, plus the blank lines it collapses around them. The
-  // stripped output is only 2 lines, so any sensible sourcemap must
-  // re-map generated line 0 back to input line 1, and generated line 1
-  // back to input line 5.
-  const input = `interface Foo { x: number }
-const x: number = 5;
-
-interface Bar { y: string }
-
-const y: number = 10;`;
-
-  // Minimal VLQ decoder — plenty fast for the handful of mappings we
-  // emit, and avoids pulling in an external dependency. Returns an array
-  // of { generatedLine, generatedColumn, originalLine, originalColumn }
-  // records (zero-indexed, matching the v3 spec).
-  function decodeMappings(mappings) {
-    const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    function decodeVLQ(seg, offset) {
-      let value = 0;
-      let shift = 0;
-      let cont = true;
-      while (cont) {
-        const ch = seg[offset++];
-        const digit = charset.indexOf(ch);
-        if (digit === -1) {
-          // Fail fast on malformed VLQ. Without this guard, (digit & 32)
-          // stays truthy for `-1` and we loop forever — a test assertion
-          // failure would manifest as a CI hang, not a useful error.
-          throw new Error(
-            `Invalid VLQ digit ${JSON.stringify(ch)} in segment ${JSON.stringify(seg)} at offset ${offset - 1}`,
-          );
-        }
-        cont = (digit & 32) !== 0;
-        value += (digit & 31) << shift;
-        shift += 5;
-      }
-      const negative = (value & 1) !== 0;
-      value >>= 1;
-      return [negative ? -value : value, offset];
-    }
-
-    const lines = mappings.split(";");
-    const out = [];
-    let genLine = 0;
-    let srcIdx = 0;
-    let origLine = 0;
-    let origCol = 0;
-    for (const line of lines) {
-      let genCol = 0;
-      if (line !== "") {
-        for (const segment of line.split(",")) {
-          const fields = [];
-          let offset = 0;
-          while (offset < segment.length) {
-            const [v, next] = decodeVLQ(segment, offset);
-            fields.push(v);
-            offset = next;
-          }
-          genCol += fields[0];
-          if (fields.length >= 4) {
-            srcIdx += fields[1];
-            origLine += fields[2];
-            origCol += fields[3];
-          }
-          out.push({
-            generatedLine: genLine,
-            generatedColumn: genCol,
-            originalLine: origLine,
-            originalColumn: origCol,
-          });
-        }
-      }
-      genLine++;
-    }
-    return out;
-  }
-
-  it("returns a plain string when sourcemap is unset", () => {
-    const t = new Bun.Transpiler({ loader: "ts" });
-    const out = t.transformSync(input);
-    expect(typeof out).toBe("string");
-    expect(out).not.toContain("sourceMappingURL");
-  });
-
-  it.each([false, "none"])("returns a plain string when sourcemap is %p", value => {
-    const t = new Bun.Transpiler({ loader: "ts", sourcemap: value });
-    const out = t.transformSync(input);
-    expect(typeof out).toBe("string");
-    expect(out).not.toContain("sourceMappingURL");
-  });
-
-  it("'inline' appends a data URL and returns a string", () => {
-    const t = new Bun.Transpiler({ loader: "ts", sourcemap: "inline" });
-    const out = t.transformSync(input);
-
-    expect(typeof out).toBe("string");
-    expect(out).toContain("//# sourceMappingURL=data:application/json;base64,");
-    // Match `Bun.build`'s inline emitter — the footer terminates with a
-    // newline so two inline outputs can be safely concatenated without
-    // the second one being swallowed by the `//#` line comment.
-    expect(out.endsWith("\n")).toBe(true);
-
-    // Decode the embedded map and sanity-check v3 shape.
-    const match = out.match(/sourceMappingURL=data:application\/json;base64,([A-Za-z0-9+/=]+)/);
-    expect(match).not.toBeNull();
-    const map = JSON.parse(atob(match[1]));
-    expect(map).toMatchObject({
-      version: 3,
-      sources: ["/input.ts"],
-      sourcesContent: [input],
-      names: [],
-    });
-    expect(typeof map.mappings).toBe("string");
-    expect(map.mappings.length).toBeGreaterThan(0);
-  });
-
-  it("true is treated as 'inline' (matches Bun.build alias)", () => {
-    const t = new Bun.Transpiler({ loader: "ts", sourcemap: true });
-    const out = t.transformSync(input);
-    expect(typeof out).toBe("string");
-    expect(out).toContain("//# sourceMappingURL=data:application/json;base64,");
-  });
-
-  it("'external' returns { code, map } with a v3 JSON map", () => {
-    const t = new Bun.Transpiler({ loader: "ts", sourcemap: "external" });
-    const out = t.transformSync(input);
-
-    expect(typeof out).toBe("object");
-    expect(typeof out.code).toBe("string");
-    expect(typeof out.map).toBe("string");
-    // external: the code has no sourceMappingURL footer.
-    expect(out.code).not.toContain("sourceMappingURL");
-
-    const map = JSON.parse(out.map);
-    expect(map).toMatchObject({
-      version: 3,
-      sources: ["/input.ts"],
-      sourcesContent: [input],
-      names: [],
-    });
-  });
-
-  it("'linked' returns { code, map } and appends //# sourceMappingURL= to code", () => {
-    const t = new Bun.Transpiler({ loader: "ts", sourcemap: "linked" });
-    const out = t.transformSync(input);
-
-    expect(typeof out).toBe("object");
-    expect(typeof out.code).toBe("string");
-    expect(typeof out.map).toBe("string");
-    // linked: code has a sibling-file reference; no inline data URL.
-    expect(out.code).toMatch(/\/\/# sourceMappingURL=[^\s]+\.map/);
-    expect(out.code).not.toContain("data:application/json");
-
-    // map is still valid v3 JSON.
-    const map = JSON.parse(out.map);
-    expect(map.version).toBe(3);
-    expect(typeof map.mappings).toBe("string");
-  });
-
-  it("mappings recover the original line numbers after TS stripping", () => {
-    // This is the motivating case from the issue: the generated file is
-    // 2 lines but the original was 6. The transpiler dropped two
-    // `interface` declarations plus the surrounding blank lines; the map
-    // must still point `const x` back at original line 1 and `const y`
-    // back at original line 5.
-    const t = new Bun.Transpiler({ loader: "ts", sourcemap: "external" });
-    const out = t.transformSync(input);
-
-    const code = out.code.trimEnd();
-    expect(code.split("\n")).toEqual(["const x = 5;", "const y = 10;"]);
-
-    const map = JSON.parse(out.map);
-    const decoded = decodeMappings(map.mappings);
-
-    // The first mapping on each generated line is the one that matters
-    // for stack-trace recovery.
-    const firstOnLine0 = decoded.find(m => m.generatedLine === 0);
-    const firstOnLine1 = decoded.find(m => m.generatedLine === 1);
-
-    expect(firstOnLine0).toMatchObject({
-      generatedLine: 0,
-      generatedColumn: 0,
-      originalLine: 1, // `const x: number = 5;`
-      originalColumn: 0,
-    });
-    expect(firstOnLine1).toMatchObject({
-      generatedLine: 1,
-      generatedColumn: 0,
-      originalLine: 5, // `const y: number = 10;`
-      originalColumn: 0,
-    });
-  });
-
-  it("async transform() mirrors the sync shape — string when unset", async () => {
-    const t = new Bun.Transpiler({ loader: "ts" });
-    const out = await t.transform(input);
-    expect(typeof out).toBe("string");
-    expect(out).not.toContain("sourceMappingURL");
-  });
-
-  it("async transform() returns { code, map } for 'external'", async () => {
-    const t = new Bun.Transpiler({ loader: "ts", sourcemap: "external" });
-    const out = await t.transform(input);
-    expect(typeof out).toBe("object");
-    expect(typeof out.code).toBe("string");
-    const map = JSON.parse(out.map);
-    expect(map.version).toBe(3);
-    expect(map.sources).toEqual(["/input.ts"]);
-  });
-
-  it("async transform() embeds the inline data URL for 'inline'", async () => {
-    const t = new Bun.Transpiler({ loader: "ts", sourcemap: "inline" });
-    const out = await t.transform(input);
-    expect(typeof out).toBe("string");
-    expect(out).toContain("//# sourceMappingURL=data:application/json;base64,");
-    // Parity with the sync path: trailing newline after the data URL.
-    expect(out.endsWith("\n")).toBe(true);
-  });
-
-  // --- empty-input parity between sync and async ---
-  //
-  // Type-only TypeScript files (`interface Foo {}`, `type X = number;`,
-  // `.d.ts`-style sources) and empty inputs produce zero output bytes.
-  // The documented contract for `sourcemap: "external"` / `"linked"` is
-  // `{ code, map }` regardless, and the sync and async paths must agree.
-  describe.each([
-    ["empty input", ""],
-    ["type-only input", "interface Foo { x: number }"],
-  ])("%s", (_name, src) => {
-    it.each(["external", "linked"])("'%s' returns { code, map } (sync)", mode => {
-      const t = new Bun.Transpiler({ loader: "ts", sourcemap: mode });
-      const out = t.transformSync(src);
-      expect(typeof out).toBe("object");
-      expect(out.code.replace(/\n\/\/# sourceMappingURL=.*/s, "")).toBe("");
-      expect(typeof out.map).toBe("string");
-      const map = JSON.parse(out.map);
-      expect(map).toMatchObject({ version: 3, sources: ["/input.ts"] });
-    });
-
-    it.each(["external", "linked"])("'%s' returns { code, map } (async)", async mode => {
-      // Pre-fix, the async path silently fell back to `""` for empty
-      // output while the sync path returned `{ code, map }` — see
-      // oven-sh/bun#30540 review.
-      const t = new Bun.Transpiler({ loader: "ts", sourcemap: mode });
-      const out = await t.transform(src);
-      expect(typeof out).toBe("object");
-      expect(typeof out.map).toBe("string");
-      const map = JSON.parse(out.map);
-      expect(map).toMatchObject({ version: 3, sources: ["/input.ts"] });
-    });
-
-    it("'inline' returns a string with a trailing newline (sync)", () => {
-      const t = new Bun.Transpiler({ loader: "ts", sourcemap: "inline" });
-      const out = t.transformSync(src);
-      expect(typeof out).toBe("string");
-      expect(out).toContain("//# sourceMappingURL=data:application/json;base64,");
-      expect(out.endsWith("\n")).toBe(true);
-    });
-
-    it("'inline' returns a string with a trailing newline (async)", async () => {
-      const t = new Bun.Transpiler({ loader: "ts", sourcemap: "inline" });
-      const out = await t.transform(src);
-      expect(typeof out).toBe("string");
-      expect(out).toContain("//# sourceMappingURL=data:application/json;base64,");
-      expect(out.endsWith("\n")).toBe(true);
-    });
-  });
-
-  // Sync and async must agree on the synthetic source filename even
-  // when the caller passes a per-call loader that differs from the
-  // constructor's `default_loader`. Pre-fix, sync used
-  // `default_loader.stdinName()` (e.g. `"input.jsx"`) while async used
-  // the overridden loader — observable on `map.sources` and the
-  // `//# sourceMappingURL=<name>.map` footer.
-  it("per-call loader override affects sources name consistently (sync vs async)", async () => {
-    // No loader set in the constructor → default_loader = "jsx".
-    // Pass "ts" as the per-call override.
-    const t = new Bun.Transpiler({ sourcemap: "external" });
-    const sync = t.transformSync("const x: number = 5;", "ts");
-    const async_ = await t.transform("const x: number = 5;", "ts");
-    expect(JSON.parse(sync.map).sources).toEqual(JSON.parse(async_.map).sources);
-    expect(JSON.parse(sync.map).sources).toEqual(["/input.ts"]);
-  });
-
-  it("per-call loader override affects linked footer consistently (sync vs async)", async () => {
-    const t = new Bun.Transpiler({ sourcemap: "linked" });
-    const sync = t.transformSync("const x: number = 5;", "ts");
-    const async_ = await t.transform("const x: number = 5;", "ts");
-    const syncFooter = sync.code.match(/sourceMappingURL=[^\s]+/)?.[0];
-    const asyncFooter = async_.code.match(/sourceMappingURL=[^\s]+/)?.[0];
-    expect(syncFooter).toBe(asyncFooter);
-    expect(syncFooter).toBe("sourceMappingURL=input.ts.map");
-  });
-
-  // `target: "bun"` flips the printer's sourcemap builder into the
-  // packed InternalSourceMap binary format. The transform path has to
-  // re-encode that to standard VLQ before emitting the v3 JSON map,
-  // otherwise JSON.parse chokes on the raw binary bytes embedded in
-  // the `mappings` field.
-  it.each(["ts", "tsx", "jsx", "js"])('target: "bun" emits valid VLQ mappings for loader=%s (sync)', loader => {
-    const t = new Bun.Transpiler({ loader, target: "bun", sourcemap: "external" });
-    const out = t.transformSync("const x = 1;\nconst y = 2;");
-    const parsed = JSON.parse(out.map);
-    // decodeMappings would throw on an invalid VLQ segment; a
-    // successful decode is our proof that the format is correct.
-    const decoded = decodeMappings(parsed.mappings);
-    expect(decoded.length).toBeGreaterThan(0);
-    for (const m of decoded) {
-      expect(m.originalLine).toBeGreaterThanOrEqual(0);
-      expect(m.originalColumn).toBeGreaterThanOrEqual(0);
-    }
-  });
-
-  it('target: "bun" with sourcemap: "inline" produces a parseable embedded map', () => {
-    const t = new Bun.Transpiler({ loader: "ts", target: "bun", sourcemap: "inline" });
-    const out = t.transformSync("const x: number = 1;");
-    const match = out.match(/sourceMappingURL=data:application\/json;base64,([A-Za-z0-9+/=]+)/);
-    expect(match).not.toBeNull();
-    const map = JSON.parse(atob(match[1]));
-    expect(map.version).toBe(3);
-    // No non-VLQ characters in the mappings field.
-    expect(map.mappings).toMatch(/^[A-Za-z0-9+/,;]*$/);
   });
 });

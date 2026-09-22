@@ -430,12 +430,11 @@ function onUpgradedError(self, connection, err) {
   if (!hasErrorListener(self) && hasErrorListener(connection)) return;
   self._emitTLSError(err);
 }
-// Node's wrap 'error' -> _emitTLSError. First in line, so it sees a once() listener before that one removes itself.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L65
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L977
+// Node's wrap 'error' -> _emitTLSError: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L977
 function forwardUpgradedError(self, connection) {
   const forwarder = onUpgradedError.bind(null, self, connection);
   upgradedErrorForwarders.add(forwarder);
+  // First in line, so that it sees a once() listener before that one removes itself.
   connection.prependListener("error", forwarder);
 }
 // A forward does not count: only a real 'error' listener opts a socket into its read and write errors.

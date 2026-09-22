@@ -317,6 +317,16 @@ describe("Bun.serve HTML manifest", () => {
     expect(exitCode).toBe(0);
   });
 
+  it("rejects a relative manifest file path that joins onto the cwd to exactly MAX_PATH_BYTES", async () => {
+    // The joined path fills a PathBuffer with no room for its NUL. The OS
+    // rejects it, and on Windows relative() used to overflow its own buffer.
+    const { stdout, exitCode } = await serveWithManifestPath(
+      `Buffer.alloc(${maxPathBytes} - process.cwd().length - 1, "a").toString()`,
+    );
+    expect(stdout).toBe("CAUGHT ENAMETOOLONG");
+    expect(exitCode).toBe(0);
+  });
+
   it("rejects an absolute manifest file path outside the cwd that overflows the relative buffer", async () => {
     // The path fits the join buffer, but relative(cwd, path) prepends one
     // "/.." per cwd segment, and that output did not fit its own buffer:

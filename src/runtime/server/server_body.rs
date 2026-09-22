@@ -612,15 +612,18 @@ impl AnyRoute {
             FileSystem::instance().top_level_dir
         };
 
+        // Same bound as `Valid::path_too_long`: the joined path needs room for its NUL.
         let mut abs_buf = paths::path_buffer_pool::get();
-        let Some(abs_path) =
-            FileSystem::instance().abs_buf_checked(&[path_slice], &mut abs_buf[..])
-        else {
-            use bun_sys_jsc::SystemErrorJsc as _;
-            let err = crate::node::types::Valid::name_too_long(path_slice);
-            return Err(init_ctx
-                .global
-                .throw_value(err.to_error_instance(init_ctx.global)));
+        let abs_path = match FileSystem::instance().abs_buf_checked(&[path_slice], &mut abs_buf[..])
+        {
+            Some(abs_path) if abs_path.len() < paths::MAX_PATH_BYTES => abs_path,
+            _ => {
+                use bun_sys_jsc::SystemErrorJsc as _;
+                let err = crate::node::types::Valid::name_too_long(path_slice);
+                return Err(init_ctx
+                    .global
+                    .throw_value(err.to_error_instance(init_ctx.global)));
+            }
         };
         // Worst case: one "/.." per `cwd` segment, then a separator and `abs_path`.
         let mut relative_buf = vec![0u8; abs_path.len() + 3 * cwd.len() + 4];

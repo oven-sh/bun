@@ -1336,7 +1336,8 @@ describe("a TLS socket over a Duplex transport reports that transport's error", 
     ["https", "late", "req.error:transport failed|req.close:true"],
   ])("%s: a transport error %s reaches the TLS socket", async (side, when, stdout) => {
     const fixture = join(import.meta.dir, "node-tls-duplex-transport-error-fixture.ts");
-    const result = await bunRun(fixture, { SIDE: side, WHEN: when });
+    const { key, cert } = COMMON_CERT_;
+    const result = await bunRun(fixture, { SIDE: side, WHEN: when, KEY: key, CERT: cert });
     expect(result).toEqual({ stdout, stderr: "", exitCode: 0, signalCode: null });
   });
 });

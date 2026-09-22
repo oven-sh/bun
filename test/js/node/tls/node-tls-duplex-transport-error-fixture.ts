@@ -6,12 +6,13 @@
 // exists. WHEN=late destroys it once the engine runs: after the ClientHello for
 // a client, one event-loop turn after the wrap for a server.
 // Prints the events that the TLS socket, or the request, emitted.
-import { tls as certs } from "harness";
+// KEY and CERT come from the test. Importing "harness" here costs each run
+// several seconds of startup on a debug build.
 import https from "node:https";
 import { Duplex } from "node:stream";
 import tls from "node:tls";
 
-const { SIDE: side, WHEN: when } = process.env;
+const { SIDE: side, WHEN: when, KEY: key, CERT: cert } = process.env;
 const seen: string[] = [];
 process.on("exit", () => console.log(seen.join("|")));
 
@@ -37,7 +38,7 @@ function record(socket: tls.TLSSocket) {
 }
 
 if (side === "server") {
-  record(new tls.TLSSocket(transport, { isServer: true, key: certs.key, cert: certs.cert }));
+  record(new tls.TLSSocket(transport, { isServer: true, key, cert }));
   // A server writes nothing until its peer does. The task that creates the
   // engine is queued ahead of this one.
   if (when === "late") setImmediate(kill);

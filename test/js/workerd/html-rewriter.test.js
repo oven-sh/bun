@@ -2697,7 +2697,7 @@ it.concurrent.each([" ", " > "])(
       cmd: [
         bunExe(),
         "-e",
-        `const sel = Array.from({ length: 30000 }, () => "p").join(${JSON.stringify(combinator)});
+        `const sel = Array.from({ length: 30001 }, () => "p").join(${JSON.stringify(combinator)});
        const rw = new HTMLRewriter().on(sel, { element(el) { el.setAttribute("hit", ""); } });
        console.log(rw.transform("<i>x</i><p>y</p>"));`,
       ],

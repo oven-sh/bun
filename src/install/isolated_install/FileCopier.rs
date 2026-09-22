@@ -203,7 +203,23 @@ impl FileCopier {
                     }
                 };
 
-                let dest = match dest_dir.create_file_z(entry.path, Default::default()) {
+                // A stale symlink from an earlier install of the same folder must not
+                // redirect the write: ELOOP from O_NOFOLLOW replaces it.
+                let create = || {
+                    let flags = bun_sys::O::CREAT
+                        | bun_sys::O::WRONLY
+                        | bun_sys::O::CLOEXEC
+                        | bun_sys::O::NOFOLLOW;
+                    match bun_sys::openat(dest_dir.fd(), entry.path, flags, 0o666) {
+                        Err(err) if err.get_errno() == E::ELOOP => {
+                            let _ = bun_sys::unlinkat(dest_dir.fd(), entry.path);
+                            bun_sys::openat(dest_dir.fd(), entry.path, flags, 0o666)
+                        }
+                        result => result,
+                    }
+                    .map(bun_sys::File::from_fd)
+                };
+                let dest = match create() {
                     Ok(f) => f,
                     Err(_) => 'dest: {
                         if let Some(entry_dirname) =
@@ -215,7 +231,7 @@ impl FileCopier {
                             );
                         }
 
-                        match dest_dir.create_file_z(entry.path, Default::default()) {
+                        match create() {
                             Ok(f) => break 'dest f,
                             Err(err) => {
                                 bun_core::pretty_errorln!(

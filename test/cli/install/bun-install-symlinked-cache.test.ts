@@ -101,3 +101,32 @@ describe.skipIf(isWindows)("install from a cache whose files are symlinks", () =
     });
   });
 });
+
+// A folder dependency is linked into the isolated store again on every
+// install. A file that replaces an in-package symlink must replace the stale
+// link in the store, not write through it.
+test.skipIf(isWindows)("isolated store follows a folder dependency whose symlink becomes a file", async () => {
+  using dir = tempDir("symlink-to-file", {
+    "package.json": JSON.stringify({
+      name: "symlink-to-file-test",
+      dependencies: { dep: "file:./dep" },
+    }),
+    "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+    "dep/lib/real.js": "module.exports = 'real';",
+  });
+  const cache = join(String(dir), "cache");
+  const dep = join(String(dir), "dep");
+  symlinkSync(join("lib", "real.js"), join(dep, "index.js"));
+
+  await install(String(dir), cache, ["--linker", "isolated"]);
+  const installed = join(String(dir), "node_modules", "dep");
+  expect(lstatSync(join(installed, "index.js")).isSymbolicLink()).toBe(true);
+  expect(await Bun.file(join(installed, "index.js")).text()).toBe("module.exports = 'real';");
+
+  rmSync(join(dep, "index.js"));
+  writeFileSync(join(dep, "index.js"), "module.exports = 'file';");
+  await install(String(dir), cache, ["--linker", "isolated"]);
+  expect(lstatSync(join(installed, "index.js")).isSymbolicLink()).toBe(false);
+  expect(await Bun.file(join(installed, "index.js")).text()).toBe("module.exports = 'file';");
+  expect(await Bun.file(join(installed, "lib", "real.js")).text()).toBe("module.exports = 'real';");
+});

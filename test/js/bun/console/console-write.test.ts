@@ -1,5 +1,8 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { mkfifo } from "mkfifo";
+import { closeSync, constants, openSync, readSync } from "node:fs";
+import { join } from "node:path";
 
 test("console.write rejects a non-object this", async () => {
   await using proc = Bun.spawn({
@@ -193,4 +196,73 @@ try {
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
   expect(stderr).toBe(`pipe already broken: true\ncaught ${code}\nlater: caught EPIPE\n`);
   expect(exitCode).toBe(0);
+});
+
+// console.write(a, "s", b): `a` overflows the pipe by a little and is pending; the short "s" beside it settles that
+// write's Promise early, and `b` then starts a pending write of its own. Only the last Promise was kept, so the
+// call resolved to a total without `a`.
+//
+// Linux, because the first argument has to be sized from the pipe's capacity (F_GETPIPE_SZ). stdout is a FIFO that
+// this test does not read until the child has made the call.
+test.concurrent.skipIf(!isLinux)("console.write counts a write that settled before the call was over", async () => {
+  using dir = tempDir("console-write-total", {});
+  const fifo = join(String(dir), "stdout.fifo");
+  mkfifo(fifo, 0o600);
+  const readEnd = openSync(fifo, constants.O_RDONLY | constants.O_NONBLOCK);
+  const writeEnd = openSync(fifo, constants.O_WRONLY);
+  try {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+const { dlopen } = require("bun:ffi");
+const F_GETPIPE_SZ = 1032;
+const capacity = dlopen("libc.so.6", { fcntl: { args: ["int", "int"], returns: "int" } }).symbols.fcntl(1, F_GETPIPE_SZ);
+const a = Buffer.alloc(capacity + 100, "a").toString();
+const b = Buffer.alloc(1024 * 1024, "b").toString();
+const total = console.write(a, "s", b);
+console.error("expected " + (a.length + 1 + b.length));
+console.error("resolved " + (await total));
+`,
+      ],
+      env: bunEnv,
+      stdout: writeEnd,
+      stderr: "pipe",
+    });
+    closeSync(writeEnd);
+
+    const reader = proc.stderr.getReader();
+    const decoder = new TextDecoder();
+    let stderr = "";
+    while (!stderr.includes("\n")) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      stderr += decoder.decode(value, { stream: true });
+    }
+    const expected = Number(/expected (\d+)/.exec(stderr)?.[1]);
+
+    const chunk = Buffer.alloc(1024 * 1024);
+    let arrived = 0;
+    while (arrived < expected) {
+      try {
+        const n = readSync(readEnd, chunk);
+        if (n === 0) break;
+        arrived += n;
+      } catch (e: any) {
+        if (e.code !== "EAGAIN") throw e;
+        await new Promise(resolve => setImmediate(resolve));
+      }
+    }
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      stderr += decoder.decode(value, { stream: true });
+    }
+
+    expect({ stderr, arrived }).toEqual({ stderr: `expected ${expected}\nresolved ${expected}\n`, arrived: expected });
+    expect(await proc.exited).toBe(0);
+  } finally {
+    closeSync(readEnd);
+  }
 });

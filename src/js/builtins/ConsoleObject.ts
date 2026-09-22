@@ -133,11 +133,12 @@ export function write(this: Console & { $writer: ConsoleWriter | undefined; $ret
   // while it is backed up, of the bytes those writes added. The caller gets a Promise of the total then, because
   // awaiting it waits for the drain and is where a write error (EPIPE from a reader that hung up) arrives.
   //
-  // A write that fails on the spot (the pipe is already broken) returns a rejected Promise of its own instead. The
-  // caller gets the last one. Any other is lost: replaced by a later argument's, or dropped when a later argument
-  // or the flush throws. Nobody can handle its rejection, so it is marked handled. Only one that is already
-  // rejected: the sink hands its pending Promise out again, to callers whose rejection has to be reported. And not
-  // one an earlier call returned, which is that caller's.
+  // The caller gets the last Promise. An earlier one has settled by the time a write returns a different one: the
+  // sink has one pending write at a time. Fulfilled (a short write beside it can settle it early), its bytes join
+  // the total. Rejected (the pipe is already broken, and every write fails on the spot), it is lost, as is the last
+  // one when a later argument or the flush throws: nobody can handle its rejection, so it is marked handled. Only
+  // one that is already rejected, since the sink hands its pending Promise out again, to callers whose rejection
+  // has to be reported. And not one an earlier call returned, which is that caller's.
   var wrote = 0;
   var pending: Promise<number> | undefined;
   var finished: unknown;
@@ -149,8 +150,10 @@ export function write(this: Console & { $writer: ConsoleWriter | undefined; $ret
       const result = writer.write(arguments[i]);
       if (typeof result === "number") wrote += result;
       else if ($isPromise<number>(result)) {
-        if (pending !== undefined && pending !== result && pending !== returned && $isPromiseRejected(pending))
-          $pokePromiseAsHandled(pending);
+        if (pending !== undefined && pending !== result) {
+          if ($isPromiseFulfilled(pending)) wrote += $peekPromiseSettledValue(pending)!;
+          else if (pending !== returned && $isPromiseRejected(pending)) $pokePromiseAsHandled(pending);
+        }
         pending = result;
       } else finished = result;
     } while (++i < count);

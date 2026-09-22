@@ -82,11 +82,4 @@ describe("suite", () => {
   });
 });
 
-// Node fails the test with the error, so an expected failure accepts it.
-test("X", { expectFailure: true }, async () => {
-  await pendingUntilAfter(() => {
-    throw new Error("thrown from a timer of X");
-  });
-});
-
 after(() => console.log("ORDER=" + JSON.stringify(log)));

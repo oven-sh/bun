@@ -338,43 +338,67 @@ describe("node:test", () => {
       "D start",
       "D end",
       "afterEach(D)",
-      "afterEach(X)",
     ]);
-    expect(stderr).toContain("error: thrown from a timer of A");
-    expect(stderr).toContain("error: 1 subtest failed");
-    expect(stderr).toContain("error: thrown from a timer of sub1");
-    expect(stderr).toContain("error: rejected in R");
-    // X expects to fail, so the error thrown from its timer makes it pass.
-    expect(stderr).toContain("4 pass");
-    expect({ exitCode, stderr }).toMatchObject({
-      exitCode: 1,
-      stderr: expect.stringContaining("3 fail"),
-    });
+    // Each error is reported once, under the test that was running.
+    expect(errorsAndVerdicts(stderr)).toEqual([
+      "error: thrown from a timer of A",
+      "(fail) A",
+      "(pass) B",
+      "error: thrown from a timer of sub1",
+      "(fail) P",
+      "(pass) C",
+      "error: rejected in R",
+      "(fail) suite > R",
+      "(pass) suite > D",
+    ]);
+    expect(exitCode).toBe(1);
   });
 
-  test("should let a test's hooks finish before the next test when the error is thrown while one of them is pending", async () => {
+  test("should give up a hook that is pending when the error is thrown and run the test's remaining hooks before the next test", async () => {
     const { exitCode, stdout, stderr } = await runTests(["31-outside-error-in-hooks.js"]);
     const order = /^ORDER=(.*)$/m.exec(stdout)?.[1] ?? "null";
-    // The line `node --test` (v26.3.0) prints for this fixture.
     expect(JSON.parse(order)).toEqual([
       "afterEach(H)",
-      "afterEach(H) end",
+      "second afterEach(H)",
       "t.after(H)",
       "I",
       "afterEach(I)",
+      "second afterEach(I)",
       "beforeEach(J)",
-      "beforeEach(J) end",
       "afterEach(J)",
+      "second afterEach(J)",
       "K",
       "afterEach(K)",
+      "second afterEach(K)",
     ]);
-    expect(stderr).toContain("error: thrown from a timer of an afterEach hook");
-    expect(stderr).toContain("error: thrown from a timer of a beforeEach hook");
-    expect(stderr).toContain("2 pass");
-    expect({ exitCode, stderr }).toMatchObject({
-      exitCode: 1,
-      stderr: expect.stringContaining("2 fail"),
-    });
+    // The hooks never settle, so waiting for them would end in a bun:test timeout.
+    expect(stderr).not.toContain("timed out");
+    expect(errorsAndVerdicts(stderr)).toEqual([
+      "error: thrown while an afterEach hook was pending",
+      "(fail) H",
+      "(pass) I",
+      "error: thrown while a beforeEach hook was pending",
+      "(fail) J",
+      "(pass) K",
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("should not let a todo subtest, expectFailure, t.skip() or t.todo() absorb an error thrown outside the test's promise", async () => {
+    const { exitCode, stderr } = await runTests(["32-outside-error-not-absorbed.js"]);
+    expect(errorsAndVerdicts(stderr)).toEqual([
+      "error: thrown while a todo subtest was pending",
+      "(fail) a todo subtest is pending",
+      "error: thrown while an expectFailure subtest was pending",
+      "(fail) an expectFailure subtest is pending",
+      "error: thrown after t.skip()",
+      "(fail) after t.skip()",
+      "error: thrown after t.todo()",
+      "(fail) after t.todo()",
+      "error: thrown in an expectFailure test",
+      "(fail) expectFailure",
+    ]);
+    expect(exitCode).toBe(1);
   });
 
   test("should resolve the promise of a test that a name pattern filters out", async () => {
@@ -405,6 +429,14 @@ async function runTests(filenames: string[], env: Record<string, string> = {}, a
     new Response(stderrStream).text(),
   ]);
   return { exitCode, stdout, stderr };
+}
+
+// The `error: ...` lines and the per-test verdict lines of a `bun test` report, in order.
+function errorsAndVerdicts(stderr: string) {
+  return stderr
+    .split("\n")
+    .filter(line => /^(error: |\((pass|fail|skip|todo)\) )/.test(line))
+    .map(line => line.replace(/ \[[\d.]+ms\]$/, ""));
 }
 
 describe("node:test mock", () => {

@@ -652,22 +652,23 @@ pub(crate) mod on_unhandled_rejection {
                     }
                 }
             }
-            if bun_test::BunTest::offer_uncaught_to_node_test(
-                &buntest_strong,
-                global_object,
-                &current_state_data,
-                rejection,
-            ) {
-                return;
-            }
-            // SAFETY: as above; the handler has returned, so this is again the only handle.
-            let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
             buntest.on_uncaught_exception(
                 global_object,
                 Some(rejection),
                 true,
                 &current_state_data,
             );
+            if bun_test::BunTest::offer_uncaught_to_node_test(
+                &buntest_strong,
+                global_object,
+                &current_state_data,
+                rejection,
+            ) {
+                // The entry has failed; its `done` advances the sequence.
+                return;
+            }
+            // SAFETY: as above; the handler has returned, so this is again the only handle.
+            let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
             buntest.add_result(current_state_data);
             if let Err(e) = bun_test::BunTest::run(&buntest_strong, global_object) {
                 // As `RunTestsTask::call`: what advancing the runner threw is

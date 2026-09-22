@@ -1,38 +1,34 @@
 const { test, after, beforeEach, afterEach } = require("node:test");
 
-// An error thrown outside any promise while a beforeEach or afterEach hook of a
-// test is pending. bun:test fails the running test for it (Node only prints a
-// diagnostic). The hook still finishes and the test's remaining hooks still
-// run before the next test starts. `node --test` prints the same ORDER.
+// An error thrown while a beforeEach or afterEach hook of a test is pending,
+// by the very operation the hook waits on, so that hook never settles (a setup
+// callback that throws before it resolves). bun:test fails the running test
+// for it. The test must not sit there until the bun:test timeout: it gives up
+// that hook, and its remaining hooks still run before the next test starts.
 const log = [];
 
-// Runs `fail` from a timer callback and settles only after it, so the error
-// always arrives while the awaiting hook is pending.
-function pendingUntilAfter(fail) {
-  const { promise, resolve } = Promise.withResolvers();
-  setTimeout(() => {
-    setTimeout(resolve, 1);
-    fail();
-  }, 1);
-  return promise;
+// Never settles: the callback that would resolve it throws first.
+function brokenSetup(message) {
+  return new Promise(() => {
+    setTimeout(() => {
+      throw new Error(message);
+    }, 1);
+  });
 }
 
 beforeEach(async t => {
   if (t.name !== "J") return;
   log.push("beforeEach(J)");
-  await pendingUntilAfter(() => {
-    throw new Error("thrown from a timer of a beforeEach hook");
-  });
-  log.push("beforeEach(J) end");
+  await brokenSetup("thrown while a beforeEach hook was pending");
 });
 
 afterEach(async t => {
   log.push(`afterEach(${t.name})`);
-  if (t.name !== "H") return;
-  await pendingUntilAfter(() => {
-    throw new Error("thrown from a timer of an afterEach hook");
-  });
-  log.push("afterEach(H) end");
+  if (t.name === "H") await brokenSetup("thrown while an afterEach hook was pending");
+});
+
+afterEach(t => {
+  log.push(`second afterEach(${t.name})`);
 });
 
 test("H", t => {
@@ -43,7 +39,9 @@ test("I", () => {
   log.push("I");
 });
 
-test("J", () => {});
+test("J", () => {
+  log.push("J body");
+});
 
 test("K", () => {
   log.push("K");

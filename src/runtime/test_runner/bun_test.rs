@@ -1265,10 +1265,12 @@ impl BunTest {
     }
 
     /// `node:test` runs a test's hooks, subtests and mock restore inside the one
-    /// bun:test callback, so failing that entry here would start the next test on
-    /// top of them. While `current` is the entry its handler was registered for,
-    /// the handler sees the error first; `true` means `node:test` winds the test
-    /// down and then fails it itself, through `done`.
+    /// bun:test callback, so advancing past that entry as soon as an uncaught
+    /// error has failed it would start the next test on top of them. While
+    /// `current` is the entry its handler was registered for, the handler hears
+    /// about the error; `true` means `node:test` winds the test down and then
+    /// calls the entry's `done`, which advances the sequence. The entry's
+    /// timeout still bounds that.
     pub(crate) fn offer_uncaught_to_node_test(
         this_strong: &BunTestPtr,
         global_this: &JSGlobalObject,
@@ -1281,14 +1283,13 @@ impl BunTest {
             Some(claim) if claim.entry.is_same_entry(current) => claim.handler.get(),
             _ => return false,
         };
+        if global_this.has_exception() {
+            return false;
+        }
         // JS gets the thrown value, not the `JSC::Exception` cell around it.
         let thrown_value = error.to_error().unwrap_or(error);
-        match handler.call(global_this, JSValue::UNDEFINED, &[thrown_value]) {
-            Ok(taken) => {
-                let taken = taken.to_boolean();
-                bun_core::scoped_log!(bun_test_group, "offerUncaughtToNodeTest -> taken: {}", taken);
-                taken
-            }
+        let taken = match handler.call(global_this, JSValue::UNDEFINED, &[thrown_value]) {
+            Ok(taken) => taken.to_boolean(),
             Err(e) => {
                 let thrown = global_this.take_exception(e);
                 if !thrown.is_termination_exception() {
@@ -1296,7 +1297,16 @@ impl BunTest {
                 }
                 false
             }
+        };
+        bun_core::scoped_log!(bun_test_group, "offerUncaughtToNodeTest -> taken: {}", taken);
+        if taken {
+            // The handler rejected a promise. A rejection is reported after the
+            // turn's microtask drain, so nothing else would run the reactions
+            // before the loop sleeps, and the test would stay parked until the
+            // loop next wakes up.
+            let _ = global_this.bun_vm().event_loop_mut().maybe_drain_microtasks();
         }
+        taken
     }
 
     /// called from the uncaught exception handler, or if a test callback rejects or throws an error

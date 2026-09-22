@@ -203,6 +203,7 @@ impl PostgresSQLQuery {
         let event_loop = vm.event_loop_mut();
         let js_err = postgres_error_to_js(global_object, None, err);
         event_loop.run_callback(
+            bun_event_loop::ContextId::NONE,
             function,
             global_object,
             this_value,
@@ -236,6 +237,7 @@ impl PostgresSQLQuery {
             .unwrap();
         let event_loop = vm.event_loop_mut();
         event_loop.run_callback(
+            bun_event_loop::ContextId::NONE,
             function,
             global_object,
             this_value,
@@ -310,6 +312,7 @@ impl PostgresSQLQuery {
         let event_loop = vm.event_loop_mut();
 
         event_loop.run_callback(
+            bun_event_loop::ContextId::NONE,
             function,
             global_object,
             this_value,
@@ -478,6 +481,19 @@ impl PostgresSQLQuery {
             }
             JsError::Thrown
         };
+
+        // A connection that failed or closed answers nothing: a query queued on it would hold the
+        // event loop for ever. The pool hears of a close through `onclose` and stops handing the
+        // connection out, except a disposed `Bun.ModuleGraph`'s, which is told nothing.
+        if matches!(
+            connection.status.get(),
+            bun_sql::postgres::Status::Failed | bun_sql::postgres::Status::Disconnected
+        ) {
+            return Err(throw_write_error(
+                b"Connection closed",
+                AnyPostgresError::ConnectionClosed,
+            ));
+        }
 
         if this.flags.get().simple {
             bun_core::scoped_log!(Postgres, "executeQuery");

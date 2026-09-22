@@ -1079,7 +1079,7 @@ impl Assets {
 // PackageJSONFields
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct PackageJSONFields {
+pub(crate) struct PackageJSONFields {
     pub name: Vec<u8>,
     /// ARENA: allocated from `bun_ast::Expr` Store via `initialize_store()`; no deinit.
     pub object: Option<StoreRef<bun_ast::E::Object>>,
@@ -1330,7 +1330,7 @@ impl DependencyGroup {
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 #[repr(u8)]
-pub enum Template {
+pub(crate) enum Template {
     Blank,
     ReactBlank,
     ReactTailwind,
@@ -1338,7 +1338,7 @@ pub enum Template {
     TypescriptLibrary,
 }
 
-pub struct TemplateFile {
+pub(crate) struct TemplateFile {
     pub path: &'static [u8],
     pub(crate) contents: &'static [u8],
 }

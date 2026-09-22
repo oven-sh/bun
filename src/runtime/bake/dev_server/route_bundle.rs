@@ -9,7 +9,7 @@ use crate::bake::framework_router;
 use crate::server::{StaticRoute, html_bundle::HTMLBundleRoute};
 
 /// `bun.GenericIndex(u30, RouteBundle)`.
-pub enum RouteBundleMarker {}
+pub(crate) enum RouteBundleMarker {}
 pub(crate) type Index = bun_core::GenericIndex<u32, RouteBundleMarker>;
 pub(crate) type IndexOptional = Option<Index>;
 
@@ -17,7 +17,7 @@ pub(crate) type IndexOptional = Option<Index>;
 pub(crate) type ByteOffset = bun_core::GenericIndex<u32, u8>;
 
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum State {
+pub(crate) enum State {
     Unqueued,
     Bundling,
     DeferredToNextBundle,
@@ -25,14 +25,14 @@ pub enum State {
     Loaded,
 }
 
-pub struct Framework {
+pub(crate) struct Framework {
     pub(crate) route_index: framework_router::RouteIndex,
     pub(crate) cached_module_list: jsc::StrongOptional,
     pub(crate) cached_client_bundle_url: jsc::StrongOptional,
     pub(crate) cached_css_file_array: jsc::StrongOptional,
 }
 
-pub struct Html {
+pub(crate) struct Html {
     /// Ref taken in `get_or_put_route_bundle`.
     pub(crate) html_bundle: RefPtr<HTMLBundleRoute>,
     pub(crate) bundled_file: incremental_graph::ClientFileIndex,
@@ -44,7 +44,7 @@ pub struct Html {
     pub(crate) cached_response: Option<RefPtr<StaticRoute>>,
 }
 
-pub enum Data {
+pub(crate) enum Data {
     Framework(Framework),
     Html(Html),
 }
@@ -104,7 +104,7 @@ pub(crate) enum UnresolvedIndex {
     Html(bun_ptr::ThisPtr<HTMLBundleRoute>),
 }
 
-pub struct RouteBundle {
+pub(crate) struct RouteBundle {
     pub(crate) server_state: State,
     pub(crate) data: Data,
     /// The route's client-side script, built on first request.

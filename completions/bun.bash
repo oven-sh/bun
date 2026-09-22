@@ -231,7 +231,7 @@ _extract_cwd() {
 _bun_completions_inner() {
     local SUBCOMMANDS="dev bun create run install add remove upgrade completions discord help init pm x test repl update audit dedupe prune outdated link unlink build"
 
-    local GLOBAL_OPTIONS="--use --cwd --bunfile --server-bunfile --config --disable-react-fast-refresh --disable-hmr --env-file --extension-order --jsx-factory --jsx-fragment --jsx-import-source --jsx-production --jsx-runtime --main-fields --no-summary --version --platform --public-dir --tsconfig-override --define --external --help --inject --loader --origin --port --dump-environment-variables --dump-limits --disable-bun-js -c -v -d -e -h -i -l -u -p"
+    local GLOBAL_OPTIONS="--use --cwd --bunfile --server-bunfile --config --disable-react-fast-refresh --disable-hmr --env-file --extension-order --jsx-factory --jsx-fragment --jsx-import-source --jsx-production --jsx-runtime --main-fields --no-summary --version --target --public-dir --tsconfig-override --define --external --help --loader --origin --port --dump-environment-variables --dump-limits --disable-bun-js -c -v -d -e -h -i -l -u -p"
 
     local ADD_OPTIONS="--development --optional --peer --catalog --filter -d -F --config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --global --cwd --backend --link-native-bins --help -c -y -p -f -g"
     local REMOVE_OPTIONS="--filter -F --config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --global --cwd --backend --link-native-bins --help -c -y -p -f -g"

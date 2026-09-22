@@ -8,8 +8,16 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // The stub counts each S3 request and the child prints the counts at exit.
 // `body` runs with `client` in scope and must leave the upload abandoned.
 // The child then waits for `waitFor` before it runs `then`. With `gateCreate`,
-// the stub holds the CreateMultipartUpload response until `then` ran.
-function fixture(opts: { body: string; waitFor: string; then?: string; gateCreate?: boolean }) {
+// the stub holds the CreateMultipartUpload response until `then` ran. The stub answers
+// AbortMultipartUpload with `abortStatus` (204, as S3 does, by default).
+function fixture(opts: {
+  body: string;
+  waitFor: string;
+  then?: string;
+  gateCreate?: boolean;
+  retry?: number;
+  abortStatus?: number;
+}) {
   return `
     const reqs = { create: 0, part: 0, complete: 0, abort: 0, put: 0 };
     const createGate = Promise.withResolvers();
@@ -36,7 +44,7 @@ function fixture(opts: { body: string; waitFor: string; then?: string; gateCreat
         }
         if (req.method === "DELETE") {
           reqs.abort++;
-          return new Response("", { status: 204 });
+          return new Response("", { status: ${opts.abortStatus ?? 204} });
         }
         await req.text();
         reqs.complete++;
@@ -53,7 +61,7 @@ function fixture(opts: { body: string; waitFor: string; then?: string; gateCreat
       region: "us-east-1",
     });
     const partSize = 5 * 1024 * 1024;
-    const opts = { partSize, queueSize: 2, retry: 0 };
+    const opts = { partSize, queueSize: 2, retry: ${opts.retry ?? 0} };
     const deadline = Date.now() + 4_000;
     ${opts.body}
     while (Date.now() < deadline && !(${opts.waitFor})) {
@@ -89,36 +97,51 @@ async function run(opts: Parameters<typeof fixture>[0]) {
   return { stdout, stderr, exited };
 }
 
+// Uploads a stream that yields one full part, waits for `before`, then errors.
+const failingStream = (before: string) => `
+  let pulls = 0;
+  const stream = new ReadableStream({
+    async pull(controller) {
+      if (pulls++ === 0) {
+        controller.enqueue(new Uint8Array(partSize));
+        return;
+      }
+      while (Date.now() < deadline && !(${before})) await Bun.sleep(10);
+      controller.error(new Error("source failed"));
+    },
+  });
+  const result = await client.write("key", new Response(stream), opts).then(
+    () => "resolved",
+    e => "rejected: " + e.message,
+  );
+  console.log(result);
+`;
+
 // The source stream errors after one full part, while the
 // CreateMultipartUpload request is still in flight. The write rejects at
 // once. When the Create response lands, the upload it names must be aborted.
 test.concurrent("stream error while CreateMultipartUpload is in flight aborts the upload", async () => {
-  const body = `
-    let pulls = 0;
-    const stream = new ReadableStream({
-      pull(controller) {
-        if (pulls++ === 0) {
-          controller.enqueue(new Uint8Array(partSize));
-          return;
-        }
-        controller.error(new Error("source failed"));
-      },
-    });
-    const result = await client.write("key", new Response(stream), opts).then(
-      () => "resolved",
-      e => "rejected: " + e.message,
-    );
-    console.log(result);
-  `;
   expect(
     await run({
-      body,
+      body: failingStream(`true`),
       waitFor: `true`,
       then: `createGate.resolve(); while (Date.now() < deadline && reqs.abort === 0) await Bun.sleep(10);`,
       gateCreate: true,
     }),
   ).toEqual({
     stdout: `rejected: source failed\n{"create":1,"part":0,"complete":0,"abort":1,"put":0}\n`,
+    stderr: "",
+    exited: 0,
+  });
+});
+
+// S3 answers AbortMultipartUpload with 204. A 404 means the store no longer has the upload.
+// Both are final: the abort must not be sent again.
+test.concurrent.each([204, 404])("AbortMultipartUpload answered with %d is not retried", async abortStatus => {
+  expect(
+    await run({ body: failingStream(`reqs.part === 1`), waitFor: `reqs.abort > 0`, retry: 3, abortStatus }),
+  ).toEqual({
+    stdout: `rejected: source failed\n{"create":1,"part":1,"complete":0,"abort":1,"put":0}\n`,
     stderr: "",
     exited: 0,
   });

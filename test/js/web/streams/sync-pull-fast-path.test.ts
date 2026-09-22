@@ -115,13 +115,14 @@ test("writer.write() with a sync sink does not allocate a wrapper promise per ch
 // directly, and the source/sink observes them: they decide whether its own jobs run before or after
 // the stream calls it again.
 describe("a promise returned from pull(), write() or close() is adopted, not reacted to directly", () => {
-  // `now` counts passes through the microtask queue.
+  // `now` counts passes through the microtask queue. The cap keeps a stream that never finishes
+  // from starving the event loop, so the test times out and does not hang the runner.
   function microtaskClock() {
     let now = 0;
     let running = true;
     (function tick() {
       now++;
-      if (running) queueMicrotask(tick);
+      if (running && now < 1000) queueMicrotask(tick);
     })();
     return {
       get now() {

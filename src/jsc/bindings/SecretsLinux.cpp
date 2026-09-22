@@ -269,7 +269,7 @@ static void updateError(Error& err, GError* gerror)
     }
 }
 
-Error setPassword(const CString& service, const CString& name, CString&& password, bool allowUnrestrictedAccess)
+Error setPassword(const CString& service, const CString& name, CString&& password, bool allowUnrestrictedAccess, Persist)
 {
     Error err;
 

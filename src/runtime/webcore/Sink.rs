@@ -9,7 +9,7 @@ use bun_sys::{self as sys, Error as SysError};
 
 // Re-export the real ArrayBufferSink so `crate::webcore::sink::ArrayBufferSink`
 // resolves to the full type (with `bytes`/`source`/`destroy`) for Body.rs.
-pub use crate::webcore::array_buffer_sink::ArrayBufferSink;
+pub(crate) use crate::webcore::array_buffer_sink::ArrayBufferSink;
 
 crate::impl_js_sink_abi!(ArrayBufferSink, "ArrayBufferSink");
 
@@ -31,7 +31,7 @@ crate::impl_js_sink_abi!(ArrayBufferSink, "ArrayBufferSink");
 // `heap::take` on the inner pointer (e.g. `HTTPServerWritable::destroy`)
 // is sound for an allocation that was `heap::alloc`'d as `Box<JSSink<T>>`.
 #[repr(transparent)]
-pub struct JSSink<T> {
+pub(crate) struct JSSink<T> {
     pub sink: T,
 }
 
@@ -181,7 +181,7 @@ macro_rules! impl_js_sink_forwarders {
 /// Per-sink C ABI surface. `&str` const-generics can't drive `#[link_name]`,
 /// so each `SinkType` provides the resolved `${abi}__*` externs here (normally
 /// via `impl_js_sink_abi!`) for the generic `JSSink<T>` host-fn bodies to call.
-pub trait JsSinkAbi {
+pub(crate) trait JsSinkAbi {
     /// `${abi_name}__fromJS` — encodes `*ThisSink` (or 0/1 sentinel) as `usize`.
     fn from_js_extern(value: crate::webcore::jsc::JSValue) -> usize;
     /// `${abi_name}__createObject`. Safe wrapper: takes `&JSGlobalObject` and
@@ -214,7 +214,7 @@ pub(crate) mod from_js_result {
 }
 
 impl<T: JsSinkAbi> JSSink<T> {
-    pub fn create_object(
+    pub(crate) fn create_object(
         global: &crate::webcore::jsc::JSGlobalObject,
         object: &mut T,
         destructor: usize,
@@ -226,13 +226,13 @@ impl<T: JsSinkAbi> JSSink<T> {
         )
     }
 
-    pub fn set_destroy_callback(value: crate::webcore::jsc::JSValue, callback: usize) {
+    pub(crate) fn set_destroy_callback(value: crate::webcore::jsc::JSValue, callback: usize) {
         T::set_destroy_callback_extern(value, callback)
     }
 
     /// `JSSink.fromJS(value)` — recover `*mut JSSink<T>` (= `*mut ThisSink`) from
     /// the JS wrapper, or `None` if detached / wrong type.
-    pub fn from_js(value: crate::webcore::jsc::JSValue) -> Option<*mut JSSink<T>> {
+    pub(crate) fn from_js(value: crate::webcore::jsc::JSValue) -> Option<*mut JSSink<T>> {
         let raw = T::from_js_extern(value);
         match raw {
             from_js_result::DETACHED
@@ -247,7 +247,7 @@ impl<T: JsSinkAbi> JSSink<T> {
     /// because the pump drains whatever the stream already holds (user code
     /// included) before returning, and a sink failing in there detaches its
     /// `source()`.
-    pub fn assign_to_stream(
+    pub(crate) fn assign_to_stream(
         global: &crate::webcore::jsc::JSGlobalObject,
         stream: crate::webcore::jsc::JSValue,
         ptr: NonNull<T>,
@@ -260,7 +260,7 @@ impl<T: JsSinkAbi> JSSink<T> {
     }
 
     /// A new `JSReadable*SinkController` attached to the sink at `ptr`; it must be detached before the sink is freed.
-    pub fn create_controller(
+    pub(crate) fn create_controller(
         global: &crate::webcore::jsc::JSGlobalObject,
         ptr: NonNull<T>,
     ) -> crate::webcore::jsc::JSValue
@@ -271,7 +271,7 @@ impl<T: JsSinkAbi> JSSink<T> {
     }
 
     /// [`assign_to_stream`](Self::assign_to_stream) through a `controller` from [`create_controller`](Self::create_controller).
-    pub fn assign_controller_to_stream(
+    pub(crate) fn assign_controller_to_stream(
         global: &crate::webcore::jsc::JSGlobalObject,
         stream: crate::webcore::jsc::JSValue,
         controller: crate::webcore::jsc::JSValue,
@@ -289,24 +289,24 @@ impl<T: JsSinkAbi> JSSink<T> {
         }
         start_pump(global, stream, controller)
     }
+}
 
+impl SourceHandle {
     /// Disconnect the upstream source: JSController → detachPtr; ByteStream → clear its SinkHandle.
-    pub(crate) fn detach(source: &mut SourceHandle, _global: &crate::webcore::jsc::JSGlobalObject) {
-        match *source {
+    pub(crate) fn detach(&mut self, global: &JSGlobalObject) {
+        match *self {
             SourceHandle::JSController(value) => {
-                source.clear();
+                self.clear();
                 // detachPtr leaves m_needExceptionCheck set; wrap to satisfy the verifier.
-                let _ = ::bun_jsc::call_check_slow(_global, || {
-                    streams::controller_abi::detach_ptr(value)
-                });
+                let _ = ::bun_jsc::call_check_slow(global, || controller_abi::detach_ptr(value));
             }
             SourceHandle::ByteStream(bs) => {
                 bs.unpipe_without_deref();
-                source.clear();
+                self.clear();
             }
             SourceHandle::FileReader(fr) => {
                 fr.unpipe_without_deref();
-                source.clear();
+                self.clear();
             }
             _ => {}
         }
@@ -333,7 +333,7 @@ fn start_pump(global: &JSGlobalObject, stream: JSValue, controller: JSValue) -> 
 /// Trait collecting every method `JSSink` may call on the wrapped `SinkType`.
 /// Most of these are optional, modeled with default method bodies and
 /// associated `const` gates.
-pub trait JsSinkType: Sized + JsSinkAbi {
+pub(crate) trait JsSinkType: Sized + JsSinkAbi {
     const NAME: &'static str;
     /// Mirrors `@hasDecl(SinkType, "construct")`.
     const HAS_CONSTRUCT: bool = false;
@@ -894,7 +894,7 @@ pub(crate) unsafe fn sink_handle_from_id(
 /// `None`, so omitting it is behavior-preserving.
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn Bun__NativeTransformSink__writeBytes(
+pub(crate) extern "C" fn Bun__NativeTransformSink__writeBytes(
     sink_id: u8,
     sink_ptr: *mut c_void,
     global: &JSGlobalObject,

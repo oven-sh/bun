@@ -758,7 +758,7 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
 // Disabled until Tailwind v4 is supported.
 const ENABLE_SHADCN_UI: bool = true;
 
-pub struct TemplateFile {
+pub(crate) struct TemplateFile {
     pub name: &'static [u8],
     pub(crate) content: &'static [u8],
     pub reason: Reason,
@@ -926,14 +926,14 @@ pub(crate) mod react_shadcn_spa {
 // Template type to handle different project types
 #[derive(bun_core::EnumTag)]
 #[enum_tag(existing = Tag)]
-pub enum Template {
+pub(crate) enum Template {
     ReactTailwindSpa,
     ReactSpa,
     ReactShadcnSpa { components: StringSet },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Tag {
+pub(crate) enum Tag {
     ReactTailwindSpa,
     ReactSpa,
     ReactShadcnSpa,
@@ -966,7 +966,7 @@ impl Template {
     }
 }
 
-pub struct Logger {
+pub(crate) struct Logger {
     pub(crate) has_written_initial_message: bool,
     pub(crate) template: Tag,
 }

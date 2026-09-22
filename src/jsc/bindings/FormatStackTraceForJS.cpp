@@ -585,7 +585,7 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
     // Error.prepareStackTrace - https://v8.dev/docs/stack-trace-api#customizing-stack-traces
     if (!globalObject) {
         // node:vm will use a different JSGlobalObject
-        globalObject = defaultGlobalObject();
+        globalObject = defaultGlobalObject(vm);
         if (!globalObject->isInsideErrorPrepareStackTraceCallback) {
             auto* errorConstructor = lexicalGlobalObject->m_errorStructure.constructor(lexicalGlobalObject);
             auto prepareStackTrace = errorConstructor->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "prepareStackTrace"_s));
@@ -651,7 +651,7 @@ WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& sta
 
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     // The frames only: JavaScriptCore prepends the error's name and message when the stack is read.
-    WTF::String result = Bun::formatStackTrace(vm, defaultGlobalObject(), nullptr, emptyString(), emptyString(), line, column, sourceURL, stackTrace, nullptr);
+    WTF::String result = Bun::formatStackTrace(vm, defaultGlobalObject(vm), nullptr, emptyString(), emptyString(), line, column, sourceURL, stackTrace, nullptr);
     if (scope.exception()) {
         // The onComputeErrorInfo hook cannot propagate a throw.
         (void)scope.tryClearException();

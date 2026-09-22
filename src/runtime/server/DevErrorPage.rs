@@ -11,7 +11,7 @@ use bun_jsc::exception_list::{JsException, StackTrace};
 
 const HTML_TEMPLATE: &[u8] = include_bytes!("dev-error-page.html");
 
-pub struct DevErrorPage<'a> {
+pub(crate) struct DevErrorPage<'a> {
     /// One-line summary, e.g. `GET /foo failed`.
     pub message: &'a [u8],
     pub cwd: &'a [u8],
@@ -21,7 +21,7 @@ pub struct DevErrorPage<'a> {
 }
 
 impl DevErrorPage<'_> {
-    pub fn render(&self) -> Vec<u8> {
+    pub(crate) fn render(&self) -> Vec<u8> {
         let mut json = Vec::new();
         self.write_json(&mut json);
         substitute_named(

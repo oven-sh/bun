@@ -354,7 +354,7 @@ function failWrite(self, negErrno, callback) {
       self.destroy(er);
     }
   } else if (!self.destroyed) {
-    if (self.listenerCount("error") > 0) {
+    if (hasErrorListener(self)) {
       // The consumer can detach its listener between now and destroy()'s
       // deferred 'error' emission - the same last-resort guard
       // SocketEmitEndNT uses for read errors.
@@ -421,6 +421,31 @@ function onUpgradedClose(self, connection) {
 // a pending handshake, which a socket destroyed first does not report.
 function destroyWhenUpgradedCloses(self, connection) {
   connection.once("close", (self[kOnUpgradedClose] = onUpgradedClose.bind(null, self, connection)));
+}
+const upgradedErrorForwarders = new WeakSet();
+function onUpgradedError(self, connection, err) {
+  // `self` reports the close of an adopted fd itself, and node destroys `connection` with `self`: nothing is left.
+  if (connection instanceof Socket && self[kclosed]) return;
+  // Node throws here when only the transport has an 'error' listener. Bun keeps the error on that listener.
+  if (!hasErrorListener(self) && hasErrorListener(connection)) return;
+  // The close that follows a transport's own failure is no second error, also not for a pending handshake.
+  if (connection.destroyed) self._hadError = true;
+  self._emitTLSError(err);
+}
+// Node's wrap 'error' -> _emitTLSError: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L977
+function forwardUpgradedError(self, connection) {
+  const forwarder = onUpgradedError.bind(null, self, connection);
+  upgradedErrorForwarders.add(forwarder);
+  // First in line, so that it sees a once() listener before that one removes itself.
+  connection.prependListener("error", forwarder);
+}
+// A forward does not count: only a real 'error' listener opts a socket into its read and write errors.
+function hasErrorListener(self) {
+  const listeners = EventEmitter.prototype.rawListeners.$call(self, "error");
+  for (let i = 0; i < listeners.length; i++) {
+    if (!upgradedErrorForwarders.has(listeners[i])) return true;
+  }
+  return false;
 }
 let addAbortListener;
 function destroyWhenAborted(err) {
@@ -837,7 +862,7 @@ function SocketEmitEndNT(self, _err?) {
   // _hadError: the failure already reached JS through the error dispatch
   // (native on_error / a fatal write); node emits a socket error exactly
   // once, so the close that follows it is delivered plain.
-  if (_err && !self.destroyed && !self._hadError && !teardownNoise && self.listenerCount("error") > 0) {
+  if (_err && !self.destroyed && !self._hadError && !teardownNoise && hasErrorListener(self)) {
     // The consumer can detach its 'error' listener between this close
     // callback and destroy()'s deferred 'error' emission (a request that
     // finished just as the reset arrived); a last-resort no-op listener keeps
@@ -1246,7 +1271,7 @@ const ServerHandlers = {
         // peer that already reset, and leaving that connection alive turns the
         // error it then raises into an uncaught exception.
         data.emit("_tlsError", error);
-        data.destroy(data.listenerCount("error") > 0 ? error : undefined);
+        data.destroy(hasErrorListener(data) ? error : undefined);
       }
       return;
     }
@@ -1530,7 +1555,7 @@ const SocketHandlers2 = {
     // family-autoselection race and raw sockets handed off during a TLS
     // upgrade also report errors on close, and those must keep ending
     // cleanly.
-    if (err && !self.destroyed && socket === self._handle && self.listenerCount("error") > 0) {
+    if (err && !self.destroyed && socket === self._handle && hasErrorListener(self)) {
       // Same late-detach guard as SocketEmitEndNT: the listener seen at
       // close-time can be gone by the deferred 'error' emission.
       self.once("error", () => {});
@@ -2192,6 +2217,7 @@ Socket.prototype.connect = function connect(...args) {
           connection.on("end", events[1]);
           connection.on("drain", events[2]);
           connection.on("close", events[3]);
+          forwardUpgradedError(this, connection);
           this._handle = result;
         } else {
           // upgradeTLS requires an established socket; a socket that is still
@@ -2211,6 +2237,7 @@ Socket.prototype.connect = function connect(...args) {
               connection._handle = raw;
               raw[kAdoptedTLSRaw] = true;
               destroyWhenUpgradedCloses(this, connection);
+              forwardUpgradedError(this, connection);
               this.once("end", this[kCloseRawConnection]);
               raw.connecting = false;
               this._handle = tls;
@@ -2245,6 +2272,7 @@ Socket.prototype.connect = function connect(...args) {
                 connection.on("end", events[1]);
                 connection.on("drain", events[2]);
                 connection.on("close", events[3]);
+                forwardUpgradedError(this, connection);
                 this._handle = result;
               } else {
                 this[kupgraded] = connection;
@@ -2260,6 +2288,7 @@ Socket.prototype.connect = function connect(...args) {
                   connection._handle = raw;
                   raw[kAdoptedTLSRaw] = true;
                   destroyWhenUpgradedCloses(this, connection);
+                  forwardUpgradedError(this, connection);
                   this.once("end", this[kCloseRawConnection]);
                   raw.connecting = false;
                   this._handle = tls;
@@ -2552,11 +2581,13 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
     connection.on("end", events[1]);
     connection.on("drain", events[2]);
     connection.on("close", events[3]);
+    forwardUpgradedError(this, connection);
     this[kupgraded] = connection;
     this._handle = result;
     return;
   }
   this[kupgraded] = connection;
+  forwardUpgradedError(this, connection);
   process.nextTick(() => {
     if (this.destroyed || connection.destroyed) {
       this.destroy();

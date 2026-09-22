@@ -208,6 +208,65 @@ test.each(["from the request's 'end' listener", "a turn of the loop later"])(
   },
 );
 
+// The bytes of the first response still drain when one read brings the next
+// request. That request waits behind the unsent bytes, so the connection is
+// not idle, also when the same read completed the body of the first request.
+test.each([
+  ["whose request body ended after it", "POST /first HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\n01234", "56789"],
+  ["that its handler ended in the same read", "", "GET /first HTTP/1.1\r\nHost: x\r\n\r\n"],
+])(
+  "server.close() from a request queued behind a draining response %s reaps neither",
+  async (_name, firstWrite, restOfFirst) => {
+    // More than a loopback socket takes in one write.
+    const size = 64 * 1024 * 1024;
+    const firstDispatched = Promise.withResolvers<void>();
+    const secondDispatched = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
+    const server = createServer((req, res) => {
+      if (req.url === "/first") {
+        req.resume();
+        res.end(Buffer.alloc(size, "a"));
+        firstDispatched.resolve();
+        return;
+      }
+      server.close(() => closed.resolve());
+      res.end("second response");
+      secondDispatched.resolve();
+    });
+    server.keepAliveTimeout = 60000;
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const socket = connect(port, "127.0.0.1");
+    try {
+      await once(socket, "connect");
+      socket.pause();
+      socket.on("error", () => {});
+      if (firstWrite) {
+        socket.write(firstWrite);
+        await firstDispatched.promise;
+      }
+      socket.write(restOfFirst + "GET /second HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+      await secondDispatched.promise;
+
+      let received = 0;
+      let tail = "";
+      socket.on("data", chunk => {
+        received += chunk.length;
+        tail = (tail + chunk.toString("latin1")).slice(-"second response".length);
+      });
+      const socketClosed = once(socket, "close");
+      socket.resume();
+      await Promise.all([closed.promise, socketClosed]);
+      expect({ all: received > size, tail }).toEqual({ all: true, tail: "second response" });
+    } finally {
+      socket.destroy();
+      server.closeAllConnections();
+    }
+  },
+);
+
 // The graceful-drain-with-deadline pattern: close(), then force via
 // closeAllConnections() once the caller has waited long enough. The force
 // step must work even though close() already dropped the native handle.

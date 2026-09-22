@@ -524,6 +524,8 @@ private:
                  * behind the backed-up response lands here and parks the rest. */
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_PIPELINED_DISPATCH;
                 httpResponseData->nodeHttpQueuedPipelinedCount++;
+                /* A connection that owes a queued response is not idle (see markDone). */
+                httpResponseData->isIdle = false;
                 if (((AsyncSocket<SSL> *) s)->getBufferedAmount() > 0) {
                     httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED;
                     /* Also stop the request loop over the buffer being parsed

@@ -155,10 +155,7 @@ var ResponsePrototype = Response.prototype;
 const kUrl = Symbol("kUrl");
 const kStartBody = Symbol("kStartBody");
 
-// node-fetch reads a stream body when the body is used, not in the constructor: a caller can build a Request
-// only to look at it and send the same init with fetch(url, init). `start` begins the read at once, for a source
-// that emits in the same tick. A consumer that cannot call it (the global fetch, request.body) begins the read
-// with its first pull.
+// Like node-fetch, this reads the source when the body is used: a caller can build a Request only to inspect it.
 function lazyBodyFromOldStyleStream(source: import("node:stream").Stream) {
   let reader: ReadableStreamDefaultReader | undefined;
   // The source failed, or the body was canceled, before the read began. The source is then never read.
@@ -171,6 +168,7 @@ function lazyBodyFromOldStyleStream(source: import("node:stream").Stream) {
       failure = err;
     }
   });
+  // The native consumers pull a microtask late. A caller that can runs this first, for a source that emits at once.
   function start() {
     if (reader || finished) return;
     try {
@@ -200,21 +198,28 @@ function lazyBodyFromOldStyleStream(source: import("node:stream").Stream) {
   return { stream, start };
 }
 
+// The native side takes the body of a Request input when init has no `body` (null is one), else of a Request as init.
+function startTakenBody(input, init, initBody) {
+  (initBody === undefined ? input : init)?.[kStartBody]?.();
+}
+
 class Request extends WebRequest {
   [kUrl]?: string;
   declare [kStartBody]?: () => void;
 
   constructor(input, init) {
-    // The native Request reads a Node stream through Symbol.asyncIterator. A stream without one
-    // (form-data's CombinedStream) would become the text "[object Object]".
+    // The native Request turns a Stream without Symbol.asyncIterator (form-data) into the text "[object Object]".
     const body = init?.body;
     let startBody: (() => void) | undefined;
     if (typeof body?.pipe === "function" && !body[Symbol.asyncIterator]) {
       if (body instanceof require("node:stream").Stream) {
         const lazy = lazyBodyFromOldStyleStream(body);
-        // Not a copy, because `init` can inherit its members. `keepalive` is hidden: node-fetch has no such
-        // option, and the native Request refuses it with a ReadableStream body.
-        init = ObjectCreate(init, { body: { value: lazy.stream }, keepalive: { value: undefined } });
+        // Inherits from `init` and is not a copy, because a copy loses the members that `init` itself inherits.
+        init = ObjectCreate(init, {
+          body: { value: lazy.stream },
+          // node-fetch has no `keepalive`, and the native Request refuses it with a stream body.
+          keepalive: { value: undefined },
+        });
         startBody = lazy.start;
       }
     }
@@ -229,9 +234,7 @@ class Request extends WebRequest {
       super(input, init);
     }
     if (startBody) this[kStartBody] = startBody;
-    // The new Request takes the body of a Request input when init has no `body` (null is a body), or the body
-    // of a Request that is the init. The native side tees that body, which reads it at once.
-    else (body === undefined ? input : init)?.[kStartBody]?.();
+    else startTakenBody(input, init, body);
   }
 
   get url() {
@@ -309,9 +312,7 @@ async function fetch(
       init = { ...init, body: Readable.toWeb(readable) };
     }
   }
-  // The fetch sends the body of a Request input when init has no `body` (null is a body), or the body of a
-  // Request that is the init.
-  (initBody === undefined ? url : init)?.[kStartBody]?.();
+  startTakenBody(url, init, initBody);
   const response = await nativeFetch.$call(undefined, url, init);
   Object.setPrototypeOf(response, ResponsePrototype);
   response[kFetched] = true;

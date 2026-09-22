@@ -1513,9 +1513,9 @@ class ChildProcess extends EventEmitter {
         this.send = this.#send;
         this.disconnect = this.#disconnect;
         this.channel = new Control();
-        // With no listener the channel is not read, so a 'message' waits in the kernel buffer and is not emitted to nobody.
-        setSubprocessReading(this.#handle, false);
         this.#followIpcListeners();
+        // With no listener the channel is not read, so a 'message' waits in the kernel buffer and is not emitted to nobody.
+        this.#updateIpcReading("message");
         Object.defineProperty(this, "_channel", {
           get() {
             return this.channel;

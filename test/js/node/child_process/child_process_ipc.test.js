@@ -1,6 +1,6 @@
 import { $ } from "bun";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { fork, spawn } from "node:child_process";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { ChildProcess, fork, spawn } from "node:child_process";
 import { once } from "node:events";
 import net from "node:net";
 import path from "node:path";
@@ -80,8 +80,19 @@ describe.concurrent("a 'message' that arrives while there is no 'message' listen
     });
   });
 
+  test("parent: listener added before spawn()", async () => {
+    const child = new ChildProcess();
+    const message = once(child, "message");
+    child.spawn({
+      file: bunExe(),
+      args: [bunExe(), "-e", `process.send("hello")`],
+      stdio: ["ignore", "inherit", "inherit", "ipc"],
+    });
+    await withChild(child, async () => expect((await message)[0]).toBe("hello"));
+  });
+
   // The child reports that it is ready on an extra pipe, after it sent its messages.
-  test.skipIf(isWindows)("parent: listener added once the child reports ready on an extra stdio pipe", async () => {
+  test("parent: listener added once the child reports ready on an extra stdio pipe", async () => {
     const script = `
       process.send({ early: 1 });
       process.send({ early: 2 });
@@ -211,7 +222,7 @@ describe.concurrent("a 'message' that arrives while there is no 'message' listen
   });
 
   // The ack arrives on the same stream as the messages, so a sender that waits for one reads.
-  test.skipIf(isWindows)("a sent handle is acknowledged while the sender has no listener", async () => {
+  test("a sent handle is acknowledged while the sender has no listener", async () => {
     using dir = tempDir("ipc-ack-no-listener", {
       "child.js": `process.on("message", (m, server) => server.close());`,
     });

@@ -644,6 +644,11 @@ private:
                     nodeHttpResponseData->lastMessageStartMs = 0;
                     nodeHttpResponseData->headersCompleted = false;
                     nodeHttpResponseData->requestTimeoutReported = false;
+                    /* The response ended before this body did: markDone() marked the connection idle, and the read of the rest of the body cleared that. */
+                    if (!switchToTunnelAfterThisChunk && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING)
+                        && httpResponseData->nodeHttpQueuedPipelinedCount == 0) {
+                        httpResponseData->isIdle = true;
+                    }
                 }
             }
 

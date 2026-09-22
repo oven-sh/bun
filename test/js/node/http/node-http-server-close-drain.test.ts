@@ -164,6 +164,50 @@ test("server.close(cb) fires once an idle keep-alive connection is reaped", asyn
   }
 });
 
+// The response ended before the body did (an early 401 or 413). Once the body
+// is complete the connection is idle, like in Node.js, and close() reaps it.
+test.each(["from the request's 'end' listener", "a turn of the loop later"])(
+  "server.close(cb) reaps a keep-alive connection whose request body ended after its response, called %s",
+  async when => {
+    const bodyEnded = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
+    const server = createServer((req, res) => {
+      req.on("end", () => {
+        if (when.startsWith("from")) server.close(() => closed.resolve());
+        bodyEnded.resolve();
+      });
+      req.resume();
+      res.end("early");
+    });
+    // The callback must come from the reap, not from this timer.
+    server.keepAliveTimeout = 60000;
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const socket = connect(port, "127.0.0.1");
+    try {
+      await once(socket, "connect");
+      let body = "";
+      socket.on("data", chunk => (body += chunk));
+      socket.on("error", () => {});
+      const socketClosed = once(socket, "close");
+      socket.write("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\n01234");
+      while (!body.includes("early")) await once(socket, "data");
+      socket.write("56789");
+      await bodyEnded.promise;
+      if (!when.startsWith("from")) {
+        await new Promise<void>(r => setImmediate(r));
+        server.close(() => closed.resolve());
+      }
+      await Promise.all([closed.promise, socketClosed]);
+    } finally {
+      socket.destroy();
+      server.closeAllConnections();
+    }
+  },
+);
+
 // The graceful-drain-with-deadline pattern: close(), then force via
 // closeAllConnections() once the caller has waited long enough. The force
 // step must work even though close() already dropped the native handle.

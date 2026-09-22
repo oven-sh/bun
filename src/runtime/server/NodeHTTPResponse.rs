@@ -2181,6 +2181,12 @@ impl NodeHTTPResponse {
                 global_object,
                 value.with_async_context_if_needed(global_object),
             );
+            // A corked write reports WantMore and disarms the drain. The uncork can still leave its bytes in the uWS buffer.
+            if self.has_unflushed_write() {
+                if let Some(raw_response) = self.raw_response.get() {
+                    raw_response.on_writable(on_drain_shim, self.as_ctx_ptr());
+                }
+            }
         }
     }
 

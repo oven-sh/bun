@@ -842,6 +842,36 @@ describe("backpressure", () => {
       }).toEqual({ intact: true, reply: "HTTP/1.1 400 Bad Request\r\nConnection: close", ended: true });
     });
 
+    // Windows 11 takes the whole first body from a client that does not read, and then refuses the next
+    // send. The small write of the second response then waits in the server, behind no other bytes.
+    it("the callback of a small write() that the kernel refuses runs once the client reads", async () => {
+      const wrote = Promise.withResolvers<void>();
+      let callbackRan = false;
+      await using server = createServer(false, (req, res) => {
+        if (req.url === "/first") return void writeBody(res);
+        res.write("hello", () => {
+          callbackRan = true;
+          res.end();
+        });
+        wrote.resolve();
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      using client = pausedClient(
+        (server.address() as AddressInfo).port,
+        "GET /first HTTP/1.1\r\nHost: localhost\r\n\r\nGET /second HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+      );
+      await Promise.race([wrote.promise, client.done]);
+      client.resume();
+      // The connection closes only after the callback has ended the second response.
+      const { bytes, ended } = await client.done;
+      const second = bytes.subarray(client.headLength + BODY).toString("latin1");
+      expect({ callbackRan, body: second.slice(second.indexOf("\r\n\r\n") + 4), ended }).toEqual({
+        callbackRan: true,
+        body: "5\r\nhello\r\n0\r\n\r\n",
+        ended: true,
+      });
+    });
+
     // The second request's body reader is set up while the first response
     // still drains, and the rest of that body arrives after it. Completing
     // the first response must not take the reader away. The first request has

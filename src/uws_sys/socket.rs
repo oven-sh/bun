@@ -267,6 +267,16 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         )
     }
 
+    /// `raw_write` with the fatal signal of `write_check_error`.
+    pub fn raw_write_check_error(&self, data: &[u8]) -> (i32, i32) {
+        on_socket!(self.socket;
+            connected s => s.raw_write_check_error(data),
+            duplex d => (d.raw_write(data), 0),
+            pipe p => (p.raw_write(data), 0),
+            else => (0, 0),
+        )
+    }
+
     pub fn is_closed(&self) -> bool {
         on_socket!(self.socket;
             connected s => s.is_closed(),

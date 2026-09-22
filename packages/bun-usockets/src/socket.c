@@ -672,6 +672,11 @@ int us_socket_raw_write(struct us_socket_t *s, const char *data, int length) {
     return us_internal_socket_raw_write(s, data, length, &peer_gone_errno);
 }
 
+int us_socket_raw_write_check_error(struct us_socket_t *s, const char *data, int length, int *fatal_write_error) {
+    *fatal_write_error = 0;
+    return us_internal_socket_raw_write(s, data, length, fatal_write_error);
+}
+
 #if !defined(_WIN32)
 /* Send a message with data and an attached file descriptor, for use in IPC. Returns the number of bytes written. If that
     number is less than the length, the file descriptor was not sent. */

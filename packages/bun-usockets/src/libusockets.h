@@ -652,6 +652,8 @@ struct us_iovec_t {
 int us_socket_raw_writev(us_socket_r s, const struct us_iovec_t *iov, int count) nonnull_fn_decl;
 
 int us_socket_raw_write(us_socket_r s, const char *data, int length);
+/* us_socket_raw_write that reports a send that found the peer gone through *fatal_write_error (not on Windows). */
+int us_socket_raw_write_check_error(us_socket_r s, const char *data, int length, int *fatal_write_error);
 /* Like us_socket_write, but additionally reports a fatal (non-would-block)
  * send error through *fatal_write_error so opted-in callers can fail the
  * write instead of retrying forever. A TLS socket reports the send of its

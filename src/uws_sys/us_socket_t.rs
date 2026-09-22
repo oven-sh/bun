@@ -130,6 +130,22 @@ impl us_socket_t {
         (written, fatal)
     }
 
+    /// `raw_write` with the fatal signal of `write_check_error`.
+    pub(crate) fn raw_write_check_error(&self, data: &[u8]) -> (i32, i32) {
+        let mut fatal: i32 = 0;
+        // SAFETY: `self` is a live `us_socket_t`; `data` is valid for its length
+        // (clamped to i32) and `fatal` outlives the call as the out-parameter.
+        let written = unsafe {
+            c::us_socket_raw_write_check_error(
+                self,
+                data.as_ptr().cast(),
+                i32::try_from(data.len().min(MAX_I32)).expect("int cast"),
+                &raw mut fatal,
+            )
+        };
+        (written, fatal)
+    }
+
     pub(crate) fn is_shutdown(&self) -> bool {
         c::us_socket_is_shut_down(self) > 0
     }
@@ -573,6 +589,12 @@ mod c {
         pub(super) safe fn us_socket_shutdown(s: &mut us_socket_t);
         pub(super) safe fn us_socket_is_closed(s: &us_socket_t) -> i32;
         pub(super) fn us_socket_write_check_error(
+            s: &us_socket_t,
+            data: *const core::ffi::c_char,
+            length: i32,
+            fatal_write_error: *mut i32,
+        ) -> i32;
+        pub(super) fn us_socket_raw_write_check_error(
             s: &us_socket_t,
             data: *const core::ffi::c_char,
             length: i32,

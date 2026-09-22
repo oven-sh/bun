@@ -596,11 +596,6 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             if (error && us_internal_socket_defers_error(s, loop)) {
                 break;
             }
-            if (hangup && s->defer_error_until_read && s->flags.last_write_failed && !us_socket_is_shut_down(s)) {
-                /* Not our shutdown, so the peer reset, and the send that failed on it took the socket error: the pending write cannot complete. */
-                s = us_internal_socket_close_raw(s, LIBUS_ECONNRESET, NULL);
-                return;
-            }
             if (events & LIBUS_SOCKET_WRITABLE && !error) {
                 s->flags.last_write_failed = 0;
                 #ifdef LIBUS_USE_KQUEUE

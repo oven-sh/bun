@@ -373,9 +373,8 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
                 /* Write side dead without our own shutdown() (peer reset /
                  * connect refused), or a read-filter EV_EOF carrying the
                  * socket error in fflags: both are epoll's EPOLLERR. */
-                struct us_socket_t *sock = (struct us_socket_t *) poll;
                 if (bits.send_eof && !bits.send_eof_err && !bits.eof_err && type == POLL_TYPE_SOCKET &&
-                    sock->flags.is_paused && !(sock->defer_error_until_read && sock->flags.last_write_failed)) {
+                    ((struct us_socket_t *) poll)->flags.is_paused) {
                     /* fflags==0 with reads paused is AF_UNIX's graceful peer
                      * close (TCP only gets SS_CANTSENDMORE from RST, which
                      * carries the error): the receive buffer survives, so

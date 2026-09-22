@@ -562,7 +562,12 @@ function countPixels(rgba: Uint8Array, pixel: [number, number, number, number]):
   return n;
 }
 
-/** libjpeg writes 255 into every alpha byte it outputs, so a short row shows up here. */
+/**
+ * libjpeg writes 255 into every alpha byte it outputs. A row it never wrote shows up here
+ * only if the allocator did not hand back a block that held a decoded image before, so in
+ * this process the check is a cheap extra. "commits no byte that libjpeg did not write"
+ * below runs it where every new allocation is filled with another byte.
+ */
 function everyAlphaOpaque(rgba: Uint8Array): boolean {
   for (let i = 3; i < rgba.length; i += 4) if (rgba[i] !== 255) return false;
   return true;
@@ -695,6 +700,90 @@ describe("JPEG truncated inside its scan data", () => {
       meanError: true,
     });
   });
+});
+
+// The decoder's output buffer is uninitialised capacity, so an accepted decode must not
+// leave a byte of it unwritten. ASAN can fill every new allocation with a chosen byte:
+// an alpha byte that libjpeg never wrote then reads as that byte, whatever the block held
+// before. The child decodes under that fill, and this process reads the alpha back.
+test.skipIf(!isASAN)("an accepted JPEG decode commits no byte that libjpeg did not write", async () => {
+  const cases: { name: string; kind: "baseline" | "progressive"; cut?: number; insert?: [number, number[]] }[] = [];
+  for (const kind of ["baseline", "progressive"] as const) {
+    const clean = warnJpegs[kind];
+    const markers = jpegMarkers(clean);
+    const scans = scanRanges(markers);
+    const [scanStart, scanEnd] = scans[0];
+    const step = Math.max(1, Math.floor((scanEnd - scanStart) / 12));
+    for (let cut = scanStart; cut < scanEnd; cut += step) cases.push({ name: `${kind} cut at ${cut}`, kind, cut });
+    cases.push({ name: `${kind} cut at 95%`, kind, cut: cutInsideScanData(markers, Math.floor(clean.length * 0.95)) });
+    cases.push({ name: `${kind} without its last scan's data`, kind, cut: scans.at(-1)![0] });
+    // A warning and then a fatal error: no row is written for the progressive file.
+    cases.push({
+      name: `${kind} junk and SOF5 after the first scan`,
+      kind,
+      // 16 junk bytes: libjpeg swallows a few without a warning.
+      insert: [scanEnd, [...new Array<number>(16).fill(0), 0xff, 0xc5]],
+    });
+  }
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { files, cases } = await Bun.stdin.json();
+        const out = {};
+        for (const c of cases) {
+          const file = Buffer.from(files[c.kind], "base64");
+          const bytes = c.insert
+            ? Buffer.concat([file.subarray(0, c.insert[0]), Buffer.from(c.insert[1]), file.subarray(c.insert[0])])
+            : file.subarray(0, c.cut);
+          out[c.name] = await new Bun.Image(bytes).png().bytes().then(
+            png => Buffer.from(png).toString("base64"),
+            e => "rejected: " + e.code,
+          );
+        }
+        console.log(JSON.stringify(out));
+      `,
+    ],
+    env: {
+      ...bunEnv,
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "malloc_fill_byte=90", "max_malloc_fill_size=1073741824"]
+        .filter(Boolean)
+        .join(":"),
+    },
+    stdin: Buffer.from(
+      JSON.stringify({
+        files: {
+          baseline: Buffer.from(warnJpegs.baseline).toString("base64"),
+          progressive: Buffer.from(warnJpegs.progressive).toString("base64"),
+        },
+        cases,
+      }),
+    ),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const stderr = rawStderr
+    .split("\n")
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+  expect(stderr).toBe("");
+
+  const pngs: Record<string, string> = JSON.parse(stdout || "{}");
+  const got: Record<string, string> = {};
+  for (const { name } of cases) {
+    const png = pngs[name] ?? "missing";
+    if (png.startsWith("rejected") || png === "missing") got[name] = png;
+    else
+      got[name] = everyAlphaOpaque(await rgbaOf(Buffer.from(png, "base64"))) ? "fully written" : "has unwritten bytes";
+  }
+  const want = Object.fromEntries(
+    cases.map(c => [c.name, c.insert ? "rejected: ERR_IMAGE_DECODE_FAILED" : "fully written"]),
+  );
+  expect(got).toEqual(want);
+  expect(exitCode).toBe(0);
 });
 
 // Each of these warns and then hits a fatal error, which TurboJPEG reports as a warning

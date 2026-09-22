@@ -7612,7 +7612,7 @@ pub fn get_fd_path_opened_from<'a>(
             return Ok(&mut out.0[..len]);
         }
         let mut scratch = bun_paths::path_buffer_pool::get();
-        let is_same_entry = file_name(&out.0[..len]) == file_name(path)
+        let is_same_entry = bun_paths::basename(&out.0[..len]) == bun_paths::basename(path)
             && matches!(
                 (stat_directory_of(&out.0[..len], &mut scratch), stat_directory_of(path, &mut scratch)),
                 (Some(a), Some(b)) if a.st_dev == b.st_dev && a.st_ino == b.st_ino
@@ -7642,17 +7642,8 @@ pub fn get_fd_path_opened_from<'a>(
 }
 
 #[cfg(target_os = "macos")]
-fn file_name(path: &[u8]) -> &[u8] {
-    &path[bun_core::strings::last_index_of_char(path, b'/').map_or(0, |i| i + 1)..]
-}
-
-#[cfg(target_os = "macos")]
 fn stat_directory_of(path: &[u8], scratch: &mut bun_paths::PathBuffer) -> Option<Stat> {
-    let directory: &[u8] = match path.len() - file_name(path).len() {
-        0 => b".",
-        1 => b"/",
-        n => &path[..n - 1],
-    };
+    let directory = bun_paths::dirname(path).unwrap_or(b".");
     scratch.0[..directory.len()].copy_from_slice(directory);
     scratch.0[directory.len()] = 0;
     stat(ZStr::from_buf(&scratch.0[..], directory.len())).ok()

@@ -42,7 +42,6 @@ impl Hardlinker {
                     skip_dirnames,
                 )?;
                 w.resolve_unknown_entry_types = true;
-                w.follow_file_symlinks = true;
                 w
             },
         })
@@ -254,7 +253,8 @@ impl Hardlinker {
                         EntryKind::Directory => {
                             let _ = Fd::cwd().make_path(self.dest.slice());
                         }
-                        EntryKind::File => {
+                        // `linkat` without AT_SYMLINK_FOLLOW links the symlink itself.
+                        EntryKind::File | EntryKind::SymLink => {
                             match sys::linkat(
                                 entry.dir,
                                 entry.basename,

@@ -426,6 +426,39 @@ fn open_dir_a(dir: Fd, subpath: &[u8]) -> crate::Result<Dir> {
         .map_err(Into::into)
 }
 
+/// Recreate the symlink `src_dir/src_name` as `dest_dir/dest_path` with the
+/// same link text. The copy backends use this instead of reading through the
+/// link, so a symlink that points outside the package never has its target
+/// copied into `node_modules`.
+#[cfg(not(windows))]
+pub(crate) fn copy_symlink(
+    src_dir: Fd,
+    src_name: &ZStr,
+    dest_dir: &Dir,
+    dest_path: &ZStr,
+) -> sys::Result<()> {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let len = sys::readlinkat(src_dir, src_name, &mut buf[..])?;
+    let target = ZStr::from_buf(&buf, len);
+
+    let link = || sys::symlinkat(target, dest_dir.fd(), dest_path);
+    match link() {
+        Ok(()) => Ok(()),
+        Err(err) if err.get_errno() == sys::E::EEXIST => {
+            let _ = sys::unlinkat(dest_dir, dest_path);
+            link()
+        }
+        Err(err) if err.get_errno() == sys::E::ENOENT => {
+            let dirname = path::resolve_path::dirname::<path::platform::Auto>(dest_path.as_bytes());
+            if !dirname.is_empty() {
+                let _ = bun_sys::MakePath::make_path::<OSPathChar>(dest_dir, dirname);
+            }
+            link()
+        }
+        Err(err) => Err(err),
+    }
+}
+
 // macOS clonefileat(2) — routed through the safe `sys::clonefileat` wrapper
 // (takes `Fd`/`&ZStr`, returns `Maybe<()>`). The wrapper preserves the errno
 // via `Error::get_errno()` for the per-errno branching below.
@@ -1024,7 +1057,6 @@ impl<'a> PackageInstall<'a> {
             Err(err) => return Ok(InstallResult::fail(err.into(), Step::OpeningCacheDir, None)),
         };
         walker_.resolve_unknown_entry_types = true;
-        walker_.follow_file_symlinks = true;
 
         fn copy(destination_dir_: &Dir, walker: &mut Walker) -> crate::Result<()> {
             let mut stackpath = [0u8; path::MAX_PATH_BYTES];
@@ -1065,6 +1097,9 @@ impl<'a> PackageInstall<'a> {
                                 _ => return Err(crate::Error::Unexpected),
                             },
                         }
+                    }
+                    EntryKind::SymLink => {
+                        copy_symlink(entry.dir, entry.basename, destination_dir_, entry.path)?;
                     }
                     _ => {}
                 }
@@ -1187,7 +1222,6 @@ impl<'a> PackageInstall<'a> {
             skip_dirs,
         ));
         walker.resolve_unknown_entry_types = true;
-        walker.follow_file_symlinks = true;
 
         #[cfg(not(windows))]
         {
@@ -1411,8 +1445,13 @@ impl<'a> PackageInstall<'a> {
                 }
                 #[cfg(not(windows))]
                 {
-                    if entry.kind != EntryKind::File {
-                        continue;
+                    match entry.kind {
+                        EntryKind::File => {}
+                        EntryKind::SymLink => {
+                            copy_symlink(entry.dir, entry.basename, destination_dir_, entry.path)?;
+                            continue;
+                        }
+                        _ => continue,
                     }
 
                     let in_file = sys::openat(entry.dir, entry.basename, sys::O::RDONLY, 0)?;
@@ -1601,7 +1640,8 @@ impl<'a> PackageInstall<'a> {
                                 entry.path.as_bytes(),
                             );
                         }
-                        EntryKind::File => {
+                        // `linkat` without AT_SYMLINK_FOLLOW links the symlink itself.
+                        EntryKind::File | EntryKind::SymLink => {
                             // EACCES/EPERM: FUSE (e.g. Android SDCARD) does not support hardlinks
                             fn map_linkat_err(err: sys::Error) -> crate::Error {
                                 match err.get_errno() {
@@ -1786,7 +1826,7 @@ impl<'a> PackageInstall<'a> {
                                 entry.path.as_bytes(),
                             );
                         }
-                        EntryKind::File => {
+                        EntryKind::File | EntryKind::SymLink => {
                             let target_len = to_copy_into2_offset + entry.path.len();
                             head2[to_copy_into2_offset..target_len]
                                 .copy_from_slice(entry.path.as_bytes());

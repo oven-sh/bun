@@ -43,7 +43,6 @@ impl FileCopier {
                     skip_dirnames,
                 )?;
                 w.resolve_unknown_entry_types = true;
-                w.follow_file_symlinks = true;
                 w
             },
         })
@@ -182,8 +181,18 @@ impl FileCopier {
             }
             #[cfg(not(windows))]
             {
-                if entry.kind != EntryKind::File {
-                    continue;
+                match entry.kind {
+                    EntryKind::File => {}
+                    EntryKind::SymLink => {
+                        crate::package_install::copy_symlink(
+                            entry.dir,
+                            entry.basename,
+                            &dest_dir,
+                            entry.path,
+                        )?;
+                        continue;
+                    }
+                    _ => continue,
                 }
 
                 let src = match bun_sys::openat(entry.dir, entry.basename, bun_sys::O::RDONLY, 0) {

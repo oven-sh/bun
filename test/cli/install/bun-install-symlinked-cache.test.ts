@@ -1,11 +1,21 @@
-// Some environments rewrite hardlinks as symlinks (proot's link2symlink,
-// used by Termux proot-distro). After the first install with the hardlink
-// backend, every file in the package cache is a symlink. A later install
-// must still materialize those files into node_modules.
+// A symlink in the package cache must still reach node_modules. Every backend
+// recreates it as a symlink, the way the macOS clonefile backend already does.
+// The hardlink backend in proot's link2symlink (Termux proot-distro) leaves
+// the cache full of such entries after the first install.
 // https://github.com/oven-sh/bun/issues/43788
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { cpSync, lstatSync, mkdirSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 
 // Replace every regular file under `dir` with a symlink to a copy of it in `store`.
@@ -61,10 +71,10 @@ describe.skipIf(isWindows)("install from a cache whose files are symlinks", () =
         const cached = readdirSync(cache).filter(name => name.startsWith("@T@"));
         expect(cached).toHaveLength(1);
         expect(symlinkFiles(join(cache, cached[0]), store)).toBeGreaterThan(0);
-        // A relative symlink resolves somewhere else once it is linked into
-        // node_modules, so the installer leaves it out instead of dangling.
+        // A symlink that points outside the package must stay a symlink in
+        // node_modules. The installer never copies its target.
         writeFileSync(join(cache, "outside.js"), "module.exports = 1;");
-        symlinkSync(join("..", "outside.js"), join(cache, cached[0], "relative.js"));
+        symlinkSync(join(cache, "outside.js"), join(cache, cached[0], "outside.js"));
         rmSync(join(String(dir), "node_modules"), { recursive: true });
 
         await install(String(dir), cache, ["--backend", backend, "--linker", linker]);
@@ -73,7 +83,8 @@ describe.skipIf(isWindows)("install from a cache whose files are symlinks", () =
           name: "bar",
           version: "0.0.2",
         });
-        expect(() => lstatSync(join(installed, "relative.js"))).toThrow("ENOENT");
+        expect(lstatSync(join(installed, "outside.js")).isSymbolicLink()).toBe(true);
+        expect(realpathSync(join(installed, "outside.js"))).toBe(realpathSync(join(cache, "outside.js")));
       });
     });
   });

@@ -27,8 +27,6 @@ pub struct Walker {
     skip_all: Box<[u64]>,
     seed: u64,
     pub resolve_unknown_entry_types: bool,
-    /// Report a symlink to a regular file as `File`. POSIX only.
-    pub follow_file_symlinks: bool,
 }
 
 /// The directory a walk starts from. The walker never closes a borrowed
@@ -86,10 +84,15 @@ impl Walker {
                         // d_type and return DT_UNKNOWN. Optionally resolve via
                         // fstatat so callers get accurate types for recursion.
                         // This only affects POSIX; Windows always provides types.
+                        // DT_LNK is checked too: proot's link2symlink turns hardlinks
+                        // into symlinks that it then presents to lstat as regular files,
+                        // but getdents still reports DT_LNK for them.
                         #[cfg(not(windows))]
-                        let kind: sys::EntryKind = if base.kind == sys::EntryKind::Unknown
-                            && self.resolve_unknown_entry_types
-                        {
+                        let kind: sys::EntryKind = if self.resolve_unknown_entry_types
+                            && matches!(
+                                base.kind,
+                                sys::EntryKind::Unknown | sys::EntryKind::SymLink
+                            ) {
                             let dir_fd = self.stack[top_idx].iter.dir();
                             match sys::lstatat(dir_fd, base.name.as_zstr()) {
                                 Ok(stat_buf) => sys::kind_from_mode(stat_buf.st_mode as sys::Mode),
@@ -97,17 +100,6 @@ impl Walker {
                             }
                         } else {
                             base.kind
-                        };
-                        #[cfg(not(windows))]
-                        let kind: sys::EntryKind = if kind == sys::EntryKind::SymLink
-                            && self.follow_file_symlinks
-                            && is_absolute_symlink_to_file(
-                                self.stack[top_idx].iter.dir(),
-                                base.name.as_zstr(),
-                            ) {
-                            sys::EntryKind::File
-                        } else {
-                            kind
                         };
                         #[cfg(windows)]
                         let kind: sys::EntryKind = base.kind;
@@ -215,21 +207,6 @@ impl Walker {
     }
 }
 
-/// A relative symlink resolves differently once it is linked or copied
-/// elsewhere, so only an absolute one can stand in for its target file.
-#[cfg(not(windows))]
-fn is_absolute_symlink_to_file(dir_fd: Fd, name: &bun_core::ZStr) -> bool {
-    let mut buf = bun_paths::path_buffer_pool::get();
-    match sys::readlinkat(dir_fd, name, &mut buf[..]) {
-        Ok(len) if len > 0 && buf[0] == b'/' => {}
-        _ => return false,
-    }
-    match sys::fstatat(dir_fd, name) {
-        Ok(stat_buf) => sys::kind_from_mode(stat_buf.st_mode as sys::Mode) == sys::EntryKind::File,
-        Err(_) => false,
-    }
-}
-
 impl Drop for Walker {
     fn drop(&mut self) {
         if !self.stack.is_empty() {
@@ -304,6 +281,5 @@ fn walk_root(
         skip_filenames: skip_filenames_,
         skip_dirnames: skip_dirnames_,
         resolve_unknown_entry_types: false,
-        follow_file_symlinks: false,
     })
 }

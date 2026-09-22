@@ -571,6 +571,68 @@ describe.concurrent("close()", () => {
     });
   });
 
+  // The C code calls back into JS, and that JS closes the library. The call returns into the
+  // compiled code, so close() has to leave it in memory. Without that the return is a segfault.
+  it("close() from a JSCallback that the C code calls lets the call finish", async () => {
+    using dir = tempDir("bun-ffi-cc-close-inside-call", {
+      "lib.c": /* c */ `
+        typedef int (*callback_t)(int);
+        int invoke(callback_t callback, int value) { return callback(value) + 1; }
+      `,
+      "fixture.js": /* js */ `
+        import { cc, JSCallback } from "bun:ffi";
+        import path from "path";
+
+        const lib = cc({
+          source: path.join(import.meta.dir, "lib.c"),
+          symbols: { invoke: { args: ["ptr", "int"], returns: "int" } },
+        });
+        const { invoke } = lib.symbols;
+        let armed = false;
+        const callback = new JSCallback(
+          value => {
+            if (armed) lib.close();
+            return value * 2;
+          },
+          { args: ["int"], returns: "int" },
+        );
+        function hot(value) { return invoke(callback.ptr, value); }
+        let sum = 0;
+        for (let i = 0; i < 20_000; i++) sum += hot(i);
+        const results = { "before close": sum };
+
+        armed = true;
+        results["call that closes its library"] = hot(20);
+        try {
+          results["next call"] = "returned " + hot(20);
+        } catch (e) {
+          results["next call"] = e.name + ": " + e.message;
+        }
+        callback.close();
+        console.log(JSON.stringify(results));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const results = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+    expect({ results, stderr, exitCode }).toMatchObject({
+      results: {
+        "before close": 400000000,
+        "call that closes its library": 41,
+        "next call": closed("invoke"),
+      },
+      exitCode: 0,
+    });
+  });
+
   // C code that got a napi_env can leave callbacks with the engine: here a function and a cleanup
   // hook. close() cannot take those back, so it closes the symbols and keeps the code. Without that
   // the function call is a segfault, and so is the exit. cc()-compiled C resolves napi_* from the
@@ -585,6 +647,8 @@ describe.concurrent("close()", () => {
         extern int napi_create_int32(napi_env_t env, int value, napi_value_t* result);
         extern int napi_get_undefined(napi_env_t env, napi_value_t* result);
         extern int napi_add_env_cleanup_hook(napi_env_t env, void (*hook)(void* arg), void* arg);
+        extern int napi_get_global(napi_env_t env, napi_value_t* result);
+        extern int napi_call_function(napi_env_t env, napi_value_t recv, napi_value_t func, unsigned long argc, const napi_value_t* argv, napi_value_t* result);
         extern long write(int fd, const void* buf, unsigned long count);
 
         static napi_value_t seven(napi_env_t env, void* info) {
@@ -606,20 +670,31 @@ describe.concurrent("close()", () => {
           napi_get_undefined(env, &result);
           return result;
         }
+        napi_value_t call(napi_env_t env, napi_value_t callback) {
+          napi_value_t global;
+          napi_value_t result;
+          napi_get_global(env, &global);
+          napi_call_function(env, global, callback, 0, 0, &result);
+          return result;
+        }
         int plain(void) { return 1; }
       `,
       "fixture.js": /* js */ `
         import { cc } from "bun:ffi";
         import path from "path";
 
-        const lib = cc({
-          source: path.join(import.meta.dir, "napi.c"),
-          symbols: {
-            make_function: { args: ["napi_env"], returns: "napi_value" },
-            add_cleanup_hook: { args: ["napi_env"], returns: "napi_value" },
-            plain: { args: [], returns: "int" },
-          },
-        });
+        const open = () =>
+          cc({
+            source: path.join(import.meta.dir, "napi.c"),
+            symbols: {
+              make_function: { args: ["napi_env"], returns: "napi_value" },
+              add_cleanup_hook: { args: ["napi_env"], returns: "napi_value" },
+              call: { args: ["napi_env", "napi_value"], returns: "napi_value" },
+              plain: { args: [], returns: "int" },
+            },
+          });
+
+        const lib = open();
         const seven = lib.symbols.make_function();
         lib.symbols.add_cleanup_hook();
         const results = { "before close": [seven(), lib.symbols.plain()] };
@@ -630,6 +705,13 @@ describe.concurrent("close()", () => {
           results["symbol"] = e.name + ": " + e.message;
         }
         results["function from napi_create_function"] = seven();
+
+        // The JS argument in the napi_env position is not used.
+        const second = open();
+        results["call that closes its library"] = second.symbols.call(null, () => {
+          second.close();
+          return 5;
+        });
         console.log(JSON.stringify(results));
       `,
     });
@@ -649,6 +731,7 @@ describe.concurrent("close()", () => {
         "before close": [7, 1],
         "symbol": closed("plain"),
         "function from napi_create_function": 7,
+        "call that closes its library": 5,
       },
       hookRan: true,
       exitCode: 0,

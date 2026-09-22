@@ -28,6 +28,7 @@
 
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
+#include <JavaScriptCore/StackVisitor.h>
 #include <JavaScriptCore/VM.h>
 #include "ZigGeneratedClasses.h"
 #include "ZigGlobalObject.h"
@@ -86,20 +87,41 @@ extern "C" JSC::EncodedJSValue Bun__CreateFFIFunctionValue(Zig::GlobalObject* gl
 
 // Closes the functions that cc() made for this library. It must run before the library frees their code.
 // `symbols` cannot be the list: JS can change it.
-extern "C" void Bun__FFI__closeFunctions(JSC::EncodedJSValue libraryValue)
+// Returns true when one of the functions is on the stack (its C code called back into JS, and that JS
+// closes the library). That call returns into the compiled code, so the library must not free it.
+extern "C" bool Bun__FFI__closeFunctions(Zig::GlobalObject* globalObject, JSC::EncodedJSValue libraryValue)
 {
     auto* library = dynamicDowncast<WebCore::JSFFI>(JSC::JSValue::decode(libraryValue));
     if (!library)
-        return;
+        return false;
     JSC::JSValue functionsValue = library->m_functionsValue.get();
     auto* functions = functionsValue ? dynamicDowncast<JSC::JSArray>(functionsValue) : nullptr;
     if (!functions)
-        return;
-    for (unsigned i = 0, length = functions->length(); i < length; ++i) {
+        return false;
+    const unsigned length = functions->length();
+    for (unsigned i = 0; i < length; ++i) {
         if (auto* function = dynamicDowncast<Zig::JSFFIFunction>(functions->getIndexQuickly(i)))
             function->close();
     }
+
+    auto& vm = JSC::getVM(globalObject);
+    bool isRunning = false;
+    JSC::StackVisitor::visit(vm.topCallFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
+        JSC::CalleeBits callee = visitor->callee();
+        if (!callee.isCell() || !callee.asCell())
+            return WTF::IterationStatus::Continue;
+        JSC::JSValue calleeValue = callee.asCell();
+        for (unsigned i = 0; i < length; ++i) {
+            if (functions->getIndexQuickly(i) == calleeValue) {
+                isRunning = true;
+                return WTF::IterationStatus::Done;
+            }
+        }
+        return WTF::IterationStatus::Continue;
+    });
+
     library->m_functionsValue.clear();
+    return isRunning;
 }
 
 namespace Zig {

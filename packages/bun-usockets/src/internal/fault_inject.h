@@ -54,6 +54,14 @@ enum us_fault_syscall {
      * US_FAULT_ERRNO applies, and the errno value is ignored — the simulated
      * failure is a thrown JS out-of-memory error, not an errno. */
     US_FAULT_SESSION_BUFFER,
+    /* Not a syscall: SSL_write itself failing with a fatal SSL error in
+     * us_internal_ssl_write (a record-layer failure, as opposed to the
+     * transport errors US_FAULT_SEND covers). Outside of a library bug or
+     * allocation failure BoringSSL never fails an established connection's
+     * write, so the path is unreachable without injection. Only
+     * US_FAULT_ERRNO applies, and the errno value is ignored: the failure is
+     * an SSL error, not an errno. */
+    US_FAULT_SSL_WRITE,
     US_FAULT_COUNT
 };
 

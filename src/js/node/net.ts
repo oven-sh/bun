@@ -426,13 +426,11 @@ const upgradedErrorForwarders = new WeakSet();
 function onUpgradedError(self, connection, err) {
   // An adopted fd closes under both sockets at once, and `self` reports that close from its own handle.
   if (connection instanceof Socket && self[kclosed]) return;
-  // Node throws when only the transport has an 'error' listener. Those listeners have this error, and
-  // a socket without one is told of no read or write error here.
+  // Node throws here when only the transport has an 'error' listener. Bun keeps the error on that listener.
   if (!hasErrorListener(self) && hasErrorListener(connection)) return;
   self._emitTLSError(err);
 }
-// Node's wrap 'error' -> _emitTLSError. Node appends its listener. This one runs first, so that
-// it still sees the transport's listeners that remove themselves when they run.
+// Node's wrap 'error' -> _emitTLSError. First in line, so it sees a once() listener before that one removes itself.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L65
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L977
 function forwardUpgradedError(self, connection) {
@@ -440,8 +438,7 @@ function forwardUpgradedError(self, connection) {
   upgradedErrorForwarders.add(forwarder);
   connection.prependListener("error", forwarder);
 }
-// An 'error' listener opts a socket into the read and write errors that close it silently otherwise.
-// The forwarder of a TLS socket over it is no such opt-in.
+// A forward does not count: only a real 'error' listener opts a socket into its read and write errors.
 function hasErrorListener(self) {
   const listeners = self.rawListeners("error");
   for (let i = 0; i < listeners.length; i++) {

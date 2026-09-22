@@ -55,9 +55,9 @@ function extractScriptsFromPackageJson(document: vscode.TextDocument) {
   const endIndex = startIndex + matches[0].length;
   const range = new vscode.Range(document.positionAt(startIndex), document.positionAt(endIndex));
 
-  const scripts = matches[1].split(/,\s*/).map(script => {
+  const scripts = matches[1].split(/,\s*/).flatMap(script => {
     const elements = script.match(/"([^"\\]|\\.|\\\n)*"/g);
-    if (elements?.length != 2) return null;
+    if (elements?.length != 2) return [];
     const [name, command] = elements;
     return {
       name: name.replace(/(?<!\\)"/g, "").trim(),
@@ -90,7 +90,9 @@ function registerCodeLensProvider(context: vscode.ExtensionContext) {
       },
       {
         provideCodeLenses(document: vscode.TextDocument) {
-          const { range } = extractScriptsFromPackageJson(document);
+          const extracted = extractScriptsFromPackageJson(document);
+          if (!extracted) return [];
+          const { range } = extracted;
 
           const codeLenses: vscode.CodeLens[] = [];
           codeLenses.push(
@@ -152,10 +154,17 @@ function parseScripts(document: vscode.TextDocument): Record<string, string> {
     scripts = JSON.parse(document.getText()).scripts;
   } catch {
     const extracted = extractScriptsFromPackageJson(document)?.scripts ?? [];
-    return Object.fromEntries(extracted.filter(script => script !== null).map(({ name, command }) => [name, command]));
+    return Object.fromEntries(extracted.map(({ name, command }) => [name, command]));
   }
   if (!scripts || typeof scripts !== "object" || Array.isArray(scripts)) return {};
   return Object.fromEntries(Object.entries(scripts).filter(([, script]) => typeof script === "string"));
+}
+
+async function saveManifest(cwd: string) {
+  const manifest = vscode.workspace.textDocuments.find(
+    document => document.uri.scheme === "file" && document.uri.fsPath === path.join(cwd, "package.json"),
+  );
+  if (manifest?.isDirty) await manifest.save();
 }
 
 function getActiveTerminal(name: string, cwd: string) {
@@ -182,7 +191,7 @@ function registerHoverProvider(context: vscode.ExtensionContext) {
       { language: "json", scheme: "file" },
       {
         provideHover(document, position) {
-          const { scripts } = extractScriptsFromPackageJson(document);
+          const scripts = extractScriptsFromPackageJson(document)?.scripts ?? [];
           const cwd = path.dirname(document.uri.fsPath);
 
           return {
@@ -209,9 +218,12 @@ function registerHoverProvider(context: vscode.ExtensionContext) {
       debugCommand(script, cwd);
     }),
     vscode.commands.registerCommand("extension.bun.codelens.run.task", async ({ name, cwd }: CommandArgs) => {
+      // bun reads the package.json from disk, while the picker and the hover show the editor buffer.
+      await saveManifest(cwd);
+
       // Run the script by name from the package directory, so bun applies pre/post hooks and env assignments.
-      // Double quotes are the one quoting form that sh, PowerShell and cmd all accept.
-      const argument = /^[\w.:@/-]+$/.test(name) ? name : `"${name}"`;
+      // Double quotes, with \" for an embedded quote, are the one quoting form that sh, PowerShell and cmd all accept.
+      const argument = /^[\w.:@/-]+$/.test(name) ? name : `"${name.replace(/"/g, '\\"')}"`;
       const command = `bun run ${argument}`;
       const terminalName = `Bun Task: ${name}`;
 

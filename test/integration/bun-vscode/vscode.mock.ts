@@ -8,6 +8,7 @@ import { join } from "node:path";
 export const vscodeSrc = join(import.meta.dirname, "../../../packages/bun-vscode/src");
 
 export class Uri {
+  readonly scheme = "file";
   constructor(public fsPath: string) {}
   static file(path: string) {
     return new Uri(path);
@@ -49,10 +50,7 @@ export class MarkdownString {
   constructor(public value: string) {}
 }
 
-class ShellExecution {
-  constructor(public commandLine: string) {}
-}
-
+// BunTask extends vscode.Task at module load.
 class Task {
   detail?: string;
   constructor(
@@ -79,8 +77,11 @@ export interface QuickPickItem {
 
 export interface TextDocument {
   uri: Uri;
+  isDirty: boolean;
+  saved: number;
   getText(): string;
   positionAt(offset: number): Position;
+  save(): Promise<boolean>;
 }
 
 export const commands = new Map<string, (...args: any[]) => unknown>();
@@ -95,19 +96,26 @@ export const state = {
   codeLensProvider: null as null | { provideCodeLenses(document: TextDocument): CodeLens[] },
   hoverSelector: null as unknown,
   hoverProvider: null as null | { provideHover(document: TextDocument, position: Position): { contents: unknown[] } },
-  provideTasks: async (): Promise<Task[]> => [],
+  // Documents open in an editor. An entry here wins over the file on disk, like a dirty editor buffer.
+  openDocuments: [] as TextDocument[],
 };
 
-export function makeDocument(fsPath: string): TextDocument {
-  const text = readFileSync(fsPath, "utf8");
+export function makeDocument(fsPath: string, text = readFileSync(fsPath, "utf8")): TextDocument {
   return {
     uri: Uri.file(fsPath),
+    isDirty: false,
+    saved: 0,
     getText: () => text,
     positionAt(offset: number) {
       const before = text.slice(0, offset);
       const line = before.split("\n").length - 1;
       const character = offset - (before.lastIndexOf("\n") + 1);
       return new Position(line, character);
+    },
+    async save() {
+      this.saved++;
+      this.isDirty = false;
+      return true;
     },
   };
 }
@@ -118,17 +126,17 @@ mock.module("vscode", () => ({
   Range,
   CodeLens,
   MarkdownString,
-  ShellExecution,
   Task,
   TaskScope: { Global: 1, Workspace: 2 },
   workspace: {
     get workspaceFolders() {
       return [{ uri: Uri.file(state.workspaceRoot) }];
     },
-    fs: {
-      readFile: async (uri: Uri) => readFileSync(uri.fsPath),
+    get textDocuments() {
+      return state.openDocuments;
     },
-    openTextDocument: async (uri: Uri) => makeDocument(uri.fsPath),
+    openTextDocument: async (uri: Uri) =>
+      state.openDocuments.find(document => document.uri.fsPath === uri.fsPath) ?? makeDocument(uri.fsPath),
   },
   window: {
     get terminals() {
@@ -169,9 +177,6 @@ mock.module("vscode", () => ({
       state.hoverProvider = provider;
       return { dispose() {} };
     },
-  },
-  tasks: {
-    fetchTasks: async () => state.provideTasks(),
   },
   debug: {
     startDebugging: async (_folder: unknown, configuration: Record<string, unknown>) => {

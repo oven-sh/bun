@@ -10,11 +10,7 @@ import { commands, makeDocument, MarkdownString, state, vscodeSrc } from "./vsco
 
 // `vscode` exists only inside VS Code. The mock for it must be registered before
 // the module under test is resolved, so a static import cannot be used here.
-const { providePackageJsonTasks, registerPackageJsonProviders } = await import(
-  join(vscodeSrc, "features/tasks/package.json.ts")
-);
-
-state.provideTasks = providePackageJsonTasks;
+const { registerPackageJsonProviders } = await import(join(vscodeSrc, "features/tasks/package.json.ts"));
 registerPackageJsonProviders({ subscriptions: [] } as any);
 
 const files = {
@@ -39,12 +35,14 @@ beforeEach(() => {
   state.terminals = [];
   state.debugSessions = [];
   state.configScopes = [];
+  state.openDocuments = [];
 });
 
 async function clickCodeLens(root: string, relativePath: string, title: "Bun: Run" | "Bun: Debug", pick: string) {
   state.workspaceRoot = root;
   state.pickLabel = pick;
-  const document = makeDocument(join(root, relativePath));
+  const path = join(root, relativePath);
+  const document = state.openDocuments.find(document => document.uri.fsPath === path) ?? makeDocument(path);
   const lenses = state.codeLensProvider!.provideCodeLenses(document);
   const lens = lenses.find(lens => lens.command.title.endsWith(title));
   expect(lens).toBeDefined();
@@ -74,15 +72,33 @@ test("Bun: Run skips script entries that are not strings", async () => {
 
 test("Bun: Run quotes a script name that contains whitespace", async () => {
   using dir = tempDir("vscode-codelens", {
-    "package.json": JSON.stringify({ scripts: { "build docs": "echo docs", "test:unit": "bun test" } }),
+    "package.json": JSON.stringify({
+      scripts: { "build docs": "echo docs", "test:unit": "bun test", 'say "hi"': "echo hi" },
+    }),
   });
   await clickCodeLens(String(dir), "package.json", "Bun: Run", "build docs");
   await clickCodeLens(String(dir), "package.json", "Bun: Run", "test:unit");
+  await clickCodeLens(String(dir), "package.json", "Bun: Run", 'say "hi"');
 
   expect(terminalsAsSeen()).toEqual([
     [String(dir), ['bun run "build docs"']],
     [String(dir), ["bun run test:unit"]],
+    [String(dir), ['bun run "say \\"hi\\""']],
   ]);
+});
+
+test("Bun: Run saves an edited package.json first, so bun sees the script the picker showed", async () => {
+  using dir = tempDir("vscode-codelens", files);
+  const path = join(String(dir), "packages/api/package.json");
+  const edited = makeDocument(path, JSON.stringify({ scripts: { build: "echo api", lint: "eslint ." } }));
+  edited.isDirty = true;
+  state.openDocuments = [edited];
+
+  await clickCodeLens(String(dir), "packages/api/package.json", "Bun: Run", "lint");
+
+  expect(state.quickPickItems.map(item => item.label)).toEqual(["build", "lint"]);
+  expect(edited).toMatchObject({ isDirty: false, saved: 1 });
+  expect(terminalsAsSeen()).toEqual([[join(String(dir), "packages/api"), ["bun run lint"]]]);
 });
 
 test("Bun: Run falls back to the lenient parser when the package.json is not strict JSON", async () => {
@@ -181,4 +197,21 @@ test("hover links in a nested package.json carry that package's directory", asyn
     ["extension.bun.codelens.debug.task", { script: "echo c#", name: "build", cwd }],
     ["extension.bun.codelens.run.task", { script: "echo c#", name: "build", cwd }],
   ]);
+});
+
+test("hover and CodeLens tolerate a trailing comma and a document without scripts", () => {
+  using dir = tempDir("vscode-codelens", {
+    "package.json": '{ "scripts": { "build": "echo ok", } }',
+    "tsconfig.json": '{ "compilerOptions": {} }',
+  });
+  state.workspaceRoot = String(dir);
+
+  const manifest = makeDocument(join(String(dir), "package.json"));
+  const offset = manifest.getText().indexOf('"build"') + 1;
+  const { contents } = state.hoverProvider!.provideHover(manifest, manifest.positionAt(offset));
+  expect(contents.filter(content => content instanceof MarkdownString)).toHaveLength(1);
+
+  const other = makeDocument(join(String(dir), "tsconfig.json"));
+  expect(state.codeLensProvider!.provideCodeLenses(other)).toEqual([]);
+  expect(state.hoverProvider!.provideHover(other, other.positionAt(0))).toEqual({ contents: [] });
 });

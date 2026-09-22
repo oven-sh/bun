@@ -27,9 +27,6 @@
 [bun_errno]
 "unused_pub:src/errno/windows_errno.rs" = 31
 
-[bun_event_loop]
-"unused_pub:src/event_loop/ConcurrentTask.rs" = 1
-
 [bun_http]
 "generic_body_not_generic:src/http/HTTPContext.rs" = 1
 "generic_body_not_generic:src/http/lib.rs" = 2

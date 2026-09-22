@@ -377,6 +377,18 @@ function failWrite(self, negErrno, callback) {
     }
   }
 }
+
+function failPendingWriteAndDestroy(self, error) {
+  const callback = self[kwriteCallback];
+  if (callback) {
+    self[kwriteCallback] = null;
+    callback(error);
+  }
+  if (!self.destroyed) {
+    self.destroy(error);
+  }
+}
+
 function endNT(socket, callback, err) {
   // Node's _final half-closes the writable side (sends FIN) and leaves the
   // readable side open; the Duplex's allowHalfOpen drives the eventual destroy.
@@ -679,13 +691,7 @@ const SocketHandlers = {
     if (self._hadError) return;
     self._hadError = true;
 
-    const callback = self[kwriteCallback];
-    if (callback) {
-      self[kwriteCallback] = null;
-      callback(error);
-    }
-
-    self.emit("error", error);
+    failPendingWriteAndDestroy(self, error);
   },
   open(socket) {
     const self = socket.data;
@@ -1243,18 +1249,8 @@ const ServerHandlers = {
     // the errno is visible (the close it issues short-circuits the read
     // dispatch at loop.c's us_socket_is_closed check), so swallowing it hung
     // the server behind an un-failed pending write (test-net-stream on
-    // darwin). Shape it like Node's onWriteComplete: fail the pending write
-    // callback, then destroy with the error. destroy() owns the single
-    // 'error' emission via the stream's errorEmitted guard; callback(error)
-    // may have already destroyed, in which case this is a no-op.
-    const callback = data[kwriteCallback];
-    if (callback) {
-      data[kwriteCallback] = null;
-      callback(error);
-    }
-    if (!data.destroyed) {
-      data.destroy(error);
-    }
+    // darwin).
+    failPendingWriteAndDestroy(data, error);
   },
   timeout(socket) {
     SocketHandlers.timeout(socket);

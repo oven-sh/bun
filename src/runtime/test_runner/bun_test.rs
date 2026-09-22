@@ -1291,8 +1291,9 @@ impl BunTest {
         let taken = match handler.call(global_this, JSValue::UNDEFINED, &[thrown_value]) {
             Ok(taken) => taken.to_boolean(),
             Err(e) => {
-                let thrown = global_this.take_exception(e);
-                if !thrown.is_termination_exception() {
+                // As `on_unhandled_rejection` does for `run`: a termination is left where it is.
+                if !global_this.has_pending_termination_exception() {
+                    let thrown = global_this.take_exception(e);
                     this_strong.get().on_uncaught_exception(global_this, Some(thrown), false, current);
                 }
                 false
@@ -1300,11 +1301,11 @@ impl BunTest {
         };
         bun_core::scoped_log!(bun_test_group, "offerUncaughtToNodeTest -> taken: {}", taken);
         if taken {
-            // The handler rejected a promise. A rejection is reported after the
-            // turn's microtask drain, so nothing else would run the reactions
-            // before the loop sleeps, and the test would stay parked until the
-            // loop next wakes up.
-            let _ = global_this.bun_vm().event_loop_mut().maybe_drain_microtasks();
+            // The handler only rejected a promise, and the error can be reported
+            // after the turn's last microtask drain (or under a live JS frame,
+            // where a drain here would be wrong). Keep the loop from sleeping on
+            // the queued reactions; the next turn runs them.
+            this_strong.get().wants_wakeup = true;
         }
         taken
     }
@@ -1484,7 +1485,8 @@ pub(crate) enum RefDataValue {
 }
 
 impl RefDataValue {
-    /// Both name the same attempt of the same execution entry.
+    /// Both name the same execution entry in the same repeat. A retry of it
+    /// compares equal.
     pub(crate) fn is_same_entry(&self, other: &RefDataValue) -> bool {
         match (self, other) {
             (

@@ -82,4 +82,23 @@ describe("suite", () => {
   });
 });
 
+// A listener that throws inside dispatchEvent() is reported while the body is
+// still in its synchronous part: no microtask may run under that frame, and
+// the body, which never settles, must still be given up.
+test("S", async () => {
+  const seen = [];
+  queueMicrotask(() => seen.push("microtask"));
+  const target = new EventTarget();
+  target.addEventListener("x", () => {
+    throw new Error("thrown from a listener of S");
+  });
+  target.dispatchEvent(new Event("x"));
+  log.push(`S after dispatchEvent seen=${seen}`);
+  await new Promise(() => {});
+});
+
+test("E", () => {
+  log.push("E");
+});
+
 after(() => console.log("ORDER=" + JSON.stringify(log)));

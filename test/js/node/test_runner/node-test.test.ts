@@ -338,6 +338,10 @@ describe("node:test", () => {
       "D start",
       "D end",
       "afterEach(D)",
+      "S after dispatchEvent seen=",
+      "afterEach(S)",
+      "E",
+      "afterEach(E)",
     ]);
     // Each error is reported once, under the test that was running.
     expect(errorsAndVerdicts(stderr)).toEqual([
@@ -350,7 +354,12 @@ describe("node:test", () => {
       "error: rejected in R",
       "(fail) suite > R",
       "(pass) suite > D",
+      "error: thrown from a listener of S",
+      "(fail) S",
+      "(pass) E",
     ]);
+    // S never settles, so waiting for it would end in a bun:test timeout.
+    expect(stderr).not.toContain("timed out");
     expect(exitCode).toBe(1);
   });
 
@@ -399,6 +408,15 @@ describe("node:test", () => {
       "(fail) expectFailure",
     ]);
     expect(exitCode).toBe(1);
+  });
+
+  test("should retry from a clean test after an error thrown outside the test's promise", async () => {
+    const { exitCode, stderr } = await runTests(["33-outside-error-retry.js"], {}, ["--retry=2"]);
+    expect(errorsAndVerdicts(stderr)).toEqual([
+      "error: thrown in the first attempt",
+      "(pass) flaky parent (attempt 2)",
+    ]);
+    expect(exitCode).toBe(0);
   });
 
   test("should resolve the promise of a test that a name pattern filters out", async () => {

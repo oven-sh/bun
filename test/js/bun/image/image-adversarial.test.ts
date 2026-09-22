@@ -477,6 +477,168 @@ describe("malformed JPEG", () => {
   });
 });
 
+// ─── 5b. JPEG that libjpeg decodes with a warning ────────────────────────────
+//
+// libjpeg finishes these decodes and only warns (djpeg: exit status 2, whole
+// image written), so Bun.Image returns the pixels. A fatal error (djpeg: exit
+// status 1) rejects, also when a warning came first: TurboJPEG returns -1 for
+// both, and after a fatal error the output rows were never written.
+
+const warnW = 96;
+const warnH = 64;
+const warnPng = makePng(warnW, warnH, (x, y) => [
+  Math.round((x * 255) / (warnW - 1)),
+  Math.round((y * 255) / (warnH - 1)),
+  ((x ^ y) * 4) & 255,
+  255,
+]);
+const warnJpegs = {
+  baseline: await new Bun.Image(warnPng).jpeg({ quality: 90 }).bytes(),
+  progressive: await new Bun.Image(warnPng).jpeg({ quality: 90, progressive: true }).bytes(),
+};
+const warnRgba = {
+  baseline: await rgbaOf(warnJpegs.baseline),
+  progressive: await rgbaOf(warnJpegs.progressive),
+};
+
+/** Each marker up to EOI: its offset, and where its segment ends. In entropy-coded data, FF00 and RSTn are data. */
+function jpegMarkers(jpeg: Uint8Array): { marker: number; offset: number; end: number }[] {
+  const out: { marker: number; offset: number; end: number }[] = [];
+  let i = 2;
+  while (i + 1 < jpeg.length) {
+    if (jpeg[i] !== 0xff) throw new Error(`no marker at ${i}`);
+    const marker = jpeg[i + 1];
+    if (marker === 0xd9) {
+      out.push({ marker, offset: i, end: i + 2 });
+      break;
+    }
+    const end = i + 2 + ((jpeg[i + 2] << 8) | jpeg[i + 3]);
+    out.push({ marker, offset: i, end });
+    i = end;
+    if (marker === 0xda) {
+      while (i + 1 < jpeg.length && !(jpeg[i] === 0xff && jpeg[i + 1] !== 0 && (jpeg[i + 1] & 0xf8) !== 0xd0)) i++;
+    }
+  }
+  return out;
+}
+
+function insertBytes(jpeg: Uint8Array, offset: number, bytes: number[]): Buffer {
+  return Buffer.concat([jpeg.subarray(0, offset), Buffer.from(bytes), jpeg.subarray(offset)]);
+}
+
+describe.each(["baseline", "progressive"] as const)("%s JPEG that libjpeg decodes with a warning", kind => {
+  const clean = warnJpegs[kind];
+  const cleanRgba = warnRgba[kind];
+  const markers = jpegMarkers(clean);
+  const eoi = markers.at(-1)!.offset;
+  const firstDqt = markers.find(m => m.marker === 0xdb)!.offset;
+  const firstSos = markers.findIndex(m => m.marker === 0xda);
+  // The first scan's entropy-coded data. It ends at EOI (baseline) or at the next scan's DHT (progressive).
+  const scanStart = markers[firstSos].end;
+  const scanEnd = markers[firstSos + 1].offset;
+  const junk = (n: number) => new Array<number>(n).fill(0);
+  const sof5 = [0xff, 0xc5]; // differential sequential DCT: libjpeg's fatal JERR_SOF_UNSUPPORTED
+  const decodeFailed = { code: "ERR_IMAGE_DECODE_FAILED" };
+  const metadata = { width: warnW, height: warnH, format: "jpeg" };
+
+  test("fixture layout", () => {
+    expect([clean[eoi], clean[eoi + 1], eoi]).toEqual([0xff, 0xd9, clean.length - 2]);
+    expect(markers.filter(m => m.marker === 0xda).length > 1).toBe(kind === "progressive");
+  });
+
+  // "Corrupt JPEG data: N extraneous bytes before marker 0xd9"
+  test.each([8, 16, 32])("%d junk bytes before EOI decode to the clean file's pixels", async n => {
+    const padded = insertBytes(clean, eoi, junk(n));
+    expect(await new Bun.Image(padded).metadata()).toEqual(metadata);
+    expect(Buffer.compare(await rgbaOf(padded), cleanRgba)).toBe(0);
+  });
+
+  test("junk after EOI decodes to the clean file's pixels", async () => {
+    const padded = Buffer.concat([clean, Buffer.alloc(32, 0x41)]);
+    expect(Buffer.compare(await rgbaOf(padded), cleanRgba)).toBe(0);
+  });
+
+  // "Corrupt JPEG data: 16 extraneous bytes before marker 0xdb", from the header parse.
+  test("junk between header segments: metadata() and the decode both accept it", async () => {
+    const padded = insertBytes(clean, firstDqt, junk(16));
+    expect(await new Bun.Image(padded).metadata()).toEqual(metadata);
+    expect(Buffer.compare(await rgbaOf(padded), cleanRgba)).toBe(0);
+  });
+
+  test("DCT-scaled decode of a file with junk before EOI matches the clean file", async () => {
+    const small = (b: Uint8Array) =>
+      new Bun.Image(b)
+        .resize(warnW / 4, warnH / 4)
+        .png()
+        .bytes();
+    expect(Buffer.compare(await small(insertBytes(clean, eoi, junk(16))), await small(clean))).toBe(0);
+  });
+
+  // "Premature end of JPEG file": libjpeg acts as if EOI were there. All the scan data is present.
+  test("EOI removed decodes to the clean file's pixels", async () => {
+    expect(Buffer.compare(await rgbaOf(clean.subarray(0, eoi)), cleanRgba)).toBe(0);
+  });
+
+  // The same warning, but scan data is missing. libjpeg decodes what it has: a baseline
+  // file gets mid-grey for the missing blocks, a progressive file loses refinement.
+  test("truncated at 95%: rows with data are intact, the rest is libjpeg's fill", async () => {
+    const rgba = await rgbaOf(clean.subarray(0, Math.floor(clean.length * 0.95)));
+    expect(rgba.length).toBe(cleanRgba.length);
+    const topQuarter = (warnH / 4) * warnW * 4;
+    expect(Buffer.compare(rgba.subarray(0, topQuarter), cleanRgba.subarray(0, topQuarter))).toBe(0);
+    if (kind === "baseline") {
+      expect([...rgba.subarray(-4)]).toEqual([128, 128, 128, 255]);
+    } else {
+      let sum = 0;
+      for (let i = 0; i < rgba.length; i++) sum += Math.abs(rgba[i] - cleanRgba[i]);
+      expect(sum / rgba.length).toBeLessThan(2);
+    }
+  });
+
+  test("a cut anywhere in the scan data gives a fully written image", async () => {
+    const partlyWritten: number[] = [];
+    for (let cut = scanStart + 1; cut < scanEnd; cut += 13) {
+      const rgba = await rgbaOf(clean.subarray(0, cut));
+      // libjpeg sets alpha to 255 in every pixel it writes.
+      for (let i = 3; i < rgba.length; i += 4) {
+        if (rgba[i] !== 255) {
+          partlyWritten.push(cut);
+          break;
+        }
+      }
+    }
+    expect(partlyWritten).toEqual([]);
+  });
+
+  // TurboJPEG keeps its warning flag after a fatal error. In the progressive file the fatal
+  // error comes before any row is written, so to accept it would return heap garbage.
+  test("warning, then a fatal error after the first scan: rejects", async () => {
+    expect(Buffer.compare(await rgbaOf(insertBytes(clean, scanEnd, junk(16))), cleanRgba)).toBe(0);
+    const warnThenFatal = insertBytes(clean, scanEnd, [...junk(16), ...sof5]);
+    expect(await new Bun.Image(warnThenFatal).metadata()).toEqual(metadata);
+    await expect(new Bun.Image(warnThenFatal).png().bytes()).rejects.toMatchObject(decodeFailed);
+    await expect(new Bun.Image(warnThenFatal).resize(8, 8).jpeg().bytes()).rejects.toMatchObject(decodeFailed);
+  });
+
+  test("warning, then a fatal error in the header: metadata() and the decode reject", async () => {
+    const warnThenFatal = insertBytes(clean, firstDqt, [...junk(16), ...sof5]);
+    await expect(new Bun.Image(warnThenFatal).metadata()).rejects.toMatchObject(decodeFailed);
+    await expect(new Bun.Image(warnThenFatal).png().bytes()).rejects.toMatchObject(decodeFailed);
+  });
+
+  test("fatal error with no warning: rejects", async () => {
+    const unsupportedSof = insertBytes(clean, scanEnd, sof5);
+    expect(await new Bun.Image(unsupportedSof).metadata()).toEqual(metadata);
+    await expect(new Bun.Image(unsupportedSof).png().bytes()).rejects.toMatchObject(decodeFailed);
+
+    // DQT segment length one byte short: JERR_BAD_LENGTH in the header parse.
+    const badDqt = Buffer.from(clean);
+    badDqt[firstDqt + 3] -= 1;
+    await expect(new Bun.Image(badDqt).metadata()).rejects.toMatchObject(decodeFailed);
+    await expect(new Bun.Image(badDqt).png().bytes()).rejects.toMatchObject(decodeFailed);
+  });
+});
+
 // ─── 6. lossless roundtrip parity ────────────────────────────────────────────
 
 describe("lossless roundtrip", () => {

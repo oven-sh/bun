@@ -90,7 +90,14 @@ export const libjpegTurbo: Dependency = {
     commit: LIBJPEG_TURBO_COMMIT,
   }),
 
-  patches: ["patches/libjpeg-turbo/8bit-only.patch", "patches/libjpeg-turbo/jbun_stubs.c"],
+  // fatal-clears-warning.patch: tj3GetErrorCode() reports TJERR_WARNING only
+  // for a call that ran to completion. codec_jpeg.rs commits the decoded rows
+  // on that signal, so do not drop the patch without changing that file.
+  patches: [
+    "patches/libjpeg-turbo/8bit-only.patch",
+    "patches/libjpeg-turbo/fatal-clears-warning.patch",
+    "patches/libjpeg-turbo/jbun_stubs.c",
+  ],
 
   build: cfg => {
     const withSimd: [string, string] = ["#cmakedefine WITH_SIMD 1", "#define WITH_SIMD 1"];

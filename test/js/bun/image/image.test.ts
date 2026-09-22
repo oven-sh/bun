@@ -844,6 +844,19 @@ describe("Bun.Image", () => {
       expect([w, h]).toEqual([32, 32]);
       expectQuadrants(data, w, 0.5);
     });
+
+    // libjpeg warns "extraneous bytes before marker 0xd9" and finishes the decode.
+    test.each([
+      ["CMYK", cmykJpeg],
+      ["YCCK", ycckJpeg],
+    ])("%s with junk before EOI decodes to the clean file's pixels", async (_name, fixture) => {
+      expect([...fixture.subarray(-2)]).toEqual([0xff, 0xd9]);
+      const padded = Buffer.concat([fixture.subarray(0, -2), Buffer.alloc(16), fixture.subarray(-2)]);
+      const clean = decodePngRaw(await new Bun.Image(fixture).png().bytes());
+      const { w, data } = decodePngRaw(await new Bun.Image(padded).png().bytes());
+      expectQuadrants(data, w);
+      expect(Buffer.compare(data, clean.data)).toBe(0);
+    });
   });
 
   // EXIF: build a minimal JPEG via Bun.Image, then splice in an APP1 segment

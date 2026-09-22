@@ -407,7 +407,7 @@ _bun_completions_inner() {
         build|b)
             case "${prev}" in
                 --outdir) _compgen_reply -d -S / -- "${cur_word}"; return ;;
-                --outfile) _compgen_file_reply -- "${cur_word}"; return ;;
+                --outfile) _file_arguments; return ;;
                 --target) _compgen_reply -W "browser node bun" -- "${cur_word}"; return ;;
                 --format) _compgen_reply -W "esm cjs iife" -- "${cur_word}"; return ;;
                 --entry-naming|--public-path|--sourcemap) return ;;
@@ -466,13 +466,12 @@ _bun_completions_inner() {
             _compgen_reply -W "${SUBCOMMANDS}" -- "${cur_word}"
             _long_short_completion "${GLOBAL_OPTIONS}"
             _read_scripts_in_package_json
+            if [[ "${cur_word}" == */* || "${cur_word}" == .* ]]; then
+                _file_arguments "!*.@(js|ts|jsx|tsx|mjs|cjs)"
+            fi
             return ;;
         *)
-            if (( subcommand_idx > 0 && subcommand_idx < COMP_CWORD )); then
-                return 0
-            fi
-            _file_arguments
-            return ;;
+            return 0 ;;
     esac
 }
 
@@ -550,9 +549,10 @@ _wrapper_preamble() {
     fi
 
     orig_pwd="${PWD}"
+    orig_oldpwd="${OLDPWD}"
     switched=0
     if (( cwd_specified && ! completing_cwd )); then
-        if [[ ! -d "${working_dir}" ]] || ! builtin cd "${working_dir}" 2>/dev/null; then
+        if [[ ! -d "${working_dir}" ]] || ! CDPATH= builtin cd "${working_dir}" >/dev/null 2>&1; then
             return 1
         fi
         switched=1
@@ -563,7 +563,8 @@ _wrapper_preamble() {
 _wrapper_finalizer() {
     local cmd="${1}" func="${2}"
     if (( switched )); then
-        builtin cd "${orig_pwd}" 2>/dev/null
+        CDPATH= builtin cd "${orig_pwd}" >/dev/null 2>&1
+        OLDPWD="${orig_oldpwd}"
     fi
 
     if [[ ${#COMPREPLY[@]} -eq 1 && "${COMPREPLY[0]}" == */ ]]; then
@@ -582,14 +583,14 @@ _wrapper_finalizer() {
 }
 
 _bun_completions() {
-    local cur_word prev prev_prev completing_cwd orig_pwd switched working_dir cwd_specified
+    local cur_word prev prev_prev completing_cwd orig_pwd orig_oldpwd switched working_dir cwd_specified
     _wrapper_preamble || return 0
     _bun_completions_inner
     _wrapper_finalizer bun _bun_completions
 }
 
 _bunx_completions() {
-    local cur_word prev prev_prev completing_cwd orig_pwd switched working_dir cwd_specified
+    local cur_word prev prev_prev completing_cwd orig_pwd orig_oldpwd switched working_dir cwd_specified
     _wrapper_preamble || return 0
     _bunx_completions_inner
     _wrapper_finalizer bunx _bunx_completions

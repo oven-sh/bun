@@ -8,7 +8,12 @@
 # Contributions very welcome!!
 
 function __fish__bun_extract_cwd
-    set -l tokens (commandline -cop)
+    set -l tokens
+    if commandline -x >/dev/null 2>&1
+        set tokens (commandline -xpc)
+    else
+        set tokens (commandline -opc)
+    end
     set -l result "."
     for i in (seq 1 (count $tokens))
         set -l val ""

@@ -179,7 +179,7 @@
 
 [bun_sys]
 "error_collapsed_to_bool:src/sys/lib.rs" = 4
-"unused_pub:src/sys/lib.rs" = 68
+"unused_pub:src/sys/lib.rs" = 65
 "unused_pub:src/sys/windows/mod.rs" = 5
 
 [bun_uws_sys]

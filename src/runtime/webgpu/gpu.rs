@@ -8,7 +8,7 @@ use super::{GPUAdapter, js_module};
 
 #[bun_jsc::JsClass]
 #[derive(Default)]
-pub struct GPU {}
+pub(crate) struct GPU {}
 
 super::gpu_object!(GPU);
 

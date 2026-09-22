@@ -201,7 +201,7 @@ fn lost_info_to_js(
 }
 
 #[bun_jsc::JsClass]
-pub struct GPUDeviceHandle {
+pub(crate) struct GPUDeviceHandle {
     state: DeviceRef,
     label: JsCell<bun_core::String>,
     /// `GPUDeviceDescriptor.defaultQueue.label`.

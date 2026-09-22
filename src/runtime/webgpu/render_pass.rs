@@ -262,7 +262,7 @@ macro_rules! render_commands {
 }
 
 #[bun_jsc::JsClass]
-pub struct GPURenderPassEncoder {
+pub(crate) struct GPURenderPassEncoder {
     device: DeviceRef,
     raw: bun_webgpu::RenderPassEncoder,
     label: JsCell<bun_core::String>,
@@ -665,7 +665,7 @@ impl GPURenderPassEncoder {
 }
 
 #[bun_jsc::JsClass]
-pub struct GPURenderBundleEncoder {
+pub(crate) struct GPURenderBundleEncoder {
     device: DeviceRef,
     raw: bun_webgpu::RenderBundleEncoder,
     label: JsCell<bun_core::String>,
@@ -813,7 +813,7 @@ impl GPURenderBundleEncoder {
 }
 
 #[bun_jsc::JsClass]
-pub struct GPURenderBundle {
+pub(crate) struct GPURenderBundle {
     raw: Rc<bun_webgpu::RenderBundle>,
     label: JsCell<bun_core::String>,
 }

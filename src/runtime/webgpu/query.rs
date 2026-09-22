@@ -11,7 +11,7 @@ use super::args::Dict;
 use super::device::DeviceRef;
 
 #[bun_jsc::JsClass]
-pub struct GPUQuerySet {
+pub(crate) struct GPUQuerySet {
     raw: Rc<bun_webgpu::QuerySet>,
     label: JsCell<bun_core::String>,
     kind: QueryKind,

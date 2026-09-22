@@ -15,7 +15,7 @@ use super::wait::{self, Waiter};
 use super::{GPUBuffer, GPUCommandBuffer};
 
 #[bun_jsc::JsClass]
-pub struct GPUQueue {
+pub(crate) struct GPUQueue {
     device: DeviceRef,
     label: JsCell<bun_core::String>,
 }

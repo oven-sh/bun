@@ -30,7 +30,7 @@ struct Message {
 }
 
 #[bun_jsc::JsClass]
-pub struct GPUShaderModule {
+pub(crate) struct GPUShaderModule {
     raw: Rc<bun_webgpu::ShaderModule>,
     label: JsCell<bun_core::String>,
     messages: Vec<Message>,

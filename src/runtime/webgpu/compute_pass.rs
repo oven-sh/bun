@@ -12,7 +12,7 @@ use super::device::DeviceRef;
 use super::{GPUBuffer, GPUComputePipeline, GPUQuerySet};
 
 #[bun_jsc::JsClass]
-pub struct GPUComputePassEncoder {
+pub(crate) struct GPUComputePassEncoder {
     device: DeviceRef,
     raw: bun_webgpu::ComputePassEncoder,
     label: JsCell<bun_core::String>,

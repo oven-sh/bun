@@ -14,7 +14,7 @@ use super::device::DeviceRef;
 const ALL_USAGES: u32 = 0x3F;
 
 #[bun_jsc::JsClass]
-pub struct GPUTexture {
+pub(crate) struct GPUTexture {
     device: DeviceRef,
     raw: Rc<bun_webgpu::Texture>,
     label: JsCell<bun_core::String>,
@@ -246,7 +246,7 @@ impl GPUTexture {
 }
 
 #[bun_jsc::JsClass]
-pub struct GPUTextureView {
+pub(crate) struct GPUTextureView {
     raw: Rc<bun_webgpu::TextureView>,
     label: JsCell<bun_core::String>,
     /// A 2d or 2d-array view. wgpu-core 30 panics on any other dimension as a `resolveTarget`.
@@ -263,7 +263,7 @@ impl GPUTextureView {
 }
 
 #[bun_jsc::JsClass]
-pub struct GPUSampler {
+pub(crate) struct GPUSampler {
     raw: Rc<bun_webgpu::Sampler>,
     label: JsCell<bun_core::String>,
 }

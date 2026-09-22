@@ -16,19 +16,19 @@ mod shader;
 mod texture;
 mod wait;
 
-pub use adapter::GPUAdapter;
-pub use bind::{GPUBindGroup, GPUBindGroupLayout, GPUPipelineLayout};
-pub use buffer::GPUBuffer;
-pub use command::{GPUCommandBuffer, GPUCommandEncoder};
-pub use compute_pass::GPUComputePassEncoder;
-pub use device::GPUDeviceHandle;
-pub use gpu::GPU;
-pub use pipeline::{GPUComputePipeline, GPURenderPipeline};
-pub use query::GPUQuerySet;
-pub use queue::GPUQueue;
-pub use render_pass::{GPURenderBundle, GPURenderBundleEncoder, GPURenderPassEncoder};
-pub use shader::GPUShaderModule;
-pub use texture::{GPUSampler, GPUTexture, GPUTextureView};
+pub(crate) use adapter::GPUAdapter;
+pub(crate) use bind::{GPUBindGroup, GPUBindGroupLayout, GPUPipelineLayout};
+pub(crate) use buffer::GPUBuffer;
+pub(crate) use command::{GPUCommandBuffer, GPUCommandEncoder};
+pub(crate) use compute_pass::GPUComputePassEncoder;
+pub(crate) use device::GPUDeviceHandle;
+pub(crate) use gpu::GPU;
+pub(crate) use pipeline::{GPUComputePipeline, GPURenderPipeline};
+pub(crate) use query::GPUQuerySet;
+pub(crate) use queue::GPUQueue;
+pub(crate) use render_pass::{GPURenderBundle, GPURenderBundleEncoder, GPURenderPassEncoder};
+pub(crate) use shader::GPUShaderModule;
+pub(crate) use texture::{GPUSampler, GPUTexture, GPUTextureView};
 
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 

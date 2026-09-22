@@ -11,7 +11,7 @@ use super::texture::{parse_texel_copy_buffer_info, parse_texel_copy_texture_info
 use super::{GPUBuffer, GPUComputePassEncoder, GPUQuerySet, GPURenderPassEncoder};
 
 #[bun_jsc::JsClass]
-pub struct GPUCommandEncoder {
+pub(crate) struct GPUCommandEncoder {
     device: DeviceRef,
     raw: bun_webgpu::CommandEncoder,
     label: JsCell<bun_core::String>,
@@ -314,7 +314,7 @@ impl GPUCommandEncoder {
 }
 
 #[bun_jsc::JsClass]
-pub struct GPUCommandBuffer {
+pub(crate) struct GPUCommandBuffer {
     raw: Rc<bun_webgpu::CommandBuffer>,
     label: JsCell<bun_core::String>,
 }

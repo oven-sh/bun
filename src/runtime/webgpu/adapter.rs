@@ -9,7 +9,7 @@ use super::device::{DescriptorError, parse_device_descriptor};
 use super::{GPUDeviceHandle, js_module};
 
 #[bun_jsc::JsClass]
-pub struct GPUAdapter {
+pub(crate) struct GPUAdapter {
     raw: bun_webgpu::Adapter,
     /// Set once `requestDevice` has handed out the adapter's one device; later calls reject.
     consumed: Cell<bool>,

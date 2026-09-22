@@ -78,7 +78,7 @@ fn parse_stage(
 }
 
 #[bun_jsc::JsClass]
-pub struct GPUComputePipeline {
+pub(crate) struct GPUComputePipeline {
     device: DeviceRef,
     raw: Rc<bun_webgpu::ComputePipeline>,
     label: JsCell<bun_core::String>,
@@ -148,7 +148,7 @@ impl GPUComputePipeline {
 }
 
 #[bun_jsc::JsClass]
-pub struct GPURenderPipeline {
+pub(crate) struct GPURenderPipeline {
     device: DeviceRef,
     raw: Rc<bun_webgpu::RenderPipeline>,
     label: JsCell<bun_core::String>,

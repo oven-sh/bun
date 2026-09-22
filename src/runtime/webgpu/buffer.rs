@@ -41,7 +41,7 @@ enum MapState {
 }
 
 #[bun_jsc::JsClass]
-pub struct GPUBuffer {
+pub(crate) struct GPUBuffer {
     device: DeviceRef,
     raw: Rc<bun_webgpu::Buffer>,
     label: JsCell<bun_core::String>,

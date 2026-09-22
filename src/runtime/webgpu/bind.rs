@@ -14,7 +14,7 @@ use super::device::DeviceRef;
 use super::{GPUBuffer, GPUSampler, GPUTexture, GPUTextureView};
 
 #[bun_jsc::JsClass]
-pub struct GPUBindGroupLayout {
+pub(crate) struct GPUBindGroupLayout {
     raw: Rc<bun_webgpu::BindGroupLayout>,
     label: JsCell<bun_core::String>,
 }
@@ -194,7 +194,7 @@ impl GPUBindGroupLayout {
 }
 
 #[bun_jsc::JsClass]
-pub struct GPUPipelineLayout {
+pub(crate) struct GPUPipelineLayout {
     raw: Rc<bun_webgpu::PipelineLayout>,
     label: JsCell<bun_core::String>,
 }
@@ -243,7 +243,7 @@ impl GPUPipelineLayout {
 }
 
 #[bun_jsc::JsClass]
-pub struct GPUBindGroup {
+pub(crate) struct GPUBindGroup {
     raw: Rc<bun_webgpu::BindGroup>,
     label: JsCell<bun_core::String>,
 }

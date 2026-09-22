@@ -174,8 +174,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketIsRequestTimedOut, (JSC::
     return JSValue::encode(JSC::jsBoolean(thisObject->isRequestTimedOut(headersTimeoutMs, requestTimeoutMs)));
 }
 
-// node:http: milliseconds since the connection last received bytes. The socket
-// inactivity timer reads it when it expires.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketMsSinceLastRead, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(callFrame->thisValue());

@@ -88,9 +88,7 @@ public:
      * (ms; 0 disables a check). Reports a given message at most once. */
     bool isRequestTimedOut(uint64_t headersTimeoutMs, uint64_t requestTimeoutMs);
 
-    /* node:http server compat: milliseconds since this connection last
-     * received bytes, for the socket inactivity timeout. Infinity before the
-     * first read and once the connection is closed or upgraded. */
+    /* Milliseconds since the last read. Infinity before the first read, and once closed or upgraded. */
     double msSinceLastRead();
 
     /* node:http server compat - HTTP/1.1 pipelining. Responses for requests

@@ -259,11 +259,8 @@ struct HttpResponseData<SSL, true> : HttpResponseData<SSL, false> {
      * Mirrors last_message_start_/headers_completed_ in Node's http parser
      * ConnectionsList, which back server.headersTimeout/requestTimeout. */
     uint64_t lastMessageStartMs = 0;
-    /* When this connection last received bytes; 0 before the first read. Bytes
-     * that the parser keeps to itself (an unfinished request head, chunk
-     * framing, trailers) reach no JS callback, so the JS inactivity timer
-     * (socket.setTimeout / server.timeout / keepAliveTimeout) reads this when
-     * it expires. Node refreshes that timer on every socket read. */
+    /* When this connection last received bytes; 0 before the first read. The JS
+     * inactivity timer reads it on expiry: not every read reaches a JS callback. */
     uint64_t lastReadMs = 0;
     /* Trailer fields set via response.addTrailers(), pre-rendered as
      * "name: value\r\n" lines. Written between the terminating 0 chunk and the

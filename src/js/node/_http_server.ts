@@ -1431,6 +1431,11 @@ function socketOnError(this: any, err) {
 }
 function noopOnError() {}
 
+// jest.useFakeTimers() and sinon mark setTimeout with `clock`. msSinceLastRead() measures on the real clock.
+function fakeTimersAreActive() {
+  return "clock" in setTimeout;
+}
+
 function onSocketTimeoutTimerExpired(socket) {
   // The keep-alive idle timer is left armed across the request to avoid a
   // clear + setTimeout cycle per request. A fire while a request is in
@@ -1462,18 +1467,12 @@ function onSocketTimeoutTimerExpired(socket) {
       return;
     }
   }
-  // Node.js refreshes this timer on every socket read. Bytes that the native
-  // layer keeps to itself (an unfinished request head, chunk framing,
-  // trailers, a body that nothing reads) reach no JS callback, so nothing
-  // called _unrefTimer() for them: measure the timeout from the last read
-  // instead. setTimeout() re-arms the timer at its full interval; moving
-  // _idleStart back moves the deadline. The handle measures on the real
-  // clock, so a timer that fake timers fired (they mark setTimeout with
-  // `clock`) keeps its deadline.
+  // Node.js refreshes this timer on every read, also on the reads that reach no JS callback here.
   const { timeout } = socket;
   const sinceLastRead = socket[kHandle]?.msSinceLastRead?.();
-  if (sinceLastRead < timeout && !("clock" in setTimeout)) {
+  if (sinceLastRead < timeout && !fakeTimersAreActive()) {
     socket.setTimeout(timeout);
+    // Moving _idleStart back makes the deadline that read plus the timeout.
     const timer = socket[kSocketTimeoutTimer];
     if (timer !== undefined) timer._idleStart -= sinceLastRead;
     return;

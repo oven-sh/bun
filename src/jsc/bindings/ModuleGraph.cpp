@@ -83,7 +83,8 @@ static SymbolTable* overlaySymbolTable(Zig::GlobalObject* globalObject, const Ve
     add(moduleLoaderSlotName(vm));
     add(moduleGraphSlotName(vm));
     // The script made under this scope belongs to it: a function of the graph's runs in the graph's context whoever
-    // calls it (JavaScriptCore's op_jcurrent_script_execution_owner), and the scope is what is current while it does.
+    // calls it (JavaScriptCore's op_enter, CodeBlock::scriptExecutionOwnerDepth()), and the scope is what is current while
+    // it does.
     symbolTable->setIsScriptExecutionOwner(true);
     symbolTables.set(key, symbolTable);
     return symbolTable;
@@ -200,8 +201,8 @@ static bool deliverToOnError(Zig::GlobalObject* globalObject, JSModuleGraph* gra
         auto* thrown = scope.exception();
         (void)scope.tryClearException();
         // What the handler lets escape is its own error, wherever inside it that was thrown: it goes on
-        // to the handler's owner and does not come back here (an onError that re-enters its graph with
-        // `run()` and throws there would otherwise be handed its own throw, without end).
+        // to the handler's owner and does not come back here (an onError that calls a function of its
+        // graph's that throws would otherwise be handed its own throw, without end).
         thrown->setAsyncContext(vm, AsyncContextSwapScope::current(vm, globalObject));
         Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, thrown);
     }
@@ -438,7 +439,7 @@ void JSModuleGraph::finishCreation(VM& vm, JSGlobalObject* globalObject)
     setOverlaySlot(vm, overlay(), moduleGraphSlotName(vm), this);
     m_context->setModuleGraph(this);
     // The graph's context travels with the async context: the top-level code of the graph's
-    // modules runs in it however their evaluation is reached, and run() enters it.
+    // modules runs in it however their evaluation is reached.
     globalObject->setAsyncContextTrackingEnabled(true);
     m_loader->setAsyncContext(vm, AsyncContextSwapScope::captured(vm, globalObject, jsUndefined(), overlay()));
 }

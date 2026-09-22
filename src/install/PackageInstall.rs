@@ -426,39 +426,26 @@ fn open_dir_a(dir: Fd, subpath: &[u8]) -> crate::Result<Dir> {
         .map_err(Into::into)
 }
 
-/// The link text of `dir/name`, or `None` when the target leaves the package.
-#[cfg(not(windows))]
-pub(crate) fn symlink_target_in_package<'a>(
-    dir: Fd,
-    name: &ZStr,
-    path: &ZStr,
-    buf: &'a mut path::PathBuffer,
-) -> Option<&'a ZStr> {
-    let len = sys::readlinkat(dir, name, &mut buf[..]).ok()?;
-    let target = ZStr::from_buf(buf, len);
-    bun_libarchive::is_symlink_target_safe(path.as_bytes(), target, &mut None).then_some(target)
-}
-
-#[cfg(not(windows))]
-pub(crate) fn is_symlink_in_package(dir: Fd, name: &ZStr, path: &ZStr) -> bool {
-    let mut buf = bun_paths::path_buffer_pool::get();
-    symlink_target_in_package(dir, name, path, &mut buf).is_some()
-}
-
-/// Recreate the symlink `src_dir/src_name` at `dest_dir/dest_path`.
+/// Recreate the symlink `src_dir/src_name` (at `src_path` inside the package)
+/// as `dest_dir/dest_path`. A target that leaves the package is left out.
 #[cfg(not(windows))]
 pub(crate) fn copy_symlink(
     src_dir: Fd,
     src_name: &ZStr,
-    dest_dir: &Dir,
+    src_path: &ZStr,
+    dest_dir: Fd,
     dest_path: &ZStr,
 ) -> sys::Result<()> {
-    let mut buf = bun_paths::path_buffer_pool::get();
-    let Some(target) = symlink_target_in_package(src_dir, src_name, dest_path, &mut buf) else {
-        return Ok(());
-    };
+    use bun_sys::FdDirExt;
 
-    let link = || sys::symlinkat(target, dest_dir.fd(), dest_path);
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let len = sys::readlinkat(src_dir, src_name, &mut buf[..])?;
+    let target = ZStr::from_buf(&buf, len);
+    if !bun_libarchive::is_symlink_target_safe(src_path.as_bytes(), target, &mut None) {
+        return Ok(());
+    }
+
+    let link = || sys::symlinkat(target, dest_dir, dest_path);
     match link() {
         Ok(()) => Ok(()),
         Err(err) if err.get_errno() == sys::E::EEXIST => {
@@ -468,7 +455,7 @@ pub(crate) fn copy_symlink(
         Err(err) if err.get_errno() == sys::E::ENOENT => {
             let dirname = path::resolve_path::dirname::<path::platform::Auto>(dest_path.as_bytes());
             if !dirname.is_empty() {
-                let _ = bun_sys::MakePath::make_path::<OSPathChar>(dest_dir, dirname);
+                let _ = dest_dir.make_path(dirname);
             }
             link()
         }
@@ -1116,7 +1103,13 @@ impl<'a> PackageInstall<'a> {
                         }
                     }
                     EntryKind::SymLink => {
-                        copy_symlink(entry.dir, entry.basename, destination_dir_, entry.path)?;
+                        copy_symlink(
+                            entry.dir,
+                            entry.basename,
+                            entry.path,
+                            destination_dir_.fd(),
+                            entry.path,
+                        )?;
                     }
                     _ => {}
                 }
@@ -1465,7 +1458,13 @@ impl<'a> PackageInstall<'a> {
                     match entry.kind {
                         EntryKind::File => {}
                         EntryKind::SymLink => {
-                            copy_symlink(entry.dir, entry.basename, destination_dir_, entry.path)?;
+                            copy_symlink(
+                                entry.dir,
+                                entry.basename,
+                                entry.path,
+                                destination_dir_.fd(),
+                                entry.path,
+                            )?;
                             continue;
                         }
                         _ => continue,
@@ -1657,10 +1656,17 @@ impl<'a> PackageInstall<'a> {
                                 entry.path.as_bytes(),
                             );
                         }
-                        EntryKind::SymLink
-                            if !is_symlink_in_package(entry.dir, entry.basename, entry.path) => {}
-                        // `linkat` without AT_SYMLINK_FOLLOW links the symlink itself.
-                        EntryKind::File | EntryKind::SymLink => {
+                        // Not `linkat`: protected_hardlinks refuses a symlink inode the caller does not own.
+                        EntryKind::SymLink => {
+                            copy_symlink(
+                                entry.dir,
+                                entry.basename,
+                                entry.path,
+                                destination_dir.fd(),
+                                entry.path,
+                            )?;
+                        }
+                        EntryKind::File => {
                             // EACCES/EPERM: FUSE (e.g. Android SDCARD) does not support hardlinks
                             fn map_linkat_err(err: sys::Error) -> crate::Error {
                                 match err.get_errno() {
@@ -1847,7 +1853,13 @@ impl<'a> PackageInstall<'a> {
                         }
                         // Same link text, so a chain resolves under node_modules, not the cache.
                         EntryKind::SymLink => {
-                            copy_symlink(entry.dir, entry.basename, destination_dir, entry.path)?;
+                            copy_symlink(
+                                entry.dir,
+                                entry.basename,
+                                entry.path,
+                                destination_dir.fd(),
+                                entry.path,
+                            )?;
                         }
                         EntryKind::File => {
                             let target_len = to_copy_into2_offset + entry.path.len();

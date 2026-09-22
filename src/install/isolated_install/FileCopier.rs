@@ -187,7 +187,8 @@ impl FileCopier {
                         crate::package_install::copy_symlink(
                             entry.dir,
                             entry.basename,
-                            &dest_dir,
+                            entry.path,
+                            dest_dir.fd(),
                             entry.path,
                         )?;
                         continue;

@@ -253,14 +253,18 @@ impl Hardlinker {
                         EntryKind::Directory => {
                             let _ = Fd::cwd().make_path(self.dest.slice());
                         }
-                        EntryKind::SymLink
-                            if !crate::package_install::is_symlink_in_package(
+                        EntryKind::SymLink => {
+                            if let Err(err) = crate::package_install::copy_symlink(
                                 entry.dir,
                                 entry.basename,
                                 entry.path,
-                            ) => {}
-                        // `linkat` without AT_SYMLINK_FOLLOW links the symlink itself.
-                        EntryKind::File | EntryKind::SymLink => {
+                                Fd::cwd(),
+                                self.dest.slice_z(),
+                            ) {
+                                break 'body Some(err);
+                            }
+                        }
+                        EntryKind::File => {
                             match sys::linkat(
                                 entry.dir,
                                 entry.basename,

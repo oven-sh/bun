@@ -73,7 +73,9 @@ describe.skipIf(isWindows)("install from a cache whose files are symlinks", () =
         const cached = readdirSync(cache).filter(name => name.startsWith("@T@"));
         expect(cached).toHaveLength(1);
         const pkg = join(cache, cached[0]);
-        expect(symlinkFiles(pkg)).toBeGreaterThan(0);
+        mkdirSync(join(pkg, "cjs"));
+        writeFileSync(join(pkg, "cjs", "index.js"), "module.exports = 'cjs';");
+        expect(symlinkFiles(pkg)).toBe(2);
         // Symlinks that leave the package, by an absolute or a climbing
         // relative target, must not reach node_modules.
         writeFileSync(join(cache, "outside.js"), "module.exports = 1;");
@@ -89,6 +91,8 @@ describe.skipIf(isWindows)("install from a cache whose files are symlinks", () =
           name: "bar",
           version: "0.0.2",
         });
+        expect(lstatSync(join(installed, "cjs", "index.js")).isSymbolicLink()).toBe(true);
+        expect(await Bun.file(join(installed, "cjs", "index.js")).text()).toBe("module.exports = 'cjs';");
         expect(() => lstatSync(join(installed, "absolute.js"))).toThrow("ENOENT");
         expect(() => lstatSync(join(installed, "climbing.js"))).toThrow("ENOENT");
         // A link to a left-out link must not resolve through the cache either.

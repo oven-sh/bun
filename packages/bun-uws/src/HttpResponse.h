@@ -56,18 +56,12 @@ public:
     void setTimeout(uint8_t seconds) {
         auto* data = getHttpResponseData();
         data->idleTimeout = seconds;
-        /* A lingering close owns the timeout (shutdownAndClose). */
-        if (data->state & HttpResponseData<SSL>::HTTP_LINGERING_CLOSE) [[unlikely]] {
-            return;
-        }
         Super::timeout(data->idleTimeout);
     }
 
     void resetTimeout() {
         auto* data = getHttpResponseData();
-        if (data->state & HttpResponseData<SSL>::HTTP_LINGERING_CLOSE) [[unlikely]] {
-            return;
-        }
+
         Super::timeout(data->idleTimeout);
     }
     /* Write an unsigned 32-bit integer in hex */
@@ -100,7 +94,7 @@ public:
 
     /* How long a close lingers, and how much it drops (onData counts). The
      * timeout sweep runs every 4 seconds, so this is between 4 and 8 seconds. */
-    static constexpr unsigned int LINGERING_CLOSE_SECONDS = 8;
+    static constexpr uint8_t LINGERING_CLOSE_SECONDS = 8;
     static constexpr unsigned int LINGERING_CLOSE_MAX_BYTES = 8 * 1024 * 1024;
 
     /* Sends the FIN and closes: the end of every close gate. Bun.serve: reads are
@@ -121,6 +115,9 @@ public:
             && us_socket_queued_input((us_socket_t *) this) == LIBUS_QUEUED_INPUT_DATA) [[unlikely]] {
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_LINGERING_CLOSE;
             httpResponseData->received_bytes_per_timeout = 0;
+            /* The teardown of the response still calls resetTimeout(), also with
+             * idleTimeout: 0. It has to arm this bound again, not remove it. */
+            httpResponseData->idleTimeout = LINGERING_CLOSE_SECONDS;
             /* Can close the socket, which destructs httpResponseData. */
             Super::resume();
             if (!us_socket_is_closed((us_socket_t *) this)) {
@@ -140,9 +137,6 @@ public:
      * outgoing byte has been flushed. Returns true when the socket was closed or
      * left to a lingering close: the caller is done with it either way. */
     bool closeIfDoneAndMarked(HttpResponseData<SSL> *httpResponseData) {
-        if (httpResponseData->state & HttpResponseData<SSL>::HTTP_LINGERING_CLOSE) [[unlikely]] {
-            return true;
-        }
         if (httpResponseData->shouldCloseConnection()) {
             if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
                 if (((AsyncSocket<SSL> *) this)->hasFullyDrained()) {

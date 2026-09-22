@@ -2004,6 +2004,34 @@ describe("a CONNECT tunnel pipelined behind a response that still drains", () =>
     expect(received).toEqual({ bodyBeforeReply: size, tail: "tunnel bytes" });
   });
 
+  // The server corks the socket while it parses a read, so the small res.write() of a request in the same packet waits in the cork buffer.
+  test("its bytes arrive after a small res.write() of the request before it in the same packet", async () => {
+    const server = http.createServer((req, res) => void res.write("partial"));
+    server.on("connect", (req, socket) => {
+      socket.write(reply);
+      socket.end("tunnel bytes");
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const client = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+    try {
+      await once(client, "connect");
+      const chunks: Buffer[] = [];
+      client.on("data", chunk => chunks.push(chunk));
+      client.on("error", () => {});
+      const closed = once(client, "close");
+      client.write(
+        "GET / HTTP/1.1\r\nHost: x\r\n\r\nCONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n",
+      );
+      await closed;
+      const wire = Buffer.concat(chunks).toString("latin1");
+      expect(wire.slice(wire.indexOf("\r\n\r\n") + 4)).toBe("7\r\npartial\r\n" + reply + "tunnel bytes");
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
   // A zero-length write puts no bytes on the wire. Its callback still has to run, or the writes after it never start.
   test("a zero-length write does not hold back the writes after it", async () => {
     const callbacks: string[] = [];

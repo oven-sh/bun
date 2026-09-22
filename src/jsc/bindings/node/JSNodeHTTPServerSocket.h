@@ -136,8 +136,8 @@ public:
     void updateTunnelIdle();
     /* uWS still holds bytes of an HTTP response on this connection. A raw write has to go through the same buffer, or it reaches the wire first. */
     bool hasUnsentResponseBytes() const;
-    /* The zero-copy tail of a res.write() waits outside the uWS buffer. It moves there, so that a raw write or a FIN goes out behind it. */
-    void spillResponseTail();
+    /* Sends the response bytes that are not in the uWS buffer (the zero-copy tail of a res.write(), the cork buffer) to the kernel or into it. A raw write or a FIN then goes out behind them. */
+    void flushResponseBytesAhead();
     /* Only a tunnel gets the drain call that flushes streamBuffer. On any other socket the uWS buffer takes what the kernel does not. */
     bool flushesStreamBufferOnDrain() const { return !!functionToCallOnDrain; }
     /* The WebSocket that adopted the connection reads from here on. */

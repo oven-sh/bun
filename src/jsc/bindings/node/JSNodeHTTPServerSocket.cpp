@@ -349,8 +349,6 @@ static bool deferShutdownUntilResponseDrains(us_socket_t* socket, bool destroySo
     /* The end() of a finished response whose request body is still being parsed: Node parses the whole read before destroySoon(). */
     bool bodyStillParsing = destroySoon && reinterpret_cast<uWS::HttpResponse<SSL>*>(socket)->isDeliveringBodyAfterResponse();
     auto* asyncSocket = reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket);
-    // getBufferedAmount() does not count bytes that are still in the cork buffer.
-    asyncSocket->uncork();
     if (!bodyStillParsing && asyncSocket->getBufferedAmount() == 0) {
         return false;
     }
@@ -369,7 +367,7 @@ bool JSNodeHTTPServerSocket::shutdownAfterResponseDrains(bool destroySoon)
     if (!socket || upgraded || us_socket_is_closed(socket) || us_socket_is_shut_down(socket)) {
         return false;
     }
-    spillResponseTail();
+    flushResponseBytesAhead();
     if (is_ssl) {
         return deferShutdownUntilResponseDrains<true>(socket, destroySoon);
     }
@@ -879,10 +877,18 @@ void JSNodeHTTPServerSocket::onClose(int readError, bool peerEnded)
     });
 }
 
-void JSNodeHTTPServerSocket::spillResponseTail()
+void JSNodeHTTPServerSocket::flushResponseBytesAhead()
 {
+    if (upgraded || isClosed()) {
+        return;
+    }
     if (auto* res = currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
         Bun__NodeHTTPResponse_spillPendingWrite(res->m_ctx);
+    }
+    if (is_ssl) {
+        reinterpret_cast<uWS::AsyncSocket<true>*>(socket)->uncork();
+    } else {
+        reinterpret_cast<uWS::AsyncSocket<false>*>(socket)->uncork();
     }
 }
 
@@ -901,8 +907,6 @@ template<bool SSL>
 static bool writeBehindResponse(us_socket_t* socket, const char* data, size_t length)
 {
     auto* asyncSocket = reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket);
-    // Not into the cork buffer: close() discards it, and getBufferedAmount() does not count it.
-    asyncSocket->uncork();
     while (length > 0) {
         const int chunk = static_cast<int>(std::min(length, static_cast<size_t>(INT_MAX)));
         asyncSocket->write(data, chunk);

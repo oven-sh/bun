@@ -596,12 +596,6 @@ impl JsonScalar for &[u8] {
         encode_json_string(self, out);
     }
 }
-impl<const N: usize> JsonScalar for &[u8; N] {
-    #[inline]
-    fn write_json(&self, out: &mut Vec<u8>, opts: WriteStreamOptions) {
-        self.as_slice().write_json(out, opts);
-    }
-}
 
 /// Quote + escape the minimal RFC-8259 set (`"`, `\`, U+0000..U+001F). Input is
 /// treated as already-valid UTF-8/WTF-8; the lockfile string buffer never

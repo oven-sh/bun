@@ -133,7 +133,7 @@ macro_rules! us_dispatch_shims {
         /// buffer must be valid for the duration of the call).
         #[unsafe(no_mangle)]
         #[allow(clippy::unused_unit)]
-        pub unsafe extern "C" fn $name($recv: *mut $Recv $(, $a: $t)*) -> $ret {
+        pub(crate) unsafe extern "C" fn $name($recv: *mut $Recv $(, $a: $t)*) -> $ret {
             match $lookup($recv).$field {
                 Some(f) => {
                     // SAFETY: `f` is the vtable callback for this socket kind; loop.c

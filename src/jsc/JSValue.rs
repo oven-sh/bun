@@ -1858,37 +1858,15 @@ impl FromAny for &[u16] {
     }
 }
 
-impl FromAny for () {
-    #[inline]
-    fn into_js_value(self, _global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(JSValue::UNDEFINED)
-    }
-}
 impl FromAny for &[u8] {
     #[inline]
     fn into_js_value(self, global: &JSGlobalObject) -> JsResult<JSValue> {
         bun_string_jsc::create_utf8_for_js(global, self)
     }
 }
-impl FromAny for &str {
-    #[inline]
-    fn into_js_value(self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_string_jsc::create_utf8_for_js(global, self.as_bytes())
-    }
-}
 impl FromAny for Box<[bun_core::String]> {
     fn into_js_value(self, global: &JSGlobalObject) -> JsResult<JSValue> {
         bun_string_jsc::to_js_array(global, &self)
-    }
-}
-impl<T: FromAny> FromAny for Option<T> {
-    /// `None` → `undefined`.
-    #[inline]
-    fn into_js_value(self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        match self {
-            Some(v) => v.into_js_value(global),
-            None => Ok(JSValue::UNDEFINED),
-        }
     }
 }
 

@@ -5,7 +5,7 @@
 use crate::webcore::jsc::{JSGlobalObject, JSValue, JsResult};
 use bun_jsc::ComptimeStringMapExt as _;
 
-pub use bun_http::compress_body::{
+pub(crate) use bun_http::compress_body::{
     CompressEncoding, CompressOption, DEFAULT_BROTLI_QUALITY, DEFAULT_DEFLATE_LEVEL,
     DEFAULT_ZSTD_LEVEL,
 };
@@ -21,7 +21,7 @@ bun_core::comptime_string_map! {
 
 /// Parses `compress?: boolean | "gzip" | "deflate" | "br" | "zstd" | { encoding, level? }`.
 /// Returns `Ok(None)` for `false` / `undefined` / `null`.
-pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<CompressOption>> {
+pub(crate) fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<CompressOption>> {
     if value.is_undefined_or_null() {
         return Ok(None);
     }

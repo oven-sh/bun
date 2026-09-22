@@ -72,7 +72,7 @@ pub(crate) struct UpgradedDuplex {
 bun_event_loop::impl_timer_owner!(UpgradedDuplex; from_timer_ptr => event_loop_timer);
 
 #[derive(Default)]
-pub struct CertError {
+pub(crate) struct CertError {
     pub(crate) error_no: i32,
     // Owned NUL-terminated copies. `None` represents the default `""`.
     pub(crate) code: Option<Box<CStr>>,
@@ -93,7 +93,7 @@ pub(crate) struct ServerVerify {
     pub reject_unauthorized: bool,
 }
 
-pub struct Handlers {
+pub(crate) struct Handlers {
     // BACKREF per LIFETIMES.tsv — container holding self as `.upgrade`.
     pub ctx: *mut (),
     pub(crate) on_open: fn(*mut ()),

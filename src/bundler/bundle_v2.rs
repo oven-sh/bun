@@ -1143,6 +1143,27 @@ pub mod bv2_impl {
                     unsafe { (*(*this).bv2).plugin_context }
                 }
             }
+            /// The plugins answered a [`Resolve`]: the hop back to the loop that runs the bundle, when
+            /// that is a JS loop. Same pointer as the request, its own tag.
+            #[repr(transparent)]
+            pub struct ResolveAnswered(Resolve);
+            impl bun_event_loop::Taskable for ResolveAnswered {
+                const TAG: bun_event_loop::TaskTag =
+                    bun_event_loop::task_tag::BundleV2PluginResolveAnswered;
+                /// The VM that runs the bundle is going: the answer goes to nobody.
+                unsafe fn release_unrun(_: *mut Self) {}
+                /// A step of the bundle.
+                unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+                    bun_event_loop::ContextId::NONE
+                }
+            }
+            impl ResolveAnswered {
+                pub fn run(&mut self) {
+                    // SAFETY: `bv2` is a live backref set in `Resolve::init`.
+                    let bv2 = unsafe { &mut *self.0.bv2 };
+                    BundleV2::on_resolve(&mut self.0, bv2);
+                }
+            }
             impl Resolve {
                 pub(crate) fn init(bv2: &mut BundleV2<'_>, record: MiniImportRecord) -> Self {
                     Self {
@@ -1350,6 +1371,47 @@ pub mod bv2_impl {
                 unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
                     // SAFETY: as `Resolve::context`.
                     unsafe { (*(*this).bv2).plugin_context }
+                }
+            }
+            /// The plugins answered a [`Load`]: as [`ResolveAnswered`].
+            #[repr(transparent)]
+            pub struct LoadAnswered(Load);
+            impl bun_event_loop::Taskable for LoadAnswered {
+                const TAG: bun_event_loop::TaskTag =
+                    bun_event_loop::task_tag::BundleV2PluginLoadAnswered;
+                /// As `ResolveAnswered::release_unrun`.
+                unsafe fn release_unrun(_: *mut Self) {}
+                /// A step of the bundle.
+                unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+                    bun_event_loop::ContextId::NONE
+                }
+            }
+            impl LoadAnswered {
+                pub fn run(&mut self) {
+                    // SAFETY: `bv2` is a live backref set in `Load::init`.
+                    let bv2 = unsafe { &mut *self.0.bv2 };
+                    BundleV2::on_load(&mut self.0, bv2);
+                }
+            }
+            /// A plugin `.defer()`red a [`Load`]: the notice to the loop that runs the bundle, when
+            /// that is a JS loop. Same pointer as the request, its own tag.
+            #[repr(transparent)]
+            pub struct LoadDeferred(Load);
+            impl bun_event_loop::Taskable for LoadDeferred {
+                const TAG: bun_event_loop::TaskTag =
+                    bun_event_loop::task_tag::BundleV2PluginLoadDeferred;
+                /// As `ResolveAnswered::release_unrun`.
+                unsafe fn release_unrun(_: *mut Self) {}
+                /// A step of the bundle.
+                unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+                    bun_event_loop::ContextId::NONE
+                }
+            }
+            impl LoadDeferred {
+                pub fn run(&mut self) {
+                    // SAFETY: `bv2` is a live backref set in `Load::init`.
+                    let bv2 = unsafe { &mut *self.0.bv2 };
+                    BundleV2::on_notify_defer(&mut self.0, bv2);
                 }
             }
         }
@@ -4509,9 +4571,8 @@ pub mod bv2_impl {
             // mutate `graph` / allocate from `graph.heap` off-thread.
             match self.any_loop_mut() {
                 bun_event_loop::AnyEventLoop::Js { .. } => {
-                    let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
-                        std::ptr::from_mut(load),
-                        on_load_from_js_loop_raw,
+                    let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::create_from(
+                        std::ptr::from_mut(load).cast::<jsc_api::JSBundler::LoadAnswered>(),
                     );
                     let poster = self
                         .js_poster
@@ -4543,9 +4604,8 @@ pub mod bv2_impl {
             // See `on_load_async` — must dispatch on the bundler's own loop.
             match self.any_loop_mut() {
                 bun_event_loop::AnyEventLoop::Js { .. } => {
-                    let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
-                        std::ptr::from_mut(resolve),
-                        on_resolve_from_js_loop_raw,
+                    let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::create_from(
+                        std::ptr::from_mut(resolve).cast::<jsc_api::JSBundler::ResolveAnswered>(),
                     );
                     let poster = self
                         .js_poster
@@ -4584,20 +4644,6 @@ pub mod bv2_impl {
     fn on_resolve_mini(resolve: *mut jsc_api::JSBundler::Resolve, this: *mut BundleV2<'static>) {
         // SAFETY: see `on_load_mini`.
         BundleV2::on_resolve(unsafe { &mut *resolve }, unsafe { &mut *this });
-    }
-
-    fn on_load_from_js_loop(load: &mut jsc_api::JSBundler::Load) {
-        // SAFETY: `bv2` is a live backref set in `Load::init`.
-        let bv2 = unsafe { &mut *load.bv2 };
-        BundleV2::on_load(load, bv2);
-    }
-
-    fn on_load_from_js_loop_raw(
-        load: *mut jsc_api::JSBundler::Load,
-    ) -> bun_event_loop::JsResult<()> {
-        // SAFETY: `load` is a valid pointer set up by `from_callback`.
-        on_load_from_js_loop(unsafe { &mut *load });
-        Ok(())
     }
 
     impl<'a> BundleV2<'a> {
@@ -4785,20 +4831,6 @@ pub mod bv2_impl {
                 | jsc_api::JSBundler::LoadValue::Consumed => unreachable!(),
             }
         }
-    }
-
-    fn on_resolve_from_js_loop(resolve: &mut jsc_api::JSBundler::Resolve) {
-        // SAFETY: `bv2` is a live backref set in `Resolve::init`.
-        let bv2 = unsafe { &mut *resolve.bv2 };
-        BundleV2::on_resolve(resolve, bv2);
-    }
-
-    fn on_resolve_from_js_loop_raw(
-        resolve: *mut jsc_api::JSBundler::Resolve,
-    ) -> bun_event_loop::JsResult<()> {
-        // SAFETY: `resolve` is a valid pointer set up by `from_callback`.
-        on_resolve_from_js_loop(unsafe { &mut *resolve });
-        Ok(())
     }
 
     impl<'a> BundleV2<'a> {
@@ -7700,20 +7732,6 @@ pub mod bv2_impl {
         }
     }
     impl Eq for StableRef {}
-    impl Ord for StableRef {
-        #[inline]
-        fn cmp(&self, other: &Self) -> core::cmp::Ordering {
-            let (a_idx, a_ref) = (self.stable_source_index, self.r#ref);
-            let (b_idx, b_ref) = (other.stable_source_index, other.r#ref);
-            (a_idx, a_ref.inner_index()).cmp(&(b_idx, b_ref.inner_index()))
-        }
-    }
-    impl PartialOrd for StableRef {
-        #[inline]
-        fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
-            Some(self.cmp(other))
-        }
-    }
 
     #[derive(Clone, Copy, Default, PartialEq, Eq)]
     pub struct ImportTracker {

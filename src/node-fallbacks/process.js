@@ -33,7 +33,8 @@ function drainQueue() {
 
 export function nextTick(fun, ...args) {
   if (typeof fun !== "function") {
-    var err = new TypeError('The "callback" argument must be of type function. Received ' + String(fun));
+    var received = fun === null ? "null" : typeof fun;
+    var err = new TypeError('The "callback" argument must be of type function. Received ' + received);
     err.code = "ERR_INVALID_ARG_TYPE";
     throw err;
   }

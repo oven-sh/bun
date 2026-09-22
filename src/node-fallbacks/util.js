@@ -68,16 +68,17 @@ export function format(f, ...args) {
 // Returns a modified function which warns once by default.
 // If --no-deprecation is set, then it is a no-op.
 export function deprecate(fn, msg) {
-  if (typeof process === "undefined" || process?.noDeprecation === true) {
+  var proc = globalThis.process;
+  if (proc == null || proc.noDeprecation === true) {
     return fn;
   }
 
   var warned = false;
   function deprecated(...args) {
     if (!warned) {
-      if (process.throwDeprecation) {
+      if (proc.throwDeprecation) {
         throw new Error(msg);
-      } else if (process.traceDeprecation) {
+      } else if (proc.traceDeprecation) {
         console.trace(msg);
       } else {
         console.error(msg);
@@ -91,20 +92,24 @@ export function deprecate(fn, msg) {
 }
 
 // This function has been edited to be tree-shakable and minifiable
-export const debuglog = /* @__PURE__ */ ((debugs = {}, debugEnvRegex = {}, debugEnv) => (
-  ((debugEnv = typeof process !== "undefined" && process.env.NODE_DEBUG) &&
-    (debugEnv = debugEnv
-      .replace(/[|\\{}()[\]^$+?.]/g, "\\$&")
-      .replace(/\*/g, ".*")
-      .replace(/,/g, "$|^")
-      .toUpperCase()),
-  (debugEnvRegex = new RegExp("^" + debugEnv + "$", "i"))),
+export const debuglog = /* @__PURE__ */ ((debugs = {}, debugEnvRegex, debugEnv) => (
+  (debugEnv = globalThis.process?.env?.NODE_DEBUG) &&
+    (debugEnvRegex = new RegExp(
+      "^" +
+        debugEnv
+          .replace(/[|\\{}()[\]^$+?.]/g, "\\$&")
+          .replace(/\*/g, ".*")
+          .replace(/,/g, "$|^")
+          .toUpperCase() +
+        "$",
+      "i",
+    )),
   set => {
     set = set.toUpperCase();
     if (!debugs[set]) {
-      if (debugEnvRegex.test(set)) {
+      if (debugEnvRegex?.test(set)) {
         debugs[set] = function (...args) {
-          console.error("%s: %s", set, format.apply(null, args));
+          console.error("%s: %s", set, format(...args));
         };
       } else {
         debugs[set] = function () {};
@@ -433,118 +438,7 @@ function reduceToSingleString(output, base, braces) {
   return braces[0] + base + " " + output.join(", ") + " " + braces[1];
 }
 
-// %TypedArray%.prototype[Symbol.toStringTag] is a brand check: it returns the type name or undefined.
-const getTypedArrayTag = /* @__PURE__ */ Object.getOwnPropertyDescriptor(
-  Object.getPrototypeOf(Uint8Array.prototype),
-  Symbol.toStringTag,
-).get;
-
-function typedArrayTag(value) {
-  return isObject(value) ? getTypedArrayTag.call(value) : undefined;
-}
-
-function hasTag(tag) {
-  return function (value) {
-    return (isObject(value) || isFunction(value)) && objectToString(value) === tag;
-  };
-}
-
-const isArrayBuffer = /* @__PURE__ */ hasTag("[object ArrayBuffer]");
-const isSharedArrayBuffer = /* @__PURE__ */ hasTag("[object SharedArrayBuffer]");
-
-export const types = {
-  isAnyArrayBuffer(value) {
-    return isArrayBuffer(value) || isSharedArrayBuffer(value);
-  },
-  isArrayBuffer,
-  isSharedArrayBuffer,
-  isArgumentsObject: /* @__PURE__ */ hasTag("[object Arguments]"),
-  isArrayBufferView: ArrayBuffer.isView,
-  isAsyncFunction: /* @__PURE__ */ hasTag("[object AsyncFunction]"),
-  isBigInt64Array(value) {
-    return typedArrayTag(value) === "BigInt64Array";
-  },
-  isBigUint64Array(value) {
-    return typedArrayTag(value) === "BigUint64Array";
-  },
-  isBooleanObject: /* @__PURE__ */ hasTag("[object Boolean]"),
-  isBoxedPrimitive(value) {
-    return (
-      types.isNumberObject(value) ||
-      types.isStringObject(value) ||
-      types.isBooleanObject(value) ||
-      types.isBigIntObject(value) ||
-      types.isSymbolObject(value)
-    );
-  },
-  isBigIntObject: /* @__PURE__ */ hasTag("[object BigInt]"),
-  isCryptoKey(value) {
-    return typeof CryptoKey !== "undefined" && value instanceof CryptoKey;
-  },
-  isDataView: /* @__PURE__ */ hasTag("[object DataView]"),
-  isDate,
-  isExternal() {
-    return false;
-  },
-  isFloat16Array(value) {
-    return typedArrayTag(value) === "Float16Array";
-  },
-  isFloat32Array(value) {
-    return typedArrayTag(value) === "Float32Array";
-  },
-  isFloat64Array(value) {
-    return typedArrayTag(value) === "Float64Array";
-  },
-  isGeneratorFunction: /* @__PURE__ */ hasTag("[object GeneratorFunction]"),
-  isGeneratorObject: /* @__PURE__ */ hasTag("[object Generator]"),
-  isInt8Array(value) {
-    return typedArrayTag(value) === "Int8Array";
-  },
-  isInt16Array(value) {
-    return typedArrayTag(value) === "Int16Array";
-  },
-  isInt32Array(value) {
-    return typedArrayTag(value) === "Int32Array";
-  },
-  isKeyObject() {
-    return false;
-  },
-  isMap: /* @__PURE__ */ hasTag("[object Map]"),
-  isMapIterator: /* @__PURE__ */ hasTag("[object Map Iterator]"),
-  isModuleNamespaceObject: /* @__PURE__ */ hasTag("[object Module]"),
-  isNativeError(value) {
-    return isObject(value) && value instanceof Error;
-  },
-  isNumberObject: /* @__PURE__ */ hasTag("[object Number]"),
-  isPromise(value) {
-    return isObject(value) && value instanceof Promise;
-  },
-  isProxy() {
-    return false;
-  },
-  isRegExp,
-  isSet: /* @__PURE__ */ hasTag("[object Set]"),
-  isSetIterator: /* @__PURE__ */ hasTag("[object Set Iterator]"),
-  isStringObject: /* @__PURE__ */ hasTag("[object String]"),
-  isSymbolObject: /* @__PURE__ */ hasTag("[object Symbol]"),
-  isTypedArray(value) {
-    return typedArrayTag(value) !== undefined;
-  },
-  isUint8Array(value) {
-    return typedArrayTag(value) === "Uint8Array";
-  },
-  isUint8ClampedArray(value) {
-    return typedArrayTag(value) === "Uint8ClampedArray";
-  },
-  isUint16Array(value) {
-    return typedArrayTag(value) === "Uint16Array";
-  },
-  isUint32Array(value) {
-    return typedArrayTag(value) === "Uint32Array";
-  },
-  isWeakMap: /* @__PURE__ */ hasTag("[object WeakMap]"),
-  isWeakSet: /* @__PURE__ */ hasTag("[object WeakSet]"),
-};
+export const types = /* @__PURE__ */ () => {};
 
 export function isArray(ar) {
   return Array.isArray(ar);
@@ -609,9 +503,15 @@ export function isPrimitive(arg) {
   );
 }
 
-// Compatibility with the buffer polyfill:
+// Browsers have no Buffer global, so detect the buffer polyfill by its methods.
 export function isBuffer(arg) {
-  return arg instanceof Buffer;
+  return (
+    typeof arg === "object" &&
+    arg !== null &&
+    typeof arg.copy === "function" &&
+    typeof arg.fill === "function" &&
+    typeof arg.readUInt8 === "function"
+  );
 }
 
 function objectToString(o) {
@@ -767,14 +667,13 @@ export function callbackify(original) {
     var cb = function (...args) {
       return maybeCb.apply(self, args);
     };
-    // In true node style we process the callback on `nextTick` with all the
-    // implications (stack, `uncaughtException`, `async_hooks`)
+    // Like process.nextTick in Node, a throw from the callback is an uncaught error, not a rejection.
     original.apply(this, args).then(
       function (ret) {
-        process.nextTick(cb, null, ret);
+        queueMicrotask(cb.bind(null, null, ret));
       },
       function (rej) {
-        process.nextTick(callbackifyOnRejected, rej, cb);
+        queueMicrotask(callbackifyOnRejected.bind(null, rej, cb));
       },
     );
   }

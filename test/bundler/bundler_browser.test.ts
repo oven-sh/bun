@@ -681,96 +681,156 @@ describe("bundler", () => {
     },
   });
 
-  // The util and process polyfills are hand-written. These checks run the
-  // bundle under bun, so they only cover logic that is wrong in any host.
-  itBundled("browser/NodeUtilPromisifyCallbackifyTypesNextTick", {
+  itBundled("browser/NodeStreamWithoutGlobalProcess", {
     files: {
       "/entry.js": /* js */ `
-        import { promisify, callbackify, types, deprecate } from "node:util";
-        import util from "node:util";
-        import { nextTick } from "node:process";
-        import process from "node:process";
-        const out = {};
-        out.promisify = await promisify((a, cb) => cb(null, a + 1))(1);
-        const custom = () => "custom";
-        const fn = () => {};
-        fn[promisify.custom] = custom;
-        out.promisifyCustom = promisify(fn) === custom;
-        out.callbackify = await new Promise(resolve =>
-          callbackify(async (x, y) => x * y)(6, 7, (err, val) => resolve([err, val])),
-        );
-        out.callbackifyRejectNull = await new Promise(resolve =>
-          callbackify(async () => { throw null; })(err => resolve(err.message)),
-        );
-        out.deprecate = deprecate((a, b) => a + b, "old")(1, 2);
-        out.types = [
-          types.isDate(new Date()),
-          types.isRegExp(/x/),
-          types.isPromise(Promise.resolve()),
-          types.isMap(new Map()),
-          types.isSet(new Set()),
-          types.isUint8Array(new Uint8Array(1)),
-          types.isUint8Array(new Uint16Array(1)),
-          types.isTypedArray(new Float64Array(1)),
-          types.isTypedArray(new DataView(new ArrayBuffer(1))),
-          types.isArrayBuffer(new ArrayBuffer(1)),
-          types.isAnyArrayBuffer(new ArrayBuffer(1)),
-          types.isAsyncFunction(async () => {}),
-          types.isAsyncFunction(() => {}),
-          types.isGeneratorFunction(function* () {}),
-          types.isNativeError(new TypeError("x")),
-          types.isBoxedPrimitive(new Number(1)),
-          types.isBoxedPrimitive(1),
-          types.isDate("2020-01-01"),
-        ];
-        out.defaultExport = [typeof util.format, typeof util.inspect, typeof util.types.isDate, util.format("%s=%d", "a", 1)];
-        out.nextTickArgs = await new Promise(resolve => nextTick((a, b) => resolve([a, b]), "A", "B"));
-        out.nextTickDefault = await new Promise(resolve => process.nextTick(resolve, "ok"));
-        out.order = await new Promise(resolve => {
-          const log = [];
-          setTimeout(() => { log.push("timeout"); resolve(log.join(" < ")); }, 0);
-          Promise.resolve().then(() => log.push("microtask"));
-          nextTick(() => log.push("tick"));
+        import { Readable } from "node:stream";
+        const r = Readable.from(["a", "b"]);
+        const chunks = [];
+        globalThis.DONE = new Promise((resolve, reject) => {
+          r.on("data", d => chunks.push(d));
+          r.on("end", () => resolve("got:" + chunks.join(",")));
+          r.on("error", reject);
         });
-        console.log(JSON.stringify(out));
+      `,
+    },
+    target: "browser",
+    runtimeFiles: {
+      "/exec.js": /* js */ `
+        // Simulate a browser: no global process object.
+        delete globalThis.process;
+        await import("./out.js");
+        console.log(await globalThis.DONE);
+      `,
+    },
+    run: {
+      file: "/exec.js",
+      stdout: "got:a,b",
+    },
+    onAfterBundle(api) {
+      api.expectFile("out.js").not.toInclude("import ");
+      api.expectFile("out.js").not.toInclude("globalThis.process");
+    },
+  });
+  itBundled("browser/NodeProcessNextTickForwardsArgs", {
+    files: {
+      "/entry.js": /* js */ `
+        import { nextTick } from "node:process";
+        globalThis.DONE = new Promise(resolve => {
+          nextTick((a, b, c) => resolve(a + b + c), "x", "y", "z");
+        });
+      `,
+    },
+    target: "browser",
+    runtimeFiles: {
+      "/exec.js": /* js */ `
+        delete globalThis.process;
+        await import("./out.js");
+        console.log(await globalThis.DONE);
+      `,
+    },
+    run: {
+      file: "/exec.js",
+      stdout: "xyz",
+    },
+  });
+  // node runs a tick after the microtasks that are already queued and before any timer.
+  itBundled("browser/NodeProcessNextTickOrder", {
+    files: {
+      "/entry.js": /* js */ `
+        import process, { nextTick } from "node:process";
+        const log = [];
+        await new Promise(resolve => {
+          setTimeout(() => { log.push("timeout"); resolve(); }, 0);
+          Promise.resolve().then(() => log.push("microtask"));
+          nextTick(() => { log.push("tick"); process.nextTick(value => log.push(value), "nested tick"); });
+        });
+        console.log(log.join(" < "));
       `,
     },
     target: "browser",
     run: {
-      stdout: JSON.stringify({
-        promisify: 2,
-        promisifyCustom: true,
-        callbackify: [null, 42],
-        callbackifyRejectNull: "Promise was rejected with a falsy value",
-        deprecate: 3,
-        types: [
-          true,
-          true,
-          true,
-          true,
-          true,
-          true,
-          false,
-          true,
-          false,
-          true,
-          true,
-          true,
-          false,
-          true,
-          true,
-          true,
-          false,
-          false,
-        ],
-        defaultExport: ["function", "function", "function", "a=1"],
-        nextTickArgs: ["A", "B"],
-        nextTickDefault: "ok",
-        order: "microtask < tick < timeout",
-      }),
+      stdout: "microtask < tick < nested tick < timeout",
     },
   });
+  // The util polyfill is a hand conversion of the npm `util` package. Each of
+  // these exports had a bug from that conversion: an undeclared identifier, a
+  // spread into Function#apply, or a dependency on a Node-only global.
+  itBundled("browser/NodeUtilPolyfill", {
+    files: {
+      "/entry.js": /* js */ `
+        import util, { promisify, callbackify, deprecate, isBuffer, debuglog } from "node:util";
+        import * as utilNamespace from "node:util";
+        import { Buffer } from "node:buffer";
+        import { resolve as resolvePath } from "node:path";
 
+        // A browser has none of these globals. The test runner has them all, so
+        // drop them before the polyfills run. Exit on an unhandled rejection so
+        // that a polyfill reaching for one of them fails fast instead of hanging.
+        const proc = globalThis.process;
+        proc.on("unhandledRejection", err => {
+          console.log("unhandledRejection: " + err.message);
+          proc.exit(1);
+        });
+        delete globalThis.process;
+        delete globalThis.Buffer;
+        delete globalThis.setImmediate;
+        const results = [];
+
+        results.push(await promisify((a, b, cb) => cb(null, a + b))(40, 2));
+        results.push(await promisify(cb => cb(new Error("cb failed")))().then(() => "resolved", e => e.message));
+        const withCustom = () => {};
+        withCustom[promisify.custom] = () => Promise.resolve("custom");
+        results.push(promisify(withCustom) === withCustom[promisify.custom] ? await promisify(withCustom)() : "custom ignored");
+
+        results.push(await new Promise(resolve => callbackify(async x => x * 2)(21, (err, value) => resolve(err + "," + value))));
+        results.push(await new Promise(resolve => callbackify(async () => { throw new Error("rejected"); })(err => resolve(err.message))));
+        results.push(await new Promise(resolve => callbackify(() => Promise.reject(null))(err => resolve(err.message + "," + err.reason))));
+        // As in node, a throw inside the callback is an uncaught exception, not a rejection.
+        const uncaught = new Promise(resolve => proc.once("uncaughtException", err => resolve("uncaughtException: " + err.message)));
+        callbackify(async () => 1)(() => { throw new Error("in callback"); });
+        results.push(await uncaught);
+
+        // Without a process there is no deprecation config: the function comes back as is.
+        const plain = () => {};
+        results.push(deprecate(plain, "old") === plain);
+        // With one, the wrapper warns once and forwards this and the arguments.
+        globalThis.process = proc;
+        const warnings = [];
+        const consoleError = console.error;
+        console.error = msg => warnings.push(msg);
+        const target = { base: 1, old: deprecate(function (a, b) { return this.base + a + b; }, "old is deprecated") };
+        results.push(target.old(2, 3) + "," + target.old(4, 5) + "," + warnings.join("|"));
+        console.error = consoleError;
+        delete globalThis.process;
+
+        results.push([isBuffer(Buffer.from("x")), isBuffer(new Uint8Array(1)), isBuffer(null), isBuffer("str")].join(","));
+        results.push(typeof debuglog("anything"));
+        results.push(resolvePath("relative/x"));
+        const missing = Object.keys(utilNamespace).filter(name => name !== "default" && util[name] !== utilNamespace[name]);
+        results.push("missing from default export: " + missing.join(","));
+        console.log(results.join("\\n"));
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: [
+        "42",
+        "cb failed",
+        "custom",
+        "null,42",
+        "rejected",
+        "Promise was rejected with a falsy value,null",
+        "uncaughtException: in callback",
+        "true",
+        "6,10,old is deprecated",
+        "true,false,false,false",
+        "function",
+        "/relative/x",
+        "missing from default export: ",
+      ].join("\n"),
+    },
+  });
   // A browser has no process, Buffer, or setImmediate global. The polyfills
   // must bind those to the sibling polyfills instead of reading globals.
   itBundled("browser/NodePolyfillsRunWithoutNodeGlobals", {

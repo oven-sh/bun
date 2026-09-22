@@ -246,6 +246,8 @@ const WRITE_FLUSHED_WITHOUT_CALLBACK: u32 = 0x10;
 // RFC 7541 Section 4.1: Each header entry has 32 bytes of overhead
 // for the HPACK dynamic table entry structure
 const HPACK_ENTRY_OVERHEAD: usize = 32;
+// nghttp2's send limit when `maxSendHeaderBlockLength` is unset (https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_frame.h#L58). A block under it holds no field over LSHPACK_MAX_HEADER_SIZE (c-bindings.cpp), the largest the encoder emits.
+const NGHTTP2_MAX_HEADERSLEN: usize = 65536;
 // Maximum number of custom settings (same as Node.js MAX_ADDITIONAL_SETTINGS)
 const MAX_CUSTOM_SETTINGS: usize = 10;
 
@@ -2003,12 +2005,6 @@ impl HeaderList {
         12 + self.fields.len() * 12 + self.bytes.len()
     }
 
-    /// A 1xx `:status`: the final response still follows on the same stream.
-    fn is_informational(&self) -> bool {
-        self.iter()
-            .any(|(name, value, _)| name == b":status" && value.len() == 3 && value[0] == b'1')
-    }
-
     fn iter(&self) -> impl Iterator<Item = (&[u8], &[u8], bool)> {
         let mut offset = 0usize;
         self.fields.iter().map(move |field| {
@@ -2027,21 +2023,13 @@ impl HeaderList {
 // ──────────────────────────────────────────────────────────────────────────
 
 impl H2FrameParser {
-    /// Stages the field when `request()` has to measure the whole block first, else encodes it.
-    fn encode_or_stage_header(
-        &self,
-        staged: &mut Option<HeaderList>,
-        encoded_headers: &mut Vec<u8>,
-        name: &[u8],
-        value: &[u8],
-        never_index: bool,
-    ) -> crate::Result<()> {
-        match staged {
-            Some(list) => Ok(list.push(name, value, never_index)?),
-            None => self
-                .encode_header_into_list(encoded_headers, name, value, never_index)
-                .map(|_| ()),
-        }
+    /// Whether nghttp2 would refuse the staged block. `frame_bytes` is what the frame adds to the bound (the priority fields of HEADERS).
+    fn over_send_limit(&self, staged: &HeaderList, frame_bytes: usize) -> bool {
+        let limit = match self.max_send_header_block_length.get() {
+            0 => NGHTTP2_MAX_HEADERSLEN,
+            limit => limit as usize,
+        };
+        staged.deflate_bound() + frame_bytes > limit
     }
 
     /// Encodes a single header into the ArrayList, growing if needed.
@@ -6549,7 +6537,8 @@ impl H2FrameParser {
             headers_arg,
             sensitive_arg,
             options_arg,
-        ] = callframe.arguments_as_array::<5>();
+            informational_arg,
+        ] = callframe.arguments_as_array::<6>();
         if callframe.arguments_count() < 4 {
             return Err(global_object.throw(format_args!(
                 "Expected stream_id, stream_ctx, headers and sensitiveHeaders arguments"
@@ -6569,8 +6558,8 @@ impl H2FrameParser {
         if encoded_headers.try_reserve(16384).is_err() {
             return Err(global_object.throw(format_args!("Failed to allocate header buffer")));
         }
-        // maxSendHeaderBlockLength is checked on the whole block before the encoder sees it.
-        let mut staged = (this.max_send_header_block_length.get() != 0).then(HeaderList::default);
+        // The send limit is checked on the whole block before the encoder sees it.
+        let mut staged = HeaderList::default();
         // max header name length for lshpack
         let mut name_buffer = [0u8; 4096];
         let stream_id: u32 =
@@ -6691,29 +6680,10 @@ impl H2FrameParser {
                         BStr::new(value)
                     );
 
-                    if let Err(err) = this.encode_or_stage_header(
-                        &mut staged,
-                        &mut encoded_headers,
-                        validated_name,
-                        value,
-                        never_index,
-                    ) {
-                        if matches!(err, crate::Error::Alloc(_)) {
-                            return Err(global_object
-                                .throw(format_args!("Failed to allocate header buffer")));
-                        }
-                        let Some(stream) = this.handle_received_stream_id(stream_id) else {
-                            return Ok(JSValue::js_number(-1.0));
-                        };
-                        // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
-                        let stream = unsafe { &mut *stream };
-                        if !stream_ctx_arg.is_empty_or_undefined_or_null()
-                            && stream_ctx_arg.is_object()
-                        {
-                            stream.set_context(stream_ctx_arg, global_object);
-                        }
-                        this.schedule_header_compression_session_error();
-                        return Ok(JSValue::js_number(stream_id as f64));
+                    if staged.push(validated_name, value, never_index).is_err() {
+                        return Err(
+                            global_object.throw(format_args!("Failed to allocate header buffer"))
+                        );
                     }
                 }
             }
@@ -6862,29 +6832,9 @@ impl H2FrameParser {
                             BStr::new(value)
                         );
 
-                        if let Err(err) = this.encode_or_stage_header(
-                            &mut staged,
-                            &mut encoded_headers,
-                            validated_name,
-                            value,
-                            never_index,
-                        ) {
-                            if matches!(err, crate::Error::Alloc(_)) {
-                                return Err(global_object
-                                    .throw(format_args!("Failed to allocate header buffer")));
-                            }
-                            let Some(stream) = this.handle_received_stream_id(stream_id) else {
-                                return Ok(JSValue::js_number(-1.0));
-                            };
-                            // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
-                            let stream = unsafe { &mut *stream };
-                            if !stream_ctx_arg.is_empty_or_undefined_or_null()
-                                && stream_ctx_arg.is_object()
-                            {
-                                stream.set_context(stream_ctx_arg, global_object);
-                            }
-                            this.schedule_header_compression_session_error();
-                            return Ok(JSValue::UNDEFINED);
+                        if staged.push(validated_name, value, never_index).is_err() {
+                            return Err(global_object
+                                .throw(format_args!("Failed to allocate header buffer")));
                         }
                     }
                 } else if !js_value.is_empty_or_undefined_or_null() {
@@ -6933,29 +6883,10 @@ impl H2FrameParser {
                         BStr::new(value)
                     );
 
-                    if let Err(err) = this.encode_or_stage_header(
-                        &mut staged,
-                        &mut encoded_headers,
-                        validated_name,
-                        value,
-                        never_index,
-                    ) {
-                        if matches!(err, crate::Error::Alloc(_)) {
-                            return Err(global_object
-                                .throw(format_args!("Failed to allocate header buffer")));
-                        }
-                        let Some(stream) = this.handle_received_stream_id(stream_id) else {
-                            return Ok(JSValue::js_number(-1.0));
-                        };
-                        // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
-                        let stream = unsafe { &mut *stream };
-                        if !stream_ctx_arg.is_empty_or_undefined_or_null()
-                            && stream_ctx_arg.is_object()
-                        {
-                            stream.set_context(stream_ctx_arg, global_object);
-                        }
-                        this.schedule_header_compression_session_error();
-                        return Ok(JSValue::js_number(stream_id as f64));
+                    if staged.push(validated_name, value, never_index).is_err() {
+                        return Err(
+                            global_object.throw(format_args!("Failed to allocate header buffer"))
+                        );
                     }
                 }
             }
@@ -7165,10 +7096,7 @@ impl H2FrameParser {
         }
 
         // Like nghttp2, priority bytes always counted: https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L2095-L2101
-        if let Some(staged) = &staged
-            && staged.deflate_bound() + StreamPriority::BYTE_SIZE
-                > this.max_send_header_block_length.get() as usize
-        {
+        if this.over_send_limit(&staged, StreamPriority::BYTE_SIZE) {
             if this.is_server.get() {
                 let identifier = stream.get_identifier();
                 identifier.ensure_still_alive();
@@ -7179,8 +7107,8 @@ impl H2FrameParser {
                     JSValue::js_number(FrameType::HTTP_FRAME_HEADERS as u8 as f64),
                     JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
                 );
-                // DATA cannot follow a refused final response. A refused 1xx block keeps the stream open.
-                if !staged.is_informational() {
+                // DATA cannot follow a refused final response. After a refused additionalHeaders() block the response still follows.
+                if !(informational_arg.is_boolean() && informational_arg.as_boolean()) {
                     this.end_stream(&mut stream, ErrorCode::FRAME_SIZE_ERROR);
                 }
                 return Ok(JSValue::js_number(stream_id as f64));
@@ -7206,19 +7134,17 @@ impl H2FrameParser {
             return Ok(JSValue::js_number(stream_id as f64));
         }
 
-        if let Some(staged) = &staged {
-            for (name, value, never_index) in staged.iter() {
-                if let Err(err) =
-                    this.encode_header_into_list(&mut encoded_headers, name, value, never_index)
-                {
-                    if matches!(err, crate::Error::Alloc(_)) {
-                        return Err(
-                            global_object.throw(format_args!("Failed to allocate header buffer"))
-                        );
-                    }
-                    this.schedule_header_compression_session_error();
-                    return Ok(JSValue::js_number(stream_id as f64));
+        for (name, value, never_index) in staged.iter() {
+            if let Err(err) =
+                this.encode_header_into_list(&mut encoded_headers, name, value, never_index)
+            {
+                if matches!(err, crate::Error::Alloc(_)) {
+                    return Err(
+                        global_object.throw(format_args!("Failed to allocate header buffer"))
+                    );
                 }
+                this.schedule_header_compression_session_error();
+                return Ok(JSValue::js_number(stream_id as f64));
             }
         }
         let encoded_size = encoded_headers.len();

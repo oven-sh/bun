@@ -1289,6 +1289,240 @@ describe("request pseudo-header requirements (RFC 9113 §8.3.1)", () => {
   });
 });
 
+describe("a response header block over the send limit (RFC 9113 §8.1)", () => {
+  // Every expectation here is node v26.3.0's: nghttp2 refuses a block over maxSendHeaderBlockLength
+  // (65536 when unset) before it deflates it, so the stream gets 'frameError' and RST_STREAM
+  // FRAME_SIZE_ERROR, the session sends GOAWAY NO_ERROR, and no DATA goes out without HEADERS.
+  const big = (size: number) => Buffer.alloc(size, "B").toString();
+  type Track = (stream: http2.ServerHttp2Stream) => void;
+
+  const sawGoaway = (f: Frame) => f.type === FrameType.GOAWAY;
+  const sawEndOfBody = (f: Frame) => f.streamId === 1 && f.type === FrameType.DATA && (f.flags & 0x1) !== 0;
+
+  async function wireFor(
+    handle: (srv: http2.Http2Server, track: Track) => void,
+    options: http2.ServerOptions = {},
+    done: (f: Frame) => boolean = sawGoaway,
+  ) {
+    const frameErrors: number[][] = [];
+    const streamErrors: string[] = [];
+    const sessionErrors: string[] = [];
+    const streamClosed = Promise.withResolvers<number>();
+    const srv = http2.createServer(options);
+    srv.on("sessionError", err => sessionErrors.push(err.message));
+    handle(srv, stream => {
+      stream.on("error", (err: NodeJS.ErrnoException) => streamErrors.push(`${err.code} ${err.message}`));
+      stream.on("frameError", (type, code) => frameErrors.push([type, code]));
+      stream.on("close", () => streamClosed.resolve(stream.rstCode));
+    });
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    const c = await RawH2.connect((srv.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendSettingsAck();
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+      const [, rstCode] = await Promise.all([c.waitFor(done), streamClosed.promise]);
+      const goaway = c.frames.find(f => f.type === FrameType.GOAWAY);
+      return {
+        stream1: c.frames
+          .filter(f => f.streamId === 1)
+          .map(f => (f.type === FrameType.RST_STREAM ? `RST_STREAM ${f.payload.readUInt32BE(0)}` : `type ${f.type}`)),
+        goaway: goaway ? goawayErrorCode(goaway) : null,
+        frameErrors,
+        streamErrors,
+        sessionErrors,
+        rstCode,
+      };
+    } finally {
+      c.destroy();
+      srv.close();
+    }
+  }
+
+  const respondWith =
+    (headers: any, options?: http2.ServerStreamResponseOptions) =>
+    (srv: http2.Http2Server, track: Track): void => {
+      srv.on("stream", stream => {
+        track(stream);
+        stream.respond(headers, options);
+        stream.end("body");
+      });
+    };
+
+  const refused = {
+    stream1: [`RST_STREAM ${ErrorCode.FRAME_SIZE_ERROR}`],
+    goaway: ErrorCode.NO_ERROR,
+    frameErrors: [[FrameType.HEADERS, ErrorCode.FRAME_SIZE_ERROR]],
+    streamErrors: ["ERR_HTTP2_STREAM_ERROR Stream closed with error code NGHTTP2_FRAME_SIZE_ERROR"],
+    sessionErrors: [],
+    rstCode: ErrorCode.FRAME_SIZE_ERROR,
+  };
+
+  test.each([
+    ["a single value", { ":status": 200, "x-big": big(200_000) }],
+    ["an array value", { ":status": 200, "x-big": ["small", big(200_000)] }],
+    ["a raw header list", [":status", 200, "x-big", big(200_000)]],
+  ])("respond() with %s resets the stream and sends no DATA", async (_, headers) => {
+    expect(await wireFor(respondWith(headers))).toEqual(refused);
+  });
+
+  // nghttp2 compares the limit with 12 + 12 per field + every name and value byte, plus 5 priority bytes.
+  // Without the date field the block is ":status" + "200" and "x-big" + its value: 12 + 24 + 10 + 5 + 5 = 56.
+  const valueAtLimit = 65_536 - 56;
+
+  test("a block whose bound is exactly 65536 is sent", async () => {
+    const headers = { ":status": 200, "x-big": big(valueAtLimit) };
+    const wire = await wireFor(respondWith(headers, { sendDate: false }), {}, sawEndOfBody);
+    expect({ ...wire, stream1: wire.stream1[0] }).toEqual({
+      stream1: `type ${FrameType.HEADERS}`,
+      goaway: null,
+      frameErrors: [],
+      streamErrors: [],
+      sessionErrors: [],
+      rstCode: ErrorCode.NO_ERROR,
+    });
+  });
+
+  test("a block whose bound is 65537 is refused", async () => {
+    const headers = { ":status": 200, "x-big": big(valueAtLimit + 1) };
+    expect(await wireFor(respondWith(headers, { sendDate: false }))).toEqual(refused);
+  });
+
+  test("a block of many small fields over 65536 is refused", async () => {
+    const headers: Record<string, string | number> = { ":status": 200 };
+    for (let i = 0; i < 70; i++) headers[`x-field-${i}`] = big(1000);
+    expect(await wireFor(respondWith(headers))).toEqual(refused);
+  });
+
+  test("a field over a user-set maxSendHeaderBlockLength takes the same path", async () => {
+    const headers = { ":status": 200, "x-big": big(90_000) };
+    expect(await wireFor(respondWith(headers), { maxSendHeaderBlockLength: 70_000 })).toEqual(refused);
+  });
+
+  test("the compat response resets the stream and sends no DATA", async () => {
+    const wire = await wireFor((srv, track) => {
+      srv.on("request", (_req, res) => {
+        track(res.stream);
+        res.setHeader("x-big", big(200_000));
+        res.end("body");
+      });
+    });
+    expect(wire).toEqual(refused);
+  });
+
+  test.each([
+    ["a 103 status", { ":status": 103, "x-big": big(200_000) }],
+    ["no :status", { "x-big": big(200_000) }],
+  ])("a refused additionalHeaders() block with %s leaves the stream open for the response", async (_, info) => {
+    const wire = await wireFor((srv, track) => {
+      srv.on("stream", stream => {
+        track(stream);
+        stream.additionalHeaders(info);
+        stream.respond({ ":status": 200 });
+        stream.end("body");
+      });
+    });
+    expect(wire).toEqual({
+      stream1: [`type ${FrameType.HEADERS}`, `type ${FrameType.DATA}`],
+      goaway: ErrorCode.NO_ERROR,
+      frameErrors: [[FrameType.HEADERS, ErrorCode.FRAME_SIZE_ERROR]],
+      streamErrors: [],
+      sessionErrors: [],
+      rstCode: ErrorCode.NO_ERROR,
+    });
+  });
+
+  // respond() throws for a 1xx status, so only additionalHeaders() can send a block that is not the response.
+  test("respond() throws for a 1xx status and the stream still sends its response", async () => {
+    let thrown: unknown;
+    const wire = await wireFor(
+      (srv, track) => {
+        srv.on("stream", stream => {
+          track(stream);
+          try {
+            stream.respond({ ":status": 103, "x-big": big(200_000) });
+          } catch (err) {
+            thrown = (err as NodeJS.ErrnoException).code;
+          }
+          stream.end("body");
+        });
+      },
+      {},
+      sawEndOfBody,
+    );
+    expect({ thrown, ...wire, stream1: wire.stream1[0] }).toEqual({
+      thrown: "ERR_HTTP2_STATUS_INVALID",
+      stream1: `type ${FrameType.HEADERS}`,
+      goaway: null,
+      frameErrors: [],
+      streamErrors: [],
+      sessionErrors: [],
+      rstCode: ErrorCode.NO_ERROR,
+    });
+  });
+
+  // The refused block also carries "x-shared". The client can only decode that field on the second
+  // stream if the refused block never reached the HPACK encoder.
+  test("a stream in flight completes and its headers still decode", async () => {
+    const srv = http2.createServer();
+    const refusedClosed = Promise.withResolvers<void>();
+    srv.on("stream", (stream, headers) => {
+      stream.on("error", () => {});
+      if (headers[":path"] === "/big") {
+        stream.on("close", () => refusedClosed.resolve());
+        stream.respond({ ":status": 200, "x-shared": "same-value", "x-big": big(200_000) });
+        stream.end("body");
+        return;
+      }
+      refusedClosed.promise.then(() => {
+        if (stream.destroyed) return;
+        stream.respond({ ":status": 200, "x-shared": "same-value" });
+        stream.end("neighbour body");
+      });
+    });
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    const client = http2.connect(`http://127.0.0.1:${(srv.address() as net.AddressInfo).port}`);
+    client.on("error", () => {});
+    const run = (path: string) => {
+      const result = { status: 0, shared: undefined as unknown, body: "", error: "", rstCode: -1 };
+      const { promise, resolve } = Promise.withResolvers<typeof result>();
+      const req = client.request({ ":path": path });
+      req.setEncoding("utf8");
+      req.on("response", h => Object.assign(result, { status: h[":status"], shared: h["x-shared"] }));
+      req.on("data", chunk => (result.body += chunk));
+      req.on("error", (err: NodeJS.ErrnoException) => (result.error = `${err.code} ${err.message}`));
+      req.on("close", () => resolve(Object.assign(result, { rstCode: req.rstCode })));
+      req.end();
+      return promise;
+    };
+    try {
+      const [neighbour, refusedStream] = await Promise.all([run("/ok"), run("/big")]);
+      expect({ neighbour, refusedStream }).toEqual({
+        neighbour: {
+          status: 200,
+          shared: "same-value",
+          body: "neighbour body",
+          error: "",
+          rstCode: ErrorCode.NO_ERROR,
+        },
+        refusedStream: {
+          status: 0,
+          shared: undefined,
+          body: "",
+          error: "ERR_HTTP2_STREAM_ERROR Stream closed with error code NGHTTP2_FRAME_SIZE_ERROR",
+          rstCode: ErrorCode.FRAME_SIZE_ERROR,
+        },
+      });
+    } finally {
+      client.destroy();
+      srv.close();
+    }
+  });
+});
+
 // A stream nothing references any more can still survive a bounded number of collections: JSC scans
 // the machine stack conservatively and honors interior pointers, so a stale word left in a native
 // frame (seen on x64 as cell+0x84 in the microtask-drain frames; near-deterministic on aarch64) pins

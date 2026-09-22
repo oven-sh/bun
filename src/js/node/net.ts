@@ -335,15 +335,7 @@ const kSocketClass = Symbol("kSocketClass");
 // callback as errnoException(status, 'write') and destroys the stream when no
 // callback is pending. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L81-L92
 function failWrite(self, negErrno, callback) {
-  let er = new ErrnoException(negErrno, "write") as Error & { code?: string; errno?: number; syscall?: string };
-  if (typeof er.code !== "string" || !/^E[A-Z0-9]+$/.test(er.code)) {
-    // A raw WSA value the errno table cannot name (Windows delivers fatal
-    // send errors this way): shape it like SocketEmitEndNT shapes reads,
-    // keeping the original errno.
-    er = new ConnResetException("write ECONNRESET") as Error & { code: string; errno?: number; syscall?: string };
-    er.errno = negErrno;
-    er.syscall = "write";
-  }
+  const er = writeErrnoException(negErrno);
   self._pendingData = null;
   self[kwriteCallback] = null;
   if (callback) {
@@ -376,6 +368,19 @@ function failWrite(self, negErrno, callback) {
       self.destroy();
     }
   }
+}
+// Node's errnoException(status, 'write') for the negative errno $write returns.
+function writeErrnoException(negErrno) {
+  let er = new ErrnoException(negErrno, "write") as Error & { code?: string; errno?: number; syscall?: string };
+  if (typeof er.code !== "string" || !/^E[A-Z0-9]+$/.test(er.code)) {
+    // A raw WSA value the errno table cannot name (Windows delivers fatal
+    // send errors this way): shape it like SocketEmitEndNT shapes reads,
+    // keeping the original errno.
+    er = new ConnResetException("write ECONNRESET") as Error & { code: string; errno?: number; syscall?: string };
+    er.errno = negErrno;
+    er.syscall = "write";
+  }
+  return er;
 }
 function endNT(socket, callback, err) {
   // Node's _final half-closes the writable side (sends FIN) and leaves the
@@ -2965,7 +2970,11 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     // Node reports this as errnoException(UV_EBADF/UV_EPIPE, 'write'), with
     // message, code, errno and syscall all populated.
     const er = new ErrnoException(process.platform === "win32" ? -4047 /* UV_EPIPE */ : -9 /* UV_EBADF */, "write");
-    process.nextTick(callback, er);
+    // Node fails a write that the handle rejects at once inside the same call,
+    // so write() returns false. The stream runs the write callback and destroys
+    // the socket on the next tick.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L158-L159
+    callback(er);
     return false;
   }
   const res = socket.$write(chunk, encoding);
@@ -2973,7 +2982,7 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
   if (res < 0) {
     // The kernel rejected the send outright (peer reset): $write returned the
     // negative errno; deliver it like the EBADF/EPIPE branch above.
-    process.nextTick(failWrite, this, res, callback);
+    callback(writeErrnoException(res));
     return false;
   }
   if (res) {

@@ -1306,7 +1306,11 @@ mod _async_tasks {
         }
 
         /// `Err` is the exception a failed conversion left pending, as for `JSPromise::reject`.
-        pub(crate) fn reject(&self, global: &JSGlobalObject, value: JsResult<JSValue>) -> JsResult<()> {
+        pub(crate) fn reject(
+            &self,
+            global: &JSGlobalObject,
+            value: JsResult<JSValue>,
+        ) -> JsResult<()> {
             match self {
                 Self::Promise(promise) => promise.get().reject(global, value),
                 Self::Callback(callback) => {
@@ -1436,7 +1440,10 @@ mod _async_tasks {
                     // may be niche-optimised; never construct an all-zero `Result`.
                     result: Err(sys::Error::default()),
                 },
-                AsyncFSJs { completion, tracker },
+                AsyncFSJs {
+                    completion,
+                    tracker,
+                },
             );
             value
         }
@@ -2494,7 +2501,10 @@ mod _async_tasks {
                     pending_err: None,
                     pending_err_mutex: bun_threading::Mutex::default(),
                 },
-                AsyncFSJs { completion, tracker },
+                AsyncFSJs {
+                    completion,
+                    tracker,
+                },
             );
             value
         }

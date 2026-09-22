@@ -1406,6 +1406,82 @@ it("child.stdout.pause() after flowing stops native reads and blocks the child",
   }
 });
 
+// child.stdout and child.stderr read ahead: `_read()` pushes each native pull
+// result synchronously, so while the stream flows Readable holds the next chunk
+// in its buffer when a 'data' listener runs. destroy() left that chunk there and
+// flow() emitted it after destroy() returned, with `destroyed === true`. Node's
+// child stdio is a net.Socket that pushes asynchronously, so no 'data' follows
+// destroy() there.
+it.concurrent.each(["stdout", "stderr"] as const)(
+  "child.%s.destroy() inside a 'data' listener stops 'data' and 'end'",
+  async name => {
+    const SIZE = 8 * 1024 * 1024;
+    const writer = `const s=process.${name};s.on('error',()=>process.exit(0));const c=Buffer.alloc(1<<16,97);let w=0;(function f(){while(w<${SIZE}){w+=c.length;if(!s.write(c)){s.once('drain',f);return}}})()`;
+    const c = spawn(bunExe(), ["-e", writer], {
+      stdio: ["ignore", name === "stdout" ? "pipe" : "ignore", name === "stderr" ? "pipe" : "ignore"],
+      env: bunEnv,
+    });
+    try {
+      const stream = c[name]!;
+      let bytes = 0;
+      let destroyed = false;
+      const afterDestroy: string[] = [];
+      stream.on("data", (d: Buffer) => {
+        if (destroyed) {
+          afterDestroy.push(`data(${d.length}) destroyed=${stream.destroyed}`);
+          return;
+        }
+        bytes += d.length;
+        // Destroy as soon as another chunk is already buffered behind this
+        // one: that is the chunk that used to follow destroy(). If the reader
+        // never gets ahead of this listener, destroy half way instead.
+        if (stream.readableLength > 0 || bytes >= SIZE / 2) {
+          destroyed = true;
+          stream.destroy();
+          c.kill();
+        }
+      });
+      stream.on("end", () => afterDestroy.push("end"));
+      await once(c, "close");
+      expect(afterDestroy).toEqual([]);
+      expect(destroyed).toBe(true);
+    } finally {
+      c.kill();
+    }
+  },
+);
+
+// The exec()/execFile() 'data' listener is a port of Node's: at the chunk that
+// crosses maxBuffer it destroys the stream, and it relies on no 'data' following
+// destroy(). The chunk that used to follow made `maxBuffer - (totalLen - length)`
+// negative, and slice(0, negative) appended most of it, so the callback got up
+// to a chunk more than maxBuffer. Whether a chunk is buffered at the crossing is
+// a race (about 1 run in 3 without the fix), so several run at once.
+describe.concurrent("execFile() maxBuffer against a fast writer", () => {
+  const maxBuffer = 1024 * 1024;
+  // 3 MiB in 64 KiB blocks, each block filled with its own letter. ASCII on
+  // purpose: the handler, like Node's, counts bytes but slices a string chunk by
+  // code units, so multi-byte output is over maxBuffer in bytes in Node too
+  // (Node v26.3.0, maxBuffer 1000000, 2-byte characters: 1016960 bytes).
+  const writer = `const s=process.stdout;s.on('error',()=>process.exit(0));let k=0;(function f(){while(k<48){if(!s.write(Buffer.alloc(1<<16,65+(k++%26)))){s.once('drain',f);return}}})()`;
+  const expected = Buffer.concat(
+    Array.from({ length: maxBuffer >> 16 }, (_, k) => Buffer.alloc(1 << 16, 65 + (k % 26))),
+  );
+
+  it.each(["buffer", "utf8"] as const)("truncates at exactly maxBuffer (encoding: %s)", async encoding => {
+    const runs = Array.from({ length: 4 }, () => {
+      const { promise, resolve } = Promise.withResolvers();
+      execFile(bunExe(), ["-e", writer], { maxBuffer, encoding, env: bunEnv }, (err, stdout) => {
+        resolve({ code: err?.code, length: stdout.length, isPrefix: expected.equals(Buffer.from(stdout)) });
+      });
+      return promise;
+    });
+    expect(await Promise.all(runs)).toEqual(
+      Array(4).fill({ code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER", length: maxBuffer, isPrefix: true }),
+    );
+  });
+});
+
 // When spawn fails (ENOENT, bad cwd, etc.) the ChildProcess emits 'error' and
 // 'close' but never 'exit'. The abort listener on options.signal was only
 // removed on 'exit', so every failed spawn against a shared AbortSignal leaked

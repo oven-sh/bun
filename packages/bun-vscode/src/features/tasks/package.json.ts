@@ -43,7 +43,7 @@ export function registerPackageJsonProviders(context: vscode.ExtensionContext) {
   registerHoverProvider(context);
 }
 
-/** Turns a quoted JSON string token into its value, including escapes such as \" and \uXXXX. */
+/** Turns a quoted JSON string token into its value, with backslash escapes resolved. */
 function unquote(token: string): string {
   try {
     return JSON.parse(token);

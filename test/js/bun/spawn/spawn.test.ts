@@ -1841,3 +1841,162 @@ it.if(parentThp() === "1")("spawned children keep the system THP policy", async 
   expect(thpEnabled(readFileSync("/proc/self/status", "utf8"))).toBe("1");
   expect(exitCode).toBe(0);
 });
+
+// Runs a script in a fresh bun process, so its fd numbers are low and known and a blocked spawnSync cannot block this runner.
+async function runInFreshProcess(script: string) {
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+// A socketpair end that bun hands to a child keeps the file status flags bun gave it. A child that
+// is not bun or node does a plain write(2) on the IPC fd, which is short or fails with EAGAIN when the fd is O_NONBLOCK.
+describe.skipIf(!isPosix)("file status flags handed to the child", () => {
+  const probe = join(import.meta.dir, "fixtures", "fd-nonblock-probe.js");
+
+  it.concurrent("the ipc fd is blocking", async () => {
+    await using proc = spawn({
+      cmd: [bunExe(), probe, "3"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      ipc() {},
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("3:blocking\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe.skipIf(!isPosix)("stdio source fds that are also slot numbers", () => {
+  // File actions run in slot order in the child. The source fd of a later
+  // slot must survive the actions of the slots before it (the close of an
+  // "ignore" slot, the dup2 onto another slot) even when its fd number is one
+  // of those slots. Each case runs in a fresh process so the source fds are
+  // low, known numbers.
+  it.concurrent("a pipe after many ignore slots", async () => {
+    const slots = 60;
+    const result = await runInFreshProcess(`
+      const fs = require("fs");
+      const proc = Bun.spawn({
+        cmd: [process.execPath, "-e", "require('fs').writeSync(${slots}, 'hi')"],
+        stdio: ["ignore", "inherit", "inherit", ...Array(${slots - 3}).fill("ignore"), "pipe"],
+      });
+      const fd = proc.stdio[${slots}];
+      const exitCode = await proc.exited;
+      const buf = Buffer.alloc(16);
+      const n = fs.readSync(fd, buf);
+      console.log(JSON.stringify({ sourceBelowSlot: fd < ${slots}, exitCode, data: buf.toString("utf8", 0, n) }));
+    `);
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toEqual({ sourceBelowSlot: true, exitCode: 0, data: "hi" });
+    expect(result.exitCode).toBe(0);
+  });
+
+  it.concurrent("a caller fd after many ignore slots", async () => {
+    using dir = tempDir("spawn-high-slot", {});
+    const slots = 60;
+    const file = join(String(dir), "out.txt");
+    const result = await runInFreshProcess(`
+      const fs = require("fs");
+      const fd = fs.openSync(${JSON.stringify(file)}, "w");
+      const proc = Bun.spawn({
+        cmd: [process.execPath, "-e", "require('fs').writeSync(${slots}, 'hi')"],
+        stdio: ["ignore", "inherit", "inherit", ...Array(${slots - 3}).fill("ignore"), fd],
+      });
+      console.log(JSON.stringify({ sourceBelowSlot: fd < ${slots}, exitCode: await proc.exited }));
+    `);
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toEqual({ sourceBelowSlot: true, exitCode: 0 });
+    expect(readFileSync(file, "utf8")).toBe("hi");
+    expect(result.exitCode).toBe(0);
+  });
+
+  it.concurrent("fd 2 at stdout and fd 1 at stderr swap them", async () => {
+    const result = await runInFreshProcess(`
+      const proc = Bun.spawn({
+        cmd: [process.execPath, "-e", "require('fs').writeSync(1, 'to-fd-1,'); require('fs').writeSync(2, 'to-fd-2,')"],
+        stdio: ["ignore", 2, 1],
+      });
+      await proc.exited;
+    `);
+    expect({ stdout: result.stdout, stderr: result.stderr }).toEqual({ stdout: "to-fd-2,", stderr: "to-fd-1," });
+    expect(result.exitCode).toBe(0);
+  });
+
+  // The child reports which of its fds 1 and 2 is /dev/null. It writes the report to the other one.
+  const reportDevNull = (reportFd: 1 | 2) => `
+    const fs = require("fs");
+    const devNull = fs.statSync("/dev/null").rdev;
+    const isDevNull = fd => { const s = fs.fstatSync(fd); return s.isCharacterDevice() && s.rdev === devNull; };
+    fs.writeSync(${reportFd}, JSON.stringify({ stdoutIsDevNull: isDevNull(1), stderrIsDevNull: isDevNull(2) }));
+  `;
+
+  it.concurrent(
+    "a closed stdout slot that is inherited gets /dev/null, not the stdin pipe end that took fd 1",
+    async () => {
+      const result = await runInFreshProcess(`
+      require("fs").closeSync(1);
+      // stdin "pipe" makes a socketpair, and its child end lands on the free fd 1.
+      const proc = Bun.spawn({
+        cmd: [process.execPath, "-e", ${JSON.stringify(reportDevNull(2))}],
+        stdio: ["pipe", "inherit", "inherit"],
+      });
+      process.exitCode = await proc.exited;
+    `);
+      expect(JSON.parse(result.stderr)).toEqual({ stdoutIsDevNull: true, stderrIsDevNull: false });
+      expect(result.exitCode).toBe(0);
+    },
+  );
+
+  it.concurrent(
+    "a closed stderr slot that is inherited gets /dev/null, not the stdout pipe end that took fd 2",
+    async () => {
+      const result = await runInFreshProcess(`
+      require("fs").closeSync(2);
+      // stdout "pipe" makes a socketpair, and the parent's end lands on the free fd 2.
+      const proc = Bun.spawn({
+        cmd: [process.execPath, "-e", ${JSON.stringify(reportDevNull(1))}],
+        stdio: ["ignore", "pipe", "inherit"],
+      });
+      const [report, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      console.log(report);
+      process.exitCode = exitCode;
+    `);
+      expect(JSON.parse(result.stdout)).toEqual({ stdoutIsDevNull: false, stderrIsDevNull: true });
+      expect(result.exitCode).toBe(0);
+    },
+  );
+
+  it.concurrent(
+    "an extra inherit slot that is closed in the parent fails with EBADF, not with the pipe end that took its number",
+    async () => {
+      const result = await runInFreshProcess(`
+      const fs = require("fs");
+      const free = fs.openSync("/dev/null", "r"); // the lowest free fd number
+      fs.closeSync(free);
+      let outcome;
+      try {
+        // stdin "pipe" makes a socketpair, and its child end lands on that free number.
+        const proc = Bun.spawn({
+          cmd: ["true"],
+          stdio: ["pipe", "inherit", "inherit", ...Array(free - 3).fill("ignore"), "inherit"],
+        });
+        await proc.exited;
+        outcome = "spawned";
+      } catch (e) {
+        outcome = e.code;
+      }
+      console.log(JSON.stringify({ freeIsExtraSlot: free >= 3, outcome }));
+    `);
+      expect(result.stderr).toBe("");
+      expect(JSON.parse(result.stdout)).toEqual({ freeIsExtraSlot: true, outcome: "EBADF" });
+      expect(result.exitCode).toBe(0);
+    },
+  );
+});

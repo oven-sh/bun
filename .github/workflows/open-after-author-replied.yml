@@ -159,12 +159,21 @@ jobs:
               return;
             }
 
-            await github.rest.issues.update({
-              owner,
-              repo,
-              issue_number: issueNumber,
-              state: "open"
-            });
+            try {
+              await github.rest.issues.update({
+                owner,
+                repo,
+                issue_number: issueNumber,
+                state: "open"
+              });
+            } catch (error) {
+              if (error.status !== 422) {
+                throw error;
+              }
+              core.warning(
+                `Could not reopen ${owner}/${repo}#${issueNumber}: ${error.message}`
+              );
+            }
 
             core.info(
               `Reopened ${owner}/${repo}#${issueNumber} after a reply from ${authorLogin}.`

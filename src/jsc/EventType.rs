@@ -19,18 +19,18 @@ bun_core::comptime_string_map! {
 
 #[allow(non_upper_case_globals)]
 impl EventType {
-    pub const Event: Self = Self(0);
-    pub const MessageEvent: Self = Self(1);
-    pub const CloseEvent: Self = Self(2);
-    pub const ErrorEvent: Self = Self(3);
-    pub const OpenEvent: Self = Self(4);
-    pub const unknown: Self = Self(254);
+    pub(crate) const Event: Self = Self(0);
+    pub(crate) const MessageEvent: Self = Self(1);
+    pub(crate) const CloseEvent: Self = Self(2);
+    pub(crate) const ErrorEvent: Self = Self(3);
+    pub(crate) const OpenEvent: Self = Self(4);
+    pub(crate) const unknown: Self = Self(254);
 
     /// The map type is a zero-sized handle, so this is the same map as the
     /// module-level `MAP` static.
-    pub const MAP: __ComptimeStringMap_MAP = __ComptimeStringMap_MAP(());
+    pub(crate) const MAP: __ComptimeStringMap_MAP = __ComptimeStringMap_MAP(());
 
-    pub fn label(self) -> &'static [u8] {
+    pub(crate) fn label(self) -> &'static [u8] {
         match self {
             Self::Event => b"event",
             Self::MessageEvent => b"message",

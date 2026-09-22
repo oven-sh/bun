@@ -1,11 +1,16 @@
 /**
  * This test must also pass in Node.js.
  */
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { once } from "node:events";
-import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
+import { readFileSync } from "node:fs";
+import { createServer, IncomingMessage, ServerResponse } from "node:http";
+import { createServer as createSecureServer } from "node:https";
+import type { AddressInfo, Socket } from "node:net";
 import { connect } from "node:net";
+import { join } from "node:path";
+import { duplexPair } from "node:stream";
+import { connect as tlsConnect } from "node:tls";
 
 test("aborted request body emits 'error' ECONNRESET and res 'close' before req 'close'", async () => {
   // Like Node.js's socketOnClose → abortIncoming: the aborted request is
@@ -46,4 +51,362 @@ test("aborted request body emits 'error' ECONNRESET and res 'close' before req '
   } finally {
     server.close();
   }
+});
+
+// Like Node.js's OutgoingMessage#destroy, res.destroy() does not emit 'close'
+// itself. A response that still has its socket gets 'close' from the socket
+// teardown (so an ended response still emits 'finish' first); a response
+// without one (already finished, still queued, standalone) gets it a tick
+// later. Either way 'close' is observed after destroy() has returned, with
+// res.closed false in between.
+describe("res.destroy() defers 'close'", () => {
+  function destroyRecording(res: ServerResponse, events: string[], err?: Error) {
+    events.push("destroy()");
+    res.destroy(err);
+    events.push(`destroy() returned (closed: ${res.closed})`);
+  }
+
+  function recordResponse(res: ServerResponse, events: string[], onClose: () => void) {
+    res.on("finish", () => events.push("res.finish"));
+    res.on("close", () => {
+      events.push(`res.close (closed: ${res.closed})`);
+      onClose();
+    });
+  }
+
+  // Serves one GET over a real connection and returns the recorded events once
+  // both the request and the response have emitted 'close'. With
+  // connectionClosedByServer it also waits for the server to close the
+  // connection, which destroy() does whenever the response still has its socket.
+  async function serveAndRecord(
+    listener: (req: IncomingMessage, res: ServerResponse, events: string[]) => void,
+    { connectionClosedByServer = true } = {},
+  ) {
+    const events: string[] = [];
+    const reqClosed = Promise.withResolvers<void>();
+    const resClosed = Promise.withResolvers<void>();
+    const server = createServer((req, res) => {
+      req.on("aborted", () => events.push("req.aborted"));
+      req.on("close", () => {
+        events.push("req.close");
+        reqClosed.resolve();
+      });
+      recordResponse(res, events, resClosed.resolve);
+      listener(req, res, events);
+      events.push("listener returned");
+    });
+    let client: ReturnType<typeof connect> | undefined;
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      client = connect(port, "127.0.0.1");
+      client.on("error", () => {});
+      const clientClosed = Promise.withResolvers<void>();
+      client.on("close", () => clientClosed.resolve());
+      let received = "";
+      client.on("data", chunk => (received += chunk.toString("latin1")));
+      client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+      await Promise.all([reqClosed.promise, resClosed.promise]);
+      if (connectionClosedByServer) await clientClosed.promise;
+      return { events, received };
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  }
+
+  test.concurrent("after end(): 'close' follows 'finish' and the response still reaches the client", async () => {
+    const { events, received } = await serveAndRecord((req, res, events) => {
+      res.end("hello");
+      destroyRecording(res, events);
+    });
+    expect(events).toEqual([
+      "destroy()",
+      "destroy() returned (closed: false)",
+      "listener returned",
+      "res.finish",
+      "res.close (closed: true)",
+      "req.close",
+    ]);
+    expect(received).toStartWith("HTTP/1.1 200 ");
+    expect(received).toEndWith("\r\n\r\nhello");
+  });
+
+  // Once the response has finished it no longer has a socket, so (like Node)
+  // destroy() leaves the kept-alive connection alone and only defers 'close'.
+  test.concurrent("inside a 'finish' listener", async () => {
+    const { events } = await serveAndRecord(
+      (req, res, events) => {
+        res.on("finish", () => destroyRecording(res, events));
+        res.end("hello");
+      },
+      { connectionClosedByServer: false },
+    );
+    expect(events).toEqual([
+      "listener returned",
+      "res.finish",
+      "destroy()",
+      "destroy() returned (closed: false)",
+      "res.close (closed: true)",
+      "req.close",
+    ]);
+  });
+
+  test.concurrent("inside the end() callback", async () => {
+    const { events } = await serveAndRecord(
+      (req, res, events) => {
+        res.end("hello", () => {
+          events.push("end callback");
+          destroyRecording(res, events);
+        });
+      },
+      { connectionClosedByServer: false },
+    );
+    expect(events).toEqual([
+      "listener returned",
+      "res.finish",
+      "end callback",
+      "destroy()",
+      "destroy() returned (closed: false)",
+      "res.close (closed: true)",
+      "req.close",
+    ]);
+  });
+
+  const destroyedBeforeFinishing = [
+    "destroy()",
+    "destroy() returned (closed: false)",
+    "listener returned",
+    "req.aborted",
+    "res.close (closed: true)",
+    "req.close",
+  ];
+
+  test.concurrent("before anything was written: 'close' comes from the connection teardown", async () => {
+    const { events } = await serveAndRecord((req, res, events) => {
+      destroyRecording(res, events);
+    });
+    expect(events).toEqual(destroyedBeforeFinishing);
+  });
+
+  test.concurrent("after a partial body", async () => {
+    const { events } = await serveAndRecord((req, res, events) => {
+      res.write("partial");
+      destroyRecording(res, events);
+    });
+    expect(events).toEqual(destroyedBeforeFinishing);
+  });
+
+  test.concurrent("destroy(err) reports the error as res.errored inside 'close'", async () => {
+    const err = new Error("boom");
+    let erroredInClose: unknown;
+    const { events } = await serveAndRecord((req, res, events) => {
+      res.on("close", () => (erroredInClose = res.errored));
+      destroyRecording(res, events, err);
+    });
+    expect(events).toEqual(destroyedBeforeFinishing);
+    expect(erroredInClose).toBe(err);
+  });
+
+  test.concurrent("after the request listener has returned", async () => {
+    const { events } = await serveAndRecord((req, res, events) => {
+      setImmediate(() => destroyRecording(res, events));
+    });
+    expect(events).toEqual([
+      "listener returned",
+      "destroy()",
+      "destroy() returned (closed: false)",
+      "req.aborted",
+      "res.close (closed: true)",
+      "req.close",
+    ]);
+  });
+
+  // server.emit("connection", duplex) serves the connection with the JS
+  // HTTP/1 parser: here 'close' comes from the assigned socket's own 'close'.
+  test.concurrent.each([false, true])(
+    "on a response served over server.emit('connection') (ended first: %p)",
+    async endFirst => {
+      const events: string[] = [];
+      const resClosed = Promise.withResolvers<void>();
+      const server = createServer((req, res) => {
+        recordResponse(res, events, resClosed.resolve);
+        if (endFirst) res.end("hello");
+        destroyRecording(res, events);
+        events.push("listener returned");
+      });
+      const [clientSide, serverSide] = duplexPair();
+      try {
+        serverSide.on("close", () => events.push("socket.close"));
+        server.emit("connection", serverSide);
+        clientSide.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+        await resClosed.promise;
+        expect(events).toEqual([
+          "destroy()",
+          "destroy() returned (closed: false)",
+          "listener returned",
+          ...(endFirst ? ["res.finish"] : []),
+          "socket.close",
+          "res.close (closed: true)",
+        ]);
+      } finally {
+        clientSide.destroy();
+        serverSide.destroy();
+      }
+    },
+  );
+
+  // A response queued behind an unfinished pipelined response has no socket
+  // yet (res.socket === null), so this takes the same deferred path as a
+  // standalone response.
+  test.concurrent("on a response still queued behind a pipelined response", async () => {
+    const events: string[] = [];
+    const secondClosed = Promise.withResolvers<void>();
+    const responses: ServerResponse[] = [];
+    const server = createServer((req, res) => {
+      responses.push(res);
+      if (req.url === "/first") return;
+      events.push(`second dispatched (socket: ${res.socket})`);
+      recordResponse(res, events, secondClosed.resolve);
+      destroyRecording(res, events);
+    });
+    let client: ReturnType<typeof connect> | undefined;
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      client = connect(port, "127.0.0.1");
+      client.on("error", () => {});
+      client.write("GET /first HTTP/1.1\r\nHost: x\r\n\r\nGET /second HTTP/1.1\r\nHost: x\r\n\r\n");
+      await secondClosed.promise;
+      expect(events).toEqual([
+        "second dispatched (socket: null)",
+        "destroy()",
+        "destroy() returned (closed: false)",
+        "res.close (closed: true)",
+      ]);
+    } finally {
+      for (const res of responses) res.destroy();
+      client?.destroy();
+      server.close();
+    }
+  });
+
+  test("on a standalone response that was never given a socket", async () => {
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    const res = new ServerResponse(new IncomingMessage(null as any));
+    recordResponse(res, events, closed.resolve);
+    destroyRecording(res, events);
+    await closed.promise;
+    expect(events).toEqual(["destroy()", "destroy() returned (closed: false)", "res.close (closed: true)"]);
+  });
+});
+
+// Like Node.js's net.Socket: the connection socket (req.socket) emits 'end' for
+// the peer's FIN and 'error' (read ECONNRESET, routed to 'clientError') for the
+// peer's RST, each before 'close'. A close the server starts emits only 'close'.
+describe("req.socket reports how the client closed the connection", () => {
+  const keys = join(import.meta.dirname, "..", "test", "fixtures", "keys");
+  const tlsOptions = {
+    key: readFileSync(join(keys, "agent1-key.pem")),
+    cert: readFileSync(join(keys, "agent1-cert.pem")),
+  };
+
+  // idle: after a finished keep-alive response. pending: a complete request the
+  // listener has not answered. midbody: half of the request body has arrived.
+  type When = "idle" | "pending" | "midbody";
+  type How = "FIN" | "RST" | "closeIdleConnections";
+
+  async function closeConnection(secure: boolean, when: When, how: How, withClientErrorListener = true) {
+    const socketEvents: string[] = [];
+    const clientErrors: string[] = [];
+    const gotRequest = Promise.withResolvers<void>();
+    const socketClosed = Promise.withResolvers<void>();
+
+    const listener = (req: IncomingMessage, res: ServerResponse) => {
+      const socket = req.socket;
+      socket.on("end", () => socketEvents.push("end"));
+      socket.on("error", (e: NodeJS.ErrnoException) =>
+        socketEvents.push(`error "${e.message}" code=${e.code} syscall=${e.syscall}`),
+      );
+      socket.on("close", () => {
+        socketEvents.push("close");
+        socketClosed.resolve();
+      });
+      req.resume();
+      if (when === "idle") res.end("ok");
+      gotRequest.resolve();
+    };
+    const server = secure ? createSecureServer(tlsOptions, listener) : createServer(listener);
+    if (withClientErrorListener) {
+      server.on("clientError", (e: NodeJS.ErrnoException, socket: Socket) => {
+        clientErrors.push(String(e.code));
+        socket.destroy();
+      });
+    }
+
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const tcp = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    try {
+      tcp.on("error", () => {});
+      const client = secure ? tlsConnect({ socket: tcp, rejectUnauthorized: false }) : tcp;
+      client.on("error", () => {});
+      await once(client, secure ? "secureConnect" : "connect");
+
+      if (when === "midbody") {
+        client.write("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\nhello");
+      } else {
+        client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+      }
+      if (when === "idle") await once(client, "data");
+      else await gotRequest.promise;
+
+      if (how === "RST") tcp.resetAndDestroy();
+      else if (how === "FIN") client.end();
+      else server.closeIdleConnections();
+      await socketClosed.promise;
+      return { socketEvents, clientErrors };
+    } finally {
+      tcp.destroy();
+      server.close();
+    }
+  }
+
+  for (const secure of [false, true]) {
+    for (const when of ["idle", "pending", "midbody"] as const) {
+      test.concurrent(`${secure ? "https" : "http"}: FIN while ${when} emits 'end' then 'close'`, async () => {
+        expect(await closeConnection(secure, when, "FIN")).toEqual({
+          socketEvents: ["end", "close"],
+          // Node's socketOnEnd: an EOF inside a message is a parse error.
+          clientErrors: when === "midbody" ? ["HPE_INVALID_EOF_STATE"] : [],
+        });
+      });
+
+      test.concurrent(`${secure ? "https" : "http"}: RST while ${when} emits 'error' then 'close'`, async () => {
+        expect(await closeConnection(secure, when, "RST")).toEqual({
+          socketEvents: ['error "read ECONNRESET" code=ECONNRESET syscall=read', "close"],
+          clientErrors: ["ECONNRESET"],
+        });
+      });
+    }
+
+    // Over TLS the peer answers the server's close_notify. That answer is not a
+    // half-close by the client.
+    test.concurrent(`${secure ? "https" : "http"}: closeIdleConnections() emits only 'close'`, async () => {
+      expect(await closeConnection(secure, "idle", "closeIdleConnections")).toEqual({
+        socketEvents: ["close"],
+        clientErrors: [],
+      });
+    });
+  }
+
+  test.concurrent("RST with no 'clientError' listener still emits 'error' then 'close'", async () => {
+    expect(await closeConnection(false, "idle", "RST", false)).toEqual({
+      socketEvents: ['error "read ECONNRESET" code=ECONNRESET syscall=read', "close"],
+      clientErrors: [],
+    });
+  });
 });

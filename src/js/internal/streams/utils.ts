@@ -90,7 +90,7 @@ function isWebStream(obj) {
   return isReadableStream(obj) || isWritableStream(obj) || isTransformStream(obj);
 }
 
-function isIterable(obj, isAsync) {
+function isIterable(obj, isAsync?) {
   if (obj == null) return false;
   if (isAsync === true) return typeof obj[SymbolAsyncIterator] === "function";
   if (isAsync === false) return typeof obj[SymbolIterator] === "function";
@@ -123,16 +123,6 @@ function isWritableFinished(stream, strict) {
   if (wState?.errored) return false;
   if (typeof wState?.finished !== "boolean") return null;
   return !!(wState.finished || (strict === false && wState.ended === true && wState.length === 0));
-}
-
-// Have been push(null):d.
-function isReadableEnded(stream) {
-  if (!isReadableNodeStream(stream)) return null;
-  if (stream.readableEnded === true) return true;
-  const rState = stream._readableState;
-  if (!rState || rState.errored) return false;
-  if (typeof rState?.ended !== "boolean") return null;
-  return rState.ended;
 }
 
 // Have emitted 'end'.
@@ -282,21 +272,16 @@ export default {
   isDestroyed,
   kIsDestroyed,
   isDisturbed,
-  kIsDisturbed,
   isErrored,
-  kIsErrored,
   isReadable,
-  kIsReadable,
   kIsClosedPromise,
   kControllerErrorFunction,
-  kIsWritable,
   isClosed,
   isDuplexNodeStream,
   isFinished,
   isIterable,
   isReadableNodeStream,
   isReadableStream,
-  isReadableEnded,
   isReadableFinished,
   isReadableErrored,
   isNodeStream,
@@ -308,7 +293,6 @@ export default {
   isWritableFinished,
   isWritableErrored,
   isServerRequest,
-  isServerResponse,
   willEmitClose,
   isTransformStream,
   kState,
@@ -322,4 +306,4 @@ export default {
   kCloseEmitted,
   kErrored,
   kConstructed,
-};
+} as const;

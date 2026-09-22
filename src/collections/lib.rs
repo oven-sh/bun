@@ -6,13 +6,13 @@
     unsized_const_params,
     const_cmp,
     const_trait_impl,
-    core_intrinsics,
     allocator_api
 )]
 #![allow(incomplete_features, internal_features)]
 #![warn(unused_must_use)]
 
 pub mod hive_array;
+pub mod index_sort;
 pub mod multi_array_list;
 pub mod vec_ext;
 // `bounded_array` moved down to `bun_core` (cycle-break for the
@@ -57,15 +57,7 @@ pub trait PriorityCompare<T> {
 }
 pub struct PriorityQueue<T, C> {
     pub items: Vec<T>,
-    pub context: C,
-}
-impl<T, C: Default> Default for PriorityQueue<T, C> {
-    fn default() -> Self {
-        Self {
-            items: Vec::new(),
-            context: C::default(),
-        }
-    }
+    pub(crate) context: C,
 }
 impl<T, C> PriorityQueue<T, C> {
     pub fn init(context: C) -> Self {
@@ -143,7 +135,7 @@ pub mod array_hash_map;
 pub use array_hash_map::{
     ArrayHashMap, ArrayHashMapExt, AutoContext, CaseInsensitiveAsciiStringArrayHashMap,
     CaseInsensitiveAsciiStringContext, Entry, GetOrPutResult, MapEntry, OccupiedEntry,
-    StringArrayHashMap, StringHashMap, StringHashMapContext, StringHashMapInner, StringHashMapKey,
+    StringArrayHashMap, StringHashMap, StringHashMapContext, StringHashMapKey,
     StringHashMapUnownedKey, StringSet, VacantEntry, string_hash_map,
 };
 /// Downstream crates name hashbrown's iterator/entry types in struct fields
@@ -444,12 +436,6 @@ impl<T, const N: usize> SmallList<T, N> {
     pub fn any(&self, predicate: impl Fn(&T) -> bool) -> bool {
         self.0.iter().any(predicate)
     }
-    #[inline]
-    pub fn map(&mut self, func: impl Fn(&mut T)) {
-        for item in self.0.iter_mut() {
-            func(item);
-        }
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -484,5 +470,4 @@ pub mod hash_map {
 }
 
 pub mod array_list;
-pub use array_list::ArrayListAlignedIn;
 pub use array_list::ArrayListDefault;

@@ -1,7 +1,7 @@
 // fs.ReadStream and fs.WriteStream are lazily loaded to avoid importing 'node:stream' until required
 import type { FileSink } from "bun";
 const { Readable, Writable, finished } = require("node:stream");
-const fs: typeof import("node:fs") = require("node:fs");
+const fs = require("node:fs");
 const { read, write, fsync, writev } = fs;
 const { FileHandle, kRef, kUnref, kFd } = (fs.promises as any).$data as {
   FileHandle: { new (): FileHandle };
@@ -12,25 +12,28 @@ const { FileHandle, kRef, kUnref, kFd } = (fs.promises as any).$data as {
 type FileHandle = import("node:fs/promises").FileHandle & {
   on(event: any, listener: any): FileHandle;
 };
-type FSStream = import("node:fs").ReadStream &
-  import("node:fs").WriteStream & {
-    fd: number | null;
-    path: string;
-    flags: string;
-    mode: number;
-    start: number;
-    end: number;
-    pos: number | undefined;
-    bytesRead: number;
-    flush: boolean;
-    open: () => void;
-    autoClose: boolean;
-    /**
-     * true = path must be opened
-     * sink = FileSink
-     */
-    [kWriteStreamFastPath]?: undefined | true | FileSink;
-  };
+type FSStream = Omit<import("node:fs").ReadStream & import("node:fs").WriteStream, "path" | "_write" | "_writev"> & {
+  fd: number | null;
+  // null / undefined only for the internal fast-path WriteStream, which is given a FileSink and no path.
+  path: string | null | undefined;
+  _write: import("node:fs").WriteStream["_write"] | null;
+  _writev: import("node:fs").WriteStream["_writev"] | null;
+  _writableState?: { ending: boolean; destroyed: boolean };
+  flags: string;
+  mode: number;
+  start: number;
+  end: number;
+  pos: number | undefined;
+  bytesRead: number;
+  flush: boolean;
+  open: () => void;
+  autoClose: boolean;
+  /**
+   * true = path must be opened
+   * sink = FileSink
+   */
+  [kWriteStreamFastPath]?: undefined | true | FileSink;
+};
 type FD = number;
 
 const { validateInteger, validateInt32, validateFunction } = require("internal/validators");
@@ -163,7 +166,7 @@ function ReadStream(this: FSStream, path, options): void {
     this[kFs] = customFs || fs;
   } else if (typeof fd === "object" && fd instanceof FileHandle) {
     if (options.fs) {
-      throw $ERR_METHOD_NOT_IMPLEMENTED("fs.FileHandle with custom fs operations");
+      throw $ERR_METHOD_NOT_IMPLEMENTED("FileHandle with fs");
     }
     this[kFs] = fileHandleStreamFs(fd);
     this.fd = fd[kFd];
@@ -228,12 +231,6 @@ function streamConstruct(this: FSStream, callback: (e?: any) => void) {
   }
   const fastPath = this[kWriteStreamFastPath];
   if (this.open !== streamNoop) {
-    // if (fastPath) {
-    //   // disable fast path in this case
-    //   $assert(this[kWriteStreamFastPath] === true, "fastPath is not true");
-    //   this[kWriteStreamFastPath] = undefined;
-    // }
-
     // Backwards compat for monkey patching open().
     const orgEmit: any = this.emit;
     this.emit = function (...args) {
@@ -251,19 +248,6 @@ function streamConstruct(this: FSStream, callback: (e?: any) => void) {
     this.open();
   } else {
     if (fastPath) {
-      // // there is a chance that this fd is not actually correct but it will be a number
-      // if (fastPath !== true) {
-      //   // @ts-expect-error undocumented. to make this public please make it a
-      //   // getter. couldn't figure that out sorry
-      //   this.fd = fastPath._getFd();
-      // } else {
-      //   if (fs.open !== open || fs.write !== write || fs.fsync !== fsync || fs.close !== close) {
-      //     this[kWriteStreamFastPath] = undefined;
-      //     break fast;
-      //   }
-      //   // @ts-expect-error
-      //   this.fd = (this[kWriteStreamFastPath] = Bun.file(this.path).writer())._getFd();
-      // }
       callback();
       this.emit("open", this.fd);
       this.emit("ready");
@@ -387,7 +371,7 @@ function closeAfterSync(stream, err, cb) {
   stream.fd = null;
 }
 
-function WriteStream(this: FSStream, path: string | null, options?: any): void {
+function WriteStream(this: FSStream, path: string | null | undefined, options?: any): void {
   if (!(this instanceof WriteStream)) {
     return new WriteStream(path, options);
   }
@@ -403,7 +387,10 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
   if (fd == null) {
     this[kFs] = customFs || fs;
     this.fd = null;
-    this.path = getValidatedPath(path);
+    // Internal $fastPath callers (writableFromFileSink) discard .path; do not
+    // resolve it - path.resolve("") needs process.cwd(), which throws when
+    // the cwd has been deleted (Node still spawns children in that state).
+    this.path = fastPath ? path : getValidatedPath(path);
     const { flags, mode } = options;
     this.flags = flags === undefined ? "w" : flags;
     this.mode = mode === undefined ? 0o666 : mode;
@@ -424,7 +411,7 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
     this[kFs] = customFs || fs;
   } else if (typeof fd === "object" && fd instanceof FileHandle) {
     if (options.fs) {
-      throw $ERR_METHOD_NOT_IMPLEMENTED("fs.FileHandle with custom fs operations");
+      throw $ERR_METHOD_NOT_IMPLEMENTED("FileHandle with fs");
     }
     this[kFs] = customFs = fileHandleStreamFs(fd);
     fd[kRef]();
@@ -527,7 +514,7 @@ function writeAll(data, size, pos, cb, retries = 0) {
 
     retries = bytesWritten ? 0 : retries + 1;
     size -= bytesWritten;
-    pos += bytesWritten;
+    if (pos !== undefined) pos += bytesWritten;
 
     // Try writing non-zero number of bytes up to 5 times.
     if (retries > 5) {
@@ -615,7 +602,7 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
   }
   try {
     if (fileSink === true) {
-      fileSink = this[kWriteStreamFastPath] = Bun.file(this.path).writer();
+      fileSink = this[kWriteStreamFastPath] = Bun.file(this.path!).writer();
       // @ts-expect-error
       this.fd = fileSink._getFd();
     }
@@ -689,7 +676,7 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
       return true; // No backpressure
     }
   } else {
-    const result: any = this._write(data, encoding, cb);
+    const result: any = this._write!(data, encoding, cb);
     if (this.write === writeFast) {
       this.write = writablePrototypeWrite;
     } else {

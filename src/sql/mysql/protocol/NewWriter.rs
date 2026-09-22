@@ -22,9 +22,9 @@ pub struct NewWriterWrap<C: WriterContext> {
 }
 
 pub struct Packet<C: WriterContext> {
-    pub header: PacketHeader,
-    pub offset: usize,
-    pub ctx: NewWriterWrap<C>,
+    pub(crate) header: PacketHeader,
+    pub(crate) offset: usize,
+    pub(crate) ctx: NewWriterWrap<C>,
 }
 
 impl<C: WriterContext> Packet<C> {
@@ -48,17 +48,17 @@ impl<C: WriterContext> Packet<C> {
 
 impl<C: WriterContext> NewWriterWrap<C> {
     #[inline]
-    pub fn write_length_encoded_int(self, data: u64) -> Result<(), AnyMySQLError> {
+    pub(crate) fn write_length_encoded_int(self, data: u64) -> Result<(), AnyMySQLError> {
         self.wrapped.write(encode_length_int(data).slice())
     }
 
     #[inline]
-    pub fn write_length_encoded_string(self, data: &[u8]) -> Result<(), AnyMySQLError> {
+    pub(crate) fn write_length_encoded_string(self, data: &[u8]) -> Result<(), AnyMySQLError> {
         self.write_length_encoded_int(data.len() as u64)?;
         self.wrapped.write(data)
     }
 
-    pub fn write(self, data: &[u8]) -> Result<(), AnyMySQLError> {
+    pub(crate) fn write(self, data: &[u8]) -> Result<(), AnyMySQLError> {
         self.wrapped.write(data)
     }
 
@@ -76,15 +76,15 @@ impl<C: WriterContext> NewWriterWrap<C> {
         })
     }
 
-    pub fn pwrite(self, data: &[u8], i: usize) -> Result<(), AnyMySQLError> {
+    pub(crate) fn pwrite(self, data: &[u8], i: usize) -> Result<(), AnyMySQLError> {
         self.wrapped.pwrite(data, i)
     }
 
-    pub fn int4(self, value: MySQLInt32) -> Result<(), AnyMySQLError> {
+    pub(crate) fn int4(self, value: MySQLInt32) -> Result<(), AnyMySQLError> {
         self.write(&value.to_ne_bytes())
     }
 
-    pub fn int1(self, value: u8) -> Result<(), AnyMySQLError> {
+    pub(crate) fn int1(self, value: u8) -> Result<(), AnyMySQLError> {
         self.write(&[value])
     }
 

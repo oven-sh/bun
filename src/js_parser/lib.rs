@@ -5,12 +5,6 @@
 //! `StoreSlice<T>` / `StoreStr` here. A future refactor could thread a
 //! crate-wide `'bump` and rewrite these to `&'bump [T]` / `&'bump mut [T]`.
 
-// `lexer::NewLexer<J: JsonOptionsT>` projects trait associated consts into
-// eight `const bool` slots; assoc-const projection on a *type*
-// param works under `generic_const_exprs`.
-#![feature(adt_const_params, generic_const_exprs)]
-#![allow(incomplete_features)]
-
 pub mod error;
 pub use error::Error;
 pub use error::Result as CrateResult;
@@ -21,12 +15,12 @@ pub mod parser;
 pub use parser::*;
 pub mod lexer;
 
-pub mod fold;
+pub(crate) mod fold;
 pub mod lower;
 pub mod p;
 pub mod parse;
 pub mod react_compiler_host;
-pub mod repl_transforms;
+pub(crate) mod repl_transforms;
 pub mod scan;
 pub mod typescript;
 pub mod visit;
@@ -147,7 +141,7 @@ pub mod Macro {
     }
     impl MacroContext {
         #[inline]
-        pub fn call(
+        pub(crate) fn call(
             &mut self,
             import_record_path: &[u8],
             source_dir: &[u8],
@@ -201,7 +195,7 @@ pub mod Macro {
         /// parser calls without a borrowck conflict; the table lives in
         /// `Transpiler.options` which outlives every parse.
         #[inline]
-        pub fn get_remap(&self, path: &[u8]) -> Option<&'static MacroRemapEntry> {
+        pub(crate) fn get_remap(&self, path: &[u8]) -> Option<&'static MacroRemapEntry> {
             if self.data.is_null() {
                 return None;
             }
@@ -304,25 +298,25 @@ pub mod defines {
         const METHOD_CALL_UNDEF_SHIFT: u8 = 7;
 
         #[inline]
-        pub const fn valueless(self) -> bool {
+        pub(crate) const fn valueless(self) -> bool {
             (self.0 >> Self::VALUELESS_SHIFT) & 1 != 0
         }
         #[inline]
-        pub fn set_valueless(&mut self, v: bool) {
+        pub(crate) fn set_valueless(&mut self, v: bool) {
             self.0 =
                 (self.0 & !(1 << Self::VALUELESS_SHIFT)) | ((v as u8) << Self::VALUELESS_SHIFT);
         }
         #[inline]
-        pub const fn can_be_removed_if_unused(self) -> bool {
+        pub(crate) const fn can_be_removed_if_unused(self) -> bool {
             (self.0 >> Self::CAN_BE_REMOVED_SHIFT) & 1 != 0
         }
         #[inline]
-        pub fn set_can_be_removed_if_unused(&mut self, v: bool) {
+        pub(crate) fn set_can_be_removed_if_unused(&mut self, v: bool) {
             self.0 = (self.0 & !(1 << Self::CAN_BE_REMOVED_SHIFT))
                 | ((v as u8) << Self::CAN_BE_REMOVED_SHIFT);
         }
         #[inline]
-        pub fn call_can_be_unwrapped_if_unused(self) -> E::CallUnwrap {
+        pub(crate) fn call_can_be_unwrapped_if_unused(self) -> E::CallUnwrap {
             // 2-bit field; `E::CallUnwrap` only has discriminants 0/1/2, so
             // an explicit match keeps bit-pattern 3 sound.
             match (self.0 & Self::CALL_UNWRAP_MASK) >> Self::CALL_UNWRAP_SHIFT {
@@ -332,16 +326,16 @@ pub mod defines {
             }
         }
         #[inline]
-        pub fn set_call_can_be_unwrapped_if_unused(&mut self, v: E::CallUnwrap) {
+        pub(crate) fn set_call_can_be_unwrapped_if_unused(&mut self, v: E::CallUnwrap) {
             self.0 = (self.0 & !Self::CALL_UNWRAP_MASK)
                 | (((v as u8) & 0b11) << Self::CALL_UNWRAP_SHIFT);
         }
         #[inline]
-        pub const fn method_call_must_be_replaced_with_undefined(self) -> bool {
+        pub(crate) const fn method_call_must_be_replaced_with_undefined(self) -> bool {
             (self.0 >> Self::METHOD_CALL_UNDEF_SHIFT) & 1 != 0
         }
         #[inline]
-        pub fn set_method_call_must_be_replaced_with_undefined(&mut self, v: bool) {
+        pub(crate) fn set_method_call_must_be_replaced_with_undefined(&mut self, v: bool) {
             self.0 = (self.0 & !(1 << Self::METHOD_CALL_UNDEF_SHIFT))
                 | ((v as u8) << Self::METHOD_CALL_UNDEF_SHIFT);
         }
@@ -431,7 +425,7 @@ pub mod defines {
         }
 
         #[inline]
-        pub fn original_name(&self) -> Option<&[u8]> {
+        pub(crate) fn original_name(&self) -> Option<&[u8]> {
             match &self.original_name {
                 Some(name) if !name.is_empty() => Some(name.as_ref()),
                 _ => None,
@@ -440,20 +434,20 @@ pub mod defines {
 
         /// True if accessing this value is known to not have any side effects.
         #[inline]
-        pub fn can_be_removed_if_unused(&self) -> bool {
+        pub(crate) fn can_be_removed_if_unused(&self) -> bool {
             self.flags.can_be_removed_if_unused()
         }
         /// True if a call to this value is known to not have any side effects.
         #[inline]
-        pub fn call_can_be_unwrapped_if_unused(&self) -> E::CallUnwrap {
+        pub(crate) fn call_can_be_unwrapped_if_unused(&self) -> E::CallUnwrap {
             self.flags.call_can_be_unwrapped_if_unused()
         }
         #[inline]
-        pub fn method_call_must_be_replaced_with_undefined(&self) -> bool {
+        pub(crate) fn method_call_must_be_replaced_with_undefined(&self) -> bool {
             self.flags.method_call_must_be_replaced_with_undefined()
         }
         #[inline]
-        pub fn valueless(&self) -> bool {
+        pub(crate) fn valueless(&self) -> bool {
             self.flags.valueless()
         }
 
@@ -477,7 +471,7 @@ pub mod defines {
             }
         }
 
-        pub fn merge(a: &DefineData, b: DefineData) -> DefineData {
+        pub(crate) fn merge(a: &DefineData, b: DefineData) -> DefineData {
             DefineData {
                 value: b.value,
                 flags: Flags::new(
@@ -498,11 +492,96 @@ pub mod defines {
     pub struct Define {
         pub identifiers: StringHashMap<IdentifierDefine>,
         pub dots: StringHashMap<Vec<DotDefine>>,
+        /// Which `DotFilter::bit`s the keys of `dots` set. The visitor asks
+        /// about every property access; nearly all miss, and this says so
+        /// without hashing the name.
+        pub dots_filter: DotFilter,
         pub drop_debugger: bool,
+        /// `hash_user_inputs` of this table's inputs, for the runtime transpiler cache key.
+        pub user_hash: Option<u64>,
+    }
+
+    #[derive(Clone)]
+    pub struct DotFilter([u64; 64]);
+
+    impl Default for DotFilter {
+        fn default() -> Self {
+            DotFilter([0; 64])
+        }
+    }
+
+    impl DotFilter {
+        #[inline]
+        fn bit(name: &[u8]) -> usize {
+            let (first, last) = match name {
+                [] => (0, 0),
+                [first, .., last] | [first @ last] => (*first as usize, *last as usize),
+            };
+            (name.len().wrapping_mul(131) ^ first.wrapping_mul(31) ^ last.wrapping_mul(7)) & 4095
+        }
+
+        #[inline]
+        pub fn insert(&mut self, name: &[u8]) {
+            let bit = Self::bit(name);
+            self.0[bit / 64] |= 1 << (bit % 64);
+        }
+
+        #[inline]
+        pub fn may_contain(&self, name: &[u8]) -> bool {
+            let bit = Self::bit(name);
+            self.0[bit / 64] & (1 << (bit % 64)) != 0
+        }
     }
 
     impl Define {
-        pub fn for_identifier(&self, name: &[u8]) -> Option<&IdentifierDefine> {
+        /// The dot defines whose last part is `name` (`NODE_ENV` for
+        /// `process.env.NODE_ENV`).
+        #[inline]
+        pub fn dots_for(&self, name: &[u8]) -> Option<&Vec<DotDefine>> {
+            if !self.dots_filter.may_contain(name) {
+                return None;
+            }
+            self.dots.get(name)
+        }
+
+        /// Order-independent, length-prefixed hash of the three inputs. `None` when all are empty.
+        pub fn hash_user_inputs<'i>(
+            defines: impl IntoIterator<Item = (&'i [u8], &'i [u8])>,
+            env_defines: impl IntoIterator<Item = (&'i [u8], &'i [u8])>,
+            drop: impl IntoIterator<Item = &'i [u8]>,
+        ) -> Option<u64> {
+            let mut defines: Vec<(&[u8], &[u8])> = defines.into_iter().collect();
+            let mut env_defines: Vec<(&[u8], &[u8])> = env_defines.into_iter().collect();
+            let mut drop: Vec<&[u8]> = drop.into_iter().filter(|item| !item.is_empty()).collect();
+            if defines.is_empty() && env_defines.is_empty() && drop.is_empty() {
+                return None;
+            }
+            defines.sort_unstable();
+            env_defines.sort_unstable();
+            drop.sort_unstable();
+            drop.dedup();
+
+            let mut hasher = bun_wyhash::Wyhash::init(0);
+            let mut update = |bytes: &[u8]| {
+                hasher.update(&(bytes.len() as u64).to_le_bytes());
+                hasher.update(bytes);
+            };
+            // Separate sections: `init` lets a later env pair override a user pair.
+            for pairs in [defines, env_defines] {
+                update(&(pairs.len() as u64).to_le_bytes());
+                for (key, value) in pairs {
+                    update(key);
+                    update(value);
+                }
+            }
+            update(&(drop.len() as u64).to_le_bytes());
+            for item in drop {
+                update(item);
+            }
+            Some(hasher.final_())
+        }
+
+        pub(crate) fn for_identifier(&self, name: &[u8]) -> Option<&IdentifierDefine> {
             if let Some(data) = self.identifiers.get(name) {
                 return Some(data);
             }
@@ -528,13 +607,14 @@ pub mod defines {
             if let Some(last_dot) = strings::last_index_of_char(key, b'.') {
                 let tail = &key[last_dot + 1..key.len()];
                 let remainder = &key[0..last_dot];
-                let count = remainder.iter().filter(|&&b| b == b'.').count() + 1;
+                let count = strings::count_char(remainder, b'.') + 1;
                 let mut parts: Vec<Box<[u8]>> = Vec::with_capacity(count + 1);
-                for split in remainder.split(|b| *b == b'.') {
+                for split in strings::split(remainder, b".") {
                     parts.push(Box::from(split));
                 }
                 parts.push(Box::from(tail));
 
+                self.dots_filter.insert(tail);
                 if let Some(existing) = self.dots.get_mut(tail) {
                     for part in existing.iter_mut() {
                         if are_parts_equal(&part.parts, &parts) {
@@ -624,7 +704,7 @@ pub mod renamer {
         slot_counts
     }
 
-    pub(crate) fn assign_nested_scope_slots_helper(
+    fn assign_nested_scope_slots_helper(
         sorted_members: &mut Vec<u32>,
         scope: &Scope,
         symbols: &mut [Symbol],

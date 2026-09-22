@@ -8,7 +8,6 @@ const path = require("node:path");
 const {
   ArrayPrototypeJoin,
   ArrayPrototypeMap,
-  ArrayPrototypePush,
   ArrayPrototypeSlice,
   RegExpPrototypeExec,
   RegExpPrototypeSymbolReplace,
@@ -18,8 +17,6 @@ const {
 } = require("internal/repl/node-primordials");
 
 // ---- internal/util ----------------------------------------------------
-
-const { kEmptyObject } = require("internal/shared");
 
 // Node's real implementation reconstructs the regex in an internal realm so a
 // tampered `RegExp.prototype[Symbol.replace]` can't observe it. Bun has no
@@ -111,31 +108,12 @@ function has() {
   return true;
 }
 
-// ---- internal/streams/utils ----------------------------------------------
-
-function isWritable(stream) {
-  return typeof stream?.write === "function";
-}
-
-// ---- internal/events/abort_listener ----------------------------------------------
-
-const { addAbortListener } = require("internal/abort_listener");
-
 // ---- internal/bootstrap/realm ----------------------------------------------
 
 const BuiltinModule = {
   getSchemeOnlyModuleNames() {
     // Bare names; completion.js prefixes them with "node:" itself.
     return ["test"];
-  },
-  exists(id) {
-    return Module.isBuiltin(id);
-  },
-  canBeRequiredByUsers(id) {
-    return Module.isBuiltin(id);
-  },
-  canBeRequiredWithoutScheme(id) {
-    return Module.isBuiltin(id) && Module.isBuiltin("node:" + id);
   },
 };
 
@@ -271,10 +249,6 @@ function makeContextifyScript(
   });
 }
 
-function runScriptInThisContext(script, displayErrors, _breakOnFirstLine) {
-  return script.runInThisContext({ displayErrors });
-}
-
 // ---- internal/modules/cjs/loader (constructible Module shim) ----------------
 
 class CJSModuleShim {
@@ -324,40 +298,9 @@ function stopSigintWatchdog() {
 // ---- internalBinding('util') ----------------------------------------------
 
 const ALL_PROPERTIES = 0;
-const ONLY_WRITABLE = 1;
-const ONLY_ENUMERABLE = 2;
-const ONLY_CONFIGURABLE = 4;
-const SKIP_STRINGS = 8;
 const SKIP_SYMBOLS = 16;
 
-function getOwnNonIndexProperties(obj, filter = ALL_PROPERTIES) {
-  const indexRegex = /^(0|[1-9][0-9]*)$/;
-  const keys = [];
-  if (!(filter & SKIP_STRINGS)) {
-    const names = Object.getOwnPropertyNames(obj);
-    for (let i = 0; i < names.length; i++) {
-      const key = names[i];
-      if (RegExpPrototypeExec(indexRegex, key) !== null) continue;
-      if (filter & ONLY_ENUMERABLE) {
-        const desc = Object.getOwnPropertyDescriptor(obj, key);
-        if (!desc?.enumerable) continue;
-      }
-      ArrayPrototypePush(keys, key);
-    }
-  }
-  if (!(filter & SKIP_SYMBOLS)) {
-    const syms = Object.getOwnPropertySymbols(obj);
-    for (let i = 0; i < syms.length; i++) {
-      const sym = syms[i];
-      if (filter & ONLY_ENUMERABLE) {
-        const desc = Object.getOwnPropertyDescriptor(obj, sym);
-        if (!desc?.enumerable) continue;
-      }
-      ArrayPrototypePush(keys, sym);
-    }
-  }
-  return keys;
-}
+const getOwnNonIndexProperties = $newCppFunction("UtilInspect.cpp", "jsFunctionGetOwnNonIndexProperties", 2);
 
 // ---- process.addUncaughtExceptionCaptureCallback polyfill ----------------
 // Bun only implements the single-callback set/clear API; emulate Node's
@@ -406,10 +349,6 @@ export default {
   // internalBinding('util')
   constants: {
     ALL_PROPERTIES,
-    ONLY_WRITABLE,
-    ONLY_ENUMERABLE,
-    ONLY_CONFIGURABLE,
-    SKIP_STRINGS,
     SKIP_SYMBOLS,
   },
   getOwnNonIndexProperties,
@@ -419,8 +358,6 @@ export default {
   decorateErrorStack,
   deprecate: util.deprecate,
   isError,
-  kEmptyObject,
-  promisify: util.promisify,
   // internal/util/colors
   shouldColorize,
   // internal/util/debuglog
@@ -434,10 +371,6 @@ export default {
   // internal/process/permission (consumed as a namespace: permission.isEnabled())
   isEnabled,
   has,
-  // internal/streams/utils
-  isWritable,
-  // internal/events/abort_listener
-  addAbortListener,
   // internal/bootstrap/realm
   BuiltinModule,
   // internal/modules/esm/get_format
@@ -452,5 +385,4 @@ export default {
   makeRequireFunction,
   // internal/vm
   makeContextifyScript,
-  runScriptInThisContext,
 };

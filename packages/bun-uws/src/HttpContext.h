@@ -28,7 +28,6 @@
 #include "SocketKinds.h"
 
 #include <string>
-#include <map>
 #include <string_view>
 #include "MoveOnlyFunction.h"
 #include "HttpParser.h"
@@ -36,6 +35,8 @@
 #include <array>
 #include <mutex>
 
+
+extern "C" void Bun__NodeHTTP__onReadsResumable(int ssl, struct us_socket_t *s);
 
 namespace uWS {
 
@@ -107,19 +108,6 @@ private:
     us_socket_group_t group{};
     HttpContextData<SSL> data;
 
-    /* fromSocket() / getSocketContextDataS() cast group.ext back to
-     * HttpContext*; nothing else relies on offsetof(data), but pin group at 0
-     * so a future base class or vptr doesn't quietly break the cast. */
-    static void layoutAssert() {
-        static_assert(!std::is_polymorphic_v<HttpContext>,
-                      "HttpContext must stay non-polymorphic (group.ext = this)");
-        static_assert(offsetof(HttpContext, group) == 0,
-                      "HttpContext::fromSocket layout assumption broken");
-    }
-
-    /* Maximum delay allowed until an HTTP connection is terminated due to outstanding request or rejected data (slow loris protection) */
-    static constexpr int HTTP_IDLE_TIMEOUT_S = 10;
-
     /* Minimum allowed receive throughput per second (clients uploading less than 16kB/sec get dropped) */
     static constexpr int HTTP_RECEIVE_THROUGHPUT_BYTES = 16 * 1024;
 
@@ -129,6 +117,13 @@ private:
     static unsigned char socketKind() { return SSL ? US_SOCKET_KIND_UWS_HTTP_TLS : US_SOCKET_KIND_UWS_HTTP; }
 
 public:
+    /* node:http flood prevention: re-feed parked request bytes through the same
+     * parse path fresh socket data takes. The caller guarantees the buffer has
+     * LIBUS_RECV_BUFFER_PADDING of writable slack past `length`. */
+    static us_socket_t *feedNodeHttpData(us_socket_t *s, char *data, int length) {
+        return onData<true>(s, data, length);
+    }
+
     us_socket_group_t *getSocketGroup() {
         return &group;
     }
@@ -154,7 +149,11 @@ private:
             HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
             // Set per-socket authorization status
             auto *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(us_socket_ext(s));
-            if(httpContextData->flags.rejectUnauthorized) {
+            /* The app-level flag reflects the default entry; a per-serverName
+             * entry adds its own client-certificate policy for its name. */
+            bool rejectUnauthorized = httpContextData->flags.rejectUnauthorized ||
+                us_socket_server_name_reject_unauthorized(s);
+            if(rejectUnauthorized) {
                 if(!success || verify_error.error != 0) {
                     // we failed to handshake, close the socket
                     us_socket_close(s, 0, nullptr);
@@ -170,13 +169,20 @@ private:
              * report _secureEstablished = false. Peer-cert authorization is
              * surfaced separately (rejectUnauthorized above / tls.authorized). */
             httpResponseData->isAuthorized = success;
+            httpResponseData->peerCertVerified = success && verify_error.error == 0;
+            httpResponseData->peerCertVerifyErrorCode = verify_error.code;
 
             /* Any connected socket should timeout until it has a request */
             ((HttpResponse<SSL> *) s)->resetTimeout();
 
             /* Call filter */
+            httpResponseData->filteredOpen = true;
             for (auto &f : httpContextData->filterHandlers) {
                 f((HttpResponse<SSL> *) s, 1);
+            }
+
+            if (httpContextData->onHttp2 && !us_socket_is_closed(s) && us_socket_alpn_is_h2(s)) {
+                httpContextData->onHttp2(httpContextData->http2Context, s, nullptr, 0, 0);
             }
         }
     }
@@ -215,8 +221,14 @@ private:
          * for both transports. */
         s->flags.allow_half_open = 1;
 
+        /* Call filter: accepted (both transports)... */
+        ((AsyncSocketData<SSL> *) us_socket_ext(s))->filteredAccept = true;
+        for (auto &f : httpContextData->filterHandlers) {
+            f((HttpResponse<SSL> *) s, 2);
+        }
+        /* ...and open (TLS: once the handshake completes, in onHandshake) */
         if(!SSL) {
-            /* Call filter */
+            ((AsyncSocketData<SSL> *) us_socket_ext(s))->filteredOpen = true;
             for (auto &f : httpContextData->filterHandlers) {
                 f((HttpResponse<SSL> *) s, 1);
             }
@@ -226,7 +238,7 @@ private:
     }
 
     template <bool IsNodeHttp>
-    static us_socket_t *onClose(us_socket_t *s, int /*code*/, void * /*reason*/) {
+    static us_socket_t *onClose(us_socket_t *s, int code, void * /*reason*/) {
         ((AsyncSocket<SSL> *)s)->uncorkWithoutSending();
 
         /* Get socket ext */
@@ -249,12 +261,27 @@ private:
         }
 
 
-        for (auto &f : httpContextData->filterHandlers) {
-            f((HttpResponse<SSL> *) s, -1);
+        if (httpResponseData->filteredOpen) {
+            for (auto &f : httpContextData->filterHandlers) {
+                f((HttpResponse<SSL> *) s, -1);
+            }
+        }
+        if (httpResponseData->filteredAccept) {
+            for (auto &f : httpContextData->filterHandlers) {
+                f((HttpResponse<SSL> *) s, -2);
+            }
         }
 
         if (httpResponseData->socketData && httpContextData->onSocketClosed) {
-            httpContextData->onSocketClosed(httpResponseData->socketData, SSL, s);
+            int readError = 0;
+            bool peerEnded = false;
+            /* A tunnel reports its EOF through onSocketData above. */
+            if (!httpResponseData->isConnectRequest && !nodeHttpTunnelAfterBody) {
+                /* Above FAST_SHUTDOWN the code is the error of the failed read (a peer RST). */
+                readError = code > LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN ? code : 0;
+                peerEnded = (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_PEER_ENDED) != 0;
+            }
+            httpContextData->onSocketClosed(httpResponseData->socketData, SSL, s, readError, peerEnded);
         }
         /* Signal broken HTTP request only if we have a pending request */
         if (httpResponseData->onAborted != nullptr && httpResponseData->userData != nullptr) {
@@ -270,6 +297,14 @@ private:
         }
 
         return s;
+    }
+
+    /* http1: false with HTTP/2 attached: an HTTP/1.x client gets one 505. */
+    static us_socket_t *rejectHttp1(us_socket_t *s) {
+        static const char response[] = "HTTP/1.1 505 HTTP Version Not Supported\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+        us_socket_write(s, response, sizeof(response) - 1);
+        us_socket_shutdown(s);
+        return us_socket_close(s, 0, nullptr);
     }
 
     template <bool IsNodeHttp>
@@ -295,6 +330,54 @@ private:
 
         HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext(s);
 
+        /* HTTP/2: a cleartext connection that opens with the prior-knowledge
+         * preface (RFC 9113 §3.3) moves to the Http2Context before the
+         * HTTP/1 parser ever sees "PRI * HTTP/2.0". Decided on the first
+         * bytes; a read too short to decide (< 4 bytes of matching prefix) is
+         * held back and counted in h2PrefaceMatched until one can. */
+        std::string replay;
+        if constexpr (!SSL && !IsNodeHttp) {
+            unsigned char matched = httpResponseData->h2PrefaceMatched;
+            if (httpContextData->onHttp2 && matched != HttpResponseData<SSL>::PROTOCOL_DECIDED) {
+                static const char preface[] = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+                unsigned int n = (unsigned int) length < 24u - matched ? (unsigned int) length : 24u - matched;
+                bool isPrefix = memcmp(data, preface + matched, n) == 0;
+                if (isPrefix && matched + n >= 4) {
+                    us_socket_unref(s);
+                    return httpContextData->onHttp2(httpContextData->http2Context, s, data, length, matched);
+                }
+                if (isPrefix) {
+                    httpResponseData->h2PrefaceMatched = (unsigned char) (matched + n);
+                    us_socket_unref(s);
+                    return s;
+                }
+                httpResponseData->h2PrefaceMatched = HttpResponseData<SSL>::PROTOCOL_DECIDED;
+                if (!httpContextData->allowHttp1) {
+                    us_socket_unref(s);
+                    return rejectHttp1(s);
+                }
+                if (matched) {
+                    /* Not HTTP/2 after all: give the HTTP/1 parser the bytes we held back. */
+                    replay.reserve(LIBUS_RECV_BUFFER_PADDING * 2 + matched + (size_t) length);
+                    replay.assign(LIBUS_RECV_BUFFER_PADDING, '\0');
+                    replay.append(preface, matched);
+                    replay.append(data, (size_t) length);
+                    replay.append(LIBUS_RECV_BUFFER_PADDING, '\0');
+                    data = replay.data() + LIBUS_RECV_BUFFER_PADDING;
+                    length += matched;
+                }
+            }
+        }
+        if constexpr (SSL && !IsNodeHttp) {
+            if (httpContextData->onHttp2 && httpResponseData->h2PrefaceMatched != HttpResponseData<SSL>::PROTOCOL_DECIDED) {
+                httpResponseData->h2PrefaceMatched = HttpResponseData<SSL>::PROTOCOL_DECIDED;
+                if (!httpContextData->allowHttp1) {
+                    us_socket_unref(s);
+                    return rejectHttp1(s);
+                }
+            }
+        }
+
         /* node:http compat: HTTP parsing stopped on this connection (a parse error
          * was already delivered to 'clientError', or the JS layer freed the
          * parser); ignore further request bytes. CONNECT/Upgrade tunnels are not
@@ -309,21 +392,17 @@ private:
         /* Cork this socket */
         ((AsyncSocket<SSL> *) s)->cork();
 
-        /* Mark that we are inside the parser now */
+        /* Mark that we are inside the parser now. Save/restore the parsed
+         * socket: node:http's read replay can nest a parse inside another
+         * socket's dispatch. */
         httpContextData->flags.isParsingHttp = true;
+        struct us_socket_t *prevParsingSocket = httpContextData->parsingSocket;
+        httpContextData->parsingSocket = s;
         httpResponseData->isIdle = false;
 
         /* node:http compat: maintain the headers/request timeout window (see
          * the requestHandler/dataHandler hooks and the post-parse check). */
         const bool trackNodeHttpTimings = IsNodeHttp && !httpResponseData->isConnectRequest;
-
-        // clients need to know the cursor after http parse, not servers!
-        // how far did we read then? we need to know to continue with websocket parsing data? or?
-
-        void *proxyParser = nullptr;
-#ifdef UWS_WITH_PROXY
-        proxyParser = &httpResponseData->proxyParser;
-#endif
 
         /* The return value is entirely up to us to interpret. The HttpParser cares only for whether the returned value is DIFFERENT from passed user */
 
@@ -336,14 +415,30 @@ private:
             nodeHttpRequestTrailers = &nodeHttpResponseData->nodeHttpRequestTrailers;
         }
 
-        auto result = httpResponseData->template consumePostPadded<IsNodeHttp>(httpContextData->maxHeaderSize, httpResponseData->isConnectRequest, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, httpContextData->flags.useInsecureHTTPParser, nodeHttpRequestTrailers, &httpResponseData->chunkedExtensionsByteCount, data, (unsigned int) length, s, proxyParser, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
+        auto result = httpResponseData->template consumePostPadded<IsNodeHttp>(httpContextData->maxHeaderSize, httpResponseData->isConnectRequest, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, httpContextData->flags.useInsecureHTTPParser, httpContextData->flags.useLenientTransferEncoding, nodeHttpRequestTrailers, &httpResponseData->chunkedExtensionsByteCount, data, (unsigned int) length, s, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
 
+            HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext((us_socket_t *) s);
+
+            /* Bun.serve, RFC 9112 9.6: a complete response marked this connection close
+             * and sawConnectionClose did not see it (a Connection: close response
+             * header). Run onData's tail now: resetResponseState() below drops the mark.
+             * Latch first: a socket that has not drained stays open, and the parser
+             * holds this request's framing, so later bytes must not reach it. Before
+             * the timeout reset, so that socket still times out. */
+            if constexpr (!IsNodeHttp) {
+                constexpr uint32_t closeOrPending = HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE | HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
+                if ((httpResponseData->state & closeOrPending) == HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) [[unlikely]] {
+                    httpResponseData->sawConnectionClose = true;
+                    us_socket_unref((us_socket_t *) s);
+                    ((AsyncSocket<SSL> *) s)->uncork();
+                    ((HttpResponse<SSL> *) s)->closeIfDoneAndMarked(httpResponseData);
+                    return nullptr;
+                }
+            }
 
             /* For every request we reset the timeout and hang until user makes action */
             /* Warning: if we are in shutdown state, resetting the timer is a security issue! */
             us_socket_timeout((us_socket_t *) s, 0);
-
-            HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext((us_socket_t *) s);
 
             /* node:http compat: the JS layer stopped HTTP processing on this
              * connection (the user emitted 'close' on the socket - Node frees
@@ -373,7 +468,9 @@ private:
             if constexpr (IsNodeHttp) hasQueuedPipelinedResponses = httpResponseData->nodeHttpQueuedPipelinedCount > 0;
             if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) || hasQueuedPipelinedResponses) {
                 if constexpr (!IsNodeHttp) {
-                    us_socket_close((us_socket_t *) s, 0, nullptr);
+                    /* Responses that completed earlier in this read can still
+                     * sit in the cork buffer. close() sends them first. */
+                    ((AsyncSocket<SSL> *) s)->close();
                     return nullptr;
                 } else {
 
@@ -394,6 +491,9 @@ private:
                 httpResponseData->nodeHttpQueuedPipelinedCount++;
                 if (((AsyncSocket<SSL> *) s)->getBufferedAmount() > 0) {
                     httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED;
+                    /* Also stop the request loop over the buffer being parsed
+                     * right now — pausing the socket alone cannot bound it. */
+                    httpResponseData->nodeHttpParkAtNextBoundary = true;
                     ((HttpResponse<SSL> *) s)->pause();
                 }
                 }
@@ -412,7 +512,7 @@ private:
                 const bool isAncient = httpRequest->isAncient();
                 if (isAncient) {
                     httpResponseData->state |= HttpResponseData<SSL>::HTTP_ANCIENT_REQUEST | HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
-                } else if (httpRequest->getHeader("connection").length() == 5) {
+                } else if (httpResponseData->sawConnectionClose) {
                     httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
                 }
 
@@ -420,6 +520,15 @@ private:
                  * on this keep-alive connection (the flag itself was cleared above). */
                 if constexpr (IsNodeHttp) {
                     ((HttpResponseData<SSL, true> *) httpResponseData)->nodeHttpResponseTrailers.clear();
+
+                    /* Node's flood prevention: sync write()+end() handlers bypass the pipelined
+                     * branch yet still back up the socket. On outgoing backpressure, pause reads
+                     * and park already-received requests. No already-paused guard (replay clears the park flag only). */
+                    if (((AsyncSocket<SSL> *) s)->getBufferedAmount() > 0) {
+                        httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED;
+                        httpResponseData->nodeHttpParkAtNextBoundary = true;
+                        ((HttpResponse<SSL> *) s)->pause();
+                    }
                 }
             }
 
@@ -432,11 +541,23 @@ private:
                 }
             }
 
+            /* Bun.serve: every request of this read is dispatched corked, not only
+             * the first. A response to an earlier request can release the cork
+             * taken above (a response that JavaScript produced, a body larger
+             * than the cork buffer, the sendfile path). The handler writes the
+             * status line, each header and the body as separate writes, and
+             * without the cork each of them is one send(). node:http corks in its
+             * own write calls. */
+            if constexpr (!IsNodeHttp) {
+                ((AsyncSocket<SSL> *) s)->cork();
+            }
+
             /* Route the method and URL */
             selectedRouter->getUserData() = {(HttpResponse<SSL> *) s, httpRequest};
             if (!selectedRouter->route(httpRequest->getCaseSensitiveMethod(), httpRequest->getUrlForRouting())) {
-                /* We have to force close this socket as we have no handler for it */
-                us_socket_close((us_socket_t *) s, 0, nullptr);
+                /* We have to force close this socket as we have no handler for it.
+                 * close() first sends the responses to earlier requests of this read. */
+                ((AsyncSocket<SSL> *) s)->close();
                 return nullptr;
             }
 
@@ -496,6 +617,7 @@ private:
                     auto *nodeHttpResponseData = (HttpResponseData<SSL, true> *) httpResponseData;
                     nodeHttpResponseData->lastMessageStartMs = 0;
                     nodeHttpResponseData->headersCompleted = false;
+                    nodeHttpResponseData->requestTimeoutReported = false;
                 }
             }
 
@@ -550,6 +672,7 @@ private:
 
         /* Mark that we are no longer parsing Http */
         httpContextData->flags.isParsingHttp = false;
+        httpContextData->parsingSocket = prevParsingSocket;
         /* If we got fullptr that means the parser wants us to close the socket from error (same as calling the errorHandler) */
         if (httpErrorStatusCode) {
             /* node:http compat: parse errors surface as the server's 'clientError'
@@ -573,6 +696,10 @@ private:
             if(httpContextData->onClientError) {
                 httpContextData->onClientError(SSL, s, result.parserError, data, length);
             }
+            /* The error response below bypasses the cork buffer. Responses to
+             * valid requests earlier in this read can still sit there, so send
+             * them first. */
+            ((AsyncSocket<SSL> *) s)->uncork();
             /* For errors, we only deliver them "at most once". We don't care if they get halfways delivered or not. */
             us_socket_write(s, httpErrorResponses[httpErrorStatusCode].data(), (int) httpErrorResponses[httpErrorStatusCode].length());
             us_socket_shutdown(s);
@@ -640,6 +767,19 @@ private:
             /* Reset upgradedWebSocket before we return */
             httpContextData->upgradedWebSocket = nullptr;
 
+            /* Frames that a client sent without waiting for the 101 (RFC 6455 4.1) follow the
+             * request head in this read, and the HTTP parser stopped there. Give them to the
+             * WebSocket now, as the loop would have for a read of its own. The parser counts a
+             * body that the request declared as consumed, so that is never taken for frames.
+             * Not when upgradedWebSocket names another connection (upgrade() adopts in place,
+             * so ours is s): the field is per context, and a microtask of this dispatch, or an
+             * earlier upgrade from a request body handler, can set it. */
+            unsigned int consumed = result.consumedBytes();
+            if (consumed < (unsigned int) length && (us_socket_t *) asyncSocket == s
+                && !us_socket_is_closed(s) && !us_socket_is_shut_down(s)) {
+                return us_dispatch_data(s, data + consumed, (int) ((unsigned int) length - consumed));
+            }
+
             /* Return the new upgraded websocket */
             return (us_socket_t *) asyncSocket;
         }
@@ -665,9 +805,12 @@ private:
             if (asyncSocket->getBufferedAmount() > 0) {
                 /* onEnd deferred close for these bytes; a writable event that
                  * moves nothing (EPIPE) means the peer is gone and this would
-                 * otherwise spin the writable dispatch until idle timeout. */
+                 * otherwise spin the writable dispatch until idle timeout.
+                 * Except on libuv, where a stale SEND completion can move
+                 * nothing on a healthy socket; there the kernel is asked. */
                 if (flushed == 0
-                    && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN)) {
+                    && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN)
+                    && us_socket_stalled_write_means_peer_gone((us_socket_t *) asyncSocket)) {
                     return asyncSocket->close();
                 }
                 /* Socket buffer is not completely empty yet
@@ -703,11 +846,14 @@ private:
             if constexpr (!IsNodeHttp) {
                 /* Bun.serve: onEnd deferred close for a tryEnd tail (offset < total,
                  * nothing in AsyncSocketData::buffer). A retry that moves zero bytes
-                 * after the peer's FIN is EPIPE; close instead of spinning. */
+                 * after the peer's FIN is EPIPE; close instead of spinning. Except
+                 * on libuv, where the retry can stall while the TLS layer's spill
+                 * is still blocked on a healthy socket; there the kernel is asked. */
                 if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN)
                     && (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING)
                     && httpResponseData->offset == offsetBefore
-                    && asyncSocket->hasFullyDrained()) {
+                    && asyncSocket->hasFullyDrained()
+                    && us_socket_stalled_write_means_peer_gone((us_socket_t *) asyncSocket)) {
                     return asyncSocket->close();
                 }
             }
@@ -729,10 +875,11 @@ private:
          * backpressure when the queue drained; now that it has flushed, read
          * new requests again. */
         if constexpr (IsNodeHttp) {
-            if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED) && httpResponseData->nodeHttpQueuedPipelinedCount == 0
-                && asyncSocket->getBufferedAmount() == 0) {
-                httpResponseData->state &= ~HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED;
-                reinterpret_cast<HttpResponse<SSL> *>(s)->resume();
+            if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED) {
+                /* Parked pipelined requests must replay before fresh reads or the stream
+                 * reorders; the hook holds under backpressure and resumes raw reads only once
+                 * the queue and spill drain (JSNodeHTTPServerSocket.cpp). */
+                Bun__NodeHTTP__onReadsResumable(SSL, s);
             }
         }
 
@@ -788,6 +935,12 @@ private:
                     httpContextData->onSocketData(httpResponseData->socketData, SSL, s, "", 0, true);
                 }
                 return s;
+            }
+
+            /* Before onClientError, whose listener can destroy the socket. Not once this side
+             * shut down: TLS delivers the peer's answer to our close_notify here as an EOF. */
+            if (!us_socket_is_shut_down(s)) {
+                httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_PEER_ENDED;
             }
 
             if (httpContextData->onClientError && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED)
@@ -924,28 +1077,10 @@ public:
             return;
         }
 
-        /* Record this route's parameter offsets */
-        std::map<std::string, unsigned short, std::less<>> parameterOffsets;
-        unsigned short offset = 0;
-        for (unsigned int i = 0; i < pattern.length(); i++) {
-            if (pattern[i] == ':') {
-                i++;
-                unsigned int start = i;
-                while (i < pattern.length() && pattern[i] != '/') {
-                    i++;
-                }
-                parameterOffsets[std::string(pattern.data() + start, i - start)] = offset;
-                offset++;
-            }
-        }
-
-
-
-        httpContextData->currentRouter->add(methods, pattern, [handler = std::move(handler), parameterOffsets = std::move(parameterOffsets), httpContextData](auto *r) mutable {
+        httpContextData->currentRouter->add(methods, pattern, [handler = std::move(handler), httpContextData](auto *r) mutable {
             auto user = r->getUserData();
             user.httpRequest->setYield(false);
             user.httpRequest->setParameters(r->getParameters());
-            user.httpRequest->setParameterOffsets(&parameterOffsets);
 
             if (!httpContextData->flags.usingCustomExpectHandler) {
                 /* Middleware? Automatically respond to expectations */

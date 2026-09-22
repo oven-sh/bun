@@ -186,10 +186,12 @@ describe.skipIf(skip || !isLinux)("Bun.serve: a request-socket resume that fails
   test.concurrent("req.arrayBuffer() rejects and the server stays up", () => run("body-buffered", bodyFails));
 
   test.concurrent("req.text() on a materialized body rejects and the server stays up", () =>
-    run("body-stream", bodyFails));
+    run("body-stream", bodyFails),
+  );
 
   // The handler answered, so the request is complete: ending it must not
   // deliver an abort, and the connection closes with the response.
   test.concurrent("a response that ends while the body is paused completes", () =>
-    run("response-ends", ["before: 200 pong", "after: 200 pong", "done"]));
+    run("response-ends", ["before: 200 pong", "after: 200 pong", "done"]),
+  );
 });

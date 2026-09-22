@@ -1355,8 +1355,7 @@ const kKeepAliveTimeoutSet = Symbol("keepAliveTimeoutSet");
 // the socket timer on every response; onSocketTimeoutTimerExpired reads it to
 // grant the remaining idle budget when the timer actually fires.
 const kKeepAliveIdleStart = Symbol("keepAliveIdleStart");
-// performance.now() of the last response write. Settled when the timer fires, like kKeepAliveIdleStart.
-// Node.js refreshes the timer on every socket write: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L1019
+// performance.now() of the last response write, settled when the timer fires like kKeepAliveIdleStart.
 const kLastResponseWrite = Symbol("lastResponseWrite");
 // 'timeout' was emitted: the next response write re-arms the spent timer, like refresh() in Node.js.
 const kSocketTimeoutEmitted = Symbol("socketTimeoutEmitted");
@@ -1467,8 +1466,7 @@ function onSocketTimeoutTimerExpired(socket) {
       return;
     }
   }
-  // The period restarts at a response write inside the window. Not a new, shorter timer
-  // as above: the next _unrefTimer() would refresh the shorter interval.
+  // Not a new, shorter timer as above: the next _unrefTimer() would refresh the shorter interval.
   const lastWrite = socket[kLastResponseWrite];
   if (lastWrite !== undefined) {
     socket[kLastResponseWrite] = undefined;
@@ -3456,8 +3454,7 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
     result = handle.write(chunk, encoding, allowWritesToContinue.bind(this), strictContentLength(this));
   }
 
-  // Node.js drops a write to a response without a body before it reaches the socket:
-  // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L983
+  // Node.js drops this write before the socket: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L983
   if (this._hasBody) noteResponseWrite(this);
 
   if (result < 0) {

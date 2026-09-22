@@ -803,9 +803,12 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
     const sessionError = Promise.withResolvers<NodeJS.ErrnoException>();
     client.on("error", err => sessionError.resolve(err));
     const pushedData: Buffer[] = [];
+    const pushedError = jest.fn();
+    const pushedClosed = Promise.withResolvers<number>();
     client.on("stream", pushed => {
-      pushed.on("error", () => {});
+      pushed.on("error", pushedError);
       pushed.on("data", (d: Buffer) => pushedData.push(d));
+      pushed.on("close", () => pushedClosed.resolve(pushed.rstCode));
     });
     try {
       const req = client.request({ ":path": "/" });
@@ -829,6 +832,8 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
       expect(goawayErrorCode(goaway)).toBe(ErrorCode.PROTOCOL_ERROR);
       expect((await sessionError.promise).code).toBe("ERR_HTTP2_ERROR");
       expect(await reqClosed.promise).toBe(http2.constants.NGHTTP2_INTERNAL_ERROR);
+      expect(await pushedClosed.promise).toBe(http2.constants.NGHTTP2_INTERNAL_ERROR);
+      expect(pushedError).toHaveBeenCalledTimes(1);
       // Once the client's socket is gone, every frame it wrote is in raw.frames. The reserved
       // stream gets no RST_STREAM of its own, and its payload never reaches the pushed stream.
       await socketClosed;

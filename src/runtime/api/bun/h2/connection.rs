@@ -135,9 +135,6 @@ pub(crate) struct Feed {
 /// behind a non-reading peer before the session is treated as flooded (NGHTTP2_ERR_FLOODED).
 const MAX_OUTBOUND_ACK_QUEUE: u32 = 1000;
 
-/// RFC 9113 §5.1: DATA on a reserved (remote) stream is a connection PROTOCOL_ERROR (nghttp2's reason text).
-const DATA_ON_RESERVED_STREAM: &[u8] = b"DATA: stream in reserved";
-
 /// What the connection engine calls back into the embedder (the JSC binding) for. Methods take
 /// `&self`: the JSC binding (H2FrameParser) is fully interior-mutable (Cell/JsCell) and its host
 /// functions receive `&Self`, so it can own the `Connection` and pass itself as the sink without an
@@ -1381,7 +1378,7 @@ impl Connection {
             }
             Some(st) => {
                 if st.state == State::ReservedRemote {
-                    self.send_go_away(sink, ErrorCode::ProtocolError, DATA_ON_RESERVED_STREAM);
+                    self.data_on_reserved_stream(sink, hdr.stream_id);
                     return StreamedDataStart::Fatal;
                 }
                 if !stream::can_receive_data(st.state) {
@@ -1547,7 +1544,7 @@ impl Connection {
                 return false;
             }
             DataDecision::ReservedStream => {
-                self.send_go_away(sink, ErrorCode::ProtocolError, DATA_ON_RESERVED_STREAM);
+                self.data_on_reserved_stream(sink, hdr.stream_id);
                 return true;
             }
             DataDecision::FlowControlViolation => {
@@ -1592,6 +1589,16 @@ impl Connection {
             }
         }
         false
+    }
+
+    /// RFC 9113 §5.1 reserved (remote): DATA is a connection PROTOCOL_ERROR, as in nghttp2.
+    fn data_on_reserved_stream(&mut self, sink: &impl Sink, stream_id: u32) {
+        if let Some(s) = self.streams.get_mut(&stream_id) {
+            s.state = State::Closed;
+        }
+        // Session teardown in the embedder misses a promised stream: report this one first.
+        sink.on_stream_reset(stream_id, ErrorCode::InternalError.as_u32());
+        self.send_go_away(sink, ErrorCode::ProtocolError, b"DATA: stream in reserved");
     }
 
     /// RFC 9113 §8.1.1: once END_STREAM arrives, a request whose received DATA total contradicts

@@ -10,7 +10,7 @@
 // Kept in its own file so the happy-path image.test.ts stays readable.
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { gcTick, isASAN, rss, tempDir } from "harness";
+import { bunEnv, bunExe, gcTick, isASAN, rss, tempDir } from "harness";
 import { join } from "node:path";
 import zlib from "node:zlib";
 
@@ -526,6 +526,48 @@ function insertBytes(jpeg: Uint8Array, offset: number, bytes: number[]): Buffer 
   return Buffer.concat([jpeg.subarray(0, offset), Buffer.from(bytes), jpeg.subarray(offset)]);
 }
 
+/** Each scan's entropy-coded data as [start, end). */
+function scanRanges(markers: { marker: number; offset: number; end: number }[]): [number, number][] {
+  return markers.flatMap((m, i) => (m.marker === 0xda ? [[m.end, markers[i + 1].offset] as [number, number]] : []));
+}
+
+/**
+ * The largest cut at or below `target` that keeps whole marker segments. A cut
+ * inside one truncates a length-prefixed header, which is a fatal error, not
+ * the warning this file is about. The fixture's size moves with the encoder's
+ * output, so a cut at a fraction of the file cannot assume where it lands.
+ */
+function cutInsideScanData(markers: { marker: number; offset: number; end: number }[], target: number): number {
+  let best = 0;
+  for (const [start, end] of scanRanges(markers)) {
+    if (target >= start) best = Math.min(target, end);
+  }
+  if (best === 0) throw new Error(`no scan data at or below ${target}`);
+  return best;
+}
+
+function rowsIdenticalFromTop(a: Uint8Array, b: Uint8Array, width: number): number {
+  const stride = width * 4;
+  for (let row = 0; row * stride < a.length; row++) {
+    if (Buffer.compare(a.subarray(row * stride, (row + 1) * stride), b.subarray(row * stride, (row + 1) * stride)))
+      return row;
+  }
+  return a.length / stride;
+}
+
+function countPixels(rgba: Uint8Array, pixel: [number, number, number, number]): number {
+  let n = 0;
+  for (let i = 0; i < rgba.length; i += 4)
+    if (rgba[i] === pixel[0] && rgba[i + 1] === pixel[1] && rgba[i + 2] === pixel[2] && rgba[i + 3] === pixel[3]) n++;
+  return n;
+}
+
+/** libjpeg writes 255 into every alpha byte it outputs, so a short row shows up here. */
+function everyAlphaOpaque(rgba: Uint8Array): boolean {
+  for (let i = 3; i < rgba.length; i += 4) if (rgba[i] !== 255) return false;
+  return true;
+}
+
 describe.each(["baseline", "progressive"] as const)("%s JPEG that libjpeg decodes with a warning", kind => {
   const clean = warnJpegs[kind];
   const cleanRgba = warnRgba[kind];
@@ -579,33 +621,44 @@ describe.each(["baseline", "progressive"] as const)("%s JPEG that libjpeg decode
     expect(Buffer.compare(await rgbaOf(clean.subarray(0, eoi)), cleanRgba)).toBe(0);
   });
 
-  // The same warning, but scan data is missing. libjpeg decodes what it has: a baseline
-  // file gets mid-grey for the missing blocks, a progressive file loses refinement.
-  test("truncated at 95%: rows with data are intact, the rest is libjpeg's fill", async () => {
-    const rgba = await rgbaOf(clean.subarray(0, Math.floor(clean.length * 0.95)));
-    expect(rgba.length).toBe(cleanRgba.length);
-    const topQuarter = (warnH / 4) * warnW * 4;
-    expect(Buffer.compare(rgba.subarray(0, topQuarter), cleanRgba.subarray(0, topQuarter))).toBe(0);
+  // The same warning, but scan data is missing. libjpeg decodes what it has and
+  // fills the rest, so the output is complete and the pixels are not.
+  test("truncated at 95%: the output is complete and the pixels differ", async () => {
+    const rgba = await rgbaOf(clean.subarray(0, cutInsideScanData(markers, Math.floor(clean.length * 0.95))));
+    expect({
+      bytes: rgba.length,
+      opaque: everyAlphaOpaque(rgba),
+      sameAsClean: !Buffer.compare(rgba, cleanRgba),
+    }).toEqual({ bytes: cleanRgba.length, opaque: true, sameAsClean: false });
+  });
+
+  // Where the fill shows up differs by kind: a baseline file loses whole MCU
+  // rows from the bottom, a progressive file loses refinement over all of it.
+  test("a detail of the fill", async () => {
     if (kind === "baseline") {
-      expect([...rgba.subarray(-4)]).toEqual([128, 128, 128, 255]);
+      // Half of the one scan's data. The rows before the cut are intact.
+      const rgba = await rgbaOf(clean.subarray(0, scanStart + Math.floor((scanEnd - scanStart) / 2)));
+      const kept = rowsIdenticalFromTop(rgba, cleanRgba, warnW);
+      expect({ kept: kept > 0 && kept < warnH, grey: countPixels(rgba, [128, 128, 128, 255]) > 0 }).toEqual({
+        kept: true,
+        grey: true,
+      });
     } else {
-      let sum = 0;
-      for (let i = 0; i < rgba.length; i++) sum += Math.abs(rgba[i] - cleanRgba[i]);
-      expect(sum / rgba.length).toBeLessThan(2);
+      // Every scan but the last, which is a refinement pass, so the error is small.
+      const rgba = await rgbaOf(clean.subarray(0, scanRanges(markers).at(-1)![0]));
+      let total = 0;
+      for (let i = 0; i < rgba.length; i++) total += Math.abs(rgba[i] - cleanRgba[i]);
+      expect({ opaque: everyAlphaOpaque(rgba), meanError: total / rgba.length < 4 }).toEqual({
+        opaque: true,
+        meanError: true,
+      });
     }
   });
 
-  test("a cut anywhere in the scan data gives a fully written image", async () => {
+  test("a cut anywhere in the first scan's data gives a fully written image", async () => {
     const partlyWritten: number[] = [];
     for (let cut = scanStart + 1; cut < scanEnd; cut += 13) {
-      const rgba = await rgbaOf(clean.subarray(0, cut));
-      // libjpeg sets alpha to 255 in every pixel it writes.
-      for (let i = 3; i < rgba.length; i += 4) {
-        if (rgba[i] !== 255) {
-          partlyWritten.push(cut);
-          break;
-        }
-      }
+      if (!everyAlphaOpaque(await rgbaOf(clean.subarray(0, cut)))) partlyWritten.push(cut);
     }
     expect(partlyWritten).toEqual([]);
   });
@@ -636,6 +689,69 @@ describe.each(["baseline", "progressive"] as const)("%s JPEG that libjpeg decode
     badDqt[firstDqt + 3] -= 1;
     await expect(new Bun.Image(badDqt).metadata()).rejects.toMatchObject(decodeFailed);
     await expect(new Bun.Image(badDqt).png().bytes()).rejects.toMatchObject(decodeFailed);
+  });
+});
+
+// ─── 5c. lossless JPEG (SOF3) ────────────────────────────────────────────────
+//
+// TurboJPEG refuses a cropping region for a lossless stream, and libjpeg
+// ignores the scaling factor for one, so the DCT-scaled decode path has to
+// fall back to the source size. A narrow fixture is what makes the two
+// disagree: the row-width check inside the library catches a wider one first.
+// Bun's encoder writes baseline or progressive only, so the bytes are an
+// encode by TurboJPEG itself (TJPARAM_LOSSLESS, PSV 1), 2x64, one gradient.
+const losslessJpeg = Buffer.from(
+  "/9j/7gAOQWRvYmUAZAAAAAAA/8MAEQgAQAACA1IRAEcRAEIRAP/EABwAAAMBAQEBAQEAAAAAAAAAAAADCAQFAgEGB//aAAwDUgBHAEIAAQAAn+" +
+    "f/AON3+cMZxL/NIzrX+ckYm/z6MRf48Zuv8xDObf54Gab/ABAz9Vf5zhhf5mGeb/PIzl3+NGar/PYzXf5yxnMv87IzpX+PGfob/Pgx1/mMYi/x" +
+    "YzlX+d0Z1r/Mg3mX+dkYu/zWM61/iBnev8WMxX+fRiL/ADuDOlf4oZiv86AzqX+ZBnJv8+jG3+LGfor/ABoz7f55GZL/ADeMff50xmq/zOM59/" +
+    "m0Zpv81jHX+exn6O/zIMwX+aRq7/PQzXf56Ga7/PozBf5sGde/znDOVf4oZ+iv8zjPt/ngZvv8QM83+YxmW/zeMzX+bxnVv89DMN/nwZ37/PQz" +
+    "Vf4DHX+cgZyL/NgzpX+ZRnq/zAMw3+aBu6/zl//Z",
+  "base64",
+);
+
+describe("lossless JPEG", () => {
+  const sof3 = losslessJpeg.indexOf(Buffer.from([0xff, 0xc3]));
+  // 16 junk bytes before SOF3: a header warning, which the decode now accepts.
+  const headerWarning = insertBytes(losslessJpeg, sof3, new Array<number>(16).fill(0));
+
+  test("metadata reports the SOF3 dimensions", async () => {
+    expect(sof3).toBeGreaterThan(0);
+    expect(await new Bun.Image(losslessJpeg).metadata()).toEqual({ width: 2, height: 64, format: "jpeg" });
+    expect(await new Bun.Image(headerWarning).metadata()).toEqual({ width: 2, height: 64, format: "jpeg" });
+  });
+
+  test("a header warning does not change the full-size pixels", async () => {
+    expect(await rgbaOf(headerWarning)).toEqual(await rgbaOf(losslessJpeg));
+  });
+
+  // A decode that asks libjpeg for a scaling factor it ignores writes more rows
+  // than the buffer holds, so a build without the fix dies here. Run it in a
+  // child, or it takes the whole test file with it.
+  test("a scaled decode stays inside the buffer", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const jpeg = Buffer.from(${JSON.stringify(losslessJpeg.toString("base64"))}, "base64");
+          const warned = Buffer.concat([jpeg.subarray(0, ${sof3}), Buffer.alloc(16), jpeg.subarray(${sof3})]);
+          const scaled = b => new Bun.Image(b).resize(2, 50, { fit: "fill" }).png().bytes();
+          // The same pixels by the route that never scales inside the decoder.
+          const viaFullSize = await scaled(await new Bun.Image(jpeg).png().bytes());
+          console.log(JSON.stringify({
+            scaled: Buffer.compare(await scaled(jpeg), viaFullSize) === 0,
+            withHeaderWarning: Buffer.compare(await scaled(warned), viaFullSize) === 0,
+          }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout || "{}")).toEqual({ scaled: true, withHeaderWarning: true });
+    expect(exitCode).toBe(0);
   });
 });
 

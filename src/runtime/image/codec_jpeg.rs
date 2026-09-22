@@ -12,8 +12,8 @@ type tjhandle = *mut c_void;
 
 // TJINIT_COMPRESS=0, TJINIT_DECOMPRESS=1.
 unsafe extern "C" {
-    pub(crate) fn tj3Init(init_type: c_int) -> tjhandle;
-    pub(crate) fn tj3Destroy(h: tjhandle);
+    fn tj3Init(init_type: c_int) -> tjhandle;
+    fn tj3Destroy(h: tjhandle);
     fn tj3Set(h: tjhandle, param: c_int, value: c_int) -> c_int;
     fn tj3Get(h: tjhandle, param: c_int) -> c_int;
     fn tj3GetErrorCode(h: tjhandle) -> c_int;
@@ -63,7 +63,7 @@ impl Handle {
     }
 
     #[inline]
-    pub(crate) fn as_ptr(&self) -> tjhandle {
+    fn as_ptr(&self) -> tjhandle {
         self.0.as_ptr()
     }
 
@@ -242,8 +242,10 @@ pub(crate) fn decode(
     //     passes the product check still can't write more rows than fit
     // and post-check the second-parse dims so a smaller swap (which would
     // leave rows unfilled with raw mimalloc bytes) is treated as corrupt.
+    // TurboJPEG refuses the region for some streams; the branch below takes
+    // the product check alone as the bound for those.
     // SAFETY: `h` is live; CropRegion is a plain #[repr(C)] value passed by copy.
-    unsafe {
+    let cropped = unsafe {
         tj3Set(
             h,
             TJPARAM_MAXPIXELS,
@@ -257,20 +259,36 @@ pub(crate) fn decode(
                 w: c_int::try_from(w).expect("int cast"),
                 h: c_int::try_from(ht).expect("int cast"),
             },
-        );
-    }
+        ) == 0
+    };
+    // A region that was refused leaves `croppedHeight` at the second parse's
+    // own `output_height` (turbojpeg-mp.c:233), so the rows are bounded only by
+    // the product check. Drop the scaling factor, which libjpeg ignores for a
+    // lossless stream anyway (jdmaster.c:539) while the buffer below would
+    // shrink with it, and pass pitch 0: libjpeg then packs the rows at the
+    // second parse's width, and `w'·h' <= w·ht` bounds the bytes by `out_len`.
+    // The resize pass that the hint comes from still runs.
+    let pitch = if cropped {
+        c_int::try_from(w * 4).expect("int cast")
+    } else {
+        // SAFETY: `h` is live; ScalingFactor is a plain #[repr(C)] value passed by copy.
+        unsafe { tj3SetScalingFactor(h, ScalingFactor { num: 1, denom: 1 }) };
+        w = src_w;
+        ht = src_h;
+        0
+    };
     let out_len = w as usize * ht as usize * 4;
     let mut out: Vec<u8> = Vec::with_capacity(out_len);
     // SAFETY: `h` is live; src ptr/len come from a valid `&[u8]`; dst is `out`'s
-    // exclusive `w*ht*4` bytes of capacity and the explicit pitch + cropping
-    // region above bound libjpeg-turbo's writes to that allocation.
+    // exclusive `w*ht*4` bytes of capacity, which the bounds above keep
+    // libjpeg-turbo's writes inside.
     let rc = unsafe {
         tj3Decompress8(
             h,
             bytes.as_ptr(),
             bytes.len(),
             out.as_mut_ptr(),
-            c_int::try_from(w * 4).expect("int cast"),
+            pitch,
             if cmyk { TJPF_CMYK } else { TJPF_RGBA },
         )
     };
@@ -336,15 +354,9 @@ pub(crate) fn encode(
     progressive: bool,
     icc_profile: Option<&[u8]>,
 ) -> Result<codecs::Encoded, codecs::Error> {
-    // SAFETY: FFI — tj3Init has no preconditions; returns null on failure.
-    let h = unsafe { tj3Init(0) };
-    if h.is_null() {
-        return Err(codecs::Error::OutOfMemory);
-    }
-    // SAFETY: `h` is the non-null tjhandle returned above; tj3Destroy is the
-    // documented owner-release and is called exactly once via this guard.
-    let _h_guard = scopeguard::guard(h, |h| unsafe { tj3Destroy(h) });
-    // SAFETY: `h` is a live tjhandle for the duration of `_h_guard`.
+    let handle = Handle::init(0).ok_or(codecs::Error::OutOfMemory)?;
+    let h = handle.as_ptr();
+    // SAFETY: `h` is a live tjhandle for as long as `handle` is in scope.
     unsafe {
         tj3Set(h, TJPARAM_QUALITY, c_int::from(quality.clamp(1, 100)));
         tj3Set(h, TJPARAM_SUBSAMP, TJSAMP_420);

@@ -32,7 +32,7 @@ use crate::postgres::postgres_sql_query::{self, RequestCounter, Status as QueryS
 use crate::postgres::postgres_sql_statement::{Error as StatementError, Status as StatementStatus};
 use crate::postgres::sasl::SASLStatus;
 use crate::shared::CachedStructure as PostgresCachedStructure;
-use crate::shared::connection_ctor_args::ConnectionCtorArgs;
+use crate::shared::connection_ctor_args::{ConnectionCtorArgs, timeout_ms_from_js};
 use bun_sql::postgres::AnyPostgresError;
 use bun_sql::postgres::PostgresErrorOptions;
 use bun_sql::postgres::PostgresProtocol as protocol;
@@ -1162,9 +1162,9 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
 
     let on_connect = arguments[9];
     let on_close = arguments[10];
-    let idle_timeout = arguments[11].coerce::<i32>(global_object)?.max(0);
-    let connection_timeout = arguments[12].coerce::<i32>(global_object)?.max(0);
-    let max_lifetime = arguments[13].coerce::<i32>(global_object)?.max(0);
+    let idle_timeout = timeout_ms_from_js(global_object, arguments[11])?;
+    let connection_timeout = timeout_ms_from_js(global_object, arguments[12])?;
+    let max_lifetime = timeout_ms_from_js(global_object, arguments[13])?;
     let use_unnamed_prepared_statements = arguments[14].as_boolean();
 
     let ptr: *mut PostgresSQLConnection =
@@ -1206,8 +1206,8 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
                 TLSStatus::None
             }),
             ssl_mode: args.ssl_mode,
-            idle_timeout_interval_ms: u32::try_from(idle_timeout).expect("int cast"),
-            connection_timeout_ms: u32::try_from(connection_timeout).expect("int cast"),
+            idle_timeout_interval_ms: idle_timeout,
+            connection_timeout_ms: connection_timeout,
             flags: Cell::new(if use_unnamed_prepared_statements {
                 ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS
             } else {
@@ -1216,7 +1216,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
             timer: JsCell::new(EventLoopTimer::init_paused(
                 EventLoopTimerTag::PostgresSQLConnectionTimeout,
             )),
-            max_lifetime_interval_ms: u32::try_from(max_lifetime).expect("int cast"),
+            max_lifetime_interval_ms: max_lifetime,
             max_lifetime_timer: JsCell::new(EventLoopTimer::init_paused(
                 EventLoopTimerTag::PostgresSQLConnectionMaxLifetime,
             )),

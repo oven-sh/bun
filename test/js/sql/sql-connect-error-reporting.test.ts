@@ -420,7 +420,7 @@ test("mysql: connectionTimeout: 0 disables connect retries", async () => {
 // assigned to it after construction reaches the native connection constructor
 // without a pass through the option parser. The child process does the
 // assignments because a regression here aborts the process.
-test.each([
+test.concurrent.each([
   ["postgres", "ERR_POSTGRES_CONNECTION_REFUSED"],
   ["mysql", "ERR_MYSQL_CONNECTION_REFUSED"],
 ])("%s: invalid values assigned to sql.options do not crash the next connection", async (adapter, refused) => {
@@ -429,7 +429,7 @@ test.each([
     cmd: [
       bunExe(),
       "-e",
-      `const keys = ["idleTimeout", "connectionTimeout", "maxLifetime", "sslMode"];
+      `const timeouts = ["idleTimeout", "connectionTimeout", "maxLifetime"];
 async function attempt(assign) {
   const sql = new Bun.SQL({ url: process.env.SQL_URL, max: 1 });
   assign(sql.options);
@@ -444,20 +444,25 @@ async function attempt(assign) {
 }
 const results = {};
 for (const [label, value] of [["object", {}], ["string", "abc"], ["negative", -1]]) {
-  results[label] = await attempt(options => {
-    for (const key of keys) options[key] = value;
+  results["timeouts " + label] = await attempt(options => {
+    for (const key of timeouts) options[key] = value;
   });
 }
-for (const key of keys) {
-  results["symbol " + key] = await attempt(options => {
+for (const key of timeouts) {
+  results[key + " symbol"] = await attempt(options => {
     options[key] = Symbol();
   });
-  results["valueOf throws " + key] = await attempt(options => {
+  results[key + " valueOf throws"] = await attempt(options => {
     options[key] = {
       valueOf() {
         throw Object.assign(new Error("from valueOf"), { code: "FROM_VALUE_OF" });
       },
     };
+  });
+}
+for (const [label, value] of [["object", {}], ["string", "require"], ["negative", -1], ["out of range", 5]]) {
+  results["sslMode " + label] = await attempt(options => {
+    options.sslMode = value;
   });
 }
 console.log(JSON.stringify(results));`,
@@ -469,17 +474,20 @@ console.log(JSON.stringify(results));`,
 
   expect(stderr).toBe("");
   expect(JSON.parse(stdout)).toEqual({
-    object: refused,
-    string: refused,
-    negative: refused,
-    "symbol idleTimeout": "TypeError",
-    "valueOf throws idleTimeout": "FROM_VALUE_OF",
-    "symbol connectionTimeout": "TypeError",
-    "valueOf throws connectionTimeout": "FROM_VALUE_OF",
-    "symbol maxLifetime": "TypeError",
-    "valueOf throws maxLifetime": "FROM_VALUE_OF",
-    "symbol sslMode": "TypeError",
-    "valueOf throws sslMode": "FROM_VALUE_OF",
+    "timeouts object": refused,
+    "timeouts string": refused,
+    "timeouts negative": refused,
+    "idleTimeout symbol": "TypeError",
+    "idleTimeout valueOf throws": "FROM_VALUE_OF",
+    "connectionTimeout symbol": "TypeError",
+    "connectionTimeout valueOf throws": "FROM_VALUE_OF",
+    "maxLifetime symbol": "TypeError",
+    "maxLifetime valueOf throws": "FROM_VALUE_OF",
+    // A mode that the native side cannot map must not fall back to a plaintext connection.
+    "sslMode object": "ERR_INVALID_ARG_TYPE",
+    "sslMode string": "ERR_INVALID_ARG_TYPE",
+    "sslMode negative": "ERR_INVALID_ARG_TYPE",
+    "sslMode out of range": "ERR_INVALID_ARG_TYPE",
   });
   expect(exitCode).toBe(0);
 });

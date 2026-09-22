@@ -125,6 +125,13 @@ function __fish__get_bun_packages
     ' "$pkg_file" 2>/dev/null
 end
 
+function __fish__get_bun_add_packages
+    if test (commandline -ct) != ""
+        set -lx SHELL fish
+        string split ' ' (bun getcompletes a (commandline -ct) 2>/dev/null)
+    end
+end
+
 function __fish__get_bun_bun_js_files
     set -l target_cwd (__fish__bun_extract_cwd)
     if not test -d "$target_cwd"
@@ -233,7 +240,11 @@ complete -c bun \
 complete -c bun \
        -n "__fish_seen_subcommand_from dedupe" -l 'check' -d 'Exit with code 1 if the lockfile has duplicate versions that can be removed, without changing anything'
 complete -c bun \
-       -n "__fish_seen_subcommand_from add" -d 'Popular' -a '(__fish__get_bun_packages)'
+       -n "__fish_seen_subcommand_from add" -d 'Popular' -a '(__fish__get_bun_add_packages)'
+complete -c bun \
+       -n "__fish_seen_subcommand_from remove" -d 'Package' -a '(__fish__get_bun_packages)'
+complete -c bun \
+       -n "__fish_seen_subcommand_from update" -d 'Package' -a '(__fish__get_bun_packages)'
 complete -c bun \
        -n "__fish_seen_subcommand_from pm; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) cache;" -a 'bin ls licenses cache hash hash-print hash-string' -f
 complete -c bun \

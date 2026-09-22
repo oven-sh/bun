@@ -1277,5 +1277,56 @@ if ! command -v compinit >/dev/null; then
     autoload -U compinit && compinit
 fi
 
+_bunx() {
+    local target_cwd="${PWD}"
+    local cwd_specified=0
+    local i val
+    for (( i=1; i < ${#words[@]}; i++ )); do
+        val=""
+        if [[ "${words[i]}" == "--cwd" && -n "${words[i+1]}" ]]; then
+            val="${words[i+1]}"
+            cwd_specified=1
+        elif [[ "${words[i]}" == --cwd=* ]]; then
+            val="${words[i]#--cwd=}"
+            cwd_specified=1
+        fi
+        if [[ -n "${val}" ]]; then
+            val="${val%"}"
+            val="${val#"}"
+            val="${val%'}"
+            val="${val#'}"
+            val="${val/#\~/$HOME}"
+            target_cwd="${val}"
+        fi
+    done
+
+    local orig_pwd="${PWD}"
+    local switched=0
+    if (( cwd_specified )); then
+        if [[ ! -d "${target_cwd}" ]] || ! builtin cd -q "${target_cwd}" 2>/dev/null; then
+            return
+        fi
+        switched=1
+    fi
+
+    local -a bins
+    bins=(${(f)"$(SHELL=zsh bun getcompletes b 2>/dev/null)"})
+
+    if (( switched )); then
+        builtin cd -q "${orig_pwd}" 2>/dev/null
+    fi
+
+    _arguments -C         '(-b --bun)'{-b,--bun}'[Run with Bun runtime]'         '--install[Install package if not found]'         '(-h --help)'{-h,--help}'[Print help]'         '--cwd=[Change working directory]:directory:_files -W ${(q)target_cwd} -/'         '1:package:->pkg'         '*::arguments:->rest' && return 0
+
+    case "$state" in
+        pkg)
+            _alternative                 "bin:bin:compadd -a bins"                 "files:file:_files -W ${(q)target_cwd}"
+            ;;
+        rest)
+            _files -W ${(q)target_cwd}
+            ;;
+    esac
+}
+
 compdef _bun bun
-compdef _bun bunx
+compdef _bunx bunx

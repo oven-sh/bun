@@ -194,7 +194,9 @@ _bun_completions_inner() {
         -l|--loader)
             if [[ "${cur_word}" == *:* ]]; then
                 local prefix="${cur_word%%:*}"
-                _compgen_reply -W "${prefix}:jsx ${prefix}:js ${prefix}:json ${prefix}:tsx ${prefix}:ts ${prefix}:css" -- "${cur_word}"
+                _filter_literal_reply \
+                    "${prefix}:jsx" "${prefix}:js" "${prefix}:json" \
+                    "${prefix}:tsx" "${prefix}:ts" "${prefix}:css"
             fi
             return ;;
     esac
@@ -214,7 +216,8 @@ _bun_completions_inner() {
             --loader|-l|--target|--origin|--public-dir|--backend|--filter|-F|\
             --jsx-runtime|--jsx-factory|--jsx-fragment|--jsx-import-source|\
             --omit|--linker|--define|-d|--external|--inject|-i|--tsconfig-override|\
-            --main-fields|--extension-order|--conditions|-e|--eval|-u|--use)
+            --main-fields|--extension-order|--conditions|-e|--eval|-u|--use|\
+            --outdir|--outfile|--format|--timeout|--rerun-each)
                 if [[ "${COMP_WORDS[i+1]}" == "=" ]]; then
                     skip=2
                 else
@@ -275,10 +278,20 @@ _bun_completions_inner() {
             _long_short_completion "--version --cwd --help --silent -v -h"
             return ;;
         test)
+            case "${prev}" in
+                --timeout|--rerun-each|--filter) return ;;
+            esac
             _file_arguments "!*.@(js|ts|jsx|tsx|mjs|cjs)"
             _long_short_completion "--bail --coverage --watch --timeout --todo --only --rerun-each --filter --help -b -t -h"
             return ;;
         build|b)
+            case "${prev}" in
+                --outdir) _compgen_reply -d -S / -- "${cur_word}"; return ;;
+                --outfile) _compgen_file_reply -- "${cur_word}"; return ;;
+                --target) _compgen_reply -W "browser node bun" -- "${cur_word}"; return ;;
+                --format) _compgen_reply -W "esm cjs iife" -- "${cur_word}"; return ;;
+                --entry-naming|--public-path|--sourcemap) return ;;
+            esac
             _file_arguments "!*.@(js|ts|jsx|tsx|mjs|cjs|html)"
             _long_short_completion "--outdir --outfile --target --format --minify --sourcemap --entry-naming --public-path --compile --bytecode --help -h"
             return ;;

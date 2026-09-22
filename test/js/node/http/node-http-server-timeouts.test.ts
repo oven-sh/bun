@@ -436,12 +436,12 @@ describe("node:http response writes restart the socket inactivity timeout", () =
   // activity fires TIMEOUT / 2 early, far outside this.
   const SLACK = 50;
 
-  async function send(port: number, request: string, onClose?: (received: string) => void) {
+  // A stalled client never reads, so the server's writes back up.
+  async function send(port: number, request: string, stalled = false) {
     const client = net.connect(port, "127.0.0.1");
-    let received = "";
-    client.on("data", chunk => (received += chunk.toString("latin1")));
+    if (stalled) client.pause();
+    else client.resume();
     client.on("error", () => {});
-    client.on("close", () => onClose?.(received));
     await once(client, "connect");
     client.write(request);
     return client;
@@ -451,22 +451,23 @@ describe("node:http response writes restart the socket inactivity timeout", () =
   test.concurrent.each(["server.timeout", "res.setTimeout()", "req.setTimeout()", "socket.setTimeout()"])(
     "%s does not fire while the response keeps writing",
     async armedBy => {
-      const events: string[] = [];
+      let lastWriteAt = 0;
+      const { promise: firstTimeout, resolve: onFirstTimeout } = Promise.withResolvers<number>();
       const server = http.createServer((req, res) => {
         if (armedBy === "res.setTimeout()") res.setTimeout(TIMEOUT);
         if (armedBy === "req.setTimeout()") req.setTimeout(TIMEOUT);
         if (armedBy === "socket.setTimeout()") req.socket.setTimeout(TIMEOUT);
-        req.socket.on("timeout", () => events.push("timeout"));
+        req.socket.on("timeout", () => onFirstTimeout(performance.now() - lastWriteAt));
         res.writeHead(200, { "Content-Type": "text/plain" });
         // Stream for longer than the timeout, one chunk every TIMEOUT / 8.
         const startedAt = performance.now();
         const interval = setInterval(() => {
-          if (performance.now() - startedAt < TIMEOUT * 1.5) {
+          lastWriteAt = performance.now();
+          if (lastWriteAt - startedAt < TIMEOUT * 1.5) {
             res.write("chunk\n");
             return;
           }
           clearInterval(interval);
-          events.push("end");
           res.end("done\n");
         }, TIMEOUT / 8);
         res.on("close", () => clearInterval(interval));
@@ -478,13 +479,10 @@ describe("node:http response writes restart the socket inactivity timeout", () =
       const port = await listen(server);
       let client: net.Socket | undefined;
       try {
-        const { promise: closed, resolve: onClosed } = Promise.withResolvers<string>();
-        client = await send(port, GET, onClosed);
-        const received = await closed;
-        expect({ events, complete: received.endsWith("done\n\r\n0\r\n\r\n") }).toEqual({
-          events: ["end", "timeout"],
-          complete: true,
-        });
+        client = await send(port, GET);
+        // A server that ignores writes fires within TIMEOUT / 8 of one. A machine that stalls
+        // between two writes can only make this longer.
+        expect(await firstTimeout).toBeGreaterThanOrEqual(TIMEOUT - SLACK);
       } finally {
         client?.destroy();
         server.closeAllConnections();
@@ -574,21 +572,28 @@ describe("node:http response writes restart the socket inactivity timeout", () =
     }
   });
 
-  // Writes that never reach the socket in Node: write_() drops a write to a response without
-  // a body, and it validates before it sends anything. A server that ignores every write
-  // passes these too. They guard against counting such a write as activity, which keeps the
-  // connection of a handler that writes forever open.
-  const noActivity: Record<string, { request: string; setup: (res: http.ServerResponse) => void }> = {
-    "a write that a HEAD response discards": {
-      request: "HEAD / HTTP/1.1\r\nHost: a\r\n\r\n",
-      setup: res => res.writeHead(200, { "Content-Type": "text/event-stream" }),
-    },
-    "a write that throws": {
-      request: GET,
-      // The implicit header is invalid, so every write throws before it sends anything.
-      setup: res => (res.statusCode = 1000),
-    },
-  };
+  // Writes that are no activity in Node: write_() drops a write to a response without a body
+  // and validates before it sends anything, and a write to a peer that stopped reading only
+  // backs up. A server that ignores every write passes these too. They guard against counting
+  // such a write, which keeps the connection of a handler that writes forever open.
+  const noActivity: Record<string, { request: string; stalled?: boolean; setup: (res: http.ServerResponse) => void }> =
+    {
+      "a write that a HEAD response discards": {
+        request: "HEAD / HTTP/1.1\r\nHost: a\r\n\r\n",
+        setup: res => res.writeHead(200, { "Content-Type": "text/event-stream" }),
+      },
+      "a write that throws": {
+        request: GET,
+        // The implicit header is invalid, so every write throws before it sends anything.
+        setup: res => (res.statusCode = 1000),
+      },
+      "a write to a peer that stopped reading": {
+        request: GET,
+        stalled: true,
+        // More than the kernel buffers take: this write and every later one back up.
+        setup: res => res.write(Buffer.alloc(16 * 1024 * 1024, "a")),
+      },
+    };
 
   test.concurrent.each(Object.keys(noActivity))("%s does not restart the timer", async name => {
     let reference: ReturnType<typeof setTimeout> | undefined;
@@ -612,7 +617,7 @@ describe("node:http response writes restart the socket inactivity timeout", () =
     const port = await listen(server);
     let client: net.Socket | undefined;
     try {
-      client = await send(port, noActivity[name].request);
+      client = await send(port, noActivity[name].request, noActivity[name].stalled);
       expect(await settled).toBe("'timeout'");
     } finally {
       clearTimeout(reference);

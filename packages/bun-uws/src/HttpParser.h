@@ -1523,11 +1523,13 @@ struct HttpResponseData;
                                 return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, trailerError);
                             }
                         }
-                        void *returnedUser = dataHandler(user, chunk, chunk.length() == 0);
+                        const bool fin = chunk.length() == 0;
+                        void *returnedUser = dataHandler(user, chunk, fin);
                         if (returnedUser != user) {
-                            /* The data handler closed or shut down the socket; stop parsing
-                             * so we do not dispatch pipelined requests on a dead socket. */
-                            return HttpParserResult::success(consumedTotal, returnedUser);
+                            /* The data handler closed, shut down or upgraded the socket; stop parsing
+                             * so we do not dispatch pipelined requests on a dead socket. The caller's
+                             * bytes start behind the body, and a body that has not ended leaves none. */
+                            return HttpParserResult::success(fin ? consumedTotal + (length - (unsigned int) dataToConsume.length()) : HttpParserResult::WHOLE_READ, returnedUser);
                         }
                     }
                     if (*chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
@@ -1600,7 +1602,7 @@ public:
         HttpRequest req;
         if (IsNodeHttp && nodeHttpBodyUntilEof) {
             void *returnedUser = dataHandler(user, std::string_view(data, length), false);
-            return HttpParserResult::success(0, returnedUser);
+            return HttpParserResult::success(returnedUser != user ? HttpParserResult::WHOLE_READ : 0, returnedUser);
         } else if (remainingStreamingBytes) {
             if (isConnectRequest) {
                 dataHandler(user, std::string_view(data, length), false);
@@ -1619,9 +1621,10 @@ public:
                             return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, trailerError);
                         }
                     }
-                    void *returnedUser = dataHandler(user, chunk, chunk.length() == 0);
+                    const bool fin = chunk.length() == 0;
+                    void *returnedUser = dataHandler(user, chunk, fin);
                     if (returnedUser != user) {
-                        return HttpParserResult::success(0, returnedUser);
+                        return HttpParserResult::success(fin ? (unsigned int) (dataToConsume.data() - readStart) : HttpParserResult::WHOLE_READ, returnedUser);
                     }
                 }
                 if (*chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
@@ -1649,13 +1652,13 @@ public:
                     bool fin = remainingStreamingBytes == length;
                     remainingStreamingBytes -= length;
                     void *returnedUser = dataHandler(user, std::string_view(data, length), fin);
-                    return HttpParserResult::success(0, returnedUser);
+                    return HttpParserResult::success(returnedUser != user ? HttpParserResult::WHOLE_READ : 0, returnedUser);
                 } else {
                     unsigned int emittable = (unsigned int) remainingStreamingBytes;
                     remainingStreamingBytes = 0;
                     void *returnedUser = dataHandler(user, std::string_view(data, emittable), true);
                     if (returnedUser != user) {
-                        return HttpParserResult::success(0, returnedUser);
+                        return HttpParserResult::success((unsigned int) (data - readStart) + emittable, returnedUser);
                     }
 
                     data += emittable;
@@ -1697,7 +1700,7 @@ public:
                 if (IsNodeHttp && nodeHttpBodyUntilEof) {
                     if (length) {
                         void *returnedUser = dataHandler(user, std::string_view(data, length), false);
-                        return HttpParserResult::success(0, returnedUser);
+                        return HttpParserResult::success(returnedUser != user ? HttpParserResult::WHOLE_READ : 0, returnedUser);
                     }
                     return HttpParserResult::success(0, user);
                 } else if (remainingStreamingBytes) {
@@ -1718,9 +1721,10 @@ public:
                                     return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, trailerError);
                                 }
                             }
-                            void *returnedUser = dataHandler(user, chunk, chunk.length() == 0);
+                            const bool fin = chunk.length() == 0;
+                            void *returnedUser = dataHandler(user, chunk, fin);
                             if (returnedUser != user) {
-                                return HttpParserResult::success(0, returnedUser);
+                                return HttpParserResult::success(fin ? (unsigned int) (dataToConsume.data() - readStart) : HttpParserResult::WHOLE_READ, returnedUser);
                             }
                         }
                         if (*chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
@@ -1743,13 +1747,13 @@ public:
                             bool fin = remainingStreamingBytes == (unsigned int) length;
                             remainingStreamingBytes -= length;
                             void *returnedUser = dataHandler(user, std::string_view(data, length), fin);
-                            return HttpParserResult::success(0, returnedUser);
+                            return HttpParserResult::success(returnedUser != user ? HttpParserResult::WHOLE_READ : 0, returnedUser);
                         } else {
                             unsigned int emittable = (unsigned int) remainingStreamingBytes;
                             remainingStreamingBytes = 0;
                             void *returnedUser = dataHandler(user, std::string_view(data, emittable), true);
                             if (returnedUser != user) {
-                                return HttpParserResult::success(0, returnedUser);
+                                return HttpParserResult::success((unsigned int) (data - readStart) + emittable, returnedUser);
                             }
 
                             data += emittable;

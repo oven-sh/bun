@@ -1511,6 +1511,38 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
     });
   }
 
+  // The bytes of the request body are not frames. The WebSocket reads from the
+  // first byte behind the body, where a client that does not wait for the 101
+  // can already have a frame (RFC 6455 4.1).
+  for (const [framing, header, body] of [
+    ["Content-Length", "Content-Length: 5", "hello"],
+    ["chunked", "Transfer-Encoding: chunked", "5\r\nhello\r\n0\r\n\r\n"],
+  ] as const) {
+    for (const where of ["in the same read as the head", "in a read of its own"] as const) {
+      it(`keeps the WebSocket of an upgrade from the body handler open, ${framing} body ${where}`, async () => {
+        const server = createServer();
+        const wss = new WebSocketServer({ noServer: true });
+        server.on("upgrade", (req, socket, head) => {
+          req.on("end", () =>
+            wss.handleUpgrade(req, socket, head, ws => ws.on("message", message => ws.send(`echo:${message}`))),
+          );
+          req.resume();
+        });
+        const head = upgradeRequest().replace("\r\n\r\n", `\r\n${header}\r\n\r\n`);
+        // FIN + text "ping", masked with a zero key.
+        const frame = Buffer.concat([Buffer.from([0x81, 0x84, 0, 0, 0, 0]), Buffer.from("ping")]);
+        const sameRead = where === "in the same read as the head";
+        await using upgrade = await receiveUpgrade(
+          sameRead ? Buffer.concat([Buffer.from(head + body), frame]) : head,
+          server,
+        );
+        if (!sameRead) upgrade.client.write(Buffer.concat([Buffer.from(body), frame]));
+        expect(await upgrade.received("echo:ping")).toContain("echo:ping");
+        wss.close();
+      });
+    }
+  }
+
   // The parser of connection A must not take an upgrade of connection B, done
   // from A's body handler, for an upgrade of A: the request pipelined behind
   // A's body still gets its response, and A closes on Connection: close.

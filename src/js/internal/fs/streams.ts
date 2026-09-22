@@ -1,7 +1,7 @@
 // fs.ReadStream and fs.WriteStream are lazily loaded to avoid importing 'node:stream' until required
 import type { FileSink } from "bun";
 const { Readable, Writable, finished } = require("node:stream");
-const fs: typeof import("node:fs") = require("node:fs");
+const fs = require("node:fs");
 const { read, write, fsync, writev } = fs;
 const { FileHandle, kRef, kUnref, kFd } = (fs.promises as any).$data as {
   FileHandle: { new (): FileHandle };
@@ -12,25 +12,28 @@ const { FileHandle, kRef, kUnref, kFd } = (fs.promises as any).$data as {
 type FileHandle = import("node:fs/promises").FileHandle & {
   on(event: any, listener: any): FileHandle;
 };
-type FSStream = import("node:fs").ReadStream &
-  import("node:fs").WriteStream & {
-    fd: number | null;
-    path: string;
-    flags: string;
-    mode: number;
-    start: number;
-    end: number;
-    pos: number | undefined;
-    bytesRead: number;
-    flush: boolean;
-    open: () => void;
-    autoClose: boolean;
-    /**
-     * true = path must be opened
-     * sink = FileSink
-     */
-    [kWriteStreamFastPath]?: undefined | true | FileSink;
-  };
+type FSStream = Omit<import("node:fs").ReadStream & import("node:fs").WriteStream, "path" | "_write" | "_writev"> & {
+  fd: number | null;
+  // null / undefined only for the internal fast-path WriteStream, which is given a FileSink and no path.
+  path: string | null | undefined;
+  _write: import("node:fs").WriteStream["_write"] | null;
+  _writev: import("node:fs").WriteStream["_writev"] | null;
+  _writableState?: { ending: boolean; destroyed: boolean };
+  flags: string;
+  mode: number;
+  start: number;
+  end: number;
+  pos: number | undefined;
+  bytesRead: number;
+  flush: boolean;
+  open: () => void;
+  autoClose: boolean;
+  /**
+   * true = path must be opened
+   * sink = FileSink
+   */
+  [kWriteStreamFastPath]?: undefined | true | FileSink;
+};
 type FD = number;
 
 const { validateInteger, validateInt32, validateFunction } = require("internal/validators");
@@ -368,7 +371,7 @@ function closeAfterSync(stream, err, cb) {
   stream.fd = null;
 }
 
-function WriteStream(this: FSStream, path: string | null, options?: any): void {
+function WriteStream(this: FSStream, path: string | null | undefined, options?: any): void {
   if (!(this instanceof WriteStream)) {
     return new WriteStream(path, options);
   }
@@ -599,7 +602,7 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
   }
   try {
     if (fileSink === true) {
-      fileSink = this[kWriteStreamFastPath] = Bun.file(this.path).writer();
+      fileSink = this[kWriteStreamFastPath] = Bun.file(this.path!).writer();
       // @ts-expect-error
       this.fd = fileSink._getFd();
     }
@@ -673,7 +676,7 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
       return true; // No backpressure
     }
   } else {
-    const result: any = this._write(data, encoding, cb);
+    const result: any = this._write!(data, encoding, cb);
     if (this.write === writeFast) {
       this.write = writablePrototypeWrite;
     } else {

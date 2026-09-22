@@ -1,3 +1,4 @@
+import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { once } from "events";
 import { bunEnv, bunExe, tls as COMMON_CERT_, isASAN, nodeExe, tempDir } from "harness";
@@ -1106,6 +1107,195 @@ describe("application data written over a Duplex transport before the handshake 
       outcome: "failed",
       clientReceived: "",
     });
+  });
+});
+
+describe("a TLS socket over a Duplex transport follows that transport's teardown", () => {
+  // Node wraps a stream that has no fd in a JSStreamSocket and destroys the
+  // TLS socket when that wrap closes:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L739-L741
+  // So a destroyed transport always reaches the TLS socket as 'close' with
+  // hadError === false. Bun runs a TLS engine over the stream instead, and
+  // that engine is created on a later event-loop turn, so the cases below
+  // cover both sides of that turn.
+  const makeTransport = () =>
+    new Duplex({
+      read() {},
+      write(_chunk, _encoding, callback) {
+        callback();
+      },
+    });
+  const serverContext = () => ({ isServer: true, secureContext: tls.createSecureContext(COMMON_CERT_) });
+  // Resolves with the 'error' and 'close' events the socket emitted, in order.
+  const recordTeardown = (socket: TLSSocket) => {
+    const events: string[] = [];
+    const closed = Promise.withResolvers<string[]>();
+    socket.on("error", (err: NodeJS.ErrnoException) => events.push(`error:${err.code}`));
+    socket.on("close", hadError => {
+      events.push(`close:${hadError}`);
+      closed.resolve(events);
+    });
+    return closed.promise;
+  };
+
+  it("a server wrap closes when the transport is destroyed in the same tick", async () => {
+    // The engine does not exist yet, so the close has to be held and reported
+    // when it starts. Without that the socket never closes at all.
+    const transport = makeTransport();
+    const wrapped = new TLSSocket(transport, serverContext());
+    const teardown = recordTeardown(wrapped);
+    transport.destroy();
+    expect(await teardown).toEqual(["close:false"]);
+    expect(wrapped.destroyed).toBe(true);
+  });
+
+  it("tls.connect({ socket }) closes when the transport is destroyed in the same tick", async () => {
+    const transport = makeTransport();
+    const client = tls.connect({ socket: transport, rejectUnauthorized: false });
+    const teardown = recordTeardown(client);
+    transport.destroy();
+    expect(await teardown).toEqual(["close:false"]);
+    expect(client.destroyed).toBe(true);
+  });
+
+  it("a server wrap closes when the transport is destroyed after the engine started", async () => {
+    // The engine is up and its handshake is still pending. The aborted
+    // handshake must not surface as an ECONNRESET instead of the close.
+    const transport = makeTransport();
+    const wrapped = new TLSSocket(transport, serverContext());
+    const teardown = recordTeardown(wrapped);
+    // 'secure' never fires without a peer, but the upgrade task that creates
+    // the engine is queued ahead of this one.
+    await new Promise<void>(resolve => setImmediate(resolve));
+    transport.destroy();
+    expect(await teardown).toEqual(["close:false"]);
+    expect(wrapped.destroyed).toBe(true);
+  });
+
+  it("a server wrap closes when the transport of an established connection is destroyed", async () => {
+    // Each side's _write pushes into the other, so this handshakes for real
+    // over two in-memory duplexes (what Playwright's client-certificate proxy
+    // does with its browser-facing transport).
+    const makeSide = (peer: () => Duplex) =>
+      new Duplex({
+        read() {},
+        write(chunk, _encoding, callback) {
+          peer().push(chunk);
+          callback();
+        },
+        final(callback) {
+          peer().push(null);
+          callback();
+        },
+      });
+    const clientSide: Duplex = makeSide(() => serverSide);
+    const serverSide: Duplex = makeSide(() => clientSide);
+    const wrapped = new TLSSocket(serverSide, serverContext());
+    const client = tls.connect({ socket: clientSide, rejectUnauthorized: false });
+    try {
+      const secured = Promise.withResolvers<void>();
+      client.on("error", secured.reject);
+      wrapped.on("error", secured.reject);
+      wrapped.on("secure", () => secured.resolve());
+      await secured.promise;
+      const teardown = recordTeardown(wrapped);
+      serverSide.destroy();
+      expect(await teardown).toEqual(["close:false"]);
+      expect(wrapped.destroyed).toBe(true);
+    } finally {
+      client.destroy();
+      wrapped.destroy();
+    }
+  });
+
+  // A peer that ends cleanly can leave decrypted data unread inside the TLS
+  // socket, because the reader is paused or slower than the transport. That
+  // data has to outlive the peer's close. Bun's engine reads the transport with
+  // no backpressure and ends it on the peer's close_notify, so in Bun the
+  // transport has already closed by then. Node keeps it open.
+  describe.each(["paused", "for-await"] as const)("a clean peer close keeps unread data (%s reader)", reader => {
+    it("delivers every byte and 'end'", async () => {
+      const makeSide = (peer: () => Duplex) =>
+        new Duplex({
+          read() {},
+          write(chunk, _encoding, callback) {
+            peer().push(chunk);
+            callback();
+          },
+          final(callback) {
+            peer().push(null);
+            callback();
+          },
+        });
+      const clientSide: Duplex = makeSide(() => serverSide);
+      const serverSide: Duplex = makeSide(() => clientSide);
+      const payload = Buffer.alloc(256 * 1024, "bun");
+      const server = new TLSSocket(serverSide, serverContext());
+      server.on("secure", () => server.end(payload));
+      const client = tls.connect({ socket: clientSide, rejectUnauthorized: false });
+      // Only a failure ahead of the last byte counts. What happens to the
+      // socket after 'end' differs between runtimes.
+      const failed = Promise.withResolvers<never>();
+      server.on("error", failed.reject);
+      client.on("error", failed.reject);
+
+      const read = (async () => {
+        let total = 0;
+        if (reader === "for-await") {
+          for await (const chunk of client) {
+            total += chunk.length;
+            // Yield, so the peer's close lands between two reads.
+            await new Promise<void>(resolve => setImmediate(resolve));
+          }
+          return total;
+        }
+        client.pause();
+        // The server handed everything to the transport, its close_notify included.
+        await once(server, "finish");
+        // One turn for the transport's own teardown, where a runtime runs it this early.
+        await new Promise<void>(resolve => setImmediate(resolve));
+        expect(client.destroyed).toBe(false);
+        client.on("data", chunk => (total += chunk.length));
+        const ended = once(client, "end");
+        client.resume();
+        await ended;
+        return total;
+      })();
+
+      expect(await Promise.race([read, failed.promise])).toBe(payload.length);
+      client.destroy();
+      server.destroy();
+    });
+  });
+
+  it("a transport destroyed before the engine starts leaves no native socket behind", async () => {
+    // The queued engine start has to see that close. An engine started for a
+    // transport that is gone is never closed, and it keeps the native socket,
+    // and through it the TLSSocket, strongly referenced for good.
+    const nativeSockets = () => heapStats().objectTypeCounts.TLSSocket || 0;
+    Bun.gc(true);
+    const baseline = nativeSockets();
+    const count = 20;
+    await (async () => {
+      const closes: Promise<unknown>[] = [];
+      for (let i = 0; i < count; i++) {
+        const transport = makeTransport();
+        const socket =
+          i % 2 === 0
+            ? tls.connect({ socket: transport, rejectUnauthorized: false })
+            : new TLSSocket(transport, serverContext());
+        closes.push(once(socket, "close"));
+        transport.destroy();
+      }
+      await Promise.all(closes);
+    })();
+    let alive = count;
+    for (let i = 0; i < 10 && alive > count / 2; i++) {
+      await new Promise<void>(resolve => setImmediate(resolve));
+      Bun.gc(true);
+      alive = nativeSockets() - baseline;
+    }
+    expect(alive).toBeLessThanOrEqual(count / 2);
   });
 });
 

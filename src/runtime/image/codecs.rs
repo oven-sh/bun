@@ -13,20 +13,20 @@ use core::ptr::NonNull;
 
 // Per-format implementations live in their own files; codecs.rs is the
 // dispatch surface only.
-pub use super::codec_bmp as bmp;
-pub use super::codec_gif as gif;
-pub use super::codec_jpeg as jpeg;
-pub use super::codec_png as png;
-pub use super::codec_webp as webp;
+pub(crate) use super::codec_bmp as bmp;
+pub(crate) use super::codec_gif as gif;
+pub(crate) use super::codec_jpeg as jpeg;
+pub(crate) use super::codec_png as png;
+pub(crate) use super::codec_webp as webp;
 
 /// Optional OS-native backend. Absent on Linux (and any platform we haven't
 /// written one for) so the dispatch in `decode`/`encode` compiles away. The
 /// backend module is only `use`d inside the matching cfg arm so non-target
 /// platforms never see its symbols. Exposed for `Image.fromClipboard()`.
 #[cfg(target_os = "macos")]
-pub use super::backend_coregraphics as system_backend;
+pub(crate) use super::backend_coregraphics as system_backend;
 #[cfg(windows)]
-pub use super::backend_wic as system_backend;
+pub(crate) use super::backend_wic as system_backend;
 
 /// `true` on platforms where `system_backend` is present.
 const HAS_SYSTEM_BACKEND: bool = cfg!(any(target_os = "macos", windows));
@@ -94,7 +94,7 @@ fn use_system() -> bool {
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum Format {
+pub(crate) enum Format {
     Jpeg,
     Png,
     Webp,
@@ -208,7 +208,7 @@ bun_core::comptime_string_map! {
 }
 
 #[derive(Default)]
-pub struct Decoded {
+pub(crate) struct Decoded {
     pub(crate) rgba: Vec<u8>, // global allocator (mimalloc)
     pub(crate) width: u32,
     pub(crate) height: u32,
@@ -259,7 +259,7 @@ pub(crate) const DEFAULT_MAX_PIXELS: u64 = 0x3FFF * 0x3FFF;
 /// the IDCT work AND shrinking the RGBA buffer the resize pass touches. This
 /// is the same trick Sharp/libvips use and is where most of the perf gap was.
 #[derive(Copy, Clone, Default)]
-pub struct DecodeHint {
+pub(crate) struct DecodeHint {
     /// Final output dims (after rotate). 0 = "no resize, full decode".
     pub(crate) target_w: u32,
     pub(crate) target_h: u32,
@@ -439,7 +439,7 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
 }
 
 #[derive(Copy, Clone)]
-pub struct EncodeOptions {
+pub(crate) struct EncodeOptions {
     pub(crate) format: Format,
     /// 0–100 for JPEG/WebP-lossy. Ignored for PNG.
     pub(crate) quality: u8,
@@ -489,7 +489,7 @@ impl Default for EncodeOptions {
 ///
 /// `free` matches `jsc::JSTypedArrayBytesDeallocator` (bytes, ctx) so it can
 /// be passed straight through; the `ctx` arg is unused.
-pub struct Encoded {
+pub(crate) struct Encoded {
     // SAFETY: fat pointer (ptr+len) owned by whichever C allocator produced
     // it; `free` is the matching deallocator. Not a Box — drop must call `free`.
     pub(crate) bytes: NonNull<[u8]>,
@@ -604,7 +604,7 @@ pub(crate) fn encode(
 
 #[repr(i32)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum Filter {
+pub(crate) enum Filter {
     Box = 0,
     Bilinear = 1,
     Lanczos3 = 2,

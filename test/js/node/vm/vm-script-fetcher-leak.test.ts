@@ -57,6 +57,52 @@ describe("node:vm NodeVMScriptFetcher leak", () => {
 
     await expectMaxObjectTypeCount(expect, "Script", baseline + 20);
   });
+
+  // A callback that reaches the wrapper itself (a module linker cache) forms
+  // callback -> wrapper -> source -> fetcher -> Weak<callback>; nothing external marks it.
+
+  test("vm.Script with importModuleDynamically referencing the script should not leak", async () => {
+    const baseline = heapStats().objectTypeCounts.Script || 0;
+
+    function iteration() {
+      const holder: { script?: vm.Script } = {};
+      holder.script = new vm.Script("1 + 1", {
+        importModuleDynamically: () => holder.script,
+      });
+    }
+    for (let i = 0; i < 500; i++) iteration();
+
+    await expectMaxObjectTypeCount(expect, "Script", baseline + 20);
+  });
+
+  test("vm.SourceTextModule with importModuleDynamically referencing the module should not leak", async () => {
+    const baseline = heapStats().objectTypeCounts.NodeVMSourceTextModule || 0;
+
+    function iteration() {
+      const cache = new Map<string, any>();
+      const mod = new vm.SourceTextModule("export const a = 1;", {
+        importModuleDynamically: specifier => cache.get(specifier),
+      });
+      cache.set("self", mod);
+    }
+    for (let i = 0; i < 500; i++) iteration();
+
+    await expectMaxObjectTypeCount(expect, "NodeVMSourceTextModule", baseline + 20);
+  });
+
+  test("vm.compileFunction with importModuleDynamically referencing the function should not leak", async () => {
+    const baseline = heapStats().objectTypeCounts.FunctionExecutable || 0;
+
+    function iteration() {
+      const holder: { fn?: Function } = {};
+      holder.fn = vm.compileFunction("return 1", [], {
+        importModuleDynamically: () => holder.fn,
+      });
+    }
+    for (let i = 0; i < 500; i++) iteration();
+
+    await expectMaxObjectTypeCount(expect, "FunctionExecutable", baseline + 50);
+  });
 });
 
 // importModuleDynamically and its referrer live as long as code that can still import(), no longer.

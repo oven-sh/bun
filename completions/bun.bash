@@ -1,5 +1,7 @@
 #/usr/bin/env bash
 
+BUNX_OPTIONS="--bun -p --package --no-install --verbose --silent --help --cwd -h"
+
 _compgen_reply() {
     local comp_out item
     comp_out=$(compgen "$@")
@@ -111,10 +113,96 @@ _read_scripts_in_package_json() {
 }
 
 _extract_cwd() {
-    local line
+    local line skip=0
     working_dir="${PWD}"
     cwd_specified=0
+
+    local is_bunx=0
+    [[ "${COMP_WORDS[0]}" == "bunx" ]] && is_bunx=1
+
+    local subcmd="" subcmd_idx=0
+    if (( ! is_bunx )); then
+        for (( line=1; line < COMP_CWORD; line++ )); do
+            if (( skip > 0 )); then
+                (( skip-- ))
+                continue
+            fi
+            local w="${COMP_WORDS[line]}"
+            case "${w}" in
+                --cwd|--bunfile|--server-bunfile|-c|--config|--env-file|--port|-p|\
+                --loader|-l|--target|--origin|--public-dir|--backend|--filter|-F|\
+                --jsx-runtime|--jsx-factory|--jsx-fragment|--jsx-import-source|\
+                --omit|--linker|--define|-d|--external|--inject|-i|--tsconfig-override|\
+                --main-fields|--extension-order|--conditions|-e|--eval|-u|--use|\
+                --outdir|--outfile|--format|--timeout|--rerun-each|--package)
+                    if [[ "${COMP_WORDS[line+1]}" == "=" ]]; then
+                        skip=2
+                    else
+                        skip=1
+                    fi
+                    continue
+                    ;;
+                -*)
+                    continue
+                    ;;
+                *)
+                    subcmd="${w}"
+                    subcmd_idx=${line}
+                    break
+                    ;;
+            esac
+        done
+    fi
+
+    skip=0
     for (( line=0; line < COMP_CWORD; line++ )); do
+        if (( skip > 0 )); then
+            (( skip-- ))
+            continue
+        fi
+
+        if (( is_bunx )); then
+            if (( line >= 1 )); then
+                local w="${COMP_WORDS[line]}"
+                case "${w}" in
+                    --cwd|-p|--package)
+                        if [[ "${COMP_WORDS[line+1]}" == "=" ]]; then
+                            skip=2
+                        else
+                            skip=1
+                        fi
+                        ;;
+                    --cwd=*|--package=*|-p=*)
+                        ;;
+                    -*)
+                        ;;
+                    *)
+                        break
+                        ;;
+                esac
+            fi
+        elif [[ "${subcmd}" == "run" || "${subcmd}" == "x" ]]; then
+            if (( line > subcmd_idx )); then
+                local w="${COMP_WORDS[line]}"
+                case "${w}" in
+                    --cwd|-c|--config|--env-file|-p|--package)
+                        if [[ "${COMP_WORDS[line+1]}" == "=" ]]; then
+                            skip=2
+                        else
+                            skip=1
+                        fi
+                        ;;
+                    --cwd=*|-c=*|--config=*|--env-file=*|-p=*|--package=*)
+                        ;;
+                    -*)
+                        ;;
+                    *)
+                        break
+                        ;;
+                esac
+            fi
+        fi
+
         if [[ "${COMP_WORDS[line]}" == "--cwd" ]]; then
             if (( line + 2 < COMP_CWORD )) &&
                 [[ "${COMP_WORDS[line+1]}" == "=" && -n "${COMP_WORDS[line+2]}" ]]; then
@@ -164,9 +252,11 @@ _bun_completions_inner() {
 
     case "${prev}" in
         help|--help|-h|-v|--version) return ;;
-        -c|--config)      _file_arguments "!*.toml"; return ;;
-        --bunfile)        _file_arguments "!*.bun"; return ;;
-        --server-bunfile) _file_arguments "!*.server.bun"; return ;;
+        -c|--config)          _file_arguments "!*.toml"; return ;;
+        --bunfile)            _file_arguments "!*.bun"; return ;;
+        --server-bunfile)     _file_arguments "!*.server.bun"; return ;;
+        --env-file)           _file_arguments; return ;;
+        --tsconfig-override)  _file_arguments "!*.json"; return ;;
         --backend)
             _compgen_reply -W "clonefile copyfile hardlink clonefile_each_dir symlink" -- "${cur_word}"
             return ;;
@@ -196,6 +286,7 @@ _bun_completions_inner() {
     esac
 
     local subcommand=""
+    local subcommand_idx=0
     local skip=0
     local i
     for (( i=1; i < COMP_CWORD; i++ )); do
@@ -224,6 +315,7 @@ _bun_completions_inner() {
                 ;;
             *)
                 subcommand="${w}"
+                subcommand_idx=${i}
                 break
                 ;;
         esac
@@ -262,6 +354,40 @@ _bun_completions_inner() {
             _compgen_reply -W "--help -h --eval -e --print -p --preload -r --smol --config -c --cwd --env-file --no-env-file" -- "${cur_word}"
             return ;;
         run)
+            local target_seen=0
+            local skip_run=0
+            local j
+            for (( j=subcommand_idx+1; j < COMP_CWORD; j++ )); do
+                if (( skip_run > 0 )); then
+                    (( skip_run-- ))
+                    continue
+                fi
+                local w="${COMP_WORDS[j]}"
+                case "${w}" in
+                    --cwd|-c|--config|--env-file)
+                        if [[ "${COMP_WORDS[j+1]}" == "=" ]]; then
+                            skip_run=2
+                        else
+                            skip_run=1
+                        fi
+                        continue
+                        ;;
+                    --cwd=*|-c=*|--config=*|--env-file=*)
+                        continue
+                        ;;
+                    -*)
+                        continue
+                        ;;
+                    *)
+                        target_seen=1
+                        break
+                        ;;
+                esac
+            done
+            if (( target_seen )); then
+                return 0
+            fi
+
             _read_scripts_in_package_json
             local bins
             bins=$(bun getcompletes b 2>/dev/null)
@@ -294,6 +420,40 @@ _bun_completions_inner() {
             _compgen_reply -W "bin ls licenses cache hash hash-print hash-string" -- "${cur_word}"
             return ;;
         x)
+            local target_seen=0
+            local skip_x=0
+            local j
+            for (( j=subcommand_idx+1; j < COMP_CWORD; j++ )); do
+                if (( skip_x > 0 )); then
+                    (( skip_x-- ))
+                    continue
+                fi
+                local w="${COMP_WORDS[j]}"
+                case "${w}" in
+                    --cwd|-p|--package)
+                        if [[ "${COMP_WORDS[j+1]}" == "=" ]]; then
+                            skip_x=2
+                        else
+                            skip_x=1
+                        fi
+                        continue
+                        ;;
+                    --cwd=*|--package=*|-p=*)
+                        continue
+                        ;;
+                    -*)
+                        continue
+                        ;;
+                    *)
+                        target_seen=1
+                        break
+                        ;;
+                esac
+            done
+            if (( target_seen )); then
+                return 0
+            fi
+
             local bins
             bins=$(bun getcompletes b 2>/dev/null)
             if [[ -n "${bins}" ]]; then
@@ -308,16 +468,53 @@ _bun_completions_inner() {
             _read_scripts_in_package_json
             return ;;
         *)
+            if (( subcommand_idx > 0 && subcommand_idx < COMP_CWORD )); then
+                return 0
+            fi
             _file_arguments
             return ;;
     esac
 }
 
 _bunx_completions_inner() {
-    
     if [[ "${prev}" == "=" && "${prev_prev}" == "--cwd" ]] || [[ "${prev}" == "--cwd" ]]; then
         _compgen_reply -d -S / -- "${cur_word}"
         return
+    fi
+
+    local target_seen=0
+    local skip=0
+    local j
+    for (( j=1; j < COMP_CWORD; j++ )); do
+        if (( skip > 0 )); then
+            (( skip-- ))
+            continue
+        fi
+        local w="${COMP_WORDS[j]}"
+        case "${w}" in
+            --cwd|-p|--package)
+                if [[ "${COMP_WORDS[j+1]}" == "=" ]]; then
+                    skip=2
+                else
+                    skip=1
+                fi
+                continue
+                ;;
+            --cwd=*|--package=*|-p=*)
+                continue
+                ;;
+            -*)
+                continue
+                ;;
+            *)
+                target_seen=1
+                break
+                ;;
+        esac
+    done
+
+    if (( target_seen )); then
+        return 0
     fi
 
     _long_short_completion "${BUNX_OPTIONS}"

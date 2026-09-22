@@ -159,8 +159,8 @@ end
 set -l bun_install_boolean_flags yarn production optional development no-save dry-run force no-cache silent verbose global
 set -l bun_install_boolean_flags_descriptions "Write a yarn.lock file (yarn v1)" "Don't install devDependencies" "Add dependency to optionalDependencies" "Add dependency to devDependencies" "Don't update package.json or save a lockfile" "Don't install anything" "Always request the latest versions from the registry & reinstall all dependencies" "Ignore manifest cache entirely" "Don't output anything" "Excessively verbose logging" "Use global folder"
 
-set -l bun_builtin_cmds_without_run dev create help bun upgrade discord install remove add update audit dedupe prune init pm x repl
-set -l bun_builtin_cmds_accepting_flags create help bun upgrade discord run init link unlink pm x update
+set -l bun_builtin_cmds_without_run dev create help bun upgrade discord install remove add update audit dedupe prune init pm x repl test
+set -l bun_builtin_cmds_accepting_flags create help bun upgrade discord run init link unlink pm x update test
 
 function __bun_complete_bins_scripts --inherit-variable bun_builtin_cmds_without_run -d "Emit bun completions for bins and scripts"
     if __fish_seen_subcommand_from $bun_builtin_cmds_without_run
@@ -235,6 +235,8 @@ complete -c bun \
        -n "__fish_use_subcommand" -a 'add' -F -d 'Add a package to package.json'
 complete -c bun \
        -n "__fish_use_subcommand" -a 'remove' -F -d 'Remove a package from package.json'
+complete -c bun \
+       -n "__fish_use_subcommand" -a 'test' -d 'Run unit tests'
 
 for i in (seq (count $bun_install_boolean_flags))
        complete -c bun \
@@ -274,6 +276,24 @@ complete -c bun \
        -n "__fish_seen_subcommand_from pm; and __fish_seen_subcommand_from licenses" -l 'long' -d 'Also print author, description and homepage' -f
 complete -c bun \
        -n "__fish_seen_subcommand_from pm; and __fish_seen_subcommand_from licenses" -l 'filter' -s 'F' -d 'List only the matching workspaces' -r
+
+complete -c bun -n "__fish_seen_subcommand_from test" -l "bail" -s "b" -d "Exit immediately upon test failure"
+complete -c bun -n "__fish_seen_subcommand_from test" -l "coverage" -d "Generate coverage report"
+complete -c bun -n "__fish_seen_subcommand_from test" -l "watch" -d "Watch for changes"
+complete -c bun -n "__fish_seen_subcommand_from test" -l "timeout" -s "t" -r -d "Set test timeout in milliseconds"
+complete -c bun -n "__fish_seen_subcommand_from test" -l "todo" -d "Include todo tests"
+complete -c bun -n "__fish_seen_subcommand_from test" -l "only" -d "Run only tests with test.only"
+complete -c bun -n "__fish_seen_subcommand_from test" -l "rerun-each" -r -d "Rerun each test N times"
+complete -c bun -n "__fish_seen_subcommand_from test" -l "filter" -r -d "Run tests matching pattern"
+complete -c bun -n "__fish_seen_subcommand_from test" -s "h" -l "help" -d "Print help" -x
+
+complete -c bun -n "__fish_seen_subcommand_from x" -l "bun" -s "b" -d "Run with Bun runtime"
+complete -c bun -n "__fish_seen_subcommand_from x" -l "package" -s "p" -r -d "Explicit package name"
+complete -c bun -n "__fish_seen_subcommand_from x" -l "no-install" -d "Do not install package"
+complete -c bun -n "__fish_seen_subcommand_from x" -l "verbose" -d "Show verbose output"
+complete -c bun -n "__fish_seen_subcommand_from x" -l "silent" -d "Silence output"
+complete -c bun -n "__fish_seen_subcommand_from x" -s "h" -l "help" -d "Print help" -x
+complete -c bun -n "__fish_seen_subcommand_from x" -l "cwd" -r -a '(__fish_complete_directories)' -d "Change working directory"
 
 complete -c bun -n "__fish_use_subcommand" -a "create" -f -d "Create a new project from a template"
 complete -c bun -n "__fish_use_subcommand" -a "build bun" --require-parameter -F -d "Transpile and bundle one or more files"
@@ -336,3 +356,14 @@ complete -c bun -n "__fish_seen_subcommand_from repl" -s "c" -l "config" -r -d "
 complete -c bun -n "__fish_seen_subcommand_from repl" -l "cwd" -r -a '(__fish_complete_directories)' -d "Absolute path to resolve files & entry points from"
 complete -c bun -n "__fish_seen_subcommand_from repl" -l "env-file" -r -d "Load environment variables from the specified file(s)"
 complete -c bun -n "__fish_seen_subcommand_from repl" -l "no-env-file" -d "Disable automatic loading of .env files" -f
+
+# Standalone bunx command completion
+complete -e -c bunx
+complete -c bunx -l "bun" -s "b" -d "Run with Bun runtime"
+complete -c bunx -l "package" -s "p" -r -d "Explicit package name"
+complete -c bunx -l "no-install" -d "Do not install package"
+complete -c bunx -l "verbose" -d "Show verbose output"
+complete -c bunx -l "silent" -d "Silence output"
+complete -c bunx -s "h" -l "help" -d "Print help" -x
+complete -c bunx -l "cwd" -r -a '(__fish_complete_directories)' -d "Change working directory"
+complete -c bunx -a "(__fish__get_bun_bins)" -d "package bin"

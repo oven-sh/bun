@@ -66,8 +66,7 @@ pub struct FileSink {
     /// while an async operation is pending. This is set when endFromJS returns a
     /// pending Promise and cleared when the operation completes.
     pub(crate) js_sink_ref: JsCell<bun_jsc::strong::Optional>,
-    /// Armed while a file this sink opened for a `Bun.ModuleGraph`'s script is open, and while
-    /// an ended sink drains (`close_with_vm`).
+    /// Armed for a file opened for a `Bun.ModuleGraph`'s script, and while an ended sink drains.
     abort_handle: bun_jsc::AbortHandle,
     /// `close_with_vm` armed `abort_handle`: only VM teardown closes this sink.
     closes_with_vm_only: Cell<bool>,
@@ -505,9 +504,7 @@ impl FileSink {
         }
     }
 
-    /// What `abort_handle` is armed with. Its handler can free this sink through the pointer, so
-    /// it is the allocation's own (`init`/`create*` gave it to the writer) and not one derived
-    /// from `&self`. Only a sink the JS constructor built has no such pointer.
+    /// The allocation's pointer (the handler frees through it); a JS-constructed sink has none.
     fn abort_owner(&self) -> *mut FileSink {
         let allocation = self.writer.get().parent;
         if allocation.is_null() {
@@ -517,16 +514,11 @@ impl FileSink {
         }
     }
 
-    /// This sink ended with bytes still buffered. From here only the writer's close releases the
-    /// keep-alive ref, and no JS cell may be left that reaches the sink (a controller detaches
-    /// before it ends it). A VM torn down before the drain never delivers that close, so its
-    /// stop phase closes the writer instead. Not on Windows: that phase closes every pipe on the
-    /// worker's loop there, and a file's buffered writes finish while the loop's requests drain.
+    /// Not on Windows: its teardown closes the pipes itself and still drains a file sink's writes.
     fn close_with_vm(&self) {
         #[cfg(not(windows))]
         {
             let Some(vm) = self.js_vm() else { return };
-            // Nothing unlinks a sink that joins once the sweeps have started.
             if vm.stop_phase_has_begun() || self.abort_handle.context_id().is_some() {
                 return;
             }
@@ -1633,12 +1625,11 @@ impl FileSink {
 }
 
 bun_jsc::impl_abort_handle_owner!(FileSink, abort_handle, |this, cause| {
-    // What is buffered is dropped with the graph or the VM: the writer closes without draining (a
-    // reader that never reads would keep it open for ever), and a parked write gives up its promise
-    // and the wrapper it pins, as when an attached process exits. `on_close` may free `this`.
-    // SAFETY: trait contract — `this` is live (armed ⇒ `on_close` has not run), and is the
-    // pointer `abort_owner` armed with: write+dealloc provenance for every sink but one the JS
-    // constructor built. The guard keeps it live across `close()` and `run_pending`.
+    // What is buffered is dropped with the graph: the writer closes without draining (a reader
+    // that never reads would keep it open for ever), and a parked write gives up its promise and
+    // the wrapper it pins, as when an attached process exits. `on_close` may free `this`.
+    // SAFETY: trait contract — `this` is live (armed ⇒ `on_close` has not run) and is what
+    // `abort_owner` armed with; the guard keeps it so across `close()` and `run_pending`.
     unsafe {
         // The realm `bun test --isolate` retired leaves its loop running, which drains the write.
         if (*this).closes_with_vm_only.replace(false)

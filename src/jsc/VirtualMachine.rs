@@ -345,8 +345,7 @@ pub struct VirtualMachine {
     /// When true, drainMicrotasksWithGlobal is suppressed. `Cell` for the same
     /// reason as [`Self::is_inside_deferred_task_queue`].
     pub(crate) suppress_microtask_drain: core::cell::Cell<bool>,
-    /// [`teardown`](Self::teardown) is about to run its first stop-phase sweep, or has: what joins
-    /// a context from here is not stopped. `Cell` and zero-valid as the two above.
+    /// Set before `teardown`'s first stop-phase sweep: what joins a context later is not stopped.
     stop_phase_begun: core::cell::Cell<bool>,
 
     pub channel_ref: Async::KeepAlive,
@@ -1712,9 +1711,7 @@ impl VirtualMachine {
         self.is_shutting_down
     }
 
-    /// An owner that joins a context only so that teardown stops it asks this first: once the
-    /// sweeps have started nothing would unlink it. `script_allowed()` is no substitute, because a
-    /// parent's `terminate()` forbids script from its own thread long before this thread's sweep.
+    /// Not `!script_allowed()`: a parent's `terminate()` clears that from its own thread, earlier.
     pub fn stop_phase_has_begun(&self) -> bool {
         self.stop_phase_begun.get()
     }

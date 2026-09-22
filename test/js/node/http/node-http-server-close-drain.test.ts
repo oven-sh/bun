@@ -268,6 +268,101 @@ test.each([
   },
 );
 
+// The head of the next request has started to arrive. Node.js counts that
+// connection as busy, and the request gets its response.
+test.each([
+  "the body of the first request ends in the read that starts the second head",
+  "the first response ends after the second head started",
+])("server.close() does not reap a connection that holds a partial request head: %s", async route => {
+  const bodyFirst = route.startsWith("the body");
+  const firstDispatched = Promise.withResolvers<void>();
+  const firstBodyEnded = Promise.withResolvers<void>();
+  let endFirst = () => {};
+  const server = createServer((req, res) => {
+    if (req.url === "/first") {
+      req.on("end", () => firstBodyEnded.resolve());
+      req.resume();
+      if (bodyFirst) res.end("early");
+      else endFirst = () => res.end("early");
+      firstDispatched.resolve();
+      return;
+    }
+    res.end("second response");
+  });
+  server.keepAliveTimeout = 60000;
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const socket = connect(port, "127.0.0.1");
+  try {
+    await once(socket, "connect");
+    let response = "";
+    socket.on("data", chunk => (response += chunk));
+    socket.on("error", () => {});
+    const socketClosed = once(socket, "close");
+    const partialHead = "GET /second HTTP/1.1\r\nHo";
+    if (bodyFirst) {
+      socket.write("POST /first HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\n01234");
+      while (!response.includes("early")) await once(socket, "data");
+      socket.write("56789" + partialHead);
+      await firstBodyEnded.promise;
+    } else {
+      socket.write("GET /first HTTP/1.1\r\nHost: x\r\n\r\n" + partialHead);
+      await firstDispatched.promise;
+      await new Promise<void>(r => setImmediate(r));
+      endFirst();
+      while (!response.includes("early")) await once(socket, "data");
+    }
+    await new Promise<void>(r => setImmediate(r));
+    server.close();
+    socket.write("st: x\r\nConnection: close\r\n\r\n");
+    await socketClosed;
+    expect(response.slice(-"second response".length)).toBe("second response");
+  } finally {
+    socket.destroy();
+    server.closeAllConnections();
+  }
+});
+
+// The handler still runs when it calls close(), so Node.js counts its
+// connection as busy. A response that the socket did not take whole must not
+// be cut off.
+test("server.close() in the handler of a response that still drains does not cut the response off", async () => {
+  // More than a loopback socket takes in one write.
+  const size = 64 * 1024 * 1024;
+  const closed = Promise.withResolvers<void>();
+  const server = createServer((req, res) => {
+    res.end(Buffer.alloc(size, "a"));
+    server.close(() => closed.resolve());
+  });
+  server.keepAliveTimeout = 60000;
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const socket = connect(port, "127.0.0.1");
+  try {
+    await once(socket, "connect");
+    let received = 0;
+    const done = Promise.withResolvers<void>();
+    socket.on("data", chunk => {
+      received += chunk.length;
+      if (received > size) done.resolve();
+    });
+    socket.on("error", () => {});
+    socket.on("close", () => done.resolve());
+    socket.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+    await done.promise;
+    expect(received).toBeGreaterThan(size);
+    socket.destroy();
+    await closed.promise;
+  } finally {
+    socket.destroy();
+    server.closeAllConnections();
+  }
+});
+
 // The bytes of the first response still drain when one read brings the next
 // request. That request waits behind the unsent bytes, so the connection is
 // not idle, also when the same read completed the body of the first request.

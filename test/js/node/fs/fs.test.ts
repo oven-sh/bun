@@ -3299,6 +3299,21 @@ it.skipIf(!isMacOS)(
   },
 );
 
+// /dev/fd/N is not a link of the file, so there is no path to walk and F_GETPATH names the file.
+it.skipIf(!isMacOS)("realpath of /dev/fd/N names the hard-linked file that the descriptor has open", () => {
+  using dir = tempDir("fs-realpath-hardlink-dev-fd", { "original.txt": "hard link" });
+  const root = realpathSync(String(dir));
+  const original = join(root, "original.txt");
+  const link = join(root, "link.txt");
+  fs.linkSync(original, link);
+  const fd = openSync(link, "r");
+  try {
+    expect([original, link]).toContain(realpathSync(`/dev/fd/${fd}`));
+  } finally {
+    closeSync(fd);
+  }
+});
+
 it("readlink", () => {
   const actual = join(tmpdirSync(), "fs-readlink.txt");
   try {

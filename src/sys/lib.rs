@@ -7596,26 +7596,42 @@ pub fn get_fd_path_opened_from<'a>(
 ) -> Maybe<&'a mut [u8]> {
     #[cfg(target_os = "macos")]
     {
-        let is_hard_linked_file = |st: &Stat| st.st_nlink > 1 && !S::ISDIR(st.st_mode as _);
         let len = get_fd_path(fd, out)?.len();
         // `F_GETPATH` names a hard-linked file by the link that any process looked up last.
-        let ambiguous = out.0[..len] != *path
-            && match stat {
-                Some(st) => is_hard_linked_file(st),
-                None => fstat(fd).is_ok_and(|st| is_hard_linked_file(&st)),
-            };
-        if !ambiguous || path.len() >= out.0.len() {
+        if out.0[..len] == *path || path.len() >= out.0.len() {
             return Ok(&mut out.0[..len]);
         }
-        let mut path_z = bun_paths::path_buffer_pool::get();
-        path_z.0[..path.len()].copy_from_slice(path);
-        path_z.0[path.len()] = 0;
+        let file = match stat {
+            Some(st) => *st,
+            None => match fstat(fd) {
+                Ok(st) => st,
+                Err(_) => return Ok(&mut out.0[..len]),
+            },
+        };
+        if file.st_nlink <= 1 || S::ISDIR(file.st_mode as _) {
+            return Ok(&mut out.0[..len]);
+        }
+        let mut scratch = bun_paths::path_buffer_pool::get();
+        let is_same_entry = file_name(&out.0[..len]) == file_name(path)
+            && matches!(
+                (stat_directory_of(&out.0[..len], &mut scratch), stat_directory_of(path, &mut scratch)),
+                (Some(a), Some(b)) if a.st_dev == b.st_dev && a.st_ino == b.st_ino
+            );
+        if is_same_entry {
+            return Ok(&mut out.0[..len]);
+        }
+        scratch.0[..path.len()].copy_from_slice(path);
+        scratch.0[path.len()] = 0;
         // realpath(3) walks `path`, so it names the link that was opened.
-        if let Ok(walked) = realpath(ZStr::from_buf(&path_z.0[..], path.len()), out) {
+        if let Ok(walked) = realpath(ZStr::from_buf(&scratch.0[..], path.len()), out) {
             let len = walked.len();
-            return Ok(&mut out.0[..len]);
+            // A hard link is on the device of its file. `/dev/fd/N` is not.
+            if stat_directory_of(&out.0[..len], &mut scratch)
+                .is_some_and(|dir| dir.st_dev == file.st_dev)
+            {
+                return Ok(&mut out.0[..len]);
+            }
         }
-        // realpath(3) left the component that it failed on in `out`.
         return get_fd_path(fd, out);
     }
     #[cfg(not(target_os = "macos"))]
@@ -7623,6 +7639,23 @@ pub fn get_fd_path_opened_from<'a>(
         let _ = (path, stat);
         get_fd_path(fd, out)
     }
+}
+
+#[cfg(target_os = "macos")]
+fn file_name(path: &[u8]) -> &[u8] {
+    &path[bun_core::strings::last_index_of_char(path, b'/').map_or(0, |i| i + 1)..]
+}
+
+#[cfg(target_os = "macos")]
+fn stat_directory_of(path: &[u8], scratch: &mut bun_paths::PathBuffer) -> Option<Stat> {
+    let directory: &[u8] = match path.len() - file_name(path).len() {
+        0 => b".",
+        1 => b"/",
+        n => &path[..n - 1],
+    };
+    scratch.0[..directory.len()].copy_from_slice(directory);
+    scratch.0[directory.len()] = 0;
+    stat(ZStr::from_buf(&scratch.0[..], directory.len())).ok()
 }
 
 /// fd → absolute wide path (Windows `GetFinalPathNameByHandleW`).

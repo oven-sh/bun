@@ -17,6 +17,7 @@ class GlobalObject;
 
 namespace JSC {
 class JSLexicalEnvironment;
+class JSScriptExecutionOwnerEnvironment;
 class JSPromise;
 class ThrowScope;
 }
@@ -42,7 +43,7 @@ public:
     DECLARE_VISIT_CHILDREN;
 
     JSC::JSModuleLoader* loader() const { return m_loader.get(); }
-    JSC::JSLexicalEnvironment* overlay() const;
+    JSC::JSScriptExecutionOwnerEnvironment* overlay() const;
     // Which shape the overlay has: one number per `globals` name set, never 0 and never reused.
     // Code compiled under one shape must not be shared with another, or with the host
     // (see commonJSSourceForGraph).

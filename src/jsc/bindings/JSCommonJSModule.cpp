@@ -40,6 +40,7 @@
 #include "JavaScriptCore/SourceCode.h"
 #include "headers-handwritten.h"
 #include "ZigGlobalObject.h"
+#include <JavaScriptCore/JSScriptExecutionOwnerEnvironment.h>
 #include <JavaScriptCore/JSSourceCode.h>
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/ObjectConstructor.h>

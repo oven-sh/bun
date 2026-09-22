@@ -127,7 +127,6 @@ using namespace JSC;
     macro(min) \
     macro(mockedFunction) \
     macro(mode) \
-    macro(moduleGraph) \
     macro(mtimeMs) \
     macro(napiDlopenHandle) \
     macro(napiWrappedContents) \

@@ -20,6 +20,7 @@
 #include <JavaScriptCore/JSLexicalEnvironmentInlines.h>
 #include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/JSPromise.h>
+#include <JavaScriptCore/JSScriptExecutionOwnerEnvironment.h>
 #include <JavaScriptCore/LazyClassStructureInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/PropertyNameArray.h>
@@ -35,22 +36,22 @@ using namespace JSC;
 //
 // A lexical environment over the global lexical environment: the module scope of the graph's
 // loader, and the scope the wrappers of its CommonJS modules close over. It holds the host's
-// `globals`, @moduleLoader (what import() compiles to a lookup of) and @moduleGraph (the
-// graph, which is how code scoped to the overlay is attributed to it and keeps it alive).
-// Graphs whose `globals` have the same names share one SymbolTable, which is what JSC keys
-// shared module executables on.
+// `globals` and @moduleLoader (what import() compiles to a lookup of). It is a
+// JSScriptExecutionOwnerEnvironment: the script made under it belongs to it, so a function of the
+// graph's runs in the graph's context whoever calls it (JavaScriptCore's op_enter,
+// CodeBlock::scriptExecutionOwnerDepth()), the overlay is what is current while it does, and the
+// graph is the object the overlay keeps (which is how code scoped to the overlay is attributed to
+// the graph and keeps it alive). Graphs whose `globals` have the same names share one SymbolTable,
+// which is what JSC keys shared module executables on.
 
-static Identifier moduleGraphSlotName(VM& vm) { return WebCore::builtinNames(vm).moduleGraphPrivateName(); }
 static Identifier moduleLoaderSlotName(VM& vm) { return vm.propertyNames->builtinNames().moduleLoaderPrivateName(); }
 
 // The graph whose overlay `scope` is, or null.
-static JSModuleGraph* moduleGraphOfOverlay(VM& vm, JSScope* scope)
+static JSModuleGraph* moduleGraphOfOverlay(JSCell* scope)
 {
-    auto* environment = dynamicDowncast<JSLexicalEnvironment>(scope);
-    if (!environment)
-        return nullptr;
-    auto entry = environment->symbolTable()->get(moduleGraphSlotName(vm).impl());
-    return entry.isNull() ? nullptr : dynamicDowncast<JSModuleGraph>(environment->variableAt(entry.scopeOffset()).get());
+    auto* overlay = dynamicDowncast<JSScriptExecutionOwnerEnvironment>(scope);
+    JSCell* graph = overlay ? overlay->embedderObject() : nullptr;
+    return graph ? dynamicDowncast<JSModuleGraph>(graph) : nullptr;
 }
 
 static ModuleGraphState& moduleGraphState(Zig::GlobalObject* globalObject)
@@ -81,11 +82,6 @@ static SymbolTable* overlaySymbolTable(Zig::GlobalObject* globalObject, const Ve
     for (auto& name : sortedNames)
         add(name);
     add(moduleLoaderSlotName(vm));
-    add(moduleGraphSlotName(vm));
-    // The script made under this scope belongs to it: a function of the graph's runs in the graph's context whoever
-    // calls it (JavaScriptCore's op_enter, CodeBlock::scriptExecutionOwnerDepth()), and the scope is what is current while
-    // it does.
-    symbolTable->setIsScriptExecutionOwner(true);
     symbolTables.set(key, symbolTable);
     return symbolTable;
 }
@@ -124,7 +120,7 @@ static JSModuleLoader* createModuleGraphLoader(Zig::GlobalObject* globalObject, 
         std::sort(names.begin(), names.end(), [](const Identifier& a, const Identifier& b) { return codePointCompare(a.string(), b.string()) < 0; });
     }
     SymbolTable* symbolTable = overlaySymbolTable(globalObject, names, overlayShape);
-    JSLexicalEnvironment* overlay = JSLexicalEnvironment::create(vm, globalObject, globalObject->globalLexicalEnvironment(), symbolTable, jsUndefined());
+    auto* overlay = JSScriptExecutionOwnerEnvironment::create(vm, globalObject, globalObject->globalLexicalEnvironment(), symbolTable, jsUndefined());
     for (auto& name : names) {
         JSValue value = globals->get(globalObject, name);
         RETURN_IF_EXCEPTION(scope, nullptr);
@@ -141,7 +137,7 @@ JSModuleGraph* moduleGraphOfLoader(JSGlobalObject* globalObject, JSModuleLoader*
 {
     if (!loader || loader == globalObject->moduleLoader())
         return nullptr;
-    return moduleGraphOfOverlay(globalObject->vm(), loader->moduleScope());
+    return moduleGraphOfOverlay(loader->moduleScope());
 }
 
 JSMap* requireMapOf(Zig::GlobalObject* globalObject, JSModuleGraph* graph)
@@ -252,20 +248,20 @@ extern "C" bool Bun__ModuleGraph__handleUncaughtException(JSGlobalObject* lexica
 
 // The script execution owner is a graph's overlay: the scope the graph's script is made under, which is what the
 // engine compares a function's scope chain with when it is called.
-static JSModuleGraph* moduleGraphOfScriptExecutionOwner(VM& vm, JSValue owner)
+static JSModuleGraph* moduleGraphOfScriptExecutionOwner(JSValue owner)
 {
-    return owner.isCell() ? moduleGraphOfOverlay(vm, dynamicDowncast<JSScope>(owner.asCell())) : nullptr;
+    return owner.isCell() ? moduleGraphOfOverlay(owner.asCell()) : nullptr;
 }
 
 JSModuleGraph* currentModuleGraph(Zig::GlobalObject* globalObject)
 {
-    return moduleGraphOfScriptExecutionOwner(globalObject->vm(), globalObject->m_asyncContextData->getInternalField(1));
+    return moduleGraphOfScriptExecutionOwner(globalObject->m_asyncContextData->getInternalField(1));
 }
 
 JSModuleGraph* moduleGraphOfCapturedContext(JSValue captured)
 {
     JSValue owner = AsyncContextSwapScope::scriptExecutionOwnerOf(captured);
-    return owner.isCell() ? moduleGraphOfScriptExecutionOwner(owner.asCell()->vm(), owner) : nullptr;
+    return moduleGraphOfScriptExecutionOwner(owner);
 }
 
 // VirtualMachine::current_context (only asked once a graph has been made).
@@ -279,7 +275,7 @@ extern "C" void* Bun__currentGraphContext(JSGlobalObject* globalObject)
 // for the current one: its script execution owner.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsDisposedModuleGraph, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    auto* graph = moduleGraphOfScriptExecutionOwner(globalObject->vm(), callFrame->argument(0));
+    auto* graph = moduleGraphOfScriptExecutionOwner(callFrame->argument(0));
     return JSValue::encode(jsBoolean(graph && graph->disposed()));
 }
 
@@ -436,7 +432,7 @@ void JSModuleGraph::finishCreation(VM& vm, JSGlobalObject* globalObject)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
     m_requireMap.set(vm, this, JSMap::create(vm, globalObject->mapStructure()));
-    setOverlaySlot(vm, overlay(), moduleGraphSlotName(vm), this);
+    overlay()->setEmbedderObject(vm, this);
     m_context->setModuleGraph(this);
     // The graph's context travels with the async context: the top-level code of the graph's
     // modules runs in it however their evaluation is reached.
@@ -444,9 +440,9 @@ void JSModuleGraph::finishCreation(VM& vm, JSGlobalObject* globalObject)
     m_loader->setAsyncContext(vm, AsyncContextSwapScope::captured(vm, globalObject, jsUndefined(), overlay()));
 }
 
-JSLexicalEnvironment* JSModuleGraph::overlay() const
+JSScriptExecutionOwnerEnvironment* JSModuleGraph::overlay() const
 {
-    return uncheckedDowncast<JSLexicalEnvironment>(m_loader->moduleScope());
+    return uncheckedDowncast<JSScriptExecutionOwnerEnvironment>(m_loader->moduleScope());
 }
 
 template<typename Visitor>

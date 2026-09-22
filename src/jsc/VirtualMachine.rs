@@ -345,6 +345,9 @@ pub struct VirtualMachine {
     /// When true, drainMicrotasksWithGlobal is suppressed. `Cell` for the same
     /// reason as [`Self::is_inside_deferred_task_queue`].
     pub(crate) suppress_microtask_drain: core::cell::Cell<bool>,
+    /// [`teardown`](Self::teardown) is about to run its first stop-phase sweep, or has: what joins
+    /// a context from here is not stopped. `Cell` and zero-valid as the two above.
+    stop_phase_begun: core::cell::Cell<bool>,
 
     pub channel_ref: Async::KeepAlive,
     pub channel_ref_overridden: bool,
@@ -1709,6 +1712,13 @@ impl VirtualMachine {
         self.is_shutting_down
     }
 
+    /// An owner that joins a context only so that teardown stops it asks this first: once the
+    /// sweeps have started nothing would unlink it. `script_allowed()` is no substitute, because a
+    /// parent's `terminate()` forbids script from its own thread long before this thread's sweep.
+    pub fn stop_phase_has_begun(&self) -> bool {
+        self.stop_phase_begun.get()
+    }
+
     pub fn has_run_cleanup_hooks(&self) -> bool {
         self.has_run_cleanup_hooks
     }
@@ -2398,6 +2408,7 @@ impl VirtualMachine {
                 "a native close path registered a stoppable resource during teardown"
             );
         };
+        vm.stop_phase_begun.set(true);
         sweep();
         // A worker closes its uv loop below (D), so requests still in flight
         // complete here, against this live VM: their handles were just closed,

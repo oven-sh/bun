@@ -501,9 +501,19 @@ impl FileSink {
     pub(crate) fn close_with_graph(&self, context: &bun_jsc::ScriptExecutionContext) {
         if let Some(context) = self.js_vm().and_then(|vm| vm.as_graph_context(context)) {
             // SAFETY: a started sink is heap-allocated; it leaves its context in `on_close`.
-            unsafe {
-                bun_jsc::AbortHandle::arm_owner(core::ptr::from_ref(self).cast_mut(), context);
-            }
+            unsafe { bun_jsc::AbortHandle::arm_owner(self.abort_owner(), context) };
+        }
+    }
+
+    /// What `abort_handle` is armed with. Its handler can free this sink through the pointer, so
+    /// it is the allocation's own (`init`/`create*` gave it to the writer) and not one derived
+    /// from `&self`. Only a sink the JS constructor built has no such pointer.
+    fn abort_owner(&self) -> *mut FileSink {
+        let allocation = self.writer.get().parent;
+        if allocation.is_null() {
+            core::ptr::from_ref(self).cast_mut()
+        } else {
+            allocation
         }
     }
 
@@ -516,21 +526,12 @@ impl FileSink {
         #[cfg(not(windows))]
         {
             let Some(vm) = self.js_vm() else { return };
-            // The stop phase is still to come while this thread has not begun its shutdown, or
-            // while script may run (teardown forbids it before its first sweep). A parent's
-            // `terminate()` forbids script from its own thread at once, so that alone proves
-            // nothing. Past both, the sweeps can be over and nothing would unlink this sink.
-            let stop_phase_is_to_come = !vm.is_shutting_down() || vm.script_allowed();
-            if !stop_phase_is_to_come || self.abort_handle.context_id().is_some() {
+            // Nothing unlinks a sink that joins once the sweeps have started.
+            if vm.stop_phase_has_begun() || self.abort_handle.context_id().is_some() {
                 return;
             }
             // SAFETY: as in `close_with_graph`.
-            unsafe {
-                bun_jsc::AbortHandle::arm_owner(
-                    core::ptr::from_ref(self).cast_mut(),
-                    vm.root_context(),
-                );
-            }
+            unsafe { bun_jsc::AbortHandle::arm_owner(self.abort_owner(), vm.root_context()) };
             self.closes_with_vm_only.set(true);
         }
     }
@@ -1635,8 +1636,9 @@ bun_jsc::impl_abort_handle_owner!(FileSink, abort_handle, |this, cause| {
     // What is buffered is dropped with the graph or the VM: the writer closes without draining (a
     // reader that never reads would keep it open for ever), and a parked write gives up its promise
     // and the wrapper it pins, as when an attached process exits. `on_close` may free `this`.
-    // SAFETY: trait contract — `this` is live (armed ⇒ `on_close` has not run) with
-    // write+dealloc provenance; the guard keeps it so across `close()` and `run_pending`.
+    // SAFETY: trait contract — `this` is live (armed ⇒ `on_close` has not run), and is the
+    // pointer `abort_owner` armed with: write+dealloc provenance for every sink but one the JS
+    // constructor built. The guard keeps it live across `close()` and `run_pending`.
     unsafe {
         // The realm `bun test --isolate` retired leaves its loop running, which drains the write.
         if (*this).closes_with_vm_only.replace(false)

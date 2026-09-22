@@ -81,7 +81,7 @@ it("can use the console iterator more than once", async () => {
 // stream must ref it again, or the process exits with code 0 while a read is
 // still pending. No top-level await in the child: it would keep the loop alive
 // and hide the bug.
-describe("a later stdin consumer keeps the process alive after the reader is released", () => {
+describe.concurrent("a later stdin consumer keeps the process alive after the reader is released", () => {
   const afterConsoleBreak = `
     (async () => {
       for await (const line of console) {

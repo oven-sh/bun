@@ -66,6 +66,8 @@ pub struct FileReader {
     /// path; `pull_into_sink` is the drain-ack resume.
     pub(crate) sink: JsCell<SinkHandle>,
     pub(crate) sink_paused: Cell<bool>,
+    /// A reader release took a held event-loop ref away; the next reader lock gives it back. An explicit `updateRef` cancels that.
+    pub(crate) ref_dropped_on_release: Cell<bool>,
 }
 
 impl Default for FileReader {
@@ -90,6 +92,7 @@ impl Default for FileReader {
             flowing: Cell::new(true),
             sink: JsCell::new(SinkHandle::None),
             sink_paused: Cell::new(false),
+            ref_dropped_on_release: Cell::new(false),
         }
     }
 }
@@ -899,12 +902,25 @@ impl FileReader {
         Vec::<u8>::move_from_list(mem::take(self.reader().buffer()))
     }
 
-    /// Returns the previous ref state. A finished reader has none.
-    pub(crate) fn set_ref_or_unref(&self, enable: bool) -> bool {
+    pub(crate) fn set_ref_or_unref(&self, enable: bool) {
         if self.done.get() {
-            return false;
+            return;
         }
-        self.reader().update_ref(enable)
+        self.ref_dropped_on_release.set(false);
+        self.reader().update_ref(enable);
+    }
+
+    /// A reader locked (`true`) or released (`false`) the stream over this source. A released source does not keep the event loop alive.
+    pub(crate) fn set_reader_locked(&self, locked: bool) {
+        if self.done.get() {
+            return;
+        }
+        if !locked {
+            let was_ref = self.reader().update_ref(false);
+            self.ref_dropped_on_release.set(was_ref);
+        } else if self.ref_dropped_on_release.replace(false) {
+            self.reader().update_ref(true);
+        }
     }
 
     fn consume_reader_buffer(&self) {
@@ -1069,6 +1085,14 @@ impl FileReader {
 
 pub(crate) type Source = readable_stream::NewSource<FileReader>;
 
+/// `readableStreamReaderGenericInitialize` / `readableStreamReaderGenericRelease` (C++): a reader locked or released the stream over this source.
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub(crate) extern "C" fn FileReader__setReaderLocked(source: *mut Source, locked: bool) {
+    // SAFETY: `source` is the live `Source` that the stream's native handle wraps.
+    unsafe { (*source).context.set_reader_locked(locked) };
+}
+
 /// Holds a ref on the `Source` that embeds a `FileReader` while a dispatch runs
 /// user JS. Dropping it releases the ref and can free the source, so a pin must
 /// outlive every use of the reader it protects.
@@ -1125,7 +1149,7 @@ impl readable_stream::SourceContext for FileReader {
     fn finalize_detach(&mut self) -> bool {
         Self::finalize_detach(self)
     }
-    fn set_ref_unref(&mut self, e: bool) -> bool {
+    fn set_ref_unref(&mut self, e: bool) {
         Self::set_ref_or_unref(self, e)
     }
     fn drain_internal_buffer(&mut self) -> Vec<u8> {

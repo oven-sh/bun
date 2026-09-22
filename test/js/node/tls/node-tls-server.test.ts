@@ -2669,50 +2669,52 @@ describe.skipIf(isWindows)("TLS socket over a net.Socket whose peer resets behin
 
   // Like a net write, the send that fails on the reset fails the write. After the peer's FIN the
   // errno is EPIPE. Without it: ECONNRESET on Linux, EPIPE on the BSDs.
-  it.each([
+  describe.each([
     { peer: "resets", endFirst: false, code: isLinux ? "ECONNRESET" : "EPIPE" },
     { peer: "ends and then resets", endFirst: true, code: "EPIPE" },
-  ])("new TLSSocket(socket, { isServer }) fails a write after its peer $peer", async ({ endFirst, code }) => {
-    const accepted = Promise.withResolvers<TLSSocket>();
-    const server = net.createServer(conn => {
-      conn.on("error", () => {});
-      const socket = new TLSSocket(conn, { isServer: true, ...COMMON_CERT });
-      socket.pause();
-      accepted.resolve(socket);
-    });
-    await once(server.listen(0, "127.0.0.1"), "listening");
-    const peerReady = Promise.withResolvers<void>();
-    const peerClosed = Promise.withResolvers<void>();
-    const peer = await Bun.connect({
-      hostname: "127.0.0.1",
-      port: (server.address() as AddressInfo).port,
-      tls: { ca: COMMON_CERT.cert },
-      socket: {
-        handshake: (_peer, success, verifyError) =>
-          success ? peerReady.resolve() : peerReady.reject(verifyError ?? new Error("handshake failed")),
-        data() {},
-        close: () => peerClosed.resolve(),
-        error: (_peer, error) => peerReady.reject(error),
-        connectError: (_peer, error) => peerReady.reject(error),
-      },
-    });
-    const socket = await accepted.promise;
-    const { events, closed } = watchSocket(socket);
-    try {
-      await peerReady.promise;
-      await fillThenReset(socket, peer, peerClosed.promise, endFirst);
-      expect(events).toEqual([]);
-      const written = Promise.withResolvers<string>();
-      socket.write("late", (error?: NodeJS.ErrnoException | null) => {
-        written.resolve(error ? `${error.code} ${error.syscall}` : "ok");
+  ])("new TLSSocket(socket, { isServer }) whose peer $peer", ({ endFirst, code }) => {
+    it("fails a write with the errno of its send", async () => {
+      const accepted = Promise.withResolvers<TLSSocket>();
+      const server = net.createServer(conn => {
+        conn.on("error", () => {});
+        const socket = new TLSSocket(conn, { isServer: true, ...COMMON_CERT });
+        socket.pause();
+        accepted.resolve(socket);
       });
-      expect(await written.promise).toBe(`${code} write`);
-      await closed;
-      expect(events).toEqual([`error ${code}`, "close hadError=true"]);
-    } finally {
-      socket.destroy();
-      server.close();
-    }
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const peerReady = Promise.withResolvers<void>();
+      const peerClosed = Promise.withResolvers<void>();
+      const peer = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: (server.address() as AddressInfo).port,
+        tls: { ca: COMMON_CERT.cert },
+        socket: {
+          handshake: (_peer, success, verifyError) =>
+            success ? peerReady.resolve() : peerReady.reject(verifyError ?? new Error("handshake failed")),
+          data() {},
+          close: () => peerClosed.resolve(),
+          error: (_peer, error) => peerReady.reject(error),
+          connectError: (_peer, error) => peerReady.reject(error),
+        },
+      });
+      const socket = await accepted.promise;
+      const { events, closed } = watchSocket(socket);
+      try {
+        await peerReady.promise;
+        await fillThenReset(socket, peer, peerClosed.promise, endFirst);
+        expect(events).toEqual([]);
+        const written = Promise.withResolvers<string>();
+        socket.write("late", (error?: NodeJS.ErrnoException | null) => {
+          written.resolve(error ? `${error.code} ${error.syscall}` : "ok");
+        });
+        expect(await written.promise).toBe(`${code} write`);
+        await closed;
+        expect(events).toEqual([`error ${code}`, "close hadError=true"]);
+      } finally {
+        socket.destroy();
+        server.close();
+      }
+    });
   });
 });
 

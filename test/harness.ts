@@ -11,7 +11,7 @@ import { heapStats } from "bun:jsc";
 import { beforeAll, describe, expect } from "bun:test";
 import { ChildProcess, execSync, fork } from "child_process";
 import { readdir, rm, writeFile } from "fs/promises";
-import fs, { closeSync, openSync, rmSync } from "node:fs";
+import fs, { closeSync, openSync, readSync, rmSync } from "node:fs";
 import os from "node:os";
 import { dirname, isAbsolute, join } from "path";
 
@@ -2276,7 +2276,28 @@ export function getPuppeteerInstallEnv(): Record<string, string> {
   return { PUPPETEER_CACHE_DIR: tmpdirSync("puppeteer-cache") };
 }
 
+/**
+ * Reads `files` through once, front to back, and keeps none of it. The first C
+ * compile on a fresh Windows CI VM otherwise demand-pages the toolchain in from
+ * the cloud disk one fault at a time: 7s for a 100 MB compiler on an Azure VM,
+ * against a second to read it through, after which the faults hit the disk's
+ * cache. Files that do not exist are skipped.
+ */
+export function primeToolchain(files: string[]) {
+  const buffer = Buffer.allocUnsafe(4 << 20);
+  for (const file of files) {
+    if (!fs.existsSync(file)) continue;
+    const fd = openSync(file, "r");
+    try {
+      while (readSync(fd, buffer, 0, buffer.length, null) > 0);
+    } finally {
+      closeSync(fd);
+    }
+  }
+}
+
 const compiledFixtures = new Map<string, string>();
+let primedFixtureCompiler = false;
 export function compileFixture(sourcePath: string, options: { flags?: string[] } = {}): string {
   const cacheKey = sourcePath + "\0" + (options.flags ?? []).join("\0");
   const cached = compiledFixtures.get(cacheKey);
@@ -2290,6 +2311,17 @@ export function compileFixture(sourcePath: string, options: { flags?: string[] }
 
   const cc = which("cc") || which("clang") || which("gcc");
   if (!cc) throw new Error("compileFixture: no C compiler (cc/clang/gcc) found in $PATH");
+  if (isWindows && !primedFixtureCompiler) {
+    // gcc runs these as separate programs, and cc1 is most of the bytes. clang
+    // is one binary: it answers with the bare names, which do not exist.
+    const programs = ["cc1", "as", "collect2", "ld"].map(name =>
+      spawnSync({ cmd: [cc, `-print-prog-name=${name}`], stdout: "pipe", stderr: "ignore", env: bunEnv })
+        .stdout.toString()
+        .trim(),
+    );
+    primeToolchain([cc, ...programs]);
+    primedFixtureCompiler = true;
+  }
 
   const cmd = isWindows
     ? [cc, sourcePath, "-shared", "-o", outPath, ...(options.flags ?? [])]

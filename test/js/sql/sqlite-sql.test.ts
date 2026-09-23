@@ -968,6 +968,34 @@ describe("Query Execution", () => {
 
     expect(await settle(query)).toEqual({ code, message: "Query cancelled" });
   });
+
+  // Transaction queries use their own Query handler. Each test owns its database,
+  // because a transaction that hangs keeps its connection.
+  test("cancel() before the query runs rejects inside a transaction", async () => {
+    await using db = new SQL(":memory:");
+    const result = await db.begin(async tx => {
+      const query = tx`SELECT 1 AS x`;
+      query.cancel();
+      const outcome = await settle(query);
+      // The transaction stays usable.
+      return [outcome, await tx`SELECT 2 AS x`];
+    });
+
+    expect(result).toEqual([{ code: "ERR_SQLITE_QUERY_CANCELLED", message: "Query cancelled" }, [{ x: 2 }]]);
+  });
+
+  test("a transaction that returns a query cancelled before it runs rolls back", async () => {
+    await using db = new SQL(":memory:");
+    await db`CREATE TABLE cancel_in_transaction (id INTEGER)`;
+    const transaction = db.begin(tx => {
+      const cancelled = tx`SELECT 1 AS x`;
+      cancelled.cancel();
+      return [tx`INSERT INTO cancel_in_transaction VALUES (1)`, cancelled];
+    });
+
+    expect(await settle(transaction)).toEqual({ code: "ERR_SQLITE_QUERY_CANCELLED", message: "Query cancelled" });
+    expect(await db`SELECT count(*) AS n FROM cancel_in_transaction`).toEqual([{ n: 0 }]);
+  });
 });
 
 // Bun's bundled SQLite allows 250000 parameters. A system libsqlite3 (macOS) can stop at 32766.

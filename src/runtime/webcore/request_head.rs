@@ -38,10 +38,12 @@ impl RequestHeadSnapshot {
         Self(ptr)
     }
 
-    /// Parses the copy with uWS again and lends the request to `f`.
+    /// Parses the copy with uWS again and lends the request to `f`. `f` must not come back here.
     pub(crate) fn with_request<R>(&self, f: impl FnOnce(&UwsRequest) -> R) -> Option<R> {
-        // SAFETY: `capture` laid out `len()` head bytes and the padding after the prefix.
-        unsafe { UwsRequest::with_raw_head(self.0.as_ptr().add(LEN_PREFIX), self.len(), f) }
+        let len = self.len() + UwsRequest::RAW_HEAD_POST_PADDING;
+        // SAFETY: `capture` laid these bytes out after the prefix, and only this call borrows them.
+        let copy = unsafe { core::slice::from_raw_parts_mut(self.0.as_ptr().add(LEN_PREFIX), len) };
+        UwsRequest::with_raw_head_copy(copy, f)
     }
 
     pub(crate) fn memory_cost(&self) -> usize {

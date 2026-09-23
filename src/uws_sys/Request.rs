@@ -99,18 +99,12 @@ impl Request {
         unsafe { bun_core::ffi::slice(ptr, len) }
     }
 
-    /// Writable bytes uWS needs after a copy of [`Self::raw_head`] to parse it again.
+    /// Spare bytes uWS needs after a copy of [`Self::raw_head`] to parse it again.
     pub const RAW_HEAD_POST_PADDING: usize = 32;
 
-    /// Parses a copy of [`Self::raw_head`] and lends the result to `f`. `None` if uWS rejects the copy.
-    ///
-    /// # Safety
-    /// `head` points at `len` copied bytes followed by [`Self::RAW_HEAD_POST_PADDING`] writable bytes.
-    pub unsafe fn with_raw_head<R, F: FnOnce(&Request) -> R>(
-        head: *mut u8,
-        len: usize,
-        f: F,
-    ) -> Option<R> {
+    /// Lends `f` the request uWS parses from `copy`: a [`Self::raw_head`], then the spare bytes.
+    pub fn with_raw_head_copy<R, F: FnOnce(&Request) -> R>(copy: &mut [u8], f: F) -> Option<R> {
+        let len = copy.len().checked_sub(Self::RAW_HEAD_POST_PADDING)?;
         struct Call<R, F> {
             f: Option<F>,
             result: Option<R>,
@@ -126,9 +120,14 @@ impl Request {
             f: Some(f),
             result: None,
         };
-        // SAFETY: `head` per the caller's contract; `call` outlives the synchronous callback.
+        // SAFETY: uWS reads and fences only inside `copy`; `call` outlives the synchronous callback.
         unsafe {
-            c::uws_req_with_raw_head(head, len, (&raw mut call).cast::<c_void>(), handle::<R, F>)
+            c::uws_req_with_raw_head(
+                copy.as_mut_ptr(),
+                len,
+                (&raw mut call).cast::<c_void>(),
+                handle::<R, F>,
+            )
         };
         call.result
     }

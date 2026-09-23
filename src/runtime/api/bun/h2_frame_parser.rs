@@ -1075,10 +1075,7 @@ pub(crate) struct H2FrameParser {
     // local Window limits the download of data
     // current window size for the connection (what setLocalWindowSize asked for)
     window_size: Cell<u64>,
-    /// The engine's connection-level receive window, mirrored through `Sink::on_recv_window`
-    /// so `state` can be read inside a dispatch (the engine cell is borrowed there):
-    /// what the peer has been told it may send, and what it has sent since the last
-    /// WINDOW_UPDATE on stream 0.
+    /// The engine's connection-level `recv_window`, mirrored by `Sink::on_recv_window`.
     recv_window_size: Cell<i64>,
     recv_window_consumed: Cell<i64>,
 
@@ -4560,18 +4557,15 @@ impl H2FrameParser {
         let window_size_value: u32 = window_size.to_u32();
         let old_window_size = this.window_size.get();
         this.window_size.set(window_size_value as u64);
-        // Like nghttp2_session_set_local_window_size(stream_id 0): only the connection-level
-        // window moves. SETTINGS_INITIAL_WINDOW_SIZE stays as advertised; the engine sizes each
-        // new stream's receive window from it, and raising it without a SETTINGS frame leaves
-        // the peer stopped at the old stream window while we wait for half of the new one.
+        // Only the connection window moves: SETTINGS_INITIAL_WINDOW_SIZE changes through a SETTINGS
+        // frame.
         if window_size_value as u64 > old_window_size {
             let increment: u32 = (window_size_value as u64 - old_window_size) as u32;
-            this.send_window_update(0, UInt31WithReserved::init(increment, false));
-            // Keep the rewrite engine's receive window in sync: we just advertised a larger
-            // window, so the engine must accept that much DATA without tripping its overflow
-            // check. try_borrow: setLocalWindowSize can be called from JS inside a dispatch
-            // (rewrite_read holds the engine borrow there); deferring the sync to the pending
-            // delta keeps that path panic-free.
+            // Keep the rewrite engine's receive window in sync: we are about to advertise a
+            // larger window, so the engine must accept that much DATA without tripping its
+            // overflow check. try_borrow: setLocalWindowSize can be called from JS inside a
+            // dispatch (rewrite_read holds the engine borrow there); deferring the sync to the
+            // pending delta keeps that path panic-free.
             match this.engine.try_borrow_mut() {
                 Ok(mut guard) => match guard.as_mut() {
                     Some(engine) => engine.grow_recv_window(this, increment as i64),
@@ -4589,6 +4583,9 @@ impl H2FrameParser {
                         .set(this.pending_recv_window_growth.get() + increment as i64);
                 }
             }
+            // Last: a JS transport can re-enter read() inside this write, and DATA sent against
+            // this WINDOW_UPDATE must find the engine window already grown.
+            this.send_window_update(0, UInt31WithReserved::init(increment, false));
         }
         Ok(JSValue::UNDEFINED)
     }
@@ -4623,10 +4620,8 @@ impl H2FrameParser {
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let result = JSValue::create_empty_object(global_object, 9);
-        // node (nghttp2_session_get_*): effectiveLocalWindowSize is the connection window we
-        // want, localWindowSize is what the peer may still send on it (advertised minus what it
-        // sent since the last WINDOW_UPDATE), effectiveRecvDataLength is that consumed amount.
-        // Growth queued for the engine is already on the wire, so it counts as advertised.
+        // localWindowSize and effectiveRecvDataLength as nghttp2 reports them. Growth still
+        // queued for the engine is already on the wire.
         let advertised = this.recv_window_size.get() + this.pending_recv_window_growth.get();
         let consumed = this.recv_window_consumed.get().max(0);
         result.put(

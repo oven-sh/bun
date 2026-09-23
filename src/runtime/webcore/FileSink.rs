@@ -59,9 +59,8 @@ pub(crate) struct FileSink {
     /// A write or source failure that is not a JS value; a JS one lives on `pipe` and sets `stream_js_error`.
     stream_error: JsCell<Option<streams::StreamError>>,
     stream_js_error: Cell<bool>,
-    /// Why the pipe ended early while this sink was open, unless a write into it failed: the
-    /// stream's own error, or a chunk that the sink rejects. Kept for the sink's owner, because
-    /// `pipe` lets go of a JS error when it is released. Boxed: only a failed pipe pays for it.
+    /// Why the pipe ended early while this sink was open, other than a failed write into it. Boxed and
+    /// kept for the sink's owner: `pipe` lets go of a JS error when it is released.
     stream_source_failure: JsCell<Option<Box<streams::StreamError>>>,
     /// Bytes accepted since `pipe_stream` (`written` counts buffered bytes again when flushed).
     pub(crate) stream_bytes: Cell<Option<u64>>,
@@ -339,9 +338,8 @@ impl FileSink {
         }
     }
 
-    /// [`on_attached_process_exit`](Self::on_attached_process_exit) for an
-    /// owner that holds the sink through a [`RefPtr`]. Returns the piped
-    /// stream's own failure, if it failed before the process exited.
+    /// [`on_attached_process_exit`](Self::on_attached_process_exit) through a [`RefPtr`]. Returns the
+    /// piped stream's own failure from before the exit.
     pub(crate) fn attached_process_exited(
         this: &RefPtr<FileSink>,
         status: &SpawnStatus,
@@ -627,16 +625,14 @@ impl FileSink {
         }
     }
 
-    /// Nothing is kept once the sink is done: the exit notice cancels a stream that still
-    /// produces, and the source reports that cancel like a failure.
+    /// Not once the sink is done: the exit notice cancels the stream, and a source reports that like a failure.
     fn keep_stream_source_failure(&self, failure: streams::StreamError) {
         if !self.done.get() {
             self.stream_source_failure.set(Some(Box::new(failure)));
         }
     }
 
-    /// The piped stream ended early for a reason other than a failed write into this sink, so
-    /// its consumer got a truncated body.
+    /// Why the stream's consumer got a truncated body, when no write into this sink failed.
     pub(crate) fn take_stream_source_failure(&self) -> Option<streams::StreamError> {
         self.stream_source_failure
             .replace(None)
@@ -1173,12 +1169,10 @@ impl FileSink {
         )
     }
 
-    /// Every writer op that can fail runs here (`on_error` has the asynchronous failures). The
-    /// failure is recorded before the source hears of it, because a source reports a failed
-    /// sink write back to the sink like an error of its own.
+    /// Every writer op that can fail (`on_error` has the asynchronous failures). The error is recorded before
+    /// the source hears of it: a source reports a failed sink write back like an error of its own.
     fn writer_io(&self, op: impl FnOnce(&mut IOWriter) -> WriteResult) -> WriteResult {
-        // SAFETY(JsCell): the writer ops are pure I/O. A callback they trigger re-enters through
-        // the stored `*mut FileSink` backref, not through this borrow.
+        // SAFETY(JsCell): pure I/O; a callback it triggers re-enters through the `*mut FileSink` backref.
         let rc = self.writer.with_mut(op);
         if let WriteResult::Err(err) = &rc {
             self.record_stream_error(streams::StreamError::Error(err.clone()));

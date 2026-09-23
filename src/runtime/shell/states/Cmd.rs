@@ -822,8 +822,7 @@ impl Cmd {
                             )
                             .throw());
                     }
-                    // Stop-gap until `Stdio::extract_blob` keeps a file blob's window (#41209):
-                    // it hands the child the whole file, so a sliced file stream stays a stream.
+                    // Stop-gap until `Stdio::extract_blob` keeps a file blob's window (#41209).
                     let sliced_file = stream.ptr.file().is_some_and(|file| {
                         file.start_offset.is_some_and(|offset| offset > 0)
                             || file.max_size.is_some()

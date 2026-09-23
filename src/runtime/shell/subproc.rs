@@ -985,8 +985,7 @@ impl ShellSubprocess {
 /// The `bun: ...` line for a `< ${stream}` that failed, with `cause` when it formats.
 fn stream_failure_message(global: &jsc::JSGlobalObject, cause: jsc::JSValue) -> Box<[u8]> {
     const MESSAGE: &str = "Failed to pipe ReadableStream to stdin";
-    // `fmt::Write` (unlike `format!`/`io::Write`) propagates the formatter
-    // `Err` that `fmt_string` produces when the value's `toString()` throws.
+    // `fmt::Write` returns the `Err` of a throwing `toString()`; `format!` panics on it.
     use core::fmt::Write as _;
     let mut msg = String::new();
     if cause.is_undefined() || write!(&mut msg, "{MESSAGE}: {}", cause.fmt_string(global)).is_err()
@@ -1196,9 +1195,8 @@ impl Writable {
         // SAFETY: `pipe` is the only handle to the sink `init` just created,
         // so nothing else borrows it.
         let result = unsafe { &mut *pipe.as_ptr() }.assign_to_stream(stream, global);
-        // Success shapes: undefined/null/empty (drained or natively wired) or
-        // a promise (the pump). Anything else is a synchronous throw —
-        // an `Error` instance or any other thrown value propagated as-is.
+        // Success is undefined/null/empty (drained or natively wired) or the pump's promise.
+        // Any other value was thrown.
         let thrown = if let Some(err) = result.to_error() {
             Some(err)
         } else if global.has_exception() {

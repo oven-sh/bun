@@ -1739,11 +1739,79 @@ describe("Socket fd adoption", () => {
     expect(events).toEqual(["cb:EAGAIN", "error:EAGAIN"]);
   });
 
+  // The two suites below run one script under bun and, when it is installed,
+  // under Node, and expect the same output. Node 22.0 still called a canceled
+  // write's callback without an error, so only a current Node is a reference.
+  const node = nodeExe();
+  const nodeMajor = node
+    ? parseInt(Bun.spawnSync({ cmd: [node, "-p", "process.versions.node"], env: bunEnv }).stdout.toString(), 10)
+    : 0;
+  const runtimes = [["bun", bunExe()], ...(nodeMajor >= 24 ? [["node", node!]] : [])];
+
+  // A queued write settles from a promise reaction. A throw from the user's
+  // write callback or from a 'drain' listener is still an uncaught exception.
+  describe.skipIf(isWindows)("a throw while a queued write settles is an uncaught exception", () => {
+    const fixture = /* js */ `
+      const fs = require("node:fs");
+      const net = require("node:net");
+      const { O_RDONLY, O_WRONLY, O_NONBLOCK } = fs.constants;
+      const rfd = fs.openSync(process.env.FIFO, O_RDONLY | O_NONBLOCK);
+      const wfd = fs.openSync(process.env.FIFO, O_WRONLY | O_NONBLOCK);
+      for (const name of ["uncaughtException", "unhandledRejection"]) {
+        process.on(name, err => {
+          console.log(name + ": " + err.message);
+          process.exit(0);
+        });
+      }
+      const socket = new net.Socket({ fd: wfd, readable: false, writable: true });
+      if (process.env.THROW_FROM === "drain") {
+        socket.on("drain", () => {
+          throw new Error("thrown from a 'drain' listener");
+        });
+      }
+      // Larger than a pipe buffer: the tail is queued until the reader below takes it.
+      socket.write(Buffer.alloc(512 * 1024, "x"), () => {
+        if (process.env.THROW_FROM === "callback") throw new Error("thrown from the write callback");
+      });
+      const chunk = Buffer.alloc(64 * 1024);
+      (function pump() {
+        try {
+          while (fs.readSync(rfd, chunk) > 0);
+        } catch (e) {
+          if (e.code !== "EAGAIN") throw e;
+        }
+        setImmediate(pump);
+      })();
+    `;
+
+    describe.each(runtimes)("%s", (_, exe) => {
+      it.concurrent.each([
+        ["callback", "thrown from the write callback"],
+        ["drain", "thrown from a 'drain' listener"],
+      ])("from the %s", async (from, message) => {
+        using dir = tempDir("net-fd-throw", {});
+        const fifo = join(String(dir), "fifo");
+        execFileSync("mkfifo", [fifo]);
+        await using proc = Bun.spawn({
+          cmd: [exe, "-e", fixture],
+          env: { ...bunEnv, FIFO: fifo, THROW_FROM: from },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({
+          stdout: `uncaughtException: ${message}\n`,
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+    });
+  });
+
   // destroy() while a write is still queued behind a full pipe. libuv cancels
   // the queued request when the handle closes: its callback gets ECANCELED
   // after 'error' and before 'close', the queued bytes are dropped and the fd
-  // is released. The same script runs under Node when it is installed, and
-  // both runtimes must print the same report.
+  // is released.
   describe.skipIf(isWindows)("destroy() cancels a write that is still queued", () => {
     const fixture = /* js */ `
       const fs = require("node:fs");
@@ -1826,14 +1894,6 @@ describe("Socket fd adoption", () => {
         })();
       });
     `;
-
-    // Node 22.0 still called a canceled write's callback without an error, so
-    // only a current Node is a reference.
-    const node = nodeExe();
-    const nodeMajor = node
-      ? parseInt(Bun.spawnSync({ cmd: [node, "-p", "process.versions.node"], env: bunEnv }).stdout.toString(), 10)
-      : 0;
-    const runtimes = [["bun", bunExe()], ...(nodeMajor >= 24 ? [["node", node!]] : [])];
 
     describe.each(runtimes)("%s", (_, exe) => {
       async function run(env: Record<string, string>) {

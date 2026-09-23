@@ -32,6 +32,7 @@ const {
   ConnResetException,
   NodeAggregateError,
   ErrnoException,
+  guardCallback,
   hasObserver,
   startPerf,
   stopPerf,
@@ -2827,7 +2828,8 @@ function fdWriteFailed(self, err, callback, written, buf, offset, data?, next = 
   }
   if (!$isPromisePending(result)) {
     // The sink's own write(2) failed at once: nothing is queued, so destroy() has nothing to cancel.
-    result.$then(() => callback(), callback);
+    const guarded = guardCallback(callback);
+    result.$then(() => guarded(), guarded);
     return;
   }
   // The callback runs once every byte reached the fd, like a libuv write request.
@@ -2843,7 +2845,8 @@ function settleSinkWrite(self, err?) {
   // destroy() took it to settle it with ECANCELED.
   if (callback === undefined) return;
   self[kSyncWriteCallback] = undefined;
-  callback(err);
+  // This runs in a promise reaction: a throw from a write callback or a 'drain' listener is an uncaught exception.
+  guardCallback(callback)(err);
 }
 
 Socket.prototype.resetAndDestroy = function resetAndDestroy() {

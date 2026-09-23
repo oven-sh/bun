@@ -411,8 +411,7 @@ impl JSBundleCompletionTask {
                         paths::basename(&f.dest_path)
                     }
                 });
-            // The executable is moved into place with a rename. The sourcemaps are written in place.
-            let overwritten = core::iter::once((basename, OutputWrite::Rename))
+            let overwritten = core::iter::once((basename, OutputWrite::EXECUTABLE))
                 .chain(sourcemap_names.map(|name| (name, OutputWrite::Truncate)))
                 .find_map(|(name, write)| input_paths.overwritten_by(&root, name, write));
             if let Some(input) = overwritten {

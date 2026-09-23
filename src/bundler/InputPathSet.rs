@@ -16,6 +16,15 @@ pub enum OutputWrite {
     Rename,
 }
 
+impl OutputWrite {
+    /// The compiled executable is moved into place. On Windows a move to another volume is a copy, which writes through a link.
+    pub const EXECUTABLE: Self = if cfg!(windows) {
+        Self::Truncate
+    } else {
+        Self::Rename
+    };
+}
+
 /// Absolute paths of every input file that exists on disk.
 #[derive(Default)]
 pub struct InputPathSet {

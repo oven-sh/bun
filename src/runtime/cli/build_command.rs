@@ -887,10 +887,9 @@ impl BuildCommand {
                 }
 
                 {
-                    // The executable is moved into place with a rename. The sourcemaps are written in place.
                     let exe_basename = bun_paths::basename(outfile);
                     let mut dest_paths: Vec<(Box<[u8]>, OutputWrite)> =
-                        vec![(Box::from(exe_basename), OutputWrite::Rename)];
+                        vec![(Box::from(exe_basename), OutputWrite::EXECUTABLE)];
                     if opt_source_map == options::SourceMapOption::External {
                         for f in output_files.iter() {
                             if f.output_kind == options::OutputKind::Sourcemap {

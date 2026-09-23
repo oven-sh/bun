@@ -695,12 +695,12 @@ JSValue getIndexWithoutAccessors(JSGlobalObject* globalObject, JSObject* obj, ui
     return JSValue();
 }
 
-// Compares the elements at [begin, end) of two arrays. False: a pair differs, or an exception is pending.
+// Compares the indices from `begin` to `end1` of both arrays, then up to `end2` of the second array alone. False: a pair differs, or an exception is pending.
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity>
-ALWAYS_INLINE static bool arrayIndexRangeEquals(JSGlobalObject* globalObject, JSObject* o1, JSObject* o2, size_t array1Length, size_t array2Length, uint64_t begin, uint64_t end, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSValue, JSValue>, 16>& stack, ThrowScope& scope)
+ALWAYS_INLINE static bool arrayIndexRangeEquals(JSGlobalObject* globalObject, JSObject* o1, JSObject* o2, uint64_t begin, uint64_t end1, uint64_t end2, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSValue, JSValue>, 16>& stack, ThrowScope& scope)
 {
     uint64_t i = begin;
-    for (const uint64_t end1 = std::min<uint64_t>(end, array1Length); i < end1; i++) {
+    for (; i < end1; i++) {
         JSValue left = getIndexWithoutAccessors(globalObject, o1, i);
         RETURN_IF_EXCEPTION(scope, false);
         JSValue right = getIndexWithoutAccessors(globalObject, o2, i);
@@ -726,7 +726,7 @@ ALWAYS_INLINE static bool arrayIndexRangeEquals(JSGlobalObject* globalObject, JS
         if (!eql) return false;
     }
 
-    for (const uint64_t end2 = std::min<uint64_t>(end, array2Length); i < end2; i++) {
+    for (; i < end2; i++) {
         JSValue right = getIndexWithoutAccessors(globalObject, o2, i);
         RETURN_IF_EXCEPTION(scope, false);
 
@@ -801,7 +801,7 @@ NEVER_INLINE static std::optional<bool> sparseArrayIndicesEqual(JSGlobalObject* 
     uint64_t begin = 0;
     uint64_t end = vectorEnd;
     for (size_t cursor = 0;; cursor++) {
-        if (!arrayIndexRangeEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, o1, o2, array1Length, array2Length, begin, end, gcBuffer, stack, scope))
+        if (!arrayIndexRangeEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, o1, o2, begin, std::min<uint64_t>(end, array1Length), std::min<uint64_t>(end, array2Length), gcBuffer, stack, scope))
             return false;
         if (cursor == sparseIndices.size())
             return true;
@@ -1100,16 +1100,15 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             }
         }
 
-        const uint64_t walkEnd = std::max(array1Length, array2Length);
         uint64_t walkBegin = 0;
-        if (walkEnd >= MIN_SPARSE_ARRAY_INDEX) [[unlikely]] {
+        if (array1Length >= MIN_SPARSE_ARRAY_INDEX || array2Length >= MIN_SPARSE_ARRAY_INDEX) [[unlikely]] {
             if (auto sparseResult = sparseArrayIndicesEqual<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, o1, o2, array1Length, array2Length, gcBuffer, stack, scope)) {
                 if (!*sparseResult)
                     return false;
-                walkBegin = walkEnd;
+                walkBegin = std::max(array1Length, array2Length);
             }
         }
-        if (!arrayIndexRangeEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, o1, o2, array1Length, array2Length, walkBegin, walkEnd, gcBuffer, stack, scope))
+        if (!arrayIndexRangeEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, o1, o2, walkBegin, array1Length, array2Length, gcBuffer, stack, scope))
             return false;
 
         if constexpr (checkPrototypes) {

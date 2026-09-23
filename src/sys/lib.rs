@@ -2609,14 +2609,21 @@ mod posix_impl {
     pub fn dup_at_least(fd: Fd, min: i32) -> Maybe<Fd> {
         fcntl(fd, libc::F_DUPFD_CLOEXEC, min as isize).map(|rc| Fd::from_native(rc as i32))
     }
-    /// A descriptor created while fd 0, 1 or 2 is closed gets that number, where [`FdExt::close`] skips it and a spawned child inherits it as stdio. Returns `fd`, or its CLOEXEC duplicate at 3 or higher with `fd` closed. `fd` is closed on error too.
+    /// A descriptor created while fd 0, 1 or 2 is closed gets that number, where [`FdExt::close`] skips it and a spawned child inherits it as stdio. Returns `fd`, or its duplicate at 3 or higher (same `FD_CLOEXEC` state) with `fd` closed. `fd` is closed on error too.
     pub(crate) fn move_above_stdio(fd: Fd) -> Maybe<Fd> {
         if fd.stdio_tag().is_none() {
             return Ok(fd);
         }
-        let moved = dup_at_least(fd, 3);
+        let moved = fcntl(fd, libc::F_GETFD, 0).and_then(|flags| {
+            let dup = if flags & libc::FD_CLOEXEC as isize != 0 {
+                libc::F_DUPFD_CLOEXEC
+            } else {
+                libc::F_DUPFD
+            };
+            fcntl(fd, dup, 3)
+        });
         let _ = fd.close_allowing_standard_io(None);
-        moved
+        moved.map(|rc| Fd::from_native(rc as i32))
     }
     /// [`move_above_stdio`] for both ends of a pair. On error both ends are closed.
     fn move_pair_above_stdio(pair: [Fd; 2]) -> Maybe<[Fd; 2]> {

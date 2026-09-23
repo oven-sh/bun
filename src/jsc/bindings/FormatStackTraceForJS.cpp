@@ -34,8 +34,7 @@ using namespace WebCore;
 
 namespace Bun {
 
-// globalThis is a JSGlobalProxy that forwards every read to its target, so a direct write of "stack" must land there.
-// The proxy stays the JS-visible receiver: JSC hands the raw global object to no script.
+// A JSGlobalProxy (globalThis) forwards reads to its target, so a direct write must land on the target.
 static JSC::JSObject* stackStorageObject(JSC::JSObject* object)
 {
     if (object->type() == JSC::GlobalProxyType)

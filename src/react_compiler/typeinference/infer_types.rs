@@ -283,21 +283,27 @@ fn is_ref_like_name(object_name: &[u8], property_name: &PropertyNameKind) -> boo
 /// because the TS `phiTypeEquals` has a bug where `return false` is outside the
 /// `if` block, so it unconditionally returns false.
 fn type_equals(a: &Type, b: &Type) -> bool {
-    match (a, b) {
-        (Type::TypeVar { id: id_a }, Type::TypeVar { id: id_b }) => id_a == id_b,
-        (Type::Primitive, Type::Primitive) => true,
-        (Type::Poly, Type::Poly) => true,
-        (Type::ObjectMethod, Type::ObjectMethod) => true,
-        (Type::Object { shape_id: sa }, Type::Object { shape_id: sb }) => sa == sb,
-        (
-            Type::Function {
-                return_type: ra, ..
-            },
-            Type::Function {
-                return_type: rb, ..
-            },
-        ) => type_equals(ra, rb),
-        _ => false,
+    let (mut a, mut b) = (a, b);
+    loop {
+        return match (a, b) {
+            (Type::TypeVar { id: id_a }, Type::TypeVar { id: id_b }) => id_a == id_b,
+            (Type::Primitive, Type::Primitive) => true,
+            (Type::Poly, Type::Poly) => true,
+            (Type::ObjectMethod, Type::ObjectMethod) => true,
+            (Type::Object { shape_id: sa }, Type::Object { shape_id: sb }) => sa == sb,
+            (
+                Type::Function {
+                    return_type: ra, ..
+                },
+                Type::Function {
+                    return_type: rb, ..
+                },
+            ) => {
+                (a, b) = (ra, rb);
+                continue;
+            }
+            _ => false,
+        };
     }
 }
 
@@ -1359,7 +1365,7 @@ impl Unifier {
 
     fn get(&self, ty: &Type) -> Type {
         if Self::has_inner_type(ty) && !crate::stack_guard::is_safe_to_recurse() {
-            return ty.clone();
+            return Type::Poly;
         }
         if let Type::TypeVar { id } = ty {
             if let Some(sub) = self.substitutions.get(id) {

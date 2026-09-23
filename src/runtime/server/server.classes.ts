@@ -278,18 +278,10 @@ export default [
       publishText: {
         fn: "publishText",
         length: 2,
-        DOMJIT: {
-          returns: "int",
-          args: ["JSString", "JSString"],
-        },
       },
       publishBinary: {
         fn: "publishBinary",
         length: 2,
-        DOMJIT: {
-          returns: "int",
-          args: ["JSString", "JSUint8Array"],
-        },
       },
       ping: {
         fn: "ping",

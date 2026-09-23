@@ -53,19 +53,9 @@ export default [
       randomUUID: {
         fn: "randomUUID",
         length: 1,
-        DOMJIT: {
-          returns: "JSString",
-          "pure": false,
-          args: [],
-        },
       },
       timingSafeEqual: {
         fn: "timingSafeEqual",
-        DOMJIT: {
-          returns: "JSValue",
-          "pure": false,
-          args: ["JSUint8Array", "JSUint8Array"],
-        },
         length: 2,
       },
     },

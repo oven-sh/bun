@@ -89,19 +89,24 @@ test("Error.captureStackTrace after .stack was read: capturing again replaces th
   expect(stack).not.toContain("at first");
 });
 
+// A capture from inside Error.prepareStackTrace, on the error being formatted, keeps the
+// frames the callback was given: the same capture is what reads the stack.
 test("Error.captureStackTrace after .stack was read: Error.prepareStackTrace captures the same error again", () => {
   const error = new Error("first");
   void error.stack;
-  let inner: unknown;
+  let inner: string | undefined;
   Error.prepareStackTrace = (e, sites) => {
     Error.captureStackTrace(e);
     inner = e.stack;
-    return `prepared: ${(e as Error).message} ${sites.length > 0}`;
+    return `prepared: ${(e as Error).message} ${sites[0].getFunctionName()}`;
   };
-  Error.captureStackTrace(error);
+  function outerSite(e: Error) {
+    Error.captureStackTrace(e);
+  }
+  outerSite(error);
   error.message = "second";
-  expect(error.stack).toBe("prepared: second true");
-  expect(typeof inner).toBe("string");
+  expect(error.stack).toBe("prepared: second outerSite");
+  expect(inner!.split("\n").slice(0, 2)).toEqual(["Error: second", expect.stringMatching(/^    at outerSite \(/)]);
 });
 
 test("Error.captureStackTrace after .stack was read: a frame collected before the read does not crash", () => {

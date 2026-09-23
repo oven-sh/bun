@@ -1101,6 +1101,14 @@ impl SendQueue {
         self.apply_socket_reading(self.is_reading());
     }
 
+    /// For a socket that is about to open. Returns whether it opens reading.
+    pub(crate) fn set_reads_held_before_open(&self, held: bool) -> bool {
+        self.reads_held.set(held);
+        let reading = self.is_reading();
+        self.socket_reading.set(reading);
+        reading
+    }
+
     /// Writes are unaffected. What the peer sends while the socket does not
     /// read waits in the kernel, and so does its close.
     fn apply_socket_reading(&self, reading: bool) {
@@ -1135,7 +1143,7 @@ impl SendQueue {
             }
             // SAFETY: as above; `root_ptr()` is the context `windows_configure_*` registered.
             let started = unsafe { (*stream).read_start_ctx::<SendQueue>(self.root_ptr()) };
-            if started.to_error(bun_sys::Tag::listen).is_some() {
+            if started.is_err() && started.int() != uv::UV_EALREADY {
                 self.close_socket(CloseReason::Failure, CloseFrom::User);
             }
         }
@@ -1966,6 +1974,9 @@ impl SendQueue {
         // SAFETY: ipc_pipe is the live uv handle just stored in the socket cell.
         let stream = unsafe { (*ipc_pipe).as_stream() };
 
+        if !self_.socket_reading.get() {
+            return Ok(());
+        }
         // SAFETY: stream points to the live uv handle; `this` is the root-raw
         // context pointer (see fn safety contract) so storing it in
         // `handle.data` is sound for the handle's lifetime.

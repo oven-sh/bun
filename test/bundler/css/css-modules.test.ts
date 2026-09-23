@@ -327,6 +327,149 @@ describe("css", () => {
     },
   });
 
+  // css-view-transitions-2 lets the argument combine a name (or `*`) with
+  // classes, and chain classes. Every class is hashed and exported, the same
+  // as the single `.class` form. The name is hashed like `view-transition-name`.
+  itBundled("css-module/ViewTransitionNameAndClassesExported", {
+    files: {
+      "/entry.js": `
+        import styles from './styles.module.css';
+        console.log(styles);
+      `,
+      "/styles.module.css": `
+        ::view-transition-group(hero.big) { top: 0 }
+        ::view-transition-old(*.fade) { opacity: 0 }
+        ::view-transition-new(.a.b) { opacity: 1 }
+        ::view-transition-image-pair(photo.wide.tall) { isolation: auto }
+        ::view-transition-group-children(hero.big.slow) { overflow: clip }
+        .card { view-transition-name: hero; view-transition-class: big fade }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const css = api.readFile("/out/entry.css");
+      const card = css.match(/\.card_([A-Za-z0-9_-]+)\s*\{/);
+      expect(card, ".card should be scoped").not.toBeNull();
+      const hash = card![1];
+
+      expect(css).toEqualIgnoringWhitespace(`
+        /* styles.module.css */
+        ::view-transition-group(hero_${hash}.big_${hash}) {
+          top: 0;
+        }
+
+        ::view-transition-old(*.fade_${hash}) {
+          opacity: 0;
+        }
+
+        ::view-transition-new(.a_${hash}.b_${hash}) {
+          opacity: 1;
+        }
+
+        ::view-transition-image-pair(photo_${hash}.wide_${hash}.tall_${hash}) {
+          isolation: auto;
+        }
+
+        ::view-transition-group-children(hero_${hash}.big_${hash}.slow_${hash}) {
+          overflow: clip;
+        }
+
+        .card_${hash} {
+          view-transition-name: hero_${hash};
+          view-transition-class: big_${hash} fade_${hash};
+        }
+      `);
+
+      const js = api.readFile("/out/entry.js");
+      expect(js).toEqualIgnoringWhitespace(`
+        // styles.module.css
+        var styles_module_default = {
+          big: "big_${hash}",
+          fade: "fade_${hash}",
+          a: "a_${hash}",
+          b: "b_${hash}",
+          wide: "wide_${hash}",
+          tall: "tall_${hash}",
+          slow: "slow_${hash}",
+          card: "card_${hash}"
+        };
+
+        // entry.js
+        console.log(styles_module_default);
+      `);
+    },
+  });
+
+  // `::view-transition-group-children()` (css-view-transitions-2) takes the
+  // same argument as `::view-transition-group()`. The name and the class get
+  // the module hash, the class is exported, and there is no warning.
+  // https://github.com/oven-sh/bun/issues/42777
+  itBundled("css-module/ViewTransitionGroupChildrenScoped", {
+    files: {
+      "/entry.js": `
+        import styles from './styles.module.css';
+        console.log(styles);
+      `,
+      "/styles.module.css": `
+        .card {
+          view-transition-name: hero;
+          view-transition-class: big;
+          view-transition-group: contain;
+        }
+        ::view-transition-group(hero) { animation-duration: 1s }
+        ::view-transition-group-children(hero) { overflow: clip }
+        ::view-transition-group-children(.big) { overflow: clip }
+        ::view-transition-group-children(*):only-child { overflow: visible }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const css = api.readFile("/out/entry.css");
+      const card = css.match(/\.card_([A-Za-z0-9_-]+)\s*\{/);
+      expect(card, ".card should be scoped").not.toBeNull();
+      const hash = card![1];
+
+      expect(css).toEqualIgnoringWhitespace(`
+        /* styles.module.css */
+        .card_${hash} {
+          view-transition-name: hero_${hash};
+          view-transition-class: big_${hash};
+          view-transition-group: contain;
+        }
+
+        ::view-transition-group(hero_${hash}) {
+          animation-duration: 1s;
+        }
+
+        ::view-transition-group-children(hero_${hash}) {
+          overflow: clip;
+        }
+
+        ::view-transition-group-children(.big_${hash}) {
+          overflow: clip;
+        }
+
+        ::view-transition-group-children(*):only-child {
+          overflow: visible;
+        }
+      `);
+
+      const js = api.readFile("/out/entry.js");
+      expect(js).toEqualIgnoringWhitespace(`
+        // styles.module.css
+        var styles_module_default = {
+          card: "card_${hash}",
+          big: "big_${hash}"
+        };
+
+        // entry.js
+        console.log(styles_module_default);
+      `);
+    },
+  });
+
   // A module file in a nested directory: the `view-transition-class`
   // declaration, the `::view-transition-*(.class)` selector and the exported
   // value must all carry the same hash.

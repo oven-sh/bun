@@ -183,6 +183,15 @@ pub use whatwg::{
     file_url_from_string, href_from_string, join, origin_from_slice, path_from_file_url,
 };
 
+/// Where the authority ends, which is where the search for the `@` of the userinfo stops.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AuthorityEnd {
+    /// `/`, `?`, `#`, and a `\` in a special scheme. For a string that something else reads too.
+    LikeNewURL,
+    /// `/`, `?` or `#`, so a `\` stays userinfo. Only for a string this parser alone reads.
+    SlashQueryOrHash,
+}
+
 // URL is a pure view struct — every field is a slice into `href` (or a
 // literal default).
 #[derive(Clone)]
@@ -203,6 +212,8 @@ pub struct URL<'a> {
     pub(crate) search_params: Option<QueryStringMap>,
     pub username: &'a [u8],
     pub(crate) port_was_automatically_set: bool,
+    /// The rule `parse` used, so `href_without_userinfo` cuts the same bytes.
+    pub(crate) authority_end: AuthorityEnd,
 }
 
 impl<'a> Default for URL<'a> {
@@ -222,6 +233,7 @@ impl<'a> Default for URL<'a> {
             search_params: None,
             username: b"",
             port_was_automatically_set: false,
+            authority_end: AuthorityEnd::LikeNewURL,
         }
     }
 }
@@ -312,6 +324,7 @@ impl<'a> URL<'a> {
             search_params: self.search_params,
             username: d(self.username),
             port_was_automatically_set: self.port_was_automatically_set,
+            authority_end: self.authority_end,
         }
     }
 
@@ -421,6 +434,39 @@ impl<'a> URL<'a> {
         strings::eql_case_insensitive_ascii(self.protocol, b"http", true)
     }
 
+    /// The schemes WHATWG calls special: a `\` ends the authority of these, as a `/` does.
+    fn has_special_scheme(&self) -> bool {
+        strings::eql_any_case_insensitive_ascii(
+            self.protocol,
+            &[b"http", b"https", b"ws", b"wss", b"ftp", b"file"],
+        )
+    }
+
+    fn backslash_ends_authority(&self, end: AuthorityEnd) -> bool {
+        end == AuthorityEnd::LikeNewURL && self.has_special_scheme()
+    }
+
+    /// The one definition of where an authority ends, for the userinfo, the host and the port.
+    fn ends_authority(byte: u8, backslash_ends_it: bool) -> bool {
+        matches!(byte, b'/' | b'?' | b'#') || (backslash_ends_it && byte == b'\\')
+    }
+
+    /// The last `@` of the authority of `after_scheme`, the text after `scheme://`.
+    pub fn userinfo_end(&self, after_scheme: &[u8], end: AuthorityEnd) -> Option<usize> {
+        let backslash_ends_it = self.backslash_ends_authority(end);
+        let mut last_at = None;
+        // One pass over the authority, which is short.
+        for (i, &byte) in after_scheme.iter().enumerate() {
+            if Self::ends_authority(byte, backslash_ends_it) {
+                break;
+            }
+            if byte == b'@' {
+                last_at = Some(i);
+            }
+        }
+        last_at
+    }
+
     pub fn display_hostname(&self) -> &[u8] {
         if !self.hostname.is_empty() {
             self.hostname
@@ -473,6 +519,25 @@ impl<'a> URL<'a> {
         buf.extend_from_slice(path);
         buf.push(b'/');
         buf.into_boxed_slice()
+    }
+
+    /// `href` with `user:password@` cut out of its authority.
+    pub fn href_without_userinfo(&self) -> std::borrow::Cow<'a, [u8]> {
+        use std::borrow::Cow;
+        if self.username.is_empty() && self.password.is_empty() {
+            return Cow::Borrowed(self.href);
+        }
+        let Some(authority) = strings::index_of(self.href, b"://").map(|i| i + 3) else {
+            return Cow::Borrowed(self.href);
+        };
+        let rest = &self.href[authority..];
+        let Some(at) = self.userinfo_end(rest, self.authority_end) else {
+            return Cow::Borrowed(self.href);
+        };
+        let mut out = Vec::with_capacity(self.href.len() - at - 1);
+        out.extend_from_slice(&self.href[..authority]);
+        out.extend_from_slice(&rest[at + 1..]);
+        Cow::Owned(out)
     }
 
     pub fn has_http_like_protocol(&self) -> bool {
@@ -625,12 +690,23 @@ impl<'a> URL<'a> {
         }
     }
 
+    /// Reads the authority as `new URL()` reads it. See [`URL::parse_single_reader`] for the other rule.
     pub fn parse(base: &'a [u8]) -> URL<'a> {
+        Self::parse_with(base, AuthorityEnd::LikeNewURL)
+    }
+
+    /// `parse` for a string this parser alone reads, where a `\` before the `@` is userinfo.
+    pub fn parse_single_reader(base: &'a [u8]) -> URL<'a> {
+        Self::parse_with(base, AuthorityEnd::SlashQueryOrHash)
+    }
+
+    fn parse_with(base: &'a [u8], authority_end: AuthorityEnd) -> URL<'a> {
         if base.is_empty() {
             return URL::default();
         }
         let mut url = URL {
             href: base,
+            authority_end,
             ..Default::default()
         };
         let mut offset: u32 = 0;
@@ -655,21 +731,16 @@ impl<'a> URL<'a> {
                 let is_relative_path = !is_protocol_relative && base[0] == b'/';
 
                 if !is_relative_path {
-                    // if there's no protocol or @, it's ambiguous whether the colon is a port or a username.
+                    // Without a protocol it's ambiguous whether a colon is a port or a username,
+                    // see https://github.com/oven-sh/bun/issues/1390. With one, the userinfo is
+                    // what precedes the last `@` of the authority.
                     if offset > 0 {
-                        // see https://github.com/oven-sh/bun/issues/1390
-                        let first_at =
-                            strings::index_of_char(&base[offset as usize..], b'@').unwrap_or(0);
-                        let first_colon =
-                            strings::index_of_char(&base[offset as usize..], b':').unwrap_or(0);
-
-                        if first_at > first_colon
-                            && first_at
-                                < strings::index_of_char(&base[offset as usize..], b'/')
-                                    .unwrap_or(u32::MAX)
-                        {
-                            offset += url.parse_username(&base[offset as usize..]).unwrap_or(0);
-                            offset += url.parse_password(&base[offset as usize..]).unwrap_or(0);
+                        let rest = &base[offset as usize..];
+                        if let Some(at) = url.userinfo_end(rest, authority_end) {
+                            let userinfo = &rest[..at];
+                            (url.username, url.password) =
+                                strings::split_once_char(userinfo, b':').unwrap_or((userinfo, b""));
+                            offset += u32::try_from(at + 1).expect("int cast");
                         }
                     }
 
@@ -776,37 +847,18 @@ impl<'a> URL<'a> {
                 b':' => {
                     if i + 3 <= str.len() && str[i + 1] == b'/' && str[i + 2] == b'/' {
                         self.protocol = &str[0..i];
-                        return Some(u32::try_from(i + 3).expect("int cast"));
+                        // RFC 3986 §3.1: only behind `ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )` is there an authority.
+                        let is_scheme = self.protocol.first().is_some_and(u8::is_ascii_alphabetic)
+                            && self.protocol.iter().all(|byte| {
+                                matches!(byte, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'+' | b'-' | b'.')
+                            });
+                        return is_scheme.then(|| u32::try_from(i + 3).expect("int cast"));
                     }
                 }
                 _ => {}
             }
         }
 
-        None
-    }
-
-    pub(crate) fn parse_username(&mut self, str: &'a [u8]) -> Option<u32> {
-        // reset it
-        self.username = b"";
-
-        if str.len() < b"@".len() {
-            return None;
-        }
-        for i in 0..str.len() {
-            match str[i] {
-                b':' | b'@' => {
-                    // we found a username, everything before this point in the slice is a username
-                    self.username = &str[0..i];
-                    return Some(u32::try_from(i + 1).expect("int cast"));
-                }
-                // if we reach a slash or "?", there's no username
-                b'?' | b'/' => {
-                    return None;
-                }
-                _ => {}
-            }
-        }
         None
     }
 
@@ -841,6 +893,7 @@ impl<'a> URL<'a> {
 
     pub(crate) fn parse_host(&mut self, str: &'a [u8]) -> Option<u32> {
         let mut i: u32 = 0;
+        let backslash_ends_it = self.backslash_ends_authority(self.authority_end);
 
         // reset it
         self.host = b"";
@@ -864,12 +917,8 @@ impl<'a> URL<'a> {
                 } else {
                     colon_i
                 };
-                match str[i as usize] {
-                    // alright, we found the slash or "?"
-                    b'?' | b'/' => {
-                        break;
-                    }
-                    _ => {}
+                if Self::ends_authority(str[i as usize], backslash_ends_it) {
+                    break;
                 }
                 i += 1;
             }
@@ -898,12 +947,8 @@ impl<'a> URL<'a> {
                     colon_i
                 };
 
-                match str[i as usize] {
-                    // alright, we found the slash or "?"
-                    b'?' | b'/' => {
-                        break;
-                    }
-                    _ => {}
+                if Self::ends_authority(str[i as usize], backslash_ends_it) {
+                    break;
                 }
                 i += 1;
             }
@@ -920,6 +965,8 @@ impl<'a> URL<'a> {
         Some(i)
     }
 }
+
+pub use bun_core::ip_address::strip_ipv6_brackets;
 
 // ══════════════════════════════════════════════════════════════════════════
 // QueryStringMap & friends
@@ -1797,6 +1844,67 @@ mod tests {
         assert_eq!(url.path, b"/path");
         assert_eq!(url.search, b"?q=1");
         assert_eq!(url.hash, b"#frag?x=2");
+    }
+
+    #[test]
+    fn the_authority_ends_where_new_url_ends_it() {
+        let url = URL::parse(br"http://u:p@first.example:8080\x@second.example/path");
+        assert_eq!((url.username, url.password), (&b"u"[..], &b"p"[..]));
+        assert_eq!(
+            (url.hostname, url.port),
+            (&b"first.example"[..], &b"8080"[..])
+        );
+
+        let url = URL::parse(b"HTTPS://u:p@first.example:8443#@second.example/");
+        assert_eq!((url.username, url.password), (&b"u"[..], &b"p"[..]));
+        assert_eq!(
+            (url.hostname, url.port),
+            (&b"first.example"[..], &b"8443"[..])
+        );
+
+        // In a scheme that is not special, a `\` is part of the userinfo, as for `new URL()`.
+        let url = URL::parse(br"socks5://u:p@first.example\x@second.example/");
+        assert_eq!(
+            (url.username, url.password),
+            (&b"u"[..], &br"p@first.example\x"[..])
+        );
+        assert_eq!(url.hostname, b"second.example");
+    }
+
+    #[test]
+    fn a_proxy_keeps_a_domain_login() {
+        let proxy = URL::parse_single_reader(br"http://DOMAIN\user:pass@proxy.example:8080");
+        assert_eq!(
+            (proxy.username, proxy.password),
+            (&br"DOMAIN\user"[..], &b"pass"[..])
+        );
+        assert_eq!(
+            (proxy.hostname, proxy.port),
+            (&b"proxy.example"[..], &b"8080"[..])
+        );
+        assert_eq!(
+            &*proxy.href_without_userinfo(),
+            b"http://proxy.example:8080"
+        );
+    }
+
+    #[test]
+    fn no_host_is_read_behind_a_second_scheme() {
+        let url = URL::parse(b"http:first.example://second.example/");
+        assert_eq!(url.protocol, b"http:first.example");
+        assert_eq!(url.hostname, b"http");
+
+        let url = URL::parse(b"blob:http://second.example/id");
+        assert_eq!(url.protocol, b"blob:http");
+        assert_eq!(url.hostname, b"blob");
+
+        let url = URL::parse(b"1http://second.example/");
+        assert_eq!(url.protocol, b"1http");
+        assert_eq!(url.hostname, b"1http");
+
+        let url = URL::parse(b"localhost:3000/api");
+        assert_eq!(url.protocol, b"");
+        assert_eq!((url.hostname, url.port), (&b"localhost"[..], &b"3000"[..]));
     }
 
     #[test]

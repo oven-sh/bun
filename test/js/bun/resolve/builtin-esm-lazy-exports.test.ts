@@ -415,8 +415,9 @@ test.concurrent("a top-level mock of default does not change what a lazy export 
   expect(exitCode).toBe(0);
 });
 
-// An enumerable accessor on the exports object before the module record exists makes that export lazy, default included.
-function lazyDefaultFixture(factory: string, afterRestore: string) {
+// A user-defined `default` accessor is read when the builtin loads (#39812), so `default` is never an empty binding:
+// the object a lazy export is restored from is always known, and restore never runs that getter again.
+function userDefaultAccessorFixture(factory: string, afterRestore: string) {
   return `
     import { expect, mock, test } from "bun:test";
     const events = require("node:events");
@@ -425,26 +426,22 @@ function lazyDefaultFixture(factory: string, afterRestore: string) {
 
     test("defaultMaxListeners", async () => {
       const ns = await import("node:events");
+      expect(defaultReads).toBe(1);
       mock.module("node:events", () => (${factory}));
       expect(ns.defaultMaxListeners).toBe(123);
       mock.restore();
-      expect(ns.defaultMaxListeners).toBe(123);
+      expect(ns.defaultMaxListeners).toBe(events.defaultMaxListeners);
+      expect(ns.defaultMaxListeners).not.toBe(123);
       ${afterRestore}
+      expect(defaultReads).toBe(1);
     });
   `;
 }
 
-test.concurrent("a lazy export stays mocked after restore when the default export is itself lazy", async () => {
+test.concurrent("a lazy export is restored when the default export comes from a user-defined accessor", async () => {
   const { stderr, exitCode } = await run(
     {
-      "lazy.test.ts": lazyDefaultFixture(
-        `{ defaultMaxListeners: 123 }`,
-        `
-          expect(defaultReads).toBe(0);
-          expect(ns.default).toBe(events);
-          expect(defaultReads).toBe(1);
-        `,
-      ),
+      "lazy.test.ts": userDefaultAccessorFixture(`{ defaultMaxListeners: 123 }`, `expect(ns.default).toBe(events);`),
     },
     ["test", "lazy.test.ts"],
   );
@@ -453,15 +450,12 @@ test.concurrent("a lazy export stays mocked after restore when the default expor
   expect(exitCode).toBe(0);
 });
 
-test.concurrent("a lazy export stays mocked when the same call also replaced the lazy default", async () => {
+test.concurrent("a lazy export is restored when the same call also replaced a user-accessor default", async () => {
   const { stderr, exitCode } = await run(
     {
-      "lazy.test.ts": lazyDefaultFixture(
+      "lazy.test.ts": userDefaultAccessorFixture(
         `{ default: { notEvents: true }, defaultMaxListeners: 123 }`,
-        `
-          expect(ns.default).toEqual({ notEvents: true });
-          expect(defaultReads).toBe(0);
-        `,
+        `expect(ns.default).toBe(events);`,
       ),
     },
     ["test", "lazy.test.ts"],
@@ -676,68 +670,63 @@ test.concurrent('"bun": a throwing getter fails mock.restore() and keeps the moc
   expect(exitCode).toBe(0);
 });
 
-test.concurrent('"bun": a getter that itself mocks (and maybe restores) does not derail the restore', async () => {
+// A user-defined accessor present when a builtin loads is read then (#39812), so it never runs during a restore.
+// One installed afterwards over an export that was still lazy does: restore reads the empty binding's value off the
+// exports object, through whatever getter is there by then.
+test.concurrent("node:fs: a getter that itself mocks (and maybe restores) does not derail the restore", async () => {
   const { stderr, exitCode } = await run(
     {
-      "reexport.mjs": bunReexport,
       "dep.mjs": `export const value = "real dep";`,
       "dep.cjs": `module.exports = { value: "real cjs dep" };`,
       "never-loaded.mjs": `export const value = "real never-loaded";`,
       "lazy.test.ts": `
         import { expect, mock, test } from "bun:test";
+        import * as ns from "node:fs";
         import * as dep from "./dep.mjs";
 
-        // Defined before anything builds the "bun" module record, so these become lazy exports with user getters.
+        const fs = ns.default;
         const reads = { restoring: 0, mockingOnly: 0, remocking: 0 };
-        Object.defineProperty(Bun, "restoringLazy", {
-          configurable: true,
-          enumerable: true,
-          get() {
-            reads.restoring++;
-            mock.module("./dep.mjs", () => ({ value: "mocked inside the getter" }));
-            mock.restore();
-            return "restoring getter";
-          },
+        // Each replaces an accessor of fs's own that nothing has bound to, so the binding behind it is still empty.
+        function replaceLazyAccessor(name, get) {
+          expect(typeof Object.getOwnPropertyDescriptor(fs, name).get).toBe("function");
+          Object.defineProperty(fs, name, { configurable: true, enumerable: true, get });
+        }
+        replaceLazyAccessor("ReadStream", () => {
+          reads.restoring++;
+          mock.module("./dep.mjs", () => ({ value: "mocked inside the getter" }));
+          mock.restore();
+          return "restoring getter";
         });
-        Object.defineProperty(Bun, "mockingLazy", {
-          configurable: true,
-          enumerable: true,
-          get() {
-            reads.mockingOnly++;
-            mock.module("./dep.mjs", () => ({ value: "esm mocked by the getter" }));
-            mock.module("./dep.cjs", () => ({ value: "cjs mocked by the getter" }));
-            mock.module("./never-loaded.mjs", () => ({ value: "never-loaded mocked by the getter" }));
-            return "mocking getter";
-          },
+        replaceLazyAccessor("WriteStream", () => {
+          reads.mockingOnly++;
+          mock.module("./dep.mjs", () => ({ value: "esm mocked by the getter" }));
+          mock.module("./dep.cjs", () => ({ value: "cjs mocked by the getter" }));
+          mock.module("./never-loaded.mjs", () => ({ value: "never-loaded mocked by the getter" }));
+          return "mocking getter";
         });
         // A binding is only restored through its getter once, so the third scenario needs a getter of its own.
-        Object.defineProperty(Bun, "remockingLazy", {
-          configurable: true,
-          enumerable: true,
-          get() {
-            reads.remocking++;
-            mock.module("./dep.mjs", () => ({ value: "esm re-mocked by the getter" }));
-            mock.module("./dep.cjs", () => ({ value: "cjs re-mocked by the getter" }));
-            return "re-mocking getter";
-          },
+        replaceLazyAccessor("FileReadStream", () => {
+          reads.remocking++;
+          mock.module("./dep.mjs", () => ({ value: "esm re-mocked by the getter" }));
+          mock.module("./dep.cjs", () => ({ value: "cjs re-mocked by the getter" }));
+          return "re-mocking getter";
         });
 
-        test("the getter restores as well", async () => {
-          const reexported = await import("./reexport.mjs");
-          mock.module("./reexport.mjs", () => ({ restoringLazy: "mocked", Glob: "mocked glob" }));
-          expect([reexported.restoringLazy, reexported.Glob]).toEqual(["mocked", "mocked glob"]);
+        test("the getter restores as well", () => {
+          mock.module("node:fs", () => ({ ReadStream: "mocked", existsSync: "mocked existsSync" }));
+          expect([ns.ReadStream, ns.existsSync]).toEqual(["mocked", "mocked existsSync"]);
+          expect(reads).toEqual({ restoring: 0, mockingOnly: 0, remocking: 0 });
           mock.restore();
           expect(reads).toEqual({ restoring: 1, mockingOnly: 0, remocking: 0 });
-          expect([reexported.restoringLazy, reexported.Glob, dep.value]).toEqual(["restoring getter", Bun.Glob, "real dep"]);
+          expect([ns.ReadStream, ns.existsSync, dep.value]).toEqual(["restoring getter", fs.existsSync, "real dep"]);
         });
 
         test("the getter only mocks: its mocks all stay until the next restore", async () => {
-          const reexported = await import("./reexport.mjs");
           expect(require("./dep.cjs").value).toBe("real cjs dep");
-          mock.module("./reexport.mjs", () => ({ mockingLazy: "mocked" }));
+          mock.module("node:fs", () => ({ WriteStream: "mocked" }));
           mock.restore();
           expect(reads).toEqual({ restoring: 1, mockingOnly: 1, remocking: 0 });
-          expect(reexported.mockingLazy).toBe("mocking getter");
+          expect(ns.WriteStream).toBe("mocking getter");
           expect(dep.value).toBe("esm mocked by the getter");
           expect(require("./dep.cjs").value).toBe("cjs mocked by the getter");
           expect((await import("./never-loaded.mjs")).value).toBe("never-loaded mocked by the getter");
@@ -746,15 +735,14 @@ test.concurrent('"bun": a getter that itself mocks (and maybe restores) does not
           expect(require("./dep.cjs").value).toBe("real cjs dep");
         });
 
-        test("the getter re-mocks modules this restore has yet to put back: they are put back, and stay put", async () => {
-          const reexported = await import("./reexport.mjs");
-          mock.module("./reexport.mjs", () => ({ remockingLazy: "mocked" }));
+        test("the getter re-mocks modules this restore has yet to put back: they are put back, and stay put", () => {
+          mock.module("node:fs", () => ({ FileReadStream: "mocked" }));
           mock.module("./dep.mjs", () => ({ value: "esm mocked by the test" }));
           mock.module("./dep.cjs", () => ({ value: "cjs mocked by the test" }));
           expect([dep.value, require("./dep.cjs").value]).toEqual(["esm mocked by the test", "cjs mocked by the test"]);
           mock.restore();
           expect(reads).toEqual({ restoring: 1, mockingOnly: 1, remocking: 1 });
-          expect(reexported.remockingLazy).toBe("re-mocking getter");
+          expect(ns.FileReadStream).toBe("re-mocking getter");
           expect([dep.value, require("./dep.cjs").value]).toEqual(["real dep", "real cjs dep"]);
           // Nothing the getter logged may describe the test's mocks as the values to go back to.
           mock.restore();

@@ -127,8 +127,7 @@ pub(crate) struct RequestContext<
     pub(crate) server: Cell<Option<bun_ptr::BackRef<ThisServer, bun_ptr::Mut>>>,
     pub(crate) resp: Cell<Option<uws::AnyResponse>>,
     pub(crate) req: Cell<Option<*mut Req<SSL_ENABLED, MUX>>>,
-    /// The copy of the request head `finalize_without_deinit` hands to the
-    /// `Request`, taken before a response write can free the bytes `req` points at.
+    /// The head copy `finalize_without_deinit` hands to the `Request`.
     request_head: Cell<Option<RequestHeadSnapshot>>,
     pub(crate) request_weakref: JsCell<request::WeakRef>,
     // NOTE: `Arc<AbortSignal>` was wrong —
@@ -2349,8 +2348,7 @@ where
         present
     }
 
-    /// Copies the request head for the `Request`'s lazy `url`/`headers` getters, so they
-    /// survive the response. A no-op once JS read both, and for MUX (eager there).
+    /// Copies the head for the lazy getters. A no-op once JS read both, and for MUX (eager there).
     fn capture_request_head(&self) {
         if MUX || self.has_request_head() {
             return;
@@ -2755,9 +2753,7 @@ where
             return;
         }
 
-        // Writing the response can close the socket, and uWS frees the bytes
-        // `req` points at with it. A handler that parked instead gets `url` and
-        // the headers from `to_async`.
+        // The write below can close the socket, which frees the bytes `req` points at.
         let parks = response_value
             .as_any_promise()
             .is_some_and(|promise| promise.status() == jsc::PromiseStatus::Pending);

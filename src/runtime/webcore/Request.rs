@@ -261,8 +261,7 @@ impl Request {
         self.url.get().is_empty() || self.headers.get().is_none()
     }
 
-    /// Ends the link to the server context, which hands over the head copy it took for the
-    /// getters. Returns the bytes the `Request` keeps, for the caller to report to the GC.
+    /// Takes over the context's head copy and returns the bytes kept, for the GC report.
     pub(crate) fn detach_request_context(&mut self, head: Option<RequestHeadSnapshot>) -> usize {
         drop(self.request_context.take_head());
         let (context, kept) = match head {
@@ -273,8 +272,7 @@ impl Request {
             _ => (AnyRequestContext::NULL, 0),
         };
         self.request_context = context;
-        // `estimated_size` feeds reportExtraMemoryVisited on every mark, so the
-        // collector sees the copy for as long as JS holds this Request.
+        // `estimated_size` is what every mark reports through reportExtraMemoryVisited.
         self.reported_estimated_size
             .set(self.reported_estimated_size.get() + kept);
         kept

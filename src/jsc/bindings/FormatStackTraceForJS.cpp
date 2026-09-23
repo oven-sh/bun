@@ -34,6 +34,15 @@ using namespace WebCore;
 
 namespace Bun {
 
+// globalThis is a JSGlobalProxy that forwards every read to its target, so a direct write of "stack" must land there.
+// The proxy stays the JS-visible receiver: JSC hands the raw global object to no script.
+static JSC::JSObject* stackStorageObject(JSC::JSObject* object)
+{
+    if (object->type() == JSC::GlobalProxyType)
+        return uncheckedDowncast<JSC::JSGlobalProxy>(object)->target();
+    return object;
+}
+
 // What `.stack` is when the frames do not fit in one string. It cannot throw: `formatStackTrace` also runs in a GC finalizer.
 static WTF::String stackTraceHeaderOnly(const WTF::String& name, const WTF::String& message)
 {
@@ -166,7 +175,7 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
     if (callsPrepareStackTrace) {
         // In Node, if you console.log(error.stack) inside Error.prepareStackTrace
         // it will display the stack as a formatted string, so we have to do the same.
-        errorObject->putDirect(vm, vm.propertyNames->stack, stackStringValue, JSC::PropertyAttribute::DontEnum | 0);
+        stackStorageObject(errorObject)->putDirect(vm, vm.propertyNames->stack, stackStringValue, JSC::PropertyAttribute::DontEnum | 0);
 
         JSC::MarkedArgumentBuffer arguments;
         arguments.append(errorObject);
@@ -846,9 +855,6 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     }
 
     JSC::JSObject* errorObject = objectArg.asCell()->getObject();
-    // globalThis is a JSGlobalProxy that forwards every read to its target, so "stack" must land there.
-    if (errorObject->type() == JSC::GlobalProxyType)
-        errorObject = uncheckedDowncast<JSC::JSGlobalProxy>(errorObject)->target();
     JSC::JSValue caller = callFrame->argument(1);
 
     size_t stackTraceLimit = globalObject->stackTraceLimit().value_or(DEFAULT_ERROR_STACK_TRACE_LIMIT);
@@ -893,7 +899,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
         String sourceURL;
         JSValue result = computeErrorInfoToJSValue(vm, stackTrace, line, column, sourceURL, errorObject);
         RETURN_IF_EXCEPTION(scope, {});
-        errorObject->putDirect(vm, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
+        stackStorageObject(errorObject)->putDirect(vm, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
     }
 
     return JSC::JSValue::encode(JSC::jsUndefined());

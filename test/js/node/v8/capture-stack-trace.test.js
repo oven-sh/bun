@@ -415,6 +415,24 @@ test("Error.captureStackTrace on globalThis installs .stack on the global object
       configurable: true,
     });
     expect(globalThis.stack.split("\n")[1]).toContain("capture-stack-trace.test.js");
+    delete globalThis.stack;
+
+    // Error.prepareStackTrace gets the same value the caller passed, and can
+    // read the default-formatted stack through it. The raw global object
+    // behind the proxy never reaches script: a strict `this` of it is undefined.
+    let seen;
+    Error.prepareStackTrace = (err, sites) => {
+      seen = {
+        isGlobalThis: err === globalThis,
+        stackType: typeof err.stack,
+        hasOwnStack: Object.prototype.hasOwnProperty.call(err, "stack"),
+        sites: Array.isArray(sites),
+      };
+      return "from-prepare";
+    };
+    Error.captureStackTrace(globalThis);
+    expect(seen).toEqual({ isGlobalThis: true, stackType: "string", hasOwnStack: true, sites: true });
+    expect(globalThis.stack).toBe("from-prepare");
   } finally {
     delete globalThis.stack;
   }

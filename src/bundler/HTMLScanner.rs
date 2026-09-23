@@ -68,13 +68,11 @@ impl<'a> HTMLScanner<'a> {
     }
 }
 
-/// `//host/...` or `scheme:...` (two or more scheme chars, so not a drive letter): not a local file.
+/// The URLs the resolver marks external from their text alone.
 pub(crate) fn is_external_url(url: &[u8]) -> bool {
-    url.starts_with(b"//")
-        || url
-            .iter()
-            .position(|&c| !(c.is_ascii_alphanumeric() || matches!(c, b'+' | b'-' | b'.')))
-            .is_some_and(|len| len >= 2 && url[len] == b':' && url[0].is_ascii_alphabetic())
+    ["//", "http://", "https://", "data:"]
+        .iter()
+        .any(|prefix| url.starts_with(prefix.as_bytes()))
 }
 
 /// `./sprite.svg?v=2#icon` -> (`./sprite.svg`, `?v=2#icon`). A URL with no file part (`https:`, `#icon`) is not split.
@@ -131,9 +129,29 @@ impl Iterator for SrcsetUrls<'_> {
 }
 
 impl<'a> HTMLScanner<'a> {
+    /// Whether `url`, read as a path from the project root (`/x`) or from this file's directory, is on disk.
+    fn exists_on_disk(&self, url: &[u8]) -> bool {
+        let (dir, path) = match url {
+            [b'/', path @ ..] => (fs::FileSystem::instance().top_level_dir, path),
+            _ => (
+                resolve_path::dirname::<platform::Auto>(self.source.path.text()),
+                url,
+            ),
+        };
+        !dir.is_empty()
+            && sys::exists_z(resolve_path::join_abs_string_z::<platform::Auto>(
+                dir,
+                &[path],
+            ))
+    }
+
     fn create_import_record(&mut self, url: &[u8], kind: ImportKind) -> Result<(), Error> {
-        // Resolve without `?query#fragment`; the rewrite pass re-appends it from the attribute text.
-        let (input_path, _suffix) = split_url_suffix(url);
+        // Resolve without `?query#fragment`; the rewrite pass re-appends it. Both characters are
+        // also legal in file names (`./C#/logo.png`), so a file that exists as written wins.
+        let (input_path, _suffix) = match split_url_suffix(url) {
+            (_, suffix) if !suffix.is_empty() && self.exists_on_disk(url) => (url, &b""[..]),
+            split => split,
+        };
         // In HTML, sometimes people do /src/index.js
         // In that case, we don't want to use the absolute filesystem path, we want to use the path relative to the project root
         let path_to_use: &[u8] = if is_external_url(url) {

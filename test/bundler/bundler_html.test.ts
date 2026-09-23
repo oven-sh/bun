@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test";
+import { isWindows } from "harness";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -261,12 +262,17 @@ describe("bundler", () => {
     <img src="https://cdn.example.com/y.png?v=1#f">
     <img src="#local">
     <img src="#">
+    <img src="./C#/logo.png">
+    ${isWindows ? "" : `<img src="v2:icons/logo.png">`}
   </body>
 </html>`,
       "/app.js": "console.log('app')",
       "/style.css": "body { color: red }",
       "/sprite.svg": `<svg xmlns="http://www.w3.org/2000/svg"><symbol id="icon"/></svg>`,
       "/clip.mp4": "not really a video",
+      // `#` and (not on Windows) `:` are legal in file names: a file that exists as written is a file.
+      "/C#/logo.png": "c sharp",
+      ...(isWindows ? {} : { "/v2:icons/logo.png": "v2" }),
     },
     entryPoints: ["/index.html"],
     onAfterBundle(api) {
@@ -288,6 +294,8 @@ describe("bundler", () => {
         // Same-document references are not files.
         `#local`,
         `#`,
+        expect.stringMatching(/^\.\/logo-[a-z0-9]+\.png$/),
+        ...(isWindows ? [] : [expect.stringMatching(/^\.\/logo-[a-z0-9]+\.png$/)]),
       ]);
       api.expectFile(`out/${html.match(/index-[a-z0-9]+\.js/)![0]}`).toContain("app");
     },

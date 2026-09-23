@@ -363,10 +363,12 @@ body { color: blue; }`,
 <img srcset="./h1.png 1x, ./h2.png 2x"> <img srcset="data:image/gif;base64,R0lGODlhAQABAAAAACw=, ./h2.png 2x">
 <video src="./clip.mp4#t=1,2"></video>
 <img src="//cdn.example.com/x.png"> <img src="https://cdn.example.com/y.png?v=1#f"> <img src="#local">
+<img src="./C#/logo.png">
 </body></html>`,
       "app.js": `console.log("app");`,
       "h1.png": png,
       "h2.png": png,
+      "C#/logo.png": png,
       "sprite.svg": svg,
       "clip.mp4": mp4,
     });
@@ -393,6 +395,7 @@ body { color: blue; }`,
       "//cdn.example.com/x.png",
       "https://cdn.example.com/y.png?v=1#f",
       "#local",
+      pngData, // the `#` is part of a directory name, not a fragment
     ]);
     expect(html).toContain('console.log("app")');
   });

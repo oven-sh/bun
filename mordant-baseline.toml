@@ -27,9 +27,6 @@
 [bun_errno]
 "unused_pub:src/errno/windows_errno.rs" = 31
 
-[bun_event_loop]
-"unused_pub:src/event_loop/ConcurrentTask.rs" = 1
-
 [bun_http]
 "generic_body_not_generic:src/http/HTTPContext.rs" = 1
 "generic_body_not_generic:src/http/lib.rs" = 2
@@ -56,7 +53,6 @@
 "generic_body_not_generic:src/io/pipes.rs" = 1
 "param_wider_than_callers:src/io/PipeWriter.rs" = 1
 "unused_pub:src/io/PipeWriter.rs" = 2
-"unused_pub:src/io/lib.rs" = 1
 
 [bun_js_parser]
 "generic_body_not_generic:src/js_parser/fold.rs" = 1
@@ -171,9 +167,6 @@
 [bun_spawn]
 "unused_pub:src/spawn/process.rs" = 1
 
-[bun_spawn_sys]
-"unused_pub:src/spawn_sys/spawn_process.rs" = 5
-
 [bun_sql_jsc]
 "generic_body_not_generic:src/sql_jsc/mysql/JSMySQLConnection.rs" = 1
 "generic_body_not_generic:src/sql_jsc/mysql/MySQLConnection.rs" = 4
@@ -182,7 +175,7 @@
 
 [bun_sys]
 "error_collapsed_to_bool:src/sys/lib.rs" = 4
-"unused_pub:src/sys/lib.rs" = 65
+"unused_pub:src/sys/lib.rs" = 56
 "unused_pub:src/sys/windows/mod.rs" = 5
 
 [bun_uws_sys]

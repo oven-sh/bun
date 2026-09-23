@@ -335,7 +335,6 @@ pub struct VirtualMachine {
 
     pub debugger: Option<Box<crate::debugger::Debugger>>,
     pub(crate) has_started_debugger: bool,
-    pub(crate) has_terminated: bool,
 
     /// `Cell` so [`EventLoop`] (a value field of this struct) can flip the flag
     /// through `vm_ref()` (`&VirtualMachine`) without forming an overlapping
@@ -3923,10 +3922,9 @@ impl ResolveMode {
     }
 }
 
-/// Output slot for module resolution: the resolver result plus the resolved path and query string.
+/// Output slot for module resolution: the resolved path and query string.
 #[derive(Default)]
 pub struct ResolveFunctionResult {
-    pub result: Option<bun_resolver::Result>,
     // LIFETIME-ERASED: `path`/`query_string` borrow argv or the resolver's
     // process-lifetime arena (`detach_lifetime` in `resolve_maybe_need_dirname_uncached`),
     // which outlives every `ResolveFunctionResult`.
@@ -3984,8 +3982,7 @@ fn specifier_cache_resolver_buf() -> *mut bun_paths::PathBuffer {
 fn ensure_source_code_printer() {
     if SOURCE_CODE_PRINTER.get().is_none() {
         let writer = bun_js_printer::BufferWriter::init();
-        let mut printer = Box::new(bun_js_printer::BufferPrinter::init(writer));
-        printer.ctx.append_null_byte = false;
+        let printer = Box::new(bun_js_printer::BufferPrinter::init(writer));
         SOURCE_CODE_PRINTER.set(NonNull::new(bun_core::heap::into_raw(printer)));
     }
 }
@@ -5030,17 +5027,14 @@ impl VirtualMachine {
             return Ok(());
         }
         if specifier == MAIN_FILE_NAME && self.entry_point.generated {
-            ret.result = None;
             ret.path = MAIN_FILE_NAME;
             return Ok(());
         }
         if specifier.starts_with(Macro::NAMESPACE_WITH_COLON) {
-            ret.result = None;
             ret.path = self.dupe_resolved_path(specifier);
             return Ok(());
         }
         if specifier.starts_with(node_fallbacks::IMPORT_PATH) {
-            ret.result = None;
             ret.path = self.dupe_resolved_path(specifier);
             return Ok(());
         }
@@ -5049,7 +5043,6 @@ impl VirtualMachine {
             bun_ast::Target::Bun,
             Default::default(),
         ) {
-            ret.result = None;
             ret.path = result.path.as_bytes();
             return Ok(());
         }
@@ -5057,12 +5050,10 @@ impl VirtualMachine {
             && (specifier.ends_with(bun_paths::path_literal!("/[eval]").as_bytes())
                 || specifier.ends_with(bun_paths::path_literal!("/[stdin]").as_bytes()))
         {
-            ret.result = None;
             ret.path = self.dupe_resolved_path(specifier);
             return Ok(());
         }
         if let Some(blob_id) = specifier.strip_prefix(b"blob:".as_slice()) {
-            ret.result = None;
             // `WebCore.ObjectURLRegistry` lives in `bun_runtime`; routed
             // through [`RuntimeHooks::has_blob_url`].
             let has = runtime_hooks()
@@ -5188,7 +5179,6 @@ impl VirtualMachine {
         // outlives `ResolveFunctionResult` (see the struct's lifetime-erasure
         // note).
         ret.path = unsafe { bun_ptr::detach_lifetime(result_path.text) };
-        ret.result = Some(result);
 
         Ok(())
     }
@@ -5475,7 +5465,6 @@ impl VirtualMachine {
             // once on the same thread; `self` is the live per-thread VM.
             unsafe { (hooks.deinit_runtime_state)(std::ptr::from_mut(self), state) };
         }
-        self.has_terminated = true;
     }
     /// Note: takes the concrete
     /// `bun_core::io::Writer` since every call site passes

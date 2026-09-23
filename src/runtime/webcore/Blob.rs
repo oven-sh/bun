@@ -2048,6 +2048,7 @@ impl BlobExt for Blob {
                             binding,
                             crate::node::fs::args::Stat::owned(path_like.slice().to_vec()),
                             vm,
+                            None,
                         ))
                     }
                     PathOrFileDescriptor::Fd(fd) => {
@@ -2062,6 +2063,7 @@ impl BlobExt for Blob {
                             binding,
                             crate::node::fs::args::Fstat::for_fd(*fd),
                             vm,
+                            None,
                         ))
                     }
                 }

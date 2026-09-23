@@ -109,6 +109,45 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
     60_000,
   );
 
+  // Bytecode is counted among the outputs before it is generated. JSC rejects this regular expression, which the bundler
+  // passes through, so that chunk ends up without bytecode: the files after it must still be in the executable.
+  test("a chunk whose bytecode cannot be generated keeps the embedded files", async () => {
+    using dir = tempDir("build-compile-bytecode-failed", {
+      "logo.png": "PNGDATA",
+      "data.bin": "BINDATA",
+      "index.js": `
+          import logo from "./logo.png" with { type: "file" };
+          import data from "./data.bin" with { type: "file" };
+          console.log(await Bun.file(logo).text(), await Bun.file(data).text());
+          try {
+            const { bad } = await import("./bad.js");
+            console.log(bad("x"));
+          } catch (error) {
+            console.log(error.name);
+          }
+        `,
+      "bad.js": String.raw`export const bad = s => /\p{NotAProperty}/u.test(s);`,
+    });
+    const outfile = join(String(dir), isWindows ? "app.exe" : "app");
+    const build = await Bun.build({
+      entrypoints: [join(String(dir), "index.js")],
+      target: "bun",
+      format: "esm",
+      splitting: true,
+      bytecode: true,
+      compile: { outfile },
+    });
+    expect(build.success).toBe(true);
+    // Loading a module JSC cannot parse leaves an exception unchecked in ModuleProgramExecutable::tryCreate
+    // (oven-sh/WebKit#718), which the ASAN lane's exception-check validation turns into an abort. Remove the
+    // override once WEBKIT_VERSION includes that fix.
+    const env = { ...bunEnv, BUN_JSC_validateExceptionChecks: "0" };
+    await using proc = Bun.spawn({ cmd: [outfile], env, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "PNGDATA BINDATA\nSyntaxError\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  }, 60_000);
+
   // --bytecode into an executable for another os/arch/libc embeds bytecode written by this platform's JavaScriptCore for
   // another's; such executables say so in crash reports (Features: cross_compiled_bytecode). The "other platform" build
   // here is the same OS with the other CPU, and reuses this bun as the target executable, so it still runs here.

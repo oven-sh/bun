@@ -83,6 +83,20 @@ pub(crate) fn url_suffix(url: &[u8]) -> &[u8] {
     }
 }
 
+/// Whether `url` goes to the resolver: not `#icon` or `?page=2`, nor an optional `mailto:`-like URL or `{{ template }}`.
+fn is_followed(url: &[u8], optional: bool) -> bool {
+    let has_scheme = || {
+        url.iter()
+            .position(|&c| !(c.is_ascii_alphanumeric() || matches!(c, b'+' | b'-' | b'.')))
+            .is_some_and(|len| len >= 2 && url[len] == b':' && url[0].is_ascii_alphabetic())
+    };
+    !url.is_empty()
+        && !matches!(url[0], b'#' | b'?')
+        && !(optional
+            && !is_external_url(url)
+            && (has_scheme() || strings::index_of_any(url, b"{}<>").is_some()))
+}
+
 const HTML_WHITESPACE: &[u8] = b" \t\n\r\x0c";
 
 /// Length of a `srcset` descriptor: up to the next comma outside `( )`.
@@ -129,7 +143,12 @@ impl Iterator for SrcsetUrls<'_> {
 }
 
 impl<'a> HTMLScanner<'a> {
-    fn create_import_record(&mut self, url: &[u8], kind: ImportKind) -> Result<(), Error> {
+    fn create_import_record(
+        &mut self,
+        url: &[u8],
+        kind: ImportKind,
+        optional: bool,
+    ) -> Result<(), Error> {
         // The resolver retries without `?query#fragment` for assets and stylesheets only; a bundled script has no use for its `?v=3`.
         let input_path = match strings::index_of_char_usize(url, b'?') {
             Some(query) if kind == ImportKind::Stmt && !is_external_url(url) => &url[..query],
@@ -183,7 +202,12 @@ impl<'a> HTMLScanner<'a> {
             loader: None,
             source_index: AstIndex::default(),
             original_path: b"",
-            flags: ImportRecordFlags::default(),
+            // Not found: `resolve_import_records` warns and leaves the URL as written.
+            flags: if optional {
+                ImportRecordFlags::HANDLES_IMPORT_ERRORS
+            } else {
+                ImportRecordFlags::default()
+            },
         };
 
         self.import_records.push(record);
@@ -223,7 +247,11 @@ pub(crate) enum UrlAction<'a> {
 /// Trait capturing the methods `HTMLProcessor` calls on `T`.
 pub(crate) trait HTMLProcessorHandler {
     /// Once per URL (per `srcset` candidate), in document order: one import record made or consumed per call.
-    fn on_url(&mut self, url: &[u8], kind: ImportKind) -> UrlAction<'_>;
+    fn on_url(&mut self, url: &[u8], kind: ImportKind, optional: bool) -> UrlAction<'_>;
+    /// Standalone HTML has every local file inline, so a `<link rel="preload">` of one points at nothing.
+    fn drops_local_preloads(&self) -> bool {
+        false
+    }
     fn on_write_html(&mut self, bytes: &[u8]);
     fn on_html_parse_error(&mut self, message: &[u8]);
 
@@ -242,8 +270,8 @@ pub(crate) trait HTMLProcessorHandler {
 }
 
 impl<'a> HTMLProcessorHandler for HTMLScanner<'a> {
-    fn on_url(&mut self, url: &[u8], kind: ImportKind) -> UrlAction<'_> {
-        let _ = self.create_import_record(url, kind);
+    fn on_url(&mut self, url: &[u8], kind: ImportKind, optional: bool) -> UrlAction<'_> {
+        let _ = self.create_import_record(url, kind, optional);
         UrlAction::Keep
     }
     fn on_write_html(&mut self, bytes: &[u8]) {
@@ -256,76 +284,167 @@ impl<'a> HTMLProcessorHandler for HTMLScanner<'a> {
 
 pub(crate) struct HTMLProcessor<T, const VISIT_DOCUMENT_TAGS: bool>(PhantomData<T>);
 
+/// What the URL in a matched attribute is.
 #[derive(Clone, Copy)]
-struct TagHandler {
-    /// CSS selector to match elements
-    pub(crate) selector: &'static str,
-    /// The attribute to extract the URL from
-    pub(crate) url_attribute: &'static str,
-    /// The kind of import to create
-    pub(crate) kind: ImportKind,
+enum UrlAttr {
+    Script,
+    /// A file that has to exist: not found is a build error.
+    Asset,
+    /// A file that may live elsewhere (`og:image`, `<object data>`): not found stays as written, with a warning.
+    OptionalAsset,
+    /// Decided by `rel`, `as` and `type`.
+    LinkHref,
+    /// Decided by `property` and `name`.
+    MetaContent,
 }
 
-impl TagHandler {
-    const fn new(selector: &'static str, url_attribute: &'static str, kind: ImportKind) -> Self {
-        Self {
-            selector,
-            url_attribute,
-            kind,
-        }
+/// One selector per element name: lol-html runs every compound selector on every start tag, so `rel`, `as` and `property` are checked in `UrlAttr::kind`.
+const URL_ELEMENTS: &[(&str, &[(&str, UrlAttr)])] = &[
+    // Keep docs/bundler/{loaders,html-static,standalone-html}.mdx and docs/runtime/file-types.mdx in step.
+    ("script[src]", &[("src", UrlAttr::Script)]),
+    (
+        "link",
+        &[
+            ("href", UrlAttr::LinkHref),
+            ("imagesrcset", UrlAttr::OptionalAsset),
+        ],
+    ),
+    ("meta[content]", &[("content", UrlAttr::MetaContent)]),
+    (
+        "img",
+        &[("src", UrlAttr::Asset), ("srcset", UrlAttr::Asset)],
+    ),
+    (
+        "video",
+        &[("src", UrlAttr::Asset), ("poster", UrlAttr::Asset)],
+    ),
+    ("audio[src]", &[("src", UrlAttr::Asset)]),
+    (
+        "source",
+        &[("src", UrlAttr::Asset), ("srcset", UrlAttr::Asset)],
+    ),
+    ("track[src]", &[("src", UrlAttr::OptionalAsset)]),
+    ("embed[src]", &[("src", UrlAttr::OptionalAsset)]),
+    ("input[src]", &[("src", UrlAttr::OptionalAsset)]),
+    ("object[data]", &[("data", UrlAttr::OptionalAsset)]),
+    (
+        "image",
+        &[
+            ("href", UrlAttr::OptionalAsset),
+            ("xlink:href", UrlAttr::OptionalAsset),
+        ],
+    ),
+    (
+        "use",
+        &[
+            ("href", UrlAttr::OptionalAsset),
+            ("xlink:href", UrlAttr::OptionalAsset),
+        ],
+    ),
+];
+
+/// The attributes of one start tag that decide what its URLs are.
+#[derive(Default)]
+struct UrlContext {
+    rel: Option<String>,
+    as_: Option<String>,
+    type_: Option<String>,
+    property: Option<String>,
+    name: Option<String>,
+}
+
+fn is(value: &Option<String>, expected: &str) -> bool {
+    value
+        .as_deref()
+        .is_some_and(|value| value.eq_ignore_ascii_case(expected))
+}
+
+impl UrlContext {
+    fn rel_has(&self, token: &str) -> bool {
+        self.rel.as_deref().is_some_and(|rel| {
+            rel.split_ascii_whitespace()
+                .any(|t| t.eq_ignore_ascii_case(token))
+        })
+    }
+
+    /// `<link rel="preload|modulepreload">`: a hint to fetch early, not a use of the file.
+    fn is_preload(&self) -> bool {
+        self.rel_has("preload") || self.rel_has("modulepreload")
     }
 }
 
-const TAG_HANDLERS: [TagHandler; 16] = [
-    // Module scripts with src
-    TagHandler::new("script[src]", "src", ImportKind::Stmt),
-    // CSS Stylesheets
-    TagHandler::new("link[rel='stylesheet'][href]", "href", ImportKind::At),
-    // CSS Assets
-    TagHandler::new("link[as='style'][href]", "href", ImportKind::At),
-    // Font files
-    TagHandler::new(
-        "link[as='font'][href], link[type^='font/'][href]",
-        "href",
-        ImportKind::Url,
-    ),
-    // Image assets
-    TagHandler::new("link[as='image'][href]", "href", ImportKind::Url),
-    // Audio/Video assets
-    TagHandler::new(
-        "link[as='video'][href], link[as='audio'][href]",
-        "href",
-        ImportKind::Url,
-    ),
-    // Web Workers
-    TagHandler::new("link[as='worker'][href]", "href", ImportKind::Stmt),
-    // Manifest files
-    TagHandler::new("link[rel='manifest'][href]", "href", ImportKind::Url),
-    // Icons
-    TagHandler::new(
-        "link[rel='icon'][href], link[rel='apple-touch-icon'][href]",
-        "href",
-        ImportKind::Url,
-    ),
-    // Images with src
-    TagHandler::new("img[src]", "src", ImportKind::Url),
-    // Images with srcset
-    TagHandler::new("img[srcset]", "srcset", ImportKind::Url),
-    // Videos with src
-    TagHandler::new("video[src]", "src", ImportKind::Url),
-    // Videos with poster
-    TagHandler::new("video[poster]", "poster", ImportKind::Url),
-    // Audio with src
-    TagHandler::new("audio[src]", "src", ImportKind::Url),
-    // Source elements with src
-    TagHandler::new("source[src]", "src", ImportKind::Url),
-    // Source elements with srcset
-    TagHandler::new("source[srcset]", "srcset", ImportKind::Url),
-    //     // Iframes
-    //     TagHandler::new("iframe[src]", "src", ImportKind::Url),
-];
+impl UrlAttr {
+    /// The import kind, and whether the file is optional. `None`: not a URL this build follows.
+    fn kind(self, c: &UrlContext) -> Option<(ImportKind, bool)> {
+        const REQUIRED: bool = false;
+        const OPTIONAL: bool = true;
+        Some(match self {
+            UrlAttr::Script => (ImportKind::Stmt, REQUIRED),
+            UrlAttr::Asset => (ImportKind::Url, REQUIRED),
+            UrlAttr::OptionalAsset => (ImportKind::Url, OPTIONAL),
+            UrlAttr::LinkHref => {
+                let font = c.type_.as_deref().is_some_and(|t| {
+                    t.get(..5)
+                        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("font/"))
+                });
+                if is(&c.rel, "stylesheet") || is(&c.as_, "style") {
+                    (ImportKind::At, REQUIRED)
+                } else if is(&c.as_, "worker") {
+                    (ImportKind::Stmt, REQUIRED)
+                } else if font
+                    || ["font", "image", "video", "audio"]
+                        .iter()
+                        .any(|as_| is(&c.as_, as_))
+                    || ["manifest", "icon", "apple-touch-icon"]
+                        .iter()
+                        .any(|rel| is(&c.rel, rel))
+                {
+                    (ImportKind::Url, REQUIRED)
+                } else if c.rel_has("icon")
+                    || c.rel_has("mask-icon")
+                    || c.rel_has("apple-touch-icon-precomposed")
+                    || c.rel_has("apple-touch-startup-image")
+                {
+                    // The other icon rels, e.g. "shortcut icon".
+                    (ImportKind::Url, OPTIONAL)
+                } else {
+                    return None;
+                }
+            }
+            UrlAttr::MetaContent => {
+                // The list Vite rewrites: https://ogp.me and the msapplication tile images.
+                let image = [
+                    "og:image",
+                    "og:image:url",
+                    "og:image:secure_url",
+                    "og:audio",
+                    "og:audio:secure_url",
+                    "og:video",
+                    "og:video:secure_url",
+                ]
+                .iter()
+                .any(|property| is(&c.property, property))
+                    || [
+                        "twitter:image",
+                        "msapplication-tileimage",
+                        "msapplication-config",
+                        "msapplication-square70x70logo",
+                        "msapplication-square150x150logo",
+                        "msapplication-wide310x150logo",
+                        "msapplication-square310x310logo",
+                    ]
+                    .iter()
+                    .any(|name| is(&c.name, name));
+                if !image {
+                    return None;
+                }
+                (ImportKind::Url, OPTIONAL)
+            }
+        })
+    }
+}
 
-const SELECTOR_CAP: usize = TAG_HANDLERS.len() + 3;
+const SELECTOR_CAP: usize = URL_ELEMENTS.len() + 3;
 
 #[inline]
 fn lol_err<E>(_: E) -> Error {
@@ -370,14 +489,17 @@ fn set_attribute(element: &mut Element<'_, '_>, name: &str, value: &[u8]) {
 fn rewrite_srcset<T: HTMLProcessorHandler>(
     this: &mut T,
     value: &[u8],
-    kind: ImportKind,
+    (kind, optional): (ImportKind, bool),
 ) -> UrlAction<'static> {
     let mut out = Vec::new();
     let mut copied = 0;
     let mut remove = false;
     // No early exit: every candidate reaches `on_url` so both passes stay in step.
     for url in (SrcsetUrls { value, pos: 0 }) {
-        match this.on_url(&value[url.clone()], kind) {
+        if !is_followed(&value[url.clone()], optional) {
+            continue;
+        }
+        match this.on_url(&value[url.clone()], kind, optional) {
             UrlAction::Keep => {}
             UrlAction::Replace(new_url) => {
                 out.extend_from_slice(&value[copied..url.start]);
@@ -408,36 +530,74 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
 
         let mut element_content_handlers = Vec::with_capacity(SELECTOR_CAP);
 
-        for tag_info in TAG_HANDLERS {
+        for &(selector, attrs) in URL_ELEMENTS {
             let on_element: lol_html::ElementHandler<'_> = Box::new(
                 move |element: &mut Element<'_, '_>| -> lol_html::HandlerResult {
-                    let value = element
-                        .get_attribute(tag_info.url_attribute)
-                        .unwrap_or_default();
-                    bun_core::scoped_log!(HTMLScanner, "{} {}", tag_info.selector, value);
-                    let action = if tag_info.url_attribute == "srcset" {
-                        // SAFETY: `this_ptr` was derived from `run`'s `&mut T`,
-                        // which is not reborrowed while the rewriter — the only
-                        // holder of these closures — is alive.
-                        rewrite_srcset(unsafe { &mut *this_ptr }, value.as_bytes(), tag_info.kind)
-                    } else {
-                        match strings::trim(value.as_bytes(), HTML_WHITESPACE) {
-                            b"" => UrlAction::Keep,
-                            // SAFETY: as for `rewrite_srcset` above.
-                            url => unsafe { (*this_ptr).on_url(url, tag_info.kind) },
+                    // One pass, and a URL is read only once it is wanted: lol-html allocates a String per name or value it returns.
+                    let mut found: [Option<usize>; 2] = [None, None];
+                    let mut context = UrlContext::default();
+                    let wants_context =
+                        matches!(attrs[0].1, UrlAttr::LinkHref | UrlAttr::MetaContent);
+                    for (index, attribute) in element.attributes().iter().enumerate() {
+                        let name = attribute.name();
+                        // The first of a repeated attribute wins, as in a browser.
+                        if let Some(i) = attrs.iter().position(|(attr, _)| *attr == name) {
+                            found[i].get_or_insert(index);
+                        } else if wants_context {
+                            let slot = match name.as_str() {
+                                "rel" => &mut context.rel,
+                                "as" => &mut context.as_,
+                                "type" => &mut context.type_,
+                                "property" => &mut context.property,
+                                "name" => &mut context.name,
+                                _ => continue,
+                            };
+                            slot.get_or_insert_with(|| attribute.value());
                         }
-                    };
-                    match action {
-                        UrlAction::Keep => {}
-                        UrlAction::Replace(new_value) => {
-                            set_attribute(element, tag_info.url_attribute, &new_value)
+                    }
+
+                    // SAFETY: `this_ptr` was derived from `run`'s `&mut T`,
+                    // which is not reborrowed while the rewriter — the only
+                    // holder of these closures — is alive.
+                    let drops_local_preloads = unsafe { (*this_ptr).drops_local_preloads() };
+                    let mut remove = drops_local_preloads
+                        && context.is_preload()
+                        && found[0].is_some_and(|href| {
+                            let href = element.attributes()[href].value();
+                            let href = href.trim_ascii().as_bytes();
+                            is_followed(href, false) && !is_external_url(href)
+                        });
+                    for (&(attr, url_attr), index) in attrs.iter().zip(found) {
+                        let (Some(index), Some(kind)) = (index, url_attr.kind(&context)) else {
+                            continue;
+                        };
+                        let value = element.attributes()[index].value();
+                        bun_core::scoped_log!(HTMLScanner, "{} {}={}", selector, attr, value);
+                        let action = if attr.ends_with("srcset") {
+                            // SAFETY: as for `drops_local_preloads` above.
+                            rewrite_srcset(unsafe { &mut *this_ptr }, value.as_bytes(), kind)
+                        } else {
+                            match strings::trim(value.as_bytes(), HTML_WHITESPACE) {
+                                url if !is_followed(url, kind.1) => UrlAction::Keep,
+                                // SAFETY: as for `drops_local_preloads` above.
+                                url => unsafe { (*this_ptr).on_url(url, kind.0, kind.1) },
+                            }
+                        };
+                        match action {
+                            UrlAction::Keep => {}
+                            UrlAction::Replace(new_value) => {
+                                set_attribute(element, attr, &new_value)
+                            }
+                            UrlAction::RemoveElement => remove = true,
                         }
-                        UrlAction::RemoveElement => element.remove(),
+                    }
+                    if remove {
+                        element.remove();
                     }
                     Ok(())
                 },
             );
-            element_content_handlers.push(element_entry(tag_info.selector, on_element)?);
+            element_content_handlers.push(element_entry(selector, on_element)?);
         }
 
         if VISIT_DOCUMENT_TAGS {

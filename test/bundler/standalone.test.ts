@@ -400,6 +400,106 @@ body { color: blue; }`,
     expect(html).toContain('console.log("app")');
   });
 
+  test("inlines every local URL attribute and drops local preloads", async () => {
+    const png = Buffer.from("89504e470d0a1a0a78", "hex");
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg"><symbol id="icon" viewBox="0 0 1 1"><path d="M0 0h1v1z"/></symbol></svg>`;
+    using dir = tempDir("compile-browser-url-attrs", {
+      "index.html": `<!DOCTYPE html><html><head>
+<link rel="preload" as="image" href="./i.png" imagesrcset="./h1.png 1x, ./h2.png 2x" imagesizes="100vw">
+<link rel="modulepreload" href="./app.js" integrity="sha384-AAAA">
+<link rel="preload" as="font" href="https://cdn.example.com/font.woff2" crossorigin>
+<link rel="prefetch" href="./about.html">
+<link rel="shortcut icon" href="./i.png">
+<link rel="apple-touch-startup-image" href="./st.png">
+<meta property="og:image" content="./og.png">
+<meta property="og:image:width" content="1200">
+<meta name="twitter:image" content="./og.png">
+<script type="module" src="./app.js"></script></head><body>
+<video poster="./i.png"><track src="./subs.vtt" kind="subtitles" srclang="en" default></video>
+<object data="./doc.pdf" type="application/pdf"><embed src="./doc.pdf"></object>
+<input type="image" src="./i.png">
+<svg><use href="./sprite.svg#icon"></use><use xlink:href="./sprite.svg#icon"></use><image href="./i.png"/></svg>
+<svg><symbol id="local"></symbol><use href="#local"></use></svg>
+<a href="./doc.pdf">pdf</a>
+</body></html>`,
+      "app.js": `console.log("app");`,
+      "i.png": png,
+      "h1.png": png,
+      "h2.png": png,
+      "st.png": png,
+      "og.png": png,
+      "sprite.svg": svg,
+      "subs.vtt": "WEBVTT\n\n",
+      "doc.pdf": "%PDF-1.4\n",
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/index.html`],
+      compile: true,
+      target: "browser",
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.logs).toEqual([]);
+    expect(result.outputs.length).toBe(1);
+    const html = await result.outputs[0].text();
+
+    const pngData = "data:image/png;base64," + png.toString("base64");
+    const svgData = "data:image/svg+xml;base64," + Buffer.from(svg).toString("base64");
+    const pdfData = "data:application/pdf;base64," + Buffer.from("%PDF-1.4\n").toString("base64");
+    const urls = [...html.matchAll(/ (?:src|href|xlink:href|content|data|poster)="([^"]*)"/g)].map(m => m[1]);
+    expect(urls).toEqual([
+      // <link rel="preload"> and <link rel="modulepreload"> of local files are gone:
+      // what they point at is inline. The external preload stays.
+      "https://cdn.example.com/font.woff2",
+      "./about.html", // prefetch is for a later navigation, not for this page
+      pngData, // shortcut icon
+      pngData, // apple-touch-startup-image
+      pngData, // og:image
+      "1200",
+      pngData, // twitter:image
+      pngData, // poster
+      expect.stringMatching(/^data:text\/vtt[^"]*;base64,/), // track
+      pdfData, // object
+      pdfData, // embed
+      pngData, // input
+      `${svgData}#icon`, // use href
+      `${svgData}#icon`, // use xlink:href
+      pngData, // image href
+      "#local",
+      "./doc.pdf", // <a href> is navigation
+    ]);
+    expect(html).not.toContain("modulepreload");
+    expect(html).not.toContain("imagesrcset");
+    expect(html).toContain('console.log("app")');
+  });
+
+  test("an optional asset that is not on disk stays as written, with a warning", async () => {
+    using dir = tempDir("compile-browser-optional-asset", {
+      "index.html": `<!DOCTYPE html><html><head>
+<meta property="og:image" content="/served-elsewhere/og.png">
+<meta name="twitter:image" content="{{ og_image }}">
+</head><body><video><track src="./missing.vtt"></video></body></html>`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/index.html`],
+      compile: true,
+      target: "browser",
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.logs.map(log => [log.level, log.message])).toEqual([
+      // A rooted URL is looked up from the project root. "{{ og_image }}" is a template placeholder: no lookup.
+      ["warn", expect.stringMatching(/^Could not resolve: ".*served-elsewhere.og\.png"\. The URL stays as written\.$/)],
+      ["warn", `Could not resolve: "./missing.vtt". The URL stays as written.`],
+    ]);
+    const html = await result.outputs[0].text();
+    expect(html).toContain(`content="/served-elsewhere/og.png"`);
+    expect(html).toContain(`content="{{ og_image }}"`);
+    expect(html).toContain(`<track src="./missing.vtt">`);
+  });
+
   test("handles CSS url() references", async () => {
     const pixel = Buffer.from(
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4DwAAAQEABRjYTgAAAABJRU5ErkJggg==",

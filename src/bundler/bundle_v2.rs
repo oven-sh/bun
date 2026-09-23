@@ -6699,6 +6699,16 @@ pub mod bv2_impl {
                                             import_record.kind,
                                         );
                                     }
+                                } else if loader == Loader::Html {
+                                    // Only `HTMLScanner`'s optional assets (`og:image`, `<object data>`) handle errors.
+                                    log.add_warning_fmt(
+                                        Some(source),
+                                        bun_ast::Loc::EMPTY,
+                                        format_args!(
+                                            "Could not resolve: \"{}\". The URL stays as written.",
+                                            bstr::BStr::new(import_record.path.text)
+                                        ),
+                                    );
                                 }
                             } else {
                                 // assume other errors are already in the log
@@ -6744,6 +6754,20 @@ pub mod bv2_impl {
                         resolve_result.primary_side_effects_data
                             != bun_ast::SideEffects::HasSideEffects,
                     );
+                    continue;
+                }
+
+                // `<object data="./page.html">` links to a page; bundling it would run its scripts here.
+                if loader == Loader::Html
+                    && import_record.kind == ImportKind::Url
+                    && import_record
+                        .loader
+                        .or_else(|| path.loader(&transpiler.options.loaders))
+                        == Some(Loader::Html)
+                {
+                    import_record
+                        .flags
+                        .insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
                     continue;
                 }
 

@@ -301,6 +301,144 @@ describe("bundler", () => {
     },
   });
 
+  // Every element/attribute pair the scanner follows; see URL_ELEMENTS in src/bundler/HTMLScanner.rs.
+  itBundled("html/asset-attributes", {
+    outdir: "out/",
+    files: {
+      "/index.html": `<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="shortcut icon" href="./a.png">
+    <link rel="apple-touch-icon-precomposed" href="./a.png">
+    <link rel="apple-touch-startup-image" href="./a.png">
+    <link rel="mask-icon" href="./a.svg">
+    <link REL="ICON" href="./a.png">
+    <link rel="preload" as="image" href="./a.png" imagesrcset="./a.png 1x, ./b.png 2x" imagesizes="100vw">
+    <link rel="modulepreload" href="./keep-me.js">
+    <link rel="alternate stylesheet" href="./not-bundled.css">
+    <link rel="canonical" href="./index.html">
+    <meta property="og:image" content="./a.png">
+    <meta property="OG:Image:Secure_URL" content="./a.png">
+    <meta property="og:image:alt" content="./not-a-file.png">
+    <meta name="twitter:image" content="./a.png">
+    <meta name="msapplication-TileImage" content="./a.png">
+    <meta name="description" content="./not-a-file.png">
+  </head>
+  <body>
+    <video><track src="./a.vtt"></video>
+    <object data="./a.pdf"><embed src="./a.pdf"></object>
+    <input type="image" src="./a.png">
+    <svg><image href="./a.png"/><image xlink:href="./a.png"/><use xlink:href="./a.svg#x"/><use href="#local"/></svg>
+    <iframe src="./page.html"></iframe>
+    <object data="./page.html"></object>
+    <a href="./a.pdf">download</a>
+  </body>
+</html>`,
+      "/a.png": "png",
+      "/b.png": "png two",
+      "/a.svg": `<svg xmlns="http://www.w3.org/2000/svg"/>`,
+      "/a.vtt": "WEBVTT",
+      "/a.pdf": "%PDF-1.4",
+      // A page that another page points at is a link, not an asset: it is not
+      // parsed, so its script must not end up in index.html's bundle.
+      "/page.html": `<!DOCTYPE html><script src="./page.js"></script>`,
+      "/page.js": `console.log("only on page.html")`,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      const js = api.readFile(`out/${html.match(/index-\w+\.js/)![0]}`);
+      expect(js).not.toContain("only on page.html");
+      const hashed = (stem: string, ext: string) => {
+        const name = html.match(new RegExp(`[" ]\\./(${stem}-[a-z0-9]+\\.${ext})[?#" ]`))![1];
+        api.assertFileExists(`out/${name}`);
+        return `./${name}`;
+      };
+      const [png, png2, svg, vtt, pdf] = [
+        hashed("a", "png"),
+        hashed("b", "png"),
+        hashed("a", "svg"),
+        hashed("a", "vtt"),
+        hashed("a", "pdf"),
+      ];
+      const urls = [...html.matchAll(/ (?:src|href|xlink:href|content|data|imagesrcset)="([^"]*)"/g)].map(m => m[1]);
+      expect(urls.filter(url => !/^\.\/index-\w+\.js$/.test(url))).toEqual([
+        png, // shortcut icon
+        png, // apple-touch-icon-precomposed
+        png, // apple-touch-startup-image
+        svg, // mask-icon
+        png, // REL="ICON": rel values are ASCII case-insensitive
+        png, // preload as=image href
+        `${png} 1x, ${png2} 2x`, // imagesrcset
+        "./keep-me.js", // modulepreload is only dropped in standalone mode
+        "./not-bundled.css", // an alternate stylesheet is not the page's stylesheet
+        "./index.html", // canonical
+        png, // og:image
+        png, // property values are ASCII case-insensitive
+        "./not-a-file.png", // og:image:alt is text
+        png, // twitter:image
+        png, // msapplication-TileImage
+        "./not-a-file.png", // description is text
+        vtt,
+        pdf, // object
+        pdf, // embed
+        png, // input
+        png, // image href
+        png, // image xlink:href
+        `${svg}#x`, // use xlink:href
+        "#local", // a same-document reference is not a file
+        "./page.html", // iframes are left alone
+        "./page.html", // so are other pages
+        "./a.pdf", // and anchors
+      ]);
+    },
+  });
+
+  // <track>, <object>, <embed>, <input>, SVG, imagesrcset, <meta> and the less common icon rels are
+  // optional: a value that names no file on disk stays as written and the build still passes.
+  itBundled("html/optional-assets-unresolved", {
+    outdir: "out/",
+    files: {
+      "/index.html": `<!DOCTYPE html>
+<html>
+  <head>
+    <meta property="og:image" content="/served-elsewhere/og.png">
+    <meta name="twitter:image" content="{{ og_image }}">
+    <link rel="shortcut icon" href="./missing.ico">
+    <link rel="preload" as="image" imagesrcset="./missing-1x.png 1x, ./here.png 2x">
+  </head>
+  <body>
+    <video><track src="./missing.vtt"></video>
+    <object data="blob:https://example.com/1234"></object>
+    <embed src="mailto:someone@example.com">
+    <input type="image" src="javascript:void(0)">
+    <embed src="?page=2">
+    <svg><use href="missing.svg#a"></use></svg>
+  </body>
+</html>`,
+      "/here.png": "here",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      const here = html.match(/here-[a-z0-9]+\.png/)![0];
+      api.assertFileExists(`out/${here}`);
+      const urls = [...html.matchAll(/ (?:src|href|content|data|imagesrcset)="([^"]*)"/g)].map(m => m[1]);
+      expect(urls.filter(url => !/^\.\/index-\w+\.js$/.test(url))).toEqual([
+        "/served-elsewhere/og.png",
+        "{{ og_image }}",
+        "./missing.ico",
+        `./missing-1x.png 1x, ./${here} 2x`,
+        "./missing.vtt",
+        "blob:https://example.com/1234",
+        "mailto:someone@example.com",
+        "javascript:void(0)",
+        "?page=2",
+        "missing.svg#a",
+      ]);
+    },
+  });
+
   // Test external assets preservation
   itBundled("html/external-assets", {
     outdir: "out/",

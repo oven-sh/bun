@@ -126,6 +126,41 @@ devTest("srcset candidates and #fragments on asset URLs", {
     await dev.fetch(logo).expect.toBe("C SHARP");
   },
 });
+devTest("svg <use href>, links between pages, optional assets that are not on disk", {
+  files: {
+    "index.html": `
+      <!DOCTYPE html><html><head>
+      <meta property="og:image" content="/served-elsewhere/og.png">
+      <link rel="preload" as="image" imagesrcset="./a.png 1x, ./b.png 2x">
+      </head><body>
+      <svg><use href="./sprite.svg#icon"></use><use href="#local"></use></svg>
+      <object data="./other.html"></object>
+      <video><track src="./missing.vtt"></video>
+      </body></html>
+    `,
+    "a.png": "A",
+    "b.png": "B",
+    "sprite.svg": `<svg xmlns="http://www.w3.org/2000/svg"><symbol id="icon"/></svg>`,
+    // Only linked to from index.html, never a route: it must not be bundled,
+    // so its missing script is not an error.
+    "other.html": `<!DOCTYPE html><script src="./does-not-exist.js"></script>`,
+  },
+  htmlFiles: ["index.html"],
+  async test(dev) {
+    const html = await dev.fetch("/").text();
+    const [, a, b] = html.match(
+      /imagesrcset="(\/_bun\/asset\/[0-9a-f]+\.png) 1x, (\/_bun\/asset\/[0-9a-f]+\.png) 2x"/,
+    )!;
+    await dev.fetch(a).expect.toBe("A");
+    await dev.fetch(b).expect.toBe("B");
+    const [, sprite] = html.match(/<use href="(\/_bun\/asset\/[0-9a-f]+\.svg)#icon">/)!;
+    await dev.fetch(sprite).expect.toInclude(`<symbol id="icon"/>`);
+    expect(html).toInclude(`<use href="#local">`);
+    expect(html).toInclude(`<object data="./other.html">`);
+    expect(html).toInclude(`content="/served-elsewhere/og.png"`);
+    expect(html).toInclude(`<track src="./missing.vtt">`);
+  },
+});
 devTest("image import in JS", {
   files: {
     "index.html": `

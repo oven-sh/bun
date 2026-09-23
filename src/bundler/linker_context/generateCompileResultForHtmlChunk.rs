@@ -112,7 +112,11 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
         ));
     }
 
-    fn on_url(&mut self, url: &[u8], _kind: ImportKind) -> UrlAction<'_> {
+    fn drops_local_preloads(&self) -> bool {
+        self.compile_to_standalone_html
+    }
+
+    fn on_url(&mut self, url: &[u8], _kind: ImportKind, optional: bool) -> UrlAction<'_> {
         if self.current_import_record_index as usize >= self.import_records.len() {
             bun_core::Output::panic(format_args!(
                 "Assertion failure in HTMLLoader.onTag: current_import_record_index ({}) >= import_records.len ({})",
@@ -162,6 +166,14 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
                 "Leaving external import: {}",
                 BStr::new(import_record.path.text)
             );
+            return UrlAction::Keep;
+        }
+
+        if optional
+            && import_record
+                .flags
+                .contains(ImportRecordFlags::WAS_UNRESOLVED)
+        {
             return UrlAction::Keep;
         }
 

@@ -177,14 +177,12 @@ test("Async functions frame should be included in stack trace", async () => {
 });
 
 describe("uncaught error printer", () => {
-  // A callback invoked from native code (timers, the microtask queue, process
+  // A callback invoked from native code (ticks, timers, the microtask queue, process
   // lifecycle events) hands an error that escapes it to the printer wrapped in
   // a JSC::Exception. The printer must still print the Error itself: the stack
   // captured where it was constructed, its own properties and its cause, so
   // the output is the same as when the same error escapes synchronously.
-  const exceptionEntryPoints = ["setTimeout", "setImmediate", "queueMicrotask", "beforeExit", "exit"];
-  // nextTick callbacks run from JS, which reports the bare thrown value.
-  const entryPoints = [...exceptionEntryPoints, "nextTick"];
+  const entryPoints = ["nextTick", "setTimeout", "setImmediate", "queueMicrotask", "beforeExit", "exit"];
 
   const fixture = `const [, , entryPoint, kind] = process.argv;
 function make(message, options) {
@@ -427,7 +425,7 @@ test("something", () => {
   async function expectThrowSiteFrames(kind: string, header: string, throwSite: string) {
     using dir = tempDir("uncaught-print", { "fixture.js": fixture });
     const [rethrown, ...results] = await Promise.all(
-      ["rethrow", ...exceptionEntryPoints].map(entryPoint => run(String(dir), entryPoint, kind)),
+      ["rethrow", ...entryPoints].map(entryPoint => run(String(dir), entryPoint, kind)),
     );
     for (const { stderr, exitCode } of results) {
       expect(stderr).toContain(header);

@@ -1,5 +1,6 @@
 use core::ptr::NonNull;
 
+use bun_bundler::bytecode_order::CodeNamesRef;
 use bun_core::String as BunString;
 use bun_options_types::Format;
 
@@ -83,12 +84,14 @@ unsafe extern "C" {
         is_module: bool,
         depth: u32,
         optimize: bool,
+        names: &CodeNamesRef<'_>,
     ) -> bool;
     /// InternalModuleRegistry.cpp: what `Bun__generateInternalModuleBytecode[FromSource]` encodes, as a module of the link.
     fn Bun__BytecodeLinkEncoder__addInternalModule(
         this: *mut BytecodeLinkEncoder,
         id: u32,
         depth: u32,
+        names: &CodeNamesRef<'_>,
     ) -> bool;
     fn Bun__BytecodeLinkEncoder__addInternalModuleFromSource(
         this: *mut BytecodeLinkEncoder,
@@ -100,6 +103,7 @@ unsafe extern "C" {
         url_len: usize,
         source_stamp: u32,
         depth: u32,
+        names: &CodeNamesRef<'_>,
     ) -> bool;
     fn Bun__BytecodeLinkEncoder__finish(
         this: *mut BytecodeLinkEncoder,
@@ -109,7 +113,9 @@ unsafe extern "C" {
         entry_offsets: *mut u32,
         entry_offset_count: usize,
         region_ends: *mut u32,
-        matched_hot_functions: *mut u32,
+        named_hot_functions: *mut u32,
+        placed_hot_functions: *mut u32,
+        functions_without_name: *mut u32,
     ) -> bool;
 }
 
@@ -336,7 +342,8 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_destroy(encoder: NonNull<BytecodeL
     unsafe { Bun__BytecodeLinkEncoder__destroy(encoder.as_ptr()) }
 }
 
-/// Parses `source` and adds it to the link's payload; false on a parse error. The source text is what `generate` would encode.
+/// Parses `source` and adds it to the link's payload; false on a parse error. The source text is what `generate` would
+/// encode; `names` is what an order file calls its code.
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_jsc_bytecode_link_encoder_add_module(
     encoder: NonNull<BytecodeLinkEncoder>,
@@ -345,6 +352,7 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_add_module(
     source_provider_url: &BunString,
     depth: u32,
     optimize: bool,
+    names: &CodeNamesRef<'_>,
 ) -> bool {
     let is_module = match format {
         Format::Esm => true,
@@ -355,7 +363,7 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_add_module(
         Some(first_non_ascii) => utf16_source(source, first_non_ascii as usize),
         None => BunString::clone_latin1(source),
     };
-    // SAFETY: `encoder` is live; the strings are live for the call.
+    // SAFETY: `encoder` is live; the strings and the names are live for the call, and C++ reads the names during it only.
     unsafe {
         Bun__BytecodeLinkEncoder__addModule(
             encoder.as_ptr(),
@@ -364,6 +372,7 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_add_module(
             is_module,
             depth,
             optimize,
+            names,
         )
     }
 }
@@ -374,9 +383,10 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_add_internal_module(
     encoder: NonNull<BytecodeLinkEncoder>,
     id: u32,
     depth: u32,
+    names: &CodeNamesRef<'_>,
 ) -> bool {
-    // SAFETY: `encoder` is live.
-    unsafe { Bun__BytecodeLinkEncoder__addInternalModule(encoder.as_ptr(), id, depth) }
+    // SAFETY: `encoder` is live; the names are live for the call, and C++ reads them during it only.
+    unsafe { Bun__BytecodeLinkEncoder__addInternalModule(encoder.as_ptr(), id, depth, names) }
 }
 
 /// Same, for an internal module of another bun executable (cross-compiling), as
@@ -389,8 +399,9 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_add_internal_module_from_source(
     url: &[u8],
     source_stamp: u32,
     depth: u32,
+    names: &CodeNamesRef<'_>,
 ) -> bool {
-    // SAFETY: `encoder` is live; the three slices are valid for their lengths for the duration of the call.
+    // SAFETY: `encoder` is live; the slices and the names are valid for the duration of the call.
     unsafe {
         Bun__BytecodeLinkEncoder__addInternalModuleFromSource(
             encoder.as_ptr(),
@@ -402,29 +413,27 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_add_internal_module_from_source(
             url.len(),
             source_stamp,
             depth,
+            names,
         )
     }
 }
 
 /// The payload, each module's cache-entry offset in it (in the order of the successful `add_*` calls), where each of the
-/// payload's regions ends (`JSC::BytecodeLinkEncoder`), and how many of the order files' hot functions are functions
-/// of this link.
+/// payload's regions ends (`JSC::BytecodeLinkEncoder`), how many of the order files' hot functions are functions
+/// of this link, and for each module how many functions with code its names did not cover.
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_jsc_bytecode_link_encoder_finish(
     encoder: NonNull<BytecodeLinkEncoder>,
     module_count: usize,
-) -> Option<(
-    Vec<u8>,
-    Vec<u32>,
-    [u32; bun_resolver::LINKED_BYTECODE_REGION_COUNT],
-    u32,
-)> {
+) -> Option<bun_bundler::bytecode_order::LinkedPayload> {
     let mut bytes: Option<NonNull<u8>> = None;
     let mut size: usize = 0;
     let mut handle: Option<NonNull<CachedBytecode>> = None;
     let mut entry_offsets = vec![0u32; module_count];
     let mut region_ends = [0u32; bun_resolver::LINKED_BYTECODE_REGION_COUNT];
-    let mut matched_hot_functions = 0u32;
+    let mut named_hot_functions = 0u32;
+    let mut placed_hot_functions = 0u32;
+    let mut functions_without_name = 0u32;
     // SAFETY: out-params are initialized locals of the sizes C++ expects.
     let ok = unsafe {
         Bun__BytecodeLinkEncoder__finish(
@@ -435,7 +444,9 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_finish(
             entry_offsets.as_mut_ptr(),
             entry_offsets.len(),
             region_ends.as_mut_ptr(),
-            &raw mut matched_hot_functions,
+            &raw mut named_hot_functions,
+            &raw mut placed_hot_functions,
+            &raw mut functions_without_name,
         )
     };
     let (true, Some(bytes), Some(handle)) = (ok, bytes, handle) else {
@@ -447,7 +458,14 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_finish(
     // SAFETY: `bytes[..size]` is the CachedBytecode's payload, valid until the deref below.
     payload.extend_from_slice(unsafe { core::slice::from_raw_parts(bytes.as_ptr(), size) });
     CachedBytecode__deref(CachedBytecode::opaque_mut(handle.as_ptr()));
-    Some((payload, entry_offsets, region_ends, matched_hot_functions))
+    Some(bun_bundler::bytecode_order::LinkedPayload {
+        payload,
+        entry_offsets,
+        region_ends,
+        named_hot_functions,
+        placed_hot_functions,
+        functions_without_name,
+    })
 }
 
 /// Frees the calling thread's bytecode-generation VM, if it made one.

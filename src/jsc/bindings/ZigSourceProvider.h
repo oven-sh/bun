@@ -86,4 +86,21 @@ inline Ref<JSC::CachedBytecode> embeddedBytecode(std::span<uint8_t> bytes, uint3
     return bytecode;
 }
 
+// bun_bundler::bytecode_order::CodeNamesRef. `functions` is sorted by (start, kind), each once; none for a text without names.
+struct BytecodeOrderNamesRef {
+    uint64_t module;
+    const JSC::BytecodeOrderNames::Function* functions;
+    size_t functionCount;
+
+    JSC::BytecodeOrderNames view() const
+    {
+        static_assert(sizeof(JSC::BytecodeOrderNames::Function) == 16 && offsetof(JSC::BytecodeOrderNames::Function, key) == 0 && offsetof(JSC::OrderFunctionKey, kind) == 4 && offsetof(JSC::BytecodeOrderNames::Function, name) == 8, "FunctionIdentity");
+        static_assert(!static_cast<uint8_t>(JSC::OrderFunctionKind::Function) && static_cast<uint8_t>(JSC::OrderFunctionKind::InnerBody) == 1 && static_cast<uint8_t>(JSC::OrderFunctionKind::ClassFields) == 2 && static_cast<uint8_t>(JSC::OrderFunctionKind::DefaultConstructor) == 3, "FunctionKind");
+        std::span span { functions, functionCount };
+        ASSERT(std::ranges::is_sorted(span, {}, &JSC::BytecodeOrderNames::Function::key));
+        ASSERT(std::ranges::adjacent_find(span, {}, &JSC::BytecodeOrderNames::Function::key) == span.end());
+        return { module, span };
+    }
+};
+
 } // namespace Bun

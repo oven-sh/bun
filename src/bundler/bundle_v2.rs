@@ -1527,11 +1527,13 @@ pub mod bv2_impl {
                 source_provider_url: &bun_core::String,
                 depth: u32,
                 optimize: bool,
+                names: &crate::bytecode_order::CodeNamesRef<'_>,
             ) -> bool;
             safe fn __bun_jsc_bytecode_link_encoder_add_internal_module(
                 encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
                 id: u32,
                 depth: u32,
+                names: &crate::bytecode_order::CodeNamesRef<'_>,
             ) -> bool;
             safe fn __bun_jsc_bytecode_link_encoder_add_internal_module_from_source(
                 encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
@@ -1540,16 +1542,12 @@ pub mod bv2_impl {
                 url: &[u8],
                 source_stamp: u32,
                 depth: u32,
+                names: &crate::bytecode_order::CodeNamesRef<'_>,
             ) -> bool;
             safe fn __bun_jsc_bytecode_link_encoder_finish(
                 encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
                 module_count: usize,
-            ) -> Option<(
-                Vec<u8>,
-                Vec<u32>,
-                [u32; crate::bytecode_order::REGION_COUNT],
-                u32,
-            )>;
+            ) -> Option<crate::bytecode_order::LinkedPayload>;
             /// The runtime-resolvable slot for one module-info string (`EncoderStringTable::slot_for_wtf8`).
             safe fn __bun_jsc_encoder_string_table_slot(
                 table: core::ptr::NonNull<EncoderStringTable>,
@@ -1672,8 +1670,8 @@ pub mod bv2_impl {
                     module_count: 0,
                 }
             }
-            /// Same arguments as `generate_cached_bytecode`; false on a parse error. A module's position among the
-            /// successful calls is its index into `finish()`'s entry offsets.
+            /// Same arguments as `generate_cached_bytecode`, and what an order file calls the chunk's code; false on a
+            /// parse error. A module's position among the successful calls is its index into `finish()`'s lists.
             pub(crate) fn add_module(
                 &mut self,
                 format: crate::options_impl::Format,
@@ -1681,6 +1679,7 @@ pub mod bv2_impl {
                 source_provider_url: &bun_core::String,
                 depth: u32,
                 optimize: bool,
+                names: Option<&crate::bytecode_order::CodeNames>,
             ) -> bool {
                 let depth = match format {
                     crate::options_impl::Format::Cjs => depth.saturating_add(1),
@@ -1693,20 +1692,24 @@ pub mod bv2_impl {
                     source_provider_url,
                     depth,
                     optimize,
+                    &names.into(),
                 );
                 self.module_count += ok as usize;
                 ok
             }
-            /// An internal module (this executable's, or with `target` another executable's as its builtins section
-            /// has it) as one more module of the link.
+            /// An internal module (this executable's, or with `target_source_stamp` another executable's) as its
+            /// builtins section has it, as one more module of the link.
             pub(crate) fn add_internal_module(
                 &mut self,
                 id: u32,
-                target: Option<(&bun_exe_format::builtins::Module<'_>, u32)>,
+                module: &bun_exe_format::builtins::Module<'_>,
+                target_source_stamp: Option<u32>,
                 depth: u32,
+                names: Option<&crate::bytecode_order::CodeNames>,
             ) -> bool {
-                let ok = match target {
-                    Some((module, source_stamp)) => {
+                let names = names.into();
+                let ok = match target_source_stamp {
+                    Some(source_stamp) => {
                         __bun_jsc_bytecode_link_encoder_add_internal_module_from_source(
                             self.encoder,
                             module.source,
@@ -1714,25 +1717,20 @@ pub mod bv2_impl {
                             module.url,
                             source_stamp,
                             depth,
+                            &names,
                         )
                     }
-                    None => {
-                        __bun_jsc_bytecode_link_encoder_add_internal_module(self.encoder, id, depth)
-                    }
+                    None => __bun_jsc_bytecode_link_encoder_add_internal_module(
+                        self.encoder,
+                        id,
+                        depth,
+                        &names,
+                    ),
                 };
                 self.module_count += ok as usize;
                 ok
             }
-            /// (payload, each module's cache-entry offset, where each region of the payload ends, how many of the order
-            /// files' hot functions this link has).
-            pub(crate) fn finish(
-                &mut self,
-            ) -> Option<(
-                Vec<u8>,
-                Vec<u32>,
-                [u32; crate::bytecode_order::REGION_COUNT],
-                u32,
-            )> {
+            pub(crate) fn finish(&mut self) -> Option<crate::bytecode_order::LinkedPayload> {
                 __bun_jsc_bytecode_link_encoder_finish(self.encoder, self.module_count)
             }
         }
@@ -3298,13 +3296,14 @@ pub mod bv2_impl {
                     .map(|path| &path[..]);
                 match crate::bytecode_order::BytecodeOrder::load(paths) {
                     Ok((order, without_hints)) => {
-                        for path in without_hints {
+                        for (path, unusable) in without_hints {
                             this.transpiler.log_mut().add_warning_fmt(
                                 None,
                                 bun_ast::Loc::EMPTY,
                                 format_args!(
-                                    "the bytecode order file {} has nothing this version of Bun can use",
-                                    bstr::BStr::new(path)
+                                    "the bytecode order file {} {}",
+                                    bstr::BStr::new(path),
+                                    unusable.why()
                                 ),
                             );
                         }

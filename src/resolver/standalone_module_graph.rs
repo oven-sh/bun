@@ -139,6 +139,8 @@ pub trait StandaloneModuleGraph: Send + Sync {
     ) -> Option<(*const [u8], [u32; LINKED_BYTECODE_REGION_COUNT])> {
         None
     }
-    /// Every module that has bytecode (`BUN_BYTECODE_DIGEST_OUT`).
+    /// The path of every file, and the path every module's bytecode is keyed on.
+    fn for_each_path(&self, _each: &mut dyn FnMut(&'static [u8])) {}
+    /// Every module that has bytecode (`BUN_BYTECODE_ORDER_OUT`, `BUN_BYTECODE_DIGEST_OUT`).
     fn for_each_bytecode_module(&self, _each: &mut dyn FnMut(BytecodeModule)) {}
 }

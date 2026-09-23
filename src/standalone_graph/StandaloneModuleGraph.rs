@@ -418,6 +418,14 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
             .sum();
         modules + linked_payload + builtins + self.bytecode_string_table.len()
     }
+    fn for_each_path(&self, each: &mut dyn FnMut(&'static [u8])) {
+        for file in self.files.values() {
+            each(file.name);
+            if !file.bytecode_origin_path.is_empty() {
+                each(file.bytecode_origin_path);
+            }
+        }
+    }
     fn for_each_bytecode_module(&self, each: &mut dyn FnMut(bun_resolver::BytecodeModule)) {
         for file in self
             .files

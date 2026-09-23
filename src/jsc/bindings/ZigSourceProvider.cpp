@@ -321,7 +321,7 @@ extern "C" void Bun__BytecodeLinkEncoder__destroy(JSC::BytecodeLinkEncoder* enco
     delete encoder;
 }
 
-extern "C" bool Bun__BytecodeLinkEncoder__addModule(JSC::BytecodeLinkEncoder* encoder, const BunString* sourceProviderURL, const BunString* inputSourceCode, bool isModule, uint32_t depth, bool optimize)
+extern "C" bool Bun__BytecodeLinkEncoder__addModule(JSC::BytecodeLinkEncoder* encoder, const BunString* sourceProviderURL, const BunString* inputSourceCode, bool isModule, uint32_t depth, bool optimize, const Bun::BytecodeOrderNamesRef& names)
 {
     JSC::VM& vm = vmOfBytecodeLinkEncoder(*encoder);
     JSC::JSLockHolder locker(vm);
@@ -330,13 +330,14 @@ extern "C" bool Bun__BytecodeLinkEncoder__addModule(JSC::BytecodeLinkEncoder* en
     JSC::UnlinkedCodeBlock* unlinkedCodeBlock = generateUnlinkedCodeForBytecodeCache(vm, sourceProviderURL, inputSourceCode, isModule, depth, optimize, sourceCode, key);
     if (!unlinkedCodeBlock)
         return false;
-    encoder->addModule(key, unlinkedCodeBlock, sourceCode);
+    encoder->addModule(key, unlinkedCodeBlock, sourceCode, names.view());
     return true;
 }
 
-// `entryOffsets` has room for one offset per addModule call; `regionEnds` for JSC::BytecodeLinkEncoder::numberOfRegions.
+// `entryOffsets` has room for one number per successful add* call; `regionEnds` for
+// JSC::BytecodeLinkEncoder::numberOfRegions.
 static_assert(JSC::BytecodeLinkEncoder::numberOfRegions == 6, "bun_resolver::LINKED_BYTECODE_REGION_COUNT");
-extern "C" bool Bun__BytecodeLinkEncoder__finish(JSC::BytecodeLinkEncoder* encoder, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr, uint32_t* entryOffsets, size_t entryOffsetCount, uint32_t* regionEnds, uint32_t* matchedHotFunctions)
+extern "C" bool Bun__BytecodeLinkEncoder__finish(JSC::BytecodeLinkEncoder* encoder, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr, uint32_t* entryOffsets, size_t entryOffsetCount, uint32_t* regionEnds, uint32_t* namedHotFunctions, uint32_t* placedHotFunctions, uint32_t* functionsWithoutName)
 {
     JSC::JSLockHolder locker(vmOfBytecodeLinkEncoder(*encoder));
     auto result = encoder->finish();
@@ -344,7 +345,9 @@ extern "C" bool Bun__BytecodeLinkEncoder__finish(JSC::BytecodeLinkEncoder* encod
         return false;
     memcpySpan(std::span { entryOffsets, entryOffsetCount }, result.entryOffsets.span());
     memcpySpan(std::span { regionEnds, JSC::BytecodeLinkEncoder::numberOfRegions }, std::span<const uint32_t> { result.regionEnds });
-    *matchedHotFunctions = result.matchedHotFunctions;
+    *namedHotFunctions = result.namedHotFunctions;
+    *placedHotFunctions = result.placedHotFunctions;
+    *functionsWithoutName = result.functionsWithoutName;
     *outputByteCode = result.payload->span().data();
     *outputByteCodeSize = result.payload->span().size();
     *cachedBytecodePtr = result.payload.leakRef();
@@ -371,26 +374,14 @@ extern "C" void Bun__BytecodeOrder__setLinkedPayload(JSC::VM* vm, const uint8_t*
     vm->persistentBytecodePayloads().setLinkedPayload({ payload, payloadSize }, ends);
 }
 
-// BUN_BYTECODE_ORDER_OUT, when the program is done: the order file of what every VM of the process recorded. Naming code
-// takes all the bytecode of the executable (JSC::BytecodeOrderFile), one module at a time, on the main thread's VM.
-extern "C" JSC::BytecodeOrderFile* Bun__BytecodeOrderFile__create()
+// BUN_BYTECODE_ORDER_OUT, when the process exits: what every VM of the process recorded (JSC::bytecodeOrderRecording),
+// for bun_bundler::bytecode_order::write to name. `take` is called once; what it is given is gone when it returns.
+extern "C" void Bun__BytecodeOrder__takeRecording(void* ctx, void (*take)(void* ctx, const JSC::RecordedOrderSource* sources, size_t sourceCount, const JSC::RecordedOrderFunction* functions, size_t functionCount, const unsigned* evaluatedSources, size_t evaluatedSourceCount, const unsigned* rejectedSources, size_t rejectedSourceCount, const uint64_t* strings, size_t stringCount))
 {
-    return new JSC::BytecodeOrderFile();
-}
-
-extern "C" bool Bun__BytecodeOrderFile__addModule(JSC::BytecodeOrderFile* file, JSC::VM* vm, const BunString* source, const BunString* originPath, bool isModule, uint8_t* bytecode, size_t bytecodeSize, uint32_t entryOffset)
-{
-    JSC::JSLockHolder locker(*vm);
-    JSC::SourceCode sourceCode = JSC::makeSource(source->toWTFString(), toSourceOrigin(originPath->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
-    return file->addModule(*vm, sourceCode, isModule, Bun::embeddedBytecode({ bytecode, bytecodeSize }, entryOffset));
-}
-
-// Destroys `file`.
-extern "C" void Bun__BytecodeOrderFile__finish(JSC::BytecodeOrderFile* file, void* ctx, void (*append)(void* ctx, const uint8_t* bytes, size_t len))
-{
-    CString text = file->contents();
-    delete file;
-    append(ctx, byteCast<uint8_t>(text.span().data()), text.length());
+    static_assert(sizeof(JSC::RecordedOrderSource) == 16 && offsetof(JSC::RecordedOrderSource, entryOffset) == 8, "bun_bundler::bytecode_order::RecordedSource");
+    static_assert(sizeof(JSC::RecordedOrderFunction) == 12 && offsetof(JSC::RecordedOrderFunction, key) == 4 && offsetof(JSC::OrderFunctionKey, kind) == 4, "bun_bundler::bytecode_order::RecordedFunction");
+    auto recording = JSC::bytecodeOrderRecording();
+    take(ctx, recording.sources.span().data(), recording.sources.size(), recording.functions.span().data(), recording.functions.size(), recording.evaluatedSources.span().data(), recording.evaluatedSources.size(), recording.rejectedSources.span().data(), recording.rejectedSources.size(), recording.strings.span().data(), recording.strings.size());
 }
 
 // BUN_BYTECODE_DIGEST_OUT: JSC::digestOfAllCachedCode for one module of the executable.

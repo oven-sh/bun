@@ -1371,29 +1371,74 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         }
     }
 
-    // The link's one bytecode payload, and the `Bytecode`/`BuiltinBytecode` output file of each module added to it.
-    let mut linked_bytecode: Option<(
-        crate::bundle_v2::dispatch::BytecodeLinkEncoderHandle,
-        Vec<u32>,
-    )> = None;
+    let mut linked_bytecode: Option<LinkedBytecode> = None;
     if let Some(order) = &bytecode_order {
         let table = external_string_table
             .as_ref()
             .and_then(|table| table.get())
             .expect("an order file is only loaded for --compile --bytecode");
-        let mut encoder = crate::bundle_v2::dispatch::BytecodeLinkEncoderHandle::new(table, order);
+        let encoder = crate::bundle_v2::dispatch::BytecodeLinkEncoderHandle::new(table, order);
         linked_bytecode_chunks
             .sort_by_key(|&(chunk_index, _, _)| output_files.output_files[chunk_index].load_order);
-        let mut encoded: Vec<u32> = Vec::with_capacity(linked_bytecode_chunks.len());
-        for (chunk_index, bytecode_index, source_provider_url) in &linked_bytecode_chunks {
-            if encoder.add_module(
+        let is_esm = c.options.output_format == options::Format::Esm;
+        // What `IntermediateOutput::code` wrote where a text imports a chunk.
+        let mut chunk_paths: Vec<Vec<u8>> = chunks
+            .iter()
+            .map(|chunk| {
+                let public_path: &[u8] = if chunk
+                    .flags
+                    .contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
+                {
+                    &bundler
+                        .transpiler_for_target(options::Target::Browser)
+                        .options
+                        .public_path
+                } else {
+                    c.options.public_path
+                };
+                cheap_prefix_normalizer(public_path, &chunk.final_rel_path).concat()
+            })
+            .collect();
+        chunk_paths.sort_unstable();
+        let chunk_paths: Vec<&[u8]> = chunk_paths.iter().map(Vec::as_slice).collect();
+        let names = crate::bytecode_order::names_of_all(
+            &linked_bytecode_chunks
+                .iter()
+                .map(|&(chunk_index, _, _)| crate::bytecode_order::Named::Chunk {
+                    text: output_files.output_files[chunk_index].value.as_slice(),
+                    is_esm,
+                    chunk_paths: &chunk_paths,
+                })
+                .collect::<Vec<_>>(),
+        );
+        let mut linked = LinkedBytecode {
+            encoder,
+            output_files: Vec::with_capacity(linked_bytecode_chunks.len()),
+        };
+        for ((chunk_index, bytecode_index, source_provider_url), names) in
+            linked_bytecode_chunks.iter().zip(&names)
+        {
+            if linked.encoder.add_module(
                 c.options.output_format,
                 output_files.output_files[*chunk_index].value.as_slice(),
                 source_provider_url,
                 c.options.bytecode_depth,
                 c.options.optimize_bytecode,
+                names.as_ref(),
             ) {
-                encoded.push(*bytecode_index);
+                linked.output_files.push(*bytecode_index);
+                if names.is_none() {
+                    // JavaScriptCore compiled what the parser here does not take: nothing of the chunk can be listed
+                    // in an order file, or placed by one.
+                    c.log_mut().add_warning_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "the bytecode order files cannot place the functions of {}: they have no names",
+                            bstr::BStr::new(&output_files.output_files[*chunk_index].dest_path)
+                        ),
+                    );
+                }
                 continue;
             }
             output_files.output_files[*chunk_index].bytecode_index = u32::MAX;
@@ -1406,7 +1451,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 ),
             );
         }
-        linked_bytecode = Some((encoder, encoded));
+        linked_bytecode = Some(linked);
     }
 
     if is_standalone {
@@ -1440,15 +1485,32 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         );
     }
     let mut linked_bytecode_payload: Option<Box<[u8]>> = None;
-    if let Some((mut encoder, encoded)) = linked_bytecode {
-        match encoder.finish() {
-            Some((payload, entry_offsets, region_ends, matched_hot_functions)) => {
+    if let Some(mut linked) = linked_bytecode {
+        let encoded = linked.output_files;
+        match linked.encoder.finish() {
+            Some(crate::bytecode_order::LinkedPayload {
+                payload,
+                entry_offsets,
+                region_ends,
+                named_hot_functions,
+                placed_hot_functions,
+                functions_without_name,
+            }) => {
+                if functions_without_name != 0 {
+                    c.log_mut().add_warning_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "the bytecode order files cannot place {functions_without_name} functions: they have no names"
+                        ),
+                    );
+                }
                 // An order file of another program moves nothing: say so. (A share is not judged: a recording also lists
                 // functions of Bun's internal modules, which are not part of every link.)
                 let listed = bytecode_order
                     .as_ref()
                     .map_or(0, |order| order.hot_functions.len());
-                if listed != 0 && matched_hot_functions == 0 {
+                if listed != 0 && named_hot_functions == 0 {
                     c.log_mut().add_warning_fmt(
                         None,
                         bun_ast::Loc::EMPTY,
@@ -1458,10 +1520,13 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     );
                 }
                 debug!(
-                    "Linked bytecode payload: {} modules, {} bytes, regions end at {:?}",
+                    "Linked bytecode payload: {} modules, {} bytes, regions end at {:?}, {} of {} listed functions named, {} functions in HOT",
                     entry_offsets.len(),
                     payload.len(),
-                    region_ends
+                    region_ends,
+                    named_hot_functions,
+                    listed,
+                    placed_hot_functions
                 );
                 // `encoded` holds positions in the output file list (`insert_for_sourcemap_or_bytecode`), which `result`
                 // still is: a chunk's own file comes first, at the chunk's index, its `Bytecode` file after all of those.
@@ -1599,6 +1664,13 @@ fn debug_assert_no_placeholder_left(c: &LinkerContext, files: &[options::OutputF
     }
 }
 
+/// The link's one bytecode payload (`--bytecode-order`), and for each module added to it its `Bytecode` or
+/// `BuiltinBytecode` output file.
+struct LinkedBytecode {
+    encoder: crate::bundle_v2::dispatch::BytecodeLinkEncoderHandle,
+    output_files: Vec<u32>,
+}
+
 /// `--compile --bytecode`: the executable also carries ahead-of-time bytecode for the internal modules (node:fs, …) the
 /// bundle imports and everything those can require (while loading or lazily later), so their first `require` decodes
 /// instead of parsing. One
@@ -1606,15 +1678,12 @@ fn debug_assert_no_placeholder_left(c: &LinkerContext, files: &[options::OutputF
 /// picks them up by id. The modules, their ids and (when compiling for another platform) their sources come from the
 /// builtins section of the executable the bundle is going into.
 fn append_internal_module_bytecode(
-    c: &LinkerContext,
+    c: &mut LinkerContext,
     output_files: &mut Vec<options::OutputFile>,
     external_strings: Option<core::ptr::NonNull<crate::bundle_v2::dispatch::EncoderStringTable>>,
     // With an order file the internal modules are more modules of the link's one payload, and their output files
     // cache-entry offsets like the chunks'.
-    mut linked_bytecode: Option<&mut (
-        crate::bundle_v2::dispatch::BytecodeLinkEncoderHandle,
-        Vec<u32>,
-    )>,
+    mut linked_bytecode: Option<&mut LinkedBytecode>,
 ) {
     use crate::bundle_v2::dispatch;
     let target_section = c.options.target_builtins.as_deref();
@@ -1676,20 +1745,47 @@ fn append_internal_module_bytecode(
         i += 1;
     }
 
-    for id in wanted {
-        let bytecode = if let Some((encoder, encoded)) = linked_bytecode.as_deref_mut() {
-            let module = target_section.and_then(|_| builtins.module(id));
-            if target_section.is_some() && module.is_none() {
+    // `wanted`'s modules as the builtins section has them, and (for a link) what the order files call their code.
+    let modules: Vec<Option<bun_exe_format::builtins::Module<'_>>> =
+        wanted.iter().map(|&id| builtins.module(id)).collect();
+    let mut names = if linked_bytecode.is_some() {
+        crate::bytecode_order::names_of_all(
+            &modules
+                .iter()
+                .map(|module| {
+                    crate::bytecode_order::Named::InternalModule(
+                        module.as_ref().map_or(&[][..], |module| module.source),
+                    )
+                })
+                .collect::<Vec<_>>(),
+        )
+    } else {
+        Vec::new()
+    };
+    let mut without_names: Vec<Vec<u8>> = Vec::new();
+    for (index, id) in wanted.into_iter().enumerate() {
+        let bytecode = if let Some(linked) = linked_bytecode.as_deref_mut() {
+            // This executable's own builtins section has every module it has an id for.
+            debug_assert!(target_section.is_some() || modules[index].is_some());
+            let Some(module) = &modules[index] else {
                 continue;
+            };
+            // Another executable's builtins may be another version's, in a syntax the parser here does not take.
+            let names = names[index].take();
+            if names.is_none() {
+                without_names.push(module.name.to_vec());
             }
-            encoder
+            linked
+                .encoder
                 .add_internal_module(
                     id,
-                    module.as_ref().map(|m| (m, builtins.source_stamp)),
+                    module,
+                    target_section.map(|_| builtins.source_stamp),
                     c.options.bytecode_depth,
+                    names.as_ref(),
                 )
                 .then(|| {
-                    encoded.push(output_files.len() as u32);
+                    linked.output_files.push(output_files.len() as u32);
                     Box::<[u8]>::from(0u32.to_le_bytes())
                 })
         } else {
@@ -1728,6 +1824,16 @@ fn append_internal_module_bytecode(
             is_executable: false,
             ..Default::default()
         }));
+    }
+    for name in without_names {
+        c.log_mut().add_warning_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "the bytecode order files cannot place the functions of {}: they have no names",
+                bstr::BStr::new(&name)
+            ),
+        );
     }
 }
 

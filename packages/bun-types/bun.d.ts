@@ -3751,7 +3751,8 @@ declare module "bun" {
      * An executable built with `bytecode: true` writes an order file when it exits if
      * the `BUN_BYTECODE_ORDER_OUT` environment variable names a path (`%p` in the path
      * becomes the process id). The file lists the functions, strings and modules that
-     * run read from the embedded bytecode, as hashes of their source text. Building
+     * run read from the embedded bytecode, as hashes (of a function's syntax, not of
+     * the names a minifier picks; it contains no source code). Building
      * again with that file places what the run read at the front of the bytecode, so
      * the executable reads fewer pages of itself at startup and keeps fewer in memory.
      *

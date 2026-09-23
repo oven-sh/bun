@@ -430,7 +430,7 @@ pub mod virtual_machine_exports;
 #[path = "AnyPromise.rs"]
 pub mod any_promise;
 #[path = "BytecodeOrderRecorder.rs"]
-pub(crate) mod bytecode_order_recorder;
+pub mod bytecode_order_recorder;
 #[path = "CachedBytecode.rs"]
 pub mod cached_bytecode;
 #[path = "DOMFormData.rs"]

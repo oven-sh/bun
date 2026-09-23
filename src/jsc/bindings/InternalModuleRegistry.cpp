@@ -310,7 +310,7 @@ extern "C" bool Bun__generateInternalModuleBytecodeFromSource(const Latin1Charac
 }
 
 // With an order file the internal modules are modules of the link's one payload like the chunks (see ZigSourceProvider.cpp).
-static bool addInternalModuleToLink(JSC::BytecodeLinkEncoder* encoder, const String& text, const String& moduleName, const String& url, uint32_t sourceStamp, uint32_t depth)
+static bool addInternalModuleToLink(JSC::BytecodeLinkEncoder* encoder, const String& text, const String& moduleName, const String& url, uint32_t sourceStamp, uint32_t depth, const JSC::BytecodeOrderNames& names)
 {
     using namespace Bun;
     JSC::VM& vm = Zig::vmOfBytecodeLinkEncoder(*encoder);
@@ -319,26 +319,27 @@ static bool addInternalModuleToLink(JSC::BytecodeLinkEncoder* encoder, const Str
     UnlinkedFunctionExecutable* executable = generateInternalModuleCode(vm, source, moduleName, depth);
     if (!executable)
         return false;
-    encoder->addBuiltinFunction(executable, source, sourceStamp);
+    encoder->addBuiltinFunction(executable, source, sourceStamp, names);
     return true;
 }
 
-extern "C" bool Bun__BytecodeLinkEncoder__addInternalModule(JSC::BytecodeLinkEncoder* encoder, uint32_t id, uint32_t depth)
+// The names are of the module's source as the builtins section has it (bun_bundler::bytecode_order::Named::InternalModule).
+extern "C" bool Bun__BytecodeLinkEncoder__addInternalModule(JSC::BytecodeLinkEncoder* encoder, uint32_t id, uint32_t depth, const Bun::BytecodeOrderNamesRef& names)
 {
     using namespace Bun;
     if (id >= bun_internal_modules_header.moduleCount)
         return false;
     const auto& m = internalModuleRecord(id);
-    return addInternalModuleToLink(encoder, internalModuleSource(id), internalModuleString(m.nameOffset, m.nameLength), internalModuleString(m.urlOffset, m.urlLength), bun_internal_modules_header.sourceStamp, depth);
+    return addInternalModuleToLink(encoder, internalModuleSource(id), internalModuleString(m.nameOffset, m.nameLength), internalModuleString(m.urlOffset, m.urlLength), bun_internal_modules_header.sourceStamp, depth, names.view());
 }
 
-extern "C" bool Bun__BytecodeLinkEncoder__addInternalModuleFromSource(JSC::BytecodeLinkEncoder* encoder, const Latin1Character* text, size_t textLength, const Latin1Character* name, size_t nameLength, const Latin1Character* url, size_t urlLength, uint32_t sourceStamp, uint32_t depth)
+extern "C" bool Bun__BytecodeLinkEncoder__addInternalModuleFromSource(JSC::BytecodeLinkEncoder* encoder, const Latin1Character* text, size_t textLength, const Latin1Character* name, size_t nameLength, const Latin1Character* url, size_t urlLength, uint32_t sourceStamp, uint32_t depth, const Bun::BytecodeOrderNamesRef& names)
 {
-    return addInternalModuleToLink(encoder, String({ text, textLength }), String({ name, nameLength }), String({ url, urlLength }), sourceStamp, depth);
+    return addInternalModuleToLink(encoder, String({ text, textLength }), String({ name, nameLength }), String({ url, urlLength }), sourceStamp, depth, names.view());
 }
 
-// BUN_BYTECODE_ORDER_OUT / BUN_BYTECODE_DIGEST_OUT (see ZigSourceProvider.cpp), for the embedded bytecode of internal
-// module `id`: the hash of every function it holds, or the digest of all its code.
+// BUN_BYTECODE_DIGEST_OUT (see ZigSourceProvider.cpp), for the embedded bytecode of internal module `id`: the digest of
+// all its code.
 static std::optional<JSC::SourceCode> internalModuleSourceCode(uint32_t id)
 {
     using namespace Bun;
@@ -346,14 +347,6 @@ static std::optional<JSC::SourceCode> internalModuleSourceCode(uint32_t id)
         return std::nullopt;
     const auto& m = internalModuleRecord(id);
     return makeInternalModuleSource(internalModuleSource(id), internalModuleString(m.nameOffset, m.nameLength), internalModuleString(m.urlOffset, m.urlLength));
-}
-
-extern "C" bool Bun__BytecodeOrderFile__addInternalModule(JSC::BytecodeOrderFile* file, JSC::VM* vm, uint32_t id, uint8_t* bytecode, size_t bytecodeSize, uint32_t entryOffset)
-{
-    using namespace Bun;
-    JSC::JSLockHolder locker(*vm);
-    auto source = internalModuleSourceCode(id);
-    return source && file->addBuiltinFunction(*vm, *source, bun_internal_modules_header.sourceStamp, embeddedBytecode({ bytecode, bytecodeSize }, entryOffset));
 }
 
 extern "C" bool Bun__BytecodeOrder__digestInternalModule(JSC::VM* vm, uint32_t id, uint8_t* bytecode, size_t bytecodeSize, uint32_t entryOffset, uint64_t* digest, uint32_t* codeBlocks)

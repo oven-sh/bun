@@ -314,7 +314,7 @@ Bun prints how many files changed and how many test files it selected:
 --changed: 1 changed file, running 2/40 test files
 ```
 
-If there are no changed files, or no test file imports a changed file, `bun test` runs nothing and exits with code `0`. The flag requires `git` in `PATH` and a git repository.
+If `--changed` selects none of the discovered test files, because there are no changed files or no test file imports a changed file, `bun test` runs nothing and exits with code `0`. The flag requires `git` in `PATH` and a git repository.
 
 ### `--changed` with `--watch`
 

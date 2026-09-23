@@ -414,14 +414,15 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
                         .get_attribute(tag_info.url_attribute)
                         .unwrap_or_default();
                     bun_core::scoped_log!(HTMLScanner, "{} {}", tag_info.selector, value);
-                    // SAFETY: `this_ptr` was derived from `run`'s `&mut T`,
-                    // which is not reborrowed while the rewriter — the only
-                    // holder of these closures — is alive.
                     let action = if tag_info.url_attribute == "srcset" {
+                        // SAFETY: `this_ptr` was derived from `run`'s `&mut T`,
+                        // which is not reborrowed while the rewriter — the only
+                        // holder of these closures — is alive.
                         rewrite_srcset(unsafe { &mut *this_ptr }, value.as_bytes(), tag_info.kind)
                     } else {
                         match strings::trim(value.as_bytes(), HTML_WHITESPACE) {
                             b"" => UrlAction::Keep,
+                            // SAFETY: as for `rewrite_srcset` above.
                             url => unsafe { (*this_ptr).on_url(url, tag_info.kind) },
                         }
                     };
@@ -442,7 +443,7 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
             for (which, tag) in ["body", "head", "html"].into_iter().enumerate() {
                 let on_element: lol_html::ElementHandler<'_> = Box::new(
                     move |element: &mut Element<'_, '_>| -> lol_html::HandlerResult {
-                        // SAFETY: see `on_url` above.
+                        // SAFETY: see the URL element handler above.
                         let stop = unsafe {
                             match which {
                                 0 => (*this_ptr).on_body_tag(element),
@@ -478,7 +479,7 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
         // C-API sink routed that to a no-op `done()`, never to `on_write_html`.
         let output_sink = OutputSink::Callback(Box::new(move |chunk: &[u8]| {
             if !chunk.is_empty() {
-                // SAFETY: see `on_url` above.
+                // SAFETY: see the URL element handler above.
                 unsafe { (*this_ptr).on_write_html(chunk) }
             }
         }));

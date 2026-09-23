@@ -908,6 +908,52 @@ describe("Bun.file in serve routes", () => {
       });
     });
 
+    // An error() Response with no body, or with a stream body, has no body to
+    // take a Content-Type from. It must not fall back to the file that failed:
+    // its headers equal those of the same Response returned with no failure.
+    it("an error() Response without a typed body does not describe the file that failed", async () => {
+      const replies = {
+        stream: () =>
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode("streamed"));
+                controller.close();
+              },
+            }),
+            { status: 500 },
+          ),
+        bodiless: () => new Response(null, { status: 404 }),
+      };
+      const probe = async (server: { url: URL }, pathname: string, method: string) => {
+        const res = await fetch(new URL(pathname, server.url), { method });
+        await res.text();
+        return {
+          status: res.status,
+          contentType: res.headers.get("Content-Type"),
+          contentDisposition: res.headers.get("Content-Disposition"),
+        };
+      };
+      for (const [name, reply] of Object.entries(replies)) {
+        using control = Bun.serve({ port: 0, fetch: reply });
+        using afterFailedFile = Bun.serve({
+          port: 0,
+          fetch: req =>
+            new Response(Bun.file(new URL(req.url).pathname === "/dir" ? tempDir : join(tempDir, "nope.html"))),
+          error: reply,
+        });
+        for (const method of ["GET", "HEAD"]) {
+          const expected = await probe(control, "/", method);
+          expect({
+            name,
+            method,
+            missing: await probe(afterFailedFile, "/missing", method),
+            dir: await probe(afterFailedFile, "/dir", method),
+          }).toEqual({ name, method, missing: expected, dir: expected });
+        }
+      }
+    });
+
     it("preserves custom status for empty files", async () => {
       const res = await fetch(new URL(`/empty-400.txt`, server.url));
       expect(res.status).toBe(400);

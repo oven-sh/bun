@@ -1758,6 +1758,12 @@ where
         true
     }
 
+    /// `error()` renders its own Response, which must not describe the file that failed.
+    fn fail_sendfile(&self, js_err: JSValue) {
+        self.blob.with_mut(|b| b.detach());
+        self.run_error_handler(js_err);
+    }
+
     pub(crate) fn do_sendfile(&self, blob: Blob) {
         if self.is_aborted_or_ended() {
             return;
@@ -1792,7 +1798,7 @@ where
                     let js_err = err
                         .with_path(file.pathlike.path().slice())
                         .to_js(global_this);
-                    return self.run_error_handler(js_err);
+                    return self.fail_sendfile(js_err);
                 }
             }
         };
@@ -1812,7 +1818,7 @@ where
                         err.with_fd(*pathlike_fd).to_js(global_this)
                     }
                 };
-                return self.run_error_handler(js_err);
+                return self.fail_sendfile(js_err);
             }
         };
 
@@ -1845,7 +1851,8 @@ where
                 };
                 let mut sys: jsc::SystemError = err.to_system_error().into();
                 sys.message = BunString::static_("Cannot stream a directory as a response body");
-                return self.run_error_handler(sys.to_error_instance(global_this));
+                let js_err = sys.to_error_instance(global_this);
+                return self.fail_sendfile(js_err);
             }
             (bun_io::FileType::File, false)
         };

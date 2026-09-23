@@ -203,27 +203,25 @@ export async function sigactionIgnored(signals: number[]): Promise<Set<number> |
 /**
  * The ending signals this process was started ignoring (under nohup, as a
  * background job of a script): a listener would make them end it after all.
- * Linux says in /proc/self/status (SigIgn), macOS through `sigactionIgnored`;
- * where neither can be had none counts as ignored, so every ending signal is
- * held: removing the scratch directory matters more than honouring a nohup
- * nobody can see. All of this under bun: node resets what it inherits.
+ * The process is asked first (`sigactionIgnored`); where it cannot be (musl,
+ * node) linux still says in /proc/self/status (SigIgn). With neither, none
+ * counts as ignored, so every ending signal is held: removing the scratch
+ * directory matters more than honouring a nohup nobody can see. Under node none
+ * ever does: it resets what it inherits when it starts.
  */
 async function ignoredEndingSignals(): Promise<Set<string>> {
-  let ignored: (number: number) => boolean = () => false;
-  try {
-    if (process.platform === "linux") {
+  let ignored = process.platform === "win32" ? undefined : await sigactionIgnored(Object.values(ENDING_SIGNALS));
+  if (!ignored && process.platform === "linux") {
+    try {
       const hex = /^SigIgn:\s*([0-9a-f]+)$/m.exec(readFileSync("/proc/self/status", "utf8"))?.[1];
       // The ending signals are all among the first 32.
       const mask = hex ? parseInt(hex.slice(-8), 16) : 0;
-      ignored = number => ((mask >>> (number - 1)) & 1) === 1;
-    } else if (process.platform === "darwin") {
-      const asked = await sigactionIgnored(Object.values(ENDING_SIGNALS));
-      ignored = number => asked?.has(number) ?? false;
+      ignored = new Set(Object.values(ENDING_SIGNALS).filter(number => (mask >>> (number - 1)) & 1));
+    } catch {
+      // No /proc: none counts as ignored.
     }
-  } catch {
-    // Unreadable: none counts as ignored.
   }
-  const names = Object.entries(ENDING_SIGNALS).filter(([, number]) => ignored(number));
+  const names = Object.entries(ENDING_SIGNALS).filter(([, number]) => ignored?.has(number));
   return new Set(names.map(([name]) => name));
 }
 

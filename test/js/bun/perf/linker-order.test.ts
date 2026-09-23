@@ -872,8 +872,8 @@ describe("workload groups", () => {
     },
   );
 
-  // macOS has no /proc to say which signals a process was started ignoring, so there the process asks
-  // sigaction() about itself through bun:ffi. The same call against glibc has /proc to be checked against.
+  // Which signals it was started ignoring, a process asks sigaction() about itself through bun:ffi, and
+  // where it cannot (musl, node) linux reads /proc. With glibc both answer, and they have to agree.
   it.skipIf(process.platform !== "linux" || isMusl).each([
     { started: "ignoring SIGHUP and SIGINT", trap: `trap "" HUP INT; `, ignored: [1, 2] },
     { started: "ignoring nothing", trap: "", ignored: [] },

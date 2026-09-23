@@ -2331,13 +2331,6 @@ impl NetworkSink {
         Box::new(init)
     }
 
-    pub fn path(&self) -> Option<&[u8]> {
-        if let Some(task) = self.task_ref() {
-            return Some(&task.path);
-        }
-        None
-    }
-
     pub(crate) fn start(&mut self, _stream_start: &Start) -> bun_sys::Result<()> {
         if self.ended {
             return bun_sys::Result::Ok(());
@@ -2371,6 +2364,18 @@ impl NetworkSink {
 
     fn detach_writable(&mut self) {
         self.task = None;
+    }
+
+    /// The `writer()` wrapper was collected before `end()`: nothing can finish the upload, so fail it.
+    fn abort_on_collect(&mut self) {
+        if self.ended || self.writer_holders.get() == 0 {
+            return;
+        }
+        self.ended = true;
+        self.done = true;
+        if let Some(task) = self.task_ref() {
+            task.fail_writer_collected();
+        }
     }
 
     /// The S3 upload drained: settle the flush/write promises (terminal, like
@@ -2691,6 +2696,7 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
     unsafe fn finalize(this: *mut Self) {
         // SAFETY: trait contract — `this` is live and not used after this call.
         unsafe {
+            (*this).abort_on_collect();
             (*this).finalize();
             Self::release_writer_holder(this);
         }

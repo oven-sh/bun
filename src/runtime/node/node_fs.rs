@@ -636,7 +636,7 @@ mod _async_tasks {
 
     #[cfg(windows)]
     pub(crate) struct UVFSRequest<R, A, const F: NodeFSFunctionEnum> {
-        pub(crate) promise: JSPromiseStrong,
+        pub(crate) completion: FsCompletion,
         pub args: ThreadIsolated<A>,
         pub(crate) global_object: bun_ptr::BackRef<JSGlobalObject>,
         pub(crate) req: uv::fs_t,
@@ -661,14 +661,16 @@ mod _async_tasks {
             self.global_object.get()
         }
 
+        /// `callback`: as for [`AsyncFSTask::create`].
         pub(crate) fn create(
             cx: &bun_jsc::JsThread<'_>,
             binding: &Binding,
             task_args: ThreadIsolated<A>,
             vm: &mut VirtualMachine,
+            callback: Option<JSValue>,
         ) -> JSValue {
             let task = Box::new(Self {
-                promise: JSPromiseStrong::init(cx.global()),
+                completion: FsCompletion::new(cx.global(), callback),
                 args: task_args,
                 // Sentinel — overwritten by `uv_callback` (or the early-return arms
                 // below) before any read on the JS thread. `Maybe<R>` is
@@ -682,7 +684,7 @@ mod _async_tasks {
                 context: cx.context().id(),
             });
             // Transfer ownership to libuv: the box outlives the async request and is
-            // reclaimed in `destroy()` (run_from_js_thread → scopeguard). `heap::release`
+            // reclaimed in `destroy()` (from `run_from_js_thread`). `heap::release`
             // names that hand-off — it is `Box::leak` under the hood; the reclaim
             // happens in `destroy()`, not in this scope.
             let task: &mut Self = bun_core::heap::release(task);
@@ -849,7 +851,7 @@ mod _async_tasks {
                             .bun_vm()
                             .event_loop_mut()
                             .enqueue_task(bun_jsc::Task::init(task_ptr));
-                        return task.promise.value();
+                        return task.completion.value();
                     }
                     let pos: i64 = args.position.map(|p| p as i64).unwrap_or(-1);
                     let sum: u64 = bufs.iter().map(|b| b.slice().len() as u64).sum();
@@ -897,7 +899,7 @@ mod _async_tasks {
                 _ => unreachable!("UVFSRequest type not implemented"),
             }
 
-            task.promise.value()
+            task.completion.value()
         }
 
         extern "C" fn uv_callback(req: *mut uv::fs_t) {
@@ -938,41 +940,36 @@ mod _async_tasks {
                 .enqueue_task(bun_jsc::Task::init(this_ptr));
         }
 
-        pub(crate) fn run_from_js_thread(&mut self) -> JsResult<()> {
-            // SAFETY: self was Box::leak'd in create(); destroy() runs exactly once on scope exit
-            let _deinit =
-                scopeguard::guard(core::ptr::from_mut(self), |p| unsafe { Self::destroy(p) });
-            // Move `result` out so the `global_object()` `&self` borrow can coexist
-            // with consuming it below; the sentinel left behind is dropped in `destroy()`.
-            let result = core::mem::replace(&mut self.result, Err(sys::Error::default()));
-            let global_object = self.global_object();
-            let success = matches!(result, Ok(_));
-            let promise_value = self.promise.value();
-            let promise = self.promise.get();
-            let result = match result {
-                Err(err) => match err.to_js_with_async_stack(global_object, promise) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        return promise.reject(global_object, Err(e));
-                    }
-                },
-                Ok(res) => match FsReturn::fs_to_js(res, global_object) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        return promise.reject(global_object, Err(e));
-                    }
-                },
+        /// SAFETY: `this` must be the pointer Box::leak'd in `create()`. The body frees it before it calls back, so it is not `&mut self`.
+        pub(crate) unsafe fn run_from_js_thread(this: *mut Self) -> JsResult<()> {
+            // SAFETY: fn contract. The borrow ends before `destroy` below.
+            let (result, completion, global_ref, tracker) = unsafe {
+                let task = &mut *this;
+                (
+                    core::mem::replace(&mut task.result, Err(sys::Error::default())),
+                    core::mem::replace(
+                        &mut task.completion,
+                        FsCompletion::Promise(JSPromiseStrong::empty()),
+                    ),
+                    task.global_object,
+                    task.tracker,
+                )
             };
-            promise_value.ensure_still_alive();
+            // The arguments pin their buffers. A callback runs inside `resolve`/`reject`, and a pinned buffer cannot be transferred.
+            // SAFETY: fn contract. `this` is not used again.
+            unsafe { Self::destroy(this) };
 
-            let _dispatch = self.tracker.dispatch(global_object);
+            let global_object = global_ref.get();
+            let success = matches!(result, Ok(_));
+            let converted = match result {
+                Err(err) => completion.error_to_js(global_object, &err),
+                Ok(res) => FsReturn::fs_to_js(res, global_object),
+            };
+            completion.ensure_still_alive();
 
-            if success {
-                promise.resolve(global_object, result)?;
-            } else {
-                promise.reject(global_object, Ok(result))?;
-            }
-            Ok(())
+            let _dispatch = tracker.dispatch(global_object);
+
+            completion.settle(global_object, converted, success)
         }
 
         /// SAFETY: `this` must be the pointer Box::leak'd in `create()`; called exactly once.
@@ -1250,10 +1247,118 @@ mod _async_tasks {
     {
     }
 
+    /// How an async fs operation reports its result: a promise, or the `node:fs` callback, called from the completion.
+    #[derive(bun_jsc::JsAffine)]
+    pub(crate) enum FsCompletion {
+        Promise(JSPromiseStrong),
+        Callback(bun_jsc::Strong),
+    }
+
+    impl FsCompletion {
+        pub(crate) fn new(global: &JSGlobalObject, callback: Option<JSValue>) -> Self {
+            match callback {
+                Some(callback) => Self::Callback(bun_jsc::Strong::create(
+                    callback.with_async_context_if_needed(global),
+                    global,
+                )),
+                None => Self::Promise(JSPromiseStrong::init(global)),
+            }
+        }
+
+        /// What the binding returns to its JS caller.
+        pub(crate) fn value(&self) -> JSValue {
+            match self {
+                Self::Promise(promise) => promise.value(),
+                Self::Callback(_) => JSValue::UNDEFINED,
+            }
+        }
+
+        pub(crate) fn ensure_still_alive(&self) {
+            match self {
+                Self::Promise(promise) => promise.value().ensure_still_alive(),
+                Self::Callback(callback) => callback.get().ensure_still_alive(),
+            }
+        }
+
+        pub(crate) fn error_to_js(
+            &self,
+            global: &JSGlobalObject,
+            err: &sys::Error,
+        ) -> JsResult<JSValue> {
+            match self {
+                Self::Promise(promise) => err.to_js_with_async_stack(global, promise.get()),
+                Self::Callback(_) => err.to_js(global),
+            }
+        }
+
+        pub(crate) fn resolve(&self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
+            match self {
+                Self::Promise(promise) => promise.get().resolve(global, value),
+                Self::Callback(callback) => {
+                    Self::call(global, callback.get(), &[JSValue::NULL, value]);
+                    Ok(())
+                }
+            }
+        }
+
+        /// `Err` is the exception a failed conversion left pending, as for `JSPromise::reject`.
+        pub(crate) fn reject(
+            &self,
+            global: &JSGlobalObject,
+            value: JsResult<JSValue>,
+        ) -> JsResult<()> {
+            match self {
+                Self::Promise(promise) => promise.get().reject(global, value),
+                // The error value is built exactly as `JSPromise::reject` builds it.
+                Self::Callback(callback) => {
+                    let error = match value {
+                        Ok(error) => error,
+                        Err(bun_jsc::JsError::OutOfMemory) => global.create_out_of_memory_error(),
+                        Err(bun_jsc::JsError::Terminated) => {
+                            return Err(bun_jsc::JsError::Terminated);
+                        }
+                        Err(bun_jsc::JsError::Thrown) => {
+                            let exception = global.take_exception(bun_jsc::JsError::Thrown);
+                            if exception.is_termination_exception() {
+                                return Err(bun_jsc::top_exception_scope::thrown(global));
+                            }
+                            exception.to_error().unwrap_or(exception)
+                        }
+                    };
+                    Self::call(global, callback.get(), &[error]);
+                    Ok(())
+                }
+            }
+        }
+
+        /// Reports a converted result. `success` says that `converted` holds the value of the operation, not its error.
+        pub(crate) fn settle(
+            &self,
+            global: &JSGlobalObject,
+            converted: JsResult<JSValue>,
+            success: bool,
+        ) -> JsResult<()> {
+            match converted {
+                Ok(value) if success => self.resolve(global, value),
+                error => self.reject(global, error),
+            }
+        }
+
+        fn call(global: &JSGlobalObject, callback: JSValue, arguments: &[JSValue]) {
+            global.bun_vm().event_loop_mut().run_callback(
+                bun_event_loop::ContextId::NONE,
+                callback,
+                global,
+                JSValue::UNDEFINED,
+                arguments,
+            );
+        }
+    }
+
     /// The JS-thread half of an async fs operation.
     #[derive(bun_jsc::JsAffine)]
     pub(crate) struct AsyncFSJs {
-        pub(crate) promise: JSPromiseStrong,
+        pub(crate) completion: FsCompletion,
         pub(crate) tracker: AsyncTaskTracker,
     }
 
@@ -1283,38 +1388,28 @@ mod _async_tasks {
             let _dispatch = js.tracker.dispatch(global_object);
 
             let success = this.result.is_ok();
-            let promise_value = js.promise.value();
-            let promise = js.promise.get();
-            let result = match core::mem::replace(&mut this.result, Err(sys::Error::default())) {
-                Err(err) => match err.to_js_with_async_stack(global_object, promise) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        return promise.reject(global_object, Err(e));
-                    }
-                },
-                Ok(res) => match FsReturn::fs_to_js(res, global_object) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        return promise.reject(global_object, Err(e));
-                    }
-                },
+            let completion = &js.completion;
+            let converted = match core::mem::replace(&mut this.result, Err(sys::Error::default())) {
+                Err(err) => completion.error_to_js(global_object, &err),
+                Ok(res) => FsReturn::fs_to_js(res, global_object),
             };
-            promise_value.ensure_still_alive();
+            completion.ensure_still_alive();
 
-            if Self::HAVE_ABORT_SIGNAL {
-                if let Some(signal) = this.args.signal() {
-                    if let Some(abort_error) = signal.node_abort_error_if_aborted(global_object) {
-                        return promise.reject(global_object, Ok(abort_error));
-                    }
-                }
-            }
-
-            if success {
-                promise.resolve(global_object, result)?;
+            let aborted = if Self::HAVE_ABORT_SIGNAL && converted.is_ok() {
+                this.args
+                    .signal()
+                    .and_then(|signal| signal.node_abort_error_if_aborted(global_object))
             } else {
-                promise.reject(global_object, Ok(result))?;
+                None
+            };
+
+            // The arguments pin their buffers. A callback runs inside `resolve`/`reject`, and a pinned buffer cannot be transferred.
+            drop(this);
+
+            match aborted {
+                Some(abort_error) => completion.reject(global_object, Ok(abort_error)),
+                None => completion.settle(global_object, converted, success),
             }
-            Ok(())
         }
     }
 
@@ -1330,16 +1425,18 @@ mod _async_tasks {
         /// the functions to check .signal.aborted() for early returns.
         pub(crate) const HAVE_ABORT_SIGNAL: bool = A::HAVE_ABORT_SIGNAL;
 
+        /// `callback`: the `node:fs` callback to call with the result. `None` returns a promise.
         pub(crate) fn create(
             cx: &bun_jsc::JsThread<'_>,
             _binding: &Binding,
             args: ThreadIsolated<A>,
             vm: &mut VirtualMachine,
+            callback: Option<JSValue>,
         ) -> JSValue {
             let tracker = AsyncTaskTracker::init(vm);
             tracker.did_schedule(cx.global());
-            let promise = JSPromiseStrong::init(cx.global());
-            let value = promise.value();
+            let completion = FsCompletion::new(cx.global(), callback);
+            let value = completion.value();
             bun_jsc::Job::<Self>::schedule(
                 cx,
                 Self {
@@ -1348,7 +1445,10 @@ mod _async_tasks {
                     // may be niche-optimised; never construct an all-zero `Result`.
                     result: Err(sys::Error::default()),
                 },
-                AsyncFSJs { promise, tracker },
+                AsyncFSJs {
+                    completion,
+                    tracker,
+                },
             );
             value
         }
@@ -2237,15 +2337,9 @@ mod _async_tasks {
         ) -> bun_jsc::JsResult<()> {
             let global_object = cx.global();
             let success = this.pending_err.is_none();
-            let promise_value = js.promise.value();
-            let promise = js.promise.get();
-            let result = if let Some(err) = &mut this.pending_err {
-                match err.to_js_with_async_stack(global_object, promise) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        return promise.reject(global_object, Err(e));
-                    }
-                }
+            let completion = &js.completion;
+            let converted = if let Some(err) = &this.pending_err {
+                completion.error_to_js(global_object, err)
             } else {
                 let res = match core::mem::replace(
                     &mut this.result_list,
@@ -2257,22 +2351,12 @@ mod _async_tasks {
                     ResultListEntryValue::Buffers(v) => ret::Readdir::Buffers(v.into_boxed_slice()),
                     ResultListEntryValue::Files(v) => ret::Readdir::Files(v.into_boxed_slice()),
                 };
-                match res.to_js(global_object) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        return promise.reject(global_object, Err(e));
-                    }
-                }
+                res.to_js(global_object)
             };
-            promise_value.ensure_still_alive();
+            completion.ensure_still_alive();
             let _dispatch = js.tracker.dispatch(global_object);
             drop(this);
-            if success {
-                promise.resolve(global_object, result)?;
-            } else {
-                promise.reject(global_object, Ok(result))?;
-            }
-            Ok(())
+            completion.settle(global_object, converted, success)
         }
     }
 
@@ -2362,10 +2446,12 @@ mod _async_tasks {
             });
         }
 
+        /// `callback`: as for [`AsyncFSTask::create`].
         pub(crate) fn create(
             cx: &bun_jsc::JsThread<'_>,
             args: ThreadIsolated<args::Readdir<'static>>,
             vm: &mut VirtualMachine,
+            callback: Option<JSValue>,
         ) -> JSValue {
             let tag = args.tag();
             let encoding = args.encoding;
@@ -2385,8 +2471,8 @@ mod _async_tasks {
             };
             let tracker = AsyncTaskTracker::init(vm);
             tracker.did_schedule(cx.global());
-            let promise = JSPromiseStrong::init(cx.global());
-            let value = promise.value();
+            let completion = FsCompletion::new(cx.global(), callback);
+            let value = completion.value();
             bun_jsc::Job::<Self>::schedule(
                 cx,
                 AsyncReaddirRecursiveTask {
@@ -2405,7 +2491,10 @@ mod _async_tasks {
                     pending_err: None,
                     pending_err_mutex: bun_threading::Mutex::default(),
                 },
-                AsyncFSJs { promise, tracker },
+                AsyncFSJs {
+                    completion,
+                    tracker,
+                },
             );
             value
         }

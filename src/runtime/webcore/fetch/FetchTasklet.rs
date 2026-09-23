@@ -37,7 +37,6 @@ use bun_jsc::AbortSignalRef;
 
 // `bun_event_loop::JsResult` (cycle-broken erased error) — used by
 // ConcurrentTask callbacks at the tier-3 layer.
-type ElJsResult<T> = bun_event_loop::JsResult<T>;
 
 use http::signals::BODY_HIGH_WATER_MARK;
 
@@ -68,6 +67,27 @@ impl FetchTaskletDeinitHop {
     pub(crate) unsafe fn run(this: *mut Self) {
         // SAFETY: fn contract — sole owner.
         drop(unsafe { bun_core::heap::take(this.cast::<FetchTasklet>()) });
+    }
+}
+
+/// The HTTP thread drained the request body's buffer: the hop that tells the sink, on the JS
+/// thread. Same pointer, its own tag.
+#[repr(transparent)]
+pub(crate) struct FetchTaskletRequestDrain(FetchTasklet);
+impl Taskable for FetchTaskletRequestDrain {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FetchTaskletRequestDrain;
+    /// Carries the +1 `on_write_request_data_drain` took.
+    unsafe fn release_unrun(this: *mut Self) {
+        FetchTasklet::deref(this.cast::<FetchTasklet>());
+    }
+    /// Enters no context.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
+}
+impl FetchTaskletRequestDrain {
+    pub(crate) fn run(this: *mut Self) {
+        FetchTasklet::resume_request_data_stream(this.cast::<FetchTasklet>());
     }
 }
 
@@ -474,7 +494,7 @@ impl FetchTasklet {
             sink.task = None;
             // `detach` may fire the controller's onClose; every terminal path
             // here has already cleared it, so this just nulls m_sinkPtr.
-            JSSink::<FetchRequestBodySink>::detach(&mut sink.source, &self.global_this);
+            sink.source.detach(&self.global_this);
         }
         if let Some(buffer) = self.request_body_streaming_buffer.take() {
             // The HTTP thread may still be using its ref; `clear_drain_callback`
@@ -1740,7 +1760,7 @@ impl FetchTasklet {
         self.abandon_response_body();
     }
 
-    /// `SourceHandle::consumer_collected`: the parked stream's wrapper was swept, so nothing
+    /// `SourceHandle::consumer_collected`: the stream's wrapper was swept, so nothing
     /// can read the rest of the body. Inside a GC sweep, like `on_response_finalize`.
     pub(crate) fn on_body_stream_collected(&self) {
         bun_output::scoped_log!(FetchTasklet, "onBodyStreamCollected");
@@ -1765,13 +1785,13 @@ impl FetchTasklet {
 
     /// The other half of this rule is in `callback` (HTTP thread).
     fn after_body_chunk_delivered(&self, bytes: &crate::webcore::ByteStream) {
-        use crate::webcore::byte_stream::{AfterDelivery, ProducerHold};
+        use crate::webcore::byte_stream::AfterDelivery;
         bun_output::scoped_log!(
             FetchTasklet,
             "afterBodyChunkDelivered buffered={}",
             bytes.buffered_len()
         );
-        match ProducerHold::after_delivery(bytes) {
+        match self.response_stream.after_delivery(bytes) {
             AfterDelivery::Resume => self.resume_receive(),
             AfterDelivery::Pause => self.signal_store.pause_receive(),
             AfterDelivery::Park => {
@@ -2226,8 +2246,7 @@ impl FetchTasklet {
         let this_ref = Self::from_raw_ref(this);
         // ref until the main thread callback is called
         this_ref.ref_();
-        // `from_callback` heap-allocates a fresh `ConcurrentTaskItem`.
-        let task = ConcurrentTask::from_callback(this, FetchTasklet::resume_request_data_stream);
+        let task = ConcurrentTask::create_from(this.cast::<FetchTaskletRequestDrain>());
         this_ref
             .http_ticket
             .as_ref()
@@ -2236,8 +2255,7 @@ impl FetchTasklet {
     }
 
     /// This is ALWAYS called from the main thread
-    // ConcurrentTask::from_callback expects `fn(*mut T) -> bun_event_loop::JsResult<()>`.
-    fn resume_request_data_stream(this: *mut FetchTasklet) -> ElJsResult<()> {
+    fn resume_request_data_stream(this: *mut FetchTasklet) {
         let this_ref = Self::from_raw_mut(this);
         bun_output::scoped_log!(FetchTasklet, "resumeRequestDataStream");
         if !this_ref.signal_aborted() {
@@ -2249,7 +2267,6 @@ impl FetchTasklet {
         // deref when done because we ref inside onWriteRequestDataDrain
         // SAFETY: `this` is the live heap tasklet; we hold a ref.
         FetchTasklet::deref(this);
-        Ok(())
     }
 
     /// True for upgraded connections, HTTP/2 (DATA frames) and `Content-Length` framing.

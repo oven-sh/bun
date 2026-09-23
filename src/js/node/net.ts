@@ -335,15 +335,7 @@ const kSocketClass = Symbol("kSocketClass");
 // callback as errnoException(status, 'write') and destroys the stream when no
 // callback is pending. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L81-L92
 function failWrite(self, negErrno, callback) {
-  let er = new ErrnoException(negErrno, "write") as Error & { code?: string; errno?: number; syscall?: string };
-  if (typeof er.code !== "string" || !/^E[A-Z0-9]+$/.test(er.code)) {
-    // A raw WSA value the errno table cannot name (Windows delivers fatal
-    // send errors this way): shape it like SocketEmitEndNT shapes reads,
-    // keeping the original errno.
-    er = new ConnResetException("write ECONNRESET") as Error & { code: string; errno?: number; syscall?: string };
-    er.errno = negErrno;
-    er.syscall = "write";
-  }
+  const er = writeErrnoException(negErrno);
   self._pendingData = null;
   self[kwriteCallback] = null;
   if (callback) {
@@ -377,6 +369,19 @@ function failWrite(self, negErrno, callback) {
     }
   }
 }
+// Node's errnoException(status, 'write') for the negative errno $write returns.
+function writeErrnoException(negErrno) {
+  let er = new ErrnoException(negErrno, "write") as Error & { code?: string; errno?: number; syscall?: string };
+  if (typeof er.code !== "string" || !/^E[A-Z0-9]+$/.test(er.code)) {
+    // A raw WSA value the errno table cannot name (Windows delivers fatal
+    // send errors this way): shape it like SocketEmitEndNT shapes reads,
+    // keeping the original errno.
+    er = new ConnResetException("write ECONNRESET") as Error & { code: string; errno?: number; syscall?: string };
+    er.errno = negErrno;
+    er.syscall = "write";
+  }
+  return er;
+}
 function endNT(socket, callback, err) {
   // Node's _final half-closes the writable side (sends FIN) and leaves the
   // readable side open; the Duplex's allowHalfOpen drives the eventual destroy.
@@ -406,8 +411,14 @@ function destroyNT(self, err) {
 }
 // Node's wrap 'close' -> destroy(): https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L739-L741
 function onUpgradedClose(self, connection) {
-  if (self[kupgraded] === connection) self.destroy();
+  if (self[kupgraded] !== connection) return;
+  // The stream-level engine reads its transport with no backpressure, so the
+  // transport can close after the peer's EOF with plaintext still unread.
+  if ((self[kended] || self[kOnreadPendingEnd]) && !self.readableEnded) self.once("end", self[kOnUpgradedClose]);
+  else self.destroy();
 }
+// Armed ahead of the stream-level engine's own 'close' thunk: that thunk aborts
+// a pending handshake, which a socket destroyed first does not report.
 function destroyWhenUpgradedCloses(self, connection) {
   connection.once("close", (self[kOnUpgradedClose] = onUpgradedClose.bind(null, self, connection)));
 }
@@ -874,8 +885,10 @@ function SocketEmitEndNT(self, _err?) {
   }
   // A write that was waiting on the native drain can never complete once the
   // socket is gone - fail it so 'finish'/destroy are not stuck behind it.
+  // kclosed, not _err: a native close can carry no error. A half-open 'end'
+  // also lands here, and its write stays parked because it can still drain.
   const pendingWrite = self[kwriteCallback];
-  if (pendingWrite && (self.destroyed || _err)) {
+  if (pendingWrite && (self[kclosed] || self.destroyed)) {
     self[kwriteCallback] = null;
     pendingWrite(_err ?? $ERR_SOCKET_CLOSED());
   }
@@ -2174,11 +2187,11 @@ Socket.prototype.connect = function connect(...args) {
             tls,
             socket: this[khandlers],
           });
+          destroyWhenUpgradedCloses(this, connection);
           connection.on("data", events[0]);
           connection.on("end", events[1]);
           connection.on("drain", events[2]);
           connection.on("close", events[3]);
-          destroyWhenUpgradedCloses(this, connection);
           this._handle = result;
         } else {
           // upgradeTLS requires an established socket; a socket that is still
@@ -2227,11 +2240,11 @@ Socket.prototype.connect = function connect(...args) {
                   tls,
                   socket: this[khandlers],
                 });
+                destroyWhenUpgradedCloses(this, connection);
                 connection.on("data", events[0]);
                 connection.on("end", events[1]);
                 connection.on("drain", events[2]);
                 connection.on("close", events[3]);
-                destroyWhenUpgradedCloses(this, connection);
                 this._handle = result;
               } else {
                 this[kupgraded] = connection;
@@ -2534,11 +2547,11 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
       socket: serverHandlersFor(this),
       isServer: true,
     });
+    destroyWhenUpgradedCloses(this, connection);
     connection.on("data", events[0]);
     connection.on("end", events[1]);
     connection.on("drain", events[2]);
     connection.on("close", events[3]);
-    destroyWhenUpgradedCloses(this, connection);
     this[kupgraded] = connection;
     this._handle = result;
     return;
@@ -2564,11 +2577,11 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
         socket: serverHandlersFor(this),
         isServer: true,
       });
+      destroyWhenUpgradedCloses(this, connection);
       connection.on("data", events[0]);
       connection.on("end", events[1]);
       connection.on("drain", events[2]);
       connection.on("close", events[3]);
-      destroyWhenUpgradedCloses(this, connection);
       this._handle = result;
       this.emit(kUpgradeAttached);
       return;
@@ -2963,7 +2976,11 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     // Node reports this as errnoException(UV_EBADF/UV_EPIPE, 'write'), with
     // message, code, errno and syscall all populated.
     const er = new ErrnoException(process.platform === "win32" ? -4047 /* UV_EPIPE */ : -9 /* UV_EBADF */, "write");
-    process.nextTick(callback, er);
+    // Node fails a write that the handle rejects at once inside the same call,
+    // so write() returns false. The stream runs the write callback and destroys
+    // the socket on the next tick.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L158-L159
+    callback(er);
     return false;
   }
   const res = socket.$write(chunk, encoding);
@@ -2971,7 +2988,7 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
   if (res < 0) {
     // The kernel rejected the send outright (peer reset): $write returned the
     // negative errno; deliver it like the EBADF/EPIPE branch above.
-    process.nextTick(failWrite, this, res, callback);
+    callback(writeErrnoException(res));
     return false;
   }
   if (res) {

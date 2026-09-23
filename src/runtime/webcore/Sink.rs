@@ -289,24 +289,24 @@ impl<T: JsSinkAbi> JSSink<T> {
         }
         start_pump(global, stream, controller)
     }
+}
 
+impl SourceHandle {
     /// Disconnect the upstream source: JSController → detachPtr; ByteStream → clear its SinkHandle.
-    pub(crate) fn detach(source: &mut SourceHandle, _global: &crate::webcore::jsc::JSGlobalObject) {
-        match *source {
+    pub(crate) fn detach(&mut self, global: &JSGlobalObject) {
+        match *self {
             SourceHandle::JSController(value) => {
-                source.clear();
+                self.clear();
                 // detachPtr leaves m_needExceptionCheck set; wrap to satisfy the verifier.
-                let _ = ::bun_jsc::call_check_slow(_global, || {
-                    streams::controller_abi::detach_ptr(value)
-                });
+                let _ = ::bun_jsc::call_check_slow(global, || controller_abi::detach_ptr(value));
             }
             SourceHandle::ByteStream(bs) => {
                 bs.unpipe_without_deref();
-                source.clear();
+                self.clear();
             }
             SourceHandle::FileReader(fr) => {
                 fr.unpipe_without_deref();
-                source.clear();
+                self.clear();
             }
             _ => {}
         }
@@ -321,7 +321,7 @@ fn start_pump(global: &JSGlobalObject, stream: JSValue, controller: JSValue) -> 
     let result = controller_abi::assign_to_stream(global, stream, controller);
     // Setup threw (e.g. a direct stream's `pull` getter): nothing will ever
     // end()/close() the controller, and its destructor would otherwise run
-    // `${name}__finalize` on the sink after its owner has freed it. Detach it
+    // `${name}__controllerFinalize` on the sink after its owner has freed it. Detach it
     // while the sink is live; that reaches `js_controller_detached`, which
     // drops it from `source()` (a no-op if it already detached in the call).
     if result.to_error().is_some() {
@@ -358,6 +358,16 @@ pub(crate) trait JsSinkType: Sized + JsSinkAbi {
     /// # Safety
     /// `this` is the cell's live sink and must not be used after the call.
     unsafe fn finalize(this: *mut Self);
+    /// `${abi}__controllerFinalize`: a `JSReadable*Controller` died still attached to `this`,
+    /// right after [`js_controller_detached`](JSSink::js_controller_detached). The default gives
+    /// up the claim like any other cell; a sink whose controller holds no claim overrides it.
+    ///
+    /// # Safety
+    /// As [`finalize`](Self::finalize).
+    unsafe fn controller_finalize(this: *mut Self) {
+        // SAFETY: the caller's contract is the same one.
+        unsafe { Self::finalize(this) }
+    }
     fn write_bytes(&mut self, data: &streams::Result) -> streams::result::Writable;
     fn write_utf16(&mut self, data: &streams::Result) -> streams::result::Writable;
     fn write_latin1(&mut self, data: &streams::Result) -> streams::result::Writable;
@@ -688,6 +698,17 @@ impl<T: JsSinkType> JSSink<T> {
         debug_assert!(!this.is_null());
         // SAFETY: the caller's contract is the same one.
         unsafe { T::finalize(this) }
+    }
+
+    /// `${abi_name}__controllerFinalize` body.
+    ///
+    /// # Safety
+    /// As [`JsSinkType::controller_finalize`].
+    #[inline]
+    pub(crate) unsafe fn js_controller_finalize(this: *mut T) {
+        debug_assert!(!this.is_null());
+        // SAFETY: the caller's contract is the same one.
+        unsafe { T::controller_finalize(this) }
     }
 
     /// `${abi_name}__controllerDetached` body — called from

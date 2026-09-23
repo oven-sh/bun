@@ -973,7 +973,7 @@ where
             let wrapper = unsafe { &mut *wrapper_ptr.as_ptr() };
             wrapper.sink.finalize();
             if let Some(sink_global) = wrapper.sink.global_this {
-                ResponseStreamJSSink::<SSL_ENABLED>::detach(&mut wrapper.sink.source, &sink_global);
+                wrapper.sink.source.detach(&sink_global);
             }
             Self::destroy_sink(wrapper_ptr);
         }
@@ -2078,7 +2078,7 @@ where
             // SAFETY: this context is the sink's sole owner until `destroy_sink`
             // below (see the `sink` field); `on_abort` leaves it allocated.
             let wrapper = unsafe { &mut *wrapper_ptr.as_ptr() };
-            ResponseStreamJSSink::<SSL_ENABLED>::detach(&mut wrapper.sink.source, global_this);
+            wrapper.sink.source.detach(global_this);
             crate::dispatch::fold(stream.cancel(global_this));
             wrapper.sink.mark_done();
             wrapper.sink.on_first_write = None;
@@ -2165,10 +2165,7 @@ where
         // writing a second chunked last-chunk.
         if resp.has_responded() {
             stream_log!("done");
-            ResponseStreamJSSink::<SSL_ENABLED>::detach(
-                &mut response_stream.sink.source,
-                global_this,
-            );
+            response_stream.sink.source.detach(global_this);
             this.sink.set(None);
             Self::destroy_sink(response_stream_ptr);
             stream.done();
@@ -2180,10 +2177,7 @@ where
 
         if let Some(err_value) = assignment_result.to_error() {
             stream_log!("returned an error");
-            ResponseStreamJSSink::<SSL_ENABLED>::detach(
-                &mut response_stream.sink.source,
-                global_this,
-            );
+            response_stream.sink.source.detach(global_this);
             this.sink.set(None);
             Self::destroy_sink(response_stream_ptr);
             return this.handle_reject(err_value);
@@ -2286,10 +2280,7 @@ where
             } else {
                 // if is not a promise we treat it as Error
                 stream_log!("returned an error");
-                ResponseStreamJSSink::<SSL_ENABLED>::detach(
-                    &mut response_stream.sink.source,
-                    global_this,
-                );
+                response_stream.sink.source.detach(global_this);
                 this.sink.set(None);
                 Self::destroy_sink(response_stream_ptr);
                 return this.handle_reject(effective_result);
@@ -2310,10 +2301,7 @@ where
                     stream_log!("is not locked");
                     response_stream.sink.on_first_write = None;
                     response_stream.sink.ctx = None;
-                    ResponseStreamJSSink::<SSL_ENABLED>::detach(
-                        &mut response_stream.sink.source,
-                        global_this,
-                    );
+                    response_stream.sink.source.detach(global_this);
                     response_stream.sink.mark_done();
                     response_stream.sink.finalize();
                     this.sink.set(None);
@@ -2328,7 +2316,7 @@ where
         stream_log!("is in progress, but did not return a Promise. Finalizing request context");
         response_stream.sink.on_first_write = None;
         response_stream.sink.ctx = None;
-        ResponseStreamJSSink::<SSL_ENABLED>::detach(&mut response_stream.sink.source, global_this);
+        response_stream.sink.source.detach(global_this);
         crate::dispatch::fold(stream.cancel(global_this));
         response_stream.sink.mark_done();
         response_stream.sink.finalize();
@@ -2894,7 +2882,7 @@ where
                 .sink
                 .global_this
                 .expect("sink.global_this set in do_render_stream");
-            ResponseStreamJSSink::<SSL_ENABLED>::detach(&mut wrapper.sink.source, &sink_global);
+            wrapper.sink.source.detach(&sink_global);
             Self::destroy_sink(wrapper_ptr);
         }
 
@@ -2988,7 +2976,7 @@ where
                 .sink
                 .global_this
                 .expect("sink.global_this set in do_render_stream");
-            ResponseStreamJSSink::<SSL_ENABLED>::detach(&mut wrapper.sink.source, &sink_global);
+            wrapper.sink.source.detach(&sink_global);
             Self::destroy_sink(wrapper_ptr);
         }
 

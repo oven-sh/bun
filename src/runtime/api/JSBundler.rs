@@ -1474,7 +1474,7 @@ pub(crate) mod js_bundler {
     // dependency. Only the JSC-aware bits (`on_defer`, `JSBundlerPlugin__*`
     // C-ABI exports) live here.
     pub(crate) use bun_bundler::bundle_v2::api::JSBundler::{
-        Load, LoadSuccess, LoadValue, Resolve, ResolveSuccess, ResolveValue,
+        Load, LoadDeferred, LoadSuccess, LoadValue, Resolve, ResolveSuccess, ResolveValue,
     };
 
     /// `&mut BundleV2` for the live backref stored on `Resolve`/`Load`.
@@ -1588,9 +1588,8 @@ pub(crate) mod js_bundler {
                     .expect("BundleV2.linker.loop must be set before plugins run");
                 match &mut *any_loop.as_ptr() {
                     bun_event_loop::AnyEventLoop::Js { .. } => {
-                        let ct = ConcurrentTask::from_callback(
-                            std::ptr::from_mut::<Load>(self),
-                            on_notify_defer_js,
+                        let ct = ConcurrentTask::create_from(
+                            std::ptr::from_mut::<Load>(self).cast::<LoadDeferred>(),
                         );
                         let poster = (*ctx.as_mut_ptr())
                             .js_poster
@@ -1613,14 +1612,6 @@ pub(crate) mod js_bundler {
                 Ok(bv2_plugin(self.bv2).append_defer_promise())
             }
         }
-    }
-
-    fn on_notify_defer_js(load: *mut Load) -> bun_event_loop::JsResult<()> {
-        // SAFETY: task contract — `load` is the live request `on_defer` posted; this runs on the loop
-        // that runs the bundle (bake: the plugins' own), so it is the bundle thread here.
-        let load = unsafe { &mut *load };
-        BundleV2::on_notify_defer(load, bv2_mut(load.bv2));
-        Ok(())
     }
 
     fn on_notify_defer_mini_wrap(load: *mut Load, ctx: *mut BundleV2<'static>) {

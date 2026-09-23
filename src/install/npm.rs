@@ -2124,16 +2124,19 @@ impl PackageManifest {
                 let sliced_version = SlicedString::init(version_name, version_name);
                 let parsed_version = Semver::Version::parse(sliced_version);
 
-                debug_assert!(parsed_version.valid);
                 if !parsed_version.valid {
-                    log.add_error_fmt(
-                        Some(&source),
-                        prop.key_loc,
-                        format_args!(
-                            "Failed to parse dependency {}",
-                            bstr::BStr::new(version_name)
-                        ),
-                    );
+                    // Not an error: an error fails the install. npm skips such a key in silence.
+                    if PackageManager::verbose_install() {
+                        log.add_warning_fmt(
+                            Some(&source),
+                            prop.key_loc,
+                            format_args!(
+                                "Skipping version {} of {}: not a valid semver version",
+                                bun_fmt::quote(version_name),
+                                bun_fmt::quote(expected_name),
+                            ),
+                        );
+                    }
                     continue;
                 }
 
@@ -2182,8 +2185,12 @@ impl PackageManifest {
                                 }
                             }
                             JSON::E::JsonValue::String(str_) => {
-                                string_builder.count(str_.slice());
-                                break 'bin;
+                                // The build pass reads `directories.bin` when `bin` is empty.
+                                let str_ = str_.slice();
+                                if !str_.is_empty() {
+                                    string_builder.count(str_);
+                                    break 'bin;
+                                }
                             }
                             _ => {}
                         }
@@ -2386,7 +2393,9 @@ impl PackageManifest {
                 let mut sliced_version = SlicedString::init(version_name, version_name);
                 let mut parsed_version = Semver::Version::parse(sliced_version);
 
-                debug_assert!(parsed_version.valid);
+                if !parsed_version.valid {
+                    continue;
+                }
                 // We only need to copy the version tags if it contains pre and/or build
                 if parsed_version.version.tag.has_build() || parsed_version.version.tag.has_pre() {
                     let version_string = string_builder.append::<SemverString>(version_name);
@@ -2397,9 +2406,6 @@ impl PackageManifest {
                         parsed_version.version.tag.has_build()
                             || parsed_version.version.tag.has_pre()
                     );
-                }
-                if !parsed_version.valid {
-                    continue;
                 }
 
                 let version_obj = prop.value.as_object();
@@ -2690,15 +2696,8 @@ impl PackageManifest {
 
                         for item in items {
                             let name_str = item.key.slice();
-                            let version_str = match item.value.as_str() {
-                                Some(s) => s,
-                                None => {
-                                    if cfg!(debug_assertions) {
-                                        unreachable!("non-value Expr from JSON parser")
-                                    } else {
-                                        continue;
-                                    }
-                                }
+                            let Some(version_str) = item.value.as_str() else {
+                                continue;
                             };
 
                             all_extern_strings[names_base + i] =
@@ -2882,7 +2881,7 @@ impl PackageManifest {
                             0 => package_version.dependencies = map,
                             1 => package_version.optional_dependencies = map,
                             2 => package_version.peer_dependencies = map,
-                            _ => unreachable!("non-value Expr from JSON parser"),
+                            _ => unreachable!("DEPENDENCY_GROUPS has 3 entries"),
                         }
 
                         // The dedupe must hand back
@@ -2893,23 +2892,6 @@ impl PackageManifest {
                         #[cfg(debug_assertions)]
                         {
                             let dependencies_list = map;
-                            debug_assert!(
-                                (dependencies_list.name.off as usize) < all_extern_strings.len()
-                            );
-                            debug_assert!(
-                                (dependencies_list.value.off as usize) < all_extern_strings.len()
-                            );
-                            debug_assert!(
-                                dependencies_list.name.off as usize
-                                    + (dependencies_list.name.len as usize)
-                                    < all_extern_strings.len()
-                            );
-                            debug_assert!(
-                                dependencies_list.value.off as usize
-                                    + (dependencies_list.value.len as usize)
-                                    < all_extern_strings.len()
-                            );
-
                             let name_dependencies = dependencies_list.name.get(&all_extern_strings);
                             let value_dependencies =
                                 dependencies_list.value.get(&version_extern_strings);
@@ -2925,19 +2907,26 @@ impl PackageManifest {
                             }
 
                             // Per-element string-content checks against the
-                            // source JSON. Skipped when meta-only
-                            // optional peers may have been synthesised, since
-                            // `items[j]` correspondence no longer holds then.
+                            // source JSON. `stored` is the items the build loop
+                            // kept: it skips a value that is not a string. Skipped
+                            // when meta-only optional peers may have been
+                            // synthesised, since `stored[j]` correspondence no
+                            // longer holds then.
                             if !is_peer || optional_peer_dep_names.is_empty() {
                                 let string_buf: &[u8] = string_builder.allocated_slice();
+                                let stored: Vec<(&[u8], &[u8])> = items
+                                    .iter()
+                                    .filter_map(|item| {
+                                        Some((item.key.slice(), item.value.as_str()?))
+                                    })
+                                    .collect();
+                                debug_assert!(stored.len() == count);
                                 for (j, dep_name) in name_dependencies.iter().enumerate() {
                                     debug_assert!(
                                         dep_name.value.slice(string_buf)
                                             == this_names[j].value.slice(string_buf)
                                     );
-                                    debug_assert!(
-                                        dep_name.value.slice(string_buf) == items[j].key.slice()
-                                    );
+                                    debug_assert!(dep_name.value.slice(string_buf) == stored[j].0);
                                 }
                                 for (j, dep_version) in value_dependencies.iter().enumerate() {
                                     debug_assert!(
@@ -2945,11 +2934,7 @@ impl PackageManifest {
                                             == this_versions[j].value.slice(string_buf)
                                     );
                                     debug_assert!(
-                                        dep_version.value.slice(string_buf)
-                                            == items[j]
-                                                .value
-                                                .as_str()
-                                                .expect("dependency value must be a string")
+                                        dep_version.value.slice(string_buf) == stored[j].1
                                     );
                                 }
                             }
@@ -3157,11 +3142,12 @@ impl PackageManifest {
                         // Sanity check:
                         // When reading the versions, we iterate through the
                         // list backwards to choose the highest matching
-                        // version
+                        // version. Two keys can name one version ("1.0.0" and
+                        // "01.0.0"), so neighbours can be equal.
                         let first = semver_versions_[0];
                         let second = semver_versions_[1];
                         let order = second.order(first, string_bytes, string_bytes);
-                        debug_assert!(order == core::cmp::Ordering::Greater);
+                        debug_assert!(order != core::cmp::Ordering::Less);
                     }
                 }
             }

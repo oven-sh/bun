@@ -10,7 +10,7 @@
 
 import type { Dependency, DirectBuild } from "../source.ts";
 
-const LSHPACK_COMMIT = "8905c024b6d052f083a3d11d0a169b3c2735c8a1";
+const LSHPACK_COMMIT = "cf0f70dd10b352194c97448eb5d00b4aa484f531";
 
 export const lshpack: Dependency = {
   name: "lshpack",
@@ -25,11 +25,7 @@ export const lshpack: Dependency = {
   // hencs[65536]/hdecs[65536] (768 KB of .rodata) are pure functions of the
   // 257-entry encode_table. Declare them in .bss and fill on first init
   // (~250 us once); the hot-path lookup is unchanged.
-  //
-  // no-name-trim: upstream strips trailing whitespace from a decoded literal
-  // field name, so "x-a " reached the request validators as "x-a" instead of
-  // being rejected, and the shortened name went into the dynamic table.
-  patches: ["patches/lshpack/bss-huff-tables.patch", "patches/lshpack/no-name-trim.patch"],
+  patches: ["patches/lshpack/bss-huff-tables.patch"],
 
   build: cfg => {
     // <sys/queue.h> ships with glibc and BSD libc but not musl or win32.

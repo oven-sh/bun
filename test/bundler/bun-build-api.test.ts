@@ -1,13 +1,12 @@
 import assert from "assert";
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
+import { mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
 import {
   bunEnv,
   bunExe,
   bunRun,
   isASAN,
   isDebug,
-  isMacOS,
   isWindows,
   tempDir,
   tempDirWithFiles,
@@ -70,6 +69,70 @@ describe("Bun.build", () => {
     expect(build.outputs[0].kind).toBe("entry-point");
     expect(build.outputs[1].kind).toBe("bytecode");
     expect(await bunRun(build.outputs[0].path)).toSpawn("world");
+  });
+
+  // Bytecode is counted among the outputs before it is generated. JSC rejects this regular expression, which the
+  // bundler passes through, so the chunk ends up without bytecode: every other output must still be there.
+  describe.each(["in memory", "outdir"])("a chunk whose bytecode cannot be generated (%s)", form => {
+    const files = {
+      "package.json": `{}`,
+      "logo.png": "PNGDATA",
+      "data.bin": "BINDATA",
+    };
+    const unparseable = String.raw`/\p{NotAProperty}/u`;
+
+    test("keeps the other outputs", async () => {
+      using dir = tempDir("bun-build-api-bytecode-failed", {
+        ...files,
+        "index.js": `
+          const logo = require("./logo.png");
+          const data = require("./data.bin");
+          console.log(typeof logo, typeof data);
+          exports.bad = s => ${unparseable}.test(s);
+        `,
+      });
+      const build = await Bun.build({
+        entrypoints: [join(String(dir), "index.js")],
+        ...(form === "outdir" ? { outdir: join(String(dir), "out") } : {}),
+        target: "bun",
+        format: "cjs",
+        bytecode: true,
+        loader: { ".bin": "file" },
+      });
+      const outputs = await Promise.all(
+        build.outputs.map(async output => ({
+          kind: output?.kind,
+          text: output?.kind === "asset" ? await output.text() : "",
+        })),
+      );
+      expect(outputs.sort((a, b) => (a.kind + a.text).localeCompare(b.kind + b.text))).toEqual([
+        { kind: "asset", text: "BINDATA" },
+        { kind: "asset", text: "PNGDATA" },
+        { kind: "entry-point", text: "" },
+      ]);
+    });
+  });
+
+  // Bytecode is for JavaScript chunks: the CSS chunk of a JavaScript entry point is not one, and is not counted as one.
+  test("bytecode is not generated for the CSS chunk of an entry point", async () => {
+    using dir = tempDir("bun-build-api-bytecode-css", {
+      "logo.png": "PNGDATA",
+      "empty.css": "/* nothing */\n",
+      "index.js": `
+        import "./empty.css";
+        const logo = require("./logo.png");
+        console.log(typeof logo);
+      `,
+    });
+    const build = await Bun.build({
+      entrypoints: [join(String(dir), "index.js")],
+      outdir: join(String(dir), "out"),
+      target: "bun",
+      format: "cjs",
+      bytecode: true,
+    });
+    expect(build.outputs.map(output => output?.kind).sort()).toEqual(["asset", "asset", "bytecode", "entry-point"]);
+    expect(readdirSync(join(String(dir), "out")).filter(file => file.endsWith(".jsc"))).toEqual(["index.js.jsc"]);
   });
 
   const nestedSource = `
@@ -241,11 +304,11 @@ describe("Bun.build", () => {
         console.log(JSON.stringify({ base, after }));
       `,
     });
-    // Linux/Windows release, 20k functions: ~+65 MB without freeing the VM, about level with the baseline with it.
+    // Release, 20k functions: ~+65 MB without freeing the VM, about level with the baseline with it.
     // Debug/ASAN parse far slower and hold freed pages in quarantine, so they get a smaller module and only guard against
-    // gross retention. macOS reports +230-280 MB here even with the VM freed (the pages leave RSS lazily), so same there.
+    // gross retention.
     const slow = isASAN || isDebug;
-    const [functions, limit] = slow ? [3000, 400] : [20000, isMacOS ? 400 : 40];
+    const [functions, limit] = slow ? [3000, 400] : [20000, 40];
     await using proc = Bun.spawn({
       cmd: [bunExe(), "retained-fixture.ts", String(functions), String(limit)],
       env: bunEnv,
@@ -259,6 +322,48 @@ describe("Bun.build", () => {
     const { base, after } = JSON.parse(stdout);
     expect(after - base).toBeLessThanOrEqual(limit);
   });
+
+  // A pool thread holds a build's ASTs until it tears its worker down; macOS and Windows read files on a second pool.
+  // The 250ms load outlasts an idle pool thread's first park (100ms, timed), so they are all parked for good at the end.
+  test.concurrent.each([{}, { BUN_FEATURE_FLAG_FORCE_IO_POOL: "1" }])(
+    "every pool thread a build ran on tears its worker down once the build is done %j",
+    async env => {
+      const files: Record<string, string> = { "entry.js": `export * from "slow";\n` };
+      for (let i = 0; i < 32; i++) {
+        files[`m${i}.js`] =
+          `export function f${i}(a, b) { for (let j = 0; j < b; j++) a += j ^ ${i}; return { a, b }; }\n`;
+        files["entry.js"] += `export * from "./m${i}.js";\n`;
+      }
+      files["worker-teardown-fixture.ts"] = /* ts */ `
+        import { bundlerWorkerLiveCount } from "bun:internal-for-testing";
+        const slow = {
+          name: "slow",
+          setup(build) {
+            build.onResolve({ filter: /^slow$/ }, () => ({ path: "slow", namespace: "slow" }));
+            build.onLoad({ filter: /.*/, namespace: "slow" }, async () => {
+              await Bun.sleep(250);
+              return { contents: "export const slow = 1;", loader: "js" };
+            });
+          },
+        };
+        if (!(await Bun.build({ entrypoints: ["./entry.js"], target: "bun", plugins: [slow] })).success) throw new Error("build failed");
+        const deadline = Date.now() + 5000;
+        while (bundlerWorkerLiveCount() > 0 && Date.now() < deadline) await Bun.sleep(5);
+        console.log(bundlerWorkerLiveCount());
+      `;
+      using dir = tempDir("bun-build-api-worker-teardown", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "worker-teardown-fixture.ts"],
+        env: { ...bunEnv, ...env },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("0\n");
+      expect(exitCode).toBe(0);
+    },
+  );
 
   test("passing undefined doesnt segfault", () => {
     try {
@@ -1788,7 +1893,7 @@ test.skipIf(!isDebug && !isASAN)(
     const dir = tempDirWithFiles("bun-build-inline-sourcemap-leak", {
       "entry.ts": "export const a = 1;\n/* " + Buffer.alloc(30 * 1024 * 1024, "x").toString() + " */\n",
       "run.ts": `
-        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+        const rss = process.memoryUsage.rss;
         const entry = process.argv[2];
         async function build() {
           const res = await Bun.build({ entrypoints: [entry], sourcemap: "inline" });
@@ -1867,7 +1972,7 @@ test.skip("Bun.build NumberRenamer does not leak intermediate NumberScope.name_c
   const dir = tempDirWithFiles("bun-build-number-renamer-leak", {
     "entry.js": entry,
     "run.ts": `
-        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+        const rss = process.memoryUsage.rss;
         const entry = process.argv[2];
         async function build() {
           // No identifier minification → NumberRenamer path (not MinifyRenamer).

@@ -4,7 +4,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_
 bun_output::declare_scope!(S3Stat, visible);
 
 #[bun_jsc::JsClass]
-pub struct S3Stat {
+pub(crate) struct S3Stat {
     pub(crate) size: u64,
     pub(crate) etag: BunString,
     pub(crate) content_type: BunString,

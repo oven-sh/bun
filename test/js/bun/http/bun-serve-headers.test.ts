@@ -445,7 +445,9 @@ describe("Request.url and Request.headers after the handler returned", () => {
       "HTTP/1.0 without Host": ["GET /no-host HTTP/1.0\r\n\r\n"],
       "IPv6 Host": ["GET /ipv6 HTTP/1.1\r\nHost: [::1]:3000\r\n\r\n"],
       "empty and padded values": ["GET /empty HTTP/1.1\r\nHost: x\r\nX-Empty:\r\nX-Pad: \t padded \t \r\n\r\n"],
-      "duplicate fields": ["GET /dup HTTP/1.1\r\nHost: x\r\nX-Dup: 1\r\nx-dup: 2\r\nCookie: a=1\r\nCookie: b=2\r\n\r\n"],
+      "duplicate fields": [
+        "GET /dup HTTP/1.1\r\nHost: x\r\nX-Dup: 1\r\nx-dup: 2\r\nCookie: a=1\r\nCookie: b=2\r\n\r\n",
+      ],
       "Latin-1 value": ["GET /latin1 HTTP/1.1\r\nHost: x\r\nX-Latin: caf\xe9\r\n\r\n"],
       "query only": ["GET /?only=query HTTP/1.1\r\nHost: x\r\n\r\n"],
       "long target": [`GET ${longTarget} HTTP/1.1\r\nHost: x\r\n\r\n`],

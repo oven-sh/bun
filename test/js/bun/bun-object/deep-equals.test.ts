@@ -161,12 +161,16 @@ describe("sparse arrays that only claim a length", () => {
     ["undefined against a hole loose", "loose(at(last, undefined), holes())", "true"],
     ["undefined against a hole strict", "strict(at(last, undefined), holes())", "false"],
     ["nested strict", "equal([holes()], [holes()])", "true"],
+    ["toEqual all holes", "passes(() => expect(holes()).toEqual(holes()))", "true"],
+    ["toStrictEqual last index equal", "passes(() => expect(at(last, 1)).toStrictEqual(at(last, 1)))", "true"],
+    ["toEqual last index matcher", "passes(() => expect(at(last, 1)).toEqual(at(last, expect.any(Number))))", "true"],
   ] as const;
 
   it("compare without walking every index", async () => {
     const fixture = `
       const util = require('node:util');
       const assert = require('node:assert');
+      const { expect } = require('bun:test');
 
       const last = 2 ** 32 - 2;
       const holes = () => { const a = []; a.length = 2 ** 32 - 1; return a; };
@@ -174,6 +178,7 @@ describe("sparse arrays that only claim a length", () => {
       const equal = util.isDeepStrictEqual;
       const loose = (a, b) => Bun.deepEquals(a, b);
       const strict = (a, b) => Bun.deepEquals(a, b, true);
+      const passes = assertion => { try { assertion(); return true; } catch { return false; } };
 
       ${cases.map(([name, expression]) => `console.log(${JSON.stringify(name)}, ${expression});`).join("\n      ")}
 
@@ -192,6 +197,7 @@ describe("sparse arrays that only claim a length", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+    expect(proc.signalCode).toBeNull();
     expect(stdout).toBe(
       [...cases.map(([name, , answer]) => `${name} ${answer}`), "assert.deepStrictEqual true", ""].join("\n"),
     );
@@ -241,6 +247,38 @@ describe("sparse arrays that only claim a length", () => {
       expect(compare(a, b)).toBe(false);
       expect(a[added]).toBe(1);
     });
+  });
+
+  // toEqual and toStrictEqual are their own instantiations of the comparison, and a matcher is user code that runs inside it.
+  it("compare through expect().toEqual and toStrictEqual", () => {
+    const sparse = (...indices: number[]) => {
+      const a: unknown[] = [];
+      a.length = 200_000;
+      for (const index of indices) a[index] = index;
+      return a;
+    };
+
+    expect(sparse(0, 199_999)).toEqual(sparse(0, 199_999));
+    expect(sparse(0, 199_999)).toStrictEqual(sparse(0, 199_999));
+    expect(sparse(0, 199_999)).not.toEqual(sparse(0, 199_998));
+    expect(sparse(0, 199_999)).not.toStrictEqual(sparse(0, 199_998));
+
+    const withMatcher = sparse(0);
+    withMatcher[199_999] = expect.any(Number);
+    expect(sparse(0, 199_999)).toEqual(withMatcher);
+
+    expect.extend({
+      toStoreInto(_received: unknown, target: unknown[], index: number) {
+        target[index] = 1;
+        return { pass: true, message: () => "" };
+      },
+    });
+    const storeInto = (expect as unknown as { toStoreInto(target: unknown[], index: number): unknown }).toStoreInto;
+    const a = sparse(0);
+    const b = sparse();
+    b[0] = storeInto(a, 110_000);
+    expect(a).not.toEqual(b);
+    expect(a[110_000]).toBe(1);
   });
 
   // Known gap: the swap keeps the sparse map's size, so the comparison does not notice that its keys changed.

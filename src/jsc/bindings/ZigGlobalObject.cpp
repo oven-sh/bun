@@ -4320,21 +4320,21 @@ extern "C" bool Bun__VM__entryEvaluationStarted(void*);
 extern "C" BunString Bun__VM__entryRootKey(void*);
 extern "C" void Bun__VM__noteEntryEvaluationStarted(void*);
 
-// Evaluating or beyond: the entry's graph is fetched and linked, and anything still pending is a top-level await.
-static bool entryRootIsEvaluating(Zig::GlobalObject* globalObject, JSModuleLoader* moduleLoader)
+// Evaluating: the entry's graph is linked and its bodies are on the stack. EvaluatingAsync: only a top-level await is left.
+static bool entryRootReached(Zig::GlobalObject* globalObject, JSModuleLoader* moduleLoader, JSC::CyclicModuleRecord::Status status)
 {
     BunString rootKey = Bun__VM__entryRootKey(globalObject->bunVM());
     auto* entry = moduleLoader->registryEntry(JSC::Identifier::fromString(globalObject->vm(), rootKey.toWTFString(BunString::ZeroCopy)));
     if (!entry)
         return false;
     auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(entry->record());
-    return cyclic && cyclic->status() >= JSC::CyclicModuleRecord::Status::Evaluating;
+    return cyclic && cyclic->status() >= status;
 }
 
 // Asked by a --hot reload that finds the entry promise still pending (VirtualMachine::reload).
-extern "C" [[ZIG_EXPORT(nothrow)]] bool Bun__entryRootIsEvaluating(Zig::GlobalObject* globalObject)
+extern "C" [[ZIG_EXPORT(nothrow)]] bool Bun__entryRootIsAwaiting(Zig::GlobalObject* globalObject)
 {
-    return entryRootIsEvaluating(globalObject, globalObject->moduleLoader());
+    return entryRootReached(globalObject, globalObject->moduleLoader(), JSC::CyclicModuleRecord::Status::EvaluatingAsync);
 }
 
 // A body running before the root is Evaluating belongs to another root (a preload's un-awaited import()).
@@ -4343,7 +4343,7 @@ static void noteModuleEvaluation(Zig::GlobalObject* globalObject, JSModuleLoader
     void* bunVM = globalObject->bunVM();
     if (Bun__VM__entryEvaluationStarted(bunVM))
         return;
-    if (entryRootIsEvaluating(globalObject, moduleLoader))
+    if (entryRootReached(globalObject, moduleLoader, JSC::CyclicModuleRecord::Status::Evaluating))
         Bun__VM__noteEntryEvaluationStarted(bunVM);
 }
 

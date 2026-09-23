@@ -296,6 +296,8 @@ pub struct VirtualMachine {
     pub pending_internal_promise_is_protected: bool,
     pub pending_internal_promise_reported_at: u32,
     pub(crate) hot_reload_deferred: bool,
+    /// Module fetches of the current `--hot` generation that have not settled. JS thread only.
+    pub(crate) module_fetches_in_flight: u32,
     pub entry_point_result: EntryPointResult,
 
     pub on_unhandled_rejection: OnUnhandledRejection,
@@ -751,6 +753,19 @@ impl ExitHandler {
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__VM__noteEntryEvaluationStarted(vm: &mut VirtualMachine) {
         vm.entry_evaluation_started = true;
+    }
+
+    /// A plugin's `onLoad` returned a promise. The result goes to [`Bun__VM__moduleFetchSettled`].
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__VM__moduleFetchStarted(vm: &mut VirtualMachine) -> u32 {
+        // SAFETY: `vm` is the live VM, on the JS thread.
+        unsafe { VirtualMachine::module_fetch_started(vm) }
+    }
+
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__VM__moduleFetchSettled(vm: &mut VirtualMachine, generation: u32) {
+        // SAFETY: `vm` is the live VM, on the JS thread.
+        unsafe { VirtualMachine::module_fetch_settled(vm, generation) }
     }
 
     /// Only a worker's start waits on this (`wait_for_worker_entry_evaluation`);
@@ -3554,12 +3569,12 @@ impl VirtualMachine {
                     break;
                 }
                 self.event_loop_mut().tick();
+                self.retry_deferred_hot_reload();
                 let Some(p) = self.pending_internal_promise else {
                     break;
                 };
                 // SAFETY: see above.
                 if crate::JSPromise::status_ptr(p) == crate::js_promise::Status::Pending {
-                    self.retry_deferred_hot_reload();
                     self.auto_tick();
                 }
             }
@@ -4467,6 +4482,28 @@ impl VirtualMachine {
         self.add_main_to_watcher_if_needed();
     }
 
+    /// A module fetch starts: a transpile job, a plugin `onLoad` promise. Returns the generation to settle it with.
+    /// Safety: `vm` is the live VM, on the JS thread. Field access only: a caller can hold `&mut` to another field.
+    pub(crate) unsafe fn module_fetch_started(vm: *mut Self) -> u32 {
+        // SAFETY: fn contract.
+        unsafe {
+            (*vm).module_fetches_in_flight += 1;
+            (*vm).hot_reload_counter
+        }
+    }
+
+    /// A fetch that an earlier generation started is not in the count: `reload()` zeroed it.
+    /// Safety: as [`module_fetch_started`].
+    pub(crate) unsafe fn module_fetch_settled(vm: *mut Self, generation: u32) {
+        // SAFETY: fn contract.
+        unsafe {
+            if generation == (*vm).hot_reload_counter {
+                debug_assert!((*vm).module_fetches_in_flight > 0);
+                (*vm).module_fetches_in_flight = (*vm).module_fetches_in_flight.saturating_sub(1);
+            }
+        }
+    }
+
     /// Runs a reload [`reload`] deferred; it defers itself again while the entry load is still in flight.
     fn retry_deferred_hot_reload(&mut self) {
         if self.hot_reload_deferred {
@@ -4552,8 +4589,11 @@ impl VirtualMachine {
             // SAFETY: `p` is a live JSC heap cell tracked by the VM.
             match crate::JSPromise::status_ptr(p) {
                 crate::js_promise::Status::Pending => {
-                    // A load still in flight would share the registry with a new one; a pending top-level await would not.
-                    if !crate::cpp::Bun__entryRootIsEvaluating(self.global()) {
+                    // Replaced only when parked on a top-level await: no load in flight (two would share the registry), no body running under this tick.
+                    let parked = self.module_fetches_in_flight == 0
+                        && !self.global().vm().is_entered()
+                        && crate::cpp::Bun__entryRootIsAwaiting(self.global());
+                    if !parked {
                         self.hot_reload_deferred = true;
                         return;
                     }
@@ -4589,6 +4629,7 @@ impl VirtualMachine {
         // the JSC module loader registry.
         self.global().reload().expect("Failed to reload");
         self.hot_reload_counter += 1;
+        self.module_fetches_in_flight = 0;
         if self.pending_internal_promise_is_protected {
             if let Some(p) = self.pending_internal_promise {
                 JSValue::from_cell(p).unprotect();

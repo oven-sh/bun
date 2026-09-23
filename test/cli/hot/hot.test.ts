@@ -849,7 +849,7 @@ function spawnHot(dir: string, ...args: string[]) {
   });
 }
 
-describe.concurrent("a generation whose top-level await never settles", () => {
+describe.concurrent("a generation whose top-level await has not settled", () => {
   it(
     "is replaced by the next save of the entry",
     async () => {
@@ -955,8 +955,16 @@ describe.concurrent("a generation whose top-level await never settles", () => {
     "is not applied as the server config when it finishes after a newer generation (%s)",
     async (_shape, exportsConfig) => {
       const oldConfigRead = "[#!tla] old config read";
-      using dir = tempDir("hot-tla-late", {
-        "entry.ts": `
+      using dir = tempDir("hot-tla-late", { "entry.ts": finishes("[#!tla] ready") });
+      const entry = join(String(dir), "entry.ts");
+      const finishOld = join(String(dir), "finish-old");
+      await using runner = spawnHot(String(dir));
+      const markers = stdoutMarkers(runner);
+      await markers.next("[#!tla] ready");
+
+      writeFileSync(
+        entry,
+        `
           console.write("[#!tla] old start\\n");
           await new Promise(resolve => (globalThis.finishOld = resolve));
           console.write("[#!tla] old finished\\n");
@@ -970,14 +978,11 @@ describe.concurrent("a generation whose top-level await never settles", () => {
           };
           ${exportsConfig}
         `,
-      });
-      const finishOld = join(String(dir), "finish-old");
-      await using runner = spawnHot(String(dir));
-      const markers = stdoutMarkers(runner);
+      );
       await markers.next("[#!tla] old start");
 
       writeFileSync(
-        join(String(dir), "entry.ts"),
+        entry,
         `
           import { existsSync } from "fs";
           console.write("[#!tla] new start\\n");
@@ -996,6 +1001,195 @@ describe.concurrent("a generation whose top-level await never settles", () => {
       // so before the timer that prints this marker.
       const afterOldFinished = await markers.next("[#!tla] old settled");
       expect(afterOldFinished).not.toContain(oldConfigRead);
+    },
+    timeout,
+  );
+
+  // A module body can run the event loop itself: Bun.build() waits for an
+  // async plugin setup() before it returns. A save that lands meanwhile is
+  // applied once the body is done, not under it.
+  it.each([
+    ["before its first await", ""],
+    ["after an await", "await 0;"],
+  ])(
+    "is not replaced while its body is still running (%s)",
+    async (_when, beforeBuild) => {
+      using dir = tempDir("hot-tla-body", { "entry.ts": finishes("[#!tla] ready") });
+      const entry = join(String(dir), "entry.ts");
+      await using runner = spawnHot(String(dir));
+      const markers = stdoutMarkers(runner);
+      await markers.next("[#!tla] ready");
+
+      writeFileSync(
+        entry,
+        `
+          import { readFileSync } from "fs";
+          ${beforeBuild}
+          const source = readFileSync(import.meta.path, "utf8");
+          console.write("[#!tla] body running\\n");
+          try {
+            Bun.build({
+              entrypoints: [import.meta.path],
+              plugins: [
+                {
+                  name: "runs-the-event-loop",
+                  async setup() {
+                    while (readFileSync(import.meta.path, "utf8") === source) await Bun.sleep(5);
+                    // A deferred reload is not observable; give the save's
+                    // watcher event time to reach the body that is waiting here.
+                    await Bun.sleep(${isDebug ? 1_000 : 300});
+                    throw new Error("no build wanted");
+                  },
+                },
+              ],
+            });
+          } catch {}
+          console.write("[#!tla] body done\\n");
+          await new Promise(() => {});
+        `,
+      );
+      await markers.next("[#!tla] body running");
+
+      writeFileSync(entry, finishes("[#!tla] new start"));
+      const whileBodyRan = await markers.next("[#!tla] body done");
+      expect(whileBodyRan).not.toContain("[#!tla] new start");
+      await markers.next("[#!tla] new start");
+    },
+    timeout,
+  );
+
+  // The fetch of a dynamic import is a load as well. A generation replaced
+  // while one is in flight lets that fetch finish into the next generation's
+  // module registry, which then runs the source from before the save.
+  it(
+    "is not replaced while a dynamic import it awaits is still being fetched",
+    async () => {
+      // Only types, so transpiling dep.ts is slow and the module it becomes is
+      // one line. The saves below land while that transpile is in flight; a
+      // transpile that is too fast can only let the test pass, never fail it.
+      const typeLine = "type T = { a: string; b: [1, 2, 3]; c: Record<string, Array<Map<string, Set<number>>>> };\n";
+      const megabytes = isDebug ? 2 : 8;
+      const lines = Math.ceil((megabytes * 1024 * 1024) / typeLine.length);
+      const types = Buffer.alloc(lines * typeLine.length, typeLine).toString();
+      const dep = (v: number) => `export const v = ${v};\n${types}`;
+      const importsDep = (generation: number) => `
+        const dep = import("./dep.ts");
+        console.write("[#!tla] ${generation} importing\\n");
+        console.write("[#!tla] ${generation} sees v=" + (await dep).v + "\\n");
+      `;
+      using dir = tempDir("hot-tla-dynamic-import", {
+        "entry.ts": importsDep(1),
+        "dep.ts": dep(1),
+        // Renamed over dep.ts, so the child never reads a half-written file. Windows does not rename over a file that is open.
+        ...(isWindows ? {} : { "staged/dep.ts": dep(2) }),
+      });
+      const entry = join(String(dir), "entry.ts");
+      await using runner = spawnHot(String(dir));
+      const markers = stdoutMarkers(runner);
+      await markers.next("[#!tla] 1 sees v=1");
+
+      writeFileSync(entry, importsDep(2));
+      await markers.next("[#!tla] 2 importing");
+
+      if (isWindows) writeFileSync(join(String(dir), "dep.ts"), dep(2));
+      else renameSync(join(String(dir), "staged", "dep.ts"), join(String(dir), "dep.ts"));
+      writeFileSync(entry, importsDep(3));
+      await markers.next("[#!tla] 3 sees v=2");
+    },
+    timeout,
+  );
+
+  // The same when a plugin's onLoad is the fetch in flight. The first load
+  // takes the version from before the save and finishes first, the way a
+  // fetch that started earlier does.
+  it(
+    "is not replaced while a plugin is still loading a dynamic import it awaits",
+    async () => {
+      const importsDep = (generation: number) => `
+        console.write("[#!tla] ${generation} importing\\n");
+        console.write("[#!tla] ${generation} sees v=" + (await import("./dep.ts")).v + "\\n");
+      `;
+      using dir = tempDir("hot-tla-plugin-import", {
+        "entry.ts": finishes("[#!tla] ready"),
+        "dep.ts": "",
+        "version.txt": "1",
+        "slow-plugin.ts": `
+          import { readFileSync } from "fs";
+          import { join } from "path";
+          const entry = join(import.meta.dir, "entry.ts");
+          let loads = 0;
+          let firstLoadDone = false;
+          Bun.plugin({
+            name: "slow",
+            setup(build) {
+              build.onLoad({ filter: /dep[.]ts$/ }, async () => {
+                const version = readFileSync(join(import.meta.dir, "version.txt"), "utf8");
+                if (++loads === 1) {
+                  const entryBefore = readFileSync(entry, "utf8");
+                  console.write("[#!tla] holding dep\\n");
+                  while (readFileSync(entry, "utf8") === entryBefore) await Bun.sleep(5);
+                  // A deferred reload is not observable; give the save's
+                  // watcher event time to reach the generation that waits here.
+                  await Bun.sleep(${isDebug ? 1_000 : 300});
+                  firstLoadDone = true;
+                } else {
+                  while (!firstLoadDone) await Bun.sleep(5);
+                }
+                return { contents: "export const v = " + version + ";", loader: "ts" };
+              });
+            },
+          });
+        `,
+      });
+      const entry = join(String(dir), "entry.ts");
+      await using runner = spawnHot(String(dir), `--preload=${join(String(dir), "slow-plugin.ts")}`);
+      const markers = stdoutMarkers(runner);
+      await markers.next("[#!tla] ready");
+
+      writeFileSync(entry, importsDep(2));
+      await markers.next("[#!tla] holding dep");
+
+      writeFileSync(join(String(dir), "version.txt"), "2");
+      writeFileSync(entry, importsDep(3));
+      await markers.next("[#!tla] 3 sees v=2");
+    },
+    timeout,
+  );
+
+  // A fetch that never settles belongs to the generation that started it. It
+  // does not keep a later generation from being replaced.
+  it(
+    "is replaced although a plugin load from an earlier generation never settled",
+    async () => {
+      using dir = tempDir("hot-tla-old-fetch", {
+        "entry.ts": `
+          import("./never.hang").catch(() => {});
+          while (!globalThis.loadHeld) await Bun.sleep(1);
+          console.write("[#!tla] 1 ok\\n");
+        `,
+        "never.hang": "",
+        "hang-plugin.ts": `
+          Bun.plugin({
+            name: "hang",
+            setup(build) {
+              build.onLoad({ filter: /[.]hang$/ }, () => {
+                globalThis.loadHeld = true;
+                return new Promise(() => {});
+              });
+            },
+          });
+        `,
+      });
+      const entry = join(String(dir), "entry.ts");
+      await using runner = spawnHot(String(dir), `--preload=${join(String(dir), "hang-plugin.ts")}`);
+      const markers = stdoutMarkers(runner);
+      await markers.next("[#!tla] 1 ok");
+
+      writeFileSync(entry, hangs("[#!tla] 2 hung"));
+      await markers.next("[#!tla] 2 hung");
+
+      writeFileSync(entry, finishes("[#!tla] 3 ok"));
+      await markers.next("[#!tla] 3 ok");
     },
     timeout,
   );

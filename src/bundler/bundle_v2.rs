@@ -4224,7 +4224,7 @@ pub mod bv2_impl {
                     input_paths: if this.linker.writes_output_files_to_disk() {
                         Default::default()
                     } else {
-                        crate::input_path_set::InputPathSet::from_graph(&this.graph)
+                        crate::input_path_set::InputPathSet::from_graph(&this.graph, this.file_map)
                     },
                 })
             })();
@@ -5416,7 +5416,8 @@ pub mod bv2_impl {
 
             // Without an executable to assemble, the linker checked and wrote everything, the metafile paths included.
             let input_paths = if self.linker.options.compile_mode.is_executable() {
-                let mut input_paths = crate::input_path_set::InputPathSet::from_graph(&self.graph);
+                let mut input_paths =
+                    crate::input_path_set::InputPathSet::from_graph(&self.graph, self.file_map);
                 for root in self.transpiler.options.caller_input_roots.iter() {
                     input_paths.add_root(root);
                 }
@@ -5496,7 +5497,7 @@ pub mod bv2_impl {
         outdir: &[u8],
         metafile_paths: [&[u8]; 2],
     ) -> Option<Box<[u8]>> {
-        let mut working_dir: Option<Box<[u8]>> = None;
+        let mut working_dir: Option<crate::input_path_set::OutputRoot> = None;
         metafile_paths
             .into_iter()
             .filter(|path| !path.is_empty())

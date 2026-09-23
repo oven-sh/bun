@@ -699,7 +699,9 @@ fn overwritten_input(
     is_standalone: bool,
     standalone_sourcemaps: &[Option<Box<[u8]>>],
 ) -> Option<Box<[u8]>> {
-    let inputs = InputPathSet::from_graph(c.parse_graph());
+    // SAFETY: `c` is the `linker` field of a `BundleV2` that is valid for the link step.
+    let in_memory_files = unsafe { &*LinkerContext::bundle_v2_const_ptr(c) }.file_map;
+    let inputs = InputPathSet::from_graph(c.parse_graph(), in_memory_files);
     if inputs.is_empty() {
         return None;
     }

@@ -1327,6 +1327,42 @@ describe.concurrent("bun build refuses to write an output over an input", () => 
     expect(exitCode).toBe(0);
   });
 
+  // An in-memory file is not on disk, so an output at its path replaces no input.
+  test("Bun.build writes an output at the path of an in-memory file", async () => {
+    using dir = tempDir("build-api-in-memory-input", {});
+    const entry = path.join(String(dir), "entry.js");
+
+    const result = await Bun.build({
+      entrypoints: [entry],
+      files: { [entry]: `console.log("virtual");\n` },
+      outdir: String(dir),
+      throw: false,
+    });
+    expect({ success: result.success, logs: result.logs.map(l => l.message) }).toEqual({ success: true, logs: [] });
+    expect(await Bun.file(entry).text()).toContain('console.log("virtual")');
+  });
+
+  test.skipIf(isWindows)("--compile with a --metafile that is a symlink to an embedded --asset file", async () => {
+    using dir = tempDir("build-overwrite-compile-asset-metafile-link", {
+      "app.js": `console.log("APP");\n`,
+      "assets/meta.json": `{ "asset": true }\n`,
+    });
+    fs.symlinkSync("assets/meta.json", path.join(String(dir), "meta.json"));
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "./app.js", "--asset", "assets", "--metafile=meta.json"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain('Refusing to overwrite input file "assets/meta.json"');
+    expect(stdout).toBe("");
+    expect(await Bun.file(path.join(String(dir), "assets", "meta.json")).text()).toBe(`{ "asset": true }\n`);
+    expect(exitCode).toBe(1);
+  });
+
   test("Bun.build with a metafile path that names an input", async () => {
     using dir = tempDir("build-api-overwrite-metafile", {
       "a.js": `import data from "./data.json";\nconsole.log(data);\n`,

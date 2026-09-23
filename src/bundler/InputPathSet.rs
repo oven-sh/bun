@@ -38,8 +38,11 @@ pub struct InputPathSet {
 }
 
 impl InputPathSet {
-    /// Every `file:` namespace input of the parse graph.
-    pub(crate) fn from_graph(graph: &crate::Graph::Graph<'_>) -> Self {
+    /// Every `file:` namespace input of the parse graph that was read from disk.
+    pub(crate) fn from_graph(
+        graph: &crate::Graph::Graph<'_>,
+        in_memory_files: Option<&crate::bundle_v2::FileMap>,
+    ) -> Self {
         Self::from_paths(
             graph
                 .input_files
@@ -47,7 +50,8 @@ impl InputPathSet {
                 .iter()
                 .map(|source| &source.path)
                 .filter(|path| path.namespace == b"file")
-                .map(|path| path.text),
+                .map(|path| path.text)
+                .filter(|path| !in_memory_files.is_some_and(|files| files.contains(path))),
         )
     }
 
@@ -70,13 +74,13 @@ impl InputPathSet {
 
     /// `path` is a file, or a directory whose every file is an input (`--asset`).
     pub fn add_root(&mut self, path: &[u8]) {
-        self.roots.push(resolve_output_root(path));
+        self.roots.push(resolve_output_root(path).real);
     }
 
     /// The input that writing `dest_path` under `root` would replace, relative to the working directory.
     pub fn overwritten_by(
         &self,
-        root: &[u8],
+        root: &OutputRoot,
         dest_path: &[u8],
         write: OutputWrite,
     ) -> Option<Box<[u8]>> {
@@ -84,23 +88,31 @@ impl InputPathSet {
             return None;
         }
         let mut abs_buf = bun_paths::path_buffer_pool::get();
-        let abs =
-            resolve_path::join_abs_string_buf::<platform::Auto>(root, &mut abs_buf.0, &[dest_path]);
-        let real = self.through_real_parent(root, abs);
+        let abs = resolve_path::join_abs_string_buf::<platform::Auto>(
+            &root.real,
+            &mut abs_buf.0,
+            &[dest_path],
+        );
+        let real = self.through_real_parent(&root.real, abs);
         let real: &[u8] = real.as_deref().unwrap_or(abs);
+        let link_target;
 
         let input: &[u8] = if let Some(index) = self
             .paths
             .get_index(abs)
             .or_else(|| self.paths.get_index(real))
+            .or_else(|| self.index_of_unresolved(root, dest_path))
         {
             &self.paths.keys()[index]
         } else if self.is_under_a_root(real) {
             real
-        } else if write == OutputWrite::Truncate {
-            &self.paths.keys()[self.index_of_same_file(abs)?]
-        } else {
+        } else if write == OutputWrite::Rename {
             return None;
+        } else if let Some(target) = self.link_target_under_a_root(abs) {
+            link_target = target;
+            &link_target
+        } else {
+            &self.paths.keys()[self.index_of_same_file(abs)?]
         };
         let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
         let mut rel: Box<[u8]> = Box::from(resolve_path::relative(top_level_dir, input));
@@ -136,6 +148,34 @@ impl InputPathSet {
                 &[bun_paths::basename(abs)],
             ),
         ))
+    }
+
+    /// The inputs keep the spelling the resolver saw. On Windows `realpath` rewrites a subst or mapped drive.
+    fn index_of_unresolved(&self, root: &OutputRoot, dest_path: &[u8]) -> Option<usize> {
+        let unresolved = root.unresolved.as_deref()?;
+        let mut buf = bun_paths::path_buffer_pool::get();
+        self.paths
+            .get_index(resolve_path::join_abs_string_buf::<platform::Auto>(
+                unresolved,
+                &mut buf.0,
+                &[dest_path],
+            ))
+    }
+
+    /// A symlink at the destination whose target is a root, or is in a root directory.
+    fn link_target_under_a_root(&self, abs: &[u8]) -> Option<Box<[u8]>> {
+        if self.roots.is_empty() {
+            return None;
+        }
+        let mut z_buf = bun_paths::path_buffer_pool::get();
+        let abs_z = resolve_path::z(abs, &mut z_buf);
+        let link = bun_sys::lstat(abs_z).ok()?;
+        if bun_sys::kind_from_mode(link.st_mode as bun_sys::Mode) != bun_sys::FileKind::SymLink {
+            return None;
+        }
+        let mut target_buf = bun_paths::path_buffer_pool::get();
+        let target = bun_sys::realpath(abs_z, &mut target_buf).ok()?;
+        self.is_under_a_root(target).then(|| Box::from(target))
     }
 
     /// An existing file that is a root, or is in a root directory.
@@ -181,8 +221,16 @@ impl InputPathSet {
     }
 }
 
-/// The absolute, symlink-resolved output directory. Empty `root_path` is the working directory.
-pub fn resolve_output_root(root_path: &[u8]) -> Box<[u8]> {
+/// The absolute directory that output files are written under.
+pub struct OutputRoot {
+    /// Symlink-resolved.
+    real: Box<[u8]>,
+    /// As joined from the working directory, when that differs from `real`.
+    unresolved: Option<Box<[u8]>>,
+}
+
+/// Empty `root_path` is the working directory.
+pub fn resolve_output_root(root_path: &[u8]) -> OutputRoot {
     let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
     let mut abs_buf = bun_paths::path_buffer_pool::get();
     let abs = resolve_path::join_abs_string_buf::<platform::Auto>(
@@ -194,7 +242,13 @@ pub fn resolve_output_root(root_path: &[u8]) -> Box<[u8]> {
     let abs_z = resolve_path::z(abs, &mut z_buf);
     let mut real_buf = bun_paths::path_buffer_pool::get();
     match bun_sys::realpath(abs_z, &mut real_buf) {
-        Ok(real) => Box::from(real),
-        Err(_) => Box::from(abs),
+        Ok(real) if real != abs => OutputRoot {
+            real: Box::from(real),
+            unresolved: Some(Box::from(abs)),
+        },
+        _ => OutputRoot {
+            real: Box::from(abs),
+            unresolved: None,
+        },
     }
 }

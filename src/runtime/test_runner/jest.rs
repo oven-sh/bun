@@ -323,13 +323,14 @@ pub(crate) mod Jest {
     }
 
     /// `mock.restore()` keeps module mocks installed by preload or a file's collection phase (its setup), not by tests/hooks.
+    /// Outside `bun test` there is no test to scope a mock to, so every mock is setup.
     #[unsafe(no_mangle)]
     extern "C" fn Bun__Jest__moduleMockIsPersistent(global_object: &JSGlobalObject) -> bool {
         if global_object.bun_vm().is_in_preload {
             return true;
         }
         let Some(runner) = runner_ptr() else {
-            return false;
+            return true;
         };
         // SAFETY: JS thread only; raw projections (see js_file_generation and BunTestCell::as_ptr) since we are re-entered from JS.
         let phase = unsafe {

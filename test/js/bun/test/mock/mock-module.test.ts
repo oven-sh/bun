@@ -703,6 +703,33 @@ describe.concurrent("mock.restore() reverts mock.module()", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("an export that holds a spy on some other object is restored to the spy, not to that object's original", async () => {
+    await expectFixturePasses(
+      {
+        "helper.ts": `
+          import { spyOn } from "bun:test";
+          export const target = { m: () => "target" };
+          export const spy = spyOn(target, "m");
+        `,
+        "fixture.test.ts": `
+          import { test, expect, mock } from "bun:test";
+          import * as helper from "./helper";
+          test("t", () => {
+            const spy = helper.spy;
+            const target = helper.target;
+            mock.module("./helper", () => ({ spy: helper.spy, target: "mocked" }));
+            expect(helper.target).toBe("mocked");
+            mock.restore();
+            expect(helper.target).toBe(target);
+            expect(helper.spy).toBe(spy);
+            expect(typeof helper.spy.mockClear).toBe("function");
+          });
+        `,
+      },
+      1,
+    );
+  });
+
   test("restores the require cache entry in place while a module born from the mock keeps it", async () => {
     await expectFixturePasses(
       {
@@ -774,6 +801,52 @@ describe.concurrent("mock.restore() reverts mock.module()", () => {
     });
     expect(stderr).toContain("1 pass");
     expect(stderr).not.toContain("fail)");
+    expect(exitCode).toBe(0);
+  });
+
+  test("leaves a Bun.plugin virtual module registered over a test's mock.module() of the same specifier", async () => {
+    await expectFixturePasses(
+      {
+        "fixture.test.ts": `
+          import { test, expect, mock } from "bun:test";
+          test("t", () => {
+            mock.module("plugin-virtual", () => ({ hi: 999 }));
+            Bun.plugin({
+              name: "p",
+              setup(build) {
+                build.module("plugin-virtual", () => ({ exports: { hi: 123 }, loader: "object" }));
+              },
+            });
+            mock.restore();
+            expect(require("plugin-virtual").hi).toBe(123);
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  test("outside bun test, mock.restore() leaves module mocks in place", async () => {
+    using dir = tempDir("mock-module-restore-script", {
+      "dep.ts": depTs,
+      "script.ts": `
+        import { mock } from "bun:test";
+        import { getValue } from "./dep";
+        mock.module("./dep", () => ({ getValue: () => "mocked" }));
+        mock.restore();
+        console.log(getValue());
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "script.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("mocked\n");
     expect(exitCode).toBe(0);
   });
 

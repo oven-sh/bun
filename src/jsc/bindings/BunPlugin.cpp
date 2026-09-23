@@ -36,10 +36,7 @@
 #include "isBuiltinModule.h"
 #include "AsyncContextFrame.h"
 #include "ImportMetaObject.h"
-
-namespace Bun {
-JSC::JSValue unwrapSpyOriginal(JSC::JSValue);
-}
+#include "JSMockFunction.h"
 
 extern "C" bool Bun__Jest__moduleMockIsPersistent(JSC::JSGlobalObject*);
 
@@ -665,7 +662,23 @@ static std::optional<ExportBinding> readExportBinding(JSC::JSGlobalObject* globa
     return ExportBinding { resolution.moduleRecord, resolution.localName, environment->variableAt(offset).get() };
 }
 
-// Every override is preceded by a note, so the first note on a module reads a `default` no mock has replaced yet (a spy on it is seen through).
+// A spy on this binding (through any namespace that resolves to it) is seen through: restore clears spies before it
+// replays the log, which must not put the spy back. A spy on something else that happens to live in the export is the value.
+static JSC::JSValue valueBeneathSpy(JSC::JSGlobalObject* globalObject, const ExportBinding& binding)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto spy = Bun::moduleExportSpy(binding.value);
+    if (!spy)
+        return binding.value;
+    auto spied = readExportBinding(globalObject, spy->ns->moduleRecord(), spy->exportName);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!spied || spied->record != binding.record || spied->localName != binding.localName)
+        return binding.value;
+    return spy->original;
+}
+
+// Every override is preceded by a note, so the first note on a module reads a `default` no mock has replaced yet.
 static JSC::JSObject* lazySourceFor(Zig::GlobalObject* globalObject, ModuleMockUndoLog& log, JSC::SyntheticModuleRecord* record)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -675,7 +688,11 @@ static JSC::JSObject* lazySourceFor(Zig::GlobalObject* globalObject, ModuleMockU
     if (index == notFound) {
         auto defaultBinding = readExportBinding(globalObject, record, vm.propertyNames->defaultKeyword);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        JSC::JSObject* object = defaultBinding && defaultBinding->value ? Bun::unwrapSpyOriginal(defaultBinding->value).getObject() : nullptr;
+        JSC::JSObject* object = nullptr;
+        if (defaultBinding && defaultBinding->value) {
+            object = valueBeneathSpy(globalObject, *defaultBinding).getObject();
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        }
         index = log.lazySources.size();
         log.lazySources.append({ JSC::Strong<JSC::SyntheticModuleRecord> { vm, record }, object ? JSC::Strong<JSC::JSObject> { vm, object } : JSC::Strong<JSC::JSObject> {} });
     }
@@ -717,7 +734,9 @@ static void noteBindingBeforeOverride(Zig::GlobalObject* globalObject, ModuleMoc
     };
 
     if (binding->value) {
-        entry.original = JSC::Strong<JSC::Unknown> { vm, Bun::unwrapSpyOriginal(binding->value) };
+        JSValue original = valueBeneathSpy(globalObject, *binding);
+        RETURN_IF_EXCEPTION(scope, void());
+        entry.original = JSC::Strong<JSC::Unknown> { vm, original };
         log.bindings.append(WTF::move(entry));
         return;
     }
@@ -738,6 +757,10 @@ static void noteCommonJSBeforeOverride(JSC::VM& vm, ModuleMockUndoLog& log, Bun:
         return;
     }
     if (logged != notFound)
+        return;
+    // Source not run yet (the loader is between fetching and evaluating it): it will be evaluated from the mock, like
+    // a module the mock creates, and keeps that. Putting the empty placeholder exports back would leave it empty for good.
+    if (!module->hasEvaluated && !module->sourceCode.isNull())
         return;
     // module.exports is always a data property of ours (see JSCommonJSModule::setExportsObject).
     JSValue exports = module->getDirect(vm, Bun::builtinNames(vm).exportsPublicName());
@@ -1090,25 +1113,35 @@ void BunPlugin::OnLoad::restoreModuleMocks(Zig::GlobalObject* globalObject)
     // Taken out first: a lazy getter may run JS that mocks (logged afresh, for the next restore) or restores (sees only that).
     ModuleMockUndoLog pending = log->take();
 
-    size_t restored = 0;
+    // A builtin getter that throws is given up on: that binding keeps the mock, the rest is still put back, and the
+    // first such error is rethrown at the end. Keeping the entry would fail every later restore() in the run the same way.
+    JSC::Exception* getterFailure = nullptr;
+    size_t handled = 0;
     for (auto& binding : pending.bindings) {
         JSValue value = binding.original.get();
         if (auto* lazySource = binding.lazySource.get()) {
             value = lazySource->get(globalObject, binding.localName);
-            if (scope.exception()) [[unlikely]]
-                break;
+            if (auto* exception = scope.exception()) [[unlikely]] {
+                // A termination stays pending and stops the replay.
+                if (!scope.tryClearException())
+                    break;
+                if (!getterFailure)
+                    getterFailure = exception;
+                handled++;
+                continue;
+            }
         }
         binding.ns->overrideExportValue(globalObject, binding.exportName, value);
         if (scope.exception()) [[unlikely]]
             break;
-        restored++;
+        handled++;
         // A getter that re-mocked this while it was pending logged the value just undone as the original; its mock went with it.
         if (size_t relogged = log->findBinding(binding.record.get(), binding.localName); relogged != notFound)
             log->bindings.removeAt(relogged);
     }
-    if (restored < pending.bindings.size()) {
+    if (handled < pending.bindings.size()) {
         // Threw: everything not yet undone goes back, ahead of what was logged meanwhile, for the next restore().
-        pending.bindings.removeAt(0, restored);
+        pending.bindings.removeAt(0, handled);
         pending.absorbNewer(log->take());
         log->takeEntriesFrom(pending);
     }
@@ -1122,14 +1155,22 @@ void BunPlugin::OnLoad::restoreModuleMocks(Zig::GlobalObject* globalObject)
 
     for (auto& entry : pending.installed) {
         if (virtualModules) {
-            if (entry.displaced)
-                virtualModules->set(entry.specifier, JSC::Strong<JSC::JSObject> { vm, entry.displaced.get() });
-            else
-                virtualModules->remove(entry.specifier);
+            // Only a test's mock is taken out. A Bun.plugin module registered over it since (build.module() does not log) stays.
+            auto current = virtualModules->find(entry.specifier);
+            auto* currentMock = current != virtualModules->end() ? dynamicDowncast<JSModuleMock>(current->value.get()) : nullptr;
+            if (currentMock && !currentMock->persistent) {
+                if (entry.displaced)
+                    virtualModules->set(entry.specifier, JSC::Strong<JSC::JSObject> { vm, entry.displaced.get() });
+                else
+                    virtualModules->remove(entry.specifier);
+            }
         }
         if (size_t relogged = log->findInstalled(entry.specifier); relogged != notFound)
             log->installed.removeAt(relogged);
     }
+
+    if (getterFailure) [[unlikely]]
+        scope.throwException(globalObject, getterFailure);
 }
 
 EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, const BunString* namespaceString, const BunString* path)

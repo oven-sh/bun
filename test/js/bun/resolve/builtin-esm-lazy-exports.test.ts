@@ -637,35 +637,48 @@ test.concurrent('"bun": mock.restore() restores a renamed re-export by its own n
   expect(exitCode).toBe(0);
 });
 
-test.concurrent('"bun": a throwing getter fails mock.restore() and keeps the mock for a retry', async () => {
+test.concurrent('"bun": a throwing getter fails mock.restore() once, after everything else is put back', async () => {
   const { stderr, exitCode } = await run(
     {
       "reexport.mjs": bunReexport,
       "lazy.test.ts": `
-        import { expect, mock, test } from "bun:test";
+        import { afterEach, expect, mock, test } from "bun:test";
         import * as reexported from "./reexport.mjs";
+
+        afterEach(() => mock.restore());
 
         test("redis", () => {
           expect(reexported.Glob).toBe(Bun.Glob); // materialized: snapshotted by value
-          mock.module("./reexport.mjs", () => ({ Glob: "mocked glob", redis: "mocked redis" }));
+          mock.module("./reexport.mjs", () => ({ Glob: "mocked glob", redis: "mocked redis", SQL: "mocked sql" }));
           expect(reexported.Glob).toBe("mocked glob");
           expect(reexported.redis).toBe("mocked redis");
+          expect(reexported.SQL).toBe("mocked sql");
 
-          // Reading Bun.redis throws (invalid REDIS_URL), so restoring the redis binding fails after Glob was put back.
+          // Reading Bun.redis throws (invalid REDIS_URL). The bindings logged before and after it are still put back,
+          // then the error is rethrown.
           expect(() => mock.restore()).toThrow(/URL/);
           expect(reexported.Glob).toBe(Bun.Glob);
+          expect(reexported.SQL).toBe(Bun.SQL);
           expect(reexported.redis).toBe("mocked redis");
 
-          // The module is still registered as mocked, so a retry attempts (and fails) the restore again.
-          expect(() => mock.restore()).toThrow(/URL/);
+          // The redis binding is given up on: it keeps the mock, and nothing is left for a later restore to fail on.
+          expect(() => mock.restore()).not.toThrow();
           expect(reexported.redis).toBe("mocked redis");
+        });
+
+        test("a later test's mock.restore() is not affected", () => {
+          expect(reexported.redis).toBe("mocked redis");
+          mock.module("./reexport.mjs", () => ({ Glob: "mocked again" }));
+          expect(reexported.Glob).toBe("mocked again");
+          expect(() => mock.restore()).not.toThrow();
+          expect(reexported.Glob).toBe(Bun.Glob);
         });
       `,
     },
     ["test", "lazy.test.ts"],
     { REDIS_URL: "http://[::1" },
   );
-  expect(stderr).toContain(" 1 pass");
+  expect(stderr).toContain(" 2 pass");
   expect(stderr).toContain(" 0 fail");
   expect(exitCode).toBe(0);
 });

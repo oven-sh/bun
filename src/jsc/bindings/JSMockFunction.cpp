@@ -649,13 +649,16 @@ static void restoreAllMocks(Zig::GlobalObject* globalObject)
     globalObject->mockModule.activeSpies.clear();
 }
 
-JSC::JSValue unwrapSpyOriginal(JSC::JSValue value)
+std::optional<ModuleExportSpy> moduleExportSpy(JSC::JSValue value)
 {
-    if (auto* spy = dynamicDowncast<JSMockFunction>(value)) {
-        if (JSValue original = spy->spyOriginal.get())
-            return original;
-    }
-    return value;
+    auto* spy = dynamicDowncast<JSMockFunction>(value);
+    if (!spy || !(spy->spyAttributes & JSMockFunction::SpyAttributeESModuleNamespace))
+        return std::nullopt;
+    auto* ns = tryJSDynamicCast<JSModuleNamespaceObject*>(spy->spyTarget.get());
+    if (!ns)
+        return std::nullopt;
+    JSValue original = spy->spyOriginal.get();
+    return ModuleExportSpy { ns, spy->spyIdentifier, original ? original : jsUndefined() };
 }
 
 extern "C" void JSMock__clearAllMocks(Zig::GlobalObject* globalObject)

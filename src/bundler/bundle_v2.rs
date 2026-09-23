@@ -5411,10 +5411,38 @@ pub mod bv2_impl {
                 _ => None,
             };
 
+            // Without an executable to assemble, the linker checked and wrote everything, the metafile paths included.
+            let input_paths = if self.linker.options.compile_mode.is_executable() {
+                crate::input_path_set::InputPathSet::from_graph(&self.graph)
+            } else {
+                Default::default()
+            };
+
             // Write metafile outputs to disk and add them as OutputFiles.
             // Metafile paths are relative to outdir, like all other output files.
             // `LinkerContext::resolver()` wraps the `*mut Resolver` backref deref.
             let outdir = &self.linker.resolver().opts.output_dir;
+            if !outdir.is_empty() && !input_paths.is_empty() {
+                let root = crate::input_path_set::resolve_output_root(outdir);
+                let overwritten = [
+                    self.linker.options.metafile_json_path,
+                    self.linker.options.metafile_markdown_path,
+                ]
+                .into_iter()
+                .filter(|path| !path.is_empty())
+                .find_map(|path| input_paths.overwritten_by(&root, path));
+                if let Some(input) = overwritten {
+                    self.linker.log_mut().add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "Refusing to overwrite input file {}",
+                            bun_core::fmt::quote(&input)
+                        ),
+                    );
+                    return Err(Error::OutputOverwritesInput);
+                }
+            }
             if !self.linker.options.metafile_json_path.is_empty() {
                 if let Some(mf) = &metafile {
                     write_metafile_output(
@@ -5437,13 +5465,6 @@ pub mod bv2_impl {
                     )?;
                 }
             }
-
-            // Only the compile step writes after this point; every other output is on disk or stays in memory.
-            let input_paths = if self.linker.options.compile_mode.is_executable() {
-                crate::input_path_set::InputPathSet::from_graph(&self.graph)
-            } else {
-                Default::default()
-            };
 
             Ok(BuildResult {
                 output_files,

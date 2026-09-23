@@ -726,20 +726,12 @@ fn overwritten_input(
                 return Some(input);
             }
         }
-        if !inlined_into_html && c.options.generate_bytecode_cache {
-            let loader: Loader = if chunk.entry_point.is_entry_point() {
-                c.parse_graph().input_files.items_loader()
-                    [chunk.entry_point.source_index() as usize]
-            } else {
-                Loader::Js
-            };
-            if loader.is_javascript_like() {
-                if let Some(input) = check(&strings::concat(&[
-                    &chunk.final_rel_path,
-                    BYTECODE_EXTENSION.as_bytes(),
-                ])) {
-                    return Some(input);
-                }
+        if !inlined_into_html && c.options.generate_bytecode_cache && c.chunk_gets_bytecode(chunk) {
+            if let Some(input) = check(&strings::concat(&[
+                &chunk.final_rel_path,
+                BYTECODE_EXTENSION.as_bytes(),
+            ])) {
+                return Some(input);
             }
         }
     }

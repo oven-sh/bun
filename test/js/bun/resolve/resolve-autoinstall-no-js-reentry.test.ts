@@ -207,6 +207,7 @@ test.concurrent("a memoised import() of a missing package runs once for concurre
   died.catch(() => {});
 
   const firstLine = await Promise.race([lines(proc.stdout).next(), died]);
+  if (firstLine.done) await died;
   const { port } = JSON.parse(firstLine.value!) as { port: number };
 
   const sockets = await Promise.all(Array.from({ length: 20 }, () => connectTo(port)));

@@ -419,4 +419,101 @@ describe("Request.url and Request.headers after the handler returned", () => {
       ["http://x/second", "second"],
     ]);
   });
+
+  test("a late formData() still sees the request's Content-Type", async () => {
+    let later: Promise<string[]> | undefined;
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      fetch(req) {
+        const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+        later = promise;
+        setTimeout(() => req.formData().then(form => resolve([...form.keys()]), reject), 0);
+        return new Response("ok");
+      },
+    });
+
+    await (await fetch(server.url, { headers: { "content-type": "application/x-www-form-urlencoded" } })).text();
+    expect(await later!).toEqual([]);
+  });
+
+  // The late read parses a saved copy of the head. It must give what the handler would have read.
+  test("a late read of an unusual head equals the read inside the handler", async () => {
+    const longTarget = "/" + Buffer.alloc(12 * 1024, "t").toString();
+    const heads: Record<string, string[]> = {
+      "absolute-form target": ["GET http://example.com/abs?x=1 HTTP/1.1\r\nHost: other.example\r\n\r\n"],
+      "HTTP/1.0 without Host": ["GET /no-host HTTP/1.0\r\n\r\n"],
+      "IPv6 Host": ["GET /ipv6 HTTP/1.1\r\nHost: [::1]:3000\r\n\r\n"],
+      "empty and padded values": ["GET /empty HTTP/1.1\r\nHost: x\r\nX-Empty:\r\nX-Pad: \t padded \t \r\n\r\n"],
+      "duplicate fields": ["GET /dup HTTP/1.1\r\nHost: x\r\nX-Dup: 1\r\nx-dup: 2\r\nCookie: a=1\r\nCookie: b=2\r\n\r\n"],
+      "Latin-1 value": ["GET /latin1 HTTP/1.1\r\nHost: x\r\nX-Latin: caf\xe9\r\n\r\n"],
+      "query only": ["GET /?only=query HTTP/1.1\r\nHost: x\r\n\r\n"],
+      "long target": [`GET ${longTarget} HTTP/1.1\r\nHost: x\r\n\r\n`],
+      "head split over three writes": ["GET /split HTT", "P/1.1\r\nHost: x\r\nX-Sp", "lit: yes\r\n\r\n"],
+    };
+
+    const read = (req: Request) => ({ url: req.url, headers: [...req.headers] });
+    const late: Promise<ReturnType<typeof read>>[] = [];
+    const inHandler: ReturnType<typeof read>[] = [];
+    let readLate = true;
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      fetch(req) {
+        if (readLate) {
+          const { promise, resolve } = Promise.withResolvers<ReturnType<typeof read>>();
+          late.push(promise);
+          setTimeout(() => resolve(read(req)), 0);
+        } else {
+          inHandler.push(read(req));
+        }
+        return new Response("ok");
+      },
+    });
+
+    async function send(writes: string[]) {
+      const socket = net.connect(server.port, "127.0.0.1");
+      try {
+        socket.on("error", () => {});
+        socket.setNoDelay(true);
+        await once(socket, "connect");
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
+        let raw = "";
+        socket.on("data", chunk => {
+          raw += chunk.toString("latin1");
+          if (raw.includes("\r\n\r\nok")) resolve();
+        });
+        socket.on("close", () => reject(new Error("server closed the connection before it answered: " + raw)));
+        for (const write of writes) {
+          await new Promise<void>(written => socket.write(Buffer.from(write, "latin1"), () => written()));
+        }
+        await promise;
+      } finally {
+        socket.destroy();
+      }
+    }
+
+    for (const writes of Object.values(heads)) {
+      readLate = true;
+      await send(writes);
+      readLate = false;
+      await send(writes);
+    }
+
+    const names = Object.keys(heads);
+    const byName = (reads: ReturnType<typeof read>[]) => Object.fromEntries(reads.map((r, i) => [names[i], r]));
+    expect(byName(await Promise.all(late))).toEqual(byName(inHandler));
+    // Guards the comparison itself: the reads are not all empty.
+    expect(inHandler.map(r => r.url)).toEqual([
+      "http://other.example/abs?x=1",
+      "/no-host",
+      "http://[::1]:3000/ipv6",
+      "http://x/empty",
+      "http://x/dup",
+      "http://x/latin1",
+      "http://x/?only=query",
+      "http://x" + longTarget,
+      "http://x/split",
+    ]);
+  });
 });

@@ -872,14 +872,38 @@ describe("workload groups", () => {
     },
   );
 
-  // Only linux says which signals a process was started ignoring; elsewhere all of them are held.
-  it.skipIf(process.platform !== "linux")(
-    "a signal the generator was started ignoring, as under nohup, stays ignored",
-    async () => {
-      using dir = tempDir("orderfile-nohup", {});
-      const [pids, go, out] = ["pids", "go", "out"].map(name => join(String(dir), name));
-      const generate = join(import.meta.dir, "../../../../scripts/orderfile/generate.ts");
-      const script = `
+  // Which signals it was started ignoring, a process asks sigaction() about itself through bun:ffi, and
+  // where it cannot (musl, node) linux reads /proc. With glibc both answer, and they have to agree.
+  it.skipIf(process.platform !== "linux" || isMusl).each([
+    { started: "ignoring SIGHUP and SIGINT", trap: `trap "" HUP INT; `, ignored: [1, 2] },
+    { started: "ignoring nothing", trap: "", ignored: [] },
+  ])("sigaction through bun:ffi agrees with /proc about a process started $started", async ({ trap, ignored }) => {
+    const generate = join(import.meta.dir, "../../../../scripts/orderfile/generate.ts");
+    const script = `
+      import { readFileSync } from "node:fs";
+      import { sigactionIgnored } from ${JSON.stringify(generate)};
+      const asked = await sigactionIgnored([1, 2, 15]);
+      const mask = parseInt(/^SigIgn:\\s*([0-9a-f]+)$/m.exec(readFileSync("/proc/self/status", "utf8"))[1].slice(-8), 16);
+      console.log(JSON.stringify({ sigaction: asked && [...asked], proc: [1, 2, 15].filter(n => (mask >>> (n - 1)) & 1) }));`;
+    await using proc = Bun.spawn({
+      cmd: ["/bin/sh", "-c", `${trap}exec "$0" -e "$1"`, bunExe(), script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ sigaction: ignored, proc: ignored }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.skipIf(isWindows)("a signal the generator was started ignoring, as under nohup, stays ignored", async () => {
+    using dir = tempDir("orderfile-nohup", {});
+    const [pids, go, out] = ["pids", "go", "out"].map(name => join(String(dir), name));
+    const generate = join(import.meta.dir, "../../../../scripts/orderfile/generate.ts");
+    const script = `
       import { writeFileSync } from "node:fs";
       import { checkpoint, runCommandAsync, withScratch } from ${JSON.stringify(generate)};
       const command = ["/bin/sh", "-c", 'echo $$,$$ > "$1"; until [ -e "$2" ]; do sleep 0.01; done', "sh", ${JSON.stringify(pids)}, ${JSON.stringify(go)}];
@@ -888,24 +912,23 @@ describe("workload groups", () => {
         await checkpoint(interrupted);
         writeFileSync(${JSON.stringify(out)}, "written");
       });`;
-      await using proc = Bun.spawn({
-        cmd: ["/bin/sh", "-c", `trap "" HUP; exec "$0" -e "$1"`, bunExe(), script],
-        env: { ...bunEnv, TMPDIR: String(dir) },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      await started(pids, proc.exited);
-      proc.kill("SIGHUP");
-      writeFileSync(go, "");
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-      expect({ stderr, exitCode, signalCode: proc.signalCode, written: existsSync(out) }).toEqual({
-        stderr: "",
-        exitCode: 0,
-        signalCode: null,
-        written: true,
-      });
-    },
-  );
+    await using proc = Bun.spawn({
+      cmd: ["/bin/sh", "-c", `trap "" HUP; exec "$0" -e "$1"`, bunExe(), script],
+      env: { ...bunEnv, TMPDIR: String(dir) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    await started(pids, proc.exited);
+    proc.kill("SIGHUP");
+    writeFileSync(go, "");
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode, signalCode: proc.signalCode, written: existsSync(out) }).toEqual({
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+      written: true,
+    });
+  });
 
   it.skipIf(isWindows)(
     "a signal inside a nested scratch directory removes both before the generator ends",

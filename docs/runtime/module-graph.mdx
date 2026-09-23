@@ -70,6 +70,8 @@ That is one rule for every case. It does not matter when the work was started, b
 
 Using a graph's code after `dispose()` is not an intended use. `dispose()` is for a graph the host is done with, and nothing reports a call into a disposed graph. A host that may still hold a graph's functions when it disposes the graph, such as a handler in a routing table or a request in flight, removes them first or races what they return against a signal of its own, as shown [below](#calling-into-a-graph).
 
+A graph that a graph's code made is one of the things that graph opened, so it is disposed with it: it is inert from then on too, and its `import()` fails, although nobody called its own `dispose()`. The rule is about the code that starts the work, not about what the work is for: `otherGraph.import()` called by a disposed graph's code never settles, even when `otherGraph` is alive, because a disposed graph's code started it.
+
 `graph.dispose()` also drops the graph's module registry and `require.cache`. An error in what still runs in the graph's context, such as a tick it had queued, still goes to `onError`. From then on:
 
 - `graph.import()` and the graph's `require()` fail with `ERR_INVALID_STATE`. They are the graph's handle, and using a handle that was disposed is an error.
@@ -103,6 +105,8 @@ const response = await Promise.race([app.handle(request), disposed.promise]);
 ```
 
 `Bun.ModuleGraph.current` is the graph whose context the calling code is running in, or `undefined` in the host's. Host functions that several graphs share through `globals` can use it to tell their callers apart.
+
+A function run through an `AsyncResource` (`resource.runInAsyncScope(fn)`, `AsyncResource.bind(fn)`) or an `AsyncLocalStorage.snapshot()` runs in the graph context the resource or snapshot was made in, whoever calls it, as it runs in the `AsyncLocalStorage` stores of that moment.
 
 So a host function a graph calls, such as one passed in `globals`, runs in that graph's context. The asynchronous work it starts is the graph's and is dropped with it at `dispose()`. For work that must finish whatever happens to the caller, such as an audit log or billing, leave the graph's context with a snapshot taken in the host:
 

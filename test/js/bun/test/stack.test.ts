@@ -464,6 +464,30 @@ test("something", () => {
     );
   });
 
+  // When the file cannot be read again, the preview comes from the source
+  // lines of the selected frames, so those must be the throw site's too.
+  test.concurrent(
+    "an Error with no frames of its own prints the throw site's source line when the file is gone",
+    async () => {
+      using dir = tempDir("uncaught-print", {
+        "gone.js": `require("fs").unlinkSync(__filename);
+Error.stackTraceLimit = 0;
+setTimeout(() => {
+  throw new Error("frameless, source file gone");
+}, 1);
+`,
+      });
+      const { stderr, exitCode } = await bunRun(join(String(dir), "gone.js"), env);
+      const lines = stderr.split("\n");
+      const preview = lines.findIndex(line => /^\d+ \| +throw Error\("frameless, source file gone"\);$/.test(line));
+      expect(preview).toBeGreaterThanOrEqual(0);
+      expect(lines[preview + 1]).toMatch(/^ +\^$/);
+      expect(lines[preview + 2]).toBe("error: frameless, source file gone");
+      expect(stderr).toMatch(/^\s+at <anonymous> \(.*gone\.js:4:\d+\)$/m);
+      expect(exitCode).toBe(1);
+    },
+  );
+
   // A ResolveMessage thrown through the exception has no stack of its own
   // either, and is still printed once.
   test.concurrent("bun test prints a synchronously thrown resolve error once", async () => {

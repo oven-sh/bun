@@ -72,6 +72,7 @@
 #ifndef WIN32
 #include <errno.h>
 #include <dlfcn.h>
+#include <limits.h>
 #include <sys/ioctl.h>
 #include <termios.h>
 #include <netdb.h>
@@ -531,6 +532,13 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
                 better_sqlite3_message);
         }
     }
+
+#if !OS(WINDOWS)
+    // glibc's dlopen() copies a name without a '/' to the stack (alloca), and no path this long can be opened.
+    if (filename.length() >= PATH_MAX) [[unlikely]] {
+        return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, "dlopen failed: File name too long"_s);
+    }
+#endif
 
     {
         auto utf8_filename = filename.tryGetUTF8(ConversionMode::LenientConversion);

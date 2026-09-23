@@ -450,7 +450,10 @@ describe("Request.url and Request.headers after the handler returned", () => {
       port: 0,
       development: false,
       fetch(req) {
-        setTimeout(() => later.resolve({ url: req.url, id: req.headers.get("x-id"), count: [...req.headers].length }), 0);
+        setTimeout(
+          () => later.resolve({ url: req.url, id: req.headers.get("x-id"), count: [...req.headers].length }),
+          0,
+        );
         // Bigger than the cork buffer, so uWS writes it out and the close gate runs here.
         return new Response(body, { headers: { Connection: "close" } });
       },

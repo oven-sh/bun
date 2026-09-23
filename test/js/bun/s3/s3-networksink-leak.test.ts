@@ -63,15 +63,30 @@ async function leakedBytes(count: number, finish: keyof typeof finishes, outcome
     }
     for (let i = 0; i < ${count}; i++) await each(i);
     if (${finish === "collect"}) {
-      while (finalized < ${count}) { Bun.gc(true); await new Promise(resolve => setImmediate(resolve)); }
+      const deadline = Date.now() + 10_000;
+      while (finalized < ${count} && Date.now() < deadline) {
+        Bun.gc(true);
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      // A writer that is not collected keeps the process alive, so "beforeExit" never comes.
+      if (finalized < ${count}) {
+        console.log("collected only", finalized, "of", ${count});
+        process.exit(1);
+      }
       seen.add("collected");
     }
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", script],
-    // symbolize=0 keeps the child fast. It also turns the suppressions off, which is fine:
-    // the callers compare two runs, so what a process leaks once cancels out.
-    env: { ...env, ASAN_OPTIONS: "detect_leaks=1:symbolize=0" },
+    env: {
+      ...env,
+      // symbolize=0 keeps the child fast. It also turns the suppressions off, which is fine:
+      // the callers compare two runs, so what a process leaks once cancels out.
+      ASAN_OPTIONS: "detect_leaks=1:symbolize=0",
+      // bun test does not kill the child of a concurrent test that times out. With this, a
+      // child that hangs exits when the test process does.
+      BUN_FEATURE_FLAG_NO_ORPHANS: "1",
+    },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -79,7 +94,7 @@ async function leakedBytes(count: number, finish: keyof typeof finishes, outcome
   const summary = /SUMMARY: AddressSanitizer: (\d+) byte\(s\) leaked/.exec(stderr);
   // A report makes the child exit with 1. With no report, only exit code 0 means that the scan
   // ran and found nothing: a scan that cannot run (under ptrace) also prints no summary.
-  if (!summary) expect({ exitCode, stderr }).toMatchObject({ exitCode: 0 });
+  if (!summary) expect({ exitCode, stdout, stderr }).toMatchObject({ exitCode: 0 });
   return { stdout, leaked: Number(summary?.[1] ?? 0) };
 }
 
@@ -107,6 +122,7 @@ describe.skipIf(!isASAN)("S3 writer() frees its NetworkSink", () => {
 
 // On success only `Drop for MultiPartUpload` unrefs the event loop, so the sink has to drop its
 // ref on the upload when the upload completes, not when the writer is collected.
+// Serial on purpose: when this test times out, bun test kills the child that never exits.
 test("S3 writer() lets the process exit once end() resolves, even if the writer is retained", async () => {
   const script = `${mockS3("succeeds")}
     const w = s3.file("k").writer({ retry: 0 });

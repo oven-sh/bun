@@ -204,7 +204,12 @@ function throwString() {
 function throwDOMException() {
   throw new DOMException("not an error instance either", "AbortError");
 }
-const callback = kind === "string" ? throwString : kind === "domexception" ? throwDOMException : thrower;
+function throwFrameless() {
+  Error.stackTraceLimit = 0;
+  throw new Error("an error with no frames of its own");
+}
+const callbacks = { string: throwString, domexception: throwDOMException, frameless: throwFrameless };
+const callback = callbacks[kind] ?? thrower;
 switch (entryPoint) {
   case "sync": callback(); break;
   case "nextTick": process.nextTick(callback); break;
@@ -446,6 +451,16 @@ test("something", () => {
       "domexception",
       "AbortError: not an error instance either\n",
       "throw new DOMException(",
+    );
+  });
+
+  // An Error constructed with no frames (Error.stackTraceLimit = 0, or built by
+  // native code with no JS on the stack) falls back to the throw site too.
+  test.concurrent("an Error with no frames of its own is printed with the frames of the throw site", async () => {
+    await expectThrowSiteFrames(
+      "frameless",
+      "error: an error with no frames of its own\n",
+      'throw new Error("an error with no frames of its own")',
     );
   });
 

@@ -409,6 +409,21 @@ public:
     }
 };
 
+static bool isPositionedFrame(const JSC::StackFrame& frame)
+{
+    return frame.hasLineAndColumnInfo() || frame.isWasmFrame();
+}
+
+// True when populateStackTrace(OnlyPosition) would emit at least one frame from `frames`.
+static bool hasPositionedFrame(const WTF::Vector<JSC::StackFrame>& frames)
+{
+    for (const auto& frame : frames) {
+        if (isPositionedFrame(frame))
+            return true;
+    }
+    return false;
+}
+
 static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& frames, ZigStackTrace& trace, PopulateStackTraceFlags flags)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -420,7 +435,7 @@ static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& 
 
         while (frame_i < frame_count && stack_frame_i < total_frame_count) {
             // Skip native frames
-            while (stack_frame_i < total_frame_count && !(frames.at(stack_frame_i).hasLineAndColumnInfo()) && !(frames.at(stack_frame_i).isWasmFrame())) {
+            while (stack_frame_i < total_frame_count && !isPositionedFrame(frames.at(stack_frame_i))) {
                 stack_frame_i++;
             }
             if (stack_frame_i >= total_frame_count)
@@ -475,7 +490,7 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     bool getFromSourceURL = false;
-    if (err->stackTrace() != nullptr && err->stackTrace()->size() > 0) {
+    if (err->stackTrace() != nullptr && hasPositionedFrame(*err->stackTrace())) {
         populateStackTrace(vm, *err->stackTrace(), except.stack, flags);
         RETURN_IF_EXCEPTION(scope, );
 
@@ -832,7 +847,7 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__toZigException(JSC::Enc
         return;
     }
 
-    // The cell's throw-site stack is used only for a thrown value with no stack of its own.
+    // The cell's throw-site stack is used only for a thrown value with no frames of its own.
     JSC::Exception* jscException = nullptr;
     if (value.classInfoOrNull() == JSC::Exception::info()) {
         jscException = uncheckedDowncast<JSC::Exception>(value);
@@ -841,6 +856,9 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__toZigException(JSC::Enc
 
     if (JSC::ErrorInstance* error = dynamicDowncast<JSC::ErrorInstance>(value)) {
         fromErrorInstance(*exception, global, error, value, PopulateStackTraceFlags::OnlyPosition);
+        if (exception->stack.frames_len == 0 && jscException && jscException->stack().size() > 0) {
+            populateStackTrace(global->vm(), jscException->stack(), exception->stack, PopulateStackTraceFlags::OnlyPosition);
+        }
         return;
     }
 
@@ -866,8 +884,10 @@ extern "C" void ZigException__collectSourceLines(JSC::EncodedJSValue jsException
     }
 
     if (JSC::ErrorInstance* error = dynamicDowncast<JSC::ErrorInstance>(value)) {
-        if (error->stackTrace() != nullptr && error->stackTrace()->size() > 0) {
+        if (error->stackTrace() != nullptr && hasPositionedFrame(*error->stackTrace())) {
             populateStackTrace(global->vm(), *error->stackTrace(), exception->stack, PopulateStackTraceFlags::OnlySourceLines);
+        } else if (jscException && jscException->stack().size() > 0) {
+            populateStackTrace(global->vm(), jscException->stack(), exception->stack, PopulateStackTraceFlags::OnlySourceLines);
         }
         return;
     }

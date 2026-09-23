@@ -169,7 +169,9 @@ describe("the callback of an operation with no result receives the same argument
     "symlink (4 arguments)": dir =>
       argumentsPassedTo(cb => fs.symlink(join(dir, "file.txt"), join(dir, "link-4"), "file", cb)),
     appendFile: dir => argumentsPassedTo(cb => fs.appendFile(join(dir, "file.txt"), "more", cb)),
+    "appendFile (file descriptor)": dir => withFd(dir, (fd, cb) => fs.appendFile(fd, "more", cb)),
     writeFile: dir => argumentsPassedTo(cb => fs.writeFile(join(dir, "written.txt"), "data", cb)),
+    "writeFile (file descriptor)": dir => withFd(dir, (fd, cb) => fs.writeFile(fd, "data", cb)),
     copyFile: dir => argumentsPassedTo(cb => fs.copyFile(join(dir, "file.txt"), join(dir, "copy.txt"), cb)),
     rename: dir => argumentsPassedTo(cb => fs.rename(join(dir, "file.txt"), join(dir, "renamed.txt"), cb)),
     link: dir => argumentsPassedTo(cb => fs.link(join(dir, "file.txt"), join(dir, "hardlink.txt"), cb)),
@@ -177,6 +179,7 @@ describe("the callback of an operation with no result receives the same argument
     rm: dir => argumentsPassedTo(cb => fs.rm(join(dir, "file.txt"), cb)),
     "rm (recursive)": dir => argumentsPassedTo(cb => fs.rm(join(dir, "subdir"), { recursive: true }, cb)),
     rmdir: dir => argumentsPassedTo(cb => fs.rmdir(join(dir, "subdir"), cb)),
+    "rmdir (recursive)": dir => argumentsPassedTo(cb => fs.rmdir(join(dir, "subdir"), { recursive: true }, cb)),
     mkdir: dir => argumentsPassedTo(cb => fs.mkdir(join(dir, "created"), cb)),
     "mkdir (recursive, directory already exists)": dir =>
       argumentsPassedTo(cb => fs.mkdir(join(dir, "subdir"), { recursive: true }, cb)),
@@ -211,6 +214,17 @@ describe("the callback of an operation with no result receives the same argument
     const args = await argumentsPassedTo(cb => fs.mkdir(join(first, "b", "c"), { recursive: true }, cb));
     expect(args).toStrictEqual([null, path.toNamespacedPath(first)]);
   });
+
+  // The one operation whose result can be `undefined`: node passes it as the second argument.
+  it.each([false, true])(
+    "stat with throwIfNoEntry: false still passes undefined as the result (bigint: %p)",
+    async bigint => {
+      using dir = tempDir("fs-callback-arguments-stat", {});
+      const missing = join(String(dir), "missing.txt");
+      const args = await argumentsPassedTo(cb => fs.stat(missing, { throwIfNoEntry: false, bigint }, cb));
+      expect(args).toStrictEqual([null, undefined]);
+    },
+  );
 
   it("access callback receives the error on failure", async () => {
     using dir = tempDir("fs-access-failure", {});
@@ -7163,7 +7177,7 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
     ["fs.readdir", `require("fs").readdir(${dirLit}, () => { throw new Error("boom"); })`],
     ["fs.open", `require("fs").open("/definitely/not/here", "r", () => { throw new Error("boom"); })`],
     ["fs.access", `require("fs").access(${file}, () => { throw new Error("boom"); })`],
-    // Both arms of the handler that operations with no result share: no result, and mkdir's created path.
+    // Both argument counts of the native completion: (null), and (null, result) for mkdir's created path.
     ["fs.chmod", `require("fs").chmod(${file}, 0o644, () => { throw new Error("boom"); })`],
     [
       "fs.mkdir (recursive)",

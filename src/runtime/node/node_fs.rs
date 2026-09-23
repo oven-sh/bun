@@ -572,6 +572,10 @@ mod _async_tasks {
 
         const _: () = assert!(ReadFile::HAVE_ABORT_SIGNAL);
         const _: () = assert!(WriteFile::HAVE_ABORT_SIGNAL);
+        const _: () = assert!(matches!(
+            <StatOrNotFound as FsReturn>::UNDEFINED_RESULT,
+            UndefinedResult::Passed
+        ));
 
         #[cfg(windows)]
         /// Used internally. Not from JavaScript.
@@ -969,7 +973,7 @@ mod _async_tasks {
 
             let _dispatch = tracker.dispatch(global_object);
 
-            completion.settle(global_object, converted, success)
+            completion.settle(global_object, converted, success, R::UNDEFINED_RESULT)
         }
 
         /// SAFETY: `this` must be the pointer Box::leak'd in `create()`; called exactly once.
@@ -1108,9 +1112,19 @@ mod _async_tasks {
         }
     }
 
+    /// What a `node:fs` callback gets when the result of its operation converts to `undefined`.
+    #[derive(Clone, Copy)]
+    pub(crate) enum UndefinedResult {
+        /// `callback(null)`, the rule of node's `FSReqCallback::Resolve`.
+        Omitted,
+        /// `callback(null, undefined)`.
+        Passed,
+    }
+
     /// Convert an async-FS result payload to a `JSValue`.
     /// Each `ret::*` type implements this by forwarding to its inherent method.
     pub(crate) trait FsReturn {
+        const UNDEFINED_RESULT: UndefinedResult = UndefinedResult::Omitted;
         fn fs_to_js(self, global: &JSGlobalObject) -> JsResult<JSValue>;
         /// The result is not going to be reported (the context of the script that asked has
         /// stopped): release what only that script could have released.
@@ -1192,6 +1206,8 @@ mod _async_tasks {
         }
     }
     impl FsReturn for StatOrNotFound {
+        /// With `throwIfNoEntry: false`, `undefined` is the result of the stat, not the lack of one.
+        const UNDEFINED_RESULT: UndefinedResult = UndefinedResult::Passed;
         #[inline]
         fn fs_to_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
             self.to_js_newly_created(global)
@@ -1285,11 +1301,24 @@ mod _async_tasks {
             }
         }
 
-        pub(crate) fn resolve(&self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
+        pub(crate) fn resolve(
+            &self,
+            global: &JSGlobalObject,
+            value: JSValue,
+            undefined_result: UndefinedResult,
+        ) -> JsResult<()> {
             match self {
                 Self::Promise(promise) => promise.get().resolve(global, value),
                 Self::Callback(callback) => {
-                    Self::call(global, callback.get(), &[JSValue::NULL, value]);
+                    let arguments = [JSValue::NULL, value];
+                    let argc = if value.is_undefined()
+                        && matches!(undefined_result, UndefinedResult::Omitted)
+                    {
+                        1
+                    } else {
+                        2
+                    };
+                    Self::call(global, callback.get(), &arguments[..argc]);
                     Ok(())
                 }
             }
@@ -1331,9 +1360,10 @@ mod _async_tasks {
             global: &JSGlobalObject,
             converted: JsResult<JSValue>,
             success: bool,
+            undefined_result: UndefinedResult,
         ) -> JsResult<()> {
             match converted {
-                Ok(value) if success => self.resolve(global, value),
+                Ok(value) if success => self.resolve(global, value, undefined_result),
                 error => self.reject(global, error),
             }
         }
@@ -1402,7 +1432,7 @@ mod _async_tasks {
 
             match aborted {
                 Some(abort_error) => completion.reject(global_object, Ok(abort_error)),
-                None => completion.settle(global_object, converted, success),
+                None => completion.settle(global_object, converted, success, R::UNDEFINED_RESULT),
             }
         }
     }
@@ -2350,7 +2380,12 @@ mod _async_tasks {
             completion.ensure_still_alive();
             let _dispatch = js.tracker.dispatch(global_object);
             drop(this);
-            completion.settle(global_object, converted, success)
+            completion.settle(
+                global_object,
+                converted,
+                success,
+                <ret::Readdir as FsReturn>::UNDEFINED_RESULT,
+            )
         }
     }
 

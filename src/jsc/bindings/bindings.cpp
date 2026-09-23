@@ -52,6 +52,7 @@
 #include "JavaScriptCore/JSGlobalObjectInlines.h"
 #include "JavaScriptCore/JSFunction.h"
 #include "JavaScriptCore/ErrorInstanceInlines.h"
+#include "JavaScriptCore/ErrorPrototype.h"
 #include "JavaScriptCore/BigIntObject.h"
 #include "JavaScriptCore/SymbolObject.h"
 #include "JavaScriptCore/JSOrderedHashTableHelper.h"
@@ -3965,6 +3966,20 @@ bool JSC__JSValue__isAnyError(JSC::EncodedJSValue JSValue0)
     }
 
     return type == JSC::ErrorInstanceType;
+}
+
+bool JSC__JSValue__hasErrorPrototype(JSC::EncodedJSValue JSValue0)
+{
+    JSC::JSObject* object = JSC::JSValue::decode(JSValue0).getObject();
+    if (!object)
+        return false;
+
+    // getPrototypeDirect() reads the stored prototype: no Proxy trap, no getter.
+    for (JSC::JSValue prototype = object->getPrototypeDirect(); prototype.isObject(); prototype = asObject(prototype)->getPrototypeDirect()) {
+        if (prototype.inherits<JSC::ErrorPrototype>())
+            return true;
+    }
+    return false;
 }
 
 // This implementation closely mimics the one in JSC::JSPromise::reject

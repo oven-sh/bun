@@ -363,6 +363,11 @@ impl JSValue {
     pub fn is_error(self) -> bool {
         self.is_cell() && self.js_type() == JSType::ErrorInstance
     }
+    /// Whether an `Error.prototype` (of any realm) is in the prototype chain. Runs no script, unlike `instanceof`.
+    #[inline]
+    pub fn has_error_prototype(self) -> bool {
+        self.is_cell() && JSC__JSValue__hasErrorPrototype(self)
+    }
     /// `JSValue.isJSXElement(globalObject)`. Checks via the
     /// global's `Symbol.for("react.element")` / `Symbol.for("react.transitional.element")`
     /// for `$$typeof`; may invoke a user getter and throw.
@@ -2142,6 +2147,7 @@ unsafe extern "C" {
         promise: &JSPromise,
     );
     safe fn JSC__JSValue__isAnyError(this: JSValue) -> bool;
+    safe fn JSC__JSValue__hasErrorPrototype(this: JSValue) -> bool;
     // safe: `JSValue` is a by-value scalar; `&mut *const u8` / `&mut usize` are
     // ABI-identical to non-null `*mut` out-params the C++ side fills on success.
     safe fn JSC__JSValue__getClassInfoName(

@@ -115,12 +115,21 @@ describe("a value thrown from a callback that native code runs", () => {
 class Thing {
   why = "details the user needs";
 }
+function OldStyleError(message) {
+  this.message = message;
+  this.name = "OldStyleError";
+  Error.captureStackTrace(this, OldStyleError);
+}
+require("util").inherits(OldStyleError, Error);
 function thrower() {
   if (kind === "object") throw new Thing();
   if (kind === "string") throw "only a string";
   if (kind === "error") throw new Error("an error");
   if (kind === "resolve") require("./does-not-exist");
-  if (kind === "typeof") throw { get $$typeof() { throw 1; } };
+  if (kind === "build") require("./syntax-error.js");
+  if (kind === "inherits") throw new OldStyleError("made the old way");
+  if (kind === "domexception") throw new DOMException("a DOMException", "AbortError");
+  if (kind === "getter") throw { get $$typeof() { throw 1; } };
   throw Object.assign(new String("hostile"), { toString() { throw 1; }, [Symbol.toPrimitive]() { throw 1; } });
 }
 switch (entryPoint) {
@@ -130,6 +139,7 @@ switch (entryPoint) {
   case "queueMicrotask": queueMicrotask(thrower); break;
 }
 `;
+  const files = { "fixture.js": fixture, "syntax-error.js": "const ok = 1;\nconst broken = ;\n" };
 
   // Debug builds show builtin frames unless told otherwise.
   const env = { BUN_JSC_showPrivateScriptsInStackTraces: "0" };
@@ -142,107 +152,188 @@ switch (entryPoint) {
       .replaceAll("\\", "/")
       .replaceAll(dir.replaceAll("\\", "/"), "<dir>")
       .split("\n")
-      .filter(line => !/^\s+at (?!thrower )/.test(line) && !line.startsWith("Bun v"))
+      .filter(line => !/^\s+at (?!thrower |<dir>)/.test(line) && !line.startsWith("Bun v"))
       .join("\n")
-      .replace(/:(\d+):\d+\)$/gm, ":$1:<col>)")
+      .replace(/:(\d+):\d+(\)?)$/gm, ":$1:<col>$2")
       .replace(/^ +\^$/gm, "^")
       .trim();
     return { stdout, output, exitCode };
   }
 
-  test.concurrent("an object is printed between the message and the frames of the throw", async () => {
-    using dir = tempDir("thrown-object", { "fixture.js": fixture });
-    const reports = await Promise.all(entryPoints.map(entryPoint => report(String(dir), entryPoint, "object")));
+  // The same report from every entry point; returns that report.
+  async function reportFromEveryEntryPoint(kind: string) {
+    using dir = tempDir("thrown-object", files);
+    const reports = await Promise.all(entryPoints.map(entryPoint => report(String(dir), entryPoint, kind)));
     const outputs = Object.fromEntries(entryPoints.map((entryPoint, i) => [entryPoint, reports[i].output]));
     expect(outputs).toEqual(Object.fromEntries(entryPoints.map(entryPoint => [entryPoint, outputs.nextTick])));
-    expect(outputs.nextTick).toMatchInlineSnapshot(`
-      "1 | const [, , entryPoint, kind] = process.argv;
-      2 | class Thing {
-      3 |   why = "details the user needs";
-      4 | }
-      5 | function thrower() {
-      6 |   if (kind === "object") throw new Thing();
+    expect(reports.map(({ exitCode }) => exitCode)).toEqual(entryPoints.map(() => 1));
+    return outputs.nextTick;
+  }
+
+  // The frame of `thrower` at the fixture line that contains `source`, as a report prints it.
+  const throwerFrameAt = (source: string) =>
+    `at thrower (<dir>/fixture.js:${fixture.split("\n").findIndex(line => line.includes(source)) + 1}:<col>)`;
+  const framesOf = (output: string) =>
+    output
+      .split("\n")
+      .filter(line => /^\s+at /.test(line))
+      .map(line => line.trim());
+
+  test.concurrent("an object is printed between the message and the frames of the throw", async () => {
+    expect(await reportFromEveryEntryPoint("object")).toMatchInlineSnapshot(`
+      "7 |   this.name = "OldStyleError";
+       8 |   Error.captureStackTrace(this, OldStyleError);
+       9 | }
+      10 | require("util").inherits(OldStyleError, Error);
+      11 | function thrower() {
+      12 |   if (kind === "object") throw new Thing();
       ^
       error
       Thing {
         why: "details the user needs",
       }
-            at thrower (<dir>/fixture.js:6:<col>)"
+            at thrower (<dir>/fixture.js:12:<col>)"
     `);
-    expect(reports.map(({ exitCode }) => exitCode)).toEqual(entryPoints.map(() => 1));
   });
 
-  test.concurrent("a string, an Error and a ResolveMessage are still printed once", async () => {
-    using dir = tempDir("thrown-object", { "fixture.js": fixture });
-    const [string, error, resolve] = await Promise.all(
-      ["string", "error", "resolve"].map(kind => report(String(dir), "setTimeout", kind)),
+  test.concurrent("a BuildMessage is printed with its own file, line and excerpt", async () => {
+    expect(await reportFromEveryEntryPoint("build")).toMatchInlineSnapshot(`
+      "11 | function thrower() {
+      12 |   if (kind === "object") throw new Thing();
+      13 |   if (kind === "string") throw "only a string";
+      14 |   if (kind === "error") throw new Error("an error");
+      15 |   if (kind === "resolve") require("./does-not-exist");
+      16 |   if (kind === "build") require("./syntax-error.js");
+      ^
+      BuildMessage: Unexpected ;
+      2 | const broken = ;
+      ^
+      error: Unexpected ;
+          at <dir>/syntax-error.js:2:<col>
+            at thrower (<dir>/fixture.js:16:<col>)"
+    `);
+  });
+
+  test.concurrent("an old-style error (util.inherits, Error.captureStackTrace) gets no object dump", async () => {
+    expect(await reportFromEveryEntryPoint("inherits")).toMatchInlineSnapshot(`
+      "12 |   if (kind === "object") throw new Thing();
+      13 |   if (kind === "string") throw "only a string";
+      14 |   if (kind === "error") throw new Error("an error");
+      15 |   if (kind === "resolve") require("./does-not-exist");
+      16 |   if (kind === "build") require("./syntax-error.js");
+      17 |   if (kind === "inherits") throw new OldStyleError("made the old way");
+      ^
+      OldStyleError: made the old way
+            at thrower (<dir>/fixture.js:17:<col>)"
+    `);
+  });
+
+  test.concurrent("a string, an Error, a ResolveMessage and a DOMException are still printed once", async () => {
+    using dir = tempDir("thrown-object", files);
+    const [string, error, resolve, domException] = await Promise.all(
+      ["string", "error", "resolve", "domexception"].map(kind => report(String(dir), "setTimeout", kind)),
     );
     expect(string.output).toMatchInlineSnapshot(`
-      "2 | class Thing {
-      3 |   why = "details the user needs";
-      4 | }
-      5 | function thrower() {
-      6 |   if (kind === "object") throw new Thing();
-      7 |   if (kind === "string") throw "only a string";
+      "8 |   Error.captureStackTrace(this, OldStyleError);
+       9 | }
+      10 | require("util").inherits(OldStyleError, Error);
+      11 | function thrower() {
+      12 |   if (kind === "object") throw new Thing();
+      13 |   if (kind === "string") throw "only a string";
       ^
       error: only a string
-            at thrower (<dir>/fixture.js:7:<col>)"
+            at thrower (<dir>/fixture.js:13:<col>)"
     `);
     expect(error.output).toMatchInlineSnapshot(`
-      "3 |   why = "details the user needs";
-      4 | }
-      5 | function thrower() {
-      6 |   if (kind === "object") throw new Thing();
-      7 |   if (kind === "string") throw "only a string";
-      8 |   if (kind === "error") throw new Error("an error");
+      "9 | }
+      10 | require("util").inherits(OldStyleError, Error);
+      11 | function thrower() {
+      12 |   if (kind === "object") throw new Thing();
+      13 |   if (kind === "string") throw "only a string";
+      14 |   if (kind === "error") throw new Error("an error");
       ^
       error: an error
-            at thrower (<dir>/fixture.js:8:<col>)"
+            at thrower (<dir>/fixture.js:14:<col>)"
     `);
     expect(resolve.output).toMatchInlineSnapshot(`
-      "4 | }
-      5 | function thrower() {
-      6 |   if (kind === "object") throw new Thing();
-      7 |   if (kind === "string") throw "only a string";
-      8 |   if (kind === "error") throw new Error("an error");
-      9 |   if (kind === "resolve") require("./does-not-exist");
+      "10 | require("util").inherits(OldStyleError, Error);
+      11 | function thrower() {
+      12 |   if (kind === "object") throw new Thing();
+      13 |   if (kind === "string") throw "only a string";
+      14 |   if (kind === "error") throw new Error("an error");
+      15 |   if (kind === "resolve") require("./does-not-exist");
       ^
       ResolveMessage: Cannot find module './does-not-exist'
       Require stack:
       - <dir>/fixture.js
-            at thrower (<dir>/fixture.js:9:<col>)"
+            at thrower (<dir>/fixture.js:15:<col>)"
     `);
-    expect([string.exitCode, error.exitCode, resolve.exitCode]).toEqual([1, 1, 1]);
+    expect(domException.output).toMatchInlineSnapshot(`
+      "13 |   if (kind === "string") throw "only a string";
+      14 |   if (kind === "error") throw new Error("an error");
+      15 |   if (kind === "resolve") require("./does-not-exist");
+      16 |   if (kind === "build") require("./syntax-error.js");
+      17 |   if (kind === "inherits") throw new OldStyleError("made the old way");
+      18 |   if (kind === "domexception") throw new DOMException("a DOMException", "AbortError");
+      ^
+      AbortError: a DOMException
+            at thrower (<dir>/fixture.js:18:<col>)"
+    `);
+    expect([string, error, resolve, domException].map(({ exitCode }) => exitCode)).toEqual([1, 1, 1, 1]);
   });
 
-  test.concurrent("an object that throws while it is shown does not stop the ticks after it", async () => {
-    using dir = tempDir("thrown-object", { "fixture.js": fixture });
-    const [getter, toString] = await Promise.all(
-      ["typeof", "hostile"].map(kind => report(String(dir), "nextTick", kind)),
-    );
-    expect(getter.output).toMatchInlineSnapshot(`
-      "5 | function thrower() {
-       6 |   if (kind === "object") throw new Thing();
-       7 |   if (kind === "string") throw "only a string";
-       8 |   if (kind === "error") throw new Error("an error");
-       9 |   if (kind === "resolve") require("./does-not-exist");
-      10 |   if (kind === "typeof") throw { get $$typeof() { throw 1; } };
+  test.concurrent("an object whose $$typeof getter throws keeps the frames of the throw", async () => {
+    using dir = tempDir("thrown-object", files);
+    const { stdout, output, exitCode } = await report(String(dir), "nextTick", "getter");
+    expect(output).toMatchInlineSnapshot(`
+      "14 |   if (kind === "error") throw new Error("an error");
+      15 |   if (kind === "resolve") require("./does-not-exist");
+      16 |   if (kind === "build") require("./syntax-error.js");
+      17 |   if (kind === "inherits") throw new OldStyleError("made the old way");
+      18 |   if (kind === "domexception") throw new DOMException("a DOMException", "AbortError");
+      19 |   if (kind === "getter") throw { get $$typeof() { throw 1; } };
       ^
       error
-            at thrower (<dir>/fixture.js:10:<col>)"
+            at thrower (<dir>/fixture.js:19:<col>)"
     `);
-    expect(toString.output).toMatch(/^error$/m);
-    expect([getter, toString].map(({ stdout, exitCode }) => ({ stdout, exitCode }))).toEqual([
-      { stdout: "the next tick ran", exitCode: 1 },
-      { stdout: "the next tick ran", exitCode: 1 },
-    ]);
+    expect(framesOf(output)).toEqual([throwerFrameAt("get $$typeof()")]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "the next tick ran", exitCode: 1 });
   });
 
-  test.concurrent("bun test prints an object that a test body throws", async () => {
+  test.concurrent("an object whose toString throws keeps the frames of the throw", async () => {
+    using dir = tempDir("thrown-object", files);
+    const { stdout, output, exitCode } = await report(String(dir), "nextTick", "hostile");
+    expect(output).toMatchInlineSnapshot(`
+      "15 |   if (kind === "resolve") require("./does-not-exist");
+      16 |   if (kind === "build") require("./syntax-error.js");
+      17 |   if (kind === "inherits") throw new OldStyleError("made the old way");
+      18 |   if (kind === "domexception") throw new DOMException("a DOMException", "AbortError");
+      19 |   if (kind === "getter") throw { get $$typeof() { throw 1; } };
+      20 |   throw Object.assign(new String("hostile"), { toString() { throw 1; }, [Symbol.toPrimitive]() { throw 1; } });
+      ^
+      error
+
+            at thrower (<dir>/fixture.js:20:<col>)"
+    `);
+    expect(framesOf(output)).toEqual([throwerFrameAt('new String("hostile")')]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "the next tick ran", exitCode: 1 });
+  });
+
+  test.concurrent("bun test prints an object that a test body throws, and no dump for an old-style error", async () => {
     using dir = tempDir("thrown-object", {
       "throws.test.js": `import { test } from "bun:test";
+import { inherits } from "node:util";
+function OldStyleError(message) {
+  this.message = message;
+  this.name = "OldStyleError";
+  Error.captureStackTrace(this, OldStyleError);
+}
+inherits(OldStyleError, Error);
 test("throws an object", () => {
   throw { why: "details the user needs" };
+});
+test("throws an old-style error", () => {
+  throw new OldStyleError("made the old way");
 });
 `,
     });
@@ -256,9 +347,12 @@ test("throws an object", () => {
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     expect(normalizeBunSnapshot(stderr, String(dir)).replace(/^ +\^$/gm, "^")).toMatchInlineSnapshot(`
       "throws.test.js:
-      1 | import { test } from "bun:test";
-      2 | test("throws an object", () => {
-      3 |   throw { why: "details the user needs" };
+       5 |   this.name = "OldStyleError";
+       6 |   Error.captureStackTrace(this, OldStyleError);
+       7 | }
+       8 | inherits(OldStyleError, Error);
+       9 | test("throws an object", () => {
+      10 |   throw { why: "details the user needs" };
       ^
       error
       {
@@ -266,10 +360,20 @@ test("throws an object", () => {
       }
           at <anonymous> (file:NN:NN)
       (fail) throws an object
+       8 | inherits(OldStyleError, Error);
+       9 | test("throws an object", () => {
+      10 |   throw { why: "details the user needs" };
+      11 | });
+      12 | test("throws an old-style error", () => {
+      13 |   throw new OldStyleError("made the old way");
+      ^
+      OldStyleError: made the old way
+          at <anonymous> (file:NN:NN)
+      (fail) throws an old-style error
 
        0 pass
-       1 fail
-      Ran 1 test across 1 file."
+       2 fail
+      Ran 2 tests across 1 file."
     `);
     expect(exitCode).toBe(1);
   });

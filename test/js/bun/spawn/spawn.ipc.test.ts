@@ -266,27 +266,33 @@ plugin({
       expect(await promise).toEqual(expected);
     });
 
-    it("the entry's listeners before the parent's disconnect does", async () => {
-      using dir = tempDir("ipc-early-disconnect", {
-        ...chain,
-        "listens.cjs": listens,
-        "main.mjs": `import "./a.mjs";${untilDisconnect}`,
-      });
-      await using child = spawn([bunExe(), "--preload", "./listens.cjs", "main.mjs"], {
-        cwd: String(dir),
-        env: bunEnv,
-        stdio: ["ignore", "pipe", "inherit"],
-        serialization: mode,
-        ipc() {},
-      });
-      child.send("early");
-      child.disconnect();
-      const [stdout, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
-      expect(stdout).toBe(JSON.stringify(["connected: true", "early", "disconnect"]) + "\n");
-      expect(exitCode).toBe(0);
-    });
+    // On Windows a failed write closes the channel at once. In advanced mode the child writes a version packet, and that
+    // write fails once the parent has closed its end.
+    it.skipIf(isWindows && mode === "advanced")(
+      "the entry's listeners before the parent's disconnect does",
+      async () => {
+        using dir = tempDir("ipc-early-disconnect", {
+          ...chain,
+          "listens.cjs": listens,
+          "main.mjs": `import "./a.mjs";${untilDisconnect}`,
+        });
+        await using child = spawn([bunExe(), "--preload", "./listens.cjs", "main.mjs"], {
+          cwd: String(dir),
+          env: bunEnv,
+          stdio: ["ignore", "pipe", "inherit"],
+          serialization: mode,
+          ipc() {},
+        });
+        child.send("early");
+        child.disconnect();
+        const [stdout, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
+        expect(stdout).toBe(JSON.stringify(["connected: true", "early", "disconnect"]) + "\n");
+        expect(exitCode).toBe(0);
+      },
+    );
 
-    it("the entry's listeners when the parent exits at once", async () => {
+    // Windows kills a child together with a parent that exits.
+    it.skipIf(isWindows)("the entry's listeners when the parent exits at once", async () => {
       using dir = tempDir("ipc-early-exit", {
         ...chain,
         "listens.cjs": listens,

@@ -114,6 +114,7 @@ private:
         HttpRouter<typename HttpContextData<SSL>::RouterData> *router;
     };
     std::vector<PendingServerName> pendingServerNames;
+    std::vector<unsigned char> alpnProtocols;
     /* No raw us_listen_socket_t* cache here. src/runtime/server/mod.rs's non-abrupt stop calls
      * us_listen_socket_close(ls) directly; the listener is queued for free in
      * loop_post, so any vector we kept would dangle by the time the deferred
@@ -151,6 +152,11 @@ public:
              * one. */
             if (applyClientCertPolicy) {
                 us_ssl_ctx_set_sni_policy(domainCtx, options.request_cert, options.reject_unauthorized);
+            }
+            if (!alpnProtocols.empty() && !us_ssl_ctx_set_alpn_protocols(domainCtx, alpnProtocols.data(), static_cast<unsigned int>(alpnProtocols.size()))) {
+                us_internal_ssl_ctx_unref(domainCtx);
+                if (success) *success = false;
+                return std::move(*this);
             }
             if (httpContext->getSocketContextData()->http2Context) {
                 us_ssl_ctx_enable_http2_alpn(domainCtx, httpContext->getSocketContextData()->allowHttp1);
@@ -214,6 +220,49 @@ public:
     /* Returns the SSL_CTX* of this app, or nullptr. */
     void *getNativeHandle() {
         return sslCtx;
+    }
+
+    bool setALPNProtocols(const unsigned char *protocols, unsigned int protocolsLength) {
+        if constexpr (!SSL) {
+            return false;
+        } else {
+            if (!us_ssl_ctx_set_alpn_protocols(sslCtx, protocols, protocolsLength)) {
+                return false;
+            }
+            alpnProtocols.assign(protocols, protocols + protocolsLength);
+            return true;
+        }
+    }
+
+    bool setSecureContext(SocketContextOptions options, const char *const *additionalCa, unsigned int additionalCaCount, const unsigned char *alpnProtocols, unsigned int alpnProtocolsLength) {
+        if constexpr (!SSL) {
+            return false;
+        } else {
+            enum create_bun_socket_error_t err = CREATE_BUN_SOCKET_ERROR_NONE;
+            struct ssl_ctx_st *next = us_ssl_ctx_from_options(options, &err);
+            if (!next) return false;
+
+            for (unsigned int i = 0; i < additionalCaCount; i++) {
+                if (!us_ssl_ctx_add_ca_cert(next, additionalCa[i])) {
+                    us_internal_ssl_ctx_unref(next);
+                    return false;
+                }
+            }
+            if (alpnProtocolsLength && !us_ssl_ctx_set_alpn_protocols(next, alpnProtocols, alpnProtocolsLength)) {
+                us_internal_ssl_ctx_unref(next);
+                return false;
+            }
+            if (httpContext->getSocketContextData()->http2Context) {
+                us_ssl_ctx_enable_http2_alpn(next, httpContext->getSocketContextData()->allowHttp1);
+            }
+            forEachListenSocket([&](us_listen_socket_t *ls) {
+                us_listen_socket_set_ssl_ctx(ls, next);
+            });
+
+            us_internal_ssl_ctx_unref(sslCtx);
+            sslCtx = next;
+            return true;
+        }
     }
 
     /* Attaches a "filter" function to track socket connections/disconnections */

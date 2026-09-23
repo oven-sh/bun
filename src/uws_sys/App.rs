@@ -150,6 +150,50 @@ impl<const SSL: bool> App<SSL> {
         c::uws_app_clear_routes(Self::SSL_FLAG, self.as_raw())
     }
 
+    pub fn set_secure_context(
+        &mut self,
+        opts: &BunSocketContextOptions,
+        additional_ca: &BunSocketContextOptions,
+        alpn_protocols: Option<&[u8]>,
+    ) -> bool {
+        let (alpn_protocols_ptr, alpn_protocols_len) = match alpn_protocols {
+            Some(value) => {
+                let Ok(length) = c_uint::try_from(value.len()) else {
+                    return false;
+                };
+                (value.as_ptr(), length)
+            }
+            None => (core::ptr::null(), 0),
+        };
+        // SAFETY: self is a live app and the CA pointers remain valid for the duration of the call.
+        unsafe {
+            c::uws_app_set_secure_context(
+                Self::SSL_FLAG,
+                self.as_raw(),
+                *opts,
+                additional_ca.ca,
+                additional_ca.ca_count,
+                alpn_protocols_ptr,
+                alpn_protocols_len,
+            ) != 0
+        }
+    }
+
+    pub fn set_alpn_protocols(&mut self, protocols: &[u8]) -> bool {
+        let Ok(protocols_len) = c_uint::try_from(protocols.len()) else {
+            return false;
+        };
+        // SAFETY: self is a live app, and C++ copies protocols into SSL_CTX-owned storage.
+        unsafe {
+            c::uws_app_set_alpn_protocols(
+                Self::SSL_FLAG,
+                self.as_raw(),
+                protocols.as_ptr(),
+                protocols_len,
+            ) != 0
+        }
+    }
+
     pub(crate) fn publish_with_options(
         &mut self,
         topic: &[u8],
@@ -655,6 +699,21 @@ pub mod c {
         );
 
         pub(crate) safe fn uws_app_clear_routes(ssl_flag: c_int, app: &mut uws_app_t);
+        pub(crate) fn uws_app_set_secure_context(
+            ssl_flag: c_int,
+            app: &mut uws_app_t,
+            options: BunSocketContextOptions,
+            additional_ca: *const *const c_char,
+            additional_ca_count: c_uint,
+            alpn_protocols: *const u8,
+            alpn_protocols_len: c_uint,
+        ) -> c_int;
+        pub(crate) fn uws_app_set_alpn_protocols(
+            ssl_flag: c_int,
+            app: &mut uws_app_t,
+            protocols: *const u8,
+            protocols_len: c_uint,
+        ) -> c_int;
     }
 
     #[repr(C)]

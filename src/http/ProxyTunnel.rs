@@ -559,6 +559,19 @@ fn progress_update_for_proxy_socket(ctx: *mut HTTPClient, proxy: NonNull<ProxyTu
     }
 }
 
+/// The inner connection's form of the `set_inline_reject` and
+/// `set_server_identity` calls in `HTTPClient::on_open`. Out of line, so it is
+/// compiled once and not for each `IS_SSL` of `ProxyTunnel::start`.
+#[inline(never)]
+fn install_peer_verification(client: &HTTPClient, wrapper: &ProxyTunnelWrapper) {
+    if client.flags.reject_unauthorized {
+        wrapper.set_inline_reject();
+    }
+    if client.target_verification() == PeerVerification::Native {
+        wrapper.set_server_identity(crate::get_tls_hostname(client, false));
+    }
+}
+
 // ─── ProxyTunnel methods ─────────────────────────────────────────────────────
 
 impl ProxyTunnel {
@@ -613,14 +626,7 @@ impl ProxyTunnel {
                 return;
             }
         };
-        // The inner connection's form of the `set_inline_reject` and
-        // `set_server_identity` calls in `HTTPClient::on_open`.
-        if this.flags.reject_unauthorized {
-            wrapper.set_inline_reject();
-        }
-        if this.target_verification() == PeerVerification::Native {
-            wrapper.set_server_identity(crate::get_tls_hostname(this, false));
-        }
+        install_peer_verification(this, &wrapper);
         // `RefPtr::new` owns the tunnel's initial ref (`ref_count == 1` from
         // `Default`); the client holds it until `close_proxy_tunnel` or the
         // hand-off to the keep-alive pool.

@@ -905,8 +905,8 @@ impl PostgresSQLConnection {
                                 .map_or(core::ptr::null_mut(), |p| p.cast());
                             let ok = !hostname.is_empty()
                                 && !ssl_ptr.is_null()
-                                // SAFETY: `ssl_ptr` is the live SSL* of a connected TLS socket.
                                 && BoringSSL::check_server_identity(
+                                    // SAFETY: `ssl_ptr` is the live SSL* of a connected TLS socket.
                                     unsafe { &mut *ssl_ptr },
                                     hostname,
                                 );

@@ -1813,7 +1813,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
 
     pub(crate) fn on_handshake(
         this: &JSValkeyClient,
-        _socket: SocketType<SSL>,
+        socket: SocketType<SSL>,
         success: i32,
         ssl_error: uws::us_bun_verify_error_t,
     ) -> JsResult<()> {
@@ -1836,14 +1836,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         let _guard = this.ref_guard();
         let _update = scopeguard::guard(BackRef::new(this), |p| p.update_poll_ref());
         let vm = this.client.get().vm;
-        // During this dispatch the socket's native handle is a live `SSL*`.
-        let ssl_ptr: *mut boringssl::c::SSL = this
-            .client
-            .get()
-            .socket
-            .get_native_handle()
-            .unwrap_or(core::ptr::null_mut())
-            .cast();
+        let ssl_ptr: *mut boringssl::c::SSL = socket.ssl().unwrap_or(core::ptr::null_mut());
         if handshake_success {
             if this.client.get().tls.reject_unauthorized(vm) {
                 // only reject the connection if reject_unauthorized == true
@@ -1855,10 +1848,15 @@ impl<const SSL: bool> SocketHandler<SSL> {
                 // Certificate chain is valid; verify the hostname matches the
                 // certificate.
                 let hostname = Self::identity_hostname(this, ssl_ptr);
-                if !hostname.is_empty()
-                    // SAFETY: see `ssl_ptr` above.
-                    && !boringssl::check_server_identity(unsafe { &mut *ssl_ptr }, &hostname)
-                {
+                // With no `SSL*` there is no certificate to match: fail closed.
+                let identity_ok = hostname.is_empty()
+                    || (!ssl_ptr.is_null()
+                        && boringssl::check_server_identity(
+                            // SAFETY: non-null, so the dispatched socket's live `SSL*`.
+                            unsafe { &mut *ssl_ptr },
+                            &hostname,
+                        ));
+                if !identity_ok {
                     return Self::fail_handshake_with_altname_error(this, vm, &hostname);
                 }
             }

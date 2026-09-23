@@ -625,7 +625,7 @@ test.concurrent.each([
   });
   expect({ stdout, stderr, exitCode }).toEqual({
     stdout: JSON.stringify({ errno: 0, handle: true, unixSocket: false }),
-    stderr: expect.any(String),
+    stderr: "",
     exitCode: 0,
   });
 });
@@ -697,7 +697,7 @@ test.concurrent.each(["null", "seq + 0.5"])(
     const { stdout, stderr, exitCode } = await bunRun(joinP(String(dir), "fixture.js"), { ACK: ack });
     expect({ stdout, stderr, exitCode }).toEqual({
       stdout: JSON.stringify({ connections: 3, answer: { errno: 0, handle: true } }),
-      stderr: expect.any(String),
+      stderr: "",
       exitCode: 0,
     });
   },

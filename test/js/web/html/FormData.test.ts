@@ -1010,9 +1010,24 @@ describe("USVString conversion of lone surrogates", () => {
 // allocation-driven GC trigger never fires and a server that parses one body
 // per request accumulates native memory until the idle collector runs.
 describe.concurrent("FormData native memory is reported to the GC", () => {
+  async function runAndReadNumber(script: string): Promise<number> {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const value = Number(stdout);
+    expect(stderr).toBe("");
+    expect({ exitCode, value }).toEqual({ exitCode: 0, value: expect.any(Number) });
+    expect(Number.isFinite(value)).toBe(true);
+    return value;
+  }
+
   // `create` is the source of an async function that returns one FormData.
-  async function extraMemoryDelta(create: string, count: number): Promise<number> {
-    const script = `
+  function extraMemoryDelta(create: string, count: number): Promise<number> {
+    return runAndReadNumber(`
       import { heapStats } from "bun:jsc";
       const create = ${create};
 
@@ -1030,20 +1045,7 @@ describe.concurrent("FormData native memory is reported to the GC", () => {
       const after = heapStats().extraMemorySize;
       process.stdout.write(String(after - before));
       if (live.length !== ${count}) throw new Error("unreachable");
-    `;
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const delta = Number(stdout);
-    expect(stderr).toBe("");
-    expect({ exitCode, delta }).toEqual({ exitCode: 0, delta: expect.any(Number) });
-    expect(Number.isFinite(delta)).toBe(true);
-    return delta;
+    `);
   }
 
   // Each FormData holds one 8 MB field value as a native WTF::String. After
@@ -1067,5 +1069,30 @@ describe.concurrent("FormData native memory is reported to the GC", () => {
       { headers: { "content-type": "multipart/form-data; boundary=X" } },
     ).formData()`;
     expect(await extraMemoryDelta(create, count)).toBeGreaterThan(count * valueSize * 0.5);
+  });
+
+  test("a failed multipart parse reports the parts it already copied", async () => {
+    // The first part is copied into the native FormData. The second part has no
+    // header terminator, so the parse then fails and the FormData is garbage.
+    // Nothing else in the loop allocates, so only the reported bytes can make
+    // the GC run and collect those FormData objects before the loop ends.
+    const parses = 64;
+    const alive = await runAndReadNumber(`
+      import { heapStats } from "bun:jsc";
+      const headers = { "content-type": "multipart/form-data; boundary=X" };
+      const body = new Blob([
+        "--X\\r\\nContent-Disposition: form-data; name=\\"a\\"\\r\\n\\r\\n" +
+          Buffer.alloc(4 * 1024 * 1024, "x").toString() +
+          "\\r\\n--X\\r\\nContent-Disposition: form-data; name=\\"b\\"\\r\\n--X--\\r\\n",
+      ]);
+      Bun.gc(true);
+      let rejected = 0;
+      for (let i = 0; i < ${parses}; i++) {
+        await new Response(body, { headers }).formData().catch(() => rejected++);
+      }
+      if (rejected !== ${parses}) throw new Error("expected every parse to fail, got " + rejected);
+      process.stdout.write(String(heapStats().objectTypeCounts.FormData ?? 0));
+    `);
+    expect(alive).toBeLessThan(parses / 2);
   });
 });

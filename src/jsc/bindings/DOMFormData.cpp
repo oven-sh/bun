@@ -50,7 +50,9 @@ Ref<DOMFormData> DOMFormData::create(ScriptExecutionContext* context)
 Ref<DOMFormData> DOMFormData::create(ScriptExecutionContext* context, const StringView& urlEncodedString)
 {
     auto newFormData = adoptRef(*new DOMFormData(context));
-    for (auto& entry : WTF::URLParser::parseURLEncodedForm(urlEncodedString)) {
+    auto form = WTF::URLParser::parseURLEncodedForm(urlEncodedString);
+    newFormData->m_items.reserveInitialCapacity(form.size());
+    for (auto& entry : form) {
         newFormData->append(entry.key, entry.value);
     }
 

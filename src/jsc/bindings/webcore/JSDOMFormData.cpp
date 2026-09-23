@@ -244,6 +244,12 @@ void JSDOMFormData::computeMemoryCost()
     }
 }
 
+extern "C" void WebCore__DOMFormData__reportMemoryCost(JSC::EncodedJSValue value)
+{
+    if (auto* wrapper = dynamicDowncast<JSDOMFormData>(JSC::JSValue::decode(value)))
+        wrapper->computeMemoryCost();
+}
+
 JSObject* JSDOMFormData::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
     auto* structure = JSDOMFormDataPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());

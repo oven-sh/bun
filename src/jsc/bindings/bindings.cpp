@@ -6350,12 +6350,6 @@ CPP_DECL JSC::EncodedJSValue WebCore__DOMFormData__createFromURLQuery(JSC::JSGlo
     return JSValue::encode(jsValue);
 }
 
-CPP_DECL void WebCore__DOMFormData__reportMemoryCost(JSC::EncodedJSValue value)
-{
-    if (auto* wrapper = dynamicDowncast<WebCore::JSDOMFormData>(JSC::JSValue::decode(value)))
-        wrapper->computeMemoryCost();
-}
-
 CPP_DECL JSC::EncodedJSValue WebCore__DOMFormData__create(JSC::JSGlobalObject* arg0)
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(arg0);

@@ -536,18 +536,11 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     .then(crate::bundle_v2::dispatch::EncoderStringTableHandle::new);
     // A payload order file: every chunk's bytecode goes into one payload laid out by it, encoded after the chunk loop
     // (the layout wants the chunks in load order, which is only known then).
-    // `--bytecode-order` / `compile.bytecodeOrder`, else `BUN_BYTECODE_ORDER_FILE` (a path list).
+    // `--bytecode-order` / `compile.bytecodeOrder`.
     let bytecode_order = if external_string_table.is_none() {
         None
     } else {
-        let from_env = bun_core::env_var::BUN_BYTECODE_ORDER_FILE
-            .get()
-            .filter(|_| c.options.bytecode_order.is_empty())
-            .unwrap_or_default();
-        let paths = c.options.bytecode_order.iter().map(|path| &path[..]).chain(
-            bun_core::strings::split(from_env, &[bun_paths::DELIMITER])
-                .filter(|path| !path.is_empty()),
-        );
+        let paths = c.options.bytecode_order.iter().map(|path| &path[..]);
         match crate::bytecode_order::BytecodeOrder::load(paths) {
             Ok((order, without_hints)) => {
                 let without_hints: Vec<Vec<u8>> =

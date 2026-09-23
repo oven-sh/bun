@@ -1,4 +1,4 @@
-//! Payload order file for `bun build --compile --bytecode` (`BUN_BYTECODE_ORDER_FILE`): what a previous run of the
+//! Payload order file for `bun build --compile --bytecode` (`--bytecode-order`): what a previous run of the
 //! application read out of its bytecode payload, written by that run under `BUN_BYTECODE_ORDER_OUT`. Text, one item
 //! per line after a `v1` line: `F`/`S`/`M`/`N`/`K <16 hex digits>` = a function decoded, a string read, a module
 //! evaluated, a module that was in the executable and not evaluated, a function that was in the executable and not

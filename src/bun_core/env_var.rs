@@ -43,8 +43,6 @@ new!(pub BUN_AGENT_RULE_DISABLED: boolean, "BUN_AGENT_RULE_DISABLED", { default:
 // A compiled executable decodes ALL of its embedded bytecode at exit and writes one digest line per module here: for
 // comparing two builds of the same sources whose bytecode payloads are laid out differently.
 new!(pub BUN_BYTECODE_DIGEST_OUT: string, "BUN_BYTECODE_DIGEST_OUT", {});
-// `bun build --compile --bytecode`: a payload order file to lay the bytecode out by (see `bun_bundler::bytecode_order`).
-new!(pub BUN_BYTECODE_ORDER_FILE: string, "BUN_BYTECODE_ORDER_FILE", {});
 // A compiled executable writes the payload order file of this run here at exit; `%p` in the path becomes the pid.
 new!(pub BUN_BYTECODE_ORDER_OUT: string, "BUN_BYTECODE_ORDER_OUT", {});
 new!(pub BUN_COMPILE_TARGET_TARBALL_URL: string, "BUN_COMPILE_TARGET_TARBALL_URL", {});

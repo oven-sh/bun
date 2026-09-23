@@ -1,7 +1,7 @@
 //! `BUN_BYTECODE_ORDER_OUT=<path>` in a `--compile --bytecode` executable: record what every VM of the process (the main
 //! thread's and each Worker's) reads out of the bytecode payload, and have the main thread write it at exit as a payload
 //! order file (`bun_bundler::bytecode_order` reads it back
-//! through `BUN_BYTECODE_ORDER_FILE`). `%p` in the path becomes the pid. Nothing is recorded without the variable.
+//! for `--bytecode-order`). `%p` in the path becomes the pid. Nothing is recorded without the variable.
 //! Apart from that, in an executable built with an order file every VM counts the function bodies it decodes by the
 //! region of the payload they are in (`bytecodeOrderStats()` of `bun:jsc`).
 
@@ -166,13 +166,19 @@ fn enable_if_requested(vm: &VirtualMachine) {
     unsafe { Bun__BytecodeOrder__enableRecording(vm.jsc_vm) };
 }
 
+/// Once: writing the order file ends the recording (`JSC::BytecodeOrderFile`), so a process that outlives the signal
+/// it sent itself has nothing more to write at its real exit.
 pub(crate) fn write_at_exit(
     vm: &VirtualMachine,
     graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
 ) {
+    static WRITTEN: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
     let Some(graph) = graph else {
         return;
     };
+    if WRITTEN.swap(true, core::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
     write_order_file(vm, graph);
     write_digests(vm, graph);
 }

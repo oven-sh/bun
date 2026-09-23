@@ -38,6 +38,21 @@
 namespace WebCore {
 using namespace JSC;
 
+// StructuredSerializeWithTransfer sets [[Detached]] on every transferable and
+// StructuredDeserializeWithTransfer creates a fresh object per transferDataHolder.
+// Out of line: most calls transfer no port.
+static NEVER_INLINE bool transferPorts(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& throwScope, Vector<RefPtr<MessagePort>>& ports)
+{
+    auto disentangled = MessagePort::disentanglePorts(WTF::move(ports));
+    if (disentangled.hasException()) {
+        WebCore::propagateException(*globalObject, throwScope, disentangled.releaseException());
+        return false;
+    }
+    auto* context = defaultGlobalObject(globalObject)->scriptExecutionContext();
+    ports = MessagePort::entanglePorts(*context, disentangled.releaseReturnValue());
+    return true;
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionStructuredClone, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -70,17 +85,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStructuredClone, (JSC::JSGlobalObject * globa
     }
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    // StructuredSerializeWithTransfer sets [[Detached]] on every transferable and
-    // StructuredDeserializeWithTransfer creates a fresh object per transferDataHolder.
-    auto disentangled = MessagePort::disentanglePorts(WTF::move(ports));
-    if (disentangled.hasException()) {
-        WebCore::propagateException(*globalObject, throwScope, disentangled.releaseException());
+    if (!ports.isEmpty() && !transferPorts(globalObject, throwScope, ports))
         RELEASE_AND_RETURN(throwScope, {});
-    }
-    auto* context = defaultGlobalObject(globalObject)->scriptExecutionContext();
-    auto entangled = MessagePort::entanglePorts(*context, disentangled.releaseReturnValue());
 
-    JSValue deserialized = serialized.releaseReturnValue()->deserialize(*globalObject, globalObject, entangled);
+    JSValue deserialized = serialized.releaseReturnValue()->deserialize(*globalObject, globalObject, ports);
     RETURN_IF_EXCEPTION(throwScope, {});
 
     return JSValue::encode(deserialized);
@@ -147,15 +155,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStructuredCloneAdvanced, (JSC::JSGlobalObject
     }
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    auto disentangled = MessagePort::disentanglePorts(WTF::move(ports));
-    if (disentangled.hasException()) {
-        WebCore::propagateException(*globalObject, throwScope, disentangled.releaseException());
+    if (!ports.isEmpty() && !transferPorts(globalObject, throwScope, ports))
         RELEASE_AND_RETURN(throwScope, {});
-    }
-    auto* context = defaultGlobalObject(globalObject)->scriptExecutionContext();
-    auto entangled = MessagePort::entanglePorts(*context, disentangled.releaseReturnValue());
 
-    JSValue deserialized = serialized.releaseReturnValue()->deserialize(*globalObject, globalObject, entangled);
+    JSValue deserialized = serialized.releaseReturnValue()->deserialize(*globalObject, globalObject, ports);
     RETURN_IF_EXCEPTION(throwScope, {});
 
     return JSValue::encode(deserialized);

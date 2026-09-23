@@ -562,11 +562,14 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
           const sink = new MessageChannel();
           expect(() => sink.port1.postMessage(null, [port1])).toThrow(DOMException);
           expect(() => structuredCloneFn(null, { transfer: [port1] })).toThrow(DOMException);
-          // the returned port took over port1's end of the channel
-          const { promise, resolve } = Promise.withResolvers<unknown>();
-          port2.onmessage = e => resolve(e.data);
+          // the returned port took over port1's end of the channel, in both directions
+          const toPeer = Promise.withResolvers<unknown>();
+          const toClone = Promise.withResolvers<unknown>();
+          port2.onmessage = e => toPeer.resolve(e.data);
+          cloned.onmessage = e => toClone.resolve(e.data);
           cloned.postMessage("hello");
-          expect(await promise).toBe("hello");
+          port2.postMessage("world");
+          expect(await Promise.all([toPeer.promise, toClone.promise])).toEqual(["hello", "world"]);
           cloned.close();
           port2.close();
           sink.port1.close();
@@ -579,6 +582,27 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
           expect(() => structuredCloneFn(null, { transfer: [buffer, port1] })).toThrow(DOMException);
           expect(buffer.byteLength).toBe(8);
           port2.close();
+        });
+        test("a MessagePort that a getter transfers away during serialization cannot be transferred", () => {
+          const { port1, port2 } = new MessageChannel();
+          const sink = new MessageChannel();
+          const value = {
+            get x() {
+              sink.port1.postMessage(null, [port1]);
+              return 1;
+            },
+          };
+          let error: unknown;
+          try {
+            structuredCloneFn(value, { transfer: [port1] });
+          } catch (e) {
+            error = e;
+          }
+          expect(error).toBeInstanceOf(DOMException);
+          expect((error as DOMException).name).toBe("DataCloneError");
+          port2.close();
+          sink.port1.close();
+          sink.port2.close();
         });
       });
     }

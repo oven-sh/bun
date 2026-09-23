@@ -33,6 +33,34 @@ interface Metafile {
 }
 
 describe("bundler metafile", () => {
+  test.each([false, true])("metafile lists every emitted artifact (write: %s)", async write => {
+    using dir = tempDir("metafile-artifacts", {
+      "index.ts": `import logo from "./logo.svg"; console.log(logo);`,
+      "logo.svg": `<svg xmlns="http://www.w3.org/2000/svg"></svg>`,
+    });
+    const outdir = write ? `${dir}/out` : undefined;
+    const result = await Bun.build({
+      entrypoints: [`${dir}/index.ts`],
+      outdir,
+      target: "bun",
+      bytecode: true,
+      sourcemap: "linked",
+      metafile: true,
+    });
+    expect(result.success).toBe(true);
+    expect(result.outputs.map(output => output.kind).sort()).toEqual(["asset", "bytecode", "entry-point", "sourcemap"]);
+    const { inputs, outputs } = result.metafile as Metafile;
+    const actual = Object.fromEntries(
+      result.outputs.map(output => [outdir ? `.${output.path.slice(outdir.length)}` : output.path, output.size]),
+    );
+    expect(Object.fromEntries(Object.entries(outputs).map(([path, output]) => [path, output.bytes]))).toEqual(actual);
+    const assetPath = Object.keys(outputs).find(path => path.endsWith(".svg"))!;
+    const assetInput = Object.keys(inputs).find(path => path.endsWith("logo.svg"))!;
+    expect(outputs[assetPath].inputs).toEqual({ [assetInput]: { bytesInOutput: actual[assetPath] } });
+    expect(outputs["./index.js.map"].inputs).toEqual({});
+    expect(outputs["./index.js.jsc"].inputs).toEqual({});
+  });
+
   test("metafile option returns metafile object", async () => {
     using dir = tempDir("metafile-test", {
       "index.js": `import { foo } from "./foo.js"; console.log(foo);`,
@@ -1501,8 +1529,9 @@ describe("metafile outputs[..].bytes is the size of the emitted file", () => {
       // a, b and lazy each import the shared chunk, and a also imports the lazy chunk.
       const { outputs } = result.metafile as Metafile;
       expect(
-        Object.values(outputs)
-          .map(output => output.imports.length)
+        Object.entries(outputs)
+          .filter(([path]) => !path.endsWith(".map"))
+          .map(([, output]) => output.imports.length)
           .sort((a, b) => a - b),
       ).toEqual([0, 1, 1, 2]);
 
@@ -1533,7 +1562,12 @@ describe("metafile outputs[..].bytes is the size of the emitted file", () => {
     expect(await text("entry.css")).toMatch(/url\("\.\/big-[a-z0-9]+\.png"\)/);
 
     const { reported, actual } = outputSizes(result, outdir);
-    expect(Object.keys(reported).sort()).toEqual(["./entry.css", "./entry.js"]);
+    expect(Object.keys(reported).map(withoutHash).sort()).toEqual([
+      "./big-[hash].png",
+      "./entry.css",
+      "./entry.js",
+      "./logo-[hash].svg",
+    ]);
     expect(reported).toEqual(actual);
   });
 
@@ -1566,13 +1600,12 @@ describe("metafile outputs[..].bytes is the size of the emitted file", () => {
       "./chunk-[hash].css",
       "./chunk-[hash].js",
       "./index.html",
+      "./logo-[hash].svg",
     ]);
     expect(reported).toEqual(actual);
   });
 
   // `compile` with `target: "browser"` writes one HTML file with the script and the stylesheet inlined.
-  // Each inlined chunk keeps its metafile output, with no file of its own to compare against:
-  // its bytes are what the document has between the tags.
   test.each(destinations)("a standalone HTML file (%s)", async destination => {
     using dir = tempDir("metafile-bytes-standalone", {
       "index.html": `<!doctype html><html><head><link rel="stylesheet" href="./style.css"></head><body><script type="module" src="./app.ts"></script></body></html>\n`,
@@ -1600,6 +1633,7 @@ describe("metafile outputs[..].bytes is the size of the emitted file", () => {
     };
     const script = between(`<script type="module">`, "</script>");
     const style = between("<style>", "</style>");
+    expect(style).toContain("color: red");
     expect(script).toContain(`"data:image/svg+xml;base64,`);
     expect(script).toContain("//# sourceMappingURL=data:application/json;base64,");
 
@@ -1608,8 +1642,6 @@ describe("metafile outputs[..].bytes is the size of the emitted file", () => {
       Object.fromEntries(Object.entries(outputs).map(([key, output]) => [withoutHash(key), output.bytes])),
     ).toEqual({
       "./index.html": Buffer.byteLength(html),
-      "./chunk-[hash].js": Buffer.byteLength(script),
-      "./chunk-[hash].css": Buffer.byteLength(style),
     });
   });
 
@@ -1637,7 +1669,7 @@ describe("metafile outputs[..].bytes is the size of the emitted file", () => {
     expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
 
     const { outputs } = (await Bun.file(`${dir}/meta.json`).json()) as Metafile;
-    expect(Object.keys(outputs)).toHaveLength(4);
+    expect(Object.keys(outputs)).toHaveLength(8);
     // a, b and lazy. The report prints the size of each in full in its raw data section.
     const entryKeys = Object.keys(outputs).filter(key => outputs[key].entryPoint !== undefined);
     expect(entryKeys).toHaveLength(3);

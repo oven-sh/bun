@@ -130,6 +130,23 @@ impl us_socket_t {
         (written, fatal)
     }
 
+    /// Bypass TLS: raw bytes to the fd even if `is_tls()`, with the fatal signal of `write_check_error`.
+    pub(crate) fn raw_write_check_error(&self, data: &[u8]) -> (i32, i32) {
+        bun_core::scoped_log!(uws, "us_socket_raw_write({:p}, {})", self, data.len());
+        let mut fatal: i32 = 0;
+        // SAFETY: `self` is a live `us_socket_t`; `data` is valid for its length
+        // (clamped to i32) and `fatal` outlives the call as the out-parameter.
+        let written = unsafe {
+            c::us_socket_raw_write_check_error(
+                self,
+                data.as_ptr().cast(),
+                i32::try_from(data.len().min(MAX_I32)).expect("int cast"),
+                &raw mut fatal,
+            )
+        };
+        (written, fatal)
+    }
+
     pub(crate) fn is_shutdown(&self) -> bool {
         c::us_socket_is_shut_down(self) > 0
     }
@@ -342,6 +359,11 @@ impl us_socket_t {
         c::us_socket_set_ssl_raw_tap(self, enabled as c_int);
     }
 
+    /// See `us_socket_defer_error_until_read` in libusockets.h.
+    pub fn defer_error_until_read(&mut self, enabled: bool) {
+        c::us_socket_defer_error_until_read(self, enabled as c_int);
+    }
+
     pub fn write(&mut self, data: &[u8]) -> i32 {
         let rc = unsafe {
             // SAFETY: data.as_ptr() valid for data.len() bytes
@@ -419,19 +441,6 @@ impl us_socket_t {
                 self,
                 iov.as_ptr(),
                 i32::try_from(iov.len()).expect("int cast"),
-            )
-        }
-    }
-
-    /// Bypass TLS — raw bytes to the fd even if `is_tls()`.
-    pub(crate) fn raw_write(&mut self, data: &[u8]) -> i32 {
-        bun_core::scoped_log!(uws, "us_socket_raw_write({:p}, {})", self, data.len());
-        unsafe {
-            // SAFETY: data.as_ptr() valid for data.len() bytes
-            c::us_socket_raw_write(
-                self,
-                data.as_ptr(),
-                i32::try_from(data.len().min(MAX_I32)).expect("int cast"),
             )
         }
     }
@@ -538,6 +547,7 @@ mod c {
         pub(super) safe fn us_socket_kind(s: &us_socket_t) -> u8;
         pub(super) safe fn us_socket_set_kind(s: &mut us_socket_t, kind: u8);
         pub(super) safe fn us_socket_set_ssl_raw_tap(s: &mut us_socket_t, enabled: c_int);
+        pub(super) safe fn us_socket_defer_error_until_read(s: &mut us_socket_t, enabled: c_int);
 
         pub(super) fn us_socket_write(s: *mut us_socket_t, data: *const u8, length: i32) -> i32;
         #[cfg(not(windows))]
@@ -559,8 +569,6 @@ mod c {
             iov: *const super::UsIoVec,
             count: i32,
         ) -> i32;
-        pub(super) fn us_socket_raw_write(s: *mut us_socket_t, data: *const u8, length: i32)
-        -> i32;
         pub(super) safe fn us_socket_flush(s: &mut us_socket_t);
 
         pub(super) safe fn us_socket_pause(s: &mut us_socket_t);
@@ -573,6 +581,12 @@ mod c {
         pub(super) safe fn us_socket_shutdown(s: &mut us_socket_t);
         pub(super) safe fn us_socket_is_closed(s: &us_socket_t) -> i32;
         pub(super) fn us_socket_write_check_error(
+            s: &us_socket_t,
+            data: *const core::ffi::c_char,
+            length: i32,
+            fatal_write_error: *mut i32,
+        ) -> i32;
+        pub(super) fn us_socket_raw_write_check_error(
             s: &us_socket_t,
             data: *const core::ffi::c_char,
             length: i32,

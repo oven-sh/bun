@@ -664,10 +664,12 @@ struct us_iovec_t {
 int us_socket_raw_writev(us_socket_r s, const struct us_iovec_t *iov, int count) nonnull_fn_decl;
 
 int us_socket_raw_write(us_socket_r s, const char *data, int length);
+/* us_socket_raw_write that reports a send that found the peer gone through *fatal_write_error (not on Windows). */
+int us_socket_raw_write_check_error(us_socket_r s, const char *data, int length, int *fatal_write_error);
 /* Like us_socket_write, but additionally reports a fatal (non-would-block)
  * send error through *fatal_write_error so opted-in callers can fail the
- * write instead of retrying forever. TLS sockets fall back to
- * us_socket_write (their errors propagate through the SSL layer). */
+ * write instead of retrying forever. A TLS socket reports the send of its
+ * records that found the peer gone (not on Windows). */
 int us_socket_write_check_error(us_socket_r s, const char *data, int length, int *fatal_write_error);
 
 void us_socket_timeout(us_socket_r s, unsigned int seconds) nonnull_fn_decl;
@@ -680,6 +682,8 @@ struct us_socket_group_t *us_socket_group(us_socket_r s) nonnull_fn_decl __attri
 unsigned char us_socket_kind(us_socket_r s) nonnull_fn_decl;
 void us_socket_set_kind(us_socket_r s, unsigned char kind) nonnull_fn_decl;
 void us_socket_set_ssl_raw_tap(us_socket_r s, int enabled) nonnull_fn_decl;
+/* Like libuv (for node:net): while the socket neither reads nor has a write pending, a peer reset waits in the kernel for the resume or write that meets it. Not on the libuv backend. */
+void us_socket_defer_error_until_read(us_socket_r s, int enabled) nonnull_fn_decl;
 
 void us_socket_flush(us_socket_r s) nonnull_fn_decl;
 void us_socket_shutdown(us_socket_r s) nonnull_fn_decl;

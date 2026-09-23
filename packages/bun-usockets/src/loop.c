@@ -441,6 +441,30 @@ void us_internal_loop_post(struct us_loop_t *loop) {
 #define us_ioctl ioctl
 #endif
 
+/* us_socket_defer_error_until_read: returns nonzero when the peer's reset is to stay in the kernel for now. */
+static int us_internal_socket_defers_error(struct us_socket_t *s, struct us_loop_t *loop) {
+    (void) loop;
+#ifdef LIBUS_USE_LIBUV
+    (void) s;
+    return 0;
+#else
+    /* The reads are over once the peer's FIN, or its close_notify, was delivered as on_end. */
+    const int reads = !s->flags.is_paused && !s->read_eof && !(s->ssl && s->ssl_end_delivered);
+    if (!s->defer_error_until_read || reads || s->flags.last_write_failed || s->flags.low_prio_state == 1) {
+        return 0;
+    }
+#ifdef LIBUS_USE_EPOLL
+    /* EPOLLERR and EPOLLHUP cannot be masked: leave epoll. A resume or a write re-adds the fd (us_poll_change). */
+    us_poll_stop(&s->p, loop);
+    s->p.state.poll_type = us_internal_poll_type(&s->p);
+#else
+    /* Only the EV_CLEAR read filter stays (kqueue_change), and it does not fire again. A resume or a write registers the others. */
+    us_poll_change(&s->p, loop, 0);
+#endif
+    return 1;
+#endif
+}
+
 void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, int events) {
     switch (us_internal_poll_type(p)) {
     case POLL_TYPE_CALLBACK: {
@@ -514,6 +538,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->long_timeout = 255;
                         s->flags.low_prio_state = 0;
                         s->flags.allow_half_open = listen_socket->s.flags.allow_half_open;
+                        s->defer_error_until_read = 0;
                         s->flags.is_paused = listen_socket->accept_paused;
                         s->flags.is_ipc = 0;
                         s->flags.is_closed = 0;
@@ -568,6 +593,9 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             /* Set once recv() returns 0 below: the only proof that the peer's stream ended with a FIN. The
              * eof hint this dispatch was called with (EPOLLHUP, kqueue's EV_EOF) also rides on a reset. */
             int read_fin = 0;
+            if (error && us_internal_socket_defers_error(s, loop)) {
+                break;
+            }
             if (events & LIBUS_SOCKET_WRITABLE && !error) {
                 s->flags.last_write_failed = 0;
                 #ifdef LIBUS_USE_KQUEUE
@@ -753,6 +781,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                          * buffer. This is what the comment above always described; it
                          * was keyed on the error flag, which kqueue does not set for
                          * a peer FIN. */
+                        if (s && !us_socket_is_closed(s) && error && us_internal_socket_defers_error(s, loop)) {
+                            /* on_data stopped the reads: the rest of the queue and the error wait for the resume. */
+                            return;
+                        }
                         if (s && !us_socket_is_closed(s) && (error || (!s->flags.is_paused && eof))) {
                             continue;
                         }
@@ -931,6 +963,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                  * Windows does not reliably latch a received RST in SO_ERROR
                  * (see us_internal_libuv_peer_reset_probe), so it is taken
                  * there, and the CRT's ECONNRESET reached JS as ESHUTDOWN. */
+                if (us_internal_socket_defers_error(s, loop)) {
+                    /* The FIN ahead of the reset was just read: the owner reads nothing after it. */
+                    break;
+                }
                 int socket_error = us_socket_get_error(s);
                 s = us_internal_socket_close_raw(s, socket_error > 2 ? socket_error : LIBUS_ECONNRESET, NULL);
                 return;

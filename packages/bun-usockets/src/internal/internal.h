@@ -250,6 +250,8 @@ int us_internal_ssl_handshake_callback_has_fired(us_socket_r s);
 int us_internal_ssl_is_shut_down(us_socket_r s);
 void us_internal_ssl_shutdown(us_socket_r s);
 int us_internal_ssl_write(us_socket_r s, const char *data, int length);
+/* us_socket_write_check_error for a TLS socket: a send of this write's records that can never succeed is a fatal write error. */
+int us_internal_ssl_write_check_error(us_socket_r s, const char *data, int length, int *fatal_write_error);
 unsigned int us_internal_ssl_spill_pending(us_socket_r s);
 void *us_internal_ssl_get_native_handle(us_socket_r s);
 struct us_bun_verify_error_t us_internal_ssl_verify_error(us_socket_r s);
@@ -261,6 +263,8 @@ void us_internal_ssl_ctx_up_ref(struct ssl_ctx_st *ssl_ctx);
 void us_internal_ssl_ctx_unref(struct ssl_ctx_st *ssl_ctx);
 /* TCP-level FIN, bypassing the SSL layer (used by ssl_on_end). */
 void us_internal_socket_raw_shutdown(us_socket_r s);
+/* us_socket_raw_write that stores the errno of a send that can never succeed (the peer is gone) in *peer_gone_errno. */
+int us_internal_socket_raw_write(us_socket_r s, const char *data, int length, int *peer_gone_errno);
 
 int us_internal_handle_dns_results(us_loop_r loop);
 
@@ -328,6 +332,8 @@ struct us_socket_t {
   unsigned char ssl_pending_detach : 1;
   /* Peer FIN was dispatched as on_end on a half-open socket; readable interest is never re-added and on_end never re-fires. */
   unsigned char read_eof : 1;
+  /* us_socket_defer_error_until_read. */
+  unsigned char defer_error_until_read : 1;
   /* The close code passed to the deferred close (e.g. a reset requested from
    * inside a handshake callback must still RST, not FIN, when it is finally
    * performed). */

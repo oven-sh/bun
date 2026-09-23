@@ -1453,6 +1453,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         // update the internal socket instance to the one that was just connected
         // This socket must be replaced because the previous one is a connecting socket not a uSockets socket
         this.socket.set(socket);
+        if this.get_handlers().defer_error_until_read.get() {
+            socket.defer_error_until_read(true);
+        }
         // Stale if node:net reconnected through this wrapper while it was paused.
         this.update_flags(|f| f.remove(Flags::IS_PAUSED));
         if !this.ref_pollref_on_connect.replace(true) {
@@ -1632,7 +1635,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // http response tests hung on every Linux target). Deliver it now
             // that the open dispatch is done; if it fully drains, complete the
             // pending JS write the same way on_writable's tail does, otherwise
-            // the do_socket_write backpressure arms the normal writable
+            // the write's backpressure arms the normal writable
             // subscription.
             let _ = this.internal_flush();
             if this.buffered_data_for_node_net.get().len() == 0 {
@@ -2533,12 +2536,18 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
 
+    /// The raw twin of an `upgradeTLS` pair writes raw bytes, although its us_socket_t has `ssl` set.
     #[inline]
-    fn do_socket_write(&self, buffer: &[u8]) -> i32 {
-        if self.flags.get().contains(Flags::BYPASS_TLS) {
-            self.socket.get().raw_write(buffer)
+    fn write_check_error(&self, buffer: &[u8]) -> CheckedWrite {
+        let socket = self.socket.get();
+        let (written, fatal_errno) = if self.flags.get().contains(Flags::BYPASS_TLS) {
+            socket.raw_write_check_error(buffer)
         } else {
-            self.socket.get().write(buffer)
+            socket.write_check_error(buffer)
+        };
+        CheckedWrite {
+            written,
+            fatal_errno,
         }
     }
 
@@ -2570,20 +2579,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             return -1;
         }
 
-        // The raw [raw, tls] upgrade twin shares the TLS half's us_socket_t
-        // (`s->ssl` is set) but must write raw bytes: write_check_error would
-        // route it through the SSL-encrypting us_socket_write, and its fatal
-        // signal is never set for TLS sockets anyway.
-        if flags.contains(Flags::BYPASS_TLS) {
-            let res = self.do_socket_write(buffer);
-            let uwrote: usize = usize::try_from(res.max(0)).expect("int cast");
-            self.bytes_written
-                .set(self.bytes_written.get() + uwrote as u64);
-            log!("write({}) = {}", buffer.len(), res);
-            return res;
-        }
-
-        let (res, fatal_errno) = socket.write_check_error(buffer);
+        let CheckedWrite {
+            written: res,
+            fatal_errno,
+        } = self.write_check_error(buffer);
         if fatal_errno != 0 {
             // Kernel rejected the send (peer gone): return the negative errno so
             // JS fails the write; never close from under the caller's stack, and
@@ -3063,7 +3062,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // `noalias` for them and the previous `black_box` launder (which
         // mitigated ASM-verified PROVEN_CACHED stale loads of
         // `bytes_written`/`flags`/`buffered_data_for_node_net` across the
-        // re-entrant `do_socket_write`) is no longer needed.
+        // re-entrant write) is no longer needed.
         if self.buffered_data_for_node_net.get().len() > 0 {
             // Neither write call touches `buffered_data_for_node_net`, so a
             // `JsCell::get()` projection is valid for the duration of the call.
@@ -3071,26 +3070,16 @@ impl<const SSL: bool> NewSocket<SSL> {
             // the initial write does: once the peer is gone the kernel rejects
             // every retry (EPIPE/ECONNRESET), and treating that as would-block
             // kept this buffer parked forever (the FIN-terminated-response hang).
-            // BYPASS_TLS twins keep the raw write path; TLS errors propagate
-            // through the SSL layer.
-            let res: i32 = if self.flags.get().contains(Flags::BYPASS_TLS) {
-                self.do_socket_write(self.buffered_data_for_node_net.get().slice())
-            } else {
-                let (res, fatal_errno) = self
-                    .socket
-                    .get()
-                    .write_check_error(self.buffered_data_for_node_net.get().slice());
-                if fatal_errno != 0 {
-                    // Same rule as write_maybe_corked: drop the undeliverable
-                    // buffer, stop re-arming the writable retry, and report the
-                    // errno so the event-loop caller surfaces it (the data was
-                    // already acknowledged to JS, so only an 'error' can).
-                    self.buffered_data_for_node_net
-                        .with_mut(|b| b.clear_and_free());
-                    return fatal_errno;
-                }
-                res
-            };
+            let CheckedWrite {
+                written: res,
+                fatal_errno,
+            } = self.write_check_error(self.buffered_data_for_node_net.get().slice());
+            if fatal_errno != 0 {
+                // As in write_maybe_corked. JS already counts this data as written, so only the caller's 'error' can report it.
+                self.buffered_data_for_node_net
+                    .with_mut(|b| b.clear_and_free());
+                return fatal_errno;
+            }
             let written: usize = usize::try_from(res.max(0)).unwrap();
             self.bytes_written
                 .set(self.bytes_written.get() + written as u64);
@@ -3344,6 +3333,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         // and every socket sharing it observe them; nothing else about the
         // shared `Handlers` (mode, active_connections) is touched.
         handlers.apply_reload(global, &reloaded);
+        this.socket
+            .get()
+            .defer_error_until_read(handlers.defer_error_until_read.get());
 
         Ok(JSValue::UNDEFINED)
     }
@@ -4108,6 +4100,12 @@ impl NativeCallbacks {
 enum WriteResult {
     Fail,
     Success { wrote: i32, total: usize },
+}
+
+struct CheckedWrite {
+    written: i32,
+    /// The errno of a send that can never succeed, or 0.
+    fatal_errno: i32,
 }
 
 pub(crate) struct StoredVerifyError {

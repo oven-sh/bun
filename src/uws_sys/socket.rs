@@ -267,6 +267,16 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         )
     }
 
+    /// Bypass TLS: raw bytes to the fd even on a TLS socket, with the fatal signal of `write_check_error`.
+    pub fn raw_write_check_error(&self, data: &[u8]) -> (i32, i32) {
+        on_socket!(self.socket;
+            connected s => s.raw_write_check_error(data),
+            duplex d => (d.raw_write(data), 0),
+            pipe p => (p.raw_write(data), 0),
+            else => (0, 0),
+        )
+    }
+
     pub fn is_closed(&self) -> bool {
         on_socket!(self.socket;
             connected s => s.is_closed(),
@@ -448,16 +458,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         )
     }
 
-    /// Bypass TLS — raw bytes to the fd even on a TLS socket.
-    pub fn raw_write(&self, data: &[u8]) -> i32 {
-        on_socket!(self.socket;
-            connected s => s.raw_write(data),
-            duplex d => d.raw_write(data),
-            pipe p => p.raw_write(data),
-            else => 0,
-        )
-    }
-
     pub fn flush(&self) {
         on_socket!(self.socket;
             connected s => s.flush(),
@@ -515,6 +515,13 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             duplex _d => false, // TODO: pause/resume upgraded duplex
             pipe p => p.resume_stream(),
         )
+    }
+
+    /// See `us_socket_defer_error_until_read` in libusockets.h.
+    pub fn defer_error_until_read(&self, enabled: bool) {
+        if let InternalSocket::Connected(s) = self.socket {
+            sock(s).defer_error_until_read(enabled);
+        }
     }
 
     pub fn set_no_delay(&self, enabled: bool) -> bool {

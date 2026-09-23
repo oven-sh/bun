@@ -32,6 +32,12 @@ export const Handlers = b.dictionary(
       default: "buffer",
       internalName: "binary_type",
     },
+    // node:net: see us_socket_defer_error_until_read.
+    deferErrorUntilRead: {
+      type: b.bool,
+      default: false,
+      internalName: "defer_error_until_read",
+    },
   },
 );
 

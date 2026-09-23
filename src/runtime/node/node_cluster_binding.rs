@@ -431,7 +431,7 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
         } else if address_type.is_int32() {
             atype = address_type.as_int32();
         } else {
-            // node's createServerHandle binds IPv4 for every addressType that is not 6 (or -1, a pipe).
+            // node compares addressType with ===, so a value that is not an int32 is neither 6 nor -1: IPv4.
             atype = 4;
         }
 

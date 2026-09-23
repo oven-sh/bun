@@ -840,7 +840,8 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSC::JSValue objectArg = callFrame->argument(0);
-    if (!objectArg.isObject()) {
+    // V8 rejects a Proxy too: "stack" would land on the proxy cell, where no trap can see it.
+    if (!objectArg.isObject() || objectArg.asCell()->type() == JSC::ProxyObjectType) {
         return JSC::JSValue::encode(throwTypeError(lexicalGlobalObject, scope, "invalid_argument"_s));
     }
 

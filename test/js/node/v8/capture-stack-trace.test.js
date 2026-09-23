@@ -367,6 +367,39 @@ test("Error.captureStackTrace installs .stack as non-enumerable", () => {
   expectNonEnumerableStack(materialized);
 });
 
+test("Error.captureStackTrace rejects a Proxy target like a non-object", () => {
+  // V8 throws kInvalidArgument for any receiver that is not a plain JSObject,
+  // which excludes a Proxy. No trap runs and nothing reaches the target.
+  const observed = [];
+  const handler = new Proxy(
+    {},
+    {
+      get(_, trap) {
+        observed.push(trap);
+        return undefined;
+      },
+    },
+  );
+  const target = {};
+  const proxy = new Proxy(target, handler);
+  const callableProxy = new Proxy(function () {}, handler);
+
+  for (const value of [proxy, callableProxy, Proxy.revocable({}, {}).proxy]) {
+    let caught;
+    try {
+      Error.captureStackTrace(value);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(TypeError);
+    expect(caught.message).toBe("invalid_argument");
+  }
+
+  expect(observed).toEqual([]);
+  expect(Reflect.ownKeys(target)).toEqual([]);
+  expect(Reflect.ownKeys(proxy)).toEqual([]);
+});
+
 test("prepare stack trace call sites", () => {
   function f1() {
     f2();

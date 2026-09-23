@@ -3,9 +3,10 @@
 // array with a throwing getter), the query rejects with that error, but the
 // partial Bind message (header with length 0, the portal and statement names,
 // the format codes, the parameters before the bad one) stayed in the buffer.
-// The next query's bytes followed it on the wire. A real server reads the
-// zero length as a protocol violation and drops the connection, so every
-// query pipelined behind the bad one failed too.
+// It went out with the next flush, alone or ahead of the next query's bytes.
+// A real server reads the zero length as a protocol violation and drops the
+// connection, so the next query and every query pipelined behind the bad one
+// failed too.
 //
 // The fix records the buffer offset before a Parse/Bind/Execute group is
 // written and truncates back to it when any part of the group fails.
@@ -61,11 +62,12 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     expect(await sql`SELECT ${"after"}::text AS v`).toEqual([{ v: "after" }]);
   });
 
-  test("a throwing parameter on the first execution of a statement does not break the next query", async () => {
+  test("with prepare: false, a throwing parameter does not break the query queued behind it", async () => {
     await container.ready;
-    await using sql = new SQL({ url: url(), max: 1, idleTimeout: 5, connectionTimeout: 5 });
+    await using sql = new SQL({ url: url(), max: 1, prepare: false, idleTimeout: 5, connectionTimeout: 5 });
 
-    // No warm-up: the statement is prepared and bound in the same batch.
+    // prepare: false writes Parse, Describe, Bind and Execute as one batch, so
+    // the Parse and Describe have to be discarded together with the partial Bind.
     const bad = sql`SELECT ${"a"}::text AS v, ${throwingToString}::text AS w, ${1}::int AS n`;
     const sibling = sql`SELECT ${"x"}::text AS v`;
 
@@ -81,9 +83,10 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
 });
 
 describe("postgres bind encode failure (mock server)", () => {
-  // Records every frontend message bun sends as "<type>" or, when the length
-  // field is not a valid message length, "<type>(len=<n>)". A partial Bind
-  // shows up as "B(len=0)".
+  // Records every frontend message bun sends as "<type>". A length field that
+  // is not a valid message length is recorded as "<type>(len=<n>)", and the
+  // mock then drops the connection like a real server. A partial Bind shows up
+  // as "B(len=0)".
   async function mockServer(): Promise<{ port: number; server: import("node:net").Server; received: string[] }> {
     const received: string[] = [];
     const { port, server } = await listeningServer(socket => {
@@ -106,8 +109,8 @@ describe("postgres bind encode failure (mock server)", () => {
           const len = buffered.readInt32BE(1);
           if (len < 4) {
             received.push(`${type}(len=${len})`);
-            buffered = buffered.subarray(5);
-            continue;
+            socket.destroy();
+            return;
           }
           if (buffered.length < 1 + len) break;
           const body = buffered.subarray(5, 1 + len);
@@ -142,8 +145,15 @@ describe("postgres bind encode failure (mock server)", () => {
     return { port, server, received };
   }
 
+  const outcome = (query: Promise<unknown>) =>
+    query.then(
+      () => "ok",
+      e => e.message,
+    );
+
   test("no partial Bind reaches the wire when a parameter throws", async () => {
     const { port, server, received } = await mockServer();
+    let outcomes: string[];
     try {
       await using sql = new SQL({
         url: `postgres://user@127.0.0.1:${port}/db`,
@@ -152,31 +162,59 @@ describe("postgres bind encode failure (mock server)", () => {
         connectionTimeout: 5,
       });
       await sql`select ${"w"}`;
-      const bad = sql`select ${"a"}, ${throwingToString}`.then(
-        () => "resolved",
-        e => e.message,
-      );
-      const s1 = sql`select ${"x"}`.then(
-        () => "ok",
-        e => e.message,
-      );
-      const s2 = sql`select ${"y"}`.then(
-        () => "ok",
-        e => e.message,
-      );
-      expect(await Promise.all([bad, s1, s2])).toEqual(["boom from toString", "ok", "ok"]);
+      outcomes = await Promise.all([
+        outcome(sql`select ${"a"}, ${throwingToString}`),
+        outcome(sql`select ${"x"}`),
+        outcome(sql`select ${"y"}`),
+      ]);
     } finally {
       server.close();
     }
     expect(received.filter(m => m.includes("len="))).toEqual([]);
-    // warm-up: Parse Describe Sync, Bind Execute Flush Sync.
-    // bad: Parse Describe Sync, then nothing (its Bind is discarded).
-    // siblings: Bind Execute Flush Sync, twice.
-    expect(received).toEqual([
-      ...["P", "D", "S", "B", "E", "H", "S"],
-      ...["P", "D", "S"],
-      ...["B", "E", "H", "S"],
-      ...["B", "E", "H", "S"],
-    ]);
+    expect({ outcomes, received }).toEqual({
+      outcomes: ["boom from toString", "ok", "ok"],
+      // warm-up: Parse Describe Sync, Bind Execute Flush Sync.
+      // bad: Parse Describe Sync, then nothing (its Bind is discarded).
+      // siblings: Bind Execute Flush Sync, twice.
+      received: [
+        ...["P", "D", "S", "B", "E", "H", "S"],
+        ...["P", "D", "S"],
+        ...["B", "E", "H", "S"],
+        ...["B", "E", "H", "S"],
+      ],
+    });
+  });
+
+  test("with prepare: false, no Parse, Describe or partial Bind of the rejected query reaches the wire", async () => {
+    const { port, server, received } = await mockServer();
+    let outcomes: Record<string, string>;
+    try {
+      await using sql = new SQL({
+        url: `postgres://user@127.0.0.1:${port}/db`,
+        max: 1,
+        prepare: false,
+        idleTimeout: 2,
+        connectionTimeout: 5,
+      });
+      // Nothing is queued behind the first rejected query.
+      const lone = await outcome(sql`select ${"a"}, ${throwingToString}`);
+      const after = await outcome(sql`select ${"x"}`);
+      // A query is queued behind the second rejected query.
+      const [bad, queued] = await Promise.all([
+        outcome(sql`select ${"b"}, ${throwingToString}`),
+        outcome(sql`select ${"y"}`),
+      ]);
+      outcomes = { lone, after, bad, queued };
+    } finally {
+      server.close();
+    }
+    expect(received.filter(m => m.includes("len="))).toEqual([]);
+    expect({ outcomes, received }).toEqual({
+      outcomes: { lone: "boom from toString", after: "ok", bad: "boom from toString", queued: "ok" },
+      // prepare: false writes Parse Describe Bind Execute Flush Sync as one
+      // batch. A rejected query writes nothing: a Parse or Describe without its
+      // Sync would leave replies that the next query reads as its own.
+      received: [...["P", "D", "B", "E", "H", "S"], ...["P", "D", "B", "E", "H", "S"]],
+    });
   });
 });

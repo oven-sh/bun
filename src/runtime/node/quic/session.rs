@@ -18,8 +18,6 @@ use super::ffi::lsquic_callback;
 use super::now_ns;
 use super::tls;
 
-bun_core::declare_scope!(quic_session, hidden);
-
 /// DATAGRAM frame overhead: type byte + 2-byte length varint (RFC 9221 §4).
 const DATAGRAM_FRAME_OVERHEAD: u64 = 3;
 const DATAGRAM_PAYLOAD_BUDGET: u64 = 1150;

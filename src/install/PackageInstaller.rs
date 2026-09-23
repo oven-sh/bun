@@ -2428,9 +2428,8 @@ impl<'a> PackageInstaller<'a> {
             // first while `scripts_node` (derived through it) is still live.
             // `scripts_node_mut()` takes `&self` and returns a backref to a
             // caller stack-local (disjoint from `*m`), so a single `m` covers
-            // both the `total_scripts` write and `set_node_name`.
+            // both `scripts_node_mut` and `set_node_name`.
             let m = self.manager_mut();
-            m.total_scripts += scripts_list.total as usize;
             if let Some(scripts_node) = m.scripts_node_mut() {
                 m.set_node_name::<true>(
                     scripts_node,

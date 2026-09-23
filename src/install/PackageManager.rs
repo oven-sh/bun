@@ -378,7 +378,6 @@ pub struct PackageManager {
 
     pub pending_lifecycle_script_tasks: AtomicU32,
     pub(crate) finished_installing: AtomicBool,
-    pub(crate) total_scripts: usize,
 
     pub(crate) root_lifecycle_scripts: Option<Package::scripts::List>,
 
@@ -2115,7 +2114,6 @@ pub fn init(
         wr!(total_tasks, 0);
         wr!(pending_lifecycle_script_tasks, AtomicU32::new(0));
         wr!(finished_installing, AtomicBool::new(false));
-        wr!(total_scripts, 0);
         wr!(root_lifecycle_scripts, None);
         wr!(node_gyp_tempdir_name, Box::default());
         wr!(preinstall_state, Vec::new());
@@ -2577,7 +2575,6 @@ fn init_with_runtime_once(
         wr!(total_tasks, 0);
         wr!(pending_lifecycle_script_tasks, AtomicU32::new(0));
         wr!(finished_installing, AtomicBool::new(false));
-        wr!(total_scripts, 0);
         wr!(root_lifecycle_scripts, None);
         wr!(node_gyp_tempdir_name, Box::default());
         wr!(preinstall_state, Vec::new());

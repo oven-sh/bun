@@ -579,8 +579,6 @@ impl struct_nameinfo {
     }
 }
 
-bun_opaque::opaque_ffi! { pub struct struct_Channeldata; }
-
 #[repr(C)]
 pub struct AddrInfo_cname {
     pub ttl: c_int,

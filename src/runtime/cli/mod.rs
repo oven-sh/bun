@@ -503,8 +503,6 @@ pub(crate) use bun_install::PRETEND_TO_BE_NODE;
 /// This is set `true` during `Command.which()` if argv0 is "bunx"
 static IS_BUNX_EXE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
-bun_core::declare_scope!(CLI, hidden);
-
 pub(crate) type LoaderColonList =
     colon_list_type::ColonListType<bun_options_types::schema::api::Loader>;
 pub(crate) type DefineColonList = colon_list_type::ColonListType<&'static [u8]>;

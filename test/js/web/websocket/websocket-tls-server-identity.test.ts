@@ -21,14 +21,18 @@ afterAll(() => {
 // A TLS server that records the SNI of every handshake and answers one
 // WebSocket upgrade per connection. The harness certificate has CN=server-bun
 // and SAN DNS:localhost, IP:127.0.0.1, IP:::1.
-function startSniServer() {
+function startSniServer({ requestCert = false } = {}) {
   const sni: (string | null)[] = [];
+  const clientCertificates: (string | undefined)[] = [];
   let applicationData = "";
   const connectionEnded = Promise.withResolvers<void>();
   const server = tls.createServer(
     {
       key: tlsCerts.key,
       cert: tlsCerts.cert,
+      // The client certificate is recorded, not verified.
+      requestCert,
+      rejectUnauthorized: false,
       SNICallback(servername, cb) {
         sni.push(servername);
         cb(null, tls.createSecureContext({ key: tlsCerts.key, cert: tlsCerts.cert }));
@@ -68,12 +72,14 @@ function startSniServer() {
   // A handshake with no server_name extension never reaches SNICallback.
   server.on("secureConnection", socket => {
     if (!socket.servername) sni.push(null);
+    if (requestCert) clientCertificates.push(socket.getPeerCertificate()?.fingerprint256);
   });
   const { promise, resolve } = Promise.withResolvers<number>();
   server.listen(0, "127.0.0.1", () => resolve((server.address() as AddressInfo).port));
   return {
     port: promise,
     sni,
+    clientCertificates,
     // What the client has sent over TLS so far.
     get received() {
       return applicationData;
@@ -160,6 +166,20 @@ describe.concurrent("WebSocket tls.serverName", () => {
     expect(await openSession(ws)).toEqual(tlsFailed(url));
     expect(server.sni).toEqual(["evil.test"]);
     expect(await server.receivedInTotal()).toBe("");
+  });
+
+  test("is the bare address when it is an IPv6 literal in brackets, like fetch", async () => {
+    using server = startSniServer();
+    const url = `wss://127.0.0.1:${await server.port}/`;
+    // ::1 is in the SAN as an IP address, and an IP address is never sent as SNI.
+    const ws = new WebSocket(url, { tls: { ca: tlsCerts.cert, serverName: "[::1]" } });
+    expect(await openSession(ws)).toEqual(opened);
+    const hostnames: string[] = [];
+    const withCallback = new WebSocket(url, {
+      tls: { ca: tlsCerts.cert, serverName: "[::1]", checkServerIdentity: hostname => void hostnames.push(hostname) },
+    });
+    expect(await openSession(withCallback)).toEqual(opened);
+    expect({ sni: server.sni, hostnames }).toEqual({ sni: [null, null], hostnames: ["::1"] });
   });
 
   test("is used for the tunnel handshake through an HTTP proxy", async () => {
@@ -363,6 +383,28 @@ describe.concurrent("WebSocket tls.checkServerIdentity", () => {
     });
     expect(await openSession(ws)).toEqual(opened);
     expect(calls).toEqual(["evil.test"]);
+  });
+
+  // mTLS. The callback, not the built-in check, still decides on the name.
+  test("replaces the built-in hostname check when the server asks for a client certificate", async () => {
+    using server = startSniServer({ requestCert: true });
+    const url = `wss://127.0.0.1:${await server.port}/`;
+    const calls: string[] = [];
+    const ws = new WebSocket(url, {
+      tls: {
+        ca: tlsCerts.cert,
+        cert: tlsCerts.cert,
+        key: tlsCerts.key,
+        serverName: "evil.test",
+        checkServerIdentity(hostname: string) {
+          calls.push(hostname);
+          return undefined;
+        },
+      },
+    });
+    expect(await openSession(ws)).toEqual(opened);
+    expect(calls).toEqual(["evil.test"]);
+    expect(server.clientCertificates).toEqual([expectedFingerprint256]);
   });
 
   // The verdict is read as tls.connect() reads it: any truthy value rejects. An async

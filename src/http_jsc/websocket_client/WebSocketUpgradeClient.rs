@@ -207,6 +207,7 @@ where
         let server_name: Option<Box<[u8]>> = ssl_config
             .as_deref()
             .and_then(SSLConfig::server_name_bytes)
+            .map(bun_http::strip_ipv6_brackets)
             .filter(|name| !name.is_empty())
             .map(Box::from);
 

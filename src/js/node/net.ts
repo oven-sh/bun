@@ -2813,6 +2813,8 @@ function fdWriteFailed(self, err, callback, written, buf, offset, data?, next = 
       }
       rest = Buffer.concat(bufs);
     }
+    // Node counts a write when it is dispatched to the handle, whether it completes or fails.
+    self[kBytesWritten] = (self[kBytesWritten] || 0) + written + rest.length;
     result = sink.write(rest);
     // The sink only buffers a short chunk; push it to the fd now.
     if (!$isPromise(result)) result = sink.flush();
@@ -2820,8 +2822,6 @@ function fdWriteFailed(self, err, callback, written, buf, offset, data?, next = 
     callback(e);
     return;
   }
-  // Node counts a write when it is dispatched to the handle, not when it completes.
-  self[kBytesWritten] = (self[kBytesWritten] || 0) + written + rest.length;
   if (!$isPromise(result)) {
     callback();
     return;

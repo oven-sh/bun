@@ -1682,7 +1682,12 @@ describe("Socket fd adoption", () => {
   // The reader goes away between the EAGAIN and the sink's own first write(2).
   // That write fails at once, so it was never queued: a destroy() in the same
   // tick has nothing to cancel and must not report it as done either.
-  it.skipIf(isWindows)("destroy() does not report a write the sink failed at once as done", async () => {
+  // A long tail fails in the sink's write(), a short one (which the sink only
+  // buffers) in its flush(). Both count as dispatched, as Node counts them.
+  it.skipIf(isWindows).each([
+    ["long", 100_000],
+    ["short", 10],
+  ])("destroy() does not report a write the sink failed at once as done (%s tail)", async (_, size) => {
     using dir = tempDir("net-fd-failed-at-once", {});
     const fifo = join(String(dir), "adopted.fifo");
     execFileSync("mkfifo", [fifo]);
@@ -1701,8 +1706,7 @@ describe("Socket fd adoption", () => {
       throw Object.assign(new Error("EAGAIN: resource temporarily unavailable, write"), { code: "EAGAIN" });
     });
     const settled = new Promise<void>(resolve => {
-      // Too long for the sink to only buffer it: the sink tries write(2) at once.
-      socket.write(Buffer.alloc(100_000, "x"), err => {
+      socket.write(Buffer.alloc(size, "x"), err => {
         events.push(`cb:${err ? (err as NodeJS.ErrnoException).code : "ok"}`);
         resolve();
       });
@@ -1713,7 +1717,7 @@ describe("Socket fd adoption", () => {
     } finally {
       spy.mockRestore();
     }
-    expect(events).toEqual(["cb:EPIPE"]);
+    expect({ events, bytesWritten: socket.bytesWritten }).toEqual({ events: ["cb:EPIPE"], bytesWritten: size });
   });
 
   // The sink has no poll for a character device that is not a terminal, so a

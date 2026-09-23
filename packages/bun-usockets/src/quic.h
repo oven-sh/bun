@@ -149,6 +149,12 @@ int us_quic_stream_has_unacked(us_quic_stream_t *s);
 void *us_quic_stream_ext(us_quic_stream_t *s);
 us_quic_socket_t *us_quic_stream_socket(us_quic_stream_t *s);
 us_quic_socket_context_t *us_quic_stream_context(us_quic_stream_t *s);
+/* 1 iff serving `host` (an H3 :authority or Host value; :port allowed) on
+ * this stream's connection would bypass a per-serverName requestCert policy
+ * the QUIC handshake never applied (the client's SNI selected a different
+ * entry, or none). */
+int us_quic_stream_host_header_bypasses_sni_policy(us_quic_stream_t *s,
+    const char *host, size_t host_len);
 
 /* Drive every QUIC engine on `loop` and re-arm the per-loop fallthrough
  * timer to the soonest earliest_adv_tick. Called from us_internal_loop_post

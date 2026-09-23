@@ -784,7 +784,8 @@ const reloadDeadline = isDebug ? 20_000 : 5_000;
 /**
  * Awaits markers a --hot child writes to stdout, in order: each `next()`
  * searches only past the previous match, so a marker printed before the save
- * that was supposed to produce it does not count.
+ * that was supposed to produce it does not count. Resolves to the output it
+ * skipped over to reach the marker.
  */
 function stdoutMarkers(runner: ReturnType<typeof spawn>) {
   const decoder = new TextDecoder();
@@ -817,8 +818,9 @@ function stdoutMarkers(runner: ReturnType<typeof spawn>) {
         while (true) {
           const index = output.indexOf(line, cursor);
           if (index !== -1) {
+            const skipped = output.slice(cursor, index);
             cursor = index + line.length;
-            return;
+            return skipped;
           }
           if (ended) throw new Error(`${ended} before printing ${JSON.stringify(marker)}; stdout so far:\n${output}`);
           if (expired) throw new Error(`${JSON.stringify(marker)} was never printed; stdout so far:\n${output}`);
@@ -939,6 +941,61 @@ describe.concurrent("a generation whose top-level await never settles", () => {
       writeFileSync(entry, finishes("[#!tla] save 2 applied"));
       await markers.next("[#!tla] dep hung");
       await markers.next("[#!tla] save 2 applied");
+    },
+    timeout,
+  );
+  // A generation that was replaced while parked on its await can still finish
+  // later, and what it exports then reaches the generated entry wrapper after
+  // the newer generation's did. The newer generation finishes the old one on
+  // request, so the order does not depend on timing.
+  it.each([
+    ["export default", "export default config;"],
+    ["a thenable namespace", "export function then(resolve) { resolve({ default: config }); }"],
+  ])(
+    "is not applied as the server config when it finishes after a newer generation (%s)",
+    async (_shape, exportsConfig) => {
+      const oldConfigRead = "[#!tla] old config read";
+      using dir = tempDir("hot-tla-late", {
+        "entry.ts": `
+          console.write("[#!tla] old start\\n");
+          await new Promise(resolve => (globalThis.finishOld = resolve));
+          console.write("[#!tla] old finished\\n");
+          setTimeout(() => console.write("[#!tla] old settled\\n"), 0);
+          const config = {
+            port: 0,
+            get fetch() {
+              console.write(${JSON.stringify(oldConfigRead + "\n")});
+              return () => new Response("old");
+            },
+          };
+          ${exportsConfig}
+        `,
+      });
+      const finishOld = join(String(dir), "finish-old");
+      await using runner = spawnHot(String(dir));
+      const markers = stdoutMarkers(runner);
+      await markers.next("[#!tla] old start");
+
+      writeFileSync(
+        join(String(dir), "entry.ts"),
+        `
+          import { existsSync } from "fs";
+          console.write("[#!tla] new start\\n");
+          (async () => {
+            while (!existsSync(${JSON.stringify(finishOld)})) await Bun.sleep(5);
+            globalThis.finishOld();
+          })();
+          export default { port: 0, fetch: () => new Response("new") };
+        `,
+      );
+      await markers.next("[#!tla] new start");
+
+      writeFileSync(finishOld, "");
+      await markers.next("[#!tla] old finished");
+      // The wrapper of the old generation runs as soon as its module finishes,
+      // so before the timer that prints this marker.
+      const afterOldFinished = await markers.next("[#!tla] old settled");
+      expect(afterOldFinished).not.toContain(oldConfigRead);
     },
     timeout,
   );

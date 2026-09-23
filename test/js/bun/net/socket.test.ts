@@ -3807,16 +3807,22 @@ describe("Bun.listen requestCert with a large client chain", () => {
     });
     client.on("secureConnect", () => client.write("ping"));
 
-    expect(await Promise.race([accepted.promise, failed.promise])).toEqual({
-      authorized: true,
-      writeResult: "hello\n".length,
-    });
-    // Without the fix this never resolves: the server's writes return their
-    // length, but nothing reaches the wire.
-    expect(await Promise.race([replied.promise, failed.promise])).toBe("hello\npong:ping");
-    client.removeAllListeners("close");
-    client.end();
-    await once(client, "close");
+    let reply: string;
+    try {
+      // Without the fix the server's first write() returns 0: SSL_write fails
+      // because the ticket flight does not fit the write buffer.
+      expect(await Promise.race([accepted.promise, failed.promise])).toEqual({
+        authorized: true,
+        writeResult: "hello\n".length,
+      });
+      reply = await Promise.race([replied.promise, failed.promise]);
+      client.removeAllListeners("close");
+      client.end();
+      await once(client, "close");
+    } finally {
+      client.destroy();
+    }
+    expect(reply).toBe("hello\npong:ping");
     // The tickets precede the reply on the wire, so both arrived with it.
     expect(tickets).toBe(2);
   });

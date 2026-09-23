@@ -298,8 +298,14 @@ describe("Bun.serve requestCert with a large client chain", () => {
       if (status) resolve({ status, tickets });
       else reject(new Error("connection closed without a response"));
     });
+    let result: { status: string; tickets: number };
+    try {
+      result = await promise;
+    } finally {
+      socket.destroy();
+    }
     // The tickets precede the response on the wire, so both arrived with it.
-    expect(await promise).toEqual({ status: "HTTP/1.1 200 OK", tickets: 2 });
+    expect(result).toEqual({ status: "HTTP/1.1 200 OK", tickets: 2 });
     expect(received.endsWith("served")).toBe(true);
   });
 });

@@ -979,25 +979,30 @@ it("replies to a requestCert client whose certificate chain is larger than 32 Ki
 
   const client = connect({ port, host: "127.0.0.1", key: agent1Key, cert: paddedChain, rejectUnauthorized: false });
   let tickets = 0;
-  client.on("session", () => tickets++);
-  client.on("error", failed.reject);
-  // A regression in the write path shows up as a bare close, not an error.
-  // Without this the test would sit in its timeout with no diagnostic.
-  client.on("close", () => failed.reject(new Error("client closed before the reply")));
-  const [, verdict] = await Promise.race([
-    Promise.all([once(client, "secureConnect"), accepted.promise]),
-    failed.promise,
-  ]);
+  let verdict: { authorized: boolean; protocol: string | null } | undefined;
+  let reply: Buffer | undefined;
+  // Assertions run after the client is gone: with it still open, a throw
+  // would hang in the server's dispose, which waits for zero connections.
+  try {
+    client.on("session", () => tickets++);
+    client.on("error", failed.reject);
+    // A regression in the write path shows up as a bare close, not an error.
+    // Without this the test would sit in its timeout with no diagnostic.
+    client.on("close", () => failed.reject(new Error("client closed before the reply")));
+    [, verdict] = await Promise.race([Promise.all([once(client, "secureConnect"), accepted.promise]), failed.promise]);
+
+    // Without the fix this is where it hangs: the server's write() returns true,
+    // but nothing reaches the wire.
+    client.write("ping");
+    [reply] = await Promise.race([once(client, "data"), failed.promise]);
+    client.removeAllListeners("close");
+    client.end();
+    await once(client, "close");
+  } finally {
+    client.destroy();
+  }
+
   expect(verdict).toEqual({ authorized: true, protocol: "TLSv1.3" });
-
-  // Without the fix this is where it hangs: the server's write() returns true,
-  // but nothing reaches the wire.
-  client.write("ping");
-  const [reply] = await Promise.race([once(client, "data"), failed.promise]);
-  client.removeAllListeners("close");
-  client.end();
-  await once(client, "close");
-
   expect(String(reply)).toBe("pong:ping");
   // The tickets precede the reply on the wire, so both arrived with it.
   expect(tickets).toBe(2);

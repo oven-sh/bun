@@ -42,7 +42,10 @@
 #elif defined(MODULE_INIT_THROW)
   napi_throw_error(env, "CODE_OOPS", "oops!");
   return NULL;
+#elif defined(MODULE_INIT_FATAL)
+  napi_fatal_error("NAPI_MODULE_INIT", NAPI_AUTO_LENGTH, "fatal error in init",
+                   NAPI_AUTO_LENGTH);
 #else
-#error Define one of MODULE_INIT_RETURN_{NULLPTR,NULL,UNDEFINED} to determine what to return from NAPI_MODULE_INIT
+#error Define one of MODULE_INIT_RETURN_{NULLPTR,NULL,UNDEFINED}, MODULE_INIT_THROW or MODULE_INIT_FATAL to determine what NAPI_MODULE_INIT does
 #endif
 }

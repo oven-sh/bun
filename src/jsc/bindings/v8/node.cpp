@@ -3,9 +3,7 @@
 
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/CallData.h"
-#include "JavaScriptCore/ObjectConstructor.h"
 #include "JavaScriptCore/ThrowScope.h"
-#include "JSCommonJSModule.h"
 
 #include "node/node_version.h"
 
@@ -21,7 +19,6 @@ using v8::Object;
 using v8::Value;
 
 using JSC::JSObject;
-using JSC::jsUndefined;
 using JSC::JSValue;
 
 namespace node {
@@ -110,22 +107,17 @@ v8::MaybeLocal<v8::Value> MakeCallback(v8::Isolate* isolate,
 void node_module_register(void* opaque_mod)
 {
     // TODO unify this with napi_module_register
+    // Only queue, as Node does (https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/src/node_binding.cc#L275-L290): this runs in a static constructor of the addon.
     auto* globalObject = defaultGlobalObject();
-    auto& vm = JSC::getVM(globalObject);
-    auto* mod = reinterpret_cast<struct node_module*>(opaque_mod);
-
-    auto keyStr = WTF::String::fromUTF8(mod->nm_modname);
-
-    // Append to GlobalObject vector so BunProcess.cpp can save ALL registrations after dlopen completes
-    globalObject->m_pendingV8Modules.append(mod);
-
+    globalObject->m_pendingV8Modules.append(reinterpret_cast<struct node_module*>(opaque_mod));
     globalObject->napiModuleRegisterCallCount++;
-    JSValue pendingNapiModule = globalObject->m_pendingNapiModuleAndExports[0].get();
-    JSObject* object = (pendingNapiModule && pendingNapiModule.isObject()) ? pendingNapiModule.getObject()
-                                                                           : nullptr;
+}
 
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    JSC::Strong<JSC::JSObject> strongExportsObject;
+void executePendingV8Module(Zig::GlobalObject* globalObject, node_module* mod, JSObject* object)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto keyStr = WTF::String::fromUTF8(mod->nm_modname);
 
     if (mod->nm_version != REPORTED_NODEJS_ABI_VERSION) {
         auto* error = JSC::createError(globalObject,
@@ -136,31 +128,19 @@ void node_module_register(void* opaque_mod)
                 ". This version of Bun requires NODE_MODULE_VERSION "_s,
                 REPORTED_NODEJS_ABI_VERSION,
                 ". Please try re-compiling or re-installing the module."_s));
-        globalObject->m_pendingNapiModuleAndExports[0].set(vm, globalObject, error);
+        JSC::throwException(globalObject, scope, error);
         return;
     }
 
-    if (!object) {
-        auto* exportsObject = JSC::constructEmptyObject(globalObject);
-        RETURN_IF_EXCEPTION(scope, void());
+    JSValue exportsValue = object->get(globalObject, WebCore::builtinNames(vm).exportsPublicName());
+    RETURN_IF_EXCEPTION(scope, void());
 
-        object = Bun::JSCommonJSModule::create(globalObject, keyStr, exportsObject, false, jsUndefined());
-        RETURN_IF_EXCEPTION(scope, void());
-        strongExportsObject = { vm, exportsObject };
-    } else {
-        JSValue exportsObject = object->get(globalObject, WebCore::builtinNames(vm).exportsPublicName());
-        RETURN_IF_EXCEPTION(scope, void());
+    // Like Node, convert exports to an object: null and undefined throw, a primitive gets a wrapper object.
+    JSObject* exportsObject = exportsValue.toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, void());
 
-        // Convert exports to object, matching Node.js behavior.
-        // This throws for null/undefined and creates wrapper objects for primitives.
-        JSObject* exports = exportsObject.toObject(globalObject);
-        RETURN_IF_EXCEPTION(scope, void());
-
-        ASSERT(exports);
-        strongExportsObject = { vm, exports };
-    }
-
-    JSC::Strong<JSC::JSObject> strongObject = { vm, object };
+    ASSERT(exportsObject);
+    JSC::Strong<JSC::JSObject> strongExportsObject = { vm, exportsObject };
 
     auto* isolate = globalObject->V8GlobalInternals()->isolate();
     HandleScope hs(isolate);
@@ -175,12 +155,11 @@ void node_module_register(void* opaque_mod)
         mod->nm_register_func(exports, module, mod->nm_priv);
     } else {
         auto* error = JSC::createError(globalObject, WTF::makeString("The module '"_s, keyStr, "' has no declared entry point."_s));
-        globalObject->m_pendingNapiModuleAndExports[0].set(vm, globalObject, error);
+        JSC::throwException(globalObject, scope, error);
         return;
     }
 
     RETURN_IF_EXCEPTION(scope, void());
-    globalObject->m_pendingNapiModuleAndExports[1].set(vm, globalObject, object);
 }
 
 } // namespace node

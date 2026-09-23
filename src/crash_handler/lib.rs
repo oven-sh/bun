@@ -3651,24 +3651,23 @@ mod draft {
         );
     }
 
+    /// Sets the thread's action to `Dlopen(path)` until `CrashHandler__endDlOpenAction` puts back the one it replaces.
     /// # Safety
-    /// `action` must be null or a valid NUL-terminated C string that outlives the dlopen call.
+    /// `path` must be a valid NUL-terminated C string that outlives the returned guard.
     #[unsafe(no_mangle)]
-    unsafe extern "C" fn CrashHandler__setDlOpenAction(action: *const c_char) {
-        if !action.is_null() {
-            debug_assert!(CURRENT_ACTION.with(|c| c.get()).is_none());
-            // SAFETY: action is a valid NUL-terminated C string for the duration of the dlopen call
-            let s = unsafe { bun_core::ffi::cstr(action) }.to_bytes();
-            // SAFETY: noreturn-on-crash usage; the C string outlives the action via caller contract
-            let s: &'static [u8] = unsafe { bun_collections::detach_lifetime(s) };
-            CURRENT_ACTION.with(|c| c.set(Some(Action::Dlopen(s))));
-        } else {
-            debug_assert!(matches!(
-                CURRENT_ACTION.with(|c| c.get()),
-                Some(Action::Dlopen(_))
-            ));
-            CURRENT_ACTION.with(|c| c.set(None));
-        }
+    unsafe extern "C" fn CrashHandler__beginDlOpenAction(path: *const c_char) -> *mut ActionGuard {
+        // SAFETY: path is a valid NUL-terminated C string (caller contract)
+        let s = unsafe { bun_core::ffi::cstr(path) }.to_bytes();
+        // SAFETY: noreturn-on-crash usage; the C string outlives the action via caller contract
+        let s: &'static [u8] = unsafe { bun_collections::detach_lifetime(s) };
+        bun_core::heap::into_raw(Box::new(scoped_action(Action::Dlopen(s))))
+    }
+
+    /// SAFETY: `guard` must come from `CrashHandler__beginDlOpenAction`, on this thread, and must not be used again.
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn CrashHandler__endDlOpenAction(guard: *mut ActionGuard) {
+        // SAFETY: guard is a live Box from CrashHandler__beginDlOpenAction (caller contract)
+        unsafe { bun_core::heap::destroy(guard) };
     }
 
     pub fn fix_dead_code_elimination() {

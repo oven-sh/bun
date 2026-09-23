@@ -1704,6 +1704,25 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
   it("works when the module register function throws", async () => {
     expect(() => require("./napi-app/build/Debug/throw_addon.node")).toThrow(new Error("oops!"));
   });
+  // The crash handler records which addon is loading only on POSIX.
+  it.skipIf(isWindows)(
+    "names the addon when the module register function crashes",
+    async () => {
+      const addon = join(__dirname, "napi-app/build/Debug/fatal_addon.node");
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", `require(${JSON.stringify(addon)}); console.log("loaded");`],
+        env: { ...bunEnv, BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("NAPI FATAL ERROR: NAPI_MODULE_INIT fatal error in init");
+      expect(stderr).toMatch(/Crashed while loading native module: .*fatal_addon\.node/);
+      expect(stdout).not.toContain("loaded");
+      // A debug build symbolizes the whole stack before it exits.
+    },
+    10_000,
+  );
 
   it("runs the napi_module_register callback after dlopen finishes", async () => {
     await checkSameOutput("test_constructor_order", []);
@@ -1730,6 +1749,41 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       "register_cb_b",
       "register_cb_reentrant x 64",
     ]);
+    expect(exitCode).toBe(0);
+  });
+
+  it("runs the init function of the outer module when module.exports loads another addon", async () => {
+    // The second read of module.exports is the one that process.dlopen makes for the init function.
+    const script = `
+      const build = ${JSON.stringify(join(__dirname, "napi-app", "build", "Debug"))};
+      const exports = {};
+      let reads = 0;
+      const outer = {
+        get exports() {
+          if (++reads === 2) process.dlopen({ exports: {} }, build + "/reentrant_register_addon.node");
+          return exports;
+        },
+      };
+      process.dlopen(outer, build + "/constructor_order_addon.node");
+    `;
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // On Windows each addon has its own stdout buffer, so only the order of the lines of one addon is fixed.
+    const lines = stdout.split(/\r?\n/).filter(Boolean);
+    const outer = ["call_register", "init_static", "register_cb"];
+    expect({
+      outer: lines.filter(line => outer.includes(line)),
+      inner: lines.filter(line => !outer.includes(line)),
+    }).toEqual({
+      outer,
+      inner: ["register_cb_a", "register_cb_b", "register_cb_reentrant x 64"],
+    });
     expect(exitCode).toBe(0);
   });
 

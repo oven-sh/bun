@@ -608,7 +608,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  // Restore spies and clear call history; neither call resets the mock.module() override
+  // Restore spies and undo the mock.module() call from beforeEach, then clear call history
   mock.restore();
   mock.clearAllMocks();
 });

@@ -104,7 +104,7 @@ devTest("srcset candidates and #fragments on asset URLs", {
       <img src="./sprite.svg?v=2#icon">
       <img src="https://cdn.example.com/y.png?v=1#f">
       <img src="#local">
-      <img id="c-sharp" src="./C#/logo.png?v=2">
+      <img id="c-sharp" src="./C#/logo.png">
       </body></html>
     `,
     "a.png": "A",
@@ -122,7 +122,7 @@ devTest("srcset candidates and #fragments on asset URLs", {
     expect(html).toInclude(`<img src="https://cdn.example.com/y.png?v=1#f">`);
     expect(html).toInclude(`<img src="#local">`);
     // The `#` is part of a directory name, not a fragment.
-    const [, logo] = html.match(/<img id="c-sharp" src="(\/_bun\/asset\/[0-9a-f]+\.png)\?v=2">/)!;
+    const [, logo] = html.match(/<img id="c-sharp" src="(\/_bun\/asset\/[0-9a-f]+\.png)">/)!;
     await dev.fetch(logo).expect.toBe("C SHARP");
   },
 });

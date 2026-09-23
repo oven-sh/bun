@@ -11,7 +11,7 @@ use bun_threading::thread_pool::Task as ThreadPoolLibTask;
 use lol_html::HandlerResult;
 use lol_html::html_content::{ContentType, Element, EndTag};
 
-use crate::HTMLScanner::{HTMLProcessor, HTMLProcessorHandler, UrlAction, suffix_starts};
+use crate::HTMLScanner::{HTMLProcessor, HTMLProcessorHandler, UrlAction, url_suffix};
 use crate::linker_context_mod::{GenerateChunkCtx, LinkerContext, debug};
 use crate::options::Loader;
 use crate::{Chunk, CompileResult};
@@ -138,13 +138,21 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
         } else {
             Loader::File
         };
-        // `original_path` ends with what the scan pass took as the file; the rest of `url` goes back on the new URL.
-        let suffix_start = suffix_starts(url)
-            .rev()
-            .find(|&i| import_record.original_path.ends_with(&url[..i]))
-            .or_else(|| suffix_starts(url).next())
-            .unwrap_or(url.len());
-        let suffix = &url[suffix_start..];
+        // The resolver found `./sprite.svg` for `./sprite.svg#icon`, so `#icon` goes back on the new URL. In `./C#/logo.png` it is part of the path.
+        let resolved_path = if import_record.source_index.is_valid() {
+            parse_graph.input_files.items_source()[import_record.source_index.get() as usize]
+                .path
+                .text
+        } else {
+            import_record.path.text
+        };
+        let suffix = url_suffix(url);
+        let suffix_is_path = resolved_path.len() >= suffix.len()
+            && resolved_path[resolved_path.len() - suffix.len()..]
+                .iter()
+                .zip(suffix)
+                .all(|(&a, &b)| a == b || (b == b'/' && a == b'\\'));
+        let suffix = if suffix_is_path { b"" } else { suffix };
 
         if import_record
             .flags

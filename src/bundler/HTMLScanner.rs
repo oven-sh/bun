@@ -75,12 +75,12 @@ pub(crate) fn is_external_url(url: &[u8]) -> bool {
         .any(|prefix| url.starts_with(prefix.as_bytes()))
 }
 
-/// Where the `?query#fragment` of a local `url` can begin, then its end. `?` and `#` are also legal in file names.
-pub(crate) fn suffix_starts(url: &[u8]) -> impl DoubleEndedIterator<Item = usize> + '_ {
-    let end = if is_external_url(url) { 0 } else { url.len() };
-    (1..end)
-        .filter(|&i| matches!(url[i], b'?' | b'#'))
-        .chain([url.len()])
+/// The `?query#fragment` of a local URL: `?v=2#icon` for `./sprite.svg?v=2#icon`, nothing for `https://x/y?z` or `#icon`.
+pub(crate) fn url_suffix(url: &[u8]) -> &[u8] {
+    match strings::index_of_any(url, b"?#") {
+        Some(i) if i > 0 && !is_external_url(url) => &url[i..],
+        _ => b"",
+    }
 }
 
 const HTML_WHITESPACE: &[u8] = b" \t\n\r\x0c";
@@ -129,33 +129,12 @@ impl Iterator for SrcsetUrls<'_> {
 }
 
 impl<'a> HTMLScanner<'a> {
-    /// Whether `url`, read as a path from the project root (`/x`) or from this file's directory, is on disk.
-    fn exists_on_disk(&self, url: &[u8]) -> bool {
-        let (dir, path) = match url {
-            [b'/', path @ ..] => (fs::FileSystem::instance().top_level_dir, path),
-            _ => (
-                resolve_path::dirname::<platform::Auto>(self.source.path.text()),
-                url,
-            ),
-        };
-        !dir.is_empty()
-            && sys::exists_z(resolve_path::join_abs_string_z::<platform::Auto>(
-                dir,
-                &[path],
-            ))
-    }
-
     fn create_import_record(&mut self, url: &[u8], kind: ImportKind) -> Result<(), Error> {
-        // The shortest path on disk is the file (`./C#/logo.png?v=2`). Else the URL rule: cut at the first `?` or `#`.
-        let first = suffix_starts(url).next().unwrap_or(url.len());
-        let start = if first == url.len() {
-            first
-        } else {
-            suffix_starts(url)
-                .find(|&i| self.exists_on_disk(&url[..i]))
-                .unwrap_or(first)
+        // The resolver retries without `?query#fragment` for assets and stylesheets only; a bundled script has no use for its `?v=3`.
+        let input_path = match strings::index_of_char_usize(url, b'?') {
+            Some(query) if kind == ImportKind::Stmt && !is_external_url(url) => &url[..query],
+            _ => url,
         };
-        let input_path = &url[..start];
         // In HTML, sometimes people do /src/index.js
         // In that case, we don't want to use the absolute filesystem path, we want to use the path relative to the project root
         let path_to_use: &[u8] = if is_external_url(url) {

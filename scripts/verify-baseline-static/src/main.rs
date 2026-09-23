@@ -153,9 +153,10 @@ fn is_harmless_on_nehalem(insn: &Instruction) -> bool {
     }
 
     // CLDEMOTE encodes in hint/NOP space (0f 1c /0) and is architecturally
-    // treated as a NOP on CPUs that don't enumerate it (SDM vol. 2A). Newer
-    // UCRT string routines (e.g. strpbrk) emit it unconditionally as a cache
-    // hint; on Nehalem it NOPs and the routine behaves identically.
+    // treated as a NOP on CPUs that don't enumerate it (SDM vol. 2A). Only
+    // ever observed as a data-in-.text misdecode (the CRT strspn family's
+    // switch-table RVAs, same as RTM below), but the hint-space encoding
+    // makes it harmless regardless of provenance.
     if insn.mnemonic() == Mnemonic::Cldemote {
         return true;
     }
@@ -172,9 +173,15 @@ fn is_allowed(feat: CpuidFeature) -> bool {
 /// instruction from a defunct or privileged ISA extension.
 ///
 /// 3DNow! was removed from silicon by 2010. SMM's RSM is ring-0. Cyrix/Geode/
-/// Padlock never had a mainstream toolchain. No compiler targeting x86-64 in
-/// any configuration emits these — their presence in a scan means a linear
-/// sweep walked through inline data.
+/// Padlock never had a mainstream toolchain. TSX (RTM XBEGIN/XABORT/XEND,
+/// and XTEST which iced tags HLE_or_RTM) is never compiler-emitted without
+/// `_xbegin()` intrinsics, no Bun dependency uses it, and Intel deprecated it
+/// (SDM vol. 1 2.5: future parts drop it; existing parts disable it via
+/// microcode for TAA). When a scan sees RTM it is the MSVC CRT's inline RVA
+/// jump tables decoding as `C7 F8` XBEGIN / `C6 F8` XABORT — see the
+/// strcspn/strspn/strpbrk note in allowlist-x64-windows.txt. No compiler
+/// targeting x86-64 in any configuration emits these — their presence in a
+/// scan means a linear sweep walked through inline data.
 ///
 /// MSVC inlines jump tables in .text (LLVM puts them in .rodata), so this
 /// matters on PE more than ELF.
@@ -200,6 +207,8 @@ fn is_impossible_feature(feat: CpuidFeature) -> bool {
             | F::PADLOCK_RNG
             | F::PADLOCK_GMI
             | F::PADLOCK_UNDOC
+            | F::RTM
+            | F::HLE_or_RTM
     )
 }
 
@@ -736,14 +745,40 @@ fn scan_x86_64(bytes: &[u8], sec_addr: u64, syms: &[Sym], allowlist: &Allowlist)
     let mut allowlisted = Buckets::new();
     let mut total_insns = 0u64;
 
-    // Linear sweep. iced handles variable-length encoding; on undecodable
-    // bytes (data-in-text) it returns Code::INVALID and we skip. False
-    // positives from data-in-text are rare in practice — LLVM puts jump
-    // tables in .rodata, not inline.
+    // Linear sweep, resynchronised at every symbol start. iced handles
+    // variable-length encoding; on undecodable bytes it returns Code::INVALID
+    // and we skip. Data in .text (JSC's LLInt puts a 4-byte opcode id in front
+    // of every llint_op_* label; hand-written asm occasionally has constants
+    // after a ret) desyncs a pure linear sweep, and what the following bytes
+    // then decode as depends on link layout. Every symbol start is a real
+    // instruction boundary, so an instruction that would straddle one is
+    // garbage: drop it and restart decoding at the symbol.
+    let sec_end = sec_addr + bytes.len() as u64;
+    let mut starts: Vec<u64> = syms
+        .iter()
+        .map(|s| s.addr)
+        .filter(|&a| a > sec_addr && a < sec_end)
+        .collect();
+    starts.sort_unstable();
+    starts.dedup();
+    let mut next_start = 0usize;
+
     let mut decoder = Decoder::with_ip(64, bytes, sec_addr, DecoderOptions::NONE);
     let mut insn = Instruction::default();
     while decoder.can_decode() {
         decoder.decode_out(&mut insn);
+        let (ip, next_ip) = (insn.ip(), decoder.ip());
+        while next_start < starts.len() && starts[next_start] <= ip {
+            next_start += 1;
+        }
+        if next_start < starts.len() && starts[next_start] < next_ip {
+            let resync = starts[next_start];
+            decoder
+                .set_position((resync - sec_addr) as usize)
+                .expect("symbol start inside section");
+            decoder.set_ip(resync);
+            continue;
+        }
         if insn.is_invalid() {
             continue;
         }

@@ -1,6 +1,6 @@
 import assert from "node:assert";
 import util from "node:util";
-import { CodeStyle, Type } from "./base";
+import { type CodeStyle, Type } from "./base.ts";
 
 export const bool = new (class extends Type {
   /** Converts to a boolean, as if by calling `Boolean`. */

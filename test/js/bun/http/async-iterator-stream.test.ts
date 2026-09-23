@@ -12,7 +12,7 @@ describe.concurrent("Streaming body via", () => {
           yield "Hello, ";
           await Bun.sleep(30);
           yield Buffer.from("world!");
-          return "!";
+          return "not a chunk";
         });
       },
     });
@@ -23,7 +23,7 @@ describe.concurrent("Streaming body via", () => {
       chunks.push(chunk);
     }
 
-    expect(Buffer.concat(chunks).toString()).toBe("Hello, world!!");
+    expect(Buffer.concat(chunks).toString()).toBe("Hello, world!");
     expect(chunks).toHaveLength(2);
   });
 
@@ -81,6 +81,83 @@ describe.concurrent("Streaming body via", () => {
     expect(exitCode).toBe(0);
   });
 
+  // An error from the generator with one of these codes reaches the consumer like any other error,
+  // whether the generator throws it or a native call in the generator does. The upload throws once
+  // its request is at the server, so the server sees an aborted body and not a complete one. text()
+  // and read() keep nothing alive: one that never settles shows up as a missing outcome.
+  test.each([
+    ["ERR_INVALID_STATE", "const locked = new ReadableStream(); locked.getReader(); await locked.cancel();"],
+    ["ERR_INVALID_THIS", "ReadableStream.prototype.tee.call({});"],
+  ])("an %s error from the generator rejects the body", async (code, nativeThrow) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `async function* coded(gate) {
+          yield "first;";
+          await gate;
+          throw Object.assign(new TypeError("coded"), { code: "${code}" });
+        }
+        async function* native(gate) {
+          yield "first;";
+          await gate;
+          ${nativeThrow}
+        }
+        async function drain(reader) {
+          while (!(await reader.read()).done);
+          return "drained";
+        }
+        const outcomes = {};
+        const record = (name, promise) =>
+          promise.then(v => (outcomes[name] = "resolved " + v), e => (outcomes[name] = "rejected " + e.code));
+        const atServer = { coded: Promise.withResolvers(), native: Promise.withResolvers() };
+        const requestBodies = [];
+        const server = Bun.serve({
+          port: 0,
+          async fetch(req) {
+            const name = new URL(req.url).pathname.slice(1);
+            atServer[name].resolve();
+            const body = req.text().then(text => "complete, " + text.length + " bytes", () => "aborted");
+            requestBodies.push(body.then(v => (outcomes[name + " request body"] = v)));
+            await body;
+            return new Response("done");
+          },
+        });
+        const uploads = [];
+        for (const gen of [coded, native]) {
+          record(gen.name + " text()", new Response(gen()).text());
+          record(gen.name + " read()", drain(new Response(gen()).body.getReader()));
+          const body = gen(atServer[gen.name].promise);
+          uploads.push(
+            record(gen.name + " upload", fetch(server.url + gen.name, { method: "POST", body }).then(r => r.text())),
+          );
+        }
+        Promise.all(uploads)
+          .then(() => Promise.all(requestBodies))
+          .then(() => server.stop(true));
+        process.once("beforeExit", () => {
+          for (const name of Object.keys(outcomes).sort()) console.log(name + ": " + outcomes[name]);
+        });`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim().split(/\r?\n/)).toEqual([
+      `coded read(): rejected ${code}`,
+      "coded request body: aborted",
+      `coded text(): rejected ${code}`,
+      `coded upload: rejected ${code}`,
+      `native read(): rejected ${code}`,
+      "native request body: aborted",
+      `native text(): rejected ${code}`,
+      `native upload: rejected ${code}`,
+    ]);
+    expect(stderr).not.toContain(code);
+    expect(exitCode).toBe(0);
+  });
+
   test("an iterator returning thenables (non-native promises) streams", async () => {
     let n = 0;
     const iterator = {
@@ -114,10 +191,17 @@ describe.concurrent("Streaming body via", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("async generator function throws an error but continues to send the headers", async () => {
+  // The generator fails before producing any chunk. The status and headers
+  // were already committed to uWS, so the server closes the connection without
+  // a complete response instead of sending them with an empty body and a clean
+  // chunked terminator.
+  test("async generator function throws an error before its first chunk closes the connection", async () => {
+    let outcome: string | undefined;
     const onMessage = mock(async url => {
-      const response = await fetch(url);
-      expect(response.headers.get("X-Hey")).toBe("123");
+      outcome = await fetch(url).then(
+        response => `resolved ${response.status}`,
+        (err: any) => `rejected ${err.code}`,
+      );
       subprocess?.kill();
     });
 
@@ -132,6 +216,7 @@ describe.concurrent("Streaming body via", () => {
 
     let [exitCode, stderr] = await Promise.all([subprocess.exited, subprocess.stderr.text()]);
     expect(exitCode).toBeInteger();
+    expect(outcome).toBe("rejected ECONNRESET");
     expect(stderr).toContain("error: Oops");
     expect(onMessage).toHaveBeenCalledTimes(1);
   });
@@ -178,7 +263,7 @@ describe.concurrent("Streaming body via", () => {
             if (controller !== controller2 || typeof controller.sinkId !== "number") {
               throw new Error("Controller mismatch");
             }
-            return "!";
+            return "not a chunk";
           },
         });
       },
@@ -190,7 +275,7 @@ describe.concurrent("Streaming body via", () => {
       chunks.push(chunk);
     }
 
-    expect(Buffer.concat(chunks).toString()).toBe("my string goes here\nmy buffer goes here\nend!\n!");
+    expect(Buffer.concat(chunks).toString()).toBe("my string goes here\nmy buffer goes here\nend!\n");
     expect(chunks).toHaveLength(2);
   });
 
@@ -199,19 +284,17 @@ describe.concurrent("Streaming body via", () => {
       port: 0,
 
       async fetch(req) {
-        var hasRun = false;
+        const results = [
+          { value: "Hello, ", done: false },
+          { value: Buffer.from("world!"), done: false },
+          { value: Buffer.from("not a chunk"), done: true },
+        ];
         return new Response({
           [Symbol.asyncIterator]() {
             return {
               async next() {
                 await Bun.sleep(30);
-
-                if (hasRun) {
-                  return { value: Buffer.from("world!"), done: true };
-                }
-
-                hasRun = true;
-                return { value: "Hello, ", done: false };
+                return results.shift();
               },
             };
           },
@@ -226,8 +309,6 @@ describe.concurrent("Streaming body via", () => {
     }
 
     expect(Buffer.concat(chunks).toString()).toBe("Hello, world!");
-    // TODO:
-    // expect(chunks).toHaveLength(2);
   });
 
   test("yield", async () => {
@@ -239,6 +320,50 @@ describe.concurrent("Streaming body via", () => {
     });
 
     expect(await response.text()).toBe("hello");
+  });
+
+  // IteratorStepValue semantics, like `for await`, ReadableStream.from() and node: once `done`
+  // is true the result's `value` is the iterator's return value, not a chunk of the body.
+  describe("the value of a done result is not part of the body", () => {
+    async function* gen() {
+      yield "chunk;";
+      return "RETURN-VALUE";
+    }
+
+    test("async generator return value", async () => {
+      expect(await new Response(gen()).text()).toBe("chunk;");
+      expect(await new Response(gen).text()).toBe("chunk;");
+      expect(await new Request("https://example.com", { method: "POST", body: gen() }).text()).toBe("chunk;");
+    });
+
+    test("hand-written async iterator", async () => {
+      let i = 0;
+      const body = {
+        [Symbol.asyncIterator]: () => ({
+          next: async () => (i++ === 0 ? { value: "a", done: false } : { value: "X", done: true }),
+        }),
+      };
+      expect(await new Response(body).text()).toBe("a");
+    });
+
+    test("sync generator under Symbol.asyncIterator", async () => {
+      const body = {
+        [Symbol.asyncIterator]: function* () {
+          yield "s1";
+          return "SYNC-RETURN";
+        },
+      };
+      expect(await new Response(body).text()).toBe("s1");
+    });
+
+    test("Bun.serve response body", async () => {
+      using server = Bun.serve({
+        port: 0,
+        fetch: () => new Response(gen()),
+      });
+      const res = await fetch(server.url);
+      expect(await res.text()).toBe("chunk;");
+    });
   });
 
   const callbacks = [
@@ -272,7 +397,8 @@ describe.concurrent("Streaming body via", () => {
       fn: async function* () {
         yield '"Hello, ';
         await 42;
-        return Buffer.from('world! #4"');
+        yield Buffer.from('world! #4"');
+        return "not a chunk";
       },
       expected: '"Hello, world! #4"',
     },

@@ -28,8 +28,10 @@
 // `Bun.sleep(5)` yield so the kernel flushes the first segment and the
 // fetch client's HTTP thread consumes it before the second segment lands.
 
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tls as tlsCert } from "harness";
+import { once } from "node:events";
+import net from "node:net";
 
 // Give the subprocess headroom on slow ASAN CI machines — the combined
 // setup (Bun.serve TLS + net.createServer + fetch TLS handshake) runs
@@ -175,3 +177,79 @@ test("fetch through CONNECT proxy with split 200 envelope surfaces upstream resp
   });
   expect(exitCode).toBe(0);
 }, 30_000);
+
+// `handle_on_data_headers` mem::take's the header accumulation buffer into a
+// local so `to_read` is a plain borrow. These pin the behaviour of the three
+// paths the buffer must survive: the short-read put-back, 1xx interim responses
+// consumed from the accumulated buffer, and a chunked body in the same read as
+// the end of the header block (now always copied into the 16 KiB scratch rather
+// than decoded in place).
+describe("handle_on_data_headers split-read header accumulation", () => {
+  async function serveSplit(splitAt: number | "bytes", wire: string): Promise<Response> {
+    const server = net.createServer(socket => {
+      socket.setNoDelay(true);
+      socket.once("data", async () => {
+        if (splitAt === "bytes") {
+          for (let i = 0; i < wire.length; i++) {
+            socket.write(wire[i]);
+            await new Promise(r => setImmediate(r));
+          }
+        } else {
+          socket.write(wire.slice(0, splitAt));
+          await Bun.sleep(5);
+          socket.write(wire.slice(splitAt));
+        }
+        socket.end();
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as net.AddressInfo;
+    try {
+      return await fetch(`http://127.0.0.1:${port}/`, { keepalive: false });
+    } finally {
+      server.close();
+    }
+  }
+
+  test.concurrent("byte-by-byte headers with a leading 100 Continue", async () => {
+    const res = await serveSplit(
+      "bytes",
+      "HTTP/1.1 100 Continue\r\n\r\n" + "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 5\r\n\r\nhello",
+    );
+    expect({ status: res.status, ct: res.headers.get("content-type"), body: await res.text() }).toEqual({
+      status: 200,
+      ct: "text/plain",
+      body: "hello",
+    });
+  });
+
+  test.concurrent("multiple 1xx responses accumulated across reads then final 204", async () => {
+    const interim = "HTTP/1.1 102 Processing\r\n\r\n";
+    // Split lands mid-second-interim so the second read must be appended to the
+    // already-buffered tail before the loop can consume both and the 204.
+    const res = await serveSplit(
+      interim.length + 10,
+      interim + interim + "HTTP/1.1 204 No Content\r\nX-Foo: bar\r\n\r\n",
+    );
+    expect({ status: res.status, xfoo: res.headers.get("x-foo"), body: await res.text() }).toEqual({
+      status: 204,
+      xfoo: "bar",
+      body: "",
+    });
+  });
+
+  test.concurrent("chunked body in the same read as the buffered header tail", async () => {
+    // Split at 30 so the first read buffers a partial header block and the
+    // second read brings the rest of the headers plus the whole chunked body in
+    // one on_data() call, so the body is decoded out of the accumulation buffer.
+    const res = await serveSplit(30, "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n");
+    expect({ status: res.status, body: await res.text() }).toEqual({ status: 200, body: "hello" });
+  });
+
+  test.concurrent("content-length body in the same read as the buffered header tail", async () => {
+    // Non-chunked single-packet body: handle_response_body_from_single_packet
+    // with the body bytes coming from the accumulation buffer.
+    const res = await serveSplit(30, "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello");
+    expect({ status: res.status, body: await res.text() }).toEqual({ status: 200, body: "hello" });
+  });
+});

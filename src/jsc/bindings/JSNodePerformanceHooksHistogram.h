@@ -110,12 +110,6 @@ public:
         int64_t highest,
         int figures);
 
-    static JSNodePerformanceHooksHistogram* create(
-        JSC::VM& vm,
-        JSC::Structure* structure,
-        JSC::JSGlobalObject* globalObject,
-        HistogramData&& existingHistogramData);
-
     void finishCreation(JSC::VM& vm);
     static void destroy(JSC::JSCell*);
 
@@ -133,12 +127,7 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<JSNodePerformanceHooksHistogram, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForJSNodePerformanceHooksHistogram.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSNodePerformanceHooksHistogram = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForJSNodePerformanceHooksHistogram.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSNodePerformanceHooksHistogram = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<JSNodePerformanceHooksHistogram, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSNodePerformanceHooksHistogram, m_subspaceForJSNodePerformanceHooksHistogram));
     }
 
     JSNodePerformanceHooksHistogram(JSC::VM& vm, JSC::Structure* structure, HistogramData&& histogramData)

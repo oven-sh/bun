@@ -10,34 +10,15 @@ use super::source_map_store::{self, RemoveOrUpgradeMode};
 use super::{ConsoleLogKind, DevServer, HmrTopic, IncomingMessageId, MessageId};
 use crate::bake::dev_server_body::HmrTopicBits;
 
-// Shared with `DevServer::on_web_socket_upgrade`.
-// The trait lives in `dev_server/mod.rs`; only the dev server needs it.
-pub(crate) use super::ResponseLike;
-
 // Struct definition lives in `dev_server/mod.rs` so the public
 // `crate::bake::dev_server::HmrSocket` path and these impl blocks name a
 // single type (no cross-type pointer casts).
 pub(crate) use super::HmrSocket;
 
 impl HmrSocket {
-    // `res` is generic — only `.get_remote_socket_info()` is called on it.
-    // Bound matches the caller in `DevServer::on_web_socket_upgrade`.
-    pub fn new<R>(dev: &mut DevServer, res: &mut R) -> Box<HmrSocket>
-    where
-        R: ResponseLike,
-    {
-        let is_from_localhost = if let Some(addr) = res.get_remote_socket_info() {
-            if addr.is_ipv6 {
-                &addr.ip[..] == b"::1"
-            } else {
-                &addr.ip[..] == b"127.0.0.1"
-            }
-        } else {
-            false
-        };
+    pub(crate) fn new(dev: &mut DevServer) -> Box<HmrSocket> {
         Box::new(HmrSocket {
             dev: bun_ptr::BackRef::new_mut(dev),
-            is_from_localhost,
             subscriptions: HmrTopicBits::empty(),
             active_route: None,
             referenced_source_maps: HashMap::default(),
@@ -61,7 +42,7 @@ impl HmrSocket {
         unsafe { &mut *self.dev.as_ptr() }
     }
 
-    pub fn on_open(&mut self, ws: AnyWebSocket) {
+    pub(crate) fn on_open(&mut self, ws: AnyWebSocket) {
         // SAFETY: JS-thread only; sole `&mut DevServer` for this scope. Derived
         // via the BackRef accessor (lifetime-detached from `&self`) so we can
         // assign `self.underlying` below while `dev` is still live.
@@ -82,7 +63,7 @@ impl HmrSocket {
         }
     }
 
-    pub fn on_message(&mut self, ws: AnyWebSocket, msg: &[u8], _opcode: Opcode) {
+    pub(crate) fn on_message(&mut self, ws: AnyWebSocket, msg: &[u8], _opcode: Opcode) {
         if msg.is_empty() {
             return ws.close();
         }
@@ -148,7 +129,7 @@ impl HmrSocket {
                                         // lives in `RuntimeState` (see jsc_hooks.rs).
                                         let state = crate::jsc_hooks::runtime_state();
                                         let next = bun_core::Timespec::ms_from_now(
-                                            bun_core::TimespecMockMode::AllowMockedTime,
+                                            bun_core::TimespecMockMode::ForceRealTime,
                                             1000,
                                         );
                                         // SAFETY: `runtime_state()` is non-null after
@@ -177,17 +158,20 @@ impl HmrSocket {
             }
             x if x == IncomingMessageId::SetUrl as u8 => {
                 let pattern = &msg[1..];
+                // `match_slow` requires an absolute path; these are peer bytes.
+                if pattern.first() != Some(&b'/') {
+                    return ws.close();
+                }
                 // SAFETY: JS-thread only; sole `&mut DevServer` for this scope.
                 let dev = unsafe { self.dev() };
                 let maybe_rbi = dev.route_to_bundle_index_slow(pattern);
                 if let Some(agent) = dev.inspector() {
                     if self.inspector_connection_id > -1 {
-                        let mut pattern_str = bun_core::String::init(pattern);
-                        // `defer pattern_str.deref()` → Drop on bun_core::String
+                        let pattern_str = bun_core::String::from_bytes(pattern);
                         agent.notify_client_navigated(
                             dev.inspector_server_id,
                             self.inspector_connection_id,
-                            &mut pattern_str,
+                            &pattern_str,
                             maybe_rbi.map(|i| i.get() as i32).unwrap_or(-1),
                         );
                     }
@@ -224,36 +208,29 @@ impl HmrSocket {
                             );
                         }
                     }
-                    super::TestingBatchEvents::EnableAfterBundle => {
-                        // do not expose a websocket event that panics a release build
-                        debug_assert!(false);
+                    super::TestingBatchEvents::EnableAfterBundle
+                    | super::TestingBatchEvents::ReleaseAfterBundle(_) => {
+                        // A duplicate `H` is a protocol violation, not an invariant.
                         ws.close();
                     }
                     super::TestingBatchEvents::Enabled(_event_const) => {
                         // Replace-and-extract to satisfy borrowck.
-                        let super::TestingBatchEvents::Enabled(mut event) = core::mem::replace(
+                        let super::TestingBatchEvents::Enabled(batch) = core::mem::replace(
                             &mut dev.testing_batch_events,
                             super::TestingBatchEvents::Disabled,
                         ) else {
                             unreachable!()
                         };
-                        let _ = &mut event;
 
-                        if event.entry_points.set.count() == 0 {
-                            dev.publish(
-                                HmrTopic::TestingWatchSynchronization,
-                                &[MessageId::TestingWatchSynchronization.char(), 2],
-                                bun_uws::Opcode::BINARY,
-                            );
+                        // An unbundled route's request can start a bundle;
+                        // `start_async_bundle` requires none in flight.
+                        if dev.current_bundle.is_some() {
+                            dev.testing_batch_events =
+                                super::TestingBatchEvents::ReleaseAfterBundle(batch);
                             return;
                         }
 
-                        let timer = std::time::Instant::now();
-                        dev.start_async_bundle(event.entry_points, true, timer)
-                            // bun.handleOom(err) — Rust aborts on OOM by default
-                            .expect("OOM");
-
-                        // `event.entry_points.deinit(allocator)` → Drop handles this
+                        dev.release_testing_batch(batch);
                     }
                 }
             }
@@ -277,9 +254,8 @@ impl HmrSocket {
                 let dev = unsafe { self.dev() };
 
                 if let Some(agent) = dev.inspector() {
-                    let mut log_str = bun_core::String::init(data);
-                    // `defer log_str.deref()` → Drop on bun_core::String
-                    agent.notify_console_log(dev.inspector_server_id, kind as u8, &mut log_str);
+                    let log_str = bun_core::String::from_bytes(data);
+                    agent.notify_console_log(dev.inspector_server_id, kind as u8, &log_str);
                 }
 
                 if dev.broadcast_console_log_from_browser_to_server {
@@ -328,7 +304,7 @@ impl HmrSocket {
             }
             if field.contains(HmrTopic::MemoryVisualizer.as_bit()) {
                 dev.emit_memory_visualizer_events -= 1;
-                if dev.emit_incremental_visualizer_events == 0
+                if dev.emit_memory_visualizer_events == 0
                     && dev.memory_visualizer_timer.state == EventLoopTimerState::ACTIVE
                 {
                     // Note (jsc/runtime crate cycle): `vm.timer` is `()` on the low-tier

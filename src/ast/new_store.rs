@@ -7,9 +7,6 @@
 //! Similarly to an arena, you can call .reset() to reset state, reusing memory
 //! across operations.
 
-// Scope name distinct from the macro-generated `struct Store`.
-::bun_core::declare_scope!(STORE_LOG, hidden);
-
 /// Compile-time membership check for
 /// the type list of a `new_store!`-generated store.
 ///
@@ -87,8 +84,6 @@ macro_rules! new_store {
                 /// otherwise points into the `head` chain and stays valid until
                 /// `destroy()`.
                 current: *mut Block,
-                #[cfg(debug_assertions)]
-                debug_lock: ::core::cell::Cell<bool>,
             }
 
             // `buffer` needs `align(LARGEST_ALIGN)` but `#[repr(align(N))]`
@@ -210,8 +205,6 @@ macro_rules! new_store {
                     bun_core::heap::into_raw(Box::new(Store {
                         head: None,
                         current: ::core::ptr::null_mut(),
-                        #[cfg(debug_assertions)]
-                        debug_lock: ::core::cell::Cell::new(false),
                     }))
                 }
 
@@ -324,26 +317,6 @@ macro_rules! new_store {
                     ptr
                 }
 
-                pub fn lock(store: &Store) {
-                    #[cfg(debug_assertions)]
-                    {
-                        debug_assert!(!store.debug_lock.get());
-                        store.debug_lock.set(true);
-                    }
-                    #[cfg(not(debug_assertions))]
-                    let _ = store;
-                }
-
-                pub fn unlock(store: &Store) {
-                    #[cfg(debug_assertions)]
-                    {
-                        debug_assert!(store.debug_lock.get());
-                        store.debug_lock.set(false);
-                    }
-                    #[cfg(not(debug_assertions))]
-                    let _ = store;
-                }
-
                 // Type-list membership is enforced by the
                 // `StoredIn<Store>` impls generated above `impl Block`.
             }
@@ -396,7 +369,7 @@ macro_rules! thread_local_ast_store {
             /// always restores the previous value before its frame returns.
             #[thread_local]
             pub(crate) static MEMORY_ALLOCATOR: Cell<
-                Option<::bun_ptr::BackRef<$crate::ASTMemoryAllocator>>,
+                Option<::bun_ptr::BackRef<$crate::ASTMemoryAllocator, ::bun_ptr::Mut>>,
             > = Cell::new(None);
             #[thread_local]
             pub(crate) static DISABLE_RESET: Cell<bool> = Cell::new(false);
@@ -425,7 +398,9 @@ macro_rules! thread_local_ast_store {
             }
             #[inline]
             pub(crate) fn set_memory_allocator(p: *mut $crate::ASTMemoryAllocator) {
-                MEMORY_ALLOCATOR.set(::core::ptr::NonNull::new(p).map(::bun_ptr::BackRef::from));
+                MEMORY_ALLOCATOR.set(::core::ptr::NonNull::new(p).map(|nn|
+                    // SAFETY: `p` is the caller's live allocator with write provenance.
+                    unsafe { ::bun_ptr::BackRef::from_raw_mut(nn.as_ptr()) }));
             }
 
             pub fn create() {

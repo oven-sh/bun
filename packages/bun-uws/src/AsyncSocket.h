@@ -27,7 +27,6 @@
  * to signal error with -1 (which is how the entire UNIX syscalling is built). */
 
 #include <cstring>
-#include <iostream>
 
 #include "libusockets.h"
 #include "bun-usockets/src/internal/internal.h"
@@ -141,6 +140,17 @@ public:
         return getLoopData()->findCorkSlot(this) != LoopData::INVALID_CORK_SLOT;
     }
 
+    /* Sends what the cork buffer holds for this socket. The socket stays corked. */
+    void sendCorked() {
+        LoopData *loopData = getLoopData();
+        int slot = loopData->findCorkSlot(this);
+        if (slot == LoopData::INVALID_CORK_SLOT || loopData->getCorkSlot(slot)->offset == 0) {
+            return;
+        }
+        uncork();
+        cork();
+    }
+
     /* Returns a suitable buffer for temporary assemblation of send data */
     std::pair<char *, SendBufferAttribute> getSendBuffer(size_t size) {
         LoopData *loopData = getLoopData();
@@ -183,8 +193,24 @@ public:
 
     /* Returns the user space backpressure. */
     size_t getBufferedAmount() {
-        /* We return the actual amount of bytes in backbuffer, including pendingRemoval */
-        return getAsyncSocketData()->buffer.totalLength();
+        /* Unsent bytes; already-written bytes sitting behind the head cursor
+         * are not backpressure (maxBackpressure checks, drain progress). */
+        return getAsyncSocketData()->buffer.length();
+    }
+
+    /* Whether every byte handed to us_socket_write() has reached the kernel.
+     * For TLS, us_socket_write() can report a batch as written while its
+     * ciphertext still sits in the loop's spill slot (openssl.c
+     * ssl_flush_write_batch); the close-after-drain gates in HttpResponse /
+     * HttpContext must wait for that too. Kept separate from
+     * getBufferedAmount() so WebSocket's maxBackpressure policy and the
+     * JS-exposed bufferedAmount stay a plaintext count. */
+    bool hasFullyDrained() {
+        if (getAsyncSocketData()->buffer.length()) return false;
+        if constexpr (SSL) {
+            return us_socket_ssl_spill_pending((us_socket_t *) this) == 0;
+        }
+        return true;
     }
 
     /* Returns the text representation of an IPv4 or IPv6 address */
@@ -253,7 +279,7 @@ public:
             /* Check if we couldn't write the entire buffer */
             if ((unsigned int) written < buffer_len) {
                 /* Remove the successfully written data from the buffer */
-                asyncSocketData->buffer.erase((unsigned int) written);
+                asyncSocketData->buffer.erase((size_t) written);
 
                 /* If we wrote less than we attempted, the socket buffer is likely full
                 * likely is used as an optimization hint to the compiler
@@ -301,7 +327,7 @@ public:
             /* On failure return, otherwise continue down the function */
             if ((unsigned int) written < buffer_len) {
                 /* Update buffering (todo: we can do better here if we keep track of what happens to this guy later on) */
-                asyncSocketData->buffer.erase((unsigned int) written);
+                asyncSocketData->buffer.erase((size_t) written);
 
                 if (optionally) {
                     /* Thankfully we can exit early here */

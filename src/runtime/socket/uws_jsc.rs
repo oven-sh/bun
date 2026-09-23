@@ -32,12 +32,17 @@ impl StreamBufferExt for bun_uws_sys::us_socket::StreamBuffer {
     }
     #[inline]
     fn write(&mut self, buffer: &[u8]) {
+        // Same rule as `bun_io::StreamBuffer::compact`.
+        if self.cursor > 0 && self.cursor >= self.list.len() - self.cursor {
+            self.list.drain(..self.cursor);
+            self.cursor = 0;
+        }
         self.list.extend_from_slice(buffer);
     }
 }
 
 // ── create_bun_socket_error_t.toJS / us_bun_verify_error_t.toJS ────────────
-pub fn create_bun_socket_error_to_js(
+pub(crate) fn create_bun_socket_error_to_js(
     this: create_bun_socket_error_t,
     global_object: &JSGlobalObject,
 ) -> JSValue {
@@ -71,13 +76,25 @@ pub fn create_bun_socket_error_to_js(
                 format_args!("Invalid ciphers"),
             )
             .to_js(),
+        create_bun_socket_error_t::invalid_crl => global_object
+            .err(
+                bun_jsc::ErrorCode::ERR_CRYPTO_OPERATION_FAILED,
+                format_args!("Failed to parse CRL"),
+            )
+            .to_js(),
+        create_bun_socket_error_t::invalid_ecdh_curve => global_object
+            .err(
+                bun_jsc::ErrorCode::ERR_CRYPTO_OPERATION_FAILED,
+                format_args!("Failed to set ECDH curve"),
+            )
+            .to_js(),
     }
 }
 
 // LAYERING: body sunk to `bun_jsc::system_error` so `bun_sql_jsc` (which this
 // crate depends on) shares the single canonical impl instead of carrying a
 // verbatim copy.
-pub use bun_jsc::system_error::verify_error_to_js;
+pub(crate) use bun_jsc::system_error::verify_error_to_js;
 
 // ── AnyWebSocket.getTopicsAsJSArray ────────────────────────────────────────
 // Declared inline; migrate into `bun_uws_sys` with the rest of the
@@ -112,7 +129,7 @@ pub(crate) fn any_web_socket_get_topics_as_js_array(
 /// `socket` and `buffer` must be valid, non-null pointers for the duration of the call
 /// (guaranteed by the C++ caller `JSNodeHTTPServerSocket.cpp`).
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn us_socket_buffered_js_write(
+unsafe extern "C" fn us_socket_buffered_js_write(
     socket: *mut us_socket_t,
     // kept for ABI parity with the C++ caller; TLS is now per-socket
     _ssl: bool,

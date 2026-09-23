@@ -31,6 +31,7 @@
 #include "CryptoAlgorithmHmacKeyParams.h"
 #include "CryptoKeyHMAC.h"
 #include <variant>
+#include <wtf/text/Base64.h>
 
 namespace WebCore {
 
@@ -44,7 +45,7 @@ static constexpr auto ALG512 = "HS512"_s;
 
 static inline bool usagesAreInvalidForCryptoAlgorithmHMAC(CryptoKeyUsageBitmap usages)
 {
-    return usages & (CryptoKeyUsageEncrypt | CryptoKeyUsageDecrypt | CryptoKeyUsageDeriveKey | CryptoKeyUsageDeriveBits | CryptoKeyUsageWrapKey | CryptoKeyUsageUnwrapKey);
+    return usages & (CryptoKeyUsageEncrypt | CryptoKeyUsageDecrypt | CryptoKeyUsageDeriveKey | CryptoKeyUsageDeriveBits | CryptoKeyUsageWrapKey | CryptoKeyUsageUnwrapKey | CryptoKeyUsageKemMask);
 }
 
 Ref<CryptoAlgorithm> CryptoAlgorithmHMAC::create()
@@ -78,7 +79,7 @@ void CryptoAlgorithmHMAC::generateKey(const CryptoAlgorithmParameters& parameter
     const auto& hmacParameters = downcast<CryptoAlgorithmHmacKeyParams>(parameters);
 
     if (usagesAreInvalidForCryptoAlgorithmHMAC(usages)) {
-        exceptionCallback(SyntaxError, ""_s);
+        exceptionCallback(SyntaxError, "Unsupported key usage for an HMAC key"_s);
         return;
     }
 
@@ -103,49 +104,114 @@ void CryptoAlgorithmHMAC::importKey(CryptoKeyFormat format, KeyData&& data, cons
     const auto& hmacParameters = downcast<CryptoAlgorithmHmacKeyParams>(parameters);
 
     if (usagesAreInvalidForCryptoAlgorithmHMAC(usages)) {
-        exceptionCallback(SyntaxError, ""_s);
+        // Node's import-path wording drops the article.
+        exceptionCallback(SyntaxError, "Unsupported key usage for HMAC key"_s);
+        return;
+    }
+
+    // Node validates HmacImportParams.length in its WebIDL converter.
+    if (hmacParameters.length && !*hmacParameters.length) {
+        exceptionCallback(DataError, "HmacImportParams.length cannot be 0"_s);
+        return;
+    }
+    if (hmacParameters.length && *hmacParameters.length % 8) {
+        exceptionCallback(NotSupportedError, "Unsupported HmacImportParams.length"_s);
         return;
     }
 
     RefPtr<CryptoKeyHMAC> result;
     switch (format) {
-    case CryptoKeyFormat::Raw:
-        result = CryptoKeyHMAC::importRaw(hmacParameters.length.value_or(0), hmacParameters.hashIdentifier, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
+    case CryptoKeyFormat::RawSecret:
+    case CryptoKeyFormat::Raw: {
+        auto& keyData = std::get<Vector<uint8_t>>(data);
+        if (keyData.isEmpty()) {
+            exceptionCallback(DataError, "Zero-length key is not supported"_s);
+            return;
+        }
+        if (hmacParameters.length && *hmacParameters.length != keyData.size() * 8) {
+            exceptionCallback(DataError, "Invalid key length"_s);
+            return;
+        }
+        result = CryptoKeyHMAC::importRaw(hmacParameters.length.value_or(0), hmacParameters.hashIdentifier, WTF::move(keyData), extractable, usages);
         break;
+    }
     case CryptoKeyFormat::Jwk: {
+        // Only reached with a non-null alg (the import arm checks first);
+        // no JWK alg spelling exists for the SHA3 hashes, so they fall
+        // through to the mismatch default.
         auto checkAlgCallback = [](CryptoAlgorithmIdentifier hash, const String& alg) -> bool {
             switch (hash) {
             case CryptoAlgorithmIdentifier::SHA_1:
-                return alg.isNull() || alg == ALG1;
+                return alg == ALG1;
             case CryptoAlgorithmIdentifier::SHA_224:
-                return alg.isNull() || alg == ALG224;
+                return alg == ALG224;
             case CryptoAlgorithmIdentifier::SHA_256:
-                return alg.isNull() || alg == ALG256;
+                return alg == ALG256;
             case CryptoAlgorithmIdentifier::SHA_384:
-                return alg.isNull() || alg == ALG384;
+                return alg == ALG384;
             case CryptoAlgorithmIdentifier::SHA_512:
-                return alg.isNull() || alg == ALG512;
-            case CryptoAlgorithmIdentifier::SHA3_256:
-            case CryptoAlgorithmIdentifier::SHA3_384:
-            case CryptoAlgorithmIdentifier::SHA3_512:
-                return alg.isNull();
+                return alg == ALG512;
             default:
                 return false;
             }
-            return false;
         };
-        result = CryptoKeyHMAC::importJwk(hmacParameters.length.value_or(0), hmacParameters.hashIdentifier, WTF::move(std::get<JsonWebKey>(data)), extractable, usages, WTF::move(checkAlgCallback));
+        auto& jwk = std::get<JsonWebKey>(data);
+        if (jwk.kty.isNull()) {
+            exceptionCallback(DataError, "Invalid keyData"_s);
+            return;
+        }
+        if (jwk.kty != "oct"_s) {
+            exceptionCallback(DataError, "Invalid JWK \"kty\" Parameter"_s);
+            return;
+        }
+        if (jwk.k.isNull()) {
+            exceptionCallback(DataError, "Invalid keyData"_s);
+            return;
+        }
+        // Node validates use/key_ops/ext before alg and the decoded key
+        // (verified against v26.3.0: a bad "use" wins over a bad "alg",
+        // a bad key, or a length mismatch).
+        if (usages && !jwk.use.isNull() && jwk.use != "sig"_s) {
+            exceptionCallback(DataError, "Invalid JWK \"use\" Parameter"_s);
+            return;
+        }
+        if (hasDuplicateJwkKeyOps(jwk.key_ops)) {
+            exceptionCallback(DataError, "Duplicate key operation"_s);
+            return;
+        }
+        if (jwk.key_ops && ((jwk.usages & usages) != usages)) {
+            exceptionCallback(DataError, "Key operations and usage mismatch"_s);
+            return;
+        }
+        if (jwk.ext && !jwk.ext.value() && extractable) {
+            exceptionCallback(DataError, "JWK \"ext\" Parameter and extractable mismatch"_s);
+            return;
+        }
+        if (!jwk.alg.isNull() && !checkAlgCallback(hmacParameters.hashIdentifier, jwk.alg)) {
+            exceptionCallback(DataError, "JWK \"alg\" does not match the requested algorithm"_s);
+            return;
+        }
+        // Node checks the decoded key's length for every format; its lenient
+        // base64url decode turns invalid input into an empty key.
+        auto keyBytes = base64URLDecode(jwk.k);
+        if (!keyBytes || keyBytes->isEmpty()) {
+            exceptionCallback(DataError, "Zero-length key is not supported"_s);
+            return;
+        }
+        if (hmacParameters.length && *hmacParameters.length != keyBytes->size() * 8) {
+            exceptionCallback(DataError, "Invalid key length"_s);
+            return;
+        }
+        result = CryptoKeyHMAC::importRaw(hmacParameters.length.value_or(0), hmacParameters.hashIdentifier, WTF::move(*keyBytes), extractable, usages);
         break;
     }
     default:
         exceptionCallback(NotSupportedError, ""_s);
         return;
     }
-    if (!result) {
-        exceptionCallback(DataError, ""_s);
-        return;
-    }
-
+    // Both importRaw nullptr conditions (empty key, length mismatch) are
+    // rejected with specific errors in the format arms above.
+    ASSERT(result);
     callback(*result);
 }
 
@@ -161,6 +227,7 @@ void CryptoAlgorithmHMAC::exportKey(CryptoKeyFormat format, Ref<CryptoKey>&& key
 
     KeyData result;
     switch (format) {
+    case CryptoKeyFormat::RawSecret:
     case CryptoKeyFormat::Raw:
         result = Vector<uint8_t>(hmacKey.key());
         break;

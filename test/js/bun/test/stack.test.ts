@@ -1,7 +1,6 @@
 import { $ } from "bun";
 import { expect, test } from "bun:test";
-import "harness";
-import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, bunRun, normalizeBunSnapshot } from "harness";
 import { join } from "node:path";
 
 test("name property is used for function calls in Error.stack", () => {
@@ -71,8 +70,8 @@ test.todo("name property is used for function calls in Bun.inspect with bound ob
   expect(WRONG()).toContain("at RIGHT");
 });
 
-test("err.line and err.column are set", () => {
-  expect([join(import.meta.dir, "err-stack-fixture.js")]).toRun(
+test("err.line and err.column are set", async () => {
+  expect(await bunRun(join(import.meta.dir, "err-stack-fixture.js"))).toSpawn(
     JSON.stringify(
       {
         line: 3,
@@ -82,7 +81,7 @@ test("err.line and err.column are set", () => {
       },
       null,
       2,
-    ) + "\n",
+    ),
   );
 });
 
@@ -106,6 +105,32 @@ test("throwing inside an error suppresses the error and prints the stack", async
   expect(exitCode).toBe(1);
 });
 
+test("uncaught error thrown from a data: URL module longer than a path buffer is annotated for GitHub Actions", async () => {
+  // Longer than a path buffer on every platform (98302 bytes on Windows).
+  const padding = 100_000;
+  const dataUrlModule = 'export default function fromDataUrl() { throw new Error("boom"); }//';
+  const base64 = btoa(dataUrlModule + Buffer.alloc(padding, "x").toString());
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const source = ${JSON.stringify(dataUrlModule)} + Buffer.alloc(${padding}, "x").toString();
+       const m = await import("data:text/javascript;base64," + btoa(source));
+       m.default();`,
+    ],
+    env: { ...bunEnv, GITHUB_ACTIONS: "true" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  const annotation = stderr.split("\n").find(line => line.startsWith("::error"));
+  expect(annotation).toStartWith(`::error file=data%3Atext/javascript;base64%2C${base64},line=1,col=`);
+  expect(annotation).toContain(`%0A      at fromDataUrl (data:text/javascript;base64,${base64}:1:`);
+  expect(exitCode).toBe(1);
+});
+
 test("throwing inside an error suppresses the error and continues printing properties on the object", async () => {
   $.throws(false);
   $.env(bunEnv);
@@ -116,7 +141,7 @@ test("throwing inside an error suppresses the error and continues printing prope
   expect(stderr.toString().trim()).toStartWith(`ENOENT: no such file or directory, open 'this-file-path-is-bad'
     path: "this-file-path-is-bad",
  syscall: "open",
-   errno: -2,
+   errno: ${process.binding("uv").UV_ENOENT},
     code: "ENOENT"
 `);
   expect(exitCode).toBe(1);

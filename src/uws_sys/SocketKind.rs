@@ -69,7 +69,7 @@ impl SocketKind {
     /// immediate UB in Rust, so this is an exhaustive match — LLVM folds the
     /// contiguous arms to a single range-check + reinterpret.
     #[inline]
-    pub fn from_u8(v: u8) -> Self {
+    pub(crate) fn from_u8(v: u8) -> Self {
         match v {
             0 => SocketKind::Invalid,
             1 => SocketKind::Dynamic,
@@ -97,23 +97,6 @@ impl SocketKind {
             _ => unreachable!("invalid SocketKind discriminant {v} from C"),
         }
     }
-
-    #[inline]
-    pub const fn is_tls(self) -> bool {
-        matches!(
-            self,
-            SocketKind::BunSocketTls
-                | SocketKind::BunListenerTls
-                | SocketKind::HttpClientTls
-                | SocketKind::WsClientUpgradeTls
-                | SocketKind::WsClientTls
-                | SocketKind::PostgresTls
-                | SocketKind::MysqlTls
-                | SocketKind::ValkeyTls
-                | SocketKind::UwsHttpTls
-                | SocketKind::UwsWsTls
-        )
-    }
 }
 
 // `unsigned char kind` on us_socket_t — full byte, not the flags bitfield.
@@ -125,16 +108,16 @@ impl SocketKind {
 /// side links against the Rust source of truth instead of mirroring literals
 /// that silently rot if this enum is reordered.
 #[unsafe(no_mangle)]
-pub(crate) static BUN_SOCKET_KIND_DYNAMIC: u8 = SocketKind::Dynamic as u8;
+static BUN_SOCKET_KIND_DYNAMIC: u8 = SocketKind::Dynamic as u8;
 #[unsafe(no_mangle)]
-pub(crate) static BUN_SOCKET_KIND_UWS_HTTP: u8 = SocketKind::UwsHttp as u8;
+static BUN_SOCKET_KIND_UWS_HTTP: u8 = SocketKind::UwsHttp as u8;
 #[unsafe(no_mangle)]
-pub(crate) static BUN_SOCKET_KIND_UWS_HTTP_TLS: u8 = SocketKind::UwsHttpTls as u8;
+static BUN_SOCKET_KIND_UWS_HTTP_TLS: u8 = SocketKind::UwsHttpTls as u8;
 #[unsafe(no_mangle)]
-pub(crate) static BUN_SOCKET_KIND_UWS_WS: u8 = SocketKind::UwsWs as u8;
+static BUN_SOCKET_KIND_UWS_WS: u8 = SocketKind::UwsWs as u8;
 #[unsafe(no_mangle)]
-pub(crate) static BUN_SOCKET_KIND_UWS_WS_TLS: u8 = SocketKind::UwsWsTls as u8;
+static BUN_SOCKET_KIND_UWS_WS_TLS: u8 = SocketKind::UwsWsTls as u8;
 /// Referenced from `openssl.c` so the new-session callback's per-SSL marker is
 /// only set for the sockets that actually surface the `'session'` event.
 #[unsafe(no_mangle)]
-pub(crate) static BUN_SOCKET_KIND_BUN_SOCKET_TLS: u8 = SocketKind::BunSocketTls as u8;
+static BUN_SOCKET_KIND_BUN_SOCKET_TLS: u8 = SocketKind::BunSocketTls as u8;

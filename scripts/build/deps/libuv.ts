@@ -9,11 +9,23 @@
  */
 
 import type { Dependency } from "../source.ts";
+import { LIBC_ALLOCATION_SYMBOLS } from "../source.ts";
 
-// Tip of oven-sh/libuv's `bun` branch — upstream f3ce527e + the win-pipe
-// CancelIoEx race fix + ConPTY support in uv_spawn. To bump upstream, rebase
-// the `bun` branch and update this SHA.
-const LIBUV_COMMIT = "4dcfac4780d394e0dc2d3fb30335ca01b553eb46";
+// Tip of oven-sh/libuv's `bun` branch: upstream f3ce527e + win-pipe CancelIoEx
+// fix, ConPTY uv_spawn, AppContainer pipe namespace (oven-sh/libuv#7), fs/tty
+// fixes (oven-sh/libuv#8), high-res poll timeouts (oven-sh/libuv#9),
+// FileModeInformation error return (oven-sh/libuv#10), error translation /
+// propagation audit fixes (oven-sh/libuv#11), uv_spawn returns an error
+// instead of aborting on AssignProcessToJobObject failure (oven-sh/libuv#12),
+// closes the process/thread handles on that error path (oven-sh/libuv#13), and
+// uv__split_path allocates with uv__malloc instead of _wcsdup so the buffer
+// can be uv__free'd under uv_replace_allocator (oven-sh/libuv#14), Winsock /
+// console-resize watcher / suspend-resume detection initialized on first use
+// instead of in uv__init, with uv__winsock_ensure() for callers that reach
+// ws2_32 directly (oven-sh/libuv#15), and LoadLibraryExW for those lazy
+// loads (oven-sh/libuv#16).
+// To bump, update `bun`.
+const LIBUV_COMMIT = "8023581113b276e7c1aee3f82da57ca0893faab1";
 
 // prettier-ignore
 const SHARED = [
@@ -67,6 +79,11 @@ export const libuv: Dependency = {
       "-Wno-int-conversion",
       "/wd4996",
     ],
+    // bun swaps in mimalloc with uv_replace_allocator (src/runtime/bin_entry/mod.rs), so
+    // everything has to allocate through uv__malloc and friends; uv-common.c
+    // is the default table that swap replaces. The one stray CRT call there
+    // was got uv__free'd and crashed (oven-sh/libuv#14).
+    forbidUndefined: { symbols: LIBC_ALLOCATION_SYMBOLS, except: ["src/uv-common.c"] },
   }),
 
   provides: () => ({

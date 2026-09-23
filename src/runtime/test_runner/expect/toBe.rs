@@ -7,7 +7,7 @@ use super::Expect;
 impl Expect {
     /// Object.is()
     #[bun_jsc::host_fn(method)]
-    pub fn to_be(
+    pub(crate) fn to_be(
         &self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
@@ -15,8 +15,7 @@ impl Expect {
         let (this, left, not) =
             self.matcher_prelude(global_this, callframe.this(), "toBe", "<green>expected<r>")?;
 
-        let arguments_ = callframe.arguments_old::<2>();
-        let arguments = arguments_.slice();
+        let arguments = callframe.arguments();
 
         if arguments.len() < 1 {
             return Err(global_this.throw_invalid_arguments(format_args!("toBe() takes 1 argument")));
@@ -81,7 +80,7 @@ impl Expect {
         }
 
         if right.is_string() && left.is_string() {
-            let diff_format = DiffFormatter { expected: Some(right), received: Some(left), expected_string: None, received_string: None, global_this: Some(global_this), not };
+            let diff_format = DiffFormatter::new(global_this, left, right, not)?;
             return throw!(this, global_this, signature, "\n\n{}\n", diff_format);
         }
 

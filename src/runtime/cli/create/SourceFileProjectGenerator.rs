@@ -1,5 +1,4 @@
 use crate::api::bun::process as bun_process;
-use crate::api::bun::process::SignalCodeExt as _;
 use crate::api::bun::process::sync as spawn_sync;
 use crate::cli::Command;
 use crate::cli::create_command::ExampleTag;
@@ -19,7 +18,7 @@ use bun_paths::resolve_path;
 use bun_sys::{self, Fd};
 
 // Generate project files based on the entry point and dependencies
-pub fn generate(
+pub(crate) fn generate(
     _ctx: &Command::Context,
     _example: ExampleTag,
     entry_point: &[u8],
@@ -213,10 +212,8 @@ fn run_install(argv: &mut Vec<&[u8]>) -> Result<(), crate::Error> {
         }
         bun_sys::Result::Ok(spawn_result) => {
             if !spawn_result.status.is_ok() {
-                if let Some(signal) = spawn_result.status.signal_code() {
-                    if let Some(exit_code) = signal.to_exit_code() {
-                        Global::exit(exit_code as u32);
-                    }
+                if let Some(exit_code) = spawn_result.status.signal().map(|s| s.to_exit_code()) {
+                    Global::exit(exit_code as u32);
                 }
 
                 if let bun_process::Status::Exited(exited) = spawn_result.status {
@@ -232,7 +229,7 @@ fn run_install(argv: &mut Vec<&[u8]>) -> Result<(), crate::Error> {
 }
 
 // Generate all project files from template
-pub fn generate_files(
+pub(crate) fn generate_files(
     entry_point: &[u8],
     dependencies: &[Box<[u8]>],
     dev_dependencies: &[&[u8]],
@@ -247,7 +244,7 @@ pub fn generate_files(
     }
 
     // Normalize file paths
-    let mut normalized_buf = bun_paths::PathBuffer::uninit();
+    let mut normalized_buf = bun_paths::path_buffer_pool::get();
     let mut normalized_name: &[u8] = if bun_paths::is_absolute(entry_point) {
         resolve_path::relative_normalized_buf::<path::platform::Loose, true>(
             &mut normalized_buf,
@@ -389,10 +386,10 @@ pub fn generate_files(
                     }
                     bun_sys::Result::Ok(spawn_result) => {
                         if !spawn_result.status.is_ok() {
-                            if let Some(signal) = spawn_result.status.signal_code() {
-                                if let Some(exit_code) = signal.to_exit_code() {
-                                    Global::exit(exit_code as u32);
-                                }
+                            if let Some(exit_code) =
+                                spawn_result.status.signal().map(|s| s.to_exit_code())
+                            {
+                                Global::exit(exit_code as u32);
                             }
 
                             if let bun_process::Status::Exited(exited) = spawn_result.status {
@@ -451,10 +448,8 @@ pub fn generate_files(
         }
         bun_sys::Result::Ok(spawn_result) => {
             if !spawn_result.status.is_ok() {
-                if let Some(signal) = spawn_result.status.signal_code() {
-                    if let Some(exit_code) = signal.to_exit_code() {
-                        Global::exit(exit_code as u32);
-                    }
+                if let Some(exit_code) = spawn_result.status.signal().map(|s| s.to_exit_code()) {
+                    Global::exit(exit_code as u32);
                 }
 
                 if let bun_process::Status::Exited(exited) = spawn_result.status {
@@ -612,7 +607,7 @@ fn get_shadcn_components(
 // Local wrapper for `bun.sys.exists([]const u8)` — bun_sys currently exposes
 // only `exists_z(&ZStr)`, so NUL-terminate via `resolve_path::z`.
 fn exists(path: &[u8]) -> bool {
-    let mut buf = bun_paths::PathBuffer::uninit();
+    let mut buf = bun_paths::path_buffer_pool::get();
     bun_sys::exists_z(resolve_path::z(path, &mut buf))
 }
 
@@ -763,11 +758,11 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
 // Disabled until Tailwind v4 is supported.
 const ENABLE_SHADCN_UI: bool = true;
 
-pub struct TemplateFile {
+pub(crate) struct TemplateFile {
     pub name: &'static [u8],
-    pub content: &'static [u8],
+    pub(crate) content: &'static [u8],
     pub reason: Reason,
-    pub overwrite: bool,
+    pub(crate) overwrite: bool,
 }
 
 impl TemplateFile {
@@ -802,7 +797,7 @@ pub enum Reason {
 }
 
 // Template for React + Tailwind project
-pub mod react_tailwind_spa {
+pub(crate) mod react_tailwind_spa {
     use super::*;
 
     pub(crate) const FILES: &[TemplateFile] = &[
@@ -841,7 +836,7 @@ const SHARED_PACKAGE_JSON: &[u8] = include_bytes!("projects/react-shadcn-spa/pac
 const SHARED_BUNFIG_TOML: &[u8] = include_bytes!("projects/react-shadcn-spa/bunfig.toml");
 
 // Template for basic React project
-pub mod react_spa {
+pub(crate) mod react_spa {
     use super::*;
 
     pub(crate) const FILES: &[TemplateFile] = &[
@@ -874,7 +869,7 @@ pub mod react_spa {
 }
 
 // Template for React + Shadcn project
-pub mod react_shadcn_spa {
+pub(crate) mod react_shadcn_spa {
     use super::*;
 
     pub(crate) const FILES: &[TemplateFile] = &[
@@ -931,28 +926,21 @@ pub mod react_shadcn_spa {
 // Template type to handle different project types
 #[derive(bun_core::EnumTag)]
 #[enum_tag(existing = Tag)]
-pub enum Template {
+pub(crate) enum Template {
     ReactTailwindSpa,
     ReactSpa,
     ReactShadcnSpa { components: StringSet },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Tag {
+pub(crate) enum Tag {
     ReactTailwindSpa,
     ReactSpa,
     ReactShadcnSpa,
 }
 
 impl Tag {
-    pub fn logger(self) -> Logger {
-        Logger {
-            template: self,
-            has_written_initial_message: false,
-        }
-    }
-
-    pub fn label(self) -> &'static [u8] {
+    pub(crate) fn label(self) -> &'static [u8] {
         match self {
             Tag::ReactTailwindSpa => b"React + Tailwind",
             Tag::ReactSpa => b"React",
@@ -960,7 +948,7 @@ impl Tag {
         }
     }
 
-    pub fn files(self) -> &'static [TemplateFile] {
+    pub(crate) fn files(self) -> &'static [TemplateFile] {
         match self {
             Tag::ReactTailwindSpa => react_tailwind_spa::FILES,
             Tag::ReactSpa => react_spa::FILES,
@@ -970,7 +958,7 @@ impl Tag {
 }
 
 impl Template {
-    pub(crate) fn logger(&self) -> Logger {
+    fn logger(&self) -> Logger {
         Logger {
             template: self.tag(),
             has_written_initial_message: false,
@@ -978,13 +966,13 @@ impl Template {
     }
 }
 
-pub struct Logger {
-    pub has_written_initial_message: bool,
-    pub template: Tag,
+pub(crate) struct Logger {
+    pub(crate) has_written_initial_message: bool,
+    pub(crate) template: Tag,
 }
 
 impl Logger {
-    pub fn file(&mut self, template_file: &TemplateFile, name: &[u8], max_name_len: usize) {
+    pub(crate) fn file(&mut self, template_file: &TemplateFile, name: &[u8], max_name_len: usize) {
         self.has_written_initial_message = true;
         bun_core::pretty!(" <green>create<r>  ");
         bun_core::pretty!("{}", bstr::BStr::new(name));
@@ -997,7 +985,7 @@ impl Logger {
         bun_core::prettyln!("   <d>{}<r>", <&'static str>::from(template_file.reason));
     }
 
-    pub fn if_new(&mut self) {
+    pub(crate) fn if_new(&mut self) {
         if !self.has_written_initial_message {
             return;
         }

@@ -698,6 +698,20 @@ fn js_class_hooks(args: &JsClassArgs, rust_ty: &Ident) -> TokenStream2 {
                     __create(global.as_mut_ptr(), ptr)
                 }
 
+                /// Safe sibling of [`to_js_ptr`] for `NonNull<Self>` handles.
+                /// The underlying `__create` extern is `safe fn`; `to_js_ptr`
+                /// is only marked `unsafe` to document the ownership-transfer
+                /// contract, which intrusive-refcounted callers uphold by
+                /// construction (the GC wrapper's `+1` is released in
+                /// `${T}Class__finalize`).
+                #[inline]
+                pub fn to_js_nonnull(
+                    ptr: ::core::ptr::NonNull<Self>,
+                    global: &::bun_jsc::JSGlobalObject,
+                ) -> ::bun_jsc::JSValue {
+                    __create(global.as_mut_ptr(), ptr.as_ptr())
+                }
+
                 /// Wrap an owned `Box<Self>` in a JS object. Typed sibling of
                 /// [`to_js_ptr`] — the boxed payload is leaked here and
                 /// reclaimed by `${T}Class__finalize`.
@@ -971,4 +985,47 @@ fn classify_uws_arg(ty: &syn::Type) -> UwsArg {
         }
     }
     UwsArg::PassThrough(ty.clone())
+}
+
+/// `#[derive(JsAffine)]` — the struct/enum may be (part of) a job's `Js`
+/// half (`bun_jsc::JobContext::Js`): every field must itself be
+/// `JsAffine`, which the expansion checks with one bound per field type, so
+/// a field that owns process memory (a `Vec`, a `Box`, a C library handle) is
+/// a compile error here rather than a leak-or-UAF decision at teardown.
+#[proc_macro_derive(JsAffine)]
+pub fn derive_js_affine(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as syn::DeriveInput);
+    let name = &input.ident;
+    let (impl_g, ty_g, where_g) = input.generics.split_for_impl();
+    let mut field_tys: Vec<&syn::Type> = Vec::new();
+    match &input.data {
+        syn::Data::Struct(s) => field_tys.extend(s.fields.iter().map(|f| &f.ty)),
+        syn::Data::Enum(e) => {
+            for v in &e.variants {
+                field_tys.extend(v.fields.iter().map(|f| &f.ty));
+            }
+        }
+        syn::Data::Union(u) => {
+            return syn::Error::new_spanned(u.union_token, "JsAffine: unions are not supported")
+                .to_compile_error()
+                .into();
+        }
+    }
+    let checks = field_tys.iter().map(|ty| {
+        quote! { __assert_js_affine::<#ty>(); }
+    });
+    // The field checks sit in an associated const on the type itself, so its
+    // generic parameters are in scope and nothing is left unused.
+    quote! {
+        // SAFETY: every field is `JsAffine` (checked below).
+        unsafe impl #impl_g ::bun_jsc::job::JsAffine for #name #ty_g #where_g {}
+        #[doc(hidden)]
+        impl #impl_g #name #ty_g #where_g {
+            pub const __JS_AFFINE_FIELDS: () = {
+                const fn __assert_js_affine<T: ?Sized + ::bun_jsc::job::JsAffine>() {}
+                #(#checks)*
+            };
+        }
+    }
+    .into()
 }

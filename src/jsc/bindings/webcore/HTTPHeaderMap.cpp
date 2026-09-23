@@ -33,7 +33,6 @@
 #include "HTTPHeaderMap.h"
 
 #include <utility>
-#include <wtf/CrossThreadCopier.h>
 #include <wtf/text/StringView.h>
 
 extern "C" size_t highway_index_of_first_ascii_upper(const uint8_t* input, size_t len);
@@ -80,24 +79,6 @@ HTTPHeaderMap::HTTPHeaderMap()
 {
 }
 
-HTTPHeaderMap HTTPHeaderMap::isolatedCopy() const&
-{
-    HTTPHeaderMap map;
-    map.m_commonHeaders = crossThreadCopy(m_commonHeaders);
-    map.m_uncommonHeaders = crossThreadCopy(m_uncommonHeaders);
-    map.m_setCookieHeaders = crossThreadCopy(m_setCookieHeaders);
-    return map;
-}
-
-HTTPHeaderMap HTTPHeaderMap::isolatedCopy() &&
-{
-    HTTPHeaderMap map;
-    map.m_commonHeaders = crossThreadCopy(WTF::move(m_commonHeaders));
-    map.m_uncommonHeaders = crossThreadCopy(WTF::move(m_uncommonHeaders));
-    map.m_setCookieHeaders = crossThreadCopy(WTF::move(m_setCookieHeaders));
-    return map;
-}
-
 String HTTPHeaderMap::get(const StringView name) const
 {
     HTTPHeaderName headerName;
@@ -133,27 +114,6 @@ String HTTPHeaderMap::getUncommonHeader(const StringView name) const
     });
     return index != notFound ? m_uncommonHeaders[index].value : String();
 }
-
-#if USE(CF)
-
-void HTTPHeaderMap::set(CFStringRef name, const String& value)
-{
-    // Fast path: avoid constructing a temporary String in the common header case.
-    if (auto* nameCharacters = CFStringGetCStringPtr(name, kCFStringEncodingASCII)) {
-        unsigned length = CFStringGetLength(name);
-        HTTPHeaderName headerName;
-        if (findHTTPHeaderName(StringView(nameCharacters, length), headerName))
-            set(headerName, value);
-        else
-            setUncommonHeader(String(nameCharacters, length), value);
-
-        return;
-    }
-
-    set(String(name), value);
-}
-
-#endif // USE(CF)
 
 void HTTPHeaderMap::set(const String& name, const String& value)
 {
@@ -216,30 +176,6 @@ void HTTPHeaderMap::add(const String& name, const String& value)
         m_uncommonHeaders.append(UncommonHeader { name, value });
     else
         m_uncommonHeaders[index].value = makeString(m_uncommonHeaders[index].value, ", "_s, value);
-}
-
-void HTTPHeaderMap::append(const String& name, const String& value)
-{
-    ASSERT(!contains(name));
-
-    HTTPHeaderName headerName;
-    if (findHTTPHeaderName(name, headerName)) {
-        if (headerName == HTTPHeaderName::SetCookie)
-            m_setCookieHeaders.append(value);
-        else
-            m_commonHeaders.append(CommonHeader { headerName, value });
-    } else {
-        m_uncommonHeaders.append(UncommonHeader { name, value });
-    }
-}
-
-bool HTTPHeaderMap::addIfNotPresent(HTTPHeaderName headerName, const String& value)
-{
-    if (contains(headerName))
-        return false;
-
-    m_commonHeaders.append(CommonHeader { headerName, value });
-    return true;
 }
 
 bool HTTPHeaderMap::contains(const StringView name) const

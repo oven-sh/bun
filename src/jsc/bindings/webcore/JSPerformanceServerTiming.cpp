@@ -21,7 +21,6 @@
 #include "config.h"
 #include "JSPerformanceServerTiming.h"
 
-#include "ActiveDOMObject.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "JSDOMAttribute.h"
@@ -65,7 +64,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSPerformanceServerTimingPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSPerformanceServerTimingPrototype* ptr = new (NotNull, JSC::allocateCell<JSPerformanceServerTimingPrototype>(vm)) JSPerformanceServerTimingPrototype(vm, globalObject, structure);
+        JSPerformanceServerTimingPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSPerformanceServerTimingPrototype))) JSPerformanceServerTimingPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -79,7 +78,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -104,11 +103,7 @@ template<> JSValue JSPerformanceServerTimingDOMConstructor::prototypeForStructur
 
 template<> void JSPerformanceServerTimingDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(0), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "PerformanceServerTiming"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSPerformanceServerTiming::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 0, "PerformanceServerTiming"_s, JSPerformanceServerTiming::prototype(vm, globalObject));
 }
 
 /* Hash table for prototype */
@@ -126,8 +121,8 @@ const ClassInfo JSPerformanceServerTimingPrototype::s_info = { "PerformanceServe
 void JSPerformanceServerTimingPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSPerformanceServerTiming::info(), JSPerformanceServerTimingPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSPerformanceServerTiming::info(), JSPerformanceServerTimingPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSPerformanceServerTiming::s_info = { "PerformanceServerTiming"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformanceServerTiming) };
@@ -237,7 +232,7 @@ JSC_DEFINE_HOST_FUNCTION(jsPerformanceServerTimingPrototypeFunction_toJSON, (JSG
 
 JSC::GCClient::IsoSubspace* JSPerformanceServerTiming::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSPerformanceServerTiming, UseCustomHeapCellType::No>(vm, [](auto& spaces) { return spaces.m_clientSubspaceForPerformanceServerTiming.get(); }, [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForPerformanceServerTiming = std::forward<decltype(space)>(space); }, [](auto& spaces) { return spaces.m_subspaceForPerformanceServerTiming.get(); }, [](auto& spaces, auto&& space) { spaces.m_subspaceForPerformanceServerTiming = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSPerformanceServerTiming, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForPerformanceServerTiming, m_subspaceForPerformanceServerTiming));
 }
 
 void JSPerformanceServerTiming::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
@@ -279,23 +274,6 @@ extern void* _ZTVN7WebCore23PerformanceServerTimingE[];
 
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<PerformanceServerTiming>&& impl)
 {
-
-    //     if constexpr (std::is_polymorphic_v<PerformanceServerTiming>) {
-    // #if ENABLE(BINDING_INTEGRITY)
-    //         const void* actualVTablePointer = getVTablePointer(impl.ptr());
-    // #if PLATFORM(WIN)
-    //         void* expectedVTablePointer = __identifier("??_7PerformanceServerTiming@WebCore@@6B@");
-    // #else
-    //         void* expectedVTablePointer = &_ZTVN7WebCore23PerformanceServerTimingE[2];
-    // #endif
-
-    //         // If you hit this assertion you either have a use after free bug, or
-    //         // PerformanceServerTiming has subclasses. If PerformanceServerTiming has subclasses that get passed
-    //         // to toJS() we currently require PerformanceServerTiming you to opt out of binding hardening
-    //         // by adding the SkipVTableValidation attribute to the interface IDL definition
-    //         RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
-    // #endif
-    // }
     return createWrapper<PerformanceServerTiming>(globalObject, WTF::move(impl));
 }
 

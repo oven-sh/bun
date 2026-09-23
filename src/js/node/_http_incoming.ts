@@ -18,7 +18,7 @@ const {
   emitErrorNextTickIfErrorListenerNT,
   NodeHTTPBodyReadState,
   emitEOFIncomingMessage,
-  NodeHTTPResponseAbortEvent,
+  onDataIncomingMessage,
   kAbortController,
 } = require("internal/http");
 
@@ -41,6 +41,8 @@ const kHeaderSource = Symbol("kHeaderSource");
 const kTrailers = Symbol("kTrailers");
 const kTrailersDistinct = Symbol("kTrailersDistinct");
 const kTrailersCount = Symbol("kTrailersCount");
+
+type IncomingMessage = import("node:http").IncomingMessage;
 
 function readStart(socket) {
   if (socket && !socket._paused && socket.readable) socket.resume();
@@ -410,29 +412,6 @@ IncomingMessage.prototype._read = function _read(_n) {
   }
 };
 
-function onDataIncomingMessage(
-  this: import("node:http").IncomingMessage,
-  chunk,
-  isLast,
-  aborted: NodeHTTPResponseAbortEvent,
-) {
-  if (aborted === NodeHTTPResponseAbortEvent.abort) {
-    this.destroy();
-    return;
-  }
-
-  // Incoming request-body bytes are socket activity: push the connection's
-  // inactivity timeout (socket.setTimeout / server.timeout) further out, like
-  // Node.js does for reads on the socket.
-  this.socket?._unrefTimer?.();
-
-  if (chunk && !this._dumped) this.push(chunk);
-
-  if (isLast) {
-    emitEOFIncomingMessage(this);
-  }
-}
-
 // It's possible that the socket will be destroyed, and removed from
 // any messages, before ever calling this.  In that case, just skip
 // it, since something else is destroying this connection anyway.
@@ -526,7 +505,7 @@ const kFieldSetCookie = 1; // duplicates collected into an array
 const kFieldCookie = 2; // duplicates joined with "; "
 const kFieldUnique = 3; // duplicates dropped (or joined, per joinDuplicateHeaders)
 let matchedFieldFlag = kFieldUnique;
-function matchKnownFields(field, lowercased) {
+function matchKnownFields(field, lowercased?) {
   switch (field.length) {
     case 3:
       if (field === "Age" || field === "age") {

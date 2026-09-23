@@ -205,6 +205,26 @@ describe("sparse arrays that only claim a length", () => {
     expect(exitCode).toBe(0);
   });
 
+  // Loose mode compares arrays of different lengths: the longer array's tail
+  // must hold nothing but holes and undefined. Strict mode stops at the lengths.
+  it("compare sparse arrays of different lengths in loose mode", () => {
+    const sized = (length: number, ...entries: [index: number, value: unknown][]) => {
+      const a: unknown[] = [];
+      a.length = length;
+      for (const [index, value] of entries) a[index] = value;
+      return a;
+    };
+
+    expect(Bun.deepEquals(sized(200_000), sized(400_000))).toBe(true);
+    expect(Bun.deepEquals(sized(200_000), sized(400_000, [399_999, 1]))).toBe(false);
+    expect(Bun.deepEquals(sized(400_000, [399_999, 1]), sized(200_000))).toBe(false);
+    expect(Bun.deepEquals(sized(200_000), sized(400_000, [399_999, undefined]))).toBe(true);
+    expect(Bun.deepEquals(sized(400_000, [399_999, undefined]), sized(200_000))).toBe(true);
+    expect(Bun.deepEquals(sized(200_000, [150_000, 1]), sized(400_000, [150_000, 1]))).toBe(true);
+    expect(Bun.deepEquals(sized(200_000, [150_000, 1]), sized(400_000, [150_000, 2]))).toBe(false);
+    expect(Bun.deepEquals(sized(200_000), sized(400_000), true)).toBe(false);
+  });
+
   const dense = new Array(100_000).fill(0);
   const denseCopy = dense.slice();
   const denseWithOtherTail = dense.slice();

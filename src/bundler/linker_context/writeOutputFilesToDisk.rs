@@ -39,6 +39,14 @@ pub(crate) fn write_output_files_to_disk(
 ) -> Result<(), Error> {
     let _trace = bun_core::perf::trace("Bundler.writeOutputFilesToDisk");
 
+    refuse_to_overwrite_inputs(
+        c,
+        root_path,
+        chunks,
+        standalone_chunk_contents.is_some(),
+        standalone_sourcemaps,
+    )?;
+
     let root_dir = match bun_sys::Dir::cwd().make_open_path(root_path, Default::default()) {
         Ok(dir) => dir,
         Err(e) => {
@@ -67,14 +75,6 @@ pub(crate) fn write_output_files_to_disk(
             return Err(e.into());
         }
     };
-
-    refuse_to_overwrite_inputs(
-        c,
-        root_path,
-        chunks,
-        standalone_chunk_contents.is_some(),
-        standalone_sourcemaps,
-    )?;
 
     // Optimization: when writing to disk, we can re-use the memory
     // between iterations: MaxHeapAllocator retains the largest allocation.
@@ -700,6 +700,9 @@ fn overwritten_input(
     standalone_sourcemaps: &[Option<Box<[u8]>>],
 ) -> Option<Box<[u8]>> {
     let inputs = InputPathSet::from_graph(c.parse_graph());
+    if inputs.is_empty() {
+        return None;
+    }
     let root = resolve_output_root(root_path);
     let check = |dest_path: &[u8]| inputs.overwritten_by(&root, dest_path);
 

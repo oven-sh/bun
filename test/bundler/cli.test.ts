@@ -981,6 +981,154 @@ describe.concurrent("bun build refuses to write an output over an input", () => 
     expect(stderr).toContain('Refusing to overwrite input file "data.json"');
     expect(exitCode).toBe(1);
     expect(await Bun.file(path.join(String(dir), "data.json")).text()).toBe(`{ "source": true }\n`);
+    // The refusal comes before the first write, so no chunk is on disk.
+    expect(fs.readdirSync(String(dir)).sort()).toEqual(["a.js", "data.json"]);
+  });
+
+  test("a refused --outfile leaves no metafile behind", async () => {
+    using dir = tempDir("build-overwrite-no-metafile", {
+      "a.js": `import "./b.js";\nconsole.log("A");\n`,
+      "b.js": `console.log("B-SOURCE");\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "./a.js", "--outfile", "b.js", "--metafile=meta.json"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain('Refusing to overwrite input file "b.js"');
+    expect(exitCode).toBe(1);
+    expect(fs.readdirSync(String(dir)).sort()).toEqual(["a.js", "b.js"]);
+  });
+
+  // The output path and the input path differ as strings but name the same file.
+  describe.skipIf(isWindows)("through a symlink", () => {
+    const files = {
+      "src/app.js": `import { v } from "./lib.js";\nconsole.log(v);\n`,
+      "src/lib.js": `export const v = 42;\n`,
+    };
+
+    test("--outdir is a symlink to the source directory", async () => {
+      using dir = tempDir("build-overwrite-symlink-outdir", files);
+      fs.symlinkSync("src", path.join(String(dir), "out"));
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "./src/app.js", "--outdir", "out"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain('Refusing to overwrite input file "src/app.js"');
+      expect(exitCode).toBe(1);
+      expect(await Bun.file(path.join(String(dir), "src", "app.js")).text()).toBe(files["src/app.js"]);
+    });
+
+    test("--outfile goes through a symlinked parent directory", async () => {
+      using dir = tempDir("build-overwrite-symlink-parent", { ...files, "real/.keep": "" });
+      fs.symlinkSync("../src", path.join(String(dir), "real", "link"));
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "./src/app.js", "--outfile", "real/link/app.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain('Refusing to overwrite input file "src/app.js"');
+      expect(exitCode).toBe(1);
+      expect(await Bun.file(path.join(String(dir), "src", "app.js")).text()).toBe(files["src/app.js"]);
+    });
+
+    test("a symlink to an input is already at the output path", async () => {
+      using dir = tempDir("build-overwrite-symlink-leaf", { ...files, "out/.keep": "" });
+      fs.symlinkSync("../src/lib.js", path.join(String(dir), "out", "app.js"));
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "./src/app.js", "--outdir", "out"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain('Refusing to overwrite input file "src/lib.js"');
+      expect(exitCode).toBe(1);
+      expect(await Bun.file(path.join(String(dir), "src", "lib.js")).text()).toBe(files["src/lib.js"]);
+    });
+
+    test("a symlink to a file that is not an input is written through", async () => {
+      using dir = tempDir("build-symlink-leaf-unrelated", { ...files, "out/.keep": "", "elsewhere.js": "old\n" });
+      fs.symlinkSync("../elsewhere.js", path.join(String(dir), "out", "app.js"));
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "./src/app.js", "--outdir", "out"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("Refusing to overwrite");
+      expect(await Bun.file(path.join(String(dir), "elsewhere.js")).text()).toContain("console.log(");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  test("a hard link to an input is already at the output path", async () => {
+    using dir = tempDir("build-overwrite-hardlink-leaf", {
+      "src/app.js": `import { v } from "./lib.js";\nconsole.log(v);\n`,
+      "src/lib.js": `export const v = 42;\n`,
+      "out/.keep": "",
+    });
+    fs.linkSync(path.join(String(dir), "src", "lib.js"), path.join(String(dir), "out", "app.js"));
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "./src/app.js", "--outdir", "out"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain('Refusing to overwrite input file "src/lib.js"');
+    expect(exitCode).toBe(1);
+    expect(await Bun.file(path.join(String(dir), "src", "lib.js")).text()).toBe(`export const v = 42;\n`);
+  });
+
+  // On Windows the executable gets an .exe suffix, so it cannot collide with the entry point.
+  test.skipIf(isWindows)("Bun.build with a compile outfile that names the entry point", async () => {
+    using dir = tempDir("build-api-overwrite-compile", {
+      "app.js": `console.log("APP");\n`,
+      "run.js": `
+        const result = await Bun.build({
+          entrypoints: ["./app.js"],
+          compile: { outfile: "app.js" },
+          throw: false,
+        });
+        console.log(JSON.stringify({ success: result.success, logs: result.logs.map(l => l.message) }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual({
+      success: false,
+      logs: [expect.stringContaining('Refusing to overwrite input file "app.js"')],
+    });
+    expect(await Bun.file(path.join(String(dir), "app.js")).text()).toBe(`console.log("APP");\n`);
+    expect(exitCode).toBe(0);
   });
 
   test("Bun.build with a metafile path that names an input", async () => {

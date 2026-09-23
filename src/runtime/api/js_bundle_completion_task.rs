@@ -17,6 +17,7 @@ use bun_bundler::bundle_v2::{
     BundleV2, BundleV2Result, CompletionStruct, FileMap as Bv2FileMap,
     JSBundleCompletionTask as Bv2OpaqueCompletion, JSBundlerPlugin, dispatch,
 };
+use bun_bundler::input_path_set::{InputPathSet, resolve_output_root};
 use bun_bundler::options::{self, OutputFile, OutputKind, Side};
 use bun_bundler::output_file::Value as OutputFileValue;
 use bun_bundler::transpiler::Transpiler;
@@ -356,7 +357,11 @@ impl JSBundleCompletionTask {
     }
 
     /// Port of `JSBundleCompletionTask.doCompilation`.
-    fn do_compilation(&mut self, output_files: &mut Vec<OutputFile>) -> CompileResult {
+    fn do_compilation(
+        &mut self,
+        output_files: &mut Vec<OutputFile>,
+        input_paths: &InputPathSet,
+    ) -> CompileResult {
         let compile_options = self
             .config
             .compile
@@ -379,6 +384,33 @@ impl JSBundleCompletionTask {
         let dirname: &[u8] = paths::dirname(&full_outfile_path).unwrap_or(b".");
         let basename: &[u8] = paths::basename(&full_outfile_path);
         let entry_key = executable_entry_point_name(&full_outfile_path);
+
+        {
+            let root = resolve_output_root(dirname);
+            let executable_map_name = bun_core::strings::concat(&[basename, b".map"]);
+            let sourcemap_names = output_files
+                .iter()
+                .filter(|f| {
+                    f.output_kind == OutputKind::Sourcemap
+                        && matches!(&f.value, OutputFileValue::Buffer { bytes } if !bytes.is_empty())
+                })
+                .map(|f| {
+                    if f.dest_path.is_empty() {
+                        &*executable_map_name
+                    } else {
+                        paths::basename(&f.dest_path)
+                    }
+                });
+            let overwritten = core::iter::once(basename)
+                .chain(sourcemap_names)
+                .find_map(|name| input_paths.overwritten_by(&root, name));
+            if let Some(input) = overwritten {
+                return CompileResult::fail_fmt(format_args!(
+                    "Refusing to overwrite input file {}",
+                    bun_core::fmt::quote(&input),
+                ));
+            }
+        }
 
         if !compile_options.assets.is_empty() {
             if let Err(msg) = crate::cli::build_command::collect_compile_assets(
@@ -702,12 +734,15 @@ impl JSBundleCompletionTask {
         // `&mut output_files` from inside `self.result`. Temporarily move the
         // Vec out via `take` so the method gets a disjoint `&mut self`.
         if matches!(this.result, BundleV2Result::Value(_)) && this.config.compile.is_some() {
-            let mut output_files = match &mut this.result {
-                BundleV2Result::Value(build) => core::mem::take(&mut build.output_files),
+            let (mut output_files, input_paths) = match &mut this.result {
+                BundleV2Result::Value(build) => (
+                    core::mem::take(&mut build.output_files),
+                    core::mem::take(&mut build.input_paths),
+                ),
                 // SAFETY: arm checked above.
                 _ => unsafe { core::hint::unreachable_unchecked() },
             };
-            let compile_result = this.do_compilation(&mut output_files);
+            let compile_result = this.do_compilation(&mut output_files, &input_paths);
             // `defer compile_result.deinit()` — `CompileResult` is a Rust enum
             // with owned `Vec<u8>` payloads; drops at end of scope.
 

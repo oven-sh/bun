@@ -1349,9 +1349,9 @@ pub struct BundleOptions<'a> {
     /// `--compile`: the name of the entry point's chunk, `/$bunfs/root/<name>` in the executable.
     pub compile_entry_point_name: Box<[u8]>,
     pub metafile: bool,
-    /// Path to write JSON metafile (for Bun.build API)
+    /// JSON metafile path. Bun.build: relative to outdir, the bundler writes it. CLI: absolute, the CLI writes it.
     pub metafile_json_path: Box<[u8]>,
-    /// Path to write markdown metafile (for Bun.build API)
+    /// Markdown metafile path, with the same two meanings as the JSON path.
     pub metafile_markdown_path: Box<[u8]>,
 
     /// Set when bake.DevServer is bundling.

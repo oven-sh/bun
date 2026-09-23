@@ -4217,7 +4217,12 @@ pub mod bv2_impl {
                     output_files,
                     metafile,
                     metafile_markdown: None,
-                    input_paths: crate::input_path_set::InputPathSet::from_graph(&this.graph),
+                    // When the linker wrote the files it also checked them, and the metafile paths.
+                    input_paths: if this.linker.writes_output_files_to_disk() {
+                        Default::default()
+                    } else {
+                        crate::input_path_set::InputPathSet::from_graph(&this.graph)
+                    },
                 })
             })();
 
@@ -5433,11 +5438,18 @@ pub mod bv2_impl {
                 }
             }
 
+            // Only the compile step writes after this point; every other output is on disk or stays in memory.
+            let input_paths = if self.linker.options.compile_mode.is_executable() {
+                crate::input_path_set::InputPathSet::from_graph(&self.graph)
+            } else {
+                Default::default()
+            };
+
             Ok(BuildResult {
                 output_files,
                 metafile,
                 metafile_markdown,
-                input_paths: Default::default(),
+                input_paths,
             })
         }
     }

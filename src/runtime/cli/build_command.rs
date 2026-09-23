@@ -243,6 +243,24 @@ impl BuildCommand {
         this_transpiler.options.module_preload = ctx.bundler_options.module_preload;
         this_transpiler.options.metafile =
             !ctx.bundler_options.metafile.is_empty() || !ctx.bundler_options.metafile_md.is_empty();
+        // Absolute, so the bundler's overwrite check reads them relative to the working directory and not to outdir.
+        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+        if !ctx.bundler_options.metafile.is_empty() {
+            this_transpiler.options.metafile_json_path =
+                resolve_path::join_abs_string::<resolve_path::platform::Auto>(
+                    top_level_dir,
+                    &[&ctx.bundler_options.metafile],
+                )
+                .into();
+        }
+        if !ctx.bundler_options.metafile_md.is_empty() {
+            this_transpiler.options.metafile_markdown_path =
+                resolve_path::join_abs_string::<resolve_path::platform::Auto>(
+                    top_level_dir,
+                    &[&ctx.bundler_options.metafile_md],
+                )
+                .into();
+        }
 
         this_transpiler
             .options
@@ -621,7 +639,11 @@ impl BuildCommand {
         let opt_transform_only = this_transpiler.options.transform_only;
         let env_ptr = this_transpiler.env;
 
-        let (mut output_files, input_paths): (Vec<options::OutputFile>, InputPathSet) = 'brk: {
+        let (mut output_files, input_paths, metafile_json): (
+            Vec<options::OutputFile>,
+            InputPathSet,
+            Option<Box<[u8]>>,
+        ) = 'brk: {
             if ctx.bundler_options.transform_only {
                 this_transpiler.options.import_path_format = options::ImportPathFormat::Relative;
                 this_transpiler.options.allow_runtime = false;
@@ -644,7 +666,7 @@ impl BuildCommand {
                 let output_files = result.output_files.into_vec();
                 let input_paths =
                     InputPathSet::from_paths(output_files.iter().map(|f| f.src_path.text));
-                break 'brk (output_files, input_paths);
+                break 'brk (output_files, input_paths, None);
             }
 
             if ctx.bundler_options.outdir.is_empty()
@@ -696,96 +718,11 @@ impl BuildCommand {
                 }
             };
 
-            // Write metafile if requested
-            if let Some(metafile_json) = build_result.metafile.as_deref() {
-                refuse_to_overwrite_inputs(
-                    &build_result.input_paths,
-                    b"",
-                    [
-                        &ctx.bundler_options.metafile,
-                        &ctx.bundler_options.metafile_md,
-                    ]
-                    .into_iter()
-                    .filter(|path| !path.is_empty())
-                    .map(|path| &**path),
-                    ctx.debug.hot_reload == HotReload::Watch,
-                );
-                if !ctx.bundler_options.metafile.is_empty() {
-                    // Use makeOpen which auto-creates parent directories on failure
-                    let file = match bun_sys::File::make_open(
-                        &ctx.bundler_options.metafile,
-                        bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
-                        0o664,
-                    ) {
-                        Ok(f) => f,
-                        Err(err) => {
-                            Output::err(
-                                err,
-                                "could not open metafile {}",
-                                (bun_fmt::quote(&ctx.bundler_options.metafile),),
-                            );
-                            exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
-                        }
-                    };
-
-                    match file.write_all(metafile_json) {
-                        Ok(()) => {}
-                        Err(err) => {
-                            Output::err(
-                                err,
-                                "could not write metafile {}",
-                                (bun_fmt::quote(&ctx.bundler_options.metafile),),
-                            );
-                            exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
-                        }
-                    }
-                    drop(file);
-                }
-
-                // Write markdown metafile if requested
-                if !ctx.bundler_options.metafile_md.is_empty() {
-                    let metafile_md = match MetafileBuilder::generate_markdown(metafile_json) {
-                        Ok(md) => Some(md),
-                        Err(err) => {
-                            bun_core::warn!("Failed to generate markdown metafile: {}", err.name(),);
-                            None
-                        }
-                    };
-                    if let Some(md_content) = metafile_md {
-                        let file = match bun_sys::File::make_open(
-                            &ctx.bundler_options.metafile_md,
-                            bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
-                            0o664,
-                        ) {
-                            Ok(f) => f,
-                            Err(err) => {
-                                Output::err(
-                                    err,
-                                    "could not open metafile-md {}",
-                                    (bun_fmt::quote(&ctx.bundler_options.metafile_md),),
-                                );
-                                exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
-                            }
-                        };
-
-                        match file.write_all(&md_content) {
-                            Ok(()) => {}
-                            Err(err) => {
-                                Output::err(
-                                    err,
-                                    "could not write metafile-md {}",
-                                    (bun_fmt::quote(&ctx.bundler_options.metafile_md),),
-                                );
-                                exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
-                            }
-                        }
-                        drop(file);
-                        // md_content dropped at scope exit
-                    }
-                }
-            }
-
-            break 'brk (build_result.output_files, build_result.input_paths);
+            break 'brk (
+                build_result.output_files,
+                build_result.input_paths,
+                build_result.metafile,
+            );
         };
 
         if ctx.bundler_options.compile && !ctx.bundler_options.compile_assets.is_empty() {
@@ -825,23 +762,54 @@ impl BuildCommand {
                 }
             }
 
+            let mut root_path: &[u8] = output_dir;
+            if root_path.is_empty() && ctx.args.entry_points.len() == 1 {
+                root_path = bun_core::dirname(&ctx.args.entry_points[0]).unwrap_or(b".");
+            }
+
+            let watch = ctx.debug.hot_reload == HotReload::Watch;
+            let metafile_paths: Vec<&[u8]> = if metafile_json.is_some() {
+                [
+                    &*ctx.bundler_options.metafile,
+                    &*ctx.bundler_options.metafile_md,
+                ]
+                .into_iter()
+                .filter(|path| !path.is_empty())
+                .collect()
+            } else {
+                Vec::new()
+            };
+
+            refuse_to_overwrite_inputs(&input_paths, b"", metafile_paths.iter().copied(), watch);
+
             if !ctx.bundler_options.compile {
-                if outfile.is_empty()
+                // if --no-bundle is passed, it won't have an output dir
+                let writes_to_stdout = outfile.is_empty()
                     && output_files.len() == 1
-                    && ctx.bundler_options.outdir.is_empty()
-                {
-                    // if --no-bundle is passed, it won't have an output dir
+                    && ctx.bundler_options.outdir.is_empty();
+
+                if !writes_to_stdout {
+                    refuse_to_overwrite_inputs(
+                        &input_paths,
+                        root_path,
+                        output_files.iter().filter_map(|f| f.path_written_to_disk()),
+                        watch,
+                    );
+                }
+                write_metafiles(
+                    metafile_json.as_deref(),
+                    &ctx.bundler_options.metafile,
+                    &ctx.bundler_options.metafile_md,
+                    watch,
+                );
+
+                if writes_to_stdout {
                     if let options::OutputFileValue::Buffer { bytes } = &output_files[0].value {
                         writer.write_all(bytes)?;
                     }
                     Output::flush();
                     break 'dump;
                 }
-            }
-
-            let mut root_path: &[u8] = output_dir;
-            if root_path.is_empty() && ctx.args.entry_points.len() == 1 {
-                root_path = bun_core::dirname(&ctx.args.entry_points[0]).unwrap_or(b".");
             }
 
             let root_dir = if root_path.is_empty() || root_path == b"." {
@@ -878,15 +846,6 @@ impl BuildCommand {
                     "{}",
                     bun_fmt::size(f.size, Default::default())
                 )));
-            }
-
-            if !ctx.bundler_options.compile {
-                refuse_to_overwrite_inputs(
-                    &input_paths,
-                    root_path,
-                    output_files.iter().map(|f| &*f.dest_path),
-                    ctx.debug.hot_reload == HotReload::Watch,
-                );
             }
 
             if ctx.bundler_options.compile {
@@ -944,9 +903,15 @@ impl BuildCommand {
                         &input_paths,
                         root_path,
                         dest_paths.iter().map(|d| &**d),
-                        ctx.debug.hot_reload == HotReload::Watch,
+                        watch,
                     );
                 }
+                write_metafiles(
+                    metafile_json.as_deref(),
+                    &ctx.bundler_options.metafile,
+                    &ctx.bundler_options.metafile_md,
+                    watch,
+                );
 
                 let result = match bun_standalone_module_graph::StandaloneModuleGraph::to_executable(
                     compile_target,
@@ -1245,6 +1210,91 @@ fn compile_outfile(outfile: &[u8]) -> &[u8] {
     }
 }
 
+/// Writes `--metafile` and `--metafile-md`.
+fn write_metafiles(
+    metafile_json: Option<&[u8]>,
+    metafile_path: &[u8],
+    metafile_md_path: &[u8],
+    watch: bool,
+) {
+    let Some(metafile_json) = metafile_json else {
+        return;
+    };
+    if !metafile_path.is_empty() {
+        // Use makeOpen which auto-creates parent directories on failure
+        let file = match bun_sys::File::make_open(
+            metafile_path,
+            bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
+            0o664,
+        ) {
+            Ok(f) => f,
+            Err(err) => {
+                Output::err(
+                    err,
+                    "could not open metafile {}",
+                    (bun_fmt::quote(metafile_path),),
+                );
+                exit_or_watch(1, watch);
+            }
+        };
+
+        match file.write_all(metafile_json) {
+            Ok(()) => {}
+            Err(err) => {
+                Output::err(
+                    err,
+                    "could not write metafile {}",
+                    (bun_fmt::quote(metafile_path),),
+                );
+                exit_or_watch(1, watch);
+            }
+        }
+        drop(file);
+    }
+
+    // Write markdown metafile if requested
+    if !metafile_md_path.is_empty() {
+        let metafile_md = match MetafileBuilder::generate_markdown(metafile_json) {
+            Ok(md) => Some(md),
+            Err(err) => {
+                bun_core::warn!("Failed to generate markdown metafile: {}", err.name(),);
+                None
+            }
+        };
+        if let Some(md_content) = metafile_md {
+            let file = match bun_sys::File::make_open(
+                metafile_md_path,
+                bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
+                0o664,
+            ) {
+                Ok(f) => f,
+                Err(err) => {
+                    Output::err(
+                        err,
+                        "could not open metafile-md {}",
+                        (bun_fmt::quote(metafile_md_path),),
+                    );
+                    exit_or_watch(1, watch);
+                }
+            };
+
+            match file.write_all(&md_content) {
+                Ok(()) => {}
+                Err(err) => {
+                    Output::err(
+                        err,
+                        "could not write metafile-md {}",
+                        (bun_fmt::quote(metafile_md_path),),
+                    );
+                    exit_or_watch(1, watch);
+                }
+            }
+            drop(file);
+            // md_content dropped at scope exit
+        }
+    }
+}
+
 /// Frees what it allocates before the exit: `exit_or_watch` never returns.
 fn refuse_to_overwrite_inputs<'a>(
     input_paths: &InputPathSet,
@@ -1252,9 +1302,12 @@ fn refuse_to_overwrite_inputs<'a>(
     dest_paths: impl Iterator<Item = &'a [u8]>,
     watch: bool,
 ) {
+    let mut dest_paths = dest_paths.peekable();
+    if input_paths.is_empty() || dest_paths.peek().is_none() {
+        return;
+    }
     let overwritten = {
         let root = resolve_output_root(root_path);
-        let mut dest_paths = dest_paths;
         dest_paths.find_map(|dest_path| input_paths.overwritten_by(&root, dest_path))
     };
     if let Some(input) = overwritten {

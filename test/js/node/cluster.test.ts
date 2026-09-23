@@ -587,6 +587,7 @@ test("disconnect() on a cluster.Worker built around a plain object does not abor
 // IPv4, and each of these queries gets errno 0 and a handle.
 const malformedQueryFixture = `
 const cluster = require("node:cluster");
+const fs = require("node:fs");
 
 // Under SCHED_NONE the primary binds the address itself, and that is where it reads addressType.
 cluster.schedulingPolicy = cluster.SCHED_NONE;
@@ -594,7 +595,8 @@ cluster.schedulingPolicy = cluster.SCHED_NONE;
 if (cluster.isPrimary) {
   const worker = cluster.fork();
   worker.on("message", reply => {
-    console.log(JSON.stringify(reply));
+    // "127.0.0.1" cannot bind as IPv6. As a pipe (addressType -1) it is a unix socket in the cwd. Neither means IPv4.
+    console.log(JSON.stringify({ ...reply, unixSocket: fs.existsSync("127.0.0.1") }));
     worker.kill();
     process.exit(0);
   });
@@ -610,20 +612,23 @@ if (cluster.isPrimary) {
 }
 `;
 
-test.concurrent.each([{ ack: {} }, { addressType: {} }, { addressType: false }, { addressType: 6.5 }])(
-  "primary treats %j in a worker's queryServer message like node",
-  async malformed => {
-    using dir = tempDir("cluster-malformed-query", { "fixture.js": malformedQueryFixture });
-    const { stdout, stderr, exitCode } = await bunRun(joinP(String(dir), "fixture.js"), {
-      MALFORMED: JSON.stringify(malformed),
-    });
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: JSON.stringify({ errno: 0, handle: true }),
-      stderr: expect.any(String),
-      exitCode: 0,
-    });
-  },
-);
+test.concurrent.each([
+  { ack: {} },
+  { addressType: {} },
+  { addressType: false },
+  { addressType: 6.5 },
+  { addressType: -1.5 },
+])("primary treats %j in a worker's queryServer message like node", async malformed => {
+  using dir = tempDir("cluster-malformed-query", { "fixture.js": malformedQueryFixture });
+  const { stdout, stderr, exitCode } = await bunRun(joinP(String(dir), "fixture.js"), {
+    MALFORMED: JSON.stringify(malformed),
+  });
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ errno: 0, handle: true, unixSocket: false }),
+    stderr: expect.any(String),
+    exitCode: 0,
+  });
+});
 
 // Under SCHED_RR the primary parks a callback for each newconn until the worker acks its seq. A query whose `ack` is
 // not that seq must reach the default handler. A primary that lets it settle the newconn hands the same socket to the

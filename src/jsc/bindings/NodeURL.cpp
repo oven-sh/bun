@@ -8,8 +8,7 @@
 
 namespace Bun {
 
-// Every conversion here runs on the URL parser's UTS #46 instance (CheckBidi, CheckJoiners, non-transitional) and
-// uses its error filter (CheckHyphens and VerifyDnsLength are off), so it agrees with the host parser.
+// The host parser's error filter: CheckHyphens and VerifyDnsLength are off.
 static bool hasIDNAError(const UIDNAInfo& info)
 {
     return info.errors & ~WTF::URLParser::allowedNameToASCIIErrors;
@@ -20,8 +19,7 @@ enum class IDNAMode : uint8_t {
     Lenient,
 };
 
-// Runs a uidna_*To* conversion with the U_BUFFER_OVERFLOW_ERROR retry protocol. Returns the output, which lives in
-// `buffer`, or nullopt when ICU fails. `info` holds the UTS #46 errors of the conversion.
+// Runs a uidna_*To* conversion on the host parser's UTS #46 instance. The returned span points into `buffer`.
 using UIDNAFunction = int32_t (*)(const UIDNA*, const char16_t*, int32_t, char16_t*, int32_t, UIDNAInfo*, UErrorCode*);
 using UIDNABuffer = Vector<char16_t, 256>;
 
@@ -84,7 +82,6 @@ static String icuToUnicode(const String& input)
 }
 
 // Per-label ToUnicode of a parsed host: uidna_nameToUnicode moves the rest of the name for each decoded label.
-// A label that fails UTS #46 stays as it is, like ada::idna::to_unicode. ICU's output for it carries U+FFFD markers.
 static String icuParsedHostToUnicode(const String& host)
 {
     if (!host.contains("xn--"_s))
@@ -110,6 +107,7 @@ static String icuParsedHostToUnicode(const String& host)
             auto unicode = runUIDNA(uidna_labelToUnicode, label, buffer, info);
             if (!unicode)
                 return {};
+            // ICU marks a label that fails UTS #46 with U+FFFD. ada::idna::to_unicode keeps the label as it is.
             result.append(hasIDNAError(info) ? label : *unicode);
         } else {
             result.append(label);

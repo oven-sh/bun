@@ -1,21 +1,22 @@
 //! `Bun.spawn({ maxMemory })`: one background thread samples every watched child tree and kills a tree that crosses its limit.
 
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::sync::Arc;
 use std::time::Duration;
+
+use bun_threading::{Condvar, Guarded};
 
 use crate::process::PidT;
 
 pub struct Watch {
-    #[cfg_attr(windows, allow(dead_code))]
+    #[cfg(not(windows))]
     pid: PidT,
     limit: u64,
-    #[cfg_attr(windows, allow(dead_code))]
+    #[cfg(not(windows))]
     signal: u8,
     /// Start time of `pid`, so a recycled pid is never signalled.
     #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
     identity: u64,
-    current: AtomicU64,
     peak: AtomicU64,
     exceeded: AtomicBool,
     done: AtomicBool,
@@ -38,12 +39,6 @@ impl Watch {
     pub fn peak(&self) -> u64 {
         self.peak.load(Ordering::Relaxed)
     }
-    pub fn current(&self) -> u64 {
-        self.current.load(Ordering::Relaxed)
-    }
-    pub fn limit(&self) -> u64 {
-        self.limit
-    }
     /// Call before the pid is reaped so a recycled pid is never sampled or signalled.
     pub fn unwatch(&self) {
         self.done.store(true, Ordering::Release);
@@ -55,7 +50,6 @@ impl Watch {
 
     fn sample(&self) -> u64 {
         let usage = os::tree_usage(self);
-        self.current.store(usage, Ordering::Relaxed);
         self.peak.fetch_max(usage, Ordering::Relaxed);
         if usage > self.limit
             && !self.done.load(Ordering::Acquire)
@@ -74,18 +68,8 @@ impl Drop for Watch {
     }
 }
 
-struct Watcher {
-    entries: Mutex<Vec<Arc<Watch>>>,
-    wake: Condvar,
-}
-
-fn watcher() -> &'static Watcher {
-    static W: OnceLock<Watcher> = OnceLock::new();
-    W.get_or_init(|| Watcher {
-        entries: Mutex::new(Vec::new()),
-        wake: Condvar::new(),
-    })
-}
+static ENTRIES: Guarded<Vec<Arc<Watch>>> = Guarded::new(Vec::new());
+static WAKE: Condvar = Condvar::new();
 
 static THREAD_STARTED: AtomicBool = AtomicBool::new(false);
 
@@ -104,17 +88,15 @@ fn interval_for(min_headroom: f64) -> Duration {
 }
 
 fn run() {
-    let w = watcher();
     let mut snapshot: Vec<Arc<Watch>> = Vec::new();
-    let mut guard = w.entries.lock().unwrap();
+    let mut guard = ENTRIES.lock();
     loop {
         guard.retain(|e| !e.done.load(Ordering::Relaxed));
         if guard.is_empty() {
-            guard = w.wake.wait(guard).unwrap();
+            WAKE.wait_guarded(&mut guard);
             continue;
         }
-        snapshot.clear();
-        snapshot.extend(guard.iter().cloned());
+        snapshot.extend(guard.iter().map(Arc::clone));
         drop(guard);
 
         let mut min_headroom = 1.0f64;
@@ -130,30 +112,20 @@ fn run() {
         }
         snapshot.clear();
 
-        guard = w.entries.lock().unwrap();
-        let (g, _) = w
-            .wake
-            .wait_timeout(guard, interval_for(min_headroom))
-            .unwrap();
-        guard = g;
+        guard = ENTRIES.lock();
+        let _ = WAKE.timed_wait_guarded(&mut guard, interval_for(min_headroom).as_nanos() as u64);
     }
 }
 
 /// Memory of an unwatched child's tree. Windows counts only the root process, because there is no Job Object to ask.
-pub fn usage(
-    #[cfg_attr(
-        not(any(target_os = "macos", target_os = "linux", target_os = "android")),
-        allow(unused_variables)
-    )]
-    pid: PidT,
-    #[cfg(windows)] process: bun_sys::windows::HANDLE,
-) -> u64 {
+pub fn usage(pid: PidT, #[cfg(windows)] process: bun_sys::windows::HANDLE) -> u64 {
     #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
     {
         os::usage_of(pid)
     }
     #[cfg(windows)]
     {
+        let _ = pid;
         bun_sys::windows::GetProcessMemoryInfo(process)
             .map(|c| c.PagefileUsage as u64)
             .unwrap_or(0)
@@ -165,6 +137,7 @@ pub fn usage(
         windows
     )))]
     {
+        let _ = pid;
         0
     }
 }
@@ -177,14 +150,15 @@ pub struct WatchOptions {
     pub process: bun_sys::windows::HANDLE,
 }
 
-pub fn watch(opts: WatchOptions) -> std::io::Result<Arc<Watch>> {
+pub fn watch(opts: &WatchOptions) -> std::io::Result<Arc<Watch>> {
     let entry = Arc::new(Watch {
+        #[cfg(not(windows))]
         pid: opts.pid,
         limit: opts.limit,
+        #[cfg(not(windows))]
         signal: opts.signal,
         #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
         identity: os::identity(opts.pid),
-        current: AtomicU64::new(0),
         peak: AtomicU64::new(0),
         exceeded: AtomicBool::new(false),
         done: AtomicBool::new(false),
@@ -196,8 +170,7 @@ pub fn watch(opts: WatchOptions) -> std::io::Result<Arc<Watch>> {
     // A child can allocate a lot before the thread's first tick; sample once synchronously.
     entry.sample();
 
-    let w = watcher();
-    w.entries.lock().unwrap().push(entry.clone());
+    ENTRIES.lock().push(Arc::clone(&entry));
     if !THREAD_STARTED.swap(true, Ordering::AcqRel) {
         if let Err(e) = std::thread::Builder::new()
             .name("MemoryWatcher".into())
@@ -209,7 +182,7 @@ pub fn watch(opts: WatchOptions) -> std::io::Result<Arc<Watch>> {
             return Err(e);
         }
     }
-    w.wake.notify_one();
+    WAKE.notify_one();
     Ok(entry)
 }
 
@@ -241,7 +214,7 @@ mod os {
     fn footprint(pid: c_int) -> u64 {
         let mut info = RusageInfoV0::default();
         // SAFETY: `info` is a valid out-buffer of the size `RUSAGE_INFO_V0` (flavor 0) writes.
-        if unsafe { proc_pid_rusage(pid, 0, &mut info) } != 0 {
+        if unsafe { proc_pid_rusage(pid, 0, &raw mut info) } != 0 {
             return 0;
         }
         info.ri_phys_footprint
@@ -313,13 +286,15 @@ mod os {
 #[cfg(any(target_os = "linux", target_os = "android"))]
 mod os {
     use super::Watch;
+    use bun_sys::{Fd, FdExt, File, O, SizeHint};
     use core::ffi::c_int;
-    use std::io::Read;
 
     fn read_small(path: &str, buf: &mut Vec<u8>) -> bool {
         buf.clear();
-        match std::fs::File::open(path) {
-            Ok(mut f) => f.read_to_end(buf).is_ok(),
+        match File::openat(Fd::cwd(), path.as_bytes(), O::RDONLY, 0) {
+            Ok(f) => f
+                .read_to_end_with_array_list(buf, SizeHint::ProbablySmall)
+                .is_ok(),
             Err(_) => false,
         }
     }
@@ -352,12 +327,15 @@ mod os {
         stack.push(root);
         while let Some(pid) = stack.pop() {
             f(pid);
-            let Ok(tasks) = std::fs::read_dir(format!("/proc/{pid}/task")) else {
+            let Ok(task_dir) = bun_sys::open_dir_absolute(format!("/proc/{pid}/task").as_bytes())
+            else {
                 continue;
             };
-            for task in tasks.flatten() {
-                let tid = task.file_name();
-                let Some(tid) = tid.to_str() else { continue };
+            let mut tasks = bun_sys::iterate_dir(task_dir);
+            while let Ok(Some(task)) = tasks.next() {
+                let Ok(tid) = core::str::from_utf8(task.name.slice_u8()) else {
+                    continue;
+                };
                 if !read_small(&format!("/proc/{pid}/task/{tid}/children"), &mut buf) {
                     continue;
                 }
@@ -370,6 +348,7 @@ mod os {
                     }
                 }
             }
+            task_dir.close();
         }
     }
 

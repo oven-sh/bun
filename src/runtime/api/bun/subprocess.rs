@@ -710,7 +710,7 @@ impl Subprocess<'_> {
                 None => return,
             },
         };
-        if let Ok(w) = bun_spawn::memory_watcher::watch(opts) {
+        if let Ok(w) = bun_spawn::memory_watcher::watch(&opts) {
             self.memory_watch.set(Some(w));
         }
     }

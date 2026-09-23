@@ -1329,17 +1329,30 @@ describe.concurrent("bun build refuses to write an output over an input", () => 
 
   // An in-memory file is not on disk, so an output at its path replaces no input.
   test("Bun.build writes an output at the path of an in-memory file", async () => {
-    using dir = tempDir("build-api-in-memory-input", {});
-    const entry = path.join(String(dir), "entry.js");
-
-    const result = await Bun.build({
-      entrypoints: [entry],
-      files: { [entry]: `console.log("virtual");\n` },
-      outdir: String(dir),
-      throw: false,
+    using dir = tempDir("build-api-in-memory-input", {
+      "run.js": `
+        const entry = require("node:path").join(process.cwd(), "entry.js");
+        const result = await Bun.build({
+          entrypoints: [entry],
+          files: { [entry]: 'console.log("virtual");' },
+          outdir: ".",
+          throw: false,
+        });
+        console.log(JSON.stringify({ success: result.success, logs: result.logs.map(l => l.message) }));
+      `,
     });
-    expect({ success: result.success, logs: result.logs.map(l => l.message) }).toEqual({ success: true, logs: [] });
-    expect(await Bun.file(entry).text()).toContain('console.log("virtual")');
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual({ success: true, logs: [] });
+    expect(await Bun.file(path.join(String(dir), "entry.js")).text()).toContain('console.log("virtual")');
+    expect(exitCode).toBe(0);
   });
 
   test.skipIf(isWindows)("--compile with a --metafile that is a symlink to an embedded --asset file", async () => {

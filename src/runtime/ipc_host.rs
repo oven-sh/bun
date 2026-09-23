@@ -576,17 +576,17 @@ pub(crate) fn get_ipc_instance(
 
     // SAFETY: `instance` is the live boxed IPCInstance.
     let send_queue = unsafe { (*instance).data() };
-    send_queue.set_reads_paused(vm.entry_graph_loading);
+    send_queue.set_reads_held(vm.transpiler_store.has_jobs_in_flight());
     send_queue.write_version_packet(vm.global());
 
     Some(instance)
 }
 
-/// `RuntimeHooks::entry_graph_loading_changed`.
-pub(crate) fn entry_graph_loading_changed(loading: bool) {
+/// `RuntimeHooks::hold_ipc_reads`.
+pub(crate) fn hold_ipc_reads(hold: bool) {
     if let Some(inst) = CHANNEL.get() {
         // SAFETY: `CHANNEL` holds the live boxed instance until deinit.
-        unsafe { inst.as_ref() }.data().set_reads_paused(loading);
+        unsafe { inst.as_ref() }.data().set_reads_held(hold);
     }
 }
 

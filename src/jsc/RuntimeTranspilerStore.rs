@@ -201,6 +201,12 @@ pub struct RuntimeTranspilerStore {
     pub(crate) store: TranspilerJobStore,
     pub enabled: bool,
     pub(crate) queue: Queue,
+    /// Jobs sent to the pool that the JS thread has not taken back. The event
+    /// loop turns to wait for them, and Node loads a module graph without a
+    /// turn, so the main thread's IPC channel does not read meanwhile
+    /// (`RuntimeHooks::hold_ipc_reads`): what the parent already sent has to
+    /// reach the listeners that the modules being loaded register when they run.
+    in_flight: u32,
 }
 
 pub type Queue = UnboundedQueue<TranspilerJob>;
@@ -212,6 +218,7 @@ impl Default for RuntimeTranspilerStore {
             store: TranspilerJobStore::init(),
             enabled: true,
             queue: Queue::new(),
+            in_flight: 0,
         }
     }
 }
@@ -234,6 +241,21 @@ impl RuntimeTranspilerStore {
         Self::default()
     }
 
+    #[inline]
+    pub fn has_jobs_in_flight(&self) -> bool {
+        self.in_flight > 0
+    }
+
+    fn set_in_flight(&mut self, in_flight: u32, is_main_thread: bool) {
+        let had_jobs = self.in_flight > 0;
+        self.in_flight = in_flight;
+        if is_main_thread && had_jobs != (in_flight > 0) {
+            if let Some(hooks) = crate::virtual_machine::runtime_hooks() {
+                (hooks.hold_ipc_reads)(in_flight > 0);
+            }
+        }
+    }
+
     /// VM teardown (JS thread, heap alive, script forbidden; called on every
     /// turn of the wait): jobs already handed back whose completion will not
     /// run release their source, log and module promise here instead. Queued ⇒
@@ -247,6 +269,7 @@ impl RuntimeTranspilerStore {
             if job.is_null() {
                 break;
             }
+            self.in_flight = self.in_flight.saturating_sub(1);
             // SAFETY: a live job popped from the intrusive queue; see fn doc.
             unsafe {
                 (*job).promise.deinit();
@@ -289,6 +312,11 @@ impl RuntimeTranspilerStore {
                 }
             }
             first = false;
+            debug_assert!(self.in_flight > 0);
+            // SAFETY: `vm` is the live owning VM.
+            self.set_in_flight(self.in_flight.saturating_sub(1), unsafe {
+                (*vm.as_ptr()).is_main_thread
+            });
             // SAFETY: `job` is a live job popped from the intrusive queue.
             let fulfilled = unsafe { (*job).run_from_js_thread() };
             job = iter.next();
@@ -394,6 +422,8 @@ impl RuntimeTranspilerStore {
         }
         // SAFETY: job fully initialized above
         unsafe { (*job).schedule() };
+        // SAFETY: `vm` is the live VM that owns this store.
+        self.set_in_flight(self.in_flight + 1, unsafe { (*vm).is_main_thread });
         promise.cast::<c_void>()
     }
 }

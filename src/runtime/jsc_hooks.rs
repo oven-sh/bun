@@ -1457,7 +1457,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     deinit_runtime_state,
     generate_entry_point,
     load_preloads,
-    entry_graph_loading_changed: crate::ipc_host::entry_graph_loading_changed,
+    hold_ipc_reads: crate::ipc_host::hold_ipc_reads,
     ensure_debugger,
     auto_tick,
     auto_tick_active,

@@ -928,7 +928,10 @@ pub(crate) struct SendQueue {
     pub(crate) pending_after_close: Cell<bool>,
     pub(crate) write_in_progress: Cell<bool>,
     pub close_event_sent: Cell<bool>,
-    reads_paused: Cell<bool>,
+    /// See `is_reading`.
+    reads_held: Cell<bool>,
+    /// What the socket was last told. A new socket reads.
+    socket_reading: Cell<bool>,
 
     #[cfg(windows)]
     pub windows: JsCell<WindowsState>,
@@ -1054,7 +1057,8 @@ impl SendQueue {
             pending_after_close: Cell::new(false),
             write_in_progress: Cell::new(false),
             close_event_sent: Cell::new(false),
-            reads_paused: Cell::new(false),
+            reads_held: Cell::new(false),
+            socket_reading: Cell::new(true),
             #[cfg(windows)]
             windows: JsCell::new(WindowsState::default()),
         });
@@ -1085,29 +1089,42 @@ impl SendQueue {
         self.socket_is_open() && !self.pending_close.get() && !self.close_after_flush.get()
     }
 
-    /// Stops or restarts reading from the channel; writes are unaffected. What
-    /// the peer sends meanwhile waits in the kernel, and so does its close.
-    pub(crate) fn set_reads_paused(&self, paused: bool) {
-        if self.reads_paused.replace(paused) == paused {
+    /// Every reason not to read is a term here, so the end of one never
+    /// restarts what another still holds.
+    fn is_reading(&self) -> bool {
+        !self.reads_held.get()
+    }
+
+    /// `RuntimeHooks::hold_ipc_reads`.
+    pub(crate) fn set_reads_held(&self, held: bool) {
+        self.reads_held.set(held);
+        self.apply_socket_reading(self.is_reading());
+    }
+
+    /// Writes are unaffected. What the peer sends while the socket does not
+    /// read waits in the kernel, and so does its close.
+    fn apply_socket_reading(&self, reading: bool) {
+        if self.socket_reading.get() == reading {
             return;
         }
-        log!("SendQueue#setReadsPaused {}", paused);
         let SocketUnion::Open(socket) = *self.socket.get() else {
             return;
         };
+        log!("SendQueue#applySocketReading {}", reading);
+        self.socket_reading.set(reading);
         #[cfg(not(windows))]
         {
-            if paused {
-                socket.pause_stream();
-            } else {
+            if reading {
                 socket.resume_stream();
+            } else {
+                socket.pause_stream();
             }
         }
         #[cfg(windows)]
         {
             // SAFETY: an `Open` pipe is live until `windows_on_closed`.
             let stream: *mut uv::uv_stream_t = unsafe { (*socket).as_stream() };
-            if paused {
+            if !reading {
                 // SAFETY: as above.
                 unsafe { (*stream).read_stop() };
                 return;

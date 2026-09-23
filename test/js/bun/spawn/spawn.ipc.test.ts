@@ -120,35 +120,58 @@ describe.each(["advanced", "json"])("ipc mode %s", mode => {
           : { name: "DataCloneError", message: "The object can not be cloned." },
     });
   });
+});
 
-  it("a message sent right after spawn reaches the entry's listener when a preload already listens", async () => {
-    // The preload opens the channel before the entry's module graph loads, and the import chain keeps the event loop
-    // turning while it does. "late" is only sent once the entry's listener exists, so the child reports in either case.
-    using dir = tempDir("ipc-preload-early-message", {
-      "preload.cjs": `process.on("message", () => {});`,
-      "main.mjs": `
-import "./a.mjs";
+describe.concurrent("a message sent right after spawn reaches", () => {
+  // The import chain keeps a module graph loading, with the event loop turning, while the child's IPC channel is
+  // already open. "late" is only sent once the child's listener exists, so the child reports in either case.
+  const chain = {
+    "a.mjs": `import "./b.mjs";`,
+    "b.mjs": `import "./c.mjs";`,
+    "c.mjs": `import "./d.mjs";`,
+    "d.mjs": `export {};`,
+  };
+  const listen = `
 const seen = [];
 process.on("message", message => {
   seen.push(message);
   if (message === "late") process.send(seen);
 });
-process.send("ready");
-`,
-      "a.mjs": `import "./b.mjs";`,
-      "b.mjs": `import "./c.mjs";`,
-      "c.mjs": `import "./d.mjs";`,
-      "d.mjs": `export {};`,
-    });
+process.send("ready");`;
+
+  it.each([
+    {
+      name: "the entry's listener when a preload already listens",
+      args: ["--preload", "./listens.cjs", "main.mjs"],
+      files: { "listens.cjs": `process.on("message", () => {});`, "main.mjs": `import "./a.mjs";${listen}` },
+    },
+    {
+      name: "the entry's listener when another preload loads after one that listens",
+      args: ["--preload", "./listens.cjs", "--preload", "./chain.mjs", "main.mjs"],
+      files: {
+        "listens.cjs": `process.on("message", () => {});`,
+        "chain.mjs": `import "./a.mjs";`,
+        "main.mjs": listen,
+      },
+    },
+    {
+      name: "the listener of a module that the entry imports after process.send()",
+      args: ["main.mjs"],
+      files: {
+        "main.mjs": `process.send("loading");\nawait import("./app.mjs");`,
+        "app.mjs": `import "./a.mjs";${listen}`,
+      },
+    },
+  ])("$name", async ({ args, files }) => {
+    using dir = tempDir("ipc-early-message", { ...chain, ...files });
     const { promise, resolve, reject } = Promise.withResolvers<any>();
-    await using child = spawn([bunExe(), "--preload", "./preload.cjs", "main.mjs"], {
+    await using child = spawn([bunExe(), ...args], {
       cwd: String(dir),
       env: bunEnv,
       stdio: ["ignore", "inherit", "inherit"],
-      serialization: mode,
       ipc(message, subprocess) {
         if (message === "ready") subprocess.send("late");
-        else resolve(message);
+        else if (Array.isArray(message)) resolve(message);
       },
       onExit(_subprocess, exitCode, signalCode) {
         reject(new Error(`child exited (${exitCode}, ${signalCode}) before it reported`));
@@ -156,6 +179,36 @@ process.send("ready");
     });
     child.send("early");
     expect(await promise).toEqual(["early", "late"]);
+  });
+
+  it("a plugin's async onLoad that waits for it while the entry loads", async () => {
+    using dir = tempDir("ipc-plugin-onload", {
+      "plugin.mjs": `
+import { plugin } from "bun";
+plugin({
+  name: "source-from-parent",
+  setup(build) {
+    build.onLoad({ filter: /\\.virtual$/ }, async () => {
+      const source = await new Promise(resolve => process.once("message", resolve));
+      return { contents: source, loader: "js" };
+    });
+  },
+});`,
+      "main.mjs": `import value from "./value.virtual";\nprocess.on("message", () => {});\nprocess.send({ loaded: value });`,
+      "value.virtual": "",
+    });
+    const { promise, resolve, reject } = Promise.withResolvers<any>();
+    await using child = spawn([bunExe(), "--preload", "./plugin.mjs", "main.mjs"], {
+      cwd: String(dir),
+      env: bunEnv,
+      stdio: ["ignore", "inherit", "inherit"],
+      ipc: message => resolve(message),
+      onExit(_subprocess, exitCode, signalCode) {
+        reject(new Error(`child exited (${exitCode}, ${signalCode}) before it reported`));
+      },
+    });
+    child.send("export default 42;");
+    expect(await promise).toEqual({ loaded: 42 });
   });
 });
 

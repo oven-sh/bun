@@ -38,8 +38,6 @@
 namespace WebCore {
 using namespace JSC;
 
-// StructuredSerializeWithTransfer sets [[Detached]] on every transferable and
-// StructuredDeserializeWithTransfer creates a fresh object per transferDataHolder.
 // Out of line: most calls transfer no port.
 static NEVER_INLINE bool transferPorts(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& throwScope, Vector<RefPtr<MessagePort>>& ports)
 {

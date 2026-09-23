@@ -2748,8 +2748,7 @@ function fdSyncWrite(chunk, encoding, callback) {
     fdWriteFailed(this, err, callback, offset, buf, offset);
     return;
   }
-  // No native handle on this path, so feed bytesWritten/_bytesDispatched
-  // directly (node accounts these via the libuv handle).
+  // No native handle on this path, so account bytesWritten/_bytesDispatched here.
   this[kBytesWritten] = (this[kBytesWritten] || 0) + offset;
   callback();
 }

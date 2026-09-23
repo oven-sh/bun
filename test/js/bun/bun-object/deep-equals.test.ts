@@ -1,4 +1,5 @@
 import { bunEnv, bunExe, isASAN, isWindows } from "harness";
+import { isDeepStrictEqual } from "node:util";
 import vm from "node:vm";
 
 describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
@@ -223,6 +224,34 @@ describe("sparse arrays that only claim a length", () => {
     expect(Bun.deepEquals(sized(200_000, [150_000, 1]), sized(400_000, [150_000, 1]))).toBe(true);
     expect(Bun.deepEquals(sized(200_000, [150_000, 1]), sized(400_000, [150_000, 2]))).toBe(false);
     expect(Bun.deepEquals(sized(200_000), sized(400_000), true)).toBe(false);
+  });
+
+  // The sparse walk copies the sparse map's keys before it compares anything.
+  // A getter that adds an index during the comparison makes that copy stale, so
+  // the comparison goes back to the index-by-index walk and reaches the new index.
+  describe.each([
+    ["a sparse map", 110_000],
+    ["the vector", 1_000],
+  ] as const)("see an index that a getter adds to %s during the comparison", (_storage, added) => {
+    it.each([
+      ["Bun.deepEquals", (a: unknown, b: unknown) => Bun.deepEquals(a, b)],
+      ["Bun.deepEquals strict", (a: unknown, b: unknown) => Bun.deepEquals(a, b, true)],
+      ["util.isDeepStrictEqual", isDeepStrictEqual],
+    ] as const)("%s", (_name, compare) => {
+      const a: unknown[] = [];
+      const b: unknown[] = [];
+      a.length = b.length = 200_000;
+      a[0] = {
+        get x() {
+          a[added] = 1;
+          return 1;
+        },
+      };
+      b[0] = { x: 1 };
+
+      expect(compare(a, b)).toBe(false);
+      expect(a[added]).toBe(1);
+    });
   });
 
   const dense = new Array(100_000).fill(0);

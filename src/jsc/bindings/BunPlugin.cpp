@@ -662,8 +662,7 @@ static std::optional<ExportBinding> readExportBinding(JSC::JSGlobalObject* globa
     return ExportBinding { resolution.moduleRecord, resolution.localName, environment->variableAt(offset).get() };
 }
 
-// A spy on this binding (through any namespace that resolves to it) is seen through: restore clears spies before it
-// replays the log, which must not put the spy back. A spy on something else that happens to live in the export is the value.
+// Sees through a spy on this binding (restore clears spies before it replays the log); a spy on anything else is the value.
 static JSC::JSValue valueBeneathSpy(JSC::JSGlobalObject* globalObject, const ExportBinding& binding)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -758,8 +757,7 @@ static void noteCommonJSBeforeOverride(JSC::VM& vm, ModuleMockUndoLog& log, Bun:
     }
     if (logged != notFound)
         return;
-    // Source not run yet (the loader is between fetching and evaluating it): it will be evaluated from the mock, like
-    // a module the mock creates, and keeps that. Putting the empty placeholder exports back would leave it empty for good.
+    // Source not run yet: it is evaluated from the mock, like a module the mock creates, and keeps it.
     if (!module->hasEvaluated && !module->sourceCode.isNull())
         return;
     // module.exports is always a data property of ours (see JSCommonJSModule::setExportsObject).
@@ -1113,8 +1111,7 @@ void BunPlugin::OnLoad::restoreModuleMocks(Zig::GlobalObject* globalObject)
     // Taken out first: a lazy getter may run JS that mocks (logged afresh, for the next restore) or restores (sees only that).
     ModuleMockUndoLog pending = log->take();
 
-    // A builtin getter that throws is given up on: that binding keeps the mock, the rest is still put back, and the
-    // first such error is rethrown at the end. Keeping the entry would fail every later restore() in the run the same way.
+    // A getter that throws is not retried (the log outlives the file): its binding keeps the mock, the rest is put back, the first error is rethrown.
     JSC::Exception* getterFailure = nullptr;
     size_t handled = 0;
     for (auto& binding : pending.bindings) {

@@ -465,7 +465,8 @@ test("something", () => {
   });
 
   // When the file cannot be read again, the preview comes from the source
-  // lines of the selected frames, so those must be the throw site's too.
+  // lines of the selected frames, so those must be the throw site's too. That
+  // source is the transpiled module, where `new Error(...)` may be `Error(...)`.
   test.concurrent(
     "an Error with no frames of its own prints the throw site's source line when the file is gone",
     async () => {
@@ -479,7 +480,9 @@ setTimeout(() => {
       });
       const { stderr, exitCode } = await bunRun(join(String(dir), "gone.js"), env);
       const lines = stderr.split("\n");
-      const preview = lines.findIndex(line => /^\d+ \| +throw Error\("frameless, source file gone"\);$/.test(line));
+      const preview = lines.findIndex(line =>
+        /^\d+ \| +throw (new )?Error\("frameless, source file gone"\);$/.test(line),
+      );
       expect(preview).toBeGreaterThanOrEqual(0);
       expect(lines[preview + 1]).toMatch(/^ +\^$/);
       expect(lines[preview + 2]).toBe("error: frameless, source file gone");

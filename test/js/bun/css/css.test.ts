@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import {
   cssTest,
@@ -7635,6 +7635,65 @@ describe("css tests", () => {
         `,
       { chrome: Some(90 << 16) },
     );
+
+    // The bundler's built-in browser targets are below light-dark() support, but they leave this
+    // lowering out: the variables only resolve under a `color-scheme` rule compiled in the same CSS.
+    describe("bundler default targets", () => {
+      async function bundle(css: string, minify = false) {
+        using dir = tempDir("css-light-dark-default-targets", { "index.css": css });
+        const result = await Bun.build({ entrypoints: [join(String(dir), "index.css")], minify });
+        const output = await result.outputs[0].text();
+        // The leading `/* path */` banner holds the temporary directory.
+        return output.replace(/^\/\*.*\*\/\n/, "").trim();
+      }
+
+      test("light-dark() is kept as written", async () => {
+        const output = await bundle(`
+          .b { color: light-dark(#102030, #d0e0f0); background-color: light-dark(white, black) }
+          .c { accent-color: light-dark(red, blue); --c: light-dark(red, blue) }
+        `);
+        expect(output).toBe(indoc`
+          .b {
+            color: light-dark(#102030, #d0e0f0);
+            background-color: light-dark(#fff, #000);
+          }
+
+          .c {
+            accent-color: light-dark(red, #00f);
+            --c: light-dark(red, #00f);
+          }
+        `);
+      });
+
+      test("light-dark() is kept as written when minified", async () => {
+        const output = await bundle(
+          ".b { color: light-dark(#102030, #d0e0f0) } .c { --c: light-dark(red, blue) }",
+          true,
+        );
+        expect(output).toBe(".b{color:light-dark(#102030,#d0e0f0)}.c{--c:light-dark(red,#00f)}");
+      });
+
+      test("color-scheme does not define the fallback variables", async () => {
+        const output = await bundle(`
+          :root { color-scheme: light dark }
+          .dark { color-scheme: dark }
+          .b { color: light-dark(red, blue) }
+        `);
+        expect(output).toBe(indoc`
+          :root {
+            color-scheme: light dark;
+          }
+
+          .dark {
+            color-scheme: dark;
+          }
+
+          .b {
+            color: light-dark(red, #00f);
+          }
+        `);
+      });
+    });
   });
 
   describe("page", () => {

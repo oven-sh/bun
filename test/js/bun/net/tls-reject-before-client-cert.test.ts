@@ -7,12 +7,18 @@
 // the peer CN on `secure`. The client pins ca2 while the server presents the
 // self-signed harness certificate, so the chain must fail. The client's own
 // certificate is agent3 (signed by ca2).
+//
+// Four clients run TLS in SSLWrapper, not on a usockets socket: fetch and
+// WebSocket through an HTTP CONNECT proxy, tls.connect over a Duplex, and
+// tls.connect over a Windows named pipe.
 import { RedisClient, SQL } from "bun";
-import { describe, expect, test } from "bun:test";
-import { tls as harnessTls } from "harness";
+import { afterAll, describe, expect, test } from "bun:test";
+import { tls as harnessTls, isWindows } from "harness";
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
+import { Duplex } from "node:stream";
 import tls from "node:tls";
 import {
   MYSQL_CLIENT_LONG_PASSWORD,
@@ -22,6 +28,22 @@ import {
   mysqlHandshakeV10,
   pgSSLResponse,
 } from "../../sql/wire-frames";
+import { startRecordingProxy } from "../../web/websocket/proxy-test-utils";
+
+// NO_PROXY applies to an explicit `proxy` option too. An ambient
+// NO_PROXY=127.0.0.1 would send the proxy rows direct, and they would then
+// test the wrong client. With NO_PROXY off, an ambient HTTPS_PROXY (or
+// ALL_PROXY, its fallback) would capture the direct rows. An empty value turns
+// each one off.
+const proxyEnvKeys = ["NO_PROXY", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"].flatMap(key => [key, key.toLowerCase()]);
+const savedProxyEnv = proxyEnvKeys.map(key => [key, process.env[key]] as const);
+for (const key of proxyEnvKeys) process.env[key] = "";
+afterAll(() => {
+  for (const [key, value] of savedProxyEnv) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+});
 
 const keys = join(import.meta.dir, "../../node/test/fixtures/keys");
 const pem = (name: string) => readFileSync(join(keys, name), "utf8");
@@ -52,10 +74,12 @@ type Seen = {
 
 // `plain` runs the protocol's cleartext prelude on the raw socket and resolves
 // with the number of cleartext bytes the client sent before TLS starts.
+// `pipe` makes the relay listen on that Windows named pipe, not on a TCP port.
 async function mtlsServer(opts: {
   plain?: (socket: net.Socket) => Promise<number>;
   onSecure?: (socket: tls.TLSSocket) => void;
   maxVersion?: tls.SecureVersion;
+  pipe?: string;
 }) {
   const closed = Promise.withResolvers<void>();
   const seen: Seen = { peerCN: null, clientHelloBytes: 0, clientTlsBytes: 0, closed: closed.promise };
@@ -90,7 +114,7 @@ async function mtlsServer(opts: {
     });
   });
   // The relay counts the client's bytes independently of the TLS engine.
-  const relay = await listeningServer(client => {
+  const onRelayClient = (client: net.Socket) => {
     const upstream = net.connect(backend.port, "127.0.0.1");
     client.on("error", () => {});
     upstream.on("error", () => {});
@@ -103,7 +127,13 @@ async function mtlsServer(opts: {
     upstream.on("end", () => client.end());
     client.on("close", () => upstream.destroy());
     upstream.on("close", () => client.destroy());
-  });
+  };
+  const relay = opts.pipe
+    ? await new Promise<{ port: number; server: net.Server }>(resolve => {
+        const server = net.createServer(onRelayClient);
+        server.listen(opts.pipe, () => resolve({ port: 0, server }));
+      })
+    : await listeningServer(onRelayClient);
   return {
     port: relay.port,
     seen,
@@ -160,13 +190,55 @@ const settle = <T>(p: Promise<T>) =>
     (e: any) => e,
   );
 
-const websocketOutcome = (port: number, tlsOpts: object) =>
+// The CONNECT proxy dials the host the client names, and the relay listens on
+// 127.0.0.1 only, so a proxied client targets 127.0.0.1 (it is in the harness
+// certificate's SANs).
+const websocketOutcome = (port: number, tlsOpts: object, proxy?: string) =>
   new Promise<string>(resolve => {
-    const ws = new WebSocket(`wss://localhost:${port}/`, { tls: tlsOpts } as any);
+    const ws = new WebSocket(`wss://${proxy ? "127.0.0.1" : "localhost"}:${port}/`, { tls: tlsOpts, proxy } as any);
     ws.onopen = () => resolve("open");
     ws.onerror = () => resolve("error");
     ws.onclose = () => resolve("close");
   });
+
+// Resolves with the TLS socket's error, or with null once the server ends the
+// connection without one.
+const tlsOutcome = (socket: tls.TLSSocket) =>
+  new Promise<any>(resolve => {
+    socket.on("error", resolve);
+    socket.on("end", () => {
+      socket.destroy();
+      resolve(null);
+    });
+  });
+
+// tls.connect over a generic Duplex: the ciphertext moves through JS, here to
+// a TCP socket into the relay.
+function tlsOverDuplex(port: number, tlsOpts: object) {
+  const raw = net.connect(port, "127.0.0.1");
+  raw.on("error", () => {});
+  const duplex = new Duplex({
+    read() {},
+    write(chunk, _encoding, callback) {
+      raw.write(chunk, callback);
+    },
+    final(callback) {
+      raw.end(callback);
+    },
+    destroy(err, callback) {
+      raw.destroy();
+      callback(err);
+    },
+  });
+  raw.on("data", chunk => duplex.push(chunk));
+  raw.on("end", () => duplex.push(null));
+  return tlsOutcome(tls.connect({ socket: duplex, servername: "localhost", ...tlsOpts }));
+}
+
+// Windows only: tls.connect({ path }) over a named pipe runs TLS in SSLWrapper too.
+const pipeName = () => `\\\\.\\pipe\\bun-tls-reject-${randomUUID()}`;
+const tlsOverPipe = (path: string, tlsOpts: object) =>
+  tlsOutcome(tls.connect({ path, servername: "localhost", ...tlsOpts }));
 
 async function sqlError(url: string, options: object) {
   const sql = new SQL({ url, max: 1, ...options });
@@ -188,6 +260,8 @@ async function sqlHandshakeOnly(url: string, options: object, closed: Promise<vo
 // In TLS 1.3 the client's Certificate follows the server's Finished, so the
 // read loop suppresses it. In TLS 1.2 the client writes it first and the
 // parked-write retry catches it. Both paths must keep it off the wire.
+// SSLWrapper queues both in a memory BIO and must drop that queue: before the
+// check it flushed the TLS 1.2 flight while it waited for the server's Finished.
 describe.each(["TLSv1.3", "TLSv1.2"] as const)(
   "%s: a rejecting client sends no client certificate to a server whose chain fails",
   maxVersion => {
@@ -256,6 +330,91 @@ describe.each(["TLSv1.3", "TLSv1.2"] as const)(
       expect(srv.seen.peerCN).toBeNull();
       expect(srv.seen.clientTlsBytes).toBe(srv.seen.clientHelloBytes);
     });
+
+    // The SSLWrapper clients. `proxy.requests` shows the request did go
+    // through the tunnel, so the inner TLS did run in the wrapper.
+    test("control: through a CONNECT proxy with the right CA the server does see the client certificate", async () => {
+      await using srv = await mtlsServer({ onSecure: httpOk, maxVersion });
+      using proxy = await startRecordingProxy();
+      const res = await fetch(`https://127.0.0.1:${srv.port}/`, {
+        tls: { ...mtls, ca: trustedCA },
+        proxy: `http://127.0.0.1:${proxy.port}`,
+      });
+      expect(await res.text()).toBe("ok");
+      expect(proxy.requests.map(r => r.requestLine)).toEqual([`CONNECT 127.0.0.1:${srv.port} HTTP/1.1`]);
+      expect(srv.seen.peerCN).toBe("agent3");
+    });
+
+    test("fetch through a CONNECT proxy", async () => {
+      await using srv = await mtlsServer({ onSecure: httpOk, maxVersion });
+      using proxy = await startRecordingProxy();
+      const err = await settle(
+        fetch(`https://127.0.0.1:${srv.port}/`, { tls: mtls, proxy: `http://127.0.0.1:${proxy.port}` }),
+      );
+      expect(err?.code).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+      await srv.seen.closed;
+      expect(proxy.requests.map(r => r.requestLine)).toEqual([`CONNECT 127.0.0.1:${srv.port} HTTP/1.1`]);
+      expect(srv.seen.peerCN).toBeNull();
+      expect(srv.seen.clientTlsBytes).toBe(srv.seen.clientHelloBytes);
+    });
+
+    // The server drops the connection after the handshake, so the WebSocket
+    // upgrade fails. The handshake is what this row checks.
+    test("control: WebSocket through a CONNECT proxy with the right CA completes the handshake", async () => {
+      await using srv = await mtlsServer({ onSecure: dropAfterHandshake, maxVersion });
+      using proxy = await startRecordingProxy();
+      await websocketOutcome(srv.port, { ...mtls, ca: trustedCA }, `http://127.0.0.1:${proxy.port}`);
+      await srv.seen.closed;
+      expect(proxy.requests.map(r => r.requestLine)).toEqual([`CONNECT 127.0.0.1:${srv.port} HTTP/1.1`]);
+      expect(srv.seen.peerCN).toBe("agent3");
+    });
+
+    test("WebSocket through a CONNECT proxy", async () => {
+      await using srv = await mtlsServer({ maxVersion });
+      using proxy = await startRecordingProxy();
+      expect(await websocketOutcome(srv.port, mtls, `http://127.0.0.1:${proxy.port}`)).toBe("error");
+      await srv.seen.closed;
+      expect(proxy.requests.map(r => r.requestLine)).toEqual([`CONNECT 127.0.0.1:${srv.port} HTTP/1.1`]);
+      expect(srv.seen.peerCN).toBeNull();
+      expect(srv.seen.clientTlsBytes).toBe(srv.seen.clientHelloBytes);
+    });
+
+    test("control: over a Duplex with the right CA the server does see the client certificate", async () => {
+      await using srv = await mtlsServer({ onSecure: dropAfterHandshake, maxVersion });
+      await tlsOverDuplex(srv.port, { ...mtls, ca: trustedCA });
+      await srv.seen.closed;
+      expect(srv.seen.peerCN).toBe("agent3");
+    });
+
+    test("tls.connect over a Duplex", async () => {
+      await using srv = await mtlsServer({ maxVersion });
+      const err = await tlsOverDuplex(srv.port, mtls);
+      expect(err?.code).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+      await srv.seen.closed;
+      expect(srv.seen.peerCN).toBeNull();
+      expect(srv.seen.clientTlsBytes).toBe(srv.seen.clientHelloBytes);
+    });
+
+    test.skipIf(!isWindows)(
+      "control: over a named pipe with the right CA the server does see the client certificate",
+      async () => {
+        const pipe = pipeName();
+        await using srv = await mtlsServer({ onSecure: dropAfterHandshake, maxVersion, pipe });
+        await tlsOverPipe(pipe, { ...mtls, ca: trustedCA });
+        await srv.seen.closed;
+        expect(srv.seen.peerCN).toBe("agent3");
+      },
+    );
+
+    test.skipIf(!isWindows)("tls.connect over a named pipe", async () => {
+      const pipe = pipeName();
+      await using srv = await mtlsServer({ maxVersion, pipe });
+      const err = await tlsOverPipe(pipe, mtls);
+      expect(err?.code).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+      await srv.seen.closed;
+      expect(srv.seen.peerCN).toBeNull();
+      expect(srv.seen.clientTlsBytes).toBe(srv.seen.clientHelloBytes);
+    });
   },
 );
 
@@ -273,6 +432,44 @@ describe("a client that accepts a bad chain still completes the handshake", () =
   test("WebSocket rejectUnauthorized: false", async () => {
     await using srv = await mtlsServer({ onSecure: dropAfterHandshake });
     await websocketOutcome(srv.port, { ...mtls, rejectUnauthorized: false });
+    await srv.seen.closed;
+    expect(srv.seen.peerCN).toBe("agent3");
+  });
+
+  test("fetch through a CONNECT proxy rejectUnauthorized: false", async () => {
+    await using srv = await mtlsServer({ onSecure: dropAfterHandshake });
+    using proxy = await startRecordingProxy();
+    await settle(
+      fetch(`https://127.0.0.1:${srv.port}/`, {
+        tls: { ...mtls, rejectUnauthorized: false },
+        proxy: `http://127.0.0.1:${proxy.port}`,
+      }),
+    );
+    await srv.seen.closed;
+    expect(proxy.requests.map(r => r.requestLine)).toEqual([`CONNECT 127.0.0.1:${srv.port} HTTP/1.1`]);
+    expect(srv.seen.peerCN).toBe("agent3");
+  });
+
+  test("WebSocket through a CONNECT proxy rejectUnauthorized: false", async () => {
+    await using srv = await mtlsServer({ onSecure: dropAfterHandshake });
+    using proxy = await startRecordingProxy();
+    await websocketOutcome(srv.port, { ...mtls, rejectUnauthorized: false }, `http://127.0.0.1:${proxy.port}`);
+    await srv.seen.closed;
+    expect(proxy.requests.map(r => r.requestLine)).toEqual([`CONNECT 127.0.0.1:${srv.port} HTTP/1.1`]);
+    expect(srv.seen.peerCN).toBe("agent3");
+  });
+
+  test("tls.connect over a Duplex rejectUnauthorized: false", async () => {
+    await using srv = await mtlsServer({ onSecure: dropAfterHandshake });
+    await tlsOverDuplex(srv.port, { ...mtls, rejectUnauthorized: false });
+    await srv.seen.closed;
+    expect(srv.seen.peerCN).toBe("agent3");
+  });
+
+  test.skipIf(!isWindows)("tls.connect over a named pipe rejectUnauthorized: false", async () => {
+    const pipe = pipeName();
+    await using srv = await mtlsServer({ onSecure: dropAfterHandshake, pipe });
+    await tlsOverPipe(pipe, { ...mtls, rejectUnauthorized: false });
     await srv.seen.closed;
     expect(srv.seen.peerCN).toBe("agent3");
   });

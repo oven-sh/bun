@@ -7,6 +7,18 @@ const MB = 1024 * 1024;
 const hog = (mb: number) =>
   `const b = Buffer.allocUnsafe(${mb} * 1024 * 1024); for (let i = 0; i < b.length; i += 4096) b[i] = 1; globalThis.keep = b; setInterval(() => {}, 1000);`;
 
+// A killed process stays visible as a zombie until its new parent reaps it, so wait for the pid to go away.
+async function gone(pid: number) {
+  for (;;) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return;
+    }
+    await Bun.sleep(5);
+  }
+}
+
 describe("Bun.spawn maxMemory", () => {
   test.concurrent("kills a child that exceeds the limit", async () => {
     await using proc = Bun.spawn({
@@ -54,8 +66,8 @@ describe("Bun.spawn maxMemory", () => {
     const grandchildPid = parseInt(stdout.split("\n")[0], 10);
     expect(grandchildPid).toBeGreaterThan(0);
     if (!isWindows) expect(proc.signalCode).toBe("SIGKILL");
-    // The grandchild must be gone too, not just the direct child.
-    expect(() => process.kill(grandchildPid, 0)).toThrow();
+    // The grandchild must be gone too, not just the direct child. The test times out if it survives.
+    await gone(grandchildPid);
   });
 
   test.concurrent("honors killSignal", async () => {
@@ -105,15 +117,7 @@ describe("Bun.spawn maxMemory", () => {
       expect(after.current).toBe(0);
       expect(after.peak).toBeGreaterThanOrEqual(usage.peak);
 
-      const isAlive = (pid: number) => {
-        try {
-          process.kill(pid, 0);
-          return true;
-        } catch {
-          return false;
-        }
-      };
-      while (isAlive(grandchildPid)) await Bun.sleep(5);
+      await gone(grandchildPid);
     }
   });
 

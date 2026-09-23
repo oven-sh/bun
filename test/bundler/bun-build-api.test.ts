@@ -73,7 +73,7 @@ describe("Bun.build", () => {
 
   // Bytecode is counted among the outputs before it is generated. JSC rejects this regular expression, which the
   // bundler passes through, so the chunk ends up without bytecode: every other output must still be there.
-  describe("a chunk whose bytecode cannot be generated", () => {
+  describe.each(["in memory", "outdir"])("a chunk whose bytecode cannot be generated (%s)", form => {
     const files = {
       "package.json": `{}`,
       "logo.png": "PNGDATA",
@@ -81,7 +81,7 @@ describe("Bun.build", () => {
     };
     const unparseable = String.raw`/\p{NotAProperty}/u`;
 
-    test.each(["in memory", "outdir"])("keeps the other outputs (%s)", async form => {
+    test("keeps the other outputs", async () => {
       using dir = tempDir("bun-build-api-bytecode-failed", {
         ...files,
         "index.js": `

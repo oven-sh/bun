@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { once } from "node:events";
 import * as net from "node:net";
 
@@ -313,17 +313,19 @@ describe("keep-alive headers", () => {
   });
 
   test("idleTimeout rounds down to the sweep before the one that can close the socket", async () => {
+    // 1 to 4 s can close at the next sweep: no value is safe, so no hint.
     for (const [idleTimeout, advertised] of [
-      [30, "28"],
-      [8, "4"],
-      [4, "1"],
-      [1, "1"],
-      [255, "252"],
+      [30, ["timeout=28"]],
+      [8, ["timeout=4"]],
+      [4, []],
+      [1, []],
+      [255, ["timeout=252"]],
     ] as const) {
       using server = Bun.serve({ port: 0, idleTimeout, fetch: () => new Response("ok") });
-      expect(keepAlive(await rawHeaders(server.port, GET))).toEqual({
+      expect({ idleTimeout, ...keepAlive(await rawHeaders(server.port, GET)) }).toEqual({
+        idleTimeout,
         connection: ["keep-alive"],
-        keepAlive: [`timeout=${advertised}`],
+        keepAlive: advertised,
       });
     }
   });
@@ -484,6 +486,36 @@ describe("keep-alive headers", () => {
       "GET / HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n",
     );
     expect(keepAlive(lines)).toEqual({ connection: ["Upgrade"], keepAlive: [] });
+  });
+
+  test("a response ended with close after the handler threw does not advertise keep-alive", async () => {
+    // node:http ends a pending response with close when the handler throws
+    // before writeHead. The close mark must land before the server headers.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const http = require("node:http");
+        const net = require("node:net");
+        process.on("uncaughtException", () => {});
+        const server = http.createServer(() => { throw new Error("boom"); });
+        server.listen(0, "127.0.0.1", () => {
+          const s = net.connect(server.address().port, "127.0.0.1");
+          let raw = "";
+          s.on("connect", () => s.write("GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n"));
+          s.on("data", d => (raw += d.toString("latin1")));
+          s.on("close", () => { console.log(raw.split("\\r\\n\\r\\n")[0]); server.close(); });
+        });
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const lines = stdout.trim().split("\r\n").slice(1);
+    expect({ ...keepAlive(lines), stderr }).toEqual({ connection: ["close"], keepAlive: [], stderr: "" });
+    expect(exitCode).toBe(0);
   });
 
   test("node:http keeps rendering its own pair once", async () => {

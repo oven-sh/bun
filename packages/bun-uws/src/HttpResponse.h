@@ -48,15 +48,16 @@ inline constexpr const char* HTTP_200_OK = "200 OK";
 
 /* `Connection: keep-alive\r\nKeep-Alive: timeout=N\r\n`, one rendered line
  * pair per idle timeout, indexed by the timeout in sweep ticks
- * ((seconds + 3) >> 2, the rounding us_socket_timeout applies). Entry 0
- * (no idle timeout) is the Connection line alone.
+ * ((seconds + 3) >> 2, the rounding us_socket_timeout applies).
  *
  * N is the idle time the socket is sure to survive, not the configured
  * seconds: the sweep timer runs every LIBUS_TIMEOUT_GRANULARITY seconds
  * and a timeout of T ticks fires between (T - 1) and T sweeps after it was
  * armed. A client that reads N retires the socket before the server can
  * close it (Node's http.Agent and undici both subtract a margin from N).
- * The default 10 s timeout advertises 8. */
+ * The default 10 s timeout advertises 8. Entry 0 (no idle timeout) and
+ * entry 1 (the socket can close at the next sweep, so no N is safe) are
+ * the Connection line alone. */
 struct KeepAliveHeaderLines {
     static constexpr unsigned CONNECTION_LINE_LENGTH = 24; /* "Connection: keep-alive\r\n" */
     char data[50];
@@ -85,9 +86,9 @@ inline constexpr auto keepAliveHeaderLines = [] {
         KeepAliveHeaderLines &line = lines[ticks];
         unsigned n = 0;
         for (char c : std::string_view("Connection: keep-alive\r\n")) line.data[n++] = c;
-        if (ticks) {
+        if (ticks > 1) {
             for (char c : std::string_view("Keep-Alive: timeout=")) line.data[n++] = c;
-            unsigned seconds = ticks > 1 ? (ticks - 1) * LIBUS_TIMEOUT_GRANULARITY : 1;
+            unsigned seconds = (ticks - 1) * LIBUS_TIMEOUT_GRANULARITY;
             char digits[3];
             unsigned d = 0;
             do { digits[d++] = (char) ('0' + seconds % 10); seconds /= 10; } while (seconds);
@@ -237,6 +238,20 @@ public:
         httpResponseData->markDone(this);
     }
 
+    /* The connection closes once this response is out (RFC 9112 9.6). HTTP/1.1
+     * must say so unless the client already did, so the header is written
+     * while the header section is open and no Connection header is on the
+     * wire yet. The bit is what the close gates read; it has to be set before
+     * writeMark() seals the headers, or the response advertises keep-alive
+     * on a connection about to close. */
+    void markConnectionClose() {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE | HttpResponseData<SSL>::HTTP_WRITE_CALLED | HttpResponseData<SSL>::HTTP_END_CALLED))) {
+            writeHeader("Connection", "close");
+        }
+        httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
+    }
+
     /* Returns true on success, indicating that it might be feasible to write more data.
      * Will start timeout if stream reaches totalSize or write failure. */
     bool internalEnd(std::string_view data, uint64_t totalSize, bool optional, bool allowContentLength = true, bool closeConnection = false) {
@@ -260,21 +275,8 @@ public:
         }
 
         /* In some cases, such as when refusing huge data we want to close the connection when drained */
-        if (closeConnection) {
-            /* We can only write the header once */
-            if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_END_CALLED))) {
-
-                /* HTTP 1.1 must send this back unless the client already sent it to us.
-                * It is a connection close when either of the two parties say so but the
-                * one party must tell the other one so.
-                *
-                * This check also serves to limit writing the header only once. */
-                if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) == 0 && !(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED))) {
-                    writeHeader("Connection", "close");
-                }
-
-                httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
-            }
+        if (closeConnection && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_END_CALLED)) {
+            markConnectionClose();
         }
 
         /* if write was called and there was previously no Content-Length header set.
@@ -626,17 +628,21 @@ public:
         writeStatus(HTTP_200_OK);
 
         /* Every Connection or Keep-Alive header a caller writes (a user
-         * header from any route, node:http's own line, the 101 Upgrade)
-         * passes here, so this is where writeMark() learns not to add its
-         * own, and where a `close` token marks the connection to close once
-         * the response is out (RFC 9112 9.6). Both names are 10 bytes; the
-         * length test is all that other headers pay. */
+         * header from any route, the 101 Upgrade) passes here, so this is
+         * where writeMark() learns not to add its own, and where a `close`
+         * token marks the connection to close once the response is out
+         * (RFC 9112 9.6). A caller that claimed the Connection header before
+         * writing any (node:http, which closes from JavaScript after 'finish')
+         * keeps its own semantics. Both names are 10 bytes; the length test
+         * is all that other headers pay. */
         if (key.length() == 10) [[unlikely]] {
             if (!strncasecmp(key.data(), "connection", 10)) {
                 HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
-                httpResponseData->state |= HttpResponseData<SSL>::HTTP_WROTE_CONNECTION_HEADER | HttpResponseData<SSL>::HTTP_WROTE_KEEP_ALIVE_HEADER;
-                if (connectionValueHasClose(value)) {
-                    httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
+                if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONNECTION_HEADER)) {
+                    httpResponseData->state |= HttpResponseData<SSL>::HTTP_WROTE_CONNECTION_HEADER | HttpResponseData<SSL>::HTTP_WROTE_KEEP_ALIVE_HEADER;
+                    if (connectionValueHasClose(value)) {
+                        httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
+                    }
                 }
             } else if (!strncasecmp(key.data(), "keep-alive", 10)) {
                 getHttpResponseData()->state |= HttpResponseData<SSL>::HTTP_WROTE_KEEP_ALIVE_HEADER;
@@ -698,6 +704,9 @@ public:
             !(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED | HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER
                 | HttpResponseData<SSL>::HTTP_ANCIENT_REQUEST | HttpResponseData<SSL>::HTTP_NO_BODY_STATUS))) {
             writeStatus(HTTP_200_OK);
+            if (closeConnection) {
+                markConnectionClose();
+            }
             writeMark();
             Super::write("\r\n", 2);
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
@@ -729,16 +738,16 @@ public:
     void endWithoutBody(bool closeConnection) {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
         bool headersOpen = !(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED | HttpResponseData<SSL>::HTTP_END_CALLED));
+        /* Decided before the close header below, which writes a status of its
+         * own: a caller that ends a response it never started (node:http
+         * res.destroy() before writeHead, an HTML route that lost its server)
+         * gets the header section it always got, without the server headers. */
+        bool hasStatus = httpResponseData->state & HttpResponseData<SSL>::HTTP_STATUS_CALLED;
         if (closeConnection) {
-            if (headersOpen && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE)) {
-                writeHeader("Connection", "close");
-            }
-            httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
+            markConnectionClose();
         }
         if (headersOpen) {
-            /* A response that never got a status line has no header section
-             * to complete (node:http destroys a response before writeHead). */
-            if (httpResponseData->state & HttpResponseData<SSL>::HTTP_STATUS_CALLED) {
+            if (hasStatus) {
                 writeMark();
             }
             /* Some HTTP clients require the complete "<header>\r\n\r\n" to be
@@ -767,6 +776,9 @@ public:
     bool sendTerminatingChunk(bool closeConnection = false) {
         writeStatus(HTTP_200_OK);
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        if (closeConnection) {
+            markConnectionClose();
+        }
         if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED | HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER))) {
             /* Write mark on first call to write */
             writeMark();

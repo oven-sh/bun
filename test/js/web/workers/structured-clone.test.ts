@@ -645,11 +645,13 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
               graph.dispose();
               // dispose() closes the graph's ports from the event loop's queue. A port the graph made
               // with `new MessageChannel()` tells when that ran.
-              while (isOpen(made.ofTheGraph.port1)) await new Promise(resolve => setImmediate(resolve));
-              expect({ transferred: isOpen(made.transferred), ofTheHost: isOpen(ofTheHost.port1) }).toEqual({
-                transferred: false,
-                ofTheHost: true,
-              });
+              for (const deadline = Date.now() + 3000; isOpen(made.ofTheGraph.port1) && Date.now() < deadline; )
+                await new Promise(resolve => setImmediate(resolve));
+              expect({
+                ofTheGraph: isOpen(made.ofTheGraph.port1),
+                transferred: isOpen(made.transferred),
+                ofTheHost: isOpen(ofTheHost.port1),
+              }).toEqual({ ofTheGraph: false, transferred: false, ofTheHost: true });
             } finally {
               graph.dispose();
               closeAll(made?.transferred, made?.ofTheGraph.port1, made?.ofTheGraph.port2);

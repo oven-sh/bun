@@ -1904,6 +1904,10 @@ abstract class Http2Session extends EventEmitter {
   [bunHTTP2SessionTeardownFrame]: typeof kNoSessionTeardown | import("./async_hooks").Frame | undefined =
     kNoSessionTeardown;
   [bunHTTP2Socket]: TLSSocket | Socket | null | undefined;
+  // The graph context the session was made in, and the one destroy() was called in while it tears its streams down:
+  // private-name slots (see internal/async_context_frame.ts), so types only.
+  declare $moduleGraphContext: ModuleGraphContext | undefined;
+  declare $teardownModuleGraphContext: ModuleGraphContext | undefined;
   [bunHTTP2OriginSet]: Set<string> | undefined = undefined;
   // Session-level frame (Node's Http2Session AsyncWrap): destroy()'s emits
   // run inside it so 'close' doesn't inherit the last stream's frame.
@@ -2328,6 +2332,8 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
   // frame is snapshotted directly so session.request() does not flip on
   // async-context tracking when no AsyncLocalStorage is in use.
   [bunHTTP2AsyncContextFrame] = $getInternalField($asyncContext, 0);
+  // The graph context request() ran in: a private-name slot, so a type only.
+  declare $moduleGraphContext: ModuleGraphContext | undefined;
 
   rstCode: number | undefined = undefined;
   [bunHTTP2Headers]: any;

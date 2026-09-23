@@ -420,7 +420,8 @@ export function initializeNextTickQueue(process: typeof globalThis.process, next
       // a waste of memory and Array.prototype.slice shows up in profiling.
       args: $argumentCount() > 1 ? args : undefined,
       frame: $getInternalField($asyncContext, 0),
-    };
+      // (The graph context goes in a private-name slot below: a type only.)
+    } as { callback: typeof cb; args: unknown[] | undefined; frame: unknown; $moduleGraphContext: unknown };
     // (An async_hooks init hook is handed `tock`.)
     const graph = $getInternalField($asyncContext, 1);
     if (graph !== undefined) $putByIdDirectPrivate(tock, "moduleGraphContext", graph);

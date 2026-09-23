@@ -8,28 +8,11 @@
 
 namespace Bun {
 
-// The UTS #46 instances Node used: CheckHyphens and VerifyDnsLength are
-// handled by filtering the corresponding errors after the fact.
-static UIDNA* toASCIIIDNA()
+// Every conversion here runs on the URL parser's UTS #46 instance (CheckBidi, CheckJoiners, non-transitional) and
+// uses its error filter (CheckHyphens and VerifyDnsLength are off), so it agrees with the host parser.
+static bool hasIDNAError(const UIDNAInfo& info)
 {
-    static UIDNA* instance = [] {
-        UErrorCode status = U_ZERO_ERROR;
-        UIDNA* idna = uidna_openUTS46(UIDNA_CHECK_BIDI | UIDNA_CHECK_CONTEXTJ | UIDNA_NONTRANSITIONAL_TO_ASCII, &status);
-        RELEASE_ASSERT(U_SUCCESS(status));
-        return idna;
-    }();
-    return instance;
-}
-
-static UIDNA* toUnicodeIDNA()
-{
-    static UIDNA* instance = [] {
-        UErrorCode status = U_ZERO_ERROR;
-        UIDNA* idna = uidna_openUTS46(UIDNA_NONTRANSITIONAL_TO_UNICODE, &status);
-        RELEASE_ASSERT(U_SUCCESS(status));
-        return idna;
-    }();
-    return instance;
+    return info.errors & ~WTF::URLParser::allowedNameToASCIIErrors;
 }
 
 enum class IDNAMode : uint8_t {
@@ -37,35 +20,39 @@ enum class IDNAMode : uint8_t {
     Lenient,
 };
 
-// Runs a uidna_*To* conversion with the U_BUFFER_OVERFLOW_ERROR retry protocol and appends the output to `output`.
+// Runs a uidna_*To* conversion with the U_BUFFER_OVERFLOW_ERROR retry protocol. Returns the output, which lives in
+// `buffer`, or nullopt when ICU fails. `info` holds the UTS #46 errors of the conversion.
 using UIDNAFunction = int32_t (*)(const UIDNA*, const char16_t*, int32_t, char16_t*, int32_t, UIDNAInfo*, UErrorCode*);
+using UIDNABuffer = Vector<char16_t, 256>;
 
-static void runUIDNA(UIDNAFunction convert, const UIDNA* idna, std::span<const char16_t> span, StringBuilder& output, UErrorCode& status, UIDNAInfo& info)
+static std::optional<std::span<const char16_t>> runUIDNA(UIDNAFunction convert, std::span<const char16_t> input, UIDNABuffer& buffer, UIDNAInfo& info)
 {
-    Vector<char16_t, 256> buffer(256);
-    int32_t length = convert(idna, span.data(), span.size(), buffer.begin(), buffer.size(), &info, &status);
+    const UIDNA* idna = &WTF::URLParser::internationalDomainNameTranscoder();
+    UErrorCode status = U_ZERO_ERROR;
+    buffer.grow(buffer.capacity());
+    int32_t length = convert(idna, input.data(), input.size(), buffer.begin(), buffer.size(), &info, &status);
     if (status == U_BUFFER_OVERFLOW_ERROR) {
         status = U_ZERO_ERROR;
         info = UIDNA_INFO_INITIALIZER;
         buffer.grow(length);
-        length = convert(idna, span.data(), span.size(), buffer.begin(), buffer.size(), &info, &status);
+        length = convert(idna, input.data(), input.size(), buffer.begin(), buffer.size(), &info, &status);
     }
     if (U_FAILURE(status))
-        return;
-    output.append(std::span { buffer.begin(), static_cast<size_t>(length) });
+        return std::nullopt;
+    return buffer.span().first(length);
 }
 
-static String runUIDNA(UIDNAFunction convert, const UIDNA* idna, const String& input, UErrorCode& status, UIDNAInfo& info)
+static String runUIDNA(UIDNAFunction convert, const String& input, UIDNAInfo& info)
 {
     String domain = input;
     if (domain.is8Bit())
         domain.convertTo16Bit();
 
-    StringBuilder output;
-    runUIDNA(convert, idna, domain.span16(), output, status, info);
-    if (U_FAILURE(status))
+    UIDNABuffer buffer;
+    auto output = runUIDNA(convert, domain.span16(), buffer, info);
+    if (!output)
         return {};
-    return output.toString();
+    return String(*output);
 }
 
 // Port of Node's icu-based ToASCII (removed in nodejs/node#55156):
@@ -81,20 +68,9 @@ static String icuToASCII(const String& input, IDNAMode mode)
             return lowered;
     }
 
-    UErrorCode status = U_ZERO_ERROR;
     UIDNAInfo info = UIDNA_INFO_INITIALIZER;
-    auto result = runUIDNA(uidna_nameToASCII, toASCIIIDNA(), input, status, info);
-
-    // CheckHyphens = false
-    info.errors &= ~UIDNA_ERROR_HYPHEN_3_4;
-    info.errors &= ~UIDNA_ERROR_LEADING_HYPHEN;
-    info.errors &= ~UIDNA_ERROR_TRAILING_HYPHEN;
-    // VerifyDnsLength = false
-    info.errors &= ~UIDNA_ERROR_EMPTY_LABEL;
-    info.errors &= ~UIDNA_ERROR_LABEL_TOO_LONG;
-    info.errors &= ~UIDNA_ERROR_DOMAIN_NAME_TOO_LONG;
-
-    if (result.isNull() || (mode != IDNAMode::Lenient && info.errors != 0))
+    auto result = runUIDNA(uidna_nameToASCII, input, info);
+    if (result.isNull() || (mode != IDNAMode::Lenient && hasIDNAError(info)))
         return {};
     return result;
 }
@@ -103,12 +79,12 @@ static String icuToASCII(const String& input, IDNAMode mode)
 // ToUnicode always produces output, so info.errors is deliberately ignored.
 static String icuToUnicode(const String& input)
 {
-    UErrorCode status = U_ZERO_ERROR;
     UIDNAInfo info = UIDNA_INFO_INITIALIZER;
-    return runUIDNA(uidna_nameToUnicode, toUnicodeIDNA(), input, status, info);
+    return runUIDNA(uidna_nameToUnicode, input, info);
 }
 
 // Per-label ToUnicode of a parsed host: uidna_nameToUnicode moves the rest of the name for each decoded label.
+// A label that fails UTS #46 stays as it is, like ada::idna::to_unicode. ICU's output for it carries U+FFFD markers.
 static String icuParsedHostToUnicode(const String& host)
 {
     if (!host.contains("xn--"_s))
@@ -121,6 +97,7 @@ static String icuParsedHostToUnicode(const String& host)
 
     StringBuilder result { OverflowPolicy::RecordOverflow };
     result.reserveCapacity(span.size());
+    UIDNABuffer buffer;
     size_t labelStart = 0;
     while (true) {
         size_t labelEnd = labelStart;
@@ -129,11 +106,11 @@ static String icuParsedHostToUnicode(const String& host)
         auto label = span.subspan(labelStart, labelEnd - labelStart);
 
         if (label.size() >= 4 && label[0] == 'x' && label[1] == 'n' && label[2] == '-' && label[3] == '-') {
-            UErrorCode status = U_ZERO_ERROR;
             UIDNAInfo info = UIDNA_INFO_INITIALIZER;
-            runUIDNA(uidna_labelToUnicode, toUnicodeIDNA(), label, result, status, info);
-            if (U_FAILURE(status))
+            auto unicode = runUIDNA(uidna_labelToUnicode, label, buffer, info);
+            if (!unicode)
                 return {};
+            result.append(hasIDNAError(info) ? label : *unicode);
         } else {
             result.append(label);
         }

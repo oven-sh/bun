@@ -1,7 +1,7 @@
 // File Copy Constants
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub struct Copyfile(pub(crate) i32);
+pub(crate) struct Copyfile(pub(crate) i32);
 
 impl Copyfile {
     /// Wrap a raw flags value.

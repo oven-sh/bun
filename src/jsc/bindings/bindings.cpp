@@ -4055,6 +4055,36 @@ JSC::JSPromise* JSC__JSPromise__resolvedPromise(JSC::JSGlobalObject* globalObjec
     promise->markAsHandled();
 }
 
+// The promise whose state a bun:test matcher polls for `value`'s outcome, or undefined when
+// `value` is not a thenable. A value whose own `then()` must run is adopted by a new promise.
+[[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue JSC__JSValue__jestPromiseToWaitFor(JSC::EncodedJSValue encodedValue, JSC::JSGlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    JSC::JSObject* object = value.isEmpty() ? nullptr : value.getObject();
+    if (!object)
+        return JSC::JSValue::encode(JSC::jsUndefined());
+
+    if (auto* promise = dynamicDowncast<JSC::JSPromise>(object)) {
+        promise->markAsHandled();
+        if (promise->status() != JSC::JSPromise::Status::Pending || promise->isThenFastAndNonObservable())
+            return JSC::JSValue::encode(promise);
+    } else if (JSC::isDefinitelyNonThenable(object, globalObject)) {
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+
+    auto* adopter = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+    adopter->markAsHandled();
+    adopter->resolve(globalObject, vm, object);
+    RETURN_IF_EXCEPTION(scope, {});
+    // A thenable's `then()` runs in a queued job. Only a non-thenable fulfills the adopter at once.
+    if (adopter->status() == JSC::JSPromise::Status::Fulfilled)
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    return JSC::JSValue::encode(adopter);
+}
+
 #pragma mark - JSC::JSInternalPromise (now aliased to JSPromise)
 
 JSC::JSPromise* JSC__JSInternalPromise__create(JSC::JSGlobalObject* globalObject)

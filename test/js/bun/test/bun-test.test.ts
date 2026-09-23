@@ -139,6 +139,38 @@ test("expect(lazyPromiseSubclass).rejects settles instead of hanging the run", a
         await expect(sql\`SELECT * FROM no_such_table\`).rejects.toThrow(/no such table/);
         expect(() => sql\`SELECT * FROM no_such_table\`).toThrow(/no such table/);
       });
+
+      // These two patch a built-in prototype, which also turns off the engine's
+      // "this value has the built-in then" shortcuts for the rest of the process.
+      test("a patched Promise.prototype.then runs for a pending promise", async () => {
+        const original = Promise.prototype.then;
+        let calls = 0;
+        Promise.prototype.then = function (this: Promise<unknown>, ...args: any[]) {
+          calls++;
+          return original.apply(this, args as any);
+        } as any;
+        try {
+          const { promise, resolve } = Promise.withResolvers<number>();
+          queueMicrotask(() => resolve(5));
+          calls = 0;
+          expect(promise).resolves.toBe(5);
+          expect(calls).toBeGreaterThan(0);
+        } finally {
+          Promise.prototype.then = original;
+        }
+      });
+
+      test("a then() on Object.prototype makes a plain object a thenable", async () => {
+        (Object.prototype as any).then = function (resolve: (value: number) => void) {
+          resolve(13);
+        };
+        try {
+          await expect({ a: 1 }).resolves.toBe(13);
+        } finally {
+          delete (Object.prototype as any).then;
+        }
+        expect(() => expect({ a: 1 }).resolves.toBe(1)).toThrow("Expected promise");
+      });
     `,
   });
 
@@ -155,6 +187,6 @@ test("expect(lazyPromiseSubclass).rejects settles instead of hanging the run", a
 
   // A hang is reported as the timeout kill, not as missing output.
   expect(proc.signalCode).toBeNull();
-  expect(stderr).toContain("3 pass");
+  expect(stderr).toContain("5 pass");
   expect(exitCode).toBe(0);
 });

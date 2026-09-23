@@ -472,25 +472,8 @@ impl Expect {
     }
 
     /// The promise `wait_for_promise` polls for `value`'s outcome, or `None` for a non-thenable.
-    /// A pending promise or a thenable is adopted through `resolve`, which calls its own `then()`.
     fn thenable_to_wait_for(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Option<AnyPromise>> {
-        if let Some(promise) = value.as_any_promise() {
-            promise.set_handled(global_this.vm());
-            if promise.status() != js_promise::Status::Pending {
-                return Ok(Some(promise));
-            }
-        } else if !value.is_object() {
-            return Ok(None);
-        }
-        let adopter = js_promise::JSPromise::create(global_this);
-        adopter.set_handled();
-        adopter.resolve(global_this, value)?;
-        // A thenable's `then()` runs in a queued job, so the adopter is still pending here. An
-        // object without a callable `then` fulfilled it at once and is not a promise.
-        if adopter.status() == js_promise::Status::Fulfilled {
-            return Ok(None);
-        }
-        Ok(Some(AnyPromise::Normal(core::ptr::from_mut(adopter))))
+        Ok(bun_jsc::cpp::JSC__JSValue__jestPromiseToWaitFor(value, global_this)?.as_any_promise())
     }
 
     /// Processes the async flags (resolves/rejects), waiting for the async value if needed.

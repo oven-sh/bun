@@ -161,6 +161,19 @@ describe("expect()", () => {
     await expect(thenable("reject", new Error("thenable boom"))).rejects.toThrow("thenable boom");
     await expect(thenable("reject", 4)).rejects.toBe(4);
 
+    // `then` found on the prototype chain or through a Proxy
+    class Inherited {
+      /** @param {(value: unknown) => void} resolve */
+      then(resolve) {
+        resolve("inherited");
+      }
+    }
+    await expect(new Inherited()).resolves.toBe("inherited");
+    await expect(Object.create(thenable("resolve", "created"))).resolves.toBe("created");
+    await expect(
+      new Proxy({}, { get: (_, key) => (key === "then" ? thenable("resolve", "proxy").then : undefined) }),
+    ).resolves.toBe("proxy");
+
     if (isBun) {
       await expectFailure(() => expect(thenable("resolve", 4)).rejects.toBe(4)).toThrow(
         /Received promise that resolved/,
@@ -170,6 +183,17 @@ describe("expect()", () => {
       );
       // A non-callable `then` does not make a thenable.
       await expectFailure(() => expect({ then: 4 }).resolves.toBe(4)).toThrow(/Expected promise/);
+      await expectFailure(() => expect({ a: 4 }).resolves.toBe(4)).toThrow(/Expected promise/);
+
+      // `then` is read once, as `await` reads it.
+      let reads = 0;
+      await expect({
+        get then() {
+          reads++;
+          return thenable("resolve", "getter").then;
+        },
+      }).resolves.toBe("getter");
+      expect(reads).toBe(1);
     }
   });
 

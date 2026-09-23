@@ -1732,37 +1732,37 @@ fn append_internal_module_bytecode(
     }
 
     for id in wanted {
-        let bytecode = match target_section {
-            _ if linked_bytecode.is_some() => {
-                let (encoder, encoded) = linked_bytecode.as_deref_mut().expect("checked");
-                let module = target_section.and_then(|_| builtins.module(id));
-                if target_section.is_some() && module.is_none() {
-                    continue;
-                }
-                encoder
-                    .add_internal_module(
-                        id,
-                        module.as_ref().map(|m| (m, builtins.source_stamp)),
-                        c.options.bytecode_depth,
-                    )
-                    .then(|| {
-                        encoded.push(output_files.len() as u32);
-                        Box::<[u8]>::from(0u32.to_le_bytes())
-                    })
+        let bytecode = if let Some((encoder, encoded)) = linked_bytecode.as_deref_mut() {
+            let module = target_section.and_then(|_| builtins.module(id));
+            if target_section.is_some() && module.is_none() {
+                continue;
             }
-            Some(_) => builtins.module(id).and_then(|m| {
-                dispatch::generate_internal_module_bytecode_from_source(
-                    &m,
-                    builtins.source_stamp,
+            encoder
+                .add_internal_module(
+                    id,
+                    module.as_ref().map(|m| (m, builtins.source_stamp)),
+                    c.options.bytecode_depth,
+                )
+                .then(|| {
+                    encoded.push(output_files.len() as u32);
+                    Box::<[u8]>::from(0u32.to_le_bytes())
+                })
+        } else {
+            match target_section {
+                Some(_) => builtins.module(id).and_then(|m| {
+                    dispatch::generate_internal_module_bytecode_from_source(
+                        &m,
+                        builtins.source_stamp,
+                        c.options.bytecode_depth,
+                        external_strings,
+                    )
+                }),
+                None => dispatch::generate_internal_module_bytecode(
+                    id,
                     c.options.bytecode_depth,
                     external_strings,
-                )
-            }),
-            None => dispatch::generate_internal_module_bytecode(
-                id,
-                c.options.bytecode_depth,
-                external_strings,
-            ),
+                ),
+            }
         };
         let Some(bytecode) = bytecode else {
             continue;

@@ -698,7 +698,10 @@ impl VMHolder {
 
     /// Node parity: `process.kill(self, sig)` with no JS handler for `sig`
     /// flushes the CPU and heap profiles before sending the (likely fatal)
-    /// signal, mirroring node's `Kill` binding. Idempotent via `Option::take`.
+    /// signal, mirroring node's `Kill` binding. Idempotent via `Option::take`,
+    /// except for the compile cache and a bytecode order recording, which are
+    /// written again at a real exit. The recording is the main thread's to
+    /// write: a Worker that sends the signal leaves none.
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__writeProfilesBeforeSelfKill() {
         let Some(vm_ptr) = VM.get() else { return };
@@ -722,6 +725,10 @@ impl VMHolder {
         // the signal may prove non-fatal, and latching here would no-op the real exit's persist.
         // https://github.com/nodejs/node/blob/main/src/env.cc (AtExit(FlushCompileCache))
         crate::node_compile_cache::persist_now();
+        // Likewise not latched: a real exit writes the files again, with what ran in between.
+        if vm.is_main_thread() {
+            crate::bytecode_order_recorder::write_at_exit(vm, standalone_module_graph());
+        }
     }
 }
 

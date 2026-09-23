@@ -3762,9 +3762,11 @@ declare module "bun" {
      * the app), what the first file lists comes first in that file's order, then
      * what the second file adds, and so on. A file that cannot be read fails the build.
      *
+     * `false` and `null` mean no order file, so `bytecodeOrder: haveProfile && path` works.
+     *
      * Equivalent CLI flag: `--bytecode-order <file>[,<file>...]`
      */
-    bytecodeOrder?: string | string[];
+    bytecodeOrder?: string | string[] | false | null;
     /**
      * The JIT policy the executable starts with (see {@link Bun.unsafe.setJITPolicy}).
      * `1` is the normal policy. A value `> 1` multiplies JavaScriptCore's tier-up

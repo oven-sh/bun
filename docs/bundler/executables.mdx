@@ -1263,7 +1263,7 @@ interface CompileBuildOptions {
   autoloadPackageJson?: boolean; // Load package.json (default: false)
   autoloadDotenv?: boolean; // Load .env files (default: true)
   autoloadBunfig?: boolean; // Load bunfig.toml (default: true)
-  bytecodeOrder?: string | string[]; // Order file(s) to lay the bytecode out by (requires bytecode: true)
+  bytecodeOrder?: string | string[] | false | null; // Order file(s) to lay the bytecode out by (requires bytecode: true)
   jitPolicy?: number; // JIT tier-up threshold scale at startup (default: 1 = normal)
   windows?: {
     icon?: string; // Path to .ico file

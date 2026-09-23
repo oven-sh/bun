@@ -750,12 +750,24 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
             }),
           ).toThrow("compile.bytecodeOrder must not contain an empty path");
         }
+        // The error is about the entry that is not a path, not about the array it is in.
+        expect(() =>
+          Bun.build({
+            entrypoints: [join(cwd(), "app.js")],
+            bytecode: true,
+            compile: { outfile: join(cwd(), exe("rejected")), bytecodeOrder: ["plain.order", 5 as unknown as string] },
+          }),
+        ).toThrow('The "compile.bytecodeOrder" property must be of type string or array of strings. Received number');
         // `false` is no order file (`haveProfile && path`): the options after it are looked at.
         expect(() =>
           Bun.build({
             entrypoints: [join(cwd(), "app.js")],
             bytecode: true,
-            compile: { outfile: join(cwd(), exe("rejected")), bytecodeOrder: false, jitPolicy: "8" } as any,
+            compile: {
+              outfile: join(cwd(), exe("rejected")),
+              bytecodeOrder: false,
+              jitPolicy: "8" as unknown as number,
+            },
           }),
         ).toThrow("compile.jitPolicy");
         const emptyEntry = await compile(exe("empty-entry"), ["--bytecode-order=,plain.order,,"]);
@@ -807,6 +819,56 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
           expect(readdirSync(directory)).toEqual([]);
         }
         expect(readdirSync(parent).sort()).toEqual(["digest-out-dir", "order-out-dir"]);
+      },
+      60_000,
+    );
+
+    // process.kill(process.pid, signal) with no handler ends the process without the usual exit: the recording is written
+    // before the signal is sent, like the profiles and the compile cache.
+    test.skipIf(isWindows).concurrent(
+      "a process that sends itself a fatal signal still writes the order file",
+      async () => {
+        using dir = tempDir("build-compile-bytecode-order-self-kill", {
+          "app.js": `
+            function used() {
+              return "ran";
+            }
+            console.log(used());
+            process.kill(process.pid, process.argv[2]);
+            setInterval(() => {}, 1000);
+          `,
+        });
+        await using build = Bun.spawn({
+          cmd: [bunExe(), "build", "--compile", "--bytecode", "--format=esm", "app.js", "--outfile", exe("app")],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [, buildStderr, buildExitCode] = await Promise.all([
+          build.stdout.text(),
+          build.stderr.text(),
+          build.exited,
+        ]);
+        expect({ stderr: buildStderr.includes("error"), exitCode: buildExitCode }).toEqual({
+          stderr: false,
+          exitCode: 0,
+        });
+        for (const signal of ["SIGINT", "SIGTERM"] as const) {
+          const out = join(String(dir), signal + ".order");
+          await using proc = Bun.spawn({
+            cmd: [join(String(dir), exe("app")), signal],
+            env: { ...bunEnv, BUN_BYTECODE_ORDER_OUT: out },
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(proc.signalCode).toBe(signal);
+          const lines = (await Bun.file(out).text()).split("\n");
+          expect(lines[0]).toBe("v1");
+          expect(lines.filter(line => line.startsWith("F ")).length).toBeGreaterThan(0);
+          expect(lines.filter(line => line.startsWith("M ")).length).toBeGreaterThan(0);
+        }
       },
       60_000,
     );

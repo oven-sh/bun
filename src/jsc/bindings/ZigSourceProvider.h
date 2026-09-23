@@ -73,3 +73,17 @@ private:
 };
 
 } // namespace Zig
+
+namespace Bun {
+
+// Bytecode that is a section of the executable: not owned, and there for the life of the process. `entryOffset` is where
+// the module's cache entry starts in `bytes` when they are the one payload of a link.
+inline Ref<JSC::CachedBytecode> embeddedBytecode(std::span<uint8_t> bytes, uint32_t entryOffset)
+{
+    Ref<JSC::CachedBytecode> bytecode = JSC::CachedBytecode::create(bytes, nullptr, {});
+    bytecode->setPayloadIsPersistent();
+    bytecode->setEntryOffset(entryOffset);
+    return bytecode;
+}
+
+} // namespace Bun

@@ -381,10 +381,7 @@ extern "C" bool Bun__BytecodeOrderFile__addModule(JSC::BytecodeOrderFile* file, 
 {
     JSC::JSLockHolder locker(*vm);
     JSC::SourceCode sourceCode = JSC::makeSource(source->toWTFString(), toSourceOrigin(originPath->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
-    Ref<JSC::CachedBytecode> cachedBytecode = JSC::CachedBytecode::create(std::span<uint8_t>(bytecode, bytecodeSize), nullptr, {});
-    cachedBytecode->setPayloadIsPersistent();
-    cachedBytecode->setEntryOffset(entryOffset);
-    return file->addModule(*vm, sourceCode, isModule, WTF::move(cachedBytecode));
+    return file->addModule(*vm, sourceCode, isModule, Bun::embeddedBytecode({ bytecode, bytecodeSize }, entryOffset));
 }
 
 // Destroys `file`.
@@ -400,10 +397,7 @@ extern "C" bool Bun__BytecodeOrder__digestModule(JSC::VM* vm, const BunString* s
 {
     JSC::JSLockHolder locker(*vm);
     JSC::SourceCode sourceCode = JSC::makeSource(source->toWTFString(), toSourceOrigin(originPath->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
-    Ref<JSC::CachedBytecode> cachedBytecode = JSC::CachedBytecode::create(std::span<uint8_t>(bytecode, bytecodeSize), nullptr, {});
-    cachedBytecode->setPayloadIsPersistent();
-    cachedBytecode->setEntryOffset(entryOffset);
-    auto result = JSC::digestOfAllCachedCode(*vm, sourceCode, isModule, WTF::move(cachedBytecode));
+    auto result = JSC::digestOfAllCachedCode(*vm, sourceCode, isModule, Bun::embeddedBytecode({ bytecode, bytecodeSize }, entryOffset));
     if (!result)
         return false;
     *digest = result->digest;

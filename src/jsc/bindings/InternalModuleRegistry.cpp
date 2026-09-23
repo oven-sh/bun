@@ -12,6 +12,7 @@
 
 #include "InternalModuleRegistryConstants.h"
 #include "ModuleGraph.h"
+#include "ZigSourceProvider.h"
 #include "wtf/Forward.h"
 
 #include "NativeModuleImpl.h"
@@ -116,10 +117,7 @@ JSC::JSValue generateInternalModule(JSC::JSGlobalObject* globalObject, JSC::VM& 
     size_t cachedSize = 0;
     uint32_t cachedEntryOffset = 0;
     if (Bun__standaloneInternalModuleBytecode(::bunVM(globalObject), id, &cachedBytes, &cachedSize, &cachedEntryOffset)) {
-        Ref<JSC::CachedBytecode> cached = JSC::CachedBytecode::create(std::span<uint8_t> { const_cast<uint8_t*>(cachedBytes), cachedSize }, [](const void*) {}, {});
-        cached->setPayloadIsPersistent();
-        cached->setEntryOffset(cachedEntryOffset);
-        executable = JSC::decodeBuiltinFunction(vm, WTF::move(cached), *source.provider(), bun_internal_modules_header.sourceStamp);
+        executable = JSC::decodeBuiltinFunction(vm, embeddedBytecode({ const_cast<uint8_t*>(cachedBytes), cachedSize }, cachedEntryOffset), *source.provider(), bun_internal_modules_header.sourceStamp);
         if (executable)
             s_internalModulesFromBytecode.fetch_add(1, std::memory_order_relaxed);
     }
@@ -341,14 +339,6 @@ extern "C" bool Bun__BytecodeLinkEncoder__addInternalModuleFromSource(JSC::Bytec
 
 // BUN_BYTECODE_ORDER_OUT / BUN_BYTECODE_DIGEST_OUT (see ZigSourceProvider.cpp), for the embedded bytecode of internal
 // module `id`: the hash of every function it holds, or the digest of all its code.
-static Ref<JSC::CachedBytecode> embeddedInternalModuleBytecode(uint8_t* bytecode, size_t bytecodeSize, uint32_t entryOffset)
-{
-    Ref<JSC::CachedBytecode> cached = JSC::CachedBytecode::create(std::span<uint8_t> { bytecode, bytecodeSize }, nullptr, {});
-    cached->setPayloadIsPersistent();
-    cached->setEntryOffset(entryOffset);
-    return cached;
-}
-
 static std::optional<JSC::SourceCode> internalModuleSourceCode(uint32_t id)
 {
     using namespace Bun;
@@ -363,7 +353,7 @@ extern "C" bool Bun__BytecodeOrderFile__addInternalModule(JSC::BytecodeOrderFile
     using namespace Bun;
     JSC::JSLockHolder locker(*vm);
     auto source = internalModuleSourceCode(id);
-    return source && file->addBuiltinFunction(*vm, *source, bun_internal_modules_header.sourceStamp, embeddedInternalModuleBytecode(bytecode, bytecodeSize, entryOffset));
+    return source && file->addBuiltinFunction(*vm, *source, bun_internal_modules_header.sourceStamp, embeddedBytecode({ bytecode, bytecodeSize }, entryOffset));
 }
 
 extern "C" bool Bun__BytecodeOrder__digestInternalModule(JSC::VM* vm, uint32_t id, uint8_t* bytecode, size_t bytecodeSize, uint32_t entryOffset, uint64_t* digest, uint32_t* codeBlocks)
@@ -371,7 +361,7 @@ extern "C" bool Bun__BytecodeOrder__digestInternalModule(JSC::VM* vm, uint32_t i
     using namespace Bun;
     JSC::JSLockHolder locker(*vm);
     auto source = internalModuleSourceCode(id);
-    auto result = source ? JSC::digestOfAllCachedBuiltinCode(*vm, *source, bun_internal_modules_header.sourceStamp, embeddedInternalModuleBytecode(bytecode, bytecodeSize, entryOffset)) : std::nullopt;
+    auto result = source ? JSC::digestOfAllCachedBuiltinCode(*vm, *source, bun_internal_modules_header.sourceStamp, embeddedBytecode({ bytecode, bytecodeSize }, entryOffset)) : std::nullopt;
     if (!result)
         return false;
     *digest = result->digest;

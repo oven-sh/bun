@@ -459,7 +459,7 @@ pub(crate) mod js_bundler {
                         return Err(global_this.throw_invalid_property_type_value(
                             b"compile.bytecodeOrder",
                             b"string or array of strings",
-                            bytecode_order,
+                            path,
                         ));
                     }
                     let slice = path.to_utf8(global_this)?;

@@ -4055,8 +4055,7 @@ JSC::JSPromise* JSC__JSPromise__resolvedPromise(JSC::JSGlobalObject* globalObjec
     promise->markAsHandled();
 }
 
-// The promise whose state a bun:test matcher polls for `value`'s outcome, or undefined when
-// `value` is not a thenable. A value whose own `then()` must run is adopted by a new promise.
+// Returns the promise a bun:test matcher polls for `value`'s outcome, or undefined for a non-thenable.
 [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue JSC__JSValue__jestPromiseToWaitFor(JSC::EncodedJSValue encodedValue, JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);

@@ -960,6 +960,7 @@ describe.concurrent("bun build refuses to write an output over an input", () => 
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain('Refusing to overwrite input file "app.js"');
+    expect(stdout).toBe("");
     expect(await Bun.file(path.join(String(dir), "app.js")).text()).toBe(`console.log("APP");\n`);
     expect(exitCode).toBe(1);
   });
@@ -980,6 +981,7 @@ describe.concurrent("bun build refuses to write an output over an input", () => 
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain('Refusing to overwrite input file "assets/cli"');
+    expect(stdout).toBe("");
     expect(await Bun.file(path.join(String(dir), "assets", "cli")).text()).toBe(`ASSET\n`);
     expect(exitCode).toBe(1);
   });
@@ -999,6 +1001,7 @@ describe.concurrent("bun build refuses to write an output over an input", () => 
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain('Refusing to overwrite input file "assets/meta.json"');
+    expect(stdout).toBe("");
     expect(await Bun.file(path.join(String(dir), "assets", "meta.json")).text()).toBe(`{ "asset": true }\n`);
     expect(exitCode).toBe(1);
   });

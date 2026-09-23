@@ -861,17 +861,6 @@ impl BuildCommand {
             }
 
             if ctx.bundler_options.compile {
-                print_summary(
-                    bundled_end,
-                    minify_duration,
-                    opt_minify_identifiers || opt_minify_whitespace || opt_minify_syntax,
-                    input_code_length as usize,
-                    reachable_file_count,
-                    output_files,
-                );
-
-                Output::flush();
-
                 let is_cross_compile = !compile_target.is_default();
 
                 outfile = compile_outfile(outfile);
@@ -929,6 +918,17 @@ impl BuildCommand {
                     &ctx.bundler_options.metafile_md,
                     watch,
                 );
+
+                print_summary(
+                    bundled_end,
+                    minify_duration,
+                    opt_minify_identifiers || opt_minify_whitespace || opt_minify_syntax,
+                    input_code_length as usize,
+                    reachable_file_count,
+                    output_files,
+                );
+
+                Output::flush();
 
                 let result = match bun_standalone_module_graph::StandaloneModuleGraph::to_executable(
                     compile_target,

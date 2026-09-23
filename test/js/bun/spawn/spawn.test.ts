@@ -2195,6 +2195,26 @@ describe.skipIf(!isPosix)("a spawn while fd 0, 1 or 2 is closed", () => {
     });
   });
 
+  it.concurrent("a failed exec is still reported when fds 0 and 1 are closed", async () => {
+    // With uid, macOS spawns through fork() and a pipe reports a failed exec. The write end took
+    // fd 1, and the child's file action for slot 1 replaced it: the spawn looked like a success.
+    const result = await run(`
+      fs.closeSync(0);
+      fs.closeSync(1);
+      const outcomes = [];
+      for (const stdout of [nul, "pipe"]) {
+        try {
+          const proc = Bun.spawn({ cmd: ["/nonexistent/program"], uid: process.getuid(), stdio: [nul, stdout, nul] });
+          outcomes.push("spawned, exit " + (await proc.exited));
+        } catch (e) {
+          outcomes.push("threw " + e.code);
+        }
+      }
+      report(2, { outcomes });
+    `);
+    expect(result).toEqual({ report: { outcomes: ["threw ENOENT", "threw ENOENT"] }, exitCode: 0 });
+  });
+
   it.concurrent("a child's stdout does not overwrite a large Blob made while fd 1 was closed", async () => {
     // On Linux a Blob of 8 MiB or more lives in a memfd, and the Blob maps it.
     const result = await run(`
@@ -2280,6 +2300,8 @@ describe.skipIf(!isPosix)("a spawn while fd 0, 1 or 2 is closed", () => {
         } catch (e) {
           outcome = "threw " + e.code;
         }
+        // LeakSanitizer opens /proc files when the process exits, and aborts when it cannot.
+        for (const fd of held) fs.closeSync(fd);
         report(2, { atTheLimit: held.length > 0, outcome });
       `;
       await using proc = spawn({

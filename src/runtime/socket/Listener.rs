@@ -73,7 +73,7 @@ use crate::generated_classes::js_Listener;
 // shim still emits `this: &mut Listener` — `&mut T` auto-derefs to `&T`
 // so the impls below compile against either.
 #[bun_jsc::JsClass(no_constructor)]
-pub struct Listener {
+pub(crate) struct Listener {
     pub(crate) handlers: Rc<Handlers>,
     pub(crate) listener: Cell<ListenerType>,
 
@@ -108,7 +108,7 @@ bun_jsc::impl_abort_handle_owner!(Listener, abort_handle, |this, _cause| {
 });
 
 #[derive(Clone, Copy, Default)]
-pub enum ListenerType {
+pub(crate) enum ListenerType {
     Uws(*mut uws_sys::ListenSocket),
     /// Raw heap pointer (not `Box`) to a `WindowsNamedPipeListeningContext`.
     /// The context's address is registered with libuv (`uv_pipe.data`) for the
@@ -116,6 +116,7 @@ pub enum ListenerType {
     /// Box move or `&mut Listener` that transitively covers the context — that
     /// would invalidate the pointer libuv holds under Stacked Borrows. Ownership
     /// is still unique; freed via `close_pipe_and_deinit` → `on_pipe_closed` → `deinit`.
+    #[cfg(windows)]
     NamedPipe(NonNull<WindowsNamedPipeListeningContext>),
     #[default]
     None,
@@ -137,7 +138,7 @@ impl Listener {
 }
 
 #[derive(Clone)]
-pub enum UnixOrHost {
+pub(crate) enum UnixOrHost {
     Unix(Box<[u8]>),
     Host { host: Box<[u8]>, port: u16 },
     Fd(Fd),
@@ -901,15 +902,13 @@ impl Listener {
                     WindowsNamedPipeListeningContext::close_pipe_and_deinit(named_pipe.as_ptr())
                 };
             }
-            #[cfg(not(windows))]
-            ListenerType::NamedPipe(_) => {}
             ListenerType::None => {}
         }
 
         this.secure_ctx.set(None);
     }
 
-    pub fn finalize(self: Box<Self>) {
+    pub(crate) fn finalize(self: Box<Self>) {
         log!("finalize");
         let listener = self.listener.replace(ListenerType::None);
         self.abort_handle.leave();
@@ -927,8 +926,6 @@ impl Listener {
                     WindowsNamedPipeListeningContext::close_pipe_and_deinit(named_pipe.as_ptr())
                 };
             }
-            #[cfg(not(windows))]
-            ListenerType::NamedPipe(_) => {}
             ListenerType::None => {}
         }
         // `deinit` frees the allocation itself (`heap::take`); hand ownership
@@ -1024,7 +1021,11 @@ impl Listener {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn ref_(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn ref_(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         let this_value = frame.this();
         if matches!(this.listener.get(), ListenerType::None) {
             return Ok(JSValue::UNDEFINED);
@@ -1752,7 +1753,7 @@ fn normalize_pipe_name<'a>(pipe_name: &[u8], buffer: &'a mut [u8]) -> Option<&'a
 }
 
 #[cfg(windows)]
-pub struct WindowsNamedPipeListeningContext {
+pub(crate) struct WindowsNamedPipeListeningContext {
     pub(crate) uv_pipe: uv::Pipe,
     /// BACKREF: the parent `Listener` heap-allocated this context in
     /// `listen_named_pipe` and outlives it (cleared to `None` in
@@ -1765,11 +1766,6 @@ pub struct WindowsNamedPipeListeningContext {
     /// `self.vm.is_shutting_down()` without a raw-pointer deref.
     pub(crate) vm: &'static VirtualMachine,
     pub ctx: Option<boring_sys::OwnedSslCtx>, // server reuses the same ctx
-}
-
-#[cfg(not(windows))]
-pub struct WindowsNamedPipeListeningContext {
-    _priv: (),
 }
 
 /// `c_int`: raw libuv return code so JS `err.errno` is the platform-correct UV value.

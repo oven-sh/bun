@@ -751,7 +751,6 @@ impl<'a> JsonParser<'a> {
 struct InputFileInfo<'a> {
     path: &'a [u8],
     bytes_in_output: u64,
-    import_count: u32,
     is_node_modules: bool,
     format: &'a [u8],
 }
@@ -888,7 +887,6 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
         let mut info = InputFileInfo {
             path,
             bytes_in_output: module_bytes,
-            import_count: 0,
             is_node_modules,
             format: b"",
         };
@@ -914,7 +912,6 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
         // Build reverse dependency map
         if let Some(imps) = input_obj.get(b"imports") {
             if let JsonValue::Array(imps_arr) = imps {
-                info.import_count = u32::try_from(imps_arr.len()).expect("int cast");
                 for imp in imps_arr.iter() {
                     if let JsonValue::Object(imp_obj) = imp {
                         let (imp_path, is_external) = import_target(imp_obj);

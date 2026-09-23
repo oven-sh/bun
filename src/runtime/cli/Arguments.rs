@@ -773,12 +773,12 @@ pub(crate) static Bun__Node__UseSystemCA: core::sync::atomic::AtomicBool =
 // their private helpers moved to `bun_bunfig::arguments` so `bun_install` can
 // call them without a tier-6 dependency. Re-export here so existing
 // `crate::cli::arguments::load_config*` callers are unaffected.
-pub use bun_bunfig::arguments::{load_config_path, load_config_with_cmd_args};
+pub(crate) use bun_bunfig::arguments::{load_config_path, load_config_with_cmd_args};
 
 /// node aliases `-pe` to `--print --eval` as a whole token (node_options.cc):
 /// it can't be a short in either runtime, being ambiguous with `-p` carrying
 /// the attached value `e`. Bun's `-p` takes the code, so `-pe X` is `-p X`.
-pub const NODE_SHORT_ALIASES: &[(&[u8], &[u8])] = &[(b"-pe", b"-p")];
+pub(crate) const NODE_SHORT_ALIASES: &[(&[u8], &[u8])] = &[(b"-pe", b"-p")];
 
 /// Parse `argv` into `api::TransformOptions` for the given subcommand.
 ///
@@ -1074,9 +1074,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             // accepted and ignored. Matching is case-insensitive (node uppercases).
             if ctx.debug.hot_reload == HotReload::Watch {
                 let upper = kill_signal.to_ascii_uppercase();
-                match bun_core::SignalCode::from_name(&upper)
-                    .filter(|s| s.platform_number().is_some())
-                {
+                match bun_core::SignalCode::from_name(&upper) {
                     Some(sig) => ctx.debug.watch_kill_signal = sig,
                     None => {
                         Output::print_errorln(format_args!(

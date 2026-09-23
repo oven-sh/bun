@@ -4220,6 +4220,27 @@ declare module "bun" {
        * @platform macOS - Only affects macOS keychain behavior. Ignored on other platforms.
        */
       allowUnrestrictedAccess?: boolean;
+
+      /**
+       * Which computers can see the credential on Windows. Bun passes it to
+       * Credential Manager as the `Persist` field of the entry.
+       *
+       * - `"enterprise"`: `CRED_PERSIST_ENTERPRISE`. The current user sees the
+       *   credential on this computer. When the user account has roaming state,
+       *   such as a roaming profile on a domain, the user also sees it on other
+       *   computers.
+       * - `"local"`: `CRED_PERSIST_LOCAL_MACHINE`. The current user sees the
+       *   credential on this computer only. Use it for a secret that belongs to
+       *   one device, such as a refresh token that rotates on use.
+       *
+       * Every `set()` replaces the whole entry, so the `persist` of the latest
+       * `set()` applies. A value other than these two strings throws
+       * `ERR_INVALID_ARG_VALUE` on every platform.
+       *
+       * @default "enterprise"
+       * @platform Windows - Only affects Windows Credential Manager. Ignored on other platforms.
+       */
+      persist?: "local" | "enterprise" | undefined;
     }): Promise<void>;
 
     /**
@@ -7742,7 +7763,7 @@ declare module "bun" {
       onExit?(
         subprocess: Subprocess<In, Out, Err>,
         exitCode: number | null,
-        signalCode: number | null,
+        signalCode: NodeJS.Signals | number | null,
         /**
          * If an error occurred in the call to waitpid2, this is the error.
          */
@@ -8160,10 +8181,10 @@ declare module "bun" {
      *
      * To receive signal code changes, use the `onExit` callback.
      *
-     * If the signal code is unknown, this is the original signal code
-     * number, but that case should never happen in practice.
+     * If the signal has no name (for example a Linux real-time signal), this
+     * is its number.
      */
-    readonly signalCode: NodeJS.Signals | null;
+    readonly signalCode: NodeJS.Signals | number | null;
 
     /**
      * Whether the process has exited
@@ -8233,7 +8254,7 @@ declare module "bun" {
      */
     resourceUsage: ResourceUsage;
 
-    signalCode?: string;
+    signalCode?: NodeJS.Signals | number;
     exitedDueToTimeout?: boolean;
     exitedDueToMaxBuffer?: boolean;
     pid: number;
@@ -9266,6 +9287,9 @@ declare module "bun" {
      * - `ERR_IMAGE_TOO_MANY_PIXELS` — header dimensions or resize output
      *   exceed `maxPixels`, or a path-backed input is over the 256 MiB cap.
      * - `ERR_IMAGE_DECODE_FAILED` / `ERR_IMAGE_ENCODE_FAILED` — codec error.
+     *   A damaged JPEG that libjpeg-turbo decodes with only a warning (stray
+     *   bytes, a missing end marker, truncated scan data) does not reject.
+     *   Blocks with no data come back flat grey.
      * - `ERR_IMAGE_UNKNOWN_FORMAT` — input bytes didn't match any sniffer.
      * - `ERR_INVALID_STATE` — the input ArrayBuffer was transferred between
      *   construction and the terminal call.

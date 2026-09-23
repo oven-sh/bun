@@ -1538,6 +1538,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
     }
 
     fetcher->owner(vm, function);
+    ensureStillAliveHere(importer);
 
     if (!function) {
         return throwVMError(globalObject, scope, "Failed to compile function"_s);

@@ -70,7 +70,7 @@ struct DotenvSingleton {
 unsafe impl Sync for DotenvSingleton {}
 static DOTENV_SINGLETON: OnceLock<DotenvSingleton> = OnceLock::new();
 
-pub fn build_command(ctx: Context) -> crate::Result<()> {
+pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
     bake::print_warning();
 
     if ctx.args.entry_points.len() > 1 {
@@ -1419,7 +1419,7 @@ impl framework_router::InsertionHandler for EntryPointMap {
 ///
 /// Owns the backing storage so the value can outlive `build_with_vm` in the
 /// caller's frame without dangling references.
-pub struct PerThread {
+pub(crate) struct PerThread {
     // Shared Data (owned)
     /// Owns `input_files` (keys) and `output_indexes` (values).
     pub(crate) entry_points: EntryPointMap,
@@ -1464,7 +1464,7 @@ impl PerThread {
 
     /// Safe `&'static JSGlobalObject` accessor — `self.vm().global()`.
     #[inline]
-    pub fn global(&self) -> &'static JSGlobalObject {
+    pub(crate) fn global(&self) -> &'static JSGlobalObject {
         self.vm().global()
     }
 

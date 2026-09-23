@@ -2734,91 +2734,92 @@ Object.defineProperty(Socket.prototype, "remoteFamily", {
 });
 
 function fdSyncWrite(chunk, encoding, callback) {
+  const fs = require("node:fs");
   // node's _writeGeneric restarts the idle timer on every write.
   this._unrefTimer();
   let buf;
-  try {
-    buf = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
-  } catch (err) {
-    callback(err);
-    return;
-  }
-  fdWrite(this, buf, callback);
-}
-
-function fdSyncWritev(data, callback) {
-  this._unrefTimer();
-  let buf;
-  try {
-    const n = data.length;
-    const bufs = $newArrayWithSize(n);
-    for (let i = 0; i < n; i++) {
-      const { chunk, encoding } = data[i];
-      bufs[i] = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
-    }
-    buf = Buffer.concat(bufs);
-  } catch (err) {
-    callback(err);
-    return;
-  }
-  fdWrite(this, buf, callback);
-}
-
-function fdWrite(self, buf, callback) {
-  const sink = self[kSyncWriteSink];
-  if (sink !== undefined) {
-    fdSinkWrite(self, sink, buf, callback);
-    return;
-  }
-  const fs = require("node:fs");
   let offset = 0;
   try {
+    buf = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
     while (offset < buf.length) {
-      offset += fs.writeSync(self[kSyncWriteFd], buf, offset);
+      offset += fs.writeSync(this[kSyncWriteFd], buf, offset);
     }
   } catch (err) {
-    if (process.platform === "win32" || err?.code !== "EAGAIN") {
-      callback(err);
-      return;
-    }
-    // Full O_NONBLOCK pipe: a FileSink polls the fd and drains the tail, as node's pipe handle does.
-    let newSink;
-    try {
-      newSink = self[kSyncWriteSink] = Bun.file(self[kSyncWriteFd]).writer();
-    } catch (e) {
-      callback(e);
-      return;
-    }
-    self[kBytesWritten] = (self[kBytesWritten] || 0) + offset;
-    fdSinkWrite(self, newSink, offset === 0 ? buf : buf.subarray(offset), callback);
+    fdWriteFailed(this, err, callback, offset, buf, offset);
     return;
   }
-  // No native handle on this path, so account bytesWritten/_bytesDispatched here.
-  self[kBytesWritten] = (self[kBytesWritten] || 0) + offset;
+  // No native handle on this path, so feed bytesWritten/_bytesDispatched
+  // directly (node accounts these via the libuv handle).
+  this[kBytesWritten] = (this[kBytesWritten] || 0) + offset;
   callback();
 }
 
-// The callback runs once every byte reached the fd, like a libuv write request.
-function fdSinkWrite(self, sink, buf, callback) {
-  let result;
+function fdSyncWritev(data, callback) {
+  const fs = require("node:fs");
+  this._unrefTimer();
+  let total = 0;
+  let i = 0;
+  let buf;
+  let offset = 0;
   try {
-    result = sink.write(buf);
-    // The sink only buffers a short chunk; push it to the fd now.
-    if (!$isPromise(result)) result = sink.flush();
+    for (; i < data.length; i++) {
+      const { chunk, encoding } = data[i];
+      buf = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
+      offset = 0;
+      while (offset < buf.length) {
+        offset += fs.writeSync(this[kSyncWriteFd], buf, offset);
+      }
+      total += offset;
+    }
   } catch (err) {
+    fdWriteFailed(this, err, callback, total + offset, buf, offset, data, i + 1);
+    return;
+  }
+  // See fdSyncWrite: no native handle to account these on.
+  this[kBytesWritten] = (this[kBytesWritten] || 0) + total;
+  callback();
+}
+
+// write(2) threw after `written` bytes, at `offset` in `buf`; `data` from `next` on is the rest of a writev batch.
+function fdWriteFailed(self, err, callback, written, buf, offset, data?, next = 0) {
+  if (process.platform === "win32" || err?.code !== "EAGAIN") {
     callback(err);
     return;
   }
+  // Full O_NONBLOCK pipe: a FileSink polls the fd and drains the rest, as node's pipe handle does.
+  let rest;
+  let result;
+  try {
+    rest = offset === 0 ? buf : buf.subarray(offset);
+    const count = data === undefined ? 0 : data.length;
+    if (next < count) {
+      const bufs = $newArrayWithSize(count - next + 1);
+      bufs[0] = rest;
+      for (let i = next; i < count; i++) {
+        const { chunk, encoding } = data[i];
+        bufs[i - next + 1] = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
+      }
+      rest = Buffer.concat(bufs);
+    }
+    const sink = (self[kSyncWriteSink] ??= Bun.file(self[kSyncWriteFd]).writer());
+    result = sink.write(rest);
+    // The sink only buffers a short chunk; push it to the fd now.
+    if (!$isPromise(result)) result = sink.flush();
+  } catch (e) {
+    callback(e);
+    return;
+  }
   // Node counts a write when it is dispatched to the handle, not when it completes.
-  self[kBytesWritten] = (self[kBytesWritten] || 0) + buf.length;
+  self[kBytesWritten] = (self[kBytesWritten] || 0) + written + rest.length;
   if (!$isPromise(result)) {
     callback();
     return;
   }
+  // The callback runs once every byte reached the fd, like a libuv write request.
   self[kSyncWriteCallback] = callback;
   result.$then(
     () => settleSinkWrite(self),
-    err => settleSinkWrite(self, err),
+    e => settleSinkWrite(self, e),
   );
 }
 

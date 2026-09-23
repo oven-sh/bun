@@ -1523,20 +1523,31 @@ describe("Socket fd adoption", () => {
     const rfd = fs.openSync(fifo, O_RDONLY | O_NONBLOCK);
     try {
       const wfd = fs.openSync(fifo, O_WRONLY | O_NONBLOCK);
-      // Larger than a pipe buffer (64 KiB on Linux and macOS): the first
-      // write(2) loop hits EAGAIN before the reader below gets a turn. The
-      // 251-byte period lines up with no buffer size, so a lost, repeated or
-      // reordered piece shows in the comparison below.
-      const payload = Buffer.alloc(512 * 1024, Buffer.from(Array.from({ length: 251 }, (_, i) => i)));
+      // The stream the reader must see. The 251-byte period lines up with no
+      // buffer size, so a lost, repeated or reordered piece shows below.
+      const expected = Buffer.alloc(1024 * 1024, Buffer.from(Array.from({ length: 251 }, (_, i) => i)));
+      const piece = (from: number, to: number) => expected.subarray(from, to);
       const socket = new Socket({ fd: wfd, readable: false, writable: true });
       const events: string[] = [];
+      const cb = (name: string) => (err?: Error | null) =>
+        events.push(`${name}:${err ? (err as NodeJS.ErrnoException).code : "ok"}`);
       socket.on("error", err => events.push(`error:${(err as NodeJS.ErrnoException).code}`));
       const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
-      const returned = socket.write(payload, err =>
-        events.push(`cb:${err ? (err as NodeJS.ErrnoException).code : "ok"}`),
-      );
-      events.push(`write()=${returned}`);
-      socket.end();
+
+      // Every step is larger than a pipe buffer (64 KiB on Linux and macOS), so
+      // each one hits EAGAIN whatever the reader below has taken by then:
+      // a single write, then a batch (the chunks below wait behind the first
+      // write and go out through one _writev) that runs out of room inside a
+      // chunk, then a write after the queue drained.
+      events.push(`write()=${socket.write(piece(0, 300_000), cb("single"))}`);
+      socket.write(piece(300_000, 310_000).toString("latin1"), "latin1", cb("batch string"));
+      socket.write(piece(310_000, 410_000), cb("batch 100 KB"));
+      socket.write(piece(410_000, 410_003), cb("batch 3 B"));
+      socket.write(piece(410_003, 700_000), err => {
+        cb("batch 290 KB")(err);
+        socket.write(piece(700_000, 700_010), cb("small after drain"));
+        socket.end(piece(700_010, expected.length), cb("end"));
+      });
 
       // Drain the read end once per loop turn until EOF, which arrives when
       // the socket has closed the write end after its last byte.
@@ -1549,7 +1560,7 @@ describe("Socket fd adoption", () => {
             for (;;) {
               const n = fs.readSync(rfd, chunk);
               if (n === 0) return resolve({ total, intact });
-              if (!chunk.subarray(0, n).equals(payload.subarray(total, total + n))) intact = false;
+              if (!chunk.subarray(0, n).equals(expected.subarray(total, total + n))) intact = false;
               total += n;
             }
           } catch (e) {
@@ -1561,9 +1572,18 @@ describe("Socket fd adoption", () => {
       });
       await closed;
 
-      expect(events).toEqual(["write()=false", "cb:ok"]);
-      expect(received).toEqual({ total: payload.length, intact: true });
-      expect(socket.bytesWritten).toBe(payload.length);
+      expect(events).toEqual([
+        "write()=false",
+        "single:ok",
+        "batch string:ok",
+        "batch 100 KB:ok",
+        "batch 3 B:ok",
+        "batch 290 KB:ok",
+        "small after drain:ok",
+        "end:ok",
+      ]);
+      expect(received).toEqual({ total: expected.length, intact: true });
+      expect(socket.bytesWritten).toBe(expected.length);
     } finally {
       fs.closeSync(rfd);
     }

@@ -494,6 +494,8 @@ describe("Request.url and Request.headers after the handler returned", () => {
       ],
       "Latin-1 value": ["GET /latin1 HTTP/1.1\r\nHost: x\r\nX-Latin: caf\xe9\r\n\r\n"],
       "query only": ["GET /?only=query HTTP/1.1\r\nHost: x\r\n\r\n"],
+      // getMethod() lowercases the method in the buffer the copy is taken from.
+      "CONNECT authority-form": ["CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n"],
       "long target": [`GET ${longTarget} HTTP/1.1\r\nHost: x\r\n\r\n`],
       "head split over three writes": ["GET /split HTT", "P/1.1\r\nHost: x\r\nX-Sp", "lit: yes\r\n\r\n"],
     };
@@ -561,6 +563,7 @@ describe("Request.url and Request.headers after the handler returned", () => {
       "http://x/dup",
       "http://x/latin1",
       "http://x/?only=query",
+      "example.com:443",
       "http://x" + longTarget,
       "http://x/split",
     ]);

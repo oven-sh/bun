@@ -1470,64 +1470,28 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     return uwsReq->getHasTransferEncoding();
   }
 
-  /* The writer for `RequestHeadSnapshot` (src/runtime/webcore/request_head.rs). */
-  size_t uws_req_copy_head(uws_req_t *res, char *dest, size_t capacity)
+  size_t uws_req_get_raw_head(uws_req_t *res, const char **dest)
   {
     uWS::HttpRequest *uwsReq = (uWS::HttpRequest *)res;
-    std::string_view target = uwsReq->getFullUrl();
-    const char *blockBegin = target.data();
-    const char *blockEnd = target.data() + target.length();
-    uint32_t count = 0;
-    auto extend = [&](std::string_view view) {
-      if (view.data() == nullptr)
-      {
-        return;
-      }
-      if (view.data() < blockBegin)
-      {
-        blockBegin = view.data();
-      }
-      if (view.data() + view.length() > blockEnd)
-      {
-        blockEnd = view.data() + view.length();
-      }
-    };
-    for (auto [key, value] : *uwsReq)
-    {
-      count++;
-      extend(key);
-      extend(value);
-    }
-    size_t blockLength = (size_t)(blockEnd - blockBegin);
-    size_t needed = sizeof(uint32_t) * (4 + 4 * (size_t)count) + blockLength;
-    if (needed > capacity)
-    {
-      return needed;
-    }
+    std::string_view value = uwsReq->getRawHead();
+    *dest = value.data();
+    return value.length();
+  }
 
-    /* `dest` is byte-aligned, so every uint32_t goes through memcpy. */
-    auto putU32 = [&dest](uint32_t value) {
-      memcpy(dest, &value, sizeof(value));
-      dest += sizeof(value);
-    };
-    auto putView = [&](std::string_view view) {
-      /* An absent value reads as an empty one at offset 0. */
-      putU32(view.data() ? (uint32_t)(view.data() - blockBegin) : 0);
-      putU32((uint32_t)view.length());
-    };
-    putU32((uint32_t)needed);
-    putU32(count);
-    putView(target);
-    for (auto [key, value] : *uwsReq)
+  static_assert(uWS::MINIMUM_HTTP_POST_PADDING == 32, "update Request::RAW_HEAD_POST_PADDING in src/uws_sys/Request.rs");
+
+  /* `head` is a copy of uws_req_get_raw_head() followed by MINIMUM_HTTP_POST_PADDING writable bytes.
+   * The request handed to `callback` is only valid during the call. */
+  bool uws_req_with_raw_head(char *head, size_t length, void *ctx,
+                             void (*callback)(void *ctx, uws_req_t *req))
+  {
+    uWS::HttpRequest req;
+    if (!uWS::HttpParser::parseRawHead(head, (unsigned int)length, &req))
     {
-      putView(key);
-      putView(value);
+      return false;
     }
-    if (blockLength > 0)
-    {
-      memcpy(dest, blockBegin, blockLength);
-    }
-    return needed;
+    callback(ctx, (uws_req_t *)&req);
+    return true;
   }
 
   us_socket_t *uws_res_upgrade(int ssl, uws_res_r res, void *data,

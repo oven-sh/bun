@@ -1,4 +1,4 @@
-use core::ffi::c_ushort;
+use core::ffi::{c_ushort, c_void};
 
 use crate::h3::Request as H3Request;
 
@@ -91,16 +91,52 @@ impl Request {
         unsafe { bun_core::ffi::slice(ptr, len) }
     }
 
-    /// Returns the size the copy needs; writes it only when `dest` is at least that large.
-    pub fn copy_head(&self, dest: &mut [core::mem::MaybeUninit<u8>]) -> usize {
-        // SAFETY: the shim writes at most `dest.len()` bytes, into `dest`.
-        unsafe { c::uws_req_copy_head(self, dest.as_mut_ptr().cast::<u8>(), dest.len()) }
+    /// The bytes this request was parsed from: the request line through the blank line.
+    pub fn raw_head(&self) -> &[u8] {
+        let mut ptr: *const u8 = core::ptr::null();
+        let len = c::uws_req_get_raw_head(self, &mut ptr);
+        // SAFETY: ptr/len describe the parsed bytes, which live as long as the request.
+        unsafe { bun_core::ffi::slice(ptr, len) }
+    }
+
+    /// Writable bytes uWS needs after a copy of [`Self::raw_head`] to parse it again.
+    pub const RAW_HEAD_POST_PADDING: usize = 32;
+
+    /// Parses a copy of [`Self::raw_head`] and lends the result to `f`. `None` if uWS rejects the copy.
+    ///
+    /// # Safety
+    /// `head` points at `len` copied bytes followed by [`Self::RAW_HEAD_POST_PADDING`] writable bytes.
+    pub unsafe fn with_raw_head<R, F: FnOnce(&Request) -> R>(
+        head: *mut u8,
+        len: usize,
+        f: F,
+    ) -> Option<R> {
+        struct Call<R, F> {
+            f: Option<F>,
+            result: Option<R>,
+        }
+        extern "C" fn handle<R, F: FnOnce(&Request) -> R>(call: *mut c_void, req: *mut Request) {
+            // SAFETY: `call` is the stack `Call` below, live for this synchronous callback.
+            let call = unsafe { &mut *call.cast::<Call<R, F>>() };
+            if let Some(f) = call.f.take() {
+                call.result = Some(f(bun_opaque::opaque_deref(req)));
+            }
+        }
+        let mut call = Call {
+            f: Some(f),
+            result: None,
+        };
+        // SAFETY: `head` per the caller's contract; `call` outlives the synchronous callback.
+        unsafe {
+            c::uws_req_with_raw_head(head, len, (&raw mut call).cast::<c_void>(), handle::<R, F>)
+        };
+        call.result
     }
 }
 
 mod c {
     use super::Request;
-    use core::ffi::c_ushort;
+    use core::ffi::{c_ushort, c_void};
 
     unsafe extern "C" {
         pub(super) safe fn uws_req_set_yield(res: &mut Request, yield_: bool);
@@ -121,6 +157,12 @@ mod c {
             dest: &mut *const u8,
         ) -> usize;
         pub(super) safe fn uws_req_has_transfer_encoding(res: &Request) -> bool;
-        pub(super) fn uws_req_copy_head(res: &Request, dest: *mut u8, capacity: usize) -> usize;
+        pub(super) safe fn uws_req_get_raw_head(res: &Request, dest: &mut *const u8) -> usize;
+        pub(super) fn uws_req_with_raw_head(
+            head: *mut u8,
+            len: usize,
+            call: *mut c_void,
+            callback: extern "C" fn(*mut c_void, *mut Request),
+        ) -> bool;
     }
 }

@@ -238,12 +238,23 @@ impl Request {
         self.headers.set(headers);
     }
 
-    /// `None` for a `Request` built by JS.
-    fn request_head(&self) -> Option<RequestHead<'_>> {
+    /// Runs `f` on the uWS request behind the lazy `url`/`headers` getters: the live one during
+    /// the dispatch, afterwards the copy parsed again. `None` for a `Request` built by JS.
+    fn with_uws_request<R>(&self, f: impl FnOnce(&uws::Request) -> R) -> Option<R> {
         if let Some(req) = self.request_context.get_request() {
-            return Some(RequestHead::Uws(bun_opaque::opaque_deref(req)));
+            return Some(f(bun_opaque::opaque_deref(req)));
         }
-        self.request_context.get_head().map(RequestHead::Snapshot)
+        self.request_context.get_head()?.with_request(f)
+    }
+
+    fn fetch_headers_from_uws(&self) -> Option<HeadersRef> {
+        self.with_uws_request(|req| {
+            HeadersRef::create_from_uws(
+                core::ptr::from_ref::<uws::Request>(req)
+                    .cast_mut()
+                    .cast::<core::ffi::c_void>(),
+            )
+        })
     }
 
     /// Ends the link to the server context; `req`, when still live, is copied for the lazy getters.
@@ -270,8 +281,8 @@ impl Request {
             return Ok(self.headers_mut().as_mut().unwrap());
         }
 
-        if let Some(head) = self.request_head() {
-            self.headers.set(Some(head.to_fetch_headers()));
+        if let Some(headers) = self.fetch_headers_from_uws() {
+            self.headers.set(Some(headers));
         } else {
             // we don't have a request context, so we need to create an empty headers object
             self.headers.set(Some(HeadersRef::create_empty()));
@@ -316,9 +327,7 @@ impl Request {
     #[allow(clippy::mut_from_ref)]
     pub(crate) fn get_fetch_headers_unless_empty(&self) -> Option<&mut HeadersRef> {
         if self.headers.get().is_none() {
-            if let Some(head) = self.request_head() {
-                self.headers.set(Some(head.to_fetch_headers()));
-            }
+            self.headers.set(self.fetch_headers_from_uws());
         }
 
         let headers = self.headers_mut().as_mut()?;
@@ -338,9 +347,7 @@ impl Request {
         global_this: &JSGlobalObject,
     ) -> JsResult<Option<HeadersRef>> {
         if self.headers.get().is_none() {
-            if let Some(head) = self.request_head() {
-                self.headers.set(Some(head.to_fetch_headers()));
-            }
+            self.headers.set(self.fetch_headers_from_uws());
         }
 
         if let Some(head) = self.headers_mut().as_mut() {
@@ -355,9 +362,16 @@ impl Request {
     }
 
     pub(crate) fn get_content_type(&self) -> JsResult<Option<bun_core::Utf8Bytes<'_>>> {
-        if let Some(head) = self.request_head() {
-            if let Some(value) = head.header(b"content-type") {
+        if let Some(req) = self.request_context.get_request() {
+            // S008: `uws::Request` is an `opaque_ffi!` ZST handle — safe deref.
+            let req = bun_opaque::opaque_deref(req);
+            if let Some(value) = req.header(b"content-type") {
                 return Ok(Some(bun_core::Utf8Bytes::Borrowed(value)));
+            }
+        } else if let Some(head) = self.request_context.get_head() {
+            let value = head.with_request(|req| req.header(b"content-type").map(<[u8]>::to_vec));
+            if let Some(value) = value.flatten() {
+                return Ok(Some(bun_core::Utf8Bytes::Owned(value)));
             }
         }
 
@@ -375,42 +389,6 @@ impl Request {
         }
 
         Ok(None)
-    }
-}
-
-/// The request head a `Bun.serve` `Request` reads `url` and `headers` from.
-enum RequestHead<'a> {
-    /// The uWS request. Live only while the server dispatch is on the stack.
-    Uws(&'a uws::Request),
-    /// The copy the server took when that dispatch ended.
-    Snapshot(&'a RequestHeadSnapshot),
-}
-
-impl<'a> RequestHead<'a> {
-    /// The request target from the request line (path and query).
-    fn target(&self) -> &'a [u8] {
-        match *self {
-            Self::Uws(req) => req.url(),
-            Self::Snapshot(head) => head.target(),
-        }
-    }
-
-    fn header(&self, lowercase_name: &[u8]) -> Option<&'a [u8]> {
-        match *self {
-            Self::Uws(req) => req.header(lowercase_name),
-            Self::Snapshot(head) => head.header(lowercase_name),
-        }
-    }
-
-    fn to_fetch_headers(&self) -> HeadersRef {
-        match *self {
-            Self::Uws(req) => HeadersRef::create_from_uws(
-                core::ptr::from_ref::<uws::Request>(req)
-                    .cast_mut()
-                    .cast::<core::ffi::c_void>(),
-            ),
-            Self::Snapshot(head) => head.to_fetch_headers(),
-        }
     }
 }
 
@@ -823,10 +801,10 @@ impl Request {
             return url.byte_slice().len();
         }
 
-        if let Some(head) = self.request_head() {
-            let req_url = Self::request_target_path(head.target());
+        self.with_uws_request(|req| {
+            let req_url = Self::request_target_path(req.url());
             if !req_url.is_empty() && req_url[0] == b'/' {
-                if let Some(host) = head
+                if let Some(host) = req
                     .header(b"host")
                     .filter(|host| Self::is_valid_host_header(host))
                 {
@@ -837,10 +815,9 @@ impl Request {
                     return self.get_protocol().len() + host.len() + req_url.len();
                 }
             }
-            return req_url.len();
-        }
-
-        0
+            req_url.len()
+        })
+        .unwrap_or(0)
     }
 
     pub(crate) fn get_protocol(&self) -> &'static [u8] {
@@ -913,10 +890,10 @@ impl Request {
             return Ok(());
         }
 
-        if let Some(head) = self.request_head() {
-            let req_url = Self::request_target_path(head.target());
+        self.with_uws_request(|req| {
+            let req_url = Self::request_target_path(req.url());
             if !req_url.is_empty() && req_url[0] == b'/' {
-                if let Some(host) = head
+                if let Some(host) = req
                     .header(b"host")
                     .filter(|host| Self::is_valid_host_header(host))
                 {
@@ -991,8 +968,9 @@ impl Request {
 
             debug_assert!(self.size_of_url() == req_url.len());
             self.url.set(BunString::clone_utf8(&req_url));
-        }
-        Ok(())
+            Ok(())
+        })
+        .unwrap_or(Ok(()))
     }
 }
 

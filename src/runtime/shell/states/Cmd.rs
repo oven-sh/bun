@@ -41,7 +41,10 @@ pub enum CmdState {
         idx: u32,
     },
     Exec,
-    WaitingWriteErr,
+    /// An error line is on its way to stderr; the Cmd then finishes with `exit_code`.
+    WaitingWriteErr {
+        exit_code: ExitCode,
+    },
     Done,
 }
 
@@ -80,8 +83,8 @@ pub(crate) struct SubprocExec {
     /// to drive.
     pub(crate) interp: *mut Interpreter,
     pub(crate) this_id: NodeId,
-    /// The `< ${stream}` source failed, so the child read a truncated stdin.
-    pub(crate) stdin_stream_failed: bool,
+    /// The `< ${stream}` source failed, so the child read a truncated stdin: the line for stderr.
+    pub(crate) stdin_stream_failure: Option<Box<[u8]>>,
 }
 
 /// Tracks which subprocess stdio pipes are still open. Each `Option` is `None`
@@ -244,7 +247,7 @@ impl Cmd {
             if interp.failed()
                 && !matches!(
                     interp.as_cmd(this).state,
-                    CmdState::WaitingWriteErr | CmdState::Done
+                    CmdState::WaitingWriteErr { .. } | CmdState::Done
                 )
             {
                 // The script failed: expand nothing more and do not spawn.
@@ -297,20 +300,23 @@ impl Cmd {
                 CmdState::Exec => {
                     return Self::transition_to_exec(interp, this);
                 }
-                CmdState::WaitingWriteErr => return Yield::suspended(),
+                CmdState::WaitingWriteErr { .. } => return Yield::suspended(),
                 CmdState::Done => {
-                    let stdin_stream_failed = match &mut interp.as_cmd_mut(this).exec {
-                        Exec::Subproc(sub) => core::mem::take(&mut sub.stdin_stream_failed),
-                        _ => false,
+                    let exit = interp.as_cmd(this).exit_code.unwrap_or(0);
+                    let stdin_stream_failure = match &mut interp.as_cmd_mut(this).exec {
+                        Exec::Subproc(sub) => sub.stdin_stream_failure.take(),
+                        _ => None,
                     };
-                    if stdin_stream_failed {
-                        return Builtin::cmd_write_failing_error(
+                    // A script that already failed reports nothing more.
+                    if let Some(message) = stdin_stream_failure.filter(|_| !interp.failed()) {
+                        // The child's own failure status wins; a truncated stdin is never a success.
+                        return Builtin::cmd_write_error_and_exit(
                             interp,
                             this,
-                            format_args!("bun: ReadableStream redirected to stdin errored\n"),
+                            if exit == 0 { 1 } else { exit },
+                            format_args!("bun: {}\n", bstr::BStr::new(&message)),
                         );
                     }
-                    let exit = interp.as_cmd(this).exit_code.unwrap_or(0);
                     let parent = interp.as_cmd(this).base.parent;
                     return interp.child_done(parent, this, exit);
                 }
@@ -320,7 +326,7 @@ impl Cmd {
 
     /// IOWriter completion callback for the error message written in
     /// `WaitingWriteErr`: throw on write failure, otherwise finish the Cmd
-    /// with exit code 1.
+    /// with that state's exit code.
     pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         this: NodeId,
@@ -331,12 +337,15 @@ impl Cmd {
             interp.throw(crate::shell::ShellErr::from_system(err));
             return Yield::Failed(this);
         }
-        debug_assert!(matches!(
-            interp.as_cmd(this).state,
-            CmdState::WaitingWriteErr
-        ));
+        let exit_code = match interp.as_cmd(this).state {
+            CmdState::WaitingWriteErr { exit_code } => exit_code,
+            _ => {
+                debug_assert!(false, "only `WaitingWriteErr` waits for this write");
+                1
+            }
+        };
         let parent = interp.as_cmd(this).base.parent;
-        interp.child_done(parent, this, 1)
+        interp.child_done(parent, this, exit_code)
     }
 
     pub(crate) fn child_done(
@@ -604,7 +613,7 @@ impl Cmd {
             buffered_closed,
             interp: core::ptr::null_mut(),
             this_id: this,
-            stdin_stream_failed: false,
+            stdin_stream_failure: None,
         }));
 
         // Derive the raw backrefs `spawn_async` needs from a single
@@ -813,8 +822,8 @@ impl Cmd {
                             )
                             .throw());
                     }
-                    // `extract_blob` hands the child the whole file, so a
-                    // sliced file stream keeps its window only as a stream.
+                    // Stop-gap until `Stdio::extract_blob` keeps a file blob's window (#41209):
+                    // it hands the child the whole file, so a sliced file stream stays a stream.
                     let sliced_file = stream.ptr.file().is_some_and(|file| {
                         file.start_offset.is_some_and(|offset| offset > 0)
                             || file.max_size.is_some()
@@ -1048,9 +1057,9 @@ impl Cmd {
     }
 
     /// Called by `ShellSubprocess::on_process_exit`, before [`on_exit`](Self::on_exit).
-    pub(crate) fn on_stdin_stream_failed(&mut self) {
+    pub(crate) fn on_stdin_stream_failed(&mut self, message: Box<[u8]>) {
         if let Exec::Subproc(sub) = &mut self.exec {
-            sub.stdin_stream_failed = true;
+            sub.stdin_stream_failure = Some(message);
         }
     }
 

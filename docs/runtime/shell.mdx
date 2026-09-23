@@ -177,6 +177,28 @@ You can redirect from these JavaScript objects:
 - `Buffer`, `Uint8Array`, `Uint16Array`, `Uint32Array`, `Int8Array`, `Int16Array`, `Int32Array`, `Float32Array`, `Float64Array`, `ArrayBuffer`, `SharedArrayBuffer` (reads from the underlying buffer)
 - `Bun.file(path)`, `Bun.file(fd)` (reads from the file)
 - `Response` (reads from the body)
+- `ReadableStream` (streams into the command's stdin)
+
+### Example: Redirect a `ReadableStream` to stdin
+
+A `ReadableStream` streams into the command as the command reads it. Bun does not buffer the whole stream first.
+
+```js
+import { $ } from "bun";
+
+const response = await fetch("https://example.com");
+
+const result = await $`bun -e "process.stdin.pipe(process.stdout)" < ${response.body}`.text();
+```
+
+These rules apply to a `ReadableStream` redirect:
+
+- Only `<` accepts a stream. `>` and `2>` throw.
+- The command must be an external command. A [builtin command](#builtin-commands) throws. To give a stream to a builtin, buffer the stream first, for example `< ${await new Response(stream).blob()}`.
+- The stream must be unlocked and unread. A locked or used stream throws.
+- If the stream errors, Bun writes `bun: Failed to pipe ReadableStream to stdin: <error>` to the command's stderr and the command fails. The exit code is the command's own exit code when that is not zero, and `1` otherwise.
+- If the command exits before it has read the whole stream, Bun cancels the stream.
+- An async iterable is converted to a stream, as it is for the `stdin` of `Bun.spawn`.
 
 ### Example: Redirect stdin -> file
 

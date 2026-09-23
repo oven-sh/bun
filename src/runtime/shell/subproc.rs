@@ -944,25 +944,25 @@ impl ShellSubprocess {
         // SAFETY: caller contract; the borrow ends at the `;`.
         let stream_stdin = unsafe { (*this).stdin.take_pipe() };
         let stdin_closed = stream_stdin.is_some();
-        // Read first: the exit notice cancels a stream that is still producing.
-        let stream_failed = stream_stdin
-            .as_ref()
-            .is_some_and(|sink| sink.stream_source_failed());
-        if let Some(sink) = stream_stdin {
-            FileSink::attached_process_exited(&sink, status);
-        }
+        let stream_failure =
+            stream_stdin.and_then(|sink| FileSink::attached_process_exited(&sink, status));
 
         if exit_code.is_none() && !stdin_closed {
             return;
         }
         // SAFETY: caller contract; `CmdHandle` is `Copy`, no borrow is kept.
         let handle = unsafe { (*this).cmd_parent };
+        // Formatting the cause can run user JS (`toString()`): no `&mut Cmd` is live yet.
+        let stream_failure = stream_failure.and_then(|failure| {
+            let global = handle.interp.global_this_ref()?;
+            Some(stream_failure_message(global, failure.to_js(global)))
+        });
         // SAFETY: the owning Cmd outlives its subprocess; the `&mut Cmd` ends
         // before the Yield runs.
         let cmd = unsafe { handle.cmd_mut() };
         cmd.base.interrupted |= interrupted;
-        if stream_failed {
-            cmd.on_stdin_stream_failed();
+        if let Some(message) = stream_failure {
+            cmd.on_stdin_stream_failed(message);
         }
         let mut y = match exit_code {
             Some(code) => cmd.on_exit(code.into()),
@@ -981,6 +981,22 @@ impl ShellSubprocess {
 // ───────────────────────────────────────────────────────────────────────────
 // Writable
 // ───────────────────────────────────────────────────────────────────────────
+
+/// The `bun: ...` line for a `< ${stream}` that failed, with `cause` when it formats.
+fn stream_failure_message(global: &jsc::JSGlobalObject, cause: jsc::JSValue) -> Box<[u8]> {
+    const MESSAGE: &str = "Failed to pipe ReadableStream to stdin";
+    // `fmt::Write` (unlike `format!`/`io::Write`) propagates the formatter
+    // `Err` that `fmt_string` produces when the value's `toString()` throws.
+    use core::fmt::Write as _;
+    let mut msg = String::new();
+    if cause.is_undefined() || write!(&mut msg, "{MESSAGE}: {}", cause.fmt_string(global)).is_err()
+    {
+        global.clear_exception_except_termination();
+        msg.clear();
+        msg.push_str(MESSAGE);
+    }
+    msg.into_bytes().into_boxed_slice()
+}
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum WritableInitError {
@@ -1181,7 +1197,7 @@ impl Writable {
         // so nothing else borrows it.
         let result = unsafe { &mut *pipe.as_ptr() }.assign_to_stream(stream, global);
         // Success shapes: undefined/null/empty (drained or natively wired) or
-        // a promise (pump in flight). Anything else is a synchronous throw —
+        // a promise (the pump). Anything else is a synchronous throw —
         // an `Error` instance or any other thrown value propagated as-is.
         let thrown = if let Some(err) = result.to_error() {
             Some(err)
@@ -1191,31 +1207,16 @@ impl Writable {
         } else if !result.is_empty_or_undefined_or_null() && result.as_any_promise().is_none() {
             Some(result)
         } else {
-            None
+            // A stream that had already failed: the sink closed inside the call.
+            pipe.take_stream_source_failure()
+                .map(|failure| failure.to_js(global))
         };
-        if let Some(err) = thrown {
-            // `fmt::Write` (unlike `format!`/`io::Write`) propagates the
-            // formatter `Err` that `fmt_string` produces when the thrown
-            // value's `toString()` itself throws.
-            use core::fmt::Write as _;
-            let mut msg = String::new();
-            if err.is_undefined()
-                || write!(
-                    &mut msg,
-                    "Failed to pipe ReadableStream to stdin: {}",
-                    err.fmt_string(global)
-                )
-                .is_err()
-            {
-                global.clear_exception_except_termination();
-                msg.clear();
-                msg.push_str("Failed to pipe ReadableStream to stdin");
-            }
-            return Err(WritableInitError::StreamAssign(
-                msg.into_bytes().into_boxed_slice(),
-            ));
+        match thrown {
+            Some(err) => Err(WritableInitError::StreamAssign(stream_failure_message(
+                global, err,
+            ))),
+            None => Ok(Writable::Pipe(pipe)),
         }
-        Ok(Writable::Pipe(pipe))
     }
 
     // Note: there is intentionally no `Writable::toJS` here — the shell never

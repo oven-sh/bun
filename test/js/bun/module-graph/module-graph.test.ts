@@ -994,6 +994,19 @@ describe("Bun.ModuleGraph — whose context a call runs in, in every tier", () =
           process.exit(0);
         })();
       `,
+      // A long chain of tail calls between two graphs is one frame: it takes no more memory than a short one.
+      "hops.ts": `
+        const A = new Bun.ModuleGraph(), B = new Bun.ModuleGraph();
+        const a = await A.import(import.meta.dir + "/tails.mjs"), b = await B.import(import.meta.dir + "/tails.mjs?b");
+        const hops = Number(process.argv[2]);
+        a.turns(1001, a.turns, b.turns);
+        Bun.gc(true);
+        const before = process.memoryUsage.rss();
+        const endedAs = a.turns(hops, a.turns, b.turns);
+        const grewBy = process.memoryUsage.rss() - before;
+        console.log(JSON.stringify({ endedAsTheRightGraph: endedAs === (hops % 2 ? B : A), hostIsCurrentAfterwards: Bun.ModuleGraph.current === undefined, grewByLessThan32MB: grewBy < 32 * 1024 * 1024 || grewBy }));
+        process.exit(0);
+      `,
       "depth.ts": `
         const A = new Bun.ModuleGraph(), B = new Bun.ModuleGraph();
         const a = await A.import(import.meta.dir + "/tails.mjs"), b = await B.import(import.meta.dir + "/tails.mjs");
@@ -1073,6 +1086,15 @@ describe("Bun.ModuleGraph — whose context a call runs in, in every tier", () =
       },
     );
   }
+  test("a chain of tail calls between two graphs takes no more memory however long it is", async () => {
+    // (An entry per hop was 56 bytes of it: 110 MB for this many.)
+    const hops = isDebug || isASAN ? "400000" : "2000000";
+    expect(await runBun([join(dir, "hops.ts"), hops])).toEqual({
+      stdout: JSON.stringify({ endedAsTheRightGraph: true, hostIsCurrentAfterwards: true, grewByLessThan32MB: true }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
   test("two graphs' functions calling each other get within a small factor as deep as one graph's", async () => {
     expect(await runBun([join(dir, "depth.ts")])).toEqual({
       stdout: JSON.stringify({

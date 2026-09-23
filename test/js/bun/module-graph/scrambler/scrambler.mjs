@@ -36,7 +36,7 @@ const retiredLogs = []; let recreated = 0, nested = 0, cancelled = 0, childAlive
 async function fill(s, gen) {
   let graph, cell, parent = -1; const live = slots.map((x, k) => x && k !== s && !x.dead ? k : -1).filter(k => k >= 0)
   if (NEST && live.length && rnd(3) === 0) { parent = pick(live); [graph, cell] = await slots[parent].cell.makeChild(specOf(s)); nested++ }
-  else { graph = new Bun.ModuleGraph({ onError: e => problem(`${WHO} g${s}#${gen} onError: ${String(e).slice(0, 100)}`) }); cell = await graph.import(specOf(s)) }
+  else { graph = new Bun.ModuleGraph({ uncaughtException: e => problem(`${WHO} g${s}#${gen} uncaughtException: ${String(e).slice(0, 100)}`) }); cell = await graph.import(specOf(s)) }
   made++; const label = `g${s}#${gen}${parent >= 0 ? `(child of ${slots[parent].label})` : ''}`; labels.set(graph, label)
   cell.setup(label, nameOf); expected.set(cell, 0); slots[s] = { graph, cell, gen, parent, label }
   if (Bun.ModuleGraph.current !== undefined) problem(`${WHO}: host sees ${nameOf(Bun.ModuleGraph.current)} as current after creating ${label}`)

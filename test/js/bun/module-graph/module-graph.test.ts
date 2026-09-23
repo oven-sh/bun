@@ -35,7 +35,7 @@ const ModuleGraph = (opts: HostOptions = {}): ModuleGraphInstance => {
       return typeof v === "function" ? v.bind(target) : v;
     },
   });
-  const graph = new ModuleGraphClass({ onError: opts.onError, globals: { process: proc, ...opts.globals } });
+  const graph = new ModuleGraphClass({ uncaughtException: opts.uncaughtException, globals: { process: proc, ...opts.globals } });
   return graph;
 };
 
@@ -254,7 +254,7 @@ describe("Bun.ModuleGraph", () => {
     const mk = (t: string) =>
       ModuleGraph({
         env: { APP_ID: t },
-        onError: (e: any, kind) => seen.push(`${t}:${kind}:${e?.message ?? JSON.stringify(e)}`),
+        uncaughtException: (e: any, kind) => seen.push(`${t}:${kind}:${e?.message ?? JSON.stringify(e)}`),
       });
     const [graphA, graphB] = [mk("a"), mk("b")];
     const a = await graphA.import(join(dir, "err.mjs"));
@@ -1008,8 +1008,8 @@ describe("Bun.ModuleGraph — API validation and error attribution edges", () =>
     const dir = fixture({ "unused.mjs": "" });
     expect({
       call: thrown(() => (ModuleGraphClass as any)()),
-      onError: thrown(() => new ModuleGraphClass({ onError: 1 as any })),
-      onErrorNull: thrown(() => new ModuleGraphClass({ onError: null as any })),
+      uncaughtException: thrown(() => new ModuleGraphClass({ uncaughtException: 1 as any })),
+      onErrorNull: thrown(() => new ModuleGraphClass({ uncaughtException: null as any })),
       globals: thrown(() => new ModuleGraphClass({ globals: 5 as any })),
       optionsString: thrown(() => new ModuleGraphClass("nope" as any)),
       optionsNull: thrown(() => new ModuleGraphClass(null as any)),
@@ -1034,8 +1034,8 @@ describe("Bun.ModuleGraph — API validation and error attribution edges", () =>
       ),
     }).toEqual({
       call: "TypeError [undefined]: Class constructor ModuleGraph cannot be invoked without 'new'",
-      onError: `TypeError [ERR_INVALID_ARG_TYPE]: The "options.onError" property must be of type function. Received type number (1)`,
-      onErrorNull: `TypeError [ERR_INVALID_ARG_TYPE]: The "options.onError" property must be of type function. Received null`,
+      uncaughtException: `TypeError [ERR_INVALID_ARG_TYPE]: The "options.uncaughtException" property must be of type function. Received type number (1)`,
+      onErrorNull: `TypeError [ERR_INVALID_ARG_TYPE]: The "options.uncaughtException" property must be of type function. Received null`,
       globals: `TypeError [ERR_INVALID_ARG_TYPE]: The "options.globals" property must be of type object. Received type number (5)`,
       optionsString: `TypeError [ERR_INVALID_ARG_TYPE]: The "options" argument must be of type object. Received type string ('nope')`,
       optionsNull: `TypeError [ERR_INVALID_ARG_TYPE]: The "options" argument must be of type object. Received null`,
@@ -1056,7 +1056,7 @@ describe("Bun.ModuleGraph — API validation and error attribution edges", () =>
       "boom.mjs": `export function boom() { setTimeout(() => { throw new Error("boom") }, 0) }`,
     });
     const errs: string[] = [];
-    const g = ModuleGraph({ env: { T: "z" }, onError: (e: any, k) => errs.push(k + ":" + e.message) });
+    const g = ModuleGraph({ env: { T: "z" }, uncaughtException: (e: any, k) => errs.push(k + ":" + e.message) });
     await expect(g.import(join(dir, "syncthrow.mjs"))).rejects.toThrow("at-eval");
     expect(errs).toEqual([]);
     const late = await g.import(join(dir, "late.mjs"));
@@ -1066,12 +1066,12 @@ describe("Bun.ModuleGraph — API validation and error attribution edges", () =>
     expect(errs).toEqual(["uncaughtException:late-z"]); // a tick the graph had queued runs after dispose: still that graph's onError
     // An onError that rethrows the graph's error: the host's uncaught exception once, not attributed to the graph again.
     {
-      const script = `const seen = []; process.on("uncaughtException", e => { seen.push("host:" + e.message); console.log(JSON.stringify(seen)); }); const g = new Bun.ModuleGraph({ onError: (e) => { seen.push("graph:" + e.message); throw e } }); const m = await g.import(${JSON.stringify(join(dir, "boom.mjs"))}); m.boom();`;
+      const script = `const seen = []; process.on("uncaughtException", e => { seen.push("host:" + e.message); console.log(JSON.stringify(seen)); }); const g = new Bun.ModuleGraph({ uncaughtException: (e) => { seen.push("graph:" + e.message); throw e } }); const m = await g.import(${JSON.stringify(join(dir, "boom.mjs"))}); m.boom();`;
       const r = await runBun(["-e", script]);
       expect([r.stdout, r.exitCode]).toEqual([`["graph:boom","host:boom"]`, 0]);
     }
     // An onError that throws: that is the host's own uncaught exception (observed in a child process; here the test runner owns uncaught errors).
-    const script = `process.on("uncaughtException", e => console.log("host:" + e.message)); const g = new Bun.ModuleGraph({ onError: () => { throw new Error("onError itself throws") } }); const bad = await g.import(${JSON.stringify(join(dir, "boom.mjs"))}); bad.boom();`;
+    const script = `process.on("uncaughtException", e => console.log("host:" + e.message)); const g = new Bun.ModuleGraph({ uncaughtException: () => { throw new Error("onError itself throws") } }); const bad = await g.import(${JSON.stringify(join(dir, "boom.mjs"))}); bad.boom();`;
     const r = await runBun(["-e", script]);
     expect([r.stdout, r.exitCode]).toEqual(["host:onError itself throws", 0]);
   });
@@ -1260,7 +1260,7 @@ describe("Bun.ModuleGraph — error attribution matrix", () => {
     try {
       const g = ModuleGraph({
         env: { T: "g" },
-        onError: (e: any, kind: string) => errs.push(kind + "=" + (e?.message ?? e?.tag ?? e)),
+        uncaughtException: (e: any, kind: string) => errs.push(kind + "=" + (e?.message ?? e?.tag ?? e)),
       });
       const m = await g.import(join(dir, "e.mjs"));
       const expected = (await fn(m, errs, g)) ?? 1;
@@ -1308,7 +1308,7 @@ describe("Bun.ModuleGraph — error attribution matrix", () => {
     const settled = Promise.withResolvers<void>();
     const g = new ModuleGraphClass({
       globals: {},
-      onError: (e: any, kind: string) => {
+      uncaughtException: (e: any, kind: string) => {
         seen.push(kind + ":" + e.message);
         if (seen.length === 2) settled.resolve();
       },
@@ -1323,22 +1323,23 @@ describe("Bun.ModuleGraph — error attribution matrix", () => {
     using d = tempDir("module-graph-onerror-once", {
       "boom.mjs": `export function boom() { setTimeout(() => { throw new Error("boom-once"); }, 0); } export function throwAndCatch(e) { try { throw e; } catch {} } export function chain() { (async () => { await null; throw new Error("derived"); })().then(x => x); }`,
       "host.mjs": `const seen = [];
-        const done = () => { if (seen.length === 6) { console.log(JSON.stringify(seen.sort())); process.exit(0); } };
+        const done = () => { if (seen.length === 7) { console.log(JSON.stringify(seen.sort())); process.exit(0); } };
         process.on("uncaughtException", e => { seen.push("host:uncaughtException:" + e.message); done(); });
         process.on("unhandledRejection", e => { seen.push("host:unhandledRejection:" + e.message); done(); });
         // one rethrows from a microtask; the other logs the stack (drops the error's frames) and rejects with it
-        const rethrow = new Bun.ModuleGraph({ onError: (e) => { seen.push("rethrow:" + e.message); queueMicrotask(() => { throw e; }); } });
-        const rereject = new Bun.ModuleGraph({ onError: (e) => { seen.push("rereject:" + e.message); void e.stack; Promise.reject(e); } });
+        const rethrow = new Bun.ModuleGraph({ uncaughtException: (e) => { seen.push("rethrow:" + e.message); queueMicrotask(() => { throw e; }); } });
+        const rereject = new Bun.ModuleGraph({ uncaughtException: (e) => { seen.push("rereject:" + e.message); void e.stack; Promise.reject(e); } });
         const m1 = await rethrow.import("./boom.mjs"); m1.boom();
         const m2 = await rereject.import("./boom.mjs?2"); m2.boom();
         // an object graph code once threw and caught does not make a later host rejection with it the graph's
         const stale = new Error("stale"); m2.throwAndCatch(stale); Promise.resolve().then(() => Promise.reject(stale));
-        // the promise graph code rejected is the graph's; one derived from it through .then() without a rejection handler, left unhandled, is the host's
+        // the promise the graph's .then() made with no rejection handler is the graph's too (its code made it), so its
+        // handler is told, and what the handler then rejects is the host's
         m2.chain();`,
     });
     const r = await runBun(["host.mjs"], { cwd: String(d) });
     expect({ out: r.stdout, err: r.stderr, exitCode: r.exitCode }).toEqual({
-      out: `["host:uncaughtException:boom-once","host:unhandledRejection:boom-once","host:unhandledRejection:derived","host:unhandledRejection:stale","rereject:boom-once","rethrow:boom-once"]`,
+      out: `["host:uncaughtException:boom-once","host:unhandledRejection:boom-once","host:unhandledRejection:derived","host:unhandledRejection:stale","rereject:boom-once","rereject:derived","rethrow:boom-once"]`,
       err: "",
       exitCode: 0,
     });
@@ -1359,7 +1360,7 @@ describe("Bun.ModuleGraph — error attribution matrix", () => {
           throwNow(message) { throw new Error(message); },
         };
         let how;
-        const graph = new Bun.ModuleGraph({ onError: (e, kind) => { seen.push("onError:" + e.message); done(); if (e.message.startsWith("first")) answers[how]("from onError by " + how); } });
+        const graph = new Bun.ModuleGraph({ uncaughtException: (e, kind) => { seen.push("uncaughtException:" + e.message); done(); if (e.message.startsWith("first")) answers[how]("from onError by " + how); } });
         const faults = await graph.import(import.meta.dir + "/faults.mjs");
         for (how of ["reject", "rejectInAsyncFunction", "throwNow"]) {
           const before = seen.length;
@@ -1372,13 +1373,13 @@ describe("Bun.ModuleGraph — error attribution matrix", () => {
     const r = await runBun(["host.mjs"], { cwd: String(d) });
     expect({ out: JSON.parse(r.stdout), err: r.stderr, exitCode: r.exitCode }).toEqual({
       out: [
-        "onError:first, answered by reject",
+        "uncaughtException:first, answered by reject",
         "host:unhandledRejection:from onError by reject",
-        "onError:first, answered by rejectInAsyncFunction",
+        "uncaughtException:first, answered by rejectInAsyncFunction",
         "host:unhandledRejection:from onError by rejectInAsyncFunction",
-        "onError:first, answered by throwNow",
+        "uncaughtException:first, answered by throwNow",
         "host:uncaughtException:from onError by throwNow",
-        "onError:last",
+        "uncaughtException:last",
       ],
       err: "",
       exitCode: 0,
@@ -1465,7 +1466,7 @@ describe("Bun.ModuleGraph — error attribution matrix", () => {
       "main.mjs": `
         const seen = [];
         process.on("unhandledRejection", e => seen.push("host: " + e.message.split(" imported from")[0]));
-        const make = () => new Bun.ModuleGraph({ onError: (e, kind) => seen.push("graph " + kind + ": " + e.message) });
+        const make = () => new Bun.ModuleGraph({ uncaughtException: (e, kind) => seen.push("graph " + kind + ": " + e.message) });
         for (const file of ["sync.mjs", "tla.mjs", "dep.mjs", "missing.mjs"]) make().import(import.meta.dir + "/" + file);
         const disposed = make();
         disposed.import(import.meta.dir + "/never.mjs");
@@ -1574,7 +1575,7 @@ describe("Bun.ModuleGraph — error attribution matrix", () => {
           cjsMakeError: createRequire(join(d, "rej.mjs"))("./helper.cjs"),
           scriptMakeError: (0, eval)("(function scriptMakeError(m) { return new Error(m); })"),
         },
-        onError: (e: any, kind: string) => seen.push(kind + ":" + e.message),
+        uncaughtException: (e: any, kind: string) => seen.push(kind + ":" + e.message),
       });
       const m = await g.import(join(d, "rej.mjs"));
       m.fire();
@@ -1619,8 +1620,8 @@ describe("Bun.ModuleGraph — error attribution matrix", () => {
   });
   test("two graphs throwing concurrently are attributed to their own onError", async () => {
     const seen: string[] = [];
-    const graphA = ModuleGraph({ env: { T: "A" }, onError: (e: any) => seen.push("A<-" + e.message) });
-    const graphB = ModuleGraph({ env: { T: "B" }, onError: (e: any) => seen.push("B<-" + e.message) });
+    const graphA = ModuleGraph({ env: { T: "A" }, uncaughtException: (e: any) => seen.push("A<-" + e.message) });
+    const graphB = ModuleGraph({ env: { T: "B" }, uncaughtException: (e: any) => seen.push("B<-" + e.message) });
     const a = await graphA.import(join(dir, "e.mjs"));
     const b = await graphB.import(join(dir, "e.mjs"));
     a.timerThrow();
@@ -1631,7 +1632,7 @@ describe("Bun.ModuleGraph — error attribution matrix", () => {
     expect(seen.sort()).toEqual(["A<-reject:A", "A<-timer:A", "B<-reject:B", "B<-timer:B"]);
   });
   test("an error taken by onError does not fail the process: natural exit code 0, also with --unhandled-rejections=strict", async () => {
-    const script = `const g = new Bun.ModuleGraph({ globals: { process: Object.create(process, { env: { value: { T: "x" }, enumerable: true } }) }, onError: (e, kind) => console.log(kind + ":" + e.message) });
+    const script = `const g = new Bun.ModuleGraph({ globals: { process: Object.create(process, { env: { value: { T: "x" }, enumerable: true } }) }, uncaughtException: (e, kind) => console.log(kind + ":" + e.message) });
       const m = await g.import(${JSON.stringify(join(dir, "e.mjs"))}); m.timerThrow(); m.rejection();`;
     expect([await runBun(["-e", script]), await runBun(["--unhandled-rejections=strict", "-e", script])]).toEqual([
       { stdout: "unhandledRejection:reject:x\nuncaughtException:timer:x", stderr: "", exitCode: 0 },
@@ -1671,7 +1672,7 @@ describe("Bun.ModuleGraph — an error belongs to the context it happens in, wha
       process.on("unhandledRejection", error => told.push("host"));
       const until = async condition => { while (!condition()) await new Promise(resolve => setImmediate(resolve)); };
       const out = {};
-      const graph = new Bun.ModuleGraph({ onError: () => told.push("graph") });
+      const graph = new Bun.ModuleGraph({ uncaughtException: () => told.push("graph") });
       const { cases } = await graph.import(import.meta.dir + "/tenant.mjs");
       for (const name of Object.keys(cases)) {
         told.length = 0;
@@ -1682,8 +1683,8 @@ describe("Bun.ModuleGraph — an error belongs to the context it happens in, wha
       // While one graph's onError runs, another graph's error is still that graph's.
       told.length = 0;
       let other;
-      const first = new Bun.ModuleGraph({ onError: () => { told.push("first"); other.rejectLater("from the other graph"); } });
-      const second = new Bun.ModuleGraph({ onError: () => told.push("second") });
+      const first = new Bun.ModuleGraph({ uncaughtException: () => { told.push("first"); other.rejectLater("from the other graph"); } });
+      const second = new Bun.ModuleGraph({ uncaughtException: () => told.push("second") });
       other = await second.import(import.meta.dir + "/tenant.mjs");
       const mine = await first.import(import.meta.dir + "/tenant.mjs?first");
       mine.rejectLater("from the first graph");
@@ -1721,7 +1722,7 @@ describe("Bun.ModuleGraph — an error belongs to the context it happens in, wha
         process.on("unhandledRejection", error => told.push("host: " + error.message));
         const until = async condition => { while (!condition()) await new Promise(resolve => setImmediate(resolve)); };
         const hostThrowsLater = message => { setTimeout(() => { throw new Error(message); }, 0); };
-        const make = tag => new Bun.ModuleGraph({ globals: { hostThrowsLater }, onError: error => told.push(tag + ": " + error.message) });
+        const make = tag => new Bun.ModuleGraph({ globals: { hostThrowsLater }, uncaughtException: error => told.push(tag + ": " + error.message) });
         const [graphA, graphB] = [make("A"), make("B")];
         const a = await graphA.import(import.meta.dir + "/tenant.mjs");
         const b = await graphB.import(import.meta.dir + "/tenant.mjs?b");
@@ -1776,7 +1777,7 @@ describe("Bun.ModuleGraph — an error belongs to the context it happens in, wha
           "an async function": () => { (async () => { await null; throw new Error("rejected"); })(); },
         };
         export const makesAGraph = file => {
-          const inner = new Bun.ModuleGraph({ onError: () => { told.push("the inner graph's onError ran in " + where()); throw new Error("from the inner graph's onError"); } });
+          const inner = new Bun.ModuleGraph({ uncaughtException: () => { told.push("the inner graph's onError ran in " + where()); throw new Error("from the inner graph's onError"); } });
           return inner.import(file).then(module => module.faults["a timer"]());
         };
       `,
@@ -1788,7 +1789,7 @@ describe("Bun.ModuleGraph — an error belongs to the context it happens in, wha
         const where = () => Bun.ModuleGraph.current === undefined ? "the host's context" : Bun.ModuleGraph.current === outer ? "the outer graph's context" : "another graph's context";
         const out = {};
         // A graph the host made: its handler runs as the host, whichever way the error came.
-        const graph = new Bun.ModuleGraph({ onError: () => told.push(where()) });
+        const graph = new Bun.ModuleGraph({ uncaughtException: () => told.push(where()) });
         const { faults } = await graph.import(import.meta.dir + "/tenant.mjs");
         for (const kind of Object.keys(faults)) {
           told.length = 0;
@@ -1803,7 +1804,7 @@ describe("Bun.ModuleGraph — an error belongs to the context it happens in, wha
         }
         // A graph that a graph's code made: its handler runs as that graph, so what it throws is that graph's.
         told.length = 0;
-        outer = new Bun.ModuleGraph({ globals: { told, where }, onError: error => told.push("the outer graph's onError: " + error.message) });
+        outer = new Bun.ModuleGraph({ globals: { told, where }, uncaughtException: error => told.push("the outer graph's uncaughtException: " + error.message) });
         const made = await outer.import(import.meta.dir + "/tenant.mjs?outer");
         await made.makesAGraph(import.meta.dir + "/tenant.mjs?inner");
         await until(() => told.length >= 2);
@@ -1819,7 +1820,7 @@ describe("Bun.ModuleGraph — an error belongs to the context it happens in, wha
       expected[kind + ", then the host's own timer"] = "host: thrown";
     }
     expected["a nested graph"] =
-      "the inner graph's onError ran in the outer graph's context | the outer graph's onError: from the inner graph's onError";
+      "the inner graph's onError ran in the outer graph's context | the outer graph's uncaughtException: from the inner graph's onError";
     expect(JSON.parse(stdout)).toEqual(expected);
     expect(exitCode).toBe(0);
   });
@@ -1832,7 +1833,7 @@ describe("Bun.ModuleGraph — an error belongs to the context it happens in, wha
         // A graph this graph's code makes, whose handler re-enters it and throws there.
         export const makesAGraph = async file => {
           let module;
-          const inner = new Bun.ModuleGraph({ onError: error => { told.push("inner onError: " + error.message); module.throws("thrown in the inner graph by inner's onError"); } });
+          const inner = new Bun.ModuleGraph({ uncaughtException: error => { told.push("inner uncaughtException: " + error.message); module.throws("thrown in the inner graph by inner's onError"); } });
           module = await inner.import(file);
           module.throwsLater("the inner graph's fault");
         };
@@ -1845,14 +1846,14 @@ describe("Bun.ModuleGraph — an error belongs to the context it happens in, wha
         const out = {};
         // A graph the host made: its handler re-enters the graph and throws there, every time.
         let app;
-        const graph = new Bun.ModuleGraph({ onError: error => { told.push("onError: " + error.message); app.throws("thrown in the graph by onError"); } });
+        const graph = new Bun.ModuleGraph({ uncaughtException: error => { told.push("uncaughtException: " + error.message); app.throws("thrown in the graph by onError"); } });
         app = await graph.import(import.meta.dir + "/tenant.mjs");
         app.throwsLater("the graph's fault");
         await until(() => told.length >= 2);
         await settle();
         out["a graph the host made"] = told.splice(0);
         // The same one level down: the outer graph is the inner one's maker.
-        const outer = new Bun.ModuleGraph({ globals: { told }, onError: error => told.push("outer onError: " + error.message) });
+        const outer = new Bun.ModuleGraph({ globals: { told }, uncaughtException: error => told.push("outer uncaughtException: " + error.message) });
         const made = await outer.import(import.meta.dir + "/tenant.mjs?outer");
         await made.makesAGraph(import.meta.dir + "/tenant.mjs?inner");
         await until(() => told.length >= 2);
@@ -1864,10 +1865,10 @@ describe("Bun.ModuleGraph — an error belongs to the context it happens in, wha
     });
     const { stdout, exitCode } = await runBun(["main.mjs"], { cwd: String(d) });
     expect(JSON.parse(stdout)).toEqual({
-      "a graph the host made": ["onError: the graph's fault", "host: thrown in the graph by onError"],
+      "a graph the host made": ["uncaughtException: the graph's fault", "host: thrown in the graph by onError"],
       "a graph a graph made": [
-        "inner onError: the inner graph's fault",
-        "outer onError: thrown in the inner graph by inner's onError",
+        "inner uncaughtException: the inner graph's fault",
+        "outer uncaughtException: thrown in the inner graph by inner's onError",
       ],
     });
     expect(exitCode).toBe(0);
@@ -1946,6 +1947,186 @@ describe("Bun.ModuleGraph — an error belongs to the context it happens in, wha
       "new Module, the graph's function called by the host": "the graph's",
     });
     expect(exitCode).toBe(0);
+  });
+});
+
+// An unhandled rejection is the graph's whose code made the promise that nobody handled, whoever rejects it: the
+// graph's own code, the host, another graph, or the engine settling a derived promise by itself. Each row makes a
+// promise in one place, rejects it from another and handles it nowhere; `who` is told by whichever handler gets it.
+describe("Bun.ModuleGraph — an unhandled rejection is the promise maker's", () => {
+  const tenant = `
+    import { once } from "node:events";
+    const fail = () => new Error("x");
+    const later = ms => new Promise((resolve, reject) => setTimeout(() => reject(fail()), ms));
+    // ── rejected by the engine, with nobody's code running ──
+    export const thenWithNoCatch = () => { later(1).then(value => value); };
+    export const thenTwice = () => { later(1).then(value => value).then(value => value); };
+    export const thenOfRejected = () => { Promise.reject(fail()).then(value => value); };
+    export const thenReturningRejection = () => { Promise.resolve().then(() => Promise.reject(fail())); };
+    export const thenAsyncThrows = () => { Promise.resolve().then(async () => { await null; throw fail(); }); };
+    export const resolvedWithRejection = () => { new Promise(resolve => resolve(Promise.reject(fail()))); };
+    export const all = () => { Promise.all([later(1)]); };
+    export const allSettledThenThrow = () => { Promise.allSettled([later(1)]).then(() => { throw fail(); }); };
+    export const any = () => { Promise.any([later(1)]); };
+    export const race = () => { Promise.race([later(1)]); };
+    export const raceThen = () => { Promise.race([later(1)]).then(value => value); };
+    export const finallyOnly = () => { later(1).finally(() => {}); };
+    // ── rejected by somebody else's code ──
+    export const abortListener = signal => { new Promise((resolve, reject) => signal.addEventListener("abort", reject)); };
+    export const abortListenerWrapped = signal => { new Promise((resolve, reject) => signal.addEventListener("abort", event => reject(event))); };
+    export const streamError = stream => { new Promise((resolve, reject) => { stream.on("end", resolve); stream.on("error", reject); stream.resume(); }); };
+    export const eventsOnce = emitter => { once(emitter, "ready"); };
+    export const parkedInATable = table => { const { promise, resolve, reject } = Promise.withResolvers(); table.set(1, { resolve, reject }); };
+    export const handedToACallbackApi = api => { new Promise((resolve, reject) => api.get(resolve, reject)); };
+    export const handedOut = give => { new Promise((resolve, reject) => give(reject)); };
+    export const rejects = reject => reject(fail());
+    // ── handled, or made by somebody else ──
+    export const makes = () => later(1);
+    export const catches = promise => { promise.catch(() => {}); };
+    export const catchThrows = promise => { promise.catch(() => { throw fail(); }); };
+    export const drops = promise => { promise.then(value => value); };
+  `;
+  const host = `
+    import { EventEmitter } from "node:events";
+    import { Readable } from "node:stream";
+    const tick = ms => new Promise(resolve => setTimeout(resolve, ms));
+    let who = [];
+    process.on("unhandledRejection", () => who.push("host"));
+    process.on("uncaughtException", () => who.push("host (exception)"));
+    // Made before there is any graph, by the host: the host's, though a graph's code rejects them later.
+    let rejectEarly; new Promise((resolve, reject) => (rejectEarly = reject));
+    const early = Promise.withResolvers();
+    for (let i = 0; i < 20000; i++) new Promise(resolve => resolve(i)); // the constructor is optimized code by now
+    const make = name => new Bun.ModuleGraph({ unhandledRejection: () => who.push(name), uncaughtException: () => who.push(name + " (exception)") });
+    const [one, two, three] = await Promise.all(["one", "two", "three"].map(name => make(name).import(import.meta.dir + "/tenant.mjs")));
+    const out = {};
+    const row = async (name, run) => { who = []; run(); await tick(40); out[name] = who.join() || "nobody"; };
+    for (const name of ["thenWithNoCatch", "thenTwice", "thenOfRejected", "thenReturningRejection", "thenAsyncThrows", "resolvedWithRejection", "all", "allSettledThenThrow", "any", "race", "raceThen", "finallyOnly"])
+      await row(name, () => one[name]());
+    await row("abort listener: reject", () => { const controller = new AbortController(); one.abortListener(controller.signal); controller.abort(); });
+    await row("abort listener: event => reject(event)", () => { const controller = new AbortController(); one.abortListenerWrapped(controller.signal); controller.abort(); });
+    await row("a host stream's error", () => { const stream = new Readable({ read() {} }); one.streamError(stream); stream.destroy(new Error("x")); });
+    await row("events.once() of a host emitter", () => { const emitter = new EventEmitter(); one.eventsOnce(emitter); emitter.emit("error", new Error("x")); });
+    await row("reject parked in a host table", () => { const table = new Map(); one.parkedInATable(table); table.get(1).reject(new Error("x")); });
+    await row("reject given to a host callback API", () => one.handedToACallbackApi({ get: (ok, fail) => setTimeout(() => fail(new Error("x")), 1) }));
+    await row("one's promise, rejected by two's code", () => one.handedOut(reject => two.rejects(reject)));
+    await row("one's promise, rejected by three's code that two's code called", () => one.handedOut(reject => two.handedOut(() => three.rejects(reject)) ));
+    await row("the host's promise, rejected by one's code", () => { let reject; new Promise((resolve, r) => (reject = r)); one.rejects(reject); });
+    await row("the host's withResolvers promise, rejected by one's code", () => { const { reject } = Promise.withResolvers(); one.rejects(reject); });
+    await row("a host promise made before any graph, rejected by one's code", () => one.rejects(rejectEarly));
+    await row("a host withResolvers promise made before any graph, rejected by one's code", () => one.rejects(early.reject));
+    await row("one's promise, handled by two's catch", () => two.catches(one.makes()));
+    await row("one's promise, two's catch handler throws", () => two.catchThrows(one.makes()));
+    await row("one's promise, two's then with no catch", () => two.drops(one.makes()));
+    await row("one's promise, the host's then with no catch", () => { one.makes().then(value => value); });
+    await row("one's promise, nobody's anything", () => { one.makes(); });
+    console.log(JSON.stringify(out, null, 1));
+    process.exit(0);
+  `;
+  const expected = {
+    thenWithNoCatch: "one",
+    thenTwice: "one",
+    thenOfRejected: "one",
+    thenReturningRejection: "one",
+    thenAsyncThrows: "one",
+    resolvedWithRejection: "one",
+    all: "one",
+    allSettledThenThrow: "one",
+    any: "one",
+    race: "one",
+    raceThen: "one",
+    finallyOnly: "one",
+    "abort listener: reject": "one",
+    "abort listener: event => reject(event)": "one",
+    "a host stream's error": "one",
+    "events.once() of a host emitter": "one",
+    "reject parked in a host table": "one",
+    "reject given to a host callback API": "one",
+    "one's promise, rejected by two's code": "one",
+    "one's promise, rejected by three's code that two's code called": "one",
+    "the host's promise, rejected by one's code": "host",
+    "the host's withResolvers promise, rejected by one's code": "host",
+    "a host promise made before any graph, rejected by one's code": "host",
+    "a host withResolvers promise made before any graph, rejected by one's code": "host",
+    "one's promise, handled by two's catch": "nobody",
+    "one's promise, two's catch handler throws": "two", // what .catch() returned is two's: its code made it
+    "one's promise, two's then with no catch": "two",
+    "one's promise, the host's then with no catch": "host",
+    "one's promise, nobody's anything": "one",
+  };
+
+  // The same in every tier: the Promise constructor's owner handling is compiled in only once a graph exists.
+  const tiers: Record<string, Record<string, string>> = {
+    default: {},
+    interpreter: { BUN_JSC_useJIT: "0" },
+    baseline: { BUN_JSC_useDFGJIT: "0" },
+    "DFG, eagerly": { BUN_JSC_useFTLJIT: "0", BUN_JSC_useConcurrentJIT: "0", BUN_JSC_thresholdForJITAfterWarmUp: "10", BUN_JSC_thresholdForOptimizeAfterWarmUp: "20" },
+    "FTL, eagerly": { BUN_JSC_useConcurrentJIT: "0", BUN_JSC_thresholdForJITAfterWarmUp: "10", BUN_JSC_thresholdForOptimizeAfterWarmUp: "20", BUN_JSC_thresholdForFTLOptimizeAfterWarmUp: "200" },
+  };
+  test.concurrent.each(Object.keys(tiers))("whoever rejects it (%s)", async tier => {
+    using dir = tempDir("module-graph-rejection-maker", { "tenant.mjs": tenant, "host.mjs": host });
+    const result = await runBun(["host.mjs"], { cwd: String(dir), env: tiers[tier] });
+    expect({ who: result.stdout ? JSON.parse(result.stdout) : result.stdout, stderr: result.stderr }).toEqual({ who: expected, stderr: "" });
+    expect(result.exitCode).toBe(0);
+  });
+});
+
+// options.uncaughtException(error, origin) and options.unhandledRejection(reason, promise): named after the process
+// events they stand in for, and like them an unhandled rejection with no unhandledRejection is an uncaught exception.
+describe("Bun.ModuleGraph — uncaughtException and unhandledRejection", () => {
+  test("what each is called with, which of the two is called, and who is asked next", async () => {
+    using dir = tempDir("module-graph-two-handlers", {
+      "app.mjs": `
+        export let made;
+        export const rejects = message => { made = Promise.reject(new Error(message)); };
+        export const throwsLater = message => { setTimeout(() => { throw new Error(message); }, 1); };
+        export const makeInner = async options => { const graph = new Bun.ModuleGraph(options); return await graph.import(import.meta.dir + "/app.mjs?inner"); };
+      `,
+      "host.mjs": `
+        const tick = ms => new Promise(resolve => setTimeout(resolve, ms));
+        let told = [];
+        process.on("unhandledRejection", reason => told.push("host unhandledRejection: " + reason.message));
+        process.on("uncaughtException", (error, origin) => told.push("host uncaughtException(" + origin + "): " + error.message));
+        const out = {};
+        const row = async (name, options, run) => {
+          told = [];
+          const graph = new Bun.ModuleGraph(options(name => (...args) => told.push(name + "(" + args.map(arg => arg instanceof Error ? arg.message : arg instanceof Promise ? (arg === app.made ? "the promise" : "another promise") : String(arg)).join(", ") + ")")));
+          const app = await graph.import(import.meta.dir + "/app.mjs?" + name);
+          await run(app); await tick(30); out[name] = told;
+        };
+        const both = tell => ({ uncaughtException: tell("uncaughtException"), unhandledRejection: tell("unhandledRejection") });
+        await row("both: a rejection", both, app => app.rejects("r"));
+        await row("both: an exception", both, app => app.throwsLater("e"));
+        await row("only uncaughtException: a rejection", tell => ({ uncaughtException: tell("uncaughtException") }), app => app.rejects("r"));
+        await row("only uncaughtException: an exception", tell => ({ uncaughtException: tell("uncaughtException") }), app => app.throwsLater("e"));
+        await row("only unhandledRejection: a rejection", tell => ({ unhandledRejection: tell("unhandledRejection") }), app => app.rejects("r"));
+        await row("only unhandledRejection: an exception", tell => ({ unhandledRejection: tell("unhandledRejection") }), app => app.throwsLater("e"));
+        await row("neither", () => ({}), async app => { app.rejects("r"); await tick(10); app.throwsLater("e"); });
+        // A graph a graph made: what it has no handler for goes to the graph that made it, kind by kind.
+        await row("outer has both, inner only unhandledRejection: inner's rejection", both, async app => { const inner = await app.makeInner({ unhandledRejection: () => told.push("inner unhandledRejection") }); inner.rejects("r"); });
+        await row("outer has both, inner only unhandledRejection: inner's exception", both, async app => { const inner = await app.makeInner({ unhandledRejection: () => told.push("inner unhandledRejection") }); inner.throwsLater("e"); });
+        await row("outer has only uncaughtException, inner none: inner's rejection", tell => ({ uncaughtException: tell("uncaughtException") }), async app => { const inner = await app.makeInner({}); inner.rejects("r"); });
+        console.log(JSON.stringify(out, null, 1));
+        process.exit(0);
+      `,
+    });
+    const result = await runBun(["host.mjs"], { cwd: String(dir) });
+    expect({ told: result.stdout ? JSON.parse(result.stdout) : result.stdout, stderr: result.stderr }).toEqual({
+      told: {
+        "both: a rejection": ["unhandledRejection(r, the promise)"],
+        "both: an exception": ["uncaughtException(e, uncaughtException)"],
+        "only uncaughtException: a rejection": ["uncaughtException(r, unhandledRejection)"],
+        "only uncaughtException: an exception": ["uncaughtException(e, uncaughtException)"],
+        "only unhandledRejection: a rejection": ["unhandledRejection(r, the promise)"],
+        "only unhandledRejection: an exception": ["host uncaughtException(uncaughtException): e"],
+        neither: ["host unhandledRejection: r", "host uncaughtException(uncaughtException): e"],
+        "outer has both, inner only unhandledRejection: inner's rejection": ["inner unhandledRejection"],
+        "outer has both, inner only unhandledRejection: inner's exception": ["uncaughtException(e, uncaughtException)"],
+        "outer has only uncaughtException, inner none: inner's rejection": ["uncaughtException(r, unhandledRejection)"],
+      },
+      stderr: "",
+    });
+    expect(result.exitCode).toBe(0);
   });
 });
 
@@ -2358,7 +2539,7 @@ describe("Bun.ModuleGraph — nested graphs, stack traces, misc host integration
       "w-mod.mjs": `export const who = T; export function later() { setTimeout(() => { throw new Error("in-worker:" + T) }, 0) }`,
       "worker.mjs": `import { parentPort } from "node:worker_threads";
         const seen = [];
-        const mk = t => new Bun.ModuleGraph({ globals: { T: t }, onError: (e, kind) => { seen.push(kind + ":" + e.message); if (seen.length === 2) parentPort.postMessage({ whos, seen: seen.sort() }); } });
+        const mk = t => new Bun.ModuleGraph({ globals: { T: t }, uncaughtException: (e, kind) => { seen.push(kind + ":" + e.message); if (seen.length === 2) parentPort.postMessage({ whos, seen: seen.sort() }); } });
         const graphA = mk("A"), graphB = mk("B");
         const a = await graphA.import("./w-mod.mjs"), b = await graphB.import("./w-mod.mjs");
         const whos = [a.who, b.who, a !== b];
@@ -2569,7 +2750,8 @@ describe("Bun.ModuleGraph — constructor / method contract", () => {
   });
   const bad: Array<[string, () => unknown, RegExp]> = [
     ["globals not an object", () => new (ModuleGraphClass as any)({ globals: "x" }), /globals/i],
-    ["onError not callable", () => new (ModuleGraphClass as any)({ onError: {} }), /onError/i],
+    ["uncaughtException not callable", () => new (ModuleGraphClass as any)({ uncaughtException: {} }), /options\.uncaughtException/],
+    ["unhandledRejection not callable", () => new (ModuleGraphClass as any)({ unhandledRejection: {} }), /options\.unhandledRejection/],
     ["options not an object", () => new (ModuleGraphClass as any)(42), /object|options/i],
     ["called without new", () => (ModuleGraphClass as any)({}), /constructor|new/i],
   ];
@@ -2581,7 +2763,7 @@ describe("Bun.ModuleGraph — constructor / method contract", () => {
     for (const g of [
       new (ModuleGraphClass as any)(),
       ModuleGraph({}),
-      new (ModuleGraphClass as any)({ globals: undefined, onError: undefined }),
+      new (ModuleGraphClass as any)({ globals: undefined, uncaughtException: undefined }),
     ]) {
       const m = await g.import(join(dir, "ok.mjs"));
       expect(typeof m.cwd).toBe("string");
@@ -2642,7 +2824,7 @@ describe("Bun.ModuleGraph — constructor / method contract", () => {
     const log: string[] = [];
     let g: any;
     g = ModuleGraph({
-      onError: async () => {
+      uncaughtException: async () => {
         log.push("onError");
         g.dispose();
         const m = await ModuleGraph().import(join(d, "x.mjs"));
@@ -2659,7 +2841,7 @@ describe("Bun.ModuleGraph — constructor / method contract", () => {
     await until(() => log.length >= 3);
     expect(log).toEqual(["onExit:3", "onError", "function"]); // code of a disposed graph that still throws is still that graph's (onError)
     const g2: any = ModuleGraph({
-      onError: () => {
+      uncaughtException: () => {
         log.push("onError2");
         g2.dispose();
       },
@@ -3170,7 +3352,7 @@ describe("Bun.ModuleGraph — instance evaluation: async edge cases", () => {
   });
   test("a throw after `await 0` rejects with the TypeError (not lost, not to onError)", async () => {
     const errs: unknown[] = [];
-    const e = await ModuleGraph({ onError: x => errs.push(x) })
+    const e = await ModuleGraph({ uncaughtException: x => errs.push(x) })
       .import(join(dir, "sync-throw-after-await0.mjs"))
       .catch(e => e);
     expect([e instanceof TypeError, errs.length]).toEqual([true, 0]);
@@ -3675,7 +3857,7 @@ describe("Bun.ModuleGraph — re-entrancy: graphs created/disposed from inside o
     const seen: string[] = [];
     let replacement: any;
     const g: any = ModuleGraph({
-      onError: (e: any) => {
+      uncaughtException: (e: any) => {
         seen.push(e.message);
         g.dispose();
         replacement ??= ModuleGraph({ env: { T: "new" } });

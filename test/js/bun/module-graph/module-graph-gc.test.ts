@@ -258,7 +258,7 @@ describe("ModuleGraph GC: an unreferenced graph is collected", () => {
   class Subclass extends ModuleGraph {}
   const kinds: [string, () => Graph][] = [
     ["without options", () => new ModuleGraph()],
-    ["with globals and onError", () => new ModuleGraph({ globals: { TAG: "g" }, onError() {} })],
+    ["with globals and onError", () => new ModuleGraph({ globals: { TAG: "g" }, uncaughtException() {} })],
     ["subclass", () => new Subclass()],
   ];
   for (const [kind, make] of kinds) {
@@ -316,7 +316,7 @@ describe("ModuleGraph GC: an unreferenced graph is collected", () => {
         "graph",
         new ModuleGraph({
           globals: { TAG: "cycle", holder },
-          onError() {
+          uncaughtException() {
             void graph;
           },
         }),
@@ -535,7 +535,7 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
             "graph",
             new ModuleGraph({
               globals: { control: state },
-              onError: (error: any, kind) => told.push(kind + ": " + error.message),
+              uncaughtException: (error: any, kind) => told.push(kind + ": " + error.message),
             }),
           );
           const io = await graph.import(file("io.mjs"));
@@ -660,7 +660,7 @@ describe.concurrent("ModuleGraph GC: node:fs's record of open FileHandles", () =
           let collected = false;
           const registry = new FinalizationRegistry(() => { collected = true; });
           await (async () => {
-            const graph = new Bun.ModuleGraph({ onError() {} });
+            const graph = new Bun.ModuleGraph({ uncaughtException() {} });
             registry.register(graph, "graph");
             await graph.import(${JSON.stringify(join(dir, "keeps-a-file-handle.mjs"))});
           })();

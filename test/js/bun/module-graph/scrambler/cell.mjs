@@ -135,7 +135,7 @@ export const setPeer = p => { peer = p }
 export function hopPeer(n) { if (n === 0) return Bun.ModuleGraph.current; return peer(n - 1) }
 export const drivePeer = (reps, n, want) => { let wrong = 0; for (let r = 0; r < reps; r++) if (hopPeer(n) !== want) wrong++; after('drivePeer'); return wrong }
 // a graph made by this graph's code
-export const makeChild = async spec => { here('makeChild'); const g = new Bun.ModuleGraph({ onError() {} }); const c = await g.import(spec); here('makeChild:after-import'); return [g, c] }
+export const makeChild = async spec => { here('makeChild'); const g = new Bun.ModuleGraph({ uncaughtException() {} }); const c = await g.import(spec); here('makeChild:after-import'); return [g, c] }
 // this graph answers tokens arriving on a port the host hands it (a Worker's parentPort)
 export const onPort = port => { port.on('message', m => { if (!m || m.token !== true) return; here('port-message'); state++; port.postMessage({ relay: true, from: id, hop: m.hop + 1 }) }) }
 export const ping = () => { here('ping'); return id }

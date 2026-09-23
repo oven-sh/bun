@@ -317,7 +317,7 @@ const dir = String(
       // The tenant's onError calls code of a graph the tenant made without an onError. That code runs in its
       // graph's context whoever calls it, so what it rejects is that graph's and comes to the same onError, for as
       // long as the handler goes on calling it. It never reaches the host.
-      const tenant = new Bun.ModuleGraph({ onError: () => { if (++calls <= 3) inner.rejects(); } });
+      const tenant = new Bun.ModuleGraph({ uncaughtException: () => { if (++calls <= 3) inner.rejects(); } });
       const app = await tenant.import(import.meta.dir + "/left-behind-tenant.mjs");
       inner = await app.makesAGraph().import(import.meta.dir + "/rejects-when-called.mjs");
       inner.startsIt();
@@ -1119,7 +1119,7 @@ const dir = String(
       const hostSaw = [], tenantSaw = [];
       process.on("uncaughtException", error => hostSaw.push(error.message));
       process.on("unhandledRejection", error => hostSaw.push(error.message));
-      const tenant = new Bun.ModuleGraph({ globals: { hostMakesAGraph: () => new Bun.ModuleGraph() }, onError: error => tenantSaw.push(error.message) });
+      const tenant = new Bun.ModuleGraph({ globals: { hostMakesAGraph: () => new Bun.ModuleGraph() }, uncaughtException: error => tenantSaw.push(error.message) });
       const app = await tenant.import(import.meta.dir + "/left-behind-tenant.mjs");
       // A graph made in the tenant's context that was given no onError of its own: by the tenant's
       // code, or by a function of the host's that the tenant called.
@@ -1191,7 +1191,7 @@ const dir = String(
     "disposes-while-opening.mjs": `
       const [kind, state, args] = [process.argv[2], JSON.parse(process.argv[3]), JSON.parse(process.argv[4])];
       // (What the opener had queued still runs, in a world that was closed under it: what that throws is the graph's.)
-      const graph = new Bun.ModuleGraph({ onError: error => console.error("the opener, after dispose():", error) });
+      const graph = new Bun.ModuleGraph({ uncaughtException: error => console.error("the opener, after dispose():", error) });
       const app = await graph.import(import.meta.dir + "/app.mjs");
       // Not awaited: whatever the opener has under way (a connect, a handshake, a listen) is cut short.
       Promise.resolve(app.open[kind](state, ...args)).catch(() => {});
@@ -2914,10 +2914,10 @@ describe.concurrent("ModuleGraph isolation: whose context a call runs in", () =>
 describe.concurrent("ModuleGraph isolation: errors go to the graph whose code threw", () => {
   test("an exception from a timer and a rejection from a socket handler reach only that graph's onError", async () => {
     const errors: string[] = [];
-    const onError = (who: string) => (error: any, kind: string) =>
+    const uncaughtException = (who: string) => (error: any, kind: string) =>
       void errors.push(`${who}: ${kind}: ${error.message}`);
-    using a = await newGraph({ onError: onError("a") });
-    using b = await newGraph({ onError: onError("b") });
+    using a = await newGraph({ uncaughtException: uncaughtException("a") });
+    using b = await newGraph({ uncaughtException: uncaughtException("b") });
     a.app.throwFromTimer("a's timer");
     b.app.throwFromTimer("b's timer");
     await a.app.rejectFromSocket(hostTcp.port, "a's socket");
@@ -3262,10 +3262,10 @@ describe.concurrent("ModuleGraph isolation: competing graphs", () => {
 
   test("errors thrown from every kind of hop in interleaved chains reach the onError of the graph whose chain threw, before and after another graph is disposed", async () => {
     const errors: Record<string, string[]> = { "throws-0": [], "throws-1": [], "throws-2": [] };
-    const onError = (tag: string) => (error: any, kind: string) => void errors[tag].push(kind + ": " + error.message);
+    const uncaughtException = (tag: string) => (error: any, kind: string) => void errors[tag].push(kind + ": " + error.message);
     using stack = new DisposableStack();
     const graphs = await Promise.all(
-      Object.keys(errors).map(async tag => stack.use(await newGraph({ onError: onError(tag) }))),
+      Object.keys(errors).map(async tag => stack.use(await newGraph({ uncaughtException: uncaughtException(tag) }))),
     );
     const states = Object.keys(errors).map(tag => newState(tag));
     try {
@@ -4538,7 +4538,7 @@ describe("ModuleGraph isolation: a disposed graph is inert", () => {
             "its listener on a host emitter": (graph, app, report) => { const emitter = new EventEmitter(); app.listenOn(emitter, report); graph.dispose(); emitter.emit("go", kind, args); },
           };
           for (const [way, run] of Object.entries(ways)) {
-            const graph = new Bun.ModuleGraph({ onError() {} });
+            const graph = new Bun.ModuleGraph({ uncaughtException() {} });
             const app = await graph.import(path);
             let state = "never";
             run(graph, app, reported => (state = reported));

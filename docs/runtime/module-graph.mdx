@@ -13,8 +13,12 @@ const tenantProcess = Object.create(process, { env: { value: { TENANT: "a" }, en
 
 const graph = new Bun.ModuleGraph({
   globals: { process: tenantProcess }, // free identifiers in the graph's modules
-  onError(error, kind) {
-    console.error("tenant failed", kind, error);
+  uncaughtException(error) {
+    console.error("tenant failed", error);
+    graph.dispose();
+  },
+  unhandledRejection(reason) {
+    console.error("tenant dropped a rejection", reason);
   },
 });
 
@@ -72,7 +76,7 @@ Using a graph's code after `dispose()` is not an intended use. `dispose()` is fo
 
 A graph that a graph's code made is one of the things that graph opened, so it is disposed with it: it is inert from then on too, and its `import()` fails, although nobody called its own `dispose()`. The rule is about the code that starts the work, not about what the work is for: `otherGraph.import()` called by a disposed graph's code never settles, even when `otherGraph` is alive, because a disposed graph's code started it.
 
-`graph.dispose()` also drops the graph's module registry and `require.cache`. An error in what still runs in the graph's context, such as a tick it had queued, still goes to `onError`. From then on:
+`graph.dispose()` also drops the graph's module registry and `require.cache`. An error in what still runs in the graph's context, such as a tick it had queued, still goes to the graph's error handlers. From then on:
 
 - `graph.import()` and the graph's `require()` fail with `ERR_INVALID_STATE`. They are the graph's handle, and using a handle that was disposed is an error.
 - Modules of the graph that had not run yet never will.
@@ -121,19 +125,47 @@ const graph = new Bun.ModuleGraph({
 
 ## Errors
 
-Uncaught exceptions and unhandled rejections go to the `onError` of the graph in whose context they happen, instead of the process-wide handlers. It is the same context that owns what the code opens: a graph's code and everything it starts run in the graph's context.
+A graph has two error handlers, named after the process events they stand in for:
 
-A function of the graph's that the host calls runs in the graph's context, so what it throws later is the graph's. A host function that the graph's code calls runs in the graph's context too, so what it throws there is the graph's.
+```ts
+new Bun.ModuleGraph({
+  uncaughtException(error, origin) {}, // origin: "uncaughtException" | "unhandledRejection"
+  unhandledRejection(reason, promise) {},
+});
+```
 
-What a function of the graph's throws goes to its caller, like any call. If the caller does not catch it either, it is still the graph's: it was thrown in the graph's context, whatever it unwound through afterwards.
+With a handler, the error does not reach the process-wide `uncaughtException` / `unhandledRejection` handling. As in Node, an unhandled rejection of a graph that has no `unhandledRejection` is given to its `uncaughtException`, with the origin `"unhandledRejection"`; a graph that wants one handler for everything gives only `uncaughtException`. These two are the only ones: there is no per-graph `rejectionHandled`, `uncaughtExceptionMonitor` or `warning`, and `process` warnings go to the shared `process`.
 
-An error that no code threw belongs to whoever opened the thing it happened to. A socket the graph opened that fails with no `error` handler reports to the graph's `onError`.
+### Whose error it is
+
+An **uncaught exception** belongs to the graph whose code threw it. A graph's code and everything it starts run in the graph's context, and so does a function of the graph's that the host or another graph calls, so what it throws is the graph's. A host function that the graph's code calls runs in the graph's context too, so what it throws there is the graph's. What a function of the graph's throws goes to its caller, like any call; if the caller does not catch it either, it is still the graph's, whatever it unwound through afterwards.
+
+After an uncaught exception the graph's state is suspect, as a process's is. Disposing the graph is the safe response.
+
+An **unhandled rejection** belongs to the graph whose code made the promise that nobody handled, whoever rejected it:
+
+```ts tenant.ts icon="/icons/typescript.svg"
+const load = async () => {
+  throw new Error("oops");
+};
+
+export function start(signal: AbortSignal) {
+  load().then(data => console.log(data)); // no .catch: the engine rejects what .then() returned
+  new Promise((resolve, reject) => signal.addEventListener("abort", reject)); // the host's abort() calls reject
+}
+```
+
+Both are the tenant's: its code made the two promises and handled neither. It does not matter that the host's `abort()` is what called `reject`, or whether the listener is `reject` or `event => reject(event)`. A promise the host made is the host's, even when a graph's code rejects it. The rule follows the promise, not the chain it came from: a graph that calls `.then()` or `.catch()` on another graph's promise has made a new promise, and what becomes of that one is the caller's.
+
+An error that no code threw belongs to whoever opened the thing it happened to. A socket the graph opened that fails with no `error` handler reports to the graph's `uncaughtException`.
 
 `graph.import()` returns its promise to whoever called it. If a module throws while it is evaluated the promise rejects, and if nobody handles that promise it is the caller's unhandled rejection, like a specifier that does not resolve or an `import()` into a disposed graph.
 
-`onError` itself runs in the context the graph was made in: the host's, or the enclosing graph's for a graph that a graph's code made. What it throws, rejects or starts is that context's, so an error the handler lets escape again goes on to the host and does not come back to the same handler. That holds for a handler the host wrote. A handler that is a function of some graph runs in that graph's context, like any call of it. A function of the graph's that the handler calls also runs in the graph's context, so an error in what that function starts comes back to the handler.
+### Where the handlers run
 
-A graph that was given no `onError` hands its errors to the `onError` of the graph in whose context it was made, and so on up to the host. It was made in a graph's context if that graph's code made it, or a host function that graph's code called did.
+A handler runs in the context the graph was made in: the host's, or the enclosing graph's for a graph that a graph's code made. What it throws, rejects or starts is that context's, so an error the handler lets escape goes on to the host and does not come back to the same handler. That holds for a handler the host wrote. A handler that is a function of some graph runs in that graph's context, like any call of it. A function of the graph's that the handler calls also runs in the graph's context, so an error in what that function starts comes back to the handler.
+
+A graph with no handler for an error hands it to the graph in whose context it was made, and so on up to the host. It was made in a graph's context if that graph's code made it, or a host function that graph's code called did.
 
 ## What is shared
 

@@ -571,20 +571,24 @@ struct ModuleMockUndoLog {
     }
 };
 
-static ModuleMockUndoLog& ensureUndoLog(BunPlugin::OnLoad& onLoad)
+static ModuleMockUndoLog& ensureUndoLog(Zig::GlobalObject* globalObject)
 {
-    if (!onLoad.moduleMockUndoLog)
-        onLoad.moduleMockUndoLog = new ModuleMockUndoLog;
+    auto& onLoad = globalObject->onLoadPlugins;
+    if (!onLoad.moduleMockUndoLog) {
+        auto* log = new ModuleMockUndoLog;
+        // Published under the lock the visitor takes before it reads the pointer.
+        WTF::Locker locker { globalObject->cellLock() };
+        onLoad.moduleMockUndoLog = log;
+    }
     return *onLoad.moduleMockUndoLog;
 }
 
 template<typename Visitor>
 void BunPlugin::OnLoad::visitModuleMockUndoLog(JSC::JSCell* owner, Visitor& visitor)
 {
-    if (!moduleMockUndoLog)
-        return;
     WTF::Locker locker { owner->cellLock() };
-    moduleMockUndoLog->visit(visitor);
+    if (moduleMockUndoLog)
+        moduleMockUndoLog->visit(visitor);
 }
 
 template void BunPlugin::OnLoad::visitModuleMockUndoLog(JSC::JSCell*, JSC::AbstractSlotVisitor&);
@@ -617,7 +621,7 @@ void BunPlugin::OnLoad::addModuleMock(Zig::GlobalObject* globalObject, const Str
     auto existing = virtualModules->find(path);
     JSObject* current = existing != virtualModules->end() ? existing->value.get() : nullptr;
 
-    auto& log = ensureUndoLog(*this);
+    auto& log = ensureUndoLog(globalObject);
     if (mock->persistent) {
         // File-level setup supersedes whatever an earlier test left behind for this specifier.
         if (size_t index = log.findInstalled(path); index != notFound) {
@@ -924,7 +928,7 @@ static void overrideLoadedModuleExports(Zig::GlobalObject* globalObject, const L
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    ModuleMockUndoLog& undoLog = ensureUndoLog(globalObject->onLoadPlugins);
+    ModuleMockUndoLog& undoLog = ensureUndoLog(globalObject);
 
     if (auto* moduleNamespaceObject = loaded.esmNamespace) {
         JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);

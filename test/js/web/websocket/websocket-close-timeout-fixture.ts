@@ -1,52 +1,62 @@
-// A raw ws:// or wss:// server that completes the closing handshake and then
-// keeps the TCP connection open, plus the client under test, which connects
-// directly or through a CONNECT proxy. Prints one JSON line once the client
-// has its close event and its TCP connection (to the server, or to the proxy)
-// is gone. Only the client can cause that: the server and the proxy are
-// half-open and never end or close a connection.
+// A raw wss:// server that completes the closing handshake and then keeps the
+// TCP connection open, plus the client under test, which connects directly or
+// through a CONNECT proxy. Prints one JSON line once the client has its close
+// event and its TCP connection (to the server, or to the proxy) is gone. Only
+// the client can cause that: the server and the proxy are half-open and never
+// end or close a connection.
 //
 // Scenarios: "client-closes" (close() after the open event), "server-closes"
 // (the server sends the first Close frame), "both-close" (the server's Close
 // frame arrives in the same read as a message whose handler calls close()).
 import type { Socket } from "bun";
 
-const [protocol, scenario, via] = process.argv.slice(2);
+const [scenario, via] = process.argv.slice(2);
 const tls = { cert: process.env.TLS_CERT!, key: process.env.TLS_KEY! };
-const secure = protocol === "wss";
 const direct = via === "direct";
 
 const GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const TEXT_X = new Uint8Array([0x81, 0x01, 0x78]);
+const PING = new Uint8Array([0x89, 0x00]);
 const CLOSE_1000 = new Uint8Array([0x88, 0x02, 0x03, 0xe8]);
 
 let close: { code: number; wasClean: boolean } | undefined;
 let closeFramesFromClient = 0;
+let fin = false;
 let clientConnectionGone = false;
 let reported = false;
 
 function report() {
   if (reported || !close || !clientConnectionGone) return;
   reported = true;
-  console.log(JSON.stringify({ close, closeFramesFromClient }));
+  console.log(JSON.stringify({ close, closeFramesFromClient, fin }));
   server.stop(true);
   proxy?.stop(true);
 }
 
-// For the socket that the client is connected to. On TLS, `end` can be the
-// close_notify of a client that keeps its socket open, so only `close` counts.
-// Every socket here has an `end` handler: without one, Bun closes it on `end`.
+// For the socket that the client is connected to. Every socket here has an
+// `end` handler: without one, Bun closes it on `end`. A plain `end` is the
+// client's FIN. A TLS `end` can be the close_notify of a client that keeps its
+// socket open, so the server writes to the client: only a closed socket
+// answers that with a reset, which is the `close` that counts.
 function watchClientConnection(isTls: boolean) {
   const gone = () => {
     clientConnectionGone = true;
     report();
   };
-  return { end: isTls ? () => {} : gone, close: gone };
+  return {
+    end(socket: Socket<unknown>) {
+      fin = true;
+      if (isTls) socket.write(PING);
+      else gone();
+    },
+    close: gone,
+  };
 }
 
 const server = Bun.listen<{ head: string; upgraded: boolean; frames: Buffer }>({
   hostname: "127.0.0.1",
   port: 0,
-  tls: secure ? tls : undefined,
+  tls,
   allowHalfOpen: true,
   socket: {
     open(socket) {
@@ -79,7 +89,7 @@ const server = Bun.listen<{ head: string; upgraded: boolean; frames: Buffer }>({
       state.frames = frames;
     },
     // Through a proxy, the client's connection is the one the proxy accepted.
-    ...(direct ? watchClientConnection(secure) : { end() {} }),
+    ...(direct ? watchClientConnection(true) : { end() {} }),
     error() {},
   },
 });
@@ -120,7 +130,7 @@ const proxy = direct
       },
     });
 
-const ws = new WebSocket(`${protocol}://127.0.0.1:${server.port}/`, {
+const ws = new WebSocket(`wss://127.0.0.1:${server.port}/`, {
   proxy: proxy && `${via === "https-proxy" ? "https" : "http"}://127.0.0.1:${proxy.port}`,
   tls: { rejectUnauthorized: false },
 });

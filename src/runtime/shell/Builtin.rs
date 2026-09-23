@@ -727,14 +727,14 @@ impl Builtin {
                             "{}",
                             crate::shell::states::cmd::STREAM_REDIRECT_NOT_STDIN
                         ));
-                        return Some(Yield::failed());
+                        return Some(Yield::Failed(cmd));
                     }
                     let name = Self::of(interp, cmd).kind.as_str();
                     let _ = global.throw(format_args!(
                         "ReadableStream cannot be redirected to a builtin command ('{name}'). \
                          Use an external command or buffer the stream first",
                     ));
-                    return Some(Yield::failed());
+                    return Some(Yield::Failed(cmd));
                 } else if let Some(body) =
                     crate::webcore::body::Value::from_request_or_response(jsval)
                 {

@@ -3461,6 +3461,27 @@ describe("redirect stdin from ReadableStream", () => {
     expect(await cancelled).toBe(true);
   });
 
+  test.concurrent("a later pipeline member that throws stops the member reading the stream", async () => {
+    const { promise: cancelled, resolve: onCancel } = Promise.withResolvers<true>();
+    const stream = new ReadableStream({
+      async pull(c) {
+        c.enqueue(new TextEncoder().encode("x"));
+        await Bun.sleep(0);
+      },
+      cancel() {
+        onCancel(true);
+      },
+    });
+    // The first member is already reading the stream when the second one throws:
+    // the shell rejects, kills the first member, and cancels its stream.
+    await expect(
+      runWithErrorPromise(() =>
+        $`${BUN} -e ${childPump} < ${stream} | ${BUN} -e 0 > ${new Blob(["x"])}`.env(bunEnv).quiet(),
+      ),
+    ).resolves.toThrow(/Blobs are immutable/);
+    expect(await cancelled).toBe(true);
+  });
+
   test("stdout/stderr redirect throws", async () => {
     const s1 = new ReadableStream({ pull: c => c.close() });
     await expect(runWithErrorPromise(() => $`${BUN} -e 0 > ${s1}`)).resolves.toThrow(

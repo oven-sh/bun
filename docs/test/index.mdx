@@ -334,12 +334,18 @@ bun test --changed=main --shard=1/3
 
 Bun applies `--changed` first and then splits the remaining test files across shards. Every shard must diff the same working tree against the same commit so that each shard filters the same set. A branch name such as `origin/main` can move between the start of two shard jobs, so pass the commit sha instead. See [Splitting a suite across CI machines](/test/parallel#splitting-a-suite-across-ci-machines-with---shard).
 
-In CI, make sure the commit exists in the checkout. `actions/checkout` fetches only the triggering commit by default, so the diff fails until you fetch the base commit. A depth of 1 is enough, because the diff only needs the tree of that commit:
+In CI, make sure the commit exists in the checkout. `actions/checkout` fetches only the triggering commit by default, so the diff fails until you fetch the base commit. A depth of 1 is enough, because the diff only needs the tree of that commit. Run this job on `pull_request` events only: on other events the base sha is empty, `--changed=` falls back to the working tree against `HEAD`, and a clean checkout runs nothing.
 
 ```yaml
-- uses: actions/checkout@v4
-- run: git fetch --depth=1 origin ${{ github.event.pull_request.base.sha }}
-- run: bun test --changed=${{ github.event.pull_request.base.sha }}
+on: pull_request
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: git fetch --depth=1 origin ${{ github.event.pull_request.base.sha }}
+      - run: bun test --changed=${{ github.event.pull_request.base.sha }}
 ```
 
 ## Lifecycle hooks

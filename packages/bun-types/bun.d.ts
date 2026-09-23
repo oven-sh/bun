@@ -8244,6 +8244,16 @@ declare module "bun" {
      * Returns `undefined` until the process has exited
      */
     resourceUsage(): ResourceUsage | undefined;
+
+    /**
+     * Memory used right now by this process and all of its descendants, in bytes.
+     *
+     * `current` is `0` after the process exits. `peak` is the highest value Bun has
+     * sampled; with {@link SpawnOptions.maxMemory} set, Bun samples continuously.
+     *
+     * On Windows without `maxMemory`, only the process itself is counted.
+     */
+    memoryUsage(): { current: number; peak: number };
   }
 
   /**

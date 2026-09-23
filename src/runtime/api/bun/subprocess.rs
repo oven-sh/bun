@@ -160,6 +160,7 @@ pub struct Subprocess<'a> {
     pub(crate) exited_due_to_maxbuf: Cell<Option<MaxBuf::Kind>>,
     pub(crate) memory_watch: JsCell<Option<std::sync::Arc<bun_spawn::memory_watcher::Watch>>>,
     pub(crate) exited_due_to_max_memory: Cell<bool>,
+    pub(crate) memory_peak: Cell<u64>,
 }
 
 bun_event_loop::impl_timer_owner!(Subprocess<'_>; from_timer_ptr => event_loop_timer);
@@ -362,6 +363,42 @@ impl Subprocess<'_> {
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
         this.create_resource_usage_object(global_object)
+    }
+
+    pub(crate) fn memory_usage(
+        this: &Self,
+        global_object: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let current = if this.has_exited() {
+            0
+        } else if let Some(w) = this.memory_watch.get() {
+            let current = w.sample_now();
+            this.memory_peak.set(this.memory_peak.get().max(w.peak()));
+            current
+        } else {
+            #[cfg(windows)]
+            let current = match this.process.os_handle() {
+                Some(handle) => bun_spawn::memory_watcher::usage(this.pid(), handle),
+                None => 0,
+            };
+            #[cfg(not(windows))]
+            let current = bun_spawn::memory_watcher::usage(this.pid());
+            this.memory_peak.set(this.memory_peak.get().max(current));
+            current
+        };
+        let object = JSValue::create_empty_object(global_object, 2);
+        object.put(
+            global_object,
+            b"current",
+            JSValue::js_number_from_uint64(current),
+        );
+        object.put(
+            global_object,
+            b"peak",
+            JSValue::js_number_from_uint64(this.memory_peak.get()),
+        );
+        Ok(object)
     }
 
     pub(crate) fn create_resource_usage_object(
@@ -681,6 +718,7 @@ impl Subprocess<'_> {
     fn unwatch_memory(&self) {
         if let Some(w) = self.memory_watch.replace(None) {
             w.unwatch();
+            self.memory_peak.set(self.memory_peak.get().max(w.peak()));
             if w.exceeded() {
                 self.exited_due_to_max_memory.set(true);
             }

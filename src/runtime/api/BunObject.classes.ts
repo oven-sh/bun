@@ -88,6 +88,10 @@ export default [
         fn: "resourceUsage",
         length: 0,
       },
+      memoryUsage: {
+        fn: "memoryUsage",
+        length: 0,
+      },
       send: {
         fn: "doSend",
         length: 1,

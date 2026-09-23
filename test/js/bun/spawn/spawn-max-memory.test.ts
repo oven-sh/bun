@@ -70,6 +70,53 @@ describe("Bun.spawn maxMemory", () => {
     if (!isWindows) expect(proc.signalCode).toBe("SIGTERM");
   });
 
+  test.concurrent("memoryUsage() reports the tree, with and without maxMemory", async () => {
+    for (const maxMemory of [undefined, 2048 * MB]) {
+      // The child is small. The grandchild holds 128 MB, so a tree total proves descendants count.
+      // The grandchild exits when its stdin closes, which happens when the child dies.
+      const grandchild = hog(128) + ` process.stdin.on("close", () => process.exit(0)).resume(); console.log("ready");`;
+      const parent = `
+        const child = Bun.spawn({ cmd: [process.execPath, "-e", ${JSON.stringify(grandchild)}], stdio: ["pipe", "pipe", "ignore"] });
+        for await (const chunk of child.stdout) { if (Buffer.from(chunk).includes("ready")) break; }
+        console.log("ready " + child.pid);
+        setInterval(() => {}, 1000);
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", parent],
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "inherit"],
+        maxMemory,
+      });
+      let output = "";
+      for await (const chunk of proc.stdout) {
+        output += Buffer.from(chunk).toString();
+        if (output.includes("\n")) break;
+      }
+      const grandchildPid = parseInt(output.split(" ")[1], 10);
+      expect(grandchildPid).toBeGreaterThan(0);
+      const usage = proc.memoryUsage();
+      // Windows counts only the root process when there is no Job Object.
+      if (!isWindows || maxMemory) expect(usage.current).toBeGreaterThan(128 * MB);
+      expect(usage.peak).toBeGreaterThanOrEqual(usage.current);
+
+      proc.kill("SIGKILL");
+      await proc.exited;
+      const after = proc.memoryUsage();
+      expect(after.current).toBe(0);
+      expect(after.peak).toBeGreaterThanOrEqual(usage.peak);
+
+      const isAlive = (pid: number) => {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      while (isAlive(grandchildPid)) await Bun.sleep(5);
+    }
+  });
+
   test("spawnSync reports exitedDueToMaxMemory", () => {
     const over = Bun.spawnSync({
       cmd: [bunExe(), "-e", hog(256)],

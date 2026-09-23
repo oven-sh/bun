@@ -49,6 +49,10 @@ impl Watch {
         self.done.store(true, Ordering::Release);
     }
 
+    pub fn sample_now(&self) -> u64 {
+        self.sample()
+    }
+
     fn sample(&self) -> u64 {
         let usage = os::tree_usage(self);
         self.current.store(usage, Ordering::Relaxed);
@@ -132,6 +136,36 @@ fn run() {
             .wait_timeout(guard, interval_for(min_headroom))
             .unwrap();
         guard = g;
+    }
+}
+
+/// Memory of an unwatched child's tree. Windows counts only the root process, because there is no Job Object to ask.
+pub fn usage(
+    #[cfg_attr(
+        not(any(target_os = "macos", target_os = "linux", target_os = "android")),
+        allow(unused_variables)
+    )]
+    pid: PidT,
+    #[cfg(windows)] process: bun_sys::windows::HANDLE,
+) -> u64 {
+    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
+    {
+        os::usage_of(pid)
+    }
+    #[cfg(windows)]
+    {
+        bun_sys::windows::GetProcessMemoryInfo(process)
+            .map(|c| c.PagefileUsage as u64)
+            .unwrap_or(0)
+    }
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "android",
+        windows
+    )))]
+    {
+        0
     }
 }
 
@@ -241,8 +275,12 @@ mod os {
     }
 
     pub(super) fn tree_usage(w: &Watch) -> u64 {
+        usage_of(w.pid)
+    }
+
+    pub(super) fn usage_of(root: c_int) -> u64 {
         let mut total = 0u64;
-        for_each_in_tree(w.pid, |pid| total += footprint(pid));
+        for_each_in_tree(root, |pid| total += footprint(pid));
         total
     }
 
@@ -336,9 +374,13 @@ mod os {
     }
 
     pub(super) fn tree_usage(w: &Watch) -> u64 {
+        usage_of(w.pid)
+    }
+
+    pub(super) fn usage_of(root: c_int) -> u64 {
         let mut total = 0u64;
         let mut buf: Vec<u8> = Vec::with_capacity(128);
-        for_each_in_tree(w.pid, |pid| total += footprint(pid, &mut buf));
+        for_each_in_tree(root, |pid| total += footprint(pid, &mut buf));
         total
     }
 

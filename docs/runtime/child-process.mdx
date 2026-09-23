@@ -269,6 +269,15 @@ result.exitedDueToMaxMemory; // true if the build was killed for exceeding 4 GiB
 
 A single background thread samples every limited tree. It samples slowly while all trees are far from their limits and every millisecond once any tree is within 15% of its limit, so overshoot is small even for a process allocating as fast as it can. The measurement is physical footprint on macOS (the number Activity Monitor shows), resident anonymous memory on Linux, and committed memory of a Job Object on Windows, where the Job Object also guarantees the whole tree is terminated.
 
+To read the number yourself, call `proc.memoryUsage()`. It works with or without `maxMemory`:
+
+```ts index.ts icon="/icons/typescript.svg"
+const proc = Bun.spawn(["bun", "run", "build"]);
+const { current, peak } = proc.memoryUsage(); // bytes, for the whole process tree
+```
+
+`current` is `0` after the process exits. `peak` is the highest value Bun has sampled. On Windows without `maxMemory`, only the process itself is counted.
+
 ## Inter-process communication (IPC)
 
 Bun supports a direct inter-process communication channel between two `bun` processes. To receive messages from a spawned Bun subprocess, specify an `ipc` handler.

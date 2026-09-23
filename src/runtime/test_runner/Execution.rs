@@ -160,6 +160,7 @@ pub(crate) struct ExecutionSequence {
     pub(crate) remaining_repeat_count: u32,
     pub(crate) remaining_retry_count: u32,
     pub(crate) result: Result,
+    pub(crate) timed_out_hook: Option<(&'static str, u32)>,
     pub(crate) executing: bool,
     pub(crate) started_at: Timespec,
     /// Number of expect() calls observed in this sequence.
@@ -184,6 +185,7 @@ impl ExecutionSequence {
             remaining_retry_count: retry_count,
             // defaults:
             result: Result::Pending,
+            timed_out_hook: None,
             executing: false,
             started_at: Timespec::EPOCH,
             expect_call_count: 0,

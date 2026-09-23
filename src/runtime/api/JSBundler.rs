@@ -23,7 +23,7 @@ use bun_standalone_graph::StandaloneModuleGraph;
 // with the CLI build path; live in `bun_bundler_jsc::options_jsc`.
 use bun_bundler_jsc::options_jsc::{compile_target_from_js, compile_target_from_slice};
 
-pub mod js_bundler {
+pub(crate) mod js_bundler {
     use super::*;
     use bun_core::Utf8Bytes;
 
@@ -38,7 +38,6 @@ pub mod js_bundler {
             options::JSX::Runtime::_None => api::JsxRuntime::_none,
             options::JSX::Runtime::Automatic => api::JsxRuntime::Automatic,
             options::JSX::Runtime::Classic => api::JsxRuntime::Classic,
-            options::JSX::Runtime::Solid => api::JsxRuntime::Solid,
         }
     }
 
@@ -47,7 +46,7 @@ pub mod js_bundler {
     /// `get`/`contains`/`resolve` live in `bun_bundler::bundle_v2` so the
     /// bundler thread can read it without depending on `bun_runtime`. Only
     /// the JS-aware `from_js` constructor lives here.
-    pub use bun_bundler::bundle_v2::api::JSBundler::FileMap;
+    pub(crate) use bun_bundler::bundle_v2::api::JSBundler::FileMap;
 
     /// Parse the `files` option from JavaScript.
     /// Expected format: `Record<string, string | Blob | File | TypedArray | ArrayBuffer>`.
@@ -105,7 +104,7 @@ pub mod js_bundler {
         Ok(this)
     }
 
-    pub struct Config {
+    pub(crate) struct Config {
         pub(crate) target: Target,
         pub(crate) entry_points: StringSet,
         pub(crate) react_fast_refresh: bool,
@@ -137,6 +136,7 @@ pub mod js_bundler {
         pub(crate) format: options::Format,
         pub(crate) bytecode: bool,
         pub(crate) bytecode_depth: u32,
+        pub(crate) optimize_bytecode: bool,
         pub(crate) banner: OwnedString,
         pub(crate) footer: OwnedString,
         /// Path to write JSON metafile (if specified via metafile object) - TEST: moved here
@@ -145,7 +145,10 @@ pub mod js_bundler {
         pub(crate) metafile_markdown_path: OwnedString,
         pub(crate) css_chunking: bool,
         /// `minChunkSize`: see `BundleOptions::min_chunk_size`.
-        pub(crate) min_chunk_size: u64,
+        pub(crate) min_chunk_size: Option<u64>,
+        /// `foldChunksForTesting`, read only where `bun:internal-for-testing` resolves: see `BundleOptions::fold_chunks`.
+        pub(crate) fold_chunks: bool,
+        pub(crate) module_preload: bool,
         pub(crate) drop: StringSet,
         pub(crate) features: StringSet,
         pub(crate) throw_on_error: bool,
@@ -204,12 +207,15 @@ pub mod js_bundler {
                 format: options::Format::Esm,
                 bytecode: false,
                 bytecode_depth: u32::MAX,
+                optimize_bytecode: true,
                 banner: OwnedString::default(),
                 footer: OwnedString::default(),
                 metafile_json_path: OwnedString::default(),
                 metafile_markdown_path: OwnedString::default(),
                 css_chunking: false,
-                min_chunk_size: 0,
+                min_chunk_size: None,
+                fold_chunks: true,
+                module_preload: true,
                 drop: StringSet::default(),
                 features: StringSet::default(),
                 throw_on_error: true,
@@ -223,7 +229,7 @@ pub mod js_bundler {
         }
     }
 
-    pub struct CompileOptions {
+    pub(crate) struct CompileOptions {
         pub(crate) compile_target: CompileTarget,
         pub(crate) exec_argv: OwnedString,
         pub(crate) executable_path: OwnedString,
@@ -240,6 +246,8 @@ pub mod js_bundler {
         pub(crate) autoload_bunfig: bool,
         pub(crate) autoload_tsconfig: bool,
         pub(crate) autoload_package_json: bool,
+        /// `compile.jitPolicy`: the tier-up threshold scale the executable starts with (1 = normal JIT policy).
+        pub(crate) jit_policy: f32,
     }
 
     impl Default for CompileOptions {
@@ -261,6 +269,7 @@ pub mod js_bundler {
                 autoload_bunfig: true,
                 autoload_tsconfig: false,
                 autoload_package_json: false,
+                jit_policy: 1.0,
             }
         }
     }
@@ -437,12 +446,36 @@ pub mod js_bundler {
                 this.autoload_package_json = autoload_package_json;
             }
 
+            if let Some(jit_policy) = object.get(global_this, "jitPolicy")? {
+                if !jit_policy.is_undefined() {
+                    if !jit_policy.is_number() {
+                        return Err(global_this.throw_invalid_property_type_value(
+                            b"compile.jitPolicy",
+                            b"number",
+                            jit_policy,
+                        ));
+                    }
+                    let scale = jit_policy.as_number() as f32;
+                    if !(scale.is_finite() && scale >= 1.0) {
+                        return Err(global_this.throw_range_error(
+                            jit_policy.as_number(),
+                            bun_jsc::RangeErrorOptions {
+                                field_name: b"compile.jitPolicy",
+                                msg: b"a finite number >= 1",
+                                ..Default::default()
+                            },
+                        ));
+                    }
+                    this.jit_policy = scale;
+                }
+            }
+
             Ok(Some(this))
         }
     }
 
     impl Config {
-        pub fn from_js(
+        pub(crate) fn from_js(
             global_this: &JSGlobalObject,
             config: JSValue,
             plugins: &mut Option<*mut Plugin>,
@@ -617,6 +650,17 @@ pub mod js_bundler {
                         always_allow_zero: false,
                     },
                 )?;
+            }
+
+            if let Some(optimize) = config.get_truthy(global_this, "optimize")? {
+                if !optimize.is_object() {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "Expected optimize to be an object"
+                    )));
+                }
+                if let Some(bytecode) = optimize.get_boolean_loose(global_this, "bytecode")? {
+                    this.optimize_bytecode = bytecode;
+                }
             }
 
             if let Some(react_fast_refresh) =
@@ -805,6 +849,15 @@ pub mod js_bundler {
             if let Some(split_require) = config.get_boolean_loose(global_this, "splitRequire")? {
                 this.split_require = split_require;
             }
+            if let Some(module_preload) = config.get_boolean_loose(global_this, "modulePreload")? {
+                this.module_preload = module_preload;
+            }
+            if bun_jsc::module_loader::is_allowed_to_use_internal_testing_apis()
+                && let Some(fold_chunks) =
+                    config.get_boolean_loose(global_this, "foldChunksForTesting")?
+            {
+                this.fold_chunks = fold_chunks;
+            }
 
             if let Some(min_chunk_size) =
                 config.get_optional_int::<u64>(global_this, "minChunkSize")?
@@ -814,7 +867,7 @@ pub mod js_bundler {
                         "minChunkSize requires splitting to be true."
                     )));
                 }
-                this.min_chunk_size = min_chunk_size;
+                this.min_chunk_size = Some(min_chunk_size);
             }
 
             if let Some(minify) = config.get_truthy(global_this, "minify")? {
@@ -952,7 +1005,7 @@ pub mod js_bundler {
                 };
                 let _close = scopeguard::guard(dir, |d| d.close());
 
-                let mut rootdir_buf = bun_paths::PathBuffer::uninit();
+                let mut rootdir_buf = bun_paths::path_buffer_pool::get();
                 let rootdir = match bun_sys::get_fd_path(*_close, &mut rootdir_buf) {
                     Ok(p) => p,
                     Err(err) => {
@@ -1330,7 +1383,7 @@ pub mod js_bundler {
     /// Output path templates for entry points, chunks, and assets. Each
     /// `PathTemplate.data` is owned (`Box<[u8]>`), so no separate backing
     /// string per template is needed.
-    pub struct Names {
+    pub(crate) struct Names {
         pub(crate) entry_point: options::PathTemplate,
         pub(crate) chunk: options::PathTemplate,
         pub(crate) asset: options::PathTemplate,
@@ -1347,14 +1400,18 @@ pub mod js_bundler {
     }
 
     #[derive(Default)]
-    pub struct Minify {
+    pub(crate) struct Minify {
         pub(crate) whitespace: bool,
         pub(crate) identifiers: bool,
         pub(crate) syntax: bool,
         pub(crate) keep_names: bool,
     }
 
-    fn build(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<JSValue> {
+    fn build(
+        global_this: &JSGlobalObject,
+        context: jsc::ContextId,
+        arguments: &[JSValue],
+    ) -> JsResult<JSValue> {
         if arguments.is_empty() || !arguments[0].is_object() {
             return Err(global_this.throw_invalid_arguments(format_args!(
                 "Expected a config object to be passed to Bun.build"
@@ -1388,6 +1445,7 @@ pub mod js_bundler {
             config,
             plugins.and_then(core::ptr::NonNull::new),
             global_this,
+            context,
         );
         completion.promise = jsc::JSPromiseStrong::init(global_this);
         let promise = completion.promise.value();
@@ -1401,7 +1459,11 @@ pub mod js_bundler {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        build(global_this, callframe.arguments())
+        build(
+            global_this,
+            global_this.bun_vm().context_of_caller(callframe).id(),
+            callframe.arguments(),
+        )
     }
 
     // NOTE: `Resolve`/`Load`/`MiniImportRecord`/etc. are owned by
@@ -1411,8 +1473,8 @@ pub mod js_bundler {
     // `bun_event_loop` types and the `Plugin` opaque, neither of which is a T6
     // dependency. Only the JSC-aware bits (`on_defer`, `JSBundlerPlugin__*`
     // C-ABI exports) live here.
-    pub use bun_bundler::bundle_v2::api::JSBundler::{
-        Load, LoadSuccess, LoadValue, Resolve, ResolveSuccess, ResolveValue,
+    pub(crate) use bun_bundler::bundle_v2::api::JSBundler::{
+        Load, LoadDeferred, LoadSuccess, LoadValue, Resolve, ResolveSuccess, ResolveValue,
     };
 
     /// `&mut BundleV2` for the live backref stored on `Resolve`/`Load`.
@@ -1526,9 +1588,8 @@ pub mod js_bundler {
                     .expect("BundleV2.linker.loop must be set before plugins run");
                 match &mut *any_loop.as_ptr() {
                     bun_event_loop::AnyEventLoop::Js { .. } => {
-                        let ct = ConcurrentTask::from_callback(
-                            std::ptr::from_mut::<Load>(self),
-                            on_notify_defer_js,
+                        let ct = ConcurrentTask::create_from(
+                            std::ptr::from_mut::<Load>(self).cast::<LoadDeferred>(),
                         );
                         let poster = (*ctx.as_mut_ptr())
                             .js_poster
@@ -1551,14 +1612,6 @@ pub mod js_bundler {
                 Ok(bv2_plugin(self.bv2).append_defer_promise())
             }
         }
-    }
-
-    fn on_notify_defer_js(load: *mut Load) -> bun_event_loop::JsResult<()> {
-        // SAFETY: task contract — `load` is the live request `on_defer` posted; this runs on the loop
-        // that runs the bundle (bake: the plugins' own), so it is the bundle thread here.
-        let load = unsafe { &mut *load };
-        BundleV2::on_notify_defer(load, bv2_mut(load.bv2));
-        Ok(())
     }
 
     fn on_notify_defer_mini_wrap(load: *mut Load, ctx: *mut BundleV2<'static>) {
@@ -1622,7 +1675,7 @@ pub mod js_bundler {
     /// Opaque FFI handle for the C++ `JSBundlerPlugin`. The opaque type and
     /// `has_any_matches` (the one method `bun_bundler` needs) live in the
     /// lower-tier crate; JSC-aware methods are added here via `PluginJscExt`.
-    pub use bun_bundler::bundle_v2::api::JSBundler::Plugin;
+    pub(crate) use bun_bundler::bundle_v2::api::JSBundler::Plugin;
 
     // `Plugin` is an `opaque_ffi!` handle (`repr(C)` + `UnsafeCell` marker), so
     // `&mut Plugin`/`&Plugin` are ABI-identical to non-null pointers and the
@@ -1665,7 +1718,7 @@ pub mod js_bundler {
     /// JSC-aware methods on the C++ `JSBundlerPlugin` opaque. The opaque type
     /// itself is owned by `bun_bundler` (lower tier, no JSC dep), so these are
     /// added as an extension trait rather than an inherent `impl`.
-    pub trait PluginJscExt {
+    pub(crate) trait PluginJscExt {
         fn create(global: &JSGlobalObject, target: jsc::BunPluginTarget) -> *mut Plugin;
         fn run_on_end_callbacks(
             &mut self,
@@ -1891,27 +1944,40 @@ pub mod js_bundler {
     }
 }
 
-pub use js_bundler as JSBundler;
+pub(crate) use js_bundler as JSBundler;
+
+/// `bun:internal-for-testing`: bundler `Worker`s (one per pool thread a build ran on) not yet torn down.
+#[bun_jsc::host_fn]
+pub(crate) fn js_worker_live_count(
+    _global: &JSGlobalObject,
+    _callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    use core::sync::atomic::Ordering;
+    Ok(JSValue::js_number(
+        bun_bundler::thread_pool::WORKER_LIVE_COUNT.load(Ordering::SeqCst) as f64,
+    ))
+}
+
 /// `jsc.API.JSBundler.Plugin` — re-exported for `crate::bake` (`SplitBundlerOptions.plugin`).
-pub use js_bundler::Plugin;
+pub(crate) use js_bundler::Plugin;
 pub(crate) use js_bundler::PluginJscExt;
 
 /// Full `.classes.ts` payload — wraps a `webcore::Blob` plus
 /// `loader/path/hash/output_kind`. `.sourcemap` lives on the JS wrapper
 /// (`m_sourcemap` WriteBarrier from `cache: true`), not here.
 #[bun_jsc::JsClass(no_constructor)]
-pub struct BuildArtifact {
+pub(crate) struct BuildArtifact {
     pub(crate) blob: Blob,
     pub(crate) loader: bun_ast::Loader,
     pub path: Box<[u8]>,
-    pub(crate) hash: u64,
+    pub(crate) hash: bun_core::fmt::ContentHash,
     pub(crate) output_kind: OutputKind,
 }
 
 /// `BuildArtifact.kind` — what role an output file plays. Single canonical
 /// definition lives in `bun_bundler::options` (it backs
 /// `OutputFile.output_kind`).
-pub use bun_bundler::options::OutputKind;
+pub(crate) use bun_bundler::options::OutputKind;
 
 /// `JSValue::as(Blob)` BuildArtifact fallback — declared
 /// `extern "Rust"` in `bun_jsc::webcore_types`; link-time resolved.
@@ -1996,7 +2062,7 @@ impl BuildArtifact {
         use std::io::Write;
         let mut buf = [0u8; 512];
         let mut cursor = &mut buf[..];
-        write!(cursor, "{}", bun_core::fmt::truncated_hash32(this.hash)).expect("Unexpected");
+        write!(cursor, "{}", this.hash).expect("Unexpected");
         let written = 512 - cursor.len();
         bun_string_jsc::create_utf8_for_js(global_this, &buf[..written])
     }
@@ -2092,7 +2158,7 @@ impl BuildArtifact {
                 <&'static str>::from(self.output_kind),
             )?;
 
-            if self.hash != 0 {
+            if self.hash.value != 0 {
                 formatter
                     .print_comma::<W, ENABLE_ANSI_COLORS>(writer)
                     .expect("unreachable");
@@ -2103,7 +2169,7 @@ impl BuildArtifact {
                     writer,
                     ENABLE_ANSI_COLORS,
                     "<r>hash<r>: <green>\"{f}\"<r>",
-                    bun_core::fmt::truncated_hash32(self.hash),
+                    self.hash,
                 )?;
             }
 

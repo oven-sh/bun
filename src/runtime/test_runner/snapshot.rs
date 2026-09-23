@@ -4,12 +4,10 @@ use std::io::Write as _;
 use bun_collections::{HashMap, StringHashMap};
 use bun_core::output as bun_output;
 use bun_core::printer as js_printer;
-use bun_core;
 use crate::Error;
 use bun_core::{ZStr, strings};
 use bun_js_parser::{self as js_parser, lexer as js_lexer};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_paths::{self, PathBuffer};
 use bun_sys::{self};
 use bun_wyhash::hash;
 
@@ -23,7 +21,7 @@ type FileId = super::jest::FileId;
 
 bun_core::declare_scope!(inline_snapshot, visible);
 
-pub struct Snapshots {
+pub(crate) struct Snapshots {
     pub(crate) update_snapshots: bool,
     pub(crate) total: usize,
     pub(crate) added: usize,
@@ -44,7 +42,7 @@ pub struct Snapshots {
 }
 
 // Re-export the TSV-mandated container name so the field type matches verbatim.
-pub use bun_collections::ArrayHashMap as IndexMap;
+pub(crate) use bun_collections::ArrayHashMap as IndexMap;
 
 impl Snapshots {
     const FILE_HEADER: &'static [u8] = b"// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n";
@@ -74,7 +72,7 @@ impl Snapshots {
 
 // hoisted out of `impl Snapshots` — inherent associated types are unstable.
 
-pub struct InlineSnapshotToWrite {
+pub(crate) struct InlineSnapshotToWrite {
     pub(crate) line: c_ulong,
     pub(crate) col: c_ulong,
     /// owned (was: owned by Snapshots.allocator)
@@ -104,7 +102,7 @@ impl InlineSnapshotToWrite {
     }
 }
 
-pub struct File {
+pub(crate) struct File {
     pub(crate) id: FileId,
     pub(crate) file: bun_sys::File,
 }
@@ -253,7 +251,7 @@ impl Snapshots {
         let test_filename = name.filename;
         let dir_path = name.dir_with_trailing_slash();
 
-        let mut snapshot_file_path_buf = PathBuffer::uninit();
+        let mut snapshot_file_path_buf = bun_paths::path_buffer_pool::get();
         let buf = snapshot_file_path_buf.0.as_mut_slice();
         let mut pos = 0usize;
         buf[pos..pos + dir_path.len()].copy_from_slice(dir_path);
@@ -845,7 +843,7 @@ impl Snapshots {
             let test_filename = name.filename;
             let dir_path = name.dir_with_trailing_slash();
 
-            let mut snapshot_file_path_buf = PathBuffer::uninit();
+            let mut snapshot_file_path_buf = bun_paths::path_buffer_pool::get();
             let buf = snapshot_file_path_buf.0.as_mut_slice();
             let mut pos = 0usize;
             buf[pos..pos + dir_path.len()].copy_from_slice(dir_path);

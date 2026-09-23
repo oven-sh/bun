@@ -125,13 +125,16 @@ void JSX509CertificateConstructor::finishCreation(VM& vm, JSGlobalObject* global
 static JSValue createX509Certificate(JSC::VM& vm, JSGlobalObject* globalObject, Structure* structure, JSValue arg)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    Bun::UTF8View view;
+    WTF::String string;
+    std::optional<Bun::UTF8View> view;
     std::span<const uint8_t> data;
 
     if (arg.isString()) {
-        view = arg.toWTFString(globalObject);
+        string = arg.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        data = std::span(reinterpret_cast<const uint8_t*>(view.span().data()), view.span().size());
+        view = Bun::UTF8View::tryCreate(globalObject, scope, string);
+        RETURN_IF_EXCEPTION(scope, {});
+        data = view->bytes();
     } else if (auto* typedArray = dynamicDowncast<JSArrayBufferView>(arg)) {
         if (typedArray->isDetached()) [[unlikely]] {
             Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "TypedArray is detached"_s);

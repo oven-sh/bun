@@ -81,7 +81,7 @@ impl ChildPtr {
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum WriterTag {
+pub(crate) enum WriterTag {
     /// Builtin running inside a Cmd — dispatch via `Builtin::on_io_writer_chunk`.
     Builtin,
     Cmd,
@@ -97,7 +97,7 @@ pub enum WriterTag {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, Default)]
-pub struct Flags {
+pub(crate) struct Flags {
     pub(crate) pollable: bool,
     pub(crate) nonblock: bool,
     pub(crate) is_socket: bool,
@@ -211,7 +211,7 @@ struct State {
     interp: Option<bun_ptr::ParentRef<Interpreter>>,
 }
 
-pub struct IOWriter {
+pub(crate) struct IOWriter {
     state: UnsafeCell<State>,
 }
 
@@ -369,12 +369,6 @@ impl IOWriter {
                     s.flags.pollable = false;
                     s.flags.nonblock = false;
                     s.flags.is_socket = false;
-                    if matches!(s.writer.handle, bun_io::pipes::PollOrFd::Poll(_)) {
-                        s.writer
-                            .handle
-                            .close_impl(None, None::<fn(*mut c_void)>, false);
-                    }
-                    s.writer.handle = bun_io::pipes::PollOrFd::Closed;
                     return self.__start();
                 }
                 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -385,12 +379,6 @@ impl IOWriter {
                         s.flags.pollable = false;
                         s.flags.nonblock = false;
                         s.flags.is_socket = false;
-                        if matches!(s.writer.handle, bun_io::pipes::PollOrFd::Poll(_)) {
-                            s.writer
-                                .handle
-                                .close_impl(None, None::<fn(*mut c_void)>, false);
-                        }
-                        s.writer.handle = bun_io::pipes::PollOrFd::Closed;
                         return self.__start();
                     }
                 }

@@ -1,11 +1,15 @@
 // @ts-nocheck
 import { existsSync, readFileSync } from "fs";
+import { createRequire } from "module";
 import path from "path";
-import jsclasses from "./../jsc/bindings/js_classes";
-import { InvalidThisBehavior, type ClassDefinition, type Field } from "./class-definitions";
-import { writeIfNotChanged } from "./helpers";
+import { inspect } from "util";
+import jsclasses from "./../jsc/bindings/js_classes.ts";
+import { InvalidThisBehavior, type ClassDefinition, type Field } from "./class-definitions.ts";
+import { writeIfNotChanged } from "./helpers.ts";
 
+const require = createRequire(import.meta.url);
 const files = process.argv.slice(2);
+const typesDir = files.pop();
 const outBase = files.pop();
 let externs = "";
 const CommonIdentifiers = {
@@ -1150,7 +1154,10 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
         }
 
         static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
-        static ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(${name}, m_ctx); }
+        // constexpr: the extern "C" <Type>__ptrOffset constants initialized from
+        // this are then constant-initialized in every build mode (no static
+        // initializer at -O0; the link-time initializer audit relies on it).
+        static constexpr ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(${name}, m_ctx); }
 
         /**
          * Estimated size of the object from Zig including the JS wrapper.
@@ -1679,7 +1686,7 @@ function rustSnakeIdent(name: string): string {
 // distinct `Source` structs) MUST set `rustPath` explicitly in their
 // `.classes.ts` definition; this resolver is name-based and can't infer those.
 const rustModuleResolver = (() => {
-  const runtimeRoot = path.resolve(import.meta.dir, "../runtime");
+  const runtimeRoot = path.resolve(import.meta.dirname, "../runtime");
   const fileToMod = new Map<string, string>(); // abs .rs path → crate::a::b
   const structToPath = new Map<string, string>(); // StructName → crate::a::b::StructName (shortest)
   // `(?:#[path = "…"]\s*)? (?:#[...]\s*)* pub mod NAME ;` — pub-only: a private
@@ -1689,10 +1696,10 @@ const rustModuleResolver = (() => {
   // Index both `pub struct Name` and `pub type Name = …` — several JS classes
   // (HTTPServer/HTTPSServer/MD4/MD5/…) are generic instantiations exposed as
   // type aliases; the thunks call `Name::method` either way.
-  const structRe = /\bpub\s+(?:struct|type)\s+([A-Z]\w*)\b/g;
+  const structRe = /\bpub(?:\([^)]*\))?\s+(?:struct|type)\s+([A-Z]\w*)\b/g;
   // `pub use a::b::{Name, Name as Alias};` — only the *exported* identifier is
   // indexed, at the current module path.
-  const pubUseRe = /\bpub\s+use\s+((?:\w+::)*)\{?([^;{}]+?)\}?\s*;/g;
+  const pubUseRe = /\bpub(?:\([^)]*\))?\s+use\s+((?:\w+::)*)\{?([^;{}]+?)\}?\s*;/g;
 
   const segs = (p: string) => p.split("::").length;
   function register(name: string, fullPath: string) {
@@ -2224,7 +2231,7 @@ ${gcAccessors}
 /// struct so the thunks below call its inherent methods directly. A missing
 /// method is a compile error — fix it in \`${rustPath}\`, not here.
 #[allow(dead_code, unreachable_pub, unused)]
-pub use ${rustPath} as ${typeName};
+pub(crate) use ${rustPath} as ${typeName};
 
 ${thunks.join("\n\n")}
 
@@ -2530,7 +2537,7 @@ const classes: ClassDefinition[] = [];
     if (!(result?.default?.length ?? 0)) {
       errors.push(
         new TypeError(
-          `Missing classes in "${path.relative(process.cwd(), filepath)}". Expected \`export default [ define(...) ] satisfies Array<ClassDefinition>\` but got ${Bun.inspect(result).slice(0, 100) + "..."} `,
+          `Missing classes in "${path.relative(process.cwd(), filepath)}". Expected \`export default [ define(...) ] satisfies Array<ClassDefinition>\` but got ${inspect(result).slice(0, 100) + "..."} `,
         ),
       );
       continue;
@@ -2709,7 +2716,7 @@ function writeCppSerializers() {
     initLazyClasses(classes.map(a => generateLazyClassStructureImpl(a.name, a))) + "\n" + visitLazyClasses(classes),
   );
 
-  await writeIfNotChanged(`${outBase}/ZigGeneratedClasses.d.ts`, [generateBuiltinTypes(classes)]);
+  await writeIfNotChanged(`${typesDir}/ZigGeneratedClasses.d.ts`, [generateBuiltinTypes(classes)]);
 }
 
 /**
@@ -2772,7 +2779,7 @@ function getPropertySignatureWithComment(
     }
   } else if ("getter" in propDef) {
     signature = `${tsPropName}: unknown;`; // Getter, possibly with setter
-    isReadOnly = !propDef.writable; // Mark readonly if only getter or explicitly not writable
+    isReadOnly = !propDef.writable && !("setter" in propDef); // Mark readonly if only getter or explicitly not writable
     commentLines.push(
       ` Look for a getter like this:
       * \`\`\`zig

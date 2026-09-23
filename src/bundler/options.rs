@@ -1319,7 +1319,14 @@ pub struct BundleOptions<'a> {
     /// Code splitting: also fold side-effect-free chunks whose source is
     /// smaller than this many bytes into a chunk more entry points load.
     /// 0 disables that; chunks with identical load conditions always fold.
-    pub min_chunk_size: u64,
+    /// `None` picks `default_min_chunk_size(target)`.
+    pub min_chunk_size: Option<u64>,
+    /// Code splitting: fold chunks together (`merge_small_chunks`). Only
+    /// tests turn it off (`foldChunksForTesting: false`), to compare a bundle
+    /// with and without folding.
+    pub fold_chunks: bool,
+    /// `<link rel=modulepreload>` for split browser chunks (HTML + `import()`).
+    pub module_preload: bool,
 
     pub ignore_dce_annotations: bool,
     pub emit_dce_annotations: bool,
@@ -1330,6 +1337,8 @@ pub struct BundleOptions<'a> {
     pub bytecode: bool,
     /// How many levels of nested functions get bytecode (`u32::MAX` = all; 0 = only each module's top level).
     pub bytecode_depth: u32,
+    /// Run JSC's build-time bytecode optimization passes over the cached bytecode (`optimize.bytecode`).
+    pub optimize_bytecode: bool,
     /// `--compile --bytecode`: whose internal modules get ahead-of-time bytecode embedded alongside the bundle's.
     pub compile_target_builtins: CompileTargetBuiltins,
 
@@ -1337,6 +1346,8 @@ pub struct BundleOptions<'a> {
     pub debugger: bool,
 
     pub compile_mode: CompileMode,
+    /// `--compile`: the name of the entry point's chunk, `/$bunfs/root/<name>` in the executable.
+    pub compile_entry_point_name: Box<[u8]>,
     pub metafile: bool,
     /// Path to write JSON metafile (for Bun.build API)
     pub metafile_json_path: Box<[u8]>,
@@ -1436,6 +1447,7 @@ impl<'a> BundleOptions<'a> {
             define: Box::new(defines::Define {
                 identifiers: self.define.identifiers.clone(),
                 dots: self.define.dots.clone(),
+                dots_filter: self.define.dots_filter.clone(),
                 drop_debugger: self.define.drop_debugger,
                 user_hash: self.define.user_hash,
             }),
@@ -1522,15 +1534,19 @@ impl<'a> BundleOptions<'a> {
             repl_mode: self.repl_mode,
             css_chunking: self.css_chunking,
             min_chunk_size: self.min_chunk_size,
+            fold_chunks: self.fold_chunks,
+            module_preload: self.module_preload,
             ignore_dce_annotations: self.ignore_dce_annotations,
             emit_dce_annotations: self.emit_dce_annotations,
             deprecated_namespace_object_setters: self.deprecated_namespace_object_setters,
             bytecode: self.bytecode,
             bytecode_depth: self.bytecode_depth,
+            optimize_bytecode: self.optimize_bytecode,
             compile_target_builtins: self.compile_target_builtins.clone(),
             code_coverage: self.code_coverage,
             debugger: self.debugger,
             compile_mode: self.compile_mode,
+            compile_entry_point_name: self.compile_entry_point_name.clone(),
             metafile: self.metafile,
             metafile_json_path: self.metafile_json_path.clone(),
             metafile_markdown_path: self.metafile_markdown_path.clone(),
@@ -1699,7 +1715,9 @@ impl<'a> BundleOptions<'a> {
             env: Env::default(),
             transform_options: std::sync::Arc::clone(&transform),
             css_chunking: false,
-            min_chunk_size: 0,
+            min_chunk_size: None,
+            fold_chunks: true,
+            module_preload: true,
             drop: transform.drop.clone().into_boxed_slice(),
             bundler_feature_flags,
 
@@ -1772,10 +1790,12 @@ impl<'a> BundleOptions<'a> {
             deprecated_namespace_object_setters: true,
             bytecode: false,
             bytecode_depth: u32::MAX,
+            optimize_bytecode: true,
             compile_target_builtins: CompileTargetBuiltins::Host,
             code_coverage: false,
             debugger: false,
             compile_mode: CompileMode::None,
+            compile_entry_point_name: Box::default(),
             metafile: false,
             metafile_json_path: Box::default(),
             metafile_markdown_path: Box::default(),
@@ -1921,7 +1941,7 @@ impl<'a> BundleOptions<'a> {
             let handle = open_output_dir(&opts.output_dir)?;
             // The inline `bun_resolver::fs::FileSystem` does
             // not yet expose `get_fd_path`, so resolve via `bun_sys` and box.
-            let mut buf = bun_paths::PathBuffer::uninit();
+            let mut buf = bun_paths::path_buffer_pool::get();
             let dir = bun_sys::get_fd_path(handle.fd(), &mut buf).map_err(crate::Error::from)?;
             opts.output_dir = Box::from(&dir[..]);
             opts.output_dir_handle = Some(handle);
@@ -1996,7 +2016,7 @@ pub(crate) fn open_output_dir(output_dir: &[u8]) -> Result<Dir, crate::Error> {
             // Single-level mkdir
             // (fails ENOENT if parent missing). Do NOT use `make_path` (the
             // recursive `mkdir -p` variant) here.
-            let mut buf = bun_paths::PathBuffer::uninit();
+            let mut buf = bun_paths::path_buffer_pool::get();
             let len = output_dir.len().min(buf.0.len() - 1);
             buf.0[..len].copy_from_slice(&output_dir[..len]);
             buf.0[len] = 0;
@@ -2101,10 +2121,43 @@ fn path_template_needs(data: &[u8], field: PlaceholderField) -> bool {
         PlaceholderField::Dir => b"[dir]",
         PlaceholderField::Name => b"[name]",
         PlaceholderField::Ext => b"[ext]",
-        PlaceholderField::Hash => b"[hash]",
+        PlaceholderField::Hash => return path_template_hash_len(data).is_some(),
         PlaceholderField::Target => b"[target]",
     };
     strings::contains(data, needle)
+}
+
+/// `[hash]` or `[hashN]`: the field and how many characters it prints.
+fn placeholder_field(name: &[u8]) -> Option<(PlaceholderField, usize)> {
+    if let Some(field) = PLACEHOLDER_MAP.get(name).copied() {
+        return Some((field, bun_core::fmt::ContentHash::DEFAULT_LEN));
+    }
+    let digits = name.strip_prefix(b"hash")?;
+    if digits.is_empty() || digits.len() > 2 || !digits.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    let len = digits
+        .iter()
+        .fold(0usize, |n, &d| n * 10 + (d - b'0') as usize);
+    if len == 0 {
+        return None;
+    }
+    Some((PlaceholderField::Hash, len))
+}
+
+/// The width of the first `[hash]`/`[hashN]` placeholder in `data`, if any.
+pub(crate) fn path_template_hash_len(data: &[u8]) -> Option<usize> {
+    let mut remain = data;
+    while let Some(open) = strings::index_of(remain, b"[hash") {
+        remain = &remain[open + 1..];
+        let Some(close) = strings::index_of_char(remain, b']') else {
+            break;
+        };
+        if let Some((PlaceholderField::Hash, len)) = placeholder_field(&remain[..close as usize]) {
+            return Some(bun_core::fmt::ContentHash::new(0, len).len());
+        }
+    }
+    None
 }
 
 /// `Some((index_of_open_bracket, &template[index..]))` when a `[` has no matching `]`.
@@ -2143,7 +2196,7 @@ fn path_template_print<W: bun_io::Write>(
     dir: &[u8],
     name: &[u8],
     ext: &[u8],
-    hash: Option<u64>,
+    hash: Option<bun_core::fmt::ContentHash>,
     target: &[u8],
     sanitize_parent_dirs: bool,
 ) -> bun_io::Result<()> {
@@ -2177,7 +2230,7 @@ fn path_template_print<W: bun_io::Write>(
 
         let placeholder = &remain[0..end_len];
 
-        let Some(field) = PLACEHOLDER_MAP.get(placeholder).copied() else {
+        let Some((field, hash_len)) = placeholder_field(placeholder) else {
             // Unknown placeholder: keep `[placeholder]` verbatim in the output.
             writer.write_all(b"[")?;
             PathTemplate::write_replacing_slashes_on_windows(writer, placeholder)?;
@@ -2205,7 +2258,10 @@ fn path_template_print<W: bun_io::Write>(
             PlaceholderField::Ext => PathTemplate::write_replacing_slashes_on_windows(writer, ext)?,
             PlaceholderField::Hash => {
                 if let Some(hash) = hash {
-                    writer.write_fmt(format_args!("{}", bun_core::fmt::truncated_hash32(hash)))?;
+                    writer.write_fmt(format_args!(
+                        "{}",
+                        bun_core::fmt::ContentHash::new(hash.value, hash_len.max(hash.len()))
+                    ))?;
                 }
             }
             PlaceholderField::Target => {
@@ -2269,7 +2325,8 @@ fn write_sanitized_parent_dirs_rewrites_every_dotdot_segment() {
 fn path_template_print_tolerates_malformed_brackets() {
     fn run(template: &[u8]) -> Vec<u8> {
         let mut out = Vec::new();
-        path_template_print(&mut out, template, b"D", b"N", b"E", Some(0), b"T", false).unwrap();
+        let hash = Some(bun_core::fmt::ContentHash::short(0));
+        path_template_print(&mut out, template, b"D", b"N", b"E", hash, b"T", false).unwrap();
         out
     }
     // Unterminated known placeholder: used to slice one past the end.
@@ -2316,6 +2373,22 @@ fn path_template_print_tolerates_malformed_brackets() {
 impl PathTemplate {
     pub(crate) fn needs(&self, field: PlaceholderField) -> bool {
         path_template_needs(&self.data, field)
+    }
+
+    /// The width this template's `[hash]`/`[hashN]` asks for.
+    pub(crate) fn hash_len(&self) -> usize {
+        path_template_hash_len(&self.data).unwrap_or(bun_core::fmt::ContentHash::DEFAULT_LEN)
+    }
+
+    /// `hash` at the width this template prints its own hash: what `[hashN]`
+    /// asks for, or wider if the linker widened it to keep names distinct.
+    pub(crate) fn content_hash(&self, hash: u64) -> bun_core::fmt::ContentHash {
+        bun_core::fmt::ContentHash::new(
+            hash,
+            self.placeholder
+                .hash
+                .map_or_else(|| self.hash_len(), |h| h.len()),
+        )
     }
 
     #[inline]
@@ -2405,7 +2478,7 @@ pub struct Placeholder {
     pub(crate) dir: Box<[u8]>,
     pub(crate) name: Box<[u8]>,
     pub(crate) ext: Box<[u8]>,
-    pub(crate) hash: Option<u64>,
+    pub(crate) hash: Option<bun_core::fmt::ContentHash>,
     pub(crate) target: Box<[u8]>,
 }
 
@@ -2432,7 +2505,7 @@ pub struct PlaceholderConst {
     pub(crate) dir: &'static [u8],
     pub(crate) name: &'static [u8],
     pub(crate) ext: &'static [u8],
-    pub(crate) hash: Option<u64>,
+    pub(crate) hash: Option<bun_core::fmt::ContentHash>,
     pub(crate) target: &'static [u8],
 }
 
@@ -2498,4 +2571,13 @@ impl From<PathTemplateConst> for PathTemplate {
             },
         }
     }
+}
+
+/// `--min-chunk-size` when none was given: off for now. In a browser every
+/// chunk is a request and what an entry point can gain is bounded (see
+/// `merge_small_chunks`), so `Target::Browser` is meant to default to 16 KiB
+/// once the pass has shipped opt-in for a release or two.
+pub fn default_min_chunk_size(target: Target) -> u64 {
+    let _ = target;
+    0
 }

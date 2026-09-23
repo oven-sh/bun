@@ -95,7 +95,7 @@ describe.concurrent("bundler", () => {
         `,
     },
     run: {
-      error: "TypeError: bar2 is not a function. (In 'bar2()', 'bar2' is undefined)",
+      error: "TypeError: bar is not a function. (In 'bar()', 'bar' is undefined)",
       errorLineMatch: /console\.log/,
     },
   });

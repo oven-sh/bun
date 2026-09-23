@@ -284,6 +284,33 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     );
   });
 
+  test("bun init replaces a non-object dependencies field in an existing package.json", async () => {
+    // A dependencies field that is not an object is garbage for every package
+    // manager. `bun init` used to crash on it instead of filling in its own
+    // entries.
+    await using temp = tempDir("bun-init-non-object-deps", {
+      "package.json": JSON.stringify({ name: "x", devDependencies: "nope", peerDependencies: null }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "init", "-y"],
+      cwd: temp,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: initEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+
+    expect(await Bun.file(path.join(temp, "package.json")).json()).toEqual({
+      name: "x",
+      devDependencies: { "@types/bun": "latest" },
+      peerDependencies: { typescript: "^7" },
+      module: "index.ts",
+      type: "module",
+      private: true,
+    });
+  }, 30_000);
+
   test("bun init --react works", async () => {
     await using temp = tempDir("bun-init--react-works", {});
 

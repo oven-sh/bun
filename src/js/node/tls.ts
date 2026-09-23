@@ -5,6 +5,7 @@ const Duplex = require("internal/streams/duplex");
 const EventEmitter = require("node:events");
 const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
 const { throwNotImplemented } = require("internal/shared");
+const { domainToASCII } = require("internal/url");
 const {
   throwOnInvalidTLSArray,
   tlsStringToProtocolVersion,
@@ -22,7 +23,7 @@ const {
 } = require("internal/validators");
 
 const { Server: NetServer, Socket: NetSocket } = net;
-const { kArmHandshakeTimeout, kSecureConnectDone, kVerifyError } = require("internal/net/symbols");
+const { kArmHandshakeTimeout, kPreHandshakeWrite, kSecureConnectDone, kVerifyError } = require("internal/net/symbols");
 
 const getBundledRootCertificates = $newCppFunction("NodeTLS.cpp", "getBundledRootCertificates", 1);
 const getExtraCACertificates = $newCppFunction("NodeTLS.cpp", "getExtraCACertificates", 1);
@@ -396,6 +397,9 @@ function check(hostParts, pattern, wildcards) {
 
   const { 0: prefix, 1: suffix } = patternSubdomainParts;
 
+  // Node lets "*" match the empty label of ".example.com", the IDNA form of "。example.com".
+  if (hostSubdomain === "") return false;
+
   if (prefix.length + suffix.length > hostSubdomain.length) return false;
 
   if (!StringPrototypeStartsWith.$call(hostSubdomain, prefix)) return false;
@@ -450,6 +454,12 @@ function checkServerIdentity(hostname, cert) {
   const ips = [];
 
   hostname = "" + hostname;
+  // CVE-2026-48618, https://github.com/nodejs/node/commit/1efb4ff51a: IDNA maps "。" to ".".
+  const hostnameASCII = domainToASCII(hostname);
+
+  // Remove trailing dots for error messages and matching.
+  hostname = unfqdn(hostname);
+  const hostnameASCIIWithoutFQDN = unfqdn(hostnameASCII);
 
   if (altNames) {
     const splitAltNames = StringPrototypeIncludes.$call(altNames, '"')
@@ -467,14 +477,14 @@ function checkServerIdentity(hostname, cert) {
   let valid = false;
   let reason = "Unknown reason";
 
-  hostname = unfqdn(hostname); // Remove trailing dot for error messages.
+  // https://github.com/nodejs/node/commit/1d87a24050: domainToASCII("::1") is "", so IP hosts stay as typed.
   if (net.isIP(hostname)) {
     valid = ArrayPrototypeIncludes.$call(ips, canonicalizeIP(hostname));
     if (!valid) reason = `IP: ${hostname} is not in the cert's list: ` + ArrayPrototypeJoin.$call(ips, ", ");
   } else {
     const hasDnsNames = dnsNames.length > 0;
     if (hasDnsNames || subject?.CN) {
-      const hostParts = splitHost(hostname);
+      const hostParts = splitHost(hostnameASCIIWithoutFQDN);
       const wildcard = pattern => check(hostParts, pattern, true);
 
       if (hasDnsNames) {
@@ -552,7 +562,7 @@ function newNativeSecureContext(options, cached = false) {
   // convertALPNProtocols normalizes them on the socket options.
   const ALPNProtocols = options.ALPNProtocols;
   if (Array.isArray(ALPNProtocols)) {
-    const normalized = {};
+    const normalized: { ALPNProtocols?: Buffer } = {};
     convertALPNProtocols(ALPNProtocols, normalized);
     options = { ...options, ALPNProtocols: normalized.ALPNProtocols };
   }
@@ -740,11 +750,26 @@ function TLSSocket(socket?, options?) {
     throw $ERR_INVALID_ARG_TYPE("socket", "Duplex", socket);
   }
 
-  options = isNetSocketOrDuplex ? { ...options, allowHalfOpen: false } : options || socket || {};
+  // The wrapped socket's allowHalfOpen wins: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L592
+  if (isNetSocketOrDuplex) {
+    options = { ...options, allowHalfOpen: socket.allowHalfOpen };
+  } else {
+    options = options || socket || {};
+    const wrapped = options.socket;
+    if (wrapped instanceof Duplex) {
+      options = { ...options, allowHalfOpen: wrapped.allowHalfOpen };
+    }
+  }
 
   this._rejectUnauthorized = !!options.rejectUnauthorized;
 
-  NetSocket.$call(this, options);
+  // Never forward readable / writable: node's TLSSocket builds its own net.Socket options. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L590-L600
+  NetSocket.$call(
+    this,
+    options.readable === undefined && options.writable === undefined
+      ? options
+      : { ...options, readable: undefined, writable: undefined },
+  );
 
   // Node's _init installs this as the first 'error' listener and removes it in
   // _releaseControl: until control is handed to the user it routes errors
@@ -882,23 +907,12 @@ TLSSocket.prototype._start = function _start() {
 };
 
 TLSSocket.prototype._final = function _final(callback) {
-  // Defer the FIN until the TLS handshake completes. net.Socket._final calls
-  // socket.shutdown(), which while SSL is still in init half-closes the write
-  // side before the client's TLS Finished is flushed — the peer then sees a
-  // bare FIN and reports ECONNRESET (e.g. socket.end('') right after
-  // tls.connect()). Node's native TLSWrap.DoShutdown likewise flushes the
-  // handshake output before the underlying stream's FIN.
-  // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/src/crypto/crypto_tls.cc#L1203
-  // A never-connected TLSSocket (e.g. new tls.TLSSocket().end(cb)) has no handle
-  // and no handshake to wait for; finish immediately like NetSocket._final's
-  // no-handle fast path, otherwise the deferred callback would never fire.
   if (!this._handle) return callback();
-  if (this.secureConnecting) {
-    // kSecureConnectDone rather than 'secureConnect': server-side sockets
-    // never emit the user event (node parity), but every handshake table
-    // emits the internal signal when secureConnecting clears.
+  // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1119-L1133
+  if (this.secureConnecting && this[kPreHandshakeWrite]) {
     return this.once(kSecureConnectDone, NetSocket.prototype._final.bind(this, callback));
   }
+  // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1203-L1213
   return NetSocket.prototype._final.$call(this, callback);
 };
 
@@ -1579,7 +1593,7 @@ function normalizeConnectArgs(listArgs) {
 function connect(...args) {
   let normal = normalizeConnectArgs(args);
   const options = normal[0];
-  const { ALPNProtocols, servername } = options as { ALPNProtocols?: unknown; servername?: unknown };
+  const { ALPNProtocols, servername } = options as { ALPNProtocols?: unknown; servername?: string };
 
   // The TLSSocket applies the NODE_TLS_REJECT_UNAUTHORIZED default itself
   // (rejectUnauthorizedDefault); this call exists to emit Node's one-time
@@ -1607,7 +1621,7 @@ function connect(...args) {
     ? options.rejectUnauthorized !== false
     : rejectUnauthorizedDefault();
 
-  const connectOptions = { checkServerIdentity, ...options, rejectUnauthorized };
+  const connectOptions: Record<PropertyKey, any> = { checkServerIdentity, ...options, rejectUnauthorized };
   if (!ObjectPrototypeHasOwnProperty.$call(options, "ciphers") || connectOptions.ciphers == null) {
     connectOptions.ciphers = getDefaultCiphers();
   }
@@ -1895,4 +1909,7 @@ export default {
     return cacheBundledRootCertificates();
   },
   getCACertificates,
-} as any as typeof import("node:tls");
+} as any as typeof import("node:tls") & {
+  SecureContext: typeof SecureContext;
+  convertALPNProtocols: typeof convertALPNProtocols;
+};

@@ -10,13 +10,13 @@ use bun_jsc::{
     JsResult, JsThread, StringJsc as _, SysErrorJsc as _,
 };
 use bun_paths::resolve_path::join_string_buf;
-use bun_paths::{self as resolve_path, MAX_PATH_BYTES, PathBuffer, platform};
+use bun_paths::{self as resolve_path, MAX_PATH_BYTES, platform};
 use bun_sys as syscall;
 
 // Codegen hooks (JSGlob): toJS / fromJS / fromJSDirect are provided by the
 // generated C++ wrapper. See PORTING.md §JSC ".classes.ts-backed types".
 #[bun_jsc::JsClass]
-pub struct Glob {
+pub(crate) struct Glob {
     pattern: Box<[u8]>,
     has_pending_activity: AtomicUsize,
 }
@@ -68,7 +68,7 @@ impl ScanOpts {
             }
 
             // Convert to an absolute path
-            let mut path_buf = PathBuffer::uninit();
+            let mut path_buf = bun_paths::path_buffer_pool::get();
             let cwd_len = match bun_sys::getcwd(&mut path_buf[..]) {
                 bun_sys::Result::Ok(len) => len,
                 bun_sys::Result::Err(err) => {
@@ -607,7 +607,7 @@ impl Glob {
                 Ok(Some(gw)) => gw,
             };
 
-        let cx = global_this.js_thread();
+        let cx = global_this.js_thread_of_caller(callframe);
         let promise = JSPromiseStrong::init(global_this);
         let value = promise.value();
         Job::<WalkTask>::schedule(
@@ -659,7 +659,7 @@ impl Glob {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn r#match(
+    pub(crate) fn r#match(
         &self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,

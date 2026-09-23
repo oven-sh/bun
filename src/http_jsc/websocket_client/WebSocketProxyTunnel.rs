@@ -149,7 +149,9 @@ impl WebSocketProxyTunnel {
             wrapper: OnceCell::new(),
             socket,
             write_buffer: JsCell::new(StreamBuffer::default()),
-            sni_hostname: Some(Box::<[u8]>::from(sni_hostname)),
+            sni_hostname: Some(Box::<[u8]>::from(bun_http::strip_ipv6_brackets(
+                sni_hostname,
+            ))),
             reject_unauthorized,
         })
     }
@@ -193,6 +195,11 @@ impl WebSocketProxyTunnel {
 
         debug_assert!(this.wrapper.get().is_none(), "start() called twice");
         let wrapper = this.wrapper.get_or_init(|| wrapper);
+        // The inner connection's form of the `set_inline_reject` call in
+        // `WebSocketUpgradeClient::handle_open`.
+        if this.reject_unauthorized {
+            wrapper.set_inline_reject();
+        }
         let ssl = wrapper.ssl.get();
 
         // Configure SNI with hostname.

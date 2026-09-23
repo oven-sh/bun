@@ -16,19 +16,20 @@ import jsclasses from "./../jsc/bindings/js_classes";
 import { sliceSourceCode } from "./builtin-parser";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { getJS2NativeCPP, getJS2NativeRust } from "./generate-js2native";
-import { cap, checkAscii, writeIfNotChanged, writeIfNotChangedBinary } from "./helpers";
+import { cap, checkAscii, sourceStamp, writeIfNotChanged, writeIfNotChangedBinary } from "./helpers";
 import { createInternalModuleRegistry } from "./internal-module-registry-scanner";
 import { define } from "./replacements";
 
 const BASE = path.join(import.meta.dir, "../js");
 const debug = process.argv[2] === "--debug=ON";
 const CMAKE_BUILD_ROOT = process.argv[3];
+const TYPES_DIR = process.argv[4];
 
 const timeString = 'Bundled "src/js" for ' + (debug ? "development" : "production");
 console.time(timeString);
 
-if (!CMAKE_BUILD_ROOT) {
-  console.error("Usage: bun bundle-modules.ts --debug=[OFF|ON] <CMAKE_WORK_DIR>");
+if (!CMAKE_BUILD_ROOT || !TYPES_DIR) {
+  console.error("Usage: bun bundle-modules.ts --debug=[OFF|ON] <CMAKE_WORK_DIR> <TYPES_DIR>");
   process.exit(1);
 }
 
@@ -247,8 +248,7 @@ const outputs = new Map();
 
 for (const entrypoint of bundledEntryPoints) {
   const file_path = entrypoint.slice(TMP_DIR.length + 1).replace(/\.ts$/, ".js");
-  const file = Bun.file(path.join(TMP_DIR, "modules_out", file_path));
-  const output = await file.text();
+  const output = fs.readFileSync(path.join(TMP_DIR, "modules_out", file_path), "utf8");
   let captured = `(function (){${output.replace("// @bun\n", "").trim()}})`;
   let usesDebug = output.includes("$debug_log");
   let usesAssert = output.includes("$assert");
@@ -369,6 +369,7 @@ function idToPublicSpecifierOrEnumName(id: string) {
 }
 
 const { combinedSourceCode: functionsSource } = await bundleBuiltinFunctions({
+  typesDir: TYPES_DIR,
   requireTransformer,
 });
 
@@ -425,12 +426,9 @@ const BUILTINS_HEADER_SIZE = 48;
 
 // Identifies these module sources to bytecode generated from them ahead of time (bun build --compile embeds bytecode for
 // the internal modules an app uses); computed over the bundled outputs so it is meaningful in debug builds too.
-const internalModulesStamp = (() => {
-  const h = new Bun.CryptoHasher("sha256");
-  for (const id of moduleList.slice(0, nativeStartIndex))
-    h.update(outputs.get(id.slice(0, -3).replaceAll("/", path.sep)) ?? "");
-  return new DataView(h.digest().buffer).getUint32(0);
-})();
+const internalModulesStamp = sourceStamp(
+  moduleList.slice(0, nativeStartIndex).map(id => outputs.get(id.slice(0, -3).replaceAll("/", path.sep)) ?? ""),
+);
 
 // require() edges between JS internal modules (ids are enum order), as offsets into one flat list. `bun build --compile
 // --bytecode` embeds bytecode for the builtins an app imports plus everything reachable through this table.
@@ -743,7 +741,7 @@ writeIfNotChanged(path.join(CODEGEN_DIR, "GeneratedJS2Native.h"), getJS2NativeCP
 // Rust sibling: include!()'d by src/runtime/generated_js2native.rs
 writeIfNotChanged(path.join(CODEGEN_DIR, "generated_js2native.rs"), getJS2NativeRust());
 
-const generatedDTSPath = path.join(CODEGEN_DIR, "generated.d.ts");
+const generatedDTSPath = path.join(TYPES_DIR, "generated.d.ts");
 writeIfNotChanged(
   generatedDTSPath,
   (() => {

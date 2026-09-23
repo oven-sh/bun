@@ -1710,6 +1710,83 @@ it.concurrent("server.upgrade() from the error() handler after fetch() threw com
   expect(exitCode).toBe(0);
 });
 
+// A handler that calls server.upgrade() before it returns leaves the server no
+// response to send, so the server does not subscribe to the handler's promise.
+// A rejection of that promise must stay unhandled and reach
+// process.on("unhandledRejection"), whether it has settled when the handler
+// returns or not. The server subscribes to the promise of a handler that
+// upgrades after an await, so that case is not covered here.
+describe.concurrent("a handler that calls server.upgrade() before it returns", () => {
+  async function runChild(handlers: string) {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.on("unhandledRejection", e => console.log("unhandledRejection:", e.message));
+         const server = Bun.serve({
+           port: 0,
+           ${handlers}
+           websocket: {
+             open(ws) { ws.send("hi"); },
+             message() {},
+           },
+         });
+         const ws = new WebSocket(server.url.href.replace(/^http/, "ws"));
+         ws.onerror = () => { console.log("ws error"); process.exit(1); };
+         ws.onmessage = e => { console.log("ws got:", e.data); ws.close(); };
+         ws.onclose = () => server.stop(true);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // A then() or catch() promise is rejected by a reaction job. It is a
+  // separate case: JSC does not set its first-resolving-function flag.
+  it.each([
+    [
+      "fetch() is async and throws after an await",
+      `async fetch(req, srv) { srv.upgrade(req); await 0; throw new Error("E"); },
+       error(e) { console.log("error() saw:", e.message); },`,
+    ],
+    [
+      "fetch() returns Promise.reject()",
+      `fetch(req, srv) { srv.upgrade(req); return Promise.reject(new Error("E")); },
+       error(e) { console.log("error() saw:", e.message); },`,
+    ],
+    [
+      "fetch() returns a then() promise that throws",
+      `fetch(req, srv) { srv.upgrade(req); return Promise.resolve().then(() => { throw new Error("E"); }); },
+       error(e) { console.log("error() saw:", e.message); },`,
+    ],
+    [
+      "fetch() returns a catch() promise that rethrows",
+      `fetch(req, srv) { srv.upgrade(req); return Promise.reject(new Error("E")).catch(e => { throw e; }); },
+       error(e) { console.log("error() saw:", e.message); },`,
+    ],
+    [
+      "fetch() returns a then() promise that passes a rejection through",
+      `fetch(req, srv) { srv.upgrade(req); return Promise.reject(new Error("E")).then(x => x); },
+       error(e) { console.log("error() saw:", e.message); },`,
+    ],
+    [
+      "error() upgrades and returns Promise.reject()",
+      `fetch(req) { throw Object.assign(new Error("boom"), { req }); },
+       error(err) { server.upgrade(err.req); return Promise.reject(new Error("E")); },`,
+    ],
+  ])("reports a rejection to unhandledRejection when %s", async (_, handlers) => {
+    const { stdout, stderr, exitCode } = await runChild(handlers);
+    expect({ stdoutLines: stdout.trim().split("\n").sort(), stderr, exitCode }).toEqual({
+      stdoutLines: ["unhandledRejection: E", "ws got: hi"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 it("server.upgrade() does not blank the Request's url/headers read afterwards", async () => {
   // req.url and req.headers are lifted lazily from the uws request. upgrade()
   // detaches that context, so fields not touched before the call must be

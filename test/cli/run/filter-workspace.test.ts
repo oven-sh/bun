@@ -1,8 +1,9 @@
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { existsSync, symlinkSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
+import { constants } from "os";
 import { join } from "path";
 
 const cwd_root = tempDirWithFiles("testworkspace", {
@@ -478,7 +479,22 @@ describe("bun", () => {
   });
 
   test("should error with missing script", () => {
-    runInCwdFailure(cwd_root, "*", "notpresent", /error: No workspace packages matched the filter "\*"/);
+    runInCwdFailure(cwd_root, "*", "notpresent", /error: Script "notpresent" not found in \d+ packages matching "\*"/);
+    runInCwdFailure(cwd_root, "pkga", "notpresent", /error: Script "notpresent" not found in package "pkga"/);
+  });
+  test("should error once when the filter matches no package", () => {
+    const { exitCode, stdout, stderr } = spawnSync({
+      cwd: cwd_root,
+      cmd: [bunExe(), "run", "--filter", "nosuchpkg", "present"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stdout.toString()).toBeEmpty();
+    // Said once, as an error — not as a warning and then again as an error.
+    expect(stderr.toString().match(/No workspace packages matched/g)).toEqual(["No workspace packages matched"]);
+    expect(stderr.toString()).toContain(`error: No workspace packages matched the filter "nosuchpkg"`);
+    expect(exitCode).toBe(1);
   });
   test("warns about a filter that matched nothing while running the others", () => {
     const { exitCode, stdout, stderr } = spawnSync({
@@ -527,12 +543,36 @@ describe("bun", () => {
     expect(exitCode).toBe(23);
   });
 
+  // A signaled script exits with 128 + the signal, and the signal is labeled
+  // with the OS's name for its number. Signal 40 is a Linux real-time signal
+  // with no name; it used to make bun exit 1.
+  const signaled = [
+    { signal: constants.signals.SIGUSR1, label: "SIGUSR1" },
+    ...(isLinux ? [{ signal: 40, label: "UNKNOWN" }] : []),
+  ];
+  test.skipIf(isWindows).each(signaled)("exit code of a script killed by signal $signal", ({ signal, label }) => {
+    using dir = tempDir("testworkspace", {
+      dep0: {
+        "package.json": JSON.stringify({ name: "dep0", scripts: { script: `kill -${signal} $$` } }),
+      },
+    });
+    const { exitCode, stdout } = spawnSync({
+      cwd: dir,
+      cmd: [bunExe(), "run", "--filter", "*", "script"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stdout.toString()).toContain(`Signaled with code ${label}`);
+    expect(exitCode).toBe(128 + signal);
+  });
+
   function runElideLinesTest({
     elideLines,
     target_pattern,
     antipattern,
   }: {
-    elideLines: number;
+    elideLines?: number;
     target_pattern: RegExp[];
     antipattern?: RegExp[];
   }) {
@@ -566,7 +606,14 @@ describe("bun", () => {
       // code path.
       const { exitCode, stderr, stdout } = spawnSync({
         cwd: dir,
-        cmd: [bunExe(), "run", "--filter", "./packages/dep0", "--elide-lines", String(elideLines), "script"],
+        cmd: [
+          bunExe(),
+          "run",
+          "--filter",
+          "./packages/dep0",
+          ...(elideLines === undefined ? [] : ["--elide-lines", String(elideLines)]),
+          "script",
+        ],
         env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: "0" },
         stdout: "pipe",
         stderr: "pipe",
@@ -595,10 +642,10 @@ describe("bun", () => {
     });
   }
 
-  test("elides output by default when using --filter", () => {
+  test("does not elide output by default when using --filter", () => {
     runElideLinesTest({
-      elideLines: 10,
-      target_pattern: [/\[10 lines elided\]/, /(?:log_line[\s\S]*?){20}/],
+      target_pattern: [/(?:log_line[\s\S]*?){20}/],
+      antipattern: [/lines elided/],
     });
   });
 
@@ -1263,21 +1310,21 @@ describe("auto-discovered bunfig.toml [run] section", () => {
 
   // Elision only happens on a terminal. On POSIX FORCE_COLOR=1 turns the
   // terminal renderer on for a pipe; on Windows it stays off (see runElideLinesTest).
-  test.skipIf(isWindows)("[run] elide-lines = 0 disables elision for --filter", () => {
-    using dir = workspace("filter-bunfig-elide", "[run]\nelide-lines = 0\n");
+  test.skipIf(isWindows)("[run] elide-lines enables elision for --filter", () => {
+    using dir = workspace("filter-bunfig-elide", "[run]\nelide-lines = 15\n");
     const r = run(String(dir), ["run", "--filter", "dep0", "lines"], { FORCE_COLOR: "1", NO_COLOR: "0" });
-    expect(r.stdout).not.toMatch(/lines elided/);
-    expect(r.stdout).toMatch(/(?:log_line[\s\S]*?){20}/);
+    expect(r.stdout).toMatch(/\[5 lines elided\]/);
     expect(r.exitCode).toBe(0);
   });
 
   test.skipIf(isWindows)("--elide-lines on the CLI wins over [run] elide-lines", () => {
-    using dir = workspace("filter-bunfig-cli-elide", "[run]\nelide-lines = 0\n");
-    const r = run(String(dir), ["run", "--elide-lines", "15", "--filter", "dep0", "lines"], {
+    using dir = workspace("filter-bunfig-cli-elide", "[run]\nelide-lines = 15\n");
+    const r = run(String(dir), ["run", "--elide-lines", "0", "--filter", "dep0", "lines"], {
       FORCE_COLOR: "1",
       NO_COLOR: "0",
     });
-    expect(r.stdout).toMatch(/\[5 lines elided\]/);
+    expect(r.stdout).not.toMatch(/lines elided/);
+    expect(r.stdout).toMatch(/(?:log_line[\s\S]*?){20}/);
     expect(r.exitCode).toBe(0);
   });
 

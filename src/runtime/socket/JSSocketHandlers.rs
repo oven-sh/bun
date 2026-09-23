@@ -60,7 +60,7 @@ enum Field {
 
 /// Number of callback fields (everything before `Promise`). Matches
 /// `Bun::JSSocketHandlers::numberOfCallbacks`.
-pub const CALLBACK_COUNT: usize = Field::Promise as usize;
+pub(crate) const CALLBACK_COUNT: usize = Field::Promise as usize;
 
 /// A `Bun::JSSocketHandlers` cell.
 ///
@@ -68,7 +68,7 @@ pub const CALLBACK_COUNT: usize = Field::Promise as usize;
 /// in a visited slot, or while a [`root`](Self::root) handle is alive. It is
 /// `Copy` because it is just the cell's `JSValue`.
 #[derive(Clone, Copy)]
-pub struct JSSocketHandlers(JSValue);
+pub(crate) struct JSSocketHandlers(JSValue);
 
 /// Defines a getter per callback field.
 macro_rules! callback_getters {
@@ -76,7 +76,7 @@ macro_rules! callback_getters {
         $(
             /// The callback, or `JSValue::ZERO` if unset.
             #[inline]
-            pub fn $name(self) -> JSValue {
+            pub(crate) fn $name(self) -> JSValue {
                 self.get(Field::$field)
             }
         )*
@@ -92,7 +92,7 @@ impl JSSocketHandlers {
 
     /// The cell as a `JSValue`, to store in a wrapper's visited slot.
     #[inline]
-    pub fn to_js(self) -> JSValue {
+    pub(crate) fn to_js(self) -> JSValue {
         self.0
     }
 

@@ -2415,10 +2415,16 @@ impl<const SSL: bool> NewSocket<SSL> {
         // this error can change if called in different stages of hanshake
         // is very usefull to have this feature depending on the user workflow
         let ssl_error = this.socket.get().get_verify_error();
-        if ssl_error.error_no == 0 {
-            return Ok(this
-                .stored_verify_error_to_js(global)
-                .unwrap_or(JSValue::NULL));
+        // `on_handshake` stores the name verdict, with its full message, for the in-handshake check too.
+        if ssl_error.error_no == 0
+            || ssl_error.error_no == uws::us_bun_verify_error_t::HOSTNAME_MISMATCH
+        {
+            if let Some(stored) = this.stored_verify_error_to_js(global) {
+                return Ok(stored);
+            }
+            if ssl_error.error_no == 0 {
+                return Ok(JSValue::NULL);
+            }
         }
 
         let code: &[u8] = ssl_error.code_bytes();

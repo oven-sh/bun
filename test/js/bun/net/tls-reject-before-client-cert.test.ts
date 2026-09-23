@@ -232,16 +232,21 @@ const tlsOutcome = (socket: tls.TLSSocket) =>
 // authorized handshake. `target` is a TCP port, or the path of a Windows named
 // pipe. `upgrade` connects in plain TCP first and starts TLS with
 // socket.upgradeTLS(). `onOpen` runs in the TLS socket's `open` callback,
-// before the handshake.
+// before the handshake. `onHandshake` runs first in its `handshake` callback.
 const bunConnectOutcome = (
   target: number | string,
   tlsOpts: object,
-  { upgrade = false, onOpen }: { upgrade?: boolean; onOpen?: (socket: any) => void } = {},
+  {
+    upgrade = false,
+    onOpen,
+    onHandshake,
+  }: { upgrade?: boolean; onOpen?: (socket: any) => void; onHandshake?: (socket: any) => void } = {},
 ) =>
   new Promise<any>(resolve => {
     const tlsHandlers = {
       open: (socket: any) => onOpen?.(socket),
       handshake(socket: any, authorized: boolean, error: Error | null) {
+        onHandshake?.(socket);
         resolve(error ?? (authorized ? null : new Error("not authorized, and no error")));
         socket.end();
       },
@@ -503,13 +508,18 @@ describe.each(["TLSv1.3", "TLSv1.2"] as const)(
 
     test("Bun.connect", async () => {
       await using srv = await mtlsServer({ identity: otherHost, maxVersion });
-      const err = await bunConnectOutcome(srv.port, otherHostMtls);
+      let fromGetter: any;
+      const err = await bunConnectOutcome(srv.port, otherHostMtls, {
+        onHandshake: socket => (fromGetter = socket.getAuthorizationError()),
+      });
       // The error of the check after the handshake, which a server that asks
-      // for no certificate still gets.
-      expect({ code: err?.code, message: err?.message }).toEqual({
+      // for no certificate still gets. The getter agrees with the callback.
+      const expected = {
         code: "ERR_TLS_CERT_ALTNAME_INVALID",
         message: "Hostname/IP does not match certificate's altnames: Host: localhost. is not cert's CN: agent1",
-      });
+      };
+      expect({ code: err?.code, message: err?.message }).toEqual(expected);
+      expect({ code: fromGetter?.code, message: fromGetter?.message }).toEqual(expected);
       await srv.seen.closed;
       expect(srv.seen.peerCN).toBeNull();
       expect(srv.seen.clientTlsBytes).toBe(srv.seen.clientHelloBytes);
@@ -605,21 +615,31 @@ describe.each(["TLSv1.3", "TLSv1.2"] as const)(
     test.skipIf(!isWindows)("Bun.connect over a named pipe", async () => {
       const pipe = pipeName();
       await using srv = await mtlsServer({ identity: otherHost, maxVersion, pipe });
-      const err = await bunConnectOutcome(pipe, otherHostMtls);
+      let fromGetter: any;
+      const err = await bunConnectOutcome(pipe, otherHostMtls, {
+        onHandshake: socket => (fromGetter = socket.getAuthorizationError()),
+      });
       expect(err?.code).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
+      expect({ code: fromGetter?.code, message: fromGetter?.message }).toEqual({
+        code: err.code,
+        message: err.message,
+      });
       await srv.seen.closed;
       expect(srv.seen.peerCN).toBeNull();
       expect(srv.seen.clientTlsBytes).toBe(srv.seen.clientHelloBytes);
     });
 
     // With no certificate to withhold the check stays where it was, after the
-    // handshake: the client's second flight goes out and the error is the same.
+    // handshake, and the error is the same. TLS 1.2 shows it on the wire: the
+    // client's second flight leaves before the server's Finished arrives.
+    // Under TLS 1.3 that flight leaves only when the client closes, so its
+    // size is a matter of the close path and not of this check.
     test("a client with no certificate rejects after the handshake as before", async () => {
       await using srv = await mtlsServer({ identity: otherHost, onSecure: httpOk, maxVersion });
       const err = await settle(fetch(`https://localhost:${srv.port}/`, { tls: { ca: otherHostMtls.ca } }));
       expect(err?.code).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
       await srv.seen.closed;
-      expect(srv.seen.clientTlsBytes).toBeGreaterThan(srv.seen.clientHelloBytes);
+      if (maxVersion === "TLSv1.2") expect(srv.seen.clientTlsBytes).toBeGreaterThan(srv.seen.clientHelloBytes);
     });
 
     // A checkServerIdentity function owns the verdict, and it can accept a
@@ -827,6 +847,20 @@ describe.each(["TLSv1.3", "TLSv1.2"] as const)(
           { onOpen: socket => socket.setVerifyMode(true, true) },
         );
         expect(err?.code).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
+        await srv.seen.closed;
+        expect(srv.seen.peerCN).toBeNull();
+        expect(srv.seen.clientTlsBytes).toBe(srv.seen.clientHelloBytes);
+      });
+
+      // Rejection turned on after connect covers the chain as well as the name.
+      test("setVerifyMode(false, true) sends no client certificate to a server whose chain fails", async () => {
+        await using srv = await mtlsServer({ maxVersion });
+        const err = await bunConnectOutcome(
+          srv.port,
+          { ...mtls, rejectUnauthorized: false },
+          { onOpen: socket => socket.setVerifyMode(false, true) },
+        );
+        expect(err?.code).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
         await srv.seen.closed;
         expect(srv.seen.peerCN).toBeNull();
         expect(srv.seen.clientTlsBytes).toBe(srv.seen.clientHelloBytes);

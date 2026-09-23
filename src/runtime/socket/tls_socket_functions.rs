@@ -903,7 +903,7 @@ pub(crate) fn set_key_cert(
         return Ok(JSValue::UNDEFINED);
     };
     // SAFETY: `sc` is a live SecureContext; SSL_set_SSL_CTX takes its own reference.
-    unsafe {
+    let applied = unsafe {
         let ctx = &(*sc).ctx;
         ffi::SSL_set_SSL_CTX(ssl_ptr.cast(), ctx.as_ptr().cast());
         // SSL_set_SSL_CTX stops retargeting the certificate once ClientHello
@@ -921,13 +921,16 @@ pub(crate) fn set_key_cert(
             {
                 ok_chain = ffi::SSL_set1_chain(ssl_ptr.cast(), chain);
             }
-            if ok_cert != 1 || ok_key != 1 || ok_chain != 1 {
-                return Err(global.throw(format_args!("setKeyCert failed to apply the context")));
-            }
+            ok_cert == 1 && ok_key == 1 && ok_chain == 1
+        } else {
+            true
         }
-    }
-    // SSL_set_SSL_CTX replaced the certificate callback with the context's.
+    };
+    // SSL_set_SSL_CTX replaced the certificate callback with the context's, also when the rest failed.
     this.sync_server_identity(ssl_ptr);
+    if !applied {
+        return Err(global.throw(format_args!("setKeyCert failed to apply the context")));
+    }
     Ok(JSValue::UNDEFINED)
 }
 
@@ -1318,12 +1321,14 @@ pub(super) fn set_verify_mode(
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
-    // we always allow and check the SSL certificate after the handshake or renegotiation
-    ffi::SSL_set_verify(
-        boringssl::SSL::opaque_ref(ssl_ptr),
-        verify_mode,
-        Some(always_allow_ssl_verify_callback),
-    );
+    let ssl = boringssl::SSL::opaque_ref(ssl_ptr);
+    if !acts_as_server && reject_unauthorized && ffi::SSL_is_init_finished(ssl) == 0 {
+        // The same in-handshake chain check as for a client that rejects from the start.
+        ffi::us_internal_ssl_set_inline_reject(ssl);
+    } else {
+        // we always allow and check the SSL certificate after the handshake or renegotiation
+        ffi::SSL_set_verify(ssl, verify_mode, Some(always_allow_ssl_verify_callback));
+    }
     this.sync_server_identity(ssl_ptr);
     Ok(JSValue::UNDEFINED)
 }

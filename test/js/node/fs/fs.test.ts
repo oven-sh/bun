@@ -7295,6 +7295,45 @@ describe("a process.nextTick queued by an fs callback runs before a microtask it
     expect(stdout.trim()).toBe("callback nextTick microtask");
     expect(exitCode).toBe(0);
   });
+
+  // fs.rm is a promise chain in JS. Its reaction calls process.nextTick, and here that call creates the tick queue.
+  it("when the callback is the first use of process.nextTick in the process", async () => {
+    using dir = tempDir("fs-callback-order", { "file.txt": "hello" });
+    const script = `
+      const fs = require("fs");
+      const order = [];
+      process.on("exit", () => console.log(order.join(" ")));
+      fs.rm(${JSON.stringify(join(String(dir), "file.txt"))}, () => {
+        order.push("callback");
+        process.nextTick(() => order.push("nextTick"));
+        queueMicrotask(() => order.push("microtask"));
+      });
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("callback nextTick microtask");
+    expect(exitCode).toBe(0);
+  });
+});
+
+// The first read of process.nextTick creates the tick queue. From then on every event loop task drains it.
+it("loading node:fs does not create the process.nextTick queue", async () => {
+  const script = `
+    const { heapStats } = require("bun:jsc");
+    const queues = () => heapStats().objectTypeCounts.NextTickQueue ?? 0;
+    require("node:fs");
+    const afterLoad = queues();
+    process.nextTick;
+    console.log(JSON.stringify({ afterLoad, afterRead: queues() }));
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({ afterLoad: 0, afterRead: 1 });
+  expect(exitCode).toBe(0);
 });
 
 // The operation pins the buffer while it runs. Node can transfer it from the callback.

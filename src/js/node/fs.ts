@@ -24,9 +24,6 @@ function lazyGlob() {
 
 const { guardCallback, kCustomPromisifyArgsSymbol } = require("internal/shared");
 
-// Captured at load: a process.nextTick that user code replaces later (fake timers) must not hold back fs callbacks.
-const nextTick = process.nextTick;
-
 // guardCallback reroutes a throw inside the user callback to the
 // uncaughtException path.
 function wrapFsCallback(callback) {
@@ -44,16 +41,17 @@ function ensureCallback(callback) {
 }
 
 // Via nextTick: called from the reaction itself (a microtask), a callback's microtasks would run before its nextTicks.
+// process.nextTick is read at each call, not at load: the first read creates the tick queue, and every event loop task then drains it.
 function settleCallback(promise, callback) {
   promise.then(
-    value => nextTick(callback, null, value),
-    err => nextTick(callback, err),
+    value => process.nextTick(callback, null, value),
+    err => process.nextTick(callback, err),
   );
 }
 function settleCallbackWithNull(promise, callback) {
   promise.then(
-    () => nextTick(callback, null),
-    err => nextTick(callback, err),
+    () => process.nextTick(callback, null),
+    err => process.nextTick(callback, err),
   );
 }
 
@@ -393,7 +391,7 @@ var access = function access(path, mode, callback?) {
 
     const signal = options?.signal;
     if (signal?.aborted) {
-      nextTick(callback, $makeAbortError(undefined, { cause: signal.reason }));
+      process.nextTick(callback, $makeAbortError(undefined, { cause: signal.reason }));
       return;
     }
 
@@ -865,7 +863,7 @@ const realpath: typeof import("node:fs").realpath =
             LOOP();
           });
         } else {
-          nextTick(LOOP);
+          process.nextTick(LOOP);
         }
 
         // Walk down the path, swapping out linked path parts for their real
@@ -909,7 +907,7 @@ const realpath: typeof import("node:fs").realpath =
           // If not a symlink, skip to the next path part
           if (!stats.isSymbolicLink()) {
             knownHard.add(base);
-            return nextTick(LOOP);
+            return process.nextTick(LOOP);
           }
 
           // Stat & read the link if not read before.
@@ -944,7 +942,7 @@ const realpath: typeof import("node:fs").realpath =
               LOOP();
             });
           } else {
-            nextTick(LOOP);
+            process.nextTick(LOOP);
           }
         }
       } as typeof import("node:fs").realpath);
@@ -1022,13 +1020,13 @@ function _toUnixTimestamp(time: any, name = "time") {
 
 function onOpendirStatFulfilled(callback, path, result, stats) {
   if (!stats.isDirectory()) {
-    nextTick(callback, opendirNotDirError(path));
+    process.nextTick(callback, opendirNotDirError(path));
     return;
   }
-  nextTick(callback, null, result);
+  process.nextTick(callback, null, result);
 }
 function onOpendirStatRejected(callback, path, err) {
-  nextTick(callback, typeof err?.errno === "number" ? opendirStatError(err, path) : err);
+  process.nextTick(callback, typeof err?.errno === "number" ? opendirStatError(err, path) : err);
 }
 
 function opendirSync(path, options) {

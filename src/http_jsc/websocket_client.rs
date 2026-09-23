@@ -120,6 +120,9 @@ pub struct WebSocket<const SSL: bool> {
     /// used the shared default context.
     pub(crate) secure: Cell<Option<OwnedSslCtx>>,
 
+    /// Hostname the upgrade client verified. A renegotiation re-checks it: an IP host has no SNI.
+    verified_hostname: Box<[u8]>,
+
     /// Proxy tunnel for wss:// through HTTP proxy.
     /// When set, all I/O goes through the tunnel (TLS encryption/decryption).
     /// The tunnel handles the TLS layer, so this is used with ssl=false.
@@ -241,6 +244,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.cancel_guarded();
     }
 
+    /// Only a TLS renegotiation reaches this: the upgrade client handles the first handshake.
     pub fn handle_handshake(
         &self,
         socket: Socket<SSL>,
@@ -278,8 +282,8 @@ impl<const SSL: bool> WebSocket<SSL> {
             self.fail(ErrorCode::FailedToConnect);
             return;
         };
-        let hostname = ssl.servername().map(<[u8]>::to_vec).unwrap_or_default();
-        if hostname.is_empty() || !boringssl::check_server_identity(ssl, &hostname) {
+        let hostname = &self.verified_hostname;
+        if hostname.is_empty() || !boringssl::check_server_identity(ssl, hostname) {
             self.fail(ErrorCode::FailedToConnect);
         }
     }
@@ -1400,6 +1404,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         global_this: &JSGlobalObject,
         deflate_params: Option<&websocket_deflate::Params>,
         secure: Option<OwnedSslCtx>,
+        verified_hostname: &[u8],
         proxy_tunnel: Option<RefPtr<WebSocketProxyTunnel>>,
     ) -> RefPtr<Self> {
         let ws = RefPtr::new(WebSocket::<SSL> {
@@ -1430,6 +1435,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             receiving_compressed: Cell::new(false),
             message_is_compressed: Cell::new(false),
             secure: Cell::new(secure),
+            verified_hostname: Box::from(verified_hostname),
             proxy_tunnel: JsCell::new(proxy_tunnel),
         });
         bun_core::scoped_log!(alloc, "new({}) = {:p}", Self::ALLOC_TYPE_NAME, ws.as_ptr());
@@ -1484,8 +1490,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         buffered_data: Option<Box<InitialData>>,
         deflate_params: Option<&websocket_deflate::Params>,
         secure: Option<OwnedSslCtx>,
+        verified_hostname: &[u8],
     ) -> *mut Self {
-        let ws = Self::new_raw(global_this, deflate_params, secure, None);
+        let ws = Self::new_raw(global_this, deflate_params, secure, verified_hostname, None);
         let this = ws.this_ptr();
 
         // `adopt_group` takes a closure to write the new socket.
@@ -1535,6 +1542,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             global_this,
             deflate_params,
             None,
+            &[],
             Some(RefPtr::from_this(tunnel)),
         );
 
@@ -1698,6 +1706,7 @@ pub fn bun__websocketclient__init(
     buffered_data: Option<Box<crate::websocket_client::InitialData>>,
     deflate_params: Option<&crate::websocket_client::websocket_deflate::Params>,
     secure: Option<bun_boringssl::c::OwnedSslCtx>,
+    verified_hostname: &[u8],
 ) -> *mut crate::websocket_client::WebSocketClient {
     WebSocketClient::init(
         outgoing,
@@ -1706,6 +1715,7 @@ pub fn bun__websocketclient__init(
         buffered_data,
         deflate_params,
         secure,
+        verified_hostname,
     )
 }
 // HOST_EXPORT(Bun__WebSocketClient__initWithTunnel, c)
@@ -1785,6 +1795,7 @@ pub fn bun__websocketclienttls__init(
     buffered_data: Option<Box<crate::websocket_client::InitialData>>,
     deflate_params: Option<&crate::websocket_client::websocket_deflate::Params>,
     secure: Option<bun_boringssl::c::OwnedSslCtx>,
+    verified_hostname: &[u8],
 ) -> *mut crate::websocket_client::WebSocketClientTLS {
     WebSocketClientTLS::init(
         outgoing,
@@ -1793,6 +1804,7 @@ pub fn bun__websocketclienttls__init(
         buffered_data,
         deflate_params,
         secure,
+        verified_hostname,
     )
 }
 // HOST_EXPORT(Bun__WebSocketClientTLS__memoryCost, c)

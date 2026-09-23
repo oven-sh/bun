@@ -487,6 +487,23 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       );
     });
 
+    // The JS thread parks without heap access during an idle collection, so its end phase runs on the collector thread.
+    it.skipIf(isWindows)(
+      "an idle collection on the collector thread runs the finalizers on the JS thread",
+      async () => {
+        const result = await runOn(bunExe(), "test_external_buffer_finalized_by_idle_collection", [], {
+          BUN_IDLE_GC_SECONDS: "1",
+          BUN_GC_TIMER_DISABLE: undefined,
+          BUN_GC_TIMER_INTERVAL: undefined,
+          BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS: "0",
+        } as any);
+        expect(result).toStartWith(
+          "experimental: finalized=true finalizedOffThread=0\ndeferred: finalized=true finalizedOffThread=0\n",
+        );
+      },
+      30_000,
+    );
+
     it("a worker's buffers reach the parent as copies and are finalized by the worker's env teardown", async () => {
       const result = await checkSameOutput("test_external_buffer_worker_exit", []);
       const message = JSON.stringify({

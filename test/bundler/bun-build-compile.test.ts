@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isArm64, isDebug, isLinux, isMacOS, isMusl, isPosix, isWindows, tempDir } from "harness";
-import { chmodSync, closeSync, cpSync, existsSync, openSync, readdirSync, readSync } from "node:fs";
+import { chmodSync, closeSync, cpSync, existsSync, openSync, readdirSync, readSync, statSync } from "node:fs";
 import { join } from "path";
 
 describe("Bun.build compile", () => {
@@ -36,7 +36,8 @@ describe("Bun.build compile", () => {
   });
 
   // The executable's embedded bytecode is mapped for the life of the process, so decoded instruction streams alias it
-  // instead of being copied into private memory. Same binary with the aliasing switched off is the control.
+  // instead of being copied into private memory. The same bundle run from an on-disk .jsc, whose bytes are an owned buffer
+  // the instruction streams are copied out of, is the control.
   test.skipIf(!isLinux)(
     "bytecode from a compiled executable is not copied into private memory",
     async () => {
@@ -62,33 +63,90 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
         entrypoints: [join(dir + "", "app.js")],
         compile: { outfile },
         bytecode: true,
-        format: "esm",
+        format: "cjs",
         target: "bun",
       });
       expect(result.success).toBe(true);
 
-      const run = async (extraEnv: Record<string, string>) => {
+      // The same program as `app.js` + `app.js.jsc` on disk: that bytecode is read into an owned buffer and its instruction
+      // streams are copied out of it, which is the private memory the executable's mapped payload never allocates.
+      const ondisk = await Bun.build({
+        entrypoints: [join(dir + "", "app.js")],
+        outdir: join(dir + "", "out"),
+        bytecode: true,
+        format: "cjs",
+        target: "bun",
+      });
+      expect(ondisk.success).toBe(true);
+
+      const run = async (cmd: string[]) => {
         await using proc = Bun.spawn({
-          cmd: [outfile],
-          env: { ...bunEnv, ...extraEnv },
+          cmd,
+          cwd: dir + "",
+          env: { ...bunEnv, BUN_JSC_verboseDiskCache: "1" },
           stdout: "pipe",
           stderr: "pipe",
         });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect(stderr).toBe("");
+        // Both runs execute the bundle from its bytecode, not from a parse, and print nothing else.
+        const lines = stderr.split("\n").filter(Boolean);
+        expect(lines.filter(l => !l.startsWith("[Disk Cache] "))).toEqual([]);
+        expect(lines).toContain("[Disk Cache] Cache hit for sourceCode");
         expect(stdout).toContain("anonKB");
         expect(exitCode).toBe(0);
         return JSON.parse(stdout.trim()) as { n: number; anonKB: number };
       };
-      const aliased = await run({});
-      const copied = await run({ BUN_JSC_useBorrowedBytecodeFromCache: "0" });
+      const aliased = await run([outfile]);
+      const copied = await run([bunExe(), join(dir + "", "out", "app.js")]);
       expect(aliased.n).toBe(2000);
       expect(copied.n).toBe(2000);
+      // The on-disk run also holds app.js and app.js.jsc themselves in owned buffers; that much is not copying.
+      const heldKB =
+        (statSync(join(dir + "", "out", "app.js")).size + statSync(join(dir + "", "out", "app.js.jsc")).size) / 1024;
       // 4000 decoded functions carry ~11 MB of instruction stream + expression info; copied, that is anonymous memory the aliasing run never allocates.
-      expect(copied.anonKB - aliased.anonKB).toBeGreaterThan(4096);
+      expect(copied.anonKB - heldKB - aliased.anonKB).toBeGreaterThan(4096);
     },
     60_000,
   );
+
+  // Bytecode is counted among the outputs before it is generated. JSC rejects this regular expression, which the bundler
+  // passes through, so that chunk ends up without bytecode: the files after it must still be in the executable.
+  test("a chunk whose bytecode cannot be generated keeps the embedded files", async () => {
+    using dir = tempDir("build-compile-bytecode-failed", {
+      "logo.png": "PNGDATA",
+      "data.bin": "BINDATA",
+      "index.js": `
+          import logo from "./logo.png" with { type: "file" };
+          import data from "./data.bin" with { type: "file" };
+          console.log(await Bun.file(logo).text(), await Bun.file(data).text());
+          try {
+            const { bad } = await import("./bad.js");
+            console.log(bad("x"));
+          } catch (error) {
+            console.log(error.name);
+          }
+        `,
+      "bad.js": String.raw`export const bad = s => /\p{NotAProperty}/u.test(s);`,
+    });
+    const outfile = join(String(dir), isWindows ? "app.exe" : "app");
+    const build = await Bun.build({
+      entrypoints: [join(String(dir), "index.js")],
+      target: "bun",
+      format: "esm",
+      splitting: true,
+      bytecode: true,
+      compile: { outfile },
+    });
+    expect(build.success).toBe(true);
+    // Loading a module JSC cannot parse leaves an exception unchecked in ModuleProgramExecutable::tryCreate
+    // (oven-sh/WebKit#718), which the ASAN lane's exception-check validation turns into an abort. Remove the
+    // override once WEBKIT_VERSION includes that fix.
+    const env = { ...bunEnv, BUN_JSC_validateExceptionChecks: "0" };
+    await using proc = Bun.spawn({ cmd: [outfile], env, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "PNGDATA BINDATA\nSyntaxError\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  }, 60_000);
 
   // --bytecode into an executable for another os/arch/libc embeds bytecode written by this platform's JavaScriptCore for
   // another's; such executables say so in crash reports (Features: cross_compiled_bytecode). The "other platform" build

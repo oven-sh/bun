@@ -47,6 +47,7 @@ unsafe extern "C" {
         buffered_data: Option<Box<InitialData>>,
         deflate_params: Option<&websocket_deflate::Params>,
         secure: Option<OwnedSslCtx>,
+        verified_hostname: FfiSlice<'_>,
     );
     #[allow(improper_ctypes)]
     safe fn WebSocket__didConnectWithTunnel(
@@ -146,14 +147,9 @@ impl CppWebSocket {
         event_loop.exit();
     }
 
+    /// A field read on the C++ side: no JS runs, so no event-loop entry.
     pub(crate) fn reject_unauthorized(&self) -> bool {
-        // SAFETY: VirtualMachine::get() returns the live current-thread VM;
-        // event_loop() yields its raw event-loop pointer (live for VM lifetime).
-        let event_loop = VirtualMachine::get().event_loop_mut();
-        event_loop.enter();
-        let result = WebSocket__rejectUnauthorized(self);
-        event_loop.exit();
-        result
+        WebSocket__rejectUnauthorized(self)
     }
 
     /// Rooted through the JS wrapper, which is alive while the socket is.
@@ -169,10 +165,18 @@ impl CppWebSocket {
         buffered_data: Option<Box<InitialData>>,
         deflate_params: Option<&websocket_deflate::Params>,
         secure: Option<OwnedSslCtx>,
+        verified_hostname: &[u8],
     ) {
         let event_loop = VirtualMachine::get().event_loop_mut();
         event_loop.enter();
-        WebSocket__didConnect(self, socket, buffered_data, deflate_params, secure);
+        WebSocket__didConnect(
+            self,
+            socket,
+            buffered_data,
+            deflate_params,
+            secure,
+            verified_hostname.into(),
+        );
         event_loop.exit();
     }
 

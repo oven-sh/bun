@@ -609,6 +609,8 @@ interface BuildkiteAnnotation {
   content: string;
   style?: "error" | "warning" | "info";
   priority?: number;
+  /** Add to what the context already says (the default), or say this instead of it. */
+  append?: boolean;
 }
 
 export function reportAnnotationToBuildkite({
@@ -617,6 +619,7 @@ export function reportAnnotationToBuildkite({
   content,
   style = "error",
   priority = 3,
+  append = true,
 }: BuildkiteAnnotation): void {
   if (!isBuildkite) {
     return;
@@ -628,7 +631,16 @@ export function reportAnnotationToBuildkite({
   for (const attempt of [1, 2]) {
     const { error, status, signal, stderr } = spawnSync(
       "buildkite-agent",
-      ["annotate", "--append", "--style", `${style}`, "--context", ctx, "--priority", `${priority}`],
+      [
+        "annotate",
+        ...(append ? ["--append"] : []),
+        "--style",
+        `${style}`,
+        "--context",
+        ctx,
+        "--priority",
+        `${priority}`,
+      ],
       {
         input: content,
         stdio: ["pipe", "ignore", "pipe"],

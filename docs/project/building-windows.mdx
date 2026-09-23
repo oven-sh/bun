@@ -95,9 +95,6 @@ Get-Command mt
 
 ```ps1
 bun run build
-
-# after the initial `bun run build` you can use the following to build
-ninja -Cbuild/debug
 ```
 
 A successful build writes `bun-debug.exe` to the `build/debug` folder.
@@ -110,7 +107,7 @@ Add this folder to `$Env:PATH`: open the Start menu, type "Path", and use the en
 
 ## Extra paths
 
-- The build extracts WebKit to `$Env:BUN_INSTALL\build-cache\webkit-<version>-debug` (`webkit-<version>-arm64-debug` on ARM64); `BUN_INSTALL` defaults to `~\.bun`
+- The build extracts WebKit to `$Env:BUN_INSTALL\build-cache\webkit-<version>-debug` (`webkit-<version>-arm64-debug` on ARM64); `BUN_INSTALL` defaults to `~\.bun`. Set `$Env:BUN_BUILD_CACHE_DIR` to put the build cache somewhere else.
 
 ## Tests
 

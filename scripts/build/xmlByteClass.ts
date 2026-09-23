@@ -46,7 +46,7 @@ function check() {
   }
 }
 
-export function generateXmlByteClass(cfg: Config): { h: string; rs: string } {
+export function generateXmlByteClass(cfg: Pick<Config, "codegenDir">): { h: string; rs: string } {
   check();
 
   const banner = (comment: string) => [

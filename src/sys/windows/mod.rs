@@ -559,6 +559,9 @@ pub use bun_windows_sys::{PEB, RTL_USER_PROCESS_PARAMETERS, TEB, teb};
 pub use bun_windows_sys::externs::CreateJobObjectA;
 
 pub use bun_windows_sys::externs::AssignProcessToJobObject;
+pub use bun_windows_sys::externs::QueryInformationJobObject;
+pub use bun_windows_sys::externs::TerminateJobObject;
+pub use bun_windows_sys::externs::TerminateProcess;
 
 pub use bun_windows_sys::externs::GetCurrentProcess;
 
@@ -1428,7 +1431,7 @@ pub struct PROCESS_MEMORY_COUNTERS {
     pub(crate) QuotaPagedPoolUsage: usize,
     pub(crate) QuotaPeakNonPagedPoolUsage: usize,
     pub(crate) QuotaNonPagedPoolUsage: usize,
-    pub(crate) PagefileUsage: usize,
+    pub PagefileUsage: usize,
     pub(crate) PeakPagefileUsage: usize,
 }
 
@@ -1453,6 +1456,42 @@ pub fn GetProcessMemoryInfo(process: HANDLE) -> Result<PROCESS_MEMORY_COUNTERS, 
         return Err(Win32Error::get());
     }
     Ok(out)
+}
+/// Committed memory of every process in `job`; `JobObjectMemoryUsageInformation` first, `PeakJobMemoryUsed` on older Windows.
+pub fn job_memory_usage(job: HANDLE) -> Option<u64> {
+    use bun_windows_sys::externs::{
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOBOBJECT_MEMORY_USAGE_INFORMATION,
+        JobObjectExtendedLimitInformation, JobObjectMemoryUsageInformation,
+    };
+    let mut usage = JOBOBJECT_MEMORY_USAGE_INFORMATION::default();
+    // SAFETY: out-buffer sized for the info class.
+    if unsafe {
+        QueryInformationJobObject(
+            job,
+            JobObjectMemoryUsageInformation,
+            (&raw mut usage).cast(),
+            size_of::<JOBOBJECT_MEMORY_USAGE_INFORMATION>() as DWORD,
+            core::ptr::null_mut(),
+        )
+    } != 0
+    {
+        return Some(usage.JobMemory);
+    }
+    let mut ext: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = bun_core::ffi::zeroed();
+    // SAFETY: out-buffer sized for the info class.
+    if unsafe {
+        QueryInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            (&raw mut ext).cast(),
+            size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as DWORD,
+            core::ptr::null_mut(),
+        )
+    } != 0
+    {
+        return Some(ext.PeakJobMemoryUsed as u64);
+    }
+    None
 }
 pub use bun_windows_sys::externs::GetConsoleMode;
 pub use bun_windows_sys::externs::SetConsoleMode;

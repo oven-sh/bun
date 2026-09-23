@@ -361,6 +361,7 @@ fn spawn_maybe_sync(
     let mut gid: Option<u32> = None;
     let mut kill_signal: SignalCode = SignalCode::DEFAULT;
     let mut max_buffer: Option<i64> = None;
+    let mut max_memory: Option<u64> = None;
     #[cfg(any(target_os = "linux", target_os = "android"))]
     let mut cgroup: Option<CgroupTarget> = None;
 
@@ -763,6 +764,25 @@ fn spawn_maybe_sync(
                             format_args!("Unknown signal: 0"),
                         )
                         .throw());
+                }
+            }
+
+            if let Some(val) = args.get(cx.global(), "maxMemory")? {
+                if !val.is_undefined_or_null()
+                    && !(val.is_number() && val.as_number().is_infinite() && val.as_number() > 0.0)
+                {
+                    let bytes = cx.global().validate_integer_range::<u64>(
+                        val,
+                        0,
+                        bun_sql_jsc::jsc::IntegerRange {
+                            min: 0,
+                            field_name: b"maxMemory",
+                            ..Default::default()
+                        },
+                    )?;
+                    if bytes > 0 {
+                        max_memory = Some(bytes);
+                    }
                 }
             }
 
@@ -1330,6 +1350,8 @@ fn spawn_maybe_sync(
             crate::timer::EventLoopTimerTag::SubprocessTimeout,
         )),
         exited_due_to_maxbuf: Cell::new(None),
+        memory_watch: JsCell::new(None),
+        exited_due_to_max_memory: Cell::new(false),
     }));
     // SAFETY: subprocess_ptr is a freshly-boxed Subprocess; we hold the only reference.
     let subprocess = unsafe { &mut *subprocess_ptr };
@@ -1624,6 +1646,10 @@ fn spawn_maybe_sync(
         subprocess.this_value.with_mut(|v| v.set_weak(out));
         // Immediately upgrade to strong if there's pending activity to prevent premature GC
         subprocess.update_has_pending_activity();
+    }
+
+    if let Some(limit) = max_memory {
+        subprocess.watch_memory(limit);
     }
 
     let mut send_exit_notification = false;
@@ -2009,6 +2035,7 @@ fn spawn_maybe_sync(
         });
     let exited_due_to_timeout = did_timeout;
     let exited_due_to_max_buffer = subprocess.exited_due_to_maxbuf.get();
+    let exited_due_to_max_memory = subprocess.exited_due_to_max_memory.get();
     let result_pid = JSValue::js_number_from_int32(subprocess.pid());
     // SAFETY: `subprocess_ptr` was produced by `heap::into_raw(Box::new(...))`
     // above (spawnSync path: never handed to a JS wrapper); do what the
@@ -2064,6 +2091,13 @@ fn spawn_maybe_sync(
             } else {
                 JSValue::FALSE
             },
+        );
+    }
+    if max_memory.is_some() {
+        sync_value.put(
+            cx.global(),
+            b"exitedDueToMaxMemory",
+            JSValue::from(exited_due_to_max_memory),
         );
     }
     sync_value.put(cx.global(), b"pid", result_pid);

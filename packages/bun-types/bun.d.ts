@@ -7933,6 +7933,18 @@ declare module "bun" {
        * @default undefined (no limit)
        */
       maxBuffer?: number;
+
+      /**
+       * The maximum number of bytes of memory the process and its descendants
+       * may use, combined. If the tree goes over this limit, every process in
+       * it is killed with `killSignal` (defaults to SIGTERM).
+       *
+       * Measured as physical footprint on macOS, resident anonymous memory on
+       * Linux, and committed memory of a Job Object on Windows.
+       *
+       * @default undefined (no limit)
+       */
+      maxMemory?: number;
     }
 
     interface SpawnSyncOptions<In extends Writable, Out extends Readable, Err extends Readable>
@@ -8257,6 +8269,11 @@ declare module "bun" {
     signalCode?: NodeJS.Signals | number;
     exitedDueToTimeout?: boolean;
     exitedDueToMaxBuffer?: boolean;
+
+    /**
+     * `true` if the process tree exceeded {@link SpawnOptions.maxMemory} and was killed for it.
+     */
+    exitedDueToMaxMemory?: boolean;
     pid: number;
   }
 

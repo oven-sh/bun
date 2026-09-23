@@ -158,6 +158,8 @@ pub struct Subprocess<'a> {
     pub(crate) stdout_maxbuf: Cell<Option<NonNull<MaxBuf::MaxBuf>>>,
     pub(crate) stderr_maxbuf: Cell<Option<NonNull<MaxBuf::MaxBuf>>>,
     pub(crate) exited_due_to_maxbuf: Cell<Option<MaxBuf::Kind>>,
+    pub(crate) memory_watch: JsCell<Option<std::sync::Arc<bun_spawn::memory_watcher::Watch>>>,
+    pub(crate) exited_due_to_max_memory: Cell<bool>,
 }
 
 bun_event_loop::impl_timer_owner!(Subprocess<'_>; from_timer_ptr => event_loop_timer);
@@ -657,6 +659,34 @@ impl Subprocess<'_> {
         crate::jsc_hooks::timer_all_mut()
     }
 
+    pub(crate) fn watch_memory(&self, limit: u64) {
+        if self.has_exited() {
+            return;
+        }
+        let opts = bun_spawn::memory_watcher::WatchOptions {
+            pid: self.pid(),
+            limit,
+            signal: self.kill_signal.0,
+            #[cfg(windows)]
+            process: match self.process.os_handle() {
+                Some(h) => h,
+                None => return,
+            },
+        };
+        if let Ok(w) = bun_spawn::memory_watcher::watch(opts) {
+            self.memory_watch.set(Some(w));
+        }
+    }
+
+    fn unwatch_memory(&self) {
+        if let Some(w) = self.memory_watch.replace(None) {
+            w.unwatch();
+            if w.exceeded() {
+                self.exited_due_to_max_memory.set(true);
+            }
+        }
+    }
+
     pub(crate) fn timeout_callback(&self) {
         self.set_event_loop_timer_refd(false);
         if self.event_loop_timer.get().state == EventLoopTimerState::CANCELLED {
@@ -973,6 +1003,7 @@ impl Subprocess<'_> {
             Self::timer_all().remove(self.event_loop_timer.as_ptr());
         }
         self.set_event_loop_timer_refd(false);
+        self.unwatch_memory();
 
         // SAFETY: `jsc_vm` is the live VM owning `global_this`; mutator-thread
         // only. `process` is the raw `*mut Process` threaded from the vtable
@@ -1353,6 +1384,7 @@ impl Subprocess<'_> {
             Self::timer_all().remove(self.event_loop_timer.as_ptr());
         }
         self.set_event_loop_timer_refd(false);
+        self.unwatch_memory();
 
         let mut mb = self.stdout_maxbuf.get();
         MaxBuf::MaxBuf::remove_from_subprocess(&mut mb);

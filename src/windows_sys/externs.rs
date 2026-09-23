@@ -1444,6 +1444,18 @@ unsafe extern "system" {
     ) -> BOOL;
 
     pub fn OpenProcess(dwDesiredAccess: DWORD, bInheritHandle: BOOL, dwProcessId: DWORD) -> HANDLE;
+
+    pub fn QueryInformationJobObject(
+        hJob: HANDLE,
+        JobObjectInformationClass: DWORD,
+        lpJobObjectInformation: LPVOID,
+        cbJobObjectInformationLength: DWORD,
+        lpReturnLength: LPDWORD,
+    ) -> BOOL;
+
+    pub fn TerminateJobObject(hJob: HANDLE, uExitCode: UINT) -> BOOL;
+
+    pub fn TerminateProcess(hProcess: HANDLE, uExitCode: UINT) -> BOOL;
 }
 
 unsafe extern "C" {
@@ -1459,6 +1471,16 @@ unsafe extern "C" {
 pub const JobObjectAssociateCompletionPortInformation: DWORD = 7;
 /// `JOBOBJECTINFOCLASS::JobObjectExtendedLimitInformation` (`winnt.h`).
 pub const JobObjectExtendedLimitInformation: DWORD = 9;
+/// `JOBOBJECTINFOCLASS::JobObjectMemoryUsageInformation` (`winnt.h`, Windows 10 1607+).
+pub const JobObjectMemoryUsageInformation: DWORD = 28;
+
+/// `JOBOBJECT_MEMORY_USAGE_INFORMATION` (`winnt.h`).
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct JOBOBJECT_MEMORY_USAGE_INFORMATION {
+    pub JobMemory: u64,
+    pub PeakJobMemoryUsed: u64,
+}
 
 /// `WAITORTIMERCALLBACK` (`winnt.h`) — thread-pool callback for
 /// `RegisterWaitForSingleObject`. `TimerOrWaitFired` is `TRUE` on timeout.

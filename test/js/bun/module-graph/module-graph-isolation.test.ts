@@ -3262,7 +3262,8 @@ describe.concurrent("ModuleGraph isolation: competing graphs", () => {
 
   test("errors thrown from every kind of hop in interleaved chains reach the onError of the graph whose chain threw, before and after another graph is disposed", async () => {
     const errors: Record<string, string[]> = { "throws-0": [], "throws-1": [], "throws-2": [] };
-    const uncaughtException = (tag: string) => (error: any, kind: string) => void errors[tag].push(kind + ": " + error.message);
+    const uncaughtException = (tag: string) => (error: any, kind: string) =>
+      void errors[tag].push(kind + ": " + error.message);
     using stack = new DisposableStack();
     const graphs = await Promise.all(
       Object.keys(errors).map(async tag => stack.use(await newGraph({ uncaughtException: uncaughtException(tag) }))),

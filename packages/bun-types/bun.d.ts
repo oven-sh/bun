@@ -5437,9 +5437,7 @@ declare module "bun" {
      *
      * @see https://bun.com/docs/runtime/module-graph#errors
      */
-    uncaughtException?:
-      | ((error: unknown, origin: "uncaughtException" | "unhandledRejection") => void)
-      | undefined;
+    uncaughtException?: ((error: unknown, origin: "uncaughtException" | "unhandledRejection") => void) | undefined;
     /**
      * Called with a rejection nobody handled of a promise that this graph's
      * code made, instead of the process-wide `unhandledRejection` handling,

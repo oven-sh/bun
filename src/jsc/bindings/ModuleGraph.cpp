@@ -158,7 +158,8 @@ JSModuleLoader* moduleLoaderOf(JSGlobalObject* globalObject, ThrowScope& scope, 
     return graph ? graph->loader() : globalObject->moduleLoader();
 }
 
-enum class GraphError : uint8_t { UncaughtException, UnhandledRejection };
+enum class GraphError : uint8_t { UncaughtException,
+    UnhandledRejection };
 
 // The graph that is given an error of `graph`'s code: the nearest of it and the graphs that made it with a handler for
 // it (a graph given none is part of the program of the graph whose code made it). An unhandled rejection with no

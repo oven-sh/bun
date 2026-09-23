@@ -2825,6 +2825,11 @@ function fdWriteFailed(self, err, callback, written, buf, offset, data?, next = 
     callback();
     return;
   }
+  if (!$isPromisePending(result)) {
+    // The sink's own write(2) failed at once: nothing is queued, so destroy() has nothing to cancel.
+    result.$then(() => callback(), callback);
+    return;
+  }
   // The callback runs once every byte reached the fd, like a libuv write request.
   self[kSyncWriteCallback] = callback;
   result.$then(

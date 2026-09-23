@@ -288,6 +288,7 @@ pub(crate) fn js_abort(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<J
     unsafe {
         if !(*this).writer.get().has_pending_data() {
             // Nothing is left to drop: the write already ended and only its promise is unsettled.
+            debug_assert!((*this).pending.get().state == streams::PendingState::Pending);
             let failure = match &(*this).pending.get().result {
                 streams::Writable::Err(err) => Some(err.clone()),
                 _ => None,

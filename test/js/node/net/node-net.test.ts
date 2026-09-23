@@ -1627,9 +1627,9 @@ describe("Socket fd adoption", () => {
     expect(events).toEqual(["write()=false", "queued:EPIPE", "behind:EPIPE", "error:EPIPE"]);
   });
 
-  // The sink can get the queued tail out (its end-of-tick flush, once the reader
+  // The sink gets the queued tail out (its end-of-tick flush, once the reader
   // made room) before destroy() runs, with its promise still unsettled. That
-  // write is done, not canceled: the callback must agree with what the reader got.
+  // write is done, not canceled.
   it.skipIf(isWindows)("destroy() reports a queued write that already reached the pipe as done", async () => {
     using dir = tempDir("net-fd-drained", {});
     const fifo = join(String(dir), "adopted.fifo");
@@ -1673,14 +1673,47 @@ describe("Socket fd adoption", () => {
       await closed;
       while (!drain()) await new Promise(resolve => setImmediate(resolve));
 
-      const delivered = received === Buffer.alloc(filled, "f").toString() + "0123456789";
-      expect({ received: received.length, events }).toEqual({
-        received: delivered ? filled + 10 : filled,
-        events: [delivered ? "cb:ok" : "cb:ECANCELED", "close"],
-      });
+      expect({ tail: received.slice(filled), events }).toEqual({ tail: "0123456789", events: ["cb:ok", "close"] });
     } finally {
       fs.closeSync(rfd);
     }
+  });
+
+  // The reader goes away between the EAGAIN and the sink's own first write(2).
+  // That write fails at once, so it was never queued: a destroy() in the same
+  // tick has nothing to cancel and must not report it as done either.
+  it.skipIf(isWindows)("destroy() does not report a write the sink failed at once as done", async () => {
+    using dir = tempDir("net-fd-failed-at-once", {});
+    const fifo = join(String(dir), "adopted.fifo");
+    execFileSync("mkfifo", [fifo]);
+    const { O_RDONLY, O_WRONLY, O_NONBLOCK } = fs.constants;
+    const rfd = fs.openSync(fifo, O_RDONLY | O_NONBLOCK);
+    const wfd = fs.openSync(fifo, O_WRONLY | O_NONBLOCK);
+    const socket = new Socket({ fd: wfd, readable: false, writable: true });
+    const events: string[] = [];
+    socket.on("error", err => events.push(`error:${(err as NodeJS.ErrnoException).code}`));
+    const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+    // write(2) reports a full pipe, and the reader is gone by the time the sink tries.
+    const writeSync = fs.writeSync;
+    const spy = spyOn(fs, "writeSync").mockImplementation((...args: Parameters<typeof fs.writeSync>) => {
+      if (args[0] !== wfd) return writeSync(...args);
+      fs.closeSync(rfd);
+      throw Object.assign(new Error("EAGAIN: resource temporarily unavailable, write"), { code: "EAGAIN" });
+    });
+    const settled = new Promise<void>(resolve => {
+      // Too long for the sink to only buffer it: the sink tries write(2) at once.
+      socket.write(Buffer.alloc(100_000, "x"), err => {
+        events.push(`cb:${err ? (err as NodeJS.ErrnoException).code : "ok"}`);
+        resolve();
+      });
+    });
+    try {
+      socket.destroy();
+      await Promise.all([settled, closed]);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(events).toEqual(["cb:EPIPE"]);
   });
 
   // The sink has no poll for a character device that is not a terminal, so a

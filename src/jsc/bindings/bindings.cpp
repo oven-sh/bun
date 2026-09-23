@@ -770,19 +770,14 @@ static std::optional<IndexedStorage> indexedStorageOf(JSObject* object)
     }
 }
 
-struct SparseWalk {
-    bool equalSoFar { true };
-    uint64_t plainWalkBegin { 0 };
-};
-
-// For arrays that claim far more indices than they hold (`a = []; a.length = 2 ** 32 - 1`). The plain index walk continues at `plainWalkBegin`.
+// For arrays that claim far more indices than they hold (`a = []; a.length = 2 ** 32 - 1`). nullopt: not sparse, walk every index.
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity>
-NEVER_INLINE static SparseWalk sparseArrayIndicesEqual(JSGlobalObject* globalObject, JSObject* o1, JSObject* o2, size_t array1Length, size_t array2Length, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSValue, JSValue>, 16>& stack, ThrowScope& scope)
+NEVER_INLINE static std::optional<bool> sparseArrayIndicesEqual(JSGlobalObject* globalObject, JSObject* o1, JSObject* o2, size_t array1Length, size_t array2Length, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSValue, JSValue>, 16>& stack, ThrowScope& scope)
 {
     const auto storage1 = indexedStorageOf(o1);
     const auto storage2 = indexedStorageOf(o2);
     if (!storage1 || !storage2)
-        return {};
+        return std::nullopt;
 
     const uint64_t walkEnd = std::max(array1Length, array2Length);
     const uint64_t vectorEnd = std::min(walkEnd, std::max(storage1->vectorEnd, storage2->vectorEnd));
@@ -790,12 +785,12 @@ NEVER_INLINE static SparseWalk sparseArrayIndicesEqual(JSGlobalObject* globalObj
     const uint64_t sparseCount = storage1->sparseSize + storage2->sparseSize;
     // JSC's own rule for when a range of indices is sparse (ArrayConventions.h). Below it, the copy and sort cost more than the holes.
     if (unheld < MIN_SPARSE_ARRAY_INDEX || isDenseEnoughForVector(static_cast<unsigned>(unheld), static_cast<unsigned>(std::min<uint64_t>(sparseCount, std::numeric_limits<unsigned>::max()))))
-        return {};
+        return std::nullopt;
 
     // A hole on both sides is equal in every mode, so compare only the indices that either array's storage can hold.
     Vector<uint32_t> sparseIndices;
     if (!sparseIndices.tryReserveCapacity(sparseCount))
-        return {};
+        return std::nullopt;
     for (JSC::SparseArrayValueMap* map : { storage1->sparseMap, storage2->sparseMap }) {
         if (!map)
             continue;
@@ -809,15 +804,20 @@ NEVER_INLINE static SparseWalk sparseArrayIndicesEqual(JSGlobalObject* globalObj
 
     uint64_t begin = 0;
     uint64_t end = vectorEnd;
-    for (size_t cursor = 0;; cursor++) {
+    for (size_t cursor = 0;;) {
         if (!arrayIndexRangeEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, o1, o2, begin, std::min<uint64_t>(end, array1Length), std::min<uint64_t>(end, array2Length), gcBuffer, stack, scope))
-            return { false };
-        // A comparison can run user code. If that changed what either array holds, the key copy is stale and the plain walk takes over.
-        if (indexedStorageOf(o1) != storage1 || indexedStorageOf(o2) != storage2)
-            return { true, end };
+            return false;
+        if (end == walkEnd)
+            return true;
+        // A comparison can run user code. If that changed what either array holds, the key copy is stale: walk every remaining index.
+        if (indexedStorageOf(o1) != storage1 || indexedStorageOf(o2) != storage2) {
+            begin = end;
+            end = walkEnd;
+            continue;
+        }
         if (cursor == sparseIndices.size())
-            return { true, walkEnd };
-        begin = sparseIndices[cursor];
+            return true;
+        begin = sparseIndices[cursor++];
         end = begin + 1;
     }
 }
@@ -1114,10 +1114,11 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
         uint64_t walkBegin = 0;
         if (array1Length >= MIN_SPARSE_ARRAY_INDEX || array2Length >= MIN_SPARSE_ARRAY_INDEX) [[unlikely]] {
-            const SparseWalk sparse = sparseArrayIndicesEqual<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, o1, o2, array1Length, array2Length, gcBuffer, stack, scope);
-            if (!sparse.equalSoFar)
-                return false;
-            walkBegin = sparse.plainWalkBegin;
+            if (auto sparseResult = sparseArrayIndicesEqual<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, o1, o2, array1Length, array2Length, gcBuffer, stack, scope)) {
+                if (!*sparseResult)
+                    return false;
+                walkBegin = std::max(array1Length, array2Length);
+            }
         }
         if (!arrayIndexRangeEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, o1, o2, walkBegin, array1Length, array2Length, gcBuffer, stack, scope))
             return false;

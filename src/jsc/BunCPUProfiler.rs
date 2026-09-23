@@ -66,7 +66,7 @@ pub(crate) fn write_sampling_profiler_report(
     }
     let report = report.to_utf8();
 
-    let mut filename_buf = PathBuffer::uninit();
+    let mut filename_buf = bun_paths::path_buffer_pool::get();
     let filename = {
         let mut cursor = std::io::Cursor::new(&mut filename_buf[..]);
         write_diagnostic_filename(&mut cursor, "SamplingProfile", ".txt")

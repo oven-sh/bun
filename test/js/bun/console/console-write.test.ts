@@ -267,3 +267,72 @@ console.error("resolved " + (await total));
     closeSync(readEnd);
   }
 });
+
+// What is not a Promise is added up as released: the first write's result, then `+=` each later one. A sink that
+// has finished after a failure returns `true` from write(), so one argument gives `true` and two give 2. Not a
+// count of anything, but it is what these calls return, and scripts that keep writing after their reader has gone
+// see it.
+//
+// stdout is a FIFO whose read end this test holds open without reading, then closes. The child fills the pipe and
+// leaves one short chunk buffered, whose flush cannot finish. When the read end goes, the sink finishes, and the
+// one sign of it a script gets is the unhandled rejection of that flush's Promise, which console.write() dropped.
+// (A script that writes before the event loop has seen the hang-up gets EPIPE thrown from every call instead.)
+test.concurrent.skipIf(isWindows)("console.write to a finished sink adds up what write() returns", async () => {
+  using dir = tempDir("console-write-finished", {});
+  const fifo = join(String(dir), "stdout.fifo");
+  mkfifo(fifo, 0o600);
+  const readEnd = openSync(fifo, constants.O_RDONLY | constants.O_NONBLOCK);
+  const writeEnd = openSync(fifo, constants.O_WRONLY);
+  let readEndOpen = true;
+  try {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+const fs = require("node:fs");
+const finished = new Promise(resolve => process.on("unhandledRejection", resolve));
+console.write("0");
+for (const size of [1024, 1]) {
+  try {
+    for (;;) fs.writeSync(1, Buffer.alloc(size, "f"));
+  } catch {}
+}
+console.write("short");
+console.error("READY");
+fs.readSync(0, Buffer.alloc(1));
+await finished;
+console.error(JSON.stringify([console.write("x"), console.write("x", "y"), console.write("x", "y", "z"), console.write(""), console.write("", "x")]));
+`,
+      ],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: writeEnd,
+      stderr: "pipe",
+    });
+    closeSync(writeEnd);
+
+    const reader = proc.stderr.getReader();
+    const decoder = new TextDecoder();
+    let stderr = "";
+    while (!stderr.includes("READY")) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      stderr += decoder.decode(value, { stream: true });
+    }
+    closeSync(readEnd);
+    readEndOpen = false;
+    proc.stdin.write("x");
+    await proc.stdin.end();
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      stderr += decoder.decode(value, { stream: true });
+    }
+
+    expect(stderr).toBe("READY\n" + JSON.stringify([true, 2, 3, 0, 1]) + "\n");
+    expect(await proc.exited).toBe(0);
+  } finally {
+    if (readEndOpen) closeSync(readEnd);
+  }
+});

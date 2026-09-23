@@ -129,9 +129,13 @@ export function write(this: Console & { $writer: ConsoleWriter | undefined; $ret
     $putByIdDirectPrivate(this, "writer", writer);
   }
 
+  // What is not a Promise is added up as it always was: the first result, then `+=` each later one. (A finished
+  // sink's write() is `true`, so two of them make 2.)
+  //
   // A backed-up writer (FileSink) returns a Promise instead of a count: one Promise, the same for every write made
-  // while it is backed up, of the bytes those writes added. The caller gets a Promise of the total then, because
-  // awaiting it waits for the drain and is where a write error (EPIPE from a reader that hung up) arrives.
+  // while it is backed up, of the bytes those writes added. `+` made a string of it. The caller gets a Promise of
+  // the total, because awaiting it waits for the drain and is where a write error (EPIPE from a reader that hung
+  // up) arrives.
   //
   // The caller gets the last Promise. An earlier one has settled by the time a write returns a different one: the
   // sink has one pending write at a time. Fulfilled (a short write beside it can settle it early), its bytes join
@@ -139,23 +143,28 @@ export function write(this: Console & { $writer: ConsoleWriter | undefined; $ret
   // one when a later argument or the flush throws: nobody can handle its rejection, so it is marked handled. Only
   // one that is already rejected, since the sink hands its pending Promise out again, to callers whose rejection
   // has to be reported. And not one an earlier call returned, which is that caller's.
-  var wrote = 0;
+  var wrote: number | undefined;
   var pending: Promise<number> | undefined;
-  var finished: unknown;
   const returned = $getByIdDirectPrivate(this, "returnedWrite");
   const count = $argumentCount();
   var i = 0;
   try {
     do {
-      const result = writer.write(arguments[i]);
-      if (typeof result === "number") wrote += result;
-      else if ($isPromise<number>(result)) {
-        if (pending !== undefined && pending !== result) {
-          if ($isPromiseFulfilled(pending)) wrote += $peekPromiseSettledValue(pending)!;
-          else if (pending !== returned && $isPromiseRejected(pending)) $pokePromiseAsHandled(pending);
+      var result: number | Promise<number> = writer.write(arguments[i]);
+      if ($isPromise<number>(result)) {
+        if (pending === undefined || pending === result) {
+          pending = result;
+          continue;
         }
+        const earlier = pending;
         pending = result;
-      } else finished = result;
+        if (!$isPromiseFulfilled(earlier)) {
+          if (earlier !== returned && $isPromiseRejected(earlier)) $pokePromiseAsHandled(earlier);
+          continue;
+        }
+        result = $peekPromiseSettledValue(earlier)!;
+      }
+      wrote = wrote === undefined ? result : wrote + result;
     } while (++i < count);
 
     writer.flush(true);
@@ -164,11 +173,11 @@ export function write(this: Console & { $writer: ConsoleWriter | undefined; $ret
     throw e;
   }
 
-  // A finished sink's write() is `true`, and that is what a call that wrote nothing to one returns.
-  if (pending === undefined) return wrote === 0 && finished !== undefined ? finished : wrote;
+  if (pending === undefined) return wrote;
   $putByIdDirectPrivate(this, "returnedWrite", pending);
-  if (wrote === 0) return pending;
-  return pending.$then(n => wrote + n);
+  if (wrote === undefined || wrote === 0) return pending;
+  const counted = wrote;
+  return pending.$then(n => counted + n);
 }
 
 // This is the `console.Console` constructor. It is mostly copied from Node.

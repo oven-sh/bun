@@ -1463,6 +1463,13 @@ public:
     static bool parseRawHead(char *head, unsigned int length, HttpRequest *req) {
         head[length] = '\r';
         head[length + 1] = 'a';
+        /* getMethod() lowercases the method in place, so a copy taken after it reads
+         * "connect host:port" and consumeRequestLine's CONNECT token no longer matches. */
+        for (unsigned int i = 0; i < length && head[i] != ' '; i++) {
+            if (head[i] >= 'a' && head[i] <= 'z') {
+                head[i] -= 32;
+            }
+        }
         bool isConnectRequest = false;
         /* The bytes were accepted once already, so the most lenient flags give the same result. */
         auto result = getHeaders(head, head + length, req->headers, req->ancientHttp, isConnectRequest, false, true, 0);

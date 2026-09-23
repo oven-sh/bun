@@ -256,15 +256,28 @@ impl Request {
         })
     }
 
-    /// Ends the link to the server context; `req`, when still live, is copied for the lazy getters.
-    pub(crate) fn detach_request_context(&mut self, req: Option<&uws::Request>) {
+    /// Whether the lazy `url`/`headers` getters still need the request head.
+    pub(crate) fn wants_request_head(&self) -> bool {
+        self.url.get().is_empty() || self.headers.get().is_none()
+    }
+
+    /// Ends the link to the server context, which hands over the head copy it took for the
+    /// getters. Returns the bytes the `Request` keeps, for the caller to report to the GC.
+    pub(crate) fn detach_request_context(&mut self, head: Option<RequestHeadSnapshot>) -> usize {
         drop(self.request_context.take_head());
-        self.request_context = match req {
-            Some(req) if self.url.get().is_empty() || self.headers.get().is_none() => {
-                AnyRequestContext::head(RequestHeadSnapshot::capture(req))
+        let (context, kept) = match head {
+            Some(head) if self.wants_request_head() => {
+                let kept = head.memory_cost();
+                (AnyRequestContext::head(head), kept)
             }
-            _ => AnyRequestContext::NULL,
+            _ => (AnyRequestContext::NULL, 0),
         };
+        self.request_context = context;
+        // `estimated_size` feeds reportExtraMemoryVisited on every mark, so the
+        // collector sees the copy for as long as JS holds this Request.
+        self.reported_estimated_size
+            .set(self.reported_estimated_size.get() + kept);
+        kept
     }
 
     /// Returns the headers of the request. If the headers are not already cached, it will create a new FetchHeaders object.

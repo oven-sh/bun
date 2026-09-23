@@ -437,6 +437,50 @@ describe("Request.url and Request.headers after the handler returned", () => {
     expect(await later!).toEqual([]);
   });
 
+  // The response write can close the socket inside the dispatch, and uWS frees the buffer the
+  // request was parsed out of with it (a head split over several reads lives in the parser's
+  // own buffer). The copy has to be taken before that write.
+  test.each([
+    ["head in one write", false],
+    ["head split over three writes", true],
+  ])("a closing response keeps the head readable (%s)", async (_name, split) => {
+    const body = Buffer.alloc(64 * 1024, "b").toString();
+    const later = Promise.withResolvers<Record<string, unknown>>();
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      fetch(req) {
+        setTimeout(() => later.resolve({ url: req.url, id: req.headers.get("x-id"), count: [...req.headers].length }), 0);
+        // Bigger than the cork buffer, so uWS writes it out and the close gate runs here.
+        return new Response(body, { headers: { Connection: "close" } });
+      },
+    });
+
+    const head =
+      ["GET /closing?q=1 HTTP/1.1", "Host: x", "X-Id: closing", "Cookie: " + Buffer.alloc(3000, "c").toString()].join(
+        "\r\n",
+      ) + "\r\n\r\n";
+    const writes = split ? [head.slice(0, 40), head.slice(40, head.length - 20), head.slice(head.length - 20)] : [head];
+
+    const socket = net.connect(server.port, "127.0.0.1");
+    try {
+      socket.on("error", () => {});
+      socket.setNoDelay(true);
+      socket.resume();
+      await once(socket, "connect");
+      for (const write of writes) {
+        await new Promise<void>(written => socket.write(write, () => written()));
+        // Give the server a chance to read this part on its own, so the rest of the head
+        // arrives as a second read. A coalesced write still answers the same way.
+        if (split) await Bun.sleep(10);
+      }
+      // The late read runs after the response write, which is what the close gate rides on.
+      expect(await later.promise).toEqual({ url: "http://x/closing?q=1", id: "closing", count: 3 });
+    } finally {
+      socket.destroy();
+    }
+  });
+
   // The late read parses a saved copy of the head. It must give what the handler would have read.
   test("a late read of an unusual head equals the read inside the handler", async () => {
     const longTarget = "/" + Buffer.alloc(12 * 1024, "t").toString();
@@ -486,8 +530,11 @@ describe("Request.url and Request.headers after the handler returned", () => {
           if (raw.includes("\r\n\r\nok")) resolve();
         });
         socket.on("close", () => reject(new Error("server closed the connection before it answered: " + raw)));
-        for (const write of writes) {
+        for (const [i, write] of writes.entries()) {
           await new Promise<void>(written => socket.write(Buffer.from(write, "latin1"), () => written()));
+          // Let the server read this part on its own, so the rest of the head arrives as a
+          // second read and uWS parses it out of its own buffer instead of the socket's.
+          if (i < writes.length - 1) await Bun.sleep(10);
         }
         await promise;
       } finally {

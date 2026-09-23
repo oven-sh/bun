@@ -127,6 +127,9 @@ pub(crate) struct RequestContext<
     pub(crate) server: Cell<Option<bun_ptr::BackRef<ThisServer, bun_ptr::Mut>>>,
     pub(crate) resp: Cell<Option<uws::AnyResponse>>,
     pub(crate) req: Cell<Option<*mut Req<SSL_ENABLED, MUX>>>,
+    /// The copy of the request head `finalize_without_deinit` hands to the
+    /// `Request`, taken before a response write can free the bytes `req` points at.
+    request_head: Cell<Option<RequestHeadSnapshot>>,
     pub(crate) request_weakref: JsCell<request::WeakRef>,
     // NOTE: `Arc<AbortSignal>` was wrong —
     // `AbortSignal` is an opaque ZST FFI handle; an `Arc` of a ZST never owns
@@ -278,6 +281,7 @@ use crate::node::types::PathLikeExt as _;
 use crate::server::jsc::CallFrame;
 use crate::server::{AnyRequestContext, FileResponseStream, HTTPStatusText, file_response_stream};
 use crate::webcore::blob::BlobExt as _;
+use crate::webcore::request_head::RequestHeadSnapshot;
 use crate::webcore::{Blob, ReadableStream, body as Body, s3 as S3};
 use bun_jsc::SysErrorJsc as _;
 
@@ -1418,6 +1422,7 @@ where
                 root: Cell::new(slot),
                 resp: Cell::new(Some(resp)),
                 req: Cell::new(Some(req)),
+                request_head: Cell::new(None),
                 method: resolved_method,
                 server: Cell::new(
                     NonNull::new(server).map(|p| bun_ptr::BackRef::from_raw_mut(p.as_ptr())),
@@ -1602,12 +1607,15 @@ where
         // Releases the ref taken in `set_cookies` (via `CookieMapRef::drop`).
         drop(self.cookies.replace(None));
 
+        let head = self.request_head.take();
         if let Some(request) = self.request_mut() {
-            // `req` is live only while the dispatch is still on the stack.
-            let req = if MUX { None } else { self.req.get() };
-            request.detach_request_context(
-                req.map(|req| bun_opaque::opaque_deref(req.cast::<uws::Request>())),
-            );
+            let kept = request.detach_request_context(head);
+            if kept > 0 {
+                self.server()
+                    .vm()
+                    .jsc_vm()
+                    .deprecated_report_extra_memory(kept);
+            }
             self.request_weakref.set(request::WeakRef::EMPTY);
         }
 
@@ -2334,6 +2342,31 @@ where
         matches!(self.upgrade_context.get(), UpgradeState::Upgraded)
     }
 
+    fn has_request_head(&self) -> bool {
+        let head = self.request_head.take();
+        let present = head.is_some();
+        self.request_head.set(head);
+        present
+    }
+
+    /// Copies the request head for the `Request`'s lazy `url`/`headers` getters, so they
+    /// survive the response. A no-op once JS read both, and for MUX (eager there).
+    fn capture_request_head(&self) {
+        if MUX || self.has_request_head() {
+            return;
+        }
+        let (Some(req), Some(request)) = (self.req.get(), self.request_mut()) else {
+            return;
+        };
+        if !request.wants_request_head() {
+            return;
+        }
+        // S008: `uws::Request` is an `opaque_ffi!` ZST handle — safe deref.
+        self.request_head.set(Some(RequestHeadSnapshot::capture(
+            bun_opaque::opaque_deref(req.cast::<uws::Request>()),
+        )));
+    }
+
     fn to_async_without_abort_handler(
         &self,
         req: *mut Req<SSL_ENABLED, MUX>,
@@ -2720,6 +2753,16 @@ where
         if ctx.did_upgrade_web_socket() {
             ctx.discard_handler_result(this.global_this(), response_value);
             return;
+        }
+
+        // Writing the response can close the socket, and uWS frees the bytes
+        // `req` points at with it. A handler that parked instead gets `url` and
+        // the headers from `to_async`.
+        let parks = response_value
+            .as_any_promise()
+            .is_some_and(|promise| promise.status() == jsc::PromiseStatus::Pending);
+        if !parks {
+            ctx.capture_request_head();
         }
 
         if response_value.is_empty_or_undefined_or_null() {

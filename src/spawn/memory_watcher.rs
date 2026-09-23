@@ -242,16 +242,14 @@ pub mod cgroup {
         File::read_from(Fd::cwd(), &[dir, b"/", name.as_bytes()].concat()).ok()
     }
 
-    fn write(dir: &[u8], name: &str, value: &[u8]) -> bool {
-        match File::openat(
+    fn write(dir: &[u8], name: &str, value: &[u8]) -> bun_sys::Maybe<()> {
+        File::openat(
             Fd::cwd(),
             &[dir, b"/", name.as_bytes()].concat(),
             O::WRONLY,
             0,
-        ) {
-            Ok(f) => f.write_all(value).is_ok(),
-            Err(_) => false,
-        }
+        )?
+        .write_all(value)
     }
 
     fn number(bytes: &[u8]) -> u64 {
@@ -278,12 +276,12 @@ pub mod cgroup {
         read(b"/proc", "swaps").is_some_and(|b| bun_core::strings::count_char(&b, b'\n') > 1)
     }
 
-    fn rmdir(path: &[u8]) -> bool {
-        bun_sys::rmdir(&ZBox::from_bytes(path)).is_ok()
+    fn rmdir(path: &[u8]) -> bun_sys::Maybe<()> {
+        bun_sys::rmdir(&ZBox::from_bytes(path))
     }
 
     fn retry_pending_rmdir() {
-        PENDING_RMDIR.lock().retain(|path| !rmdir(path));
+        PENDING_RMDIR.lock().retain(|path| rmdir(path).is_err());
     }
 
     /// A v2 cgroup with processes cannot give controllers to its children, so v2 uses a sibling of our own cgroup.
@@ -324,26 +322,22 @@ pub mod cgroup {
                 if bun_sys::mkdir(&ZBox::from_bytes(&path), 0o755).is_err() {
                     continue;
                 }
-                let ok = if v2 {
+                let limited = if v2 {
                     write(&path, "memory.max", limit.as_bytes())
                 } else {
                     write(&path, "memory.limit_in_bytes", limit.as_bytes())
                 };
-                if !ok {
-                    rmdir(&path);
-                    continue;
-                }
                 let swap_capped = if v2 {
                     write(&path, "memory.swap.max", b"0")
                 } else {
                     write(&path, "memory.memsw.limit_in_bytes", limit.as_bytes())
                 };
-                if !swap_capped && has_swap() {
-                    rmdir(&path);
+                if limited.is_err() || (swap_capped.is_err() && has_swap()) {
+                    let _ = rmdir(&path);
                     continue;
                 }
                 if v2 {
-                    write(&path, "memory.oom.group", b"1");
+                    let _ = write(&path, "memory.oom.group", b"1");
                 }
                 return Some(Cgroup { path, v2 });
             }
@@ -384,7 +378,7 @@ pub mod cgroup {
 
         /// Kill what the kernel left alive. One process can survive when `memory.oom.group` is not available.
         pub fn kill_all(&self) {
-            if self.v2 && write(&self.path, "cgroup.kill", b"1") {
+            if self.v2 && write(&self.path, "cgroup.kill", b"1").is_ok() {
                 return;
             }
             if let Some(procs) = read(&self.path, "cgroup.procs") {
@@ -401,7 +395,7 @@ pub mod cgroup {
 
     impl Drop for Cgroup {
         fn drop(&mut self) {
-            if !rmdir(&self.path) {
+            if rmdir(&self.path).is_err() {
                 PENDING_RMDIR.lock().push(core::mem::take(&mut self.path));
             }
         }

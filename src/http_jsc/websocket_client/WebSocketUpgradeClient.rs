@@ -694,20 +694,7 @@ where
             return !enforce
                 || (!hostname.is_empty() && boringssl::check_server_identity(ssl, hostname));
         };
-        let vm = VirtualMachineRef::get();
-        let _context = vm.enter_context(this.context);
-        let event_loop = vm.event_loop_mut();
-        event_loop.enter();
-        let verdict = match call_check_server_identity(vm.global(), callback, ssl, hostname) {
-            Ok(approved) => approved,
-            Err(err) => {
-                // A throw rejects the peer and is reported like any uncaught exception.
-                let _ = bun_jsc::task::report_error_or_terminate(vm.global(), err);
-                false
-            }
-        };
-        event_loop.exit();
-        verdict || !enforce
+        run_check_server_identity(this.context, callback, ssl, hostname) || !enforce
     }
 
     /// Whether the user callback decides this handshake. Never for a proxy's own certificate.
@@ -1897,6 +1884,30 @@ fn compute_accept_value(key: &[u8]) -> [u8; 28] {
     let mut result = [0u8; 28];
     let _ = bun_base64::encode(&mut result, &hash);
     result
+}
+
+/// Runs the callback in the context of the script that made the WebSocket. Not a method of
+/// `HTTPClient<SSL>`: nothing here depends on `SSL`, so it is compiled once.
+fn run_check_server_identity(
+    context: bun_jsc::ContextId,
+    callback: JSValue,
+    ssl: &mut boringssl::c::SSL,
+    hostname: &[u8],
+) -> bool {
+    let vm = VirtualMachineRef::get();
+    let _context = vm.enter_context(context);
+    let event_loop = vm.event_loop_mut();
+    event_loop.enter();
+    let verdict = match call_check_server_identity(vm.global(), callback, ssl, hostname) {
+        Ok(approved) => approved,
+        Err(err) => {
+            // A throw rejects the peer and is reported like any uncaught exception.
+            let _ = bun_jsc::task::report_error_or_terminate(vm.global(), err);
+            false
+        }
+    };
+    event_loop.exit();
+    verdict
 }
 
 /// `Ok(true)` only if the callback ran and returned a falsy value.

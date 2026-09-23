@@ -168,25 +168,63 @@ export const KILL_GRACE_MS = 2_000;
 const ENDING_SIGNALS = { SIGHUP: 1, SIGINT: 2, SIGTERM: 15 } as const;
 
 /**
+ * Which of `signals` (by number) this process ignores, asked of the process
+ * itself: sigaction(signal, NULL, &current) through bun:ffi. Nothing outside it
+ * can say: a child cannot, because bun's spawn resets the dispositions a child
+ * inherits. `undefined` where it cannot be asked (node, which has no bun:ffi and
+ * resets what it inherits anyway; a libc that is not there).
+ */
+export async function sigactionIgnored(signals: number[]): Promise<Set<number> | undefined> {
+  try {
+    // Not a literal: node and tsc would both look for the module.
+    const ffi = "bun:ffi";
+    const { dlopen, ptr } = await import(ffi);
+    const libc = dlopen(process.platform === "darwin" ? "libSystem.B.dylib" : "libc.so.6", {
+      sigaction: { args: ["i32", "ptr", "ptr"], returns: "i32" },
+    });
+    try {
+      const ignored = new Set<number>();
+      for (const signal of signals) {
+        // struct sigaction starts with the handler on both (16 bytes on darwin, 152 with glibc).
+        const current = Buffer.alloc(256);
+        if (libc.symbols.sigaction(signal, null, ptr(current)) !== 0) return undefined;
+        const SIG_IGN = 1;
+        if (current.readUInt32LE(0) === SIG_IGN && current.readUInt32LE(4) === 0) ignored.add(signal);
+      }
+      return ignored;
+    } finally {
+      libc.close();
+    }
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * The ending signals this process was started ignoring (under nohup, as a
  * background job of a script): a listener would make them end it after all.
- * Only linux says which those are (SigIgn in /proc/self/status), and only under
- * bun: node resets the dispositions it inherits when it starts. Everywhere else
- * none counts as ignored, so every ending signal is held: removing the scratch
- * directory matters more than honouring a nohup nobody can see.
+ * Linux says in /proc/self/status (SigIgn), macOS through `sigactionIgnored`;
+ * where neither can be had none counts as ignored, so every ending signal is
+ * held: removing the scratch directory matters more than honouring a nohup
+ * nobody can see. All of this under bun: node resets what it inherits.
  */
-function ignoredEndingSignals(): Set<string> {
-  if (process.platform !== "linux") return new Set();
+async function ignoredEndingSignals(): Promise<Set<string>> {
+  let ignored: (number: number) => boolean = () => false;
   try {
-    const hex = /^SigIgn:\s*([0-9a-f]+)$/m.exec(readFileSync("/proc/self/status", "utf8"))?.[1];
-    if (!hex) return new Set();
-    // The ending signals are all among the first 32.
-    const mask = parseInt(hex.slice(-8), 16);
-    const ignored = Object.entries(ENDING_SIGNALS).filter(([, number]) => (mask >>> (number - 1)) & 1);
-    return new Set(ignored.map(([name]) => name));
+    if (process.platform === "linux") {
+      const hex = /^SigIgn:\s*([0-9a-f]+)$/m.exec(readFileSync("/proc/self/status", "utf8"))?.[1];
+      // The ending signals are all among the first 32.
+      const mask = hex ? parseInt(hex.slice(-8), 16) : 0;
+      ignored = number => ((mask >>> (number - 1)) & 1) === 1;
+    } else if (process.platform === "darwin") {
+      const asked = await sigactionIgnored(Object.values(ENDING_SIGNALS));
+      ignored = number => asked?.has(number) ?? false;
+    }
   } catch {
-    return new Set();
+    // Unreadable: none counts as ignored.
   }
+  const names = Object.entries(ENDING_SIGNALS).filter(([, number]) => ignored(number));
+  return new Set(names.map(([name]) => name));
 }
 
 const nextTurn = () => new Promise(resolve => setImmediate(resolve));
@@ -201,17 +239,14 @@ const nextTurn = () => new Promise(resolve => setImmediate(resolve));
  * still there.
  */
 let scratchDepth = 0;
-let heldSignals: NodeJS.Signals[] = [];
+let startedIgnoring: Promise<Set<string>> | undefined;
 export async function withScratch<T>(
   prefix: string,
   work: (scratch: string, interrupted: AbortSignal) => T | Promise<T>,
 ): Promise<T> {
-  // Asked before the first listener is added, which replaces the disposition it asks about.
-  if (scratchDepth === 0) {
-    const ignored = ignoredEndingSignals();
-    heldSignals = (Object.keys(ENDING_SIGNALS) as NodeJS.Signals[]).filter(name => !ignored.has(name));
-  }
-  const held = heldSignals;
+  // Asked once, before this process has added a listener of its own: that replaces the disposition.
+  const ignored = await (startedIgnoring ??= ignoredEndingSignals());
+  const held = (Object.keys(ENDING_SIGNALS) as NodeJS.Signals[]).filter(name => !ignored.has(name));
   const scratch = mkdtempSync(join(tmpdir(), prefix));
   const controller = new AbortController();
   let ending: NodeJS.Signals | undefined;

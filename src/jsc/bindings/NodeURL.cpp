@@ -157,6 +157,15 @@ static String parseDomainAsHost(const String& domain)
     return parsedHost;
 }
 
+// idnaToASCII for the certificate check in src/boringssl/lib.rs, on any thread. Not parseDomainAsHost, which cuts the name at '/'. Dead when the name does not convert.
+extern "C" BunString Bun__idnaToASCII(const BunString* domain)
+{
+    auto ascii = icuToASCII(domain->toWTFString(), IDNAMode::Default);
+    if (ascii.isNull())
+        return { BunStringTag::Dead };
+    return Bun::toStringRef(ascii);
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsDomainToASCII, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);

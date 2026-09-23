@@ -57,7 +57,7 @@ impl ShellCondExprStatTask {
 }
 
 /// Error result of a glob-expansion task.
-pub enum ShellGlobErr {
+pub(crate) enum ShellGlobErr {
     Syscall(bun_sys::Error),
     Unknown(crate::Error),
 }
@@ -82,6 +82,10 @@ impl bun_event_loop::Taskable for ShellGlobTask {
             (*this).task.unref_unrun();
             drop(bun_core::heap::take(this));
         }
+    }
+    /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 

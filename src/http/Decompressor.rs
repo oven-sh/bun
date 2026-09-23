@@ -19,6 +19,16 @@ impl Decompressor {
     // explicit `Drop` is unnecessary. Callers that want a mid-lifecycle reset
     // assign `*self = Decompressor::None`.
 
+    /// Inside a stream: another `decompress_chunk` may produce output with no new input.
+    pub(crate) fn is_mid_stream(&self) -> bool {
+        match self {
+            Decompressor::Zlib(r) => r.is_inflating(),
+            Decompressor::Brotli(r) => r.is_inflating(),
+            Decompressor::Zstd(r) => r.is_inflating(),
+            Decompressor::None => false,
+        }
+    }
+
     fn init(&mut self, encoding: Encoding, first_chunk: &[u8]) -> crate::Result<()> {
         match encoding {
             Encoding::Gzip | Encoding::Deflate => {
@@ -49,27 +59,30 @@ impl Decompressor {
     }
 
     /// Feed one body chunk `buffer` through the decoder, appending the
-    /// decompressed output to `body_out_str`. Creates the decoder on first
-    /// call. Returns `ShortRead` when more input is needed and the stream is
-    /// not yet done.
+    /// decompressed output to `body_out_str` until it holds `max_output` bytes. Creates the
+    /// decoder on first call. Returns the input bytes consumed. Returns `ShortRead` when more
+    /// input is needed and the stream is not yet done.
     pub(crate) fn decompress_chunk(
         &mut self,
         encoding: Encoding,
         buffer: &[u8],
         body_out_str: &mut MutableString,
+        max_output: usize,
         is_done: bool,
-    ) -> crate::Result<()> {
+    ) -> crate::Result<usize> {
         if !encoding.is_compressed() {
-            return Ok(());
+            return Ok(buffer.len());
         }
         if matches!(self, Decompressor::None) {
             self.init(encoding, buffer)?;
         }
         let out = &mut body_out_str.list;
         match self {
-            Decompressor::Zlib(reader) => Ok(reader.decompress(buffer, out, is_done)?),
-            Decompressor::Brotli(reader) => Ok(reader.decompress(buffer, out, is_done)?),
-            Decompressor::Zstd(reader) => Ok(reader.decompress(buffer, out, is_done)?),
+            Decompressor::Zlib(reader) => Ok(reader.decompress(buffer, out, max_output, is_done)?),
+            Decompressor::Brotli(reader) => {
+                Ok(reader.decompress(buffer, out, max_output, is_done)?)
+            }
+            Decompressor::Zstd(reader) => Ok(reader.decompress(buffer, out, max_output, is_done)?),
             Decompressor::None => {
                 unreachable!("Invalid encoding. This code should not be reachable")
             }

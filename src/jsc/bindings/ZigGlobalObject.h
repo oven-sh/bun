@@ -39,6 +39,8 @@ class JSNextTickQueue;
 class Process;
 class SecureContextCache;
 class GCProfilerObserver;
+
+struct ModuleGraphState;
 } // namespace Bun
 
 namespace v8 {
@@ -68,7 +70,6 @@ struct node_module;
 #include <js_native_api.h>
 #include <node_api.h>
 #include "BakeAdditionsToGlobalObject.h"
-#include "WriteBarrierList.h"
 #include "NativeModuleList.h"
 #include "streams/JSStreamsRuntime.h"
 
@@ -180,6 +181,9 @@ public:
     template<typename Visitor> static void visitOutputConstraints(JSCell*, Visitor&);
 
     WebCore::ScriptExecutionContext* scriptExecutionContext() const;
+    // The context that owns what the running script opens: that of the Bun.ModuleGraph whose
+    // context it runs in, else this global's own.
+    WebCore::ScriptExecutionContext* currentScriptExecutionContext();
 
     WebCore::DOMConstructors& constructors() { return *m_constructors; }
 
@@ -243,6 +247,9 @@ public:
 
     JSC::JSObject* JSFFICStringConstructor() const { return m_JSFFICStringConstructor.getInitializedOnMainThread(this); }
 
+    JSC::Structure* JSModuleGraphStructure() const { return m_JSModuleGraphClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* JSModuleGraphConstructor() const { return m_JSModuleGraphClassStructure.constructorInitializedOnMainThread(this); }
+
     JSC::Structure* NodeVMScriptStructure() const { return m_NodeVMScriptClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* NodeVMScript() const { return m_NodeVMScriptClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue NodeVMScriptPrototype() const { return m_NodeVMScriptClassStructure.prototypeInitializedOnMainThread(this); }
@@ -296,6 +303,11 @@ public:
     Structure* AsyncContextFrameStructure() const { return m_asyncBoundFunctionStructure.getInitializedOnMainThread(this); }
 
     JSWeakMap* vmModuleContextMap() const { return m_vmModuleContextMap.getInitializedOnMainThread(this); }
+
+    // Made with the first Bun.ModuleGraph (ModuleGraph.cpp).
+    bool hasModuleGraphs() const { return !!m_moduleGraphs; }
+    // The shape of an async-context frame that names a Bun.ModuleGraph (ModuleGraph.cpp).
+    JSC::Structure* moduleGraphFrameStructure() const { return m_moduleGraphFrameStructure.getInitializedOnMainThread(this); }
 
     Structure* NapiExternalStructure() const { return m_NapiExternalStructure.getInitializedOnMainThread(this); }
     Structure* NapiPrototypeStructure() const { return m_NapiPrototypeStructure.getInitializedOnMainThread(this); }
@@ -374,6 +386,8 @@ public:
         Bun__HTTPRequestContextDebugTLS__onResolveStream,
         jsFunctionOnLoadObjectResultResolve,
         jsFunctionOnLoadObjectResultReject,
+        jsFunctionMockModuleFactoryResolve,
+        jsFunctionMockModuleFactoryReject,
         Bun__TestScope__Describe2__bunTestThen,
         Bun__TestScope__Describe2__bunTestCatch,
         Bun__HTMLRewriter__onHandlerResolve,
@@ -382,8 +396,6 @@ public:
         Bun__onRejectEntryPointResult,
         Bun__NodeHTTPRequest__onResolve,
         Bun__NodeHTTPRequest__onReject,
-        Bun__FileStreamWrapper__onRejectRequestStream,
-        Bun__FileStreamWrapper__onResolveRequestStream,
         Bun__FileSink__onResolveStream,
         Bun__FileSink__onRejectStream,
         Bun__CronJob__onPromiseResolve,
@@ -489,7 +501,9 @@ public:
                                                                                                              \
     /* TODO: these should use LazyProperty */                                                                \
                                                                                                              \
-    V(public, LazyPropertyOfGlobalObject<JSCell>, m_moduleResolveFilenameFunction)                           \
+    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_moduleResolveFilenameFunction)                       \
+    /* The user-assigned Module._resolveFilename value; require() throws if it is not callable. */           \
+    V(public, WriteBarrier<JSC::Unknown>, m_moduleResolveFilenameOverride)                                   \
     V(public, LazyPropertyOfGlobalObject<JSCell>, m_moduleRunMainFunction)                                   \
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_modulePrototypeUnderscoreCompileFunction)            \
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_commonJSRequireESMFromHijackedExtensionFunction)     \
@@ -523,6 +537,7 @@ public:
     /* node:worker_threads worker: { stdin?, stdout, stderr } MessagePorts from the parent Worker; */        \
     /* process.stdin/stdout/stderr are built over these lazily (BunProcess.cpp constructStd*). */            \
     V(private, WriteBarrier<JSObject>, m_nodeWorkerStdioPorts)                                               \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_moduleGraphFrameStructure)                           \
                                                                                                              \
     /* The original, unmodified Error.prepareStackTrace. */                                                  \
     /* */                                                                                                    \
@@ -566,6 +581,7 @@ public:
     V(private, LazyClassStructure, m_JSHTMLRewriterSinkClassStructure)                                       \
                                                                                                              \
     V(private, LazyClassStructure, m_JSStringDecoderClassStructure)                                          \
+    V(private, LazyClassStructure, m_JSModuleGraphClassStructure)                                            \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_JSFFICStringConstructor)                              \
     V(public, LazyClassStructure, m_JSDatabaseSyncClassStructure)                                            \
     V(public, LazyClassStructure, m_JSStatementSyncClassStructure)                                           \
@@ -797,6 +813,8 @@ public:
     // visitChildren wiring needed (and it must NOT keep its values alive).
     std::unique_ptr<Bun::SecureContextCache> m_secureContextCache;
 
+    std::unique_ptr<Bun::ModuleGraphState> m_moduleGraphs;
+
     // Backs node:v8's GCProfiler. Lazily created on first start(); its
     // destructor detaches from the heap so a worker that exits mid-profile
     // does not leave the observer registered.
@@ -811,7 +829,30 @@ private:
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
     WebCore::SubtleCrypto* m_subtleCrypto = nullptr;
 
-    Bun::WriteBarrierList<JSC::JSPromise> m_aboutToBeNotifiedRejectedPromises;
+public:
+    // Promises rejected while they had no handler, awaiting handleRejectedPromises()
+    // after the microtask drain, each with whose rejection it is as decided when it
+    // happened: a Bun.ModuleGraph, or null for the global object's own code.
+    // Guarded by cellLock() (visited on the GC thread).
+    class RejectedPromiseQueue {
+    public:
+        void append(JSC::VM&, JSC::JSCell* owner, JSC::JSPromise*, JSC::JSObject* rejectionOwner);
+        bool remove(JSC::JSCell* owner, JSC::JSPromise*);
+        // Move every entry out (index-aligned; jsNull() owner for the global object's) and clear.
+        void drainTo(JSC::JSCell* owner, JSC::MarkedArgumentBuffer& promises, JSC::MarkedArgumentBuffer& rejectionOwners);
+        template<typename Visitor> void visit(JSC::JSCell* owner, Visitor&);
+        bool isEmpty() const { return m_entries.isEmpty(); }
+
+    private:
+        struct Entry {
+            JSC::WriteBarrier<JSC::Unknown> promise; // JSPromise
+            JSC::WriteBarrier<JSC::Unknown> rejectionOwner; // JSModuleGraph or null
+        };
+        WTF::Vector<Entry> m_entries;
+    };
+
+private:
+    RejectedPromiseQueue m_aboutToBeNotifiedRejectedPromises;
 
 public:
     // While handleRejectedPromises() is iterating its drained snapshot, this
@@ -870,6 +911,13 @@ ALWAYS_INLINE void* vm(JSC::JSGlobalObject* lexicalGlobalObject)
     return WebCore::clientData(lexicalGlobalObject->vm())->bunVM;
 }
 
+// A realm that `bun test --isolate` retired because its file finished
+// (Zig__GlobalObject__retireForTestIsolation). Nothing enters its script again.
+ALWAYS_INLINE bool isRetiredTestIsolationRealm(const JSC::JSGlobalObject* globalObject)
+{
+    return globalObject->microtaskRunnability() == JSC::QueuedTaskResult::Discard;
+}
+
 }
 
 #ifndef RENAMED_JSDOM_GLOBAL_OBJECT
@@ -900,6 +948,11 @@ inline Zig::GlobalObject* defaultGlobalObject()
 {
     return ___private___::getDefaultGlobalObject();
 }
+// The VM's default global from any thread (the parameterless overload is the current thread's).
+Zig::GlobalObject* defaultGlobalObject(JSC::VM&);
+
+// The Structure a LazyClassStructure constructor allocates with for this newTarget. nullptr on exception.
+JSC::Structure* structureForNewTarget(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue newTarget, JSC::LazyClassStructure Zig::GlobalObject::* classStructure);
 
 inline void* bunVM(JSC::JSGlobalObject* lexicalGlobalObject)
 {

@@ -65,10 +65,11 @@ const CONTROL_HEADER_SIZE: usize = 6;
 /// Seconds a socket may outlive its close event, normalised like the opening-handshake timeout.
 #[inline]
 fn close_timeout_seconds() -> core::ffi::c_uint {
+    // `get()` is always `Some`: the declaration in env_var.rs holds the default.
     bun_http::normalize_idle_timeout_seconds(
         bun_core::env_var::BUN_CONFIG_WS_CLOSE_TIMEOUT
             .get()
-            .unwrap_or(30),
+            .unwrap_or_default(),
     )
 }
 

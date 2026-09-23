@@ -134,13 +134,20 @@ const ws = new WebSocket(`wss://127.0.0.1:${server.port}/`, {
   proxy: proxy && `${via === "https-proxy" ? "https" : "http"}://127.0.0.1:${proxy.port}`,
   tls: { rejectUnauthorized: false },
 });
+let opened = false;
 ws.onopen = () => {
+  opened = true;
   // Not inside the open event: there a proxy tunnel is not attached to the
   // client yet, and close() tears it down through the upgrade client.
   if (scenario === "client-closes") setImmediate(() => ws.close());
 };
 ws.onmessage = () => ws.close();
 ws.onclose = event => {
+  if (!opened) {
+    // A client that never connected leaves no connection to watch, so nothing else ends this process.
+    console.error(`the client did not connect: ${event.code} ${event.reason}`);
+    process.exit(1);
+  }
   close = { code: event.code, wasClean: event.wasClean };
   report();
 };

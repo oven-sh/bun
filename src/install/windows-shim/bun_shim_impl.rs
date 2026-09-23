@@ -35,7 +35,7 @@
 //! - https://github.com/ScoopInstaller/Shim/blob/master/src/shim.cs
 //!
 //! This file is compiled twice: into bun.exe (for the bunx fast paths below) and as
-//! the standalone `bun_shim_impl.exe` PE (see `main.rs` / the `shim_standalone`
+//! the standalone `bun-shim-impl.exe` PE (see `main.rs` / the `shim_standalone`
 //! feature), which is then `include_bytes!`-embedded into Bun by `BinLinkingShim.rs`.
 //! When the encoding changes, `BinLinkingShim::VersionFlag::CURRENT` should be bumped.
 //!
@@ -71,7 +71,7 @@ use super::_bin_linking_shim::Flags;
 const DBG: bool = cfg!(debug_assertions);
 
 /// True when this module IS the binary root (the standalone
-/// `bun_shim_impl.exe`), false when compiled into bun.exe.
+/// `bun-shim-impl.exe`), false when compiled into bun.exe.
 const IS_STANDALONE: bool = cfg!(feature = "shim_standalone");
 
 #[cfg(not(feature = "shim_standalone"))]
@@ -150,6 +150,8 @@ mod k32 {
     pub(super) use w::kernel32::CreateProcessW;
     /// https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-getlasterror
     pub(super) use w::kernel32::GetLastError;
+    /// https://learn.microsoft.com/en-us/windows/console/setconsolectrlhandler
+    pub(super) use w::kernel32::SetConsoleCtrlHandler;
 
     // SAFETY: kernel32 externs; signatures match SDK. Declared locally as
     // `safe fn` (vs. re-exporting `unsafe fn` from `w::kernel32`) because
@@ -413,6 +415,18 @@ fn fail_and_exit_with_reason(reason: FailReason) -> ! {
     }
 
     nt::RtlExitUserProcess(255)
+}
+
+/// The child shares our console and gets Ctrl+C itself; outlive it to report its
+/// exit code. Every path after this exits the process, so it is never removed.
+fn ignore_ctrl_c() {
+    extern "system" fn handler(ctrl_type: DWORD) -> BOOL {
+        if ctrl_type == w::CTRL_C_EVENT {
+            return w::TRUE;
+        }
+        w::FALSE
+    }
+    let _ = k32::SetConsoleCtrlHandler(Some(handler), w::TRUE);
 }
 
 const NT_OBJECT_PREFIX: [u16; 4] = ['\\' as u16, '?' as u16, '?' as u16, '\\' as u16];
@@ -1346,6 +1360,8 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         },
     };
 
+    ignore_ctrl_c();
+
     // PERF: the body is large enough that unrolling this two-iteration loop is
     // unlikely to matter — profile if it shows up on a hot path.
     for attempt_number in [0u32, 1] {
@@ -1613,7 +1629,7 @@ impl BunCtx for &FromBunRunContext {
 }
 
 /// This is called from run_command.rs in bun.exe which allows us to skip the CreateProcessW
-/// call to create bun_shim_impl.exe. Instead we invoke the logic it has from an open file handle.
+/// call to create bun-shim-impl.exe. Instead we invoke the logic it has from an open file handle.
 ///
 /// This saves ~5-12ms depending on the machine.
 ///
@@ -1700,7 +1716,7 @@ pub enum ReadWithoutLaunchResult {
 
 /// Given the path and handle to a .bunx file, do everything needed to execute it,
 /// *except* for spawning it. This is used by the Bun shell to skip spawning the
-/// bun_shim_impl.exe executable. The returned command line is fed into the shell's
+/// bun-shim-impl.exe executable. The returned command line is fed into the shell's
 /// method for launching a process.
 ///
 /// The cost of spawning is about 5-12ms, and the unicode conversions are way
@@ -1716,7 +1732,7 @@ pub fn read_without_launch(context: FromBunShellContext) -> ReadWithoutLaunchRes
     }
 }
 
-/// Main function for `bun_shim_impl.exe`
+/// Main function for `bun-shim-impl.exe`
 #[cfg(feature = "shim_standalone")]
 #[inline]
 pub(crate) fn main() -> ! {

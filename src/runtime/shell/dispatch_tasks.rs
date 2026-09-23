@@ -9,8 +9,6 @@
 //! resume the parent state via NodeId).
 
 use crate::shell::interpreter::{Interpreter, NodeId, ShellTask};
-use bun_jsc::ConcurrentTask::ConcurrentTask;
-
 /// Task payload for [`ShellAsync`](crate::shell::states::r#async::Async)'s
 /// bounce back to the main thread. The state lives in `interp.nodes`, so
 /// the enqueued payload is `(interp, node)`.
@@ -18,7 +16,6 @@ use bun_jsc::ConcurrentTask::ConcurrentTask;
 pub(crate) struct ShellAsyncTask {
     pub interp: *mut Interpreter,
     pub node: NodeId,
-    pub concurrent_task: ConcurrentTask,
 }
 
 /// Stat task backing shell conditional expressions (`[ -f x ]` etc.). Wraps an
@@ -60,7 +57,7 @@ impl ShellCondExprStatTask {
 }
 
 /// Error result of a glob-expansion task.
-pub enum ShellGlobErr {
+pub(crate) enum ShellGlobErr {
     Syscall(bun_sys::Error),
     Unknown(crate::Error),
 }
@@ -85,6 +82,10 @@ impl bun_event_loop::Taskable for ShellGlobTask {
             (*this).task.unref_unrun();
             drop(bun_core::heap::take(this));
         }
+    }
+    /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 

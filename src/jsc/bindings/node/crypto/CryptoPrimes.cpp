@@ -3,11 +3,23 @@
 #include "helpers.h"
 #include "CryptoUtil.h"
 #include "NodeValidator.h"
+#include "BunClientData.h"
 
 namespace Bun {
 
 using namespace ncrypto;
 using namespace JSC;
+
+// BN_generate_prime_ex / BN_is_prime_ex progress callback: returning false aborts. `safe` primes and
+// awkward `add`/`rem` constraints can take unboundedly long, so stop as soon as the VM this is for has
+// been asked to stop (worker terminate() / process.exit()) rather than hold its teardown — or, on the
+// sync paths, the termination itself — until OpenSSL happens to finish. Readable from any thread.
+static BignumPointer::PrimeCheckCallback whileScriptAllowed(JSGlobalObject* globalObject)
+{
+    return [clientData = WebCore::clientData(globalObject->vm())](int, int) -> bool {
+        return clientData->scriptAllowed();
+    };
+}
 
 CheckPrimeJobCtx::CheckPrimeJobCtx(ncrypto::BignumPointer candidate, int32_t checks)
     : m_candidate(WTF::move(candidate))
@@ -25,20 +37,19 @@ extern "C" void Bun__CheckPrimeJobCtx__runTask(CheckPrimeJobCtx* ctx, JSGlobalOb
 }
 void CheckPrimeJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
 {
-    auto res = m_candidate.isPrime(m_checks, [](int32_t a, int32_t b) -> bool {
-        // TODO(dylan-conway): ideally we check for !vm->isShuttingDown() here
-        return true;
-    });
-
-    m_result = res != 0;
+    auto res = m_candidate.isPrime(m_checks, whileScriptAllowed(lexicalGlobalObject));
+    m_failed = res < 0;
+    m_result = res > 0;
 }
 
 extern "C" void Bun__CheckPrimeJobCtx__runFromJS(CheckPrimeJobCtx* ctx, JSGlobalObject* lexicalGlobalObject, JSCallbackArgs* out)
 {
     *out = ctx->runFromJS(lexicalGlobalObject);
 }
-JSCallbackArgs CheckPrimeJobCtx::runFromJS(JSGlobalObject*)
+JSCallbackArgs CheckPrimeJobCtx::runFromJS(JSGlobalObject* globalObject)
 {
+    if (m_failed) [[unlikely]]
+        return { createError(globalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "could not check prime"_s) };
     return { jsUndefined(), jsBoolean(m_result) };
 }
 
@@ -97,12 +108,11 @@ JSC_DEFINE_HOST_FUNCTION(jsCheckPrimeSync, (JSC::JSGlobalObject * lexicalGlobalO
         }
     }
 
-    auto res = candidate.isPrime(checks, [](int32_t a, int32_t b) -> bool {
-        // TODO(dylan-conway): ideally we check for !vm->isShuttingDown() here
-        return true;
-    });
+    auto res = candidate.isPrime(checks, whileScriptAllowed(lexicalGlobalObject));
+    if (res < 0) [[unlikely]]
+        return ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "could not check prime"_s);
 
-    return JSValue::encode(jsBoolean(res != 0));
+    return JSValue::encode(jsBoolean(res > 0));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsCheckPrime, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -177,10 +187,7 @@ extern "C" void Bun__GeneratePrimeJobCtx__runTask(GeneratePrimeJobCtx* ctx, JSGl
 }
 void GeneratePrimeJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
 {
-    m_prime.generate({ .bits = m_size, .safe = m_safe, .add = m_add, .rem = m_rem }, [](int32_t a, int32_t b) -> bool {
-        // TODO(dylan-conway): ideally we check for !vm->isShuttingDown() here
-        return true;
-    });
+    m_failed = !m_prime.generate({ .bits = m_size, .safe = m_safe, .add = m_add, .rem = m_rem }, whileScriptAllowed(lexicalGlobalObject));
 }
 
 extern "C" void Bun__GeneratePrimeJobCtx__runFromJS(GeneratePrimeJobCtx* ctx, JSGlobalObject* lexicalGlobalObject, JSCallbackArgs* out)
@@ -192,15 +199,19 @@ JSCallbackArgs GeneratePrimeJobCtx::runFromJS(JSGlobalObject* globalObject)
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    if (m_failed) [[unlikely]]
+        return { createError(globalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "could not generate prime"_s) };
     JSValue result = GeneratePrimeJob::result(globalObject, scope, m_prime, m_bigint);
-    EXCEPTION_ASSERT(result.isEmpty() == !!scope.exception());
-    if (scope.exception()) [[unlikely]] {
-        // The thrown Error, not the Exception cell (node parity).
-        JSValue err = scope.exception()->value();
-        (void)scope.tryClearException();
-        return { err };
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        // A stopped worker's termination (which a trap can raise anywhere in result(), even with a
+        // value made): leave it pending for then() to propagate. Anything else is this job's own
+        // failure and becomes the callback's `err` — the thrown Error, not the Exception cell
+        // (node parity).
+        if (!scope.tryClearException())
+            return {};
+        return { exception->value() };
     }
-
+    ASSERT(!result.isEmpty());
     return { jsUndefined(), result };
 }
 
@@ -232,6 +243,7 @@ JSValue GeneratePrimeJob::result(JSGlobalObject* globalObject, JSC::ThrowScope& 
         }
 
         JSValue result = JSBigInt::parseInt(globalObject, vm, primeHex.span(), 16, JSBigInt::ErrorParseMode::IgnoreExceptions, JSBigInt::ParseIntSign::Unsigned);
+        RETURN_IF_EXCEPTION(scope, {});
         if (result.isEmpty()) {
             ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "could not generate prime"_s);
             return {};
@@ -458,12 +470,10 @@ JSC_DEFINE_HOST_FUNCTION(jsGeneratePrimeSync, (JSC::JSGlobalObject * lexicalGlob
         return ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "could not generate prime"_s);
     }
 
-    prime.generate({ .bits = size, .safe = safe, .add = add, .rem = rem }, [](int32_t a, int32_t b) -> bool {
-        // TODO(dylan-conway): ideally we check for !vm->isShuttingDown() here
-        return true;
-    });
+    if (!prime.generate({ .bits = size, .safe = safe, .add = add, .rem = rem }, whileScriptAllowed(lexicalGlobalObject))) [[unlikely]]
+        return ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "could not generate prime"_s);
 
-    return JSValue::encode(GeneratePrimeJob::result(lexicalGlobalObject, scope, prime, bigint));
+    RELEASE_AND_RETURN(scope, JSValue::encode(GeneratePrimeJob::result(lexicalGlobalObject, scope, prime, bigint)));
 }
 
 } // namespace Bun

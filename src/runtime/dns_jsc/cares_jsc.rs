@@ -679,11 +679,11 @@ impl ErrorDeferred {
             ))
         };
         let system_error = SystemError {
-            errno: self.errno as i32,
-            code: bstr::String::static_(code).into(),
-            message: message.into(),
-            syscall: bstr::String::clone_utf8(self.syscall).into(),
-            hostname: self.hostname.take().unwrap_or(bstr::String::empty()).into(),
+            errno: self.errno.errno(),
+            code: bstr::String::static_(code),
+            message,
+            syscall: bstr::String::clone_utf8(self.syscall),
+            hostname: self.hostname.take().unwrap_or(bstr::String::EMPTY),
             ..Default::default()
         };
 
@@ -692,55 +692,74 @@ impl ErrorDeferred {
         instance.put(
             global_this,
             b"name",
-            bstr::String::static_(b"DNSException").to_js(global_this)?,
+            bstr::String::static_("DNSException").to_js(global_this)?,
         );
 
         // `self` (and thus self.promise / self.hostname) drops at scope exit;
         // hostname was `take()`n above to avoid double-deref.
-        Ok(self.promise.reject(global_this, Ok(instance))?)
+        self.promise.reject(global_this, Ok(instance))
     }
 
-    pub(crate) fn reject_later(self: Box<Self>, global_this: &JSGlobalObject) {
-        struct Context {
-            deferred: Box<ErrorDeferred>,
-            // LIFETIMES.tsv row 1403: JSC_BORROW — the global outlives the
-            // enqueued task (VM-owned), so a `BackRef` captures the invariant.
-            global_this: bun_ptr::BackRef<JSGlobalObject>,
-        }
-        impl Context {
-            // `bun_event_loop::ManagedTask::new` expects
-            // `fn(*mut T) -> bun_event_loop::JsResult<()>` (tier-0 `bun_core::JsError`).
-            fn callback(this: *mut Context) -> bun_event_loop::JsResult<()> {
-                // SAFETY: `this` is the heap-allocated pointer passed to ManagedTask::new
-                // below; ManagedTask::run calls us exactly once with that pointer.
-                let this = unsafe { bun_core::heap::take(this) };
-                let global = this.global_this.get();
-                this.deferred.reject(global).map_err(Into::into)
-            }
-        }
-
+    /// `context` is the context of the script that asked. Once it has stopped the
+    /// error is not reported: closing a resolver's channel fails every pending
+    /// query with `ARES_EDESTRUCTION`, and that is how a `Bun.ModuleGraph`'s
+    /// resolver goes when the graph is disposed.
+    pub(crate) fn reject_later(
+        self: Box<Self>,
+        global_this: &JSGlobalObject,
+        context: bun_jsc::ContextId,
+    ) {
         let vm = global_this.bun_vm();
         // Worker terminate's `stop_dns_for_vm_teardown` fires EDESTRUCTION with
-        // `is_shutting_down` already set; the task queue is about to be
-        // drained-without-run and ManagedTask has no cleanup here, so enqueuing
-        // would leak the `Context` and its `JSPromiseStrong` box. Drop now while
-        // JSC is still live so the Strong handle releases cleanly.
+        // `is_shutting_down` already set: there is nobody to reject for.
         if vm.is_shutting_down() {
             return;
         }
-
-        let context = bun_core::heap::into_raw(Box::new(Context {
-            deferred: self,
-            global_this: bun_ptr::BackRef::new(global_this),
-        }));
-        // TODO(@heimskr): new custom Task type
-        // SAFETY: `bun_vm()` returns a non-null VM pointer (VM-owned for the lifetime of
-        // the JSGlobalObject).
         vm.as_mut()
-            .enqueue_task(bun_jsc::ManagedTask::ManagedTask::new(
-                context,
-                Context::callback,
-            ));
+            .enqueue_task(bun_event_loop::Task::from_boxed(Box::new(
+                ErrorDeferredTask {
+                    asking: context,
+                    deferred: self,
+                    global_this: bun_ptr::BackRef::new(global_this),
+                },
+            )));
+    }
+}
+
+/// [`ErrorDeferred::reject_later`]'s hop to the next turn of the loop.
+pub(crate) struct ErrorDeferredTask {
+    /// The context of the script that asked; it may stop before the task runs.
+    asking: bun_jsc::ContextId,
+    deferred: Box<ErrorDeferred>,
+    // LIFETIMES.tsv row 1403: JSC_BORROW — the global outlives the
+    // enqueued task (VM-owned), so a `BackRef` captures the invariant.
+    global_this: bun_ptr::BackRef<JSGlobalObject>,
+}
+
+impl ErrorDeferredTask {
+    #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
+    pub(crate) fn run(self: Box<Self>) -> JsResult<()> {
+        let Self {
+            asking,
+            deferred,
+            global_this,
+        } = *self;
+        let global = global_this.get();
+        // For the script that asked: once its context has stopped the error goes to nobody.
+        let _context = global.bun_vm().enter_context(asking);
+        deferred.reject(global)
+    }
+}
+
+impl bun_event_loop::Taskable for ErrorDeferredTask {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::DnsErrorDeferred;
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — boxed in `reject_later`.
+        drop(unsafe { bun_core::heap::take(this) });
+    }
+    /// `run` enters the asking script's context itself.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 
@@ -765,22 +784,21 @@ pub(crate) fn error_to_js_with_syscall(
 ) -> JsResult<JSValue> {
     let code = this.code();
     let instance = SystemError {
-        errno: this as i32,
-        code: bstr::String::static_(&code[4..]).into(),
-        syscall: bstr::String::static_(syscall).into(),
+        errno: this.errno(),
+        code: bstr::String::static_(&code[4..]),
+        syscall: bstr::String::static_(syscall),
         message: bstr::String::create_format(format_args!(
             "{} {}",
             BStr::new(syscall),
             BStr::new(&code[4..])
-        ))
-        .into(),
+        )),
         ..Default::default()
     }
     .to_error_instance(global_this);
     instance.put(
         global_this,
         b"name",
-        bstr::String::static_(b"DNSException").to_js(global_this)?,
+        bstr::String::static_("DNSException").to_js(global_this)?,
     );
     Ok(instance)
 }
@@ -797,17 +815,16 @@ pub(crate) fn system_error_with_syscall_and_hostname(
 ) -> SystemError {
     let code = this.code();
     SystemError {
-        errno: this as i32,
-        code: bstr::String::static_(&code[4..]).into(),
+        errno: this.errno(),
+        code: bstr::String::static_(&code[4..]),
         message: bstr::String::create_format(format_args!(
             "{} {} {}",
             BStr::new(syscall),
             BStr::new(&code[4..]),
             BStr::new(hostname)
-        ))
-        .into(),
-        syscall: bstr::String::static_(syscall).into(),
-        hostname: bstr::String::clone_utf8(hostname).into(),
+        )),
+        syscall: bstr::String::static_(syscall),
+        hostname: bstr::String::clone_utf8(hostname),
         ..Default::default()
     }
 }
@@ -823,9 +840,15 @@ pub(crate) fn error_to_js_with_syscall_and_hostname(
     instance.put(
         global_this,
         b"name",
-        bstr::String::static_(b"DNSException").to_js(global_this)?,
+        bstr::String::static_("DNSException").to_js(global_this)?,
     );
     Ok(instance)
+}
+
+/// Thrown before uSockets' synchronous `getaddrinfo` can block on a name that can never resolve.
+pub(crate) fn not_a_hostname_error(global_this: &JSGlobalObject, hostname: &[u8]) -> JSValue {
+    system_error_with_syscall_and_hostname(c_ares::Error::ENOTFOUND, b"getaddrinfo", hostname)
+        .to_error_instance(global_this)
 }
 
 // ── canonicalizeIP host fn ─────────────────────────────────────────────────
@@ -842,7 +865,7 @@ fn bun_canonicalize_ip(global_this: &JSGlobalObject, callframe: &CallFrame) -> J
         )));
     }
 
-    let addr_arg = arguments[0].to_slice(global_this)?;
+    let addr_arg = arguments[0].to_utf8(global_this)?;
     let addr_str = addr_arg.slice();
 
     // CIDR not allowed

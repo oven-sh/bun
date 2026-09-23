@@ -101,8 +101,78 @@ describe("bun:jsc", () => {
   it("reoptimizationRetryCount", () => {
     expect(reoptimizationRetryCount(count)).toBeGreaterThanOrEqual(0);
   });
-  it("drainMicrotasks", () => {
-    expect(drainMicrotasks()).toBeUndefined();
+  describe("drainMicrotasks", () => {
+    it("returns undefined", () => {
+      expect(drainMicrotasks()).toBeUndefined();
+    });
+
+    it("runs promise reactions, queueMicrotask() and process.nextTick() callbacks", () => {
+      const ran: string[] = [];
+      Promise.resolve().then(() => ran.push("promise"));
+      queueMicrotask(() => ran.push("queueMicrotask"));
+      process.nextTick(() => ran.push("nextTick"));
+      drainMicrotasks();
+      expect(ran.sort()).toEqual(["nextTick", "promise", "queueMicrotask"]);
+    });
+
+    it("does not run a task that this thread has queued", async () => {
+      const { port1, port2 } = new MessageChannel();
+      try {
+        const { promise, resolve } = Promise.withResolvers<string>();
+        const log: string[] = [];
+        port2.onmessage = e => {
+          log.push("message");
+          resolve(e.data);
+        };
+        // A message to a port of the same thread is a task in the event loop's queue from here on.
+        port1.postMessage("from port1");
+        drainMicrotasks();
+        log.push("after drainMicrotasks");
+
+        expect(await promise).toBe("from port1");
+        expect(log).toEqual(["after drainMicrotasks", "message"]);
+      } finally {
+        port1.close();
+        port2.close();
+      }
+    });
+
+    it("does not run a task that another thread has posted", async () => {
+      const ready = new Int32Array(new SharedArrayBuffer(4));
+      const url = URL.createObjectURL(
+        new Blob(
+          [
+            `self.onmessage = ({ data: ready }) => {
+              postMessage("from worker");
+              Atomics.store(ready, 0, 1);
+              Atomics.notify(ready, 0);
+            };`,
+          ],
+          { type: "text/javascript" },
+        ),
+      );
+      const worker = new Worker(url);
+      try {
+        const { promise, resolve, reject } = Promise.withResolvers<string>();
+        const log: string[] = [];
+        worker.onerror = reject;
+        worker.onmessage = e => {
+          log.push("message");
+          resolve(e.data);
+        };
+        worker.postMessage(ready);
+        // Block until the worker has posted its message, so that the task is in the queue for certain.
+        expect(Atomics.wait(ready, 0, 0, 30_000)).not.toBe("timed-out");
+        drainMicrotasks();
+        log.push("after drainMicrotasks");
+
+        expect(await promise).toBe("from worker");
+        expect(log).toEqual(["after drainMicrotasks", "message"]);
+      } finally {
+        worker.terminate();
+        URL.revokeObjectURL(url);
+      }
+    });
   });
   it("startRemoteDebugger", () => {
     // try {
@@ -231,6 +301,28 @@ describe("bun:jsc", () => {
     expect(result3.functions).toBeDefined();
     expect(result3.stackTraces).toBeDefined();
     expect(result3.stackTraces.traces.length).toBeGreaterThan(0);
+  });
+
+  it("profile accepts a callable Proxy", async () => {
+    // functionRunProfiler used to uncheckedDowncast<JSFunction> the callback after only
+    // checking isCallable(), which aborts asserts builds when the callable is a ProxyObject.
+    const script = `
+      const { profile } = require("bun:jsc");
+      const result = profile(new Proxy(function () { return 1; }, {}));
+      if (!result || typeof result.functions !== "string" || !("stackTraces" in result)) {
+        throw new Error("unexpected profile() result keys: " + JSON.stringify(result && Object.keys(result)));
+      }
+      console.log("ok");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
   });
 });
 
@@ -566,4 +658,31 @@ it("deserialize applies the same nesting depth limit to arrays as to objects", a
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, exitCode }).toEqual({ stdout: "rejected\n65\n", exitCode: 0 });
+});
+
+describe("JsRef::Weak liveness", () => {
+  // collectSyncWithoutSweep leaves dead cells allocated until the incremental sweeper reaches them.
+  it("dead-but-unswept cells read as not live, kept cells read as live", () => {
+    const { jscInternals } = require("bun:internal-for-testing");
+    let objects: object[] = [];
+    const dropped: bigint[] = [];
+    for (let i = 0; i < 2000; i++) {
+      const o = { i, pad: [i] };
+      objects.push(o);
+      dropped.push(jscInternals.rawCellAddress(o));
+    }
+    const kept = { keep: true };
+    const keptAddr = jscInternals.rawCellAddress(kept);
+    expect(dropped.every(a => jscInternals.isLiveCellAtRawAddress(a))).toBe(true);
+    expect(jscInternals.isLiveCellAtRawAddress(keptAddr)).toBe(true);
+
+    objects = [];
+    jscInternals.collectSyncWithoutSweep();
+
+    // A few may survive via the conservative stack scan; the bulk must read as dead.
+    const stillLive = dropped.filter(a => jscInternals.isLiveCellAtRawAddress(a)).length;
+    expect(stillLive).toBeLessThan(dropped.length / 2);
+    expect(jscInternals.isLiveCellAtRawAddress(keptAddr)).toBe(true);
+    expect(kept.keep).toBe(true);
+  });
 });

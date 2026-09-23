@@ -126,11 +126,15 @@ rewriter.on("div", {
 });
 ```
 
-`transform(response)` returns immediately; the rewrite continues in the
-background and you read the result off the returned `Response`. Because the
-rewrite outlives `transform()`, an error thrown by an async handler (or a
-Promise it returns that rejects) rejects the response body instead of throwing
-from `transform()`:
+`transform(response)` returns immediately. The rewrite continues in the
+background, and you read the result off the returned `Response`. Reading it
+paces the rewrite: a streamed input (a file, a `fetch()` response, a
+`ReadableStream`) is pulled through only as fast as the returned body is
+consumed, so a slow reader does not accumulate the whole document in memory. If
+nothing reads the body, the rewrite still runs every handler to the end of the
+document and buffers the output until it is read. Because the rewrite outlives
+`transform()`, an error thrown by an async handler (or a Promise it returns that
+rejects) rejects the response body instead of throwing from `transform()`:
 
 ```ts
 try {
@@ -158,10 +162,10 @@ new HTMLRewriter()
 // microtask. Pass a Response instead and await its body
 ```
 
-A handler whose Promise settles within a microtask checkpoint (anything that
-does not need the event loop, including `process.nextTick` and already-resolved
-Promises) still works with `transform(string)`. Pass a `Response` whenever a
-handler might await real work.
+A handler whose Promise settles within a microtask checkpoint still works with
+`transform(string)`. Anything that does not need the event loop qualifies,
+including `process.nextTick` and already-resolved Promises. Pass a `Response`
+whenever a handler might await real work.
 
 ### CSS Selector Support
 
@@ -205,7 +209,7 @@ rewriter.on("*", handler);
 
 ### Element Operations
 
-All element modification methods return the element instance, so calls can be chained:
+All element modification methods return the element instance, so you can chain calls:
 
 ```ts
 rewriter.on("div", {
@@ -335,25 +339,25 @@ rewriter.onDocument({
 
 ### Response Handling
 
-When transforming a Response:
+When transforming a Response, HTMLRewriter:
 
-- The status code, headers, and other response properties are preserved
-- The body is transformed while maintaining streaming capabilities
-- Content-encoding (like gzip) is handled automatically
-- The original response body is marked as used after transformation
-- Headers are cloned to the new response
+- Preserves the status code, headers, and other response properties
+- Transforms the body while maintaining streaming capabilities
+- Handles content-encoding (like gzip) automatically
+- Marks the original response body as used after transformation
+- Clones headers to the new response
 
 ## Error Handling
 
-Which channel an error takes is decided by the overload you called, never by
-timing. `transform()` itself throws for:
+The overload you called decides which channel an error takes. Timing never
+does. `transform()` itself throws for:
 
 - Invalid selector syntax in the `on()` method
 - Invalid input types (for example, passing a Symbol)
 - Body already used errors, and input bodies that have already failed or aborted
 - Anything a content handler raises on a `string` / `ArrayBuffer` input, since
-  those have to produce their result before `transform()` returns — including a
-  handler that needs the event loop (see [Element Handlers](#element-handlers))
+  those have to produce their result before `transform()` returns. The same goes
+  for a handler that needs the event loop (see [Element Handlers](#element-handlers))
 
 ```ts
 try {
@@ -379,10 +383,10 @@ try {
 }
 ```
 
-A rejection from a Promise a handler creates but neither returns nor awaits
-reaches neither channel: like any detached rejection, it goes to the
-process-global `unhandledRejection` path. Earlier versions of Bun could surface
-it from `transform()` itself.
+If a handler creates a Promise but neither returns nor awaits it, a rejection
+from that Promise reaches neither channel. Like any detached rejection, it goes
+to the process-global `unhandledRejection` path. Earlier versions of Bun could
+surface it from `transform()` itself.
 
 ---
 

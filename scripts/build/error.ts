@@ -31,11 +31,38 @@ export class BuildError extends Error {
       out += `  hint: ${this.hint}\n`;
     }
     if (this.cause !== undefined) {
-      const cause = this.cause instanceof Error ? this.cause.message : String(this.cause);
-      out += `  cause: ${cause}\n`;
+      out += `  cause: ${describeError(this.cause)}\n`;
     }
     return out;
   }
+}
+
+/**
+ * One line naming an error and everything it wraps, outermost first:
+ * `fetch failed: getaddrinfo EAI_AGAIN github.com`. The outer message alone
+ * is often content-free: node's fetch reports every network failure as
+ * "fetch failed" and puts the reason (DNS, connect timeout, reset) in
+ * `cause`, and a connect that failed on every resolved address is an
+ * AggregateError whose own message is empty.
+ */
+export function describeError(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  const parts: string[] = [];
+  const seen = new Set<Error>();
+  let e: unknown = err;
+  while (e instanceof Error && !seen.has(e)) {
+    seen.add(e);
+    if (e instanceof AggregateError && e.errors.length > 0) {
+      const inner = e.errors.map(describeError).join("; ");
+      parts.push(e.message ? `${e.message} (${inner})` : inner);
+    } else {
+      parts.push(e.message || e.name);
+    }
+    e = e.cause;
+  }
+  // A non-Error cause (`{ cause: "ECONNRESET" }`) still carries the reason.
+  if (e !== undefined && e !== null && !(e instanceof Error)) parts.push(String(e));
+  return parts.join(": ");
 }
 
 /**

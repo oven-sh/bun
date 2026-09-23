@@ -607,7 +607,8 @@ impl TranspilerJob {
     }
 
     fn run(&mut self, ticket: &crate::Ticket) {
-        // Stack-local per call, bulk-freed on return. An earlier version hoisted
+        // Created once the transpiler cache has missed; a hit allocates nothing
+        // from it. Stack-local per call, bulk-freed on return. An earlier version hoisted
         // this to a per-worker-thread leaked `Box<MimallocArena>` (and a second
         // one inside a leaked `ASTMemoryAllocator`) and only `reset()` it at
         // the *start* of the next call. On a 64-core box ~40 thread-pool
@@ -621,7 +622,7 @@ impl TranspilerJob {
         // `mi_heap_destroy`, so the per-call heap-churn is identical to a
         // start-of-call `reset()` but the worker holds **zero** retained pages
         // between calls.
-        let arena = Arena::new();
+        let mut arena: Option<Arena> = None;
 
         // `defer this.dispatchToMainThread()` — fires on every return path.
         let this_ptr: *mut TranspilerJob = self;
@@ -655,11 +656,10 @@ impl TranspilerJob {
             return;
         }
 
-        // `borrowing()`: the AST node store and the
-        // `AstVec` spill share `arena`'s heap and are bulk-freed when `arena`
-        // drops at the end of `run()`.
-        let mut ast_memory_store = ASTMemoryAllocator::borrowing(&arena);
-        let _ast_scope = ast_memory_store.enter();
+        // Entered once `arena` exists. Declared ahead of the guards below, so
+        // the scope exits after they have run.
+        let mut ast_memory_store;
+        let _ast_scope;
 
         let path = self.path;
         let specifier = self.path.text;
@@ -700,14 +700,14 @@ impl TranspilerJob {
         let mut transpiler_storage =
             core::mem::ManuallyDrop::new(unsafe { ptr::read(ptr::addr_of!((*vm).transpiler)) });
         // SAFETY: lifetime erasure — `Transpiler<'a>`'s `'a` only constrains the
-        // `allocator` field (and resolver opts that share it), which we
-        // immediately overwrite below via `set_arena(&arena)` to the stack-local
-        // arena above. `arena` is declared before `transpiler_storage`, so it
-        // drops after; the bytewise copy is never dropped (ManuallyDrop), so no
-        // borrow tied to the shortened `'a` outlives the arena.
+        // `allocator` field (and resolver opts that share it), which
+        // `set_arena(arena)` below overwrites with the stack-local arena above
+        // before anything reads it. `arena` is declared before
+        // `transpiler_storage`, so it drops after; the bytewise copy is never
+        // dropped (ManuallyDrop), so no borrow tied to the shortened `'a`
+        // outlives the arena.
         let transpiler: &mut Transpiler<'_> =
             unsafe { &mut *(&raw mut *transpiler_storage).cast::<Transpiler<'_>>() };
-        transpiler.set_arena(&arena);
         transpiler.set_log(&raw mut log);
         // Note: the resolver already shares opts with the parent
         // Transpiler via raw pointer; set_arena/set_log keep them in sync.
@@ -804,7 +804,6 @@ impl TranspilerJob {
         };
 
         let mut parse_options = ParseOptions {
-            arena: &arena,
             path,
             loader,
             dirname_fd: Fd::INVALID,
@@ -890,9 +889,7 @@ impl TranspilerJob {
         let is_watcher_enabled =
             import_watcher.is_some_and(|iw| !matches!(&*iw, ImportWatcher::None));
 
-        let Some(mut parse_result) = transpiler
-            .parse_maybe_return_file_only_allow_shared_buffer::<false, false>(parse_options, None)
-        else {
+        let watch_input_file = |input_file_fd: Fd| {
             if is_watcher_enabled && input_file_fd.is_valid() {
                 if !is_node_override
                     && bun_paths::is_absolute(path.text)
@@ -915,33 +912,13 @@ impl TranspilerJob {
                     }
                 }
             }
+        };
 
+        let Some(begun) = transpiler.begin_parse(parse_options) else {
+            watch_input_file(input_file_fd);
             self.parse_error = Some(crate::CrateError::ParseError);
             return;
         };
-
-        if is_watcher_enabled && input_file_fd.is_valid() {
-            if !is_node_override
-                && bun_paths::is_absolute(path.text)
-                && !strings::contains(path.text, b"node_modules")
-            {
-                if let Some(iw) = import_watcher {
-                    // SAFETY: BACKREF — process-lifetime watcher; no other
-                    // `&ImportWatcher` is live here, and `add_file` is
-                    // thread-safe via watcher mutex.
-                    let added = unsafe { iw.assume_mut() }.add_file::<true>(
-                        input_file_fd,
-                        path.text,
-                        hash,
-                        Fd::INVALID,
-                        package_json,
-                    );
-                    if matches!(added, Ok(bun_watcher::FdOwnership::Watcher)) {
-                        should_close_input_file_fd.set(false);
-                    }
-                }
-            }
-        }
 
         // SAFETY: leaf scalar field read; see `vm` note above. Inlined
         // `VirtualMachine::use_isolation_source_provider_cache` to avoid forming
@@ -951,6 +928,8 @@ impl TranspilerJob {
                 .unwrap_or(false);
 
         if let Some(entry_ptr) = cache.entry.take() {
+            watch_input_file(input_file_fd);
+
             // SAFETY: `entry` was boxed by `JSC_PARSER_CACHE_VTABLE.get` from a
             // concrete `crate::runtime_transpiler_cache::Entry`; sole owner.
             let mut entry: Box<CacheEntry> =
@@ -959,7 +938,7 @@ impl TranspilerJob {
             // SAFETY: leaf-field `&mut` borrow on `*vm.source_mappings`;
             // `SavedSourceMap` takes its own internal mutex.
             let _ = unsafe { &mut (*vm).source_mappings }.put_mappings(
-                &parse_result.source,
+                begun.source(),
                 MutableString {
                     list: core::mem::take(&mut entry.sourcemap).into_vec(),
                 },
@@ -992,6 +971,21 @@ impl TranspilerJob {
 
             return;
         }
+
+        let arena: &Arena = arena.insert(Arena::new());
+        // `borrowing()`: the AST node store and the
+        // `AstVec` spill share `arena`'s heap and are bulk-freed when `arena`
+        // drops at the end of `run()`.
+        ast_memory_store = ASTMemoryAllocator::borrowing(arena);
+        _ast_scope = ast_memory_store.enter();
+        transpiler.set_arena(arena);
+
+        let parse_result = transpiler.finish_parse(arena, begun);
+        watch_input_file(input_file_fd);
+        let Some(mut parse_result) = parse_result else {
+            self.parse_error = Some(crate::CrateError::ParseError);
+            return;
+        };
 
         if !matches!(parse_result.already_bundled, AlreadyBundled::None) {
             let already_bundled = core::mem::take(&mut parse_result.already_bundled);
@@ -1111,9 +1105,8 @@ impl TranspilerJob {
                 },
             );
             transpiler.print_with_source_map(
-                // Same per-call `arena` that `transpiler.set_arena(&arena)`
-                // and `parse_options.arena` used to build `parse_result.ast`.
-                &arena,
+                // The arena `finish_parse` built `parse_result.ast` in.
+                arena,
                 parse_result,
                 &mut printer,
                 js_printer::Format::EsmAscii,

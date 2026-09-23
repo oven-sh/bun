@@ -356,7 +356,7 @@ pub mod Runtime {
         // the feature fields that affect transpiled output.
         //
         // Takes `Wyhash` (NOT `Wyhash11`).
-        pub(crate) fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
+        pub(crate) fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash, ts: bool) {
             debug_assert!(self.runtime_transpiler_cache.is_some());
 
             let bools: [bool; 17] = [
@@ -373,7 +373,9 @@ pub mod Runtime {
                 self.trim_unused_imports,
                 self.dont_bundle_twice,
                 self.commonjs_at_runtime,
-                self.emit_decorator_metadata,
+                // `P::init` turns it off for a JavaScript file, and the key
+                // is computed before `P::init` runs.
+                self.emit_decorator_metadata && ts,
                 self.standard_decorators,
                 self.lower_using,
                 self.repl_mode,

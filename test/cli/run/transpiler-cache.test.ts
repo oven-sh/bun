@@ -495,6 +495,236 @@ describe("transpiler cache", () => {
       expect(newCacheCount()).toBe(0);
     });
   });
+
+  // A module loaded with `import` is transpiled on a worker thread, one loaded
+  // with `require` on the JavaScript thread. Both look the file up in the cache
+  // before they set up a parser, so everything a parse would have produced has
+  // to come back out of the entry.
+  describe("a module is looked up in the cache before it is parsed", () => {
+    const filler = "\n//" + Buffer.alloc(5 * 1024, "f").toString() + "\n";
+
+    async function run(cwd: string, args: string[], extraEnv: Record<string, string> = {}) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        cwd,
+        env: { ...env, ...extraEnv },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    // An entry is replaced by renaming a new file over it, so an entry that
+    // keeps its inode was served, not written again.
+    function entryInodes() {
+      return Object.fromEntries(
+        readdirSync(cache_dir)
+          .sort()
+          .map(name => [name, statSync(join(cache_dir, name), { bigint: true }).ino]),
+      );
+    }
+
+    // Reading an entry that does not decode deletes it, so a file of junk
+    // under the entry's name is still there only if the cache was never read
+    // for `contents`.
+    function plantEntries(contents: string) {
+      const hash = Buffer.alloc(8);
+      hash.writeBigUInt64LE(BigInt(Bun.hash.wyhash(contents, 42n)));
+      mkdirSync(cache_dir, { recursive: true });
+      return [".pile", ".debug.pile"].map(suffix => {
+        const path = join(cache_dir, hash.toString("hex") + suffix);
+        writeFileSync(path, "junk");
+        return path;
+      });
+    }
+
+    function writeModules() {
+      writeFileSync(
+        join(temp_dir, "esm.ts"),
+        `export interface Shape {
+  sides: number;
+}
+type Unused = { [key: string]: Shape };
+export function sides(shape: Shape): number {
+  return shape.sides;
+}
+export function fail(): never {
+  throw new Error("from esm.ts");
+}
+${filler}`,
+      );
+      writeFileSync(join(temp_dir, "cjs.js"), `exports.kind = typeof module;\nexports.answer = 42;\n${filler}`);
+      writeFileSync(
+        join(temp_dir, "tla.ts"),
+        `export let ready: string = "no";
+await new Promise<void>(resolve => queueMicrotask(resolve));
+await Promise.resolve();
+ready = "yes";
+${filler}`,
+      );
+      writeFileSync(
+        join(temp_dir, "required.ts"),
+        `enum Level {\n  Low = 1,\n  High = 2,\n}\nmodule.exports = { level: Level.High as number };\n${filler}`,
+      );
+      writeFileSync(
+        join(temp_dir, "report.ts"),
+        `import cjs from "./cjs.js";
+import { fail, sides } from "./esm.ts";
+import { ready } from "./tla.ts";
+const required = require("./required.ts");
+let position = "";
+try {
+  fail();
+} catch (e) {
+  position = (e as Error).stack!.split("\\n")[1].trim().replace(import.meta.dir, "").replaceAll("\\\\", "/");
+}
+export const report = JSON.stringify({
+  sides: sides({ sides: 3 }),
+  cjs,
+  ready,
+  required,
+  position,
+  text: sides.toString(),
+});
+`,
+      );
+    }
+    const report = JSON.stringify({
+      sides: 3,
+      cjs: { kind: "object", answer: 42 },
+      ready: "yes",
+      required: { level: 2 },
+      position: "at fail (/esm.ts:9:13)",
+      text: "function sides(shape) {\n  return shape.sides;\n}",
+    });
+
+    test("a cached module is the module that was transpiled", async () => {
+      writeModules();
+      writeFileSync(join(temp_dir, "main.ts"), `import { report } from "./report.ts";\nconsole.log(report);\n`);
+
+      expect(await run(temp_dir, ["main.ts"])).toEqual({ stdout: report + "\n", stderr: "", exitCode: 0 });
+      expect(newCacheCount()).toBe(4);
+      const written = entryInodes();
+
+      expect(await run(temp_dir, ["main.ts"])).toEqual({ stdout: report + "\n", stderr: "", exitCode: 0 });
+      expect(entryInodes()).toEqual(written);
+    });
+
+    // With --isolate the entry also supplies the module record, and with it
+    // whether the module has a top-level await.
+    test("a cached module is the module that was transpiled (bun test --isolate)", async () => {
+      writeModules();
+      writeFileSync(
+        join(temp_dir, "main.test.ts"),
+        `import { expect, test } from "bun:test";
+import { report } from "./report.ts";
+test("report", () => {
+  expect(report).toBe(process.env.EXPECTED_REPORT);
+});
+`,
+      );
+      const args = ["test", "--isolate", "./main.test.ts"];
+
+      const cold = await run(temp_dir, args, { EXPECTED_REPORT: report });
+      expect(cold.stderr).toContain(" 1 pass");
+      expect(cold.exitCode).toBe(0);
+      expect(newCacheCount()).toBe(4);
+      const written = entryInodes();
+
+      const warm = await run(temp_dir, args, { EXPECTED_REPORT: report });
+      expect(warm.stderr).toContain(" 1 pass");
+      expect(warm.exitCode).toBe(0);
+      expect(entryInodes()).toEqual(written);
+    });
+
+    test("a `// @bun` file is neither read from the cache nor written to it", async () => {
+      const files = {
+        "bundled.js": `// @bun\nexport const value = "esm";\n${filler}`,
+        "bundled-hashbang.js": `#!/usr/bin/env bun\n// @bun\nexport const value = "hashbang";\n${filler}`,
+        "bundled-cjs.js": `// @bun @bun-cjs\n(function(exports, require, module, __filename, __dirname) {module.exports = "cjs";\n${filler}})`,
+      };
+      const planted: string[] = [];
+      for (const [name, contents] of Object.entries(files)) {
+        writeFileSync(join(temp_dir, name), contents);
+        planted.push(...plantEntries(contents));
+      }
+      writeFileSync(
+        join(temp_dir, "main.js"),
+        `import { value as esm } from "./bundled.js";
+import { value as hashbang } from "./bundled-hashbang.js";
+console.log(esm, hashbang, require("./bundled-cjs.js"));
+`,
+      );
+
+      expect(await run(temp_dir, ["main.js"])).toEqual({ stdout: "esm hashbang cjs\n", stderr: "", exitCode: 0 });
+      expect(readdirSync(cache_dir).sort()).toEqual(planted.map(path => path.slice(cache_dir.length + 1)).sort());
+      expect(planted.map(path => readFileSync(path, "utf8"))).toEqual(planted.map(() => "junk"));
+    });
+
+    test("a file with a hashbang is cached", async () => {
+      writeFileSync(
+        join(temp_dir, "imported.ts"),
+        `#!/usr/bin/env bun\nexport const value: string = "imported";\n${filler}`,
+      );
+      writeFileSync(
+        join(temp_dir, "required.ts"),
+        `#!/usr/bin/env bun\nmodule.exports = "required" as string;\n${filler}`,
+      );
+      writeFileSync(
+        join(temp_dir, "main.ts"),
+        `import { value } from "./imported.ts";\nconsole.log(value, require("./required.ts"));\n`,
+      );
+
+      expect(await run(temp_dir, ["main.ts"])).toEqual({ stdout: "imported required\n", stderr: "", exitCode: 0 });
+      expect(newCacheCount()).toBe(2);
+      const written = entryInodes();
+
+      expect(await run(temp_dir, ["main.ts"])).toEqual({ stdout: "imported required\n", stderr: "", exitCode: 0 });
+      expect(entryInodes()).toEqual(written);
+    });
+
+    test("an edited module is transpiled again", async () => {
+      const source = (value: string) => `export const value: string = ${JSON.stringify(value)};\n${filler}`;
+      writeFileSync(join(temp_dir, "main.ts"), `import { value } from "./dep.ts";\nconsole.log(value);\n`);
+
+      writeFileSync(join(temp_dir, "dep.ts"), source("one"));
+      expect(await run(temp_dir, ["main.ts"])).toEqual({ stdout: "one\n", stderr: "", exitCode: 0 });
+      expect(newCacheCount()).toBe(1);
+
+      writeFileSync(join(temp_dir, "dep.ts"), source("two"));
+      expect(await run(temp_dir, ["main.ts"])).toEqual({ stdout: "two\n", stderr: "", exitCode: 0 });
+      expect(newCacheCount()).toBe(1);
+      const written = entryInodes();
+
+      writeFileSync(join(temp_dir, "dep.ts"), source("one"));
+      expect(await run(temp_dir, ["main.ts"])).toEqual({ stdout: "one\n", stderr: "", exitCode: 0 });
+      expect(entryInodes()).toEqual(written);
+    });
+
+    // emitDecoratorMetadata only changes the output of TypeScript files, so a
+    // JavaScript file has one entry whether or not the project sets it.
+    test("emitDecoratorMetadata is not part of the key of a JavaScript file", async () => {
+      const withMetadata = join(temp_dir, "with-metadata");
+      const without = join(temp_dir, "without");
+      for (const dir of [withMetadata, without]) {
+        mkdirSync(dir);
+        writeFileSync(join(dir, "dep.js"), `export const value = "js";\n${filler}`);
+        writeFileSync(join(dir, "main.js"), `import { value } from "./dep.js";\nconsole.log(value);\n`);
+      }
+      writeFileSync(
+        join(withMetadata, "tsconfig.json"),
+        JSON.stringify({ compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true } }),
+      );
+
+      expect(await run(withMetadata, ["main.js"])).toEqual({ stdout: "js\n", stderr: "", exitCode: 0 });
+      expect(newCacheCount()).toBe(1);
+      const written = entryInodes();
+
+      expect(await run(without, ["main.js"])).toEqual({ stdout: "js\n", stderr: "", exitCode: 0 });
+      expect(entryInodes()).toEqual(written);
+    });
+  });
 });
 
 test("rejects cached module records containing out-of-range string indices", () => {

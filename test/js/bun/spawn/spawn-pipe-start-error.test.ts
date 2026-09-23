@@ -88,6 +88,13 @@ try {
 // re-arms it after the first read. The kernel fails the ADD when watches or
 // memory run out. It does not fail the MOD that way: that mode only stands in
 // for any error that ends the reader during the constructor's first read.
+//
+// FAIL_EPOLL_CTL=pty-writer-mod fails a writable EPOLL_CTL_MOD of a pty master
+// and nothing else: the re-arm that Bun.Terminal's writer makes from write()
+// once it has bytes queued. FAIL_EPOLL_CTL_SKIP=n lets the first n of them
+// through. The kernel does not fail that MOD either. The mode stands in for
+// any error that ends the writer inside write(), such as EBADF after other
+// code closed the writer's fd by number.
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 
 const SHIM_C = /* c */ `
@@ -102,14 +109,20 @@ const SHIM_C = /* c */ `
 #include <sys/syscall.h>
 
 static long (*real_syscall)(long, ...);
+static int writer_mods;
 
 static int should_fail(long op, int fd, struct epoll_event *event) {
   if (!event) return 0;
   const char *mode = getenv("FAIL_EPOLL_CTL");
   if (!mode) return op == EPOLL_CTL_ADD && (event->events & EPOLLOUT);
-  long failing_op = strcmp(mode, "pty-reader-add") == 0 ? EPOLL_CTL_ADD : EPOLL_CTL_MOD;
-  unsigned int pty_number;
   // TIOCGPTN succeeds on a pty master only.
+  unsigned int pty_number;
+  if (strcmp(mode, "pty-writer-mod") == 0) {
+    if (op != EPOLL_CTL_MOD || !(event->events & EPOLLOUT) || ioctl(fd, TIOCGPTN, &pty_number) != 0) return 0;
+    const char *skip = getenv("FAIL_EPOLL_CTL_SKIP");
+    return writer_mods++ >= (skip ? atoi(skip) : 0);
+  }
+  long failing_op = strcmp(mode, "pty-reader-add") == 0 ? EPOLL_CTL_ADD : EPOLL_CTL_MOD;
   return op == failing_op && (event->events & EPOLLIN) && ioctl(fd, TIOCGPTN, &pty_number) == 0;
 }
 
@@ -159,7 +172,18 @@ if (kind !== "terminal") {
 const fdBaseline = openFds();
 const wrapperBaseline = wrappers();
 
+// The terminal is reachable only from this call, so once it returns nothing
+// but the terminal's own root on its wrapper can keep it.
+function writeToTerminal(writes) {
+  const seen = { closed: null, drains: 0 };
+  const terminal = new Bun.Terminal({ data() {}, exit() {}, drain() { seen.drains++; } });
+  for (let i = 0; i < writes; i++) terminal.write("x");
+  seen.closed = terminal.closed;
+  return seen;
+}
+
 let error = null;
+let write;
 try {
   switch (kind) {
     case "stdin-pipe":
@@ -174,6 +198,12 @@ try {
     case "spawn-terminal":
       Bun.spawn({ cmd: ["true"], terminal: {} });
       break;
+    case "terminal-write":
+      write = writeToTerminal(1);
+      break;
+    case "terminal-write-twice":
+      write = writeToTerminal(2);
+      break;
   }
 } catch (e) {
   error = { code: e.code, message: e.message };
@@ -183,7 +213,7 @@ while ((openFds() > fdBaseline || wrappers() > wrapperBaseline) && performance.n
   Bun.gc(true);
   await Bun.sleep(5);
 }
-console.log(JSON.stringify({ error, leakedFds: openFds() - fdBaseline, leakedWrappers: wrappers() - wrapperBaseline }));
+console.log(JSON.stringify({ error, write, leakedFds: openFds() - fdBaseline, leakedWrappers: wrappers() - wrapperBaseline }));
 `;
 
 let dir: ReturnType<typeof tempDir> | undefined;
@@ -280,6 +310,26 @@ describe.skipIf(!isLinux || !cc)("a Bun.Terminal whose reader fails to register 
         stderr: "",
         exitCode: 0,
       });
+    });
+  });
+});
+
+// Here the writer starts fine. The registration that fails is the re-arm that
+// write() makes after it queued the byte. The writer reports the error and the
+// terminal closes itself inside write(), with the byte still queued. Those
+// bytes can never drain: they must not root the closed terminal's wrapper
+// again, and no drain may follow the exit callback.
+describe.skipIf(!isLinux || !cc)("a Bun.Terminal whose writer fails to re-arm its poll inside write()", () => {
+  test.concurrent.each([
+    ["the first write", "terminal-write", "0"],
+    // The first write re-arms fine, so its byte is queued and its drain is
+    // owed when the second one fails.
+    ["a write behind queued bytes", "terminal-write-twice", "1"],
+  ])("%s releases the terminal", async (_, kind, skip) => {
+    expect(await runFixture(kind, { FAIL_EPOLL_CTL: "pty-writer-mod", FAIL_EPOLL_CTL_SKIP: skip })).toEqual({
+      report: { error: null, write: { closed: true, drains: 0 }, leakedFds: 0, leakedWrappers: 0 },
+      stderr: "",
+      exitCode: 0,
     });
   });
 });

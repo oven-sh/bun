@@ -314,9 +314,9 @@ declare module "bun:jsc" {
 
   /**
    * Runs every pending microtask right now: promise reactions,
-   * `queueMicrotask()` callbacks, and `process.nextTick()` callbacks. Callbacks
-   * that Bun's event loop has already queued, such as those of I/O that has
-   * completed, run as well. Nothing is waited for, and timers do not fire.
+   * `queueMicrotask()` callbacks, and `process.nextTick()` callbacks. The event
+   * loop does not run: the callbacks of completed I/O, messages, and timers wait
+   * until the current callback returns.
    *
    * Microtasks normally run only after the current script or callback
    * finishes; this lets synchronous code observe their effects immediately.

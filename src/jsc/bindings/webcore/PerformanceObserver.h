@@ -60,6 +60,8 @@ public:
 
     ExceptionOr<void> observe(Init&&);
     void disconnect();
+    // The context of the script that made it.
+    ScriptExecutionContext* scriptExecutionContext() const;
     Vector<RefPtr<PerformanceEntry>> takeRecords();
 
     OptionSet<PerformanceEntry::Type> typeFilter() const { return m_typeFilter; }

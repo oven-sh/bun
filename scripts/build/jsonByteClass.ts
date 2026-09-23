@@ -4,6 +4,7 @@
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Config } from "./config.ts";
+import { assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
 
 const STRUCTURAL = 0x07;
@@ -14,7 +15,12 @@ const CONTROL = 0x40;
 const LUT_LO = [0x50, 0x40, 0x40, 0x40, 0x40, 0x40, 0x40, 0x60, 0x40, 0x48, 0x4c, 0x41, 0x42, 0x49, 0x40, 0x60];
 const LUT_HI = [0x48, 0x40, 0x32, 0x04, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
 
-const classOf = (b: number): number => LUT_LO[b & 0xf] & LUT_HI[b >> 4];
+const classOf = (b: number): number => {
+  const lo = LUT_LO[b & 0xf];
+  const hi = LUT_HI[b >> 4];
+  assert(lo !== undefined && hi !== undefined, `${b} is not a byte`);
+  return lo & hi;
+};
 
 function check() {
   const classesOf = (b: number): number[] => {
@@ -44,7 +50,7 @@ function check() {
   }
 }
 
-export function generateJsonByteClass(cfg: Config): { h: string; rs: string } {
+export function generateJsonByteClass(cfg: Pick<Config, "codegenDir">): { h: string; rs: string } {
   check();
 
   const banner = (comment: string) => [

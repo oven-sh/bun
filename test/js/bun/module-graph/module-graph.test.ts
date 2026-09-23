@@ -35,7 +35,10 @@ const ModuleGraph = (opts: HostOptions = {}): ModuleGraphInstance => {
       return typeof v === "function" ? v.bind(target) : v;
     },
   });
-  const graph = new ModuleGraphClass({ uncaughtException: opts.uncaughtException, globals: { process: proc, ...opts.globals } });
+  const graph = new ModuleGraphClass({
+    uncaughtException: opts.uncaughtException,
+    globals: { process: proc, ...opts.globals },
+  });
   return graph;
 };
 
@@ -858,6 +861,77 @@ describe("Bun.ModuleGraph — whose context a call runs in, in every tier", () =
         console.log(JSON.stringify({ wrong: wrong.reduce((x, y) => x + y, 0), calledByTheHost, sum, current: String(Bun.ModuleGraph.current) }));
         process.exit(0);
       `,
+      // Every way a call into a graph can end, and what is current then: the graph whose code called it (the host: none).
+      "leaves.mjs": `
+        let expected, ranAs = new Set();
+        export const expect = graph => { expected = graph; };
+        export const current = () => Bun.ModuleGraph.current;
+        export function value(x) { return x; }
+        export function throws(what) { throw what; }
+        export function calls(f, ...args) { const result = f(...args); return [result, Bun.ModuleGraph.current][0]; }
+        export function tail(f, ...args) { return f(...args); }
+        export function catches(f) { try { f(); return "did not throw"; } catch { return Bun.ModuleGraph.current; } }
+        export function fewer(a, b, c, d) { return [Bun.ModuleGraph.current, a, d, arguments.length]; }
+        export function overflow(mine, theirs) { return [theirs(theirs, mine)]; }
+        export function comparator(x, y) { ranAs.add(Bun.ModuleGraph.current); return x - y; }
+        export const comparatorRanAs = () => { const graphs = [...ranAs]; ranAs.clear(); return graphs; };
+        export const json = { toJSON() { return Bun.ModuleGraph.current === expected; } };
+        export function* generator() { yield Bun.ModuleGraph.current; yield Bun.ModuleGraph.current; }
+        export async function awaits() { const before = Bun.ModuleGraph.current; await null; return [before, Bun.ModuleGraph.current]; }
+        export class Made { constructor() { this.graph = Bun.ModuleGraph.current; this.newTarget = new.target; } }
+        export function fromWasm() { return Bun.ModuleGraph.current === expected ? 1 : 0; }
+        export function throwsFromWasm() { throw new Error(Bun.ModuleGraph.current === expected ? "thrown as its graph" : "thrown as another"); }
+      `,
+      "leaves.ts": `
+        const A = new Bun.ModuleGraph(), B = new Bun.ModuleGraph();
+        const a = await A.import(import.meta.dir + "/leaves.mjs"), b = await B.import(import.meta.dir + "/leaves.mjs");
+        a.expect(A); b.expect(B);
+        const rounds = Number(process.argv[2]);
+        const wrong = new Set<string>();
+        const is = (what: string, actual: unknown, expected: unknown) => { if (actual !== expected) wrong.add(what); };
+        const host = (after: string) => { if (Bun.ModuleGraph.current !== undefined) wrong.add("the host is not current after " + after); };
+        const thrown = new Error("thrown");
+        // (module (import "m" "f" (func (result i32))) (func (export "call") (result i32) call 0))
+        const wasm = new WebAssembly.Module(new Uint8Array([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0, 1, 5, 1, 0x60, 0, 1, 0x7f, 2, 7, 1, 1, 0x6d, 1, 0x66, 0, 0, 3, 2, 1, 0, 7, 8, 1, 4, 0x63, 0x61, 0x6c, 0x6c, 0, 1, 0x0a, 6, 1, 4, 0, 0x10, 0, 0x0b]));
+        const callsA = new WebAssembly.Instance(wasm, { m: { f: a.fromWasm } }).exports.call as () => number;
+        const throwsAsB = new WebAssembly.Instance(wasm, { m: { f: b.throwsFromWasm } }).exports.call as () => number;
+        for (let i = 0; i < rounds; i++) {
+          is("what a graph's function returns", a.value(i), i); host("a return");
+          is("nested calls", a.calls(b.calls, a.current), A); host("nested calls");
+          is("a host function a graph calls", a.calls(() => Bun.ModuleGraph.current), A);
+          is("a tail call of another graph's function", a.tail(b.current), B);
+          is("a chain of tail calls", a.tail(b.tail, a.tail, b.current), B); host("tail calls");
+          try { a.calls(b.calls, a.throws, thrown); wrong.add("did not throw"); } catch (e) { is("the error", e, thrown); }
+          host("an exception through three frames of two graphs");
+          try { a.tail(b.tail, a.throws, thrown); wrong.add("did not throw"); } catch (e) { is("the error", e, thrown); }
+          host("an exception through tail calls");
+          is("caught by the function that was called", a.catches(() => b.throws(thrown)), A);
+          is("caught in the middle", a.calls(b.catches, () => a.throws(thrown)), B); host("exceptions caught inside");
+          const few = a.fewer(1);
+          is("fewer arguments than parameters", few[0] === A && few[1] === 1 && few[2] === undefined && few[3] === 1, true); host("too few arguments");
+          is("a sort", [3, 1, 2].sort(a.comparator).join(), "1,2,3");
+          const ranAs = a.comparatorRanAs();
+          is("a comparator", ranAs.length === 1 && ranAs[0] === A, true); host("a comparator");
+          is("toJSON", JSON.stringify([a.json, b.json]), "[true,true]"); host("toJSON");
+          const generator = a.generator();
+          is("a generator", generator.next().value, A);
+          is("a generator resumed by another graph", b.calls(() => generator.next().value), A); host("a generator");
+          is("new", new a.Made().graph, A);
+          const made = Reflect.construct(a.Made, [], b.Made);
+          is("Reflect.construct() with another graph's new.target", made.graph === A && made.newTarget === b.Made, true); host("constructors");
+          is("called by WebAssembly", callsA(), 1); host("a call from WebAssembly");
+          try { throwsAsB(); wrong.add("did not throw"); } catch (e: any) { is("thrown through WebAssembly", e.message, "thrown as its graph"); }
+          host("an exception through WebAssembly");
+        }
+        const awaited = await a.awaits();
+        is("an async function", awaited[0] === A && awaited[1] === A, true); host("an async function");
+        let overflowed: unknown;
+        try { a.overflow(a.overflow, b.overflow); } catch (e) { overflowed = e; }
+        is("a stack overflow", overflowed instanceof RangeError, true); host("a stack overflow through two graphs' frames");
+        is("and a call afterwards", a.calls(b.current), B); host("everything");
+        console.log(JSON.stringify({ wrong: [...wrong], current: String(Bun.ModuleGraph.current) }));
+        process.exit(0);
+      `,
       // Hot calls inside a graph's code that the DFG inlines where it cannot exit (a varargs call has loaded its
       // arguments by then), with one graph (the callee's graph is a constant) and two sharing the code (it is not).
       "varargs.mjs": `
@@ -943,6 +1017,16 @@ describe("Bun.ModuleGraph — whose context a call runs in, in every tier", () =
             sum: Number(rounds) * 10,
             current: "undefined",
           }),
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+    );
+    test.concurrent(
+      `${tier}: however a call into a graph ends, what was current before it is current again`,
+      async () => {
+        expect(await runBun([join(dir, "leaves.ts"), rounds], { env })).toEqual({
+          stdout: JSON.stringify({ wrong: [], current: "undefined" }),
           stderr: "",
           exitCode: 0,
         });
@@ -2060,13 +2144,26 @@ describe("Bun.ModuleGraph — an unhandled rejection is the promise maker's", ()
     default: {},
     interpreter: { BUN_JSC_useJIT: "0" },
     baseline: { BUN_JSC_useDFGJIT: "0" },
-    "DFG, eagerly": { BUN_JSC_useFTLJIT: "0", BUN_JSC_useConcurrentJIT: "0", BUN_JSC_thresholdForJITAfterWarmUp: "10", BUN_JSC_thresholdForOptimizeAfterWarmUp: "20" },
-    "FTL, eagerly": { BUN_JSC_useConcurrentJIT: "0", BUN_JSC_thresholdForJITAfterWarmUp: "10", BUN_JSC_thresholdForOptimizeAfterWarmUp: "20", BUN_JSC_thresholdForFTLOptimizeAfterWarmUp: "200" },
+    "DFG, eagerly": {
+      BUN_JSC_useFTLJIT: "0",
+      BUN_JSC_useConcurrentJIT: "0",
+      BUN_JSC_thresholdForJITAfterWarmUp: "10",
+      BUN_JSC_thresholdForOptimizeAfterWarmUp: "20",
+    },
+    "FTL, eagerly": {
+      BUN_JSC_useConcurrentJIT: "0",
+      BUN_JSC_thresholdForJITAfterWarmUp: "10",
+      BUN_JSC_thresholdForOptimizeAfterWarmUp: "20",
+      BUN_JSC_thresholdForFTLOptimizeAfterWarmUp: "200",
+    },
   };
   test.concurrent.each(Object.keys(tiers))("whoever rejects it (%s)", async tier => {
     using dir = tempDir("module-graph-rejection-maker", { "tenant.mjs": tenant, "host.mjs": host });
     const result = await runBun(["host.mjs"], { cwd: String(dir), env: tiers[tier] });
-    expect({ who: result.stdout ? JSON.parse(result.stdout) : result.stdout, stderr: result.stderr }).toEqual({ who: expected, stderr: "" });
+    expect({ who: result.stdout ? JSON.parse(result.stdout) : result.stdout, stderr: result.stderr }).toEqual({
+      who: expected,
+      stderr: "",
+    });
     expect(result.exitCode).toBe(0);
   });
 });
@@ -2750,8 +2847,16 @@ describe("Bun.ModuleGraph — constructor / method contract", () => {
   });
   const bad: Array<[string, () => unknown, RegExp]> = [
     ["globals not an object", () => new (ModuleGraphClass as any)({ globals: "x" }), /globals/i],
-    ["uncaughtException not callable", () => new (ModuleGraphClass as any)({ uncaughtException: {} }), /options\.uncaughtException/],
-    ["unhandledRejection not callable", () => new (ModuleGraphClass as any)({ unhandledRejection: {} }), /options\.unhandledRejection/],
+    [
+      "uncaughtException not callable",
+      () => new (ModuleGraphClass as any)({ uncaughtException: {} }),
+      /options\.uncaughtException/,
+    ],
+    [
+      "unhandledRejection not callable",
+      () => new (ModuleGraphClass as any)({ unhandledRejection: {} }),
+      /options\.unhandledRejection/,
+    ],
     ["options not an object", () => new (ModuleGraphClass as any)(42), /object|options/i],
     ["called without new", () => (ModuleGraphClass as any)({}), /constructor|new/i],
   ];

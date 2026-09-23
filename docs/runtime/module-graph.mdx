@@ -64,13 +64,18 @@ A thread-safe function keeps the process running only for as long as the graph t
 
 ## Disposing
 
-`graph.dispose()` also drops the graph's module registry and `require.cache`. Code of the graph that is still referenced keeps working, and an error in what still runs in its context, such as a tick it had queued, still goes to `onError`. From then on:
+A disposed graph is inert. Its code is still JavaScript, so a function of the graph that something still references runs when it is called, and the microtasks and `process.nextTick` callbacks it queues run. Nothing it starts that needs the event loop ever happens: a timer never fires, a request is never sent, a server never listens, an `import()` stays pending, and the promise for any of it never settles. No error says so.
 
-- `graph.import()` and the graph's `require()` fail with `ERR_INVALID_STATE`.
-- A function of the graph still runs when it is called, in the graph's stopped context: what it computes it returns, and what it starts never completes. A timer it sets never fires, and an `import()` in it stays pending, as one by the graph's own leftover code does.
+That is one rule for every case. It does not matter when the work was started, before `dispose()` or after it. It does not matter who calls the function: the host, another graph, or an emitter of the host's that the graph left a listener on. A loop that only awaits promises keeps running until it ends, because nothing in it needs the event loop.
+
+Using a graph's code after `dispose()` is not an intended use. `dispose()` is for a graph the host is done with, and nothing reports a call into a disposed graph. A host that may still hold a graph's functions when it disposes the graph, such as a handler in a routing table or a request in flight, removes them first or races what they return against a signal of its own, as shown [below](#calling-into-a-graph).
+
+`graph.dispose()` also drops the graph's module registry and `require.cache`. An error in what still runs in the graph's context, such as a tick it had queued, still goes to `onError`. From then on:
+
+- `graph.import()` and the graph's `require()` fail with `ERR_INVALID_STATE`. They are the graph's handle, and using a handle that was disposed is an error.
 - Modules of the graph that had not run yet never will.
 
-`dispose()` settles no promise. An `import()` that had not finished may reject or may never settle: what its modules were waiting for, such as a timer or a request, went with the graph. A host that may dispose a graph while importing into it should race the import the same way as a call, as shown below.
+`dispose()` settles no promise. An `import()` that had not finished may reject or may never settle: what its modules were waiting for, such as a timer or a request, went with the graph. A host that may dispose a graph while importing into it should race the import the same way as a call.
 
 ## Calling into a graph
 

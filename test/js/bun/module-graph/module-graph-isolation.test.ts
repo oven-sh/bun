@@ -4483,3 +4483,115 @@ describe("ModuleGraph isolation: no object a built-in hands out leads to a graph
     expect(await promise).toBe(graph);
   });
 });
+
+// The rule for a disposed graph: it is inert. Its code still runs when something calls it, and microtask-class work it
+// queues runs, but nothing it starts that needs the event loop ever happens, whenever it was started and whoever
+// called. The graph's handle throws.
+describe("ModuleGraph isolation: a disposed graph is inert", () => {
+  const inertDir = String(
+    tempDir("module-graph-inert-", {
+      "inert.mjs": `
+        import net from "node:net";
+        import fs from "node:fs";
+        let counter = 0;
+        export const kinds = {
+          "sync code": () => ++counter,
+          "queueMicrotask": () => new Promise(resolve => queueMicrotask(resolve)),
+          "process.nextTick": () => new Promise(resolve => process.nextTick(resolve)),
+          "a loop of 100 awaits": async () => { for (let i = 0; i < 100; i++) await null; },
+          "setTimeout": () => new Promise(resolve => setTimeout(resolve, 1)),
+          "setInterval": () => new Promise(resolve => { const timer = setInterval(() => { clearInterval(timer); resolve(); }, 1); }),
+          "setImmediate": () => new Promise(resolve => setImmediate(resolve)),
+          "fetch": url => fetch(url).then(response => response.text()),
+          "net.connect": (url, port) => new Promise((resolve, reject) => { const socket = net.connect(port, "127.0.0.1"); socket.on("connect", () => { socket.destroy(); resolve(); }); socket.on("error", reject); }),
+          "fs.promises.readFile": () => fs.promises.readFile(import.meta.path),
+          "Bun.file().text()": () => Bun.file(import.meta.path).text(),
+          "Bun.spawn": () => Bun.spawn([process.execPath, "-e", "0"], { stdout: "ignore", stderr: "ignore" }).exited,
+          "import()": () => import("node:os"),
+        };
+        // Starts \`kind\` and tells \`report\` (the host's) what became of it.
+        export function start(kind, args, report) {
+          let started;
+          try { started = kinds[kind](...args); } catch (error) { return report("throws " + (error?.code ?? error?.name)); }
+          if (!(started instanceof Promise)) return report("returns");
+          started.then(() => report("completes"), error => report("rejects " + (error?.code ?? error?.name)));
+        }
+        export const startFromAMicrotask = (kind, args, report) => { Promise.resolve().then(() => start(kind, args, report)); };
+        export const listenOn = (emitter, report) => { emitter.on("go", (kind, args) => start(kind, args, report)); };
+      `,
+      "inert.ts": `
+        import { EventEmitter } from "node:events";
+        import net from "node:net";
+        const server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+        const tcp = net.createServer(socket => socket.end()).listen(0);
+        await new Promise(resolve => tcp.once("listening", resolve));
+        const args = [server.url.href, (tcp.address() as net.AddressInfo).port];
+        const path = import.meta.dir + "/inert.mjs";
+        const live = await new Bun.ModuleGraph().import(path);
+        const out: Record<string, Record<string, string>> = {};
+        for (const kind of Object.keys(live.kinds)) {
+          out[kind] = {};
+          const ways: Record<string, (graph: Bun.ModuleGraph, app: any, report: (state: string) => void) => void> = {
+            "in flight at dispose()": (graph, app, report) => { app.start(kind, args, report); graph.dispose(); },
+            "the host calls afterwards": (graph, app, report) => { graph.dispose(); app.start(kind, args, report); },
+            "the graph's leftover microtask": (graph, app, report) => { app.startFromAMicrotask(kind, args, report); graph.dispose(); },
+            "its listener on a host emitter": (graph, app, report) => { const emitter = new EventEmitter(); app.listenOn(emitter, report); graph.dispose(); emitter.emit("go", kind, args); },
+          };
+          for (const [way, run] of Object.entries(ways)) {
+            const graph = new Bun.ModuleGraph({ onError() {} });
+            const app = await graph.import(path);
+            let state = "never";
+            run(graph, app, reported => (state = reported));
+            // The same work, started later by a graph that is alive, has completed by the time this is read.
+            await new Promise<string>(resolve => live.start(kind, args, resolve));
+            out[kind][way] = state;
+          }
+        }
+        const disposed = new Bun.ModuleGraph();
+        disposed.dispose();
+        const handle = await disposed.import(path).then(() => "imports", error => "rejects " + error.code);
+        console.log(JSON.stringify({ out, handle }));
+        process.exit(0);
+      `,
+    }),
+  );
+  afterAll(() => rmSync(inertDir, { recursive: true, force: true }));
+
+  test("code runs and microtasks run; nothing that needs the event loop ever happens; the handle throws", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(inertDir, "inert.ts")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const everyWay = (state: string) => ({
+      "in flight at dispose()": state,
+      "the host calls afterwards": state,
+      "the graph's leftover microtask": state,
+      "its listener on a host emitter": state,
+    });
+    expect({ stderr, ...JSON.parse(stdout) }).toEqual({
+      stderr: "",
+      out: {
+        "sync code": everyWay("returns"),
+        "queueMicrotask": everyWay("completes"),
+        "process.nextTick": everyWay("completes"),
+        "a loop of 100 awaits": everyWay("completes"),
+        "setTimeout": everyWay("never"),
+        "setInterval": everyWay("never"),
+        "setImmediate": everyWay("never"),
+        "fetch": everyWay("never"),
+        "net.connect": everyWay("never"),
+        "fs.promises.readFile": everyWay("never"),
+        "Bun.file().text()": everyWay("never"),
+        "Bun.spawn": everyWay("never"),
+        // (A built-in module needs nothing from the event loop: one being imported at dispose() finishes. Afterwards
+        // the graph has no loader to import with.)
+        "import()": { ...everyWay("never"), "in flight at dispose()": "completes" },
+      },
+      handle: "rejects ERR_INVALID_STATE",
+    });
+    expect(exitCode).toBe(0);
+  });
+});

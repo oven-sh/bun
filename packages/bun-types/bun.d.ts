@@ -5493,9 +5493,13 @@ declare module "bun" {
      * they start reports nothing either. Objects the graph's code made (a
      * socket, a worker, a stream) no longer work, for the host either.
      *
-     * A function of the graph's that is called afterwards still runs, in the
-     * graph's context, which is stopped: its synchronous code runs, and the
-     * asynchronous work it starts never completes.
+     * A disposed graph is inert, and using its code afterwards is not an
+     * intended use. A function of the graph's that is still referenced runs
+     * when it is called (by the host, by another graph, or as a listener the
+     * graph left on something of the host's), and the microtasks and
+     * `process.nextTick` callbacks it queues run, but nothing it starts that
+     * needs the event loop ever happens: a timer never fires, a request is
+     * never sent, an `import()` stays pending, and no error says so.
      *
      * Not a sandbox: synchronous calls run to completion. Idempotent.
      *

@@ -326,6 +326,10 @@ struct us_socket_t {
    * the driver's epilogue via ssl_pending_detach. */
   unsigned char ssl_in_use : 1;
   unsigned char ssl_pending_detach : 1;
+  /* Set across the on_handshake dispatch of a handshake that completed inside
+   * SSL_read while the final flight that read sealed is still held in the
+   * loop's write batch (see the hs_batching block in us_internal_ssl_on_data). */
+  unsigned char ssl_hs_flight_held : 1;
   /* Peer FIN was dispatched as on_end on a half-open socket; readable interest is never re-added and on_end never re-fires. */
   unsigned char read_eof : 1;
   /* The close code passed to the deferred close (e.g. a reset requested from

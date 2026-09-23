@@ -2,7 +2,7 @@ use std::io::Write as _;
 
 use crate::cli::command::{Context, HotReload};
 use bun_bundler::bundle_v2::{self, BundleV2};
-use bun_bundler::input_path_set::{InputPathSet, resolve_output_root};
+use bun_bundler::input_path_set::{InputPathSet, OutputWrite, resolve_output_root};
 use bun_bundler::linker_context::metafile_builder as MetafileBuilder;
 use bun_bundler::options;
 use bun_bundler::transpiler;
@@ -243,24 +243,23 @@ impl BuildCommand {
         this_transpiler.options.module_preload = ctx.bundler_options.module_preload;
         this_transpiler.options.metafile =
             !ctx.bundler_options.metafile.is_empty() || !ctx.bundler_options.metafile_md.is_empty();
-        // Absolute, so the bundler's overwrite check reads them relative to the working directory and not to outdir.
+        // The CLI writes the metafile itself. The bundler checks these paths with its own outputs.
         let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-        if !ctx.bundler_options.metafile.is_empty() {
-            this_transpiler.options.metafile_json_path =
+        this_transpiler.options.caller_output_paths = [
+            &ctx.bundler_options.metafile,
+            &ctx.bundler_options.metafile_md,
+        ]
+        .into_iter()
+        .filter(|path| !path.is_empty())
+        .map(|path| {
+            Box::from(
                 resolve_path::join_abs_string::<resolve_path::platform::Auto>(
                     top_level_dir,
-                    &[&ctx.bundler_options.metafile],
-                )
-                .into();
-        }
-        if !ctx.bundler_options.metafile_md.is_empty() {
-            this_transpiler.options.metafile_markdown_path =
-                resolve_path::join_abs_string::<resolve_path::platform::Auto>(
-                    top_level_dir,
-                    &[&ctx.bundler_options.metafile_md],
-                )
-                .into();
-        }
+                    &[path],
+                ),
+            )
+        })
+        .collect();
 
         this_transpiler
             .options
@@ -780,7 +779,14 @@ impl BuildCommand {
                 Vec::new()
             };
 
-            refuse_to_overwrite_inputs(&input_paths, b"", metafile_paths.iter().copied(), watch);
+            refuse_to_overwrite_inputs(
+                &input_paths,
+                b"",
+                metafile_paths
+                    .iter()
+                    .map(|path| (*path, OutputWrite::Truncate)),
+                watch,
+            );
 
             if !ctx.bundler_options.compile {
                 // if --no-bundle is passed, it won't have an output dir
@@ -792,7 +798,10 @@ impl BuildCommand {
                     refuse_to_overwrite_inputs(
                         &input_paths,
                         root_path,
-                        output_files.iter().filter_map(|f| f.path_written_to_disk()),
+                        output_files
+                            .iter()
+                            .filter_map(|f| f.path_written_to_disk())
+                            .map(|path| (path, OutputWrite::Truncate)),
                         watch,
                     );
                 }
@@ -886,23 +895,28 @@ impl BuildCommand {
                 }
 
                 {
+                    // The executable is moved into place with a rename. The sourcemaps are written in place.
                     let exe_basename = bun_paths::basename(outfile);
-                    let mut dest_paths: Vec<Box<[u8]>> = vec![Box::from(exe_basename)];
+                    let mut dest_paths: Vec<(Box<[u8]>, OutputWrite)> =
+                        vec![(Box::from(exe_basename), OutputWrite::Rename)];
                     if opt_source_map == options::SourceMapOption::External {
                         for f in output_files.iter() {
                             if f.output_kind == options::OutputKind::Sourcemap {
-                                dest_paths.push(if f.dest_path.is_empty() {
-                                    strings::concat(&[exe_basename, b".map"])
-                                } else {
-                                    Box::from(bun_paths::basename(&f.dest_path))
-                                });
+                                dest_paths.push((
+                                    if f.dest_path.is_empty() {
+                                        strings::concat(&[exe_basename, b".map"])
+                                    } else {
+                                        Box::from(bun_paths::basename(&f.dest_path))
+                                    },
+                                    OutputWrite::Truncate,
+                                ));
                             }
                         }
                     }
                     refuse_to_overwrite_inputs(
                         &input_paths,
                         root_path,
-                        dest_paths.iter().map(|d| &**d),
+                        dest_paths.iter().map(|(path, write)| (&**path, *write)),
                         watch,
                     );
                 }
@@ -1299,7 +1313,7 @@ fn write_metafiles(
 fn refuse_to_overwrite_inputs<'a>(
     input_paths: &InputPathSet,
     root_path: &[u8],
-    dest_paths: impl Iterator<Item = &'a [u8]>,
+    dest_paths: impl Iterator<Item = (&'a [u8], OutputWrite)>,
     watch: bool,
 ) {
     let mut dest_paths = dest_paths.peekable();
@@ -1308,7 +1322,8 @@ fn refuse_to_overwrite_inputs<'a>(
     }
     let overwritten = {
         let root = resolve_output_root(root_path);
-        dest_paths.find_map(|dest_path| input_paths.overwritten_by(&root, dest_path))
+        dest_paths
+            .find_map(|(dest_path, write)| input_paths.overwritten_by(&root, dest_path, write))
     };
     if let Some(input) = overwritten {
         Output::err_generic(

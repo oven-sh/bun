@@ -11,7 +11,7 @@ use bun_wyhash::hash;
 
 use crate::LinkerContext;
 use crate::chunk::{Content, Flags as ChunkFlags, ReferencePathStyle, SourceMapShiftTracking};
-use crate::input_path_set::{InputPathSet, resolve_output_root};
+use crate::input_path_set::{InputPathSet, OutputWrite, resolve_output_root};
 use crate::linker_context::output_file_list_builder::OutputFileList;
 use crate::linker_context_mod::debug;
 use crate::options::{self, Loader, OutputFile, SourceMapOption};
@@ -704,7 +704,7 @@ fn overwritten_input(
         return None;
     }
     let root = resolve_output_root(root_path);
-    let check = |dest_path: &[u8]| inputs.overwritten_by(&root, dest_path);
+    let check = |dest_path: &[u8]| inputs.overwritten_by(&root, dest_path, OutputWrite::Truncate);
 
     for (i, chunk) in chunks.iter().enumerate() {
         let inlined_into_html = is_standalone && !matches!(chunk.content, Content::Html);
@@ -744,16 +744,18 @@ fn overwritten_input(
         }
     }
 
-    for metafile_path in [
-        c.options.metafile_json_path,
-        c.options.metafile_markdown_path,
-    ] {
-        if !metafile_path.is_empty() {
-            if let Some(input) = check(metafile_path) {
-                return Some(input);
-            }
+    for path in c.options.caller_output_paths {
+        if let Some(input) = check(path) {
+            return Some(input);
         }
     }
 
-    None
+    crate::bundle_v2::bv2_impl::input_overwritten_by_metafile(
+        &inputs,
+        root_path,
+        [
+            c.options.metafile_json_path,
+            c.options.metafile_markdown_path,
+        ],
+    )
 }

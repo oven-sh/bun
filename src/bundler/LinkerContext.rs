@@ -1457,10 +1457,11 @@ pub struct LinkerOptions {
     pub(crate) target: Target,
     pub(crate) compile_mode: CompileMode,
     pub(crate) metafile: bool,
-    /// JSON metafile path. Bun.build: relative to outdir, the bundler writes it. CLI: absolute, the CLI writes it.
+    /// Path to write JSON metafile (for Bun.build API)
     pub(crate) metafile_json_path: &'static [u8],
-    /// Markdown metafile path, with the same two meanings as the JSON path.
+    /// Path to write markdown metafile (for Bun.build API)
     pub(crate) metafile_markdown_path: &'static [u8],
+    pub(crate) caller_output_paths: &'static [Box<[u8]>],
 
     pub(crate) mode: LinkerOptionsMode,
 
@@ -1506,6 +1507,7 @@ impl Default for LinkerOptions {
             metafile: false,
             metafile_json_path: b"",
             metafile_markdown_path: b"",
+            caller_output_paths: &[],
             mode: LinkerOptionsMode::Bundle,
             public_path: b"",
         }

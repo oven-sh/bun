@@ -1062,6 +1062,47 @@ describe.concurrent("bun build refuses to write an output over an input", () => 
       expect(await Bun.file(path.join(String(dir), "src", "app.js")).text()).toBe(files["src/app.js"]);
     });
 
+    test("a symlink to an input is at the output path, under a symlinked directory", async () => {
+      using dir = tempDir("build-overwrite-symlink-subdir-leaf", {
+        ...files,
+        "out/.keep": "",
+        "elsewhere/.keep": "",
+      });
+      fs.symlinkSync("../elsewhere", path.join(String(dir), "out", "src"));
+      fs.symlinkSync("../src/lib.js", path.join(String(dir), "elsewhere", "app.js"));
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "./src/app.js", "--outdir", "out", "--root", "."],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain('Refusing to overwrite input file "src/lib.js"');
+      expect(exitCode).toBe(1);
+      expect(await Bun.file(path.join(String(dir), "src", "lib.js")).text()).toBe(files["src/lib.js"]);
+    });
+
+    // The executable is moved into place with a rename, which replaces the link and not its target.
+    test("--compile over a symlink to the entry point replaces the link", async () => {
+      using dir = tempDir("build-compile-over-symlink", { ...files, "bin/.keep": "" });
+      fs.symlinkSync("../src/app.js", path.join(String(dir), "bin", "cli"));
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", "./src/app.js", "--outfile", "bin/cli"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("Refusing to overwrite");
+      expect(await Bun.file(path.join(String(dir), "src", "app.js")).text()).toBe(files["src/app.js"]);
+      expect(fs.lstatSync(path.join(String(dir), "bin", "cli")).isSymbolicLink()).toBe(false);
+      expect(exitCode).toBe(0);
+    });
+
     test("a symlink to an input is already at the output path", async () => {
       using dir = tempDir("build-overwrite-symlink-leaf", { ...files, "out/.keep": "" });
       fs.symlinkSync("../src/lib.js", path.join(String(dir), "out", "app.js"));
@@ -1158,6 +1199,38 @@ describe.concurrent("bun build refuses to write an output over an input", () => 
           compile: { outfile: "app" },
           outdir: "./out",
           metafile: "../data.json",
+          throw: false,
+        });
+        console.log(JSON.stringify({ success: result.success, logs: result.logs.map(l => l.message) }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual({
+      success: false,
+      logs: [expect.stringContaining('Refusing to overwrite input file "data.json"')],
+    });
+    expect(await Bun.file(path.join(String(dir), "data.json")).text()).toBe(`{ "source": true }\n`);
+    expect(exitCode).toBe(0);
+  });
+
+  // Bun.build joins an absolute metafile path under outdir as plain segments.
+  test("Bun.build with an absolute metafile path that lands on an input", async () => {
+    using dir = tempDir("build-api-overwrite-absolute-metafile", {
+      "a.js": `import data from "./data.json";\nconsole.log(data);\n`,
+      "data.json": `{ "source": true }\n`,
+      "run.js": `
+        const result = await Bun.build({
+          entrypoints: ["./a.js"],
+          outdir: "./out",
+          metafile: "/../data.json",
           throw: false,
         });
         console.log(JSON.stringify({ success: result.success, logs: result.logs.map(l => l.message) }));

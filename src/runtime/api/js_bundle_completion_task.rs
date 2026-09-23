@@ -17,7 +17,7 @@ use bun_bundler::bundle_v2::{
     BundleV2, BundleV2Result, CompletionStruct, FileMap as Bv2FileMap,
     JSBundleCompletionTask as Bv2OpaqueCompletion, JSBundlerPlugin, dispatch,
 };
-use bun_bundler::input_path_set::{InputPathSet, resolve_output_root};
+use bun_bundler::input_path_set::{InputPathSet, OutputWrite, resolve_output_root};
 use bun_bundler::options::{self, OutputFile, OutputKind, Side};
 use bun_bundler::output_file::Value as OutputFileValue;
 use bun_bundler::transpiler::Transpiler;
@@ -401,9 +401,10 @@ impl JSBundleCompletionTask {
                         paths::basename(&f.dest_path)
                     }
                 });
-            let overwritten = core::iter::once(basename)
-                .chain(sourcemap_names)
-                .find_map(|name| input_paths.overwritten_by(&root, name));
+            // The executable is moved into place with a rename. The sourcemaps are written in place.
+            let overwritten = core::iter::once((basename, OutputWrite::Rename))
+                .chain(sourcemap_names.map(|name| (name, OutputWrite::Truncate)))
+                .find_map(|(name, write)| input_paths.overwritten_by(&root, name, write));
             if let Some(input) = overwritten {
                 return CompileResult::fail_fmt(format_args!(
                     "Refusing to overwrite input file {}",

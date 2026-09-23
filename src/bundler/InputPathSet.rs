@@ -7,6 +7,15 @@ type PathMap = bun_collections::CaseInsensitiveAsciiStringArrayHashMap<()>;
 #[cfg(not(any(windows, target_os = "macos")))]
 type PathMap = bun_collections::StringArrayHashMap<()>;
 
+/// How an output file reaches its path.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum OutputWrite {
+    /// `open(O_TRUNC)`: a symlink or a second hard link at the path is written through.
+    Truncate,
+    /// `rename`: only the directory entry at the path is replaced.
+    Rename,
+}
+
 /// Absolute paths of every input file that exists on disk.
 #[derive(Default)]
 pub struct InputPathSet {
@@ -49,16 +58,24 @@ impl InputPathSet {
     }
 
     /// The input that writing `dest_path` under `root` would replace, relative to the working directory.
-    pub fn overwritten_by(&self, root: &[u8], dest_path: &[u8]) -> Option<Box<[u8]>> {
+    pub fn overwritten_by(
+        &self,
+        root: &[u8],
+        dest_path: &[u8],
+        write: OutputWrite,
+    ) -> Option<Box<[u8]>> {
         if self.is_empty() {
             return None;
         }
-        let abs = resolve_path::join_abs_string::<platform::Auto>(root, &[dest_path]);
+        let mut abs_buf = bun_paths::path_buffer_pool::get();
+        let abs =
+            resolve_path::join_abs_string_buf::<platform::Auto>(root, &mut abs_buf.0, &[dest_path]);
         let index = match self.paths.get_index(abs) {
             Some(index) => index,
             None => match self.index_through_real_parent(root, abs) {
                 Some(index) => index,
-                None => self.index_of_same_file(abs)?,
+                None if write == OutputWrite::Truncate => self.index_of_same_file(abs)?,
+                None => return None,
             },
         };
         let input = &self.paths.keys()[index];

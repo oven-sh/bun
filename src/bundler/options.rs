@@ -1349,10 +1349,12 @@ pub struct BundleOptions<'a> {
     /// `--compile`: the name of the entry point's chunk, `/$bunfs/root/<name>` in the executable.
     pub compile_entry_point_name: Box<[u8]>,
     pub metafile: bool,
-    /// JSON metafile path. Bun.build: relative to outdir, the bundler writes it. CLI: absolute, the CLI writes it.
+    /// Path to write JSON metafile (for Bun.build API)
     pub metafile_json_path: Box<[u8]>,
-    /// Markdown metafile path, with the same two meanings as the JSON path.
+    /// Path to write markdown metafile (for Bun.build API)
     pub metafile_markdown_path: Box<[u8]>,
+    /// Absolute paths the caller writes after the build. The overwrite check covers them too.
+    pub caller_output_paths: Vec<Box<[u8]>>,
 
     /// Set when bake.DevServer is bundling.
     // SAFETY: erased bun_runtime::bake::DevServer (T6). bundler never dereferences fields
@@ -1550,6 +1552,7 @@ impl<'a> BundleOptions<'a> {
             metafile: self.metafile,
             metafile_json_path: self.metafile_json_path.clone(),
             metafile_markdown_path: self.metafile_markdown_path.clone(),
+            caller_output_paths: self.caller_output_paths.clone(),
             dev_server: self.dev_server,
             framework: self.framework,
             serve_plugins: self.serve_plugins.clone(),
@@ -1799,6 +1802,7 @@ impl<'a> BundleOptions<'a> {
             metafile: false,
             metafile_json_path: Box::default(),
             metafile_markdown_path: Box::default(),
+            caller_output_paths: Vec::new(),
             dev_server: core::ptr::null(),
             framework: None,
             serve_plugins: None,

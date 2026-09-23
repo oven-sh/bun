@@ -6625,8 +6625,7 @@ impl VirtualMachine {
     }
 
     /// JS-value variant of the error printer; see
-    /// [`Self::print_error_instance_body`]. `jsc_exception` is the
-    /// `JSC::Exception` that delivered `error_instance`, when there is one.
+    /// [`Self::print_error_instance_body`].
     fn print_error_instance_js(
         &mut self,
         error_instance: JSValue,

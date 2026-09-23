@@ -149,14 +149,7 @@ describe("Bun.deepEquals strict mode", () => {
   });
 });
 
-// The array comparison probed every index from 0 to the array's length, so an
-// array that only claims a length cost one probe per claimed element: about a
-// minute for `a = []; a.length = 2 ** 32 - 1`, where node answers in 1 ms. An
-// index outside the element storage of both arrays is a hole on both sides,
-// and two holes are equal in every mode. Arrays that JSC itself calls sparse
-// (100,000 or more unheld indices, under 1/8 of them in the sparse map) skip
-// those indices now. Every other array is compared index by index, as before.
-// The child is killed if it is still running after 20 s, which empties stdout.
+// `a = []; a.length = 2 ** 32 - 1` must compare without one probe per claimed index.
 describe("sparse arrays that only claim a length", () => {
   const cases = [
     ["all holes strict", "equal(holes(), holes())", "true"],
@@ -193,7 +186,7 @@ describe("sparse arrays that only claim a length", () => {
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
-      // Kill switch: before the fix, the first comparison alone ran for about a minute.
+      // Kill switch: one probe per claimed index takes about a minute per comparison.
       timeout: 20_000,
       killSignal: "SIGKILL",
     });
@@ -206,8 +199,7 @@ describe("sparse arrays that only claim a length", () => {
     expect(exitCode).toBe(0);
   });
 
-  // Loose mode compares arrays of different lengths: the longer array's tail
-  // must hold nothing but holes and undefined. Strict mode stops at the lengths.
+  // In loose mode the longer array's tail may hold only holes and undefined.
   it("compare sparse arrays of different lengths in loose mode", () => {
     const sized = (length: number, ...entries: [index: number, value: unknown][]) => {
       const a: unknown[] = [];
@@ -226,9 +218,6 @@ describe("sparse arrays that only claim a length", () => {
     expect(Bun.deepEquals(sized(200_000), sized(400_000), true)).toBe(false);
   });
 
-  // The sparse walk copies the sparse map's keys before it compares anything.
-  // A getter that adds an index during the comparison makes that copy stale, so
-  // the comparison goes back to the index-by-index walk and reaches the new index.
   describe.each([
     ["a sparse map", 110_000],
     ["the vector", 1_000],
@@ -254,13 +243,29 @@ describe("sparse arrays that only claim a length", () => {
     });
   });
 
+  // Known gap: the swap keeps the sparse map's size, so the comparison does not notice that its keys changed.
+  it.failing("see an index that a getter swaps for another during the comparison", () => {
+    const a: unknown[] = [];
+    const b: unknown[] = [];
+    a.length = b.length = 200_000;
+    a[150_000] = 1;
+    a[0] = {
+      get x() {
+        delete a[150_000];
+        a[170_000] = 1;
+        return 1;
+      },
+    };
+    b[0] = { x: 1 };
+
+    expect(Bun.deepEquals(a, b)).toBe(false);
+  });
+
   const dense = new Array(100_000).fill(0);
   const denseCopy = dense.slice();
   const denseWithOtherTail = dense.slice();
   denseWithOtherTail[99_999] = 1;
 
-  // An index that a sparse array does hold lives in its sparse map, which the
-  // walk reads instead of probing the gaps around it.
   describe.each([true, false])("strict: %p", strict => {
     it("still see the indices a sparse map holds", () => {
       const sparse = (...indices: number[]) => {
@@ -282,8 +287,7 @@ describe("sparse arrays that only claim a length", () => {
       expect(deepEquals(Object.freeze(sparse(199_999)), Object.freeze(sparse(199_998)))).toBe(false);
     });
 
-    // An array that holds what it claims keeps the index-by-index walk, above
-    // JSC's MIN_SPARSE_ARRAY_INDEX (100,000) too.
+    // 100,000 is JSC's MIN_SPARSE_ARRAY_INDEX, the smallest length that can leave the index-by-index walk.
     it("compare dense arrays above the sparse threshold", () => {
       const deepEquals = (a: unknown, b: unknown) => Bun.deepEquals(a, b, strict);
 

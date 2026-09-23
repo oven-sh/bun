@@ -844,6 +844,19 @@ describe("Bun.Image", () => {
       expect([w, h]).toEqual([32, 32]);
       expectQuadrants(data, w, 0.5);
     });
+
+    // libjpeg warns "extraneous bytes before marker 0xd9" and finishes the decode.
+    test.each([
+      ["CMYK", cmykJpeg],
+      ["YCCK", ycckJpeg],
+    ])("%s with junk before EOI decodes to the clean file's pixels", async (_name, fixture) => {
+      expect([...fixture.subarray(-2)]).toEqual([0xff, 0xd9]);
+      const padded = Buffer.concat([fixture.subarray(0, -2), Buffer.alloc(16), fixture.subarray(-2)]);
+      const clean = decodePngRaw(await new Bun.Image(fixture).png().bytes());
+      const { w, data } = decodePngRaw(await new Bun.Image(padded).png().bytes());
+      expectQuadrants(data, w);
+      expect(Buffer.compare(data, clean.data)).toBe(0);
+    });
   });
 
   // EXIF: build a minimal JPEG via Bun.Image, then splice in an APP1 segment
@@ -871,6 +884,37 @@ describe("Bun.Image", () => {
     // And opting out leaves it landscape.
     const raw = await new Bun.Image(withExif, { autoOrient: false }).metadata();
     expect(raw).toEqual({ width: 4, height: 2, format: "jpeg" });
+  });
+
+  // libjpeg skips stray bytes before a marker with a warning, so the decode accepts this file.
+  // The orientation reader has to skip them too, or the picture comes out sideways with no error.
+  test("EXIF Orientation=6 survives junk bytes before the APP1 segment", async () => {
+    const jpg = await new Bun.Image(makePng(4, 2, (x, y) => [x * 60, y * 200, 128, 255])).jpeg({ quality: 90 }).bytes();
+    // prettier-ignore
+    const tiff = new Uint8Array([
+      0x4d, 0x4d, 0x00, 0x2a, 0x00, 0x00, 0x00, 0x08, // header
+      0x00, 0x01,                                     // 1 entry
+      0x01, 0x12, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01, 0x00, 0x06, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00,                         // next IFD = 0
+    ]);
+    const exif = Buffer.concat([Buffer.from("Exif\0\0"), tiff]);
+    const app1 = Buffer.concat([Buffer.from([0xff, 0xe1, (exif.length + 2) >> 8, (exif.length + 2) & 255]), exif]);
+    // After APP0: the format sniffer wants a marker straight after SOI.
+    expect([jpg[2], jpg[3]]).toEqual([0xff, 0xe0]);
+    const app0End = 4 + ((jpg[4] << 8) | jpg[5]);
+    const withExif = Buffer.concat([jpg.subarray(0, app0End), app1, jpg.subarray(app0End)]);
+    // Zero bytes, then 0xFF00: libjpeg's next_marker() discards both kinds.
+    const junk = Buffer.from([...new Array<number>(14).fill(0), 0xff, 0x00]);
+    const withJunk = Buffer.concat([jpg.subarray(0, app0End), junk, app1, jpg.subarray(app0End)]);
+
+    expect(await new Bun.Image(withJunk).metadata()).toEqual({ width: 2, height: 4, format: "jpeg" });
+    const rotated = await new Bun.Image(withJunk).png().bytes();
+    expect(Buffer.compare(rotated, await new Bun.Image(withExif).png().bytes())).toBe(0);
+    expect(await new Bun.Image(withJunk, { autoOrient: false }).metadata()).toEqual({
+      width: 4,
+      height: 2,
+      format: "jpeg",
+    });
   });
 
   test("rejects on unrecognised input", async () => {

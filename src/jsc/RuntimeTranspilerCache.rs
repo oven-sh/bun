@@ -56,7 +56,14 @@ bun_core::declare_scope!(cache, visible);
 /// u8/u16/u32 ids and implied slots dropped, instead of fixed u32 arrays.
 /// Version 27: ModuleInfo string table holds Latin-1 / UTF-16 bodies, not WTF-8.
 /// Version 28: the define table and `--drop` entries participate in the features hash.
-const EXPECTED_VERSION: u32 = 28;
+/// Version 29: `new Array(x, ...spread)` is no longer folded into an array literal.
+/// Version 30: String enum members are stored flat, so folds no longer append onto an inlined member.
+/// Version 31: Standard decorator lowering temporaries have a per-file counter in their name (`_init$1`).
+/// Version 32: Standard decorator lowering keeps class members in place.
+/// Version 33: The cached ESM record keeps the namespace of an import that a plugin
+/// `onResolve` rewrote (`namespace:path`). Older entries request the bare path, and
+/// the cache-HIT path reinstates #33904 for them.
+const EXPECTED_VERSION: u32 = 33;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

@@ -74,6 +74,8 @@ export const sslCtxLiveCount = $newRustFunction("SecureContext.rs", "jsLiveCount
 
 export const napiThreadsafeFunctionLiveCount = $newRustFunction("napi_body.rs", "jsThreadsafeFunctionLiveCount", 0);
 
+export const bundlerWorkerLiveCount: () => number = $newRustFunction("JSBundler.rs", "jsWorkerLiveCount", 0);
+
 export const escapeRegExp = $newRustFunction("escapeRegExp.rs", "jsEscapeRegExp", 1);
 export const escapeRegExpForPackageNameMatching = $newRustFunction(
   "escapeRegExp.rs",
@@ -707,6 +709,13 @@ export const memoryPressureWatcherHasOsBackend: () => boolean = $newRustFunction
 // null where there is no PSI backend (everything except Linux).
 export const memoryPressurePsiTrigger: () => Buffer | null = $newRustFunction("memory_pressure.rs", "jsPsiTrigger", 0);
 
+// The PSI event filter: `armed` is the file at arm time, `polls` one read per POLLPRI. null off Linux.
+export const memoryPressurePsiFilter: (armed: string, ...polls: string[]) => boolean[] | null = $newRustFunction(
+  "memory_pressure.rs",
+  "jsPsiFilter",
+  1,
+);
+
 export const getEventLoopStats: () => {
   activeTasks: number;
   tasks: number;
@@ -795,6 +804,30 @@ export const fetchH3Internals = {
   liveCounts: $newRustFunction("http/H3Client.rs", "TestingAPIs.quicLiveCounts", 0) as () => {
     sessions: number;
     streams: number;
+  },
+};
+
+const proxyFor = $newRustFunction("runtime/webcore/fetch.rs", "TestingAPIs.proxyFor", 2) as (
+  entries: string[],
+  url: string,
+) => string | null;
+
+export const proxyInternals = {
+  /** Whether the `NO_PROXY` value `list` exempts `hostname` on `port`. */
+  noProxyMatches: $newRustFunction("runtime/webcore/fetch.rs", "TestingAPIs.noProxyMatches", 3) as (
+    list: string,
+    hostname: string,
+    port: number,
+  ) => boolean,
+  /** The proxy an environment of exactly `env` selects for `url`, or null. */
+  proxyFor: (env: Record<string, string>, url: string) => proxyFor(Object.entries(env).flat(), url),
+  /** What the HTTP client's URL parser makes of `href`. */
+  parseURL: $newRustFunction("runtime/webcore/fetch.rs", "TestingAPIs.parseURL", 1) as (href: string) => {
+    username: string;
+    password: string;
+    hostname: string;
+    port: string;
+    pathname: string;
   },
 };
 

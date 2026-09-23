@@ -1315,6 +1315,21 @@ booga"
       expect(exitCode).toBe(0);
     });
 
+    test(".cwd() to a missing directory rejects the promise instead of throwing from then()", async () => {
+      using dir = tempDir("cwd-missing", {});
+      const missing = join(String(dir), "does-not-exist");
+      const promise = $`echo hi`.cwd(missing).nothrow();
+      // `then()` starts the shell. A setup failure must settle the promise,
+      // not throw out of `then()`.
+      const settled = promise.then(
+        () => "resolved",
+        e => e,
+      );
+      const err = await settled;
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toContain("No such file or directory");
+    });
+
     // handleChangeCwdErr's `else` arm previously returned `.failed` without writing
     // to stderr or calling done(), so any errno other than NOTDIR/NOENT/NAMETOOLONG
     // (e.g. EACCES, ELOOP) left the shell promise unresolved forever.

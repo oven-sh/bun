@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isIPv6, tls as tlsCert } from "harness";
 
 // `Bun.connect` to a hostname that fails to resolve must surface the resolver
 // error (code `ENOTFOUND`, `syscall: "getaddrinfo"`, `hostname`), matching
@@ -176,4 +176,40 @@ test("back-to-back Bun.connect calls whose names are rejected in-process do not 
     );
   }
   expect(codes).toEqual(Array(20).fill("ENOTFOUND"));
+});
+
+// Brackets are how a URL writes an IPv6 literal; only such a literal loses
+// them. Anything else in brackets is a name the resolver gets as written, as in
+// Node, and is rejected in-process without touching the network.
+test("Bun.connect unwraps a bracketed IPv6 literal and nothing else", async () => {
+  const outcome = (hostname: string, port: number, tls?: Bun.TLSOptions) =>
+    new Promise<string | boolean>(resolve => {
+      Bun.connect({
+        hostname,
+        port,
+        tls,
+        socket: {
+          open(socket) {
+            if (!tls) (resolve("connected"), socket.end());
+          },
+          handshake(socket, _success, error) {
+            resolve(error ? error.message : socket.authorized);
+            socket.end();
+          },
+          data() {},
+        },
+      }).catch(e => resolve(e.code + " " + e.hostname));
+    });
+
+  expect(await outcome("[example.invalid]", 80)).toBe("ENOTFOUND [example.invalid]");
+  expect(await outcome("[127.0.0.1]", 80)).toBe("ENOTFOUND [127.0.0.1]");
+  expect(await outcome("[]", 80)).toBe("ENOTFOUND []");
+  if (!isIPv6()) return;
+
+  using plain = Bun.listen({ hostname: "::1", port: 0, socket: { data() {} } });
+  expect(await outcome("[::1]", plain.port)).toBe("connected");
+  // The certificate lists IP:::1. The name it is checked against, and SNI,
+  // are the bare address.
+  using secure = Bun.listen({ hostname: "::1", port: 0, tls: tlsCert, socket: { data() {} } });
+  expect(await outcome("[::1]", secure.port, { ca: tlsCert.cert })).toBe(true);
 });

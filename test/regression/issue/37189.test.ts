@@ -57,6 +57,58 @@ await expect(call()).rejects.toThrow("boom");
 worker.terminate();
 console.log("OK");`;
 
+// Two requests in flight at once: both replies are queued before the
+// receiver's drain runs, so the second is already taken for dispatch when
+// the first's handler resumes the continuation that waits for it. No send()
+// runs during that wait, so the drain itself has to keep a wakeup posted.
+const pipelinedChannelMain = `import { expect } from "bun:test";
+const { port1, port2 } = new MessageChannel();
+port2.onmessage = e => {
+  port2.postMessage({ id: e.data.id });
+};
+const pending = new Map();
+port1.onmessage = e => {
+  const resolve = pending.get(e.data.id);
+  pending.delete(e.data.id);
+  resolve?.(e.data.id);
+};
+let seq = 0;
+const call = () => new Promise(resolve => {
+  const id = ++seq;
+  pending.set(id, resolve);
+  port1.postMessage({ id });
+});
+
+const first = call();
+const second = call();
+await first;
+await expect(second).resolves.toBe(2);
+port1.close();
+port2.close();
+console.log("OK");`;
+
+const pipelinedWorkerMain = `import { expect } from "bun:test";
+const worker = new Worker(new URL("./worker.js", import.meta.url).href);
+const pending = new Map();
+worker.onmessage = e => {
+  const resolve = pending.get(e.data.id);
+  pending.delete(e.data.id);
+  resolve?.(e.data.id);
+};
+let seq = 0;
+const call = () => new Promise(resolve => {
+  const id = ++seq;
+  pending.set(id, resolve);
+  worker.postMessage({ id });
+});
+
+const first = call();
+const second = call();
+await first;
+await expect(second).resolves.toBe(2);
+worker.terminate();
+console.log("OK");`;
+
 async function expectExitsCleanly(proc: Bun.Subprocess<"ignore", "pipe", "pipe">) {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "OK\n", stderr: "", exitCode: 0 });
@@ -90,6 +142,47 @@ test.concurrent(
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", channelMain],
       env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 15_000,
+      killSignal: "SIGKILL",
+    });
+    await expectExitsCleanly(proc);
+  },
+);
+
+test.concurrent(
+  "expect().resolves settles when the MessageChannel reply was already queued before the nested wait",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", pipelinedChannelMain],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 15_000,
+      killSignal: "SIGKILL",
+    });
+    await expectExitsCleanly(proc);
+  },
+);
+
+test.concurrent(
+  "expect().resolves settles when the Worker reply was already queued before the nested wait",
+  async () => {
+    using dir = tempDir("issue-37189-worker-pipelined", {
+      // Reply to both requests in one burst so both replies are usually
+      // queued before the parent's drain runs.
+      "worker.js": `const ids = [];
+    self.onmessage = e => {
+      ids.push(e.data.id);
+      if (ids.length === 2) for (const id of ids.splice(0)) self.postMessage({ id });
+    };`,
+      "main.js": pipelinedWorkerMain,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
       timeout: 15_000,

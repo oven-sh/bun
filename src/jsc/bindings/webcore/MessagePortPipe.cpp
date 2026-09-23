@@ -153,6 +153,8 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
 
     static constexpr size_t takeAtOnce = 64;
     ScriptExecutionContextIdentifier rescheduleCtx = 0;
+    bool postWakeup = false;
+    BunLoopKind wakeupLoopKind = BunLoopKind::Regular;
     while (true) {
         std::optional<MessageWithMessagePorts> message;
         {
@@ -196,7 +198,20 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
                 limit -= n;
             }
             message = s.draining.takeFirst();
-            s.state.store(st - QueuedOne, std::memory_order_release);
+            st -= QueuedOne;
+            // More is already queued behind this message. Keep a drain task
+            // posted so a handler that parks in a nested event-loop wait for
+            // one of them is woken: no send() will run to post it (#37189).
+            if (!(st & DrainScheduled) && !(s.draining.isEmpty() && s.inbox.isEmpty())) {
+                st |= DrainScheduled;
+                wakeupLoopKind = s.ctxLoopKind;
+                postWakeup = true;
+            }
+            s.state.store(st, std::memory_order_release);
+        }
+        if (postWakeup) {
+            postWakeup = false;
+            scheduleDrain(side, expectedCtx, wakeupLoopKind);
         }
 
         port->dispatchOneMessage(*context, WTF::move(*message));

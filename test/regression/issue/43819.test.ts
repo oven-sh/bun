@@ -8,18 +8,15 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // matcher spun a nested event-loop wait from inside the previous message's
 // drain, and the drain posted no wakeup for it.
 
-// Web Worker: EventTarget. worker_threads Worker: EventEmitter.
+// Web Worker: EventTarget. worker_threads Worker: EventEmitter. No deadline
+// inside the fixture: worker boot alone can take seconds under a debug ASAN
+// build, and the spawn timeout already bounds a hung child.
 const echoSource = (listen: string, unlisten: string, data: string) => `function echo(target, value) {
-  return new Promise((resolve, reject) => {
+  return new Promise(resolve => {
     const onMessage = ${data} => {
-      clearTimeout(timer);
       target.${unlisten}("message", onMessage);
       resolve(data);
     };
-    const timer = setTimeout(() => {
-      target.${unlisten}("message", onMessage);
-      reject(new Error("echo message deadline"));
-    }, 5000);
     target.${listen}("message", onMessage);
     target.postMessage(value);
   });

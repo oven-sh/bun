@@ -375,9 +375,10 @@ describe("MessagePort pipe", () => {
 
   // Each onmessage enqueues the next message mid-drain, so the drain's fixed
   // budget runs out with the inbox non-empty while the in-handler send has
-  // already posted a wakeup task. Exercises the budget-yield handoff;
-  // out-of-order or missing delivery fails.
-  test("self-feeding chain outlives the drain budget and stays in order", async () => {
+  // already posted a wakeup task. Exercises the budget-yield handoff:
+  // out-of-order or missing delivery fails, and so does a chain that runs to
+  // completion before a timer armed ahead of it gets its turn.
+  test("self-feeding chain outlives the drain budget, stays in order and yields to timers", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -386,12 +387,17 @@ describe("MessagePort pipe", () => {
           const { port1, port2 } = new MessageChannel();
           const N = 2500;
           let next = 0;
+          let timerFiredAt = -1;
           port1.onmessage = e => {
             if (e.data !== next) { console.error("out of order", e.data, next); process.exit(1); }
             next++;
-            if (next === N) { console.log("OK"); port1.close(); port2.close(); return; }
+            if (next === N) {
+              if (timerFiredAt < 0 || timerFiredAt >= N) { console.error("timer starved", timerFiredAt); process.exit(1); }
+              console.log("OK"); port1.close(); port2.close(); return;
+            }
             port2.postMessage(next);
           };
+          setTimeout(() => { timerFiredAt = next; }, 0);
           port2.postMessage(0);
         `,
       ],

@@ -1086,9 +1086,14 @@ describe.concurrent("FormData native memory is reported to the GC", () => {
           "\\r\\n--X\\r\\nContent-Disposition: form-data; name=\\"b\\"\\r\\n--X--\\r\\n",
       ]);
       Bun.gc(true);
+      // This message proves the parse reached the second part, after the copy.
+      const expected = "FormData parse error is missing header end";
       let rejected = 0;
       for (let i = 0; i < ${parses}; i++) {
-        await new Response(body, { headers }).formData().catch(() => rejected++);
+        await new Response(body, { headers }).formData().catch(e => {
+          if (e.message !== expected) throw e;
+          rejected++;
+        });
       }
       if (rejected !== ${parses}) throw new Error("expected every parse to fail, got " + rejected);
       process.stdout.write(String(heapStats().objectTypeCounts.FormData ?? 0));

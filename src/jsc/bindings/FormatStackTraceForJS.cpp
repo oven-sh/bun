@@ -846,6 +846,9 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     }
 
     JSC::JSObject* errorObject = objectArg.asCell()->getObject();
+    // globalThis is a JSGlobalProxy that forwards every read to its target, so "stack" must land there.
+    if (errorObject->type() == JSC::GlobalProxyType)
+        errorObject = uncheckedDowncast<JSC::JSGlobalProxy>(errorObject)->target();
     JSC::JSValue caller = callFrame->argument(1);
 
     size_t stackTraceLimit = globalObject->stackTraceLimit().value_or(DEFAULT_ERROR_STACK_TRACE_LIMIT);

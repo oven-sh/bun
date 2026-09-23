@@ -383,8 +383,10 @@ test("Error.captureStackTrace rejects a Proxy target like a non-object", () => {
   const target = {};
   const proxy = new Proxy(target, handler);
   const callableProxy = new Proxy(function () {}, handler);
+  const revocable = Proxy.revocable({}, {});
+  revocable.revoke();
 
-  for (const value of [proxy, callableProxy, Proxy.revocable({}, {}).proxy]) {
+  for (const value of [proxy, callableProxy, revocable.proxy]) {
     let caught;
     try {
       Error.captureStackTrace(value);
@@ -398,6 +400,23 @@ test("Error.captureStackTrace rejects a Proxy target like a non-object", () => {
   expect(observed).toEqual([]);
   expect(Reflect.ownKeys(target)).toEqual([]);
   expect(Reflect.ownKeys(proxy)).toEqual([]);
+});
+
+test("Error.captureStackTrace on globalThis installs .stack on the global object", () => {
+  // globalThis is a proxy in front of the global object. V8 stores "stack" on
+  // the object behind it, so globalThis.stack reads back as a string.
+  try {
+    Error.captureStackTrace(globalThis);
+    const d = Object.getOwnPropertyDescriptor(globalThis, "stack");
+    expect({ type: typeof globalThis.stack, enumerable: d?.enumerable, configurable: d?.configurable }).toEqual({
+      type: "string",
+      enumerable: false,
+      configurable: true,
+    });
+    expect(globalThis.stack.split("\n")[1]).toContain("capture-stack-trace.test.js");
+  } finally {
+    delete globalThis.stack;
+  }
 });
 
 test("prepare stack trace call sites", () => {

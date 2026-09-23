@@ -471,9 +471,7 @@ impl Expect {
         }
     }
 
-    /// The promise `wait_for_promise` polls for `value`'s outcome, if any. `accept_thenables`
-    /// is Jest's rule for `.resolves`, `.rejects` and matcher results; without it only a
-    /// native promise is waited on, so a lazy thenable such as a query builder never starts.
+    /// The promise `wait_for_promise` polls for `value`'s outcome, if any.
     fn promise_to_wait_for(global_this: &JSGlobalObject, value: JSValue, accept_thenables: bool) -> JsResult<Option<AnyPromise>> {
         Ok(bun_jsc::cpp::JSC__JSValue__jestPromiseToWaitFor(value, global_this, accept_thenables)?.as_any_promise())
     }
@@ -874,6 +872,7 @@ impl Expect {
             return_value = return_value_from_function;
         }
 
+        // Native promises only: a thenable the function returns, such as a query builder, must not start.
         let promise = match Self::promise_to_wait_for(global_this, return_value, false) {
             Ok(promise) => promise,
             Err(err) => {

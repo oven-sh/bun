@@ -671,9 +671,8 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_pipeThrough, (JSGloba
     if (isWritableStreamLocked(transformWritable))
         return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: The WritableStream is locked"_s);
 
-    auto* promise = readableStreamPipeTo(lexicalGlobalObject, stream, transformWritable, options.preventClose, options.preventAbort, options.preventCancel, options.signal);
+    readableStreamPipeTo(lexicalGlobalObject, stream, transformWritable, options.preventClose, options.preventAbort, options.preventCancel, options.signal, ResultPromise::Discarded);
     RETURN_IF_EXCEPTION(scope, {});
-    markPromiseAsHandled(vm, promise);
     return JSValue::encode(transformReadable);
 }
 

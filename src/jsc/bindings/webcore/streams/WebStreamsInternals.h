@@ -232,6 +232,17 @@ void resolvePromise(JSC::JSGlobalObject*, JSC::JSPromise*, JSC::JSValue); // use
 void rejectPromise(JSC::JSGlobalObject*, JSC::JSPromise*, JSC::JSValue); // userJS: no — WebStreamsMisc.cpp
 // "Set promise.[[PromiseIsHandled]] to true"
 void markPromiseAsHandled(JSC::VM&, JSC::JSPromise*); // userJS: no — WebStreamsMisc.cpp
+// "Reject promise with r" then "set promise.[[PromiseIsHandled]] to true", for a promise this subsystem
+// owns. The flag goes first: JSC queues a rejection for 'unhandledRejection' while the flag is clear, and
+// markPromiseAsHandled() afterwards does not take it out of that queue, so the promise and its reason
+// stay rooted until the event loop turns.
+void rejectPromiseAsHandled(JSC::JSGlobalObject*, JSC::JSPromise*, JSC::JSValue); // userJS: no — WebStreamsMisc.cpp
+// "a promise rejected with r" whose [[PromiseIsHandled]] is true from the start.
+JSC::JSPromise* promiseRejectedWithAsHandled(JSC::JSGlobalObject*, JSC::JSValue); // userJS: no — WebStreamsMisc.cpp
+// What the caller of a promise-returning operation does with the promise. Discarded: the operation marks it
+// handled while it is still pending, for the same reason as rejectPromiseAsHandled().
+enum class ResultPromise : bool { Returned,
+    Discarded };
 // {value,done} results: use JSC::createIteratorResultObject
 // (<JavaScriptCore/IteratorOperations.h>; VM-cached structure).
 
@@ -281,6 +292,8 @@ void readableStreamReaderGenericRelease(JSC::JSGlobalObject*, JSReadableStreamRe
 
 // Stream-level state ops.
 JSC::JSPromise* readableStreamCancel(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue reason); // userJS: yes — ReadableStreamOperations.cpp
+// The same for a caller that drops the result: no rejection of it ever reaches 'unhandledRejection'.
+void readableStreamCancelDiscardingResult(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue reason); // userJS: yes — ReadableStreamOperations.cpp
 void readableStreamClose(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes (read-request close-steps dispatch) — ReadableStreamOperations.cpp
 void readableStreamError(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue error); // userJS: yes (error-steps dispatch) — ReadableStreamOperations.cpp
 // Eagerly drop WriteBarriers on the stream that exist only to feed user source callbacks
@@ -338,7 +351,7 @@ void textDecodeReadRequestCloseSteps(JSC::JSGlobalObject*, JSReadableStreamDefau
 // section; the CrossRealm arms are with the rest of CrossRealmTransform.cpp.)
 // `signal` is the JSAbortSignal WRAPPER cell (nullptr = no signal); the pipe op roots it.
 // Byte sources are supported: per spec, the pipe always acquires a DEFAULT reader.
-JSC::JSPromise* readableStreamPipeTo(JSC::JSGlobalObject*, JSReadableStream* source, JSWritableStream* destination, bool preventClose, bool preventAbort, bool preventCancel, JSC::JSObject* signal = nullptr); // userJS: yes — ReadableStreamOperations.cpp (allocates + populates the op cell, then hands it to startPipeToOperation; the state machine lives in JSStreamPipeToOperation.cpp)
+JSC::JSPromise* readableStreamPipeTo(JSC::JSGlobalObject*, JSReadableStream* source, JSWritableStream* destination, bool preventClose, bool preventAbort, bool preventCancel, JSC::JSObject* signal = nullptr, ResultPromise = ResultPromise::Returned); // userJS: yes — ReadableStreamOperations.cpp (allocates + populates the op cell, then hands it to startPipeToOperation; the state machine lives in JSStreamPipeToOperation.cpp)
 
 // Controller set-up. Each takes the START RESULT, not a start method — the caller (the
 // FromUnderlyingSource op or an internal Create*) already ran the start algorithm; this op

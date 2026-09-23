@@ -71,14 +71,13 @@ void writableStreamDefaultWriterEnsureClosedPromiseRejected(JSGlobalObject* glob
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* closedPromise = writer->m_closedPromise.get();
     if (closedPromise->status() == JSPromise::Status::Pending) {
-        rejectPromise(globalObject, closedPromise, error);
+        rejectPromiseAsHandled(globalObject, closedPromise, error);
         RETURN_IF_EXCEPTION(scope, );
     } else {
-        closedPromise = promiseRejectedWith(globalObject, error);
+        closedPromise = promiseRejectedWithAsHandled(globalObject, error);
         RETURN_IF_EXCEPTION(scope, );
         writer->m_closedPromise.set(vm, writer, closedPromise);
     }
-    markPromiseAsHandled(vm, closedPromise);
 }
 
 void writableStreamDefaultWriterEnsureReadyPromiseRejected(JSGlobalObject* globalObject, JSWritableStreamDefaultWriter* writer, JSValue error)
@@ -87,14 +86,13 @@ void writableStreamDefaultWriterEnsureReadyPromiseRejected(JSGlobalObject* globa
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* readyPromise = writer->m_readyPromise.get();
     if (readyPromise && readyPromise->status() == JSPromise::Status::Pending) {
-        rejectPromise(globalObject, readyPromise, error);
+        rejectPromiseAsHandled(globalObject, readyPromise, error);
         RETURN_IF_EXCEPTION(scope, );
     } else {
-        readyPromise = promiseRejectedWith(globalObject, error);
+        readyPromise = promiseRejectedWithAsHandled(globalObject, error);
         RETURN_IF_EXCEPTION(scope, );
         writer->m_readyPromise.set(vm, writer, readyPromise);
     }
-    markPromiseAsHandled(vm, readyPromise);
 }
 
 // Provably-non-throwing leaf: reads members and does queue arithmetic only.

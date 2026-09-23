@@ -157,9 +157,8 @@ void setUpWritableStreamDefaultWriter(JSGlobalObject* globalObject, JSWritableSt
         return;
     }
     case WritableStreamState::Erroring: {
-        JSPromise* ready = promiseRejectedWith(globalObject, stream->m_storedError.get());
+        JSPromise* ready = promiseRejectedWithAsHandled(globalObject, stream->m_storedError.get());
         RETURN_IF_EXCEPTION(scope, );
-        markPromiseAsHandled(vm, ready);
         writer->m_readyPromise.set(vm, writer, ready);
         writer->m_closedPromise.set(vm, writer, JSPromise::create(vm, globalObject->promiseStructure()));
         return;
@@ -175,13 +174,11 @@ void setUpWritableStreamDefaultWriter(JSGlobalObject* globalObject, JSWritableSt
     }
     case WritableStreamState::Errored: {
         JSValue storedError = stream->m_storedError.get();
-        JSPromise* ready = promiseRejectedWith(globalObject, storedError);
+        JSPromise* ready = promiseRejectedWithAsHandled(globalObject, storedError);
         RETURN_IF_EXCEPTION(scope, );
-        markPromiseAsHandled(vm, ready);
         writer->m_readyPromise.set(vm, writer, ready);
-        JSPromise* closed = promiseRejectedWith(globalObject, storedError);
+        JSPromise* closed = promiseRejectedWithAsHandled(globalObject, storedError);
         RETURN_IF_EXCEPTION(scope, );
-        markPromiseAsHandled(vm, closed);
         writer->m_closedPromise.set(vm, writer, closed);
         return;
     }
@@ -474,9 +471,8 @@ void writableStreamRejectCloseAndClosedPromiseIfNeeded(JSGlobalObject* globalObj
         stream->m_closeRequest.clear();
     }
     if (auto* writer = stream->m_writer.get()) {
-        rejectPromise(globalObject, writer->m_closedPromise.get(), storedError);
+        rejectPromiseAsHandled(globalObject, writer->m_closedPromise.get(), storedError);
         RETURN_IF_EXCEPTION(scope, );
-        markPromiseAsHandled(vm, writer->m_closedPromise.get());
     }
 }
 

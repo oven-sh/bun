@@ -158,9 +158,7 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void ReadableStream__cancel(JSC::EncodedJS
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue reason = WebCore::createDOMException(globalObject, WebCore::ExceptionCode::AbortError);
     RETURN_IF_EXCEPTION(scope, );
-    auto* result = readableStreamCancel(globalObject, stream, reason);
-    RETURN_IF_EXCEPTION(scope, );
-    markPromiseAsHandled(vm, result);
+    RELEASE_AND_RETURN(scope, readableStreamCancelDiscardingResult(globalObject, stream, reason));
 }
 
 extern "C" [[ZIG_EXPORT(check_slow)]] void ReadableStream__cancelWithReason(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject, JSC::EncodedJSValue reason)
@@ -171,9 +169,7 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void ReadableStream__cancelWithReason(JSC:
 
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* result = readableStreamCancel(globalObject, stream, JSValue::decode(reason));
-    RETURN_IF_EXCEPTION(scope, );
-    markPromiseAsHandled(vm, result);
+    RELEASE_AND_RETURN(scope, readableStreamCancelDiscardingResult(globalObject, stream, JSValue::decode(reason)));
 }
 
 extern "C" [[ZIG_EXPORT(check_slow)]] void ReadableStream__error(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject, JSC::EncodedJSValue reason)

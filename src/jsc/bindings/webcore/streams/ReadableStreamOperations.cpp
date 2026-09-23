@@ -397,16 +397,16 @@ void readableStreamError(JSGlobalObject* globalObject, JSReadableStream* stream,
         }
     }
     Bun::attachAsyncStackFromPromise(globalObject, error, awaited);
-    rejectPromise(globalObject, reader->m_closedPromise.get(), error);
+    rejectPromiseAsHandled(globalObject, reader->m_closedPromise.get(), error);
     RETURN_IF_EXCEPTION(scope, void());
-    markPromiseAsHandled(vm, reader->m_closedPromise.get());
     if (!reader->isBYOB())
         RELEASE_AND_RETURN(scope, readableStreamDefaultReaderErrorReadRequests(globalObject, static_cast<JSReadableStreamDefaultReader*>(reader), error));
     RELEASE_AND_RETURN(scope, readableStreamBYOBReaderErrorReadIntoRequests(globalObject, static_cast<JSReadableStreamBYOBReader*>(reader), error));
 }
 
-// ReadableStreamCancel(stream, reason)
-JSPromise* readableStreamCancel(JSGlobalObject* globalObject, JSReadableStream* stream, JSValue reason)
+// ReadableStreamCancel(stream, reason). A stream that is already closed or errored makes no promise for
+// a caller that discards it.
+static JSPromise* readableStreamCancelImpl(JSGlobalObject* globalObject, JSReadableStream* stream, JSValue reason, ResultPromise resultPromise)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -414,6 +414,8 @@ JSPromise* readableStreamCancel(JSGlobalObject* globalObject, JSReadableStream* 
 
     stream->m_disturbed = true;
     const ReadableStreamState state = stream->m_state;
+    if (state != ReadableStreamState::Readable && resultPromise == ResultPromise::Discarded)
+        return nullptr;
     if (state == ReadableStreamState::Closed)
         RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
     if (state == ReadableStreamState::Errored)
@@ -481,9 +483,21 @@ JSPromise* readableStreamCancel(JSGlobalObject* globalObject, JSReadableStream* 
     readableStreamClearSourceBarriers(stream);
 
     auto* result = JSPromise::create(vm, globalObject->promiseStructure());
+    if (resultPromise == ResultPromise::Discarded)
+        result->markAsHandled();
     sourceCancelPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReturnUndefined(), jsUndefined(), result, jsUndefined());
     RETURN_IF_EXCEPTION(scope, nullptr);
     return result;
+}
+
+JSPromise* readableStreamCancel(JSGlobalObject* globalObject, JSReadableStream* stream, JSValue reason)
+{
+    return readableStreamCancelImpl(globalObject, stream, reason, ResultPromise::Returned);
+}
+
+void readableStreamCancelDiscardingResult(JSGlobalObject* globalObject, JSReadableStream* stream, JSValue reason)
+{
+    readableStreamCancelImpl(globalObject, stream, reason, ResultPromise::Discarded);
 }
 
 // ReadableStreamReaderGenericInitialize(reader, stream)
@@ -504,10 +518,9 @@ void readableStreamReaderGenericInitialize(JSGlobalObject* globalObject, JSReada
         return;
     }
     case ReadableStreamState::Errored: {
-        auto* closedPromise = promiseRejectedWith(globalObject, stream->m_storedError.get());
+        auto* closedPromise = promiseRejectedWithAsHandled(globalObject, stream->m_storedError.get());
         RETURN_IF_EXCEPTION(scope, void());
         reader->m_closedPromise.set(vm, reader, closedPromise);
-        markPromiseAsHandled(vm, closedPromise);
         return;
     }
     }
@@ -525,14 +538,13 @@ void readableStreamReaderGenericRelease(JSGlobalObject* globalObject, JSReadable
     JSObject* releaseError = Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: Reader released"_s);
     RETURN_IF_EXCEPTION(scope, void());
     if (stream->m_state == ReadableStreamState::Readable) {
-        rejectPromise(globalObject, reader->m_closedPromise.get(), releaseError);
+        rejectPromiseAsHandled(globalObject, reader->m_closedPromise.get(), releaseError);
         RETURN_IF_EXCEPTION(scope, void());
     } else {
-        auto* rejected = promiseRejectedWith(globalObject, releaseError);
+        auto* rejected = promiseRejectedWithAsHandled(globalObject, releaseError);
         RETURN_IF_EXCEPTION(scope, void());
         reader->m_closedPromise.set(vm, reader, rejected);
     }
-    markPromiseAsHandled(vm, reader->m_closedPromise.get());
 
     switch (stream->m_controllerKind) {
     case ControllerKind::None:
@@ -1055,10 +1067,9 @@ void textDecodeReadRequestChunkSteps(JSGlobalObject* globalObject, JSReadableStr
         readableStreamDefaultControllerError(globalObject, controller, error);
         RETURN_IF_EXCEPTION(scope, void());
         if (reader) {
-            auto* cancelResult = readableStreamReaderGenericCancel(globalObject, reader, error);
+            ASSERT(reader->m_stream);
+            readableStreamCancelDiscardingResult(globalObject, reader->m_stream.get(), error);
             RETURN_IF_EXCEPTION(scope, void());
-            if (cancelResult)
-                markPromiseAsHandled(vm, cancelResult);
             if (reader->m_stream) {
                 readableStreamDefaultReaderRelease(globalObject, reader);
                 RETURN_IF_EXCEPTION(scope, void());
@@ -1491,7 +1502,7 @@ std::pair<JSReadableStream*, JSReadableStream*> readableStreamTee(JSGlobalObject
 
 // ReadableStreamPipeTo(source, dest, preventClose, preventAbort, preventCancel[, signal]).
 // Validates, allocates + populates the operation cell, then hands it to startPipeToOperation.
-JSPromise* readableStreamPipeTo(JSGlobalObject* globalObject, JSReadableStream* source, JSWritableStream* destination, bool preventClose, bool preventAbort, bool preventCancel, JSObject* signal)
+JSPromise* readableStreamPipeTo(JSGlobalObject* globalObject, JSReadableStream* source, JSWritableStream* destination, bool preventClose, bool preventAbort, bool preventCancel, JSObject* signal, ResultPromise resultPromise)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1519,7 +1530,10 @@ JSPromise* readableStreamPipeTo(JSGlobalObject* globalObject, JSReadableStream* 
     operation->m_preventCancel = preventCancel;
     if (signal)
         operation->setSignal(vm, signal);
-    operation->setPromise(vm, JSPromise::create(vm, globalObject->promiseStructure()));
+    auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
+    if (resultPromise == ResultPromise::Discarded)
+        promise->markAsHandled();
+    operation->setPromise(vm, promise);
     reader->m_pipeOperation.set(vm, reader, operation);
     writer->m_pipeOperation.set(vm, writer, operation);
 

@@ -478,6 +478,20 @@ void markPromiseAsHandled(VM&, JSPromise* promise)
     promise->markAsHandled();
 }
 
+void rejectPromiseAsHandled(JSGlobalObject* globalObject, JSPromise* promise, JSValue reason)
+{
+    promise->markAsHandled();
+    promise->reject(getVM(globalObject), reason);
+}
+
+JSPromise* promiseRejectedWithAsHandled(JSGlobalObject* globalObject, JSValue reason)
+{
+    auto& vm = getVM(globalObject);
+    auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
+    promise->rejectAsHandled(vm, reason);
+    return promise;
+}
+
 // The stream-level closed promise. The Pending guard makes every settle site unconditionally
 // safe: a terminal transition can only run once, but the promise may already have been created
 // in a terminal state by webStreamClosedPromise().
@@ -534,8 +548,7 @@ JSPromise* webStreamClosedPromise(JSGlobalObject* globalObject, JSReadableStream
         break;
     case ReadableStreamState::Errored: {
         JSValue storedError = stream->m_storedError.get();
-        promise = promiseRejectedWith(globalObject, storedError ? storedError : jsUndefined());
-        promise->markAsHandled();
+        promise = promiseRejectedWithAsHandled(globalObject, storedError ? storedError : jsUndefined());
         break;
     }
     case ReadableStreamState::Readable:
@@ -559,8 +572,7 @@ JSPromise* webStreamClosedPromise(JSGlobalObject* globalObject, JSWritableStream
         break;
     case WritableStreamState::Errored: {
         JSValue storedError = stream->m_storedError.get();
-        promise = promiseRejectedWith(globalObject, storedError ? storedError : jsUndefined());
-        promise->markAsHandled();
+        promise = promiseRejectedWithAsHandled(globalObject, storedError ? storedError : jsUndefined());
         break;
     }
     // Erroring is not terminal: writableStreamFinishErroring() rejects the pending promise.

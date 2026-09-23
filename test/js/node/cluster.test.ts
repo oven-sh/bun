@@ -1466,6 +1466,30 @@ process.send("ready");`;
       },
       expected: ["early", "late"],
     },
+    {
+      // What a worker setup that runs before user code looks like to the loader.
+      name: "a worker whose first preload requires node:cluster, with a second preload and an entry that import nothing",
+      entry: "main.mjs",
+      files: {
+        "main.mjs": `import cluster from "node:cluster";\ncluster.setupPrimary({ exec: "app.mjs", execArgv: ["--require", "./cluster.cjs", "--require", "./empty.cjs"] });${primary}`,
+        "cluster.cjs": `require("node:cluster");`,
+        "empty.cjs": ``,
+        "app.mjs": listen,
+      },
+      expected: ["early", "late"],
+    },
+    {
+      // The worker is online while its chain still loads, so the chain is long enough for the reply to arrive.
+      name: "an ESM worker's top-level listener when the primary sends it on 'online'",
+      entry: "main.mjs",
+      files: {
+        ...Object.fromEntries(
+          Array.from({ length: 40 }, (_, i) => [`m${i}.mjs`, i < 39 ? `import "./m${i + 1}.mjs";` : `export {};`]),
+        ),
+        "main.mjs": `import cluster from "node:cluster";\nimport "./m0.mjs";\nif (cluster.isPrimary) {${primary.replace('worker.send("early");', 'worker.on("online", () => worker.send("early"));')}\n} else {${listen}\n}`,
+      },
+      expected: ["early", "late"],
+    },
   ])("$name", async ({ entry, files, expected }) => {
     using dir = tempDir("cluster-early-message", { ...chain, ...files });
     await using proc = Bun.spawn({

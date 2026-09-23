@@ -1431,7 +1431,8 @@ pub struct LinkerOptions {
     pub(crate) target_builtins: Option<std::sync::Arc<[u8]>>,
     pub(crate) bytecode_depth: u32,
     pub(crate) optimize_bytecode: bool,
-    pub(crate) bytecode_order: Vec<Box<[u8]>>,
+    /// The order files of `--bytecode-order` / `compile.bytecodeOrder`, read and merged when the bundle started.
+    pub(crate) bytecode_order: Option<crate::bytecode_order::BytecodeOrder>,
     pub(crate) output_format: Format,
     pub(crate) ignore_dce_annotations: bool,
     pub(crate) emit_dce_annotations: bool,
@@ -1482,7 +1483,7 @@ impl Default for LinkerOptions {
             target_builtins: None,
             bytecode_depth: u32::MAX,
             optimize_bytecode: true,
-            bytecode_order: Vec::new(),
+            bytecode_order: None,
             output_format: Format::Esm,
             ignore_dce_annotations: false,
             emit_dce_annotations: true,

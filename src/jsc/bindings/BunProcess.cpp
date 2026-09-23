@@ -149,6 +149,9 @@ extern "C" bool Bun__getEnvValue(JSC::JSGlobalObject* globalObject, const Encode
 extern "C" bool Bun__Node__ProcessThrowDeprecation;
 extern "C" bool Bun__Node__ProcessPendingDeprecation;
 extern "C" void Bun__writeProfilesBeforeSelfKill(bool signalEndsProcess);
+#if !OS(WINDOWS)
+extern "C" void onExitSignal(int);
+#endif
 extern "C" int32_t bun_stdio_tty[3];
 
 namespace Bun {
@@ -4792,8 +4795,16 @@ static bool selfSentSignalEndsProcess(int pid, int ownPid, int signal)
         return true;
     if (signal != SIGHUP && signal != SIGINT && signal != SIGQUIT && signal != SIGTERM)
         return false;
+    // Blocked, it stays pending and the process goes on.
+    sigset_t blocked;
+    if (pthread_sigmask(SIG_SETMASK, nullptr, &blocked) || sigismember(&blocked, signal))
+        return false;
+    // The default action, or Bun's own handler for SIGINT and SIGTERM when stdio is a terminal, which restores the
+    // terminal and raises the signal again with the default action.
     struct sigaction current;
-    return !sigaction(signal, nullptr, &current) && !(current.sa_flags & SA_SIGINFO) && current.sa_handler == SIG_DFL;
+    if (sigaction(signal, nullptr, &current) || (current.sa_flags & SA_SIGINFO))
+        return false;
+    return current.sa_handler == SIG_DFL || current.sa_handler == onExitSignal;
 #endif
 }
 

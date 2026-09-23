@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isArm64, isDebug, isLinux, isMacOS, isMusl, isPosix, isWindows, tempDir } from "harness";
 import {
   chmodSync,
@@ -11,6 +11,7 @@ import {
   readFileSync,
   readSync,
   statSync,
+  writeFileSync,
 } from "node:fs";
 import { isAbsolute, join, sep } from "path";
 
@@ -161,14 +162,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
     const buildArgs = ["--compile", "--bytecode", "--splitting", "--format=esm", "--minify", "app.js"];
     let dir: ReturnType<typeof tempDir>;
     const cwd = () => dir + "";
-    // One afterAll for the block: a hook in a nested describe would split the block's concurrent tests in two groups.
-    let selfKillDir: ReturnType<typeof tempDir> | undefined;
-    let internalsDir: ReturnType<typeof tempDir> | undefined;
-    afterAll(() => {
-      dir?.[Symbol.dispose]();
-      selfKillDir?.[Symbol.dispose]();
-      internalsDir?.[Symbol.dispose]();
-    });
+    afterAll(() => dir?.[Symbol.dispose]());
 
     async function compile(outfile: string, args: string[], env: Record<string, string> = {}, stdin?: string) {
       await using build = Bun.spawn({
@@ -204,7 +198,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
     // modules the recorded run evaluated or did not know, the bodies it decoded, (reserved), heads of the modules it
     // knew and did not evaluate, all other bodies, expression info).
     function linkedLayout(outfile: string) {
-      const file = readFileSync(join(cwd(), outfile));
+      const file = readFileSync(isAbsolute(outfile) ? outfile : join(cwd(), outfile));
       const trailer = file.lastIndexOf("\n---- Bun! ----\n", undefined, "latin1");
       // `Offsets { byte_count: usize, modules_ptr: StringPointer, entry_point_id: u32, compile_exec_argv_ptr: StringPointer, flags: u32 }`
       const offsets = trailer - 32;
@@ -240,7 +234,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
           if (source.includes(`/${name}+/u`)) entry[name] = bytecode.offset - payload.offset;
         if (source.includes(`"rev"`)) entry.app = bytecode.offset - payload.offset;
       }
-      return { payloadLength: payload.length, regionEnds, entry };
+      return { payloadLength: payload.length, regionEnds, entry, recordAt: base + at };
     }
 
     // One digest per module over ALL the code its bytecode holds, called or not; the entry point's line names the executable.
@@ -270,104 +264,85 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
 
     // The recorded run imports a, b, c (never d, e, f) and calls first() before second().
     const recordedArgv = ["a", "b", "c"];
-    let recorded: Promise<{ order: string; plain: Awaited<ReturnType<typeof run>> }> | undefined;
-    const setup = () =>
-      (recorded ??= (async () => {
+    describe("with a recorded run", () => {
+      // What every test starts from, made once, in a hook so that no test's clock includes it: the plain build, two
+      // recordings of it (the second is another way of starting the program) and the build ordered by the first. One build
+      // at a time: each links an executable the size of bun, and CI has few cores. For the same reason the tests that
+      // build are not concurrent; the ones that only run what is already built are.
+      let shared: { order: string; plain: Awaited<ReturnType<typeof run>>; orderedStderr: string };
+      beforeAll(async () => {
         dir = tempDir("build-compile-bytecode-order", files);
         expect((await compile(exe("plain"), [])).exitCode).toBe(0);
         const plain = await run(exe("plain"), recordedArgv, { BUN_BYTECODE_ORDER_OUT: join(cwd(), "plain.order") });
-        // The ordered build, and meanwhile a second recording (another way of starting the program) for the tests that
-        // merge two.
-        const [ordered, other] = await Promise.all([
-          compile(exe("ordered"), ["--bytecode-order=plain.order"]),
-          run(exe("plain"), ["f", "rev"], { BUN_BYTECODE_ORDER_OUT: join(cwd(), "other.order") }),
-        ]);
+        const other = await run(exe("plain"), ["f", "rev"], { BUN_BYTECODE_ORDER_OUT: join(cwd(), "other.order") });
+        const ordered = await compile(exe("ordered"), ["--bytecode-order=plain.order"]);
         expect({ ordered: ordered.exitCode, other: other.exitCode }).toEqual({ ordered: 0, other: 0 });
-        return { order: await Bun.file(join(cwd(), "plain.order")).text(), plain, orderedStderr: ordered.stderr };
-      })());
+        shared = { order: await Bun.file(join(cwd(), "plain.order")).text(), plain, orderedStderr: ordered.stderr };
+      }, 300_000);
 
-    // Two recordings merged, named as one list and as two flags: one build each, shared by the two tests below, into
-    // directories of their own so that the executables can have the same name.
-    let mergedBuilds: { list?: Promise<string>; repeated?: Promise<string> } = {};
-    const merged = (how: "list" | "repeated") =>
-      (mergedBuilds[how] ??= (async () => {
-        await setup();
-        const outfile = join("merged-" + how, exe("merged"));
-        const files = [join(cwd(), "plain.order"), join(cwd(), "other.order")];
-        const build = await compile(
-          outfile,
-          how === "list" ? ["--bytecode-order=" + files.join(",")] : files.map(file => "--bytecode-order=" + file),
-        );
-        expect({ stderr: build.stderr.includes("error"), exitCode: build.exitCode }).toEqual({
-          stderr: false,
-          exitCode: 0,
-        });
-        return outfile;
-      })());
+      test.concurrent(
+        "a run of the ordered build reads the same things and decodes to the same code",
+        async () => {
+          const { order, plain } = shared;
+          // Nothing but the five kinds of lines: a recording says so, in a line of another kind, when something the run
+          // decoded could not be named.
+          expect(order.split("\n").filter(line => !/^(v1|[FSMNK] [0-9a-f]{16}|)$/.test(line))).toEqual([]);
+          expect(plain).toEqual({
+            stdout: "APPAPP 2a4a6 AA/a+/3-a 2b4b6 BB/b+/3-b 2c4c6 CC/c+/3-c\n",
+            cacheHits: expect.any(Number),
+            exitCode: 0,
+          });
+          // The entry point's chunk, the shared one, and a, b, c.
+          expect(plain.cacheHits).toBe(5);
+          expect(order).toStartWith("v1\n");
+          for (const kind of ["F", "S", "M", "N", "K"])
+            expect(order).toMatch(new RegExp(`^${kind} [0-9a-f]{16}$`, "m"));
+          expect(hasLinkedPayload(exe("plain"))).toBe(false);
+          expect(hasLinkedPayload(exe("ordered"))).toBe(true);
 
-    test.concurrent(
-      "a run of the ordered build reads the same things and decodes to the same code",
-      async () => {
-        const { order, plain } = await setup();
-        // Nothing but the five kinds of lines: a recording says so, in a line of another kind, when something the run
-        // decoded could not be named.
-        expect(order.split("\n").filter(line => !/^(v1|[FSMNK] [0-9a-f]{16}|)$/.test(line))).toEqual([]);
-        expect(plain).toEqual({
-          stdout: "APPAPP 2a4a6 AA/a+/3-a 2b4b6 BB/b+/3-b 2c4c6 CC/c+/3-c\n",
-          cacheHits: expect.any(Number),
-          exitCode: 0,
-        });
-        // The entry point's chunk, the shared one, and a, b, c.
-        expect(plain.cacheHits).toBe(5);
-        expect(order).toStartWith("v1\n");
-        for (const kind of ["F", "S", "M", "N", "K"]) expect(order).toMatch(new RegExp(`^${kind} [0-9a-f]{16}$`, "m"));
-        expect(hasLinkedPayload(exe("plain"))).toBe(false);
-        expect(hasLinkedPayload(exe("ordered"))).toBe(true);
+          // What the recorded run read comes first: the heads of the modules it evaluated, then the bodies it decoded. The
+          // modules it never loaded have their heads after that, and everything else follows.
+          const { payloadLength, regionEnds, entry } = linkedLayout(exe("ordered"));
+          const [evaluatedHeadsEnd, hotBodiesEnd, , otherHeadsEnd, coldBodiesEnd, expressionInfoEnd] = regionEnds;
+          expect(evaluatedHeadsEnd).toBeGreaterThan(0);
+          expect(hotBodiesEnd).toBeGreaterThan(evaluatedHeadsEnd);
+          expect(otherHeadsEnd).toBeGreaterThan(hotBodiesEnd);
+          expect(coldBodiesEnd).toBeGreaterThan(otherHeadsEnd);
+          expect(expressionInfoEnd).toBe(payloadLength);
+          expect(Object.keys(entry).sort()).toEqual(["a", "app", "b", "c", "d", "e", "f"]);
+          for (const name of ["app", "a", "b", "c"]) expect(entry[name], name).toBeLessThan(evaluatedHeadsEnd);
+          for (const name of ["d", "e", "f"]) {
+            expect(entry[name], name).toBeGreaterThanOrEqual(hotBodiesEnd);
+            expect(entry[name], name).toBeLessThan(otherHeadsEnd);
+          }
+          const again = await run(exe("ordered"), recordedArgv, {
+            BUN_BYTECODE_ORDER_OUT: join(cwd(), "ordered.order"),
+          });
+          expect(again).toEqual(plain);
+          expect(await Bun.file(join(cwd(), "ordered.order")).text()).toBe(order);
+          expect(await digests(exe("ordered"))).toBe(await digests(exe("plain")));
+        },
+        60_000,
+      );
 
-        // What the recorded run read comes first: the heads of the modules it evaluated, then the bodies it decoded. The
-        // modules it never loaded have their heads after that, and everything else follows.
-        const { payloadLength, regionEnds, entry } = linkedLayout(exe("ordered"));
-        const [evaluatedHeadsEnd, hotBodiesEnd, , otherHeadsEnd, coldBodiesEnd, expressionInfoEnd] = regionEnds;
-        expect(evaluatedHeadsEnd).toBeGreaterThan(0);
-        expect(hotBodiesEnd).toBeGreaterThan(evaluatedHeadsEnd);
-        expect(otherHeadsEnd).toBeGreaterThan(hotBodiesEnd);
-        expect(coldBodiesEnd).toBeGreaterThan(otherHeadsEnd);
-        expect(expressionInfoEnd).toBe(payloadLength);
-        expect(Object.keys(entry).sort()).toEqual(["a", "app", "b", "c", "d", "e", "f"]);
-        for (const name of ["app", "a", "b", "c"]) expect(entry[name], name).toBeLessThan(evaluatedHeadsEnd);
-        for (const name of ["d", "e", "f"]) {
-          expect(entry[name], name).toBeGreaterThanOrEqual(hotBodiesEnd);
-          expect(entry[name], name).toBeLessThan(otherHeadsEnd);
-        }
-        const again = await run(exe("ordered"), recordedArgv, { BUN_BYTECODE_ORDER_OUT: join(cwd(), "ordered.order") });
-        expect(again).toEqual(plain);
-        expect(await Bun.file(join(cwd(), "ordered.order")).text()).toBe(order);
-        expect(await digests(exe("ordered"))).toBe(await digests(exe("plain")));
-      },
-      60_000,
-    );
+      // Nothing in the layout depends on the order modules load in or functions are first called in: a module finds its
+      // code through its own entry, wherever the recorded run's order put it.
+      test.concurrent.each([
+        ["the recorded modules in reverse, functions in the other order", ["c", "b", "a", "rev"]],
+        ["modules the recorded run never loaded, before any it did", ["f", "d", "a", "e", "c", "b"]],
+        ["only modules the recorded run never loaded", ["e", "rev", "d", "f"]],
+      ])(
+        "load order: %s",
+        async (_label, argv) => {
+          const expected = await run(exe("plain"), argv);
+          expect(expected.exitCode).toBe(0);
+          expect(await run(exe("ordered"), argv)).toEqual(expected);
+        },
+        60_000,
+      );
 
-    // Nothing in the layout depends on the order modules load in or functions are first called in: a module finds its
-    // code through its own entry, wherever the recorded run's order put it.
-    test.concurrent.each([
-      ["the recorded modules in reverse, functions in the other order", ["c", "b", "a", "rev"]],
-      ["modules the recorded run never loaded, before any it did", ["f", "d", "a", "e", "c", "b"]],
-      ["only modules the recorded run never loaded", ["e", "rev", "d", "f"]],
-    ])(
-      "load order: %s",
-      async (_label, argv) => {
-        await setup();
-        const expected = await run(exe("plain"), argv);
-        expect(expected.exitCode).toBe(0);
-        expect(await run(exe("ordered"), argv)).toEqual(expected);
-      },
-      60_000,
-    );
-
-    test.concurrent(
-      "compile.bytecodeOrder",
-      async () => {
-        const { plain } = await setup();
+      test("compile.bytecodeOrder", async () => {
+        const { plain } = shared;
         const viaApi = await Bun.build({
           entrypoints: [join(cwd(), "app.js")],
           bytecode: true,
@@ -382,38 +357,34 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
         expect(viaApi.success).toBe(true);
         expect(hasLinkedPayload(exe("api"))).toBe(true);
         expect(await run(exe("api"), recordedArgv)).toEqual(plain);
-      },
-      60_000,
-    );
+      }, 60_000);
 
-    test.concurrent(
-      "several files on the command line",
-      async () => {
-        const { plain } = await setup();
-        const outfile = await merged("list");
-        expect(hasLinkedPayload(outfile)).toBe(true);
-        expect(await run(outfile, recordedArgv)).toEqual(plain);
-      },
-      60_000,
-    );
+      test("several files on the command line", async () => {
+        const { plain } = shared;
+        const build = await compile(exe("merged"), ["--bytecode-order=plain.order,other.order"]);
+        expect({ stderr: build.stderr.includes("error"), exitCode: build.exitCode }).toEqual({
+          stderr: false,
+          exitCode: 0,
+        });
+        expect(hasLinkedPayload(exe("merged"))).toBe(true);
+        expect(await run(exe("merged"), recordedArgv)).toEqual(plain);
+      }, 60_000);
 
-    test.concurrent(
-      "several files: the same files in the same order give the same executable",
-      async () => {
-        const { plain } = await setup();
-        const [asList, repeated] = await Promise.all([merged("list"), merged("repeated")]);
-        expect(await run(repeated, recordedArgv)).toEqual(plain);
-        expect(readFileSync(join(cwd(), repeated)).equals(readFileSync(join(cwd(), asList)))).toBe(true);
-      },
-      60_000,
-    );
+      test("the same order file gives the same executable", async () => {
+        // Into a directory of its own, so that the executable has the name of the one the hook built.
+        const again = join("again", exe("ordered"));
+        // (Given twice, as two flags: what the second adds to the first is nothing.)
+        const build = await compile(again, ["--bytecode-order=plain.order", "--bytecode-order=plain.order"]);
+        expect({ stderr: build.stderr.includes("error"), exitCode: build.exitCode }).toEqual({
+          stderr: false,
+          exitCode: 0,
+        });
+        expect(readFileSync(join(cwd(), again)).equals(readFileSync(join(cwd(), exe("ordered"))))).toBe(true);
+      }, 60_000);
 
-    // The order file also lists the functions its build had and its run did not decode. A function in neither list is
-    // new or changed since the recording; those get a region of their own next to the hot one instead of being cold.
-    test.concurrent(
-      "functions the recorded build did not have",
-      async () => {
-        await setup();
+      // The order file also lists the functions its build had and its run did not decode. A function in neither list is
+      // new or changed since the recording; those get a region of their own next to the hot one instead of being cold.
+      test("functions the recorded build did not have", async () => {
         const [, hotBodiesEnd, unknownBodiesEnd] = linkedLayout(exe("ordered")).regionEnds;
         expect(unknownBodiesEnd).toBe(hotBodiesEnd);
 
@@ -459,15 +430,10 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
           unknown: 3,
           cold: 0,
         });
-      },
-      60_000,
-    );
+      }, 60_000);
 
-    // bun:jsc's bytecodeOrderStats(): the function bodies a run decoded, by the region of the payload they are in.
-    test.concurrent(
-      "bytecodeOrderStats counts what a run decodes by region",
-      async () => {
-        await setup();
+      // bun:jsc's bytecodeOrderStats(): the function bodies a run decoded, by the region of the payload they are in.
+      test("bytecodeOrderStats counts what a run decodes by region", async () => {
         expect(
           await stats(exe("plain"), recordedArgv, { BUN_BYTECODE_ORDER_OUT: join(cwd(), "stats.order") }),
         ).toBeNull();
@@ -503,14 +469,10 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
         expect(other.cold).toBeGreaterThanOrEqual(3);
         expect(other.coldBytes).toBeGreaterThan(0);
         expect(other.unknown).toBe(0);
-      },
-      60_000,
-    );
+      }, 60_000);
 
-    // Every VM of the process records: what only a Worker evaluated or called is in the order file too.
-    test.concurrent(
-      "a Worker's modules and functions are recorded",
-      async () => {
+      // Every VM of the process records: what only a Worker evaluated or called is in the order file too.
+      test("a Worker's modules and functions are recorded", async () => {
         using workerDir = tempDir("build-compile-bytecode-order-worker", {
           "main.js": `
           import { shared } from "./shared.js";
@@ -631,61 +593,25 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
         expect(main.hot).toBeGreaterThanOrEqual(2);
         expect(worker.regions).toEqual(main.regions);
         expect(countedExit).toBe(0);
-      },
-      60_000,
-    );
+      }, 60_000);
 
-    // An order file names code by a hash of its text in which every name counts the same, because a minifier hands out
-    // names afresh in every build, and it gets to the contextual keywords: `of`, `get`, `set`, `async`, `as`.
-    test.concurrent(
-      "a function keeps its name in an order file when a binding is renamed to a contextual keyword",
-      async () => {
-        const source = (local: string, member: string, extra = "") => `
-          ${extra}
-          function scale(list, ${local}) { const pick = item => item * ${local}; return list.map(pick); }
-          class Box { constructor(v) { this.v = v; } ${member} { return scale([this.v], 3)[0]; } }
-          const box = new Box(2);
-          console.log(scale([1, 2], 2).join(","), typeof box.size === "function" ? box.size() : box.size);
-        `;
-        const variants = {
-          ab: source("ab", "get size()"),
-          of: source("of", "get size()"),
-          get: source("get", "get size()"),
-          set: source("set", "get size()"),
-          async: source("async", "get size()"),
-          as: source("as", "get size()"),
-          method: source("ab", "size()"),
-          // An edit is seen wherever it is: next to a class with fields (the function that initializes them has the text
-          // of the whole function around the class), and after a template literal that holds a function.
-          fields: source("ab", "get size()", "(function (n) { class A { x = n + 1; } return new A().x; })(1);"),
-          // Two different functions around two classes with fields: four names, none of them shared, and the one name
-          // of the two default constructors.
-          twoFields: source(
-            "ab",
-            "get size()",
-            "(function (n) { class A { x = n + 1; } return new A().x; })(1); (function (m, k) { class B { y = m * k; } return [new B().y]; })(1, 2);",
-          ),
-          fieldsEdited: source(
-            "ab",
-            "get size()",
-            "(function (n) { class A { x = n + 1; } return new A().x || n; })(1);",
-          ),
-          template: source(
-            "ab",
-            "get size()",
-            "(function (a) { const t = `v${[a].map(x => x + 1)}`; return t + a; })(1);",
-          ),
-          templateEdited: source(
-            "ab",
-            "get size()",
-            "(function (a) { const t = `v${[a].map(x => x + 1)}`; if (a) a = -a; return t + a; })(1);",
-          ),
-        };
+      // An order file names code by a hash of its text in which every name counts the same, because a minifier hands out
+      // names afresh in every build, and it gets to the contextual keywords: `of`, `get`, `set`, `async`, `as`.
+      // Builds each variant, runs it recording, and returns its order file's F/M/N/K lines. Not minified: the names stay as
+      // written. Strings are named by their characters, so the S lines are left out. Two builds at a time: each links an
+      // executable the size of bun.
+      const namesSource = (locals: string[], member: string, extra = "") => `
+        ${extra}
+        ${locals.map((local, i) => `function scale${i}(list, ${local}) { const pick = item => item * ${local}; return list.map(pick); }`).join("\n")}
+        class Box { constructor(v) { this.v = v; } ${member} { return scale0([this.v], 3)[0]; } }
+        const box = new Box(2);
+        console.log(${locals.map((_, i) => `scale${i}([1, 2], 2).join(",")`).join(", ")}, typeof box.size === "function" ? box.size() : box.size);
+      `;
+      const recordVariants = async <Name extends string>(variants: Record<Name, string>, stdout: string) => {
         using namesDir = tempDir(
           "build-compile-bytecode-order-names",
-          Object.fromEntries(Object.entries(variants).map(([name, text]) => [`${name}.js`, text])),
+          Object.fromEntries(Object.entries<string>(variants).map(([name, text]) => [`${name}.js`, text])),
         );
-        // Not minified: the names stay as written. Strings are named by their characters, so leave the S lines out.
         const named = async (name: string) => {
           await using build = Bun.spawn({
             cmd: [bunExe(), "build", "--compile", "--bytecode", "--format=esm", `${name}.js`, "--outfile", exe(name)],
@@ -710,44 +636,120 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
             stdout: "pipe",
             stderr: "pipe",
           });
-          const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-          expect({ stdout, exitCode }).toEqual({ stdout: "2,4 6\n", exitCode: 0 });
+          const [out1, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect({ stdout: out1, exitCode }).toEqual({ stdout, exitCode: 0 });
           return (await Bun.file(out).text())
             .split("\n")
             .filter(line => /^[FMNK] /.test(line))
             .sort();
         };
-        const lines = Object.fromEntries(
-          await Promise.all(Object.keys(variants).map(async name => [name, await named(name)] as const)),
+        const names = Object.keys(variants);
+        const built: (readonly [string, string[]])[] = [];
+        const worker = async () => {
+          for (let name = names.shift(); name !== undefined; name = names.shift()) {
+            built.push([name, await named(name)] as const);
+          }
+        };
+        await Promise.all([worker(), worker()]);
+        return Object.fromEntries(built) as Record<Name, string[]>;
+      };
+
+      test("a function keeps its name in an order file when a binding is renamed to a contextual keyword", async () => {
+        const lines = await recordVariants(
+          {
+            plain: namesSource(["ab", "cd", "ef", "gh", "ij"], "get size()"),
+            keywords: namesSource(["of", "get", "set", "async", "as"], "get size()"),
+            method: namesSource(["ab", "cd", "ef", "gh", "ij"], "size()"),
+          },
+          "2,4 2,4 2,4 2,4 2,4 6\n",
         );
-        const ab = lines.ab;
-        // scale, pick, the constructor and the getter, and the module.
-        expect(ab.filter(line => line.startsWith("F ")).length).toBeGreaterThanOrEqual(4);
-        expect(ab.filter(line => line.startsWith("M ")).length).toBe(1);
-        for (const name of ["of", "get", "set", "async", "as"]) expect(lines[name], name).toEqual(ab);
+        // scale0 (the others are the same text), pick, the constructor and the getter, and the module.
+        expect(lines.plain.filter(line => line.startsWith("F ")).length).toBeGreaterThanOrEqual(4);
+        expect(lines.plain.filter(line => line.startsWith("M ")).length).toBe(1);
+        expect(lines.keywords).toEqual(lines.plain);
         // `get size() {}` and `size() {}` are different code: the class that holds them is top-level text.
-        expect(lines.method).not.toEqual(ab);
-        const functionNames = (name: string) => new Set(lines[name].filter(line => line.startsWith("F "))).size;
-        expect(functionNames("twoFields")).toBe(functionNames("ab") + 5);
-        for (const name of ["fields", "template"]) {
-          const [before, after] = [lines[name], lines[name + "Edited"]];
-          const functions = (lines: string[]) => lines.filter(line => line.startsWith("F "));
+        expect(lines.method).not.toEqual(lines.plain);
+      }, 60_000);
+
+      // An edit is seen wherever it is: next to a class with fields (the function that initializes them has the text of the
+      // whole function around the class), and after a template literal that holds a function.
+      test("an edit next to a class with fields or after a template literal renames only what it is in", async () => {
+        const lines = await recordVariants(
+          {
+            plain: namesSource(["ab"], "get size()"),
+            fields: namesSource(
+              ["ab"],
+              "get size()",
+              "(function (n) { class A { x = n + 1; } return new A().x; })(1);",
+            ),
+            // Two different functions around two classes with fields: four names, none of them shared, and the one name
+            // of the two default constructors.
+            twoFields: namesSource(
+              ["ab"],
+              "get size()",
+              "(function (n) { class A { x = n + 1; } return new A().x; })(1); (function (m, k) { class B { y = m * k; } return [new B().y]; })(1, 2);",
+            ),
+            fieldsEdited: namesSource(
+              ["ab"],
+              "get size()",
+              "(function (n) { class A { x = n + 1; } return new A().x || n; })(1);",
+            ),
+            template: namesSource(
+              ["ab"],
+              "get size()",
+              "(function (a) { const t = `v${[a].map(x => x + 1)}`; return t + a; })(1);",
+            ),
+            templateEdited: namesSource(
+              ["ab"],
+              "get size()",
+              "(function (a) { const t = `v${[a].map(x => x + 1)}`; if (a) a = -a; return t + a; })(1);",
+            ),
+          },
+          "2,4 6\n",
+        );
+        const functions = (lines: string[]) => lines.filter(line => line.startsWith("F "));
+        expect(new Set(functions(lines.twoFields)).size).toBe(new Set(functions(lines.plain)).size + 5);
+        for (const name of ["fields", "template"] as const) {
+          const [before, after] = [lines[name], lines[`${name}Edited`]];
           // Only the edited function has another name.
           expect(functions(after).filter(line => !before.includes(line)).length, name).toBe(1);
           expect(functions(before).filter(line => !after.includes(line)).length, name).toBe(1);
-          expect(new Set(functions(before)).size, name).toBeGreaterThan(new Set(functions(ab)).size);
+          expect(new Set(functions(before)).size, name).toBeGreaterThan(new Set(functions(lines.plain)).size);
         }
-      },
-      60_000,
-    );
+      }, 60_000);
 
-    test.concurrent(
-      "an order file that cannot be read or used",
-      async () => {
-        const { plain } = await setup();
+      test("an order file that cannot be read or used", async () => {
+        const { plain } = shared;
         const missing = await compile(exe("missing"), ["--bytecode-order=does-not-exist.order"]);
         expect(missing.stderr).toContain("cannot read the bytecode order file does-not-exist.order");
         expect(missing.exitCode).not.toBe(0);
+        // Said before anything is parsed, not after the link: the entry point's own error is never reached.
+        await Bun.write(join(cwd(), "syntax-error.js"), "let let = 1;");
+        await using early = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "build",
+            "--compile",
+            "--bytecode",
+            "--format=esm",
+            "--bytecode-order=does-not-exist.order",
+            "syntax-error.js",
+            "--outfile",
+            exe("missing"),
+          ],
+          env: bunEnv,
+          cwd: cwd(),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [, earlyStderr, earlyExitCode] = await Promise.all([
+          early.stdout.text(),
+          early.stderr.text(),
+          early.exited,
+        ]);
+        expect(earlyStderr).toContain("cannot read the bytecode order file does-not-exist.order");
+        expect(earlyStderr).not.toContain("syntax-error.js");
+        expect(earlyExitCode).not.toBe(0);
 
         await using withoutBytecode = Bun.spawn({
           cmd: [
@@ -824,142 +826,53 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
         expect(junk.exitCode).toBe(0);
         expect(hasLinkedPayload(exe("junk"))).toBe(false);
         expect(await run(exe("junk"), recordedArgv)).toEqual(plain);
-      },
-      60_000,
-    );
+      }, 60_000);
 
-    // The run is the program's: what goes wrong with the file is said on stderr and changes nothing else, and nothing
-    // that is already at the path is removed, an empty directory included.
-    test.concurrent(
-      "BUN_BYTECODE_ORDER_OUT that cannot be written",
-      async () => {
-        const { plain } = await setup();
-        // Its own directory: the file is written next to where it goes, and other tests record into cwd().
-        const parent = join(cwd(), "unwritable");
-        mkdirSync(parent, { recursive: true });
-        for (const [variable, name] of [
-          ["BUN_BYTECODE_ORDER_OUT", "order-out-dir"],
-          ["BUN_BYTECODE_DIGEST_OUT", "digest-out-dir"],
-        ]) {
-          const directory = join(parent, name);
-          mkdirSync(directory, { recursive: true });
-          // A directory, the name of one that is not there, a file in one that is not there.
-          const outs = [directory, join(parent, "no-such-dir") + sep, join(parent, "no-such-dir", "out.order")];
-          for (const out of outs) {
-            await using proc = Bun.spawn({
-              cmd: [join(cwd(), exe("plain")), ...recordedArgv],
-              env: { ...bunEnv, [variable]: out },
-              stdout: "pipe",
-              stderr: "pipe",
-            });
-            const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-            expect({ stdout, exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
-            expect(stderr).toContain(out);
-            expect(stderr).toMatch(out.endsWith("out.order") ? /ENOENT/ : /EISDIR|EEXIST|ENOTEMPTY|EPERM|EACCES/);
-          }
-          expect(existsSync(directory) && statSync(directory).isDirectory()).toBe(true);
-          expect(readdirSync(directory)).toEqual([]);
-        }
-        expect(readdirSync(parent).sort()).toEqual(["digest-out-dir", "order-out-dir"]);
-      },
-      60_000,
-    );
-
-    // process.kill(process.pid, signal) with no handler ends the process without the usual exit: the recording is written
-    // before the signal is sent, like the profiles and the compile cache.
-    describe.skipIf(isWindows)("a process that sends itself a fatal signal still writes the order file", () => {
-      let built: Promise<string> | undefined;
-      const build = () =>
-        (built ??= (async () => {
-          selfKillDir = tempDir("build-compile-bytecode-order-self-kill", {
-            "app.js": `
-              function used() {
-                return "ran";
-              }
-              console.log(used());
-              const signal = process.argv[2];
-              if (process.argv[3] === "from its handler") {
-                // What a CLI does on Ctrl-C: clean up in a handler, then let the signal end the process after all.
-                process.on(signal, function handler() {
-                  process.off(signal, handler);
-                  process.kill(process.pid, signal);
-                });
-              }
-              process.kill(process.pid, signal);
-              // Still here: the signal was one that does not end the process, and what runs now is recorded too.
-              await new Promise(resolve => setImmediate(resolve));
-              const after = () => "after";
-              console.log(after());
-              if (signal !== "SIGWINCH") setInterval(() => {}, 1000);
-            `,
-          });
-          await using proc = Bun.spawn({
-            cmd: [bunExe(), "build", "--compile", "--bytecode", "--format=esm", "app.js", "--outfile", exe("app")],
-            env: bunEnv,
-            cwd: String(selfKillDir),
-            stdout: "pipe",
-            stderr: "pipe",
-          });
-          const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-          expect({ stderr: stderr.includes("error"), exitCode }).toEqual({ stderr: false, exitCode: 0 });
-          return String(selfKillDir);
-        })());
-
-      // A signal that does not end the process does not end the recording either: the file is written at the real exit.
+      // The run is the program's: what goes wrong with the file is said on stderr and changes nothing else, and nothing
+      // that is already at the path is removed, an empty directory included.
       test.concurrent(
-        "SIGWINCH: the recording goes on",
+        "BUN_BYTECODE_ORDER_OUT that cannot be written",
         async () => {
-          const dir = await build();
-          const record = async (argv: string[], name: string) => {
-            await using proc = Bun.spawn({
-              cmd: [join(dir, exe("app")), ...argv],
-              env: { ...bunEnv, BUN_BYTECODE_ORDER_OUT: join(dir, name) },
-              stdout: "pipe",
-              stderr: "pipe",
-            });
-            const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-            const lines = (await Bun.file(join(dir, name)).text()).split("\n");
-            return { stdout, exitCode, decoded: lines.filter(line => line.startsWith("F ")).length };
-          };
-          const winch = await record(["SIGWINCH"], "SIGWINCH.order");
-          expect({ stdout: winch.stdout, exitCode: winch.exitCode }).toEqual({ stdout: "ran\nafter\n", exitCode: 0 });
-          // One more function than a run that ends at the signal: the one that ran after it.
-          const term = await record(["SIGTERM"], "SIGTERM-compared.order");
-          expect(winch.decoded).toBeGreaterThan(term.decoded);
+          const { plain } = shared;
+          // Its own directory: the file is written next to where it goes, and other tests record into cwd().
+          const parent = join(cwd(), "unwritable");
+          mkdirSync(parent, { recursive: true });
+          for (const [variable, name] of [
+            ["BUN_BYTECODE_ORDER_OUT", "order-out-dir"],
+            ["BUN_BYTECODE_DIGEST_OUT", "digest-out-dir"],
+          ]) {
+            const directory = join(parent, name);
+            mkdirSync(directory, { recursive: true });
+            // A directory, the name of one that is not there, a file in one that is not there.
+            const outs = [directory, join(parent, "no-such-dir") + sep, join(parent, "no-such-dir", "out.order")];
+            for (const out of outs) {
+              await using proc = Bun.spawn({
+                cmd: [join(cwd(), exe("plain")), ...recordedArgv],
+                env: { ...bunEnv, [variable]: out },
+                stdout: "pipe",
+                stderr: "pipe",
+              });
+              const [stdout, stderr, exitCode] = await Promise.all([
+                proc.stdout.text(),
+                proc.stderr.text(),
+                proc.exited,
+              ]);
+              expect({ stdout, exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
+              expect(stderr).toContain(out);
+              expect(stderr).toMatch(out.endsWith("out.order") ? /ENOENT/ : /EISDIR|EEXIST|ENOTEMPTY|EPERM|EACCES/);
+            }
+            expect(existsSync(directory) && statSync(directory).isDirectory()).toBe(true);
+            expect(readdirSync(directory)).toEqual([]);
+          }
+          expect(readdirSync(parent).sort()).toEqual(["digest-out-dir", "order-out-dir"]);
         },
         60_000,
       );
 
-      describe.each(["SIGINT", "SIGTERM"] as const)("%s", signal => {
-        test.concurrent.each(["directly", "from its handler"] as const)(
-          "sent %s: the recording is there",
-          async how => {
-            const dir = await build();
-            const out = join(dir, `${signal}-${how.replaceAll(" ", "-")}.order`);
-            await using proc = Bun.spawn({
-              cmd: [join(dir, exe("app")), signal, how],
-              env: { ...bunEnv, BUN_BYTECODE_ORDER_OUT: out },
-              stdout: "pipe",
-              stderr: "pipe",
-            });
-            await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-            expect(proc.signalCode).toBe(signal);
-            const lines = (await Bun.file(out).text()).split("\n");
-            expect(lines[0]).toBe("v1");
-            expect(lines.filter(line => line.startsWith("F ")).length).toBeGreaterThan(0);
-            expect(lines.filter(line => line.startsWith("M ")).length).toBeGreaterThan(0);
-          },
-          60_000,
-        );
-      });
-    });
-
-    // A recorder knows code by where it was decoded from, so a VM that records keeps its unlinked code instead of dropping
-    // it (Bun.shrink() is what an idle VM does) and decoding it again later.
-    test.concurrent(
-      "a recording run keeps the code it decoded",
-      async () => {
-        const { order } = await setup();
+      // A recorder knows code by where it was decoded from, so a VM that records keeps its unlinked code instead of dropping
+      // it (Bun.shrink() is what an idle VM does) and decoding it again later.
+      test("a recording run keeps the code it decoded", async () => {
+        const { order } = shared;
         using dir = tempDir("build-compile-bytecode-order-keep-code", {
           "app.js": `
             import { bytecodeOrderStats } from "bun:jsc";
@@ -1036,16 +949,12 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
           stderr: "",
           exitCode: 0,
         });
-      },
-      60_000,
-    );
+      }, 60_000);
 
-    // A chunk JSC cannot compile has no bytecode, as without an order file: the build says so and goes on, the other
-    // chunks are laid out, and the module runs from its source.
-    test.concurrent(
-      "a chunk without bytecode",
-      async () => {
-        const { order } = await setup();
+      // A chunk JSC cannot compile has no bytecode, as without an order file: the build says so and goes on, the other
+      // chunks are laid out, and the module runs from its source.
+      test("a chunk without bytecode", async () => {
+        const { order } = shared;
         using broken = tempDir("build-compile-bytecode-order-broken", {
           "app.js": `
             import { ok } from "./ok.js";
@@ -1089,35 +998,160 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
         expect(hasLinkedPayload(exe("broken"))).toBe(true);
         expect(await run(exe("broken"), [])).toMatchObject({ stdout: "main ok\n", exitCode: 0 });
         expect(await run(exe("broken"), ["bad"])).toMatchObject({ stdout: "main ok\nSyntaxError\n", exitCode: 0 });
-      },
-      60_000,
-    );
+      }, 60_000);
 
-    // %p in the path is the pid, so that every process of a run that starts several writes a file of its own.
-    test.concurrent(
-      "%p in BUN_BYTECODE_ORDER_OUT and BUN_BYTECODE_DIGEST_OUT is the pid",
-      async () => {
-        const { plain } = await setup();
+      // %p in the path is the pid, so that every process of a run that starts several writes a file of its own.
+      test.concurrent(
+        "%p in BUN_BYTECODE_ORDER_OUT and BUN_BYTECODE_DIGEST_OUT is the pid",
+        async () => {
+          const { plain } = shared;
+          await using proc = Bun.spawn({
+            cmd: [join(cwd(), exe("plain")), ...recordedArgv],
+            env: {
+              ...bunEnv,
+              BUN_BYTECODE_ORDER_OUT: join(cwd(), "pid-%p.order"),
+              BUN_BYTECODE_DIGEST_OUT: join(cwd(), "pid-%p.digest"),
+            },
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect({ stdout, stderr, exitCode }).toEqual({ stdout: plain.stdout, stderr: "", exitCode: 0 });
+          const written = readdirSync(cwd())
+            .filter(file => file.startsWith("pid-"))
+            .sort();
+          expect(written).toEqual([`pid-${proc.pid}.digest`, `pid-${proc.pid}.order`]);
+          expect((await Bun.file(join(cwd(), `pid-${proc.pid}.order`)).text()).startsWith("v1\n")).toBe(true);
+        },
+        60_000,
+      );
+
+      // A file that fits next to nothing of the program says so, and changes no behavior.
+      test("an order file of another program", async () => {
+        const { plain, orderedStderr } = shared;
+        const hashes = Array.from({ length: 64 }, (_, i) => `F ${(i + 1).toString(16).padStart(16, "0")}`).join("\n");
+        await Bun.write(join(cwd(), "other-program.order"), `v1\n${hashes}\n`);
+        const other = await compile(exe("other-program"), ["--bytecode-order=other-program.order"]);
+        expect(other.stderr).toContain("none of the 64 functions the bytecode order files list is in this build");
+        expect(other.exitCode).toBe(0);
+        expect(await run(exe("other-program"), recordedArgv)).toEqual(plain);
+        // The program's own file does not.
+        expect(orderedStderr).not.toContain("the bytecode order files list");
+      }, 60_000);
+
+      // The file is read once, front to back.
+      test.skipIf(!isPosix)(
+        "an order file that is a pipe",
+        async () => {
+          const { plain, order } = shared;
+          const piped = await compile(exe("piped"), ["--bytecode-order=/dev/stdin"], {}, order);
+          expect(piped.stderr).not.toContain("bytecode order file");
+          expect(piped.exitCode).toBe(0);
+          expect(hasLinkedPayload(exe("piped"))).toBe(true);
+          expect(await run(exe("piped"), recordedArgv)).toEqual(plain);
+          expect(await stats(exe("piped"), recordedArgv)).toMatchObject({
+            hot: expect.any(Number),
+            unknown: 0,
+            cold: 0,
+          });
+        },
+        60_000,
+      );
+    });
+
+    // process.kill(process.pid, signal) with no handler ends the process without the usual exit: the recording is written
+    // before the signal is sent, like the profiles and the compile cache.
+    describe.skipIf(isWindows)("a process that sends itself a fatal signal still writes the order file", () => {
+      let selfKillDir: ReturnType<typeof tempDir> | undefined;
+      let built: string;
+      afterAll(() => selfKillDir?.[Symbol.dispose]());
+      beforeAll(async () => {
+        selfKillDir = tempDir("build-compile-bytecode-order-self-kill", {
+          "app.js": `
+            function used() {
+              return "ran";
+            }
+            console.log(used());
+            const signal = process.argv[2];
+            if (process.argv[3] === "from its handler") {
+              // What a CLI does on Ctrl-C: clean up in a handler, then let the signal end the process after all.
+              process.on(signal, function handler() {
+                process.off(signal, handler);
+                process.kill(process.pid, signal);
+              });
+            }
+            process.kill(process.pid, signal);
+            // Still here: the signal was one that does not end the process, and what runs now is recorded too.
+            await new Promise(resolve => setImmediate(resolve));
+            const after = () => "after";
+            console.log(after());
+            if (signal !== "SIGWINCH") setInterval(() => {}, 1000);
+          `,
+        });
         await using proc = Bun.spawn({
-          cmd: [join(cwd(), exe("plain")), ...recordedArgv],
-          env: {
-            ...bunEnv,
-            BUN_BYTECODE_ORDER_OUT: join(cwd(), "pid-%p.order"),
-            BUN_BYTECODE_DIGEST_OUT: join(cwd(), "pid-%p.digest"),
-          },
+          cmd: [bunExe(), "build", "--compile", "--bytecode", "--format=esm", "app.js", "--outfile", exe("app")],
+          env: bunEnv,
+          cwd: String(selfKillDir),
           stdout: "pipe",
           stderr: "pipe",
         });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect({ stdout, stderr, exitCode }).toEqual({ stdout: plain.stdout, stderr: "", exitCode: 0 });
-        const written = readdirSync(cwd())
-          .filter(file => file.startsWith("pid-"))
-          .sort();
-        expect(written).toEqual([`pid-${proc.pid}.digest`, `pid-${proc.pid}.order`]);
-        expect((await Bun.file(join(cwd(), `pid-${proc.pid}.order`)).text()).startsWith("v1\n")).toBe(true);
-      },
-      60_000,
-    );
+        const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stderr: stderr.includes("error"), exitCode }).toEqual({ stderr: false, exitCode: 0 });
+        built = String(selfKillDir);
+      }, 120_000);
+
+      // A signal that does not end the process does not end the recording either: the file is written at the real exit.
+      test.concurrent(
+        "SIGWINCH: the recording goes on",
+        async () => {
+          const dir = built;
+          const record = async (argv: string[], name: string) => {
+            await using proc = Bun.spawn({
+              cmd: [join(dir, exe("app")), ...argv],
+              env: { ...bunEnv, BUN_BYTECODE_ORDER_OUT: join(dir, name) },
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+            const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+            const lines = (await Bun.file(join(dir, name)).text()).split("\n");
+            return { stdout, exitCode, decoded: lines.filter(line => line.startsWith("F ")).length };
+          };
+          const winch = await record(["SIGWINCH"], "SIGWINCH.order");
+          expect({ stdout: winch.stdout, exitCode: winch.exitCode }).toEqual({ stdout: "ran\nafter\n", exitCode: 0 });
+          // One more function than a run that ends at the signal: the one that ran after it.
+          const term = await record(["SIGTERM"], "SIGTERM-compared.order");
+          expect(winch.decoded).toBeGreaterThan(term.decoded);
+        },
+        60_000,
+      );
+
+      describe.each(["SIGINT", "SIGTERM"] as const)("%s", signal => {
+        // "on a terminal": Bun then has a handler of its own for the signal (it restores the terminal and lets the
+        // signal end the process), which is where a recording is usually made from.
+        test.concurrent.each(["directly", "from its handler", "directly, on a terminal"] as const)(
+          "sent %s: the recording is there",
+          async how => {
+            const dir = built;
+            const out = join(dir, `${signal}-${how.replaceAll(" ", "-")}.order`);
+            const onTerminal = how.endsWith("on a terminal");
+            await using proc = Bun.spawn({
+              cmd: [join(dir, exe("app")), signal, how],
+              env: { ...bunEnv, BUN_BYTECODE_ORDER_OUT: out },
+              ...(onTerminal ? { terminal: { data() {} } } : { stdout: "pipe", stderr: "pipe" }),
+            });
+            if (onTerminal) await proc.exited;
+            else await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+            proc.terminal?.close();
+            expect(proc.signalCode).toBe(signal);
+            const lines = (await Bun.file(out).text()).split("\n");
+            expect(lines[0]).toBe("v1");
+            expect(lines.filter(line => line.startsWith("F ")).length).toBeGreaterThan(0);
+            expect(lines.filter(line => line.startsWith("M ")).length).toBeGreaterThan(0);
+          },
+          60_000,
+        );
+      });
+    });
 
     // Internal modules the app imports are modules of the link like the app's chunks: recorded, laid out by the file, and
     // loaded from the payload. "cross": their sources come out of the target executable (this same bun under another
@@ -1139,13 +1173,11 @@ server.close();`;
         stats: null | { hot: number; cold: number };
       };
     };
-    let internalsRecorded: Promise<{
-      directory: string;
-      order: string;
-      unordered: { joined: string; fromBytecode: number };
-    }>;
-    const internals = () =>
-      (internalsRecorded ??= (async () => {
+    describe("internal modules in an ordered build", () => {
+      let internalsDir: ReturnType<typeof tempDir> | undefined;
+      let internalsRecorded: { directory: string; order: string; unordered: { joined: string; fromBytecode: number } };
+      afterAll(() => internalsDir?.[Symbol.dispose]());
+      beforeAll(async () => {
         internalsDir = tempDir("build-compile-bytecode-order-internals", { "app.js": internalsApp });
         const directory = String(internalsDir);
         const outfile = join(directory, exe("unordered"));
@@ -1160,77 +1192,77 @@ server.close();`;
         const order = join(directory, "app.order");
         const { joined, fromBytecode, stats } = await runInternals(outfile, { BUN_BYTECODE_ORDER_OUT: order });
         expect(stats).toBeNull();
-        return { directory, order, unordered: { joined, fromBytecode } };
-      })());
+        internalsRecorded = { directory, order, unordered: { joined, fromBytecode } };
+      }, 120_000);
 
-    test.concurrent.each(["host", "cross"] as const)(
-      "internal modules in an ordered build (%s)",
-      async mode => {
-        const { directory, order, unordered } = await internals();
-        // The recording lists far more than the app's own code: the internal modules' functions, used and not.
-        const lines = (await Bun.file(order).text()).split("\n");
-        expect(lines.filter(line => line.startsWith("F ")).length).toBeGreaterThan(50);
-        expect(lines.filter(line => line.startsWith("K ")).length).toBeGreaterThan(50);
+      test.each(["host", "cross"] as const)(
+        "%s target",
+        async mode => {
+          const { directory, order, unordered } = internalsRecorded;
+          // The recording lists far more than the app's own code: the internal modules' functions, used and not.
+          const lines = (await Bun.file(order).text()).split("\n");
+          expect(lines.filter(line => line.startsWith("F ")).length).toBeGreaterThan(50);
+          expect(lines.filter(line => line.startsWith("K ")).length).toBeGreaterThan(50);
 
-        const os = isMacOS ? "darwin" : isLinux ? "linux" : isWindows ? "windows" : "unknown";
-        const cross =
-          mode === "cross"
-            ? {
-                target: `bun-${os}-${isArm64 ? "aarch64" : "x64"}${isMusl ? "-musl" : ""}-v1.0.0` as any,
-                executablePath: process.execPath,
-              }
-            : {};
-        const outfile = join(directory, exe("ordered-" + mode));
-        const result = await Bun.build({
-          entrypoints: [join(directory, "app.js")],
-          compile: { outfile, bytecodeOrder: order, ...cross },
-          bytecode: true,
-          format: "esm",
-          target: "bun",
-        });
-        expect(result.success).toBe(true);
-        expect(hasLinkedPayload(outfile)).toBe(true);
-        const { joined, fromBytecode, stats } = await runInternals(outfile);
-        expect({ joined, fromBytecode }).toEqual(unordered);
-        expect(fromBytecode).toBeGreaterThan(10);
-        // The app has one function of its own: these are the internal modules' functions, out of the hot region.
-        expect(stats!.hot).toBeGreaterThan(50);
-        expect(stats!.cold).toBeLessThan(stats!.hot / 4);
-      },
-      60_000,
-    );
+          const os = isMacOS ? "darwin" : isLinux ? "linux" : isWindows ? "windows" : "unknown";
+          const cross =
+            mode === "cross"
+              ? {
+                  target: `bun-${os}-${isArm64 ? "aarch64" : "x64"}${isMusl ? "-musl" : ""}-v1.0.0` as any,
+                  executablePath: process.execPath,
+                }
+              : {};
+          const outfile = join(directory, exe("ordered-" + mode));
+          const result = await Bun.build({
+            entrypoints: [join(directory, "app.js")],
+            compile: { outfile, bytecodeOrder: order, ...cross },
+            bytecode: true,
+            format: "esm",
+            target: "bun",
+          });
+          expect(result.success).toBe(true);
+          expect(hasLinkedPayload(outfile)).toBe(true);
+          const { joined, fromBytecode, stats } = await runInternals(outfile);
+          expect({ joined, fromBytecode }).toEqual(unordered);
+          expect(fromBytecode).toBeGreaterThan(10);
+          // The app has one function of its own: these are the internal modules' functions, out of the hot region.
+          expect(stats!.hot).toBeGreaterThan(50);
+          expect(stats!.cold).toBeLessThan(stats!.hot / 4);
+        },
+        60_000,
+      );
 
-    // A file that fits next to nothing of the program says so, and changes no behavior.
-    test.concurrent(
-      "an order file of another program",
-      async () => {
-        const { plain, orderedStderr } = await setup();
-        const hashes = Array.from({ length: 64 }, (_, i) => `F ${(i + 1).toString(16).padStart(16, "0")}`).join("\n");
-        await Bun.write(join(cwd(), "other-program.order"), `v1\n${hashes}\n`);
-        const other = await compile(exe("other-program"), ["--bytecode-order=other-program.order"]);
-        expect(other.stderr).toContain("none of the 64 functions the bytecode order files list is in this build");
-        expect(other.exitCode).toBe(0);
-        expect(await run(exe("other-program"), recordedArgv)).toEqual(plain);
-        // The program's own file does not.
-        expect(orderedStderr).not.toContain("the bytecode order files list");
-      },
-      60_000,
-    );
-
-    // The file is read once, front to back.
-    test.skipIf(!isPosix).concurrent(
-      "an order file that is a pipe",
-      async () => {
-        const { plain, order } = await setup();
-        const piped = await compile(exe("piped"), ["--bytecode-order=/dev/stdin"], {}, order);
-        expect(piped.stderr).not.toContain("bytecode order file");
-        expect(piped.exitCode).toBe(0);
-        expect(hasLinkedPayload(exe("piped"))).toBe(true);
-        expect(await run(exe("piped"), recordedArgv)).toEqual(plain);
-        expect(await stats(exe("piped"), recordedArgv)).toMatchObject({ hot: expect.any(Number), unknown: 0, cold: 0 });
-      },
-      60_000,
-    );
+      // An executable whose trailer says "one linked payload" and whose payload record does not check out (someone
+      // edited it) has no bytecode at all: an internal module's entry, like a module's, refers to what lies before it
+      // in the payload and cannot be decoded as a payload of its own. (Linux: elsewhere the edit breaks the signature.)
+      test.skipIf(!isLinux)(
+        "a payload record that does not check out",
+        async () => {
+          const { directory, order, unordered } = internalsRecorded;
+          const outfile = join(directory, exe("edited"));
+          const result = await Bun.build({
+            entrypoints: [join(directory, "app.js")],
+            compile: { outfile, bytecodeOrder: order },
+            bytecode: true,
+            format: "esm",
+            target: "bun",
+          });
+          expect(result.success).toBe(true);
+          expect((await runInternals(outfile)).fromBytecode).toBeGreaterThan(10);
+          // Where the regions end is no longer sorted.
+          const { recordAt, regionEnds } = linkedLayout(outfile);
+          const file = readFileSync(outfile);
+          file.writeUInt32LE(regionEnds[1] + 1, recordAt + 8);
+          writeFileSync(outfile, file);
+          const edited = await runInternals(outfile);
+          expect({ joined: edited.joined, fromBytecode: edited.fromBytecode }).toEqual({
+            joined: unordered.joined,
+            fromBytecode: 0,
+          });
+        },
+        60_000,
+      );
+    });
   });
 
   // Bytecode is counted among the outputs before it is generated. JSC rejects this regular expression, which the bundler

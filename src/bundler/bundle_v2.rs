@@ -3285,10 +3285,44 @@ pub mod bv2_impl {
                 };
             this.linker.options.bytecode_depth = this.transpiler.options.bytecode_depth;
             this.linker.options.optimize_bytecode = this.transpiler.options.optimize_bytecode;
-            this.linker
-                .options
-                .bytecode_order
-                .clone_from(&this.transpiler.options.bytecode_order);
+            // Read now, once and in full (a pipe will do): a path that is wrong fails the build here, before anything
+            // is parsed, not after the link.
+            if this.transpiler.options.bytecode
+                && this.transpiler.options.compile_mode.is_executable()
+            {
+                let paths = this
+                    .transpiler
+                    .options
+                    .bytecode_order
+                    .iter()
+                    .map(|path| &path[..]);
+                match crate::bytecode_order::BytecodeOrder::load(paths) {
+                    Ok((order, without_hints)) => {
+                        for path in without_hints {
+                            this.transpiler.log_mut().add_warning_fmt(
+                                None,
+                                bun_ast::Loc::EMPTY,
+                                format_args!(
+                                    "the bytecode order file {} has nothing this version of Bun can use",
+                                    bstr::BStr::new(path)
+                                ),
+                            );
+                        }
+                        this.linker.options.bytecode_order = order;
+                    }
+                    Err((path, err)) => {
+                        this.transpiler.log_mut().add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "cannot read the bytecode order file {}: {}",
+                                bstr::BStr::new(path),
+                                err
+                            ),
+                        );
+                    }
+                }
+            }
             this.linker.options.compile_mode = this.transpiler.options.compile_mode;
             this.linker.options.metafile = this.transpiler.options.metafile;
             // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.

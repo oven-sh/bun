@@ -1167,6 +1167,10 @@ impl StandaloneModuleGraph {
                 *bytes = unsafe { slice_to_mut(raw_ptr, raw_len, linked_bytecode_payload) };
                 true
             });
+        } else if offsets.flags.contains(Flags::HAS_LINKED_BYTECODE_PAYLOAD) {
+            // The flag without a payload that checks out (an executable someone edited): an internal module's entry
+            // refers to what lies before it, like a module's, so it cannot be decoded as a payload of its own either.
+            builtin_bytecode.clear();
         }
         let _ = record_at;
         let has_linked_bytecode_payload =

@@ -536,41 +536,11 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     .then(crate::bundle_v2::dispatch::EncoderStringTableHandle::new);
     // A payload order file: every chunk's bytecode goes into one payload laid out by it, encoded after the chunk loop
     // (the layout wants the chunks in load order, which is only known then).
-    // `--bytecode-order` / `compile.bytecodeOrder`.
+    // `--bytecode-order` / `compile.bytecodeOrder`, read when the bundle started (`BundleV2::init`).
     let bytecode_order = if external_string_table.is_none() {
         None
     } else {
-        let paths = c.options.bytecode_order.iter().map(|path| &path[..]);
-        match crate::bytecode_order::BytecodeOrder::load(paths) {
-            Ok((order, without_hints)) => {
-                let without_hints: Vec<Vec<u8>> =
-                    without_hints.into_iter().map(<[u8]>::to_vec).collect();
-                for path in &without_hints {
-                    c.log_mut().add_warning_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "the bytecode order file {} has nothing this version of Bun can use",
-                            bstr::BStr::new(path)
-                        ),
-                    );
-                }
-                order
-            }
-            Err((path, err)) => {
-                let path = path.to_vec();
-                c.log_mut().add_error_fmt(
-                    None,
-                    bun_ast::Loc::EMPTY,
-                    format_args!(
-                        "cannot read the bytecode order file {}: {}",
-                        bstr::BStr::new(&path),
-                        err
-                    ),
-                );
-                return Err(crate::Error::BuildFailed);
-            }
-        }
+        c.options.bytecode_order.take()
     };
     // (chunk index, its `Bytecode` output file, the URL its bytecode is keyed on), for `bytecode_order`.
     let mut linked_bytecode_chunks: Vec<(usize, u32, BunString)> = Vec::new();

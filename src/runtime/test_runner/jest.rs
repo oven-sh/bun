@@ -322,16 +322,17 @@ pub(crate) mod Jest {
         unsafe { RUNNER.read() }
     }
 
-    /// Module mocks `mock.restore()` keeps: from preload, a file's collection phase, or outside `bun test`. Not from tests/hooks.
+    /// Module mocks `mock.restore()` keeps: from preload, a file's collection phase, a worker, or outside `bun test`. Not from tests/hooks.
     #[unsafe(no_mangle)]
     extern "C" fn Bun__Jest__moduleMockIsPersistent(global_object: &JSGlobalObject) -> bool {
-        if global_object.bun_vm().is_in_preload {
+        let vm = global_object.bun_vm();
+        if vm.is_in_preload || vm.worker_ref().is_some() {
             return true;
         }
         let Some(runner) = runner_ptr() else {
             return true;
         };
-        // SAFETY: JS thread only; raw projections (see js_file_generation and BunTestCell::as_ptr) since we are re-entered from JS.
+        // SAFETY: the runner's thread only (workers returned above); raw projections (see js_file_generation and BunTestCell::as_ptr) since we are re-entered from JS.
         let phase = unsafe {
             (*runner.as_ptr()).bun_test_root.active_file.as_ref().map(|file| (*file.as_ptr()).phase)
         };

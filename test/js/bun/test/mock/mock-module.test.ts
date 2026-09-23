@@ -826,6 +826,33 @@ describe.concurrent("mock.restore() reverts mock.module()", () => {
     );
   });
 
+  test("in a Worker under bun test, mock.restore() leaves module mocks in place", async () => {
+    await expectFixturePasses(
+      {
+        "dep.ts": depTs,
+        "worker.ts": `
+          import { mock } from "bun:test";
+          import { getValue } from "./dep";
+          mock.module("./dep", () => ({ getValue: () => "mocked" }));
+          mock.restore();
+          postMessage(getValue());
+        `,
+        "fixture.test.ts": `
+          import { test, expect } from "bun:test";
+          test("t", async () => {
+            const worker = new Worker(new URL("./worker.ts", import.meta.url));
+            const { promise, resolve, reject } = Promise.withResolvers();
+            worker.onmessage = event => resolve(event.data);
+            worker.onerror = event => reject(event.error ?? new Error(event.message));
+            expect(await promise).toBe("mocked");
+            worker.terminate();
+          });
+        `,
+      },
+      1,
+    );
+  });
+
   test("outside bun test, mock.restore() leaves module mocks in place", async () => {
     using dir = tempDir("mock-module-restore-script", {
       "dep.ts": depTs,

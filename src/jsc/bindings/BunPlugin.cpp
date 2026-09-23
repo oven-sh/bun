@@ -689,8 +689,9 @@ static JSC::JSObject* lazySourceFor(Zig::GlobalObject* globalObject, ModuleMockU
         RETURN_IF_EXCEPTION(scope, nullptr);
         JSC::JSObject* object = nullptr;
         if (defaultBinding && defaultBinding->value) {
-            object = valueBeneathSpy(globalObject, *defaultBinding).getObject();
+            JSValue value = valueBeneathSpy(globalObject, *defaultBinding);
             RETURN_IF_EXCEPTION(scope, nullptr);
+            object = value.getObject();
         }
         index = log.lazySources.size();
         log.lazySources.append({ JSC::Strong<JSC::SyntheticModuleRecord> { vm, record }, object ? JSC::Strong<JSC::JSObject> { vm, object } : JSC::Strong<JSC::JSObject> {} });
@@ -1152,10 +1153,11 @@ void BunPlugin::OnLoad::restoreModuleMocks(Zig::GlobalObject* globalObject)
 
     for (auto& entry : pending.installed) {
         if (virtualModules) {
-            // Only a test's mock is taken out. A Bun.plugin module registered over it since (build.module() does not log) stays.
+            // Only a test's mock is taken out (or already gone: its factory rejected). A Bun.plugin module registered over it since stays.
             auto current = virtualModules->find(entry.specifier);
             auto* currentMock = current != virtualModules->end() ? dynamicDowncast<JSModuleMock>(current->value.get()) : nullptr;
-            if (currentMock && !currentMock->persistent) {
+            bool testMockGone = current == virtualModules->end();
+            if (testMockGone || (currentMock && !currentMock->persistent)) {
                 if (entry.displaced)
                     virtualModules->set(entry.specifier, JSC::Strong<JSC::JSObject> { vm, entry.displaced.get() });
                 else

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { copyFileSync, readdirSync, readFileSync, spawnSync } from "fs";
+import { spawnSync } from "child_process";
+import { copyFileSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
 import { join } from "path";
 
@@ -19,7 +20,8 @@ test.skipIf(!isWindows && !isMacOS)(
     const proj = join(String(dir), "proj");
     const nodeModules = join(proj, "node_modules");
 
-    async function install(): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
+    // The unfixed install never exits, so the test runner's timeout fails it.
+    async function install(): Promise<{ stdout: string; stderr: string; exitCode: number }> {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "install"],
         cwd: proj,
@@ -27,12 +29,8 @@ test.skipIf(!isWindows && !isMacOS)(
         stdout: "pipe",
         stderr: "pipe",
       });
-      // The unfixed install never exits. Bound the wait so the failure is a
-      // clear assertion and the cleanup below still runs.
-      const exited = await Promise.race([proc.exited, Bun.sleep(30_000).then(() => null)]);
-      if (exited === null) proc.kill();
-      const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
-      return { stdout, stderr, exitCode: exited };
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
     }
 
     const first = await install();
@@ -41,11 +39,11 @@ test.skipIf(!isWindows && !isMacOS)(
     expect(JSON.parse(readFileSync(join(nodeModules, "dep", "package.json"), "utf8")).version).toBe("1.0.0");
 
     const held = join(nodeModules, "dep", isWindows ? "held.exe" : "held");
-    copyFileSync(bunExe(), held);
     let heldProc: Bun.Subprocess | undefined;
     try {
       if (isWindows) {
         // A copy has one hard link. While it runs, NTFS refuses to delete it.
+        copyFileSync(bunExe(), held);
         heldProc = Bun.spawn({
           cmd: [held, "-e", "setInterval(() => {}, 1000)"],
           cwd: String(dir),
@@ -54,6 +52,7 @@ test.skipIf(!isWindows && !isMacOS)(
           stderr: "ignore",
         });
       } else {
+        writeFileSync(held, "locked");
         expect(spawnSync("chflags", ["uchg", held]).status).toBe(0);
       }
 
@@ -72,8 +71,11 @@ test.skipIf(!isWindows && !isMacOS)(
         await heldProc.exited;
       }
       if (isMacOS) {
+        // Unlock the file wherever it ended up, so the temp dir can be removed.
         for (const name of readdirSync(nodeModules)) {
-          if (name.startsWith(".old-")) spawnSync("chflags", ["nouchg", join(nodeModules, name, "held")]);
+          if (name === "dep" || name.startsWith(".old-")) {
+            spawnSync("chflags", ["nouchg", join(nodeModules, name, "held")]);
+          }
         }
       }
     }

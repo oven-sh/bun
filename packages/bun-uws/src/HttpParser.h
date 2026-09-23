@@ -1459,8 +1459,7 @@ struct HttpResponseData;
     }
 
 public:
-    /* Fills `req` from a copy of HttpRequest::getRawHead(). The copy needs
-     * MINIMUM_HTTP_POST_PADDING writable bytes after `length`. */
+    /* Fills `req` from a copy of getRawHead() that has MINIMUM_HTTP_POST_PADDING writable bytes after it. */
     static bool parseRawHead(char *head, unsigned int length, HttpRequest *req) {
         head[length] = '\r';
         head[length + 1] = 'a';

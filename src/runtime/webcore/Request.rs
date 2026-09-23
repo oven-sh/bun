@@ -238,8 +238,7 @@ impl Request {
         self.headers.set(headers);
     }
 
-    /// Runs `f` on the uWS request behind the lazy `url`/`headers` getters: the live one during
-    /// the dispatch, afterwards the copy parsed again. `None` for a `Request` built by JS.
+    /// Runs `f` on the uWS request behind the lazy getters: live in the dispatch, parsed from the copy after it.
     fn with_uws_request<R>(&self, f: impl FnOnce(&uws::Request) -> R) -> Option<R> {
         if let Some(req) = self.request_context.get_request() {
             return Some(f(bun_opaque::opaque_deref(req)));

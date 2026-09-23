@@ -1480,8 +1480,7 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
 
   static_assert(uWS::MINIMUM_HTTP_POST_PADDING == 32, "update Request::RAW_HEAD_POST_PADDING in src/uws_sys/Request.rs");
 
-  /* `head` is a copy of uws_req_get_raw_head() followed by MINIMUM_HTTP_POST_PADDING writable bytes.
-   * The request handed to `callback` is only valid during the call. */
+  /* `head`: a copy of uws_req_get_raw_head() plus the padding. `req` is valid only during `callback`. */
   bool uws_req_with_raw_head(char *head, size_t length, void *ctx,
                              void (*callback)(void *ctx, uws_req_t *req))
   {

@@ -4330,3 +4330,156 @@ test("ModuleGraph isolation: a multipart S3 upload is its graph's from the first
     requests: ["create", "part 1", "part 2", "part 3", "part 4", "complete", "abort"],
   });
 });
+
+// A graph's context is the engine's scope object of the graph: its properties are the graph's
+// `globals`. Built-ins keep it next to what a graph made (to call back as that graph later); none
+// may keep it where script can read it.
+describe("ModuleGraph isolation: no object a built-in hands out leads to a graph's scope", () => {
+  const marker = "__moduleGraphScopeMarker";
+  const holdersDir = String(
+    tempDir("module-graph-holders-", {
+      "holders.mjs": `
+        import http from "node:http";
+        import http2 from "node:http2";
+        import net from "node:net";
+        import fs from "node:fs";
+        import { AsyncLocalStorage, AsyncResource, createHook } from "node:async_hooks";
+        import { PerformanceObserver } from "node:perf_hooks";
+        export const current = () => Bun.ModuleGraph.current;
+        export const readMarker = () => ${marker};
+        /** Objects built-ins made while this graph was current, by name. */
+        export async function make(httpURL, http2URL, file) {
+          const made = {};
+          made.agent = new http.Agent({ keepAlive: true });
+          made.clientRequest = await new Promise((resolve, reject) => {
+            const req = http.request(httpURL, { agent: made.agent }, res => { res.resume(); res.on("end", () => resolve(req)); });
+            req.on("error", reject);
+            req.end();
+          });
+          made.socketOfRequest = made.clientRequest.socket;
+          made.http2Session = http2.connect(http2URL);
+          made.http2Stream = await new Promise((resolve, reject) => {
+            const stream = made.http2Session.request({ ":path": "/" });
+            stream.on("error", reject);
+            stream.on("response", () => { stream.resume(); stream.on("end", () => resolve(stream)); });
+            stream.end();
+          });
+          const ticks = [];
+          const hook = createHook({ init(id, type, trigger, resource) { if (type === "TickObject") ticks.push(resource); } }).enable();
+          await new Promise(resolve => process.nextTick(resolve));
+          hook.disable();
+          made.tickObjects = ticks;
+          made.asyncResource = new AsyncResource("made-in-a-graph");
+          made.boundFunction = AsyncResource.bind(() => {});
+          made.snapshot = AsyncLocalStorage.snapshot();
+          made.asyncLocalStorage = new AsyncLocalStorage();
+          made.performanceObserver = new PerformanceObserver(() => {});
+          made.performanceObserver.observe({ entryTypes: ["http"] });
+          made.timeout = setTimeout(() => {}, 100_000);
+          made.interval = setInterval(() => {}, 100_000);
+          made.immediate = setImmediate(() => {});
+          made.netServer = net.createServer().listen(0);
+          made.bunServer = Bun.serve({ port: 0, fetch: () => new Response("") });
+          made.statWatcher = fs.watchFile(file, { interval: 100_000 }, () => {});
+          made.fsWatcher = fs.watch(file, () => {});
+          made.sql = new Bun.SQL("postgres://user@127.0.0.1:1/db");
+          made.abortController = new AbortController();
+          made.eventTarget = new EventTarget();
+          made.messageChannel = new MessageChannel();
+          made.promise = Promise.resolve();
+          made.asyncFunctionResult = (async () => {})();
+          return made;
+        }
+        /** Queues \`callback\` with process.nextTick while an init hook tries to take the tick out of this graph. */
+        export function tickWithTamperingHook(callback) {
+          const hook = createHook({
+            init(id, type, trigger, resource) {
+              if (type !== "TickObject") return;
+              for (const key of ["graph", "moduleGraphContext", "frame"]) resource[key] = undefined;
+            },
+          }).enable();
+          process.nextTick(callback);
+          hook.disable();
+        }
+      `,
+      "watched.txt": "",
+    }),
+  );
+  afterAll(() => rmSync(holdersDir, { recursive: true, force: true }));
+
+  /** Every object reachable from `root` by own property (string or symbol keyed, accessors' functions included) or prototype. */
+  function* reachableFrom(root: unknown, limit = 200_000): Generator<{ value: object; path: string }> {
+    const seen = new Set<unknown>();
+    const queue: { value: unknown; path: string }[] = [{ value: root, path: "" }];
+    while (queue.length > 0 && seen.size < limit) {
+      const { value, path } = queue.shift()!;
+      if ((typeof value !== "object" && typeof value !== "function") || value === null || seen.has(value)) continue;
+      seen.add(value);
+      yield { value, path };
+      let keys: (string | symbol)[] = [];
+      try {
+        keys = Reflect.ownKeys(value);
+      } catch {}
+      for (const key of keys) {
+        let descriptor: PropertyDescriptor | undefined;
+        try {
+          descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+        } catch {}
+        if (!descriptor) continue;
+        const name = `${path}[${String(key)}]`;
+        queue.push({ value: descriptor.value, path: name }, { value: descriptor.get, path: name + ".get" });
+        queue.push({ value: descriptor.set, path: name + ".set" });
+      }
+      try {
+        queue.push({ value: Reflect.getPrototypeOf(value), path: path + ".__proto__" });
+      } catch {}
+    }
+  }
+  /** Whether `value` is the scope of a graph made with `globals: { [marker]: … }`. */
+  function isGraphScope(value: object): boolean {
+    try {
+      return Object.getOwnPropertyNames(value).includes(marker);
+    } catch {
+      return false;
+    }
+  }
+
+  test("what a graph made with built-ins, and everything reachable from it", async () => {
+    await using httpServer = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+    const h2 = http2.createServer((req, res) => res.end("ok")).listen(0);
+    await new Promise(resolve => h2.once("listening", resolve));
+    const globals = { [marker]: "only the graph's code may read this" };
+    const graph = new ModuleGraph({ globals });
+    try {
+      const app = await graph.import(join(holdersDir, "holders.mjs"));
+      const made = await app.make(
+        httpServer.url.href,
+        `http://127.0.0.1:${(h2.address() as any).port}`,
+        join(holdersDir, "watched.txt"),
+      );
+      expect(Object.keys(made).length).toBeGreaterThan(20);
+      const leaks: string[] = [];
+      for (const [name, root] of Object.entries(made)) {
+        for (const { value, path } of reachableFrom(root)) {
+          // (The options object the host passed is the host's own, and is not reachable from these.)
+          if (value !== globals && isGraphScope(value)) leaks.push(name + path);
+        }
+      }
+      expect(leaks).toEqual([]);
+      expect(app.readMarker()).toBe(globals[marker]);
+    } finally {
+      graph.dispose();
+      h2.close();
+    }
+  });
+
+  test("an async_hooks init hook cannot move a tick out of the graph that queued it", async () => {
+    using graph = new ModuleGraph();
+    const app = await graph.import(join(holdersDir, "holders.mjs"));
+    const { promise, resolve } = Promise.withResolvers<unknown>();
+    // A function that belongs to no graph runs as whoever runs it: the tick's graph.
+    const report = new Function("resolve", "return () => resolve(Bun.ModuleGraph.current)")(resolve);
+    app.tickWithTamperingHook(report);
+    expect(await promise).toBe(graph);
+  });
+});

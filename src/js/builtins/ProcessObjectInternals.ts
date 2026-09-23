@@ -364,7 +364,7 @@ export function initializeNextTickQueue(process: typeof globalThis.process, next
           // The tick runs in the async context and the Bun.ModuleGraph context it was queued in.
           var restoreFrame = $getInternalField($asyncContext, 0);
           var restoreGraph = $getInternalField($asyncContext, 1);
-          var graph = tock.graph;
+          var graph = $getByIdDirectPrivate(tock, "moduleGraphContext");
           $putInternalField($asyncContext, 0, tock.frame);
           if (graph !== restoreGraph) $putInternalField($asyncContext, 1, graph);
           // No catch and no finally: what a tick throws leaves this function as it was thrown, with
@@ -420,8 +420,10 @@ export function initializeNextTickQueue(process: typeof globalThis.process, next
       // a waste of memory and Array.prototype.slice shows up in profiling.
       args: $argumentCount() > 1 ? args : undefined,
       frame: $getInternalField($asyncContext, 0),
-      graph: $getInternalField($asyncContext, 1),
     };
+    // (An async_hooks init hook is handed `tock`.)
+    const graph = $getInternalField($asyncContext, 1);
+    if (graph !== undefined) $putByIdDirectPrivate(tock, "moduleGraphContext", graph);
     if (tickInitHooks.length !== 0) {
       // node fires one TickObject init per process.nextTick() call, at
       // construction time (before the callback runs).

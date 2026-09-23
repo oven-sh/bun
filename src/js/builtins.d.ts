@@ -231,8 +231,13 @@ declare const $processBindingConstants: {
   crypto: typeof import("crypto").constants;
   zlib: typeof import("zlib").constants;
 };
+/**
+ * A Bun.ModuleGraph's context: the engine's scope object of the graph. Only ever compared, kept
+ * where script cannot read it, and put back; see internal/async_context_frame.ts.
+ */
+declare type ModuleGraphContext = { readonly __moduleGraphContext: unique symbol };
 declare const $asyncContext: InternalFieldObject<
-  [import("./node/async_hooks").Frame | undefined, Bun.ModuleGraph | undefined]
+  [import("./node/async_hooks").Frame | undefined, ModuleGraphContext | undefined]
 >;
 
 // We define our intrinsics in ./BunBuiltinNames.h. Some of those are globals.

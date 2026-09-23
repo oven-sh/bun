@@ -95,23 +95,29 @@ class HTTPClientAsyncResource {
 // listener (data/end/error/close/drain/timeout) inside it, and inside the
 // Bun.ModuleGraph context that was current next to it.
 const kClientAsyncContext = Symbol("kClientAsyncContext");
-const kClientGraph = Symbol("kClientGraph");
 const runInContext = require("internal/async_context_frame").runInContext;
 
 function captureClientContext(req) {
   req[kClientAsyncContext] = $getInternalField($asyncContext, 0);
-  req[kClientGraph] = $getInternalField($asyncContext, 1);
+  $putByIdDirectPrivate(req, "moduleGraphContext", $getInternalField($asyncContext, 1));
 }
 
 function clearClientContext(req) {
   if (req[kClientAsyncContext] !== undefined) req[kClientAsyncContext] = undefined;
-  if (req[kClientGraph] !== undefined) req[kClientGraph] = undefined;
+  if ($getByIdDirectPrivate(req, "moduleGraphContext") !== undefined)
+    $putByIdDirectPrivate(req, "moduleGraphContext", undefined);
 }
 
 /** Calls `listener` on `socket` in the context of the request the socket is serving (none: the host's). */
 function runInClientContext(socket, listener, arg?) {
   const req = socket._httpMessage;
-  return runInContext(req?.[kClientAsyncContext], req?.[kClientGraph], listener, socket, arg);
+  return runInContext(
+    req?.[kClientAsyncContext],
+    req ? $getByIdDirectPrivate(req, "moduleGraphContext") : undefined,
+    listener,
+    socket,
+    arg,
+  );
 }
 
 function closeRequest(req) {

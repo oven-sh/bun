@@ -16,7 +16,6 @@ class GlobalObject;
 }
 
 namespace JSC {
-class JSLexicalEnvironment;
 class JSScriptExecutionOwnerEnvironment;
 class JSPromise;
 class ThrowScope;
@@ -153,9 +152,6 @@ private:
     uint32_t m_previousEntered;
 };
 
-// What runs while this is alive runs inside a graph's context: the graph is the owner that is
-// current, and every continuation captured meanwhile carries it. Nothing for a null graph, or
-// when already inside it.
 // What entering a graph's context (or the realm's own) replaced, to put back on leaving it: the
 // owner and the async context. An empty owner: nothing was replaced. Shared with
 // VirtualMachine.rs's ContextScope, which keeps it on the stack as the scopes here do.
@@ -164,6 +160,9 @@ struct PreviousModuleGraphContext {
     JSC::EncodedJSValue asyncContext;
 };
 
+// What runs while this is alive runs inside a graph's context: the graph is the owner that is
+// current, and every continuation captured meanwhile carries it. Nothing for a null graph, or
+// when already inside it.
 class ModuleGraphContextScope {
     WTF_MAKE_NONCOPYABLE(ModuleGraphContextScope);
     WTF_FORBID_HEAP_ALLOCATION;

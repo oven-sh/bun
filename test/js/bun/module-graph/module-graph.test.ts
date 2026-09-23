@@ -804,6 +804,193 @@ describe("Bun.ModuleGraph — shared CodeBlocks under JIT tier-up", () => {
   });
 });
 
+describe("Bun.ModuleGraph — whose context a call runs in, in every tier", () => {
+  // Low thresholds and no concurrent compiler: every tier is reached, in the same place each run.
+  const tiers: Record<string, Record<string, string>> = {
+    "interpreter": { BUN_JSC_useJIT: "0" },
+    "baseline": { BUN_JSC_useDFGJIT: "0", BUN_JSC_thresholdForJITAfterWarmUp: "10" },
+    "DFG": {
+      BUN_JSC_useFTLJIT: "0",
+      BUN_JSC_useConcurrentJIT: "0",
+      BUN_JSC_thresholdForJITAfterWarmUp: "10",
+      BUN_JSC_thresholdForOptimizeAfterWarmUp: "100",
+    },
+    "FTL": {
+      BUN_JSC_useConcurrentJIT: "0",
+      BUN_JSC_thresholdForJITAfterWarmUp: "10",
+      BUN_JSC_thresholdForOptimizeAfterWarmUp: "100",
+      BUN_JSC_thresholdForFTLOptimizeAfterWarmUp: "1000",
+    },
+    "default": {},
+  };
+  let dir: string;
+  beforeAll(() => {
+    dir = fixture({
+      // Two graphs share this file's code, so one's function tail-calling the other's is, to the compiler, a
+      // function tail-calling itself (which the FTL makes a jump to the function's top).
+      "tails.mjs": `
+        export function tail(n, other) { if (n === 0) return Bun.ModuleGraph.current; return other(n - 1, other); }
+        export function turns(n, mine, theirs) { if (n === 0) return Bun.ModuleGraph.current; return theirs(n - 1, theirs, mine); }
+        export function countNotRunningAs(graph, call, rounds) { let wrong = 0; for (let i = 0; i < rounds; i++) if (call() !== graph) wrong++; return wrong; }
+        export function inc(x) { return x + 1; }
+        export function label() { return "label"; }
+        export function loop(n) { let sum = 0; for (let i = 0; i < n; i++) sum = inc(sum); return sum; }
+        export function descend(n, mine, theirs) { try { return theirs(n + 1, theirs, mine); } catch (e) { if (e instanceof RangeError) return n; throw e; } }
+      `,
+      "tails.ts": `
+        const A = new Bun.ModuleGraph(), B = new Bun.ModuleGraph();
+        const a = await A.import(import.meta.dir + "/tails.mjs"), b = await B.import(import.meta.dir + "/tails.mjs");
+        const rounds = Number(process.argv[2]);
+        const wrong: number[] = [];
+        for (let round = 0; round < 6; round++) {
+          wrong.push(
+            a.countNotRunningAs(B, () => a.tail(1, b.tail), rounds),
+            b.countNotRunningAs(A, () => b.tail(1, a.tail), rounds),
+            a.countNotRunningAs(B, () => a.turns(3, a.turns, b.turns), rounds),
+            a.countNotRunningAs(A, () => a.tail(2, a.tail), rounds),
+          );
+        }
+        // A function the host has called too is still a plain call where its own graph calls it.
+        for (let i = 0; i < rounds; i++) a.loop(10);
+        const calledByTheHost = [a.inc(1), a.label()];
+        let sum = 0;
+        for (let i = 0; i < rounds; i++) sum += a.loop(10);
+        console.log(JSON.stringify({ wrong: wrong.reduce((x, y) => x + y, 0), calledByTheHost, sum, current: String(Bun.ModuleGraph.current) }));
+        process.exit(0);
+      `,
+      // Hot calls inside a graph's code that the DFG inlines where it cannot exit (a varargs call has loaded its
+      // arguments by then), with one graph (the callee's graph is a constant) and two sharing the code (it is not).
+      "varargs.mjs": `
+        const add = (a, b) => (a | 0) + (b | 0);
+        class Sum { constructor(a, b) { this.sum = (a | 0) + (b | 0); } }
+        class SumOfSpread extends Sum { constructor(...args) { super(...args); } }
+        export const shapes = {
+          spread(n) { const f = (...a) => add(...a); let s = 0; for (let i = 0; i < n; i++) s += f(i, 1); return s; },
+          applyArguments(n) { function f() { return add.apply(null, arguments); } let s = 0; for (let i = 0; i < n; i++) s += f(i, 1); return s; },
+          applyArray(n) { const array = [1, 2]; let s = 0; for (let i = 0; i < n; i++) s += add.apply(null, array); return s; },
+          newSpread(n) { const array = [1, 2]; let s = 0; for (let i = 0; i < n; i++) s += new Sum(...array).sum; return s; },
+          reflectApply(n) { let s = 0; for (let i = 0; i < n; i++) s += Reflect.apply(add, null, [i, 1]); return s; },
+          forwardArguments(n) { function g() { return add(arguments[0], arguments[1]); } function f() { return g.apply(this, arguments); } let s = 0; for (let i = 0; i < n; i++) s += f(i, 1); return s; },
+          superSpread(n) { let s = 0; for (let i = 0; i < n; i++) s += new SumOfSpread(i, 1).sum; return s; },
+          crossingSpread(n, other) { const array = [1, 2]; let s = 0; for (let i = 0; i < n; i++) s += other(...array); return s; },
+        };
+        export const addOf = (a, b) => add(a, b);
+        export const current = () => Bun.ModuleGraph.current;
+      `,
+      "varargs.ts": `
+        const graphs = [new Bun.ModuleGraph(), new Bun.ModuleGraph()].slice(0, Number(process.argv[2]));
+        const apps = await Promise.all(graphs.map(graph => graph.import(import.meta.dir + "/varargs.mjs")));
+        const host = await import("./varargs.mjs");
+        const n = Number(process.argv[3]);
+        const totals: Record<string, number[]> = {};
+        for (let round = 0; round < 30; round++) {
+          for (const app of [...apps, host]) {
+            for (const shape of ["spread", "applyArguments", "applyArray", "newSpread", "reflectApply", "forwardArguments", "superSpread"])
+              (totals[shape] ??= []).push(app.shapes[shape](n));
+            (totals.crossingSpread ??= []).push(app.shapes.crossingSpread(n, apps[apps.length - 1].addOf));
+          }
+        }
+        const distinct = Object.fromEntries(Object.entries(totals).map(([shape, values]) => [shape, [...new Set(values)]]));
+        console.log(JSON.stringify({ distinct, current: String(Bun.ModuleGraph.current), stillItsGraphs: apps.every((app, i) => app.current() === graphs[i]) }));
+        process.exit(0);
+      `,
+      // CommonJS is sloppy-mode code, where Function.prototype.caller is readable.
+      "caller.cjs": `
+        exports.callerOf = function callerOf() { return callerOf.caller; };
+        exports.inner = function inner() { return exports.callerOf(); };
+      `,
+      "caller-host.cjs": `
+        const asGraph = process.argv[2] === "graph";
+        const rounds = Number(process.argv[3]);
+        (async () => {
+          const app = asGraph ? await new Bun.ModuleGraph().import(__dirname + "/caller.cjs") : require("./caller.cjs");
+          function hostCaller() { return app.callerOf(); }
+          const seen = new Set();
+          for (let i = 0; i < rounds; i++) {
+            const fromHost = hostCaller(), fromInside = app.inner();
+            seen.add((fromHost === hostCaller ? "hostCaller" : fromHost === app.callerOf ? "itself" : String(fromHost && fromHost.name)) + "," + (fromInside === app.inner ? "inner" : String(fromInside && fromInside.name)));
+          }
+          console.log(JSON.stringify([...seen]));
+          process.exit(0);
+        })();
+      `,
+      "depth.ts": `
+        const A = new Bun.ModuleGraph(), B = new Bun.ModuleGraph();
+        const a = await A.import(import.meta.dir + "/tails.mjs"), b = await B.import(import.meta.dir + "/tails.mjs");
+        const within = a.descend(0, a.descend, a.descend);
+        const between = a.descend(0, a.descend, b.descend);
+        console.log(JSON.stringify({ betweenIsWithinASmallFactor: between * 8 > within, hostIsCurrentAfterwards: Bun.ModuleGraph.current === undefined, stillRunsAsItsGraph: a.tail(0) === A }));
+        process.exit(0);
+      `,
+    });
+  });
+
+  for (const [tier, env] of Object.entries(tiers)) {
+    const rounds = tier === "interpreter" ? "2000" : "20000";
+    test.concurrent(
+      `${tier}: a tail call of another graph's copy of the same function runs as that graph`,
+      async () => {
+        expect(await runBun([join(dir, "tails.ts"), rounds], { env })).toEqual({
+          stdout: JSON.stringify({
+            wrong: 0,
+            calledByTheHost: [2, "label"],
+            sum: Number(rounds) * 10,
+            current: "undefined",
+          }),
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+    );
+    for (const graphs of ["1", "2"]) {
+      test.concurrent(`${tier}: varargs calls inside a graph's code, ${graphs} graph(s) running it`, async () => {
+        const n = Number(rounds) / 10;
+        const counting = (n * (n - 1)) / 2 + n;
+        expect(await runBun([join(dir, "varargs.ts"), graphs, String(n)], { env })).toEqual({
+          stdout: JSON.stringify({
+            distinct: {
+              spread: [counting],
+              applyArguments: [counting],
+              applyArray: [3 * n],
+              newSpread: [3 * n],
+              reflectApply: [counting],
+              forwardArguments: [counting],
+              superSpread: [counting],
+              crossingSpread: [3 * n],
+            },
+            current: "undefined",
+            stillItsGraphs: true,
+          }),
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+    }
+    test.concurrent(
+      `${tier}: Function.prototype.caller of a graph's sloppy function is its caller, as for the host's copy`,
+      async () => {
+        const [asHost, asGraph] = await Promise.all([
+          runBun([join(dir, "caller-host.cjs"), "host", rounds], { env }),
+          runBun([join(dir, "caller-host.cjs"), "graph", rounds], { env }),
+        ]);
+        expect(asHost).toEqual({ stdout: `["hostCaller,inner"]`, stderr: "", exitCode: 0 });
+        expect(asGraph).toEqual(asHost);
+      },
+    );
+  }
+  test("two graphs' functions calling each other get within a small factor as deep as one graph's", async () => {
+    expect(await runBun([join(dir, "depth.ts")])).toEqual({
+      stdout: JSON.stringify({
+        betweenIsWithinASmallFactor: true,
+        hostIsCurrentAfterwards: true,
+        stillRunsAsItsGraph: true,
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 describe("Bun.ModuleGraph — API validation and error attribution edges", () => {
   test("constructor and import() argument validation", async () => {
     const g = ModuleGraph();
@@ -2206,28 +2393,69 @@ describe("Bun.ModuleGraph — nested graphs, stack traces, misc host integration
     const i = await ModuleGraph().import(join(dir, "intl.mjs"));
     expect([i.fmt, i.url, i.enc, i.b64, i.perf]).toEqual(["1,234.5", "http://h/x", "ok", "aGk=", "number"]);
   });
-  test("what a call into a graph leaves with AsyncLocalStorage.enterWith() ends with the call", async () => {
-    expect(
-      await runBun([
-        "-e",
-        `
-        const { AsyncLocalStorage } = require("node:async_hooks");
-        const als = new AsyncLocalStorage();
-        const { call } = await new Bun.ModuleGraph().import(${callModule});
+  test("AsyncLocalStorage.enterWith() in a graph's function reaches the caller, as in a call of any function", async () => {
+    const alsDir = fixture({
+      "als.mjs": `
+        import { AsyncLocalStorage } from "node:async_hooks";
+        export const als = new AsyncLocalStorage();
+        export const enter = store => { als.enterWith(store); return als.getStore(); };
+        export const read = () => als.getStore();
+        export async function enterThenAwait(store) { als.enterWith(store); await 1; return als.getStore(); }
+        export function* enterInGenerator(store) { als.enterWith(store); yield als.getStore(); yield als.getStore(); }
+        export class Enters { constructor(store) { als.enterWith(store); } }
+      `,
+      "main.mjs": `
+        const asGraph = process.argv[2] === "graph";
+        const path = import.meta.dir + "/als.mjs";
+        const app = asGraph ? await new Bun.ModuleGraph().import(path) : await import(path);
+        const { AsyncLocalStorage } = await import("node:async_hooks");
+        const hostStorage = new AsyncLocalStorage();
         const seen = {};
-        call(() => { als.enterWith("the graph's"); seen.inside = als.getStore(); });
-        seen.after = String(als.getStore());
-        als.run("the host's", () => {
-          call(() => als.enterWith("the graph's"));
-          seen.afterUnderAHostStore = als.getStore();
+        seen.inside = app.enter("first");
+        seen.callerAfter = app.als.getStore();
+        seen.nextCallAfter = app.read();
+        hostStorage.run("the host's", () => {
+          app.als.run("outer", () => {
+            app.enter("inner");
+            seen.callerUnderRun = app.als.getStore();
+            seen.hostStoreUnderRun = hostStorage.getStore();
+          });
         });
+        seen.afterRun = app.als.getStore();
+        new app.Enters("constructed");
+        seen.afterConstruct = app.als.getStore();
+        const generator = app.enterInGenerator("generated");
+        seen.generatorFirst = generator.next().value;
+        seen.afterGeneratorNext = app.als.getStore();
+        app.als.enterWith("callers");
+        seen.generatorSecond = generator.next().value;
+        seen.awaited = await app.enterThenAwait("awaited");
+        seen.afterAwaitedCall = app.als.getStore();
         console.log(JSON.stringify(seen));
       `,
-      ]),
-    ).toMatchObject({
-      stdout: `{"inside":"the graph's","after":"undefined","afterUnderAHostStore":"the host's"}`,
+    });
+    const [asModuleOfTheHost, asGraph] = await Promise.all([
+      runBun([join(alsDir, "main.mjs"), "host"]),
+      runBun([join(alsDir, "main.mjs"), "graph"]),
+    ]);
+    expect(asModuleOfTheHost).toMatchObject({
+      stdout: JSON.stringify({
+        inside: "first",
+        callerAfter: "first",
+        nextCallAfter: "first",
+        callerUnderRun: "inner",
+        hostStoreUnderRun: "the host's",
+        afterRun: "first",
+        afterConstruct: "constructed",
+        generatorFirst: "generated",
+        afterGeneratorNext: "generated",
+        generatorSecond: "callers",
+        awaited: "awaited",
+        afterAwaitedCall: "awaited",
+      }),
       exitCode: 0,
     });
+    expect(asGraph).toEqual(asModuleOfTheHost);
   });
   test("a host Agent's pooled socket does not keep the AsyncLocalStorage store of the graph request that opened it", async () => {
     expect(
@@ -3755,6 +3983,81 @@ describe("Bun.ModuleGraph — debugger / inspector", () => {
     expect(r.stdout.split("\n").filter(l => l.startsWith("ok:"))).toEqual(["ok:dbg"]);
     expect(r.exitCode).toBe(0);
     rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("pausing in a graph's function that the host called shows the call once, with its scope", async () => {
+    const dir = fixture({
+      "paused.mjs": `const secret = process.env.T;\nexport function target(x) {\n  const local = x + 1;\n  debugger;\n  return local;\n}\nexport const inner = x => target(x);`,
+      "run.mjs": `const app = await new Bun.ModuleGraph({ globals: { process: Object.create(process, { env: { value: { T: "graph's" }, enumerable: true } }) } }).import(import.meta.dir + "/paused.mjs");
+        function hostCaller() { return app.target(1) + app.inner(10); }
+        console.log("result:" + hostCaller());
+        process.exit(0);`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--inspect-wait=ws://127.0.0.1:0/module-graph", join(dir, "run.mjs")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // The inspector prints its URL on stderr.
+    let stderr = "";
+    const url = await (async () => {
+      const decoder = new TextDecoder();
+      for await (const chunk of proc.stderr as ReadableStream<Uint8Array>) {
+        stderr += decoder.decode(chunk, { stream: true });
+        const found = stderr.match(/ws:\/\/\S+/);
+        if (found) return found[0];
+      }
+      throw new Error("no inspector URL in: " + stderr);
+    })();
+    const ws = new WebSocket(url);
+    await new Promise<void>((resolve, reject) => {
+      ws.addEventListener("open", () => resolve(), { once: true });
+      ws.addEventListener("error", () => reject(new Error("WebSocket error")), { once: true });
+    });
+    let nextId = 1;
+    const replies = new Map<number, (message: any) => void>();
+    const pauses: { frames: string[]; local: unknown; secret: unknown }[] = [];
+    const send = (method: string, params: object = {}) =>
+      new Promise<any>(resolve => {
+        replies.set(nextId, resolve);
+        ws.send(JSON.stringify({ id: nextId++, method, params }));
+      });
+    ws.addEventListener("message", async event => {
+      const message = JSON.parse(String(event.data));
+      if (typeof message.id === "number") return replies.get(message.id)?.(message);
+      if (message.method !== "Debugger.paused") return;
+      const frames = message.params.callFrames;
+      const read = async (expression: string) =>
+        (
+          await send("Debugger.evaluateOnCallFrame", {
+            callFrameId: frames[0].callFrameId,
+            expression,
+            returnByValue: true,
+          })
+        ).result?.result?.value;
+      pauses.push({
+        frames: frames
+          .map((frame: any) => frame.functionName)
+          .filter((name: string) => name && !name.startsWith("module code")),
+        local: await read("local"),
+        secret: await read("secret"),
+      });
+      send("Debugger.resume");
+    });
+    await send("Inspector.enable");
+    await send("Debugger.enable");
+    await send("Debugger.setBreakpointsActive", { active: true });
+    await send("Debugger.setPauseOnDebuggerStatements", { enabled: true });
+    send("Inspector.initialized");
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    ws.close();
+    expect(pauses).toEqual([
+      { frames: ["target", "hostCaller"], local: 2, secret: "graph's" },
+      { frames: ["target", "inner", "hostCaller"], local: 11, secret: "graph's" },
+    ]);
+    expect(stdout.trim()).toBe("result:13");
+    expect(exitCode).toBe(0);
   });
 });
 

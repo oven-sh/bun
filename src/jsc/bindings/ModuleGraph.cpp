@@ -283,8 +283,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsDisposedModuleGraph, (JSGlobalObject * glob
 // current (a completion of the host's run from an event-loop tick nested under a graph's script,
 // an event the graph's script dispatches to something of the host's). Returns what to put back on
 // leaving it (an empty owner: already there, nothing to put back): the owner, and the async
-// context with it, so that what the entered script leaves there with
-// AsyncLocalStorage.enterWith() ends with its context instead of reaching the caller.
+// context with it, as after any callback native code makes. (A call script makes of a graph's
+// function puts back the owner only: what the function leaves with AsyncLocalStorage.enterWith()
+// reaches its caller, as in a call of any function.)
 static Bun::PreviousModuleGraphContext makeContextCurrent(Zig::GlobalObject* globalObject, JSModuleGraph* graph)
 {
     auto* asyncContextData = globalObject->m_asyncContextData.get();

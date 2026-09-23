@@ -670,13 +670,7 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     try {
       // user code; a throw must not abort the pool bookkeeping below
       if (connectionInfo?.onconnect) {
-        AsyncContextFrame.runInContext(
-          this.adapter.callbackAsyncContext,
-          this.adapter.ownerGraph,
-          connectionInfo.onconnect,
-          connectionInfo,
-          err,
-        );
+        this.adapter.runInOwnerContext(connectionInfo.onconnect, connectionInfo, err);
       }
     } finally {
       this.storedError = err;
@@ -779,13 +773,7 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     try {
       // user code; a throw must not abort the pool bookkeeping below
       if (!poolClosedSlotBeforeOnconnect && connectionInfo?.onclose) {
-        AsyncContextFrame.runInContext(
-          this.adapter.callbackAsyncContext,
-          this.adapter.ownerGraph,
-          connectionInfo.onclose,
-          connectionInfo,
-          err,
-        );
+        this.adapter.runInOwnerContext(connectionInfo.onclose, connectionInfo, err);
       }
     } finally {
       this.state = PooledConnectionState.closed;
@@ -959,9 +947,18 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
   /// inside it rather than in whatever context the native callback happens to fire in
   /// (none for a socket event, the close() caller's when the socket closes synchronously).
   public readonly callbackAsyncContext: unknown;
-  /// The Bun.ModuleGraph the SQL instance was created inside of, if any: every connection of
-  /// the pool is opened in its context, so it belongs to that graph.
-  public readonly ownerGraph: unknown;
+  /// The context of the Bun.ModuleGraph the SQL instance was created inside of, if any: every
+  /// connection of the pool is opened in it, so it belongs to that graph.
+  readonly #ownerGraph: ModuleGraphContext | undefined;
+
+  /// Calls `callback` in the async context and the graph context the SQL instance was made in.
+  public runInOwnerContext<Args extends unknown[]>(
+    callback: (...args: Args) => void,
+    thisValue: unknown,
+    ...args: Args
+  ) {
+    return AsyncContextFrame.runInContext(this.callbackAsyncContext, this.#ownerGraph, callback, thisValue, ...args);
+  }
 
   /// Calls `dial` as the SQL instance's owner, whoever is calling: a connection is its owner's,
   /// the Bun.ModuleGraph the instance was made in (a redial starts from a close event, which has
@@ -969,21 +966,21 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
   /// is what makes it dial. That graph's dispose() would otherwise close the host's connection
   /// under the host, and its leftover script could leave the host waiting for one never opened.
   public runAsOwner<This, Result>(dial: (this: This) => Result, thisValue: This): Result {
-    return AsyncContextFrame.runInGraph(this.ownerGraph, dial, thisValue);
+    return AsyncContextFrame.runInGraph(this.#ownerGraph, dial, thisValue);
   }
 
   /// `callback` for a native connection to call (from a socket event, which has no async
   /// context): as the SQL instance's owner, so a retry timer it arms is the owner's too, and is
   /// cancelled with the Bun.ModuleGraph that owns the instance.
   public ownerCallback<Args extends unknown[]>(callback: (...args: Args) => void): (...args: Args) => void {
-    const graph = this.ownerGraph;
+    const graph = this.#ownerGraph;
     if (graph === undefined) return callback;
     return (...args) => AsyncContextFrame.runInGraph(graph, callback, undefined, ...args);
   }
 
   constructor(connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions) {
     this.connectionInfo = connectionInfo;
-    this.ownerGraph = AsyncContextFrame.currentGraph();
+    this.#ownerGraph = AsyncContextFrame.currentGraph();
     this.callbackAsyncContext =
       connectionInfo.onconnect || connectionInfo.onclose ? AsyncContextFrame.current() : undefined;
     // Slots are filled one at a time in connect()'s pool-start loop, and

@@ -4,10 +4,11 @@
 // API: https://nodejs.org/api/async_hooks.html
 //
 // JSC has been patched to include a special global variable $asyncContext which is set to
-// a constant InternalFieldTuple<[AsyncContextData, Bun.ModuleGraph | undefined]>. `get` and `set`
-// read/write to the first element of this tuple; the second is the Bun.ModuleGraph whose context
-// is current, which JSC and native code capture and restore together with the first. Inside of PromiseOperations.js, we "snapshot" the context (store it
-// in the promise reaction) and then just before we call .then, we restore it.
+// a constant InternalFieldTuple<[AsyncContextData, ModuleGraphContext | undefined]>. `get` and `set`
+// read/write to the first element of this tuple; the second is the context of the Bun.ModuleGraph
+// that is current (see internal/async_context_frame.ts for where script may keep one), which JSC
+// and native code capture and restore together with the first. Inside of PromiseOperations.js, we
+// "snapshot" the context (store it in the promise reaction) and then just before we call .then, we restore it.
 //
 // This means context tracking is *kind-of* manual. If we receive a callback in native code
 // - In Rust, call jsValue.with_async_context_if_needed(); which returns another JSValue. Store that and

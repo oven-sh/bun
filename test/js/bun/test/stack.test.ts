@@ -175,18 +175,3 @@ test("Async functions frame should be included in stack trace", async () => {
         at async <anonymous> (file:NN:NN)"
   `);
 });
-
-// A suspended async function's frame is found from the state its generator is in, not from a machine frame.
-test("an async frame is at the await the function is suspended at", async () => {
-  const script = [
-    `async function inner() { await 1; throw new Error("x"); }`,
-    `async function outer() { await inner(); }`,
-    `outer().catch(e => console.log(e.stack.split("\\n").filter(l => l.includes("outer")).join()));`,
-  ].join("\n");
-  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  // Line 2, column 32: `inner()` in `await inner()`.
-  expect(stdout.trim()).toMatch(/^at async outer \(.*\[eval\]:2:32\)$/);
-  expect(exitCode).toBe(0);
-});

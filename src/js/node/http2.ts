@@ -356,10 +356,8 @@ const bunHTTP2Session = Symbol.for("::bunhttp2session::");
 const bunHTTP2Headers = Symbol.for("::bunhttp2headers::");
 const bunHTTP2AsyncContextFrame = Symbol("::bunhttp2asynccontextframe::");
 // The Bun.ModuleGraph context that was current next to that frame (undefined: the host's).
-const bunHTTP2Graph = Symbol("::bunhttp2graph::");
 const bunHTTP2SessionTeardownFrame = Symbol("::bunhttp2sessionteardownframe::");
 // The Bun.ModuleGraph context of the destroy() caller, next to that frame.
-const bunHTTP2SessionTeardownGraph = Symbol("::bunhttp2sessionteardowngraph::");
 // Sentinel for bunHTTP2SessionTeardownFrame: a captured frame can itself be
 // undefined (the root context), so "no teardown in progress" needs its own value.
 const kNoSessionTeardown = Symbol("::bunhttp2noteardown::");
@@ -1905,13 +1903,11 @@ abstract class Http2Session extends EventEmitter {
   abstract destroy(error?: Error | number | null, code?: number): void;
   [bunHTTP2SessionTeardownFrame]: typeof kNoSessionTeardown | import("./async_hooks").Frame | undefined =
     kNoSessionTeardown;
-  [bunHTTP2SessionTeardownGraph]: Bun.ModuleGraph | undefined = undefined;
   [bunHTTP2Socket]: TLSSocket | Socket | null | undefined;
   [bunHTTP2OriginSet]: Set<string> | undefined = undefined;
   // Session-level frame (Node's Http2Session AsyncWrap): destroy()'s emits
   // run inside it so 'close' doesn't inherit the last stream's frame.
   [bunHTTP2AsyncContextFrame] = $getInternalField($asyncContext, 0);
-  [bunHTTP2Graph] = $getInternalField($asyncContext, 1);
   [kDeferWriteCallback]: typeof process.nextTick | typeof setImmediate = setImmediate;
   // The GOAWAY this side received (not one it sent), like node's Http2Session getters.
   get goawayCode() {
@@ -2332,7 +2328,6 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
   // frame is snapshotted directly so session.request() does not flip on
   // async-context tracking when no AsyncLocalStorage is in use.
   [bunHTTP2AsyncContextFrame] = $getInternalField($asyncContext, 0);
-  [bunHTTP2Graph] = $getInternalField($asyncContext, 1);
 
   rstCode: number | undefined = undefined;
   [bunHTTP2Headers]: any;
@@ -2346,6 +2341,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
       decodeStrings: false,
       autoDestroy: false,
     });
+    $putByIdDirectPrivate(this, "moduleGraphContext", $getInternalField($asyncContext, 1));
     this.#id = streamId;
     this[bunHTTP2Session] = session;
     this[bunHTTP2Headers] = headers;
@@ -2616,7 +2612,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
     // push(null)) and a throwing listener would otherwise skip the clear and
     // leave a retained stream pinning the store.
     this[bunHTTP2AsyncContextFrame] = undefined;
-    this[bunHTTP2Graph] = undefined;
+    $putByIdDirectPrivate(this, "moduleGraphContext", undefined);
     const { ending } = this._writableState;
     this.push(null);
     // A pushed stream's request was synthesized by the server, so its local (writable) half is
@@ -3002,10 +2998,20 @@ function withStreamFrame(handler) {
     // context the session was made in.)
     const teardownFrame = self != null ? self[bunHTTP2SessionTeardownFrame] : kNoSessionTeardown;
     if (teardownFrame !== kNoSessionTeardown)
-      return runInContext(teardownFrame, self[bunHTTP2SessionTeardownGraph], handler, undefined, self, stream, a, b, c);
+      return runInContext(
+        teardownFrame,
+        $getByIdDirectPrivate(self, "teardownModuleGraphContext"),
+        handler,
+        undefined,
+        self,
+        stream,
+        a,
+        b,
+        c,
+      );
     return runInContext(
       stream[bunHTTP2AsyncContextFrame],
-      stream[bunHTTP2Graph],
+      $getByIdDirectPrivate(stream, "moduleGraphContext"),
       handler,
       undefined,
       self,
@@ -4493,6 +4499,7 @@ class ServerHttp2Session extends Http2Session {
 
   constructor(socket: TLSSocket | Socket, options?: Http2ConnectOptions, server?: Http2Server) {
     super();
+    $putByIdDirectPrivate(this, "moduleGraphContext", $getInternalField($asyncContext, 1));
     // node: a socket can only ever be bound to a single Http2Session
     // (ERR_HTTP2_SOCKET_BOUND is not in the native error-code registry; construct it directly).
     if (socket[kBoundSession] !== undefined) {
@@ -4852,9 +4859,9 @@ class ServerHttp2Session extends Http2Session {
     // Read-and-clear the frame first: emitting 'error' with no listener throws,
     // which would skip the clear and leave a retained session pinning the store.
     const asyncFrame = this[bunHTTP2AsyncContextFrame];
-    const graph = this[bunHTTP2Graph];
+    const graph = $getByIdDirectPrivate(this, "moduleGraphContext");
     this[bunHTTP2AsyncContextFrame] = undefined;
-    this[bunHTTP2Graph] = undefined;
+    $putByIdDirectPrivate(this, "moduleGraphContext", undefined);
     if (error) {
       runInContext(asyncFrame, graph, this.emit, this, "error", error);
     }
@@ -5661,6 +5668,7 @@ class ClientHttp2Session extends Http2Session {
 
   constructor(url: string | URL, options?: Http2ConnectOptions, listener?: Function) {
     super();
+    $putByIdDirectPrivate(this, "moduleGraphContext", $getInternalField($asyncContext, 1));
 
     if (typeof options === "function") {
       listener = options;
@@ -5943,12 +5951,12 @@ class ClientHttp2Session extends Http2Session {
         // Like Node's Http2Stream._destroy: a received GOAWAY's code takes
         // precedence over the destroy code when streams are torn down.
         this[bunHTTP2SessionTeardownFrame] = $getInternalField($asyncContext, 0);
-        this[bunHTTP2SessionTeardownGraph] = $getInternalField($asyncContext, 1);
+        $putByIdDirectPrivate(this, "teardownModuleGraphContext", $getInternalField($asyncContext, 1));
         try {
           parser.emitErrorToAllStreams(this[kGoawayCode] || (code !== undefined ? code : constants.NGHTTP2_CANCEL));
         } finally {
           this[bunHTTP2SessionTeardownFrame] = kNoSessionTeardown;
-          this[bunHTTP2SessionTeardownGraph] = undefined;
+          $putByIdDirectPrivate(this, "teardownModuleGraphContext", undefined);
         }
         parser.detach();
       }
@@ -5965,9 +5973,9 @@ class ClientHttp2Session extends Http2Session {
     // Read-and-clear the frame first: emitting 'error' with no listener throws,
     // which would skip the clear and leave a retained session pinning the store.
     const asyncFrame = this[bunHTTP2AsyncContextFrame];
-    const graph = this[bunHTTP2Graph];
+    const graph = $getByIdDirectPrivate(this, "moduleGraphContext");
     this[bunHTTP2AsyncContextFrame] = undefined;
-    this[bunHTTP2Graph] = undefined;
+    $putByIdDirectPrivate(this, "moduleGraphContext", undefined);
     if (error) {
       runInContext(asyncFrame, graph, this.emit, this, "error", error);
     }

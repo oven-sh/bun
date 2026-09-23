@@ -87,7 +87,7 @@ The host's own code runs in the context it is called in, so it runs in the graph
 app.call(() => Bun.serve({ port: 0, fetch: app.fetch })); // the server is the graph's and stops with it
 ```
 
-Code made with `new Function()` or indirect `eval` is global code: it belongs to no graph, whichever code made it, and runs in its caller's context.
+Code made with `new Function()` or indirect `eval` is global code: it belongs to no graph, whichever code made it, and runs in its caller's context. So does a CommonJS module compiled with a replaced `Module.wrapper` whose wrapper function is made inside another function.
 
 A promise that a graph's asynchronous function returns is the graph's: if the graph is disposed before it settles, it never does. When the host awaits one and may dispose the graph meanwhile, race it against a promise of its own:
 
@@ -122,13 +122,13 @@ An error that no code threw belongs to whoever opened the thing it happened to. 
 
 `graph.import()` returns its promise to whoever called it. If a module throws while it is evaluated the promise rejects, and if nobody handles that promise it is the caller's unhandled rejection, like a specifier that does not resolve or an `import()` into a disposed graph.
 
-`onError` itself runs in the context the graph was made in: the host's, or the enclosing graph's for a graph that a graph's code made. What it throws, rejects or starts is that context's, so an error the handler lets escape again goes on to the host and does not come back to the same handler. That is the handler's own code: a function of the graph's that the handler calls runs in the graph's context like any other call, so an error in what that function starts comes back to the handler.
+`onError` itself runs in the context the graph was made in: the host's, or the enclosing graph's for a graph that a graph's code made. What it throws, rejects or starts is that context's, so an error the handler lets escape again goes on to the host and does not come back to the same handler. That holds for a handler the host wrote. A handler that is a function of some graph runs in that graph's context, like any call of it. A function of the graph's that the handler calls also runs in the graph's context, so an error in what that function starts comes back to the handler.
 
 A graph that was given no `onError` hands its errors to the `onError` of the graph in whose context it was made, and so on up to the host. It was made in a graph's context if that graph's code made it, or a host function that graph's code called did.
 
 ## What is shared
 
-The global object, `globalThis` properties, plugins and native addons are shared by every graph and the host. So is `process`, unless you replace it through `globals`. A graph's listeners on something the host owns are that object's, so they outlive `dispose()`. That includes signal, `process.stdin` and `'exit'` listeners on the shared `process`, and listeners on an emitter the host passed in. `ModuleGraph` separates instances of an app you trust from each other. It is not a security sandbox.
+The global object, `globalThis` properties, plugins and native addons are shared by every graph and the host. So is `process`, unless you replace it through `globals`. A graph's listeners on something the host owns are that object's, so they are still called after `dispose()`. That includes signal, `process.stdin` and `'exit'` listeners on the shared `process`, and listeners on an emitter the host passed in. They are functions of the graph's, so they run in its context, which is stopped: their synchronous code runs, and the asynchronous work they start never completes. Code that should hear nothing more removes its listeners before its graph is disposed. `ModuleGraph` separates instances of an app you trust from each other. It is not a security sandbox.
 
 `http.globalAgent` and `https.globalAgent` are shared too. A connection belongs to the `Agent` that opened it, and an `Agent` to the script that made it, so a request a graph makes without an `agent` uses a connection that is not the graph's: `dispose()` does not close it, and it keeps the process running like any connection of the host's. Code whose connections should go with its graph passes an `Agent` it made itself.
 

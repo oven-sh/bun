@@ -126,6 +126,7 @@ using namespace JSC;
     macro(method) \
     macro(min) \
     macro(mockedFunction) \
+    macro(moduleGraphContext) \
     macro(mode) \
     macro(mtimeMs) \
     macro(napiDlopenHandle) \
@@ -176,6 +177,7 @@ using namespace JSC;
     macro(statusText) \
     macro(stream) \
     macro(syscall) \
+    macro(teardownModuleGraphContext) \
     macro(text) \
     macro(textDecoderStreamDecoder) \
     macro(textEncoderStreamEncoder) \

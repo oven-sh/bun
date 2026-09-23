@@ -97,11 +97,13 @@ const sources: Record<string, string> = {
       const tags = ["l0", "l1", "l2"];
       const graphs: any[] = []; const nss: any[] = []; const got: unknown[] = ["unset", "unset", "unset"]; const lazies: any[] = [null, null, null];
       let how = "lazy";
-      // A disposed graph's function runs in its stopped context, where the import() it starts stays pending.
-      const pendingAfterAFewTurns = async () => { for (let turn = 0; turn < 5; turn++) await new Promise<void>(resolve => setImmediate(resolve)); return "pending"; };
+      // A disposed graph's function runs in its stopped context, where the import() it starts stays pending: what it
+      // has settled to is read once a live graph's import() of the same module, started after it, has completed.
+      const watch = (promise: Promise<unknown>) => { const watched = { state: "pending" }; promise.then(() => (watched.state = "fulfilled"), e => (watched.state = errName(e))); return watched; };
+      let watchedOfDisposed: { state: string } | undefined;
       const isDisposed = (i: number) => ordering === "disposeMiddle" && i === 1;
       const settle = async (i: number) => {
-        if (isDisposed(i)) { got[i] = await Promise.race([nss[i][how]().then(() => "fulfilled", errName), pendingAfterAFewTurns()]); return; }
+        if (isDisposed(i)) { watchedOfDisposed = watch(nss[i][how]()); return; }
         try { const m = await nss[i][how](); lazies[i] = m; got[i] = { who: m.who }; } catch (e) { got[i] = { rejected: errName(e) }; }
       };
       let hostWho: unknown = "not-run";
@@ -119,7 +121,9 @@ const sources: Record<string, string> = {
         for (const i of ordering === "reverse" ? [2, 1, 0] : ordering === "onlySome" ? [0, 2] : [0, 1, 2]) await settle(i);
       }
       if (ordering === "hostLast") await hostImport();
-      const repeat = await Promise.all(nss.map((ns, i) => ordering === "onlySome" && i === 1 ? "skipped" : isDisposed(i) ? Promise.race([ns[how]().then(() => "fulfilled", errName), pendingAfterAFewTurns()]) : ns[how]().then((m: any) => m === lazies[i], (e: any) => "rejected:" + errName(e))));
+      const repeatOfDisposed = nss.map((ns, i) => (isDisposed(i) ? watch(ns[how]()) : undefined));
+      const repeat: unknown[] = await Promise.all(nss.map((ns, i) => ordering === "onlySome" && i === 1 ? "skipped" : isDisposed(i) ? undefined : ns[how]().then((m: any) => m === lazies[i], (e: any) => "rejected:" + errName(e))));
+      nss.forEach((_, i) => { if (isDisposed(i)) { got[i] = watchedOfDisposed!.state; repeat[i] = repeatOfDisposed[i]!.state; } });
       const live = lazies.filter(Boolean);
       if (live.length) { live[0].inc(); live[0].inc(); }
       result = { got, repeat, distinct: new Set(live).size, isolation: live.map(m => m.n), hostWho, log: log.filter(l => l.startsWith("lazy@")).sort() };

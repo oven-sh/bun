@@ -10,14 +10,20 @@
 // array or undefined) — see the comment at the top of node/async_hooks.ts.
 // A Bun.ModuleGraph's context travels next to the frame, in the second field of the same tuple
 // (undefined: the host's). JSC and native code capture and restore the two together; script
-// that keeps a frame for later keeps the graph next to it.
+// that keeps a frame for later keeps the graph context next to it.
+//
+// A graph context is the engine's scope object of that graph, not the Bun.ModuleGraph: whoever
+// holds it can read and write the graph's `globals`, and a scope is not an object script may
+// touch. A built-in keeps one only where script cannot read it: a `#private` field, a variable,
+// or $putByIdDirectPrivate(object, "moduleGraphContext", context). Never in a property, not
+// even one keyed by a Symbol.
 
 const AsyncContextFrame = {
   enabled: true,
   current() {
     return $getInternalField($asyncContext, 0);
   },
-  /** The Bun.ModuleGraph whose context the running script is inside of, if any. */
+  /** The graph context the running script is inside of (undefined: the host's). See above for where it may be kept. */
   currentGraph() {
     return $getInternalField($asyncContext, 1);
   },

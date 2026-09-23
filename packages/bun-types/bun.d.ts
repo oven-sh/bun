@@ -5406,6 +5406,8 @@ declare module "bun" {
      *
      * The handler runs in the context the graph was made in, so what it throws
      * or rejects is that context's: the host's, when the host made the graph.
+     * (A handler that is a function of some graph runs in that graph's
+     * context, like any call of it.)
      *
      * Without an `onError`, errors go to the `onError` of the graph in whose
      * context this graph was made, and to the process-wide path when the host
@@ -5442,7 +5444,8 @@ declare module "bun" {
    * of the graph runs in the graph's context whoever calls it: calling a
    * function the graph exported is enough. Code of the host's runs in the
    * context it is called in, so it runs in the graph's when the graph's code
-   * calls it.
+   * calls it: to run host code as a graph, have a function of the graph's
+   * call it (`export const call = (fn, ...args) => fn(...args)`).
    *
    * @experimental
    * @example
@@ -5489,6 +5492,10 @@ declare module "bun" {
      * `process.nextTick` callbacks it had already queued still run once; what
      * they start reports nothing either. Objects the graph's code made (a
      * socket, a worker, a stream) no longer work, for the host either.
+     *
+     * A function of the graph's that is called afterwards still runs, in the
+     * graph's context, which is stopped: its synchronous code runs, and the
+     * asynchronous work it starts never completes.
      *
      * Not a sandbox: synchronous calls run to completion. Idempotent.
      *

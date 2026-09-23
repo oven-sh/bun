@@ -340,12 +340,12 @@ class NodeEntryObserver {
   // is then disposed, the immediate would be cancelled with `scheduled` left true, and this
   // observer would never be called again. An observer made in a graph goes with it: see
   // bufferEntry.
-  graph;
+  #graph;
 
   constructor(callback, owner) {
     this.callback = callback;
     this.owner = owner;
-    this.graph = require("internal/async_context_frame").currentGraph();
+    this.#graph = require("internal/async_context_frame").currentGraph();
   }
 
   observe(types) {
@@ -374,7 +374,7 @@ class NodeEntryObserver {
     }
     // Its graph was disposed: nothing of it runs again, so it would buffer for ever (and keep
     // the entry type produced for nobody).
-    if (isDisposedModuleGraph(this.graph)) {
+    if (isDisposedModuleGraph(this.#graph)) {
       this.disconnect();
       return;
     }
@@ -390,7 +390,7 @@ class NodeEntryObserver {
         this.buffer = [];
         this.callback.$call(undefined, makeNodeEntryList(entries), this.owner);
       };
-      require("internal/async_context_frame").runInGraph(this.graph, setImmediate, undefined, deliver);
+      require("internal/async_context_frame").runInGraph(this.#graph, setImmediate, undefined, deliver);
     }
   }
 }

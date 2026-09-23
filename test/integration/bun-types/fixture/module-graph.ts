@@ -19,8 +19,6 @@ import { expectType } from "./utilities";
   new Bun.ModuleGraph({ globals: "x" });
   // @ts-expect-error specifier must be a string
   graph.import(1);
-  // @ts-expect-error a graph's code is entered by calling it; there is no run()
-  graph.run(() => 1);
   graph.dispose();
   new Bun.ModuleGraph().dispose();
   {

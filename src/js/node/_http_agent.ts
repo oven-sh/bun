@@ -20,9 +20,7 @@ const kRequestAsyncResource = Symbol("requestAsyncResource");
 // graph's context (or the host's), not in that of whichever request needed one: a disposed graph's
 // sockets close without a word, and an agent of the host's that a graph had used would wait on
 // them for ever.
-const kOwnerGraph = Symbol("ownerGraph");
 const AsyncContextFrame = require("internal/async_context_frame");
-const ObjectDefineProperty = Object.defineProperty;
 
 function freeSocketErrorListener(err) {
   const socket = this;
@@ -40,7 +38,7 @@ function Agent(options): void {
   this.options = { __proto__: null, ...options };
   // (Only an Agent made inside a graph has one.)
   const ownerGraph = AsyncContextFrame.currentGraph();
-  if (ownerGraph !== undefined) ObjectDefineProperty(this, kOwnerGraph, { __proto__: null, value: ownerGraph });
+  if (ownerGraph !== undefined) $putByIdDirectPrivate(this, "moduleGraphContext", ownerGraph);
 
   this.defaultPort = this.options.defaultPort || 80;
   this.protocol = this.options.protocol || "http:";
@@ -365,7 +363,13 @@ Agent.prototype.createSocket = function createSocket(req, options, cb) {
     options.keepAliveInitialDelay = this.keepAliveMsecs;
   }
 
-  const newSocket = AsyncContextFrame.runInGraph(this[kOwnerGraph], this.createConnection, this, options, oncreate);
+  const newSocket = AsyncContextFrame.runInGraph(
+    $getByIdDirectPrivate(this, "moduleGraphContext"),
+    this.createConnection,
+    this,
+    options,
+    oncreate,
+  );
   if (newSocket && !newSocket[kWaitForProxyTunnel]) oncreate(null, newSocket);
 };
 

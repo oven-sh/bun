@@ -186,17 +186,20 @@ describe("ModuleGraph matrix: dynamic import() site × target × ordering", () =
           const mods: any[] = [];
           const namespaces: any[] = new Array(K).fill(null);
           const results: unknown[] = new Array(K).fill("unset");
-          // What `promise` settles to, or "pending" if it has not within a few turns of the event loop.
-          const pendingAfterAFewTurns = async () => {
-            for (let turn = 0; turn < 5; turn++) await new Promise<void>(resolve => setImmediate(resolve));
-            return "pending";
+          // What a disposed graph's import() has settled to ("pending": nothing) is read once a live graph's import()
+          // of the same module, started after it, has completed.
+          const watch = (promise: Promise<unknown>) => {
+            const watched = { state: "pending" };
+            promise.then(
+              () => (watched.state = "fulfilled"),
+              e => (watched.state = errorName(e)),
+            );
+            return watched;
           };
+          const watchedOfDisposed: ({ state: string } | undefined)[] = new Array(K).fill(undefined);
           const settle = async (i: number) => {
             if (disposed(i)) {
-              results[i] = await Promise.race([
-                mods[i].dyn().then(() => "fulfilled", errorName),
-                pendingAfterAFewTurns(),
-              ]);
+              watchedOfDisposed[i] = watch(mods[i].dyn());
               return;
             }
             try {
@@ -260,18 +263,24 @@ describe("ModuleGraph matrix: dynamic import() site × target × ordering", () =
 
           // a second dyn() in each instance: same namespace as the first, no new evaluation
           const skipped = (i: number) => ordering === "onlySomeRun" && i === 1;
-          const repeat = await Promise.all(
+          const repeatOfDisposed = mods.map((m: any, i: number) => (disposed(i) ? watch(m.dyn()) : undefined));
+          const repeat: unknown[] = await Promise.all(
             mods.map((m: any, i: number) =>
               skipped(i)
                 ? "skipped"
                 : disposed(i)
-                  ? Promise.race([m.dyn().then(() => "fulfilled", errorName), pendingAfterAFewTurns()])
+                  ? undefined
                   : m.dyn().then(
                       (ns: any) => (ns && ns.__rejected ? `rejected:${ns.__rejected}` : ns === namespaces[i]),
                       (e: unknown) => `rejected:${errorName(e)}`,
                     ),
             ),
           );
+          for (let i = 0; i < K; i++) {
+            if (!disposed(i)) continue;
+            results[i] = watchedOfDisposed[i]!.state;
+            repeat[i] = repeatOfDisposed[i]!.state;
+          }
 
           // cross-instance identity and state isolation of the dynamically imported module
           const live = namespaces.filter(Boolean);

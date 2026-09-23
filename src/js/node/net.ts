@@ -32,6 +32,7 @@ const {
   ConnResetException,
   NodeAggregateError,
   ErrnoException,
+  guardCallback,
   hasObserver,
   startPerf,
   stopPerf,
@@ -264,6 +265,7 @@ const upgradeDuplexToTLS = $newRustFunction("runtime/socket/socket.rs", "jsUpgra
 const upgradeTLSDeferred = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeTLSDeferred", 2);
 const isNamedPipeSocket = $newRustFunction("runtime/socket/socket.rs", "jsIsNamedPipeSocket", 1);
 const getBufferedAmount = $newRustFunction("runtime/socket/socket.rs", "jsGetBufferedAmount", 1);
+const abortFileSink = $newRustFunction("runtime/webcore/FileSink.rs", "jsAbort", 1);
 
 const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
@@ -286,6 +288,8 @@ const kSetNoDelay = Symbol("kSetNoDelay");
 const kSetTOS = Symbol("kSetTOS");
 const kSetKeepAlive = Symbol("kSetKeepAlive");
 const kSyncWriteFd = Symbol("kSyncWriteFd");
+const kSyncWriteSink = Symbol("kSyncWriteSink");
+const kSyncWriteCallback = Symbol("kSyncWriteCallback");
 const kSetKeepAliveInitialDelay = Symbol("kSetKeepAliveInitialDelay");
 const kConnectOptions = Symbol("connect-options");
 const kAttach = Symbol("kAttach");
@@ -391,6 +395,9 @@ function endNT(socket, callback, err) {
 }
 function emitCloseNT(self, hasError) {
   self.emit("close", hasError);
+}
+function cancelWriteNT(callback, outcome) {
+  callback(outcome === true ? new ErrnoException(uv().UV_ECANCELED, "write") : outcome);
 }
 // Shared-fd TLS pair teardown: mirrors node's close ordering, where the
 // close-callbacks phase runs after the check phase (lib/net.js close path in
@@ -2349,12 +2356,27 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   // libuv handle here). Leave stdio fds 0-2 open: process.stdout/stderr and
   // other wrappers share them, matching SyncWriteStream's autoClose gate.
   const syncFd = this[kSyncWriteFd];
+  let canceledWrite;
+  let canceledOutcome = true;
   if (syncFd !== undefined) {
     this[kSyncWriteFd] = undefined;
     // Drop the instance overrides so a later connect() on this (reusable)
     // socket goes through the fresh handle's normal write path.
     delete this._write;
     delete this._writev;
+    const sink = this[kSyncWriteSink];
+    if (sink !== undefined) {
+      this[kSyncWriteSink] = undefined;
+      canceledWrite = this[kSyncWriteCallback];
+      this[kSyncWriteCallback] = undefined;
+      try {
+        // `true`: the queued tail was dropped, as libuv cancels a queued write request. Else how the finished write ended.
+        if (canceledWrite !== undefined) canceledOutcome = abortFileSink(sink);
+        else sink.end();
+      } catch (e) {
+        err ||= e;
+      }
+    }
     if (syncFd > 2) {
       try {
         require("node:fs").closeSync(syncFd);
@@ -2409,8 +2431,11 @@ Socket.prototype._destroy = function _destroy(err, callback) {
       this._sockname = null;
     }
     callback(err);
+    if (canceledWrite !== undefined) process.nextTick(cancelWriteNT, canceledWrite, canceledOutcome);
   } else {
     callback(err);
+    // Node's order: 'error', then the canceled write's callback, then 'close'.
+    if (canceledWrite !== undefined) process.nextTick(cancelWriteNT, canceledWrite, canceledOutcome);
     process.nextTick(emitCloseNT, this, err ? true : false);
   }
 
@@ -2714,41 +2739,114 @@ function fdSyncWrite(chunk, encoding, callback) {
   const fs = require("node:fs");
   // node's _writeGeneric restarts the idle timer on every write.
   this._unrefTimer();
+  let buf;
+  let offset = 0;
   try {
-    const buf = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
-    let offset = 0;
+    buf = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
     while (offset < buf.length) {
       offset += fs.writeSync(this[kSyncWriteFd], buf, offset);
     }
-    // No native handle on this path, so feed bytesWritten/_bytesDispatched
-    // directly (node accounts these via the libuv handle).
-    this[kBytesWritten] = (this[kBytesWritten] || 0) + offset;
-    callback();
   } catch (err) {
-    callback(err);
+    fdWriteFailed(this, err, callback, offset, buf, offset);
+    return;
   }
+  // No native handle on this path, so account bytesWritten/_bytesDispatched here.
+  this[kBytesWritten] = (this[kBytesWritten] || 0) + offset;
+  callback();
 }
 
 function fdSyncWritev(data, callback) {
   const fs = require("node:fs");
   this._unrefTimer();
+  let total = 0;
+  let i = 0;
+  let buf;
+  let offset = 0;
   try {
-    let total = 0;
-    for (let i = 0; i < data.length; i++) {
+    for (; i < data.length; i++) {
       const { chunk, encoding } = data[i];
-      const buf = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
-      let offset = 0;
+      buf = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
+      offset = 0;
       while (offset < buf.length) {
         offset += fs.writeSync(this[kSyncWriteFd], buf, offset);
       }
       total += offset;
     }
-    // See fdSyncWrite: no native handle to account these on.
-    this[kBytesWritten] = (this[kBytesWritten] || 0) + total;
-    callback();
   } catch (err) {
-    callback(err);
+    fdWriteFailed(this, err, callback, total + offset, buf, offset, data, i + 1);
+    return;
   }
+  // See fdSyncWrite: no native handle to account these on.
+  this[kBytesWritten] = (this[kBytesWritten] || 0) + total;
+  callback();
+}
+
+// write(2) threw after `written` bytes, at `offset` in `buf`; `data` from `next` on is the rest of a writev batch.
+function fdWriteFailed(self, err, callback, written, buf, offset, data?, next = 0) {
+  if (process.platform === "win32" || err?.code !== "EAGAIN") {
+    callback(err);
+    return;
+  }
+  // Full O_NONBLOCK pipe: a FileSink polls the fd and drains the rest, as node's pipe handle does.
+  let rest;
+  let result;
+  try {
+    let sink = self[kSyncWriteSink];
+    if (sink === undefined) {
+      const fd = self[kSyncWriteFd];
+      const stats = require("node:fs").fstatSync(fd);
+      // A FileSink can wait on a FIFO, a socket or a tty (which it makes blocking), not on another character device.
+      if (!stats.isFIFO() && !stats.isSocket() && !require("node:tty").isatty(fd)) {
+        callback(err);
+        return;
+      }
+      sink = self[kSyncWriteSink] = Bun.file(fd).writer();
+    }
+    rest = offset === 0 ? buf : buf.subarray(offset);
+    const count = data === undefined ? 0 : data.length;
+    if (next < count) {
+      const bufs = $newArrayWithSize(count - next + 1);
+      bufs[0] = rest;
+      for (let i = next; i < count; i++) {
+        const { chunk, encoding } = data[i];
+        bufs[i - next + 1] = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
+      }
+      rest = Buffer.concat(bufs);
+    }
+    // Node counts a write when it is dispatched to the handle, whether it completes or fails.
+    self[kBytesWritten] = (self[kBytesWritten] || 0) + written + rest.length;
+    result = sink.write(rest);
+    // The sink only buffers a short chunk; push it to the fd now.
+    if (!$isPromise(result)) result = sink.flush();
+  } catch (e) {
+    callback(e);
+    return;
+  }
+  if (!$isPromise(result)) {
+    callback();
+    return;
+  }
+  if (!$isPromisePending(result)) {
+    // The sink's own write(2) failed at once: nothing is queued, so destroy() has nothing to cancel.
+    const guarded = guardCallback(callback);
+    result.$then(() => guarded(), guarded);
+    return;
+  }
+  // The callback runs once every byte reached the fd, like a libuv write request.
+  self[kSyncWriteCallback] = callback;
+  result.$then(
+    () => settleSinkWrite(self),
+    e => settleSinkWrite(self, e),
+  );
+}
+
+function settleSinkWrite(self, err?) {
+  const callback = self[kSyncWriteCallback];
+  // destroy() took it to settle it with ECANCELED.
+  if (callback === undefined) return;
+  self[kSyncWriteCallback] = undefined;
+  // This runs in a promise reaction: a throw from a write callback or a 'drain' listener is an uncaught exception.
+  guardCallback(callback)(err);
 }
 
 Socket.prototype.resetAndDestroy = function resetAndDestroy() {

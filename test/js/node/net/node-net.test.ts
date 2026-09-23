@@ -1,6 +1,6 @@
 import { Socket as _BunSocket, TCPSocketListener } from "bun";
 import { heapStats } from "bun:jsc";
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import {
   bunEnv,
   bunExe,
@@ -10,6 +10,7 @@ import {
   isASAN,
   isDebug,
   isWindows,
+  nodeExe,
   tempDir,
   tls as tlsCert,
   tmpdirSync,
@@ -1508,6 +1509,471 @@ describe("Socket fd adoption", () => {
       stdout: "now\nlate\n",
       report: { events: [], destroyed: false, cb: null },
       exitCode: 0,
+    });
+  });
+
+  // An adopted fd can be O_NONBLOCK (a FIFO or pipe opened that way). A full
+  // kernel buffer then makes write(2) fail with EAGAIN. Node's pipe handle
+  // polls and writes the rest, so EAGAIN is never an error and no byte is lost.
+  it.skipIf(isWindows)("queues the rest of a write when a non-blocking fd reports EAGAIN", async () => {
+    using dir = tempDir("net-fd-eagain", {});
+    const fifo = join(String(dir), "adopted.fifo");
+    execFileSync("mkfifo", [fifo]);
+    const { O_RDONLY, O_WRONLY, O_NONBLOCK } = fs.constants;
+    const rfd = fs.openSync(fifo, O_RDONLY | O_NONBLOCK);
+    try {
+      const wfd = fs.openSync(fifo, O_WRONLY | O_NONBLOCK);
+      // The stream the reader must see. The 251-byte period lines up with no
+      // buffer size, so a lost, repeated or reordered piece shows below.
+      const expected = Buffer.alloc(1024 * 1024, Buffer.from(Array.from({ length: 251 }, (_, i) => i)));
+      const piece = (from: number, to: number) => expected.subarray(from, to);
+      const socket = new Socket({ fd: wfd, readable: false, writable: true });
+      const events: string[] = [];
+      const cb = (name: string) => (err?: Error | null) =>
+        events.push(`${name}:${err ? (err as NodeJS.ErrnoException).code : "ok"}`);
+      socket.on("error", err => events.push(`error:${(err as NodeJS.ErrnoException).code}`));
+      const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+
+      // Fill the pipe by hand first, so that even a 10-byte write finds no
+      // room: that tail is short enough for the sink to only buffer it, and
+      // nothing may overtake it.
+      let filled = 0;
+      for (const step of [4096, 1]) {
+        try {
+          for (;;) filled += fs.writeSync(wfd, expected, filled, step);
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException).code !== "EAGAIN") throw e;
+        }
+      }
+      events.push(`write(short)=${socket.write(piece(filled, filled + 10), cb("short"))}`);
+
+      // Every later step is larger than a pipe buffer (64 KiB on Linux and
+      // macOS), so each one hits EAGAIN whatever the reader below has taken by
+      // then: a single write, then a batch (the chunks below wait behind the
+      // writes before them and go out through one _writev) that runs out of
+      // room inside a chunk, then a write after the queue drained.
+      events.push(`write(single)=${socket.write(piece(filled + 10, 300_000), cb("single"))}`);
+      socket.write(piece(300_000, 310_000).toString("latin1"), "latin1", cb("batch string"));
+      socket.write(piece(310_000, 410_000), cb("batch 100 KB"));
+      socket.write(piece(410_000, 410_003), cb("batch 3 B"));
+      socket.write(piece(410_003, 700_000), err => {
+        cb("batch 290 KB")(err);
+        socket.write(piece(700_000, 700_010), cb("small after drain"));
+        socket.end(piece(700_010, expected.length), cb("end"));
+      });
+
+      // Drain the read end once per loop turn until EOF, which arrives when
+      // the socket has closed the write end after its last byte.
+      const received = await new Promise<{ total: number; intact: boolean }>((resolve, reject) => {
+        const chunk = Buffer.alloc(64 * 1024);
+        let total = 0;
+        let intact = true;
+        const pump = () => {
+          try {
+            for (;;) {
+              const n = fs.readSync(rfd, chunk);
+              if (n === 0) return resolve({ total, intact });
+              if (!chunk.subarray(0, n).equals(expected.subarray(total, total + n))) intact = false;
+              total += n;
+            }
+          } catch (e) {
+            if ((e as NodeJS.ErrnoException).code !== "EAGAIN") return reject(e);
+          }
+          setImmediate(pump);
+        };
+        pump();
+      });
+      await closed;
+
+      expect(events).toEqual([
+        // The return value follows the high-water mark, not completion.
+        "write(short)=true",
+        "write(single)=false",
+        "short:ok",
+        "single:ok",
+        "batch string:ok",
+        "batch 100 KB:ok",
+        "batch 3 B:ok",
+        "batch 290 KB:ok",
+        "small after drain:ok",
+        "end:ok",
+      ]);
+      expect(received).toEqual({ total: expected.length, intact: true });
+      expect(socket.bytesWritten).toBe(expected.length - filled);
+    } finally {
+      fs.closeSync(rfd);
+    }
+  });
+
+  // The reader goes away while the sink still holds the tail. The sink's next
+  // write(2) fails, and the error reaches the write it belongs to.
+  it.skipIf(isWindows)("fails a queued write with EPIPE when the reader closes", async () => {
+    using dir = tempDir("net-fd-epipe", {});
+    const fifo = join(String(dir), "adopted.fifo");
+    execFileSync("mkfifo", [fifo]);
+    const { O_RDONLY, O_WRONLY, O_NONBLOCK } = fs.constants;
+    const rfd = fs.openSync(fifo, O_RDONLY | O_NONBLOCK);
+    const wfd = fs.openSync(fifo, O_WRONLY | O_NONBLOCK);
+    const socket = new Socket({ fd: wfd, readable: false, writable: true });
+    const events: string[] = [];
+    const cb = (name: string) => (err?: Error | null) =>
+      events.push(`${name}:${err ? (err as NodeJS.ErrnoException).code : "ok"}`);
+    socket.on("error", err => events.push(`error:${(err as NodeJS.ErrnoException).code}`));
+    const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+    events.push(`write()=${socket.write(Buffer.alloc(512 * 1024, "x"), cb("queued"))}`);
+    socket.write("waits behind it", cb("behind"));
+    fs.closeSync(rfd);
+    await closed;
+    expect(events).toEqual(["write()=false", "queued:EPIPE", "behind:EPIPE", "error:EPIPE"]);
+  });
+
+  // The sink gets the queued tail out (its end-of-tick flush, once the reader
+  // made room) before destroy() runs, with its promise still unsettled. That
+  // write is done, not canceled.
+  it.skipIf(isWindows)("destroy() reports a queued write that already reached the pipe as done", async () => {
+    using dir = tempDir("net-fd-drained", {});
+    const fifo = join(String(dir), "adopted.fifo");
+    execFileSync("mkfifo", [fifo]);
+    const { O_RDONLY, O_WRONLY, O_NONBLOCK } = fs.constants;
+    const rfd = fs.openSync(fifo, O_RDONLY | O_NONBLOCK);
+    try {
+      const wfd = fs.openSync(fifo, O_WRONLY | O_NONBLOCK);
+      let filled = 0;
+      for (const step of [4096, 1]) {
+        try {
+          for (;;) filled += fs.writeSync(wfd, Buffer.alloc(step, "f"));
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException).code !== "EAGAIN") throw e;
+        }
+      }
+      let received = "";
+      // Takes what the pipe holds now; true at EOF.
+      const drain = () => {
+        const chunk = Buffer.alloc(64 * 1024);
+        try {
+          for (;;) {
+            const n = fs.readSync(rfd, chunk);
+            if (n === 0) return true;
+            received += chunk.toString("latin1", 0, n);
+          }
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException).code !== "EAGAIN") throw e;
+        }
+        return false;
+      };
+
+      const socket = new Socket({ fd: wfd, readable: false, writable: true });
+      const events: string[] = [];
+      socket.on("error", err => events.push(`error:${(err as NodeJS.ErrnoException).code}`));
+      const closed = new Promise<void>(resolve => socket.on("close", () => (events.push("close"), resolve())));
+      socket.write("0123456789", err => events.push(`cb:${err ? (err as NodeJS.ErrnoException).code : "ok"}`));
+      // Two callbacks of one event-loop batch: the reader makes room, then the socket is destroyed.
+      setImmediate(drain);
+      setImmediate(() => socket.destroy());
+      await closed;
+      while (!drain()) await new Promise(resolve => setImmediate(resolve));
+
+      expect({ tail: received.slice(filled), events }).toEqual({ tail: "0123456789", events: ["cb:ok", "close"] });
+    } finally {
+      fs.closeSync(rfd);
+    }
+  });
+
+  // The reader goes away between the EAGAIN and the sink's own first write(2).
+  // That write fails at once, so it was never queued: a destroy() in the same
+  // tick has nothing to cancel and must not report it as done either.
+  // A long tail fails in the sink's write(), a short one (which the sink only
+  // buffers) in its flush(). Both count as dispatched, as Node counts them.
+  it.skipIf(isWindows).each([
+    ["long", 100_000],
+    ["short", 10],
+  ])("destroy() does not report a write the sink failed at once as done (%s tail)", async (_, size) => {
+    using dir = tempDir("net-fd-failed-at-once", {});
+    const fifo = join(String(dir), "adopted.fifo");
+    execFileSync("mkfifo", [fifo]);
+    const { O_RDONLY, O_WRONLY, O_NONBLOCK } = fs.constants;
+    const rfd = fs.openSync(fifo, O_RDONLY | O_NONBLOCK);
+    const wfd = fs.openSync(fifo, O_WRONLY | O_NONBLOCK);
+    const socket = new Socket({ fd: wfd, readable: false, writable: true });
+    const events: string[] = [];
+    socket.on("error", err => events.push(`error:${(err as NodeJS.ErrnoException).code}`));
+    const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+    // write(2) reports a full pipe, and the reader is gone by the time the sink tries.
+    const writeSync = fs.writeSync;
+    const spy = spyOn(fs, "writeSync").mockImplementation((...args: Parameters<typeof fs.writeSync>) => {
+      if (args[0] !== wfd) return writeSync(...args);
+      fs.closeSync(rfd);
+      throw Object.assign(new Error("EAGAIN: resource temporarily unavailable, write"), { code: "EAGAIN" });
+    });
+    const settled = new Promise<void>(resolve => {
+      socket.write(Buffer.alloc(size, "x"), err => {
+        events.push(`cb:${err ? (err as NodeJS.ErrnoException).code : "ok"}`);
+        resolve();
+      });
+    });
+    try {
+      socket.destroy();
+      await Promise.all([settled, closed]);
+    } finally {
+      spy.mockRestore();
+    }
+    expect({ events, bytesWritten: socket.bytesWritten }).toEqual({ events: ["cb:EPIPE"], bytesWritten: size });
+  });
+
+  // The sink has no poll for a character device that is not a terminal, so a
+  // tail queued there would never drain. Such an fd keeps the EAGAIN error.
+  it.skipIf(isWindows)("reports EAGAIN for a character device that is not a terminal", async () => {
+    const fd = fs.openSync("/dev/null", "w");
+    const socket = new Socket({ fd, readable: false, writable: true });
+    const events: string[] = [];
+    socket.on("error", err => events.push(`error:${(err as NodeJS.ErrnoException).code}`));
+    const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+    // /dev/null takes every write, so report a full buffer in its place.
+    const writeSync = fs.writeSync;
+    const spy = spyOn(fs, "writeSync").mockImplementation((...args: Parameters<typeof fs.writeSync>) => {
+      if (args[0] !== fd) return writeSync(...args);
+      throw Object.assign(new Error("EAGAIN: resource temporarily unavailable, write"), { code: "EAGAIN" });
+    });
+    try {
+      socket.end("x", err => events.push(`cb:${err ? (err as NodeJS.ErrnoException).code : "ok"}`));
+      await closed;
+    } finally {
+      spy.mockRestore();
+    }
+    expect(events).toEqual(["cb:EAGAIN", "error:EAGAIN"]);
+  });
+
+  // The two suites below run one script under bun and, when it is installed,
+  // under Node, and expect the same output. Node 22.0 still called a canceled
+  // write's callback without an error, so only a current Node is a reference.
+  const node = nodeExe();
+  const nodeMajor = node
+    ? parseInt(Bun.spawnSync({ cmd: [node, "-p", "process.versions.node"], env: bunEnv }).stdout.toString(), 10)
+    : 0;
+  const runtimes = [["bun", bunExe()], ...(nodeMajor >= 24 ? [["node", node!]] : [])];
+
+  // A queued write settles from a promise reaction. A throw from the user's
+  // write callback or from a 'drain' listener is still an uncaught exception.
+  describe.skipIf(isWindows)("a throw while a queued write settles is an uncaught exception", () => {
+    const fixture = /* js */ `
+      const fs = require("node:fs");
+      const net = require("node:net");
+      const { O_RDONLY, O_WRONLY, O_NONBLOCK } = fs.constants;
+      const rfd = fs.openSync(process.env.FIFO, O_RDONLY | O_NONBLOCK);
+      const wfd = fs.openSync(process.env.FIFO, O_WRONLY | O_NONBLOCK);
+      for (const name of ["uncaughtException", "unhandledRejection"]) {
+        process.on(name, err => {
+          console.log(name + ": " + err.message);
+          process.exit(0);
+        });
+      }
+      const socket = new net.Socket({ fd: wfd, readable: false, writable: true });
+      if (process.env.THROW_FROM === "drain") {
+        socket.on("drain", () => {
+          throw new Error("thrown from a 'drain' listener");
+        });
+      }
+      // Larger than a pipe buffer: the tail is queued until the reader below takes it.
+      socket.write(Buffer.alloc(512 * 1024, "x"), () => {
+        if (process.env.THROW_FROM === "callback") throw new Error("thrown from the write callback");
+      });
+      const chunk = Buffer.alloc(64 * 1024);
+      (function pump() {
+        try {
+          while (fs.readSync(rfd, chunk) > 0);
+        } catch (e) {
+          if (e.code !== "EAGAIN") throw e;
+        }
+        setImmediate(pump);
+      })();
+    `;
+
+    describe.each(runtimes)("%s", (_, exe) => {
+      it.concurrent.each([
+        ["callback", "thrown from the write callback"],
+        ["drain", "thrown from a 'drain' listener"],
+      ])("from the %s", async (from, message) => {
+        using dir = tempDir("net-fd-throw", {});
+        const fifo = join(String(dir), "fifo");
+        execFileSync("mkfifo", [fifo]);
+        await using proc = Bun.spawn({
+          cmd: [exe, "-e", fixture],
+          env: { ...bunEnv, FIFO: fifo, THROW_FROM: from },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({
+          stdout: `uncaughtException: ${message}\n`,
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+    });
+  });
+
+  // destroy() while a write is still queued behind a full pipe. libuv cancels
+  // the queued request when the handle closes: its callback gets ECANCELED
+  // after 'error' and before 'close', the queued bytes are dropped and the fd
+  // is released.
+  describe.skipIf(isWindows)("destroy() cancels a write that is still queued", () => {
+    const fixture = /* js */ `
+      const fs = require("node:fs");
+      const net = require("node:net");
+      const { O_RDONLY, O_WRONLY, O_NONBLOCK } = fs.constants;
+      const rfd = fs.openSync(process.env.FIFO, O_RDONLY | O_NONBLOCK);
+      const wfd = fs.openSync(process.env.FIFO, O_WRONLY | O_NONBLOCK);
+      // Larger than a pipe buffer: the tail of a write stays queued until something reads.
+      // The 251-byte period lines up with no buffer size, so a foreign or reordered byte shows.
+      const payload = Buffer.alloc(512 * 1024, Buffer.from(Array.from({ length: 251 }, (_, i) => i)));
+      // At most two payloads are written. What reaches the pipe must be a prefix of them.
+      const expected = Buffer.concat([payload, payload]);
+      const chunk = Buffer.alloc(64 * 1024);
+      const events = [];
+      let dispatched = 0;
+      let delivered = 0;
+      let prefixIntact = true;
+      let eof = false;
+      let writeError;
+
+      // Takes what the pipe holds now. EOF means that every write end is closed.
+      function drain() {
+        try {
+          for (;;) {
+            const n = fs.readSync(rfd, chunk);
+            if (n === 0) return void (eof = true);
+            if (!chunk.subarray(0, n).equals(expected.subarray(delivered, delivered + n))) prefixIntact = false;
+            delivered += n;
+          }
+        } catch (e) {
+          if (e.code !== "EAGAIN") throw e;
+        }
+      }
+
+      const socket = new net.Socket({ fd: wfd, readable: false, writable: true });
+      socket.on("error", err => events.push("error:" + err.message));
+
+      function writeThenDestroy() {
+        dispatched += payload.length;
+        const returned = socket.write(payload, err => {
+          writeError = err;
+          events.push("cb1:" + (err ? err.message : "ok"));
+        });
+        events.push("write()=" + returned);
+        socket.write("queued behind it", err => events.push("cb2:" + (err ? err.message : "ok")));
+        socket.destroy(process.env.DESTROY_ERROR ? new Error(process.env.DESTROY_ERROR) : undefined);
+        events.push("destroy() returned");
+      }
+
+      if (process.env.FROM_WRITE_CALLBACK) {
+        // An earlier write drains first. Its callback runs inside that drain.
+        let draining = true;
+        dispatched += payload.length;
+        socket.write(payload, err => {
+          events.push("cb0:" + (err ? err.message : "ok"));
+          draining = false;
+          writeThenDestroy();
+        });
+        (function pump() {
+          drain();
+          if (draining) setImmediate(pump);
+        })();
+      } else {
+        writeThenDestroy();
+      }
+
+      socket.on("close", hadError => {
+        events.push("close:" + hadError);
+        (function pump() {
+          drain();
+          if (!eof) return setImmediate(pump);
+          console.log(JSON.stringify({
+            events,
+            writeError: { message: writeError.message, code: writeError.code, syscall: writeError.syscall },
+            errored: socket.errored.message,
+            bytesWritten: socket.bytesWritten === dispatched,
+            tailDropped: delivered > 0 && delivered < dispatched,
+            prefixIntact,
+          }));
+        })();
+      });
+    `;
+
+    describe.each(runtimes)("%s", (_, exe) => {
+      async function run(env: Record<string, string>) {
+        using dir = tempDir("net-fd-cancel", {});
+        const fifo = join(String(dir), "fifo");
+        execFileSync("mkfifo", [fifo]);
+        await using proc = Bun.spawn({
+          cmd: [exe, "-e", fixture],
+          env: { ...bunEnv, FIFO: fifo, ...env },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { report: stdout.trim() ? JSON.parse(stdout) : stdout, stderr, exitCode };
+      }
+      const canceled = {
+        writeError: { message: "write ECANCELED", code: "ECANCELED", syscall: "write" },
+        errored: "write ECANCELED",
+        bytesWritten: true,
+        tailDropped: true,
+        prefixIntact: true,
+      };
+
+      it.concurrent("destroy()", async () => {
+        expect(await run({})).toEqual({
+          report: {
+            events: [
+              "write()=false",
+              "destroy() returned",
+              "cb1:write ECANCELED",
+              "cb2:write ECANCELED",
+              "close:false",
+            ],
+            ...canceled,
+          },
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+
+      it.concurrent("destroy(err)", async () => {
+        expect(await run({ DESTROY_ERROR: "boom" })).toEqual({
+          report: {
+            events: [
+              "write()=false",
+              "destroy() returned",
+              "error:boom",
+              "cb1:write ECANCELED",
+              "cb2:boom",
+              "close:true",
+            ],
+            ...canceled,
+            errored: "boom",
+          },
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+
+      it.concurrent("destroy() from the callback of the write before it", async () => {
+        expect(await run({ FROM_WRITE_CALLBACK: "1" })).toEqual({
+          report: {
+            events: [
+              "cb0:ok",
+              "write()=false",
+              "destroy() returned",
+              "cb1:write ECANCELED",
+              "cb2:write ECANCELED",
+              "close:false",
+            ],
+            ...canceled,
+          },
+          stderr: "",
+          exitCode: 0,
+        });
+      });
     });
   });
 

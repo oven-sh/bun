@@ -38,7 +38,7 @@ pub struct InputPathSet {
 }
 
 impl InputPathSet {
-    /// Every `file:` namespace input of the parse graph that was read from disk.
+    /// Every `file:` namespace input of the parse graph that is on disk. An in-memory file can shadow one.
     pub(crate) fn from_graph(
         graph: &crate::Graph::Graph<'_>,
         in_memory_files: Option<&crate::bundle_v2::FileMap>,
@@ -51,7 +51,10 @@ impl InputPathSet {
                 .map(|source| &source.path)
                 .filter(|path| path.namespace == b"file")
                 .map(|path| path.text)
-                .filter(|path| !in_memory_files.is_some_and(|files| files.contains(path))),
+                .filter(|path| {
+                    !in_memory_files.is_some_and(|files| files.contains(path))
+                        || bun_sys::exists(path)
+                }),
         )
     }
 

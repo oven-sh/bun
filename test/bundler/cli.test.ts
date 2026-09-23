@@ -1355,6 +1355,37 @@ describe.concurrent("bun build refuses to write an output over an input", () => 
     expect(exitCode).toBe(0);
   });
 
+  test("Bun.build refuses an output at the path of an on-disk file that an in-memory file shadows", async () => {
+    using dir = tempDir("build-api-in-memory-shadow", {
+      "entry.js": `console.log("ON DISK");\n`,
+      "run.js": `
+        const entry = require("node:path").join(process.cwd(), "entry.js");
+        const result = await Bun.build({
+          entrypoints: [entry],
+          files: { [entry]: 'console.log("virtual");' },
+          outdir: ".",
+          throw: false,
+        });
+        console.log(JSON.stringify({ success: result.success, logs: result.logs.map(l => l.message) }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual({
+      success: false,
+      logs: [expect.stringContaining('Refusing to overwrite input file "entry.js"')],
+    });
+    expect(await Bun.file(path.join(String(dir), "entry.js")).text()).toBe(`console.log("ON DISK");\n`);
+    expect(exitCode).toBe(0);
+  });
+
   test.skipIf(isWindows)("--compile with a --metafile that is a symlink to an embedded --asset file", async () => {
     using dir = tempDir("build-overwrite-compile-asset-metafile-link", {
       "app.js": `console.log("APP");\n`,

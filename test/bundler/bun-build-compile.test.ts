@@ -54,7 +54,7 @@ describe("Bun.build compile", () => {
     async () => {
       const body = Array.from(
         { length: 24 },
-        (_, j) => `s = (s * ${j + 3} + a) ^ (b + ${j}); if (s & ${1 << (j % 20)}) s = s - ${j} | 0; o.p${j} = s;`,
+        (_, j) => `s = (s * ${j + 3} + a) ^ (b + ${j}); if (s & ${1 << j % 20}) s = s - ${j} | 0; o.p${j} = s;`,
       ).join(" ");
       const functions = Array.from(
         { length: 4000 },

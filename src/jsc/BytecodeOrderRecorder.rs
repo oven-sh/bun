@@ -8,8 +8,6 @@
 use crate::virtual_machine::VirtualMachine;
 use crate::vm::VM;
 
-bun_core::declare_scope!(BytecodeOrder, hidden);
-
 unsafe extern "C" {
     fn Bun__BytecodeOrder__enableRecording(vm: *mut VM);
     fn Bun__BytecodeOrder__setLinkedPayload(
@@ -125,11 +123,10 @@ fn write_digests(vm: &VirtualMachine, graph: &'static dyn bun_resolver::Standalo
     });
     lines.sort();
     if let Err(err) = write_replacing(path, lines.concat().as_bytes()) {
-        bun_core::scoped_log!(
-            BytecodeOrder,
-            "cannot write {}: {}",
-            bstr::BStr::new(path),
-            err
+        bun_core::Output::err(
+            err,
+            "failed to write the bytecode digests to <b>{}<r>",
+            (bstr::BStr::new(path),),
         );
     }
 }
@@ -230,17 +227,17 @@ fn write_order_file(vm: &VirtualMachine, graph: &'static dyn bun_resolver::Stand
     unsafe { Bun__BytecodeOrderFile__finish(file, (&raw mut text).cast(), append) };
 
     if let Err(err) = write_replacing(path, &text) {
-        bun_core::scoped_log!(
-            BytecodeOrder,
-            "cannot write {}: {}",
-            bstr::BStr::new(path),
-            err
+        bun_core::Output::err(
+            err,
+            "failed to write the bytecode order file <b>{}<r>",
+            (bstr::BStr::new(path),),
         );
     }
 }
 
 /// Writes a new file (0600, exclusive, unpredictable name) next to `path` and renames it over `path`, so a reader never
-/// sees part of one and nothing that already exists at either name is written through. `%p` in `path` is the pid.
+/// sees part of one and nothing that already exists at either name is written through. A directory at `path` stays
+/// (`EISDIR`). `%p` in `path` is the pid.
 fn write_replacing(path: &[u8], text: &[u8]) -> bun_sys::Maybe<()> {
     let pid = std::process::id();
     let mut final_path = Vec::with_capacity(path.len() + 8);
@@ -251,15 +248,18 @@ fn write_replacing(path: &[u8], text: &[u8]) -> bun_sys::Maybe<()> {
         rest = &rest[at + 2..];
     }
     final_path.extend_from_slice(rest);
-    let (dir, name) = match final_path
-        .iter()
-        .rposition(|&b| bun_paths::is_sep_native(b))
+    // The name of a directory, not of a file in one (`basename` would drop the separator).
+    if final_path
+        .last()
+        .is_some_and(|&last| bun_paths::is_sep_native(last))
     {
-        Some(at) => (&final_path[..=at], &final_path[at + 1..]),
-        None => (&b"."[..], &final_path[..]),
-    };
-    let dir = bun_core::ZBox::from_bytes(dir);
-    let name = bun_core::ZBox::from_bytes(name);
+        return Err(bun_sys::Error::from_code(
+            bun_sys::E::EISDIR,
+            bun_sys::Tag::open,
+        ));
+    }
+    let dir = bun_core::ZBox::from_bytes(bun_paths::dirname(&final_path).unwrap_or(b"."));
+    let name = bun_core::ZBox::from_bytes(bun_paths::basename(&final_path));
     let dir_fd = bun_sys::openat(
         bun_core::Fd::cwd(),
         &dir,
@@ -272,11 +272,12 @@ fn write_replacing(path: &[u8], text: &[u8]) -> bun_sys::Maybe<()> {
     let tmpname: &bun_core::ZStr =
         bun_resolver::fs::FileSystem::tmpname(b".order", &mut tmpname_buf[..], u64::from(pid))
             .map_err(|_| bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open))?;
-    let mut tmpfile = bun_sys::Tmpfile::create_with_mode(dir_fd, tmpname, 0o600)?;
+    let tmpfile = bun_sys::Tmpfile::create_with_mode(dir_fd, tmpname, 0o600)?;
     let _close = bun_sys::CloseOnDrop::new(tmpfile.fd);
-    // ManuallyDrop: the fd is owned by `_close` above.
-    let file = core::mem::ManuallyDrop::new(bun_sys::File::from_fd(tmpfile.fd));
-    let result = file.write_all(text).and_then(|()| tmpfile.finish(&name));
+    // Not `Tmpfile::finish`: that removes an empty directory that is in the way.
+    let result = bun_sys::File::borrow(&tmpfile.fd)
+        .write_all(text)
+        .and_then(|()| bun_sys::renameat(dir_fd, tmpname, dir_fd, &name));
     if result.is_err() {
         let _ = bun_sys::unlinkat(dir_fd, tmpname);
     }

@@ -449,29 +449,35 @@ pub(crate) mod js_bundler {
                 this.autoload_package_json = autoload_package_json;
             }
 
-            if let Some(bytecode_order) = object.get_truthy(global_this, "bytecodeOrder")? {
-                if bytecode_order.is_string() {
-                    let slice = bytecode_order.to_utf8(global_this)?;
+            // `false` is "no order file", as in `compile: { bytecodeOrder: haveProfile && path }`.
+            if let Some(bytecode_order) = object.get(global_this, "bytecodeOrder")?
+                && !bytecode_order.is_undefined_or_null()
+                && bytecode_order != JSValue::FALSE
+            {
+                let mut push = |path: JSValue| -> JsResult<()> {
+                    if !path.is_string() {
+                        return Err(global_this.throw_invalid_property_type_value(
+                            b"compile.bytecodeOrder",
+                            b"string or array of strings",
+                            bytecode_order,
+                        ));
+                    }
+                    let slice = path.to_utf8(global_this)?;
+                    if slice.slice().is_empty() {
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "compile.bytecodeOrder must not contain an empty path"
+                        )));
+                    }
                     this.bytecode_order.push(Box::from(slice.slice()));
-                } else if bytecode_order.js_type().is_array() {
+                    Ok(())
+                };
+                if bytecode_order.js_type().is_array() {
                     let mut iter = bytecode_order.array_iterator(global_this)?;
                     while let Some(path) = iter.next()? {
-                        if !path.is_string() {
-                            return Err(global_this.throw_invalid_property_type_value(
-                                b"compile.bytecodeOrder",
-                                b"string or array of strings",
-                                bytecode_order,
-                            ));
-                        }
-                        let slice = path.to_utf8(global_this)?;
-                        this.bytecode_order.push(Box::from(slice.slice()));
+                        push(path)?;
                     }
                 } else {
-                    return Err(global_this.throw_invalid_property_type_value(
-                        b"compile.bytecodeOrder",
-                        b"string or array of strings",
-                        bytecode_order,
-                    ));
+                    push(bytecode_order)?;
                 }
             }
 

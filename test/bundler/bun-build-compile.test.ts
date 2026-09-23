@@ -5,13 +5,14 @@ import {
   closeSync,
   cpSync,
   existsSync,
+  mkdirSync,
   openSync,
   readdirSync,
   readFileSync,
   readSync,
   statSync,
 } from "node:fs";
-import { join } from "path";
+import { join, sep } from "path";
 
 describe("Bun.build compile", () => {
   test("compile with current platform target string", async () => {
@@ -332,7 +333,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
     );
 
     test.concurrent(
-      "compile.bytecodeOrder, BUN_BYTECODE_ORDER_FILE and several files",
+      "compile.bytecodeOrder",
       async () => {
         const { plain } = await setup();
         const viaApi = await Bun.build({
@@ -346,7 +347,14 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
         expect(viaApi.success).toBe(true);
         expect(hasLinkedPayload(exe("api"))).toBe(true);
         expect(await run(exe("api"), recordedArgv)).toEqual(plain);
+      },
+      60_000,
+    );
 
+    test.concurrent(
+      "BUN_BYTECODE_ORDER_FILE and several files",
+      async () => {
+        const { plain } = await setup();
         // A second profile (another way of starting the program); merged, the same files in the same order give the same executable.
         expect(
           (await run(exe("plain"), ["f", "rev"], { BUN_BYTECODE_ORDER_OUT: join(cwd(), "other.order") })).exitCode,
@@ -732,6 +740,28 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
             compile: { outfile: join(cwd(), exe("rejected")), bytecodeOrder: "plain.order" },
           }),
         ).toThrow("compile.bytecodeOrder requires bytecode: true");
+        // An empty path names no file: the API says so, the command line's list just has nothing between two commas.
+        for (const bytecodeOrder of ["", ["plain.order", ""]]) {
+          expect(() =>
+            Bun.build({
+              entrypoints: [join(cwd(), "app.js")],
+              bytecode: true,
+              compile: { outfile: join(cwd(), exe("rejected")), bytecodeOrder },
+            }),
+          ).toThrow("compile.bytecodeOrder must not contain an empty path");
+        }
+        // `false` is no order file (`haveProfile && path`): the options after it are looked at.
+        expect(() =>
+          Bun.build({
+            entrypoints: [join(cwd(), "app.js")],
+            bytecode: true,
+            compile: { outfile: join(cwd(), exe("rejected")), bytecodeOrder: false, jitPolicy: "8" } as any,
+          }),
+        ).toThrow("compile.jitPolicy");
+        const emptyEntry = await compile(exe("empty-entry"), ["--bytecode-order=,plain.order,,"]);
+        expect(emptyEntry.stderr).not.toContain("bytecode order file");
+        expect(emptyEntry.exitCode).toBe(0);
+        expect(hasLinkedPayload(exe("empty-entry"))).toBe(true);
 
         // Lines that are not hints (unknown kinds, bad or reserved hashes) are skipped: nothing is left, so nothing changes.
         await Bun.write(join(cwd(), "junk.order"), "v1\nX 0123456789abcdef\nF nothex\nF ffffffffffffffff\n\n");
@@ -740,6 +770,96 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
         expect(junk.exitCode).toBe(0);
         expect(hasLinkedPayload(exe("junk"))).toBe(false);
         expect(await run(exe("junk"), recordedArgv)).toEqual(plain);
+      },
+      60_000,
+    );
+
+    // The run is the program's: what goes wrong with the file is said on stderr and changes nothing else, and nothing
+    // that is already at the path is removed, an empty directory included.
+    test.concurrent(
+      "BUN_BYTECODE_ORDER_OUT that cannot be written",
+      async () => {
+        const { plain } = await setup();
+        // Its own directory: the file is written next to where it goes, and other tests record into cwd().
+        const parent = join(cwd(), "unwritable");
+        mkdirSync(parent, { recursive: true });
+        for (const [variable, name] of [
+          ["BUN_BYTECODE_ORDER_OUT", "order-out-dir"],
+          ["BUN_BYTECODE_DIGEST_OUT", "digest-out-dir"],
+        ]) {
+          const directory = join(parent, name);
+          mkdirSync(directory, { recursive: true });
+          // A directory, the name of one that is not there, a file in one that is not there.
+          const outs = [directory, join(parent, "no-such-dir") + sep, join(parent, "no-such-dir", "out.order")];
+          for (const out of outs) {
+            await using proc = Bun.spawn({
+              cmd: [join(cwd(), exe("plain")), ...recordedArgv],
+              env: { ...bunEnv, [variable]: out },
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+            const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+            expect({ stdout, exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
+            expect(stderr).toContain(out);
+            expect(stderr).toMatch(out.endsWith("out.order") ? /ENOENT/ : /EISDIR|EEXIST|ENOTEMPTY|EPERM|EACCES/);
+          }
+          expect(existsSync(directory) && statSync(directory).isDirectory()).toBe(true);
+          expect(readdirSync(directory)).toEqual([]);
+        }
+        expect(readdirSync(parent).sort()).toEqual(["digest-out-dir", "order-out-dir"]);
+      },
+      60_000,
+    );
+
+    // A chunk JSC cannot compile has no bytecode, as without an order file: the build says so and goes on, the other
+    // chunks are laid out, and the module runs from its source.
+    test.concurrent(
+      "a chunk without bytecode",
+      async () => {
+        const { order } = await setup();
+        using broken = tempDir("build-compile-bytecode-order-broken", {
+          "app.js": `
+            import { ok } from "./ok.js";
+            console.log("main", ok());
+            if (process.argv.includes("bad")) {
+              try {
+                const { bad } = await import("./bad.js");
+                console.log(bad("x"));
+              } catch (error) {
+                console.log(error.name);
+              }
+            }
+          `,
+          "ok.js": `export function ok() { return "ok"; }`,
+          // The bundler passes a regular expression through; JSC rejects this one when it compiles the chunk.
+          "bad.js": String.raw`export function bad(s) { return /\p{NotAProperty}/u.test(s); }`,
+          // Another program's, but an order file: the chunks go through the link encoder.
+          "app.order": order,
+        });
+        await using build = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "build",
+            "--compile",
+            "--bytecode",
+            "--splitting",
+            "--format=esm",
+            "app.js",
+            "--bytecode-order=app.order",
+            "--outfile",
+            join(cwd(), exe("broken")),
+          ],
+          env: bunEnv,
+          cwd: String(broken),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+        expect(stderr).toMatch(/Failed to generate bytecode for \S*bad/);
+        expect(exitCode).toBe(0);
+        expect(hasLinkedPayload(exe("broken"))).toBe(true);
+        expect(await run(exe("broken"), [])).toMatchObject({ stdout: "main ok\n", exitCode: 0 });
+        expect(await run(exe("broken"), ["bad"])).toMatchObject({ stdout: "main ok\nSyntaxError\n", exitCode: 0 });
       },
       60_000,
     );

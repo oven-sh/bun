@@ -115,13 +115,6 @@ impl SupportsCondition {
     }
 }
 
-impl crate::generics::CssEql for SupportsCondition {
-    #[inline]
-    fn eql(&self, other: &Self) -> bool {
-        SupportsCondition::eql(self, other)
-    }
-}
-
 impl SupportsCondition {
     fn needs_parens(&self, parent: &SupportsCondition) -> bool {
         match self {
@@ -221,13 +214,6 @@ impl SupportsCondition {
         }
         dest.write_char(b')')?;
         Ok(())
-    }
-}
-
-impl css::generic::ToCss for SupportsCondition {
-    #[inline]
-    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        SupportsCondition::to_css(self, dest)
     }
 }
 

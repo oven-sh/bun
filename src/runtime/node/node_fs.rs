@@ -9,7 +9,6 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::api::bun::process::event_loop_handle_to_ctx;
 use crate::webcore;
-use bun_core::Environment;
 use bun_core::{String as BunString, Utf8WithString, ZStr};
 use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
 use bun_io::KeepAlive;
@@ -31,19 +30,17 @@ use bun_threading::work_pool::{IntrusiveWorkTask as _, Task as WorkPoolTask, Wor
 // as `bun_sys::Maybe<T>`, so this is just the file-local extension trait
 // surface that lets `Maybe::<T>::errno_sys*` / `.get_errno()` resolve.
 // ──────────────────────────────────────────────────────────────────────────
-pub trait MaybeSysResultExt<R>: Sized {
+#[cfg(not(windows))]
+pub(crate) trait MaybeSysResultExt<R>: Sized {
+    #[cfg(not(target_os = "freebsd"))]
     fn get_errno(&self) -> E;
-    #[cfg(not(windows))]
     fn errno_sys<Rc: sys::GetErrno>(rc: Rc, syscall: sys::Tag) -> Option<Self>;
-    #[cfg(not(windows))]
     fn errno_sys_fd<Rc: sys::GetErrno>(rc: Rc, syscall: sys::Tag, fd: FD) -> Option<Self>;
-    #[cfg(not(windows))]
     fn errno_sys_p<Rc: sys::GetErrno>(
         rc: Rc,
         syscall: sys::Tag,
         path: impl AsRef<[u8]>,
     ) -> Option<Self>;
-    #[cfg(not(windows))]
     fn errno_sys_pd<Rc: sys::GetErrno>(
         rc: Rc,
         syscall: sys::Tag,
@@ -51,7 +48,9 @@ pub trait MaybeSysResultExt<R>: Sized {
         dest: impl AsRef<[u8]>,
     ) -> Option<Self>;
 }
+#[cfg(not(windows))]
 impl<R> MaybeSysResultExt<R> for Maybe<R> {
+    #[cfg(not(target_os = "freebsd"))]
     #[inline]
     fn get_errno(&self) -> E {
         match self {
@@ -59,7 +58,6 @@ impl<R> MaybeSysResultExt<R> for Maybe<R> {
             Err(e) => e.get_errno(),
         }
     }
-    #[cfg(not(windows))]
     #[inline]
     fn errno_sys<Rc: sys::GetErrno>(rc: Rc, syscall: sys::Tag) -> Option<Self> {
         match sys::get_errno(rc) {
@@ -71,7 +69,6 @@ impl<R> MaybeSysResultExt<R> for Maybe<R> {
             })),
         }
     }
-    #[cfg(not(windows))]
     #[inline]
     fn errno_sys_fd<Rc: sys::GetErrno>(rc: Rc, syscall: sys::Tag, fd: FD) -> Option<Self> {
         match sys::get_errno(rc) {
@@ -84,7 +81,6 @@ impl<R> MaybeSysResultExt<R> for Maybe<R> {
             })),
         }
     }
-    #[cfg(not(windows))]
     #[inline]
     fn errno_sys_p<Rc: sys::GetErrno>(
         rc: Rc,
@@ -101,7 +97,6 @@ impl<R> MaybeSysResultExt<R> for Maybe<R> {
             })),
         }
     }
-    #[cfg(not(windows))]
     #[inline]
     fn errno_sys_pd<Rc: sys::GetErrno>(
         rc: Rc,
@@ -161,7 +156,7 @@ use super::types::{
 // Re-exported publicly: `crate::node::fs::PathOrFileDescriptor` is the
 // canonical path used by `cli/build_command.rs` et al., and `node_fs::Flavor`
 // by every caller that runs an operation directly (`read_file(.., Flavor::Sync)`).
-pub use super::types::{Flavor, PathOrFileDescriptor};
+pub(crate) use super::types::{Flavor, PathOrFileDescriptor};
 
 /// Local alias for the many `node::foo` call sites below, routing to `super::*`.
 mod node {
@@ -201,17 +196,17 @@ fn work_pool_task(callback: unsafe fn(*mut WorkPoolTask)) -> WorkPoolTask {
     }
 }
 
-pub use super::node_fs_constant as constants;
+pub(crate) use super::node_fs_constant as constants;
 // The `Watcher` / `StatWatcher` sibling modules are declared in
 // `node.rs`; re-export them under the names the `args::Watch` / `watch()`
 // bodies below expect.
-pub use super::node_fs_stat_watcher as StatWatcher;
-pub use super::node_fs_watcher as Watcher;
+pub(crate) use super::node_fs_stat_watcher as StatWatcher;
+pub(crate) use super::node_fs_watcher as Watcher;
 
 /// `Binding` is the JSC-class instance that owns the per-thread `NodeFS`
 /// (`super::node_fs_binding::Binding`). Re-exported so the async `create()`
 /// entry points keep their `&mut Binding` signature.
-pub use super::node_fs_binding::Binding;
+pub(crate) use super::node_fs_binding::Binding;
 
 /// `jsc.JSPromise.Strong` — re-exported under its Rust crate name:
 /// `bun_jsc::js_promise::Strong` / the `JSPromiseStrong` alias.
@@ -486,7 +481,7 @@ pub(crate) const DEFAULT_PERMISSION: Mode = 0;
 mod _async_tasks {
     use super::*;
 
-    pub mod async_ {
+    pub(crate) mod async_ {
         use super::*;
 
         pub(crate) type Access =
@@ -580,7 +575,7 @@ mod _async_tasks {
 
         #[cfg(windows)]
         /// Used internally. Not from JavaScript.
-        pub struct AsyncMkdirp {
+        pub(crate) struct AsyncMkdirp {
             pub(crate) completion_ctx: *mut (),
             /// Pool thread; `ticket` is this task's, for the callee to post its
             /// hop back through.
@@ -637,11 +632,11 @@ mod _async_tasks {
     // ──────────────────────────────────────────────────────────────────────────
 
     #[cfg(not(windows))]
-    pub type UVFSRequest<R, A, const F: NodeFSFunctionEnum> = AsyncFSTask<R, A, F>;
+    pub(crate) type UVFSRequest<R, A, const F: NodeFSFunctionEnum> = AsyncFSTask<R, A, F>;
 
     #[cfg(windows)]
-    pub struct UVFSRequest<R, A, const F: NodeFSFunctionEnum> {
-        pub(crate) promise: JSPromiseStrong,
+    pub(crate) struct UVFSRequest<R, A, const F: NodeFSFunctionEnum> {
+        pub(crate) completion: FsCompletion,
         pub args: ThreadIsolated<A>,
         pub(crate) global_object: bun_ptr::BackRef<JSGlobalObject>,
         pub(crate) req: uv::fs_t,
@@ -666,14 +661,16 @@ mod _async_tasks {
             self.global_object.get()
         }
 
+        /// `callback`: as for [`AsyncFSTask::create`].
         pub(crate) fn create(
             cx: &bun_jsc::JsThread<'_>,
             binding: &Binding,
             task_args: ThreadIsolated<A>,
             vm: &mut VirtualMachine,
+            callback: Option<JSValue>,
         ) -> JSValue {
             let task = Box::new(Self {
-                promise: JSPromiseStrong::init(cx.global()),
+                completion: FsCompletion::new(cx.global(), callback),
                 args: task_args,
                 // Sentinel — overwritten by `uv_callback` (or the early-return arms
                 // below) before any read on the JS thread. `Maybe<R>` is
@@ -687,7 +684,7 @@ mod _async_tasks {
                 context: cx.context().id(),
             });
             // Transfer ownership to libuv: the box outlives the async request and is
-            // reclaimed in `destroy()` (run_from_js_thread → scopeguard). `heap::release`
+            // reclaimed in `destroy()` (from `run_from_js_thread`). `heap::release`
             // names that hand-off — it is `Box::leak` under the hood; the reclaim
             // happens in `destroy()`, not in this scope.
             let task: &mut Self = bun_core::heap::release(task);
@@ -854,7 +851,7 @@ mod _async_tasks {
                             .bun_vm()
                             .event_loop_mut()
                             .enqueue_task(bun_jsc::Task::init(task_ptr));
-                        return task.promise.value();
+                        return task.completion.value();
                     }
                     let pos: i64 = args.position.map(|p| p as i64).unwrap_or(-1);
                     let sum: u64 = bufs.iter().map(|b| b.slice().len() as u64).sum();
@@ -902,7 +899,7 @@ mod _async_tasks {
                 _ => unreachable!("UVFSRequest type not implemented"),
             }
 
-            task.promise.value()
+            task.completion.value()
         }
 
         extern "C" fn uv_callback(req: *mut uv::fs_t) {
@@ -943,41 +940,36 @@ mod _async_tasks {
                 .enqueue_task(bun_jsc::Task::init(this_ptr));
         }
 
-        pub(crate) fn run_from_js_thread(&mut self) -> JsResult<()> {
-            // SAFETY: self was Box::leak'd in create(); destroy() runs exactly once on scope exit
-            let _deinit =
-                scopeguard::guard(core::ptr::from_mut(self), |p| unsafe { Self::destroy(p) });
-            // Move `result` out so the `global_object()` `&self` borrow can coexist
-            // with consuming it below; the sentinel left behind is dropped in `destroy()`.
-            let result = core::mem::replace(&mut self.result, Err(sys::Error::default()));
-            let global_object = self.global_object();
-            let success = matches!(result, Ok(_));
-            let promise_value = self.promise.value();
-            let promise = self.promise.get();
-            let result = match result {
-                Err(err) => match err.to_js_with_async_stack(global_object, promise) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        return promise.reject(global_object, Err(e));
-                    }
-                },
-                Ok(res) => match FsReturn::fs_to_js(res, global_object) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        return promise.reject(global_object, Err(e));
-                    }
-                },
+        /// SAFETY: `this` must be the pointer Box::leak'd in `create()`. The body frees it before it calls back, so it is not `&mut self`.
+        pub(crate) unsafe fn run_from_js_thread(this: *mut Self) -> JsResult<()> {
+            // SAFETY: fn contract. The borrow ends before `destroy` below.
+            let (result, completion, global_ref, tracker) = unsafe {
+                let task = &mut *this;
+                (
+                    core::mem::replace(&mut task.result, Err(sys::Error::default())),
+                    core::mem::replace(
+                        &mut task.completion,
+                        FsCompletion::Promise(JSPromiseStrong::empty()),
+                    ),
+                    task.global_object,
+                    task.tracker,
+                )
             };
-            promise_value.ensure_still_alive();
+            // The arguments pin their buffers. A callback runs inside `resolve`/`reject`, and a pinned buffer cannot be transferred.
+            // SAFETY: fn contract. `this` is not used again.
+            unsafe { Self::destroy(this) };
 
-            let _dispatch = self.tracker.dispatch(global_object);
+            let global_object = global_ref.get();
+            let success = matches!(result, Ok(_));
+            let converted = match result {
+                Err(err) => completion.error_to_js(global_object, &err),
+                Ok(res) => FsReturn::fs_to_js(res, global_object),
+            };
+            completion.ensure_still_alive();
 
-            if success {
-                promise.resolve(global_object, result)?;
-            } else {
-                promise.reject(global_object, Ok(result))?;
-            }
-            Ok(())
+            let _dispatch = tracker.dispatch(global_object);
+
+            completion.settle(global_object, converted, success)
         }
 
         /// SAFETY: `this` must be the pointer Box::leak'd in `create()`; called exactly once.
@@ -999,7 +991,7 @@ mod _async_tasks {
     // ──────────────────────────────────────────────────────────────────────────
 
     /// One `fs.*` operation's parsed arguments.
-    pub trait FsArgument: Sized + ThreadIsolatedArg {
+    pub(crate) trait FsArgument: Sized + ThreadIsolatedArg {
         const HAVE_ABORT_SIGNAL: bool = false;
         /// `Arguments.fromJS(ctx, &slice)` — parse this argument set from a JS
         /// call frame. Every `args::*` struct already exposes an inherent
@@ -1118,7 +1110,7 @@ mod _async_tasks {
 
     /// Convert an async-FS result payload to a `JSValue`.
     /// Each `ret::*` type implements this by forwarding to its inherent method.
-    pub trait FsReturn {
+    pub(crate) trait FsReturn {
         fn fs_to_js(self, global: &JSGlobalObject) -> JsResult<JSValue>;
         /// The result is not going to be reported (the context of the script that asked has
         /// stopped): release what only that script could have released.
@@ -1236,7 +1228,7 @@ mod _async_tasks {
 
     /// One `fs.promises.*` operation on the work pool. The arguments' JS-backed
     /// buffers are pinned and rooted (`ThreadIsolated`) and read under the job's ticket.
-    pub struct AsyncFSTask<R: FsReturn, A, const F: NodeFSFunctionEnum> {
+    pub(crate) struct AsyncFSTask<R: FsReturn, A, const F: NodeFSFunctionEnum> {
         pub args: ThreadIsolated<A>,
         pub(crate) result: Maybe<R>,
     }
@@ -1255,10 +1247,118 @@ mod _async_tasks {
     {
     }
 
+    /// How an async fs operation reports its result: a promise, or the `node:fs` callback, called from the completion.
+    #[derive(bun_jsc::JsAffine)]
+    pub(crate) enum FsCompletion {
+        Promise(JSPromiseStrong),
+        Callback(bun_jsc::Strong),
+    }
+
+    impl FsCompletion {
+        pub(crate) fn new(global: &JSGlobalObject, callback: Option<JSValue>) -> Self {
+            match callback {
+                Some(callback) => Self::Callback(bun_jsc::Strong::create(
+                    callback.with_async_context_if_needed(global),
+                    global,
+                )),
+                None => Self::Promise(JSPromiseStrong::init(global)),
+            }
+        }
+
+        /// What the binding returns to its JS caller.
+        pub(crate) fn value(&self) -> JSValue {
+            match self {
+                Self::Promise(promise) => promise.value(),
+                Self::Callback(_) => JSValue::UNDEFINED,
+            }
+        }
+
+        pub(crate) fn ensure_still_alive(&self) {
+            match self {
+                Self::Promise(promise) => promise.value().ensure_still_alive(),
+                Self::Callback(callback) => callback.get().ensure_still_alive(),
+            }
+        }
+
+        pub(crate) fn error_to_js(
+            &self,
+            global: &JSGlobalObject,
+            err: &sys::Error,
+        ) -> JsResult<JSValue> {
+            match self {
+                Self::Promise(promise) => err.to_js_with_async_stack(global, promise.get()),
+                Self::Callback(_) => err.to_js(global),
+            }
+        }
+
+        pub(crate) fn resolve(&self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
+            match self {
+                Self::Promise(promise) => promise.get().resolve(global, value),
+                Self::Callback(callback) => {
+                    Self::call(global, callback.get(), &[JSValue::NULL, value]);
+                    Ok(())
+                }
+            }
+        }
+
+        /// `Err` is the exception a failed conversion left pending, as for `JSPromise::reject`.
+        pub(crate) fn reject(
+            &self,
+            global: &JSGlobalObject,
+            value: JsResult<JSValue>,
+        ) -> JsResult<()> {
+            match self {
+                Self::Promise(promise) => promise.get().reject(global, value),
+                // The error value is built exactly as `JSPromise::reject` builds it.
+                Self::Callback(callback) => {
+                    let error = match value {
+                        Ok(error) => error,
+                        Err(bun_jsc::JsError::OutOfMemory) => global.create_out_of_memory_error(),
+                        Err(bun_jsc::JsError::Terminated) => {
+                            return Err(bun_jsc::JsError::Terminated);
+                        }
+                        Err(bun_jsc::JsError::Thrown) => {
+                            let exception = global.take_exception(bun_jsc::JsError::Thrown);
+                            if exception.is_termination_exception() {
+                                return Err(bun_jsc::top_exception_scope::thrown(global));
+                            }
+                            exception.to_error().unwrap_or(exception)
+                        }
+                    };
+                    Self::call(global, callback.get(), &[error]);
+                    Ok(())
+                }
+            }
+        }
+
+        /// Reports a converted result. `success` says that `converted` holds the value of the operation, not its error.
+        pub(crate) fn settle(
+            &self,
+            global: &JSGlobalObject,
+            converted: JsResult<JSValue>,
+            success: bool,
+        ) -> JsResult<()> {
+            match converted {
+                Ok(value) if success => self.resolve(global, value),
+                error => self.reject(global, error),
+            }
+        }
+
+        fn call(global: &JSGlobalObject, callback: JSValue, arguments: &[JSValue]) {
+            global.bun_vm().event_loop_mut().run_callback(
+                bun_event_loop::ContextId::NONE,
+                callback,
+                global,
+                JSValue::UNDEFINED,
+                arguments,
+            );
+        }
+    }
+
     /// The JS-thread half of an async fs operation.
     #[derive(bun_jsc::JsAffine)]
-    pub struct AsyncFSJs {
-        pub(crate) promise: JSPromiseStrong,
+    pub(crate) struct AsyncFSJs {
+        pub(crate) completion: FsCompletion,
         pub(crate) tracker: AsyncTaskTracker,
     }
 
@@ -1288,38 +1388,28 @@ mod _async_tasks {
             let _dispatch = js.tracker.dispatch(global_object);
 
             let success = this.result.is_ok();
-            let promise_value = js.promise.value();
-            let promise = js.promise.get();
-            let result = match core::mem::replace(&mut this.result, Err(sys::Error::default())) {
-                Err(err) => match err.to_js_with_async_stack(global_object, promise) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        return promise.reject(global_object, Err(e));
-                    }
-                },
-                Ok(res) => match FsReturn::fs_to_js(res, global_object) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        return promise.reject(global_object, Err(e));
-                    }
-                },
+            let completion = &js.completion;
+            let converted = match core::mem::replace(&mut this.result, Err(sys::Error::default())) {
+                Err(err) => completion.error_to_js(global_object, &err),
+                Ok(res) => FsReturn::fs_to_js(res, global_object),
             };
-            promise_value.ensure_still_alive();
+            completion.ensure_still_alive();
 
-            if Self::HAVE_ABORT_SIGNAL {
-                if let Some(signal) = this.args.signal() {
-                    if let Some(abort_error) = signal.node_abort_error_if_aborted(global_object) {
-                        return promise.reject(global_object, Ok(abort_error));
-                    }
-                }
-            }
-
-            if success {
-                promise.resolve(global_object, result)?;
+            let aborted = if Self::HAVE_ABORT_SIGNAL && converted.is_ok() {
+                this.args
+                    .signal()
+                    .and_then(|signal| signal.node_abort_error_if_aborted(global_object))
             } else {
-                promise.reject(global_object, Ok(result))?;
+                None
+            };
+
+            // The arguments pin their buffers. A callback runs inside `resolve`/`reject`, and a pinned buffer cannot be transferred.
+            drop(this);
+
+            match aborted {
+                Some(abort_error) => completion.reject(global_object, Ok(abort_error)),
+                None => completion.settle(global_object, converted, success),
             }
-            Ok(())
         }
     }
 
@@ -1335,16 +1425,18 @@ mod _async_tasks {
         /// the functions to check .signal.aborted() for early returns.
         pub(crate) const HAVE_ABORT_SIGNAL: bool = A::HAVE_ABORT_SIGNAL;
 
+        /// `callback`: the `node:fs` callback to call with the result. `None` returns a promise.
         pub(crate) fn create(
             cx: &bun_jsc::JsThread<'_>,
             _binding: &Binding,
             args: ThreadIsolated<A>,
             vm: &mut VirtualMachine,
+            callback: Option<JSValue>,
         ) -> JSValue {
             let tracker = AsyncTaskTracker::init(vm);
             tracker.did_schedule(cx.global());
-            let promise = JSPromiseStrong::init(cx.global());
-            let value = promise.value();
+            let completion = FsCompletion::new(cx.global(), callback);
+            let value = completion.value();
             bun_jsc::Job::<Self>::schedule(
                 cx,
                 Self {
@@ -1353,7 +1445,10 @@ mod _async_tasks {
                     // may be niche-optimised; never construct an all-zero `Result`.
                     result: Err(sys::Error::default()),
                 },
-                AsyncFSJs { promise, tracker },
+                AsyncFSJs {
+                    completion,
+                    tracker,
+                },
             );
             value
         }
@@ -1363,15 +1458,15 @@ mod _async_tasks {
     // AsyncCpTask
     // ──────────────────────────────────────────────────────────────────────────
 
-    pub type AsyncCpTask = NewAsyncCpTask<false>;
-    pub type ShellAsyncCpTask = NewAsyncCpTask<true>;
+    pub(crate) type AsyncCpTask = NewAsyncCpTask<false>;
+    pub(crate) type ShellAsyncCpTask = NewAsyncCpTask<true>;
 
     // The shell flattens builtins under `crate::shell::builtins::*`. The
     // `cp_on_copy`/`cp_on_finish` hooks are inherent methods on that type
     // (cp.rs), called directly below — no trait indirection.
     pub(crate) type ShellCpTask = crate::shell::builtins::cp::ShellCpTask;
 
-    pub struct NewAsyncCpTask<const IS_SHELL: bool> {
+    pub(crate) struct NewAsyncCpTask<const IS_SHELL: bool> {
         pub(crate) promise: JSPromiseStrong,
         pub args: ThreadIsolated<args::Cp<'static>>,
         /// Owning-thread uses (global object, keep-alive context).
@@ -1417,7 +1512,7 @@ mod _async_tasks {
 
     /// This task is used by `AsyncCpTask/fs.promises.cp` to copy a single file.
     /// When clonefile cannot be used, this task is started once per file.
-    pub struct CpSingleTask<const IS_SHELL: bool> {
+    pub(crate) struct CpSingleTask<const IS_SHELL: bool> {
         /// BACKREF — the parent `NewAsyncCpTask` is `Box::leak`'d and outlives every
         /// subtask via the `subtask_count` refcount (see `on_subtask_done`). Stored
         /// as `ParentRef` (constructed from the `*mut` with `Box::leak` provenance)
@@ -2158,10 +2253,10 @@ mod _async_tasks {
     /// that share this state (it is the job's off-thread part, so its address
     /// is stable while any subtask runs). Subtasks touch only owned data here —
     /// never the JS-backed `args` — since they run outside `run`.
-    pub struct AsyncReaddirRecursiveTask {
+    pub(crate) struct AsyncReaddirRecursiveTask {
         /// Async-parsed arguments; their JS-backed path is not read off-thread
         /// (`root_path` is the owned copy).
-        pub args: ThreadIsolated<args::Readdir<'static>>,
+        pub(crate) _args: ThreadIsolated<args::Readdir<'static>>,
         pub(crate) tag: ret::ReaddirTag,
         pub(crate) encoding: Encoding,
         /// The completion token, finished by whichever subtask ends the scan.
@@ -2242,15 +2337,9 @@ mod _async_tasks {
         ) -> bun_jsc::JsResult<()> {
             let global_object = cx.global();
             let success = this.pending_err.is_none();
-            let promise_value = js.promise.value();
-            let promise = js.promise.get();
-            let result = if let Some(err) = &mut this.pending_err {
-                match err.to_js_with_async_stack(global_object, promise) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        return promise.reject(global_object, Err(e));
-                    }
-                }
+            let completion = &js.completion;
+            let converted = if let Some(err) = &this.pending_err {
+                completion.error_to_js(global_object, err)
             } else {
                 let res = match core::mem::replace(
                     &mut this.result_list,
@@ -2262,32 +2351,22 @@ mod _async_tasks {
                     ResultListEntryValue::Buffers(v) => ret::Readdir::Buffers(v.into_boxed_slice()),
                     ResultListEntryValue::Files(v) => ret::Readdir::Files(v.into_boxed_slice()),
                 };
-                match res.to_js(global_object) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        return promise.reject(global_object, Err(e));
-                    }
-                }
+                res.to_js(global_object)
             };
-            promise_value.ensure_still_alive();
+            completion.ensure_still_alive();
             let _dispatch = js.tracker.dispatch(global_object);
             drop(this);
-            if success {
-                promise.resolve(global_object, result)?;
-            } else {
-                promise.reject(global_object, Ok(result))?;
-            }
-            Ok(())
+            completion.settle(global_object, converted, success)
         }
     }
 
-    pub enum ResultListEntryValue {
+    pub(crate) enum ResultListEntryValue {
         WithFileTypes(Vec<Dirent>),
         Buffers(Vec<Buffer>),
         Files(Vec<BunString>),
     }
 
-    pub struct ResultListEntry {
+    pub(crate) struct ResultListEntry {
         pub(crate) next: bun_threading::Link<ResultListEntry>, // INTRUSIVE: UnboundedQueue link
         pub value: ResultListEntryValue,
     }
@@ -2367,10 +2446,12 @@ mod _async_tasks {
             });
         }
 
+        /// `callback`: as for [`AsyncFSTask::create`].
         pub(crate) fn create(
             cx: &bun_jsc::JsThread<'_>,
             args: ThreadIsolated<args::Readdir<'static>>,
             vm: &mut VirtualMachine,
+            callback: Option<JSValue>,
         ) -> JSValue {
             let tag = args.tag();
             let encoding = args.encoding;
@@ -2390,12 +2471,12 @@ mod _async_tasks {
             };
             let tracker = AsyncTaskTracker::init(vm);
             tracker.did_schedule(cx.global());
-            let promise = JSPromiseStrong::init(cx.global());
-            let value = promise.value();
+            let completion = FsCompletion::new(cx.global(), callback);
+            let value = completion.value();
             bun_jsc::Job::<Self>::schedule(
                 cx,
                 AsyncReaddirRecursiveTask {
-                    args,
+                    _args: args,
                     tag,
                     encoding,
                     done: None,
@@ -2410,7 +2491,10 @@ mod _async_tasks {
                     pending_err: None,
                     pending_err_mutex: bun_threading::Mutex::default(),
                 },
-                AsyncFSJs { promise, tracker },
+                AsyncFSJs {
+                    completion,
+                    tracker,
+                },
             );
             value
         }
@@ -2590,7 +2674,7 @@ mod _async_tasks {
     ///
     /// Rust can't switch on a generic `T` inside `write_results`, so the
     /// per-type `ResultListEntryValue` wrapping lives on this trait.
-    pub trait IntoResultListEntry: Sized {
+    pub(crate) trait IntoResultListEntry: Sized {
         fn into_variant(v: Vec<Self>) -> ResultListEntryValue;
     }
     impl IntoResultListEntry for Dirent {
@@ -2637,10 +2721,8 @@ mod _async_tasks {
         }
     }
 } // mod _async_tasks
-pub use _async_tasks::{
-    AsyncCpTask, AsyncFSTask, AsyncReaddirRecursiveTask, CpSingleTask, FsArgument, FsReturn,
-    IntoResultListEntry, NewAsyncCpTask, ResultListEntry, ResultListEntryValue, ShellAsyncCpTask,
-    UVFSRequest, async_,
+pub(crate) use _async_tasks::{
+    AsyncCpTask, AsyncReaddirRecursiveTask, FsArgument, FsReturn, ShellAsyncCpTask, async_,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2650,15 +2732,18 @@ pub use _async_tasks::{
 // type could become untagged unions with the tag passed as a const generic to
 // the functions performing the syscalls. This would reduce stack size, at the
 // cost of instruction cache misses.
-pub mod args {
+pub(crate) mod args {
     use super::*;
 
-    pub struct Rename<'a> {
+    pub(crate) struct Rename<'a> {
         pub(crate) old_path: PathLike<'a>,
         pub(crate) new_path: PathLike<'a>,
     }
     impl Rename<'static> {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
+        pub(crate) fn from_js(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<Self> {
             let old_path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| {
                 ctx.throw_invalid_argument_type_value(
                     b"oldPath",
@@ -2679,14 +2764,17 @@ pub mod args {
     }
 
     #[derive(Default)]
-    pub struct Truncate<'a> {
+    pub(crate) struct Truncate<'a> {
         /// Passing a file descriptor is deprecated and may result in an error being thrown in the future.
         pub path: PathOrFileDescriptor<'a>,
         pub(crate) len: u64, // u63
         pub(crate) flags: i32,
     }
     impl Truncate<'static> {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
+        pub(crate) fn from_js(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<Self> {
             let path = PathOrFileDescriptor::from_js(ctx, arguments)?.ok_or_else(|| {
                 ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray"))
             })?;
@@ -2710,13 +2798,16 @@ pub mod args {
     /// names as type aliases so every `args::Writev` / `args::Readv` caller
     /// (UVFSRequest params, `readv`/`writev`/`preadv_inner`/`pwritev_inner`,
     /// uv dispatch arms) is untouched.
-    pub struct FdVectorIo {
+    pub(crate) struct FdVectorIo {
         pub(crate) fd: FD,
         pub(crate) buffers: VectorArrayBuffer,
         pub(crate) position: Option<u64>, // u52
     }
     impl FdVectorIo {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
+        pub(crate) fn from_js(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<Self> {
             let fd = FD::from_js_required(ctx, arguments)?;
             let buffers = VectorArrayBuffer::from_js(
                 ctx,
@@ -2741,12 +2832,12 @@ pub mod args {
     pub(crate) type Writev = FdVectorIo;
     pub(crate) type Readv = FdVectorIo;
 
-    pub struct FTruncate {
+    pub(crate) struct FTruncate {
         pub(crate) fd: FD,
         pub(crate) len: Option<BlobSizeType>,
     }
     impl FTruncate {
-        pub fn from_js(
+        pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             arguments: &mut ArgumentsSlice,
         ) -> JsResult<FTruncate> {
@@ -2772,13 +2863,16 @@ pub mod args {
         }
     }
 
-    pub struct Chown<'a> {
+    pub(crate) struct Chown<'a> {
         pub path: PathLike<'a>,
         pub(crate) uid: UidT,
         pub(crate) gid: GidT,
     }
     impl Chown<'static> {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
+        pub(crate) fn from_js(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<Self> {
             // `Drop for PathLike` covers every
             // error return below (including `validate_integer`).
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
@@ -2812,13 +2906,16 @@ pub mod args {
         }
     }
 
-    pub struct Fchown {
+    pub(crate) struct Fchown {
         pub(crate) fd: FD,
         pub(crate) uid: UidT,
         pub(crate) gid: GidT,
     }
     impl Fchown {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Fchown> {
+        pub(crate) fn from_js(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<Fchown> {
             let fd = FD::from_js_required(ctx, arguments)?;
             let uid: UidT = 'brk: {
                 let Some(uid_value) = arguments.next() else {
@@ -2866,13 +2963,16 @@ pub mod args {
 
     pub(crate) type LChown<'a> = Chown<'a>;
 
-    pub struct Lutimes<'a> {
+    pub(crate) struct Lutimes<'a> {
         pub path: PathLike<'a>,
         pub(crate) atime: TimeLike,
         pub(crate) mtime: TimeLike,
     }
     impl Lutimes<'static> {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
+        pub(crate) fn from_js(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<Self> {
             // `Drop for PathLike` covers the
             // `time_like_from_js` throws below.
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
@@ -2900,12 +3000,15 @@ pub mod args {
         }
     }
 
-    pub struct Chmod<'a> {
+    pub(crate) struct Chmod<'a> {
         pub path: PathLike<'a>,
         pub(crate) mode: Mode,
     }
     impl Chmod<'static> {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
+        pub(crate) fn from_js(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<Self> {
             // `Drop for PathLike` covers the
             // `mode_from_js` throw below.
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
@@ -2926,12 +3029,15 @@ pub mod args {
         }
     }
 
-    pub struct FChmod {
+    pub(crate) struct FChmod {
         pub(crate) fd: FD,
         pub(crate) mode: Mode,
     }
     impl FChmod {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<FChmod> {
+        pub(crate) fn from_js(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<FChmod> {
             let fd = FD::from_js_required(ctx, arguments)?;
             let mode_arg = arguments.next().unwrap_or(JSValue::UNDEFINED);
             let mode: Mode = node::mode_from_js(ctx, mode_arg)?.ok_or_else(|| {
@@ -2949,12 +3055,15 @@ pub mod args {
 
     pub(crate) type LCHmod<'a> = Chmod<'a>;
 
-    pub struct StatFS<'a> {
+    pub(crate) struct StatFS<'a> {
         pub path: PathLike<'a>,
         pub(crate) big_int: bool,
     }
     impl StatFS<'static> {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
+        pub(crate) fn from_js(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<Self> {
             // `Drop for PathLike` covers the
             // `get_boolean_strict` throw below.
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
@@ -2976,13 +3085,16 @@ pub mod args {
         }
     }
 
-    pub struct Stat<'a> {
+    pub(crate) struct Stat<'a> {
         pub path: PathLike<'a>,
         pub(crate) big_int: bool,
         pub(crate) throw_if_no_entry: bool,
     }
     impl Stat<'static> {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
+        pub(crate) fn from_js(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<Self> {
             // `Drop for PathLike` covers the error returns below.
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
             let mut throw_if_no_entry = true;
@@ -3011,7 +3123,7 @@ pub mod args {
         }
 
         /// `fs.stat(path)` of Rust-owned bytes, for a work-pool job.
-        pub fn owned(path: Vec<u8>) -> ThreadIsolated<Self> {
+        pub(crate) fn owned(path: Vec<u8>) -> ThreadIsolated<Self> {
             // SAFETY: owned path only.
             unsafe {
                 ThreadIsolated::new(Stat {
@@ -3023,12 +3135,15 @@ pub mod args {
         }
     }
 
-    pub struct Fstat {
+    pub(crate) struct Fstat {
         pub(crate) fd: FD,
         pub(crate) big_int: bool,
     }
     impl Fstat {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Fstat> {
+        pub(crate) fn from_js(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<Fstat> {
             let fd = FD::from_js_required(ctx, arguments)?;
             let big_int = 'brk: {
                 if let Some(next_val) = arguments.next() {
@@ -3048,7 +3163,7 @@ pub mod args {
         }
 
         /// `fs.fstat(fd)`, for a work-pool job.
-        pub fn for_fd(fd: FD) -> ThreadIsolated<Self> {
+        pub(crate) fn for_fd(fd: FD) -> ThreadIsolated<Self> {
             // SAFETY: no JS-backed fields.
             unsafe { ThreadIsolated::new(Fstat { fd, big_int: false }) }
         }
@@ -3056,12 +3171,15 @@ pub mod args {
 
     pub(crate) type Lstat<'a> = Stat<'a>;
 
-    pub struct Link<'a> {
+    pub(crate) struct Link<'a> {
         pub(crate) old_path: PathLike<'a>,
         pub(crate) new_path: PathLike<'a>,
     }
     impl Link<'static> {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
+        pub(crate) fn from_js(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<Self> {
             let old_path = PathLike::from_js_required(ctx, arguments, "oldPath")?;
             // `Drop for PathLike` runs on early return.
             let new_path = PathLike::from_js_required(ctx, arguments, "newPath")?;
@@ -3070,14 +3188,14 @@ pub mod args {
     }
 
     #[derive(Copy, Clone)]
-    pub enum SymlinkLinkType {
+    pub(crate) enum SymlinkLinkType {
         Unspecified,
         File,
         Dir,
         Junction,
     }
 
-    pub struct Symlink<'a> {
+    pub(crate) struct Symlink<'a> {
         /// Where the symbolic link is targetting.
         pub(crate) target_path: PathLike<'a>,
         /// The path to create the symbolic link at.
@@ -3087,7 +3205,10 @@ pub mod args {
         pub(crate) link_type: SymlinkLinkType,
     }
     impl Symlink<'static> {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
+        pub(crate) fn from_js(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<Self> {
             // `Drop for PathLike` covers the error returns below.
             let old_path = PathLike::from_js_required(ctx, arguments, "target")?;
             let new_path = PathLike::from_js_required(ctx, arguments, "path")?;
@@ -3141,24 +3262,30 @@ pub mod args {
         }
     }
 
-    pub struct Readlink<'a> {
+    pub(crate) struct Readlink<'a> {
         pub path: PathLike<'a>,
         pub(crate) encoding: Encoding,
     }
     impl Readlink<'static> {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
+        pub(crate) fn from_js(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<Self> {
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
             let encoding = parse_encoding_arg(ctx, arguments, Encoding::Utf8)?;
             Ok(Readlink { path, encoding })
         }
     }
 
-    pub struct Realpath<'a> {
+    pub(crate) struct Realpath<'a> {
         pub path: PathLike<'a>,
         pub(crate) encoding: Encoding,
     }
     impl Realpath<'static> {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
+        pub(crate) fn from_js(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<Self> {
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
             let encoding = parse_encoding_arg(ctx, arguments, Encoding::Utf8)?;
             Ok(Realpath { path, encoding })
@@ -3205,17 +3332,20 @@ pub mod args {
         Ok(encoding)
     }
 
-    pub struct Unlink<'a> {
+    pub(crate) struct Unlink<'a> {
         pub path: PathLike<'a>,
     }
     impl Unlink<'static> {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
+        pub(crate) fn from_js(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<Self> {
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
             Ok(Unlink { path })
         }
 
         /// `fs.unlink(path)` of Rust-owned bytes, for a work-pool job.
-        pub fn owned(path: Vec<u8>) -> ThreadIsolated<Self> {
+        pub(crate) fn owned(path: Vec<u8>) -> ThreadIsolated<Self> {
             // SAFETY: owned path only.
             unsafe {
                 ThreadIsolated::new(Unlink {
@@ -3229,7 +3359,7 @@ pub mod args {
     /// `validateRmOptions` does: an own `recursive`/`force` key holding
     /// `undefined` overwrites the default and is rejected, where `fs.rmdir`
     /// silently keeps the default for it.
-    pub struct Rm<'a>(pub(crate) RmDir<'a>);
+    pub(crate) struct Rm<'a>(pub(crate) RmDir<'a>);
     impl<'a> std::ops::Deref for Rm<'a> {
         type Target = RmDir<'a>;
         fn deref(&self) -> &RmDir<'a> {
@@ -3237,12 +3367,15 @@ pub mod args {
         }
     }
     impl Rm<'static> {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
+        pub(crate) fn from_js(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<Self> {
             Ok(Rm(RmDir::from_js_impl(ctx, arguments, true)?))
         }
     }
 
-    pub struct RmDir<'a> {
+    pub(crate) struct RmDir<'a> {
         pub path: PathLike<'a>,
         pub(crate) force: bool,
         pub(crate) max_retries: u32,
@@ -3250,7 +3383,10 @@ pub mod args {
         pub(crate) retry_delay: c_uint,
     }
     impl RmDir<'static> {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
+        pub(crate) fn from_js(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<Self> {
             Self::from_js_impl(ctx, arguments, false)
         }
         /// `strict_booleans` selects node's `validateRmOptions` behavior (used by
@@ -3332,7 +3468,7 @@ pub mod args {
     }
 
     /// https://github.com/nodejs/node/blob/master/lib/fs.js#L1285
-    pub struct Mkdir<'a> {
+    pub(crate) struct Mkdir<'a> {
         pub path: PathLike<'a>,
         /// Indicates whether parent folders should be created.
         /// If a folder was created, the path to the first created folder will be returned.
@@ -3357,7 +3493,10 @@ pub mod args {
         }
     }
     impl Mkdir<'static> {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
+        pub(crate) fn from_js(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<Self> {
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
             let mut recursive = false;
             let mut mode: Mode = 0o777;
@@ -3387,12 +3526,15 @@ pub mod args {
         }
     }
 
-    pub struct MkdirTemp<'a> {
+    pub(crate) struct MkdirTemp<'a> {
         pub(crate) prefix: PathLike<'a>,
         pub(crate) encoding: Encoding,
     }
     impl MkdirTemp<'static> {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
+        pub(crate) fn from_js(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<Self> {
             let prefix = PathLike::from_js(ctx, arguments)?.ok_or_else(|| {
                 ctx.throw_invalid_argument_type_value(
                     b"prefix",
@@ -3405,7 +3547,7 @@ pub mod args {
         }
     }
 
-    pub struct Readdir<'a> {
+    pub(crate) struct Readdir<'a> {
         pub path: PathLike<'a>,
         pub(crate) encoding: Encoding,
         pub(crate) with_file_types: bool,
@@ -3426,7 +3568,10 @@ pub mod args {
         }
     }
     impl Readdir<'static> {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
+        pub(crate) fn from_js(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<Self> {
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
             let mut encoding = Encoding::Utf8;
             let mut with_file_types = false;
@@ -3461,23 +3606,29 @@ pub mod args {
         }
     }
 
-    pub struct Close {
+    pub(crate) struct Close {
         pub(crate) fd: FD,
     }
     impl Close {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Close> {
+        pub(crate) fn from_js(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<Close> {
             let fd = FD::from_js_required(ctx, arguments)?;
             Ok(Close { fd })
         }
     }
 
-    pub struct Open<'a> {
+    pub(crate) struct Open<'a> {
         pub path: PathLike<'a>,
         pub(crate) flags: FileSystemFlags,
         pub(crate) mode: Mode,
     }
     impl Open<'static> {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
+        pub(crate) fn from_js(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<Self> {
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
             let mut flags = FileSystemFlags::R;
             let mut mode: Mode = DEFAULT_PERMISSION;
@@ -3507,13 +3658,16 @@ pub mod args {
     /// @since v0.4.2
     pub(crate) type Utimes<'a> = Lutimes<'a>;
 
-    pub struct Futimes {
+    pub(crate) struct Futimes {
         pub(crate) fd: FD,
         pub(crate) atime: TimeLike,
         pub(crate) mtime: TimeLike,
     }
     impl Futimes {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Futimes> {
+        pub(crate) fn from_js(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<Futimes> {
             let fd = FD::from_js_required(ctx, arguments)?;
             let atime = node::time_like_from_js(
                 ctx,
@@ -3562,7 +3716,7 @@ pub mod args {
     /// The kernel ignores the position argument and always appends the data to
     /// the end of the file.
     /// @since v0.0.2
-    pub struct Write<'a> {
+    pub(crate) struct Write<'a> {
         pub(crate) fd: FD,
         pub(crate) buffer: StringOrBuffer<'a>,
         // pub buffer_val: JSValue,
@@ -3584,7 +3738,10 @@ pub mod args {
         }
     }
     impl Write<'static> {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
+        pub(crate) fn from_js(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<Self> {
             let fd = FD::from_js_required(ctx, arguments)?;
             let buffer_value = arguments.next();
             let bv = buffer_value
@@ -3746,7 +3903,7 @@ pub mod args {
         }
     }
 
-    pub struct Read {
+    pub(crate) struct Read {
         pub(crate) fd: FD,
         pub(crate) buffer: ReadBuffer,
         pub offset: u64,
@@ -3754,7 +3911,10 @@ pub mod args {
         pub(crate) position: Option<ReadPosition>,
     }
     impl Read {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Read> {
+        pub(crate) fn from_js(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<Read> {
             // About half of the normalization has already been done. The second half is done in the native code.
             // fs_binding.read(fd, buffer, offset, length, position)
 
@@ -3951,7 +4111,7 @@ pub mod args {
     /// If a file descriptor is provided, the underlying file will _not_ be closed automatically.
     /// @param options Either the encoding for the result, or an object that contains the encoding and an optional flag.
     /// If a flag is not provided, it defaults to `'r'`.
-    pub struct ReadFile<'a> {
+    pub(crate) struct ReadFile<'a> {
         pub path: PathOrFileDescriptor<'a>,
         pub(crate) encoding: Encoding,
         pub offset: BlobSizeType,
@@ -3982,7 +4142,10 @@ pub mod args {
         }
     }
     impl ReadFile<'static> {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
+        pub(crate) fn from_js(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<Self> {
             // `Drop` on `path` covers every
             // `?`-propagated JsError below.
             let path = PathOrFileDescriptor::from_js(ctx, arguments)?.ok_or_else(|| {
@@ -4040,7 +4203,7 @@ pub mod args {
         }
     }
 
-    pub struct WriteFile<'a> {
+    pub(crate) struct WriteFile<'a> {
         pub(crate) flag: FileSystemFlags,
         pub(crate) mode: Mode,
         pub(crate) file: PathOrFileDescriptor<'a>,
@@ -4059,7 +4222,10 @@ pub mod args {
         }
     }
     impl WriteFile<'static> {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
+        pub(crate) fn from_js(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<Self> {
             Self::from_js_with_default_flag(ctx, arguments, FileSystemFlags::W)
         }
         pub(crate) fn from_js_with_default_flag(
@@ -4157,25 +4323,31 @@ pub mod args {
     /// Same fields as `WriteFile`; distinct type so `FsArgument::from_js` can
     /// default `flag` to `a` (Node: `if (!options.flag) options.flag = 'a'`)
     /// while still honoring an explicit `flag` the caller passed.
-    pub struct AppendFile<'a>(pub(crate) WriteFile<'a>);
+    pub(crate) struct AppendFile<'a>(pub(crate) WriteFile<'a>);
 
-    pub struct Exists<'a> {
+    pub(crate) struct Exists<'a> {
         pub path: Option<PathLike<'a>>,
     }
     impl Exists<'static> {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
+        pub(crate) fn from_js(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<Self> {
             Ok(Exists {
                 path: PathLike::from_js(ctx, arguments)?,
             })
         }
     }
 
-    pub struct Access<'a> {
+    pub(crate) struct Access<'a> {
         pub path: PathLike<'a>,
         pub(crate) mode: FileSystemFlags,
     }
     impl Access<'static> {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
+        pub(crate) fn from_js(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<Self> {
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
             let mut mode = FileSystemFlags::R;
             if let Some(arg) = arguments.next() {
@@ -4186,11 +4358,11 @@ pub mod args {
         }
     }
 
-    pub struct FdataSync {
+    pub(crate) struct FdataSync {
         pub(crate) fd: FD,
     }
     impl FdataSync {
-        pub fn from_js(
+        pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             arguments: &mut ArgumentsSlice,
         ) -> JsResult<FdataSync> {
@@ -4199,13 +4371,16 @@ pub mod args {
         }
     }
 
-    pub struct CopyFile<'a> {
+    pub(crate) struct CopyFile<'a> {
         pub(crate) src: PathLike<'a>,
         pub(crate) dest: PathLike<'a>,
         pub(crate) mode: constants::Copyfile,
     }
     impl CopyFile<'static> {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
+        pub(crate) fn from_js(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<Self> {
             let src = PathLike::from_js_required(ctx, arguments, "src")?;
             // `Drop for PathLike` runs on early return.
             let dest = PathLike::from_js_required(ctx, arguments, "dest")?;
@@ -4222,19 +4397,22 @@ pub mod args {
     }
 
     #[derive(Copy, Clone, Default)]
-    pub struct CpFlags {
+    pub(crate) struct CpFlags {
         pub(crate) recursive: bool,
         pub(crate) error_on_exist: bool,
         pub(crate) force: bool,
     }
 
-    pub struct Cp<'a> {
+    pub(crate) struct Cp<'a> {
         pub(crate) src: PathLike<'a>,
         pub(crate) dest: PathLike<'a>,
         pub(crate) flags: CpFlags,
     }
     impl Cp<'static> {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
+        pub(crate) fn from_js(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<Self> {
             let src = PathLike::from_js_required(ctx, arguments, "src")?;
             // `Drop for PathLike` runs on early return.
             let dest = PathLike::from_js_required(ctx, arguments, "dest")?;
@@ -4271,7 +4449,7 @@ pub mod args {
         }
 
         /// `fs.cp(src, dest)` of Rust-owned bytes, for a work-pool job.
-        pub fn owned(src: Vec<u8>, dest: Vec<u8>, flags: CpFlags) -> ThreadIsolated<Self> {
+        pub(crate) fn owned(src: Vec<u8>, dest: Vec<u8>, flags: CpFlags) -> ThreadIsolated<Self> {
             // SAFETY: owned paths only.
             unsafe {
                 ThreadIsolated::new(Cp {
@@ -4288,23 +4466,25 @@ pub mod args {
     // has no lifetime parameter — unlike `Watcher::Arguments<'a>` above.
     pub(crate) type WatchFile = super::StatWatcher::Arguments;
 
-    pub struct Fsync {
+    pub(crate) struct Fsync {
         pub(crate) fd: FD,
     }
     impl Fsync {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Fsync> {
+        pub(crate) fn from_js(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<Fsync> {
             let fd = FD::from_js_required(ctx, arguments)?;
             Ok(Fsync { fd })
         }
     }
 }
-pub use args as Arguments;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Return types
 // ──────────────────────────────────────────────────────────────────────────
 
-pub enum StatOrNotFound {
+pub(crate) enum StatOrNotFound {
     Stats(Box<Stats>),
     NotFound,
 }
@@ -4317,7 +4497,7 @@ impl StatOrNotFound {
     }
 }
 
-pub enum StringOrUndefined {
+pub(crate) enum StringOrUndefined {
     String(BunString),
     None,
 }
@@ -4331,16 +4511,16 @@ impl StringOrUndefined {
 }
 
 /// For use in `Return`'s definitions to act as `void` while returning `null` to JavaScript
-pub struct Null;
+pub(crate) struct Null;
 
-pub mod ret {
+pub(crate) mod ret {
     use super::*;
 
     pub(crate) type Access = Null;
     pub(crate) type AppendFile = ();
-    pub type Close = ();
+    pub(crate) type Close = ();
     pub(crate) type CopyFile = ();
-    pub type Cp = ();
+    pub(crate) type Cp = ();
     pub(crate) type Exists = bool;
     pub(crate) type Fchmod = ();
     pub(crate) type Chmod = ();
@@ -4362,39 +4542,39 @@ pub mod ret {
     pub(crate) type Readv = Read;
     pub(crate) type StatFS = node::StatFS;
 
-    pub struct Read {
+    pub(crate) struct Read {
         pub(crate) bytes_read: u64, /* u52 */
     }
     impl Read {
-        pub fn to_js(&self, _: &JSGlobalObject) -> JSValue {
+        pub(crate) fn to_js(&self, _: &JSGlobalObject) -> JSValue {
             JSValue::js_number_from_uint64(self.bytes_read)
         }
     }
 
-    pub struct Write {
+    pub(crate) struct Write {
         pub(crate) bytes_written: u64, /* u52 */
     }
     impl Write {
         // Excited for the issue that's like "cannot read file bigger than 2 GB"
-        pub fn to_js(&self, _: &JSGlobalObject) -> JSValue {
+        pub(crate) fn to_js(&self, _: &JSGlobalObject) -> JSValue {
             JSValue::js_number_from_uint64(self.bytes_written)
         }
     }
 
     #[derive(Copy, Clone, PartialEq, Eq)]
-    pub enum ReaddirTag {
+    pub(crate) enum ReaddirTag {
         WithFileTypes,
         Buffers,
         Files,
     }
 
-    pub enum Readdir {
+    pub(crate) enum Readdir {
         WithFileTypes(Box<[Dirent]>),
         Buffers(Box<[Buffer]>),
         Files(Box<[BunString]>),
     }
     impl Readdir {
-        pub fn to_js(self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+        pub(crate) fn to_js(self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
             match self {
                 Readdir::WithFileTypes(items) => {
                     let array = JSValue::create_empty_array(global_object, items.len())?;
@@ -4458,7 +4638,7 @@ pub mod ret {
 // https://github.com/DefinitelyTyped/DefinitelyTyped/blob/master/types/node/fs.d.ts
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct NodeFS {
+pub(crate) struct NodeFS {
     /// Scratch for a temporary file path that might appear in a returned error message.
     pub(crate) sync_error_buf: bun_paths::path_buffer_pool::Guard,
     pub(crate) vm: Option<NonNull<VirtualMachine>>,
@@ -4546,7 +4726,7 @@ impl NodeFS {
         }
     }
 
-    pub fn close(&mut self, args: &args::Close, _: Flavor) -> Maybe<ret::Close> {
+    pub(crate) fn close(&mut self, args: &args::Close, _: Flavor) -> Maybe<ret::Close> {
         // Explicit `fs.close`/`fs.closeSync` must close the descriptor the user
         // asked for, including stdio (0/1/2), and surface EBADF like Node does.
         // The stdio guard only applies to Bun's own internal closes.
@@ -5952,7 +6132,7 @@ impl NodeFS {
         }
     }
 
-    pub fn write(&mut self, args: &args::Write, _: Flavor) -> Maybe<ret::Write> {
+    pub(crate) fn write(&mut self, args: &args::Write, _: Flavor) -> Maybe<ret::Write> {
         if args.position.is_some() {
             self.pwrite_inner(args)
         } else {
@@ -8946,13 +9126,13 @@ impl NodeFS {
 /// Type-level marker for [`NodeFSDispatch`] — one ZST per `NodeFSFunctionEnum`
 /// variant. Exists so the `(R, A) ↔ F` binding can be proved by a `where`
 /// bound instead of pointer-cast identity casts.
-pub struct Op<const F: NodeFSFunctionEnum>;
+pub(crate) struct Op<const F: NodeFSFunctionEnum>;
 
 /// Per-`F` binding from `(R, A)` to its `NodeFS` method. Every
 /// `AsyncFSTask<R, A, {F}>` / `UVFSRequest<R, A, {F}>` instantiation in
 /// `async_::*` has exactly one impl, so the `where Op<{F}>: NodeFSDispatch<R, A>`
 /// bound is always satisfied at every monomorphised call site.
-pub trait NodeFSDispatch<R, A> {
+pub(crate) trait NodeFSDispatch<R, A> {
     fn run(fs: &mut NodeFS, args: &A, flavor: Flavor) -> Maybe<R>;
     #[cfg(windows)]
     fn run_uv(_fs: &mut NodeFS, _args: &A, _rc: uv::ReturnCodeI64) -> Maybe<R> {
@@ -9045,13 +9225,13 @@ node_fs_ops! {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum RealpathVariant {
+pub(crate) enum RealpathVariant {
     Native,
     Emulated,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum ReadFileStringType {
+pub(crate) enum ReadFileStringType {
     Default,
     NullTerminated,
 }
@@ -9067,17 +9247,19 @@ impl MkdirCtx for () {}
 /// Rust can't switch on a generic `T` at runtime, so the per-type append
 /// logic (Dirent / Buffer / String) lives on this trait. `IS_DIRENT` tells
 /// the caller whether it must compute/maintain `dirent_path`.
-pub trait ReaddirEntry: Sized {
+pub(crate) trait ReaddirEntry: Sized {
     /// `ExpectedType == jsc.Node.Dirent` — whether the caller needs to track
     /// a cached `dirent_path` BunString.
     const IS_DIRENT: bool;
     /// Windows: entry names arrive as UTF-16 (`append_entry_w`).
+    #[cfg(windows)]
     const IS_U16: bool;
     /// Windows-only: append from a UTF-16 directory entry name.
     /// Non-recursive readdir; `re_encoding_buffer` is the pooled scratch for
     /// `strings::from_w_path` when `encoding != utf8`. Only ever invoked when
     /// `IS_U16` is true — `Buffer`'s impl is a `@compileError`-equivalent
     /// `unreachable!()`.
+    #[cfg(windows)]
     fn append_entry_w(
         entries: &mut Vec<Self>,
         utf16_name: &[u16],
@@ -9114,7 +9296,8 @@ pub trait ReaddirEntry: Sized {
 }
 impl ReaddirEntry for BunString {
     const IS_DIRENT: bool = false;
-    const IS_U16: bool = Environment::IS_WINDOWS;
+    #[cfg(windows)]
+    const IS_U16: bool = true;
     fn into_readdir(v: Vec<Self>) -> ret::Readdir {
         ret::Readdir::Files(v.into_boxed_slice())
     }
@@ -9127,6 +9310,7 @@ impl ReaddirEntry for BunString {
     ) {
         entries.push(webcore::encoding::to_bun_string(utf8_name, encoding));
     }
+    #[cfg(windows)]
     fn append_entry_w(
         entries: &mut Vec<Self>,
         utf16_name: &[u16],
@@ -9166,7 +9350,8 @@ impl ReaddirEntry for BunString {
 }
 impl ReaddirEntry for Dirent {
     const IS_DIRENT: bool = true;
-    const IS_U16: bool = Environment::IS_WINDOWS;
+    #[cfg(windows)]
+    const IS_U16: bool = true;
     fn into_readdir(v: Vec<Self>) -> ret::Readdir {
         ret::Readdir::WithFileTypes(v.into_boxed_slice())
     }
@@ -9183,6 +9368,7 @@ impl ReaddirEntry for Dirent {
             kind,
         });
     }
+    #[cfg(windows)]
     fn append_entry_w(
         entries: &mut Vec<Self>,
         utf16_name: &[u16],
@@ -9221,6 +9407,7 @@ impl ReaddirEntry for Dirent {
 }
 impl ReaddirEntry for Buffer {
     const IS_DIRENT: bool = false;
+    #[cfg(windows)]
     const IS_U16: bool = false;
     fn into_readdir(v: Vec<Self>) -> ret::Readdir {
         ret::Readdir::Buffers(v.into_boxed_slice())
@@ -9234,6 +9421,7 @@ impl ReaddirEntry for Buffer {
     ) {
         entries.push(Buffer::from_string(utf8_name).expect("oom"));
     }
+    #[cfg(windows)]
     fn append_entry_w(
         _: &mut Vec<Self>,
         _: &[u16],
@@ -9854,7 +10042,7 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
 // NodeFSFunctionEnum — one variant per NodeFS method
 // ──────────────────────────────────────────────────────────────────────────
 #[derive(Copy, Clone, PartialEq, Eq, core::marker::ConstParamTy)]
-pub enum NodeFSFunctionEnum {
+pub(crate) enum NodeFSFunctionEnum {
     Access,
     AppendFile,
     Chmod,
@@ -9903,7 +10091,7 @@ impl NodeFSFunctionEnum {
     /// Windows (`UVFSRequest`) and so re-enter through the task queue; every
     /// other async op is a `bun_jsc::Job` and needs none.
     #[cfg(windows)]
-    pub const fn task_tag(self) -> bun_event_loop::TaskTag {
+    pub(crate) const fn task_tag(self) -> bun_event_loop::TaskTag {
         use bun_event_loop::task_tag;
         match self {
             NodeFSFunctionEnum::Open => task_tag::Open,

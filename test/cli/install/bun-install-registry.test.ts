@@ -3897,6 +3897,102 @@ describe("binaries", () => {
     expect(err).not.toContain("error:");
     expect(await exited).toBe(0);
   });
+
+  // An empty `bin` names no file, so the bins come from `directories.bin`. Each path below is
+  // longer than the room that a parsed package.json or manifest has for a string that its
+  // counting pass missed. The `./` segments drop out of the resolved path, so each one still
+  // names the folder in its last segment.
+  describe("`directories.bin` next to an empty `bin`", () => {
+    const longDirOf = (folder: string) => Buffer.alloc(512, "./").toString() + folder;
+
+    /** Runs `bun install` in `packageDir`, expects it to succeed, and returns `bun.lock`. */
+    async function install(expectedOut: string) {
+      await using proc = spawn({
+        cmd: [bunExe(), "install", "--save-text-lockfile"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ out, err, exitCode, signalCode: proc.signalCode }).toEqual({
+        out: expect.stringContaining(expectedOut),
+        err: expect.not.stringContaining("error:"),
+        exitCode: 0,
+        signalCode: null,
+      });
+      const lockfile = file(join(packageDir, "bun.lock"));
+      return (await lockfile.exists()) ? ((Bun.JSONC.parse(await lockfile.text()) as any).packages ?? {}) : undefined;
+    }
+
+    test("in the root package.json", async () => {
+      await write(packageJson, JSON.stringify({ name: "foo", bin: "", directories: { bin: longDirOf("bins") } }));
+
+      expect(await install("done")).toBeUndefined();
+    });
+
+    test("in a folder dependency", async () => {
+      const binDir = longDirOf("executables");
+      await Promise.all([
+        write(packageJson, JSON.stringify({ name: "foo", dependencies: { "dir-bin": "./dir-bin" } })),
+        write(
+          join(packageDir, "dir-bin", "package.json"),
+          JSON.stringify({ name: "dir-bin", version: "1.1.1", bin: "", directories: { bin: binDir } }),
+        ),
+        write(
+          join(packageDir, "dir-bin", "executables", "dir-bin-1.js"),
+          `#!/usr/bin/env node\nconsole.log("dir-bin-1")`,
+        ),
+      ]);
+
+      expect(await install("1 package installed")).toEqual({
+        "dir-bin": ["dir-bin@file:dir-bin", { binDir }],
+      });
+      expect(join(packageDir, "node_modules", ".bin", "dir-bin-1.js")).toBeValidBin(
+        join("..", "dir-bin", "executables", "dir-bin-1.js"),
+      );
+    });
+
+    test("in a registry manifest", async () => {
+      const name = "dep-with-directory-bins";
+      const binDir = longDirOf("bins");
+      await using server = Bun.serve({
+        port: 0,
+        fetch(request) {
+          const { origin, pathname } = new URL(request.url);
+          if (pathname.endsWith(".tgz")) {
+            return new Response(file(join(import.meta.dir, "registry", "packages", name, `${name}-1.0.0.tgz`)));
+          }
+          return Response.json({
+            name,
+            "dist-tags": { latest: "1.0.0" },
+            versions: {
+              "1.0.0": {
+                name,
+                version: "1.0.0",
+                bin: "",
+                directories: { bin: binDir },
+                dist: { tarball: `${origin}/${name}-1.0.0.tgz` },
+              },
+            },
+          });
+        },
+      });
+      await Promise.all([
+        write(packageJson, JSON.stringify({ name: "foo", dependencies: { [name]: "1.0.0" } })),
+        write(
+          join(packageDir, "bunfig.toml"),
+          Bun.TOML.stringify({ install: { cache: false, registry: server.url.href, linker: "hoisted" } }),
+        ),
+      ]);
+
+      expect(await install("1 package installed")).toEqual({
+        [name]: [`${name}@1.0.0`, `${server.url.origin}/${name}-1.0.0.tgz`, { binDir }, ""],
+      });
+      await runBin("directory-bin-1", "directory-bin-1\n", false);
+      await runBin("directory-bin-2", "directory-bin-2\n", false);
+    });
+  });
 });
 
 test("--config cli flag works", async () => {
@@ -9629,7 +9725,7 @@ describe("outdated", () => {
 // test/cli/install/registry/bun-install-windowsshim.test.ts:
 //
 // This test is to verify that BinLinkingShim.zig creates correct shim files as
-// well as bun_shim_impl.exe works in various edge cases. There are many fast
+// well as bun-shim-impl.exe works in various edge cases. There are many fast
 // paths for many many cases.
 describe("windows bin linking shim should work", async () => {
   if (!isWindows) return;

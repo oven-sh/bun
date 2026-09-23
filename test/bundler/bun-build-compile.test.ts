@@ -1,3 +1,4 @@
+import { bytecodeOrderNames } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isArm64, isDebug, isLinux, isMacOS, isMusl, isPosix, isWindows, tempDir } from "harness";
 import {
@@ -13,6 +14,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import { builtinModules } from "node:module";
 import { isAbsolute, join, sep } from "path";
 
 describe("Bun.build compile", () => {
@@ -264,6 +266,497 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
 
     // The recorded run imports a, b, c (never d, e, f) and calls first() before second().
     const recordedArgv = ["a", "b", "c"];
+    // An order file names code by a hash of its syntax tree (src/js_parser/function_identities.rs), computed from the text
+    // JavaScriptCore is given; bytecodeOrderNames() is that, as "M <name>" and "<start> <kind> <name>" lines.
+    describe("what an order file calls code", () => {
+      const namesOf = (text: string, kind: "module" | "script" | "builtin" = "module", chunkPaths: string[] = []) => {
+        const names = bytecodeOrderNames(text, kind, chunkPaths.join("\n"));
+        expect(names).not.toBeNull();
+        return names!.trimEnd().split("\n");
+      };
+      // Without where they start.
+      const functionsOf = (text: string, kind: "module" | "script" | "builtin" = "module") =>
+        namesOf(text, kind)
+          .filter(line => !line.startsWith("M "))
+          .map(line => line.split(" ").slice(1).join(" "))
+          .sort();
+      const minified = async (source: string) => {
+        using dir = tempDir("bytecode-order-minified", { "entry.js": source });
+        const built = await Bun.build({
+          entrypoints: [join(String(dir), "entry.js")],
+          target: "bun",
+          minify: { identifiers: true, whitespace: true },
+        });
+        expect(built.success).toBe(true);
+        return await built.outputs[0].text();
+      };
+
+      // What has to hold is that two builds that minify alike agree, whatever names the minifier came up with: it gives
+      // one name to bindings of scopes next to each other, and names labels and private names apart from bindings.
+      test("a function keeps its name when the minifier picks other names", async () => {
+        const common = `
+          function spans(list) {
+            let total = 0;
+            for (const first of list) { total += first; }
+            for (const second of list) { total -= second / 2; }
+            { let inner = total, other = inner * 2; total = other - inner; }
+            outer: for (const row of [list, list]) { for (const cell of row) { if (cell > 1) continue outer; total += cell; } }
+            return [1].map(only => only + total)[0];
+          }
+          class Counter { #count = 1; #step = 2; next() { return (this.#count += this.#step); } peek() { return this.#count; } }
+          console.log(spans([1, 2]), new Counter().next(), new Counter().peek());
+        `;
+        // Never called. A minifier picks names out of the characters the text uses the most, and this changes which
+        // those are, and which bindings and private names are used the most.
+        const busy = `class Busy { #zq = 1; #jx = 2; busy(p0, p1, p2, p3) { return ${[3, 2, 1, 0]
+          .map((p, i) =>
+            Array(40 * (4 - i))
+              .fill(`p${p}.zzqzzqzzq.jjxjjxjjx + this.#jx`)
+              .join(" + "),
+          )
+          .join(" + ")} + this.#zq; } }\nconsole.log(typeof Busy);`;
+        const [few, many] = await Promise.all([minified(common), minified(common + busy)]);
+        const spansOf = (text: string) => text.slice(text.indexOf("let "), text.indexOf("continue"));
+        expect(spansOf(few).length).toBeGreaterThan(40);
+        expect(spansOf(many)).not.toBe(spansOf(few));
+        expect(functionsOf(few).length).toBeGreaterThanOrEqual(6);
+        expect(functionsOf(many)).toEqual(expect.arrayContaining(functionsOf(few)));
+      });
+
+      test("which binding is used where is part of a name, what the bindings are called is not", () => {
+        const sum = functionsOf("export const f = function (p, q) { return p + q; };");
+        expect(functionsOf("export const f = function (of, async) { return of + async; };")).toEqual(sum);
+        expect(functionsOf("export const f = function (p, q) { return p + p; };")).not.toEqual(sum);
+        // A binding of the function around it, by which one it is there.
+        const captured = (name: string) => functionsOf(`export function outer(a, b) { return () => ${name}; }`);
+        expect(captured("a")).not.toEqual(captured("b"));
+        // What no function around it declares: the module's by the order it is mentioned in, anything else by name.
+        const free = (body: string) => functionsOf(`const one = 1, two = 2; export const f = () => ${body};`);
+        expect(free("one")).toEqual(free("two"));
+        expect(free("[one, two, one]")).not.toEqual(free("[one, two, two]"));
+        expect(free("Math")).not.toEqual(free("JSON"));
+        // A label is not a binding; an optional chain is where it starts.
+        expect(functionsOf("export function f(a) { a: for (;;) break a; }")).toEqual(
+          functionsOf("export function f(a) { b: for (;;) break b; }"),
+        );
+        expect(functionsOf("export const f = a => a?.b.c;")).not.toEqual(functionsOf("export const f = a => a?.b?.c;"));
+      });
+
+      // A program stamps itself with its version and the day it was built wherever it says them, and a build writes the
+      // paths of its chunks, which are hashes of their contents, as strings.
+      test("what a string says is not part of a name, the name of a property is", () => {
+        const stamped = (version: string, property: string) =>
+          functionsOf(
+            `export function f(p) { return [p + "${version}".length, \`built ${version}\`, { ${property}: p }.${property}, p["${property}"]]; }`,
+          );
+        expect(stamped("2.0.1", "value")).toEqual(stamped("1.0.0", "value"));
+        expect(stamped("1.0.0", "other")).not.toEqual(stamped("1.0.0", "value"));
+      });
+
+      test("an edit renames the function it is in and the functions around that, and nothing else", () => {
+        const source = (edit: string) => `
+          export function outer(n) {
+            class A { x = n + 1; static y = () => n; }
+            const t = \`v\${[n].map(x => x + 1)}\`;
+            function inner(m) { return m * 2${edit}; }
+            return [new A().x, t, inner(n)];
+          }
+          export function other(k) { return k - 1; }
+        `;
+        const [before, after] = [functionsOf(source("")), functionsOf(source(" + 1"))];
+        // inner and outer; the class's fields, the arrows and other() are what they were.
+        expect(after.filter(line => !before.includes(line)).length).toBe(2);
+        expect(before.filter(line => !after.includes(line)).length).toBe(2);
+      });
+
+      test("where JavaScriptCore says a function starts", () => {
+        // kind 0: a function, at its parameters; 1: the inner function of a generator's body, or of an async body that
+        // awaits; 2: the function that initializes a class's fields, at the first of them; 3: the constructor of a class
+        // that does not write one, at the class.
+        const starts = (text: string, kind: "module" | "script" | "builtin" = "module") =>
+          namesOf(text, kind)
+            .filter(line => !line.startsWith("M "))
+            .map(line => line.split(" ").slice(0, 2).join(":"));
+        expect(starts("function f(a){}var g=function(a){},h=(a)=>a,i=a=>a;")).toEqual(["10:0", "29:0", "37:0", "46:0"]);
+        expect(starts("var f=async(a)=>a,g=async(a)=>await a,h=async a=>{await a};")).toEqual([
+          "11:0",
+          "25:0",
+          "30:1",
+          "46:0",
+          "49:1",
+        ]);
+        expect(starts("async function f(){}async function g(){await 1}function*h(){}")).toEqual([
+          "16:0",
+          "36:0",
+          "38:1",
+          "57:0",
+          "59:1",
+        ]);
+        expect(starts("class A{a=1;static b=2;static{A.c=3}#d;['e']=5;static [(1,'f')]=6;m(){}}")).toEqual([
+          "0:3",
+          "8:2",
+          "12:2",
+          "29:0",
+          "67:0",
+        ]);
+        expect(starts("async function f(){class A{[await 1]=1}}")).toEqual(["16:0", "18:1", "19:3", "27:2"]);
+        // A class element whose name starts with an async arrow: two things start where the `async` is.
+        expect(starts("class A{[async()=>1]=2;static[(async x=>x)()]=3}")).toEqual([
+          "0:3",
+          "8:2",
+          "14:0",
+          "23:2",
+          "37:0",
+        ]);
+        // A hashbang, and text outside ASCII: JavaScriptCore counts in UTF-16 code units.
+        expect(starts("#!/usr/bin/env bun\n/* é中\u{1f600} */function f(){}")).toEqual(["39:0"]);
+        // A CommonJS chunk is a script, and may say what a module may not.
+        expect(
+          starts("(function(exports, require, module, __filename, __dirname) {with(module){var a=010}})", "script"),
+        ).toEqual(["9:0"]);
+        // An internal module is in JavaScriptCore's builtin syntax.
+        expect(starts("(function (){return @isCallable(this.@state)?@undefined:1})", "builtin")).toEqual(["10:0"]);
+      });
+
+      // A chunk's name is a hash of its contents, and it is what other chunks import it by.
+      test("the chunks a chunk imports are not part of its name", () => {
+        const chunk = (path: string, chunks: string[]) =>
+          namesOf(
+            `import{a as b}from"${path}";import{c}from"node:fs";export function f(){return import("${path}").then(()=>b+c)}export{f as d};`,
+            "module",
+            chunks,
+          ).map(line => line.split(" ").at(-1));
+        for (const paths of ["/$bunfs/root/", "B:/~BUN/root/", "https://example.com//$bunfs/root/"]) {
+          const [one, other] = [`${paths}chunk-0a1b2c3d.js`, `${paths}sub/chunk-4e5f6g7h.js`];
+          expect(chunk(one, [other, one])).toEqual(chunk(other, [other, one]));
+          // What is not one of the build's chunks is imported by its name, wherever it is.
+          expect(chunk(one, [other])).not.toEqual(chunk(other, [other]));
+        }
+        expect(namesOf(`import{c}from"node:fs";`, "module")).not.toEqual(namesOf(`import{c}from"node:os";`, "module"));
+      });
+
+      // A minifier renames bindings and leaves properties: what tells one getter of \`__export(ns, { a: () => a, b: () => b })\`
+      // from the next is the property it is the value of.
+      test("a function that is the value of a property is named with the property", () => {
+        // In the order they are written.
+        const names = (text: string) =>
+          namesOf(text)
+            .filter(line => !line.startsWith("M "))
+            .map(line => line.split(" ").at(-1));
+        const getters = names(
+          `var a = 1, b = 2; export const ns = { a: () => a, b: () => b, ["c"]: () => a, ["d"]: () => b };`,
+        );
+        expect(getters[0]).not.toBe(getters[1]);
+        // A computed name says nothing here.
+        expect(getters[2]).toBe(getters[3]);
+        expect(names(`var x = 1, y = 2; export const ns = { a: () => x, b: () => y };`).slice(0, 2)).toEqual(
+          getters.slice(0, 2),
+        );
+        const methods = names(
+          `export class C { one() { return 1; } static one() { return 1; } get one() { return 1; } two() { return 1; } }`,
+        );
+        expect(new Set(methods).size).toBe(methods.length);
+        // A field's arrow is the value of the field.
+        const fields = names(`export class C { onOpen = () => this.emit(); onClose = () => this.emit(); }`);
+        expect(new Set(fields).size).toBe(fields.length);
+        // The function that initializes fields is named with the functions in them, and not by what is written before
+        // the class.
+        const initializer = (text: string) =>
+          namesOf(text)
+            .filter(line => line.split(" ")[1] === "2")
+            .map(line => line.split(" ").at(-1));
+        expect(initializer(`export class S { static { one(); } }`)).not.toEqual(
+          initializer(`export class S { static { two(); } }`),
+        );
+        expect(initializer(`export class S { h = () => 1; }`)).not.toEqual(
+          initializer(`export class S { h = () => 2; }`),
+        );
+        expect(initializer(`export class S { h = () => 1; static { one(); } }`)).toEqual(
+          initializer(`function before() {} export class S { h = () => 1; static { one(); } }`),
+        );
+        // A class expression in a field that mentions itself.
+        const inField = (name: string) =>
+          names(`export class R { static Entry = class ${name} { clone() { return new ${name}(this); } }; }`);
+        expect(inField("Entry")).toEqual(inField("q"));
+        // The constructor a class does not write is named by what the class's members are called.
+        const constructorOf = (text: string) =>
+          namesOf(text)
+            .filter(line => line.split(" ")[1] === "3")
+            .map(line => line.split(" ").at(-1));
+        expect(constructorOf(`export class A { one() {} }`)).toEqual(
+          constructorOf(`export class B { one() { return 1; } }`),
+        );
+        expect(constructorOf(`export class A { one() {} }`)).not.toEqual(constructorOf(`export class A { two() {} }`));
+        expect(constructorOf(`export class A { one() {} }`)).not.toEqual(
+          constructorOf(`export class A extends Object { one() {} }`),
+        );
+      });
+
+      // Generated code has expressions as deep as they are long; what is nested deeper than is walked has no name, and
+      // neither has what it is nested in, on whichever thread and however much stack is left.
+      test("code that is nested too deeply to walk", () => {
+        const long = `export function long(x) { return ${Array(200_000).fill("x").join(" + ")}; }`;
+        expect(functionsOf(long).length).toBe(1);
+        const chain = `export function chain(x) { return ${Array(2_000).fill("x ? 1").join(" : ")} : 2; }`;
+        expect(functionsOf(chain).length).toBe(1);
+        // A fluent chain, which is as deep at its start as it is long, is walked like the rest.
+        const fluent = (last: string) =>
+          `export function outer() { return function fluent(z) { return z${".object({ a: 1 }).extend(z)".repeat(1000)}${last}; }; }`;
+        expect(namesOf(fluent(""))).toHaveLength(3);
+        expect(functionsOf(fluent(".parse()"))).not.toEqual(functionsOf(fluent("")));
+        // How deeply functions are nested in functions is no depth at all: each is walked on its own.
+        const arrows = `export const f = ${"() => (".repeat(600)}42${")".repeat(600)};`;
+        expect(functionsOf(arrows).length).toBe(600);
+        expect(new Set(functionsOf(arrows)).size).toBe(600);
+        // What is nested deeper than is walked is left out of the name of the function it is in, and nothing else is.
+        const nested = (innermost: string) =>
+          `export function outer() { return function deep() { return ${"[".repeat(600)}${innermost}${"]".repeat(600)}; }; }`;
+        expect(namesOf(nested("1"))).toEqual(namesOf(nested("2")));
+        expect(namesOf(nested("1"))).toHaveLength(3);
+        expect(namesOf(nested("1"))).not.toEqual(namesOf(nested("1").replace("return [", "return 0, [")));
+      });
+
+      // A name is a wyhash (seed 0) of bytes that say what is written, which for these two can be written down by hand.
+      // A change to them changes what every order file recorded so far calls every function: if that is what a change
+      // means to do, it changes the order file's version line ("v2") too.
+      test("the bytes a name is a hash of", () => {
+        const u64 = (value: number) => [...new Uint8Array(new BigUint64Array([BigInt(value)]).buffer)];
+        const f64 = (value: number) => [...new Uint8Array(new Float64Array([value]).buffer)];
+        const nameOf = (bytes: number[]) => Bun.hash.wyhash(new Uint8Array(bytes), 0n).toString(16).padStart(16, "0");
+        const [ARROW, FUNCTION, LOCAL, NUMBER, END, NONE, RETURN, BINDING] = [2, 1, 4, 6, 7, 8, 0x40 | 3, 0xc0];
+        // An arrow that is the value of no property and not async, no parameters, its statements: return <the number 1>.
+        expect(namesOf("export default () => 1;").filter(line => !line.startsWith("M "))).toEqual([
+          `15 0 ${nameOf([ARROW, NONE, 0, ...u64(0), RETURN, NUMBER, ...f64(1), END])}`,
+        ]);
+        // A function that is neither async nor a generator and has a name; one parameter, a binding that is the first
+        // thing this function (0 functions out) declares, without a default; its statements: return <that binding>.
+        const a = [LOCAL, ...u64(0), ...u64(0)];
+        expect(namesOf("function f(a) { return a; }").filter(line => !line.startsWith("M "))).toEqual([
+          `10 0 ${nameOf([FUNCTION, NONE, 0, 1, ...u64(1), BINDING, ...a, NONE, RETURN, ...a, END])}`,
+        ]);
+      });
+    });
+
+    // Programs that are not like the one recorded below.
+    describe("in a program", () => {
+      const buildIn = async (dir: string, args: string[], outfile: string) => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "build", "--compile", "--bytecode", ...args, "--outfile", outfile],
+          env: bunEnv,
+          cwd: dir,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        // What is said about names is said when the build succeeds.
+        return {
+          stderr:
+            exitCode === 0
+              ? stderr
+                  .split("\n")
+                  .filter(line => line.includes("names"))
+                  .join("\n")
+              : stderr,
+          exitCode,
+        };
+      };
+      const runIn = async (dir: string, outfile: string, argv: string[], env: Record<string, string> = {}) => {
+        await using proc = Bun.spawn({
+          cmd: [join(dir, outfile), ...argv],
+          env: { ...bunEnv, ...env },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const stats = stderr.split("\n").find(line => line.startsWith("stats "));
+        return {
+          stdout,
+          stderr: stderr
+            .split("\n")
+            .filter(line => !line.startsWith("stats "))
+            .join("\n"),
+          stats: stats === undefined ? undefined : JSON.parse(stats.slice("stats ".length)),
+          exitCode,
+        };
+      };
+      // Builds, records a run, builds again with the recording, and runs that: every function the program runs is one
+      // the order file lists and the build places.
+      // `edit`: changes the sources between the build that records and the build that is laid out, to `unknown`
+      // functions the recording cannot know.
+      const roundTrip = async (
+        dir: string,
+        args: string[],
+        stdout: string,
+        { edit, unknown = 0 }: { edit?: () => Promise<unknown>; unknown?: number } = {},
+      ) => {
+        expect(await buildIn(dir, args, exe("plain"))).toEqual({ stderr: "", exitCode: 0 });
+        expect(await runIn(dir, exe("plain"), [], { BUN_BYTECODE_ORDER_OUT: join(dir, "app.order") })).toEqual({
+          stdout,
+          stderr: "",
+          stats: undefined,
+          exitCode: 0,
+        });
+        const order = readFileSync(join(dir, "app.order"), "utf8");
+        expect(order).not.toContain("#");
+        await edit?.();
+        expect(await buildIn(dir, [...args, "--bytecode-order=app.order"], exe("ordered"))).toEqual({
+          stderr: "",
+          exitCode: 0,
+        });
+        const ran = await runIn(dir, exe("ordered"), ["stats"]);
+        expect({ ...ran, stats: undefined }).toEqual({ stdout, stderr: "", stats: undefined, exitCode: 0 });
+        // The names the build gave are the names the run that recorded gave: of what ran, and of what did not.
+        expect({ cold: ran.stats.cold, unknownRegion: ran.stats.regions.unknown > 0 }).toEqual({
+          cold: 0,
+          unknownRegion: unknown > 0,
+        });
+        expect(ran.stats.unknown).toBeLessThanOrEqual(unknown);
+        if (edit) {
+          // What the edited program's run calls its functions: all that the edit renamed is what it changed.
+          const again = join(dir, "again.order");
+          await runIn(dir, exe("ordered"), [], { BUN_BYTECODE_ORDER_OUT: again });
+          const after = new Set(readFileSync(again, "utf8").split("\n"));
+          const renamed = (kind: string) =>
+            order.split("\n").filter(line => line.startsWith(kind) && !after.has(line)).length;
+          // (A module that imports the edited one by its path, which changed, is not renamed.)
+          expect({ functions: renamed("F "), modules: renamed("M ") }).toEqual({ functions: unknown, modules: 1 });
+        }
+        return { order, stats: ran.stats };
+      };
+
+      // The fixture runs every kind of function JavaScriptCore compiles; it starts with a hashbang, and the banner
+      // puts text outside ASCII before every function.
+      test("every function JavaScriptCore runs has a name", async () => {
+        using dir = tempDir("build-compile-bytecode-order-every", {
+          "app.js": await Bun.file(join(import.meta.dir, "fixtures", "bytecode-order-names.js")).text(),
+          "data.json": `{ "answer": 42 }`,
+        });
+        const { order, stats } = await roundTrip(
+          String(dir),
+          ["--format=esm", "--splitting", "--banner=/* \u00e9\u4e2d\u{1f600} */", "app.js"],
+          "37\n",
+        );
+        const functions = order.split("\n").filter(line => line.startsWith("F "));
+        expect(functions.length).toBeGreaterThan(40);
+        expect(stats.hot).toBeGreaterThanOrEqual(functions.length);
+      }, 60_000);
+
+      // A CommonJS chunk is a script to JavaScriptCore, and may say what a module may not.
+      test("the functions of a CommonJS chunk that is not strict code have names", async () => {
+        using dir = tempDir("build-compile-bytecode-order-sloppy", {
+          "app.cjs": `
+            const { bytecodeOrderStats } = require("bun:jsc");
+            function lookup(scope) { with (scope) { return [value, 010].map(item => item + 1); } }
+            console.log(lookup({ value: 1 }).join(","));
+            if (process.argv.includes("stats")) console.error("stats " + JSON.stringify(bytecodeOrderStats()));
+          `,
+        });
+        const { stats } = await roundTrip(
+          String(dir),
+          ["--format=cjs", "--banner=/* \u00e9\u4e2d\u{1f600} */", "app.cjs"],
+          "2,9\n",
+        );
+        // The wrapper, lookup and its arrow.
+        expect(stats.hot).toBeGreaterThanOrEqual(3);
+      }, 60_000);
+
+      // A module a Bun.ModuleGraph loads is private to the graph: JavaScriptCore decodes its code apart from the code
+      // cache, once for each graph.
+      test("the modules of a Bun.ModuleGraph are recorded, once", async () => {
+        using dir = tempDir("build-compile-bytecode-order-graph", {
+          "app.js": `
+            import { bytecodeOrderStats } from "bun:jsc";
+            import { twice } from "./lazy.js";
+            const inGraph = name => new Bun.ModuleGraph({ globals: { tenant: name } }).import(new URL("./tenants/tenant.js", import.meta.url).href);
+            const [one, two] = await Promise.all([inGraph("one"), inGraph("two")]);
+            console.log(one.hotInGraph(2), two.hotInGraph(3), twice(1));
+            if (process.argv.includes("stats")) console.error("stats " + JSON.stringify(bytecodeOrderStats()));
+          `,
+          // An entry point in a directory of its own. Both import the chunk lazy.js is in, by a path that has a hash
+          // of what lazy.js says.
+          "tenants/tenant.js": `
+            import { twice } from "../lazy.js";
+            export function hotInGraph(n) { return [n].map(item => twice(item) + tenant.length)[0]; }
+            export function neverInGraph(n) { return n - 1; }
+          `,
+          "lazy.js": `export const twice = n => n * 2;`,
+        });
+        const { order, stats } = await roundTrip(
+          String(dir),
+          ["--format=esm", "--splitting", "app.js", "tenants/tenant.js"],
+          "7 9 2\n",
+          // The chunk of lazy.js gets another path, which is not part of what the code that imports it is called:
+          // all that the recording does not know is the function that changed.
+          { edit: () => Bun.write(join(String(dir), "lazy.js"), "export const twice = n => n + n;"), unknown: 1 },
+        );
+        const lines = order.split("\n");
+        // app.js, tenant.js and lazy.js were evaluated, no module was not; hotInGraph and its arrow are listed once.
+        expect(lines.filter(line => line.startsWith("M ")).length).toBe(3);
+        expect(lines.filter(line => line.startsWith("N "))).toEqual([]);
+        expect(new Set(lines).size).toBe(lines.length);
+        // So the next build has tenant.js among the modules the run evaluated, and hotInGraph with the code it ran.
+        expect(stats.regions.lateModuleHeads).toBe(0);
+        expect(stats.regions.hot).toBeGreaterThan(0);
+      }, 60_000);
+
+      // The runtime runs a module from its source when the bytecode it has is not for that source. Such a run did not
+      // see what the module's code does: the recording says nothing about it, not that it did not run.
+      // (Linux: elsewhere the edit breaks the signature.)
+      test.skipIf(!isLinux)(
+        "a module whose bytecode the run did not use is not listed as not run",
+        async () => {
+          using dir = tempDir("build-compile-bytecode-order-rejected", {
+            "app.js": `const { twice } = await import("./lazy.js"); console.log(twice(2));`,
+            "lazy.js": `export const twice = n => [n].map(markerOfLazy => markerOfLazy * 2)[0];`,
+          });
+          const args = ["--format=esm", "--splitting", "app.js"];
+          expect(await buildIn(String(dir), args, exe("plain"))).toEqual({ stderr: "", exitCode: 0 });
+          const record = async (name: string) => {
+            const out = join(String(dir), name);
+            expect(await runIn(String(dir), exe("plain"), [], { BUN_BYTECODE_ORDER_OUT: out })).toEqual({
+              stdout: "4\n",
+              stderr: "",
+              stats: undefined,
+              exitCode: 0,
+            });
+            const lines = readFileSync(out, "utf8").split("\n");
+            return Object.fromEntries(["F", "K", "M", "N"].map(kind => [kind, lines.filter(line => line[0] === kind)]));
+          };
+          const used = await record("used.order");
+          expect({ M: used.M.length, N: used.N.length }).toEqual({ M: 2, N: 0 });
+
+          // The first bytes of lazy.js's bytecode say which version of the cache wrote it.
+          const outfile = join(String(dir), exe("plain"));
+          const file = readFileSync(outfile);
+          const trailer = file.lastIndexOf("\n---- Bun! ----\n", undefined, "latin1");
+          const offsets = trailer - 32;
+          const base = offsets - Number(file.readBigUInt64LE(offsets));
+          const modules = { offset: file.readUInt32LE(offsets + 8), length: file.readUInt32LE(offsets + 12) };
+          let edited = 0;
+          for (let at = base + modules.offset; at < base + modules.offset + modules.length; at += 52) {
+            const contents = { offset: file.readUInt32LE(at + 8), length: file.readUInt32LE(at + 12) };
+            const source = file.toString("latin1", base + contents.offset, base + contents.offset + contents.length);
+            if (!source.includes("markerOfLazy")) continue;
+            file.fill(0xff, base + file.readUInt32LE(at + 24), base + file.readUInt32LE(at + 24) + 8);
+            edited++;
+          }
+          expect(edited).toBe(1);
+          writeFileSync(outfile, file);
+
+          const unused = await record("unused.order");
+          // app.js ran from its bytecode; lazy.js is neither evaluated nor not, and none of its functions is listed.
+          expect({ M: unused.M, N: unused.N }).toEqual({ M: used.M.filter(line => unused.M.includes(line)), N: [] });
+          expect(unused.M.length).toBe(1);
+          const ofLazy = used.F.concat(used.K)
+            .filter(line => !unused.F.includes(line))
+            .map(line => line.slice(2));
+          expect(ofLazy.length).toBeGreaterThanOrEqual(2);
+          expect(unused.K.map(line => line.slice(2)).filter(name => ofLazy.includes(name))).toEqual([]);
+        },
+        60_000,
+      );
+    });
+
     describe("with a recorded run", () => {
       // What every test starts from, made once, in a hook so that no test's clock includes it: the plain build, two
       // recordings of it (the second is another way of starting the program) and the build ordered by the first. One build
@@ -286,7 +779,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
           const { order, plain } = shared;
           // Nothing but the five kinds of lines: a recording says so, in a line of another kind, when something the run
           // decoded could not be named.
-          expect(order.split("\n").filter(line => !/^(v1|[FSMNK] [0-9a-f]{16}|)$/.test(line))).toEqual([]);
+          expect(order.split("\n").filter(line => !/^(v2|[FSMNK] [0-9a-f]{16}|)$/.test(line))).toEqual([]);
           expect(plain).toEqual({
             stdout: "APPAPP 2a4a6 AA/a+/3-a 2b4b6 BB/b+/3-b 2c4c6 CC/c+/3-c\n",
             cacheHits: expect.any(Number),
@@ -294,7 +787,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
           });
           // The entry point's chunk, the shared one, and a, b, c.
           expect(plain.cacheHits).toBe(5);
-          expect(order).toStartWith("v1\n");
+          expect(order).toStartWith("v2\n");
           for (const kind of ["F", "S", "M", "N", "K"])
             expect(order).toMatch(new RegExp(`^${kind} [0-9a-f]{16}$`, "m"));
           expect(hasLinkedPayload(exe("plain"))).toBe(false);
@@ -373,8 +866,10 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
       test("the same order file gives the same executable", async () => {
         // Into a directory of its own, so that the executable has the name of the one the hook built.
         const again = join("again", exe("ordered"));
+        // As an editor may save it: a byte order mark, and lines before the version line that say nothing.
+        await Bun.write(join(cwd(), "saved.order"), "\ufeff\r\n# recorded on a Tuesday\r\n" + shared.order);
         // (Given twice, as two flags: what the second adds to the first is nothing.)
-        const build = await compile(again, ["--bytecode-order=plain.order", "--bytecode-order=plain.order"]);
+        const build = await compile(again, ["--bytecode-order=plain.order", "--bytecode-order=saved.order"]);
         expect({ stderr: build.stderr.includes("error"), exitCode: build.exitCode }).toEqual({
           stderr: false,
           exitCode: 0,
@@ -393,6 +888,8 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
           "a.js":
             files["a.js"].replace("x * n", "(x + 1) * n - n") +
             `\nexport function added(list) { return list.filter(Boolean).length; }`,
+          // Only first() itself: the two arrows in it are the recorded code.
+          "b.js": files["b.js"].replace("return pick([1, 2, 3]);", "return pick([1, 2, 3].slice());"),
         });
         const build = async (args: string[], outfile: string) => {
           await using proc = Bun.spawn({
@@ -422,14 +919,23 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
           exitCode: 0,
         });
         expect(await run(file(exe("ordered")), recordedArgv)).toEqual(expected);
-        // A function is named by its text and, through their names, the text of everything written in it: the edited
-        // arrow, the arrow around it and a's first() are new. Everything else the run decodes is still the recorded code
-        // (shared, second, the other modules' functions), and what is new sits next to it, not in the cold region.
+        // A function is named by its code and, through their names, the code of everything written in it: in a, the
+        // edited arrow, the arrow around it and first() are new; in b, first() is. Everything else the run decodes is
+        // still the recorded code (shared, second, the other modules' functions, and the arrows in b's first(), which are
+        // in the hot region although the function they are written in is not), and what is new sits next to it, not in
+        // the cold region.
         expect(await stats(file(exe("ordered")), recordedArgv)).toMatchObject({
           hot: expect.any(Number),
-          unknown: 3,
+          unknown: 4,
           cold: 0,
         });
+        // Code that was written before the function around it decodes like any other.
+        const digestsOf = async (outfile: string) => {
+          const out = join(String(editedDir), outfile + ".digest");
+          expect((await run(file(outfile), [], { BUN_BYTECODE_DIGEST_OUT: out })).exitCode).toBe(0);
+          return readFileSync(out, "utf8").replaceAll(outfile, "<entry>");
+        };
+        expect(await digestsOf(exe("ordered"))).toBe(await digestsOf(exe("plain")));
       }, 60_000);
 
       // bun:jsc's bytecodeOrderStats(): the function bodies a run decoded, by the region of the payload they are in.
@@ -525,7 +1031,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
           const lines = (await Bun.file(join(workerCwd, out)).text()).split("\n");
           const of = (kind: string) =>
             new Set(lines.filter(line => line.startsWith(kind + " ")).map(line => line.slice(2)));
-          const other = lines.filter(line => !/^(v1|[FSMNK] [0-9a-f]{16}|)$/.test(line));
+          const other = lines.filter(line => !/^(v2|[FSMNK] [0-9a-f]{16}|)$/.test(line));
           return {
             stdout,
             exitCode,
@@ -595,128 +1101,18 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
         expect(countedExit).toBe(0);
       }, 60_000);
 
-      // An order file names code by a hash of its text in which every name counts the same, because a minifier hands out
-      // names afresh in every build, and it gets to the contextual keywords: `of`, `get`, `set`, `async`, `as`.
-      // Builds each variant, runs it recording, and returns its order file's F/M/N/K lines. Not minified: the names stay as
-      // written. Strings are named by their characters, so the S lines are left out. Two builds at a time: each links an
-      // executable the size of bun.
-      const namesSource = (locals: string[], member: string, extra = "") => `
-        ${extra}
-        ${locals.map((local, i) => `function scale${i}(list, ${local}) { const pick = item => item * ${local}; return list.map(pick); }`).join("\n")}
-        class Box { constructor(v) { this.v = v; } ${member} { return scale0([this.v], 3)[0]; } }
-        const box = new Box(2);
-        console.log(${locals.map((_, i) => `scale${i}([1, 2], 2).join(",")`).join(", ")}, typeof box.size === "function" ? box.size() : box.size);
-      `;
-      const recordVariants = async <Name extends string>(variants: Record<Name, string>, stdout: string) => {
-        using namesDir = tempDir(
-          "build-compile-bytecode-order-names",
-          Object.fromEntries(Object.entries<string>(variants).map(([name, text]) => [`${name}.js`, text])),
-        );
-        const named = async (name: string) => {
-          await using build = Bun.spawn({
-            cmd: [bunExe(), "build", "--compile", "--bytecode", "--format=esm", `${name}.js`, "--outfile", exe(name)],
-            env: bunEnv,
-            cwd: namesDir + "",
-            stdout: "pipe",
-            stderr: "pipe",
-          });
-          const [, buildStderr, buildExit] = await Promise.all([
-            build.stdout.text(),
-            build.stderr.text(),
-            build.exited,
-          ]);
-          expect({ stderr: buildExit === 0 ? "" : buildStderr, exitCode: buildExit }).toEqual({
-            stderr: "",
-            exitCode: 0,
-          });
-          const out = join(namesDir + "", `${name}.order`);
-          await using proc = Bun.spawn({
-            cmd: [join(namesDir + "", exe(name))],
-            env: { ...bunEnv, BUN_BYTECODE_ORDER_OUT: out },
-            stdout: "pipe",
-            stderr: "pipe",
-          });
-          const [out1, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-          expect({ stdout: out1, exitCode }).toEqual({ stdout, exitCode: 0 });
-          return (await Bun.file(out).text())
-            .split("\n")
-            .filter(line => /^[FMNK] /.test(line))
-            .sort();
-        };
-        const names = Object.keys(variants);
-        const built: (readonly [string, string[]])[] = [];
-        const worker = async () => {
-          for (let name = names.shift(); name !== undefined; name = names.shift()) {
-            built.push([name, await named(name)] as const);
-          }
-        };
-        await Promise.all([worker(), worker()]);
-        return Object.fromEntries(built) as Record<Name, string[]>;
-      };
-
-      test("a function keeps its name in an order file when a binding is renamed to a contextual keyword", async () => {
-        const lines = await recordVariants(
-          {
-            plain: namesSource(["ab", "cd", "ef", "gh", "ij"], "get size()"),
-            keywords: namesSource(["of", "get", "set", "async", "as"], "get size()"),
-            method: namesSource(["ab", "cd", "ef", "gh", "ij"], "size()"),
-          },
-          "2,4 2,4 2,4 2,4 2,4 6\n",
-        );
-        // scale0 (the others are the same text), pick, the constructor and the getter, and the module.
-        expect(lines.plain.filter(line => line.startsWith("F ")).length).toBeGreaterThanOrEqual(4);
-        expect(lines.plain.filter(line => line.startsWith("M ")).length).toBe(1);
-        expect(lines.keywords).toEqual(lines.plain);
-        // `get size() {}` and `size() {}` are different code: the class that holds them is top-level text.
-        expect(lines.method).not.toEqual(lines.plain);
-      }, 60_000);
-
-      // An edit is seen wherever it is: next to a class with fields (the function that initializes them has the text of the
-      // whole function around the class), and after a template literal that holds a function.
-      test("an edit next to a class with fields or after a template literal renames only what it is in", async () => {
-        const lines = await recordVariants(
-          {
-            plain: namesSource(["ab"], "get size()"),
-            fields: namesSource(
-              ["ab"],
-              "get size()",
-              "(function (n) { class A { x = n + 1; } return new A().x; })(1);",
-            ),
-            // Two different functions around two classes with fields: four names, none of them shared, and the one name
-            // of the two default constructors.
-            twoFields: namesSource(
-              ["ab"],
-              "get size()",
-              "(function (n) { class A { x = n + 1; } return new A().x; })(1); (function (m, k) { class B { y = m * k; } return [new B().y]; })(1, 2);",
-            ),
-            fieldsEdited: namesSource(
-              ["ab"],
-              "get size()",
-              "(function (n) { class A { x = n + 1; } return new A().x || n; })(1);",
-            ),
-            template: namesSource(
-              ["ab"],
-              "get size()",
-              "(function (a) { const t = `v${[a].map(x => x + 1)}`; return t + a; })(1);",
-            ),
-            templateEdited: namesSource(
-              ["ab"],
-              "get size()",
-              "(function (a) { const t = `v${[a].map(x => x + 1)}`; if (a) a = -a; return t + a; })(1);",
-            ),
-          },
-          "2,4 6\n",
-        );
-        const functions = (lines: string[]) => lines.filter(line => line.startsWith("F "));
-        expect(new Set(functions(lines.twoFields)).size).toBe(new Set(functions(lines.plain)).size + 5);
-        for (const name of ["fields", "template"] as const) {
-          const [before, after] = [lines[name], lines[`${name}Edited`]];
-          // Only the edited function has another name.
-          expect(functions(after).filter(line => !before.includes(line)).length, name).toBe(1);
-          expect(functions(before).filter(line => !after.includes(line)).length, name).toBe(1);
-          expect(new Set(functions(before)).size, name).toBeGreaterThan(new Set(functions(lines.plain)).size);
-        }
-      }, 60_000);
+      // Digesting decodes all the code there is and reads every string: it comes after the recording is taken.
+      test.concurrent("digests written by a recording run do not change its order file", async () => {
+        const out = join(cwd(), "with-digests.order");
+        const ran = await run(exe("plain"), recordedArgv, {
+          BUN_BYTECODE_ORDER_OUT: out,
+          BUN_BYTECODE_DIGEST_OUT: join(cwd(), "with-digests.digest"),
+        });
+        expect(ran).toEqual(shared.plain);
+        expect(readFileSync(join(cwd(), "with-digests.digest"), "utf8")).not.toContain(" - -");
+        const lines = (text: string) => new Set(text.split("\n"));
+        expect(lines(readFileSync(out, "utf8"))).toEqual(lines(shared.order));
+      });
 
       test("an order file that cannot be read or used", async () => {
         const { plain } = shared;
@@ -813,16 +1209,34 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
           ).toThrow("compile.jitPolicy");
         }
         // Lines that are not hints (unknown kinds, bad or reserved hashes) are skipped: nothing is left, so nothing changes.
-        await Bun.write(join(cwd(), "junk.order"), "v1\nX 0123456789abcdef\nF nothex\nF ffffffffffffffff\n\n");
+        await Bun.write(join(cwd(), "junk.order"), "v2\nX 0123456789abcdef\nF nothex\nF ffffffffffffffff\n\n");
+        // Nor is a file of another version, whose names are names of something else, or one that is no order file.
+        await Bun.write(join(cwd(), "older.order"), shared.order.replace(/^v2\n/, "v1\n"));
+        await Bun.write(join(cwd(), "utf16.order"), Buffer.from("\ufeff" + shared.order, "utf16le"));
+        await Bun.write(
+          join(cwd(), "not-recorded.order"),
+          "v2\n# not recorded: none of the program's code has names\n",
+        );
+        await Bun.write(join(cwd(), "not-one.order"), "F 0123456789abcdef\n");
         // The two builds that succeed, at the same time.
         const [emptyEntry, junk] = await Promise.all([
           compile(exe("empty-entry"), ["--bytecode-order=,plain.order,,"]),
-          compile(exe("junk"), ["--bytecode-order=junk.order"]),
+          compile(exe("junk"), [
+            "--bytecode-order=junk.order,older.order,not-one.order,utf16.order,not-recorded.order",
+          ]),
         ]);
         expect(emptyEntry.stderr).not.toContain("bytecode order file");
         expect(emptyEntry.exitCode).toBe(0);
         expect(hasLinkedPayload(exe("empty-entry"))).toBe(true);
-        expect(junk.stderr).toContain("the bytecode order file junk.order has nothing this version of Bun can use");
+        expect(junk.stderr).toContain("the bytecode order file junk.order lists nothing");
+        expect(junk.stderr).toContain(
+          "the bytecode order file older.order was recorded by another version of Bun: record it again",
+        );
+        expect(junk.stderr).toContain("the bytecode order file not-one.order is not a bytecode order file");
+        expect(junk.stderr).toContain("the bytecode order file utf16.order is UTF-16: write it as UTF-8");
+        expect(junk.stderr).toContain(
+          "the bytecode order file not-recorded.order was written by a run that recorded nothing: see what that run printed",
+        );
         expect(junk.exitCode).toBe(0);
         expect(hasLinkedPayload(exe("junk"))).toBe(false);
         expect(await run(exe("junk"), recordedArgv)).toEqual(plain);
@@ -869,9 +1283,9 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
         60_000,
       );
 
-      // A recorder knows code by where it was decoded from, so a VM that records keeps its unlinked code instead of dropping
-      // it (Bun.shrink() is what an idle VM does) and decoding it again later.
-      test("a recording run keeps the code it decoded", async () => {
+      // A VM that records keeps the unlinked code it decoded (Bun.shrink() is what an idle VM does to drop it), so that
+      // what it records does not depend on when the collector runs; a VM that does not record decodes it again.
+      test("a recording run decodes each function once", async () => {
         const { order } = shared;
         using dir = tempDir("build-compile-bytecode-order-keep-code", {
           "app.js": `
@@ -949,6 +1363,11 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
           stderr: "",
           exitCode: 0,
         });
+        const functions = readFileSync(join(String(dir), "out.order"), "utf8")
+          .split("\n")
+          .filter(line => line.startsWith("F "));
+        expect(functions.length).toBeGreaterThan(3);
+        expect(new Set(functions).size).toBe(functions.length);
       }, 60_000);
 
       // A chunk JSC cannot compile has no bytecode, as without an order file: the build says so and goes on, the other
@@ -1021,7 +1440,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
             .filter(file => file.startsWith("pid-"))
             .sort();
           expect(written).toEqual([`pid-${proc.pid}.digest`, `pid-${proc.pid}.order`]);
-          expect((await Bun.file(join(cwd(), `pid-${proc.pid}.order`)).text()).startsWith("v1\n")).toBe(true);
+          expect((await Bun.file(join(cwd(), `pid-${proc.pid}.order`)).text()).startsWith("v2\n")).toBe(true);
         },
         60_000,
       );
@@ -1030,7 +1449,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
       test("an order file of another program", async () => {
         const { plain, orderedStderr } = shared;
         const hashes = Array.from({ length: 64 }, (_, i) => `F ${(i + 1).toString(16).padStart(16, "0")}`).join("\n");
-        await Bun.write(join(cwd(), "other-program.order"), `v1\n${hashes}\n`);
+        await Bun.write(join(cwd(), "other-program.order"), `v2\n${hashes}\n`);
         const other = await compile(exe("other-program"), ["--bytecode-order=other-program.order"]);
         expect(other.stderr).toContain("none of the 64 functions the bytecode order files list is in this build");
         expect(other.exitCode).toBe(0);
@@ -1144,7 +1563,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
             proc.terminal?.close();
             expect(proc.signalCode).toBe(signal);
             const lines = (await Bun.file(out).text()).split("\n");
-            expect(lines[0]).toBe("v1");
+            expect(lines[0]).toBe("v2");
             expect(lines.filter(line => line.startsWith("F ")).length).toBeGreaterThan(0);
             expect(lines.filter(line => line.startsWith("M ")).length).toBeGreaterThan(0);
           },
@@ -1231,6 +1650,42 @@ server.close();`;
         },
         60_000,
       );
+
+      // Every internal module an application can import, and what those depend on. A module of this executable that
+      // the parser that names code did not take, or whose text was not ASCII (it is Latin-1 to JavaScriptCore), would
+      // have no names; a function that JavaScriptCore has and the names do not is a warning of the build.
+      test("every internal module's functions have names", async () => {
+        const { directory, order } = internalsRecorded;
+        const specifiers = [
+          ...builtinModules.filter(name => !name.startsWith("bun:") && name !== "bun"),
+          "bun:sqlite",
+          "bun:ffi",
+          "bun:jsc",
+        ];
+        // (Not every builtin module is an internal module: some are native.)
+        const named = specifiers
+          .map(specifier => (specifier.includes(":") ? specifier : "node:" + specifier))
+          .map(specifier => [specifier, bytecodeOrderNames(specifier, "internal")] as const)
+          .filter(([, names]) => names !== undefined)
+          .map(([specifier, names]) => [specifier, names?.split("\n").length ?? 0] as const);
+        expect(named.length).toBeGreaterThan(30);
+        expect(named.filter(([, functions]) => functions < 2)).toEqual([]);
+        await Bun.write(
+          join(directory, "every.js"),
+          specifiers.map((specifier, i) => `import * as m${i} from ${JSON.stringify(specifier)};`).join("\n") +
+            `\nconsole.log(${specifiers.map((_, i) => `typeof m${i}`).join(", ")});`,
+        );
+        const result = await Bun.build({
+          entrypoints: [join(directory, "every.js")],
+          compile: { outfile: join(directory, exe("every")), bytecodeOrder: order },
+          bytecode: true,
+          format: "esm",
+          target: "bun",
+        });
+        expect(result.logs.map(log => log.message).filter(message => message.includes("no names"))).toEqual([]);
+        expect(result.success).toBe(true);
+        expect(hasLinkedPayload(join(directory, exe("every")))).toBe(true);
+      }, 120_000);
 
       // An executable whose trailer says "one linked payload" and whose payload record does not check out (someone
       // edited it) has no bytecode at all: an internal module's entry, like a module's, refers to what lies before it

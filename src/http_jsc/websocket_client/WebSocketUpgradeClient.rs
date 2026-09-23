@@ -644,12 +644,15 @@ where
     /// The name the native matcher requires of the server's certificate: the
     /// host that was dialed, else the SNI. `handle_open` installs it for the
     /// handshake and `handle_handshake` checks it after.
-    fn identity_hostname(&self, ssl: &boringssl::c::SSL) -> Vec<u8> {
+    fn identity_hostname(&self, ssl: &boringssl::c::SSL) -> std::borrow::Cow<'_, [u8]> {
         let own_hostname = self.hostname.get();
         if !own_hostname.is_empty() {
-            own_hostname.as_bytes().to_vec()
+            own_hostname.as_bytes().into()
         } else {
-            ssl.servername().map(<[u8]>::to_vec).unwrap_or_default()
+            ssl.servername()
+                .map(<[u8]>::to_vec)
+                .unwrap_or_default()
+                .into()
         }
     }
 

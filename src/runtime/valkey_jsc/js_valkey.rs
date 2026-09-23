@@ -1761,7 +1761,10 @@ impl<const SSL: bool> SocketHandler<SSL> {
     /// was set, otherwise the host from the connection URL. Empty for a
     /// unix-domain socket (redis+tls+unix:// / valkey+tls+unix://), which has
     /// no hostname to verify.
-    fn identity_hostname(this: &JSValkeyClient, ssl_ptr: *mut boringssl::c::SSL) -> Vec<u8> {
+    fn identity_hostname(
+        this: &JSValkeyClient,
+        ssl_ptr: *mut boringssl::c::SSL,
+    ) -> std::borrow::Cow<'_, [u8]> {
         let servername = if ssl_ptr.is_null() {
             None
         } else {
@@ -1770,19 +1773,24 @@ impl<const SSL: bool> SocketHandler<SSL> {
             // SSL owns.
             unsafe { boringssl::c::SSL_get_servername(ssl_ptr, 0).as_ref() }
         };
-        let hostname: &[u8] = if let Some(servername) = servername {
-            // SAFETY: NUL-terminated
-            unsafe { bun_core::ffi::cstr(std::ptr::from_ref(servername).cast()) }.to_bytes()
-        } else {
-            match &this.client.get().address {
-                valkey::Address::Host { host, .. } => &host[..],
-                valkey::Address::Unix(_) => b"",
-            }
-        };
         // URL.host() serialises IPv6 literals with surrounding brackets
         // (e.g. "[::1]"). Strip them so checkServerIdentity can recognise
         // the value as an IP and match against IP SAN entries.
-        bun_core::ip_address::strip_ipv6_brackets(hostname).to_vec()
+        if let Some(servername) = servername {
+            // SAFETY: NUL-terminated, owned by the SSL: copied.
+            let servername =
+                unsafe { bun_core::ffi::cstr(std::ptr::from_ref(servername).cast()) }.to_bytes();
+            bun_core::ip_address::strip_ipv6_brackets(servername)
+                .to_vec()
+                .into()
+        } else {
+            match &this.client.get().address {
+                valkey::Address::Host { host, .. } => {
+                    bun_core::ip_address::strip_ipv6_brackets(&host[..]).into()
+                }
+                valkey::Address::Unix(_) => (&b""[..]).into(),
+            }
+        }
     }
 
     fn fail_handshake_with_altname_error(

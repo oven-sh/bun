@@ -109,59 +109,54 @@ class JSCallback {
 const CString = ffi.CString;
 
 function FFIBuilder(params, functionToCall, name) {
-  var paramNames = new Array(params.length);
-  for (let i = 0; i < params.length; i++) paramNames[i] = `p${i}`;
-
-  var code = `return (v=>v?new __CString(v):null)(functionToCall(${paramNames.join(", ")}))`;
-
-  var func = new Function("functionToCall", "__CString", ...paramNames, code);
-  Object.defineProperty(func, "name", {
-    value: name,
-  });
+  const toCString = v => (v ? new CString(v) : null);
 
   // variadic arguments can be expensive
   // most FFI functions are going to be < 5 arguments
   // so we just inline it
   var wrap;
-  switch (paramNames.length) {
+  switch (params.length) {
     case 0:
-      wrap = () => func(functionToCall, CString);
+      wrap = () => toCString(functionToCall());
       break;
     case 1:
-      wrap = arg1 => func(functionToCall, CString, arg1);
+      wrap = arg1 => toCString(functionToCall(arg1));
       break;
     case 2:
-      wrap = (arg1, arg2) => func(functionToCall, CString, arg1, arg2);
+      wrap = (arg1, arg2) => toCString(functionToCall(arg1, arg2));
       break;
     case 3:
-      wrap = (arg1, arg2, arg3) => func(functionToCall, CString, arg1, arg2, arg3);
+      wrap = (arg1, arg2, arg3) => toCString(functionToCall(arg1, arg2, arg3));
       break;
     case 4:
-      wrap = (arg1, arg2, arg3, arg4) => func(functionToCall, CString, arg1, arg2, arg3, arg4);
+      wrap = (arg1, arg2, arg3, arg4) => toCString(functionToCall(arg1, arg2, arg3, arg4));
       break;
     case 5:
-      wrap = (arg1, arg2, arg3, arg4, arg5) => func(functionToCall, CString, arg1, arg2, arg3, arg4, arg5);
+      wrap = (arg1, arg2, arg3, arg4, arg5) => toCString(functionToCall(arg1, arg2, arg3, arg4, arg5));
       break;
     case 6:
-      wrap = (arg1, arg2, arg3, arg4, arg5, arg6) => func(functionToCall, CString, arg1, arg2, arg3, arg4, arg5, arg6);
+      wrap = (arg1, arg2, arg3, arg4, arg5, arg6) => toCString(functionToCall(arg1, arg2, arg3, arg4, arg5, arg6));
       break;
     case 7:
       wrap = (arg1, arg2, arg3, arg4, arg5, arg6, arg7) =>
-        func(functionToCall, CString, arg1, arg2, arg3, arg4, arg5, arg6, arg7);
+        toCString(functionToCall(arg1, arg2, arg3, arg4, arg5, arg6, arg7));
       break;
     case 8:
       wrap = (arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) =>
-        func(functionToCall, CString, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
+        toCString(functionToCall(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8));
       break;
     case 9:
       wrap = (arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) =>
-        func(functionToCall, CString, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9);
+        toCString(functionToCall(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9));
       break;
     default: {
-      wrap = (...args) => func(functionToCall, CString, ...args);
+      wrap = (...args) => toCString(functionToCall(...args));
       break;
     }
   }
+  Object.defineProperty(wrap, "name", {
+    value: name,
+  });
   wrap.native = functionToCall;
   wrap.ptr = functionToCall.ptr;
   return wrap;

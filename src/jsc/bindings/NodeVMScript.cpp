@@ -12,6 +12,7 @@
 #include "JavaScriptCore/SourceCodeKey.h"
 
 #include "NodeVMScriptFetcher.h"
+#include "ModuleGraph.h"
 #include "../vm/NodeVMRunTermination.h"
 
 #include <bit>
@@ -95,6 +96,8 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (Bun::throwIfCodeGenerationFromStringsIsDisallowed(globalObject, scope)) [[unlikely]]
+        return {};
     ArgList args(callFrame);
     JSValue sourceArg = args.at(0);
     String sourceString;

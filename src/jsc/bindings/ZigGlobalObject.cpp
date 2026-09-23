@@ -3690,6 +3690,15 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     WTF::String moduleName = moduleNameValue->value(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
+    // import() of a data: or blob: URL is script made from a string.
+    if (moduleName.startsWith("data:"_s) || moduleName.startsWith("blob:"_s)) [[unlikely]] {
+        auto* graph = Bun::moduleGraphOfLoader(globalObject, loader);
+        if ((graph && !graph->allowsCodeGenerationFromStrings()) || Bun::codeGenerationFromStringsIsDisallowed(defaultGlobalObject(globalObject))) {
+            throwException(globalObject, scope, createEvalError(globalObject, JSGlobalObject::scriptExecutionOwnerEvalDisabledErrorMessage()));
+            return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
+        }
+    }
+
     auto sourceURL = sourceOrigin.url();
     String sourceOriginStringHolder;
     int64_t referrerAsyncOrder = -1;

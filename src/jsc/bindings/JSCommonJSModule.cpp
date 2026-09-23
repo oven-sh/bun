@@ -831,6 +831,8 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
 
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
+    if (Bun::throwIfCodeGenerationFromStringsIsDisallowed(globalObject, throwScope)) [[unlikely]]
+        return {};
 
     String sourceString = callframe->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});

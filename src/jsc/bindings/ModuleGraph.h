@@ -47,6 +47,10 @@ public:
     // Code compiled under one shape must not be shared with another, or with the host
     // (see commonJSSourceForGraph).
     unsigned overlayShape() const { return m_overlayShape; }
+    // options.codeGeneration.strings: whether script running in this graph's context may make script from a
+    // string. The engine asks the overlay for eval and the Function constructors; what Bun compiles from a
+    // string itself (node:vm, module._compile, data: and blob: modules) asks codeGenerationFromStringsIsDisallowed().
+    bool allowsCodeGenerationFromStrings() const;
     JSC::JSMap* requireMap() const { return m_requireMap.get(); }
     // options.uncaughtException and options.unhandledRejection: null if the host gave none.
     JSC::JSObject* uncaughtExceptionHandler() const { return m_uncaughtException.get(); }
@@ -116,6 +120,10 @@ JSModuleGraph* moduleGraphOfLoader(JSC::JSGlobalObject*, JSC::JSModuleLoader*);
 JSModuleGraph* moduleGraphRejecting(Zig::GlobalObject*);
 // The graph whose context is current; null in the host's.
 JSModuleGraph* currentModuleGraph(Zig::GlobalObject*);
+// Whether the graph whose context is current was made with `codeGeneration: { strings: false }`.
+bool codeGenerationFromStringsIsDisallowed(Zig::GlobalObject*);
+// As above, throwing the EvalError the engine throws for eval. True if it threw.
+bool throwIfCodeGenerationFromStringsIsDisallowed(JSC::JSGlobalObject*, JSC::ThrowScope&);
 // The graph whose context a captured async context (AsyncContextSwapScope::current(): what an
 // AsyncContextFrame holds, Exception::asyncContext()) was captured in; null: the host's.
 JSModuleGraph* moduleGraphOfCapturedContext(JSC::JSValue);

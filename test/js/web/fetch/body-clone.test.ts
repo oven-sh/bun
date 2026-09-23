@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDirWithFiles } from "harness";
+import { appendFileSync } from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
 
@@ -1212,6 +1213,29 @@ describe("clone() of a body over an unread native stream keeps the Blob behind i
       const file = Bun.file(path);
       new Response(file).clone();
       expect(await file.text()).toBe("Linux\n");
+    });
+  });
+
+  // The same stat must not freeze the size of a regular file: a Bun.file()
+  // whose body was only cloned sees the file as it is when it is read.
+  describe("a regular file that grows after clone() is seen at its new size", () => {
+    const cases: Array<[string, (file: Bun.BunFile) => Request | Response]> = [
+      ["Response over Bun.file()", file => new Response(file)],
+      ["Response over Bun.file().stream()", file => new Response(file.stream())],
+      ["Request over Bun.file()", file => new Request("http://example.com/", { method: "POST", body: file })],
+    ];
+    test.each(cases)("%s", async (_, make) => {
+      async function afterCloneAndAppend<T>(read: (file: Bun.BunFile) => T | Promise<T>) {
+        const path = join(tempDirWithFiles("body-clone-grow", { "log.txt": "12345" }), "log.txt");
+        const file = Bun.file(path);
+        make(file).clone();
+        appendFileSync(path, "6789");
+        return await read(file);
+      }
+      expect({
+        size: await afterCloneAndAppend(file => file.size),
+        bodyStream: await afterCloneAndAppend(file => Bun.readableStreamToText(new Response(file).body!)),
+      }).toEqual({ size: 9, bodyStream: "123456789" });
     });
   });
 

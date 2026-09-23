@@ -152,7 +152,9 @@ describe("Bun.deepEquals strict mode", () => {
 // array that only claims a length cost one probe per claimed element: about a
 // minute for `a = []; a.length = 2 ** 32 - 1`, where node answers in 1 ms. An
 // index outside the element storage of both arrays is a hole on both sides,
-// and two holes are equal in every mode, so the walk skips those indices now.
+// and two holes are equal in every mode. Arrays that JSC itself calls sparse
+// (100,000 or more unheld indices, under 1/8 of them in the sparse map) skip
+// those indices now. Every other array is compared index by index, as before.
 // The child is killed if it is still running after 20 s, which empties stdout.
 describe("sparse arrays that only claim a length", () => {
   const cases = [
@@ -203,6 +205,11 @@ describe("sparse arrays that only claim a length", () => {
     expect(exitCode).toBe(0);
   });
 
+  const dense = new Array(100_000).fill(0);
+  const denseCopy = dense.slice();
+  const denseWithOtherTail = dense.slice();
+  denseWithOtherTail[99_999] = 1;
+
   // An index that a sparse array does hold lives in its sparse map, which the
   // walk reads instead of probing the gaps around it.
   describe.each([true, false])("strict: %p", strict => {
@@ -224,6 +231,16 @@ describe("sparse arrays that only claim a length", () => {
       expect(deepEquals(sparse(0, 199_999), sparse(0))).toBe(false);
       expect(deepEquals(Object.freeze(sparse(199_999)), Object.freeze(sparse(199_999)))).toBe(true);
       expect(deepEquals(Object.freeze(sparse(199_999)), Object.freeze(sparse(199_998)))).toBe(false);
+    });
+
+    // An array that holds what it claims keeps the index-by-index walk, above
+    // JSC's MIN_SPARSE_ARRAY_INDEX (100,000) too.
+    it("compare dense arrays above the sparse threshold", () => {
+      const deepEquals = (a: unknown, b: unknown) => Bun.deepEquals(a, b, strict);
+
+      expect(deepEquals(dense, denseCopy)).toBe(true);
+      expect(deepEquals(dense, denseWithOtherTail)).toBe(false);
+      expect(deepEquals(denseWithOtherTail, dense)).toBe(false);
     });
   });
 });

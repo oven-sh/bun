@@ -82,6 +82,45 @@ describe("bundler", () => {
       api.expectFile("out.js").not.toInclude("import ");
     },
   });
+  itBundled("browser/NodeBufferIndexOfEmptyAndEnd#43655", {
+    files: {
+      "/entry.js": /* js */ `
+        import { Buffer } from "node:buffer";
+        const b = Buffer.from("abcabc");
+        // An empty value returns the byteOffset, like String#indexOf.
+        console.log(b.indexOf(""), b.lastIndexOf(""), b.includes(""));
+        // A Uint8Array value that is not a Buffer is accepted.
+        console.log(b.indexOf(new Uint8Array([98])));
+        // The end argument bounds the search range.
+        console.log(b.indexOf("c", 0, 2), b.lastIndexOf("c", undefined, 4));
+        // Thrown errors carry a code.
+        try {
+          b.indexOf({});
+        } catch (e) {
+          console.log(e.code);
+        }
+        try {
+          b.indexOf("a", 0, "nope");
+        } catch (e) {
+          console.log(e.code);
+        }
+      `,
+    },
+    target: "browser",
+    run: {
+      // The values that Node.js prints for the same code.
+      stdout: `
+        0 6 true
+        1
+        -1 2
+        ERR_INVALID_ARG_TYPE
+        ERR_UNKNOWN_ENCODING
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("out.js").not.toInclude("import ");
+    },
+  });
   itBundled("browser/NodeFS", {
     files: {
       "/entry.js": /* js */ `

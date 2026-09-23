@@ -327,10 +327,11 @@ where
         );
 
         let loop_ = global.bun_vm().uws_loop();
+        let context = websocket.context();
         let group = global
             .bun_vm()
             .as_mut()
-            .client_socket_groups_in(websocket.context())
+            .client_socket_groups_in(context)
             .ws_upgrade_group::<SSL>(loop_);
         let kind: SocketKind = if SSL {
             SocketKind::WsClientUpgradeTls
@@ -390,7 +391,7 @@ where
             headers_buf: JsCell::new([picohttp::Header::ZERO; 128]),
             body: JsCell::new(Vec::new()),
             hostname: JsCell::new(ZBox::default()),
-            context: websocket.context().id(),
+            context: context.id(),
             poll_ref: JsCell::new(poll_ref),
             state: Cell::new(State::Initializing),
             proxy: JsCell::new(proxy_state),
@@ -638,13 +639,22 @@ where
                     Self::fail(this, ErrorCode::TlsHandshakeFailed);
                     return;
                 };
-                let hostname = Self::verification_hostname(this, ssl);
                 // Through a proxy this is the proxy's certificate; the user
                 // callback is for the target only (tunnel handshake), as in fetch.
-                let identity_ok = if this.proxy.get().is_some() {
-                    !hostname.is_empty() && boringssl::check_server_identity(ssl, &hostname)
-                } else {
+                let identity_ok = if Self::has_identity_callback(this) {
+                    let hostname = Self::verification_hostname(this, ssl);
                     Self::verify_peer_identity(this, ssl, &hostname, true)
+                } else {
+                    // No JS runs below, so the hostname is borrowed, not copied.
+                    let own_hostname = this.hostname.get();
+                    let sni: Vec<u8>;
+                    let hostname: &[u8] = if !own_hostname.is_empty() {
+                        own_hostname.as_bytes()
+                    } else {
+                        sni = ssl.servername().map(<[u8]>::to_vec).unwrap_or_default();
+                        &sni
+                    };
+                    !hostname.is_empty() && boringssl::check_server_identity(ssl, hostname)
                 };
                 if this.cpp_websocket().is_none() {
                     // The callback closed the WebSocket.
@@ -653,7 +663,7 @@ where
                 if !identity_ok {
                     Self::fail(this, ErrorCode::TlsHandshakeFailed);
                 }
-            } else if ssl_error.error_no == 0 && this.proxy.get().is_none() {
+            } else if ssl_error.error_no == 0 && Self::has_identity_callback(this) {
                 if let Some(ssl) = socket.ssl_mut() {
                     let _guard = RefPtr::from_this(this);
                     let hostname = Self::verification_hostname(this, ssl);
@@ -698,6 +708,14 @@ where
         };
         event_loop.exit();
         verdict || !enforce
+    }
+
+    /// Whether the user callback decides this handshake. Never for a proxy's own certificate.
+    fn has_identity_callback(this: ThisPtr<Self>) -> bool {
+        this.proxy.get().is_none()
+            && this
+                .cpp_websocket()
+                .is_some_and(|ws| ws.check_server_identity().is_some())
     }
 
     /// Owned, because user JS that runs during verification may `clear_data`.

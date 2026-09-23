@@ -337,7 +337,7 @@ pub(crate) enum PathOrFileDescriptor {
 // Held by ByteStream; dispatches write()/end() to the native sink.
 
 #[derive(Copy, Clone, Default)]
-pub enum SinkHandle {
+pub(crate) enum SinkHandle {
     #[default]
     None,
     ServerResponse(crate::server::AnyRequestContext),
@@ -352,18 +352,18 @@ pub enum SinkHandle {
 
 impl SinkHandle {
     #[inline]
-    pub fn is_none(&self) -> bool {
+    pub(crate) fn is_none(&self) -> bool {
         matches!(self, SinkHandle::None)
     }
 
     #[inline]
-    pub fn is_some(&self) -> bool {
+    pub(crate) fn is_some(&self) -> bool {
         !self.is_none()
     }
 
     /// SAFETY: every non-None variant's pointee is kept alive by the hook-in site for as long
     /// as this handle is installed.
-    pub fn write(&self, data: &streams::Result) -> streams::Writable {
+    pub(crate) fn write(&self, data: &streams::Result) -> streams::Writable {
         match *self {
             SinkHandle::None => streams::Writable::Done,
             SinkHandle::ServerResponse(any) => any.write_chunk(data),
@@ -385,7 +385,7 @@ impl SinkHandle {
     /// Signal end-of-stream (or terminal error) to the attached sink.
     ///
     /// SAFETY: same pointee-liveness invariant as [`Self::write`].
-    pub fn end(&self, err: Option<streams::StreamError>) {
+    pub(crate) fn end(&self, err: Option<streams::StreamError>) {
         match *self {
             SinkHandle::None => {}
             SinkHandle::ServerResponse(any) => any.end_chunk(err.as_ref()),

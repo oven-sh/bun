@@ -181,7 +181,7 @@ impl CmdHandle {
     }
 }
 
-pub struct ShellSubprocess {
+pub(crate) struct ShellSubprocess {
     pub(crate) cmd_parent: CmdHandle,
 
     /// `None` once closed.
@@ -982,11 +982,12 @@ pub enum WritableInitError {
     StreamAssign(Box<[u8]>),
 }
 
-pub enum Writable {
+pub(crate) enum Writable {
     /// A `< ${stream}` stdin: the sink the stream is piped into.
     Pipe(RefPtr<FileSink>),
-    Fd(Fd),
+    Fd,
     Buffer(RefPtr<StaticPipeWriter>),
+    #[cfg(not(windows))]
     Memfd(Fd),
     Inherit,
     Ignore,
@@ -1059,11 +1060,8 @@ impl Writable {
                         JscSubprocess::source_from_blob(blob),
                     )));
                 }
-                Stdio::Fd(fd) => {
-                    return Ok(Writable::Fd(*fd));
-                }
-                Stdio::Dup2(dup2) => {
-                    return Ok(Writable::Fd(dup2.to.to_fd()));
+                Stdio::Fd(_) | Stdio::Dup2(_) => {
+                    return Ok(Writable::Fd);
                 }
                 Stdio::Inherit => {
                     return Ok(Writable::Inherit);
@@ -1124,7 +1122,7 @@ impl Writable {
                         core::mem::ManuallyDrop::new(core::mem::replace(&mut stdio, Stdio::Ignore));
                     Ok(Writable::Memfd(fd))
                 }
-                Stdio::Fd(_) => Ok(Writable::Fd(result.unwrap())),
+                Stdio::Fd(_) => Ok(Writable::Fd),
                 Stdio::Inherit => Ok(Writable::Inherit),
                 Stdio::Path(_) | Stdio::Ignore => Ok(Writable::Ignore),
                 Stdio::Ipc | Stdio::Capture(_) => Ok(Writable::Ignore),
@@ -1214,7 +1212,7 @@ impl Writable {
     // Note: there is intentionally no `Writable::toJS` here — the shell never
     // exposes its stdin Writable to JS.
 
-    pub fn finalize(&mut self) {
+    pub(crate) fn finalize(&mut self) {
         match self {
             Writable::Pipe(_) => {
                 // deref via drop-on-reassign
@@ -1229,12 +1227,13 @@ impl Writable {
                 // `buffer` drops here with the variant already `Ignore`, so a
                 // re-entrant `on_stdin_writer_close` from the writer's drop is a no-op.
             }
+            #[cfg(not(windows))]
             Writable::Memfd(fd) => {
                 fd.close();
                 *self = Writable::Ignore;
             }
             Writable::Ignore => {}
-            Writable::Fd(_) | Writable::Inherit => {}
+            Writable::Fd | Writable::Inherit => {}
         }
     }
 }

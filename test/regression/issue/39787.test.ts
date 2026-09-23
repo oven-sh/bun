@@ -33,3 +33,31 @@ test.skipIf(!isWindows)("a rejecting Bun.file() read runs its continuation befor
   expect(stdout).toBe("CAUGHT ENOENT\nDONE\n");
   expect(exitCode).toBe(0);
 });
+
+// https://github.com/oven-sh/bun/issues/41850
+// Bun.stdin is a file-descriptor Blob, so its read takes the same path. With
+// no fd to close after the read, nothing else kept the loop alive and the
+// resolved promise's continuation never ran either.
+test.skipIf(!isWindows)("a Bun.stdin.text() read runs its continuation before the process exits", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `async function main() {
+        const text = await Bun.stdin.text();
+        console.log("READ " + JSON.stringify(text));
+        console.log("DONE");
+      }
+      main();`,
+    ],
+    env: bunEnv,
+    stdin: "pipe",
+    stderr: "pipe",
+  });
+  proc.stdin.write("hello\n");
+  await proc.stdin.end();
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe('READ "hello\\n"\nDONE\n');
+  expect(exitCode).toBe(0);
+});

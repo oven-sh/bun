@@ -165,7 +165,6 @@ using namespace JSC;
     macro(requireMap) \
     macro(requireNativeModule) \
     macro(resolveSync) \
-    macro(returnedWrite) \
     macro(sameSite) \
     macro(secure) \
     macro(self) \

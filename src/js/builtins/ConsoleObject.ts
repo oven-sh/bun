@@ -119,7 +119,7 @@ interface ConsoleWriter extends Bun.FileSink {
   flush(wait?: boolean): number | Promise<number>;
 }
 
-export function write(this: Console & { $writer: ConsoleWriter | undefined; $returnedWrite: unknown }, input) {
+export function write(this: Console & { $writer: ConsoleWriter | undefined }, input) {
   if (!$isObject(this)) throw $ERR_INVALID_THIS("Console");
 
   var writer = $getByIdDirectPrivate(this, "writer");
@@ -137,31 +137,31 @@ export function write(this: Console & { $writer: ConsoleWriter | undefined; $ret
   // the total, because awaiting it waits for the drain and is where a write error (EPIPE from a reader that hung
   // up) arrives.
   //
-  // The caller gets the last Promise. An earlier one has settled by the time a write returns a different one: the
-  // sink has one pending write at a time. Fulfilled (a short write beside it can settle it early), its bytes join
-  // the total. Rejected (the pipe is already broken, and every write fails on the spot), it is lost, as is the last
-  // one when a later argument or the flush throws: nobody can handle its rejection, so it is marked handled. Only
-  // one that is already rejected, since the sink hands its pending Promise out again, to callers whose rejection
-  // has to be reported. And not one an earlier call returned, which is that caller's.
+  // A write that fails on the spot (the pipe is already broken) returns a Promise of its own instead, already
+  // rejected. The sink's Promise is never that: it is still pending whenever the sink hands it out. The caller gets
+  // the last Promise, so a failed write's is lost when a later write returns another, or when a later argument or
+  // the flush throws. Nobody can handle its rejection then, so it is marked handled. The sink's Promise never is:
+  // the sink hands it out again, to callers whose rejection has to be reported.
+  //
+  // An earlier Promise of the sink's has settled by the time a write returns a different one, since the sink has
+  // one pending write at a time. Fulfilled (a short write beside it can settle it early), its bytes join the total.
   var wrote: number | undefined;
   var pending: Promise<number> | undefined;
-  const returned = $getByIdDirectPrivate(this, "returnedWrite");
+  var failedOnTheSpot = false;
   const count = $argumentCount();
   var i = 0;
   try {
     do {
       var result: number | Promise<number> = writer.write(arguments[i]);
       if ($isPromise<number>(result)) {
-        if (pending === undefined || pending === result) {
-          pending = result;
-          continue;
-        }
+        if (pending === result) continue;
         const earlier = pending;
+        const earlierFailedOnTheSpot = failedOnTheSpot;
         pending = result;
-        if (!$isPromiseFulfilled(earlier)) {
-          if (earlier !== returned && $isPromiseRejected(earlier)) $pokePromiseAsHandled(earlier);
-          continue;
-        }
+        failedOnTheSpot = $isPromiseRejected(result);
+        if (earlier === undefined) continue;
+        if (earlierFailedOnTheSpot) $pokePromiseAsHandled(earlier);
+        if (!$isPromiseFulfilled(earlier)) continue;
         result = $peekPromiseSettledValue(earlier)!;
       }
       wrote = wrote === undefined ? result : wrote + result;
@@ -169,12 +169,11 @@ export function write(this: Console & { $writer: ConsoleWriter | undefined; $ret
 
     writer.flush(true);
   } catch (e) {
-    if (pending !== undefined && pending !== returned && $isPromiseRejected(pending)) $pokePromiseAsHandled(pending);
+    if (failedOnTheSpot) $pokePromiseAsHandled(pending!);
     throw e;
   }
 
   if (pending === undefined) return wrote;
-  $putByIdDirectPrivate(this, "returnedWrite", pending);
   if (wrote === undefined || wrote === 0) return pending;
   const counted = wrote;
   return pending.$then(n => counted + n);

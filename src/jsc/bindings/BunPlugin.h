@@ -81,8 +81,7 @@ public:
         }
 
         VirtualModuleMap* _Nullable virtualModules = nullptr;
-        // What mock.module() calls made from tests and hooks changed, so mock.restore() can undo them. Its cells are
-        // WriteBarriers owned by the global object, visited from GlobalObject::visitChildren under the global's cellLock.
+        // What mock.module() calls from tests and hooks changed, for mock.restore(). WriteBarriers owned by the global object.
         ModuleMockUndoLog* _Nullable moduleMockUndoLog = nullptr;
         bool mustDoExpensiveRelativeLookup = false;
         JSC::EncodedJSValue run(JSC::JSGlobalObject* globalObject, const BunString* namespaceString, const BunString* path);

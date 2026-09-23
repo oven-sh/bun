@@ -430,9 +430,7 @@ private:
     JSModuleMock(JSC::VM&, JSC::Structure*, JSC::JSObject* callback, JSC::JSString* specifier);
 };
 
-// First-write-wins per binding / module / specifier, so re-mocks (or a barrel plus its leaf) restore to the pre-mock state.
-// Every cell is a WriteBarrier owned by the global object: GlobalObject::visitChildren marks them under the global's
-// cellLock, and every append/remove takes that lock (the RejectedPromiseQueue pattern). Nothing here is a GC root.
+// First write wins per binding / module / specifier. WriteBarriers owned by the global, visited and mutated under its cellLock (like RejectedPromiseQueue).
 struct ModuleMockUndoLog {
     struct Binding {
         // Identity of the binding (a leaf record's local name), shared by every re-export of it.
@@ -508,8 +506,7 @@ struct ModuleMockUndoLog {
         return bindings.size() * 4 + commonJSModules.size() * 2 + installed.size();
     }
 
-    // Moves the undo entries out (lazySources describes the modules themselves and stays put). The taken copy is not
-    // visited, so every cell goes into `cells` first, under the lock, and the caller keeps that buffer alive.
+    // Moves the undo entries out (lazySources stays). The copy is not visited: `cells` keeps them alive for the caller.
     ModuleMockUndoLog take(JSC::JSCell* owner, JSC::MarkedArgumentBuffer& cells)
     {
         ModuleMockUndoLog taken;
@@ -532,8 +529,7 @@ struct ModuleMockUndoLog {
         return taken;
     }
 
-    // Puts `older` entries (taken out, kept alive by the caller) back ahead of what was logged since, except where an
-    // older entry already covers the same key. Re-set through the owner so the write barrier runs again.
+    // Puts taken entries back ahead of what was logged since (an older entry for the same key wins), set through the owner again.
     void putBack(JSC::VM& vm, JSC::JSCell* owner, ModuleMockUndoLog& older, size_t firstBinding)
     {
         WTF::Locker locker { owner->cellLock() };

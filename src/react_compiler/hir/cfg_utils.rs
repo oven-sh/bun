@@ -7,6 +7,7 @@
 
 use crate::collections::IndexMap;
 use crate::collections::IndexSet;
+use smallvec::SmallVec;
 
 use super::environment::Environment;
 use super::visitors::{each_terminal_successor, terminal_fallthrough};
@@ -35,7 +36,9 @@ pub fn get_reverse_postordered_blocks(
     struct Frame {
         block_id: BlockId,
         was_visited: bool,
-        children: std::vec::IntoIter<(BlockId, bool)>,
+        is_used: bool,
+        fallthrough: Option<BlockId>,
+        successors: std::vec::IntoIter<BlockId>,
     }
 
     // Upstream's recursive `visit` up to its recursive calls. The walk keeps its own stack: its depth follows the length of the CFG.
@@ -71,23 +74,22 @@ pub fn get_reverse_postordered_blocks(
 
         // Visit fallthrough first (marking as not-yet-used) to ensure its
         // block ID is emitted in the correct position.
-        let mut children: Vec<(BlockId, bool)> = Vec::with_capacity(successors.len() + 1);
         if let Some(ft) = fallthrough {
             if is_used {
                 used_fallthroughs.insert(ft);
             }
-            children.push((ft, false));
         }
-        children.extend(successors.into_iter().map(|successor| (successor, is_used)));
 
         Some(Frame {
             block_id,
             was_visited,
-            children: children.into_iter(),
+            is_used,
+            fallthrough,
+            successors: successors.into_iter(),
         })
     }
 
-    let mut stack: Vec<Frame> = Vec::new();
+    let mut stack: SmallVec<[Frame; 32]> = SmallVec::new();
     stack.extend(enter(
         hir,
         hir.entry,
@@ -97,7 +99,14 @@ pub fn get_reverse_postordered_blocks(
         &mut used_fallthroughs,
     ));
     while let Some(frame) = stack.last_mut() {
-        if let Some((child, is_used)) = frame.children.next() {
+        let child = match frame.fallthrough.take() {
+            Some(fallthrough) => Some((fallthrough, false)),
+            None => frame
+                .successors
+                .next()
+                .map(|successor| (successor, frame.is_used)),
+        };
+        if let Some((child, is_used)) = child {
             stack.extend(enter(
                 hir,
                 child,
@@ -293,7 +302,7 @@ pub fn mark_predecessors(hir: &mut HIR) {
         Some((block_id, successors.into_iter()))
     }
 
-    let mut stack: Vec<(BlockId, std::vec::IntoIter<BlockId>)> = Vec::new();
+    let mut stack: SmallVec<[(BlockId, std::vec::IntoIter<BlockId>); 32]> = SmallVec::new();
     stack.extend(enter(hir, hir.entry, None, &mut visited));
     while let Some((block_id, successors)) = stack.last_mut() {
         if let Some(successor) = successors.next() {

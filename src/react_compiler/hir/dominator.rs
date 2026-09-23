@@ -10,6 +10,7 @@
 //! https://www.cs.rice.edu/~keith/Embed/dom.pdf
 
 use crate::collections::{FxHashSet as HashSet, IdMap};
+use smallvec::SmallVec;
 
 use crate::diagnostics::{CompilerDiagnostic, ErrorCategory};
 
@@ -182,19 +183,14 @@ fn dfs_postorder(
     postorder: &mut Vec<BlockId>,
 ) {
     // The walk keeps its own stack: its depth follows the length of the CFG.
-    let successors = |id: BlockId| -> std::vec::IntoIter<BlockId> {
-        let succs: Vec<BlockId> = nodes
-            .get(id)
-            .map(|node| node.succs.iter().copied().collect())
-            .unwrap_or_default();
-        succs.into_iter()
-    };
+    let successors = |id: BlockId| nodes.get(id).map(|node| node.succs.iter());
     if !visited.insert(id) {
         return;
     }
-    let mut stack: Vec<(BlockId, std::vec::IntoIter<BlockId>)> = vec![(id, successors(id))];
+    let mut stack: SmallVec<[_; 32]> = SmallVec::new();
+    stack.push((id, successors(id)));
     while let Some((id, succs)) = stack.last_mut() {
-        if let Some(succ) = succs.next() {
+        if let Some(&succ) = succs.as_mut().and_then(Iterator::next) {
             if visited.insert(succ) {
                 stack.push((succ, successors(succ)));
             }

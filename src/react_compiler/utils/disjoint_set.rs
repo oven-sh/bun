@@ -71,11 +71,14 @@ impl<K: Copy + Eq + Hash> DisjointSet<K> {
                 }
             }
         }
-        let mut current = item;
-        while current != root {
-            let next = self.entries[&current];
+        let (mut current, mut next) = (item, parent);
+        loop {
             self.entries.insert(current, root);
+            if next == root {
+                break;
+            }
             current = next;
+            next = self.entries[&current];
         }
         root
     }

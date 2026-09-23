@@ -3,6 +3,7 @@ use core::ptr::null_mut;
 
 use bun_boringssl_sys as ssl;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc};
+use bun_uws::ssl_wrapper;
 
 pub(super) struct TlsConfig {
     pub is_server: bool,
@@ -444,7 +445,16 @@ impl TlsContext {
                 }
             }
             if config.ca_pem.is_empty() {
-                ssl::SSL_CTX_set_default_verify_paths(ctx);
+                // `load_crl_store` adds to the context's store, and the shared store must stay as it is.
+                let store = if config.crl_pem.is_empty() {
+                    ssl_wrapper::shared_default_ca_store()
+                } else {
+                    ssl_wrapper::default_ca_store()
+                };
+                let Some(store) = store else {
+                    return Err("failed to load the default CA store");
+                };
+                ssl::SSL_CTX_set_cert_store(ctx, store.as_ptr());
             }
 
             // Node pairs `certs[i]` with `keys[i]`.

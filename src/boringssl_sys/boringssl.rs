@@ -888,13 +888,14 @@ unsafe extern "C" {
     pub fn SSL_set_renegotiate_mode(ssl: *mut SSL, mode: ssl_renegotiate_mode_t);
     pub fn SSL_renegotiate(ssl: *mut SSL) -> c_int;
     pub fn SSL_get_servername(ssl: *const SSL, ty: c_int) -> *const c_char;
-    pub fn SSL_CTX_set_default_verify_paths(ctx: *mut SSL_CTX) -> c_int;
     pub fn SSL_CTX_set_alpn_protos(
         ctx: *mut SSL_CTX,
         protos: *const u8,
         protos_len: usize,
     ) -> c_int;
     pub fn SSL_CTX_get_cert_store(ctx: *const SSL_CTX) -> *mut X509_STORE;
+    /// Frees the context's current store and takes ownership of `store`.
+    pub fn SSL_CTX_set_cert_store(ctx: *mut SSL_CTX, store: *mut X509_STORE);
     pub fn SSL_CTX_add0_chain_cert(ctx: *mut SSL_CTX, x509: *mut X509) -> c_int;
     pub fn SSL_CTX_clear_chain_certs(ctx: *mut SSL_CTX) -> c_int;
     pub fn PEM_read_bio_X509_AUX(

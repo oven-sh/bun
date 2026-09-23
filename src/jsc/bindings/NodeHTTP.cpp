@@ -536,11 +536,8 @@ static void NodeHTTPServer__writeHead(
     }
     response->writeStatus(std::string_view(statusMessage, statusMessageLength));
 
-    // node:http's ServerResponse owns the Date, Connection and Keep-Alive
-    // headers entirely (it honors res.sendDate / removeHeader("date"),
-    // renders its own keep-alive pair through autoHeaderBits, and writes
-    // nothing when the user removed Connection), so never let uWS write its
-    // own for these responses.
+    // node:http's ServerResponse renders Date, Connection and Keep-Alive
+    // itself (autoHeaderBits), so uWS must not add its own.
     response->getHttpResponseData()->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_DATE_HEADER
         | uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONNECTION_HEADER
         | uWS::HttpResponseData<isSSL>::HTTP_WROTE_KEEP_ALIVE_HEADER;

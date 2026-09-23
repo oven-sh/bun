@@ -441,8 +441,11 @@ static void us_quic_udp_on_close(struct us_udp_socket_t *u) {
 static SSL_CTX *us_quic_match_sni(us_quic_socket_context_t *ctx, const char *sni) {
     if (!sni) return ctx->ssl_ctx;
     size_t sl = strlen(sni);
+    /* Entries are stored without the root dot; ignore it on the client's name too. */
+    if (sl > 1 && sni[sl - 1] == '.') sl--;
     for (unsigned i = 0; i < ctx->sni_count; i++) {
-        if (strcmp(ctx->sni[i].name, sni) == 0) return ctx->sni[i].ctx;
+        const char *n = ctx->sni[i].name;
+        if (strlen(n) == sl && memcmp(n, sni, sl) == 0) return ctx->sni[i].ctx;
     }
     for (unsigned i = 0; i < ctx->sni_count; i++) {
         const char *n = ctx->sni[i].name;
@@ -889,7 +892,7 @@ int us_quic_socket_context_add_server_name(us_quic_socket_context_t *ctx,
     /* Store the name without the root dot, as the TCP listener's SNI tree
      * does, so `a.example.com.` and `a.example.com` are one entry. */
     size_t hl = strlen(hostname);
-    if (hl && hostname[hl - 1] == '.') hl--;
+    if (hl > 1 && hostname[hl - 1] == '.') hl--;
     char *name = (char *) us_malloc(hl + 1);
     if (!name) { SSL_CTX_free(ssl); return -1; }
     memcpy(name, hostname, hl);

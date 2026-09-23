@@ -193,10 +193,11 @@ public:
 private:
     /* The SNI tree splits a name on '.' and ignores an empty last label, so
      * `a.example.com.` and `a.example.com` are one entry there. The queue
-     * stores and compares the name without the root dot to agree with it. */
+     * stores and compares the name without the root dot to agree with it.
+     * A lone "." stays as is: an empty name would key the tree root. */
     static std::string_view canonicalServerName(const std::string &name) {
         std::string_view view(name);
-        if (!view.empty() && view.back() == '.') view.remove_suffix(1);
+        if (view.size() > 1 && view.back() == '.') view.remove_suffix(1);
         return view;
     }
 

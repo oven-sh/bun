@@ -268,13 +268,14 @@ describe("Bun.serve per-serverName client certificate policy", () => {
   };
 
   function peerCN(port: number, servername: string) {
-    const { promise, resolve } = Promise.withResolvers<string>();
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
     const socket = tls.connect({ host: "127.0.0.1", port, servername, rejectUnauthorized: false });
     socket.on("secureConnect", () => {
       resolve(socket.getPeerCertificate()?.subject?.CN ?? "-");
       socket.destroy();
     });
-    socket.on("error", () => resolve("error"));
+    socket.on("error", reject);
+    socket.on("close", () => reject(new Error("closed before the handshake completed")));
     return promise;
   }
 

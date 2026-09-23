@@ -2064,9 +2064,10 @@ describe("Bun.serve HTTP/3 SNI", () => {
     });
     const served = {
       admin: await servedCN(server.port, "admin.example.com"),
+      dottedAdmin: await servedCN(server.port, "admin.example.com."),
       other: await servedCN(server.port, "other.example.com"),
     };
-    // The TCP listener selects the same entry for this name.
-    expect(served).toEqual({ admin: "agent3", other: "agent1" });
+    // The TCP listener selects the same entry for these names.
+    expect(served).toEqual({ admin: "agent3", dottedAdmin: "agent3", other: "agent1" });
   });
 });

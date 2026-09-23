@@ -385,6 +385,18 @@ impl JSBundleCompletionTask {
         let basename: &[u8] = paths::basename(&full_outfile_path);
         let entry_key = executable_entry_point_name(&full_outfile_path);
 
+        let mut asset_sources: Vec<Box<[u8]>> = Vec::new();
+        if !compile_options.assets.is_empty() {
+            if let Err(msg) = crate::cli::build_command::collect_compile_assets(
+                &compile_options.assets,
+                entry_key,
+                output_files,
+                &mut asset_sources,
+            ) {
+                return CompileResult::fail_fmt(format_args!("{}", msg));
+            }
+        }
+
         {
             let root = resolve_output_root(dirname);
             let executable_map_name = bun_core::strings::concat(&[basename, b".map"]);
@@ -401,25 +413,20 @@ impl JSBundleCompletionTask {
                         paths::basename(&f.dest_path)
                     }
                 });
+            let asset_paths = InputPathSet::from_paths(asset_sources.iter().map(|path| &**path));
             // The executable is moved into place with a rename. The sourcemaps are written in place.
             let overwritten = core::iter::once((basename, OutputWrite::Rename))
                 .chain(sourcemap_names.map(|name| (name, OutputWrite::Truncate)))
-                .find_map(|(name, write)| input_paths.overwritten_by(&root, name, write));
+                .find_map(|(name, write)| {
+                    input_paths
+                        .overwritten_by(&root, name, write)
+                        .or_else(|| asset_paths.overwritten_by(&root, name, write))
+                });
             if let Some(input) = overwritten {
                 return CompileResult::fail_fmt(format_args!(
                     "Refusing to overwrite input file {}",
                     bun_core::fmt::quote(&input),
                 ));
-            }
-        }
-
-        if !compile_options.assets.is_empty() {
-            if let Err(msg) = crate::cli::build_command::collect_compile_assets(
-                &compile_options.assets,
-                entry_key,
-                output_files,
-            ) {
-                return CompileResult::fail_fmt(format_args!("{}", msg));
             }
         }
 

@@ -146,8 +146,7 @@ impl<'a> HTMLScanner<'a> {
     }
 
     fn create_import_record(&mut self, url: &[u8], kind: ImportKind) -> Result<(), Error> {
-        // Resolve without `?query#fragment`; the rewrite pass re-appends it. Both characters are
-        // also legal in file names (`./C#/logo.png`), so a file that exists as written wins.
+        // Resolve without `?query#fragment`, unless it is part of a name on disk (`./C#/logo.png`).
         let (input_path, _suffix) = match split_url_suffix(url) {
             (_, suffix) if !suffix.is_empty() && self.exists_on_disk(url) => (url, &b""[..]),
             split => split,

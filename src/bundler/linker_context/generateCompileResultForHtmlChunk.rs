@@ -138,8 +138,7 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
         } else {
             Loader::File
         };
-        // Resolved as `./sprite.svg`; put `#icon` back on whatever URL replaces it. When the scan
-        // pass found the `#` to be part of a file name, `original_path` still ends with it.
+        // Put `#icon` back on the new URL, unless the scan pass kept it as part of a file name.
         let suffix = split_url_suffix(url).1;
         let suffix = if import_record.original_path.ends_with(suffix) {
             b""

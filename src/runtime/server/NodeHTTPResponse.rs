@@ -31,7 +31,7 @@ bun_core::declare_scope!(NodeHTTPResponse, visible);
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy).
 #[bun_jsc::JsClass(no_constructor)]
 #[derive(bun_ptr::RefCounted)]
-pub struct NodeHTTPResponse {
+pub(crate) struct NodeHTTPResponse {
     ref_count: bun_ptr::RefCount<Self>,
 
     pub(crate) raw_response: Cell<Option<uws::AnyResponse>>,
@@ -118,7 +118,7 @@ impl Flags {
     }
 }
 
-pub struct UpgradeCTX {
+pub(crate) struct UpgradeCTX {
     pub(crate) context: *mut uws_sys::WebSocketUpgradeContext,
     // request will be detached when go async
     pub(crate) request: *mut uws_sys::Request,
@@ -178,7 +178,7 @@ impl UpgradeCTX {
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub enum BodyReadState {
+pub(crate) enum BodyReadState {
     #[default]
     None = 0,
     Pending = 1,
@@ -370,7 +370,7 @@ fn any_server_from_packed(packed: u64) -> AnyServer {
 /// `codegen_cached_accessors!` emits `on_{data,aborted,writable}_{get,set}_cached`
 /// thin wrappers over the C++ `NodeHTTPResponsePrototype__on*{Get,Set}CachedValue`
 /// `WriteBarrier<Unknown>` slots.
-pub mod js {
+pub(crate) mod js {
     bun_jsc::codegen_cached_accessors!("NodeHTTPResponse"; onData, onAborted, onWritable, pendingWriteBuffer);
 }
 
@@ -1230,7 +1230,7 @@ impl NodeHTTPResponse {
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
-pub enum AbortEvent {
+pub(crate) enum AbortEvent {
     None = 0,
     Abort = 1,
     Timeout = 2,

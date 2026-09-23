@@ -245,7 +245,10 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
       return this;
     }
 
-    then(onfulfilled, onrejected) {
+    then<TResult1 = ShellOutput, TResult2 = never>(
+      onfulfilled?: ((value: ShellOutput) => TResult1 | PromiseLike<TResult1>) | null,
+      onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | null,
+    ): Promise<TResult1 | TResult2> {
       this.#run();
 
       return super.then(onfulfilled, onrejected);

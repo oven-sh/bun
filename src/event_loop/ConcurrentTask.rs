@@ -8,7 +8,6 @@
 //! If `auto_delete` is true, the task is automatically deallocated when it's finished.
 //! Otherwise, it's expected that the containing struct will deallocate the task.
 
-use crate::ManagedTask;
 use bun_threading::UnboundedQueue;
 use bun_threading::unbounded_queue::{Link, Linked};
 
@@ -68,6 +67,14 @@ pub mod task_tag {
         BundleV2DeferredBatchTask, // bun.bundle_v2.DeferredBatchTask
         BundleV2PluginResolve,    // bun.bundle_v2.Resolve (JS-thread hop)
         BundleV2PluginLoad,       // bun.bundle_v2.Load (JS-thread hop)
+        BundleV2PluginResolveAnswered, // bun.bundle_v2.Resolve (hop back to the bundle's loop)
+        BundleV2PluginLoadAnswered, // bun.bundle_v2.Load (hop back to the bundle's loop)
+        BundleV2PluginLoadDeferred, // bun.bundle_v2.Load (`.defer()` notice to the bundle's loop)
+        BundleV2ParseTaskResult,  // bun.bundle_v2.ParseTask.Result
+        ChromePipeEvent,
+        CopyFileWindowsMkdirp,
+        WriteFileWindowsMkdirp,
+        DnsErrorDeferred,
         ShellYesTask,             // shell.Interpreter.Builtin.Yes.YesTask
         Close,
         CppTask,
@@ -75,13 +82,18 @@ pub mod task_tag {
         FetchTasklet,
         FetchTaskletDeinit,
         FetchTaskletPromiseSettle,
+        FetchTaskletRequestDrain,
         FSWatchTask,
         GetAddrInfoLibuvComplete,
+        GraphContextStopAgain,
+        GraphContextStopAndFree,
+        DeadContextStopAgain,
+        HandledPromise,
         HotReloadTask,
+        HTMLRewriterBackgroundPull,
         WatchReloadTask,
         JSBundleCompletionTask,
         JSCDeferredWorkTask,
-        ManagedTask,
         NapiAsyncWork,            // napi_async_work
         NapiFinalizerTask,
         NativePromiseContextDeferredDerefTask,
@@ -96,11 +108,19 @@ pub mod task_tag {
         Read,
         Readv,
         FlushPendingFileSinkTask,
+        RunTestsTask,
         RuntimeTranspilerStore,
         S3HttpDownloadStreamingTask,
         S3HttpSimpleTask,
+        S3UploadWriterCollected,  // MultiPartUpload (its `writer()` was collected before `end()`)
         SendQueueDeferred,        // bun_runtime::ipc::SendQueue (close / after-close hop)
         ServerAllConnectionsClosedTask,
+        HTTPServerDeinit,
+        HTTPSServerDeinit,
+        DebugHTTPServerDeinit,
+        DebugHTTPSServerDeinit,
+        HTTPAppClose,
+        HTTPSAppClose,
         ShellAsync,
         ShellCondExprStatTask,
         ShellCpTask,
@@ -120,6 +140,7 @@ pub mod task_tag {
         StreamPending,
         ThreadSafeFunction,
         ValkeyDeferredClose,
+        ValkeyDeferredFailure,
         WindowsNamedPipeContext,
         Write,
         Writev,
@@ -250,19 +271,6 @@ impl Task {
     }
 }
 
-// Taskable impls for the low-tier task wrappers defined in this crate.
-impl Taskable for crate::ManagedTask::ManagedTask {
-    const TAG: TaskTag = task_tag::ManagedTask;
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — a queued ManagedTask is the heap box `new*` made.
-        unsafe { crate::ManagedTask::ManagedTask::release(this) }
-    }
-    /// A callback task always runs: a callback that continues some script enters that script's
-    /// context itself, so what it reports goes to nobody once the context has stopped.
-    unsafe fn context(_this: *const Self) -> ContextId {
-        ContextId::NONE
-    }
-}
 // ────────────────────────────────────────────────────────────────────────────
 
 #[repr(C)]
@@ -347,16 +355,6 @@ impl ConcurrentTask {
         Self::create(Task::init(task))
     }
 
-    // callback returns `JsResult<()>` to match `ManagedTask::new`'s stored ABI;
-    // callers that have a `fn(*mut T)` should wrap it as `|p| { f(p); Ok(()) }` at the call site.
-    pub fn from_callback<T>(
-        ptr: *mut T,
-        callback: fn(*mut T) -> crate::JsResult<()>,
-    ) -> core::ptr::NonNull<ConcurrentTask> {
-        bun_core::mark_binding!();
-        Self::create(ManagedTask::ManagedTask::new(ptr, callback))
-    }
-
     pub fn from<T: Taskable>(
         &mut self,
         of: *mut T,
@@ -388,20 +386,14 @@ impl ConcurrentTask {
     }
 
     /// A weak poster got `task` back because the target VM has closed: free
-    /// it if it is a heap task (`create*`); an intrusive one belongs to its
-    /// container.
+    /// the carrier if it is a heap one (`create*`); an intrusive one belongs to
+    /// its container. What the task points at stays the poster's.
     ///
     /// # Safety
     /// `task` was just refused and is not queued anywhere.
     pub unsafe fn release_refused(task: core::ptr::NonNull<ConcurrentTask>) {
         // SAFETY: fn contract.
-        let inner = unsafe { Self::into_task(task) };
-        // A callback task (`from_callback`, `ManagedTask::new*`) owns a heap
-        // `ManagedTask` behind `task.ptr` as well.
-        if inner.tag == crate::task_tag::ManagedTask {
-            // SAFETY: as above; refused ⇒ ours.
-            unsafe { crate::ManagedTask::ManagedTask::release(inner.ptr.cast()) };
-        }
+        let _ = unsafe { Self::into_task(task) };
     }
 
     /// Returns whether this task should be automatically deallocated after execution.

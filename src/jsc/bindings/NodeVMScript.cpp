@@ -11,6 +11,7 @@
 #include "JavaScriptCore/ProgramCodeBlock.h"
 #include "JavaScriptCore/SourceCodeKey.h"
 
+#include "NodeValidator.h"
 #include "NodeVMScriptFetcher.h"
 #include "../vm/NodeVMRunTermination.h"
 
@@ -57,13 +58,9 @@ bool ScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::
             any = true;
         }
 
-        if (validateTimeout(globalObject, vm, scope, options, this->timeout))
-            any = true;
-        // The validators return false both for "absent" and for "threw".
-        RETURN_IF_EXCEPTION(scope, false);
-
         if (validateProduceCachedData(globalObject, vm, scope, options, this->produceCachedData))
             any = true;
+        // The validators return false both for "absent" and for "threw".
         RETURN_IF_EXCEPTION(scope, false);
 
         if (validateCachedData(globalObject, vm, scope, options, this->cachedData))
@@ -330,21 +327,16 @@ void NodeVMScript::destroy(JSCell* cell)
     static_cast<NodeVMScript*>(cell)->NodeVMScript::~NodeVMScript();
 }
 
-static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVMScript* script, JSObject* contextifiedObject, JSValue optionsArg, bool allowStringInPlaceOfOptions = false)
+static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVMScript* script, JSObject* contextifiedObject, JSValue optionsArg)
 {
     VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     RunningScriptOptions options;
-    if (allowStringInPlaceOfOptions && optionsArg.isString()) {
-        options.filename = optionsArg.toWTFString(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-    } else {
-        auto from = options.fromJS(globalObject, vm, scope, optionsArg);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (!from) {
-            options = {};
-        }
+    auto from = options.fromJS(globalObject, vm, scope, optionsArg);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!from) {
+        options = {};
     }
 
     // Set the contextified object before evaluating
@@ -633,11 +625,23 @@ const ClassInfo NodeVMScriptConstructor::s_info = { "Script"_s, &Base::s_info, n
 
 bool RunningScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSC::JSValue optionsArg)
 {
-    bool any = BaseVMOptions::fromJS(globalObject, vm, scope, optionsArg);
-    RETURN_IF_EXCEPTION(scope, false);
+    bool any = false;
 
-    if (!optionsArg.isUndefined() && !optionsArg.isString()) {
+    if (!optionsArg.isUndefined()) {
+        V::validateObject(scope, globalObject, optionsArg, "options"_s);
+        RETURN_IF_EXCEPTION(scope, false);
         JSObject* options = asObject(optionsArg);
+
+        // Node's order, which decides the error when several are invalid: timeout, displayErrors, breakOnSigint.
+        auto timeoutOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "timeout"_s));
+        RETURN_IF_EXCEPTION(scope, false);
+        if (timeoutOpt && !timeoutOpt.isUndefined()) {
+            uint32_t timeoutValue = 0;
+            V::validateUint32(scope, globalObject, timeoutOpt, "options.timeout"_s, jsBoolean(true), &timeoutValue);
+            RETURN_IF_EXCEPTION(scope, false);
+            this->timeout = timeoutValue;
+            any = true;
+        }
 
         auto displayErrorsOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "displayErrors"_s));
         RETURN_IF_EXCEPTION(scope, false);
@@ -651,11 +655,6 @@ bool RunningScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm
                 any = true;
             }
         }
-
-        if (validateTimeout(globalObject, vm, scope, options, this->timeout)) {
-            any = true;
-        }
-        RETURN_IF_EXCEPTION(scope, {});
 
         auto breakOnSigintOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "breakOnSigint"_s));
         RETURN_IF_EXCEPTION(scope, false);

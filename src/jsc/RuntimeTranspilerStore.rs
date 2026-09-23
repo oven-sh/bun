@@ -279,7 +279,8 @@ impl RuntimeTranspilerStore {
                 break;
             }
             if self.has_ipc_channel {
-                self.in_flight = self.in_flight.saturating_sub(1);
+                debug_assert!(self.in_flight > 0);
+                self.in_flight -= 1;
             }
             // SAFETY: a live job popped from the intrusive queue; see fn doc.
             unsafe {
@@ -324,8 +325,11 @@ impl RuntimeTranspilerStore {
             if !first {
                 // if there are more, we need to drain the microtasks from the previous run
                 if drain_microtasks().is_err() {
-                    // SAFETY: as above; the borrow ends with the call.
-                    unsafe { (*this).requeue(job, &mut iter) };
+                    // SAFETY: as above; the borrows end with the calls.
+                    unsafe {
+                        (*this).requeue(job, &mut iter);
+                        (*this).end_ipc_hold_if_idle();
+                    }
                     return;
                 }
             }
@@ -333,7 +337,8 @@ impl RuntimeTranspilerStore {
             // SAFETY: as above.
             unsafe {
                 if (*this).has_ipc_channel {
-                    (*this).in_flight = (*this).in_flight.saturating_sub(1);
+                    debug_assert!((*this).in_flight > 0);
+                    (*this).in_flight -= 1;
                 }
             }
             // SAFETY: `job` is a live job popped from the intrusive queue.
@@ -342,7 +347,10 @@ impl RuntimeTranspilerStore {
             if let Err(err) = fulfilled {
                 if crate::task::report_error_or_terminate(global, err).is_err() {
                     // SAFETY: as above.
-                    unsafe { (*this).requeue(job, &mut iter) };
+                    unsafe {
+                        (*this).requeue(job, &mut iter);
+                        (*this).end_ipc_hold_if_idle();
+                    }
                     return;
                 }
             }
@@ -351,18 +359,21 @@ impl RuntimeTranspilerStore {
         if unsafe { (*this).ipc_reads_held } {
             // The fulfilments' microtasks are where the loader asks for the
             // next modules, or runs the loaded ones. Only a load that asked
-            // for nothing more ends the hold, so a chain of imports is one hold.
-            if drain_microtasks().is_err() {
-                return;
-            }
-            // SAFETY: as above.
-            unsafe {
-                if (*this).in_flight == 0 {
-                    (*this).set_ipc_reads_held(false);
-                }
-            }
+            // for nothing more ends the hold, so a chain of imports is one
+            // hold. A drain that a termination stopped still ends it below.
+            let _ = drain_microtasks();
         }
+        // SAFETY: as above.
+        unsafe { (*this).end_ipc_hold_if_idle() };
         // immediately after this is called, the microtasks will be drained again.
+    }
+
+    /// Every way out of the store task passes here, so the hold never outlives
+    /// the jobs.
+    fn end_ipc_hold_if_idle(&mut self) {
+        if self.ipc_reads_held && self.in_flight == 0 {
+            self.set_ipc_reads_held(false);
+        }
     }
 
     /// Put `job` and the rest of a popped batch back: each still has its posted

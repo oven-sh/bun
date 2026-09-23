@@ -405,6 +405,7 @@ test("Error.captureStackTrace rejects a Proxy target like a non-object", () => {
 test("Error.captureStackTrace on globalThis installs .stack on the global object", () => {
   // globalThis is a proxy in front of the global object. V8 stores "stack" on
   // the object behind it, so globalThis.stack reads back as a string.
+  expect(Object.getOwnPropertyDescriptor(globalThis, "stack")).toBeUndefined();
   try {
     Error.captureStackTrace(globalThis);
     const d = Object.getOwnPropertyDescriptor(globalThis, "stack");

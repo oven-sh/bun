@@ -3809,8 +3809,7 @@ describe("Bun.listen requestCert with a large client chain", () => {
 
     let reply: string;
     try {
-      // Without the fix the server's first write() returns 0: SSL_write fails
-      // because the ticket flight does not fit the write buffer.
+      // The server's first write() carries the ticket flight: 0 means SSL_write failed.
       expect(await Promise.race([accepted.promise, failed.promise])).toEqual({
         authorized: true,
         writeResult: "hello\n".length,

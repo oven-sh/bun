@@ -986,13 +986,11 @@ it("replies to a requestCert client whose certificate chain is larger than 32 Ki
   try {
     client.on("session", () => tickets++);
     client.on("error", failed.reject);
-    // A regression in the write path shows up as a bare close, not an error.
-    // Without this the test would sit in its timeout with no diagnostic.
+    // A bare close carries no error, so reject on it too.
     client.on("close", () => failed.reject(new Error("client closed before the reply")));
     [, verdict] = await Promise.race([Promise.all([once(client, "secureConnect"), accepted.promise]), failed.promise]);
 
-    // Without the fix this is where it hangs: the server's write() returns true,
-    // but nothing reaches the wire.
+    // The server's reply is its first write, so it carries the ticket flight.
     client.write("ping");
     [reply] = await Promise.race([once(client, "data"), failed.promise]);
     client.removeAllListeners("close");

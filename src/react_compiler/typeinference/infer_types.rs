@@ -1325,7 +1325,7 @@ impl Unifier {
     }
 
     fn occurs_check(&self, v: &Type, ty: &Type) -> bool {
-        if !crate::stack_guard::is_safe_to_recurse() {
+        if Self::has_inner_type(ty) && !crate::stack_guard::is_safe_to_recurse() {
             return false;
         }
         if type_equals(v, ty) {
@@ -1349,8 +1349,16 @@ impl Unifier {
         false
     }
 
+    /// Whether `get` and `occurs_check` can descend into `ty`.
+    fn has_inner_type(ty: &Type) -> bool {
+        matches!(
+            ty,
+            Type::TypeVar { .. } | Type::Phi { .. } | Type::Function { .. }
+        )
+    }
+
     fn get(&self, ty: &Type) -> Type {
-        if !crate::stack_guard::is_safe_to_recurse() {
+        if Self::has_inner_type(ty) && !crate::stack_guard::is_safe_to_recurse() {
             return ty.clone();
         }
         if let Type::TypeVar { id } = ty {

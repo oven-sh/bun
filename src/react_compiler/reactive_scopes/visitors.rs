@@ -86,7 +86,10 @@ pub(crate) trait ReactiveFunctionVisitor {
     }
 
     fn traverse_value(&self, id: EvaluationOrder, value: &ReactiveValue, state: &mut Self::State) {
-        if !crate::stack_guard::is_safe_to_recurse() {
+        // An instruction is a leaf: only the other values descend.
+        if !matches!(value, ReactiveValue::Instruction(_))
+            && !crate::stack_guard::is_safe_to_recurse()
+        {
             return;
         }
         match value {
@@ -387,7 +390,9 @@ pub(crate) trait ReactiveFunctionTransform {
         value: &mut ReactiveValue,
         state: &mut Self::State,
     ) -> Result<(), CompilerError> {
-        crate::stack_guard::check()?;
+        if !matches!(value, ReactiveValue::Instruction(_)) {
+            crate::stack_guard::check()?;
+        }
         match value {
             ReactiveValue::OptionalExpression { value: inner, .. } => {
                 self.transform_value(id, inner, state)?;

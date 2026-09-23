@@ -149,13 +149,13 @@ impl SSABuilder {
         block_id: BlockId,
         env: &mut Environment,
     ) -> IdentifierId {
-        if !crate::stack_guard::is_safe_to_recurse() {
-            return old_place.identifier;
-        }
         if let Some(state) = &self.states[block_id.0 as usize] {
             if let Some(&new_id) = state.defs.get(old_place.identifier) {
                 return new_id;
             }
+        }
+        if !crate::stack_guard::is_safe_to_recurse() {
+            return old_place.identifier;
         }
 
         let preds = &self.block_preds[block_id.0 as usize];

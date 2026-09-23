@@ -638,7 +638,7 @@ impl BuildCommand {
         let opt_transform_only = this_transpiler.options.transform_only;
         let env_ptr = this_transpiler.env;
 
-        let (mut output_files, input_paths, metafile_json): (
+        let (mut output_files, mut input_paths, metafile_json): (
             Vec<options::OutputFile>,
             InputPathSet,
             Option<Box<[u8]>>,
@@ -724,16 +724,17 @@ impl BuildCommand {
             );
         };
 
-        let mut compile_asset_sources: Vec<Box<[u8]>> = Vec::new();
         if ctx.bundler_options.compile && !ctx.bundler_options.compile_assets.is_empty() {
             if let Err(msg) = collect_compile_assets(
                 &ctx.bundler_options.compile_assets,
                 compile_outfile(outfile),
                 &mut output_files,
-                &mut compile_asset_sources,
             ) {
                 Output::err_generic("{}", (msg.as_str(),));
                 exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
+            }
+            for asset in ctx.bundler_options.compile_assets.iter() {
+                input_paths.add_root(asset);
             }
         }
 
@@ -915,16 +916,12 @@ impl BuildCommand {
                             }
                         }
                     }
-                    let asset_paths =
-                        InputPathSet::from_paths(compile_asset_sources.iter().map(|path| &**path));
-                    for inputs in [&input_paths, &asset_paths] {
-                        refuse_to_overwrite_inputs(
-                            inputs,
-                            root_path,
-                            dest_paths.iter().map(|(path, write)| (&**path, *write)),
-                            watch,
-                        );
-                    }
+                    refuse_to_overwrite_inputs(
+                        &input_paths,
+                        root_path,
+                        dest_paths.iter().map(|(path, write)| (&**path, *write)),
+                        watch,
+                    );
                 }
                 write_metafiles(
                     metafile_json.as_deref(),
@@ -1420,12 +1417,10 @@ fn print_summary(
     bun_core::prettyln!("  <green>bundle<r>  {} modules", reachable_file_count);
 }
 
-/// `sources` receives the absolute, symlink-resolved path of every file that is read.
 pub(crate) fn collect_compile_assets(
     assets: &[Box<[u8]>],
     outfile: &[u8],
     out: &mut Vec<options::OutputFile>,
-    sources: &mut Vec<Box<[u8]>>,
 ) -> Result<(), String> {
     use bun_ast::Loader;
     use bun_collections::StringArrayHashMap;
@@ -1511,7 +1506,6 @@ pub(crate) fn collect_compile_assets(
             Ok(st) => st,
             Err(e) => return fail(e.with_path(asset)),
         };
-        let asset_real_path = resolve_output_root(asset_trimmed);
         if bun_core::S::ISDIR(st.st_mode as _) {
             let dir = match bun_sys::open_dir_for_iteration(cwd, asset_trimmed) {
                 Ok(d) => d,
@@ -1566,9 +1560,6 @@ pub(crate) fn collect_compile_assets(
                     };
                     (rel, bytes)
                 };
-                sources.push(Box::from(resolve_path::join_abs_string::<
-                    resolve_path::platform::Auto,
-                >(&asset_real_path, &[&rel])));
                 let mut dest = Vec::with_capacity(base.len() + 1 + rel.len());
                 dest.extend_from_slice(base);
                 dest.push(b'/');
@@ -1580,7 +1571,6 @@ pub(crate) fn collect_compile_assets(
                 Ok(b) => b,
                 Err(e) => return fail(e.with_path(asset)),
             };
-            sources.push(asset_real_path);
             push(out, asset, base.to_vec(), bytes)?;
         } else {
             return Err(format!(

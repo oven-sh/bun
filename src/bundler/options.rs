@@ -1355,6 +1355,8 @@ pub struct BundleOptions<'a> {
     pub metafile_markdown_path: Box<[u8]>,
     /// Absolute paths the caller writes after the build. The overwrite check covers them too.
     pub caller_output_paths: Vec<Box<[u8]>>,
+    /// Files and directories the caller reads as inputs outside the module graph (`compile.assets`).
+    pub caller_input_roots: Vec<Box<[u8]>>,
 
     /// Set when bake.DevServer is bundling.
     // SAFETY: erased bun_runtime::bake::DevServer (T6). bundler never dereferences fields
@@ -1553,6 +1555,7 @@ impl<'a> BundleOptions<'a> {
             metafile_json_path: self.metafile_json_path.clone(),
             metafile_markdown_path: self.metafile_markdown_path.clone(),
             caller_output_paths: self.caller_output_paths.clone(),
+            caller_input_roots: self.caller_input_roots.clone(),
             dev_server: self.dev_server,
             framework: self.framework,
             serve_plugins: self.serve_plugins.clone(),
@@ -1803,6 +1806,7 @@ impl<'a> BundleOptions<'a> {
             metafile_json_path: Box::default(),
             metafile_markdown_path: Box::default(),
             caller_output_paths: Vec::new(),
+            caller_input_roots: Vec::new(),
             dev_server: core::ptr::null(),
             framework: None,
             serve_plugins: None,

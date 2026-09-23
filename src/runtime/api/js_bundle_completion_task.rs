@@ -385,13 +385,11 @@ impl JSBundleCompletionTask {
         let basename: &[u8] = paths::basename(&full_outfile_path);
         let entry_key = executable_entry_point_name(&full_outfile_path);
 
-        let mut asset_sources: Vec<Box<[u8]>> = Vec::new();
         if !compile_options.assets.is_empty() {
             if let Err(msg) = crate::cli::build_command::collect_compile_assets(
                 &compile_options.assets,
                 entry_key,
                 output_files,
-                &mut asset_sources,
             ) {
                 return CompileResult::fail_fmt(format_args!("{}", msg));
             }
@@ -413,15 +411,10 @@ impl JSBundleCompletionTask {
                         paths::basename(&f.dest_path)
                     }
                 });
-            let asset_paths = InputPathSet::from_paths(asset_sources.iter().map(|path| &**path));
             // The executable is moved into place with a rename. The sourcemaps are written in place.
             let overwritten = core::iter::once((basename, OutputWrite::Rename))
                 .chain(sourcemap_names.map(|name| (name, OutputWrite::Truncate)))
-                .find_map(|(name, write)| {
-                    input_paths
-                        .overwritten_by(&root, name, write)
-                        .or_else(|| asset_paths.overwritten_by(&root, name, write))
-                });
+                .find_map(|(name, write)| input_paths.overwritten_by(&root, name, write));
             if let Some(input) = overwritten {
                 return CompileResult::fail_fmt(format_args!(
                     "Refusing to overwrite input file {}",
@@ -1177,6 +1170,9 @@ impl CompletionStruct for JSBundleCompletionTask {
             Box::from(config.metafile_json_path.list.as_slice());
         transpiler.options.metafile_markdown_path =
             Box::from(config.metafile_markdown_path.list.as_slice());
+        if let Some(compile) = config.compile.as_ref() {
+            transpiler.options.caller_input_roots = compile.assets.clone();
+        }
         if config.optimize_imports.count() > 0 {
             // SAFETY: `self.config` outlives `bump` and `optimize_imports` is not mutated
             // during the bundle; a bump.alloc'd clone leaked (arena never runs Drop).

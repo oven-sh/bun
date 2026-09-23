@@ -24,6 +24,8 @@ pub struct InputPathSet {
     identities: std::cell::OnceCell<Vec<Option<(u64, u64)>>>,
     /// `realpath` of each output subdirectory, `None` when it has no symlink in it or does not exist.
     real_parents: std::cell::RefCell<bun_collections::StringHashMap<Option<Box<[u8]>>>>,
+    /// Real paths of files, and of directories whose every file is an input, read outside the module graph.
+    roots: Vec<Box<[u8]>>,
 }
 
 impl InputPathSet {
@@ -54,7 +56,12 @@ impl InputPathSet {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.paths.count() == 0
+        self.paths.count() == 0 && self.roots.is_empty()
+    }
+
+    /// `path` is a file, or a directory whose every file is an input (`--asset`).
+    pub fn add_root(&mut self, path: &[u8]) {
+        self.roots.push(resolve_output_root(path));
     }
 
     /// The input that writing `dest_path` under `root` would replace, relative to the working directory.
@@ -70,15 +77,22 @@ impl InputPathSet {
         let mut abs_buf = bun_paths::path_buffer_pool::get();
         let abs =
             resolve_path::join_abs_string_buf::<platform::Auto>(root, &mut abs_buf.0, &[dest_path]);
-        let index = match self.paths.get_index(abs) {
-            Some(index) => index,
-            None => match self.index_through_real_parent(root, abs) {
-                Some(index) => index,
-                None if write == OutputWrite::Truncate => self.index_of_same_file(abs)?,
-                None => return None,
-            },
+        let real = self.through_real_parent(root, abs);
+        let real: &[u8] = real.as_deref().unwrap_or(abs);
+
+        let input: &[u8] = if let Some(index) = self
+            .paths
+            .get_index(abs)
+            .or_else(|| self.paths.get_index(real))
+        {
+            &self.paths.keys()[index]
+        } else if self.is_under_a_root(real) {
+            real
+        } else if write == OutputWrite::Truncate {
+            &self.paths.keys()[self.index_of_same_file(abs)?]
+        } else {
+            return None;
         };
-        let input = &self.paths.keys()[index];
         let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
         let mut rel: Box<[u8]> = Box::from(resolve_path::relative(top_level_dir, input));
         resolve_path::platform_to_posix_in_place(&mut rel);
@@ -87,33 +101,43 @@ impl InputPathSet {
 }
 
 impl InputPathSet {
-    /// `root` is symlink-free. A directory between it and the file can still be a symlink.
-    fn index_through_real_parent(&self, root: &[u8], abs: &[u8]) -> Option<usize> {
+    /// `abs` with its directory symlink-resolved, when that differs. `root` is symlink-free already.
+    fn through_real_parent(&self, root: &[u8], abs: &[u8]) -> Option<Box<[u8]>> {
         let parent = bun_paths::dirname(abs)?;
         if resolve_path::is_parent_or_equal(parent, root) != resolve_path::ParentEqual::Unrelated {
             return None;
         }
         let mut real_parents = self.real_parents.borrow_mut();
-        let real_parent = match real_parents.get(parent) {
-            Some(real_parent) => real_parent,
-            None => {
-                let mut z_buf = bun_paths::path_buffer_pool::get();
-                let mut real_buf = bun_paths::path_buffer_pool::get();
-                let real_parent: Option<Box<[u8]>> =
-                    bun_sys::realpath(resolve_path::z(parent, &mut z_buf), &mut real_buf)
-                        .ok()
-                        .filter(|real| *real != parent)
-                        .map(Box::from);
-                bun_core::handle_oom(real_parents.put(parent, real_parent));
-                real_parents.get(parent)?
-            }
-        };
-        let real_parent = real_parent.as_deref()?;
-        self.paths
-            .get_index(resolve_path::join_abs_string::<platform::Auto>(
+        if real_parents.get(parent).is_none() {
+            let mut z_buf = bun_paths::path_buffer_pool::get();
+            let mut real_parent_buf = bun_paths::path_buffer_pool::get();
+            let real_parent: Option<Box<[u8]>> =
+                bun_sys::realpath(resolve_path::z(parent, &mut z_buf), &mut real_parent_buf)
+                    .ok()
+                    .filter(|real| *real != parent)
+                    .map(Box::from);
+            bun_core::handle_oom(real_parents.put(parent, real_parent));
+        }
+        let real_parent = real_parents.get(parent)?.as_deref()?;
+        let mut buf = bun_paths::path_buffer_pool::get();
+        Some(Box::from(
+            resolve_path::join_abs_string_buf::<platform::Auto>(
                 real_parent,
+                &mut buf.0,
                 &[bun_paths::basename(abs)],
-            ))
+            ),
+        ))
+    }
+
+    /// An existing file that is a root, or is in a root directory.
+    fn is_under_a_root(&self, real: &[u8]) -> bool {
+        if !self.roots.iter().any(|root| {
+            resolve_path::is_parent_or_equal(root, real) != resolve_path::ParentEqual::Unrelated
+        }) {
+            return false;
+        }
+        let mut z_buf = bun_paths::path_buffer_pool::get();
+        bun_sys::lstat(resolve_path::z(real, &mut z_buf)).is_ok()
     }
 
     /// A write to a symlink, or to a file with another hard link, lands in a file that has a second name.

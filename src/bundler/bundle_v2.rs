@@ -5416,7 +5416,11 @@ pub mod bv2_impl {
 
             // Without an executable to assemble, the linker checked and wrote everything, the metafile paths included.
             let input_paths = if self.linker.options.compile_mode.is_executable() {
-                crate::input_path_set::InputPathSet::from_graph(&self.graph)
+                let mut input_paths = crate::input_path_set::InputPathSet::from_graph(&self.graph);
+                for root in self.transpiler.options.caller_input_roots.iter() {
+                    input_paths.add_root(root);
+                }
+                input_paths
             } else {
                 Default::default()
             };

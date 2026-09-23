@@ -1530,7 +1530,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                             boringssl_sys::SSL::opaque_ref(ssl_ptr),
                         );
                     }
-                    this.install_server_identity(ssl_ptr);
+                    this.sync_server_identity(ssl_ptr);
                     if let Some(protos) = this.protos.get() {
                         if this.acts_as_tls_server() {
                             // Registered above (selector + ex_data); nothing
@@ -1787,7 +1787,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let mut authorized = success == 1;
         let mut hostname_mismatch = false;
         let mut hostname_mismatch_message: Option<Box<[u8]>> = None;
-        // `install_server_identity` made the same check inside the handshake
+        // `sync_server_identity` made the same check inside the handshake
         // and failed it: the verdict and the error of the check below.
         let rejected_in_handshake = SSL
             && success == 0
@@ -1984,18 +1984,27 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// A client that rejects a wrong name natively makes that check inside
     /// the handshake too, before its certificate goes out. node:tls sockets
     /// defer the verdict to their JS `checkServerIdentity`, which may accept a
-    /// name this matcher rejects. Runs again when `setServername` changes the
-    /// name before the handshake.
-    pub(crate) fn install_server_identity(&self, ssl_ptr: *mut boringssl_sys::SSL) {
-        let flags = self.flags.get();
+    /// name this matcher rejects. `on_open` installs it, and every call that
+    /// changes the policy, the name or the certificate before the handshake
+    /// completes syncs it again: `setVerifyMode`, `setServername`, `setKeyCert`.
+    pub(crate) fn sync_server_identity(&self, ssl_ptr: *mut boringssl_sys::SSL) {
         if !SSL
-            || self.acts_as_tls_server()
-            || !flags.contains(Flags::REJECT_UNAUTHORIZED)
-            || flags.contains(Flags::DEFERS_SERVER_IDENTITY)
+            || tls_socket_functions::ffi::SSL_is_init_finished(boringssl_sys::SSL::opaque_ref(
+                ssl_ptr,
+            )) != 0
         {
             return;
         }
-        let hostname = self.server_identity_hostname();
+        let flags = self.flags.get();
+        let enforced = !self.acts_as_tls_server()
+            && flags.contains(Flags::REJECT_UNAUTHORIZED)
+            && !flags.contains(Flags::DEFERS_SERVER_IDENTITY);
+        // An empty host removes the check.
+        let hostname: &[u8] = if enforced {
+            self.server_identity_hostname()
+        } else {
+            b""
+        };
         // SAFETY: `ssl_ptr` is this socket's live `SSL*`; C copies `hostname`.
         unsafe {
             tls_socket_functions::ffi::us_internal_ssl_set_server_identity(

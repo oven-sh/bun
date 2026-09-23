@@ -627,17 +627,9 @@ where
                     Self::fail(this, ErrorCode::TlsHandshakeFailed);
                     return;
                 };
-                let identity_ok = {
-                    let own_hostname = this.hostname.get();
-                    let sni: Vec<u8>;
-                    let hostname: &[u8] = if !own_hostname.is_empty() {
-                        own_hostname.as_bytes()
-                    } else {
-                        sni = ssl.servername().map(<[u8]>::to_vec).unwrap_or_default();
-                        &sni
-                    };
-                    !hostname.is_empty() && boringssl::check_server_identity(ssl, hostname)
-                };
+                let hostname = this.identity_hostname(ssl);
+                let identity_ok =
+                    !hostname.is_empty() && boringssl::check_server_identity(ssl, &hostname);
                 if !identity_ok {
                     Self::fail(this, ErrorCode::TlsHandshakeFailed);
                 }
@@ -646,6 +638,18 @@ where
             // if we are here is because server rejected us, and the error_no is the cause of this
             // if we set reject_unauthorized == false this means the server requires custom CA aka NODE_EXTRA_CA_CERTS
             Self::fail(this, ErrorCode::TlsHandshakeFailed);
+        }
+    }
+
+    /// The name the native matcher requires of the server's certificate: the
+    /// host that was dialed, else the SNI. `handle_open` installs it for the
+    /// handshake and `handle_handshake` checks it after.
+    fn identity_hostname(&self, ssl: &boringssl::c::SSL) -> Vec<u8> {
+        let own_hostname = self.hostname.get();
+        if !own_hostname.is_empty() {
+            own_hostname.as_bytes().to_vec()
+        } else {
+            ssl.servername().map(<[u8]>::to_vec).unwrap_or_default()
         }
     }
 
@@ -681,8 +685,9 @@ where
                 .is_some_and(|ws| ws.reject_unauthorized())
             {
                 socket.set_inline_reject();
-                // The name `handle_handshake` checks after the handshake.
-                socket.set_server_identity(hostname.as_bytes());
+                if let Some(ssl) = socket.ssl_mut() {
+                    socket.set_server_identity(&this.identity_hostname(ssl));
+                }
             }
         }
 

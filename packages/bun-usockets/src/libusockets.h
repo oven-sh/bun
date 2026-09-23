@@ -388,7 +388,8 @@ void us_socket_set_inline_reject(us_socket_r s) nonnull_fn_decl;
  * another name never gets it. It runs only when the server asks for a
  * certificate and the client has one. The handshake then fails with
  * X509_V_ERR_HOSTNAME_MISMATCH, code ERR_TLS_CERT_ALTNAME_INVALID. Same call
- * window as us_socket_set_inline_reject. `host` is copied. */
+ * window as us_socket_set_inline_reject. `host` is copied. A later call
+ * replaces the name, and host_len == 0 removes the check. */
 void us_socket_set_server_identity(us_socket_r s, const char *host, size_t host_len)
     __attribute__((nonnull(1, 2)));
 

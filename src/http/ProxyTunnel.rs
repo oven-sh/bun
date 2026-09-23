@@ -617,9 +617,9 @@ impl ProxyTunnel {
         // `set_server_identity` calls in `HTTPClient::on_open`.
         if this.flags.reject_unauthorized {
             wrapper.set_inline_reject();
-            if !this.signals.get(crate::signals::Field::CertErrors) {
-                wrapper.set_server_identity(crate::get_tls_hostname(this, false));
-            }
+        }
+        if this.target_verification() == PeerVerification::Native {
+            wrapper.set_server_identity(crate::get_tls_hostname(this, false));
         }
         // `RefPtr::new` owns the tunnel's initial ref (`ref_count == 1` from
         // `Default`); the client holds it until `close_proxy_tunnel` or the

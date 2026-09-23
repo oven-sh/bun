@@ -371,10 +371,9 @@ impl MySQLConnection {
             && matches!(self.ssl_mode, SSLMode::VerifyCa | SSLMode::VerifyFull)
         {
             sock.set_inline_reject();
-            // The name `do_handshake` checks after the handshake.
-            if let (SSLMode::VerifyFull, Some(sni)) = (self.ssl_mode, sni) {
-                sock.set_server_identity(sni.to_bytes());
-            }
+        }
+        if let Some(hostname) = self.native_identity_hostname() {
+            sock.set_server_identity(hostname);
         }
         self.socket = Socket::SocketTls(uws::SocketTLS {
             socket: uws::InternalSocket::Connected(new_socket),
@@ -395,6 +394,16 @@ impl MySQLConnection {
 
         // if is connected or connecting we keep alive until idle timeout is reached
         true
+    }
+
+    /// The name the native matcher requires of the server's certificate:
+    /// `Some` only under verify-full with `rejectUnauthorized` on. It is empty
+    /// when no server name is configured, and no certificate matches that.
+    /// The TLS upgrade installs it for the handshake and `do_handshake`
+    /// checks it after.
+    fn native_identity_hostname(&self) -> Option<&[u8]> {
+        (self.tls_config.reject_unauthorized() != 0 && self.ssl_mode == SSLMode::VerifyFull)
+            .then(|| self.tls_config.server_name_bytes())
     }
 
     pub(crate) fn do_handshake(
@@ -427,31 +436,24 @@ impl MySQLConnection {
                         // VerifyFull additionally requires the certificate identity to
                         // match the intended host. Absence of a configured server name is
                         // not a license to skip the check — fail closed.
-                        if self.ssl_mode == SSLMode::VerifyFull {
-                            let servername = self.tls_config.server_name();
-                            if servername.is_null() {
-                                self.tls_status = TLSStatus::SslFailed;
-                                return Ok(false);
-                            }
+                        let identity_ok = self.native_identity_hostname().is_none_or(|hostname| {
                             // SAFETY: native handle of a connected TLS socket is `SSL*`.
                             let ssl_ptr: *mut bun_boringssl_sys::SSL = self
                                 .socket
                                 .get_native_handle()
                                 .map(|h| h.cast())
                                 .unwrap_or(core::ptr::null_mut());
-                            // SAFETY: `server_name` is a NUL-terminated C string owned by
-                            // `tls_config` for the connection lifetime.
-                            let hostname = unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
-                            if ssl_ptr.is_null()
-                                || !bun_boringssl::check_server_identity(
+                            !hostname.is_empty()
+                                && !ssl_ptr.is_null()
+                                && bun_boringssl::check_server_identity(
                                     // SAFETY: `ssl_ptr` is non-null (checked by the short-circuit above) and live (handshake just succeeded).
                                     unsafe { &mut *ssl_ptr },
                                     hostname,
                                 )
-                            {
-                                self.tls_status = TLSStatus::SslFailed;
-                                return Ok(false);
-                            }
+                        });
+                        if !identity_ok {
+                            self.tls_status = TLSStatus::SslFailed;
+                            return Ok(false);
                         }
                     }
                     // require is the same as prefer

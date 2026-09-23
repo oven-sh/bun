@@ -344,11 +344,10 @@ pub(super) fn set_servername(
     this.server_name.set(Some(slice));
 
     let host = this.server_name.get().as_deref().unwrap();
+    let Some(ssl_ptr) = this.socket.get().ssl() else {
+        return Ok(JSValue::UNDEFINED);
+    };
     if !host.is_empty() {
-        let Some(ssl_ptr) = this.socket.get().ssl() else {
-            return Ok(JSValue::UNDEFINED);
-        };
-
         if ffi::SSL_is_init_finished(boringssl::SSL::opaque_ref(ssl_ptr)) != 0 {
             // match node.js exceptions
             return Err(global.throw(format_args!("Already started.")));
@@ -356,8 +355,9 @@ pub(super) fn set_servername(
         let host_z = bun_core::ZBox::from_bytes(host);
         // SAFETY: `host_z` is NUL-terminated; FFI reads until NUL.
         unsafe { ffi::SSL_set_tlsext_host_name(ssl_ptr, host_z.as_ptr()) };
-        this.install_server_identity(ssl_ptr);
     }
+    // An empty name moves the verified name back to the connection's host.
+    this.sync_server_identity(ssl_ptr);
 
     Ok(JSValue::UNDEFINED)
 }
@@ -928,6 +928,8 @@ pub(crate) fn set_key_cert(
             }
         }
     }
+    // SSL_set_SSL_CTX replaced the certificate callback with the context's.
+    this.sync_server_identity(ssl_ptr);
     Ok(JSValue::UNDEFINED)
 }
 
@@ -1324,6 +1326,7 @@ pub(super) fn set_verify_mode(
         verify_mode,
         Some(always_allow_ssl_verify_callback),
     );
+    this.sync_server_identity(ssl_ptr);
     Ok(JSValue::UNDEFINED)
 }
 

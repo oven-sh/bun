@@ -1251,10 +1251,9 @@ static int us_server_identity_cert_cb(SSL *ssl, void *arg) {
   struct us_ssl_server_identity_t *identity = us_ssl_server_identity(ssl);
   if (!identity) return 1;
   if (identity->rejected) return 0;
-  /* With no client certificate to withhold, or with a failed chain (the verify
-   * recorder's verdict), the handshake goes on and the owner decides after it
-   * as before. */
-  if (!SSL_get_certificate(ssl) || SSL_get_verify_result(ssl) != X509_V_OK) return 1;
+  /* A failed chain is the verify recorder's verdict: the handshake goes on
+   * and the owner decides after it as before. */
+  if (SSL_get_verify_result(ssl) != X509_V_OK) return 1;
   if (Bun__SSL__checkServerIdentity(ssl, identity->host, identity->host_len)) return 1;
   identity->rejected = 1;
   return 0;
@@ -1280,8 +1279,11 @@ int us_internal_ssl_inline_reject_tripped(SSL *ssl) {
  * suppressed and the handshake is reported as failed. */
 static int us_ssl_inline_reject_tripped(struct us_socket_t *s) {
   if (!s->ssl) return 0;
-  /* Initial handshake only: renegotiation keeps the deferred JS-side policy,
-   * and established sockets exit here before any ex_data lookups. */
+  /* Established sockets exit here before any ex_data lookups. A renegotiation
+   * keeps the check live: one can start before the initial on_handshake was
+   * dispatched (a HelloRequest packed behind the TLS 1.2 Finished), and the
+   * certificate callback is then the only name check ahead of the client's
+   * Certificate. A chain is not verified again in a renegotiation. */
   if (s->ssl_handshake_state == HANDSHAKE_COMPLETED) return 0;
   return us_internal_ssl_inline_reject_tripped(s_ssl(s));
 }
@@ -1312,18 +1314,27 @@ void us_socket_set_inline_reject(struct us_socket_t *s) {
  * another name never gets the client's certificate. The handshake then fails
  * with X509_V_ERR_HOSTNAME_MISMATCH / ERR_TLS_CERT_ALTNAME_INVALID through the
  * same tripped() path as a failed chain. The owner's check after the handshake
- * stays: this one only runs when the server asks for a certificate. */
+ * stays: this one only runs when the server asks for a certificate.
+ *
+ * The call replaces what an earlier call installed, and an empty host clears
+ * it, so an owner whose policy or expected name changes before the handshake
+ * calls it again. A client with no certificate has nothing to withhold and
+ * gets nothing installed. */
 void us_internal_ssl_set_server_identity(SSL *ssl, const char *host, size_t host_len) {
-  if (!host_len || SSL_is_server(ssl)) return;
+  if (SSL_is_server(ssl)) return;
   us_ex_idx_ensure();
-  struct us_ssl_server_identity_t *identity =
-      us_calloc(1, sizeof(struct us_ssl_server_identity_t) + host_len);
-  if (!identity) Bun__outOfMemory();
-  identity->host_len = host_len;
-  memcpy(identity->host, host, host_len);
-  us_free(us_ssl_server_identity(ssl));
-  SSL_set_ex_data(ssl, us_ssl_server_identity_ex_idx, identity);
-  SSL_set_cert_cb(ssl, us_server_identity_cert_cb, NULL);
+  struct us_ssl_server_identity_t *previous = us_ssl_server_identity(ssl);
+  struct us_ssl_server_identity_t *identity = NULL;
+  if (host_len && SSL_get_certificate(ssl)) {
+    identity = us_calloc(1, sizeof(struct us_ssl_server_identity_t) + host_len);
+    if (!identity) Bun__outOfMemory();
+    identity->host_len = host_len;
+    memcpy(identity->host, host, host_len);
+  }
+  if (!identity && !previous) return;
+  if (!SSL_set_ex_data(ssl, us_ssl_server_identity_ex_idx, identity)) Bun__outOfMemory();
+  us_free(previous);
+  SSL_set_cert_cb(ssl, identity ? us_server_identity_cert_cb : NULL, NULL);
 }
 
 void us_socket_set_server_identity(struct us_socket_t *s, const char *host, size_t host_len) {
@@ -2277,9 +2288,15 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
   if (ssl_gone(s)) return s;
 
   if (s->ssl_handshake_state != HANDSHAKE_COMPLETED) {
-    /* Surface ECONNRESET-style handshake failure exactly once so callers
-     * (fetch, sockets) don't each have to check on_close themselves. */
-    ssl_trigger_handshake_econnreset(s);
+    if (us_ssl_inline_reject_tripped(s)) {
+      /* The identity check refused a renegotiation, which ssl_update_handshake
+       * does not drive: report its verdict, not the CERT_CB_ERROR around it. */
+      ssl_trigger_handshake(s, 0);
+    } else {
+      /* Surface ECONNRESET-style handshake failure exactly once so callers
+       * (fetch, sockets) don't each have to check on_close themselves. */
+      ssl_trigger_handshake_econnreset(s);
+    }
     if (ssl_gone(s)) return s;
   }
 

@@ -42,13 +42,6 @@ export default [
     proto: {
       getRandomValues: {
         fn: "getRandomValues",
-        // https://discord.com/channels/876711213126520882/1276103693665828894/1276133319033229363
-        // https://discord.com/channels/876711213126520882/1276103693665828894/1276127092047609919
-        // DOMJIT: {
-        //   returns: "JSValue",
-        //   "pure": false,
-        //   args: ["JSUint8Array"],
-        // },
       },
       randomUUID: {
         fn: "randomUUID",

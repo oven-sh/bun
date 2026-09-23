@@ -1,14 +1,1110 @@
 #compdef bun
-# Bun completions for zsh
 
-_bun_run_param_script_completion() {
-    local -a scripts_list bins
-    local target_cwd="${PWD}"
-    local cwd_specified=0
+_bun_add_completion() {
+    _arguments -s -C \
+        '1: :->cmd1' \
+        '*: :->package' \
+        '--config[Load config(bunfig.toml)]: :->config' \
+        '-c[Load config(bunfig.toml)]: :->config' \
+        '--yarn[Write a yarn.lock file (yarn v1)]' \
+        '-y[Write a yarn.lock file (yarn v1)]' \
+        '--production[Don'"'"'t install devDependencies]' \
+        '-p[Don'"'"'t install devDependencies]' \
+        '--no-save[Don'"'"'t save a lockfile]' \
+        '--save[Save to package.json]' \
+        '--dry-run[Don'"'"'t install anything]' \
+        '--frozen-lockfile[Disallow changes to lockfile]' \
+        '--force[Always request the latest versions from the registry & reinstall all dependencies]' \
+        '-f[Always request the latest versions from the registry & reinstall all dependencies]' \
+        '--cache-dir[Store & load cached data from a specific directory path]:cache-dir' \
+        '--no-cache[Ignore manifest cache entirely]' \
+        '--silent[Don'"'"'t log anything]' \
+        '--verbose[Excessively verbose logging]' \
+        '--no-progress[Disable the progress bar]' \
+        '--no-summary[Don'"'"'t print a summary]' \
+        '--no-verify[Skip verifying integrity of newly downloaded packages]' \
+        '--ignore-scripts[Skip lifecycle scripts in the package.json (dependency scripts are never run)]' \
+        '--global[Add a package globally]' \
+        '-g[Add a package globally]' \
+        '--cwd[Set a specific cwd]:cwd' \
+        '--backend[Platform-specific optimizations for installing dependencies]:backend:("copyfile" "hardlink" "symlink")' \
+        '--link-native-bins[Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo]:link-native-bins' \
+        '--help[Print this help menu]' \
+        '--dev[Add dependence to "devDependencies]' \
+        '-d[Add dependence to "devDependencies]' \
+        '-D[]' \
+        '--development[]' \
+        '--optional[Add dependency to "optionalDependencies]' \
+        '--peer[Add dependency to "peerDependencies]' \
+        '--exact[Add the exact version instead of the ^range]' \
+        '--catalog=-[Add the resolved version to the root package.json catalog and depend on it as "catalog:"]:catalog' \
+        '*--filter[Add the package(s) to the matching workspaces instead of the current package]:workspace pattern' \
+        '*-F[Add the package(s) to the matching workspaces instead of the current package]:workspace pattern' &&
+        ret=0
+
+    case $state in
+    config)
+        _bun_list_bunfig_toml
+
+        ;;
+    package)
+        _bun_add_param_package_completion
+
+        ;;
+    esac
+}
+
+_bun_unlink_completion() {
+    _arguments -s -C \
+        '1: :->cmd1' \
+        '*: :->package' \
+        '--config[Load config(bunfig.toml)]: :->config' \
+        '-c[Load config(bunfig.toml)]: :->config' \
+        '--yarn[Write a yarn.lock file (yarn v1)]' \
+        '-y[Write a yarn.lock file (yarn v1)]' \
+        '--production[Don'"'"'t install devDependencies]' \
+        '-p[Don'"'"'t install devDependencies]' \
+        '--no-save[Don'"'"'t save a lockfile]' \
+        '--save[Save to package.json]' \
+        '--dry-run[Don'"'"'t install anything]' \
+        '--frozen-lockfile[Disallow changes to lockfile]' \
+        '--force[Always request the latest versions from the registry & reinstall all dependencies]' \
+        '-f[Always request the latest versions from the registry & reinstall all dependencies]' \
+        '--cache-dir[Store & load cached data from a specific directory path]:cache-dir' \
+        '--no-cache[Ignore manifest cache entirely]' \
+        '--silent[Don'"'"'t log anything]' \
+        '--verbose[Excessively verbose logging]' \
+        '--no-progress[Disable the progress bar]' \
+        '--no-summary[Don'"'"'t print a summary]' \
+        '--no-verify[Skip verifying integrity of newly downloaded packages]' \
+        '--ignore-scripts[Skip lifecycle scripts in the package.json (dependency scripts are never run)]' \
+        '--global[Add a package globally]' \
+        '-g[Add a package globally]' \
+        '--cwd[Set a specific cwd]:cwd' \
+        '--backend[Platform-specific optimizations for installing dependencies]:backend:("copyfile" "hardlink" "symlink")' \
+        '--link-native-bins[Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo]:link-native-bins' \
+        '--help[Print this help menu]' &&
+        ret=0
+
+    case $state in
+    config)
+        _bun_list_bunfig_toml
+
+        ;;
+    package)
+        # TODO: error: bun unlink {packageName} not implemented yet
+
+        ;;
+    esac
+}
+
+_bun_link_completion() {
+    _arguments -s -C \
+        '1: :->cmd1' \
+        '*: :->package' \
+        '--config[Load config(bunfig.toml)]: :->config' \
+        '-c[Load config(bunfig.toml)]: :->config' \
+        '--yarn[Write a yarn.lock file (yarn v1)]' \
+        '-y[Write a yarn.lock file (yarn v1)]' \
+        '--production[Don'"'"'t install devDependencies]' \
+        '-p[Don'"'"'t install devDependencies]' \
+        '--no-save[Don'"'"'t save a lockfile]' \
+        '--save[Save to package.json]' \
+        '--dry-run[Don'"'"'t install anything]' \
+        '--frozen-lockfile[Disallow changes to lockfile]' \
+        '--force[Always request the latest versions from the registry & reinstall all dependencies]' \
+        '-f[Always request the latest versions from the registry & reinstall all dependencies]' \
+        '--cache-dir[Store & load cached data from a specific directory path]:cache-dir' \
+        '--no-cache[Ignore manifest cache entirely]' \
+        '--silent[Don'"'"'t log anything]' \
+        '--verbose[Excessively verbose logging]' \
+        '--no-progress[Disable the progress bar]' \
+        '--no-summary[Don'"'"'t print a summary]' \
+        '--no-verify[Skip verifying integrity of newly downloaded packages]' \
+        '--ignore-scripts[Skip lifecycle scripts in the package.json (dependency scripts are never run)]' \
+        '--global[Add a package globally]' \
+        '-g[Add a package globally]' \
+        '--cwd[Set a specific cwd]:cwd' \
+        '--backend[Platform-specific optimizations for installing dependencies]:backend:("copyfile" "hardlink" "symlink")' \
+        '--link-native-bins[Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo]:link-native-bins' \
+        '--help[Print this help menu]' &&
+        ret=0
+
+    case $state in
+    config)
+        _bun_list_bunfig_toml
+
+        ;;
+    package)
+        _bun_link_param_package_completion
+
+        ;;
+    esac
+}
+
+_bun_bun_completion() {
+    _arguments -s -C \
+        '1: :->cmd' \
+        '*: :->file' \
+        '--version[Show version and exit]' \
+        '-V[Show version and exit]' \
+        '--cwd[Change directory]:cwd' \
+        '--help[Show command help]' \
+        '-h[Show command help]' \
+        '--use[Use a framework, e.g. "next"]:use' &&
+        ret=0
+
+    case $state in
+    file)
+        _files
+
+        ;;
+    esac
+}
+
+_bun_init_completion() {
+    _arguments -s -C \
+        '1: :->cmd' \
+        '-y[Answer yes to all prompts]:' \
+        '--yes[Answer yes to all prompts]:' &&
+        ret=0
+
+}
+
+_bun_create_completion() {
+    _arguments -s -C \
+        '1: :->cmd' \
+        '2: :->cmd2' \
+        '*: :->args' &&
+        ret=0
+
+    case $state in
+    cmd2)
+        _alternative 'args:create:((next-app\:"Next.js app" react-app\:"React app"))'
+
+        ;;
+    args)
+        case $line[2] in
+        next)
+            pmargs=(
+                '1: :->cmd'
+                '2: :->cmd2'
+                '3: :->file'
+                '--force[Overwrite existing files]'
+                '--no-install[Don'"'"'t install node_modules]'
+                '--no-git[Don'"'"'t create a git repository]'
+                '--verbose[verbose]'
+                '--no-package-json[Disable package.json transforms]'
+                '--open[On finish, start bun & open in-browser]'
+            )
+
+            # ---- Command: create next
+            _arguments -s -C \
+                $pmargs &&
+                ret=0
+
+            case $state in
+            file)
+                _files
+
+                ;;
+            esac
+
+            ;;
+        react)
+
+            # ---- Command: create react
+            _arguments -s -C \
+                $pmargs &&
+                ret=0
+
+            case $state in
+            file)
+                _files
+
+                ;;
+            esac
+
+            ;;
+        *)
+
+            # ---- Command: create from other template
+            _arguments -s -C \
+                $pmargs &&
+                ret=0
+
+            case $state in
+            file)
+                _files
+
+                ;;
+            esac
+
+            ;;
+        esac
+
+        ;;
+
+    esac
+}
+
+_bun_pm_completion() {
+    _arguments -s -C \
+        '1: :->cmd' \
+        '2: :->cmd2' \
+        '*: :->args' &&
+        ret=0
+
+    case $state in
+    cmd2)
+        sub_commands=(
+            'bin\:"print the path to bin folder" '
+            'ls\:"list the dependency tree according to the current lockfile" '
+            'licenses\:"list installed packages grouped by license" '
+            'hash\:"generate & print the hash of the current lockfile" '
+            'hash-string\:"print the string used to hash the lockfile" '
+            'hash-print\:"print the hash stored in the current lockfile" '
+            'cache\:"print the path to the cache folder" '
+            'version\:"bump the version in package.json and create a git tag" '
+        )
+
+        _alternative "args:cmd3:(($sub_commands))"
+
+        ;;
+    args)
+        case $line[2] in
+        cache)
+            _arguments -s -C \
+                '1: :->cmd' \
+                '2: :->cmd2' \
+                ':::(rm)' &&
+                ret=0
+
+            ;;
+        bin)
+            pmargs=(
+                "-g[print the global path to bin folder]"
+            )
+
+            _arguments -s -C \
+                '1: :->cmd' \
+                '2: :->cmd2' \
+                $pmargs &&
+                ret=0
+
+            ;;
+        ls)
+            pmargs=(
+                "--all[list the entire dependency tree according to the current lockfile]"
+                "--trusted[list only trusted dependencies]"
+            )
+
+            _arguments -s -C \
+                '1: :->cmd' \
+                '2: :->cmd2' \
+                $pmargs &&
+                ret=0
+
+            ;;
+        licenses)
+            pmargs=(
+                "--json[output as JSON]"
+                "--prod[omit devDependencies]"
+                "--production[omit devDependencies]"
+                "--dev[list only what devDependencies pull in]"
+                "-D[list only what devDependencies pull in]"
+                "--long[also print author, description and homepage]"
+                "*--filter[list only the matching workspaces' dependencies]:workspace pattern"
+                "*-F[list only the matching workspaces' dependencies]:workspace pattern"
+            )
+
+            _arguments -s -C \
+                '1: :->cmd' \
+                '2: :->cmd2' \
+                $pmargs &&
+                ret=0
+
+            ;;
+        version)
+            version_args=(
+                "patch[increment patch version]"
+                "minor[increment minor version]"
+                "major[increment major version]"
+                "prepatch[increment patch version and add pre-release]"
+                "preminor[increment minor version and add pre-release]"
+                "premajor[increment major version and add pre-release]"
+                "prerelease[increment pre-release version]"
+                "from-git[use version from latest git tag]"
+            )
+
+            pmargs=(
+                "--no-git-tag-version[don't create a git commit and tag]"
+                "--allow-same-version[allow bumping to the same version]"
+                "-m[use the given message for the commit]:message"
+                "--message[use the given message for the commit]:message"
+                "--preid[identifier to prefix pre-release versions]:preid"
+            )
+
+            _arguments -s -C \
+                '1: :->cmd' \
+                '2: :->cmd2' \
+                '3: :->increment' \
+                $pmargs &&
+                ret=0
+
+            case $state in
+            increment)
+                _alternative "args:increment:(($version_args))"
+                ;;
+            esac
+
+            ;;
+        esac
+
+        ;;
+    esac
+}
+
+_bun_install_completion() {
+    _arguments -s -C \
+        '1: :->cmd1' \
+        '--config[Load config(bunfig.toml)]: :->config' \
+        '-c[Load config(bunfig.toml)]: :->config' \
+        '--yarn[Write a yarn.lock file (yarn v1)]' \
+        '-y[Write a yarn.lock file (yarn v1)]' \
+        '--production[Don'"'"'t install devDependencies]' \
+        '-p[Don'"'"'t install devDependencies]' \
+        '--no-save[Don'"'"'t save a lockfile]' \
+        '--save[Save to package.json]' \
+        '--dry-run[Don'"'"'t install anything]' \
+        '--frozen-lockfile[Disallow changes to lockfile]' \
+        '--force[Always request the latest versions from the registry & reinstall all dependencies]' \
+        '-f[Always request the latest versions from the registry & reinstall all dependencies]' \
+        '--cache-dir[Store & load cached data from a specific directory path]:cache-dir' \
+        '--no-cache[Ignore manifest cache entirely]' \
+        '--silent[Don'"'"'t log anything]' \
+        '--verbose[Excessively verbose logging]' \
+        '--no-progress[Disable the progress bar]' \
+        '--no-summary[Don'"'"'t print a summary]' \
+        '--no-verify[Skip verifying integrity of newly downloaded packages]' \
+        '--ignore-scripts[Skip lifecycle scripts in the package.json (dependency scripts are never run)]' \
+        '--global[Add a package globally]' \
+        '-g[Add a package globally]' \
+        '--cwd[Set a specific cwd]:cwd' \
+        '--backend[Platform-specific optimizations for installing dependencies]:backend:("copyfile" "hardlink" "symlink")' \
+        '--link-native-bins[Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo]:link-native-bins' \
+        '--help[Print this help menu]' \
+        '--dev[Add dependence to "devDependencies]' \
+        '-d[Add dependence to "devDependencies]' \
+        '--development[]' \
+        '-D[]' \
+        '--optional[Add dependency to "optionalDependencies]' \
+        '--peer[Add dependency to "peerDependencies]' \
+        '--exact[Add the exact version instead of the ^range]' \
+        '--catalog=-[Add the resolved version to the root package.json catalog and depend on it as "catalog:"]:catalog' \
+        '*--filter[Install packages for the matching workspaces]:workspace pattern' \
+        '*-F[Install packages for the matching workspaces]:workspace pattern' &&
+        ret=0
+
+    case $state in
+    config)
+        _bun_list_bunfig_toml
+
+        ;;
+    esac
+}
+
+_bun_remove_completion() {
+    _arguments -s -C \
+        '1: :->cmd1' \
+        '*: :->package' \
+        '--config[Load config(bunfig.toml)]: :->config' \
+        '-c[Load config(bunfig.toml)]: :->config' \
+        '--yarn[Write a yarn.lock file (yarn v1)]' \
+        '-y[Write a yarn.lock file (yarn v1)]' \
+        '--production[Don'"'"'t install devDependencies]' \
+        '-p[Don'"'"'t install devDependencies]' \
+        '--no-save[Don'"'"'t save a lockfile]' \
+        '--save[Save to package.json]' \
+        '--dry-run[Don'"'"'t install anything]' \
+        '--frozen-lockfile[Disallow changes to lockfile]' \
+        '--force[Always request the latest versions from the registry & reinstall all dependencies]' \
+        '-f[Always request the latest versions from the registry & reinstall all dependencies]' \
+        '--cache-dir[Store & load cached data from a specific directory path]:cache-dir' \
+        '--no-cache[Ignore manifest cache entirely]' \
+        '--silent[Don'"'"'t log anything]' \
+        '--verbose[Excessively verbose logging]' \
+        '--no-progress[Disable the progress bar]' \
+        '--no-summary[Don'"'"'t print a summary]' \
+        '--no-verify[Skip verifying integrity of newly downloaded packages]' \
+        '--ignore-scripts[Skip lifecycle scripts in the package.json (dependency scripts are never run)]' \
+        '--global[Add a package globally]' \
+        '-g[Add a package globally]' \
+        '--cwd[Set a specific cwd]:cwd' \
+        '--backend[Platform-specific optimizations for installing dependencies]:backend:("copyfile" "hardlink" "symlink")' \
+        '--link-native-bins[Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo]:link-native-bins' \
+        '--help[Print this help menu]' \
+        '*--filter[Remove the package(s) from the matching workspaces instead of the current package]:workspace pattern' \
+        '*-F[Remove the package(s) from the matching workspaces instead of the current package]:workspace pattern' &&
+        ret=0
+
+    case $state in
+    config)
+        _bun_list_bunfig_toml
+
+        ;;
+    package)
+        _bun_remove_param_package_completion
+
+        ;;
+    esac
+}
+
+_bun_run_completion() {
+    _arguments -s -C \
+        '1: :->cmd' \
+        '2: :->script' \
+        '*: :->other' \
+        '--help[Display this help and exit]' \
+        '-h[Display this help and exit]' \
+        '--bun[Force a script or package to use Bun'"'"'s runtime instead of Node.js (via symlinking node)]' \
+        '-b[Force a script or package to use Bun'"'"'s runtime instead of Node.js (via symlinking node)]' \
+        '--cwd[Absolute path to resolve files & entry points from. This just changes the process cwd]:cwd' \
+        '--config[Config file to load bun from (e.g. -c bunfig.toml]: :->config' \
+        '-c[Config file to load bun from (e.g. -c bunfig.toml]: :->config' \
+        '--env-file[Load environment variables from the specified file(s)]:env-file' \
+        '--extension-order[Defaults to: .tsx,.ts,.jsx,.js,.json]:extension-order' \
+        '--jsx-factory[Changes the function called when compiling JSX elements using the classic JSX runtime]:jsx-factory' \
+        '--jsx-fragment[Changes the function called when compiling JSX fragments]:jsx-fragment' \
+        '--jsx-import-source[Declares the module specifier to be used for importing the jsx and jsxs factory functions. Default: "react"]:jsx-import-source' \
+        '--jsx-runtime["automatic" (default) or "classic"]: :->jsx-runtime' \
+        '--preload[Import a module before other modules are loaded]:preload' \
+        '-r[Import a module before other modules are loaded]:preload' \
+        '--main-fields[Main fields to lookup in package.json. Defaults to --target dependent]:main-fields' \
+        '--no-summary[Don'"'"'t print a summary]' \
+        '--version[Print version and exit]' \
+        '-v[Print version and exit]' \
+        '--revision[Print version with revision and exit]' \
+        '--tsconfig-override[Load tsconfig from path instead of cwd/tsconfig.json]:tsconfig-override' \
+        '--define[Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:"development". Values are parsed as JSON.]:define' \
+        '-d[Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:"development". Values are parsed as JSON.]:define' \
+        '--external[Exclude module from transpilation (can use * wildcards). ex: -e react]:external' \
+        '-e[Exclude module from transpilation (can use * wildcards). ex: -e react]:external' \
+        '--loader[Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: js, jsx, ts, tsx, json, toml, text, file, wasm, napi]:loader' \
+        '--packages[Exclude dependencies from bundle, e.g. --packages external. Valid options: bundle, external]:packages' \
+        '-l[Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: js, jsx, ts, tsx, json, toml, text, file, wasm, napi]:loader' \
+        '--origin[Rewrite import URLs to start with --origin. Default: ""]:origin' \
+        '-u[Rewrite import URLs to start with --origin. Default: ""]:origin' \
+        '--port[Port to serve bun'"'"'s dev server on. Default: '"'"'3000'"'"']:port' \
+        '-p[Port to serve bun'"'"'s dev server on. Default: '"'"'3000'"'"']:port' \
+        '--smol[Use less memory, but run garbage collection more often]' \
+        '--minify[Minify (experimental)]' \
+        '--minify-syntax[Minify syntax and inline data (experimental)]' \
+        '--minify-whitespace[Minify Whitespace (experimental)]' \
+        '--minify-identifiers[Minify identifiers]' \
+        '--no-macros[Disable macros from being executed in the bundler, transpiler and runtime]' \
+        '--target[The intended execution environment for the bundle. "browser", "bun" or "node"]: :->target' \
+        '--inspect[Activate Bun'"'"'s Debugger]:inspect' \
+        '--inspect-wait[Activate Bun'"'"'s Debugger, wait for a connection before executing]:inspect-wait' \
+        '--inspect-brk[Activate Bun'"'"'s Debugger, set breakpoint on first line of code and wait]:inspect-brk' \
+        '--hot[Enable auto reload in bun'"'"'s JavaScript runtime]' \
+        '--watch[Automatically restart bun'"'"'s JavaScript runtime on file change]' \
+        '--no-install[Disable auto install in bun'"'"'s JavaScript runtime]' \
+        '--install[Install dependencies automatically when no node_modules are present, default: "auto". "force" to ignore node_modules, fallback to install any missing]: :->install_' \
+        '-i[Automatically install dependencies and use global cache in bun'"'"'s runtime, equivalent to --install=fallback'] \
+        '--prefer-offline[Skip staleness checks for packages in bun'"'"'s JavaScript runtime and resolve from disk]' \
+        '--prefer-latest[Use the latest matching versions of packages in bun'"'"'s JavaScript runtime, always checking npm]' \
+        '--silent[Don'"'"'t repeat the command for bun run]' \
+        '--dump-environment-variables[Dump environment variables from .env and process as JSON and quit. Useful for debugging]' \
+        '--dump-limits[Dump system limits. Userful for debugging]' &&
+        ret=0
+
+    case $state in
+    script)
+        curcontext="${curcontext%:*:*}:bun-grouped"
+        _bun_run_param_script_completion
+
+        ;;
+    jsx-runtime)
+        _alternative 'args:cmd3:((classic automatic))'
+
+        ;;
+    target)
+        _alternative 'args:cmd3:((browser bun node))'
+
+        ;;
+    install_)
+        _alternative 'args:cmd3:((auto force fallback))'
+
+        ;;
+    other)
+        _files
+
+        ;;
+    esac
+
+}
+
+_bun_upgrade_completion() {
+    _arguments -s -C \
+        '1: :->cmd' \
+        '--canary[Upgrade to canary build]' &&
+        ret=0
+
+}
+
+_bun_repl_completion() {
+    _arguments -s -C \
+        '1: :->cmd' \
+        '--help[Print this help menu]' \
+        '-h[Print this help menu]' \
+        '(-p --print)--eval[Evaluate argument as a script, then exit]:script' \
+        '(-p --print)-e[Evaluate argument as a script, then exit]:script' \
+        '(-e --eval)--print[Evaluate argument as a script, print the result, then exit]:script' \
+        '(-e --eval)-p[Evaluate argument as a script, print the result, then exit]:script' \
+        '--preload[Import a module before other modules are loaded]:preload' \
+        '-r[Import a module before other modules are loaded]:preload' \
+        '--smol[Use less memory, but run garbage collection more often]' \
+        '--config[Specify path to Bun config file]: :->config' \
+        '-c[Specify path to Bun config file]: :->config' \
+        '--cwd[Absolute path to resolve files & entry points from]:cwd' \
+        '--env-file[Load environment variables from the specified file(s)]:env-file' \
+        '--no-env-file[Disable automatic loading of .env files]' &&
+        ret=0
+
+    case $state in
+    config)
+        _bun_list_bunfig_toml
+
+        ;;
+    esac
+}
+
+_bun_build_completion() {
+    _arguments -s -C \
+        '1: :->cmd' \
+        '*: :->file' \
+        '--outfile[Write the output to a specific file (default: stdout)]:outfile' \
+        '--outdir[Write the output to a directory (required for splitting)]:outdir' \
+        '--minify[Enable all minification flags]' \
+        '--minify-whitespace[Remove unneeded whitespace]' \
+        '--minify-syntax[Transform code to use less syntax]' \
+        '--minify-identifiers[Shorten variable names]' \
+        '--sourcemap[Generate sourcemaps]: :->sourcemap' \
+        '--target[The intended execution environment for the bundle. "browser", "bun" or "node"]: :->target' \
+        '--splitting[Whether to enable code splitting (requires --outdir)]' \
+        '--compile[generating a standalone binary from a TypeScript or JavaScript file]' \
+        '--format[Specifies the module format to be used in the generated bundles]: :->format' &&
+        ret=0
+
+    case $state in
+    file)
+        _files
+
+        ;;
+    target)
+        _alternative 'args:cmd3:((browser bun node))'
+
+        ;;
+    sourcemap)
+        _alternative 'args:cmd3:((none external inline))'
+
+        ;;
+    format)
+
+        _alternative 'args:cmd3:((esm cjs iife))'
+        ;;
+    esac
+}
+
+_bun_update_completion() {
+    _arguments -s -C \
+        '1: :->cmd1' \
+        '-c[Load config(bunfig.toml)]: :->config' \
+        '--config[Load config(bunfig.toml)]: :->config' \
+        '-y[Write a yarn.lock file (yarn v1)]' \
+        '--yarn[Write a yarn.lock file (yarn v1)]' \
+        '-p[Only update dependencies and optionalDependencies]' \
+        '--production[Only update dependencies and optionalDependencies]' \
+        '-P[Only update dependencies and optionalDependencies]' \
+        '--prod[Only update dependencies and optionalDependencies]' \
+        '-d[Only update devDependencies]' \
+        '--dev[Only update devDependencies]' \
+        '-D[Only update devDependencies]' \
+        '--development[Only update devDependencies]' \
+        '--no-optional[Don'"'"'t update optionalDependencies]' \
+        '-E[Write exact versions to package.json instead of ^ or ~ ranges]' \
+        '--exact[Write exact versions to package.json instead of ^ or ~ ranges]' \
+        '--no-save[Don'"'"'t save a lockfile]' \
+        '--save[Save to package.json]' \
+        '--dry-run[Don'"'"'t install anything]' \
+        '--frozen-lockfile[Disallow changes to lockfile]' \
+        '-L[Update packages to their latest versions, ignoring the ranges in package.json]' \
+        '--latest[Update packages to their latest versions, ignoring the ranges in package.json]' \
+        '-i[Show an interactive list of outdated packages to select for update]' \
+        '--interactive[Show an interactive list of outdated packages to select for update]' \
+        '-r[Update packages in all workspaces]' \
+        '--recursive[Update packages in all workspaces]' \
+        '*--filter[Update packages for the matching workspaces]:workspace pattern' \
+        '*-F[Update packages for the matching workspaces]:workspace pattern' \
+        '-f[Always request the latest versions from the registry & reinstall all dependencies]' \
+        '--force[Always request the latest versions from the registry & reinstall all dependencies]' \
+        '--cache-dir[Store & load cached data from a specific directory path]:cache-dir' \
+        '--no-cache[Ignore manifest cache entirely]' \
+        '--silent[Don'"'"'t log anything]' \
+        '--verbose[Excessively verbose logging]' \
+        '--no-progress[Disable the progress bar]' \
+        '--no-summary[Don'"'"'t print a summary]' \
+        '--no-verify[Skip verifying integrity of newly downloaded packages]' \
+        '--ignore-scripts[Skip lifecycle scripts in the package.json (dependency scripts are never run)]' \
+        '-g[Add a package globally]' \
+        '--global[Add a package globally]' \
+        '--cwd[Set a specific cwd]:cwd' \
+        '--backend[Platform-specific optimizations for installing dependencies]:backend:("copyfile" "hardlink" "symlink")' \
+        '--link-native-bins[Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo]:link-native-bins' \
+        '--help[Print this help menu]' &&
+        ret=0
+
+    case $state in
+    config)
+        _bun_list_bunfig_toml
+
+        ;;
+    esac
+}
+
+_bun_outdated_completion() {
+    _arguments -s -C \
+        '--cwd[Set a specific cwd]:cwd' \
+        '--verbose[Excessively verbose logging]' \
+        '--no-progress[Disable the progress bar]' \
+        '--help[Print this help menu]' &&
+        ret=0
+
+    case $state in
+    config)
+        _bun_list_bunfig_toml
+
+        ;;
+    esac
+}
+
+_bun_dedupe_completion() {
+    _arguments -s -C \
+        '1: :->cmd1' \
+        '--check[Exit with code 1 if the lockfile has duplicate versions that can be removed, without changing anything]' \
+        '-c[Load config(bunfig.toml)]: :->config' \
+        '--config[Load config(bunfig.toml)]: :->config' \
+        '-y[Write a yarn.lock file (yarn v1)]' \
+        '--yarn[Write a yarn.lock file (yarn v1)]' \
+        '-p[Don'"'"'t install devDependencies]' \
+        '--production[Don'"'"'t install devDependencies]' \
+        '--no-save[Don'"'"'t save a lockfile]' \
+        '--save[Save to package.json]' \
+        '--dry-run[Don'"'"'t install anything]' \
+        '--frozen-lockfile[Disallow changes to lockfile]' \
+        '--lockfile-only[Generate a lockfile without installing dependencies]' \
+        '-f[Always request the latest versions from the registry & reinstall all dependencies]' \
+        '--force[Always request the latest versions from the registry & reinstall all dependencies]' \
+        '--cache-dir[Store & load cached data from a specific directory path]:cache-dir' \
+        '--no-cache[Ignore manifest cache entirely]' \
+        '--silent[Don'"'"'t log anything]' \
+        '--verbose[Excessively verbose logging]' \
+        '--no-progress[Disable the progress bar]' \
+        '--no-summary[Don'"'"'t print a summary]' \
+        '--no-verify[Skip verifying integrity of newly downloaded packages]' \
+        '--ignore-scripts[Skip lifecycle scripts in the package.json (dependency scripts are never run)]' \
+        '--cwd[Set a specific cwd]:cwd' \
+        '--backend[Platform-specific optimizations for installing dependencies]:backend:("copyfile" "hardlink" "symlink")' \
+        '--linker[Linker strategy]:linker:(isolated hoisted)' \
+        '--help[Print this help menu]' &&
+        ret=0
+
+    case $state in
+    config)
+        _bun_list_bunfig_toml
+
+        ;;
+    esac
+}
+
+_bun_prune_completion() {
+    _arguments -s -C \
+        '1: :->cmd1' \
+        '-p[Also remove packages that are only needed by devDependencies]' \
+        '--production[Also remove packages that are only needed by devDependencies]' \
+        '-P[Also remove packages that are only needed by devDependencies]' \
+        '--prod[Also remove packages that are only needed by devDependencies]' \
+        '*--omit[Also remove packages that are only needed by the given dependency types]:type:(dev optional peer)' \
+        '--dry-run[Print what would be removed without deleting anything]' \
+        '*--os[Prune for a different operating system than the current one]:os' \
+        '*--cpu[Prune for a different CPU architecture than the current one]:cpu' \
+        '--linker[Linker to assume when node_modules mixes isolated and hoisted installs]:linker:(isolated hoisted)' \
+        '*--filter[Only prune the node_modules folders of the matching workspaces]:workspace pattern' \
+        '*-F[Only prune the node_modules folders of the matching workspaces]:workspace pattern' \
+        '--silent[Don'"'"'t log anything]' \
+        '--cwd[Set a specific cwd]:cwd' \
+        '-h[Print this help menu]' \
+        '--help[Print this help menu]' &&
+        ret=0
+}
+
+_bun_audit_completion() {
+    _arguments -s -C \
+        '1: :->cmd1' \
+        '2: :->subcommand' \
+        '--json[Output in JSON format]' \
+        '--audit-level[Only print advisories with severity greater than or equal to the given level]:level:(low moderate high critical)' \
+        '*--ignore[Ignore advisories by GHSA or numeric advisory ID]:advisory' \
+        '--prod[Omit devDependencies]' \
+        '--production[Omit devDependencies]' \
+        '*--omit[Exclude dependency types from the audit]:type:(dev optional peer)' \
+        '--dry-run[Show what bun audit fix would change without changing anything]' \
+        '--latest[Let bun audit fix update direct dependencies past their declared ranges]' \
+        '-L[Let bun audit fix update direct dependencies past their declared ranges]' \
+        '--cwd[Set a specific cwd]:cwd' \
+        '--help[Print this help menu]' &&
+        ret=0
+
+    case $state in
+    subcommand)
+        _alternative 'args:subcommand:((fix\:"Upgrade vulnerable packages to the lowest safe version"))'
+
+        ;;
+    esac
+}
+
+_bun_test_completion() {
+    _arguments -s -C \
+        '1: :->cmd1' \
+        '*: :->file' \
+        '-h[Display this help and exit]' \
+        '--help[Display this help and exit]' \
+        '-b[Force a script or package to use Bun.js instead of Node.js (via symlinking node)]' \
+        '--bun[Force a script or package to use Bun.js instead of Node.js (via symlinking node)]' \
+        '--cwd[Set a specific cwd]:cwd' \
+        '-c[Load config(bunfig.toml)]: :->config' \
+        '--config[Load config(bunfig.toml)]: :->config' \
+        '--env-file[Load environment variables from the specified file(s)]:env-file' \
+        '--extension-order[Defaults to: .tsx,.ts,.jsx,.js,.json]:extension-order' \
+        '--jsx-factory[Changes the function called when compiling JSX elements using the classic JSX runtime]:jsx-factory' \
+        '--jsx-fragment[Changes the function called when compiling JSX fragments]:jsx-fragment' \
+        '--jsx-import-source[Declares the module specifier to be used for importing the jsx and jsxs factory functions. Default: "react"]:jsx-import-source' \
+        '--jsx-runtime["automatic" (default) or "classic"]: :->jsx-runtime' \
+        '--preload[Import a module before other modules are loaded]:preload' \
+        '-r[Import a module before other modules are loaded]:preload' \
+        '--main-fields[Main fields to lookup in package.json. Defaults to --target dependent]:main-fields' \
+        '--no-summary[Don'"'"'t print a summary]' \
+        '--version[Print version and exit]' \
+        '-v[Print version and exit]' \
+        '--revision[Print version with revision and exit]' \
+        '--tsconfig-override[Load tsconfig from path instead of cwd/tsconfig.json]:tsconfig-override' \
+        '--define[Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:"development". Values are parsed as JSON.]:define' \
+        '-d[Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:"development". Values are parsed as JSON.]:define' \
+        '--external[Exclude module from transpilation (can use * wildcards). ex: -e react]:external' \
+        '-e[Exclude module from transpilation (can use * wildcards). ex: -e react]:external' \
+        '--loader[Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: js, jsx, ts, tsx, json, toml, text, file, wasm, napi]:loader' \
+        '-l[Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: js, jsx, ts, tsx, json, toml, text, file, wasm, napi]:loader' \
+        '--origin[Rewrite import URLs to start with --origin. Default: ""]:origin' \
+        '-u[Rewrite import URLs to start with --origin. Default: ""]:origin' \
+        '--port[Port to serve bun'"'"'s dev server on. Default: '"'"'3000'"'"']:port' \
+        '-p[Port to serve bun'"'"'s dev server on. Default: '"'"'3000'"'"']:port' \
+        '--smol[Use less memory, but run garbage collection more often]' \
+        '--minify[Minify (experimental)]' \
+        '--minify-syntax[Minify syntax and inline data (experimental)]' \
+        '--minify-identifiers[Minify identifiers]' \
+        '--no-macros[Disable macros from being executed in the bundler, transpiler and runtime]' \
+        '--target[The intended execution environment for the bundle. "browser", "bun" or "node"]: :->target' \
+        '--inspect[Activate Bun'"'"'s Debugger]:inspect' \
+        '--inspect-wait[Activate Bun'"'"'s Debugger, wait for a connection before executing]:inspect-wait' \
+        '--inspect-brk[Activate Bun'"'"'s Debugger, set breakpoint on first line of code and wait]:inspect-brk' \
+        '--watch[Automatically restart bun'"'"'s JavaScript runtime on file change]' \
+        '--timeout[Set the per-test timeout in milliseconds, default is 5000.]:timeout' \
+        '--update-snapshots[Update snapshot files]' \
+        '--rerun-each[Re-run each test file <NUMBER> times, helps catch certain bugs]:rerun' \
+        '--retry[Default retry count for all tests]:retry' \
+        '--todo[Include tests that are marked with "test.todo()"]' \
+        '--coverage[Generate a coverage profile]' \
+        '--bail[Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1.]:bail' \
+        '--shard[Run a subset of test files, e.g. 1/3. Useful for splitting tests across CI jobs.]:shard' \
+        '--test-name-pattern[Run only tests with a name that matches the given regex]:pattern' \
+        '-t[Run only tests with a name that matches the given regex]:pattern' &&
+        ret=0
+
+    case $state in
+    file)
+        _bun_test_param_script_completion
+
+        ;;
+    config)
+        _files
+
+        ;;
+
+    esac
+
+}
+
+_bun() {
+    zstyle ':completion:*:*:bun:*' group-name ''
+    zstyle ':completion:*:*:bun-grouped:*' group-name ''
+
+    zstyle ':completion:*:*:bun::descriptions' format '%F{green}-- %d --%f'
+    zstyle ':completion:*:*:bun-grouped:*' format '%F{green}-- %d --%f'
+    # zstyle ':completion:*:options' list-colors '=^(-- *)=34'
+
+    local program=bun
+    typeset -A opt_args
+    local curcontext="$curcontext" state line context
+
+    # ---- Command:
+    _arguments -s \
+        '1: :->cmd' \
+        '*: :->args' &&
+        ret=0
+
+    case $state in
+    cmd)
+        local -a scripts_list
+        IFS=$'\n' scripts_list=($(SHELL=zsh bun getcompletes i))
+        scripts="scripts:scripts:compadd -a scripts_list"
+        local -a files_list
+        IFS=$'\n' files_list=($(SHELL=zsh bun getcompletes j))
+
+        main_commands=(
+            'run\:"Run JavaScript with Bun, a package.json script, or a bin" '
+            'test\:"Run unit tests with Bun" '
+            'x\:"Install and execute a package bin (bunx)" '
+            'repl\:"Start a REPL session with Bun" '
+            'init\:"Start an empty Bun project from a blank template" '
+            'create\:"Create a new project from a template (bun c)" '
+            'install\:"Install dependencies for a package.json (bun i)" '
+            'add\:"Add a dependency to package.json (bun a)" '
+            'remove\:"Remove a dependency from package.json (bun rm)" '
+            'update\:"Update outdated dependencies & save to package.json" '
+            'audit\:"Check installed packages for vulnerabilities" '
+            'dedupe\:"Remove duplicate versions from the lockfile" '
+            'prune\:"Remove packages that are not in the lockfile from node_modules" '
+            'outdated\:"Display the latest versions of outdated dependencies" '
+            'link\:"Link an npm package globally" '
+            'unlink\:"Globally unlink an npm package" '
+            'pm\:"More commands for managing packages" '
+            'build\:"Bundle TypeScript & JavaScript into a single file" '
+            'upgrade\:"Get the latest version of bun" '
+            'help\:"Show all supported flags and commands" '
+        )
+        main_commands=($main_commands)
+        _alternative "$scripts" "args:command:(($main_commands))" "files:files:compadd -a files_list"
+
+        ;;
+    args)
+        case $line[1] in
+        add|a)
+            _bun_add_completion
+
+            ;;
+        unlink)
+            _bun_unlink_completion
+
+            ;;
+        link)
+            _bun_link_completion
+
+            ;;
+        bun)
+            _bun_bun_completion
+
+            ;;
+        init)
+            _bun_init_completion
+
+            ;;
+        create|c)
+            _bun_create_completion
+
+            ;;
+        x)
+            _arguments -s -C \
+                '1: :->cmd' \
+                '2: :->cmd2' \
+                '*: :->args' &&
+                ret=0
+            ;;
+        pm)
+            _bun_pm_completion
+
+            ;;
+        install|i)
+            _bun_install_completion
+
+            ;;
+        remove|rm)
+            _bun_remove_completion
+
+            ;;
+        run)
+            _bun_run_completion
+
+            ;;
+        upgrade)
+            _bun_upgrade_completion
+
+            ;;
+        repl)
+            _bun_repl_completion
+
+            ;;
+        build)
+            _bun_build_completion
+
+            ;;
+        update)
+            _bun_update_completion
+
+            ;;
+        outdated)
+            _bun_outdated_completion
+
+            ;;
+        audit)
+            _bun_audit_completion
+
+            ;;
+        dedupe)
+            _bun_dedupe_completion
+
+            ;;
+        prune)
+            _bun_prune_completion
+
+            ;;
+        'test')
+            _bun_test_completion
+
+            ;;
+        help)
+            # ---- Command: help
+            _arguments -s -C \
+                '1: :->cmd' \
+                '2: :->cmd2' \
+                '*: :->args' &&
+                ret=0
+
+            case $state in
+            cmd2)
+                curcontext="${curcontext%:*:*}:bun-grouped"
+                _alternative "args:command:(($main_commands))"
+
+                ;;
+            args)
+                case $line[2] in
+                add)
+                    _bun_add_completion
+
+                    ;;
+                unlink)
+                    _bun_unlink_completion
+
+                    ;;
+                link)
+                    _bun_link_completion
+
+                    ;;
+                bun)
+                    _bun_bun_completion
+
+                    ;;
+                init)
+                    _bun_init_completion
+
+                    ;;
+                create)
+                    _bun_create_completion
+
+                    ;;
+                x)
+                    _arguments -s -C \
+                        '1: :->cmd' \
+                        '2: :->cmd2' \
+                        '*: :->args' &&
+                        ret=0
+                    ;;
+                pm)
+                    _bun_pm_completion
+
+                    ;;
+                install)
+                    _bun_install_completion
+
+                    ;;
+                remove)
+                    _bun_remove_completion
+
+                    ;;
+                run)
+                    _bun_run_completion
+
+                    ;;
+                upgrade)
+                    _bun_upgrade_completion
+
+                    ;;
+                repl)
+                    _bun_repl_completion
+
+                    ;;
+                build)
+                    _bun_build_completion
+
+                    ;;
+                update)
+                    _bun_update_completion
+
+                    ;;
+                outdated)
+                    _bun_outdated_completion
+
+                    ;;
+                audit)
+                    _bun_audit_completion
+
+                    ;;
+                dedupe)
+                    _bun_dedupe_completion
+
+                    ;;
+                prune)
+                    _bun_prune_completion
+
+                    ;;
+                'test')
+                    _bun_test_completion
+
+                    ;;
+                esac
+
+                ;;
+            esac
+
+            ;;
+        esac
+
+        ;;
+    esac
+}
+
+_bun_list_bunfig_toml() {
+    # _alternative "files:file:_files -g '*.toml'"
+    _files
+}
+
+_bun_extract_cwd() {
+    target_cwd="${PWD}"
+    cwd_specified=0
     local i val
-    for (( i=1; i < ${#words[@]}; i++ )); do
+    for (( i=1; i < CURRENT; i++ )); do
         val=""
-        if [[ "${words[i]}" == "--cwd" && -n "${words[i+1]}" ]]; then
+        if [[ "${words[i]}" == "--cwd" ]] && (( i + 1 < CURRENT )) && [[ -n "${words[i+1]}" ]]; then
             val="${words[i+1]}"
             cwd_specified=1
         elif [[ "${words[i]}" == --cwd=* ]]; then
@@ -20,10 +1116,16 @@ _bun_run_param_script_completion() {
             val="${val#\"}"
             val="${val%\'}"
             val="${val#\'}"
-            val="${val/#\~/$HOME}"
+            val="${val/#\\~/$HOME}"
             target_cwd="${val}"
         fi
     done
+}
+
+_bun_run_param_script_completion() {
+    local -a scripts_list bins
+    local target_cwd="${PWD}" cwd_specified=0
+    _bun_extract_cwd
 
     local orig_pwd="${PWD}"
     local switched=0
@@ -58,33 +1160,14 @@ _bun_link_param_package_completion() {
 }
 
 _bun_remove_param_package_completion() {
-    local pkg_dir="${PWD}"
-    local cwd_specified=0
-    local i val
-    for (( i=1; i < ${#words[@]}; i++ )); do
-        val=""
-        if [[ "${words[i]}" == "--cwd" && -n "${words[i+1]}" ]]; then
-            val="${words[i+1]}"
-            cwd_specified=1
-        elif [[ "${words[i]}" == --cwd=* ]]; then
-            val="${words[i]#--cwd=}"
-            cwd_specified=1
-        fi
-        if [[ -n "${val}" ]]; then
-            val="${val%\"}"
-            val="${val#\"}"
-            val="${val%\'}"
-            val="${val#\'}"
-            val="${val/#\~/$HOME}"
-            pkg_dir="${val}"
-        fi
-    done
+    local target_cwd="${PWD}" cwd_specified=0
+    _bun_extract_cwd
 
-    if (( cwd_specified )) && [[ ! -d "${pkg_dir}" ]]; then
+    if (( cwd_specified )) && [[ ! -d "${target_cwd}" ]]; then
         return
     fi
 
-    local pkg_file="${pkg_dir}/package.json"
+    local pkg_file="${target_cwd}/package.json"
     if [[ -f "${pkg_file}" && -r "${pkg_file}" ]]; then
         local -a deps
         deps=( "${(@f)$(BUN_PACKAGE_FILE="${pkg_file}" bun -e '
@@ -160,27 +1243,8 @@ __bun_dynamic_comp() {
 _bunx() {
     local curcontext="${curcontext}" context state state_descr line
     typeset -A opt_args
-    local target_cwd="${PWD}"
-    local cwd_specified=0
-    local i val
-    for (( i=1; i < CURRENT; i++ )); do
-        val=""
-        if [[ "${words[i]}" == "--cwd" ]] && (( i + 1 < CURRENT )) && [[ -n "${words[i+1]}" ]]; then
-            val="${words[i+1]}"
-            cwd_specified=1
-        elif [[ "${words[i]}" == --cwd=* ]]; then
-            val="${words[i]#--cwd=}"
-            cwd_specified=1
-        fi
-        if [[ -n "${val}" ]]; then
-            val="${val%\"}"
-            val="${val#\"}"
-            val="${val%\'}"
-            val="${val#\'}"
-            val="${val/#\~/$HOME}"
-            target_cwd="${val}"
-        fi
-    done
+    local target_cwd="${PWD}" cwd_specified=0
+    _bun_extract_cwd
 
     local orig_pwd="${PWD}"
     local switched=0
@@ -216,7 +1280,7 @@ _bunx() {
                 "files:file:_files -W ${(q)target_cwd}"
             ;;
         rest)
-            _files -W ${(q)target_cwd}
+            _files -W "${target_cwd}"
             ;;
     esac
 }

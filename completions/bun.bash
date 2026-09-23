@@ -185,14 +185,14 @@ _extract_cwd() {
             if (( line > subcmd_idx )); then
                 local w="${COMP_WORDS[line]}"
                 case "${w}" in
-                    --cwd|-c|--config|--env-file|-p|--package)
+                    --cwd|-c|--config|--env-file|--filter|-F|-p|--package)
                         if [[ "${COMP_WORDS[line+1]}" == "=" ]]; then
                             skip=2
                         else
                             skip=1
                         fi
                         ;;
-                    --cwd=*|-c=*|--config=*|--env-file=*|-p=*|--package=*)
+                    --cwd=*|-c=*|--config=*|--env-file=*|--filter=*|-F=*|-p=*|--package=*)
                         ;;
                     -*)
                         ;;

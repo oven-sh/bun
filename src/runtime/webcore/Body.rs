@@ -371,6 +371,7 @@ impl PendingValue {
     }
 
     /// [`Self::to_any_blob`] for `clone()`, going through the wrapper's cached `.body` when there is one.
+    /// A Blob it returns has passed [`blob::store_reads_repeatably`], so the caller does not ask again.
     fn take_blob_from_unread_stream(
         &mut self,
         global: &JSGlobalObject,
@@ -1561,9 +1562,13 @@ impl Value {
         // its type) instead of pumping the bytes through a JS tee. The owner
         // must then drop its cached `.body` (`sync_body_stream_caches`).
         // Anything else is teed.
+        let mut reads_repeatably = false;
         if let Value::Locked(locked) = self {
             match locked.take_blob_from_unread_stream(cx.global(), readable.as_deref().copied()) {
-                Some(blob) => *self = Value::from(blob),
+                Some(blob) => {
+                    *self = Value::from(blob);
+                    reads_repeatably = true;
+                }
                 None => return self.tee(cx, readable),
             }
         }
@@ -1576,8 +1581,9 @@ impl Value {
         }
 
         if let Value::Blob(b) = self {
-            if b.store()
-                .is_some_and(|store| !blob::store_reads_repeatably(store))
+            if !reads_repeatably
+                && b.store()
+                    .is_some_and(|store| !blob::store_reads_repeatably(store))
             {
                 // A pipe or other fd yields its bytes once: read it as one
                 // stream and tee that.

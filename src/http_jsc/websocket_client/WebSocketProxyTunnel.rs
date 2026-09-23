@@ -531,6 +531,8 @@ impl WebSocketProxyTunnel {
 
     /// The close timeout fired. True when the proxy still took buffered bytes, which re-arms it.
     pub(crate) fn flush_at_close_timeout(this: ThisPtr<Self>) -> bool {
+        // A close of the proxy socket inside `on_writable` drops the upgrade client's ref.
+        let _guard = RefPtr::from_this(this);
         let buffered = this.buffered_amount();
         Self::on_writable(this);
         this.buffered_amount() < buffered

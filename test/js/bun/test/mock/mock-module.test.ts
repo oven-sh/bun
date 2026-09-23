@@ -983,6 +983,8 @@ describe.concurrent("mock.restore() reverts mock.module()", () => {
           import { test, expect, mock } from "bun:test";
           import { getValue } from "./dep";
           test("mocks without restoring", () => {
+            // Loaded before it is mocked, so the mock patches module.exports in place and logs the real exports.
+            expect(require("./dep.cjs").getValue()).toBe("original-cjs");
             mock.module("./dep", () => ({ getValue: () => "a's mock" }));
             mock.module("./dep.cjs", () => ({ getValue: () => "a's cjs mock" }));
             expect(getValue()).toBe("a's mock");

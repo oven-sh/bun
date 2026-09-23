@@ -418,10 +418,11 @@ pub(crate) fn writable_stream(
     storage_class: Option<StorageClass>,
     request_payer: bool,
 ) -> JsResult<JSValue> {
-    // Local callback wrapper. `uploaded` is read off the upload (see `MultiPartUpload::callback`).
+    // Local callback wrapper. `uploaded` and `path` are read off the upload (see `MultiPartUpload::callback`).
     fn wrapper_callback(
         result: S3UploadResult,
         uploaded: u64,
+        path: &[u8],
         sink: &mut NetworkSink,
     ) -> JsResult<()> {
         // `global_this` is a `BackRef` set at construction; copy it so the
@@ -448,7 +449,7 @@ pub(crate) fn writable_stream(
                     }
                 }
                 S3UploadResult::Failure(err) => {
-                    let js_err = s3_error_to_js(&err, global, sink.path());
+                    let js_err = s3_error_to_js(&err, global, Some(path));
                     if sink.flush_promise.has_value() {
                         sink.flush_promise.reject(global, Ok(js_err))?;
                     }
@@ -475,7 +476,9 @@ pub(crate) fn writable_stream(
         let sink = ctx.cast::<NetworkSink>();
         // SAFETY: ctx was set to `response_stream: *mut NetworkSink` below; the box is live
         // while the upload holds it.
-        let r = wrapper_callback(result, task.uploaded_bytes.get(), unsafe { &mut *sink });
+        let r = wrapper_callback(result, task.uploaded_bytes.get(), &task.path, unsafe {
+            &mut *sink
+        });
         // SAFETY: the upload's hold on the box ends here; `sink` is not used afterwards.
         unsafe { NetworkSink::release_writer_holder(sink) };
         r
@@ -1375,12 +1378,12 @@ impl S3DownloadStreamWrapper {
     /// The other half of this rule is in `S3HttpDownloadStreamingTask::process_http_callback`
     /// (HTTP thread).
     fn after_chunk_delivered(&self, bytes: &ByteStream) {
-        use crate::webcore::byte_stream::{AfterDelivery, ProducerHold};
+        use crate::webcore::byte_stream::AfterDelivery;
         let task = self.task.get();
         if task.is_null() {
             return;
         }
-        match ProducerHold::after_delivery(bytes) {
+        match self.stream.after_delivery(bytes) {
             // SAFETY: see `task`.
             AfterDelivery::Resume => unsafe { (*task).resume_receive() },
             // SAFETY: see `task`.
@@ -1389,7 +1392,7 @@ impl S3DownloadStreamWrapper {
                 // SAFETY: see `task`.
                 unsafe { (*task).signal_store.pause_receive() };
                 if self.stream.park() {
-                    // SAFETY: see `task`; `park` touched the stream's source, not the task.
+                    // SAFETY: see `task`.
                     unsafe { (*task).poll_ref.unref(bun_io::js_vm_ctx()) };
                 }
             }
@@ -1417,7 +1420,7 @@ impl S3DownloadStreamWrapper {
         self.unpark();
     }
 
-    /// The parked stream's wrapper was collected: nothing can read the rest. Inside a GC sweep;
+    /// The stream's wrapper was collected: nothing can read the rest. Inside a GC sweep;
     /// touches no JS cell.
     pub(crate) fn on_stream_collected(&self) {
         self.on_stream_cancelled();

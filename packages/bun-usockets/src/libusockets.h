@@ -569,6 +569,13 @@ int us_ssl_ctx_add_ca_cert(struct ssl_ctx_st *ctx, const char *content);
 void us_ssl_enable_pending_events(struct ssl_st *ssl);
 int us_ssl_pop_pending_session(struct ssl_st *ssl, unsigned char *out, int out_cap);
 int us_ssl_pop_pending_keylog(struct ssl_st *ssl, unsigned char *out, int out_cap);
+/* The same owners as clients whose rejectUnauthorized policy is on.
+ * set_inline_reject installs the verify recorder before the handshake starts.
+ * tripped() is read after each SSL_do_handshake of the initial handshake: 1
+ * means the server's chain failed, so the owner drops its queued output (the
+ * flight that carries the client certificate) and fails the handshake. */
+void us_internal_ssl_set_inline_reject(struct ssl_st *ssl);
+int us_internal_ssl_inline_reject_tripped(struct ssl_st *ssl);
 /* The resumable session most recently delivered via the new-session callback,
  * or NULL if none. Borrowed; valid until the next NewSessionTicket or SSL_free. */
 struct ssl_session_st *us_ssl_get_new_session(struct ssl_st *ssl);

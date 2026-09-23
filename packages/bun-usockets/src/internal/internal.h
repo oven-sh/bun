@@ -297,6 +297,10 @@ struct us_socket_t {
    * hang off SSL ex_data, allocated on first use only. */
   unsigned char ssl_handshake_state : 2;
   unsigned char ssl_write_wants_read : 1;
+  /* us_internal_ssl_write refused application data because the handshake was
+   * not finished. ssl_write_wants_read cannot tell: every pending handshake
+   * sets it. */
+  unsigned char ssl_write_parked : 1;
   unsigned char ssl_read_wants_write : 1;
   unsigned char ssl_fatal_error : 1;
   unsigned char ssl_is_server : 1;

@@ -528,7 +528,6 @@ impl<'a> Parser<'a> {
             );
         }
 
-        scan_pass.approximate_newline_count = p.lexer.approximate_newline_count;
         Ok(())
     }
 

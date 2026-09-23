@@ -1757,10 +1757,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this.client_mut().on_open(Self::socket(socket))
     }
 
-    /// The name the server's certificate must carry: the SNI servername if one
-    /// was set, otherwise the host from the connection URL. Empty for a
-    /// unix-domain socket (redis+tls+unix:// / valkey+tls+unix://), which has
-    /// no hostname to verify.
+    /// The name to match: the SNI servername, else the URL host. Empty for a unix socket, which has none.
     fn identity_hostname(
         this: &JSValkeyClient,
         ssl_ptr: *mut boringssl::c::SSL,
@@ -1773,9 +1770,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
             // SSL owns.
             unsafe { boringssl::c::SSL_get_servername(ssl_ptr, 0).as_ref() }
         };
-        // URL.host() serialises IPv6 literals with surrounding brackets
-        // (e.g. "[::1]"). Strip them so checkServerIdentity can recognise
-        // the value as an IP and match against IP SAN entries.
+        // URL.host() keeps the brackets of an IPv6 literal ("[::1]"); without them it matches IP SAN entries.
         if let Some(servername) = servername {
             // SAFETY: NUL-terminated, owned by the SSL: copied.
             let servername =

@@ -641,9 +641,7 @@ where
         }
     }
 
-    /// The name the native matcher requires of the server's certificate: the
-    /// host that was dialed, else the SNI. `handle_open` installs it for the
-    /// handshake and `handle_handshake` checks it after.
+    /// The name to match, for `handle_open`'s install and `handle_handshake`'s check: the dialed host, else the SNI.
     fn identity_hostname(&self, ssl: &boringssl::c::SSL) -> std::borrow::Cow<'_, [u8]> {
         let own_hostname = self.hostname.get();
         if !own_hostname.is_empty() {

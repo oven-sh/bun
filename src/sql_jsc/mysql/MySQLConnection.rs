@@ -396,11 +396,7 @@ impl MySQLConnection {
         true
     }
 
-    /// The name the native matcher requires of the server's certificate:
-    /// `Some` only under verify-full with `rejectUnauthorized` on. It is empty
-    /// when no server name is configured, and no certificate matches that.
-    /// The TLS upgrade installs it for the handshake and `do_handshake`
-    /// checks it after.
+    /// The name verify-full matches, in and after the handshake. Empty (none configured) matches no certificate.
     fn native_identity_hostname(&self) -> Option<&[u8]> {
         (self.tls_config.reject_unauthorized() != 0 && self.ssl_mode == SSLMode::VerifyFull)
             .then(|| self.tls_config.server_name_bytes())

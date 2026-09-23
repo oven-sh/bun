@@ -1787,8 +1787,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let mut authorized = success == 1;
         let mut hostname_mismatch = false;
         let mut hostname_mismatch_message: Option<Box<[u8]>> = None;
-        // `sync_server_identity` made the same check inside the handshake
-        // and failed it: the verdict and the error of the check below.
+        // `sync_server_identity`'s check failed the handshake: the verdict and error of the check below.
         let rejected_in_handshake = SSL
             && success == 0
             && ssl_error.error_no == uws::us_bun_verify_error_t::HOSTNAME_MISMATCH;
@@ -1981,12 +1980,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
 
-    /// A client that rejects a wrong name natively makes that check inside
-    /// the handshake too, before its certificate goes out. node:tls sockets
-    /// defer the verdict to their JS `checkServerIdentity`, which may accept a
-    /// name this matcher rejects. `on_open` installs it, and every call that
-    /// changes the policy, the name or the certificate before the handshake
-    /// completes syncs it again: `setVerifyMode`, `setServername`, `setKeyCert`.
+    /// Runs `on_handshake`'s native name check inside the handshake too. node:tls is left out: its JS check decides.
     pub(crate) fn sync_server_identity(&self, ssl_ptr: *mut boringssl_sys::SSL) {
         if !SSL
             || tls_socket_functions::ffi::SSL_is_init_finished(boringssl_sys::SSL::opaque_ref(

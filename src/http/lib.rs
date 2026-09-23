@@ -1472,8 +1472,7 @@ pub(crate) fn handshake_failure(error_no: i32) -> crate::Error {
 /// onto a `crate::Error` whose name is the upper-snake error tag
 /// (e.g. `CERT_HAS_EXPIRED`). JS-side `error.code` matches on this exact
 /// string, so do NOT substitute `X509_verify_cert_error_string` output here.
-/// The one exception is a certificate that does not name the host, which
-/// keeps the `ERR_TLS_CERT_ALTNAME_INVALID` of `check_server_identity`.
+/// Except a wrong name (62), which keeps `check_server_identity`'s `ERR_TLS_CERT_ALTNAME_INVALID`.
 // constants are the BoringSSL `X509_V_ERR_*` values from
 // `<openssl/x509.h>`. Inlined as literals so
 // this file doesn't grow a dep on a header-generated const set.
@@ -1540,8 +1539,7 @@ pub(crate) fn get_cert_error_from_no(error_no: i32) -> crate::Error {
         59 => CertError::SUITE_B_INVALID_SIGNATURE_ALGORITHM,
         60 => CertError::SUITE_B_LOS_NOT_ALLOWED,
         61 => CertError::SUITE_B_CANNOT_SIGN_P_384_WITH_P_256,
-        // uSockets reports its in-handshake server identity check with this
-        // code (`set_server_identity`).
+        // The verdict of uSockets' in-handshake server identity check (`set_server_identity`).
         uws::us_bun_verify_error_t::HOSTNAME_MISMATCH => {
             return crate::Error::ERR_TLS_CERT_ALTNAME_INVALID;
         }

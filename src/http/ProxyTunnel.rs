@@ -559,9 +559,7 @@ fn progress_update_for_proxy_socket(ctx: *mut HTTPClient, proxy: NonNull<ProxyTu
     }
 }
 
-/// The inner connection's form of the `set_inline_reject` and
-/// `set_server_identity` calls in `HTTPClient::on_open`. Out of line, so it is
-/// compiled once and not for each `IS_SSL` of `ProxyTunnel::start`.
+/// `HTTPClient::on_open`'s verification setup for the inner connection, compiled once for both `start`s.
 #[inline(never)]
 fn install_peer_verification(client: &HTTPClient, wrapper: &ProxyTunnelWrapper) {
     if client.flags.reject_unauthorized {

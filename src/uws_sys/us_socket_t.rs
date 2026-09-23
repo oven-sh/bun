@@ -312,9 +312,7 @@ impl us_socket_t {
         c::us_socket_set_inline_reject(self);
     }
 
-    /// Refuse a server certificate that does not name `host` during the
-    /// handshake, before the client certificate goes out. For a client that
-    /// applies the native matcher. Same call window as `set_inline_reject`.
+    /// Also refuse, inside the handshake, a certificate that does not name `host`. Same window as `set_inline_reject`.
     pub fn set_server_identity(&mut self, host: &[u8]) {
         // SAFETY: `host` is readable for `host.len()` bytes; C copies it.
         unsafe { c::us_socket_set_server_identity(self, host.as_ptr().cast(), host.len()) };

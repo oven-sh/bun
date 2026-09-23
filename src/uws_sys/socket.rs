@@ -578,9 +578,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         }
     }
 
-    /// Refuse a server certificate that does not name `host` during the
-    /// handshake, before the client certificate goes out. For a client that
-    /// applies the native matcher; call it where `set_inline_reject` is called.
+    /// Also refuse, inside the handshake, a certificate that does not name `host`. Call it with `set_inline_reject`.
     pub fn set_server_identity(&self, host: &[u8]) {
         if let InternalSocket::Connected(s) = self.socket {
             sock(s).set_server_identity(host);

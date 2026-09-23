@@ -177,9 +177,7 @@ pub(super) mod ffi {
         /// the BIO hook + handshake drive then keep a rejected client's
         /// Finished off the wire and fail the handshake with the X509 verdict.
         pub(crate) safe fn us_internal_ssl_set_inline_reject(ssl: &SSL);
-        /// Installs the in-handshake server identity check (usockets
-        /// openssl.c): a certificate that does not name `host` fails the
-        /// handshake before the client certificate is written. Copies `host`.
+        /// openssl.c: a certificate that does not name `host` fails the handshake before the client's goes out.
         pub(crate) fn us_internal_ssl_set_server_identity(
             ssl: *mut SSL,
             host: *const c_char,

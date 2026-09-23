@@ -56,9 +56,7 @@ impl Default for us_bun_verify_error_t {
     }
 }
 impl us_bun_verify_error_t {
-    /// `X509_V_ERR_HOSTNAME_MISMATCH`: the `error_no` of a handshake that the
-    /// in-handshake server identity check failed (`set_server_identity`). Its
-    /// `code` is `ERR_TLS_CERT_ALTNAME_INVALID`.
+    /// `X509_V_ERR_HOSTNAME_MISMATCH`, from the in-handshake server identity check (`ERR_TLS_CERT_ALTNAME_INVALID`).
     pub const HOSTNAME_MISMATCH: core::ffi::c_int = 62;
 
     /// Borrow the BoringSSL verify-error `code` as a `CStr`, or `None` if null.

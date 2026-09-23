@@ -3777,7 +3777,10 @@ describe("Bun.listen requestCert with a large client chain", () => {
           accepted.resolve({ authorized: socket.authorized, writeResult: socket.write("hello\n") });
         },
         data(socket, chunk) {
-          socket.write(`pong:${chunk}`);
+          // Bun.listen does not buffer: a short write here would lose the reply.
+          const reply = `pong:${chunk}`;
+          const written = socket.write(reply);
+          if (written !== reply.length) failed.reject(new Error(`short write: ${written} of ${reply.length}`));
         },
         close() {},
         error(_socket, err) {
@@ -3801,11 +3804,17 @@ describe("Bun.listen requestCert with a large client chain", () => {
     client.on("session", () => tickets++);
     client.on("error", failed.reject);
     client.on("close", () => failed.reject(new Error("client closed before the reply")));
+    let pinged = false;
     client.on("data", chunk => {
       received += chunk.toString();
+      // "hello\n" follows the tickets on the wire, so once it arrives the
+      // server's flight is fully out and the pong write cannot be short.
+      if (!pinged && received.startsWith("hello\n")) {
+        pinged = true;
+        client.write("ping");
+      }
       if (received.endsWith("pong:ping")) replied.resolve(received);
     });
-    client.on("secureConnect", () => client.write("ping"));
 
     let reply: string;
     try {

@@ -81,25 +81,25 @@ public:
         }
 
         VirtualModuleMap* _Nullable virtualModules = nullptr;
-        // What mock.module() calls made from tests and hooks changed, so mock.restore() can undo them.
+        // What mock.module() calls made from tests and hooks changed, so mock.restore() can undo them. Its cells are
+        // WriteBarriers owned by the global object, visited from GlobalObject::visitChildren under the global's cellLock.
         ModuleMockUndoLog* _Nullable moduleMockUndoLog = nullptr;
         bool mustDoExpensiveRelativeLookup = false;
         JSC::EncodedJSValue run(JSC::JSGlobalObject* globalObject, const BunString* namespaceString, const BunString* path);
 
         bool hasVirtualModules() const { return virtualModules != nullptr; }
 
-        void addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mock);
+        void addModuleMock(Zig::GlobalObject* globalObject, const String& path, JSC::JSObject* mock);
         void restoreModuleMocks(Zig::GlobalObject* globalObject);
-        void clearVirtualModules();
-        // The log holds Strong<> roots into the realm, like the plugin lists: the test isolation swap drops it with them.
-        void discardModuleMockUndoLog();
+        void clearVirtualModules(JSC::JSCell* owner);
+        template<typename Visitor> void visitModuleMockUndoLog(JSC::JSCell* owner, Visitor& visitor);
 
         std::optional<String> resolveVirtualModule(const String& path, const String& from);
 
-        void clear()
+        void clear(JSC::JSCell* owner)
         {
             Base::clear();
-            clearVirtualModules();
+            clearVirtualModules(owner);
             mustDoExpensiveRelativeLookup = false;
         }
 

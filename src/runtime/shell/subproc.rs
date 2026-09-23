@@ -755,10 +755,12 @@ impl ShellSubprocess {
         let stdin = match Writable::init(stdio0, event_loop, subprocess, spawn_stdin) {
             Ok(w) => w,
             Err(err) => {
+                // A `Stdio::Fd` end (a pipeline member's pipe) is the caller's to close.
                 #[cfg(not(windows))]
-                {
-                    let _ = spawn_stdout.map(Fd::close);
-                    let _ = spawn_stderr.map(Fd::close);
+                for (fd, stdio) in [(spawn_stdout, &stdio1), (spawn_stderr, &stdio2)] {
+                    if let Some(fd) = fd.filter(|_| !stdio.borrows_caller_fd()) {
+                        fd.close();
+                    }
                 }
                 #[cfg(windows)]
                 {
@@ -942,6 +944,10 @@ impl ShellSubprocess {
         // SAFETY: caller contract; the borrow ends at the `;`.
         let stream_stdin = unsafe { (*this).stdin.take_pipe() };
         let stdin_closed = stream_stdin.is_some();
+        // Read first: the exit notice cancels a stream that is still producing.
+        let stream_failed = stream_stdin
+            .as_ref()
+            .is_some_and(|sink| sink.stream_source_failed());
         if let Some(sink) = stream_stdin {
             FileSink::attached_process_exited(&sink, status);
         }
@@ -955,6 +961,9 @@ impl ShellSubprocess {
         // before the Yield runs.
         let cmd = unsafe { handle.cmd_mut() };
         cmd.base.interrupted |= interrupted;
+        if stream_failed {
+            cmd.on_stdin_stream_failed();
+        }
         let mut y = match exit_code {
             Some(code) => cmd.on_exit(code.into()),
             None => Yield::suspended(),

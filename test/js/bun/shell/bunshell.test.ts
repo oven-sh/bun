@@ -3559,6 +3559,154 @@ describe("redirect stdin from ReadableStream", () => {
     expect(out.stderr.toString()).toContain("Failed to pipe ReadableStream to stdin");
     expect(out.exitCode).toBe(1);
   });
+
+  // The child echoes stdin and opens a connection to `port` once it has the first chunk.
+  const childPumpThenConnect = `
+    let connected = false;
+    for await (const chunk of Bun.stdin.stream()) {
+      process.stdout.write(chunk);
+      if (connected) continue;
+      connected = true;
+      await Bun.connect({ hostname: "127.0.0.1", port: +process.env.PORT, socket: { open: s => s.end(), data() {} } });
+    }
+  `;
+  function listenForChild() {
+    const { promise: connected, resolve } = Promise.withResolvers<void>();
+    return Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      data: { connected },
+      socket: { open: () => resolve(), data() {} },
+    });
+  }
+
+  test.concurrent("JS stream that fails after the child reads from it fails the command", async () => {
+    using child = listenForChild();
+    let pulls = 0;
+    const stream = new ReadableStream({
+      async pull(c) {
+        if (pulls++ === 0) return c.enqueue(new TextEncoder().encode("first "));
+        await child.data.connected;
+        throw new Error("boom-later");
+      },
+    });
+    const out = await $`${BUN} -e ${childPumpThenConnect} < ${stream}`
+      .env({ ...bunEnv, PORT: String(child.port) })
+      .nothrow()
+      .quiet();
+    expect({ stdout: out.stdout.toString(), stderr: out.stderr.toString(), exitCode: out.exitCode }).toEqual({
+      stdout: "first ",
+      stderr: "bun: ReadableStream redirected to stdin errored\n",
+      exitCode: 1,
+    });
+  });
+
+  test.concurrent("fetch body that fails after the child reads from it fails the command", async () => {
+    using child = listenForChild();
+    // Promises 100 bytes, then closes after 8 once the child has them.
+    let responded = false;
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        data(socket) {
+          if (responded) return;
+          responded = true;
+          socket.write("HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\npartial-");
+          child.data.connected.then(() => socket.end());
+        },
+      },
+    });
+    const res = await fetch(`http://127.0.0.1:${server.port}/`);
+    const out = await $`${BUN} -e ${childPumpThenConnect} < ${res.body}`
+      .env({ ...bunEnv, PORT: String(child.port) })
+      .nothrow()
+      .quiet();
+    expect({ stdout: out.stdout.toString(), stderr: out.stderr.toString(), exitCode: out.exitCode }).toEqual({
+      stdout: "partial-",
+      stderr: "bun: ReadableStream redirected to stdin errored\n",
+      exitCode: 1,
+    });
+  });
+
+  test.skipIf(isWindows).concurrent("a child that closes its stdin is not a stream failure", async () => {
+    // The write into the closed pipe fails, not the stream: the command ends with the child's exit code.
+    const { promise: childSocket, resolve: onChildSocket } = Promise.withResolvers<{ end(): void }>();
+    using listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: { open: socket => onChildSocket(socket), data() {} },
+    });
+    const { promise: cancelled, resolve: onCancel } = Promise.withResolvers<true>();
+    const stream = new ReadableStream({
+      async pull(c) {
+        await childSocket;
+        c.enqueue(Buffer.alloc(1 << 20, "y"));
+      },
+      async cancel() {
+        onCancel(true);
+        (await childSocket).end();
+      },
+    });
+    // The child connects once it has let go of the pipe, and exits when the socket closes.
+    const child = `
+      await Bun.connect({ hostname: "127.0.0.1", port: +process.env.PORT, socket: { close: () => process.exit(7), data() {} } });
+    `;
+    const out = await $`sh -c ${'exec 0</dev/null; exec "$0" -e "$1"'} ${BUN} ${child} < ${stream}`
+      .env({ ...bunEnv, PORT: String(listener.port) })
+      .nothrow()
+      .quiet();
+    expect({ stderr: out.stderr.toString(), exitCode: out.exitCode }).toEqual({ stderr: "", exitCode: 7 });
+    expect(await cancelled).toBe(true);
+  });
+
+  test.concurrent("sliced Bun.file() stream sends only its window", async () => {
+    using dir = tempDir("shell-stream-slice", { "input.txt": "0123456789" });
+    const file = Bun.file(join(String(dir), "input.txt"));
+    const middle = await $`${BUN} -e ${childPump} < ${file.slice(2, 7).stream()}`.env(bunEnv).nothrow().quiet();
+    const tail = await $`${BUN} -e ${childPump} < ${file.slice(3).stream()}`.env(bunEnv).nothrow().quiet();
+    expect({
+      middle: middle.stdout.toString(),
+      tail: tail.stdout.toString(),
+      exitCodes: [middle.exitCode, tail.exitCode],
+    }).toEqual({ middle: "23456", tail: "3456789", exitCodes: [0, 0] });
+  });
+
+  test.concurrent("async iterable is iterated once", async () => {
+    let iterators = 0;
+    async function* chunks() {
+      yield new TextEncoder().encode("chunk1 ");
+      yield new TextEncoder().encode("chunk2");
+    }
+    const iterable = {
+      [Symbol.asyncIterator]() {
+        iterators++;
+        return chunks();
+      },
+    };
+    const out = await $`${BUN} -e ${childPump} < ${iterable}`.env(bunEnv).nothrow().quiet();
+    expect({ stdout: out.stdout.toString(), exitCode: out.exitCode, iterators }).toEqual({
+      stdout: "chunk1 chunk2",
+      exitCode: 0,
+      iterators: 1,
+    });
+  });
+
+  test.concurrent("pipeline member whose stream fails to start leaves the pipeline's pipe open", async () => {
+    // stderr is a pipe here, so the member's error is written asynchronously and
+    // the next member spawns before the first is torn down.
+    const fixture = [
+      'import { $ } from "bun";',
+      'const s = new ReadableStream({ type: "direct", pull() { throw new Error("boom-sync"); } });',
+      "const out = await $`${process.execPath} -e ${'process.stdout.write(await Bun.stdin.text())'} < ${s} | ${process.execPath} -e ${'console.log(\"member2\")'}`.nothrow();",
+      "console.log(JSON.stringify({ stdout: out.stdout.toString(), exitCode: out.exitCode }));",
+    ].join("\n");
+    await using proc = Bun.spawn({ cmd: [BUN, "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("bun: Failed to pipe ReadableStream to stdin: Error: boom-sync");
+    expect(stdout).toBe('member2\n{"stdout":"member2\\n","exitCode":0}\n');
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("stdin redirect from a zero-length buffer delivers EOF to the spawned command", () => {

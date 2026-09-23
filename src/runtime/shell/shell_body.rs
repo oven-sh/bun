@@ -386,10 +386,11 @@ pub(crate) fn handle_template_value(
             return Ok(());
         }
 
-        if let Some(_rstream) = crate::webcore::ReadableStream::from_js(template_value, global)? {
+        if let Some(rstream) = crate::webcore::ReadableStream::from_js(template_value, global)? {
             let idx = out_jsobjs.len();
-            marked_argument_buffer.append(template_value);
-            out_jsobjs.push(template_value);
+            // `from_js` has turned an async iterable into a stream: keep that one.
+            marked_argument_buffer.append(rstream.value);
+            out_jsobjs.push(rstream.value);
             let mut cursor = std::io::Cursor::new(&mut jsobjref_buf[..]);
             write!(
                 cursor,

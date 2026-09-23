@@ -80,6 +80,8 @@ pub(crate) struct SubprocExec {
     /// to drive.
     pub(crate) interp: *mut Interpreter,
     pub(crate) this_id: NodeId,
+    /// The `< ${stream}` source failed, so the child read a truncated stdin.
+    pub(crate) stdin_stream_failed: bool,
 }
 
 /// Tracks which subprocess stdio pipes are still open. Each `Option` is `None`
@@ -297,6 +299,17 @@ impl Cmd {
                 }
                 CmdState::WaitingWriteErr => return Yield::suspended(),
                 CmdState::Done => {
+                    let stdin_stream_failed = match &mut interp.as_cmd_mut(this).exec {
+                        Exec::Subproc(sub) => core::mem::take(&mut sub.stdin_stream_failed),
+                        _ => false,
+                    };
+                    if stdin_stream_failed {
+                        return Builtin::cmd_write_failing_error(
+                            interp,
+                            this,
+                            format_args!("bun: ReadableStream redirected to stdin errored\n"),
+                        );
+                    }
                     let exit = interp.as_cmd(this).exit_code.unwrap_or(0);
                     let parent = interp.as_cmd(this).base.parent;
                     return interp.child_done(parent, this, exit);
@@ -591,6 +604,7 @@ impl Cmd {
             buffered_closed,
             interp: core::ptr::null_mut(),
             this_id: this,
+            stdin_stream_failed: false,
         }));
 
         // Derive the raw backrefs `spawn_async` needs from a single
@@ -799,12 +813,24 @@ impl Cmd {
                             )
                             .throw());
                     }
+                    // `extract_blob` hands the child the whole file, so a
+                    // sliced file stream keeps its window only as a stream.
+                    let sliced_file = stream.ptr.file().is_some_and(|file| {
+                        file.start_offset.is_some_and(|offset| offset > 0)
+                            || file.max_size.is_some()
+                    });
                     // Fully-buffered / not-yet-started file-backed streams collapse
                     // to a blob and take the existing `StaticPipeWriter` path.
-                    if let Some(blob) = stream.to_any_blob(global) {
-                        stdio[STDIN_NO].extract_blob(global, blob, STDIN_NO as i32)?;
+                    let blob = if sliced_file {
+                        None
                     } else {
-                        stdio[STDIN_NO] = Stdio::ReadableStream(stream);
+                        stream.to_any_blob(global)
+                    };
+                    match blob {
+                        Some(blob) => {
+                            stdio[STDIN_NO].extract_blob(global, blob, STDIN_NO as i32)?
+                        }
+                        None => stdio[STDIN_NO] = Stdio::ReadableStream(stream),
                     }
                 } else if let Some(req) = jsval.as_::<crate::webcore::Response>() {
                     // SAFETY: `as_` returns a live JSC-owned `*mut Response`;
@@ -1019,6 +1045,13 @@ impl Cmd {
             OutKind::Stderr => self.buffered_output_close_stderr(err),
         }
         self.finish_if_done()
+    }
+
+    /// Called by `ShellSubprocess::on_process_exit`, before [`on_exit`](Self::on_exit).
+    pub(crate) fn on_stdin_stream_failed(&mut self) {
+        if let Exec::Subproc(sub) = &mut self.exec {
+            sub.stdin_stream_failed = true;
+        }
     }
 
     /// Called by `ShellSubprocess::on_process_exit`.

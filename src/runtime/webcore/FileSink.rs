@@ -59,6 +59,8 @@ pub(crate) struct FileSink {
     /// A write or source failure that is not a JS value; a JS one lives on `pipe` and sets `stream_js_error`.
     stream_error: JsCell<Option<streams::StreamError>>,
     stream_js_error: Cell<bool>,
+    /// The recorded failure is the piped stream's own, not a write into this sink.
+    stream_source_failed: Cell<bool>,
     /// Bytes accepted since `pipe_stream` (`written` counts buffered bytes again when flushed).
     pub(crate) stream_bytes: Cell<Option<u64>>,
     /// `assign_to_js_stream` holds a ref for the pump promise's reactions, which release it.
@@ -610,6 +612,12 @@ impl FileSink {
         }
         self.pipe.get().set_error(error);
         self.stream_js_error.set(true);
+        self.stream_source_failed.set(true);
+    }
+
+    /// The piped stream failed by itself, so its consumer got a truncated body.
+    pub(crate) fn stream_source_failed(&self) -> bool {
+        self.stream_source_failed.get()
     }
 
     /// Release the ref taken in `toResult`/`end`/`endFromJS` when a write
@@ -1024,6 +1032,7 @@ impl FileSink {
                 written as u64 // @truncate
             }
             WriteResult::Err(err) => {
+                self.record_stream_error(streams::StreamError::Error(err.clone()));
                 return sys::Result::Err(err);
             }
         };
@@ -1164,9 +1173,7 @@ impl FileSink {
     fn count_stream_bytes(&self, rc: &WriteResult, encoded_len: usize) {
         let counted = self.stream_bytes.get().unwrap_or(0);
         match rc {
-            WriteResult::Err(err) => {
-                self.record_stream_error(streams::StreamError::Error(err.clone()))
-            }
+            WriteResult::Err(_) => {}
             WriteResult::Done(n) => self.stream_bytes.set(Some(counted + *n as u64)),
             _ => self.stream_bytes.set(Some(counted + encoded_len as u64)),
         }
@@ -1241,6 +1248,9 @@ impl FileSink {
             _ => None,
         };
         if let Some(err) = err {
+            if !write_failed {
+                self.stream_source_failed.set(true);
+            }
             self.record_stream_error(err);
         }
         if !errored || !is_byte_stream {
@@ -1564,6 +1574,8 @@ impl FileSink {
                 streams::Writable::Temporary(amt as u64)
             }
             WriteResult::Err(err) => {
+                // Recorded before the source hears of it: an error it reports back is then not its own.
+                self.record_stream_error(streams::StreamError::Error(err.clone()));
                 // A backpressured `write()` left its promise outstanding. `Writable::Err` becomes a
                 // second, already rejected promise, and the caller of `write()` is awaiting the first:
                 // the failure would be reported twice, once as an unhandled rejection. As in `end()`,
@@ -1633,6 +1645,7 @@ impl FileSink {
             pipe: JsCell::new(streams::PipeCell::default()),
             stream_error: JsCell::new(None),
             stream_js_error: Cell::new(false),
+            stream_source_failed: Cell::new(false),
             stream_bytes: Cell::new(None),
             pump_promise_ref: Cell::new(false),
             js_sink_ref: JsCell::new(bun_jsc::strong::Optional::empty()),

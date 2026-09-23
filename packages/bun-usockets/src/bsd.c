@@ -1882,37 +1882,6 @@ int bsd_disconnect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
     }
 }
 
-// int bsd_udp_packet_buffer_ecn(void *msgvec, int index) {
-
-// #if defined(_WIN32) || defined(__APPLE__)
-//     errno = ENOSYS;
-//     return -1;
-// #else
-//     // we should iterate all control messages once, after recvmmsg and then only fetch them with these functions
-//     struct msghdr *mh = &((struct mmsghdr *) msgvec)[index].msg_hdr;
-//     for (struct cmsghdr *cmsg = CMSG_FIRSTHDR(mh); cmsg != NULL; cmsg = CMSG_NXTHDR(mh, cmsg)) {
-//         // do we need to get TOS from ipv6 also?
-//         if (cmsg->cmsg_level == IPPROTO_IP) {
-//             if (cmsg->cmsg_type == IP_TOS) {
-//                 uint8_t tos = *(uint8_t *)CMSG_DATA(cmsg);
-//                 return tos & 3;
-//             }
-//         }
-
-//         if (cmsg->cmsg_level == IPPROTO_IPV6) {
-//             if (cmsg->cmsg_type == IPV6_TCLASS) {
-//                 // is this correct?
-//                 uint8_t tos = *(uint8_t *)CMSG_DATA(cmsg);
-//                 return tos & 3;
-//             }
-//         }
-//     }
-// #endif
-
-//     //printf("We got no ECN!\n");
-//     return 0; // no ecn defaults to 0
-// }
-
 static int bsd_do_connect_raw(LIBUS_SOCKET_DESCRIPTOR fd, struct sockaddr *addr, size_t namelen)
 {
     ssize_t injected = 0; int unused = 0;

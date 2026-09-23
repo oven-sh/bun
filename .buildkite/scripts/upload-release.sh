@@ -72,7 +72,7 @@ function assert_archive_tools() {
     if ! command -v "$tool" &> /dev/null; then
       echo "error: Cannot find $tool"
       echo ""
-      echo "hint: the agent image is supposed to have it; see scripts/bootstrap.sh"
+      echo "hint: the agent image is supposed to have it; see scripts/build/ci-images/spec.ts"
       exit 1
     fi
   done

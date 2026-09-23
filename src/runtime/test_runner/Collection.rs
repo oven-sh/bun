@@ -13,7 +13,7 @@ use crate::test_runner::bun_test::{
 use crate::test_runner::bun_test::debug::group;
 use crate::test_runner::jest::Jest;
 
-pub struct Collection {
+pub(crate) struct Collection {
     /// set to true after collection phase ends
     pub(crate) locked: bool,
     pub(crate) describe_callback_queue: Vec<QueuedDescribe>,
@@ -29,7 +29,7 @@ pub struct Collection {
     pub(crate) filter_buffer: Vec<u8>,
 }
 
-pub struct QueuedDescribe {
+pub(crate) struct QueuedDescribe {
     callback: DeprecatedStrong, // jsc.Strong.Deprecated
     /// Raw cursor into `Collection.root_scope`'s tree. Stored as `NonNull` (not `&DescribeScope`)
     /// because `Collection::active_scope_mut()` hands out `&mut` to the same node while these

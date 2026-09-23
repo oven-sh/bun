@@ -433,8 +433,12 @@ static void wsOnClose(void* ctx, unsigned short code)
             // terminator the pipe protocol needs.
             for (auto& cmd : pending) {
                 if (cmd.id && !t.m_pending.contains(cmd.id)) continue;
-                Bun::UTF8View view(cmd.body);
-                auto s = view.span();
+                auto view = Bun::UTF8View::tryCreate(cmd.body);
+                if (!view) [[unlikely]] {
+                    t.rejectAllAndMarkDead("Chrome command is too long to send"_s);
+                    return;
+                }
+                auto s = view->span();
                 t.writeRaw(s.data(), s.size());
                 t.writeRaw("\0", 1);
             }

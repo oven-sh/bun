@@ -33,13 +33,13 @@ use bun_uws::create_bun_socket_error_t;
 use crate::api::server::server_config::SSLConfig;
 
 #[derive(Default)]
-pub struct SSLContextCache {
+pub(crate) struct SSLContextCache {
     map: ArrayHashMap<Digest, *mut Entry, DigestContext>,
     mutex: Mutex,
     ops_since_compact: u32,
 }
 
-pub type Digest = [u8; 32];
+pub(crate) type Digest = [u8; 32];
 
 /// SHA-256 output is uniformly distributed, so the first 4 bytes are a perfect
 /// bucket hash — no need to re-Wyhash 32 bytes (what AutoContext would do).
@@ -59,7 +59,7 @@ impl ArrayHashContext<Digest> for DigestContext {
     }
 }
 
-pub struct Entry {
+pub(crate) struct Entry {
     /// Nulled by `bun_ssl_ctx_cache_on_free` when BoringSSL drops the last
     /// ref. Tombstoned entries are reclaimed on the next `get_or_create` for
     /// the same digest, or by the periodic compact.
@@ -272,11 +272,11 @@ impl Drop for SSLContextCache {
     }
 }
 
-pub mod c {
+pub(crate) mod c {
     use core::ffi::c_int;
     unsafe extern "C" {
         /// Registered alongside the other usockets ex_data slots in
         /// `us_ex_idx_init` (pthread_once-guarded).
-        pub safe fn us_ssl_ctx_cache_ex_idx() -> c_int;
+        pub(crate) safe fn us_ssl_ctx_cache_ex_idx() -> c_int;
     }
 }

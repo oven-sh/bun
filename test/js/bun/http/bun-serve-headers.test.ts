@@ -432,6 +432,47 @@ describe("keep-alive headers", () => {
     }
   });
 
+  test("a static or file route with Connection: close sends it once and closes the socket", async () => {
+    using dir = tempDir("keep-alive-close", { "a.txt": "file body" });
+    let handled = 0;
+    using server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      routes: {
+        "/static": new Response("static", { headers: { Connection: "close" } }),
+        "/file": new Response(Bun.file(`${dir}/a.txt`), { headers: { Connection: "Keep-Alive, Close" } }),
+      },
+      fetch() {
+        handled++;
+        return new Response("fetch");
+      },
+    });
+    for (const path of ["/static", "/file"]) {
+      const socket = net.connect(server.port, "127.0.0.1");
+      try {
+        socket.on("error", () => {});
+        await once(socket, "connect");
+        // The second request must never be answered: the server closes first.
+        socket.write(`GET ${path} HTTP/1.1\r\nHost: x\r\n\r\nGET /second HTTP/1.1\r\nHost: x\r\n\r\n`);
+        const raw = await new Promise<string>(resolve => {
+          let raw = "";
+          socket.on("data", chunk => (raw += chunk.toString("latin1")));
+          socket.on("close", () => resolve(raw));
+        });
+        const lines = raw.split("\r\n\r\n")[0].split("\r\n").slice(1);
+        expect({ path, ...keepAlive(lines), responses: (raw.match(/HTTP\/1\.1 200/g) ?? []).length }).toEqual({
+          path,
+          connection: [path === "/static" ? "close" : "Keep-Alive, Close"],
+          keepAlive: [],
+          responses: 1,
+        });
+      } finally {
+        socket.destroy();
+      }
+    }
+    expect(handled).toBe(0);
+  });
+
   test("a WebSocket upgrade keeps Connection: Upgrade alone", async () => {
     using server = Bun.serve({
       port: 0,

@@ -379,23 +379,6 @@ static void writeResponseHeader(uWS::HttpResponse<isSSL>* res, const WTF::String
     res->writeHeader(nameBytes.view(), valueBytes.view());
 }
 
-// Connection is `1#connection-option` (RFC 9112 §9.3): look for the "close"
-// token anywhere in a comma-separated list. Mirrors the /(?:^|\W)close(?:$|\W)/i
-// check used by Bun's node:http layer.
-static bool connectionValueHasClose(const WTF::String& value)
-{
-    size_t pos = 0;
-    while ((pos = value.findIgnoringASCIICase("close"_s, pos)) != WTF::notFound) {
-        bool leftOk = pos == 0 || !isASCIIAlphanumeric(value[pos - 1]);
-        size_t end = pos + 5;
-        bool rightOk = end >= value.length() || !isASCIIAlphanumeric(value[end]);
-        if (leftOk && rightOk)
-            return true;
-        pos = end;
-    }
-    return false;
-}
-
 template<bool isSSL>
 static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::HttpResponse<isSSL>* res)
 {
@@ -445,13 +428,6 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
             data->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER;
         }
 
-        // RFC 9112 §9.6: a server that sends the "close" connection option MUST
-        // close the connection after the response. Mark the uWS state so
-        // end()/tryEnd() shut the socket down instead of returning it to the
-        // keep-alive pool.
-        if (header.key == WebCore::HTTPHeaderName::Connection && connectionValueHasClose(value)) {
-            data->state |= uWS::HttpResponseData<isSSL>::HTTP_CONNECTION_CLOSE;
-        }
         writeResponseHeader<isSSL>(res, name, value);
     }
 

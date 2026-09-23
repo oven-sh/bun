@@ -34,6 +34,7 @@
 #include "MoveOnlyFunction.h"
 
 #include <array>
+#include <cctype>
 #include <string_view>
 
 /* todo: tryWrite is missing currently, only send smaller segments with write */
@@ -61,6 +62,22 @@ struct KeepAliveHeaderLines {
     char data[50];
     unsigned char length;
 };
+
+/* Connection is `1#connection-option` (RFC 9112 9.3): is `close` one of the
+ * comma-separated tokens, in any case? */
+inline bool connectionValueHasClose(std::string_view value) {
+    for (size_t i = 0; i + 5 <= value.length(); i++) {
+        if (strncasecmp(value.data() + i, "close", 5)) {
+            continue;
+        }
+        bool leftOk = i == 0 || !isalnum((unsigned char) value[i - 1]);
+        bool rightOk = i + 5 == value.length() || !isalnum((unsigned char) value[i + 5]);
+        if (leftOk && rightOk) {
+            return true;
+        }
+    }
+    return false;
+}
 
 inline constexpr auto keepAliveHeaderLines = [] {
     std::array<KeepAliveHeaderLines, 65> lines{};
@@ -611,11 +628,16 @@ public:
         /* Every Connection or Keep-Alive header a caller writes (a user
          * header from any route, node:http's own line, the 101 Upgrade)
          * passes here, so this is where writeMark() learns not to add its
-         * own. Both names are 10 bytes; the length test is all that other
-         * headers pay. */
+         * own, and where a `close` token marks the connection to close once
+         * the response is out (RFC 9112 9.6). Both names are 10 bytes; the
+         * length test is all that other headers pay. */
         if (key.length() == 10) [[unlikely]] {
             if (!strncasecmp(key.data(), "connection", 10)) {
-                getHttpResponseData()->state |= HttpResponseData<SSL>::HTTP_WROTE_CONNECTION_HEADER | HttpResponseData<SSL>::HTTP_WROTE_KEEP_ALIVE_HEADER;
+                HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+                httpResponseData->state |= HttpResponseData<SSL>::HTTP_WROTE_CONNECTION_HEADER | HttpResponseData<SSL>::HTTP_WROTE_KEEP_ALIVE_HEADER;
+                if (connectionValueHasClose(value)) {
+                    httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
+                }
             } else if (!strncasecmp(key.data(), "keep-alive", 10)) {
                 getHttpResponseData()->state |= HttpResponseData<SSL>::HTTP_WROTE_KEEP_ALIVE_HEADER;
             }

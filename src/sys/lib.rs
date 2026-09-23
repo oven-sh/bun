@@ -2609,10 +2609,10 @@ mod posix_impl {
     pub fn dup_at_least(fd: Fd, min: i32) -> Maybe<Fd> {
         fcntl(fd, libc::F_DUPFD_CLOEXEC, min as isize).map(|rc| Fd::from_native(rc as i32))
     }
-    /// A descriptor created while fd 0, 1 or 2 is closed gets that number, where [`FdExt::close`] skips it and a spawned child inherits it as stdio. Returns `fd`, or its duplicate at 3 or higher (same `FD_CLOEXEC` state) with `fd` closed. `fd` is closed on error too.
-    pub(crate) fn move_above_stdio(fd: Fd) -> Maybe<Fd> {
+    /// A descriptor created while fd 0, 1 or 2 is closed gets that number, where [`FdExt::close`] skips it and a spawned child inherits it as stdio. Returns its duplicate at 3 or higher (same `FD_CLOEXEC` state) with `fd` closed, or `fd` itself when it is above stdio already or no higher number is free.
+    pub(crate) fn move_above_stdio(fd: Fd) -> Fd {
         if fd.stdio_tag().is_none() {
-            return Ok(fd);
+            return fd;
         }
         let moved = fcntl(fd, libc::F_GETFD, 0).and_then(|flags| {
             let dup = if flags & libc::FD_CLOEXEC as isize != 0 {
@@ -2622,18 +2622,13 @@ mod posix_impl {
             };
             fcntl(fd, dup, 3)
         });
-        let _ = fd.close_allowing_standard_io(None);
-        moved.map(|rc| Fd::from_native(rc as i32))
-    }
-    /// [`move_above_stdio`] for both ends of a pair. On error both ends are closed.
-    fn move_pair_above_stdio(pair: [Fd; 2]) -> Maybe<[Fd; 2]> {
-        match pair.map(move_above_stdio) {
-            [Ok(a), Ok(b)] => Ok([a, b]),
-            [Ok(open), Err(e)] | [Err(e), Ok(open)] => {
-                open.close();
-                Err(e)
+        match moved {
+            Ok(rc) => {
+                let _ = fd.close_allowing_standard_io(None);
+                Fd::from_native(rc as i32)
             }
-            [Err(e), Err(_)] => Err(e),
+            // At the descriptor limit the creator still succeeds, as it did before the move existed.
+            Err(_) => fd,
         }
     }
     pub fn fchmod(fd: Fd, mode: Mode) -> Maybe<()> {
@@ -3228,7 +3223,7 @@ mod posix_impl {
                 }
             }
         }
-        move_pair_above_stdio([Fd::from_native(fds[0]), Fd::from_native(fds[1])])
+        Ok([Fd::from_native(fds[0]), Fd::from_native(fds[1])].map(move_above_stdio))
     }
 
     /// `pidfd_open(2)` — Linux ≥ 5.3. Returns a pollable fd referring to `pid`.
@@ -3237,7 +3232,7 @@ mod posix_impl {
     pub fn pidfd_open(pid: libc::pid_t, flags: u32) -> Maybe<Fd> {
         super::linux_syscall::pidfd_open(pid, flags)
             .map_err(|e| Error::from_code_int(e, Tag::pidfd_open))
-            .and_then(move_above_stdio)
+            .map(move_above_stdio)
     }
 
     // ── macOS clonefile / copyfile ──
@@ -3483,7 +3478,7 @@ mod posix_impl {
                 }
                 return Err(Error::from_code_int(e, Tag::memfd_create));
             }
-            return move_above_stdio(Fd::from_native(rc));
+            return Ok(move_above_stdio(Fd::from_native(rc)));
         }
     }
 
@@ -9126,7 +9121,7 @@ pub fn eventfd(initval: u32, flags: i32) -> Maybe<Fd> {
     if rc < 0 {
         return Err(err_with(Tag::open));
     }
-    move_above_stdio(Fd::from_native(rc))
+    Ok(move_above_stdio(Fd::from_native(rc)))
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -2257,6 +2257,45 @@ describe.skipIf(!isPosix)("a spawn while fd 0, 1 or 2 is closed", () => {
     expect(moved).toEqual(inPlace);
   });
 
+  it.concurrent.skipIf(!isLinux)(
+    "at the descriptor limit a spawn still works when only the closed fd 1 is free",
+    async () => {
+      // No number at 3 or above is free, so the pidfd (or the waiter thread's eventfd) cannot move.
+      // It stays at fd 1. A move that fails instead would kill the child or stop the process.
+      const fixture = `
+        ${prelude}
+        const held = [];
+        for (;;) {
+          try {
+            held.push(fs.openSync("/dev/null", "r"));
+          } catch {
+            break;
+          }
+        }
+        fs.closeSync(1);
+        let outcome;
+        try {
+          const proc = Bun.spawn({ cmd: ["true"], stdio: [nul, nul, nul] });
+          outcome = "exit " + (await proc.exited);
+        } catch (e) {
+          outcome = "threw " + e.code;
+        }
+        report(2, { atTheLimit: held.length > 0, outcome });
+      `;
+      await using proc = spawn({
+        cmd: ["sh", "-c", 'ulimit -n 64 && exec "$@"', "sh", bunExe(), "-e", fixture],
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const line = (stdout + "\n" + stderr).match(/^REPORT (.*)$/m)?.[1];
+      expect({ report: line ? JSON.parse(line) : { stdout, stderr }, exitCode }).toEqual({
+        report: { atTheLimit: true, outcome: "exit 0" },
+        exitCode: 0,
+      });
+    },
+  );
+
   // On Linux a Blob, string or buffer stdin travels in a memfd. It is created before the socketpairs.
   describe.each(["spawn", "spawnSync"])("a Blob stdin with Bun.%s", method => {
     // The first spawnSync of a process creates its event loop in usockets, and those descriptors

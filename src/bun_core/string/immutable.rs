@@ -1356,12 +1356,16 @@ pub fn str_utf8(bytes: &[u8]) -> Option<&str> {
     }
 }
 
-/// `bytes` if already valid UTF-8, else an `arena` copy with each ill-formed sequence replaced by U+FFFD.
-pub fn replace_invalid_utf8<'a>(bytes: &'a [u8], arena: &'a MimallocArena) -> &'a [u8] {
+/// `(bytes, None)` if already valid UTF-8, else an `arena` copy with each ill-formed sequence replaced by U+FFFD, and the offset of the first one.
+pub fn replace_invalid_utf8<'a>(
+    bytes: &'a [u8],
+    arena: &'a MimallocArena,
+) -> (&'a [u8], Option<usize>) {
     if is_valid_utf8(bytes) {
-        return bytes;
+        return (bytes, None);
     }
     const REPLACEMENT: &[u8] = "\u{FFFD}".as_bytes();
+    let first_invalid = bytes.utf8_chunks().next().map(|chunk| chunk.valid().len());
     let mut out_len = 0;
     for chunk in bytes.utf8_chunks() {
         out_len += chunk.valid().len();
@@ -1377,7 +1381,7 @@ pub fn replace_invalid_utf8<'a>(bytes: &'a [u8], arena: &'a MimallocArena) -> &'
         }
     }
     debug_assert_eq!(out.len(), out_len);
-    out.into_bump_slice()
+    (out.into_bump_slice(), first_invalid)
 }
 
 pub use index_of_newline_or_non_ascii as index_of_newline_or_non_ascii_or_ansi;

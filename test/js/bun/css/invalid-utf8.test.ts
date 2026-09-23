@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { existsSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
-// CSS source files whose bytes are not well-formed UTF-8. css-syntax-3 §3.3
+// CSS source files whose bytes are not well-formed UTF-8. css-syntax-3 §3.2
 // decodes the byte stream (U+FFFD for each ill-formed sequence) before
 // tokenizing, so no such byte may reach the emitted stylesheet, a diagnostic,
 // or an import specifier. The tokenizer is a port of rust-cssparser, which
@@ -26,6 +26,10 @@ const sheet = raw`.a::before { content: "caf${0xe9}${0xff}"; font-family: "F${0x
 `;
 
 const decoder = new TextDecoder("utf-8", { fatal: true });
+
+// The decode changes what the author wrote, so it says so once per file, at
+// the first replaced sequence (`sheet`: line 1, the 0xE9 after `"caf`).
+const replacedWarning = "warn: This file is not valid UTF-8, each invalid byte sequence was replaced with U+FFFD";
 
 async function build(files: Record<string, string | Buffer>, args: string[]) {
   using dir = tempDir("css-invalid-utf8", files);
@@ -64,6 +68,8 @@ describe.concurrent("ill-formed bytes are decoded to U+FFFD before tokenizing", 
   test("bun build x.css", async () => {
     const { stderr, exitCode, out } = await build({ "in.css": sheet }, ["./in.css", "--outdir=out"]);
     expect(stderr).not.toContain("error");
+    expect(stderr).toContain(replacedWarning);
+    expect(stderr).toContain("in.css:1:27");
     expectDecodedSheet(out["in.css"]);
     expect(exitCode).toBe(0);
   });
@@ -78,6 +84,8 @@ describe.concurrent("ill-formed bytes are decoded to U+FFFD before tokenizing", 
   test("bun build --no-bundle x.css", async () => {
     const { stdout, stderr, exitCode } = await build({ "in.css": sheet }, ["--no-bundle", "./in.css"]);
     expect(stderr).not.toContain("error");
+    expect(stderr).toContain(replacedWarning);
+    expect(stderr).toContain("in.css:1:27");
     expectDecodedSheet(stdout);
     expect(exitCode).toBe(0);
   });
@@ -95,6 +103,32 @@ describe.concurrent("ill-formed bytes are decoded to U+FFFD before tokenizing", 
     expect(exitCode).toBe(0);
   });
 
+  test("a declared @charset that is not UTF-8 is named in the warning", async () => {
+    // Only UTF-8 is decoded. A Latin-1 sheet used to pass its bytes through by
+    // accident, so the warning says why its text changed.
+    const { stderr, exitCode, out } = await build(
+      { "in.css": raw`@charset "ISO-8859-1";\n.a::before { content: "caf${0xe9}"; }\n` },
+      ["./in.css", "--outdir=out"],
+    );
+    expect(stderr).not.toContain("error");
+    expect(stderr).toContain(
+      `warn: @charset "ISO-8859-1" is not supported, this file was read as UTF-8 and each invalid byte sequence was replaced with U+FFFD`,
+    );
+    expect(stderr).toContain("in.css:2:27");
+    expect(decoder.decode(out["in.css"]).replaceAll(/\s+/g, "")).toEndWith(`.a:before{content:"caf\uFFFD";}`);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a sheet the decode leaves unchanged gets no warning", async () => {
+    const { stderr, exitCode, out } = await build(
+      { "in.css": `@charset "ISO-8859-1";\n.a::before { content: "caf\u00e9"; }\n` },
+      ["./in.css", "--outdir=out"],
+    );
+    expect(stderr).not.toContain("warn");
+    expect(decoder.decode(out["in.css"]).replaceAll(/\s+/g, "")).toEndWith(`.a:before{content:"caf\u00e9";}`);
+    expect(exitCode).toBe(0);
+  });
+
   test("@import and url() specifiers report resolve errors", async () => {
     // The raw byte used to reach the resolve-error formatter, which renders
     // the specifier lossily and then searched the message for the original
@@ -108,6 +142,45 @@ describe.concurrent("ill-formed bytes are decoded to U+FFFD before tokenizing", 
     expect(exitCode).toBe(1);
   });
 
+  test("Bun.build reports the warning with its position", async () => {
+    using dir = tempDir("css-invalid-utf8", { "in.css": raw`.a {}\n.b::before { content: "caf${0xe9}"; }\n` });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const r = await Bun.build({ entrypoints: ["./in.css"], throw: false });
+         const logs = r.logs.map(l => ({ level: l.level, message: l.message, ...l.position }));
+         console.log(JSON.stringify({ success: r.success, logs }));`,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const result = JSON.parse(stdout);
+    for (const log of result.logs) log.file = basename(log.file);
+    expect(result).toEqual({
+      success: true,
+      logs: [
+        {
+          level: "warn",
+          message: replacedWarning.slice("warn: ".length),
+          file: "in.css",
+          namespace: "file",
+          // `.a {}\n` is 6 bytes, then 26 bytes of `.b::before { content: "caf`.
+          line: 2,
+          column: 27,
+          offset: 32,
+          length: 3,
+          lineText: `.b::before { content: "caf\uFFFD"; }`,
+        },
+      ],
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test("Bun.build reports the resolve error on a ResolveMessage", async () => {
     using dir = tempDir("css-invalid-utf8", { "in.css": raw`@import url("./dep${0xe2}x.css");` });
     await using proc = Bun.spawn({
@@ -115,7 +188,7 @@ describe.concurrent("ill-formed bytes are decoded to U+FFFD before tokenizing", 
         bunExe(),
         "-e",
         `const r = await Bun.build({ entrypoints: ["./in.css"], throw: false });
-         const l = r.logs[0];
+         const l = r.logs.find(l => l.name === "ResolveMessage");
          console.log(JSON.stringify({ success: r.success, name: l?.name, message: l?.message }));`,
       ],
       env: bunEnv,
@@ -152,7 +225,7 @@ async function buildColumn(bytes: number[]): Promise<{ stdout: string; stderr: s
       bunExe(),
       "-e",
       `const r = await Bun.build({ entrypoints: [${JSON.stringify(css)}], throw: false });
-       const p = r.logs[0]?.position;
+       const p = r.logs.find(l => l.level === "error")?.position;
        console.log(JSON.stringify({ line: p?.line, column: p?.column }));`,
     ],
     env: bunEnv,

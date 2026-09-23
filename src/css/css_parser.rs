@@ -5165,6 +5165,44 @@ pub(crate) fn split_source_map(contents: &[u8]) -> Option<&[u8]> {
     None
 }
 
+/// Warns that `strings::replace_invalid_utf8` changed `source`, at the first replaced sequence.
+pub fn warn_invalid_utf8(log: &mut Log, source: &bun_ast::Source, first_invalid: usize) {
+    let range = bun_ast::Range {
+        loc: bun_ast::Loc {
+            start: i32::try_from(first_invalid).unwrap_or(i32::MAX),
+        },
+        len: REPLACEMENT_CHAR_UTF8.len() as i32,
+    };
+    match declared_charset(&source.contents) {
+        Some(charset) if !strings::eql_case_insensitive_ascii(charset, b"utf-8", true) => log
+            .add_range_warning_fmt(
+                Some(source),
+                range,
+                format_args!(
+                    "@charset \"{}\" is not supported, this file was read as UTF-8 and each invalid byte sequence was replaced with U+FFFD",
+                    bstr::BStr::new(charset)
+                ),
+            ),
+        _ => log.add_range_warning_fmt(
+            Some(source),
+            range,
+            format_args!(
+                "This file is not valid UTF-8, each invalid byte sequence was replaced with U+FFFD"
+            ),
+        ),
+    }
+}
+
+/// The label of a leading `@charset "…";`, matched as the byte pattern of css-syntax-3 §3.2.
+fn declared_charset(contents: &[u8]) -> Option<&[u8]> {
+    let rest = contents.strip_prefix(b"@charset \"")?;
+    let end = strings::index_of_char_usize(&rest[..rest.len().min(1024)], b'"')?;
+    let label = &rest[..end];
+    (rest.get(end + 1) == Some(&b';')
+        && label.iter().all(|b| matches!(b, 0x16..=0x21 | 0x23..=0x7F)))
+    .then_some(label)
+}
+
 // ───────────────────────────── Token ─────────────────────────────
 
 #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]

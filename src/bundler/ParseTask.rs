@@ -2396,10 +2396,10 @@ pub mod parse_worker {
         *step = Step::Parse;
 
         // The CSS tokenizer needs valid UTF-8; decode before `source` is built so offsets match.
-        let entry_contents: &[u8] = if loader == Loader::Css {
+        let (entry_contents, first_invalid_utf8) = if loader == Loader::Css {
             strings::replace_invalid_utf8(entry.contents.as_slice(), bump)
         } else {
-            entry.contents.as_slice()
+            (entry.contents.as_slice(), None)
         };
         let is_empty = strings::is_all_whitespace(entry_contents);
 
@@ -2467,6 +2467,9 @@ pub mod parse_worker {
             contents_is_recycled: false,
             ..Default::default()
         });
+        if let Some(first_invalid) = first_invalid_utf8 {
+            bun_css::warn_invalid_utf8(log, source, first_invalid);
+        }
 
         let target = (if task.source_index.get() == 1 {
             target_from_hashbang(entry_contents)

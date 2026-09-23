@@ -15,6 +15,8 @@ namespace Zig {
 
 using namespace JSC;
 
+struct ModuleMockUndoLog;
+
 class BunPlugin {
 public:
     using VirtualModuleMap = WTF::UncheckedKeyHashMap<String, JSC::Strong<JSC::JSObject>>;
@@ -79,29 +81,29 @@ public:
         }
 
         VirtualModuleMap* _Nullable virtualModules = nullptr;
+        // What mock.module() calls made from tests and hooks changed, so mock.restore() can undo them.
+        ModuleMockUndoLog* _Nullable moduleMockUndoLog = nullptr;
         bool mustDoExpensiveRelativeLookup = false;
         JSC::EncodedJSValue run(JSC::JSGlobalObject* globalObject, const BunString* namespaceString, const BunString* path);
 
         bool hasVirtualModules() const { return virtualModules != nullptr; }
 
         void addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mock);
+        void restoreModuleMocks(Zig::GlobalObject* globalObject);
+        void clearVirtualModules();
+        // The log holds Strong<> roots into the realm, like the plugin lists: the test isolation swap drops it with them.
+        void discardModuleMockUndoLog();
 
         std::optional<String> resolveVirtualModule(const String& path, const String& from);
 
         void clear()
         {
             Base::clear();
-            delete virtualModules;
-            virtualModules = nullptr;
+            clearVirtualModules();
             mustDoExpensiveRelativeLookup = false;
         }
 
-        ~OnLoad()
-        {
-            if (virtualModules) {
-                delete virtualModules;
-            }
-        }
+        ~OnLoad();
     };
 
     class OnResolve final : public Base {

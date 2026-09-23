@@ -649,6 +649,15 @@ static void restoreAllMocks(Zig::GlobalObject* globalObject)
     globalObject->mockModule.activeSpies.clear();
 }
 
+JSC::JSValue unwrapSpyOriginal(JSC::JSValue value)
+{
+    if (auto* spy = dynamicDowncast<JSMockFunction>(value)) {
+        if (JSValue original = spy->spyOriginal.get())
+            return original;
+    }
+    return value;
+}
+
 extern "C" void JSMock__clearAllMocks(Zig::GlobalObject* globalObject)
 {
     // mockClear() on every mock: only clears calls, contexts, instances and results.
@@ -1480,7 +1489,10 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSetSystemTime, (JSC::JSGlobalObject * globalO
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsRestoreAllMocks, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    restoreAllMocks(uncheckedDowncast<Zig::GlobalObject>(globalObject));
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+    restoreAllMocks(zigGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    zigGlobalObject->onLoadPlugins.restoreModuleMocks(zigGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }

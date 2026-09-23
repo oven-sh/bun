@@ -138,9 +138,13 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
       compile: { outfile },
     });
     expect(build.success).toBe(true);
-    await using proc = Bun.spawn({ cmd: [outfile], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout).toBe("PNGDATA BINDATA\nSyntaxError\n");
+    // Loading a module JSC cannot parse leaves an exception unchecked in ModuleProgramExecutable::tryCreate
+    // (oven-sh/WebKit#718), which the ASAN lane's exception-check validation turns into an abort. Remove the
+    // override once WEBKIT_VERSION includes that fix.
+    const env = { ...bunEnv, BUN_JSC_validateExceptionChecks: "0" };
+    await using proc = Bun.spawn({ cmd: [outfile], env, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "PNGDATA BINDATA\nSyntaxError\n", stderr: "" });
     expect(exitCode).toBe(0);
   }, 60_000);
 

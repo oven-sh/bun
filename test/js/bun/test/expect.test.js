@@ -179,6 +179,17 @@ describe("expect()", () => {
       throw Object.assign(new Error("thrown thenable"), thenable("resolve", 1));
     }).toThrow("thrown thenable");
 
+    // toThrow() does not start a thenable that the function returns, such as a query builder.
+    let started = false;
+    expect(() => ({
+      /** @param {() => void} resolve */
+      then(resolve) {
+        started = true;
+        resolve();
+      },
+    })).not.toThrow();
+    expect(started).toBe(false);
+
     if (isBun) {
       await expectFailure(() => expect(thenable("resolve", 4)).rejects.toBe(4)).toThrow(
         /Received promise that resolved/,
@@ -199,6 +210,27 @@ describe("expect()", () => {
         },
       }).resolves.toBe("getter");
       expect(reads).toBe(1);
+
+      // A `then` getter or a `then()` that throws is a rejection, as under `await`.
+      const boom = new Error("then boom");
+      const throwingGetter = {
+        get then() {
+          throw boom;
+        },
+      };
+      const throwingThen = {
+        then() {
+          throw boom;
+        },
+      };
+      await expect(throwingGetter).rejects.toBe(boom);
+      await expect(throwingThen).rejects.toBe(boom);
+      await expectFailure(() => expect(throwingGetter).resolves.toBe(1)).toThrow(/Received promise that rejected/);
+
+      // expect.resolvesTo and expect.rejectsTo take the same path.
+      expect({ a: thenable("resolve", "one") }).toEqual({ a: expect.resolvesTo.stringContaining("one") });
+      expect({ a: thenable("reject", "two") }).toEqual({ a: expect.rejectsTo.stringContaining("two") });
+      expect({ a: thenable("resolve", "one") }).not.toEqual({ a: expect.rejectsTo.stringContaining("one") });
     }
   });
 

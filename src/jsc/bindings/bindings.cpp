@@ -4055,8 +4055,8 @@ JSC::JSPromise* JSC__JSPromise__resolvedPromise(JSC::JSGlobalObject* globalObjec
     promise->markAsHandled();
 }
 
-// Returns the promise a bun:test matcher polls for `value`'s outcome, or undefined for a non-thenable.
-[[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue JSC__JSValue__jestPromiseToWaitFor(JSC::EncodedJSValue encodedValue, JSC::JSGlobalObject* globalObject)
+// Returns the promise a bun:test matcher polls for `value`, or undefined. Only a native promise counts unless `acceptThenables`.
+[[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue JSC__JSValue__jestPromiseToWaitFor(JSC::EncodedJSValue encodedValue, JSC::JSGlobalObject* globalObject, bool acceptThenables)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -4070,7 +4070,7 @@ JSC::JSPromise* JSC__JSPromise__resolvedPromise(JSC::JSGlobalObject* globalObjec
         promise->markAsHandled();
         if (promise->status() != JSC::JSPromise::Status::Pending || promise->isThenFastAndNonObservable())
             return JSC::JSValue::encode(promise);
-    } else if (JSC::isDefinitelyNonThenable(object, globalObject)) {
+    } else if (!acceptThenables || JSC::isDefinitelyNonThenable(object, globalObject)) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 

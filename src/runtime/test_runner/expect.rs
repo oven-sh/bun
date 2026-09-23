@@ -471,9 +471,11 @@ impl Expect {
         }
     }
 
-    /// The promise `wait_for_promise` polls for `value`'s outcome, or `None` for a non-thenable.
-    fn thenable_to_wait_for(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Option<AnyPromise>> {
-        Ok(bun_jsc::cpp::JSC__JSValue__jestPromiseToWaitFor(value, global_this)?.as_any_promise())
+    /// The promise `wait_for_promise` polls for `value`'s outcome, if any. `accept_thenables`
+    /// is Jest's rule for `.resolves`, `.rejects` and matcher results; without it only a
+    /// native promise is waited on, so a lazy thenable such as a query builder never starts.
+    fn promise_to_wait_for(global_this: &JSGlobalObject, value: JSValue, accept_thenables: bool) -> JsResult<Option<AnyPromise>> {
+        Ok(bun_jsc::cpp::JSC__JSValue__jestPromiseToWaitFor(value, global_this, accept_thenables)?.as_any_promise())
     }
 
     /// Processes the async flags (resolves/rejects), waiting for the async value if needed.
@@ -490,7 +492,7 @@ impl Expect {
     ) -> JsResult<JSValue> {
         match flags.promise() {
             resolution @ (Promise::Resolves | Promise::Rejects) => {
-                if let Some(promise) = Self::thenable_to_wait_for(global_this, value)? {
+                if let Some(promise) = Self::promise_to_wait_for(global_this, value, true)? {
                     let vm = global_this.vm();
 
                     // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
@@ -872,7 +874,7 @@ impl Expect {
             return_value = return_value_from_function;
         }
 
-        let promise = match Self::thenable_to_wait_for(global_this, return_value) {
+        let promise = match Self::promise_to_wait_for(global_this, return_value, false) {
             Ok(promise) => promise,
             Err(err) => {
                 scope.apply(vm);
@@ -1449,7 +1451,7 @@ impl Expect {
         // call the custom matcher implementation
         let mut result = matcher_fn.call(global_this, matcher_context_jsvalue, args)?;
         // support for async matcher results
-        if let Some(promise) = Self::thenable_to_wait_for(global_this, result)? {
+        if let Some(promise) = Self::promise_to_wait_for(global_this, result, true)? {
             let vm = global_this.vm();
 
             // SAFETY: bun_vm() returns the live thread-local VirtualMachine.

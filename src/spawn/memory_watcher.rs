@@ -1,4 +1,4 @@
-//! `Bun.spawn({ maxMemory })`: one background thread samples every watched child tree and kills a tree that crosses its limit.
+//! `Bun.spawn({ maxMemory })`: kill a child tree that crosses its memory limit. Windows gets a kernel notification; elsewhere one thread samples.
 
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -51,13 +51,16 @@ impl Watch {
     fn sample(&self) -> u64 {
         let usage = os::tree_usage(self);
         self.peak.fetch_max(usage, Ordering::Relaxed);
-        if usage > self.limit
-            && !self.done.load(Ordering::Acquire)
-            && !self.exceeded.swap(true, Ordering::Relaxed)
-        {
-            os::kill_tree(self);
+        if usage > self.limit {
+            self.kill_once();
         }
         usage
+    }
+
+    fn kill_once(&self) {
+        if !self.done.load(Ordering::Acquire) && !self.exceeded.swap(true, Ordering::Relaxed) {
+            os::kill_tree(self);
+        }
     }
 }
 
@@ -169,6 +172,11 @@ pub fn watch(opts: &WatchOptions) -> std::io::Result<Arc<Watch>> {
     });
     // A child can allocate a lot before the thread's first tick; sample once synchronously.
     entry.sample();
+
+    #[cfg(windows)]
+    if os::arm_kernel_limit(&entry) {
+        return Ok(entry);
+    }
 
     ENTRIES.lock().push(Arc::clone(&entry));
     if !THREAD_STARTED.swap(true, Ordering::AcqRel) {
@@ -427,13 +435,102 @@ mod os {
 
     pub(super) fn tree_usage(w: &Watch) -> u64 {
         if !w.job.is_null() {
-            if let Some(usage) = windows::job_memory_usage(w.job) {
-                return usage;
+            let (current, peak) = windows::job_memory_usage(w.job);
+            w.peak
+                .fetch_max(peak, core::sync::atomic::Ordering::Relaxed);
+            if let Some(current) = current {
+                return current;
             }
         }
         windows::GetProcessMemoryInfo(w.process)
             .map(|c| c.PagefileUsage as u64)
             .unwrap_or(0)
+    }
+
+    static PORT: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    static NOTIFIED: bun_threading::Guarded<Vec<std::sync::Arc<Watch>>> =
+        bun_threading::Guarded::new(Vec::new());
+
+    fn port() -> Option<HANDLE> {
+        let port = *PORT.get_or_init(|| {
+            let Ok(port) = windows::CreateIoCompletionPort(
+                windows::INVALID_HANDLE_VALUE,
+                core::ptr::null_mut(),
+                0,
+                1,
+            ) else {
+                return 0;
+            };
+            let raw = port as usize;
+            let spawned = std::thread::Builder::new()
+                .name("MemoryWatcher".into())
+                .stack_size(256 * 1024)
+                .spawn(move || wait_for_limits(raw as HANDLE));
+            if spawned.is_err() {
+                // SAFETY: `port` was just created and nothing else holds it.
+                unsafe { windows::CloseHandle(port) };
+                return 0;
+            }
+            raw
+        });
+        (port != 0).then_some(port as HANDLE)
+    }
+
+    /// The kernel posts one message when a job crosses its limit, so this thread never polls.
+    fn wait_for_limits(port: HANDLE) {
+        loop {
+            let mut message: windows::DWORD = 0;
+            let mut key: windows::ULONG_PTR = 0;
+            let mut overlapped: *mut windows::OVERLAPPED = core::ptr::null_mut();
+            // SAFETY: all three out-pointers are valid for the call.
+            let ok = unsafe {
+                windows::kernel32::GetQueuedCompletionStatus(
+                    port,
+                    &raw mut message,
+                    &raw mut key,
+                    &raw mut overlapped,
+                    windows::INFINITE,
+                )
+            };
+            if ok == 0 {
+                continue;
+            }
+            let mut watches = NOTIFIED.lock();
+            let Some(index) = watches
+                .iter()
+                .position(|w| std::sync::Arc::as_ptr(w) as usize == key)
+            else {
+                continue;
+            };
+            match message {
+                windows::JOB_OBJECT_MSG_NOTIFICATION_LIMIT => {
+                    let w = std::sync::Arc::clone(&watches[index]);
+                    drop(watches);
+                    w.kill_once();
+                }
+                windows::JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO => {
+                    watches.swap_remove(index);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// True when the kernel now enforces the limit for this watch, so the sampler is not needed.
+    pub(super) fn arm_kernel_limit(entry: &std::sync::Arc<Watch>) -> bool {
+        if entry.job.is_null() {
+            return false;
+        }
+        let Some(port) = port() else { return false };
+        let key = std::sync::Arc::as_ptr(entry) as usize;
+        NOTIFIED.lock().push(std::sync::Arc::clone(entry));
+        if windows::job_notify_memory_limit(entry.job, port, key, entry.limit) {
+            return true;
+        }
+        NOTIFIED
+            .lock()
+            .retain(|w| std::sync::Arc::as_ptr(w) as usize != key);
+        false
     }
 
     pub(super) fn kill_tree(w: &Watch) {

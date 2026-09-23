@@ -161,6 +161,7 @@ pub struct Subprocess<'a> {
     pub(crate) memory_watch: JsCell<Option<std::sync::Arc<bun_spawn::memory_watcher::Watch>>>,
     pub(crate) exited_due_to_max_memory: Cell<bool>,
     pub(crate) memory_peak: Cell<u64>,
+    pub(crate) memory_route: Cell<Option<&'static str>>,
 }
 
 bun_event_loop::impl_timer_owner!(Subprocess<'_>; from_timer_ptr => event_loop_timer);
@@ -719,6 +720,7 @@ impl Subprocess<'_> {
             cgroup,
         };
         if let Ok(w) = bun_spawn::memory_watcher::watch(&mut opts) {
+            self.memory_route.set(Some(w.route()));
             self.memory_watch.set(Some(w));
         }
     }
@@ -1646,6 +1648,26 @@ pub(crate) extern "C" fn on_pipe_close(this: *mut bun_sys::windows::libuv::Pipe)
 
 pub(crate) mod testing_apis {
     use super::*;
+
+    /// `"job"`, `"cgroup"` or `"sampler"` for a child spawned with `maxMemory`, so tests can require the kernel route.
+    #[bun_jsc::host_fn]
+    pub(crate) fn memory_limit_route(
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let [subprocess_value] = callframe.arguments_as_array::<1>();
+        let Some(subprocess_ptr) = Subprocess::from_js(subprocess_value) else {
+            return Err(global_this.throw(format_args!("first argument must be a Subprocess")));
+        };
+        // SAFETY: `from_js` returned a live `*mut Subprocess` owned by the JS wrapper.
+        let subprocess = unsafe { &*subprocess_ptr };
+        match subprocess.memory_route.get() {
+            Some(route) => {
+                bun_jsc::StringJsc::to_js(&bun_core::String::static_(route), global_this)
+            }
+            None => Ok(JSValue::UNDEFINED),
+        }
+    }
 
     /// Inject a synthetic read error into a subprocess's stdout/stderr
     /// PipeReader, as if the underlying read() syscall (Posix) or libuv read

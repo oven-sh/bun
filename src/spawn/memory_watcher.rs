@@ -26,6 +26,8 @@ pub struct Watch {
     job: bun_sys::windows::HANDLE,
     #[cfg(windows)]
     process: bun_sys::windows::HANDLE,
+    #[cfg(windows)]
+    notified: AtomicBool,
 }
 
 // SAFETY: HANDLEs are process-global kernel object references; every other field is atomic or immutable.
@@ -35,6 +37,19 @@ unsafe impl Send for Watch {}
 unsafe impl Sync for Watch {}
 
 impl Watch {
+    /// What enforces the limit: `"job"` or `"cgroup"` when the kernel does, `"sampler"` when this module's thread does.
+    pub fn route(&self) -> &'static str {
+        #[cfg(windows)]
+        if self.notified.load(Ordering::Relaxed) {
+            return "job";
+        }
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        if self.cgroup.is_some() {
+            return "cgroup";
+        }
+        "sampler"
+    }
+
     pub fn exceeded(&self) -> bool {
         self.exceeded.load(Ordering::Relaxed)
     }
@@ -193,6 +208,8 @@ pub fn watch(opts: &mut WatchOptions) -> std::io::Result<Arc<Watch>> {
         job: os::create_job(opts.process),
         #[cfg(windows)]
         process: opts.process,
+        #[cfg(windows)]
+        notified: AtomicBool::new(false),
     });
     // A child can allocate a lot before the thread's first tick; sample once synchronously.
     entry.sample();
@@ -733,6 +750,9 @@ mod os {
         let key = std::sync::Arc::as_ptr(entry) as usize;
         NOTIFIED.lock().push(std::sync::Arc::clone(entry));
         if windows::job_notify_memory_limit(entry.job, port, key, entry.limit) {
+            entry
+                .notified
+                .store(true, core::sync::atomic::Ordering::Relaxed);
             return true;
         }
         NOTIFIED

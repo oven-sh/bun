@@ -1363,6 +1363,7 @@ fn spawn_maybe_sync(
         memory_watch: JsCell::new(None),
         exited_due_to_max_memory: Cell::new(false),
         memory_peak: Cell::new(0),
+        memory_route: Cell::new(None),
     }));
     // SAFETY: subprocess_ptr is a freshly-boxed Subprocess; we hold the only reference.
     let subprocess = unsafe { &mut *subprocess_ptr };

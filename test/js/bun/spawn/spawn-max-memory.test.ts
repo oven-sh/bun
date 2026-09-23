@@ -1,5 +1,8 @@
+import { subprocessInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows } from "harness";
+import { existsSync, mkdirSync, readFileSync, rmdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 const MB = 1024 * 1024;
 
@@ -19,7 +22,63 @@ async function gone(pid: number) {
   }
 }
 
+// True when this host lets us create a memory cgroup with a swap cap, which is when Bun must pick the cgroup route.
+function canCreateMemoryCgroup(): boolean {
+  if (!isLinux) return false;
+  const name = `bun-max-memory-probe-${process.pid}`;
+  const candidates: { dir: string; v2: boolean }[] = [];
+  if (existsSync("/sys/fs/cgroup/memory/memory.limit_in_bytes")) {
+    candidates.push({ dir: `/sys/fs/cgroup/memory/${name}`, v2: false });
+  }
+  if (existsSync("/sys/fs/cgroup/cgroup.controllers")) {
+    const own = readFileSync("/proc/self/cgroup", "utf8")
+      .split("\n")
+      .find(l => l.startsWith("0::"))
+      ?.slice(3);
+    if (own) candidates.push({ dir: join("/sys/fs/cgroup", dirname(own), name), v2: true });
+    candidates.push({ dir: `/sys/fs/cgroup/${name}`, v2: true });
+  }
+  const hasSwap = readFileSync("/proc/swaps", "utf8").trim().split("\n").length > 1;
+  for (const { dir, v2 } of candidates) {
+    try {
+      mkdirSync(dir);
+    } catch {
+      continue;
+    }
+    try {
+      writeFileSync(join(dir, v2 ? "memory.max" : "memory.limit_in_bytes"), String(1024 * MB));
+      try {
+        writeFileSync(join(dir, v2 ? "memory.swap.max" : "memory.memsw.limit_in_bytes"), v2 ? "0" : String(1024 * MB));
+      } catch {
+        if (hasSwap) continue;
+      }
+      return true;
+    } catch {
+    } finally {
+      try {
+        rmdirSync(dir);
+      } catch {}
+    }
+  }
+  return false;
+}
+
 describe("Bun.spawn maxMemory", () => {
+  test("the kernel enforces the limit where it can", async () => {
+    const idle = [bunExe(), "-e", "setInterval(() => {}, 1000)"];
+    await using limited = Bun.spawn({
+      cmd: idle,
+      env: bunEnv,
+      stdio: ["ignore", "ignore", "ignore"],
+      maxMemory: 1024 * MB,
+    });
+    const expected = isWindows ? "job" : isMacOS ? "sampler" : canCreateMemoryCgroup() ? "cgroup" : "sampler";
+    expect(subprocessInternals.memoryLimitRoute(limited)).toBe(expected);
+
+    await using unlimited = Bun.spawn({ cmd: idle, env: bunEnv, stdio: ["ignore", "ignore", "ignore"] });
+    expect(subprocessInternals.memoryLimitRoute(unlimited)).toBeUndefined();
+  });
+
   test.concurrent("kills a child that exceeds the limit", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", hog(256)],

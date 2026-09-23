@@ -489,10 +489,12 @@ test.each(["sync", "async"])(
     // the body's ref must be gone.
     await stopAndAssertDrained(server);
 
+    // A WeakRef target survives the job that dereferenced it, so every pass gets a fresh turn
+    // before collecting.
     let alive = iterations;
     for (let i = 0; i < 20 && alive > 0; i++) {
-      Bun.gc(true);
       await Bun.sleep(1);
+      Bun.gc(true);
       alive = streams.filter(ref => ref.deref() !== undefined).length;
     }
     expect(alive).toBe(0);

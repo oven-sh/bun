@@ -41,6 +41,19 @@ const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
 const kCloseCallback = Symbol("closeCallback");
 
+// node:_http_server registers its pipelined-response machinery here at module
+// initialization, letting internal/http1_server_fallback drive the same
+// per-connection queue without widening node:_http_server's exports. The
+// fallback loads node:http (and with it _http_server) before reading these.
+const http1ServerPipeline: {
+  queuePipelinedResponse?: (socket: unknown, res: unknown, isAncient: boolean) => void;
+  advanceResponsePipeline?: (server: unknown, socket: unknown) => void;
+  abortQueuedPipelinedResponses?: (socket: unknown) => void;
+  maybePauseFallbackReads?: (socket: unknown) => void;
+  resumeFallbackReadsOnDrain?: (socket: unknown) => void;
+  kMustCloseConnection?: symbol;
+} = {};
+
 export const enum NodeHTTPResponseAbortEvent {
   none = 0,
   abort = 1,
@@ -308,7 +321,7 @@ function hasServerResponseFinished(self, chunk, callback) {
       if (finished) {
         err = $ERR_STREAM_WRITE_AFTER_END();
       } else if (destroyed) {
-        err = $ERR_STREAM_DESTROYED("Stream is destroyed");
+        err = $ERR_STREAM_DESTROYED("write");
       }
 
       if (!destroyed) {
@@ -348,22 +361,22 @@ const kOutHeaders = Symbol("kOutHeaders");
 const kNeedDrain = Symbol("kNeedDrain");
 const kProxyConfig = Symbol("kProxyConfig");
 const kWaitForProxyTunnel = Symbol("kWaitForProxyTunnel");
+const kPerRequestCheckServerIdentity = Symbol("kPerRequestCheckServerIdentity");
 
-// Cached HTTP Date header value, refreshed once a second like Node.js does.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http.js
+// The `date` header, formatted once per second like Node.js does
+// (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http.js). Keyed by the second rather than reset by a timer:
+// a timer belongs to whoever happened to be running when it was set, and if that was a
+// Bun.ModuleGraph disposed within the second, nothing would ever clear the cache again.
 let utcCache;
+let utcCacheSecond = -1;
 function utcDate() {
-  if (!utcCache) cacheUTCDate();
+  const now = Date.now();
+  const second = Math.floor(now / 1000);
+  if (second !== utcCacheSecond) {
+    utcCacheSecond = second;
+    utcCache = new Date(now).toUTCString();
+  }
   return utcCache;
-}
-function cacheUTCDate() {
-  const d = new Date();
-  utcCache = d.toUTCString();
-  const timer = setTimeout(resetUTCCache, 1000 - d.getMilliseconds());
-  if (typeof timer.unref === "function") timer.unref();
-}
-function resetUTCCache() {
-  utcCache = undefined;
 }
 
 function ipToInt(ip) {
@@ -503,6 +516,7 @@ export {
   getMaxHTTPHeaderSize,
   hasServerResponseFinished,
   headerStateSymbol,
+  http1ServerPipeline,
   isTlsSymbol,
   kAbortController,
   kCloseCallback,
@@ -511,6 +525,7 @@ export {
   kNeedDrain,
   kOutHeaders,
   kPendingCallbacks,
+  kPerRequestCheckServerIdentity,
   kProxyConfig,
   kRealListen,
   kRequest,

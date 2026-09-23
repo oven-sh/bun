@@ -3,10 +3,14 @@
  */
 import { describe, expect, test } from "bun:test";
 import { once } from "node:events";
+import { readFileSync } from "node:fs";
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
-import type { AddressInfo } from "node:net";
+import { createServer as createSecureServer } from "node:https";
+import type { AddressInfo, Socket } from "node:net";
 import { connect } from "node:net";
+import { join } from "node:path";
 import { duplexPair } from "node:stream";
+import { connect as tlsConnect } from "node:tls";
 
 test("aborted request body emits 'error' ECONNRESET and res 'close' before req 'close'", async () => {
   // Like Node.js's socketOnClose → abortIncoming: the aborted request is
@@ -297,5 +301,112 @@ describe("res.destroy() defers 'close'", () => {
     destroyRecording(res, events);
     await closed.promise;
     expect(events).toEqual(["destroy()", "destroy() returned (closed: false)", "res.close (closed: true)"]);
+  });
+});
+
+// Like Node.js's net.Socket: the connection socket (req.socket) emits 'end' for
+// the peer's FIN and 'error' (read ECONNRESET, routed to 'clientError') for the
+// peer's RST, each before 'close'. A close the server starts emits only 'close'.
+describe("req.socket reports how the client closed the connection", () => {
+  const keys = join(import.meta.dirname, "..", "test", "fixtures", "keys");
+  const tlsOptions = {
+    key: readFileSync(join(keys, "agent1-key.pem")),
+    cert: readFileSync(join(keys, "agent1-cert.pem")),
+  };
+
+  // idle: after a finished keep-alive response. pending: a complete request the
+  // listener has not answered. midbody: half of the request body has arrived.
+  type When = "idle" | "pending" | "midbody";
+  type How = "FIN" | "RST" | "closeIdleConnections";
+
+  async function closeConnection(secure: boolean, when: When, how: How, withClientErrorListener = true) {
+    const socketEvents: string[] = [];
+    const clientErrors: string[] = [];
+    const gotRequest = Promise.withResolvers<void>();
+    const socketClosed = Promise.withResolvers<void>();
+
+    const listener = (req: IncomingMessage, res: ServerResponse) => {
+      const socket = req.socket;
+      socket.on("end", () => socketEvents.push("end"));
+      socket.on("error", (e: NodeJS.ErrnoException) =>
+        socketEvents.push(`error "${e.message}" code=${e.code} syscall=${e.syscall}`),
+      );
+      socket.on("close", () => {
+        socketEvents.push("close");
+        socketClosed.resolve();
+      });
+      req.resume();
+      if (when === "idle") res.end("ok");
+      gotRequest.resolve();
+    };
+    const server = secure ? createSecureServer(tlsOptions, listener) : createServer(listener);
+    if (withClientErrorListener) {
+      server.on("clientError", (e: NodeJS.ErrnoException, socket: Socket) => {
+        clientErrors.push(String(e.code));
+        socket.destroy();
+      });
+    }
+
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const tcp = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    try {
+      tcp.on("error", () => {});
+      const client = secure ? tlsConnect({ socket: tcp, rejectUnauthorized: false }) : tcp;
+      client.on("error", () => {});
+      await once(client, secure ? "secureConnect" : "connect");
+
+      if (when === "midbody") {
+        client.write("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\nhello");
+      } else {
+        client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+      }
+      if (when === "idle") await once(client, "data");
+      else await gotRequest.promise;
+
+      if (how === "RST") tcp.resetAndDestroy();
+      else if (how === "FIN") client.end();
+      else server.closeIdleConnections();
+      await socketClosed.promise;
+      return { socketEvents, clientErrors };
+    } finally {
+      tcp.destroy();
+      server.close();
+    }
+  }
+
+  for (const secure of [false, true]) {
+    for (const when of ["idle", "pending", "midbody"] as const) {
+      test.concurrent(`${secure ? "https" : "http"}: FIN while ${when} emits 'end' then 'close'`, async () => {
+        expect(await closeConnection(secure, when, "FIN")).toEqual({
+          socketEvents: ["end", "close"],
+          // Node's socketOnEnd: an EOF inside a message is a parse error.
+          clientErrors: when === "midbody" ? ["HPE_INVALID_EOF_STATE"] : [],
+        });
+      });
+
+      test.concurrent(`${secure ? "https" : "http"}: RST while ${when} emits 'error' then 'close'`, async () => {
+        expect(await closeConnection(secure, when, "RST")).toEqual({
+          socketEvents: ['error "read ECONNRESET" code=ECONNRESET syscall=read', "close"],
+          clientErrors: ["ECONNRESET"],
+        });
+      });
+    }
+
+    // Over TLS the peer answers the server's close_notify. That answer is not a
+    // half-close by the client.
+    test.concurrent(`${secure ? "https" : "http"}: closeIdleConnections() emits only 'close'`, async () => {
+      expect(await closeConnection(secure, "idle", "closeIdleConnections")).toEqual({
+        socketEvents: ["close"],
+        clientErrors: [],
+      });
+    });
+  }
+
+  test.concurrent("RST with no 'clientError' listener still emits 'error' then 'close'", async () => {
+    expect(await closeConnection(false, "idle", "RST", false)).toEqual({
+      socketEvents: ['error "read ECONNRESET" code=ECONNRESET syscall=read', "close"],
+      clientErrors: [],
+    });
   });
 });

@@ -745,11 +745,6 @@ impl fmt::Display for Raw<'_> {
         f.write_str(unsafe { core::str::from_utf8_unchecked(self.0) })
     }
 }
-/// Shorthand constructor for [`Raw`]. Prefer [`s`] (same thing, shorter name).
-#[inline(always)]
-pub const fn raw(bytes: &[u8]) -> Raw<'_> {
-    Raw(bytes)
-}
 
 // Canonical `SliceCursor` / `buf_print` / `buf_print_len` live in T0
 // `bun_alloc` so that crate can use them too; re-exported here for the
@@ -1001,12 +996,6 @@ impl core::fmt::Display for InvalidCharacter {
     }
 }
 impl core::error::Error for InvalidCharacter {}
-impl From<InvalidCharacter> for crate::CrateError {
-    #[inline]
-    fn from(_: InvalidCharacter) -> Self {
-        crate::CrateError::InvalidCharacter
-    }
-}
 
 /// `WTF.parseDouble` — partial-match Latin-1 double parser. Returns `Ok` if
 /// any numeric prefix was consumed; `Err(InvalidCharacter)` on empty input or

@@ -7,13 +7,13 @@
 
 import type { Dependency, DirectBuild } from "../source.ts";
 
-const LSQPACK_COMMIT = "1e9c5b8e59f8161c54f168a570c8bfdc59ded0c3";
+const LSQPACK_COMMIT = "91567706c41c0d97ab8dc576873ecd472d7869fa";
 
 export const lsqpack: Dependency = {
   name: "lsqpack",
 
   source: () => ({
-    kind: "github",
+    kind: "github-archive",
     repo: "litespeedtech/ls-qpack",
     commit: LSQPACK_COMMIT,
   }),

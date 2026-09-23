@@ -153,3 +153,51 @@ describe.skipIf(!enoughMemory)("text consumers reject binary chunks summing past
     });
   });
 });
+
+// arrayBuffer() and bytes() assemble a chunk array that holds a string in a WTF::Vector, which
+// aborts past 2^31-1 bytes. The child reserves the two big chunks and never touches them, so
+// it stays small.
+test.skipIf(!enoughMemory)("arrayBuffer() and bytes() reject mixed chunks summing past 2^31-1", async () => {
+  const result = await run(`
+    const big = new Uint8Array(1100000000);
+    for (const consume of [Bun.readableStreamToArrayBuffer, Bun.readableStreamToBytes]) {
+      const rs = new ReadableStream({
+        start(c) {
+          c.enqueue("a");
+          c.enqueue(big);
+          c.enqueue(big);
+          c.close();
+        },
+      });
+      try {
+        const bytes = await consume(rs);
+        console.log("resolved", bytes.byteLength);
+      } catch (e) {
+        console.log("threw", e.name, e.message);
+      }
+    }
+  `);
+  expect(result).toEqual({
+    stdout: "threw RangeError Out of memory\nthrew RangeError Out of memory\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// TextDecoderStream joins a chunk with the bytes it carried over from an incomplete UTF-8
+// sequence. The join sized a WTF::Vector that aborts past 2^31-1 bytes, so a 2^31-byte chunk
+// after a carried byte killed the process before it read a byte. The child reserves the
+// chunk and never touches it, so it stays small.
+test.skipIf(!enoughMemory)("TextDecoderStream rejects a chunk too long to join with the carried bytes", async () => {
+  const result = await run(`
+    const writer = new TextDecoderStream().writable.getWriter();
+    await writer.write(new Uint8Array([0xe2]));
+    try {
+      await writer.write(new Uint8Array(2 ** 31));
+      console.log("resolved");
+    } catch (e) {
+      console.log("threw", e.name, e.message);
+    }
+  `);
+  expect(result).toEqual(threw);
+});

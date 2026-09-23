@@ -1,4 +1,4 @@
-use crate::jsc::{JSValue, VirtualMachineSqlExt as _};
+use crate::jsc::JSValue;
 use bun_boringssl_sys::OwnedSslCtx;
 use bun_collections::{OffsetByteList, StringHashMap, VecExt};
 use bun_uws::{self as uws, AnySocket as Socket};
@@ -313,11 +313,11 @@ impl MySQLConnection {
             return Ok(());
         };
 
-        // `as_mut()` is `'static`, so `tls_group` borrows the VM singleton —
-        // not `*self` — and stays live across the field reads below.
-        let tls_group: &mut bun_uws::SocketGroup = crate::jsc::VirtualMachine::get()
-            .as_mut()
-            .mysql_socket_group::<true>();
+        // SAFETY: `raw` is a live connected socket in its context's MySQL TCP group.
+        let tls_group: &mut bun_uws::SocketGroup = unsafe {
+            bun_jsc::rare_data::SocketGroups::of((*raw).group())
+                .mysql_group::<true>(crate::jsc::VirtualMachine::get().uws_loop())
+        };
 
         // SAFETY: `secure` is set to a live `SSL_CTX*` before TLS upgrade is
         // requested.
@@ -351,7 +351,7 @@ impl MySQLConnection {
             sni,
             true,  // is_client
             false, // request_cert (server-only)
-            false, // reject_unauthorized (server-only)
+            false, // reject_unauthorized (server-only; the client policy is set_inline_reject below)
             ext_size,
             ext_size,
         ) else {
@@ -367,6 +367,11 @@ impl MySQLConnection {
         let sock = unsafe { &mut *new_socket };
         *sock.ext::<Option<core::ptr::NonNull<JSMySQLConnection>>>() =
             core::ptr::NonNull::new(js_connection);
+        if self.tls_config.reject_unauthorized() != 0
+            && matches!(self.ssl_mode, SSLMode::VerifyCa | SSLMode::VerifyFull)
+        {
+            sock.set_inline_reject();
+        }
         self.socket = Socket::SocketTls(uws::SocketTLS {
             socket: uws::InternalSocket::Connected(new_socket),
         });

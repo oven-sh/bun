@@ -8,11 +8,11 @@ Two modes:
   `buildkite-agent` and [Tart](https://tart.run); every test job runs in a
   fresh macOS guest cloned from a baked image and deleted afterwards.
 - `bare`: for Intel hosts (Tart cannot virtualize macOS on Intel) and small
-  Apple Silicon hosts. The bun toolchain and `scripts/agent.mjs` service run
+  Apple Silicon hosts. The bun toolchain and `scripts/agent.ts` service run
   on the host itself.
 
 Agents tag themselves `os=darwin arch=... release=<macOS major> release-tier=...`
-and `.buildkite/ci.mjs` selects on those. In tart mode `release` is the
+and `.buildkite/ci.ts` selects on those. In tart mode `release` is the
 guest's macOS version, and a guest cannot be newer than its host.
 
 ## Layout
@@ -29,15 +29,24 @@ guest/job.sh       runs inside the guest for every job
 `provision <hostname> tart` disables remote management, makes sshd key-only,
 joins the tailnet, installs `buildkite-agent` and Tart, creates an
 unprivileged auto-login user (Virtualization.framework needs a console
-session), bakes the guest image from a public base image plus
-`scripts/bootstrap.sh`, and starts the agent as that user with `hooks/` as
+session), bakes the guest image from a public base image plus the toolchain
+script generated from `scripts/build/ci-images/spec.ts`, and starts the agent as that user with `hooks/` as
 its hooks path. It asks for one reboot the first time and is re-run after it.
 
-`provision <hostname> bare` does the same host setup, then runs
-`scripts/bootstrap.sh` on the host and installs the `scripts/agent.mjs` service.
+`provision <hostname> bare` does the same host setup, then runs that generated
+script on the host and installs the `scripts/agent.ts` service.
+
+The script is `build/ci-images/darwin-<arch>/bootstrap.sh`, written by
+`scripts/build/ci-images/spec.ts` from a checkout of `--ref` on the host.
+The versions it installs are the ones every other CI machine gets.
 
 `bake` is safe on a live host: it builds a staging image and swaps it in only
-after the toolchain verifies. Re-run it when toolchain pins move.
+after the toolchain verifies, under the same lock the command hook clones
+with. Re-run it when toolchain pins move.
+
+Everything here runs on whatever bun `host.sh` pinned when the host was first
+provisioned, so it sticks to `Bun.spawn` with argv arrays and stays off
+`Bun.$`.
 
 ## Bringing up a host
 

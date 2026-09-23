@@ -267,7 +267,15 @@ const result = Bun.spawnSync({ cmd: ["make", "-j8"], maxMemory: 4 * 1024 ** 3 })
 result.exitedDueToMaxMemory; // true if the build was killed for exceeding 4 GiB
 ```
 
-A single background thread samples every limited tree. It samples slowly while all trees are far from their limits and every millisecond once any tree is within 15% of its limit, so overshoot is small even for a process allocating as fast as it can. The measurement is physical footprint on macOS (the number Activity Monitor shows), resident anonymous memory on Linux, and committed memory of a Job Object on Windows, where the Job Object also guarantees the whole tree is terminated.
+Bun uses the kernel to enforce the limit where the kernel can do it, and samples only as a fallback:
+
+| Platform | How the limit is enforced                                                                                                                                |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Windows  | The child runs in a Job Object. The kernel notifies Bun when the tree commits more than `maxMemory`, and Bun terminates the job.                         |
+| Linux    | When Bun can create a memory cgroup (v2 or v1), the child starts inside one with `memory.max` set, and the kernel kills the tree. Otherwise Bun samples. |
+| macOS    | The kernel has no memory limit for a group of processes, so one background thread samples the tree's physical footprint.                                 |
+
+The sampler runs slowly while every tree is far from its limit and every millisecond once any tree is within 15% of it. `killSignal` applies when Bun does the kill. When the kernel does it (Linux cgroup, Windows job), the tree is killed at once, as with `SIGKILL`.
 
 To read the number yourself, call `proc.memoryUsage()`. It works with or without `maxMemory`:
 

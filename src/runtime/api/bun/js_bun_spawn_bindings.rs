@@ -1117,6 +1117,16 @@ fn spawn_maybe_sync(
     let loop_handle = EventLoopHandle::init(event_loop.cast::<()>());
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
+    let mut memory_cgroup = match (max_memory, &cgroup) {
+        (Some(limit), None) => bun_spawn::memory_watcher::cgroup::Cgroup::create(limit),
+        _ => None,
+    };
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    if let Some(created) = &memory_cgroup {
+        cgroup = Some(CgroupTarget::Path(ZBox::from_bytes(created.path())));
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     let cgroup_dir = match &cgroup {
         Some(target) => Some(target.open(cx.global())?),
         None => None,
@@ -1650,7 +1660,11 @@ fn spawn_maybe_sync(
     }
 
     if let Some(limit) = max_memory {
-        subprocess.watch_memory(limit);
+        subprocess.watch_memory(
+            limit,
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            memory_cgroup.take(),
+        );
     }
 
     let mut send_exit_notification = false;

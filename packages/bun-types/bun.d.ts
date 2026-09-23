@@ -7939,8 +7939,9 @@ declare module "bun" {
        * may use, combined. If the tree goes over this limit, every process in
        * it is killed with `killSignal` (defaults to SIGTERM).
        *
-       * Measured as physical footprint on macOS, resident anonymous memory on
-       * Linux, and committed memory of a Job Object on Windows.
+       * The kernel enforces the limit where it can: a Job Object on Windows and a
+       * memory cgroup on Linux when Bun may create one. Otherwise Bun samples the
+       * tree. `killSignal` applies only when Bun does the kill.
        *
        * @default undefined (no limit)
        */

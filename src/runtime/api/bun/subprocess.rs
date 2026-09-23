@@ -696,11 +696,17 @@ impl Subprocess<'_> {
         crate::jsc_hooks::timer_all_mut()
     }
 
-    pub(crate) fn watch_memory(&self, limit: u64) {
+    pub(crate) fn watch_memory(
+        &self,
+        limit: u64,
+        #[cfg(any(target_os = "linux", target_os = "android"))] cgroup: Option<
+            bun_spawn::memory_watcher::cgroup::Cgroup,
+        >,
+    ) {
         if self.has_exited() {
             return;
         }
-        let opts = bun_spawn::memory_watcher::WatchOptions {
+        let mut opts = bun_spawn::memory_watcher::WatchOptions {
             pid: self.pid(),
             limit,
             signal: self.kill_signal.0,
@@ -709,8 +715,10 @@ impl Subprocess<'_> {
                 Some(h) => h,
                 None => return,
             },
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            cgroup,
         };
-        if let Ok(w) = bun_spawn::memory_watcher::watch(&opts) {
+        if let Ok(w) = bun_spawn::memory_watcher::watch(&mut opts) {
             self.memory_watch.set(Some(w));
         }
     }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows } from "harness";
 
 const MB = 1024 * 1024;
 
@@ -79,7 +79,9 @@ describe("Bun.spawn maxMemory", () => {
       killSignal: "SIGTERM",
     });
     await proc.exited;
-    if (!isWindows) expect(proc.signalCode).toBe("SIGTERM");
+    // In a Linux cgroup the kernel does the kill, and it always uses SIGKILL.
+    if (isLinux) expect(["SIGTERM", "SIGKILL"]).toContain(proc.signalCode);
+    else if (!isWindows) expect(proc.signalCode).toBe("SIGTERM");
   });
 
   test.concurrent("memoryUsage() reports the tree, with and without maxMemory", async () => {

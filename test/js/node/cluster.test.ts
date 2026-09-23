@@ -632,6 +632,9 @@ const forgedAckFixture = `
 const cluster = require("node:cluster");
 const net = require("node:net");
 
+// Only SCHED_RR sends newconn. An inherited NODE_CLUSTER_SCHED_POLICY=none must not change that.
+cluster.schedulingPolicy = cluster.SCHED_RR;
+
 const SOCKETS = 3;
 
 if (cluster.isPrimary) {

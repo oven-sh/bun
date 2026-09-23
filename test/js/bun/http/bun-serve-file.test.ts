@@ -141,8 +141,10 @@ describe("Bun.file in serve routes", () => {
       // Snapshot the headers so a test fails if we change the headers later.
       expect(headers).toMatchInlineSnapshot(`
         {
+          "connection": "keep-alive",
           "content-length": "13",
           "content-type": "text/plain;charset=utf-8",
+          "keep-alive": "timeout=8",
         }
       `);
     });
@@ -161,8 +163,10 @@ describe("Bun.file in serve routes", () => {
 
       expect(headers).toMatchInlineSnapshot(`
         {
+          "connection": "keep-alive",
           "content-length": "0",
           "content-type": "text/plain;charset=utf-8",
+          "keep-alive": "timeout=8",
         }
       `);
     });
@@ -218,8 +222,10 @@ describe("Bun.file in serve routes", () => {
 
       expect(headers).toMatchInlineSnapshot(`
         {
+          "connection": "keep-alive",
           "content-length": "${LARGE_SIZE}",
           "content-type": "text/plain;charset=utf-8",
+          "keep-alive": "timeout=8",
         }
       `);
     });
@@ -235,8 +241,10 @@ describe("Bun.file in serve routes", () => {
 
       expect(headers).toMatchInlineSnapshot(`
         {
+          "connection": "keep-alive",
           "content-length": "25",
           "content-type": "text/plain;charset=utf-8",
+          "keep-alive": "timeout=8",
         }
       `);
     });

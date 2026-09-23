@@ -158,6 +158,16 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         /* node:http: the peer sent its FIN first (HTTP_NODE_RECEIVED_FIN only covers a
          * deferred close). onSocketClosed reports it so the JS socket emits 'end'. */
         HTTP_NODE_PEER_ENDED = 1 << 19,
+        /* A Connection header is on the wire for this response: the caller
+         * wrote one (a user header, node:http's own line, the 101 Upgrade), or
+         * writeMark() decided. Stops writeMark() from adding
+         * `Connection: keep-alive`. A caller's Connection header also sets
+         * HTTP_WROTE_KEEP_ALIVE_HEADER: like Node, the server then sends no
+         * Keep-Alive hint of its own. */
+        HTTP_WROTE_CONNECTION_HEADER = 1 << 20,
+        /* Same for the Keep-Alive header. A caller's Keep-Alive header sets
+         * only this bit, so writeMark() still adds `Connection: keep-alive`. */
+        HTTP_WROTE_KEEP_ALIVE_HEADER = 1 << 21,
 
         /* Bits that describe the connection rather than the response in flight.
          * There is one HttpResponseData per socket, reused by every request on a
@@ -240,6 +250,15 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         return (state & HTTP_CONNECTION_CLOSE)
             || ((state & HTTP_NODE_RECEIVED_FIN) && nodeHttpQueuedPipelinedCount == 0)
             || ((state & HTTP_CLOSE_WHEN_IDLE) && this->isIdle);
+    }
+
+    /* Whether the connection closes once the response in flight is out, so
+     * the response must not advertise keep-alive. Unlike
+     * shouldCloseConnection() this is asked while the response is still
+     * being written (isIdle is false then), so a close-when-idle mark counts
+     * on its own. */
+    bool closesAfterResponse() const {
+        return state & (HTTP_CONNECTION_CLOSE | HTTP_NODE_RECEIVED_FIN | HTTP_CLOSE_WHEN_IDLE);
     }
 };
 

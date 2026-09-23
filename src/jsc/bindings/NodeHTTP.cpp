@@ -432,10 +432,7 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
         // <
         //
         if (header.key == WebCore::HTTPHeaderName::ContentLength) {
-            if (!(data->state & uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
-                data->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
-                res->writeMark();
-            }
+            data->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
         }
 
         // Prevent automatic Date header insertion when user provides one
@@ -563,10 +560,14 @@ static void NodeHTTPServer__writeHead(
     }
     response->writeStatus(std::string_view(statusMessage, statusMessageLength));
 
-    // node:http's ServerResponse owns the Date header entirely (it honors
-    // res.sendDate / removeHeader("date") in JS), so never let uWS write its
-    // own Date header for these responses.
-    response->getHttpResponseData()->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_DATE_HEADER;
+    // node:http's ServerResponse owns the Date, Connection and Keep-Alive
+    // headers entirely (it honors res.sendDate / removeHeader("date"),
+    // renders its own keep-alive pair through autoHeaderBits, and writes
+    // nothing when the user removed Connection), so never let uWS write its
+    // own for these responses.
+    response->getHttpResponseData()->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_DATE_HEADER
+        | uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONNECTION_HEADER
+        | uWS::HttpResponseData<isSSL>::HTTP_WROTE_KEEP_ALIVE_HEADER;
 
     // 204/304 responses must not carry any body framing, even when the user
     // explicitly set a Transfer-Encoding header (Node.js suppresses the
@@ -618,10 +619,7 @@ static void NodeHTTPServer__writeHead(
                 WebCore::HTTPHeaderName headerName;
                 if (WebCore::findHTTPHeaderName(StringView(name), headerName)) {
                     if (headerName == WebCore::HTTPHeaderName::ContentLength) {
-                        if (!(httpResponseData->state & uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
-                            httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
-                            response->writeMark();
-                        }
+                        httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
                     } else if (headerName == WebCore::HTTPHeaderName::Date) {
                         httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_DATE_HEADER;
                     } else if (headerName == WebCore::HTTPHeaderName::TransferEncoding) {

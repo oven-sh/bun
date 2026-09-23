@@ -579,6 +579,19 @@ declare module "bun" {
 
   interface DirectUnderlyingSource<R = any> {
     cancel?: UnderlyingSourceCancelCallback;
+    /**
+     * Write the stream's data with `controller.write()` (await it for
+     * backpressure) and finish with `controller.close()`.
+     *
+     * A destination that takes the whole body (`Bun.serve`, `Bun.write`,
+     * `.text()`, ...) calls `pull()` once. If it returns a promise, the stream
+     * stays open while it is pending, ends when it resolves, and errors if it
+     * rejects. If it returns synchronously without closing, the stream stays
+     * open until `controller.close()` is called.
+     *
+     * A reader (`getReader()`, `for await`, `pipeTo()`) calls `pull()` again
+     * for a later read, once the previous call has settled.
+     */
     pull: (controller: ReadableStreamDirectController) => void | PromiseLike<void>;
     type: "direct";
   }
@@ -3175,6 +3188,18 @@ declare module "bun" {
     splitting?: boolean;
 
     /**
+     * With `splitting` and `target: "bun"`, every `require()` of a bundled ES
+     * module is a chunk boundary too. The call stays synchronous: it is
+     * emitted as `import.meta.require("./chunk-…js")` and the chunk is
+     * evaluated when the call runs, so a `require()` inside a function that
+     * never runs costs nothing at startup. Set to `false` to keep such
+     * modules inlined in the calling chunk. No effect for other targets.
+     *
+     * @default true
+     */
+    splitRequire?: boolean;
+
+    /**
      * With `splitting`, chunks that are always loaded together are folded
      * into one (for example, code shared by an entry point and a module it
      * `import()`s lives in the entry point's chunk). This option additionally
@@ -3183,11 +3208,23 @@ declare module "bun" {
      * superset of their importers, so fewer modules are loaded at runtime.
      * Nothing lazy becomes eager and no side effect runs earlier; the chunk
      * that absorbs a folded chunk exports the symbols other chunks import
-     * from it. Requires `splitting: true`. CLI: `--min-chunk-size`.
+     * from it. Requires `splitting: true`. CLI: `--min-chunk-size`. For browser
+     * builds, where every chunk is a request, 16384 is a good value.
      *
      * @default 0 (disabled)
      */
     minChunkSize?: number;
+
+    /**
+     * With `splitting` and `target: "browser"`, HTML entrypoints get a
+     * `<link rel="modulepreload">` for every chunk their script statically
+     * imports, and each `import()` first adds one for every chunk its target
+     * statically imports, so a chunk's dependencies download in parallel
+     * instead of one import depth per round trip. CLI: `--no-module-preload`.
+     *
+     * @default true
+     */
+    modulePreload?: boolean;
 
     /**
      * List of entrypoints, usually file paths
@@ -3223,13 +3260,21 @@ declare module "bun" {
        * **Experimental**
        */
       | "iife";
+    /**
+     * Output file name templates. Tokens: `[dir]`, `[name]`, `[ext]`,
+     * `[target]`, and `[hash]` (8 characters of the content hash, more when
+     * two outputs would otherwise share a name) or `[hash9]`…`[hash13]` for a
+     * wider minimum.
+     *
+     * @default { entry: "[dir]/[name].[ext]", chunk: "./chunk-[hash].[ext]", asset: "./[name]-[hash].[ext]" }
+     */
     naming?:
       | string
       | {
           chunk?: string;
           entry?: string;
           asset?: string;
-        }; // | string;
+        };
     root?: string; // project root
     plugins?: BunPlugin[];
     // manifest?: boolean; // whether to return manifest
@@ -3333,6 +3378,19 @@ declare module "bun" {
     emitDCEAnnotations?: boolean;
 
     /**
+     * Give bundled module namespace objects (`import * as ns`, `export * as ns`)
+     * a setter per export, so assigning `ns.foo = value` is silently accepted
+     * (reads still return the module's binding) instead of throwing like a
+     * real module namespace object. When `false`, namespace objects are
+     * getter-only.
+     *
+     * @deprecated This exists for backwards compatibility and will be removed
+     * (behaving as `false`) in a future release.
+     * @default true
+     */
+    deprecatedNamespaceObjectSetters?: boolean;
+
+    /**
      * Whether to enable tree-shaking (removal of unreferenced top-level
      * declarations and unused exports). Defaults to `true`. Set to `false` to
      * keep dead code in the output for debugging or test fixtures.
@@ -3377,6 +3435,18 @@ declare module "bun" {
      * @default undefined (all nested functions)
      */
     bytecodeDepth?: number;
+
+    /**
+     * Build-time optimizations for `bytecode` builds.
+     */
+    optimize?: {
+      /**
+       * Run JavaScriptCore's build-time optimization passes over the generated
+       * bytecode. Only used when `bytecode: true`.
+       * @default true
+       */
+      bytecode?: boolean;
+    };
 
     /**
      * Add a banner to the bundled code such as "use client";
@@ -3675,6 +3745,17 @@ declare module "bun" {
      * @default false
      */
     autoloadPackageJson?: boolean;
+    /**
+     * The JIT policy the executable starts with (see {@link Bun.unsafe.setJITPolicy}).
+     * `1` is the normal policy. A value `> 1` multiplies JavaScriptCore's tier-up
+     * thresholds so code that only runs during startup stays in the interpreter
+     * longer; the app should call `Bun.unsafe.setJITPolicy(1)` once it is interactive.
+     *
+     * Equivalent CLI flag: `--compile-jit-policy <n>`
+     *
+     * @default 1
+     */
+    jitPolicy?: number;
     windows?: {
       hideConsole?: boolean;
       icon?: string;
@@ -4139,6 +4220,27 @@ declare module "bun" {
        * @platform macOS - Only affects macOS keychain behavior. Ignored on other platforms.
        */
       allowUnrestrictedAccess?: boolean;
+
+      /**
+       * Which computers can see the credential on Windows. Bun passes it to
+       * Credential Manager as the `Persist` field of the entry.
+       *
+       * - `"enterprise"`: `CRED_PERSIST_ENTERPRISE`. The current user sees the
+       *   credential on this computer. When the user account has roaming state,
+       *   such as a roaming profile on a domain, the user also sees it on other
+       *   computers.
+       * - `"local"`: `CRED_PERSIST_LOCAL_MACHINE`. The current user sees the
+       *   credential on this computer only. Use it for a secret that belongs to
+       *   one device, such as a refresh token that rotates on use.
+       *
+       * Every `set()` replaces the whole entry, so the `persist` of the latest
+       * `set()` applies. A value other than these two strings throws
+       * `ERR_INVALID_ARG_VALUE` on every platform.
+       *
+       * @default "enterprise"
+       * @platform Windows - Only affects Windows Credential Manager. Ignored on other platforms.
+       */
+      persist?: "local" | "enterprise" | undefined;
     }): Promise<void>;
 
     /**
@@ -4291,6 +4393,15 @@ declare module "bun" {
           kind: ImportKind;
           /** Original import specifier before resolution (if different from path) */
           original?: string;
+          /**
+           * With `splitting`, an `import()` (or, for `target: "bun"`, a
+           * `require()` of an ES module) of a bundled file loads another
+           * output file: `path` then points at that output instead of an
+           * input, and `external` is `true`. `entryPoint` is the input file
+           * that output was built from. It is a key of `inputs` and equals
+           * that output's `outputs[...].entryPoint`.
+           */
+          entryPoint?: string;
           /** Whether this import is external to the bundle */
           external?: boolean;
           /** Import attributes, for example `{ type: "json" }` */
@@ -5039,6 +5150,26 @@ declare module "bun" {
     terminate(): void;
 
     /**
+     * Stops reading from the underlying socket, so the peer sees TCP
+     * backpressure instead of the client buffering in memory. Messages
+     * already received may still be dispatched. A pause before the
+     * connection opens takes effect once it does.
+     * @returns `true` if the socket was paused (or will be on open), `false` if there is no socket to pause
+     */
+    pause(): boolean;
+
+    /**
+     * Resumes reading from the underlying socket after `pause()`.
+     * @returns `true` if the socket was resumed (or will be on open), `false` if there is no socket to resume
+     */
+    resume(): boolean;
+
+    /**
+     * Whether the connection is currently paused via `pause()`.
+     */
+    readonly isPaused: boolean;
+
+    /**
      * Registers an event handler of a specific event type on the WebSocket.
      * @param type A case-sensitive string representing the event type to listen for
      * @param listener The function to be called when the event occurs
@@ -5276,6 +5407,128 @@ declare module "bun" {
    */
   function color(input: ColorInput, outputFormat: "number"): number | null;
 
+  interface ModuleGraphOptions {
+    /**
+     * Values for free identifiers in all of the graph's module code
+     * (e.g. `{ process: myProcess, fetch: myFetch }`). Graphs constructed
+     * with the same set of names share their ES modules' compiled code with
+     * each other.
+     */
+    globals?: Record<string, unknown> | undefined;
+    /**
+     * Called with the uncaught exceptions and unhandled rejections that happen
+     * in this graph's context, instead of the process-wide
+     * `uncaughtException` / `unhandledRejection` handling. `kind` says which.
+     *
+     * An error is the graph's when it happens in the graph's context, whoever
+     * wrote the code that threw: the graph's modules and what they start, and
+     * what the host calls through {@link ModuleGraph.run}. A function of the
+     * graph's that the host calls directly runs in the host's context, and
+     * its errors are the host's. The promise {@link ModuleGraph.import}
+     * returns is its caller's.
+     *
+     * The handler runs in the context the graph was made in, so what it throws
+     * or rejects is that context's: the host's, when the host made the graph.
+     *
+     * Without an `onError`, errors go to the `onError` of the graph in whose
+     * context this graph was made, and to the process-wide path when the host
+     * made it.
+     *
+     * @see https://bun.com/docs/runtime/module-graph#errors
+     */
+    onError?: ((error: unknown, kind: "uncaughtException" | "unhandledRejection") => void) | undefined;
+  }
+
+  /**
+   * A further instantiation of ES module graphs in **this** global object.
+   *
+   * Every graph that loads a file shares that file's parsed code and
+   * bytecode with every other graph and with the host, and for ES modules
+   * the JIT-compiled code too; each graph gets its own module-level state
+   * (top-level bindings, classes, closures), its own module registry for
+   * `import` / `import()`, its own `require.cache` (`require()`,
+   * `import.meta.require()` and `createRequire()` called from the graph's
+   * code load into it), its own `import.meta`, and its own values for the
+   * names in `globals`. Everything else — `globalThis`, `process`,
+   * intrinsics, builtin modules (so `require("node:module")._cache` is the
+   * host's cache), native
+   * addons, the event loop — is the global object's, shared: this runs
+   * instances of a program side by side, it is not a sandbox.
+   *
+   * A graph has a context of its own for timers and I/O. Everything its
+   * code opens — timers, `Bun.serve` / `Bun.listen` servers, sockets,
+   * `fetch()` requests, watchers, child processes — belongs to the graph,
+   * and {@link ModuleGraph.dispose} closes all of it. The context follows
+   * the graph's code through `await`, timers, socket handlers and the
+   * listeners of what it made, the way `AsyncLocalStorage` stores do
+   * (creating the first graph turns that tracking on for the process). Code
+   * of the graph that the host calls directly runs in the host's context;
+   * use {@link ModuleGraph.run} to call it in the graph's.
+   *
+   * @experimental
+   * @example
+   * ```ts
+   * const graph = new Bun.ModuleGraph({
+   *   globals: { process: Object.create(process, { env: { value: { NAME: "a" } } }) },
+   *   onError: (err, kind) => console.error(kind, err),
+   * });
+   * const app = await graph.import("./app.mjs"); // app.mjs's exports, for this graph
+   * graph.run(() => app.start()); // what start() opens is the graph's
+   * graph.dispose(); // and is closed here
+   * ```
+   */
+  class ModuleGraph {
+    constructor(options?: ModuleGraphOptions);
+    /**
+     * The graph whose context the calling code is running in
+     * (what it opens now would belong to that graph), or `undefined` in the
+     * host's context. For host functions shared by several graphs, and for
+     * asserting that a call went through {@link ModuleGraph.run}.
+     */
+    static readonly current: ModuleGraph | undefined;
+    /**
+     * Load `specifier` (resolved against `process.cwd()` when relative) and
+     * instantiate it and its dependencies into this graph, evaluating what
+     * has not been evaluated in this graph yet.
+     *
+     * The first module imported into a graph is its main module:
+     * `import.meta.main` is true in it and in no other module of the graph.
+     *
+     * @param specifier module specifier, as for `import()`
+     * @returns the module's namespace object for this graph
+     */
+    import<T = any>(specifier: string): Promise<T>;
+    /**
+     * Call `fn` inside the graph's context: what `fn` and everything it
+     * starts open belongs to the graph.
+     *
+     * Throws `ERR_INVALID_STATE` once the graph is disposed.
+     *
+     * @returns what `fn` returns
+     */
+    run<A extends unknown[], R>(fn: (...args: A) => R, ...args: A): R;
+    /**
+     * Closes everything the graph's code opened (and disposes any graph its
+     * code made), and drops the graph's modules: `graph.import()` and
+     * `graph.run()` fail from here on, the graph's `require()` throws, and
+     * modules that had not run yet never will.
+     *
+     * The graph is told nothing, like a worker that was terminated: no
+     * `close` handler, `onExit` or `'error'` event is called, and no promise
+     * is settled — one waiting on the graph's work (a `fetch()`, a child's
+     * `exited`, an `import()` still loading) stays pending. Microtasks and
+     * `process.nextTick` callbacks it had already queued still run once; what
+     * they start reports nothing either. Objects the graph's code made (a
+     * socket, a worker, a stream) no longer work, for the host either.
+     *
+     * Not a sandbox: synchronous calls run to completion. Idempotent.
+     *
+     * @see https://bun.com/docs/runtime/module-graph#disposing
+     */
+    dispose(): void;
+    [Symbol.dispose](): void;
+  }
+
   /**
    * Bun.semver parses and compares version numbers.
    */
@@ -5335,16 +5588,30 @@ declare module "bun" {
     function mimallocDump(): void;
 
     /**
-     * Accurate per-process memory footprint in bytes.
+     * Scale JavaScriptCore's JIT tier-up thresholds for the current thread's VM.
      *
-     * Unlike `process.memoryUsage.rss()`, this excludes pages already
-     * returned to the OS that the kernel keeps mapped lazily (Darwin's
-     * `MADV_FREE_REUSABLE`), so leak tests are platform-comparable.
+     * `1` is the normal JIT policy. A value `> 1` makes the JIT that many times more
+     * reluctant to compile, e.g. during a burst of run-once startup code; it stays in
+     * effect until the next call. `bun build --compile` executables can start with a
+     * scale baked in (`compile.jitPolicy` / `--compile-jit-policy`) and call
+     * `setJITPolicy(1)` once interactive.
      *
-     * Backed by `task_info(TASK_VM_INFO).phys_footprint` on Darwin, `Pss:`
-     * from `/proc/self/smaps_rollup` on Linux, and `PrivateUsage` on Windows.
-     * Returns `undefined` on platforms with no accurate accessor; callers
-     * should fall back: `Bun.unsafe.memoryFootprint() ?? process.memoryUsage.rss()`.
+     * @param scale a finite number `>= 1`
+     * @throws {TypeError} if `scale` is not a number
+     * @throws {RangeError} if `scale` is not finite or `< 1`
+     */
+    function setJITPolicy(scale: number): void;
+
+    /**
+     * Per-process memory footprint in bytes: the memory that only this
+     * process keeps the machine from reusing.
+     *
+     * Backed by `task_info(TASK_VM_INFO).phys_footprint` on macOS (the same
+     * number `process.memoryUsage.rss()` reports there), `Pss:` from
+     * `/proc/self/smaps_rollup` on Linux (shared pages are split between the
+     * processes that map them), and `PrivateUsage` on Windows (this process's
+     * commit charge). Returns `undefined` on platforms with no such accessor;
+     * callers should fall back: `Bun.unsafe.memoryFootprint() ?? process.memoryUsage.rss()`.
      */
     function memoryFootprint(): number | undefined;
   }
@@ -7496,7 +7763,7 @@ declare module "bun" {
       onExit?(
         subprocess: Subprocess<In, Out, Err>,
         exitCode: number | null,
-        signalCode: number | null,
+        signalCode: NodeJS.Signals | number | null,
         /**
          * If an error occurred in the call to waitpid2, this is the error.
          */
@@ -7914,10 +8181,10 @@ declare module "bun" {
      *
      * To receive signal code changes, use the `onExit` callback.
      *
-     * If the signal code is unknown, this is the original signal code
-     * number, but that case should never happen in practice.
+     * If the signal has no name (for example a Linux real-time signal), this
+     * is its number.
      */
-    readonly signalCode: NodeJS.Signals | null;
+    readonly signalCode: NodeJS.Signals | number | null;
 
     /**
      * Whether the process has exited
@@ -7987,7 +8254,7 @@ declare module "bun" {
      */
     resourceUsage: ResourceUsage;
 
-    signalCode?: string;
+    signalCode?: NodeJS.Signals | number;
     exitedDueToTimeout?: boolean;
     exitedDueToMaxBuffer?: boolean;
     pid: number;
@@ -8649,6 +8916,134 @@ declare module "bun" {
   // ): number;
 
   /**
+   * The proxy a `fetch()` uses.
+   *
+   * - A URL string, a `URL`, or `{ url, headers, respectNoProxy }` selects that proxy.
+   * - `false` connects directly, even when `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` are set.
+   * - `undefined` uses the proxy environment variables.
+   */
+  type FetchProxyOption =
+    | string
+    | URL
+    | false
+    | {
+        /**
+         * The proxy URL, as a string or a `URL`.
+         */
+        url: string | URL;
+        /**
+         * Custom headers to send to the proxy server.
+         * These headers are sent in the CONNECT request (for HTTPS targets)
+         * or in the proxy request (for HTTP targets).
+         */
+        headers?: HeadersInit | undefined;
+        /**
+         * Whether hosts listed in `NO_PROXY` / `no_proxy` bypass this proxy.
+         * Set to `false` to send every request through the proxy.
+         *
+         * @default true
+         */
+        respectNoProxy?: boolean | undefined;
+      };
+
+  interface FetchSessionInit {
+    /**
+     * TLS options for the connections of this session. A request that passes
+     * its own `tls` uses that instead, as a whole.
+     *
+     * A `checkServerIdentity` given here runs once per connection, and the
+     * connection is then shared by the requests of this session.
+     */
+    tls?: BunFetchRequestInitTLS | undefined;
+    /**
+     * The proxy for the requests of this session.
+     *
+     * The constructor throws for a value that names no proxy, such as a number
+     * or an object without a `url`. Only `undefined`, `null` and `""` mean no
+     * option. On a request, `fetch()` ignores such a value.
+     */
+    proxy?: FetchProxyOption | undefined;
+    /**
+     * Connection reuse. `false` closes every connection after its response.
+     * The limits do not apply to HTTP/3 connections.
+     *
+     * @default true
+     */
+    keepAlive?:
+      | boolean
+      | {
+          /**
+           * Seconds an idle connection stays in the pool before it is closed.
+           * The socket timer is coarse: it moves in 4 second steps up to four
+           * minutes, and in whole minutes beyond that. Bun rounds the value up
+           * to the timer, so a connection is never closed before `idleTimeout`,
+           * and it can stay open for up to two steps longer. The longest is
+           * 238 minutes (14280), and a larger value means that.
+           *
+           * @default 300
+           */
+          idleTimeout?: number | undefined;
+          /**
+           * Most idle connections this session keeps per kind of connection
+           * (plain, TLS, each distinct `tls` configuration, Unix socket). When
+           * one more is released, the longest-idle one is closed.
+           *
+           * Without it the session has no limit of its own. The idle
+           * connections of all sessions and of plain `fetch()` share one bounded
+           * pool per kind, and when it is full Bun closes the longest-idle
+           * connection in it. A value above the size of that pool has no effect.
+           */
+          maxIdleSockets?: number | undefined;
+        }
+      | undefined;
+    /**
+     * Send the requests of this session over a Unix socket.
+     */
+    unix?: string | undefined;
+  }
+
+  /**
+   * Connection settings shared by the `fetch()` calls that name it, and the
+   * keep-alive connection pool they share. Connections are never shared between
+   * two sessions, or between a session and plain `fetch()`.
+   *
+   * @example
+   * ```ts
+   * const session = new Bun.FetchSession({
+   *   proxy: { url: "http://proxy.internal:8080", respectNoProxy: false },
+   *   tls: { ca: await Bun.file("corp-ca.pem").text() },
+   * });
+   *
+   * const response = await session.fetch("https://example.com");
+   * // the same request, as an option of the global fetch():
+   * await fetch("https://example.com", { session });
+   * ```
+   */
+  class FetchSession {
+    constructor(init?: FetchSessionInit);
+    /**
+     * `fetch()` with this session. The function is bound: hand it to anything
+     * that takes a `fetch`. A `session` in `init` does not replace this one.
+     *
+     * It has no `preconnect`, so where an option is typed `typeof fetch`
+     * (which in Bun includes `fetch.preconnect`), pass
+     * `session.fetch as typeof fetch`.
+     *
+     * @example
+     * ```ts
+     * const client = new SomeClient({ fetch: session.fetch });
+     * ```
+     */
+    readonly fetch: (input: string | URL | Request, init?: BunFetchRequestInit) => Promise<Response>;
+    /**
+     * Close the idle connections in this session's pool. Requests in flight
+     * finish, and the session stays usable.
+     */
+    close(): void;
+    [Symbol.dispose](): void;
+  }
+
+  /**
    * Resolve routes against a directory of files using Next.js-style (`pages`
    * directory) conventions.
    */
@@ -8892,6 +9287,9 @@ declare module "bun" {
      * - `ERR_IMAGE_TOO_MANY_PIXELS` — header dimensions or resize output
      *   exceed `maxPixels`, or a path-backed input is over the 256 MiB cap.
      * - `ERR_IMAGE_DECODE_FAILED` / `ERR_IMAGE_ENCODE_FAILED` — codec error.
+     *   A damaged JPEG that libjpeg-turbo decodes with only a warning (stray
+     *   bytes, a missing end marker, truncated scan data) does not reject.
+     *   Blocks with no data come back flat grey.
      * - `ERR_IMAGE_UNKNOWN_FORMAT` — input bytes didn't match any sniffer.
      * - `ERR_INVALID_STATE` — the input ArrayBuffer was transferred between
      *   construction and the terminal call.
@@ -9323,8 +9721,9 @@ declare module "bun" {
        * constructor returns; `await view.navigate(otherUrl)` or any other
        * operation waits for it to complete first.
        *
-       * Equivalent to calling `view.navigate(url)` immediately after
-       * construction.
+       * Starts the same navigation `view.navigate(url)` would, but its
+       * promise stays internal: a failure never surfaces as a rejection.
+       * Set {@link WebView.onNavigationFailed} to observe it.
        */
       url?: string;
       /** Capture page-side `console.*` calls. See {@link ConsoleCapture}. */
@@ -9645,6 +10044,11 @@ declare module "bun" {
     /**
      * Close the view and release its WebContent process. After close,
      * all methods throw. Idempotent.
+     *
+     * Pending operations reject with `Error("WebView closed")`. The
+     * rejections are marked as handled: a promise you hold still rejects
+     * catchably, but a pending operation nothing holds never triggers
+     * `unhandledRejection`.
      */
     close(): void;
 

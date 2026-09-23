@@ -1648,8 +1648,6 @@ impl<'bump> Parser<'bump> {
                     | Token::Ampersand
                     | Token::DoubleAmpersand
                     | Token::Redirect(_)
-                    | Token::Dollar
-                    | Token::Eq
                     | Token::Semicolon
                     | Token::Newline
                     | Token::CmdSubstQuoted
@@ -1968,10 +1966,8 @@ pub enum TokenTag {
     Ampersand,
     DoubleAmpersand,
     Redirect,
-    Dollar,
     Asterisk,
     DoubleAsterisk,
-    Eq,
     Semicolon,
     Newline,
     BraceBegin,
@@ -2008,14 +2004,10 @@ pub enum Token {
 
     Redirect(ast::RedirectFlags),
 
-    /// $
-    Dollar,
     /// `*`
     Asterisk,
     DoubleAsterisk,
 
-    /// =
-    Eq,
     /// ;
     Semicolon,
     /// \n (unescaped newline)
@@ -2083,10 +2075,8 @@ impl Token {
             Token::Ampersand => b"`&`",
             Token::DoubleAmpersand => b"`&&`",
             Token::Redirect(_) => b"`>`",
-            Token::Dollar => b"`$`",
             Token::Asterisk => b"`*`",
             Token::DoubleAsterisk => b"`**`",
-            Token::Eq => b"`=`",
             Token::Semicolon => b"`;`",
             Token::Newline => b"`\\n`",
             Token::BraceBegin => b"`{`",
@@ -2993,9 +2983,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 | TokenTag::Ampersand
                 | TokenTag::DoubleAmpersand
                 | TokenTag::Redirect
-                | TokenTag::Dollar
                 | TokenTag::DoubleAsterisk
-                | TokenTag::Eq
                 | TokenTag::Semicolon
                 | TokenTag::Newline
                 | TokenTag::CmdSubstBegin

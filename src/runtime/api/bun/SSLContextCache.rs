@@ -23,6 +23,7 @@ use core::ffi::{c_int, c_long, c_void};
 use core::ptr;
 
 use bun_boringssl_sys as boringssl;
+use bun_boringssl_sys::OwnedSslCtx;
 use bun_collections::array_hash_map::{ArrayHashContext, ArrayHashMap};
 use bun_threading::Mutex;
 use bun_uws as uws;
@@ -32,13 +33,13 @@ use bun_uws::create_bun_socket_error_t;
 use crate::api::server::server_config::SSLConfig;
 
 #[derive(Default)]
-pub struct SSLContextCache {
+pub(crate) struct SSLContextCache {
     map: ArrayHashMap<Digest, *mut Entry, DigestContext>,
     mutex: Mutex,
     ops_since_compact: u32,
 }
 
-pub type Digest = [u8; 32];
+pub(crate) type Digest = [u8; 32];
 
 /// SHA-256 output is uniformly distributed, so the first 4 bytes are a perfect
 /// bucket hash — no need to re-Wyhash 32 bytes (what AutoContext would do).
@@ -58,7 +59,7 @@ impl ArrayHashContext<Digest> for DigestContext {
     }
 }
 
-pub struct Entry {
+pub(crate) struct Entry {
     /// Nulled by `bun_ssl_ctx_cache_on_free` when BoringSSL drops the last
     /// ref. Tombstoned entries are reclaimed on the next `get_or_create` for
     /// the same digest, or by the periodic compact.
@@ -70,12 +71,12 @@ pub struct Entry {
 }
 
 impl SSLContextCache {
-    /// Returns +1 ref; caller must `SSL_CTX_free`. The map itself holds no ref.
+    /// The map itself holds no ref.
     pub(crate) fn get_or_create(
         &mut self,
         config: &SSLConfig,
         err: &mut create_bun_socket_error_t,
-    ) -> Option<*mut boringssl::SSL_CTX> {
+    ) -> Option<OwnedSslCtx> {
         let opts = config.as_usockets();
         self.get_or_create_digest(&opts, opts.digest(), err)
     }
@@ -86,7 +87,7 @@ impl SSLContextCache {
         &mut self,
         opts: &uws::SocketContext::BunSocketContextOptions,
         err: &mut create_bun_socket_error_t,
-    ) -> Option<*mut boringssl::SSL_CTX> {
+    ) -> Option<OwnedSslCtx> {
         self.get_or_create_digest(opts, opts.digest(), err)
     }
 
@@ -98,7 +99,7 @@ impl SSLContextCache {
         opts: &uws::SocketContext::BunSocketContextOptions,
         d: Digest,
         err: &mut create_bun_socket_error_t,
-    ) -> Option<*mut boringssl::SSL_CTX> {
+    ) -> Option<OwnedSslCtx> {
         {
             let _guard = self.mutex.lock_guard();
             if let Some(entry) = self.map.get(&d) {
@@ -107,9 +108,12 @@ impl SSLContextCache {
                 let entry = unsafe { &**entry };
                 if !entry.ctx.is_null() {
                     let ctx = entry.ctx;
-                    // SAFETY: ctx non-null and tombstone write is serialized by this mutex.
-                    unsafe { boringssl::SSL_CTX_up_ref(ctx) };
-                    return Some(ctx);
+                    // SAFETY: ctx non-null and tombstone write is serialized by this mutex;
+                    // the up_ref is the +1 `from_raw` takes.
+                    return unsafe {
+                        boringssl::SSL_CTX_up_ref(ctx);
+                        OwnedSslCtx::from_raw(ctx)
+                    };
                 }
             }
         }
@@ -135,12 +139,11 @@ impl SSLContextCache {
             let entry = unsafe { &mut **gop.value_ptr };
             if !entry.ctx.is_null() {
                 let existing = entry.ctx;
-                // SAFETY: existing non-null; ctx is the fresh CTX we just built and own.
-                unsafe {
+                // SAFETY: existing non-null; the up_ref is the +1 `from_raw` takes.
+                return unsafe {
                     boringssl::SSL_CTX_up_ref(existing);
-                    boringssl::SSL_CTX_free(ctx);
-                }
-                return Some(existing);
+                    OwnedSslCtx::from_raw(existing)
+                };
             }
             // Tombstone — adopt the rebuilt CTX into the existing slot.
             // SSL_CTX_set_ex_data only fails on OOM (Bun crashes anyway), but if
@@ -149,7 +152,7 @@ impl SSLContextCache {
             // SAFETY: ctx is a valid SSL_CTX*; entry is a valid heap pointer.
             if unsafe {
                 boringssl::SSL_CTX_set_ex_data(
-                    ctx,
+                    ctx.as_ptr(),
                     c::us_ssl_ctx_cache_ex_idx(),
                     std::ptr::from_mut::<Entry>(entry).cast::<c_void>(),
                 )
@@ -157,19 +160,19 @@ impl SSLContextCache {
             {
                 return Some(ctx);
             }
-            entry.ctx = ctx;
+            entry.ctx = ctx.as_ptr();
             return Some(ctx);
         }
 
         let entry = bun_core::heap::into_raw(Box::new(Entry {
-            ctx,
+            ctx: ctx.as_ptr(),
             owner: owner_ptr,
         }));
         *gop.value_ptr = entry;
         // SAFETY: ctx is a valid SSL_CTX*; entry is a fresh non-null heap pointer.
         if unsafe {
             boringssl::SSL_CTX_set_ex_data(
-                ctx,
+                ctx.as_ptr(),
                 c::us_ssl_ctx_cache_ex_idx(),
                 entry.cast::<c_void>(),
             )
@@ -269,11 +272,11 @@ impl Drop for SSLContextCache {
     }
 }
 
-pub mod c {
+pub(crate) mod c {
     use core::ffi::c_int;
     unsafe extern "C" {
         /// Registered alongside the other usockets ex_data slots in
         /// `us_ex_idx_init` (pthread_once-guarded).
-        pub safe fn us_ssl_ctx_cache_ex_idx() -> c_int;
+        pub(crate) safe fn us_ssl_ctx_cache_ex_idx() -> c_int;
     }
 }

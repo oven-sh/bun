@@ -339,7 +339,6 @@ impl FileResponseStream {
                     },
                     self.as_ptr(),
                 );
-                #[cfg(not(unix))]
                 // SAFETY: reader entry point; `pause()` does not call back into
                 // this object.
                 self.reader_mut().pause();
@@ -393,6 +392,8 @@ impl FileResponseStream {
         }
         self.resp.get().timeout(self.idle_timeout.get());
         self.hold_read_ref();
+        // A paused POSIX reader ignores `read()`.
+        self.reader_mut().unpause();
         // SAFETY: `read()` dispatches `on_read_chunk`/`on_reader_done` back
         // into this object through the parent pointer, so no cell borrow
         // spans it.
@@ -412,6 +413,22 @@ impl FileResponseStream {
         if self.state.get().contains(State::RESPONSE_DONE) {
             self.finish();
             return false;
+        }
+
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            // sendfile() bypasses the userspace socket buffer, so an unsent
+            // header tail parked there must flush first or file bytes overtake
+            // it on the wire. The writable path re-enters here once it has.
+            let buffered = self.resp.get().get_buffered_amount();
+            if buffered > 0 {
+                bun_output::scoped_log!(
+                    FileResponseStream,
+                    "deferring sendfile behind {} buffered bytes",
+                    buffered
+                );
+                return self.arm_sendfile_writable();
+            }
         }
 
         #[cfg(any(target_os = "linux", target_os = "android"))]

@@ -34,9 +34,15 @@ struct Error {
     JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject) const;
 };
 
+// CREDENTIALW::Persist for a Windows Credential Manager entry. The macOS and Linux backends ignore it.
+enum class Persist : uint8_t {
+    Local, // CRED_PERSIST_LOCAL_MACHINE: this user on this computer
+    Enterprise, // CRED_PERSIST_ENTERPRISE: this user, also on other computers when the account roams
+};
+
 // Sync platform-specific implementations (used by threadpool)
 // These use CString for thread safety - only called from threadpool
-Error setPassword(const WTF::CString& service, const WTF::CString& name, WTF::CString&& password, bool allowUnrestrictedAccess = false);
+Error setPassword(const WTF::CString& service, const WTF::CString& name, WTF::CString&& password, bool allowUnrestrictedAccess, Persist persist);
 
 // Use a WTF::Vector here so we can zero out the memory.
 std::optional<WTF::Vector<uint8_t>> getPassword(const WTF::CString& service, const WTF::CString& name, Error& error);

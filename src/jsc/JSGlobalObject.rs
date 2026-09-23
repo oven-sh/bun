@@ -132,6 +132,17 @@ impl JSGlobalObject {
         .throw()
     }
 
+    /// Node's error for a failed allocation, as opposed to JSC's
+    /// [`Self::throw_out_of_memory`].
+    #[cold]
+    pub fn throw_memory_allocation_failed(&self) -> JsError {
+        self.err(
+            crate::ErrorCode::MEMORY_ALLOCATION_FAILED,
+            format_args!("Failed to allocate memory"),
+        )
+        .throw()
+    }
+
     #[cold]
     #[inline(never)]
     pub fn throw_out_of_memory_value(&self) -> JSValue {
@@ -685,7 +696,7 @@ impl JSGlobalObject {
 
     pub(crate) fn reload(&self) -> JsResult<()> {
         self.vm().drain_microtasks();
-        self.vm().collect_async();
+        self.vm().collect_async(false);
         crate::cpp::JSC__JSGlobalObject__reload(self)
     }
 

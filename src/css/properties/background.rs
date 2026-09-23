@@ -191,7 +191,7 @@ impl Background {
             has_output = true;
         }
 
-        if (output_padding_box && !self.clip.eql_origin(BackgroundOrigin::BorderBox))
+        if (output_padding_box && !self.clip.eql_origin(self.origin))
             || !self.clip.eql_origin(BackgroundOrigin::BorderBox)
         {
             if has_output {

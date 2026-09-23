@@ -238,6 +238,12 @@ JSC::WeakHandleOwner& webViewWeakOwner();
 void settleSlot(JSC::JSGlobalObject*, JSWebView*,
     JSC::WriteBarrier<JSC::JSPromise>& slot, bool ok, JSC::JSValue);
 
+// settleSlot's reject path, marking the promise handled first: a caller that
+// awaits it still gets the error, but an unheld promise never reports an
+// unhandled rejection. For user-initiated close() teardown (#40991).
+void rejectSlotAsHandled(JSC::JSGlobalObject*, JSWebView*,
+    JSC::WriteBarrier<JSC::JSPromise>& slot, JSC::JSValue);
+
 // Implemented in JSWebViewPrototype.cpp / JSWebViewConstructor.cpp.
 // setupJSWebViewClassStructure calls these.
 JSC::JSObject* createJSWebViewPrototype(JSC::VM&, JSC::JSGlobalObject*);

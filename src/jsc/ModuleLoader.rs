@@ -38,6 +38,16 @@ pub fn set_is_allowed_to_use_internal_testing_apis(v: bool) {
     IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS.store(v, core::sync::atomic::Ordering::Relaxed);
 }
 
+/// Tests open the gate from the environment: with `BUN_GARBAGE_COLLECTOR_LEVEL`, which only they set.
+pub fn allow_internal_testing_apis_from_env<'a>(get: impl Fn(&[u8]) -> Option<&'a [u8]>) {
+    if get(b"BUN_GARBAGE_COLLECTOR_LEVEL").is_some()
+        && get(b"BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING").is_some()
+    {
+        set_is_allowed_to_use_internal_testing_apis(true);
+        bun_resolve_builtins::set_expose_internals_enabled(true);
+    }
+}
+
 /// Whether `bun:internal-for-testing` resolves: `--expose-internals` in release builds, always in debug builds.
 #[inline]
 pub fn is_allowed_to_use_internal_testing_apis() -> bool {

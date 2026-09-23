@@ -64,10 +64,7 @@ unsafe extern "C" {
 /// module, `<path the bytecode is keyed on> <digest> <code blocks>` (`- -` where the bytecode does not decode for the
 /// module). Two builds of the same sources have equal digests however their bytecode is laid out.
 fn write_digests(vm: &VirtualMachine, graph: &'static dyn bun_resolver::StandaloneModuleGraph) {
-    let Some(path) = bun_core::env_var::BUN_BYTECODE_DIGEST_OUT
-        .get()
-        .filter(|path| !path.is_empty())
-    else {
+    let Some(path) = bun_core::env_var::BUN_BYTECODE_DIGEST_OUT.get_not_empty() else {
         return;
     };
     let mut lines: Vec<String> = Vec::new();
@@ -126,9 +123,7 @@ fn write_digests(vm: &VirtualMachine, graph: &'static dyn bun_resolver::Standalo
 }
 
 fn output_path() -> Option<&'static [u8]> {
-    bun_core::env_var::BUN_BYTECODE_ORDER_OUT
-        .get()
-        .filter(|path| !path.is_empty())
+    bun_core::env_var::BUN_BYTECODE_ORDER_OUT.get_not_empty()
 }
 
 /// For every VM, once its `DecoderStringTable` (if the executable has one) is installed.
@@ -227,9 +222,9 @@ fn write_order_file(graph: &'static dyn bun_resolver::StandaloneModuleGraph) {
         }
     });
     let names = bytecode_order::names_of_all(&named);
-    if let Some(path) = bun_core::env_var::BUN_BYTECODE_ORDER_NAMES_OUT
-        .get()
-        .filter(|path| !path.is_empty())
+    if let Some(path) = crate::module_loader::is_allowed_to_use_internal_testing_apis()
+        .then(|| bun_core::env_var::BUN_BYTECODE_ORDER_NAMES_OUT.get_not_empty())
+        .flatten()
     {
         let mut out = Vec::new();
         for (name, names) in module_names.iter().zip(&names) {

@@ -1414,9 +1414,9 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         let mut linked = LinkedBytecode {
             encoder,
             output_files: Vec::with_capacity(linked_bytecode_chunks.len()),
-            names_out: bun_core::env_var::BUN_BYTECODE_ORDER_NAMES_OUT
-                .get()
-                .filter(|path| !path.is_empty())
+            names_out: crate::bundle_v2::dispatch::is_allowed_to_use_internal_testing_apis()
+                .then(|| bun_core::env_var::BUN_BYTECODE_ORDER_NAMES_OUT.get_not_empty())
+                .flatten()
                 .map(|path| (path, Vec::new())),
         };
         for ((chunk_index, bytecode_index, source_provider_url), names) in

@@ -528,6 +528,11 @@ pub(crate) fn __bun_jsc_host_builtins() -> &'static [u8] {
     }
 }
 
+#[unsafe(no_mangle)]
+pub(crate) fn __bun_jsc_is_allowed_to_use_internal_testing_apis() -> bool {
+    crate::module_loader::is_allowed_to_use_internal_testing_apis()
+}
+
 fn take_bytecode(
     ok: bool,
     bytes: Option<NonNull<u8>>,

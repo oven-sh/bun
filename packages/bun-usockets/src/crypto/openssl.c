@@ -1211,24 +1211,34 @@ static int us_inline_reject_verify_callback(int preverify_ok, X509_STORE_CTX *ct
   return 1;
 }
 
-/* Whether this socket is a rejecting client whose chain verification failed:
- * from that point on its handshake output is suppressed and the handshake is
- * reported as failed. */
-static int us_ssl_inline_reject_tripped(struct us_socket_t *s) {
-  if (us_ssl_inline_reject_enabled_ex_idx < 0 || !s->ssl) return 0;
-  /* Initial handshake only: renegotiation keeps the deferred JS-side policy,
-   * and established sockets exit here before any ex_data lookups. */
-  if (s->ssl_handshake_state == HANDSHAKE_COMPLETED) return 0;
-  SSL *ssl = s_ssl(s);
-  if (!ssl || !SSL_get_ex_data(ssl, us_ssl_inline_reject_enabled_ex_idx)) return 0;
+/* Whether this SSL belongs to a rejecting client whose chain verification
+ * failed. Also the check for a client whose TLS runs in SSLWrapper
+ * (src/uws/lib.rs) and so has no us_socket_t; the caller limits it to the
+ * initial handshake. */
+int us_internal_ssl_inline_reject_tripped(SSL *ssl) {
+  if (us_ssl_inline_reject_enabled_ex_idx < 0 || !ssl) return 0;
+  if (!SSL_get_ex_data(ssl, us_ssl_inline_reject_enabled_ex_idx)) return 0;
   if (!SSL_get_ex_data(ssl, us_ssl_inline_reject_err_ex_idx)) return 0;
   /* A per-depth failure may be recovered by an alternate chain: only the
    * final verdict rejects. */
   return SSL_get_verify_result(ssl) != X509_V_OK;
 }
 
+/* Whether this socket is a rejecting client whose chain verification failed:
+ * from that point on its handshake output is suppressed and the handshake is
+ * reported as failed. */
+static int us_ssl_inline_reject_tripped(struct us_socket_t *s) {
+  if (!s->ssl) return 0;
+  /* Initial handshake only: renegotiation keeps the deferred JS-side policy,
+   * and established sockets exit here before any ex_data lookups. */
+  if (s->ssl_handshake_state == HANDSHAKE_COMPLETED) return 0;
+  return us_internal_ssl_inline_reject_tripped(s_ssl(s));
+}
+
 /* Called from the Rust TLS socket layer for client sockets whose
- * rejectUnauthorized policy must refuse a bad chain during the handshake. */
+ * rejectUnauthorized policy must refuse a bad chain during the handshake.
+ * SSLWrapper installs it on its own SSL the same way; its handshake step
+ * acts on us_internal_ssl_inline_reject_tripped. */
 void us_internal_ssl_set_inline_reject(SSL *ssl) {
   us_ex_idx_ensure();
   SSL_set_ex_data(ssl, us_ssl_inline_reject_enabled_ex_idx, (void *)1);
@@ -1239,7 +1249,7 @@ void us_internal_ssl_set_inline_reject(SSL *ssl) {
  * postgres, mysql, valkey, WebSocket): same policy, installed before the
  * handshake is driven so a rejected chain never sees the client's Certificate
  * flight. A client whose TLS runs in SSLWrapper (proxy tunnels, upgraded
- * duplexes, named pipes) has no handshake drive here and is not covered. */
+ * duplexes, named pipes) uses SSLWrapper::set_inline_reject instead. */
 void us_socket_set_inline_reject(struct us_socket_t *s) {
   if (!s->ssl || s->ssl_is_server || s->ssl_handshake_state == HANDSHAKE_COMPLETED) return;
   us_internal_ssl_set_inline_reject(s_ssl(s));
@@ -1817,6 +1827,7 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
   s->ssl = ssl;
   s->ssl_handshake_state = HANDSHAKE_PENDING;
   s->ssl_write_wants_read = 0;
+  s->ssl_write_parked = 0;
   s->ssl_read_wants_write = 0;
   s->ssl_fatal_error = 0;
   s->ssl_raw_tap = 0;
@@ -2468,6 +2479,7 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
   if (ssl_is_uws_http_tls(s) && us_internal_ssl_is_shut_down(s)) return s;
 
   if (s->ssl_handshake_state == HANDSHAKE_COMPLETED) {
+    s->ssl_write_parked = 0;
     s = us_dispatch_writable(s);
   }
   return s;
@@ -2656,9 +2668,17 @@ restart:
         if (s->ssl_handshake_state == HANDSHAKE_PENDING && SSL_is_init_finished(s_ssl(s))) {
           ssl_trigger_handshake(s, 1);
           if (ssl_gone(s)) return NULL;
+          /* A write parked before the handshake (node:https queues its request
+           * that way) is retried with the flight still held, so both leave in
+           * one segment, like a write from the callback. */
+          if (s->ssl_write_parked) {
+            s = ssl_retry_parked_write(s);
+            if (!s || ssl_gone(s)) return NULL;
+          }
           loop_ssl_data->ssl_socket = s;
-          /* The callback ran with the flight held: a write it issued already
-           * flushed flight + data together; send whatever is still held. */
+          /* The callback and the retry ran with the flight held: a write they
+           * issued already flushed flight + data together; send whatever is
+           * still held. */
           if (loop_ssl_data->ssl_write_batch_len &&
               loop_ssl_data->ssl_write_batch_owner == s) {
             ssl_flush_write_batch(loop_ssl_data, s);
@@ -2700,8 +2720,9 @@ restart:
       loop_ssl_data->ssl_read_input_length = saved_length;
       loop_ssl_data->ssl_read_input_offset = saved_offset;
       loop_ssl_data->ssl_socket = s;
-      /* Same as the no-data completion above: send what the callback's own
-       * write did not already flush of the held flight. */
+      /* Send what the callback's own write did not already flush of the held
+       * flight. No parked-write retry here: its writable dispatch would run
+       * before the data this read decrypted reaches the caller. */
       if (loop_ssl_data->ssl_write_batch_len &&
           loop_ssl_data->ssl_write_batch_owner == s) {
         ssl_flush_write_batch(loop_ssl_data, s);
@@ -2799,6 +2820,7 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
    * ssl_update_handshake drains it. Mirrors the SEMI_SOCKET guard in
    * us_internal_ssl_close above. */
   if ((us_internal_poll_type(&s->p) & POLL_TYPE_KIND_MASK) == POLL_TYPE_SEMI_SOCKET) {
+    s->ssl_write_parked = 1;
     return 0;
   }
 
@@ -2806,6 +2828,7 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
    * callback writing): wait for the handshake, same as WANT_READ below. */
   if (s->ssl_in_use) {
     s->ssl_write_wants_read = 1;
+    s->ssl_write_parked = 1;
     return 0;
   }
 
@@ -2871,6 +2894,7 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
     int err = SSL_get_error(s_ssl(s), last_ssl_written);
     if (err == SSL_ERROR_WANT_READ) {
       s->ssl_write_wants_read = 1;
+      s->ssl_write_parked = 1;
     } else if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
       /* SSL_write drives the handshake when it has not finished, so this is
        * where a handshake-configuration failure (impossible version window,

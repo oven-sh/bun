@@ -555,6 +555,7 @@ void NodeVMSourceTextModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(vmModule->m_moduleRequestsArray);
     visitor.append(vmModule->m_cachedBytecodeBuffer);
     visitor.append(vmModule->m_initializeImportMeta);
+    NodeVMScriptFetcher::visitSource(visitor, vmModule->m_sourceCode);
 }
 
 DEFINE_VISIT_CHILDREN(NodeVMSourceTextModule);

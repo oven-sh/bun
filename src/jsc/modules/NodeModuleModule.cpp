@@ -1,6 +1,7 @@
 #include "root.h"
 #include "headers-handwritten.h"
 #include "NodeModuleModule.h"
+#include "ModuleGraph.h"
 #include "WebCoreJSBuiltins.h"
 
 #include <JavaScriptCore/JSCInlines.h>
@@ -20,6 +21,7 @@
 #include "ZigGlobalObject.h"
 #include "headers.h"
 #include "ErrorCode.h"
+#include "BunString.h"
 
 #include "GeneratedNodeModuleModule.h"
 #include "ZigGeneratedClasses.h"
@@ -174,6 +176,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor,
 
     auto* out = Bun::JSCommonJSModule::create(vm, structure, idString, jsNull(),
         dirname, SourceCode());
+    // A module made in a Bun.ModuleGraph's context is that graph's: what it requires and compiles
+    // loads into the graph, over the graph's `globals`.
+    out->setModuleGraph(vm, Bun::currentModuleGraph(defaultGlobalObject(globalObject)));
 
     if (!parentValue.isUndefined()) {
         out->putDirect(vm, JSC::Identifier::fromString(vm, "parent"_s), parentValue,
@@ -268,8 +273,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
         val = Bun__Node__Path_joinWTF(&lhs, "noop.js", sizeof("noop.js") - 1).transferToWTFString();
     }
 
+    // Called in a Bun.ModuleGraph's context: that graph's require().
     RELEASE_AND_RETURN(
-        scope, JSValue::encode(Bun::JSCommonJSModule::createBoundRequireFunction(vm, globalObject, val)));
+        scope, JSValue::encode(Bun::JSCommonJSModule::createBoundRequireFunction(vm, globalObject, val, Bun::currentModuleGraph(defaultGlobalObject(globalObject)))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
@@ -486,9 +492,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveLookupPaths,
     String request = callFrame->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto utf8 = request.utf8();
-    if (ModuleLoader__isBuiltin(utf8.data(), utf8.length())) {
-        return JSC::JSValue::encode(JSC::jsNull());
+    // A builtin name is short, so a request whose UTF-8 form does not fit in a buffer is not one.
+    if (auto utf8 = UTF8View::tryCreate(request)) {
+        auto span = utf8->span();
+        if (ModuleLoader__isBuiltin(span.data(), span.size())) {
+            return JSC::JSValue::encode(JSC::jsNull());
+        }
     }
 
     PathResolveModule parent = getParent(vm, globalObject, callFrame->argument(1));
@@ -1169,11 +1178,9 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
             JSC::VM& vm = init.vm;
             JSC::JSGlobalObject* globalObject = init.owner;
 
-            auto* function = JSFunction::create(vm, globalObject, static_cast<JSC::FunctionExecutable*>(commonJSCreateRequireCacheCodeGenerator(vm)), globalObject);
-
-            NakedPtr<JSC::Exception> returnedException = nullptr;
-            auto result = JSC::profiledCall(globalObject, ProfilingReason::API, function, JSC::getCallData(function), globalObject, ArgList(), returnedException);
-            ASSERT(!returnedException);
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+            JSValue result = Bun::createRequireCacheObject(globalObject, uncheckedDowncast<Zig::GlobalObject>(globalObject)->requireMap());
+            ASSERT_UNUSED(scope, !scope.exception());
             init.set(result.toObject(globalObject));
         });
 

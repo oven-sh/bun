@@ -202,9 +202,6 @@ int us_udp_socket_bound_port(struct us_udp_socket_t *s);
 /* Peeks peer addr (sockaddr) of received packet */
 char *us_udp_packet_buffer_peer(struct us_udp_packet_buffer_t *buf, int index);
 
-/* Peeks ECN of received packet */
-// int us_udp_packet_buffer_ecn(struct us_udp_packet_buffer_t *buf, int index);
-
 /* Receives a set of packets into specified packet buffer */
 int us_udp_socket_receive(struct us_udp_socket_t *s, struct us_udp_packet_buffer_t *buf);
 
@@ -380,6 +377,11 @@ struct us_socket_t *us_socket_tls_feed(us_socket_r s, const char *data, int leng
 /* Send ClientHello after adopt_tls. Separate so the caller can repoint the
  * ext slot before any dispatch can fire. */
 void us_socket_start_tls_handshake(us_socket_r s) nonnull_fn_decl;
+/* Client TLS socket whose rejectUnauthorized policy is on: refuse a bad chain
+ * during the handshake, so the client's own Certificate flight never reaches a
+ * server that fails verification. Must run before the handshake is driven
+ * (on_open, or between adopt_tls and start_tls_handshake). No-op otherwise. */
+void us_socket_set_inline_reject(us_socket_r s) nonnull_fn_decl;
 
 /* ── Listen ───────────────────────────────────────────────────────────────
  * The listener owns: an embedded group for accepted sockets, the SSL_CTX
@@ -567,6 +569,13 @@ int us_ssl_ctx_add_ca_cert(struct ssl_ctx_st *ctx, const char *content);
 void us_ssl_enable_pending_events(struct ssl_st *ssl);
 int us_ssl_pop_pending_session(struct ssl_st *ssl, unsigned char *out, int out_cap);
 int us_ssl_pop_pending_keylog(struct ssl_st *ssl, unsigned char *out, int out_cap);
+/* The same owners as clients whose rejectUnauthorized policy is on.
+ * set_inline_reject installs the verify recorder before the handshake starts.
+ * tripped() is read after each SSL_do_handshake of the initial handshake: 1
+ * means the server's chain failed, so the owner drops its queued output (the
+ * flight that carries the client certificate) and fails the handshake. */
+void us_internal_ssl_set_inline_reject(struct ssl_st *ssl);
+int us_internal_ssl_inline_reject_tripped(struct ssl_st *ssl);
 /* The resumable session most recently delivered via the new-session callback,
  * or NULL if none. Borrowed; valid until the next NewSessionTicket or SSL_free. */
 struct ssl_session_st *us_ssl_get_new_session(struct ssl_st *ssl);

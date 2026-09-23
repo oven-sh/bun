@@ -315,6 +315,7 @@ pub struct WindowsLoop {
     pub is_default: c_int,
     pub pre: *mut uv::uv_prepare_t,
     pub check: *mut uv::uv_check_t,
+    pub idle_sweep_timer: *mut crate::Timer,
 }
 
 #[cfg(windows)]

@@ -182,10 +182,13 @@ function findPinnedCombinedDomains(): string | undefined {
   // Mirrors prebuiltDestDir() in scripts/build/deps/webkit.ts:
   // <cache>/webkit-<version>[-<os>][-<arch>][-debug|-lto][-asan]/
   const dirVersion = version.startsWith("autobuild-") ? version.slice("autobuild-".length) : version.slice(0, 16);
+  // The build cache, as sharedCacheDir() in scripts/build/config.ts resolves it.
   const bunInstall = process.env.BUN_INSTALL
     ? path.resolve(repoRoot, process.env.BUN_INSTALL)
     : path.join(homedir(), ".bun");
-  const cacheDir = path.join(bunInstall, "build-cache");
+  const cacheDir = process.env.BUN_BUILD_CACHE_DIR
+    ? path.resolve(repoRoot, process.env.BUN_BUILD_CACHE_DIR)
+    : path.join(bunInstall, "build-cache");
   if (!existsSync(cacheDir)) {
     return undefined;
   }

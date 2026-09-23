@@ -710,6 +710,7 @@ pub(crate) fn lookup(
     this: &Resolver,
     query: &GetAddrInfo,
     global_this: &JSGlobalObject,
+    context: bun_jsc::ContextId,
 ) -> JSValue {
     bun_core::Environment::only_mac();
 
@@ -717,14 +718,14 @@ pub(crate) fn lookup(
     if getaddrinfo_only_flags(query.options.flags)
         || bun_core::ip_address::to_ip_address(query.name.as_ref()).is_some()
     {
-        return lib_c::lookup(this, query, global_this);
+        return lib_c::lookup(this, query, global_this, context);
     }
 
     let key = get_addr_info_request::PendingCacheKey::init(query);
     let cache = this.get_or_put_into_pending_cache(&key, PendingCacheField::PendingHostCacheNative);
 
     if let CacheHit::Inflight(inflight) = cache {
-        let dns_lookup = DNSLookup::init(this.as_ctx_ptr(), global_this);
+        let dns_lookup = DNSLookup::init(this.as_ctx_ptr(), global_this, context);
         // SAFETY: inflight points into resolver's HiveArray buffer
         unsafe { (*inflight).append(dns_lookup) };
         // SAFETY: `dns_lookup` was just heap-allocated by `DNSLookup::init`.
@@ -738,7 +739,7 @@ pub(crate) fn lookup(
                 unsafe { c.put(new) };
             });
         }
-        return lib_c::lookup(this, query, global_this);
+        return lib_c::lookup(this, query, global_this, context);
     };
 
     let protocol = protocol_for_family(query.options.family);
@@ -747,6 +748,7 @@ pub(crate) fn lookup(
         get_addr_info_request::Backend::DnsSd(get_addr_info_request::BackendDnsSd::new(protocol)),
         Some(this.as_ctx_ptr()),
         global_this,
+        context,
         PendingCacheField::PendingHostCacheNative,
     );
     // SAFETY: request was just heap-allocated in init() and is exclusively owned here.
@@ -772,7 +774,7 @@ pub(crate) fn lookup(
             DNSLookup::destroy(&raw mut (*request).head);
             drop(bun_core::heap::take(request));
         }
-        return lib_c::lookup(this, query, global_this);
+        return lib_c::lookup(this, query, global_this, context);
     };
 
     this.request_sent(this.vm());

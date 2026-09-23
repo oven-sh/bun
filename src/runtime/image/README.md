@@ -22,7 +22,11 @@ a `BackendUnavailable` error for anything it can't do (palette PNG, lossless
 WebP, dlopen miss) and the static path takes over.
 
 The codecs themselves are vendored via `scripts/build/deps/{libjpeg-turbo,libspng,libwebp}.ts`.
-`patches/libjpeg-turbo/` carries the 8-bit-only patch + the j12/j16 stub overlay.
+`patches/libjpeg-turbo/` carries the 8-bit-only patch + the j12/j16 stub overlay, and
+`fatal-clears-warning.patch`: after `tj3DecompressHeader` and `tj3Decompress8`, TurboJPEG's warning
+flag stays set only when the call ran to completion. `codec_jpeg.rs` accepts a decode on that signal
+(a JPEG with junk before EOI, no EOI, or truncated scan data) and reads it through
+`tj3BunCompletedWithWarning`, which the patch adds, so a build without the patch fails to link.
 
 ## Adding a chainable op
 

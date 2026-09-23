@@ -25,7 +25,7 @@ import {
 } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isBuildKite, isWindows, tempDir } from "harness";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 describe("bun:jsc", () => {
@@ -871,5 +871,46 @@ describe.concurrent("sampling profiler report at exit", () => {
     const reports = reportsIn(profileDir);
     expect(reports).toHaveLength(1);
     expect(statSync(join(profileDir, reports[0])).size).toBeGreaterThan(0);
+  });
+
+  it("BUN_JSC_samplingProfilerPath sends a worker created after process.chdir() to the same directory", async () => {
+    using dir = tempDir("sampling-profiler-env-worker", {
+      "main.mjs": `
+        import { mkdirSync } from "node:fs";
+        mkdirSync("elsewhere");
+        process.chdir("elsewhere");
+        const worker = new Worker(new URL("./worker.mjs", import.meta.url));
+        const message = await new Promise((resolve, reject) => {
+          worker.onmessage = e => resolve(e.data);
+          worker.onerror = e => reject(new Error(e.message));
+          worker.addEventListener("close", () => reject(new Error("worker closed before posting a message")));
+        });
+        console.log(message);
+        const closed = new Promise(resolve => worker.addEventListener("close", resolve));
+        await worker.terminate();
+        await closed;
+        process.exit(0);
+      `,
+      "worker.mjs": `
+        let x = 0;
+        for (let i = 0; i < 2e6; i++) x += Math.sqrt(i);
+        postMessage("done " + (x > 0));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      env: { ...bunEnv, BUN_JSC_useSamplingProfiler: "1", BUN_JSC_samplingProfilerPath: "profiles" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("done true\n");
+    expect(exitCode).toBe(0);
+
+    // One report for the main thread and one for the worker, both under the startup working directory.
+    expect(reportsIn(join(String(dir), "profiles"))).toHaveLength(2);
+    expect(existsSync(join(String(dir), "elsewhere", "profiles"))).toBe(false);
   });
 });

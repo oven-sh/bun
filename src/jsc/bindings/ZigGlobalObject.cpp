@@ -284,7 +284,7 @@ extern "C" long Bun__crashHandlerFromJSCFrame(void*, void*, void*, void*);
 extern "C" void Bun__ensureICUDefaultLocale();
 
 // virtual_machine_exports.rs
-extern "C" void Bun__VirtualMachine__setSamplingProfilerDirectory(void* bunVM, const BunString* directory);
+extern "C" void Bun__VirtualMachine__setSamplingProfilerDirectoryFromEnv(void* bunVM, const BunString* directory);
 
 // BUN_JSC_samplingProfilerPath, kept out of JSC::Options so VM::VM never registers JSC's atexit reporter (it crashes when fopen fails, and quick_exit skips it); VirtualMachine::write_profiles writes the report.
 static const char* s_samplingProfilerDirectory = nullptr;
@@ -581,7 +581,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
         auto directory = WTF::String::fromUTF8(s_samplingProfilerDirectory);
         if (!directory.isEmpty()) {
             auto directoryString = Bun::toString(directory);
-            Bun__VirtualMachine__setSamplingProfilerDirectory(Bun__getVM(), &directoryString);
+            Bun__VirtualMachine__setSamplingProfilerDirectoryFromEnv(Bun__getVM(), &directoryString);
         }
     }
 

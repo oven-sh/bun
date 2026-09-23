@@ -3996,6 +3996,40 @@ describe("Bun.ModuleGraph — debugger / inspector", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  test("a CPU profile shows a call into a graph as one call", async () => {
+    const dir = fixture({
+      "busy.mjs": `
+        export function busy(n) { let s = 0; for (let i = 0; i < n; i++) s += Math.sqrt(i); return s; }
+        export function callsOther(other, n) { let s = 0; for (let i = 0; i < 50; i++) s += other(n); return s; }
+      `,
+      "run.mjs": `
+        const a = await new Bun.ModuleGraph().import(import.meta.dir + "/busy.mjs"), b = await new Bun.ModuleGraph().import(import.meta.dir + "/busy.mjs");
+        function hostLoop() { let s = 0; for (let i = 0; i < 40; i++) s += a.busy(20000) + a.callsOther(b.busy, 2000); return s; }
+        const until = performance.now() + 400;
+        while (performance.now() < until) hostLoop();
+      `,
+    });
+    // The cold tiers keep the entering frame and the engine's builtin on the stack; the optimizing ones inline them.
+    for (const env of [{ BUN_JSC_useDFGJIT: "0" }, {}]) {
+      const profiles = join(dir, "profiles-" + Object.keys(env).length);
+      expect(await runBun(["--cpu-prof", "--cpu-prof-dir=" + profiles, join(dir, "run.mjs")], { env })).toMatchObject({
+        exitCode: 0,
+      });
+      const [name] = [...new Bun.Glob("*.cpuprofile").scanSync(profiles)];
+      const { nodes } = await Bun.file(join(profiles, name)).json();
+      const byId = new Map<number, any>(nodes.map((node: any) => [node.id, node]));
+      const names = nodes.map((node: any) => node.callFrame.functionName);
+      const childrenOf = (node: any) => (node.children ?? []).map((id: number) => byId.get(id).callFrame.functionName);
+      expect({
+        sampledTheGraphsFunction: names.includes("busy"),
+        enginesBuiltins: names.filter((n: string) => /InScriptExecutionOwner$/.test(n)),
+        busyCalledByItself: nodes.filter(
+          (node: any) => node.callFrame.functionName === "busy" && childrenOf(node).includes("busy"),
+        ).length,
+      }).toEqual({ sampledTheGraphsFunction: true, enginesBuiltins: [], busyCalledByItself: 0 });
+    }
+  });
+
   test("pausing in a graph's function that the host called shows the call once, with its scope", async () => {
     const dir = fixture({
       "paused.mjs": `const secret = process.env.T;\nexport function target(x) {\n  const local = x + 1;\n  debugger;\n  return local;\n}\nexport const inner = x => target(x);`,

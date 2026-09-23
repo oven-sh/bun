@@ -6,6 +6,7 @@ import { heapStats } from "bun:jsc";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { renameSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createRequire } from "node:module";
 import { join } from "path";
 
@@ -1083,6 +1084,138 @@ describe("Bun.ModuleGraph — whose context a call runs in, in every tier", () =
       stderr: "",
       exitCode: 0,
     });
+  });
+});
+
+describe("Bun.ModuleGraph — codeGeneration: { strings: false }", () => {
+  // Every way script is made from a string, as a function of the graph's that reports what it got.
+  const routes = `
+    import vm from "node:vm";
+    import { createRequire } from "node:module";
+    const require = createRequire(import.meta.url);
+    const attempt = fn => { try { return fn(); } catch (e) { return e.constructor.name + ": " + e.message; } };
+    const attemptAsync = async fn => { try { return await fn(); } catch (e) { return e.constructor.name + ": " + e.message; } };
+    export const sync = {
+      directEval: () => attempt(() => eval("1 + 1")),
+      indirectEval: () => attempt(() => (0, eval)("1 + 1")),
+      Function: () => attempt(() => new Function("return 1 + 1")()),
+      FunctionCall: () => attempt(() => Function("return 1 + 1")()),
+      reflectConstruct: () => attempt(() => Reflect.construct(Function, ["return 1 + 1"])()),
+      AsyncFunction: () => attempt(() => typeof new (async function () {}).constructor("return 1")),
+      GeneratorFunction: () => attempt(() => typeof new (function* () {}).constructor("yield 1")),
+      mapEval: () => attempt(() => ["1 + 1"].map(eval)[0]),
+      boundEval: () => attempt(() => eval.bind(null, "1 + 1")()),
+      shadowRealm: () => attempt(() => new ShadowRealm().evaluate("1 + 1")),
+      vmScript: () => attempt(() => typeof new vm.Script("1 + 1")),
+      vmRunInThisContext: () => attempt(() => vm.runInThisContext("1 + 1")),
+      vmRunInNewContext: () => attempt(() => vm.runInNewContext("1 + 1")),
+      vmCompileFunction: () => attempt(() => vm.compileFunction("return 1 + 1")()),
+      moduleCompile: () => attempt(() => { const m = new (require("node:module"))("/made.cjs"); m._compile("module.exports = 1 + 1", "/made.cjs"); return m.exports; }),
+      // Not script: these stay allowed.
+      evalOfNonString: () => attempt(() => eval(2)),
+      jsonParse: () => attempt(() => JSON.parse("2")),
+    };
+    export const later = {
+      timerEval: () => attemptAsync(() => new Promise((resolve, reject) => setTimeout(() => { try { resolve(eval("1 + 1")); } catch (e) { reject(e); } }, 0))),
+      thenEval: () => attemptAsync(() => Promise.resolve("1 + 1").then(eval)),
+      importData: () => attemptAsync(async () => (await import("data:text/javascript,export default 1 + 1")).default),
+      importBlob: () => attemptAsync(async () => { const url = URL.createObjectURL(new Blob(["export default 1 + 1"], { type: "text/javascript" })); try { return (await import(url)).default; } finally { URL.revokeObjectURL(url); } }),
+    };
+    export const nested = options => new Bun.ModuleGraph(options);
+  `;
+  const refused = "EvalError: Code generation from strings disallowed for this context";
+
+  async function run(app: any) {
+    const out: Record<string, unknown> = {};
+    for (const name of Object.keys(app.sync)) out[name] = app.sync[name]();
+    for (const name of Object.keys(app.later)) out[name] = await app.later[name]();
+    return out;
+  }
+
+  test("a graph made with it makes no script from a string; one made without it, and the host, do", async () => {
+    const dir = fixture({ "routes.mjs": routes });
+    const strict = new ModuleGraphClass({ codeGeneration: { strings: false } });
+    const lax = new ModuleGraphClass();
+    const [strictApp, laxApp, hostApp] = [
+      await strict.import(join(dir, "routes.mjs")),
+      await lax.import(join(dir, "routes.mjs")),
+      await import(join(dir, "routes.mjs")),
+    ];
+    const allowed = {
+      directEval: 2,
+      indirectEval: 2,
+      Function: 2,
+      FunctionCall: 2,
+      reflectConstruct: 2,
+      AsyncFunction: "function",
+      GeneratorFunction: "function",
+      mapEval: 2,
+      boundEval: 2,
+      shadowRealm: 2,
+      vmScript: "object",
+      vmRunInThisContext: 2,
+      vmRunInNewContext: 2,
+      vmCompileFunction: 2,
+      moduleCompile: 2,
+      evalOfNonString: 2,
+      jsonParse: 2,
+      timerEval: 2,
+      thenEval: 2,
+      importData: 2,
+      importBlob: 2,
+    };
+    expect(await run(laxApp)).toEqual(allowed);
+    expect(await run(hostApp)).toEqual(allowed);
+    expect(await run(strictApp)).toEqual({
+      ...Object.fromEntries(Object.keys(allowed).map(name => [name, refused])),
+      evalOfNonString: 2,
+      jsonParse: 2,
+    });
+    // The host is not the graph: the same realm still evaluates strings, also right after the graph refused.
+    expect(new Function("return 1 + 1")()).toBe(2);
+    strict.dispose();
+    lax.dispose();
+  });
+
+  test("a graph that a refusing graph's script makes refuses too, whatever it asks for", async () => {
+    const dir = fixture({ "routes.mjs": routes });
+    const strict = new ModuleGraphClass({ codeGeneration: { strings: false } });
+    const app = await strict.import(join(dir, "routes.mjs"));
+    const inner = app.nested({ codeGeneration: { strings: true } });
+    const innerApp = await inner.import(join(dir, "routes.mjs"));
+    expect(innerApp.sync.Function()).toBe(refused);
+    expect(innerApp.sync.directEval()).toBe(refused);
+    strict.dispose();
+  });
+
+  test("a host function the graph calls runs as the graph, so it is refused; one that leaves the graph's context is not", async () => {
+    const asHost = AsyncLocalStorage.snapshot();
+    const dir = fixture({
+      "calls.mjs": `export const inGraph = () => { try { return make("return 1 + 1")(); } catch (e) { return e.constructor.name; } };
+        export const leftGraph = () => makeAsHost("return 1 + 1")();`,
+    });
+    const graph = new ModuleGraphClass({
+      codeGeneration: { strings: false },
+      globals: {
+        make: (body: string) => new Function(body),
+        makeAsHost: (body: string) => asHost(() => new Function(body)),
+      },
+    });
+    const app = await graph.import(join(dir, "calls.mjs"));
+    expect(app.inGraph()).toBe("EvalError");
+    expect(app.leftGraph()).toBe(2);
+    graph.dispose();
+  });
+
+  test("options.codeGeneration is validated", () => {
+    expect(() => new ModuleGraphClass({ codeGeneration: 1 } as any)).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+    expect(() => new ModuleGraphClass({ codeGeneration: { strings: "no" } } as any)).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+    new ModuleGraphClass({ codeGeneration: {} }).dispose();
+    new ModuleGraphClass({ codeGeneration: { strings: undefined } }).dispose();
   });
 });
 

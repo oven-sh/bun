@@ -98,7 +98,7 @@ The host's own code runs in the context it is called in, so it runs in the graph
 app.call(() => Bun.serve({ port: 0, fetch: app.fetch })); // the server is the graph's and stops with it
 ```
 
-Code made with `new Function()` or indirect `eval` is global code: it belongs to no graph, whichever code made it, and runs in its caller's context. So does a CommonJS module compiled with a replaced `Module.wrapper` whose wrapper function is made inside another function.
+Code made with `new Function()` or indirect `eval` is global code: it belongs to no graph, whichever code made it, and runs in its caller's context. So does a CommonJS module compiled with a replaced `Module.wrapper` whose wrapper function is made inside another function. Such code reads the real globals, not the graph's `globals`, and its `import()` loads the host's module instances. To keep a graph's code from making any, see [Refusing code made from strings](#refusing-code-made-from-strings).
 
 A promise that a graph's asynchronous function returns is the graph's: if the graph is disposed before it settles, it never does. When the host awaits one and may dispose the graph meanwhile, race it against a promise of its own:
 
@@ -122,6 +122,31 @@ const graph = new Bun.ModuleGraph({
   globals: { record: (entry: string) => asHost(() => appendToAuditLog(entry)) },
 });
 ```
+
+## Refusing code made from strings
+
+`codeGeneration: { strings: false }` makes a graph refuse to turn a string into code. The option has the name and the meaning it has in `node:vm`.
+
+```ts
+const graph = new Bun.ModuleGraph({ codeGeneration: { strings: false } });
+const app = await graph.import("./app.ts");
+app.render("1 + 1"); // if render() calls eval(): EvalError: Code generation from strings disallowed for this context
+```
+
+While the graph's context is the current one, each of these throws an `EvalError`:
+
+- `eval()`, direct and indirect
+- `new Function()`, and the generator and async function constructors
+- `new vm.Script()`, `vm.runInThisContext()`, `vm.runInContext()`, `vm.runInNewContext()`, `vm.compileFunction()` and `new vm.SourceTextModule()`
+- `module._compile()`
+- `ShadowRealm.prototype.evaluate()`
+- `import()` of a `data:` or `blob:` URL, which rejects with the error
+
+The graph's context is current in every function of the graph's, whoever calls it, and in a host function while the graph's code is calling it. A host function that has to make code for a graph leaves the graph's context first, with an `AsyncLocalStorage.snapshot()` taken in the host, as shown [above](#calling-into-a-graph).
+
+A graph that a refusing graph's code makes refuses too, whatever options it is given. The host and other graphs are not affected. WebAssembly is not affected. `eval()` of a value that is not a string returns the value, as it always does.
+
+The option stops a graph's code from making code that belongs to no graph. It does not stop code from reaching shared state in other ways: a module the graph writes to disk and then imports is a module of the graph's, and `globalThis` is still shared.
 
 ## Errors
 

@@ -59,6 +59,7 @@
 #include "JavaScriptCore/ProgramCodeBlock.h"
 #include "JavaScriptCore/GlobalObjectMethodTable.h"
 #include "NodeVMScriptFetcher.h"
+#include "ModuleGraph.h"
 #include "wtf/FileHandle.h"
 
 #include "JavaScriptCore/GetterSetter.h"
@@ -1434,6 +1435,8 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (Bun::throwIfCodeGenerationFromStringsIsDisallowed(globalObject, scope)) [[unlikely]]
+        return {};
 
     // Step 1: Argument validation
     // Get code argument (required)

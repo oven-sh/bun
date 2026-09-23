@@ -25,6 +25,12 @@ import { expectType } from "./utilities";
   new Bun.ModuleGraph({ onError() {} });
   // @ts-expect-error globals must be an object
   new Bun.ModuleGraph({ globals: "x" });
+  new Bun.ModuleGraph({ codeGeneration: { strings: false } }).dispose();
+  new Bun.ModuleGraph({ codeGeneration: {} }).dispose();
+  // @ts-expect-error codeGeneration.strings must be a boolean
+  new Bun.ModuleGraph({ codeGeneration: { strings: "no" } });
+  // @ts-expect-error codeGeneration must be an object
+  new Bun.ModuleGraph({ codeGeneration: false });
   // @ts-expect-error specifier must be a string
   graph.import(1);
   graph.dispose();

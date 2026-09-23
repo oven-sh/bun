@@ -5451,6 +5451,33 @@ declare module "bun" {
      * @see https://bun.com/docs/runtime/module-graph#errors
      */
     unhandledRejection?: ((reason: unknown, promise: Promise<unknown>) => void) | undefined;
+    /**
+     * Whether script running in this graph's context may make script from a
+     * string. Named after the `codeGeneration` option of `node:vm`.
+     */
+    codeGeneration?:
+      | {
+          /**
+           * `false`: `eval()`, `new Function()` and the other function
+           * constructors, `node:vm`, `module._compile()`,
+           * `ShadowRealm.prototype.evaluate()` and `import()` of a
+           * `data:` or `blob:` URL throw an `EvalError` when the graph's
+           * context is the current one. That is any call made by the graph's
+           * code, and by a host function the graph's code calls.
+           *
+           * Script made with `new Function()` or indirect `eval` belongs to no
+           * graph: it reads the real globals instead of the graph's `globals`,
+           * and its `import()` loads the host's module instances. Refusing it
+           * keeps a graph's code inside the graph.
+           *
+           * A graph made by the code of a graph that refuses also refuses,
+           * whatever it passes here. WebAssembly is not affected.
+           *
+           * @default true
+           */
+          strings?: boolean | undefined;
+        }
+      | undefined;
   }
 
   /**

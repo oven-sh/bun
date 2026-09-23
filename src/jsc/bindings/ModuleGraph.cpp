@@ -459,6 +459,25 @@ JSScriptExecutionOwnerEnvironment* JSModuleGraph::overlay() const
     return uncheckedDowncast<JSScriptExecutionOwnerEnvironment>(m_loader->moduleScope());
 }
 
+bool JSModuleGraph::allowsCodeGenerationFromStrings() const
+{
+    return overlay()->evalEnabled();
+}
+
+bool codeGenerationFromStringsIsDisallowed(Zig::GlobalObject* globalObject)
+{
+    JSModuleGraph* graph = currentModuleGraph(globalObject);
+    return graph && !graph->allowsCodeGenerationFromStrings();
+}
+
+bool throwIfCodeGenerationFromStringsIsDisallowed(JSGlobalObject* globalObject, ThrowScope& scope)
+{
+    if (!codeGenerationFromStringsIsDisallowed(defaultGlobalObject(globalObject))) [[likely]]
+        return false;
+    throwException(globalObject, scope, createEvalError(globalObject, JSGlobalObject::scriptExecutionOwnerEvalDisabledErrorMessage()));
+    return true;
+}
+
 template<typename Visitor>
 void JSModuleGraph::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
@@ -681,7 +700,7 @@ private:
 
 const ClassInfo JSModuleGraphConstructor::s_info = { "ModuleGraph"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSModuleGraphConstructor) };
 
-// new Bun.ModuleGraph({ globals?, uncaughtException?, unhandledRejection? })
+// new Bun.ModuleGraph({ globals?, uncaughtException?, unhandledRejection?, codeGeneration? })
 JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSModuleGraphConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -691,6 +710,9 @@ JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSModuleGraphConstructor::construct(JSGl
     JSObject* globals = nullptr;
     JSObject* uncaughtException = nullptr;
     JSObject* unhandledRejection = nullptr;
+    // A graph made by one that may not make script from strings may not either: it is that graph's script.
+    JSModuleGraph* maker = currentModuleGraph(globalObject);
+    bool codeGenerationFromStrings = !maker || maker->allowsCodeGenerationFromStrings();
     JSValue optionsValue = callFrame->argument(0);
     if (!optionsValue.isUndefined()) {
         V::validateObject(scope, globalObject, optionsValue, "options"_s);
@@ -717,6 +739,19 @@ JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSModuleGraphConstructor::construct(JSGl
             RETURN_IF_EXCEPTION(scope, {});
             unhandledRejection = asObject(unhandledRejectionValue);
         }
+        JSValue codeGenerationValue = options->get(globalObject, Identifier::fromString(vm, "codeGeneration"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!codeGenerationValue.isUndefined()) {
+            V::validateObject(scope, globalObject, codeGenerationValue, "options.codeGeneration"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+            JSValue stringsValue = codeGenerationValue.getObject()->get(globalObject, Identifier::fromString(vm, "strings"_s));
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!stringsValue.isUndefined()) {
+                V::validateBoolean(scope, globalObject, stringsValue, "options.codeGeneration.strings"_s);
+                RETURN_IF_EXCEPTION(scope, {});
+                codeGenerationFromStrings = codeGenerationFromStrings && stringsValue.asBoolean();
+            }
+        }
     }
 
     Structure* structure = globalObject->JSModuleGraphStructure();
@@ -728,7 +763,9 @@ JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSModuleGraphConstructor::construct(JSGl
     unsigned overlayShape = 0;
     JSModuleLoader* loader = createModuleGraphLoader(globalObject, globals, overlayShape);
     RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(JSModuleGraph::create(vm, globalObject, structure, loader, overlayShape, uncaughtException, unhandledRejection, currentModuleGraph(globalObject)));
+    auto* graph = JSModuleGraph::create(vm, globalObject, structure, loader, overlayShape, uncaughtException, unhandledRejection, maker);
+    graph->overlay()->setEvalEnabled(codeGenerationFromStrings);
+    return JSValue::encode(graph);
 }
 
 void initJSModuleGraphClassStructure(LazyClassStructure::Initializer& init)

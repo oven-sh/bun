@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { once } from "node:events";
+import * as http from "node:http";
 import * as net from "node:net";
 
 // https://github.com/oven-sh/bun/issues/9180
@@ -455,10 +456,15 @@ describe("keep-alive headers", () => {
         socket.on("error", () => {});
         await once(socket, "connect");
         // The second request must never be answered: the server closes first.
+        // A second response resolves too, so a server that keeps the socket
+        // open fails the assertion below instead of hanging.
         socket.write(`GET ${path} HTTP/1.1\r\nHost: x\r\n\r\nGET /second HTTP/1.1\r\nHost: x\r\n\r\n`);
         const raw = await new Promise<string>(resolve => {
           let raw = "";
-          socket.on("data", chunk => (raw += chunk.toString("latin1")));
+          socket.on("data", chunk => {
+            raw += chunk.toString("latin1");
+            if ((raw.match(/HTTP\/1\.1 200/g) ?? []).length > 1) resolve(raw);
+          });
           socket.on("close", () => resolve(raw));
         });
         const lines = raw.split("\r\n\r\n")[0].split("\r\n").slice(1);
@@ -519,7 +525,6 @@ describe("keep-alive headers", () => {
   });
 
   test("node:http keeps rendering its own pair once", async () => {
-    const http = await import("node:http");
     await using server = http.createServer((req, res) => res.end("ok"));
     server.listen(0, "127.0.0.1");
     await once(server, "listening");

@@ -308,7 +308,9 @@ process.exit(0);`,
       });
       await using parent = spawn([bunExe(), "parent.mjs"], {
         cwd: String(dir),
-        env: bunEnv,
+        // The CI runner sets BUN_FEATURE_FLAG_NO_ORPHANS on ASAN lanes, which kills the child with its parent. The
+        // child leaves on its own once it has seen the disconnect.
+        env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
         stdio: ["ignore", "pipe", "inherit"],
       });
       // The child holds the pipe, so this ends when the child does.

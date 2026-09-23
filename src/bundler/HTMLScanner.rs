@@ -75,12 +75,12 @@ pub(crate) fn is_external_url(url: &[u8]) -> bool {
         .any(|prefix| url.starts_with(prefix.as_bytes()))
 }
 
-/// `./sprite.svg?v=2#icon` -> (`./sprite.svg`, `?v=2#icon`). A URL with no file part (`https:`, `#icon`) is not split.
-pub(crate) fn split_url_suffix(url: &[u8]) -> (&[u8], &[u8]) {
-    match strings::index_of_any(url, b"?#") {
-        Some(i) if i > 0 && !is_external_url(url) => url.split_at(i),
-        _ => (url, b""),
-    }
+/// Where the `?query#fragment` of a local `url` can begin, then its end. `?` and `#` are also legal in file names.
+pub(crate) fn suffix_starts(url: &[u8]) -> impl DoubleEndedIterator<Item = usize> + '_ {
+    let end = if is_external_url(url) { 0 } else { url.len() };
+    (1..end)
+        .filter(|&i| matches!(url[i], b'?' | b'#'))
+        .chain([url.len()])
 }
 
 const HTML_WHITESPACE: &[u8] = b" \t\n\r\x0c";
@@ -146,11 +146,16 @@ impl<'a> HTMLScanner<'a> {
     }
 
     fn create_import_record(&mut self, url: &[u8], kind: ImportKind) -> Result<(), Error> {
-        // Resolve without `?query#fragment`, unless it is part of a name on disk (`./C#/logo.png`).
-        let (input_path, _suffix) = match split_url_suffix(url) {
-            (_, suffix) if !suffix.is_empty() && self.exists_on_disk(url) => (url, &b""[..]),
-            split => split,
+        // The shortest path on disk is the file (`./C#/logo.png?v=2`). Else the URL rule: cut at the first `?` or `#`.
+        let first = suffix_starts(url).next().unwrap_or(url.len());
+        let start = if first == url.len() {
+            first
+        } else {
+            suffix_starts(url)
+                .find(|&i| self.exists_on_disk(&url[..i]))
+                .unwrap_or(first)
         };
+        let input_path = &url[..start];
         // In HTML, sometimes people do /src/index.js
         // In that case, we don't want to use the absolute filesystem path, we want to use the path relative to the project root
         let path_to_use: &[u8] = if is_external_url(url) {

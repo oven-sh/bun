@@ -11,7 +11,7 @@ use bun_threading::thread_pool::Task as ThreadPoolLibTask;
 use lol_html::HandlerResult;
 use lol_html::html_content::{ContentType, Element, EndTag};
 
-use crate::HTMLScanner::{HTMLProcessor, HTMLProcessorHandler, UrlAction, split_url_suffix};
+use crate::HTMLScanner::{HTMLProcessor, HTMLProcessorHandler, UrlAction, suffix_starts};
 use crate::linker_context_mod::{GenerateChunkCtx, LinkerContext, debug};
 use crate::options::Loader;
 use crate::{Chunk, CompileResult};
@@ -138,13 +138,13 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
         } else {
             Loader::File
         };
-        // Put `#icon` back on the new URL, unless the scan pass kept it as part of a file name.
-        let suffix = split_url_suffix(url).1;
-        let suffix = if import_record.original_path.ends_with(suffix) {
-            b""
-        } else {
-            suffix
-        };
+        // `original_path` ends with what the scan pass took as the file; the rest of `url` goes back on the new URL.
+        let suffix_start = suffix_starts(url)
+            .rev()
+            .find(|&i| import_record.original_path.ends_with(&url[..i]))
+            .or_else(|| suffix_starts(url).next())
+            .unwrap_or(url.len());
+        let suffix = &url[suffix_start..];
 
         if import_record
             .flags

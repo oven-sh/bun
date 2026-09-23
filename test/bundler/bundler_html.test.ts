@@ -263,6 +263,7 @@ describe("bundler", () => {
     <img src="#local">
     <img src="#">
     <img src="./C#/logo.png">
+    <img src="./C#/logo.png?v=2#frag">
     ${isWindows ? "" : `<img src="v2:icons/logo.png">`}
   </body>
 </html>`,
@@ -295,6 +296,7 @@ describe("bundler", () => {
         `#local`,
         `#`,
         expect.stringMatching(/^\.\/logo-[a-z0-9]+\.png$/),
+        expect.stringMatching(/^\.\/logo-[a-z0-9]+\.png\?v=2#frag$/),
         ...(isWindows ? [] : [expect.stringMatching(/^\.\/logo-[a-z0-9]+\.png$/)]),
       ]);
       api.expectFile(`out/${html.match(/index-[a-z0-9]+\.js/)![0]}`).toContain("app");

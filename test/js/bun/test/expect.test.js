@@ -174,6 +174,11 @@ describe("expect()", () => {
       new Proxy({}, { get: (_, key) => (key === "then" ? thenable("resolve", "proxy").then : undefined) }),
     ).resolves.toBe("proxy");
 
+    // A thenable that a function throws is the thrown value, not a promise to wait for.
+    expect(() => {
+      throw Object.assign(new Error("thrown thenable"), thenable("resolve", 1));
+    }).toThrow("thrown thenable");
+
     if (isBun) {
       await expectFailure(() => expect(thenable("resolve", 4)).rejects.toBe(4)).toThrow(
         /Received promise that resolved/,

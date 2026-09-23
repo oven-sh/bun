@@ -857,32 +857,19 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     RETURN_IF_EXCEPTION(scope, {});
 
     if (auto* instance = dynamicDowncast<JSC::ErrorInstance>(errorObject)) {
-        if (instance->hasMaterializedErrorInfo()) {
-            // Error info was already materialized (e.g. .stack was previously accessed).
-            // Don't call setStackFrames — it would leave m_errorInfoMaterialized=true with
-            // a non-null m_stackTrace, causing ASSERT(!m_errorInfoMaterialized) in
-            // computeErrorInfo when GC's finalizeUnconditionally finds unmarked frames.
-            // Eagerly compute and set the .stack property instead.
-            OrdinalNumber line;
-            OrdinalNumber column;
-            String sourceURL;
-            JSValue result = computeErrorInfoToJSValue(vm, stackTrace, line, column, sourceURL, errorObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            errorObject->putDirect(vm, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
-        } else {
-            // Not yet materialized — safe to install new frames with a lazy getter.
-            instance->setStackFrames(vm, WTF::move(stackTrace));
+        // The new frames arm the lazy error info again, read or not: the next read of .stack
+        // formats them, with the name, message and Error.prepareStackTrace of that moment.
+        instance->setStackFrames(vm, WTF::move(stackTrace));
 
-            {
-                const auto& propertyName = vm.propertyNames->stack;
-                VM::DeletePropertyModeScope deleteScope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-                DeletePropertySlot slot;
-                JSObject::deleteProperty(instance, globalObject, propertyName, slot);
-            }
-            RETURN_IF_EXCEPTION(scope, {});
-
-            instance->putDirectCustomAccessor(vm, vm.propertyNames->stack, globalObject->m_lazyStackCustomGetterSetter.get(globalObject), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::CustomAccessor | 0);
+        {
+            const auto& propertyName = vm.propertyNames->stack;
+            VM::DeletePropertyModeScope deleteScope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
+            DeletePropertySlot slot;
+            JSObject::deleteProperty(instance, globalObject, propertyName, slot);
         }
+        RETURN_IF_EXCEPTION(scope, {});
+
+        instance->putDirectCustomAccessor(vm, vm.propertyNames->stack, globalObject->m_lazyStackCustomGetterSetter.get(globalObject), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::CustomAccessor | 0);
     } else {
         OrdinalNumber line;
         OrdinalNumber column;

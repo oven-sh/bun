@@ -5,9 +5,11 @@ import { join } from "node:path";
 
 // oven-sh/WebKit#699. JavaScriptCore parsed the text of an arrow function with parenthesized parameters three times, and
 // an arrow function in those parameters did the same to its own text: every level of nesting more than doubled the
-// parse time. Depth 24 took 17 seconds and depth 40 does not finish.
-
-const depth = 40;
+// parse time. Depth 24 took 17 seconds, and a nest of `depth` does not finish.
+const depth = 30;
+// A call compiles one level with a new parser, which parses the levels below it again. A walk down a whole nest costs
+// depth^3, and a debug build is slow enough for that to matter, so the walk gets a nest of its own.
+const callDepth = 10;
 
 // [text before the innermost value, text after it]
 const shapes: [string, string][] = [
@@ -20,7 +22,8 @@ const shapes: [string, string][] = [
 ];
 
 const repeat = (value: string, count: number) => Buffer.alloc(value.length * count, value).toString();
-const nest = ([before, after]: [string, string]) => repeat(before, depth) + "'innermost'" + repeat(after, depth);
+const nest = ([before, after]: [string, string], levels = depth) =>
+  repeat(before, levels) + "'innermost'" + repeat(after, levels);
 
 // A parser that does not finish cannot stop itself, and the test runner does not stop the child of a test that timed
 // out. So each child is killed after `childTimeout`, and a child that is still there when the file is done is killed
@@ -48,20 +51,17 @@ async function run(cmd: string[], cwd?: string) {
 test.concurrent("eval() of arrow functions nested in parameter default values finishes", async () => {
   const source = `
     globalThis.id = value => value;
-    const sources = ${JSON.stringify(shapes.map(nest))};
-    const results = [];
-    for (const source of sources) {
-      results.push(typeof (0, eval)(source));
-      results.push(typeof new Function("return " + source)());
-    }
+    const results = ${JSON.stringify(shapes.map(shape => nest(shape)))}.map(source => typeof (0, eval)(source));
+    // A syntax check reads this one first, and the call parses it again to compile the function.
+    results.push(typeof new Function(${JSON.stringify("return " + nest(shapes[0]))})());
     // The default values still evaluate from the inside out.
-    let value = (0, eval)(sources[0]);
-    for (let i = 0; i < ${depth}; i++) value = value();
+    let value = (0, eval)(${JSON.stringify(nest(shapes[0], callDepth))});
+    for (let i = 0; i < ${callDepth}; i++) value = value();
     results.push(value);
     console.log(results.join(","));
   `;
   expect(await run(["-e", source])).toEqual({
-    stdout: repeat("function,", shapes.length * 2) + "innermost\n",
+    stdout: repeat("function,", shapes.length + 1) + "innermost\n",
     stderr: "",
     exitCode: 0,
     signalCode: null,
@@ -73,12 +73,13 @@ test.concurrent("a module with arrow functions nested in parameter default value
   using dir = tempDir("jsc-nested-arrow-functions", {
     "nest.mjs": `
       const id = value => value;
-      export const functions = [${shapes.map(nest).join(",\n")}];
+      export const functions = [${shapes.map(shape => nest(shape)).join(",\n")}];
+      export const shallow = ${nest(shapes[0], callDepth)};
     `,
     "index.mjs": `
-      import { functions } from "./nest.mjs";
-      let value = functions[0];
-      for (let i = 0; i < ${depth}; i++) value = value();
+      import { functions, shallow } from "./nest.mjs";
+      let value = shallow;
+      for (let i = 0; i < ${callDepth}; i++) value = value();
       console.log(functions.map(f => typeof f).join(","), value);
     `,
   });

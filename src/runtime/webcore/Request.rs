@@ -800,25 +800,23 @@ impl Request {
             return url.byte_slice().len();
         }
 
-        self.with_uws_request(|req| self.size_of_url_from(req))
-            .unwrap_or(0)
-    }
-
-    fn size_of_url_from(&self, req: &uws::Request) -> usize {
-        let req_url = Self::request_target_path(req.url());
-        if !req_url.is_empty() && req_url[0] == b'/' {
-            if let Some(host) = req
-                .header(b"host")
-                .filter(|host| Self::is_valid_host_header(host))
-            {
-                // With `port: None`, HostFormatter always emits exactly `host`, so the
-                // formatted byte-count is just `host.len()`. Avoid the `core::fmt::write`
-                // vtable dispatch that `bun_fmt::count(format_args!(...))` incurs — this
-                // runs once per request via JSC extra-memory accounting.
-                return self.get_protocol().len() + host.len() + req_url.len();
+        self.with_uws_request(|req| {
+            let req_url = Self::request_target_path(req.url());
+            if !req_url.is_empty() && req_url[0] == b'/' {
+                if let Some(host) = req
+                    .header(b"host")
+                    .filter(|host| Self::is_valid_host_header(host))
+                {
+                    // With `port: None`, HostFormatter always emits exactly `host`, so the
+                    // formatted byte-count is just `host.len()`. Avoid the `core::fmt::write`
+                    // vtable dispatch that `bun_fmt::count(format_args!(...))` incurs — this
+                    // runs once per request via JSC extra-memory accounting.
+                    return self.get_protocol().len() + host.len() + req_url.len();
+                }
             }
-        }
-        req_url.len()
+            req_url.len()
+        })
+        .unwrap_or(0)
     }
 
     pub(crate) fn get_protocol(&self) -> &'static [u8] {
@@ -891,6 +889,11 @@ impl Request {
             return Ok(());
         }
 
+        let predicted_len = if cfg!(debug_assertions) {
+            self.size_of_url()
+        } else {
+            0
+        };
         self.with_uws_request(|req| {
             let req_url = Self::request_target_path(req.url());
             if !req_url.is_empty() && req_url[0] == b'/' {
@@ -905,7 +908,7 @@ impl Request {
                     let protocol = self.get_protocol();
                     let url_bytelength = protocol.len() + host.len() + req_url.len();
 
-                    debug_assert!(self.size_of_url_from(req) == url_bytelength);
+                    debug_assert!(predicted_len == url_bytelength);
 
                     if url_bytelength < 128 {
                         let mut buffer = [0u8; 128];
@@ -920,7 +923,7 @@ impl Request {
                             &buffer[..at]
                         };
 
-                        debug_assert!(self.size_of_url_from(req) == url.len());
+                        debug_assert!(predicted_len == url.len());
 
                         let href = bun_url::href_from_string(&BunString::from_bytes(url));
                         if !href.is_empty() {
@@ -967,7 +970,7 @@ impl Request {
                 }
             }
 
-            debug_assert!(self.size_of_url_from(req) == req_url.len());
+            debug_assert!(predicted_len == req_url.len());
             self.url.set(BunString::clone_utf8(&req_url));
             Ok(())
         })

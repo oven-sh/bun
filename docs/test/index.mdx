@@ -304,7 +304,9 @@ bun test --changed=HEAD~1
 bun test --changed=main
 ```
 
-Without a value, `--changed` compares the working tree against `HEAD`. With `--changed=<ref>`, Bun runs `git diff <ref>` instead. Untracked files count as changed in both forms. Bun resolves `tsconfig.json` `paths` aliases such as `@/*` when it scans imports, so a test that imports a changed file through an alias runs too. Changes inside `node_modules` do not select any tests.
+Without a value, `--changed` compares the working tree against `HEAD`. With `--changed=<ref>`, Bun runs `git diff <ref>` instead. Untracked files count as changed in both forms.
+
+The scan follows relative imports and `tsconfig.json` `paths` aliases such as `@/*`, so a test that imports a changed file through an alias runs too. The scan does not follow a bare package name. A change inside `node_modules`, a change to a workspace package that tests import by its name, and a file that only a `baseUrl` import reaches select no tests. Preload scripts, snapshot files, and files that tests read at runtime are not in the import graph either. Run the full suite for those changes.
 
 Bun ignores a deleted file, because the scan can only follow imports of files that exist. A change that only deletes files selects no tests. Run the full suite for that change.
 
@@ -330,14 +332,14 @@ With both flags, Bun watches every local source file in the import graph. That i
 bun test --changed=main --shard=1/3
 ```
 
-Bun applies `--changed` first and then splits the remaining test files across shards. Every shard must use the same `--changed=<ref>` so that each shard filters the same set. See [Splitting a suite across CI machines](/test/parallel#splitting-a-suite-across-ci-machines-with---shard).
+Bun applies `--changed` first and then splits the remaining test files across shards. Every shard must diff the same working tree against the same commit so that each shard filters the same set. A branch name such as `origin/main` can move between the start of two shard jobs, so pass the commit sha instead. See [Splitting a suite across CI machines](/test/parallel#splitting-a-suite-across-ci-machines-with---shard).
 
-In CI, make sure the ref exists in the checkout. `actions/checkout` fetches only the triggering commit by default, so `git diff origin/main` fails until you fetch that branch. A depth of 1 is enough, because the diff only needs the tip of the base branch:
+In CI, make sure the commit exists in the checkout. `actions/checkout` fetches only the triggering commit by default, so the diff fails until you fetch the base commit. A depth of 1 is enough, because the diff only needs the tree of that commit:
 
 ```yaml
 - uses: actions/checkout@v4
-- run: git fetch --depth=1 origin main
-- run: bun test --changed=origin/main
+- run: git fetch --depth=1 origin ${{ github.event.pull_request.base.sha }}
+- run: bun test --changed=${{ github.event.pull_request.base.sha }}
 ```
 
 ## Lifecycle hooks
@@ -426,7 +428,7 @@ For a suite with thousands of test files, `bun test` has several knobs that stac
 
 **2. Decide how much isolation you need.** `--parallel` gives every file a fresh global, which is the safe default and what Jest/Vitest do. If your files don't leak state into each other (they already pass under plain `bun test`, which shares one global), [`--parallel --no-isolate`](/test/parallel#every-file-is-isolated-unless-you-opt-out) lets each worker evaluate your imports and preloads once instead of once per file. On suites made of many small files, that is the single biggest win. See [how it compares](/test/parallel#how-it-compares).
 
-**3. Skip the tests your change cannot reach: [`--changed`](#run-only-affected-tests-with---changed).** On a pull request, `bun test --changed=origin/main` runs only the test files whose import graph reaches a file in the diff. Fetch the base branch first (see [`--changed` with `--shard`](#--changed-with---shard)). The flag filters before `--shard` splits. Keep `--update-timings` on full-suite runs only: under `--shard` it writes timings for the files that ran, so a filtered run shrinks the table.
+**3. Skip the tests your change cannot reach: [`--changed`](#run-only-affected-tests-with---changed).** On a pull request, `bun test --changed=<base sha>` runs only the test files whose import graph reaches a file in the diff. Fetch the base commit first (see [`--changed` with `--shard`](#--changed-with---shard)). The flag filters before `--shard` splits. Keep `--update-timings` on full-suite runs only: under `--shard` it writes timings for the files that ran, so a filtered run shrinks the table.
 
 **4. Split across machines: [`--shard=i/n`](/test/parallel#splitting-a-suite-across-ci-machines-with---shard).** Deterministic, no coordinator. Each CI job runs one slice, and each slice still uses `--parallel` locally.
 

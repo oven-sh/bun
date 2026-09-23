@@ -1,6 +1,6 @@
 import { Socket as _BunSocket, TCPSocketListener } from "bun";
 import { heapStats } from "bun:jsc";
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import {
   bunEnv,
   bunExe,
@@ -1534,12 +1534,25 @@ describe("Socket fd adoption", () => {
       socket.on("error", err => events.push(`error:${(err as NodeJS.ErrnoException).code}`));
       const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
 
-      // Every step is larger than a pipe buffer (64 KiB on Linux and macOS), so
-      // each one hits EAGAIN whatever the reader below has taken by then:
-      // a single write, then a batch (the chunks below wait behind the first
-      // write and go out through one _writev) that runs out of room inside a
-      // chunk, then a write after the queue drained.
-      events.push(`write()=${socket.write(piece(0, 300_000), cb("single"))}`);
+      // Fill the pipe by hand first, so that even a 10-byte write finds no
+      // room: that tail is short enough for the sink to only buffer it, and
+      // nothing may overtake it.
+      let filled = 0;
+      for (const step of [4096, 1]) {
+        try {
+          for (;;) filled += fs.writeSync(wfd, expected, filled, step);
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException).code !== "EAGAIN") throw e;
+        }
+      }
+      events.push(`write(short)=${socket.write(piece(filled, filled + 10), cb("short"))}`);
+
+      // Every later step is larger than a pipe buffer (64 KiB on Linux and
+      // macOS), so each one hits EAGAIN whatever the reader below has taken by
+      // then: a single write, then a batch (the chunks below wait behind the
+      // writes before them and go out through one _writev) that runs out of
+      // room inside a chunk, then a write after the queue drained.
+      events.push(`write(single)=${socket.write(piece(filled + 10, 300_000), cb("single"))}`);
       socket.write(piece(300_000, 310_000).toString("latin1"), "latin1", cb("batch string"));
       socket.write(piece(310_000, 410_000), cb("batch 100 KB"));
       socket.write(piece(410_000, 410_003), cb("batch 3 B"));
@@ -1573,7 +1586,10 @@ describe("Socket fd adoption", () => {
       await closed;
 
       expect(events).toEqual([
-        "write()=false",
+        // The return value follows the high-water mark, not completion.
+        "write(short)=true",
+        "write(single)=false",
+        "short:ok",
         "single:ok",
         "batch string:ok",
         "batch 100 KB:ok",
@@ -1583,10 +1599,55 @@ describe("Socket fd adoption", () => {
         "end:ok",
       ]);
       expect(received).toEqual({ total: expected.length, intact: true });
-      expect(socket.bytesWritten).toBe(expected.length);
+      expect(socket.bytesWritten).toBe(expected.length - filled);
     } finally {
       fs.closeSync(rfd);
     }
+  });
+
+  // The reader goes away while the sink still holds the tail. The sink's next
+  // write(2) fails, and the error reaches the write it belongs to.
+  it.skipIf(isWindows)("fails a queued write with EPIPE when the reader closes", async () => {
+    using dir = tempDir("net-fd-epipe", {});
+    const fifo = join(String(dir), "adopted.fifo");
+    execFileSync("mkfifo", [fifo]);
+    const { O_RDONLY, O_WRONLY, O_NONBLOCK } = fs.constants;
+    const rfd = fs.openSync(fifo, O_RDONLY | O_NONBLOCK);
+    const wfd = fs.openSync(fifo, O_WRONLY | O_NONBLOCK);
+    const socket = new Socket({ fd: wfd, readable: false, writable: true });
+    const events: string[] = [];
+    const cb = (name: string) => (err?: Error | null) =>
+      events.push(`${name}:${err ? (err as NodeJS.ErrnoException).code : "ok"}`);
+    socket.on("error", err => events.push(`error:${(err as NodeJS.ErrnoException).code}`));
+    const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+    events.push(`write()=${socket.write(Buffer.alloc(512 * 1024, "x"), cb("queued"))}`);
+    socket.write("waits behind it", cb("behind"));
+    fs.closeSync(rfd);
+    await closed;
+    expect(events).toEqual(["write()=false", "queued:EPIPE", "behind:EPIPE", "error:EPIPE"]);
+  });
+
+  // The sink has no poll for a character device that is not a terminal, so a
+  // tail queued there would never drain. Such an fd keeps the EAGAIN error.
+  it.skipIf(isWindows)("reports EAGAIN for a character device that is not a terminal", async () => {
+    const fd = fs.openSync("/dev/null", "w");
+    const socket = new Socket({ fd, readable: false, writable: true });
+    const events: string[] = [];
+    socket.on("error", err => events.push(`error:${(err as NodeJS.ErrnoException).code}`));
+    const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+    // /dev/null takes every write, so report a full buffer in its place.
+    const writeSync = fs.writeSync;
+    const spy = spyOn(fs, "writeSync").mockImplementation((...args: Parameters<typeof fs.writeSync>) => {
+      if (args[0] !== fd) return writeSync(...args);
+      throw Object.assign(new Error("EAGAIN: resource temporarily unavailable, write"), { code: "EAGAIN" });
+    });
+    try {
+      socket.end("x", err => events.push(`cb:${err ? (err as NodeJS.ErrnoException).code : "ok"}`));
+      await closed;
+    } finally {
+      spy.mockRestore();
+    }
+    expect(events).toEqual(["cb:EAGAIN", "error:EAGAIN"]);
   });
 
   // destroy() while a write is still queued behind a full pipe. libuv cancels

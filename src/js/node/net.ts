@@ -2789,6 +2789,17 @@ function fdWriteFailed(self, err, callback, written, buf, offset, data?, next = 
   let rest;
   let result;
   try {
+    let sink = self[kSyncWriteSink];
+    if (sink === undefined) {
+      const fd = self[kSyncWriteFd];
+      const stats = require("node:fs").fstatSync(fd);
+      // A FileSink can wait on a FIFO, a socket or a tty (which it makes blocking), not on another character device.
+      if (!stats.isFIFO() && !stats.isSocket() && !require("node:tty").isatty(fd)) {
+        callback(err);
+        return;
+      }
+      sink = self[kSyncWriteSink] = Bun.file(fd).writer();
+    }
     rest = offset === 0 ? buf : buf.subarray(offset);
     const count = data === undefined ? 0 : data.length;
     if (next < count) {
@@ -2800,7 +2811,6 @@ function fdWriteFailed(self, err, callback, written, buf, offset, data?, next = 
       }
       rest = Buffer.concat(bufs);
     }
-    const sink = (self[kSyncWriteSink] ??= Bun.file(self[kSyncWriteFd]).writer());
     result = sink.write(rest);
     // The sink only buffers a short chunk; push it to the fd now.
     if (!$isPromise(result)) result = sink.flush();

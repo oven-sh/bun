@@ -500,17 +500,18 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
         const chain = `export function chain(x) { return ${Array(2_000).fill("x ? 1").join(" : ")} : 2; }`;
         expect(functionsOf(chain).length).toBe(1);
         // A fluent chain, which is as deep at its start as it is long, is walked like the rest.
+        const link = ".object({ a: 1 }).extend(z)";
         const fluent = (last: string) =>
-          `export function outer() { return function fluent(z) { return z${".object({ a: 1 }).extend(z)".repeat(1000)}${last}; }; }`;
+          `export function outer() { return function fluent(z) { return z${Buffer.alloc(1000 * link.length, link).toString()}${last}; }; }`;
         expect(namesOf(fluent(""))).toHaveLength(3);
         expect(functionsOf(fluent(".parse()"))).not.toEqual(functionsOf(fluent("")));
         // How deeply functions are nested in functions is no depth at all: each is walked on its own.
-        const arrows = `export const f = ${"() => (".repeat(600)}42${")".repeat(600)};`;
+        const arrows = `export const f = ${Buffer.alloc(600 * 7, "() => (").toString()}42${Buffer.alloc(600, ")").toString()};`;
         expect(functionsOf(arrows).length).toBe(600);
         expect(new Set(functionsOf(arrows)).size).toBe(600);
         // What is nested deeper than is walked is left out of the name of the function it is in, and nothing else is.
         const nested = (innermost: string) =>
-          `export function outer() { return function deep() { return ${"[".repeat(600)}${innermost}${"]".repeat(600)}; }; }`;
+          `export function outer() { return function deep() { return ${Buffer.alloc(600, "[").toString()}${innermost}${Buffer.alloc(600, "]").toString()}; }; }`;
         expect(namesOf(nested("1"))).toEqual(namesOf(nested("2")));
         expect(namesOf(nested("1"))).toHaveLength(3);
         expect(namesOf(nested("1"))).not.toEqual(namesOf(nested("1").replace("return [", "return 0, [")));
@@ -625,7 +626,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
       };
 
       // The fixture runs every kind of function JavaScriptCore compiles; it starts with a hashbang, and the banner
-      // puts text outside ASCII before every function.
+      // puts text outside ASCII (U+FFFD too, which is text like any other) before every function.
       test("every function JavaScriptCore runs has a name", async () => {
         using dir = tempDir("build-compile-bytecode-order-every", {
           "app.js": await Bun.file(join(import.meta.dir, "fixtures", "bytecode-order-names.js")).text(),
@@ -633,7 +634,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
         });
         const { order, stats } = await roundTrip(
           String(dir),
-          ["--format=esm", "--splitting", "--banner=/* \u00e9\u4e2d\u{1f600} */", "app.js"],
+          ["--format=esm", "--splitting", "--banner=/* \u00e9\u4e2d\u{1f600}\ufffd */", "app.js"],
           "37\n",
         );
         const functions = order.split("\n").filter(line => line.startsWith("F "));

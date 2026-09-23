@@ -85,15 +85,10 @@ impl FunctionIdentities {
         let first_non_ascii = bun_core::strings::first_non_ascii(text);
         // An internal module is Latin-1, and all of them are ASCII; any other text is UTF-8, or not the text
         // JavaScriptCore counts code units of.
-        // (U+FFFD: where the executable has the text, it stands for what was not UTF-8 in it.)
-        if let Some(first_non_ascii) = first_non_ascii {
-            let rest = &text[first_non_ascii as usize..];
-            if kind == Text::Builtin
-                || !bun_core::strings::is_valid_utf8(text)
-                || bun_core::strings::index_of(rest, "\u{fffd}".as_bytes()).is_some()
-            {
-                return None;
-            }
+        if first_non_ascii.is_some()
+            && (kind == Text::Builtin || !bun_core::strings::is_valid_utf8(text))
+        {
+            return None;
         }
         let arena = bun_alloc::Arena::new();
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);

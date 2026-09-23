@@ -395,8 +395,8 @@ function endNT(socket, callback, err) {
 function emitCloseNT(self, hasError) {
   self.emit("close", hasError);
 }
-function cancelWriteNT(callback) {
-  callback(new ErrnoException(uv().UV_ECANCELED, "write"));
+function cancelWriteNT(callback, outcome) {
+  callback(outcome === true ? new ErrnoException(uv().UV_ECANCELED, "write") : outcome);
 }
 // Shared-fd TLS pair teardown: mirrors node's close ordering, where the
 // close-callbacks phase runs after the check phase (lib/net.js close path in
@@ -2356,6 +2356,7 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   // other wrappers share them, matching SyncWriteStream's autoClose gate.
   const syncFd = this[kSyncWriteFd];
   let canceledWrite;
+  let canceledOutcome = true;
   if (syncFd !== undefined) {
     this[kSyncWriteFd] = undefined;
     // Drop the instance overrides so a later connect() on this (reusable)
@@ -2368,8 +2369,8 @@ Socket.prototype._destroy = function _destroy(err, callback) {
       canceledWrite = this[kSyncWriteCallback];
       this[kSyncWriteCallback] = undefined;
       try {
-        // libuv cancels a write request still queued when its handle closes: the tail is dropped.
-        if (canceledWrite !== undefined) abortFileSink(sink);
+        // `true`: the queued tail was dropped, as libuv cancels a queued write request. Else how the finished write ended.
+        if (canceledWrite !== undefined) canceledOutcome = abortFileSink(sink);
         else sink.end();
       } catch (e) {
         err ||= e;
@@ -2429,11 +2430,11 @@ Socket.prototype._destroy = function _destroy(err, callback) {
       this._sockname = null;
     }
     callback(err);
-    if (canceledWrite !== undefined) process.nextTick(cancelWriteNT, canceledWrite);
+    if (canceledWrite !== undefined) process.nextTick(cancelWriteNT, canceledWrite, canceledOutcome);
   } else {
     callback(err);
     // Node's order: 'error', then the canceled write's callback, then 'close'.
-    if (canceledWrite !== undefined) process.nextTick(cancelWriteNT, canceledWrite);
+    if (canceledWrite !== undefined) process.nextTick(cancelWriteNT, canceledWrite, canceledOutcome);
     process.nextTick(emitCloseNT, this, err ? true : false);
   }
 

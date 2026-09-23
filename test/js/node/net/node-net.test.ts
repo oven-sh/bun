@@ -1627,6 +1627,62 @@ describe("Socket fd adoption", () => {
     expect(events).toEqual(["write()=false", "queued:EPIPE", "behind:EPIPE", "error:EPIPE"]);
   });
 
+  // The sink can get the queued tail out (its end-of-tick flush, once the reader
+  // made room) before destroy() runs, with its promise still unsettled. That
+  // write is done, not canceled: the callback must agree with what the reader got.
+  it.skipIf(isWindows)("destroy() reports a queued write that already reached the pipe as done", async () => {
+    using dir = tempDir("net-fd-drained", {});
+    const fifo = join(String(dir), "adopted.fifo");
+    execFileSync("mkfifo", [fifo]);
+    const { O_RDONLY, O_WRONLY, O_NONBLOCK } = fs.constants;
+    const rfd = fs.openSync(fifo, O_RDONLY | O_NONBLOCK);
+    try {
+      const wfd = fs.openSync(fifo, O_WRONLY | O_NONBLOCK);
+      let filled = 0;
+      for (const step of [4096, 1]) {
+        try {
+          for (;;) filled += fs.writeSync(wfd, Buffer.alloc(step, "f"));
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException).code !== "EAGAIN") throw e;
+        }
+      }
+      let received = "";
+      // Takes what the pipe holds now; true at EOF.
+      const drain = () => {
+        const chunk = Buffer.alloc(64 * 1024);
+        try {
+          for (;;) {
+            const n = fs.readSync(rfd, chunk);
+            if (n === 0) return true;
+            received += chunk.toString("latin1", 0, n);
+          }
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException).code !== "EAGAIN") throw e;
+        }
+        return false;
+      };
+
+      const socket = new Socket({ fd: wfd, readable: false, writable: true });
+      const events: string[] = [];
+      socket.on("error", err => events.push(`error:${(err as NodeJS.ErrnoException).code}`));
+      const closed = new Promise<void>(resolve => socket.on("close", () => (events.push("close"), resolve())));
+      socket.write("0123456789", err => events.push(`cb:${err ? (err as NodeJS.ErrnoException).code : "ok"}`));
+      // Two callbacks of one event-loop batch: the reader makes room, then the socket is destroyed.
+      setImmediate(drain);
+      setImmediate(() => socket.destroy());
+      await closed;
+      while (!drain()) await new Promise(resolve => setImmediate(resolve));
+
+      const delivered = received === Buffer.alloc(filled, "f").toString() + "0123456789";
+      expect({ received: received.length, events }).toEqual({
+        received: delivered ? filled + 10 : filled,
+        events: [delivered ? "cb:ok" : "cb:ECANCELED", "close"],
+      });
+    } finally {
+      fs.closeSync(rfd);
+    }
+  });
+
   // The sink has no poll for a character device that is not a terminal, so a
   // tail queued there would never drain. Such an fd keeps the EAGAIN error.
   it.skipIf(isWindows)("reports EAGAIN for a character device that is not a terminal", async () => {

@@ -276,20 +276,37 @@ pub(crate) extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
 }
 
 /// For `destroy()` on a `net.Socket` over an adopted fd: libuv drops a write still queued at close.
-pub(crate) fn js_abort(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    if let Some(wrapper) = JSSink::from_js(frame.argument(0)) {
-        let this = wrapper.cast::<FileSink>();
-        // SAFETY: `from_js` returned the live wrapper's sink, and `JSSink<FileSink>` is
-        // `repr(transparent)` over the `FileSink` allocation that `to_js` handed to it.
-        unsafe {
-            (*this).writer.with_mut(|w| w.outgoing.reset());
-            FileSink::abort(this, sys::Errno::ECANCELED);
-            // JS is on the stack: the promise settles from a task, as in `end_from_js`.
-            (*this).run_pending_later();
-            FileSink::clear_keep_alive_ref(this);
+pub(crate) fn js_abort(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    use bun_sys_jsc::ErrorJsc;
+
+    let Some(wrapper) = JSSink::from_js(frame.argument(0)) else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    let this = wrapper.cast::<FileSink>();
+    // SAFETY: `from_js` returned the live wrapper's sink, and `JSSink<FileSink>` is
+    // `repr(transparent)` over the `FileSink` allocation that `to_js` handed to it.
+    unsafe {
+        if !(*this).writer.get().has_pending_data() {
+            // Nothing is left to drop: the write already ended and only its promise is unsettled.
+            let failure = match &(*this).pending.get().result {
+                streams::Writable::Err(err) => Some(err.clone()),
+                _ => None,
+            };
+            if let sys::Result::Err(err) = (*this).end(None) {
+                return err.to_js(global);
+            }
+            return match failure {
+                Some(err) => err.to_js(global),
+                None => Ok(JSValue::UNDEFINED),
+            };
         }
+        (*this).writer.with_mut(|w| w.outgoing.reset());
+        FileSink::abort(this, sys::Errno::ECANCELED);
+        // JS is on the stack: the promise settles from a task, as in `end_from_js`.
+        (*this).run_pending_later();
+        FileSink::clear_keep_alive_ref(this);
     }
-    Ok(JSValue::UNDEFINED)
+    Ok(JSValue::TRUE)
 }
 
 impl FileSink {

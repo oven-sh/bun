@@ -53,8 +53,10 @@ const wptToASCIITests = require(
       assert.strictEqual(domainToUnicode(input), '', caseComment);
     } else {
       assert.strictEqual(domainToASCII(input), output, caseComment);
-      const roundtripped = domainToASCII(domainToUnicode(input));
-      assert.strictEqual(roundtripped, output, caseComment);
+      // whatwg/url#914: an ASCII input passes through with a label that fails ToASCII. Beside a decoded label it fails.
+      const unicode = domainToUnicode(input);
+      const keepsBadLabel = /(^|\.)xn--/.test(unicode) && /[^\x00-\x7f]/.test(unicode);
+      assert.strictEqual(domainToASCII(unicode), keepsBadLabel ? '' : output, caseComment);
     }
   }
 }

@@ -52,20 +52,6 @@ const knownOriginDeviations = new Map([
   ["blob:wss://example.org/", "wss://example.org"],
 ]);
 
-// Inputs that parse since https://github.com/whatwg/url/pull/914 (an all-ASCII host passes through even when an xn--
-// label fails Unicode ToASCII) and that bun still rejects. The test asserts the rejection, so the fix shows up here
-// and the list goes away.
-const knownParseDeviations = new Set([
-  "http://a.b.c.xn--pokxncvks",
-  "http://10.0.0.xn--pokxncvks",
-  "http://a.b.c.XN--pokxncvks",
-  "http://a.b.c.Xn--pokxncvks",
-  "http://10.0.0.XN--pokxncvks",
-  "http://10.0.0.xN--pokxncvks",
-  "file://xn--/p",
-  "https://xn--/",
-]);
-
 const componentKeys = [
   "href",
   "protocol",
@@ -98,7 +84,7 @@ function check(entry: Entry): Mismatch | null {
     actual,
   });
 
-  if (entry.failure || knownParseDeviations.has(entry.input)) {
+  if (entry.failure) {
     let thrown: unknown = null;
     try {
       construct(entry);
@@ -154,4 +140,57 @@ describe("WPT url-constructor", () => {
       expect(mismatches).toEqual([]);
     });
   }
+});
+
+// WPT url/IdnaTestV2.any.js and IdnaTestV2-removed.any.js over the vendored data.
+type IdnaRow = { input: string; output: string | null; comment?: string };
+
+function idnaRows(file: string): IdnaRow[] {
+  const rows = JSON.parse(
+    readFileSync(join(import.meta.dir, "../../node/test/fixtures/wpt/url/resources", file), "utf8"),
+  );
+  // A string is a comment. An empty input cannot go through new URL().
+  return rows.filter((row: IdnaRow | string): row is IdnaRow => typeof row === "object" && row.input !== "");
+}
+
+function idnaMismatches(rows: IdnaRow[]) {
+  const mismatches: { input: string; expected: unknown; actual: unknown }[] = [];
+  for (const { input, output } of rows) {
+    let actual: unknown = null;
+    try {
+      const { host, hostname, pathname, href } = new URL(`https://${input}/x`);
+      actual = { host, hostname, pathname, href };
+    } catch (error) {
+      if (!(error instanceof TypeError)) actual = String(error);
+    }
+    const expected =
+      output === null ? null : { host: output, hostname: output, pathname: "/x", href: `https://${output}/x` };
+    if (!Bun.deepEquals(actual, expected)) mismatches.push({ input, expected, actual });
+  }
+  return mismatches;
+}
+
+describe("WPT IdnaTestV2", () => {
+  const rows = idnaRows("IdnaTestV2.json");
+  const isASCII = (row: IdnaRow) => /^[\x00-\x7f]*$/.test(row.input);
+  // The data follows the Unicode version of ICU 78, which Linux and Windows builds bundle. macOS uses the system ICU.
+  const hasCurrentICU = parseInt(process.versions.icu) >= 78;
+
+  test("ASCII input passes through, with or without a valid xn-- label", () => {
+    const ascii = rows.filter(isASCII);
+    expect(ascii.length).toBeGreaterThan(900);
+    expect(idnaMismatches(ascii)).toEqual([]);
+  });
+
+  test.skipIf(!hasCurrentICU)("non-ASCII input", () => {
+    const nonASCII = rows.filter(row => !isASCII(row));
+    expect(nonASCII.length).toBeGreaterThan(1600);
+    expect(idnaMismatches(nonASCII)).toEqual([]);
+  });
+
+  test.skipIf(!hasCurrentICU)("rows that a later Unicode version removed", () => {
+    const removed = idnaRows("IdnaTestV2-removed.json");
+    expect(removed.length).toBeGreaterThan(10);
+    expect(idnaMismatches(removed)).toEqual([]);
+  });
 });

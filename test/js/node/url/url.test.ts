@@ -65,6 +65,17 @@ describe("Url.prototype.parse", () => {
       href: "http://xn--hs8h.net/",
     });
   });
+
+  // ada::idna::to_ascii returns an ASCII hostname lowercased, whatever Unicode ToASCII says about its xn-- labels.
+  it("keeps an ASCII hostname whose xn-- label fails ToASCII (like Node v26.10.0)", () => {
+    expect(
+      ["http://xn--a.com/p", "http://XN--A.com/", "http://xn--xn--zca-hia/", "http://xn--1ug.example:81/"].map(
+        input => parse(input).href,
+      ),
+    ).toEqual(["http://xn--a.com/p", "http://xn--a.com/", "http://xn--xn--zca-hia/", "http://xn--1ug.example:81/"]);
+    expect(parse("http://\u00e9.xn--ls8h/").hostname).toBe("xn--9ca.xn--ls8h");
+    expect(() => parse("http://\u00e9.xn--a/")).toThrow(expect.objectContaining({ code: "ERR_INVALID_URL" }));
+  });
 });
 
 it("URL constructor throws ERR_MISSING_ARGS", () => {

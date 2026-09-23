@@ -227,6 +227,18 @@ fn write_order_file(graph: &'static dyn bun_resolver::StandaloneModuleGraph) {
         }
     });
     let names = bytecode_order::names_of_all(&named);
+    if let Some(path) = bun_core::env_var::BUN_BYTECODE_ORDER_NAMES_OUT
+        .get()
+        .filter(|path| !path.is_empty())
+    {
+        let mut out = Vec::new();
+        for (name, names) in module_names.iter().zip(&names) {
+            bytecode_order::write_names_of(&mut out, name, names.as_ref());
+        }
+        if let Err(err) = write_replacing(path, &out) {
+            bun_core::Output::err(err, "failed to write <b>{}<r>", (bstr::BStr::new(path),));
+        }
+    }
     for (name, names) in module_names.iter().zip(&names) {
         if names.is_none() {
             bun_core::warn!(
@@ -325,7 +337,8 @@ fn write_order_file(graph: &'static dyn bun_resolver::StandaloneModuleGraph) {
         );
         // Not what the path held before, which a build would take for this run's.
         context.text = format!(
-            "v2\n{}: none of the program's code has names\n",
+            "{}\n{}: none of the program's code has names\n",
+            bytecode_order::VERSION,
             bytecode_order::NOT_RECORDED
         )
         .into_bytes();
@@ -444,15 +457,7 @@ pub fn names_for_testing(
     let Some(names) = names else {
         return Ok(crate::JSValue::NULL);
     };
-    let mut lines = match names.module {
-        Some(module) => format!("M {module:016x}\n"),
-        None => String::new(),
-    };
-    for function in &names.functions {
-        lines.push_str(&format!(
-            "{} {} {:016x}\n",
-            function.start, function.kind as u8, function.identity
-        ));
-    }
-    crate::bun_string_jsc::create_utf8_for_js(global, lines.as_bytes())
+    let mut lines = Vec::new();
+    bytecode_order::write_names(&mut lines, &names);
+    crate::bun_string_jsc::create_utf8_for_js(global, &lines)
 }

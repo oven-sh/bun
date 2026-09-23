@@ -540,10 +540,10 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
 
     // Programs that are not like the one recorded below.
     describe("in a program", () => {
-      const buildIn = async (dir: string, args: string[], outfile: string) => {
+      const buildIn = async (dir: string, args: string[], outfile: string, env: Record<string, string> = {}) => {
         await using proc = Bun.spawn({
           cmd: [bunExe(), "build", "--compile", "--bytecode", ...args, "--outfile", outfile],
-          env: bunEnv,
+          env: { ...bunEnv, ...env },
           cwd: dir,
           stdout: "pipe",
           stderr: "pipe",
@@ -600,12 +600,32 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
         const order = readFileSync(join(dir, "app.order"), "utf8");
         expect(order).not.toContain("#");
         await edit?.();
-        expect(await buildIn(dir, [...args, "--bytecode-order=app.order"], exe("ordered"))).toEqual({
-          stderr: "",
-          exitCode: 0,
-        });
+        // BUN_BYTECODE_ORDER_NAMES_OUT: what the build calls every function of every text it links, and what the run
+        // that records calls every function of every text its executable has.
+        const namesOut = (name: string) => ({ BUN_BYTECODE_ORDER_NAMES_OUT: join(dir, name) });
+        expect(
+          await buildIn(dir, [...args, "--bytecode-order=app.order"], exe("ordered"), namesOut("build.names")),
+        ).toEqual({ stderr: "", exitCode: 0 });
         const ran = await runIn(dir, exe("ordered"), ["stats"]);
         expect({ ...ran, stats: undefined }).toEqual({ stdout, stderr: "", stats: undefined, exitCode: 0 });
+        const again = join(dir, "again.order");
+        expect(
+          await runIn(dir, exe("ordered"), [], { BUN_BYTECODE_ORDER_OUT: again, ...namesOut("run.names") }),
+        ).toEqual({ stdout, stderr: "", stats: undefined, exitCode: 0 });
+        // Nothing but the text is what a name is made of, and the two have the same text: the same names, for every
+        // chunk and internal module, at the same places.
+        const namesIn = (name: string) => {
+          const texts: Record<string, string[]> = {};
+          let key = "";
+          for (const line of readFileSync(join(dir, name), "utf8").trimEnd().split("\n")) {
+            if (line.startsWith("# ")) texts[(key = line.slice(2))] = [];
+            else texts[key].push(line);
+          }
+          return texts;
+        };
+        const byTheBuild = namesIn("build.names");
+        expect(Object.values(byTheBuild).flat().length).toBeGreaterThan(Object.keys(byTheBuild).length);
+        expect(namesIn("run.names")).toEqual(byTheBuild);
         // The names the build gave are the names the run that recorded gave: of what ran, and of what did not.
         expect({ cold: ran.stats.cold, unknownRegion: ran.stats.regions.unknown > 0 }).toEqual({
           cold: 0,
@@ -614,8 +634,6 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
         expect(ran.stats.unknown).toBeLessThanOrEqual(unknown);
         if (edit) {
           // What the edited program's run calls its functions: all that the edit renamed is what it changed.
-          const again = join(dir, "again.order");
-          await runIn(dir, exe("ordered"), [], { BUN_BYTECODE_ORDER_OUT: again });
           const after = new Set(readFileSync(again, "utf8").split("\n"));
           const renamed = (kind: string) =>
             order.split("\n").filter(line => line.startsWith(kind) && !after.has(line)).length;
@@ -654,7 +672,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
         });
         const { stats } = await roundTrip(
           String(dir),
-          ["--format=cjs", "--banner=/* \u00e9\u4e2d\u{1f600} */", "app.cjs"],
+          ["--format=cjs", "--minify", "--banner=/* \u00e9\u4e2d\u{1f600} */", "app.cjs"],
           "2,9\n",
         );
         // The wrapper, lookup and its arrow.

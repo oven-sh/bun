@@ -1414,10 +1414,21 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         let mut linked = LinkedBytecode {
             encoder,
             output_files: Vec::with_capacity(linked_bytecode_chunks.len()),
+            names_out: bun_core::env_var::BUN_BYTECODE_ORDER_NAMES_OUT
+                .get()
+                .filter(|path| !path.is_empty())
+                .map(|path| (path, Vec::new())),
         };
         for ((chunk_index, bytecode_index, source_provider_url), names) in
             linked_bytecode_chunks.iter().zip(&names)
         {
+            if let Some((_, names_out)) = &mut linked.names_out {
+                crate::bytecode_order::write_names_of(
+                    names_out,
+                    source_provider_url.to_utf8().slice(),
+                    names.as_ref(),
+                );
+            }
             if linked.encoder.add_module(
                 c.options.output_format,
                 output_files.output_files[*chunk_index].value.as_slice(),
@@ -1486,6 +1497,16 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     }
     let mut linked_bytecode_payload: Option<Box<[u8]>> = None;
     if let Some(mut linked) = linked_bytecode {
+        if let Some((path, names_out)) = &linked.names_out {
+            let path = bun_core::ZBox::from_bytes(path);
+            if let Err(err) = bun_sys::File::write_file(bun_core::Fd::cwd(), &path, names_out) {
+                bun_core::warn!(
+                    "failed to write {}: {}",
+                    bstr::BStr::new(path.as_bytes()),
+                    err
+                );
+            }
+        }
         let encoded = linked.output_files;
         match linked.encoder.finish() {
             Some(crate::bytecode_order::LinkedPayload {
@@ -1669,6 +1690,8 @@ fn debug_assert_no_placeholder_left(c: &LinkerContext, files: &[options::OutputF
 struct LinkedBytecode {
     encoder: crate::bundle_v2::dispatch::BytecodeLinkEncoderHandle,
     output_files: Vec<u32>,
+    /// `BUN_BYTECODE_ORDER_NAMES_OUT`, and what is written there.
+    names_out: Option<(&'static [u8], Vec<u8>)>,
 }
 
 /// `--compile --bytecode`: the executable also carries ahead-of-time bytecode for the internal modules (node:fs, …) the
@@ -1785,6 +1808,13 @@ fn append_internal_module_bytecode(
                     names.as_ref(),
                 )
                 .then(|| {
+                    if let Some((_, names_out)) = &mut linked.names_out {
+                        crate::bytecode_order::write_names_of(
+                            names_out,
+                            module.name,
+                            names.as_ref(),
+                        );
+                    }
                     linked.output_files.push(output_files.len() as u32);
                     Box::<[u8]>::from(0u32.to_le_bytes())
                 })

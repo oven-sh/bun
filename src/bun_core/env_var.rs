@@ -43,6 +43,9 @@ new!(pub BUN_AGENT_RULE_DISABLED: boolean, "BUN_AGENT_RULE_DISABLED", { default:
 // A compiled executable decodes ALL of its embedded bytecode at exit and writes one digest line per module here: for
 // comparing two builds of the same sources whose bytecode payloads are laid out differently.
 new!(pub BUN_BYTECODE_DIGEST_OUT: string, "BUN_BYTECODE_DIGEST_OUT", {});
+// A build with `--bytecode-order`, and a compiled executable that writes an order file (`%p` as in its path), write
+// what they call each function here: the two must agree for every text, which is what the tests compare.
+new!(pub BUN_BYTECODE_ORDER_NAMES_OUT: string, "BUN_BYTECODE_ORDER_NAMES_OUT", {});
 // A compiled executable writes the payload order file of this run here at exit; `%p` in the path becomes the pid.
 new!(pub BUN_BYTECODE_ORDER_OUT: string, "BUN_BYTECODE_ORDER_OUT", {});
 new!(pub BUN_COMPILE_TARGET_TARBALL_URL: string, "BUN_COMPILE_TARGET_TARBALL_URL", {});

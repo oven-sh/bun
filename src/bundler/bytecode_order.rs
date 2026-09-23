@@ -51,6 +51,36 @@ impl Named<'_> {
 /// More than any thread that parsed what the text was printed from had: a text either side could not parse, and the
 /// other could, would have names on one side only.
 const NAMING_THREAD_STACK_SIZE: usize = 64 * 1024 * 1024;
+const _: () = assert!(
+    NAMING_THREAD_STACK_SIZE >= 3 * bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize
+);
+
+/// An order file's first line. Its names are the walker's (`FunctionIdentities`) of the Bun that built the executable
+/// that recorded it: a change to what a name is a hash of changes this, and older files are told to be recorded again.
+pub const VERSION: &str = "v2";
+
+/// `BUN_BYTECODE_ORDER_NAMES_OUT`: what the code `key` is the path of is called.
+pub fn write_names_of(out: &mut Vec<u8>, key: &[u8], names: Option<&CodeNames>) {
+    use std::io::Write;
+    let _ = writeln!(out, "# {}", bstr::BStr::new(key));
+    if let Some(names) = names {
+        write_names(out, names);
+    }
+}
+
+pub fn write_names(out: &mut Vec<u8>, names: &CodeNames) {
+    use std::io::Write;
+    if let Some(module) = names.module {
+        let _ = writeln!(out, "M {module:016x}");
+    }
+    for function in &names.functions {
+        let _ = writeln!(
+            out,
+            "{} {} {:016x}",
+            function.start, function.kind as u8, function.identity
+        );
+    }
+}
 
 /// In a build and at the exit of the run that records alike: on threads of their own (the process's pool may never
 /// get to it at exit), or on this one if there are none to be had.
@@ -81,6 +111,11 @@ pub fn names_of_all(texts: &[Named<'_>]) -> Vec<Option<CodeNames>> {
             }
         }
     });
+    if !texts.is_empty() && names.iter().all(|names| names.get().is_none()) {
+        bun_core::warn!(
+            "no thread could be started to name the code of a bytecode order file: it is named on this one, which may have less stack"
+        );
+    }
     name_the_rest();
     names
         .into_iter()
@@ -157,7 +192,7 @@ pub struct Recording<'a> {
 /// executable has bytecode for.
 pub fn write(modules: &[Option<&CodeNames>], recording: &Recording<'_>) -> (Vec<u8>, usize) {
     use std::io::Write;
-    let mut text = b"v2\n".to_vec();
+    let mut text = format!("{VERSION}\n").into_bytes();
     let mut seen = bun_collections::HashMap::<(u8, u64), ()>::default();
     let mut line = |seen_as: u8, kind: u8, hash: u64| {
         if seen.insert((seen_as, hash), ()).is_none() {
@@ -336,7 +371,7 @@ impl BytecodeOrder {
             .map(<[u8]>::trim_ascii)
             .skip_while(|line| line.is_empty() || line.starts_with(b"#"));
         match lines.next() {
-            Some(b"v2") => {}
+            Some(version) if version == VERSION.as_bytes() => {}
             Some([b'v', version @ ..])
                 if !version.is_empty() && version.iter().all(u8::is_ascii_digit) =>
             {

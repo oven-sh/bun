@@ -46,7 +46,7 @@ static NEVER_INLINE bool transferPorts(JSC::JSGlobalObject* globalObject, JSC::T
         WebCore::propagateException(*globalObject, throwScope, disentangled.releaseException());
         return false;
     }
-    auto* context = defaultGlobalObject(globalObject)->scriptExecutionContext();
+    auto* context = defaultGlobalObject(globalObject)->currentScriptExecutionContext();
     ports = MessagePort::entanglePorts(*context, disentangled.releaseReturnValue());
     return true;
 }

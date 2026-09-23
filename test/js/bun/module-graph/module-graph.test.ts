@@ -864,6 +864,7 @@ describe("Bun.ModuleGraph — whose context a call runs in, in every tier", () =
         const add = (a, b) => (a | 0) + (b | 0);
         class Sum { constructor(a, b) { this.sum = (a | 0) + (b | 0); } }
         class SumOfSpread extends Sum { constructor(...args) { super(...args); } }
+        class SumOfArguments extends Sum { constructor() { super(...arguments); } }
         export const shapes = {
           spread(n) { const f = (...a) => add(...a); let s = 0; for (let i = 0; i < n; i++) s += f(i, 1); return s; },
           applyArguments(n) { function f() { return add.apply(null, arguments); } let s = 0; for (let i = 0; i < n; i++) s += f(i, 1); return s; },
@@ -872,6 +873,11 @@ describe("Bun.ModuleGraph — whose context a call runs in, in every tier", () =
           reflectApply(n) { let s = 0; for (let i = 0; i < n; i++) s += Reflect.apply(add, null, [i, 1]); return s; },
           forwardArguments(n) { function g() { return add(arguments[0], arguments[1]); } function f() { return g.apply(this, arguments); } let s = 0; for (let i = 0; i < n; i++) s += f(i, 1); return s; },
           superSpread(n) { let s = 0; for (let i = 0; i < n; i++) s += new SumOfSpread(i, 1).sum; return s; },
+          superSpreadArguments(n) { let s = 0; for (let i = 0; i < n; i++) s += new SumOfArguments(i, 1).sum; return s; },
+          proxyApplyTrap(n) { const proxy = new Proxy(add, { apply: (target, thisValue, args) => target(...args) }); let s = 0; for (let i = 0; i < n; i++) s += proxy(i, 1); return s; },
+          proxyConstructTrap(n) { const proxy = new Proxy(Sum, { construct: (target, args) => new target(...args) }); let s = 0; for (let i = 0; i < n; i++) s += new proxy(i, 1).sum; return s; },
+          callSpreadArguments(n) { function g() { return add.call(null, ...arguments); } let s = 0; for (let i = 0; i < n; i++) s += g(i, 1); return s; },
+          applyRest(n) { const f = (...rest) => add.apply(null, rest); let s = 0; for (let i = 0; i < n; i++) s += f(i, 1); return s; },
           crossingSpread(n, other) { const array = [1, 2]; let s = 0; for (let i = 0; i < n; i++) s += other(...array); return s; },
         };
         export const addOf = (a, b) => add(a, b);
@@ -885,7 +891,7 @@ describe("Bun.ModuleGraph — whose context a call runs in, in every tier", () =
         const totals: Record<string, number[]> = {};
         for (let round = 0; round < 30; round++) {
           for (const app of [...apps, host]) {
-            for (const shape of ["spread", "applyArguments", "applyArray", "newSpread", "reflectApply", "forwardArguments", "superSpread"])
+            for (const shape of Object.keys(app.shapes).filter(shape => shape !== "crossingSpread"))
               (totals[shape] ??= []).push(app.shapes[shape](n));
             (totals.crossingSpread ??= []).push(app.shapes.crossingSpread(n, apps[apps.length - 1].addOf));
           }
@@ -956,6 +962,11 @@ describe("Bun.ModuleGraph — whose context a call runs in, in every tier", () =
               reflectApply: [counting],
               forwardArguments: [counting],
               superSpread: [counting],
+              superSpreadArguments: [counting],
+              proxyApplyTrap: [counting],
+              proxyConstructTrap: [counting],
+              callSpreadArguments: [counting],
+              applyRest: [counting],
               crossingSpread: [3 * n],
             },
             current: "undefined",

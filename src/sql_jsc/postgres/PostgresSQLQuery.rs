@@ -832,10 +832,12 @@ impl PostgresSQLQuery {
         }
 
         // Replies go to the head of the queue, so wire order has to equal queue order.
-        connection.requests.with_mut(|q| {
-            let at = q.len().saturating_sub(queued_by_conversion);
-            q.insert(at, queued)
-        });
+        connection
+            .requests
+            .with_mut(|q| match queued_by_conversion {
+                0 => q.push_back(queued),
+                behind => q.insert(q.len().saturating_sub(behind), queued),
+            });
         if this.status.get() == Status::Pending {
             connection.note_request_pending();
         }

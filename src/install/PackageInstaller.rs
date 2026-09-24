@@ -4,10 +4,10 @@ use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
-use bun_paths::resolve_path::{dirname, join_abs_string_z, join_z_buf};
+use bun_paths::resolve_path::{dirname, join_z_buf};
 use bun_paths::{AbsPath, AutoAbsPath, MAX_PATH_BYTES, PathBuffer, SEP, platform};
 use bun_semver::String;
-use bun_sys::{self as Syscall, Dir, Fd};
+use bun_sys::{Dir, Fd};
 
 use crate::bin_real as bin;
 use crate::bin_real::Bin;
@@ -1212,13 +1212,7 @@ impl<'a> PackageInstaller<'a> {
             }
         }
 
-        if scripts.preinstall.is_empty() && scripts.install.is_empty() {
-            let binding_dot_gyp_path = join_abs_string_z::<platform::Auto>(
-                self.node_modules.path.as_slice(),
-                &[alias, b"binding.gyp"],
-            );
-            count += Syscall::exists(binding_dot_gyp_path) as usize;
-        }
+        count += scripts.wants_default_node_gyp(folder_path.slice()) as usize;
 
         count
     }

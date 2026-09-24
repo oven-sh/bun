@@ -2752,6 +2752,13 @@ impl Package<u64> {
         self.scripts.parse_alloc(&mut string_builder, json);
         self.scripts.filled = true;
 
+        // Root packages (the void resolver) keep has_install_script unset.
+        if !resolver.is_void() {
+            let has_scripts = self.scripts.has_any()
+                || self.scripts.wants_default_node_gyp(source.path.name().dir);
+            self.meta.set_has_install_script(has_scripts);
+        }
+
         // It is allowed for duplicate dependencies to exist in optionalDependencies and regular dependencies
         if FEATURES.check_for_duplicate_dependencies {
             lockfile.scratch.duplicate_checker_map.clear();

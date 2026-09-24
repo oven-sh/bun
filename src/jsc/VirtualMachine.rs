@@ -98,8 +98,7 @@ impl GenerationFetches {
     /// A fetch that an earlier generation started is not in this count.
     pub(crate) fn settled(&mut self, generation: u32) {
         if generation == self.generation {
-            debug_assert!(self.in_flight > 0);
-            self.in_flight = self.in_flight.saturating_sub(1);
+            self.in_flight -= 1;
         }
     }
 }

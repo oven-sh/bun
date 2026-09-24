@@ -3176,6 +3176,20 @@ extern "C" uint8_t JSC__JSGlobalObject__drainMicrotasks(Zig::GlobalObject* globa
     return globalObject->drainMicrotasks();
 }
 
+// Whether drainMicrotasks() would report a stop or run script: the VM is
+// stopping, a termination is pending, or a tick or a microtask is queued. For
+// a caller on a path too hot for an empty drain.
+extern "C" bool JSC__JSGlobalObject__hasMicrotaskCheckpointWork(Zig::GlobalObject* globalObject)
+{
+    auto& vm = globalObject->vm();
+    if (WebCore::clientData(vm)->isStoppingOrStopped(vm) || vm.hasPendingTerminationException()) [[unlikely]]
+        return true;
+    auto* nextTickQueue = globalObject->m_nextTickQueue.get();
+    if (nextTickQueue && !nextTickQueue->isEmpty())
+        return true;
+    return !vm.defaultMicrotaskQueue().isEmpty();
+}
+
 template<class Visitor, class T> static void visitGlobalObjectMember(Visitor& visitor, T& anything)
 {
     anything.visit(visitor);

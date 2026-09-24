@@ -917,15 +917,13 @@ unsafe fn auto_tick(vm: *mut VirtualMachine, waiting_on: Option<AnyPromise>) {
     unsafe { (*el).tick_immediate_tasks(vm) };
     let mut wait_over = false;
     if let Some(promise) = waiting_on {
-        // The blocked frame usually has the loop entered (it is a callback, or
-        // runs in a microtask drain), so the immediates' exits above did not
-        // checkpoint microtasks; the one settling the promise (as a rule an
-        // await continuation) would otherwise run in the wait's next `tick()`,
-        // after the poll.
+        // See `EventLoop::auto_tick_waiting_on`. An empty checkpoint is
+        // skipped: a program with a pending top-level await is here on every
+        // turn of its loop.
         // SAFETY: as above.
-        let stopped = unsafe { (*el).drain_microtasks() }.is_err();
-        // Final: nothing else before the poll runs script. The waiter returns
-        // on either as soon as this tick does, so the poll must not park.
+        let stopped =
+            unsafe { &*el }.has_checkpoint_work() && unsafe { (*el).drain_microtasks() }.is_err();
+        // Final: nothing else before the poll runs user script.
         wait_over = stopped || promise.status() != PromiseStatus::Pending;
     }
     // SAFETY: as above.

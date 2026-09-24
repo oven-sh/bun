@@ -194,9 +194,9 @@ describe("ReadStream.prototype.setRawMode", () => {
 });
 
 describe("WriteStream end()", () => {
-  // The parent does not read the child's stdout until the child says it is
-  // about to call end(), so most of the 1 MiB sits in the stream's sink when
-  // end() runs. The callback must wait for it, or process.exit truncates it.
+  // The parent does not read the child's stdout until the child has called
+  // end(), so most of the 1 MiB sits in the stream's sink at that point. The
+  // callback must wait for it, or process.exit truncates the output.
   it.skipIf(isWindows)("fires the callback after the backlog is flushed", async () => {
     const child = spawn(
       bunExe(),
@@ -206,8 +206,8 @@ describe("WriteStream end()", () => {
          const out = new WriteStream(1);
          const chunk = Buffer.alloc(256 * 1024, 120);
          for (let i = 0; i < 4; i++) out.write(chunk);
-         process.send("ending");
-         out.end(() => process.exit(0));`,
+         out.end(() => process.exit(0));
+         process.send("ending");`,
       ],
       { env: bunEnv, stdio: ["ignore", "pipe", "pipe", "ipc"] },
     );

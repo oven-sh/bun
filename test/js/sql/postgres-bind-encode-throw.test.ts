@@ -12,7 +12,7 @@
 // written and truncates back to it when any part of the group fails.
 import { SQL } from "bun";
 import { describe, expect, test } from "bun:test";
-import { describeWithContainer } from "harness";
+import { bunEnv, bunExe, describeWithContainer } from "harness";
 import {
   listeningServer,
   pgAuthenticationOk,
@@ -79,6 +79,29 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
       sibling,
     ]);
     expect({ badResult, s }).toEqual({ badResult: "boom from toString", s: [{ v: "x" }] });
+  });
+
+  // The rejected query sends nothing, so no reply comes back to release the
+  // event loop ref that the query took. The connection must release it itself.
+  test.each([false, true])("a script whose last query was rejected exits on its own (prepare: %p)", async prepare => {
+    await container.ready;
+    const script = `
+      const sql = new Bun.SQL({ url: process.env.DATABASE_URL, max: 1, prepare: ${prepare} });
+      await sql.connect();
+      // A later tick: the idle connection does not hold the process any more.
+      await new Promise(resolve => setImmediate(resolve));
+      const param = { toString() { throw new Error("boom from toString"); } };
+      console.log(await sql\`SELECT \${param}::text AS v\`.then(() => "resolved", e => e.message));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, DATABASE_URL: url() },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("boom from toString\n");
+    expect(exitCode).toBe(0);
   });
 
   test("a query dispatched from inside a conversion that then fails never gets another query's row", async () => {

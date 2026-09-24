@@ -2,7 +2,7 @@ import { spawn } from "bun";
 import { upgrade_test_helpers } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
 import { bunExe, bunEnv as env, isMusl, isWindows, tempDir, tls, tmpdirSync } from "harness";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { copyFile, writeFile } from "node:fs/promises";
 import { basename, join } from "path";
 const { openTempDirWithoutSharingDelete, closeTempDirHandle } = upgrade_test_helpers;
@@ -327,7 +327,8 @@ it.skipIf(isWindows)(
 
     expect(stderr).toContain("Upgraded.");
     expect(await Bun.file(execPath).text()).toStartWith("#!/bin/sh");
-    expect(existsSync(join(String(stagingRoot), version, releaseFolderName(), "bun"))).toBe(false);
+    // The release was unpacked under BUN_TMPDIR, and the move left nothing in its folder.
+    expect(readdirSync(join(String(stagingRoot), version, releaseFolderName()))).toEqual([]);
     expect(exitCode).toBe(0);
   },
 );

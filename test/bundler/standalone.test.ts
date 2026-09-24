@@ -406,6 +406,7 @@ body { color: blue; }`,
     using dir = tempDir("compile-browser-url-attrs", {
       "index.html": `<!DOCTYPE html><html><head>
 <link rel="preload" as="image" href="./i.png" imagesrcset="./h1.png 1x, ./h2.png 2x" imagesizes="100vw">
+<link rel="preload" as="image" imagesrcset="./h1.png 1x, ./h2.png 2x" imagesizes="100vw">
 <link rel="modulepreload" href="./app.js" integrity="sha384-AAAA">
 <link rel="preload" as="font" href="https://cdn.example.com/font.woff2" crossorigin>
 <link rel="prefetch" href="./about.html">
@@ -414,6 +415,7 @@ body { color: blue; }`,
 <meta property="og:image" content="./og.png">
 <meta property="og:image:width" content="1200">
 <meta name="twitter:image" content="./og.png">
+<meta name="msapplication-config" content="none">
 <script type="module" src="./app.js"></script></head><body>
 <video poster="./i.png"><track src="./subs.vtt" kind="subtitles" srclang="en" default></video>
 <object data="./doc.pdf" type="application/pdf"><embed src="./doc.pdf"></object>
@@ -445,7 +447,6 @@ body { color: blue; }`,
     const html = await result.outputs[0].text();
 
     const pngData = "data:image/png;base64," + png.toString("base64");
-    const svgData = "data:image/svg+xml;base64," + Buffer.from(svg).toString("base64");
     const pdfData = "data:application/pdf;base64," + Buffer.from("%PDF-1.4\n").toString("base64");
     const urls = [...html.matchAll(/ (?:src|href|xlink:href|content|data|poster)="([^"]*)"/g)].map(m => m[1]);
     expect(urls).toEqual([
@@ -458,13 +459,15 @@ body { color: blue; }`,
       pngData, // og:image
       "1200",
       pngData, // twitter:image
+      "none", // msapplication-config: not a URL, and no warning for it
       pngData, // poster
       expect.stringMatching(/^data:text\/vtt[^"]*;base64,/), // track
       pdfData, // object
       pdfData, // embed
       pngData, // input
-      `${svgData}#icon`, // use href
-      `${svgData}#icon`, // use xlink:href
+      // Browsers do not load a data: URL from <use>, so it stays as written.
+      "./sprite.svg#icon", // use href
+      "./sprite.svg#icon", // use xlink:href
       pngData, // image href
       "#local",
       "./doc.pdf", // <a href> is navigation

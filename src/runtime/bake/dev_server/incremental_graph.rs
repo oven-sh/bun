@@ -1010,6 +1010,13 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             match mode {
                 // Invalid source indices in CSS are external URLs.
                 EdgeAttachmentMode::Css => return Ok(EdgeAttachmentResult::Stop),
+                // `<object data="/other.html">` is external: a link to that route, not a dependency on its files.
+                EdgeAttachmentMode::JsOrHtml
+                    if ir_flags
+                        .contains(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS) =>
+                {
+                    return Ok(EdgeAttachmentResult::Continue);
+                }
                 // Check IncrementalGraph for a file from a prior build.
                 EdgeAttachmentMode::JsOrHtml => match self.bundled_files.get_index(key) {
                     Some(i) => (FileIndex::<SIDE>::init(i as u32), FileKind::Unknown),

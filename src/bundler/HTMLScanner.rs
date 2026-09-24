@@ -248,8 +248,8 @@ pub(crate) enum UrlAction<'a> {
 pub(crate) trait HTMLProcessorHandler {
     /// Once per URL (per `srcset` candidate), in document order: one import record made or consumed per call.
     fn on_url(&mut self, url: &[u8], kind: ImportKind, optional: bool) -> UrlAction<'_>;
-    /// Standalone HTML has every local file inline, so a `<link rel="preload">` of one points at nothing.
-    fn drops_local_preloads(&self) -> bool {
+    /// Standalone HTML has every local file inline as a `data:` URL: a `<link rel="preload">` of one is dropped, and `<use>` keeps its URL.
+    fn is_standalone_html(&self) -> bool {
         false
     }
     fn on_write_html(&mut self, bytes: &[u8]);
@@ -292,6 +292,8 @@ enum UrlAttr {
     Asset,
     /// A file that may live elsewhere (`og:image`, `<object data>`): not found stays as written, with a warning.
     OptionalAsset,
+    /// `OptionalAsset` that browsers do not load from a `data:` URL.
+    SvgUse,
     /// Decided by `rel`, `as` and `type`.
     LinkHref,
     /// Decided by `property` and `name`.
@@ -336,10 +338,7 @@ const URL_ELEMENTS: &[(&str, &[(&str, UrlAttr)])] = &[
     ),
     (
         "use",
-        &[
-            ("href", UrlAttr::OptionalAsset),
-            ("xlink:href", UrlAttr::OptionalAsset),
-        ],
+        &[("href", UrlAttr::SvgUse), ("xlink:href", UrlAttr::SvgUse)],
     ),
 ];
 
@@ -381,7 +380,7 @@ impl UrlAttr {
         Some(match self {
             UrlAttr::Script => (ImportKind::Stmt, REQUIRED),
             UrlAttr::Asset => (ImportKind::Url, REQUIRED),
-            UrlAttr::OptionalAsset => (ImportKind::Url, OPTIONAL),
+            UrlAttr::OptionalAsset | UrlAttr::SvgUse => (ImportKind::Url, OPTIONAL),
             UrlAttr::LinkHref => {
                 let font = c.type_.as_deref().is_some_and(|t| {
                     t.get(..5)
@@ -412,7 +411,7 @@ impl UrlAttr {
                 }
             }
             UrlAttr::MetaContent => {
-                // The list Vite rewrites: https://ogp.me and the msapplication tile images.
+                // The list Vite rewrites, less `msapplication-config`: its documented value `none` is not a URL.
                 let image = [
                     "og:image",
                     "og:image:url",
@@ -427,7 +426,6 @@ impl UrlAttr {
                     || [
                         "twitter:image",
                         "msapplication-tileimage",
-                        "msapplication-config",
                         "msapplication-square70x70logo",
                         "msapplication-square150x150logo",
                         "msapplication-wide310x150logo",
@@ -559,13 +557,20 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
                     // SAFETY: `this_ptr` was derived from `run`'s `&mut T`,
                     // which is not reborrowed while the rewriter — the only
                     // holder of these closures — is alive.
-                    let drops_local_preloads = unsafe { (*this_ptr).drops_local_preloads() };
-                    let mut remove = drops_local_preloads
+                    let standalone = unsafe { (*this_ptr).is_standalone_html() };
+                    let is_local = |url: &[u8]| is_followed(url, true) && !is_external_url(url);
+                    let mut remove = standalone
                         && context.is_preload()
-                        && found[0].is_some_and(|href| {
-                            let href = element.attributes()[href].value();
-                            let href = href.trim_ascii().as_bytes();
-                            is_followed(href, false) && !is_external_url(href)
+                        && attrs.iter().zip(found).any(|(&(attr, _), index)| {
+                            index.is_some_and(|index| {
+                                let value = element.attributes()[index].value();
+                                let value = value.as_bytes();
+                                if attr.ends_with("srcset") {
+                                    (SrcsetUrls { value, pos: 0 }).any(|url| is_local(&value[url]))
+                                } else {
+                                    is_local(strings::trim(value, HTML_WHITESPACE))
+                                }
+                            })
                         });
                     for (&(attr, url_attr), index) in attrs.iter().zip(found) {
                         let (Some(index), Some(kind)) = (index, url_attr.kind(&context)) else {
@@ -574,17 +579,19 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
                         let value = element.attributes()[index].value();
                         bun_core::scoped_log!(HTMLScanner, "{} {}={}", selector, attr, value);
                         let action = if attr.ends_with("srcset") {
-                            // SAFETY: as for `drops_local_preloads` above.
+                            // SAFETY: as for `is_standalone_html` above.
                             rewrite_srcset(unsafe { &mut *this_ptr }, value.as_bytes(), kind)
                         } else {
                             match strings::trim(value.as_bytes(), HTML_WHITESPACE) {
                                 url if !is_followed(url, kind.1) => UrlAction::Keep,
-                                // SAFETY: as for `drops_local_preloads` above.
+                                // SAFETY: as for `is_standalone_html` above.
                                 url => unsafe { (*this_ptr).on_url(url, kind.0, kind.1) },
                             }
                         };
                         match action {
                             UrlAction::Keep => {}
+                            UrlAction::Replace(_)
+                                if standalone && matches!(url_attr, UrlAttr::SvgUse) => {}
                             UrlAction::Replace(new_value) => {
                                 set_attribute(element, attr, &new_value)
                             }

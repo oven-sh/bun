@@ -161,6 +161,33 @@ devTest("svg <use href>, links between pages, optional assets that are not on di
     expect(html).toInclude(`<track src="./missing.vtt">`);
   },
 });
+devTest("a link to another route does not pull in that route's files", {
+  files: {
+    "a.html": `
+      <!DOCTYPE html><html><head></head><body>
+      <object data="/b.html"></object>
+      <script type="module" src="/a.ts"></script>
+      </body></html>
+    `,
+    "a.ts": `console.log("a");`,
+    "b.html": `
+      <!DOCTYPE html><html><head><link rel="stylesheet" href="/b.css"></head><body>
+      <script type="module" src="/b.ts"></script>
+      </body></html>
+    `,
+    "b.css": `body { color: red }`,
+    "b.ts": `console.log("b");`,
+  },
+  async test(dev) {
+    // Bundle /b first: b.html is then in the graph under the path that "/b.html" maps to.
+    expect(await dev.fetch("/b").text()).toInclude(`rel="stylesheet"`);
+    const a = await dev.fetch("/a").text();
+    expect(a).toInclude(`<object data="/b.html">`);
+    expect(a).not.toInclude(`rel="stylesheet"`);
+    await using c = await dev.client("/a");
+    await c.expectMessage("a");
+  },
+});
 devTest("image import in JS", {
   files: {
     "index.html": `

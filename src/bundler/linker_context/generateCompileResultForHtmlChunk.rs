@@ -112,7 +112,7 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
         ));
     }
 
-    fn drops_local_preloads(&self) -> bool {
+    fn is_standalone_html(&self) -> bool {
         self.compile_to_standalone_html
     }
 

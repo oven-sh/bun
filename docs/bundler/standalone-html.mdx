@@ -87,7 +87,7 @@ Bun inlines every local asset it finds in your HTML: anything with a relative pa
 | `<link rel="stylesheet" href="./styles.css">`                                            | `<style>...bundled CSS...</style>`                                          |
 | `<img src="./logo.png">`                                                                 | `<img src="data:image/png;base64,...">`                                     |
 | `<img src="./icon.svg">`                                                                 | `<img src="data:image/svg+xml;base64,...">`                                 |
-| `<img src="./icons.svg#menu">`, `<use href="...">`                                       | `<img src="data:image/svg+xml;base64,...#menu">`                            |
+| `<img src="./icons.svg#menu">`                                                           | `<img src="data:image/svg+xml;base64,...#menu">`                            |
 | `<img srcset="./a.png 1x, ./b.png 2x">`                                                  | `<img srcset="data:image/png;base64,... 1x, data:image/png;base64,... 2x">` |
 | `<video src="./demo.mp4">`                                                               | `<video src="data:video/mp4;base64,...">`                                   |
 | `<audio src="./click.wav">`                                                              | `<audio src="data:audio/x-wav;base64,...">`                                 |
@@ -113,6 +113,7 @@ Bun leaves external URLs (like CDN links or absolute URLs) untouched.
 These references are left exactly as written. If they point at a local file, that file will not be next to the output:
 
 - `<iframe src>`, `<a href>`, `<link rel="prefetch">`, and any other reference from one HTML page to another (`<object data="./page.html">`)
+- SVG `<use href="./icons.svg#menu">`: browsers do not load a `data:` URL from `<use>`. Copy the `<symbol>` into the page and reference it as `<use href="#menu">`.
 - `url()` inside a `style="..."` attribute or an inline `<style>` block (put the CSS in a `.css` file and `<link>` it instead)
 - `import` specifiers inside an inline `<script type="module">` block (use `<script src>` instead)
 - Anything inside `<noscript>`

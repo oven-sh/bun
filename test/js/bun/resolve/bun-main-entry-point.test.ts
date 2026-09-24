@@ -270,15 +270,14 @@ test.concurrent(
     const generations: GlobalsReport[] = [];
     for (let gen = 0; gen <= 1; gen++) {
       if (gen > 0) runner.save(esmDefaultExport(gen));
-      // A restart closes the server of the previous process, so the URL of an
-      // earlier line can be dead by the time it is fetched. Skip those.
+      // A restart closes the server of the previous process, so the request
+      // to the URL of an earlier line can fail at any point. Skip those.
       let report: GlobalsReport | undefined;
       do {
         const [, url] = await runner.next(started);
-        report = await fetch(url).then(
-          response => response.json(),
-          () => undefined,
-        );
+        report = await fetch(url)
+          .then(response => response.json())
+          .catch(() => undefined);
       } while (report?.gen !== gen);
       generations.push(report);
     }

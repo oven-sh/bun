@@ -77,8 +77,7 @@ pub struct Flags {
     pub(crate) binary: bool,
     pub(crate) bigint: bool,
     pub(crate) simple: bool,
-    /// Rejected while in flight (an undecodable row, a cancel behind the FIFO head): its
-    /// response is skipped until `ReadyForQuery`.
+    /// Rejected while in flight: its response is skipped until `ReadyForQuery`.
     pub(crate) discard_response: bool,
     /// Which connection counter this request's dispatch incremented; reset to
     /// `None` when `finish_request` consumes that contribution, so the

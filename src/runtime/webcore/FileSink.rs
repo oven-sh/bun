@@ -223,11 +223,12 @@ pub(crate) extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
 
     #[cfg(not(windows))]
     {
-        this.force_sync.set(true);
-        // SAFETY(JsCell): single-field write; does not call into JS.
-        this.writer.with_mut(|w| w.force_sync = true);
-        if this.fd.get() != Fd::INVALID {
-            let _ = sys::update_nonblocking(this.fd.get(), false);
+        if this.pollable.get() && !this.force_sync.get() {
+            // Pipe or socket: write through immediately, but per-call nonblocking so fd 1/2 stay blocking for children.
+            this.writer.with_mut(|w| w.unbuffered = true);
+        } else {
+            this.force_sync.set(true);
+            this.writer.with_mut(|w| w.force_sync = true);
         }
     }
     #[cfg(windows)]

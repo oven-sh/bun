@@ -3077,10 +3077,13 @@ mod posix_impl {
     }
     #[cfg(unix)]
     pub(crate) const MSG_DONTWAIT: i32 = libc::MSG_DONTWAIT;
-    // `MSG_DONTWAIT | MSG_NOSIGNAL` on all Unix including macOS
-    // (Darwin defines MSG_NOSIGNAL=0x80000).
+    /// XNU's `sosend` only honours `MSG_NBIO` (private, 0x20000) for "don't wait for buffer space"; `MSG_DONTWAIT` alone still blocks there.
+    #[cfg(target_os = "macos")]
+    const MSG_NBIO: i32 = 0x20000;
+    #[cfg(not(target_os = "macos"))]
+    const MSG_NBIO: i32 = 0;
     #[cfg(unix)]
-    pub(crate) const SEND_FLAGS_NONBLOCK: i32 = libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL;
+    pub(crate) const SEND_FLAGS_NONBLOCK: i32 = libc::MSG_DONTWAIT | MSG_NBIO | libc::MSG_NOSIGNAL;
     /// `fcntl(F_GETFD)` then OR in `FD_CLOEXEC`.
     pub fn set_close_on_exec(fd: Fd) -> Maybe<()> {
         let fl = fcntl(fd, libc::F_GETFD, 0)?;
@@ -7360,6 +7363,74 @@ pub fn write_nonblocking(fd: Fd, buf: &[u8]) -> Maybe<usize> {
     write(fd, buf)
 }
 
+/// How many bytes a blocking pipe accepts right now without blocking; `None` if the fd can't say (not a pipe).
+pub fn pipe_writable_space(fd: Fd) -> Option<usize> {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        // SAFETY: plain fcntl/ioctl on a caller-owned fd.
+        let cap = unsafe { libc::fcntl(fd.native(), libc::F_GETPIPE_SZ) };
+        if cap < 0 {
+            return None;
+        }
+        let mut queued: c_int = 0;
+        if unsafe { libc::ioctl(fd.native(), libc::FIONREAD, &mut queued) } < 0 {
+            return None;
+        }
+        return Some((cap as usize).saturating_sub(queued as usize));
+    }
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    {
+        thread_local! {
+            static KQ: core::cell::Cell<c_int> = const { core::cell::Cell::new(-1) };
+        }
+        let kq = KQ.with(|kq| {
+            if kq.get() < 0 {
+                kq.set(safe_libc::kqueue());
+            }
+            kq.get()
+        });
+        if kq < 0 {
+            return None;
+        }
+        // SAFETY: all-zero is a valid kevent.
+        let mut change: libc::kevent = unsafe { core::mem::zeroed() };
+        change.ident = fd.native() as usize;
+        change.filter = libc::EVFILT_WRITE;
+        change.flags = libc::EV_ADD | libc::EV_ONESHOT;
+        let mut out: [libc::kevent; 1] = unsafe { core::mem::zeroed() };
+        let zero = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        let n = kevent(
+            Fd::from_native(kq),
+            core::slice::from_ref(&change),
+            &mut out,
+            Some(&zero),
+        )
+        .ok()?;
+        if n == 1 && out[0].ident == change.ident {
+            if out[0].flags & (libc::EV_ERROR | libc::EV_EOF) != 0 {
+                return None;
+            }
+            return Some(out[0].data.max(0) as usize);
+        }
+        change.flags = libc::EV_DELETE;
+        let _ = kevent(
+            Fd::from_native(kq),
+            core::slice::from_ref(&change),
+            &mut [],
+            Some(&zero),
+        );
+        return Some(0);
+    }
+    #[allow(unreachable_code)]
+    {
+        let _ = fd;
+        None
+    }
+}
+
 /// `fallocate(fd, 0, offset, len)` on Linux, result discarded; no-op elsewhere.
 pub fn preallocate_file(
     fd: FdNative,
@@ -9231,6 +9302,20 @@ fn fd_write_all_quiet(fd: Fd, mut bytes: &[u8]) -> bool {
         match write(fd, bytes) {
             Ok(0) => return false, // short write → give up
             Ok(n) => bytes = &bytes[n..],
+            #[cfg(unix)]
+            Err(e) if e.get_errno() == E::EAGAIN => {
+                // Another process sharing fd 1/2 may have set O_NONBLOCK; wait instead of dropping output.
+                let mut pfd = [libc::pollfd {
+                    fd: fd.native(),
+                    events: libc::POLLOUT,
+                    revents: 0,
+                }];
+                // SAFETY: valid 1-element pollfd array.
+                if unsafe { libc::poll(pfd.as_mut_ptr(), 1, -1) } < 0 && last_errno() != libc::EINTR
+                {
+                    return false;
+                }
+            }
             Err(_) => return false,
         }
     }

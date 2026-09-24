@@ -226,9 +226,14 @@ fn write_to_blocking_pipe(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
         }
     }
 
-    match bun_core::is_writable(fd) {
-        bun_core::Pollable::Ready | bun_core::Pollable::Hup => sys::write(fd, buf),
-        bun_core::Pollable::NotReady => sys::Result::Err(sys::Error::retry()),
+    // No per-call nonblocking write here: ask how much fits so a large write can't park the thread.
+    match sys::pipe_writable_space(fd) {
+        Some(0) => sys::Result::Err(sys::Error::retry()),
+        Some(space) => sys::write(fd, &buf[..buf.len().min(space)]),
+        None => match bun_core::is_writable(fd) {
+            bun_core::Pollable::Ready | bun_core::Pollable::Hup => sys::write(fd, buf),
+            bun_core::Pollable::NotReady => sys::Result::Err(sys::Error::retry()),
+        },
     }
 }
 
@@ -608,6 +613,8 @@ pub struct PosixStreamingWriter<Parent: PosixStreamingWriterParent> {
     pub is_done: bool,
     pub(crate) closed_without_reporting: bool,
     pub force_sync: bool,
+    /// Like `force_sync`, skip the small-write buffer, but keep the fd's nonblocking write path.
+    pub unbuffered: bool,
     /// Last reported `WriteStatus == Pending` (i.e. write(2) returned EAGAIN).
     backed_up: core::cell::Cell<bool>,
 }
@@ -621,6 +628,7 @@ impl<Parent: PosixStreamingWriterParent> Default for PosixStreamingWriter<Parent
             is_done: false,
             closed_without_reporting: false,
             force_sync: false,
+            unbuffered: false,
             backed_up: core::cell::Cell::new(false),
         }
     }
@@ -731,7 +739,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
     }
 
     pub(crate) fn should_buffer(&self, addition: usize) -> bool {
-        !self.force_sync && self.outgoing.size() + addition < Self::CHUNK_SIZE
+        !self.force_sync && !self.unbuffered && self.outgoing.size() + addition < Self::CHUNK_SIZE
     }
 
     pub fn get_buffer(&self) -> &[u8] {

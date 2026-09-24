@@ -71,9 +71,9 @@ describe("RegExp.escape with supplementary code points", () => {
 });
 
 describe("identity escapes in Unicode mode", () => {
-  // BMP letters, a supplementary character, each lone surrogate half, a
+  // BMP letters, supplementary characters, each lone surrogate half, a
   // LineTerminator and U+FEFF: none of these is a SyntaxCharacter or '/'.
-  test.each(["00E9", "4E2D", "1F600", "D83D", "DE00", "2028", "FEFF"])(
+  test.each(["00E9", "00C7", "4E2D", "5B57", "1F600", "1D4B3", "D83D", "DE00", "2028", "FEFF"])(
     '"\\\\" + U+%s is a SyntaxError with the u and v flags',
     codePoint => {
       const ch = String.fromCodePoint(parseInt(codePoint, 16));
@@ -94,13 +94,30 @@ describe("identity escapes in Unicode mode", () => {
       }
     }
     expect(/^[\-]$/u.test("-")).toBe(true);
+    expect(/^[\]]$/u.test("]")).toBe(true);
     expect(/^[\&]$/v.test("&")).toBe(true);
-    expect(() => new RegExp("\\a", "u")).toThrow(SyntaxError);
-    expect(() => new RegExp("\\ ", "u")).toThrow(SyntaxError);
+  });
+
+  test("NUL and ASCII characters outside the allowed set are still a SyntaxError", () => {
+    for (const flags of ["u", "v"]) {
+      expect(() => new RegExp("\\\u0000", flags)).toThrow(SyntaxError);
+      expect(() => new RegExp("\\a", flags)).toThrow(SyntaxError);
+      expect(() => new RegExp("\\q", flags)).toThrow(SyntaxError);
+      expect(() => new RegExp("\\ ", flags)).toThrow(SyntaxError);
+    }
+  });
+
+  test("an unescaped or unicode-escaped non-ASCII character still matches with u and v", () => {
+    for (const flags of ["u", "v"]) {
+      expect(new RegExp("^\u00c7$", flags).test("\u00c7")).toBe(true);
+      expect(new RegExp("^\\u00C7$", flags).test("\u00c7")).toBe(true);
+      expect(new RegExp("^\\u{1D4B3}$", flags).test("\u{1D4B3}")).toBe(true);
+      expect(new RegExp("^[\u{1D4B3}]$", flags).test("\u{1D4B3}")).toBe(true);
+    }
   });
 
   test("non-Unicode patterns keep the Annex B identity escape", () => {
-    for (const ch of ["\u00e9", "\u4e2d", "\u{1F600}"]) {
+    for (const ch of ["\u00e9", "\u00c7", "\u4e2d", "\u{1F600}"]) {
       expect(new RegExp("^\\" + ch + "$").test(ch)).toBe(true);
       expect(new RegExp("^[\\" + ch + "]+$").test(ch)).toBe(true);
     }

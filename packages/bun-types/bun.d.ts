@@ -5432,9 +5432,12 @@ declare module "bun" {
      */
     globals?: Record<string, unknown> | undefined;
     /**
-     * Called with the uncaught exceptions and unhandled rejections that happen
-     * in this graph's context, instead of the process-wide
-     * `uncaughtException` / `unhandledRejection` handling. `kind` says which.
+     * Called with an exception nobody caught that was thrown in this graph's
+     * context, instead of the process-wide `uncaughtException` handling, as a
+     * `process.on("uncaughtException")` listener is. `origin` is
+     * `"uncaughtException"`, or `"unhandledRejection"` for an unhandled
+     * rejection of a graph that has no
+     * {@link ModuleGraphOptions.unhandledRejection | unhandledRejection}.
      *
      * An error is the graph's when it happens in the graph's context, whoever
      * wrote the code that threw: the graph's modules and what they start, and
@@ -5446,13 +5449,27 @@ declare module "bun" {
      * The handler runs in the context the graph was made in, so what it throws
      * or rejects is that context's: the host's, when the host made the graph.
      *
-     * Without an `onError`, errors go to the `onError` of the graph in whose
+     * A graph with no handler for an error hands it to the graph in whose
      * context this graph was made, and to the process-wide path when the host
      * made it.
      *
      * @see https://bun.com/docs/runtime/module-graph#errors
      */
-    onError?: ((error: unknown, kind: "uncaughtException" | "unhandledRejection") => void) | undefined;
+    uncaughtException?: ((error: unknown, origin: "uncaughtException" | "unhandledRejection") => void) | undefined;
+    /**
+     * Called with a rejection nobody handled of a promise that was rejected in
+     * this graph's context, instead of the process-wide `unhandledRejection`
+     * handling, as a `process.on("unhandledRejection")` listener is. Without
+     * it, the rejection goes to
+     * {@link ModuleGraphOptions.uncaughtException | uncaughtException} with
+     * the origin `"unhandledRejection"`.
+     *
+     * Runs in the context the graph was made in, like
+     * {@link ModuleGraphOptions.uncaughtException | uncaughtException}.
+     *
+     * @see https://bun.com/docs/runtime/module-graph#errors
+     */
+    unhandledRejection?: ((reason: unknown, promise: Promise<unknown>) => void) | undefined;
   }
 
   /**
@@ -5486,7 +5503,7 @@ declare module "bun" {
    * ```ts
    * const graph = new Bun.ModuleGraph({
    *   globals: { process: Object.create(process, { env: { value: { NAME: "a" } } }) },
-   *   onError: (err, kind) => console.error(kind, err),
+   *   uncaughtException: (err, origin) => console.error(origin, err),
    * });
    * const app = await graph.import("./app.mjs"); // app.mjs's exports, for this graph
    * graph.run(() => app.start()); // what start() opens is the graph's

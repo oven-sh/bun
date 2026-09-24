@@ -3,6 +3,7 @@
 #include "root.h"
 
 #include "BunClientData.h"
+#include "BunProcess.h"
 #include "ErrorCode.h"
 #include "NodeV8.h"
 #include "ZigGlobalObject.h"
@@ -13,8 +14,6 @@
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <wtf/StdLibExtras.h>
-
-#include "mimalloc.h"
 
 namespace Bun {
 
@@ -27,11 +26,8 @@ JSC_DEFINE_HOST_FUNCTION(functionGetHeapStatisticsArray, (JSGlobalObject * globa
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto& heap = vm.heap;
 
-    size_t elapsed_msecs = 0, user_msecs = 0, system_msecs = 0;
-    size_t current_rss = 0, peak_rss = 0;
-    size_t current_commit = 0, peak_commit = 0, page_faults = 0;
-    mi_process_info(&elapsed_msecs, &user_msecs, &system_msecs, &current_rss,
-        &peak_rss, &current_commit, &peak_commit, &page_faults);
+    size_t peakRSS = 0;
+    getPeakRSS(&peakRSS);
 
     const size_t globalObjectCount = WebCore::clientData(vm)->liveGlobalObjectCount;
 
@@ -45,7 +41,7 @@ JSC_DEFINE_HOST_FUNCTION(functionGetHeapStatisticsArray, (JSGlobalObject * globa
     RETURN_IF_EXCEPTION(scope, {});
     result->putDirectIndex(globalObject, 3, jsNumber(globalObjectCount));
     RETURN_IF_EXCEPTION(scope, {});
-    result->putDirectIndex(globalObject, 4, jsNumber(peak_rss));
+    result->putDirectIndex(globalObject, 4, jsNumber(peakRSS));
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(result);
 }

@@ -227,6 +227,58 @@ describe("fs.watch", () => {
     });
   });
 
+  // macOS hands one FSEvents stream to every watcher in the process, and each
+  // watcher keeps the events under its own path. The watcher on the parent puts
+  // the siblings into that stream: "views2/a.txt" and "views.bak" must not reach
+  // a watcher on "views" as "2/a.txt" and ".bak".
+  test("does not report siblings whose names start with the watched name", async () => {
+    using dir = tempDir("fs-watch-sibling-prefix", { "views": {}, "views2": {} });
+    const root = String(dir);
+    const views = path.join(root, "views");
+
+    const seen = { recursive: new Set<string>(), flat: new Set<string>() };
+    let onEvent = () => {};
+    const watchers = [
+      fs.watch(root, { recursive: true }, () => {}),
+      fs.watch(views, { recursive: true }, (_, filename) => {
+        seen.recursive.add(String(filename));
+        onEvent();
+      }),
+      fs.watch(views, (_, filename) => {
+        seen.flat.add(String(filename));
+        onEvent();
+      }),
+    ];
+    // Writes the siblings and then `name`, until both watchers on "views" report `name`.
+    // The siblings come first, so a watcher that matches them reports them before `name`.
+    const writeUntilSeen = async (name: string) => {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      onEvent = () => {
+        if (seen.recursive.has(name) && seen.flat.has(name)) resolve();
+      };
+      const interval = repeat(() => {
+        fs.writeFileSync(path.join(root, "views2", "a.txt"), "x");
+        fs.writeFileSync(path.join(root, "views.bak"), "x");
+        fs.writeFileSync(path.join(views, name), "x");
+      });
+      await promise;
+      clearInterval(interval);
+    };
+
+    try {
+      await writeUntilSeen("b.txt");
+      // Both watchers are live now, so they observe every write of this round.
+      await writeUntilSeen("c.txt");
+    } finally {
+      for (const watcher of watchers) watcher.close();
+    }
+
+    expect({ recursive: [...seen.recursive], flat: [...seen.flat] }).toEqual({
+      recursive: ["b.txt", "c.txt"],
+      flat: ["b.txt", "c.txt"],
+    });
+  });
+
   test("should emit 'change' event when file is modified", done => {
     const filepath = path.join(testDir, "watch.txt");
 

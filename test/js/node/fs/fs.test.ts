@@ -217,9 +217,7 @@ describe.concurrent("fs.openAsBlob pins the file", () => {
     await expect(blob.slice(1, 4).text()).rejects.toEqual(notReadable);
     await expect(new File([blob], "n").text()).rejects.toEqual(notReadable);
     await expect(new Response(blob).text()).rejects.toEqual(notReadable);
-    await expect(new Request("http://example.com", { method: "POST", body: blob }).text()).rejects.toEqual(
-      notReadable,
-    );
+    await expect(new Request("http://example.com", { method: "POST", body: blob }).text()).rejects.toEqual(notReadable);
     const url = URL.createObjectURL(blob);
     try {
       await expect(fetch(url).then(res => res.text())).rejects.toEqual(notReadable);

@@ -279,11 +279,7 @@ impl UpgradedDuplex {
         // Before the call: an erroring Duplex can run `done` inside it.
         self.in_flight.set(self.in_flight.get() + 1);
         if let Err(err) = write_or_end.call(&global, duplex, &[payload, done]) {
-            // A throw means the stream never took the chunk: no callback comes.
-            match self.in_flight.get().checked_sub(1) {
-                Some(n) => self.in_flight.set(n),
-                None => debug_assert!(false, "a throw from a write that was not counted"),
-            }
+            // Fatal: the count stays high, so nothing completes before teardown resets it.
             (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
         }
     }

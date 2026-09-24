@@ -2490,6 +2490,64 @@ describe.each([
   });
 });
 
+// A TLS 1.3 client finishes its handshake before it sends its final flight
+// (Certificate, CertificateVerify, Finished). The handshake callback runs in
+// between. A client that destroys the socket there turns the server down, so
+// that flight must not go out: it carries the client certificate, and it lets
+// the server report a connection the client never used. node drops its pending
+// handshake output on destroy(). Under TLS 1.2 the client's flight leaves
+// before the server's Finished, on both runtimes.
+// The fixture runs on both runtimes so the expected reports are pinned to node.
+describe.each([
+  ["bun", bunExe()],
+  ["node", nodeExe()],
+])("a client that turns the server down once its handshake is done (%s)", (_runtime, exe) => {
+  async function run(mode: string, version: string) {
+    await using proc = Bun.spawn({
+      cmd: [exe!, join(import.meta.dir, "tls-reject-after-handshake-fixture.mjs"), mode, version],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const report = JSON.parse(stdout);
+    expect(exitCode).toBe(0);
+    return report;
+  }
+
+  const neverConnected = { event: "tlsClientError", code: "ECONNRESET" };
+  const connected = (data: string) => ({ event: "secureConnection", peerCN: "agent3", data });
+
+  const refusals = [
+    ["checkServerIdentity", ["error:ERR_TLS_CERT_ALTNAME_INVALID", "close:true"]],
+    ["checkServerIdentity function", ["error:ERR_PINNED_KEY", "close:true"]],
+    ["tls.connect({ socket })", ["error:ERR_TLS_CERT_ALTNAME_INVALID", "close:true"]],
+    ["https.request", ["error:ERR_TLS_CERT_ALTNAME_INVALID"]],
+    ["http2.connect", ["error:ERR_TLS_CERT_ALTNAME_INVALID"]],
+    ["destroy()", ["close:false"]],
+    ["destroy(error)", ["error:ERR_REFUSED", "close:true"]],
+  ] as const;
+
+  describe.concurrent("each connection in its own process", () => {
+    it.skipIf(!exe).each(refusals)("TLSv1.3 %s: the server never sees the client certificate", async (mode, client) => {
+      expect(await run(mode, "TLSv1.3")).toEqual({ client: [...client], server: neverConnected });
+    });
+
+    // What the client chose to send still goes out with the flight.
+    it.skipIf(!exe).each([
+      ["end()", ""],
+      ["write() then destroy()", "hello"],
+    ])("TLSv1.3 %s still completes the server's handshake", async (mode, data) => {
+      expect(await run(mode, "TLSv1.3")).toEqual({ client: ["close:false"], server: connected(data) });
+    });
+
+    it.skipIf(!exe).each([refusals[0], refusals[5]])("TLSv1.2 %s is unchanged", async (mode, client) => {
+      expect(await run(mode, "TLSv1.2")).toEqual({ client: [...client], server: connected("") });
+    });
+  });
+});
+
 it.each(["TLSv1.3", "TLSv1.2"] as const)(
   "%s: re-checks server identity on a resumed session (cross-servername resume must not authorize)",
   async version => {

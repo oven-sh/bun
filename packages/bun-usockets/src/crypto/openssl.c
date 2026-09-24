@@ -1836,6 +1836,7 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
   s->ssl_end_delivered = 0;
   s->ssl_in_use = 0;
   s->ssl_pending_detach = 0;
+  s->ssl_hs_flight_held = 0;
   s->ssl_pending_close_code = 0;
   s->ssl_is_server = is_client ? 0 : 1;
 }
@@ -2159,7 +2160,18 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
     struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
     if (loop_ssl_data && loop_ssl_data->ssl_write_batch_len &&
         loop_ssl_data->ssl_write_batch_owner == s && !us_socket_is_closed(s)) {
-      ssl_flush_write_batch(loop_ssl_data, s);
+      if (s->ssl_hs_flight_held && !s->ssl_is_server && code != LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN) {
+        /* A client that destroys its socket from inside on_handshake refuses
+         * the server it just finished the handshake with (a verify error, a
+         * checkServerIdentity verdict, the user's own check). Cancel the held
+         * final flight, like node does: under TLS 1.3 it carries the client's
+         * Certificate. The peer never gets our Finished, so it could not read
+         * a close_notify either. */
+        ssl_release_batch(s->group->loop, s);
+        s->ssl_fatal_error = 1;
+      } else {
+        ssl_flush_write_batch(loop_ssl_data, s);
+      }
     }
   }
   /* Neither node's `_handle.close()` (FAST_SHUTDOWN, no reason) nor a graceful
@@ -2666,7 +2678,9 @@ restart:
          * loads. The save/restore below makes this safe even if the JS
          * callback writes; with read==0 the buffer is empty anyway. */
         if (s->ssl_handshake_state == HANDSHAKE_PENDING && SSL_is_init_finished(s_ssl(s))) {
+          s->ssl_hs_flight_held = 1;
           ssl_trigger_handshake(s, 1);
+          s->ssl_hs_flight_held = 0;
           if (ssl_gone(s)) return NULL;
           /* A write parked before the handshake (node:https queues its request
            * that way) is retried with the flight still held, so both leave in
@@ -2714,7 +2728,9 @@ restart:
       char *saved_input = loop_ssl_data->ssl_read_input;
       unsigned int saved_length = loop_ssl_data->ssl_read_input_length;
       unsigned int saved_offset = loop_ssl_data->ssl_read_input_offset;
+      s->ssl_hs_flight_held = 1;
       ssl_trigger_handshake(s, 1);
+      s->ssl_hs_flight_held = 0;
       if (ssl_gone(s)) return NULL;
       loop_ssl_data->ssl_read_input = saved_input;
       loop_ssl_data->ssl_read_input_length = saved_length;

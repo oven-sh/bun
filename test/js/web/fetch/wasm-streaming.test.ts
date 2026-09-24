@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { tmpdirSync } from "harness";
+import { isLinux, tmpdirSync } from "harness";
 
 import { ok } from "node:assert/strict";
 
@@ -212,6 +212,14 @@ describe("WebAssembly.compileStreaming", () => {
   test("doesn't compile a response that isn't valid WebAssembly", async () => {
     const response = await fetch("data:application/wasm,This is not actually Wasm");
     expect(WebAssembly.compileStreaming(response)).rejects.toBeInstanceOf(WebAssembly.CompileError);
+  });
+
+  // /proc/version is a regular file whose st_size is 0, and it is not Wasm. The error shows that
+  // its bytes reached the compiler: a stream capped at st_size fails as "expected a module of at
+  // least 8 bytes" instead.
+  test.skipIf(!isLinux)("reads a procfs Bun.file() response to EOF", async () => {
+    const response = new Response(Bun.file("/proc/version"), { headers: { "Content-Type": "application/wasm" } });
+    expect(WebAssembly.compileStreaming(response)).rejects.toThrow("module doesn't start with '\\0asm'");
   });
 });
 

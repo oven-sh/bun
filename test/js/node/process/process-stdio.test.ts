@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows } from "harness";
+import { release } from "node:os";
 import path from "path";
 import { isatty } from "tty";
 describe.concurrent("process-stdio", () => {
@@ -203,7 +204,7 @@ describe.concurrent.skipIf(isWindows)(
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("rc=0\n");
-      expect(stdout.byteLength).toBe("start\n".length + 1000000);
+      expect(stdout).toEqual(new Uint8Array(Buffer.concat([Buffer.from("start\n"), Buffer.alloc(1000000)])));
       expect(exitCode).toBe(0);
     });
 
@@ -287,7 +288,9 @@ describe.concurrent.skipIf(isWindows)(
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
-      expect(stdout.byteLength).toBe((1 << 20) + 1 + (1 << 20));
+      expect(stdout).toEqual(
+        new Uint8Array(Buffer.concat([Buffer.alloc(1 << 20, "A"), Buffer.from("\n"), Buffer.alloc(1 << 20, "B")])),
+      );
       expect(exitCode).toBe(0);
     });
 
@@ -385,7 +388,14 @@ describe.concurrent.skipIf(isWindows)(
       expect(exitCode).toBe(0);
     });
 
-    test.skipIf(!isLinux)(
+    // pwritev2(RWF_NOWAIT) works on pipes from Linux 6.4 (FMODE_NOWAIT on pipes); older kernels behave like macOS/Node here.
+    const pipesHaveNowait =
+      isLinux &&
+      (() => {
+        const [maj, min] = release().split(".").map(Number);
+        return maj > 6 || (maj === 6 && min >= 4);
+      })();
+    test.skipIf(!pipesHaveNowait)(
       "process.stdout.write on a pipe stays asynchronous after an inherit spawn cleared O_NONBLOCK (RWF_NOWAIT)",
       async () => {
         const reader = `process.on("SIGUSR1", async () => { for await (const c of Bun.stdin.stream()) require("fs").writeSync(1, c); process.exit(0); });

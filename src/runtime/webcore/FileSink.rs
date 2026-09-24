@@ -47,6 +47,7 @@ pub struct FileSink {
     pub(crate) pollable: Cell<bool>,
     pub(crate) nonblocking: Cell<bool>,
     pub(crate) force_sync: Cell<bool>,
+    #[cfg(unix)]
     pub(crate) is_tty: Cell<bool>,
 
     pub(crate) is_socket: Cell<bool>,
@@ -1628,6 +1629,7 @@ impl FileSink {
             pollable: Cell::new(false),
             nonblocking: Cell::new(false),
             force_sync: Cell::new(false),
+            #[cfg(unix)]
             is_tty: Cell::new(false),
             is_socket: Cell::new(false),
             fd: Cell::new(fd),

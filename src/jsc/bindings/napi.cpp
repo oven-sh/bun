@@ -1740,6 +1740,27 @@ extern "C" JS_EXPORT napi_status node_api_create_sharedarraybuffer(napi_env env,
     NAPI_RETURN_SUCCESS(env);
 }
 
+// Node throws this above its own kMaxLength (2^53 - 1) and also runs finalize_cb there: https://github.com/nodejs/node/blob/v26.3.0/src/node_buffer.cc#L478-L482
+// Bun does not run finalize_cb: valid addons reach JSC's lower limit, and node-addon-api deletes its finalizer data on
+// every failed status. The caller keeps the bytes.
+static NEVER_INLINE void throwBufferTooLarge(napi_env env)
+{
+    Zig::GlobalObject* globalObject = toJS(env);
+    JSC::VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    static_assert(MAX_ARRAY_BUFFER_SIZE == 0x100000000ull);
+    scope.throwException(globalObject, createErrorWithCode(vm, globalObject, "ERR_BUFFER_TOO_LARGE"_s, "Cannot create a Buffer larger than 0x100000000 bytes"_s, JSC::ErrorType::Error));
+}
+
+// ArrayBuffer::createFromBytes asserts above MAX_ARRAY_BUFFER_SIZE, so fail before anything adopts the addon's bytes.
+#define NAPI_RETURN_IF_BUFFER_TOO_LARGE(_env, _length)                   \
+    do {                                                                 \
+        if ((_length) > MAX_ARRAY_BUFFER_SIZE) [[unlikely]] {            \
+            throwBufferTooLarge(_env);                                   \
+            NAPI_RETURN_STATUS_IF_EXCEPTION(_env, napi_generic_failure); \
+        }                                                                \
+    } while (0)
+
 // SharedArrayBuffer backing stores can outlive the creating napi_env (they
 // may be posted to other agents), so Node-API specifies a finalizer with no
 // env parameter. This destructor mirrors NapiExternalBufferDestructor but
@@ -1777,6 +1798,7 @@ extern "C" JS_EXPORT napi_status node_api_create_external_sharedarraybuffer(napi
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     NAPI_CHECK_ARG(env, result);
     NAPI_RETURN_EARLY_IF_FALSE(env, !env->hasPendingException(), napi_pending_exception);
+    NAPI_RETURN_IF_BUFFER_TOO_LARGE(env, byte_length);
 
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = JSC::getVM(globalObject);
@@ -2441,6 +2463,8 @@ extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
 {
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ARG(env, result);
+    // Before the NULL-data branch, as in Node: https://github.com/nodejs/node/blob/v26.3.0/src/node_buffer.cc#L478-L484
+    NAPI_RETURN_IF_BUFFER_TOO_LARGE(env, length);
 
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = JSC::getVM(globalObject);
@@ -2492,6 +2516,7 @@ extern "C" napi_status napi_create_external_arraybuffer(napi_env env, void* exte
 {
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ARG(env, result);
+    NAPI_RETURN_IF_BUFFER_TOO_LARGE(env, byte_length);
 
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = JSC::getVM(globalObject);

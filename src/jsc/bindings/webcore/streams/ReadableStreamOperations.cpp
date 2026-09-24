@@ -397,9 +397,7 @@ void readableStreamError(JSGlobalObject* globalObject, JSReadableStream* stream,
         }
     }
     Bun::attachAsyncStackFromPromise(globalObject, error, awaited);
-    rejectPromise(globalObject, reader->m_closedPromise.get(), error);
-    RETURN_IF_EXCEPTION(scope, void());
-    markPromiseAsHandled(vm, reader->m_closedPromise.get());
+    rejectPromiseAsHandled(globalObject, reader->m_closedPromise.get(), error);
     if (!reader->isBYOB())
         RELEASE_AND_RETURN(scope, readableStreamDefaultReaderErrorReadRequests(globalObject, static_cast<JSReadableStreamDefaultReader*>(reader), error));
     RELEASE_AND_RETURN(scope, readableStreamBYOBReaderErrorReadIntoRequests(globalObject, static_cast<JSReadableStreamBYOBReader*>(reader), error));
@@ -490,27 +488,22 @@ JSPromise* readableStreamCancel(JSGlobalObject* globalObject, JSReadableStream* 
 void readableStreamReaderGenericInitialize(JSGlobalObject* globalObject, JSReadableStreamReaderBase* reader, JSReadableStream* stream)
 {
     auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    reader->m_stream.set(vm, reader, stream);
-    stream->m_reader.set(vm, stream, reader);
+    // Promise first, links last, no check in between (see rejectPromiseAsHandled).
+    JSPromise* closedPromise = nullptr;
     switch (stream->m_state) {
     case ReadableStreamState::Readable:
-        reader->m_closedPromise.set(vm, reader, JSPromise::create(vm, globalObject->promiseStructure()));
-        return;
-    case ReadableStreamState::Closed: {
-        auto* closedPromise = promiseFulfilledWith(globalObject, JSC::jsUndefined());
-        RETURN_IF_EXCEPTION(scope, void());
-        reader->m_closedPromise.set(vm, reader, closedPromise);
-        return;
+        closedPromise = JSPromise::create(vm, globalObject->promiseStructure());
+        break;
+    case ReadableStreamState::Closed:
+        closedPromise = promiseFulfilledWith(globalObject, JSC::jsUndefined());
+        break;
+    case ReadableStreamState::Errored:
+        closedPromise = promiseRejectedWithAsHandled(globalObject, stream->m_storedError.get());
+        break;
     }
-    case ReadableStreamState::Errored: {
-        auto* closedPromise = promiseRejectedWith(globalObject, stream->m_storedError.get());
-        RETURN_IF_EXCEPTION(scope, void());
-        reader->m_closedPromise.set(vm, reader, closedPromise);
-        markPromiseAsHandled(vm, closedPromise);
-        return;
-    }
-    }
+    reader->m_closedPromise.set(vm, reader, closedPromise);
+    reader->m_stream.set(vm, reader, stream);
+    stream->m_reader.set(vm, stream, reader);
 }
 
 // ReadableStreamReaderGenericRelease(reader)
@@ -522,54 +515,42 @@ void readableStreamReaderGenericRelease(JSGlobalObject* globalObject, JSReadable
     ASSERT(stream);
     ASSERT(stream->m_reader.get() == reader);
 
+    // What can throw comes first: the release itself has no check (see rejectPromiseAsHandled).
     JSObject* releaseError = Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: Reader released"_s);
     RETURN_IF_EXCEPTION(scope, void());
-    if (stream->m_state == ReadableStreamState::Readable) {
-        rejectPromise(globalObject, reader->m_closedPromise.get(), releaseError);
-        RETURN_IF_EXCEPTION(scope, void());
-    } else {
-        auto* rejected = promiseRejectedWith(globalObject, releaseError);
-        RETURN_IF_EXCEPTION(scope, void());
-        reader->m_closedPromise.set(vm, reader, rejected);
+    // A direct stream's in-flight read lives on the controller (not in the reader's
+    // read-request queue), so releasing the reader must settle it here.
+    JSPromise* pendingDirectRead = nullptr;
+    JSObject* pendingReadError = nullptr;
+    if (stream->m_controllerKind == ControllerKind::Direct) {
+        pendingDirectRead = uncheckedDowncast<WebCore::JSDirectStreamController>(stream->m_controller.get())->m_pendingRead.get();
+        if (pendingDirectRead) {
+            pendingReadError = Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: Releasing reader"_s);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
     }
-    markPromiseAsHandled(vm, reader->m_closedPromise.get());
 
+    if (stream->m_state == ReadableStreamState::Readable)
+        rejectPromiseAsHandled(globalObject, reader->m_closedPromise.get(), releaseError);
+    else
+        reader->m_closedPromise.set(vm, reader, promiseRejectedWithAsHandled(globalObject, releaseError));
+
+    JSObject* nativeHandle = nullptr;
     switch (stream->m_controllerKind) {
     case ControllerKind::None:
     case ControllerKind::NativeSink:
         break;
-    case ControllerKind::Direct: {
-        // A direct stream's in-flight read lives on the controller (not in the reader's
-        // read-request queue), so releasing the reader must settle it here.
-        auto* controller = uncheckedDowncast<WebCore::JSDirectStreamController>(stream->m_controller.get());
-        if (auto* pendingRead = controller->m_pendingRead.get()) {
-            controller->m_pendingRead.clear();
-            JSObject* pendingReadError = Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: Releasing reader"_s);
-            RETURN_IF_EXCEPTION(scope, void());
-            pendingRead->reject(vm, pendingReadError);
-            RETURN_IF_EXCEPTION(scope, void());
+    case ControllerKind::Direct:
+        if (pendingDirectRead) {
+            uncheckedDowncast<WebCore::JSDirectStreamController>(stream->m_controller.get())->m_pendingRead.clear();
+            pendingDirectRead->reject(vm, pendingReadError);
         }
         break;
-    }
     case ControllerKind::Default: {
         auto* controller = defaultControllerOf(stream);
         controller->releaseSteps();
-        // Bun: drop the native handle's event-loop ref when its consumer releases the lock.
-        if (controller->m_algorithms.kind == SourceKind::Native) {
-            const auto* adapter = uncheckedDowncast<WebCore::JSNativeStreamSourceAdapter>(controller->m_algorithms.algorithmContext.get());
-            if (auto* handle = adapter->handle()) {
-                JSValue updateRef = handle->getIfPropertyExists(globalObject, builtinNames(vm).updateRefPublicName());
-                RETURN_IF_EXCEPTION(scope, void());
-                if (updateRef && updateRef.isCallable()) {
-                    auto callData = JSC::getCallData(updateRef);
-                    MarkedArgumentBuffer args;
-                    args.append(jsBoolean(false));
-                    ASSERT(!args.hasOverflowed());
-                    JSC::call(globalObject, updateRef, callData, handle, args);
-                    RETURN_IF_EXCEPTION(scope, void());
-                }
-            }
-        }
+        if (controller->m_algorithms.kind == SourceKind::Native)
+            nativeHandle = uncheckedDowncast<WebCore::JSNativeStreamSourceAdapter>(controller->m_algorithms.algorithmContext.get())->handle();
         break;
     }
     case ControllerKind::Byte:
@@ -578,6 +559,21 @@ void readableStreamReaderGenericRelease(JSGlobalObject* globalObject, JSReadable
     }
     stream->m_reader.clear();
     reader->m_stream.clear();
+
+    // Bun: drop the native handle's event-loop ref when its consumer releases the lock. This calls
+    // into the handle, so it comes after the release.
+    if (nativeHandle) {
+        JSValue updateRef = nativeHandle->getIfPropertyExists(globalObject, builtinNames(vm).updateRefPublicName());
+        RETURN_IF_EXCEPTION(scope, void());
+        if (updateRef && updateRef.isCallable()) {
+            auto callData = JSC::getCallData(updateRef);
+            MarkedArgumentBuffer args;
+            args.append(jsBoolean(false));
+            ASSERT(!args.hasOverflowed());
+            JSC::call(globalObject, updateRef, callData, nativeHandle, args);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+    }
 }
 
 // ReadableStreamReaderGenericCancel(reader, reason)

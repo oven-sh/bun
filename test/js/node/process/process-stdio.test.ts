@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows } from "harness";
 import path from "path";
 import { isatty } from "tty";
 describe.concurrent("process-stdio", () => {
@@ -340,5 +340,99 @@ describe.concurrent.skipIf(isWindows)(
       expect(stdout.byteLength).toBe(1 << 20);
       expect(exitCode).toBe(0);
     });
+
+    // Spawning an inherit child clears O_NONBLOCK on the shared description (above). The parent's own process.stdout must
+    // stay asynchronous after that where the OS has a per-call nonblocking write: sockets everywhere (send + MSG_DONTWAIT /
+    // MSG_NBIO), pipes on Linux (pwritev2 + RWF_NOWAIT). macOS pipes have no such call, so they behave like Node there.
+    test("process.stdout.write on a socket stays asynchronous after an inherit spawn cleared O_NONBLOCK", async () => {
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.stdout.write("x");
+           Bun.spawnSync(["true"], { stdio: ["inherit", "inherit", "inherit"] });
+           const ret = process.stdout.write(Buffer.alloc(1 << 20, "A"));
+           process.stderr.write(JSON.stringify({ ret }) + "\\n");
+           process.stdout.once("drain", () => process.stderr.write(JSON.stringify({ drained: true }) + "\\n"));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        lazy: true,
+      });
+      const stderr = proc.stderr.getReader();
+      let first = "";
+      while (!first.includes("\n")) {
+        const { value, done } = await stderr.read();
+        if (done) break;
+        first += Buffer.from(value).toString();
+      }
+      expect(JSON.parse(first.split("\n")[0])).toEqual({ ret: false });
+      const [stdout, rest, exitCode] = await Promise.all([
+        proc.stdout.bytes(),
+        (async () => {
+          let out = first.slice(first.indexOf("\n") + 1);
+          while (true) {
+            const { value, done } = await stderr.read();
+            if (done) return out;
+            out += Buffer.from(value).toString();
+          }
+        })(),
+        proc.exited,
+      ]);
+      expect(stdout.byteLength).toBe(1 + (1 << 20));
+      expect(JSON.parse(rest.trim())).toEqual({ drained: true });
+      expect(exitCode).toBe(0);
+    });
+
+    test.skipIf(!isLinux)(
+      "process.stdout.write on a pipe stays asynchronous after an inherit spawn cleared O_NONBLOCK (RWF_NOWAIT)",
+      async () => {
+        const reader = `process.on("SIGUSR1", async () => { for await (const c of Bun.stdin.stream()) require("fs").writeSync(1, c); process.exit(0); });
+        setInterval(() => {}, 1 << 30);
+        require("fs").writeSync(2, JSON.stringify({ reader: process.pid }) + "\\n");`;
+        const writer = `process.stdout.write("x");
+        Bun.spawnSync(["true"], { stdio: ["inherit", "inherit", "inherit"] });
+        const ret = process.stdout.write(Buffer.alloc(1 << 20, "A"));
+        require("fs").writeSync(2, JSON.stringify({ ret }) + "\\n");
+        process.stdout.once("drain", () => require("fs").writeSync(2, JSON.stringify({ drained: true }) + "\\n"));`;
+        await using proc = spawn({
+          cmd: ["sh", "-c", `"$0" -e "$1" | "$0" -e "$2"`, bunExe(), writer, reader],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const lines: any[] = [];
+        let buf = "";
+        const stderr = proc.stderr.getReader();
+        const next = async () => {
+          while (true) {
+            const nl = buf.indexOf("\n");
+            if (nl >= 0) {
+              const line = buf.slice(0, nl);
+              buf = buf.slice(nl + 1);
+              const v = JSON.parse(line);
+              lines.push(v);
+              return v;
+            }
+            const { value, done } = await stderr.read();
+            if (done) throw new Error("stderr closed early: " + JSON.stringify(lines) + " " + JSON.stringify(buf));
+            buf += Buffer.from(value).toString();
+          }
+        };
+        let readerPid: number | undefined, ret: boolean | undefined;
+        while (readerPid === undefined || ret === undefined) {
+          const v = await next();
+          if ("reader" in v) readerPid = v.reader;
+          if ("ret" in v) ret = v.ret;
+        }
+        expect(ret).toBe(false);
+        process.kill(readerPid!, "SIGUSR1");
+        expect(await next()).toEqual({ drained: true });
+        const [stdout, exitCode] = await Promise.all([proc.stdout.bytes(), proc.exited]);
+        expect(stdout.byteLength).toBe(1 + (1 << 20));
+        expect(exitCode).toBe(0);
+      },
+    );
   },
 );

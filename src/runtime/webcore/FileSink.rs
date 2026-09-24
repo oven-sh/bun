@@ -47,6 +47,7 @@ pub struct FileSink {
     pub(crate) pollable: Cell<bool>,
     pub(crate) nonblocking: Cell<bool>,
     pub(crate) force_sync: Cell<bool>,
+    pub(crate) is_tty: Cell<bool>,
 
     pub(crate) is_socket: Cell<bool>,
     pub(crate) fd: Cell<Fd>,
@@ -740,6 +741,8 @@ impl FileSink {
             }
             sys::Result::Ok(fd) => fd,
         };
+        #[cfg(unix)]
+        self.is_tty.set(pollable_out && sys::isatty(fd));
 
         if matches!(options.input_path, PathOrFileDescriptor::Path(_)) {
             self.close_with_graph(context);
@@ -793,6 +796,12 @@ impl FileSink {
                             .get_poll()
                             .unwrap()
                             .set_flag(bun_io::FilePollFlag::Socket);
+                    } else if self.is_tty.get() {
+                        self.writer
+                            .get()
+                            .get_poll()
+                            .unwrap()
+                            .set_flag(bun_io::FilePollFlag::Tty);
                     } else if self.pollable.get() {
                         self.writer
                             .get()
@@ -1619,6 +1628,7 @@ impl FileSink {
             pollable: Cell::new(false),
             nonblocking: Cell::new(false),
             force_sync: Cell::new(false),
+            is_tty: Cell::new(false),
             is_socket: Cell::new(false),
             fd: Cell::new(fd),
             auto_flusher: JsCell::new(AutoFlusher::default()),

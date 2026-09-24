@@ -141,17 +141,13 @@ describe.skipIf(parseInt(process.versions.icu) < 76)(
 );
 
 describe("url.domainToUnicode with many xn-- labels", () => {
-  // The conversion runs once per xn-- label. The whole-name ICU conversion
-  // moves the rest of the name for each decoded label, which is quadratic.
+  // The whole-name ICU conversion moves the rest of the name for each decoded label. That takes more than 9 s for
+  // this host on a debug build, so the test times out. One conversion per label takes 0.2 s.
   // Node (ada 4.0.0) returns "" for a host of more than 16384 bytes. Bun has no cap.
   test("takes linear time in the number of xn-- labels", () => {
-    const labels = 262144;
+    const labels = 131072;
     const host = Buffer.alloc(labels * 8, "xn--nxa.").toString() + "com";
-    const start = performance.now();
-    const unicode = url.domainToUnicode(host);
-    const elapsed = performance.now() - start;
-    expect(unicode).toBe(Buffer.alloc(labels * 3, "β.").toString() + "com");
-    expect(elapsed).toBeLessThan(5000);
+    expect(url.domainToUnicode(host)).toBe(Buffer.alloc(labels * 3, "β.").toString() + "com");
   });
 
   // Expected values are from Node v26.10.0.

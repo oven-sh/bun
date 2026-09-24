@@ -244,6 +244,53 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
     }
   });
 
+  test("a pool slot is reusable after sql.reserve() is closed with a timeout and its queries finish first", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      const r = await sql.reserve();
+      const inflight = r.unsafe("SELECT 'inflight'").execute();
+      await r.close({ timeout: 30 });
+      await inflight;
+
+      // max is 1, so this only gets a connection when close() gave the reserved one up.
+      const t1 = await sql.begin(async tx => {
+        await tx.unsafe("SELECT 'T1a'");
+        return "t1";
+      });
+      expect(t1).toBe("t1");
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  test("tx.close() with a timeout rolls back when its queries finish first", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      const err = await sql
+        .begin(async tx => {
+          const inflight = tx.unsafe("SELECT 'inflight'").execute();
+          await tx.close({ timeout: 30 });
+          await inflight;
+        })
+        .then(
+          () => null,
+          e => e,
+        );
+
+      expect(received.map(r => r.sql)).toEqual([beginCommand, "SELECT 'inflight'", "ROLLBACK"]);
+      expect(err).toBeInstanceOf(Error);
+      expect(err.message).toBe("Connection closed");
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
   test("concurrent sql.begin() stays serialized after a server-side disconnect during a transaction", async () => {
     const received: Received[] = [];
     const { port, server } = await mockServer(received);

@@ -63,6 +63,19 @@ function settleReservedTransaction(
   settle(value);
 }
 
+/// The wait of close({ timeout }): fulfills when every promise has settled, or after
+/// `timeout` seconds. It never rejects, so a failed query is not reported a second time.
+function settledOrTimeout(pending: Promise<unknown>[], timeout: number): Promise<void> {
+  const { promise, resolve } = Promise.withResolvers<void>();
+  const timer = setTimeout(resolve, timeout * 1000);
+  timer.unref(); // dont block the event loop
+  Promise.allSettled(pending).then(() => {
+    clearTimeout(timer);
+    resolve();
+  });
+  return promise;
+}
+
 function adapterFromOptions(options: Bun.SQL.__internal.DefinedOptions): Adapter | ListenableAdapter {
   switch (options.adapter) {
     case "postgres":
@@ -493,26 +506,14 @@ const SQL = function SQL(
           throw $ERR_INVALID_ARG_VALUE("options.timeout", timeout, "must be a non-negative integer less than 2^31");
         }
         if (timeout > 0 && (reserveQueries.size > 0 || reservedTransaction.size > 0)) {
-          const { promise, resolve } = Promise.withResolvers();
-          // race all queries vs timeout
-          const pending_queries = Array.from(reserveQueries);
-          const pending_transactions = Array.from(reservedTransaction);
-          const timer = setTimeout(() => {
-            state.connectionState |= ReservedConnectionState.closed;
-            for (const query of reserveQueries) {
-              (query as Query<any, any>).cancel();
-            }
-            state.connectionState |= ReservedConnectionState.closed;
-            pooledConnection.close();
-
-            resolve();
-          }, timeout * 1000);
-          timer.unref(); // dont block the event loop
-          Promise.all([Promise.all(pending_queries), Promise.all(pending_transactions)]).finally(() => {
-            clearTimeout(timer);
-            resolve();
-          });
-          return promise;
+          await settledOrTimeout(
+            (Array.from(reserveQueries) as Promise<unknown>[]).concat(Array.from(reservedTransaction)),
+            timeout,
+          );
+          // The connection closed, or release() gave it back to the pool, during the wait.
+          if (state.connectionState & ReservedConnectionState.closed) {
+            return;
+          }
         }
       }
       state.connectionState |= ReservedConnectionState.closed;
@@ -778,27 +779,16 @@ const SQL = function SQL(
         }
 
         if (timeout > 0 && (transactionQueries.size > 0 || transactionSavepoints.size > 0)) {
-          const { promise, resolve } = Promise.withResolvers();
-          // race all queries vs timeout
-          const pending_queries = Array.from(transactionQueries);
-          const pending_savepoints = Array.from(transactionSavepoints);
-          const timer = setTimeout(async () => {
-            for (const query of transactionQueries) {
-              (query as Query<any, any>).cancel();
-            }
-            if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
-              await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
-            }
-            await run_internal_transaction_sql(ROLLBACK_COMMAND);
-            state.connectionState |= ReservedConnectionState.closed;
-            resolve();
-          }, timeout * 1000);
-          timer.unref(); // dont block the event loop
-          Promise.all([Promise.all(pending_queries), Promise.all(pending_savepoints)]).finally(() => {
-            clearTimeout(timer);
-            resolve();
-          });
-          return promise;
+          await settledOrTimeout(
+            (Array.from(transactionQueries) as Promise<unknown>[]).concat(
+              Array.from(transactionSavepoints) as Promise<unknown>[],
+            ),
+            timeout,
+          );
+          // The transaction ended, or its connection closed, during the wait.
+          if (state.connectionState & ReservedConnectionState.closed) {
+            return;
+          }
         }
       }
       for (const query of transactionQueries) {

@@ -1254,6 +1254,22 @@ describe("Transactions", () => {
     const accounts = await sql`SELECT * FROM accounts WHERE id = 1`;
     expect(accounts[0].balance).toBe(1002);
   });
+
+  test("tx.close() with a timeout rolls back when its queries finish first", async () => {
+    const error = await sql
+      .begin(async tx => {
+        const update = tx`UPDATE accounts SET balance = 0 WHERE id = 1`.execute();
+        await tx.close({ timeout: 30 });
+        await update;
+      })
+      .then(
+        () => null,
+        e => e,
+      );
+
+    expect(await sql`SELECT balance FROM accounts WHERE id = 1`).toEqual([{ balance: 1000 }]);
+    expect(error).toMatchObject({ code: "ERR_SQLITE_CONNECTION_CLOSED", message: "Connection closed" });
+  });
 });
 
 describe("SQLite-specific features", () => {

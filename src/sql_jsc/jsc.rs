@@ -289,10 +289,16 @@ pub(crate) trait VirtualMachineSqlExt {
     fn ssl_ctx_cache(&mut self) -> &mut SslCtxCache;
     /// bun_io::EventLoopCtx for the JS-thread VM, for KeepAlive::{ref_,unref}.
     fn vm_ctx(&self) -> bun_io::EventLoopCtx;
-    /// Lazy-init `RareData`'s per-protocol uws [`bun_uws::SocketGroup`].
-    fn postgres_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup;
+    /// `context`'s per-protocol uws [`bun_uws::SocketGroup`], for a new connection its script opens.
+    fn postgres_socket_group<const SSL: bool>(
+        &mut self,
+        context: &bun_jsc::ScriptExecutionContext,
+    ) -> &mut bun_uws::SocketGroup;
     /// See [`Self::postgres_socket_group`].
-    fn mysql_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup;
+    fn mysql_socket_group<const SSL: bool>(
+        &mut self,
+        context: &bun_jsc::ScriptExecutionContext,
+    ) -> &mut bun_uws::SocketGroup;
     // NOTE: `event_loop_mut` lives on `VirtualMachine` as a safe inherent
     // accessor (single audited deref under the JS-thread-singleton invariant);
     // the former unsafe trait shim here was dead — inherent methods always win
@@ -323,14 +329,22 @@ impl VirtualMachineSqlExt for VirtualMachine {
         bun_io::js_vm_ctx()
     }
     #[inline]
-    fn postgres_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup {
+    fn postgres_socket_group<const SSL: bool>(
+        &mut self,
+        context: &bun_jsc::ScriptExecutionContext,
+    ) -> &mut bun_uws::SocketGroup {
         let loop_ = self.uws_loop();
-        self.rare_data().postgres_group::<SSL>(loop_)
+        self.client_socket_groups_in(context)
+            .postgres_group::<SSL>(loop_)
     }
     #[inline]
-    fn mysql_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup {
+    fn mysql_socket_group<const SSL: bool>(
+        &mut self,
+        context: &bun_jsc::ScriptExecutionContext,
+    ) -> &mut bun_uws::SocketGroup {
         let loop_ = self.uws_loop();
-        self.rare_data().mysql_group::<SSL>(loop_)
+        self.client_socket_groups_in(context)
+            .mysql_group::<SSL>(loop_)
     }
 }
 
@@ -474,6 +488,16 @@ pub mod api {
                     // its `Option<CString>` field, valid for `self`'s lifetime.
                     Some(p) => unsafe { (hooks().ssl_config_server_name)(p.as_ptr()) },
                 }
+            }
+
+            /// [`server_name`](Self::server_name) as bytes; empty when unset.
+            pub(crate) fn server_name_bytes(&self) -> &[u8] {
+                let server_name = self.server_name();
+                if server_name.is_null() {
+                    return b"";
+                }
+                // SAFETY: NUL-terminated C string that the boxed SSLConfig owns.
+                unsafe { core::ffi::CStr::from_ptr(server_name) }.to_bytes()
             }
 
             /// `SSLConfig.reject_unauthorized` — non-zero rejects on verify error.

@@ -948,7 +948,7 @@ fn find_dependency_paths(
         if is_root_dep || workspace_name_for_dep.is_some() {
             let mut path = DependencyPath { path: Vec::new() };
 
-            let mut trace: Box<[u8]> = current.clone();
+            let mut trace: Box<[u8]> = current;
             let mut seen_in_trace: StringHashMap<()> = StringHashMap::default();
 
             // Walks dependent → dependency, so the path reads root-most first and ends at the vulnerable package.

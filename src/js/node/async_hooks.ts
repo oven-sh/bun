@@ -63,8 +63,17 @@ class Frame {
 // Only run during debug
 function assertValidFrame(frame: unknown): boolean {
   for (var f = frame, n = 0; f !== undefined; f = (f as Frame).prev, n++) {
-    $assert(f instanceof Frame, "AsyncContextData must be a Frame chain or undefined, got", f);
-    $assert((f as Frame).storage instanceof AsyncLocalStorage, "Frame.storage must be an AsyncLocalStorage");
+    // A Bun.ModuleGraph's context is a frame whose storage is the graph: made in
+    // ModuleGraph.cpp (null prototype), or a copy of one made here.
+    $assert(
+      f instanceof Frame || Object.getPrototypeOf(f) === null,
+      "AsyncContextData must be a Frame chain or undefined, got",
+      f,
+    );
+    $assert(
+      $isObject((f as Frame).storage),
+      "Frame.storage must be an AsyncLocalStorage, a ModuleGraph, or (leaving a graph's context) the global object",
+    );
     $assert((f as Frame).masked === undefined || $isJSArray((f as Frame).masked), "Frame.masked must be an array");
     $assert(n < 10000, "AsyncContextData chain is unreasonably long (cycle?)");
   }
@@ -199,11 +208,11 @@ class RunScope {
   }
 }
 
-class AsyncLocalStorage {
-  #defaultValue = undefined;
-  #name = undefined;
+class AsyncLocalStorage<T = any> {
+  #defaultValue: T | undefined = undefined;
+  #name: string | undefined = undefined;
 
-  constructor(options) {
+  constructor(options?) {
     if (options !== undefined) {
       validateObject(options, "options");
       this.#defaultValue = options.defaultValue;
@@ -219,14 +228,14 @@ class AsyncLocalStorage {
       const uid = Math.random().toString(36).slice(2, 8);
       const source = require("bun:jsc").callerSourceOrigin();
 
-      (this as any).__id__ = uid + "@" + require("node:path").basename(source);
+      (this as any).__id__ = uid + "@" + require("node:path").basename(source!);
 
       $debug("new AsyncLocalStorage uid=", (this as any).__id__, source);
     }
   }
 
   static bind(fn, ...args: any) {
-    validateFunction(fn);
+    validateFunction(fn, "fn");
     return this.snapshot().bind(null, fn, ...args);
   }
 
@@ -319,12 +328,12 @@ class AsyncLocalStorage {
     return this.#name || "";
   }
 
-  getStore() {
+  getStore(): T | undefined {
     $debug("getStore " + (this as any).__id__);
     var start = get();
     if (start === undefined || isMasked(start, this)) return this.#defaultValue;
     for (var f: Frame | undefined = start; f !== undefined; f = f.prev) {
-      if (f.storage === this) return f.value;
+      if (f.storage === this) return f.value as T;
     }
     return this.#defaultValue;
   }
@@ -611,6 +620,8 @@ const asyncWrapProviders = {
   VERIFYREQUEST: 56,
   INSPECTORJSBINDING: 57,
 };
+
+export type { Frame };
 
 export default {
   AsyncLocalStorage,

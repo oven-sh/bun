@@ -2648,6 +2648,39 @@ it("http2 connect supports various URL formats", async done => {
   });
 });
 
+// The client corks its connection preface before the socket has connected. A write on a
+// connecting socket consumes the kernel's pending connect error, and the refused connect
+// is then reported as ECONNRESET. The fixture prints the error shape; Node.js and Bun must
+// print the same line.
+it("http2 client reports ECONNREFUSED for a refused connect, like Node.js", async () => {
+  const fixture = path.join(import.meta.dir, "http2-connect-refused.fixture.js");
+  async function run(exe) {
+    await using proc = Bun.spawn({ cmd: [exe, fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+  const expected = {
+    code: "ECONNREFUSED",
+    syscall: "connect",
+    address: "127.0.0.1",
+    portMatches: true,
+    message: "connect ECONNREFUSED 127.0.0.1:<port>",
+  };
+
+  const bunRun = await run(bunExe());
+  expect(bunRun.stderr).toBe("");
+  expect(JSON.parse(bunRun.stdout)).toEqual(expected);
+  expect(bunRun.exitCode).toBe(0);
+
+  const node = nodeExe();
+  if (node) {
+    const nodeRun = await run(node);
+    expect(JSON.parse(nodeRun.stdout)).toEqual(expected);
+    expect(nodeRun.stdout).toBe(bunRun.stdout);
+    expect(nodeRun.exitCode).toBe(0);
+  }
+});
+
 it("http2 request.close() validates input and manages stream state", async done => {
   const { mustCall } = createCallCheckCtx(done);
   const server = http2.createServer();
@@ -3534,6 +3567,229 @@ describe("http2 header values are latin-1 byte strings", () => {
         trailers: { "x-wide-trailer": utf8AsLatin1(wide) },
       });
       expect(await response.promise).toBe(200);
+    } finally {
+      client.close();
+      server.close();
+    }
+  });
+});
+
+// node:http2 writes the strings of an ALTSVC frame (RFC 7838) and of an ORIGIN
+// frame (RFC 8336) with one byte per code unit, and reads them back with one
+// code unit per byte (node_http2.cc). The quoted-string value of an ALTSVC
+// parameter can carry obs-text (0x80-0xFF). The tests decode wire bytes as
+// latin-1, so a string survives only if each code unit was one byte.
+describe("http2 ALTSVC and ORIGIN frame strings are latin-1", () => {
+  const ALTSVC = 0x0a;
+  const ORIGIN = 0x0c;
+  const origin = "https://caf\xe9.example";
+  const value = 'h2=":443"; x="caf\xe9"';
+  const asUtf8 = str => Buffer.from(str, "utf8").toString("latin1"); // "\xe9" -> "\xc3\xa9"
+
+  const lengthPrefixed = str => {
+    const bytes = Buffer.from(str, "latin1");
+    const prefix = Buffer.alloc(2);
+    prefix.writeUInt16BE(bytes.length);
+    return Buffer.concat([prefix, bytes]);
+  };
+  const frame = (type, payload) => Buffer.concat([new http2utils.Frame(payload.length, type, 0, 0).data, payload]);
+  const altsvcFields = ({ streamId, payload }) => {
+    const originLength = payload.readUInt16BE(0);
+    return {
+      streamId,
+      origin: payload.subarray(2, 2 + originLength).toString("latin1"),
+      value: payload.subarray(2 + originLength).toString("latin1"),
+    };
+  };
+  const originEntries = ({ payload }) => {
+    const entries = [];
+    for (let offset = 0; offset + 2 <= payload.length; ) {
+      const length = payload.readUInt16BE(offset);
+      entries.push(payload.subarray(offset + 2, offset + 2 + length).toString("latin1"));
+      offset += 2 + length;
+    }
+    return entries;
+  };
+
+  // Connects to a node:http2 server as a raw client. Returns the frames of
+  // `type` that arrive before the PING ACK. The server writes its frames in
+  // order, so the ACK follows every frame that its 'session' listener wrote.
+  async function framesBeforePingAck(port, type) {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const frames = [];
+    const socket = net.connect(port, "127.0.0.1", () => {
+      socket.write(
+        Buffer.concat([
+          http2utils.kClientMagic,
+          new http2utils.SettingsFrame(false).data,
+          new http2utils.PingFrame(false).data,
+        ]),
+      );
+    });
+    socket.on("error", reject);
+    socket.on("close", () => resolve(frames));
+    let buf = Buffer.alloc(0);
+    socket.on("data", chunk => {
+      buf = Buffer.concat([buf, chunk]);
+      while (buf.length >= 9) {
+        const length = buf.readUIntBE(0, 3);
+        if (buf.length < 9 + length) break;
+        const frameType = buf[3];
+        const flags = buf[4];
+        if (frameType === type) {
+          frames.push({
+            streamId: buf.readUInt32BE(5) & 0x7fffffff,
+            payload: Buffer.from(buf.subarray(9, 9 + length)),
+          });
+        }
+        buf = buf.subarray(9 + length);
+        if (frameType === 6 && (flags & 1) !== 0) resolve(frames);
+      }
+    });
+    try {
+      return await promise;
+    } finally {
+      socket.destroy();
+    }
+  }
+
+  // The connection listener of a raw h2 server. After the client preface it
+  // sends SETTINGS and then `frames`. It acks the SETTINGS of the client.
+  const rawServerConnection = frames => socket => {
+    let buf = Buffer.alloc(0);
+    let sawPreface = false;
+    socket.on("error", () => {});
+    socket.on("data", chunk => {
+      buf = Buffer.concat([buf, chunk]);
+      if (!sawPreface) {
+        if (buf.length < http2utils.kClientMagic.length) return;
+        buf = buf.subarray(http2utils.kClientMagic.length);
+        sawPreface = true;
+        socket.write(Buffer.concat([new http2utils.SettingsFrame(false).data, ...frames]));
+      }
+      while (buf.length >= 9) {
+        const length = buf.readUIntBE(0, 3);
+        if (buf.length < 9 + length) break;
+        if (buf[3] === 4 && (buf[4] & 1) === 0) socket.write(new http2utils.SettingsFrame(true).data);
+        buf = buf.subarray(9 + length);
+      }
+    });
+  };
+
+  it("server writes the ALTSVC value with one byte per code unit", async () => {
+    // The same value as a 16-bit string. A utf-16le decode always gives one.
+    const value16 = new TextDecoder("utf-16le").decode(new Uint16Array([...value].map(c => c.charCodeAt(0))));
+    const server = http2.createServer();
+    server.on("session", session => {
+      session.altsvc(value, "https://example.org");
+      session.altsvc(value16, "https://example.org");
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const frames = await framesBeforePingAck(server.address().port, ALTSVC);
+      expect(frames.map(altsvcFields)).toEqual([
+        { streamId: 0, origin: "https://example.org", value },
+        { streamId: 0, origin: "https://example.org", value },
+      ]);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("server limits the ALTSVC origin and value to 16382 code units", async () => {
+    const altOrigin = "https://example.org";
+    // A value of `length` code units. Each U+00E9 is one byte on the wire and
+    // two bytes in UTF-8.
+    const alt = length => 'h2="' + Buffer.alloc(length - 5, 0xe9).toString("latin1") + '"';
+    const results = [];
+    const server = http2.createServer();
+    server.on("session", session => {
+      for (const length of [16382 - altOrigin.length, 16383 - altOrigin.length]) {
+        try {
+          session.altsvc(alt(length), altOrigin);
+          results.push("sent");
+        } catch (err) {
+          results.push(err.code);
+        }
+      }
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const frames = await framesBeforePingAck(server.address().port, ALTSVC);
+      expect(results).toEqual(["sent", "ERR_HTTP2_ALTSVC_LENGTH"]);
+      expect(frames.map(({ payload }) => payload.length)).toEqual([2 + 16382]);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("server writes ORIGIN entries with one byte per code unit", async () => {
+    const server = http2.createServer();
+    server.on("session", session => {
+      // An object's origin is sent as is. A string is serialized as a URL first.
+      session.origin({ origin });
+      session.origin({ origin }, "https://b.example");
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const frames = await framesBeforePingAck(server.address().port, ORIGIN);
+      expect(frames.map(originEntries)).toEqual([[origin], [origin, "https://b.example"]]);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("client reads the ALTSVC origin and value as latin-1", async () => {
+    const server = net.createServer(
+      rawServerConnection([
+        frame(ALTSVC, Buffer.concat([lengthPrefixed(origin), Buffer.from(value, "latin1")])),
+        frame(ALTSVC, Buffer.concat([lengthPrefixed(origin), Buffer.from(value, "utf8")])),
+      ]),
+    );
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      const received = [];
+      client.on("error", reject);
+      client.on("close", () => reject(new Error(`session closed after ${received.length} ALTSVC frames`)));
+      client.on("altsvc", (alt, altOrigin, streamId) => {
+        received.push({ streamId, origin: altOrigin, value: alt });
+        if (received.length === 2) resolve();
+      });
+      await promise;
+      expect(received).toEqual([
+        { streamId: 0, origin, value },
+        { streamId: 0, origin, value: asUtf8(value) },
+      ]);
+    } finally {
+      client.close();
+      server.close();
+    }
+  });
+
+  it("client reads ORIGIN entries as latin-1", async () => {
+    // A client emits 'origin' only on a TLS session.
+    const server = tls.createServer(
+      { ...TLS_CERT, ALPNProtocols: ["h2"] },
+      rawServerConnection([
+        frame(ORIGIN, lengthPrefixed(origin)),
+        frame(ORIGIN, Buffer.concat([lengthPrefixed(origin), lengthPrefixed(asUtf8(origin))])),
+      ]),
+    );
+    await new Promise(resolve => server.listen(0, resolve));
+    const client = http2.connect(`https://localhost:${server.address().port}`, TLS_OPTIONS);
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      const received = [];
+      client.on("error", reject);
+      client.on("close", () => reject(new Error(`session closed after ${received.length} ORIGIN frames`)));
+      client.on("origin", origins => {
+        received.push(origins);
+        if (received.length === 2) resolve();
+      });
+      await promise;
+      expect(received).toEqual([[origin], [origin, asUtf8(origin)]]);
     } finally {
       client.close();
       server.close();
@@ -4695,6 +4951,127 @@ it("http2 option range error messages use the options. prefix", () => {
   }
 });
 
+// node checks the session options in connect(), createServer(), createSecureServer() and
+// performServerHandshake() before it creates anything. An https connect() also runs the server
+// checks, because node builds the tls.connect() options with the server's initializeTLSOptions().
+// The fixture prints how each call ends. The expected text is the output of node v26.3.0.
+const optionChecksFixture = path.join(import.meta.dir, "http2-option-checks.fixture.js");
+const optionChecksExpected = `{ strictSingleValueFields: "yes" }
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options.strictSingleValueFields" property must be of type boolean. Received type string ('yes')
+    every entry point
+{ strictSingleValueFields: 0 }
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options.strictSingleValueFields" property must be of type boolean. Received type number (0)
+    every entry point
+{ strictSingleValueFields: null }
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options.strictSingleValueFields" property must be of type boolean. Received null
+    every entry point
+{ strictSingleValueFields: false }
+  no throw
+    every entry point
+{ strictSingleValueFields: undefined }
+  no throw
+    every entry point
+{ maxSessionInvalidFrames: -1 }
+  no throw
+    connect(http), connect(createConnection)
+  RangeError [ERR_OUT_OF_RANGE]: The value of "options.maxSessionInvalidFrames" is out of range. It must be >= 0 && <= 4294967295. Received -1
+    connect(https), createServer, createSecureServer, performServerHandshake
+{ maxSessionInvalidFrames: 2 ** 32 }
+  RangeError [ERR_OUT_OF_RANGE]: The value of "options.maxSessionInvalidFrames" is out of range. It must be >= 0 && <= 4294967295. Received 4294967296
+    connect(https), createServer, createSecureServer, performServerHandshake
+{ maxSessionInvalidFrames: "1" }
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options.maxSessionInvalidFrames" property must be of type number. Received type string ('1')
+    connect(https), createServer, createSecureServer, performServerHandshake
+{ maxSessionRejectedStreams: -1 }
+  RangeError [ERR_OUT_OF_RANGE]: The value of "options.maxSessionRejectedStreams" is out of range. It must be >= 0 && <= 4294967295. Received -1
+    connect(https), createServer, createSecureServer, performServerHandshake
+{ unknownProtocolTimeout: -1 }
+  RangeError [ERR_OUT_OF_RANGE]: The value of "options.unknownProtocolTimeout" is out of range. It must be >= 0 && <= 4294967295. Received -1
+    connect(https), createServer, createSecureServer, performServerHandshake
+{ maxSessionInvalidFrames: 2 ** 32 - 1, maxSessionRejectedStreams: 2 ** 32 - 1, unknownProtocolTimeout: 0 }
+  no throw
+    connect(https), createServer, createSecureServer, performServerHandshake
+{ settings: 1 }
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options.settings" property must be of type object. Received type number (1)
+    connect(https), createServer, createSecureServer, performServerHandshake
+{ settings: null }
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options.settings" property must be of type object. Received null
+    connect(https), createServer, createSecureServer, performServerHandshake
+{ settings: [] }
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options.settings" property must be of type object. Received an instance of Array
+    connect(https), createServer, createSecureServer, performServerHandshake
+{ settings: function () {} }
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options.settings" property must be of type object. Received function settings
+    connect(https), createServer, createSecureServer, performServerHandshake
+{ remoteCustomSettings: "x", strictSingleValueFields: "yes" }
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options.remoteCustomSettings" property must be an instance of Array. Received type string ('x')
+    every entry point
+{ remoteCustomSettings: [11 ids], maxSessionInvalidFrames: -1 }
+  Error [ERR_HTTP2_TOO_MANY_CUSTOM_SETTINGS]: Number of custom settings exceeds MAX_ADDITIONAL_SETTINGS
+    every entry point
+{ settings: 1, maxSessionInvalidFrames: -1 }
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options.settings" property must be of type object. Received type number (1)
+    connect(https), createServer, createSecureServer, performServerHandshake
+{ maxSessionInvalidFrames: -1, maxSessionRejectedStreams: -1 }
+  RangeError [ERR_OUT_OF_RANGE]: The value of "options.maxSessionInvalidFrames" is out of range. It must be >= 0 && <= 4294967295. Received -1
+    connect(https), createServer, createSecureServer, performServerHandshake
+{ maxSessionRejectedStreams: -1, unknownProtocolTimeout: -1 }
+  RangeError [ERR_OUT_OF_RANGE]: The value of "options.maxSessionRejectedStreams" is out of range. It must be >= 0 && <= 4294967295. Received -1
+    connect(https), createServer, createSecureServer, performServerHandshake
+{ unknownProtocolTimeout: -1, strictSingleValueFields: "yes" }
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options.strictSingleValueFields" property must be of type boolean. Received type string ('yes')
+    connect(http), connect(https), connect(createConnection)
+  RangeError [ERR_OUT_OF_RANGE]: The value of "options.unknownProtocolTimeout" is out of range. It must be >= 0 && <= 4294967295. Received -1
+    createServer, createSecureServer, performServerHandshake
+other calls
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options.strictSingleValueFields" property must be of type boolean. Received type string ('yes')
+    connect("not a url", { strictSingleValueFields: "yes" })
+  TypeError [ERR_INVALID_ARG_TYPE]: The "authority" argument must be of type string or an instance of URL or Object. Received function authority
+    connect(function authority() {})
+  RangeError [ERR_OUT_OF_RANGE]: The value of "options.maxSessionInvalidFrames" is out of range. It must be >= 0 && <= 4294967295. Received -1
+    connect({ hostname, port }, { protocol: "https:", maxSessionInvalidFrames: -1 }), connect({ hostname, port }, { maxSessionInvalidFrames: -1 })
+  no throw
+    connect({ hostname, port }, { protocol: "http:", maxSessionInvalidFrames: -1 })
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options" argument must be of type object. Received an instance of Array
+    createSecureServer([])
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options" argument must be of type object. Received function options
+    performServerHandshake(duplex, function options() {})
+  true
+    options.strictSingleValueFields that createConnection() receives
+  rejects with TypeError [ERR_INVALID_ARG_TYPE]: The "options.strictSingleValueFields" property must be of type boolean. Received type string ('yes')
+    promisify(connect)(http url, { strictSingleValueFields: "yes" })
+  rejects with RangeError [ERR_OUT_OF_RANGE]: The value of "options.maxSessionInvalidFrames" is out of range. It must be >= 0 && <= 4294967295. Received -1
+    promisify(connect)(https url, { maxSessionInvalidFrames: -1 })
+`;
+// An older node has no strictSingleValueFields option, and the macOS CI hosts can have one.
+const optionChecksNode = (() => {
+  const node = nodeExe();
+  if (!node) return null;
+  const { stdout } = Bun.spawnSync({ cmd: [node, "-p", "process.versions.node"], env: bunEnv, stderr: "ignore" });
+  return parseInt(stdout.toString(), 10) >= 26 ? node : null;
+})();
+
+for (const [name, runtime] of [
+  ["bun", bunExe()],
+  ["node", optionChecksNode],
+]) {
+  it.skipIf(!runtime)(
+    `http2 entry points check their options like node v26 (${name})`,
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [runtime, optionChecksFixture],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: optionChecksExpected, stderr: "", exitCode: 0 });
+    },
+    // A debug build needs 3 to 5 s to start and load node:http2. Every other build keeps the default.
+    isDebug ? 15_000 : undefined,
+  );
+}
+
 it("getPackedSettings caps initialWindowSize at 2**31-1", () => {
   // The cap itself is valid.
   http2.getPackedSettings({ initialWindowSize: 2 ** 31 - 1 });
@@ -4990,6 +5367,70 @@ it("http2 allowHTTP1 fallback writes a close-delimited body raw and ends the con
     expect(raw.slice(0, raw.indexOf("\r\n\r\n") + 4).toLowerCase()).toContain("\r\nconnection: close\r\n");
     expect(raw.slice(raw.indexOf("\r\n\r\n") + 4)).toBe("part1part2");
   } finally {
+    server.close();
+  }
+});
+
+it("http2 allowHTTP1 fallback serves pipelined requests in order", async () => {
+  // Both requests arrive in one TLS record, so the second one's headers
+  // complete while the first response is still assigned: it must queue (an
+  // unconditional assignSocket throws ERR_HTTP_SOCKET_ASSIGNED and kills the
+  // connection) and its output must follow the first response.
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
+    setImmediate(() => res.end("ok:" + req.url));
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  try {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const socket = tls.connect(
+      { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
+      () => socket.write("GET /a HTTP/1.1\r\nHost: localhost\r\n\r\nGET /b HTTP/1.1\r\nHost: localhost\r\n\r\n"),
+    );
+    let buf = "";
+    socket.on("error", reject);
+    socket.on("data", chunk => {
+      buf += chunk;
+      if (buf.includes("ok:/a") && buf.includes("ok:/b")) resolve(buf);
+    });
+    socket.on("close", () => reject(new Error("closed before both responses: " + buf)));
+    const raw = await promise;
+    expect(raw.indexOf("ok:/a")).toBeLessThan(raw.indexOf("ok:/b"));
+    expect(raw.match(/HTTP\/1\.1 200/g)).toHaveLength(2);
+    socket.destroy();
+  } finally {
+    server.close();
+  }
+});
+
+it("http2 allowHTTP1 fallback aborts a queued pipelined response when the connection dies", async () => {
+  const closedEvents = [];
+  const { promise: aborted, resolve: onAborted, reject: onSocketError } = Promise.withResolvers();
+  let closesPending = 2;
+  const onQueuedClose = tag => {
+    closedEvents.push(tag);
+    if (--closesPending === 0) onAborted();
+  };
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
+    // /a never responds, so its response keeps the socket and /b stays queued.
+    if (req.url !== "/b") return;
+    req.on("close", () => onQueuedClose("reqB"));
+    res.on("close", () => onQueuedClose("resB"));
+    // Kill the connection while /b is queued behind /a.
+    socket.destroy();
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  const socket = tls.connect(
+    { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
+    () => socket.write("GET /a HTTP/1.1\r\nHost: localhost\r\n\r\nGET /b HTTP/1.1\r\nHost: localhost\r\n\r\n"),
+  );
+  // The server handler destroys this socket without an error, so any 'error'
+  // here is a real failure (e.g. the TLS handshake), not the expected close.
+  socket.on("error", onSocketError);
+  try {
+    await aborted;
+    expect(closedEvents.sort()).toEqual(["reqB", "resB"]);
+  } finally {
+    socket.destroy();
     server.close();
   }
 });
@@ -6008,4 +6449,29 @@ describe("frames issued from inside a user-supplied Duplex transport's _write", 
       }
     },
   );
+});
+
+it("originSet is undefined on a destroyed TLS session that never read it", async () => {
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: false });
+  const { promise: listening, resolve: onListening } = Promise.withResolvers();
+  server.listen(0, onListening);
+  await listening;
+  try {
+    const client = http2.connect(`https://localhost:${server.address().port}`, TLS_OPTIONS);
+    const { promise: connected, resolve: onConnect, reject } = Promise.withResolvers();
+    client.on("error", reject);
+    client.on("connect", onConnect);
+    await connected;
+    const { promise: closed, resolve: onClose } = Promise.withResolvers();
+    client.on("close", onClose);
+    client.destroy();
+    await closed;
+    expect({ encrypted: client.encrypted, destroyed: client.destroyed, originSet: client.originSet }).toEqual({
+      encrypted: true,
+      destroyed: true,
+      originSet: undefined,
+    });
+  } finally {
+    server.close();
+  }
 });

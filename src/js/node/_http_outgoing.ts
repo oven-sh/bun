@@ -766,7 +766,8 @@ OutgoingMessage.prototype.getHeaderNames = function getHeaderNames() {
 
 // Returns an array of the names of the current outgoing raw headers.
 OutgoingMessage.prototype.getRawHeaderNames = function getRawHeaderNames() {
-  const headersMap = this[kOutHeaders];
+  const headersMap: Record<string, [name: string, value: number | string | readonly string[]]> | null =
+    this[kOutHeaders];
   if (headersMap === null) return [];
 
   const values = ObjectValues(headersMap);

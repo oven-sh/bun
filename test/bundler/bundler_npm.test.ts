@@ -65,7 +65,7 @@ describe("bundler", () => {
       },
     },
     expectExactFilesize: {
-      "out/entry.js": 222012,
+      "out/entry.js": 222000,
     },
     run: {
       stdout: "<!DOCTYPE html><html><body><h1>Hello World</h1><p>This is an example.</p></body></html>",

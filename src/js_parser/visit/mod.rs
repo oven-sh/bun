@@ -2,6 +2,7 @@
 //! AST visitor pass: visits statements, expressions, bindings, function bodies,
 //! classes, and declarations. This is the second pass after parsing.
 
+pub(crate) mod const_call;
 pub mod visit_binary;
 pub(crate) mod visit_expr;
 pub(crate) mod visit_stmt;
@@ -735,6 +736,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if let Some(val) = decl.value {
                         if val.can_be_const_value() {
                             self.const_values.put(id_ref, val).expect("oom");
+                        } else if could_be_const_value && self.const_calls_enabled {
+                            self.note_const_call_decl(id_ref, decl.binding.loc, &val);
                         }
                     }
                 } else {

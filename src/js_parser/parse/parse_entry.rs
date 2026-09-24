@@ -157,6 +157,9 @@ pub struct Options<'a> {
     /// A bundle entry point: its own output is needed, so a `module.exports = require(...)`-only file stays a real
     /// module rather than becoming a redirect to what it re-exports.
     pub is_entry_point: bool,
+
+    /// Set by `_parse` for its second attempt, after a folded call turned out to be unsound.
+    pub const_call_retry: Option<crate::visit::const_call::ConstCallRetry<'a>>,
 }
 
 impl<'a> Default for Options<'a> {
@@ -191,6 +194,7 @@ impl<'a> Default for Options<'a> {
             repl_mode: false,
             lower_toml_datetimes: false,
             is_entry_point: false,
+            const_call_retry: None,
         }
     }
 }
@@ -278,6 +282,7 @@ impl<'a> Options<'a> {
             repl_mode: self.repl_mode,
             lower_toml_datetimes: self.lower_toml_datetimes,
             is_entry_point: self.is_entry_point,
+            const_call_retry: None,
         }
     }
 
@@ -352,6 +357,7 @@ impl<'a> Options<'a> {
             repl_mode: false,
             lower_toml_datetimes: loader == options::Loader::Toml,
             is_entry_point: false,
+            const_call_retry: None,
         };
         opts.jsx.parse = loader.is_jsx();
         opts
@@ -821,8 +827,71 @@ fn lower_one_date_time_literal<'a>(
     Ok(())
 }
 
+/// One run of `_parse_attempt`.
+enum ParseAttempt<'a> {
+    Done(crate::Result<'a>),
+    /// A folded call was unsound (`visit/const_call.rs`). Boxed: this is rare, and `Options` is large.
+    RetryConstCalls(Box<(Options<'a>, crate::visit::const_call::ConstCallRetry<'a>)>),
+}
+
+/// A statement that leaves `Scope::is_after_const_local_prefix` unset at module scope.
+fn is_const_local_prefix_stmt(stmt: &Stmt) -> bool {
+    match &stmt.data {
+        js_ast::StmtData::SLocal(local) => local.kind == js_ast::s::Kind::KConst,
+        js_ast::StmtData::SDirective(_)
+        | js_ast::StmtData::SComment(_)
+        | js_ast::StmtData::SEmpty(_)
+        | js_ast::StmtData::STypeScript(_)
+        | js_ast::StmtData::SDebugger(_) => true,
+        _ => false,
+    }
+}
+
+/// The scopes the parse pass pushed for the top-level statement at `loc`. `scopes` is
+/// in source order and starts at or before that statement.
+fn scopes_of_top_level_stmt<'a>(
+    scopes: &'a [crate::ScopeOrder<'a>],
+    loc: bun_ast::Loc,
+    stmts_after: &[Stmt],
+) -> &'a [crate::ScopeOrder<'a>] {
+    let start = scopes.partition_point(|order| order.loc.start < loc.start);
+    // A generated statement has no source position.
+    let end = match stmts_after.iter().find(|next| next.loc.start > loc.start) {
+        Some(next) => scopes.partition_point(|order| order.loc.start < next.loc.start),
+        None => scopes.len(),
+    };
+    &scopes[start..end]
+}
+
 impl<'a> Parser<'a> {
     fn _parse<const TS: bool>(self) -> Result<crate::Result<'a>, Error> {
+        let (log, source, define, bump) = (self.log, self.source, self.define, self.bump);
+        let (msgs, errors, warnings) = {
+            // SAFETY: the pointee outlives `'a` (see `Parser::init`), and no other borrow of it is live here.
+            let log = unsafe { log.as_ref() };
+            (log.msgs.len(), log.errors, log.warnings)
+        };
+        let retry = match self._parse_attempt::<TS>()? {
+            ParseAttempt::Done(result) => return Ok(result),
+            ParseAttempt::RetryConstCalls(retry) => retry,
+        };
+        let (mut options, const_call_retry) = *retry;
+        options.const_call_retry = Some(const_call_retry);
+        // SAFETY: as above. The first attempt's parser and lexer are dropped.
+        let log = unsafe { &mut *log.as_ptr() };
+        // The second attempt logs the same warnings again.
+        log.msgs.truncate(msgs);
+        log.errors = errors;
+        log.warnings = warnings;
+        match Parser::init(options, log, source, define, bump)?._parse_attempt::<TS>()? {
+            ParseAttempt::Done(result) => Ok(result),
+            ParseAttempt::RetryConstCalls(_) => {
+                unreachable!("the second attempt folds a subset of the first")
+            }
+        }
+    }
+
+    fn _parse_attempt<const TS: bool>(self) -> Result<ParseAttempt<'a>, Error> {
         // `Source.path` is `Path<'static>`, so
         // `path.text` satisfies `Action::Parse(&'static [u8])` directly.
         let _action_guard = bun_crash_handler::scoped_action(bun_crash_handler::Action::Parse(
@@ -880,7 +949,7 @@ impl<'a> Parser<'a> {
         // Detect a leading "// @bun" pragma
         if p.options.features.dont_bundle_twice {
             if let Some(pragma) = Self::has_bun_pragma(&source.contents, !hashbang.is_empty()) {
-                return Ok(crate::Result::AlreadyBundled(pragma));
+                return Ok(ParseAttempt::Done(crate::Result::AlreadyBundled(pragma)));
             }
         }
 
@@ -905,7 +974,7 @@ impl<'a> Parser<'a> {
                     core::ptr::NonNull::from(&p.options).cast::<()>(),
                     p.options.jsx.parse && (!is_node_module || is_jsx_file),
                 ) {
-                    return Ok(crate::Result::Cached);
+                    return Ok(ParseAttempt::Done(crate::Result::Cached));
                 }
             }
         }
@@ -958,6 +1027,7 @@ impl<'a> Parser<'a> {
 
         let mut visit_tracer = bun_core::perf::trace("JSParser::visit");
         p.prepare_for_visit_pass()?;
+        p.enable_const_calls();
 
         if p.options.features.react_compiler.is_enabled() {
             let rc_options = bun_react_compiler::ReactCompilerOptions {
@@ -1100,8 +1170,61 @@ impl<'a> Parser<'a> {
                 }
             }
 
+            // A function declaration is callable before the statements above it run, so
+            // the ones that may fold to a value (`visit/const_call.rs`) are visited before
+            // the statements that can call them. The const local prefix comes first: such
+            // a body can read it. A CommonJS file keeps the source order: the visit of
+            // `exports.name` depends on it.
+            struct PrevisitedFn<'a> {
+                stmt_i: usize,
+                scope_count: usize,
+                parts: BumpVec<'a, js_ast::Part>,
+            }
+            let mut previsited_fns: BumpVec<PrevisitedFn<'a>> = BumpVec::new_in(arena);
+            let mut previsited_fn_i: usize = 0;
+            let mut previsit_pending =
+                p.const_calls_enabled && p.react_compiler.is_none() && p.has_es_module_syntax;
+
             // When tree shaking is enabled, each top-level statement is potentially a separate part.
-            for stmt in stmts.iter() {
+            for (stmt_i, stmt) in stmts.iter().enumerate() {
+                if previsit_pending && !is_const_local_prefix_stmt(stmt) {
+                    previsit_pending = false;
+                    for (fn_i, fn_stmt) in stmts.iter().enumerate().skip(stmt_i) {
+                        if !crate::visit::const_call::is_previsit_candidate(fn_stmt) {
+                            continue;
+                        }
+                        let old_scopes_in_order = p.scope_order_to_visit;
+                        let fn_scopes = scopes_of_top_level_stmt(
+                            old_scopes_in_order,
+                            fn_stmt.loc,
+                            &stmts[fn_i + 1..],
+                        );
+                        p.scope_order_to_visit = fn_scopes;
+                        let mut fn_parts = BumpVec::<js_ast::Part>::new_in(arena);
+                        let sliced = arena.alloc_slice_copy(&[*fn_stmt]);
+                        let res = p.append_part(&mut fn_parts, sliced);
+                        debug_assert!(res.is_err() || p.scope_order_to_visit.is_empty());
+                        p.scope_order_to_visit = old_scopes_in_order;
+                        res?;
+                        previsited_fns.push(PrevisitedFn {
+                            stmt_i: fn_i,
+                            scope_count: fn_scopes.len(),
+                            parts: fn_parts,
+                        });
+                    }
+                }
+                if previsited_fns
+                    .get(previsited_fn_i)
+                    .is_some_and(|previsited| previsited.stmt_i == stmt_i)
+                {
+                    let previsited = &mut previsited_fns[previsited_fn_i];
+                    previsited_fn_i += 1;
+                    for part in core::mem::replace(&mut previsited.parts, BumpVec::new_in(arena)) {
+                        parts.push(part);
+                    }
+                    p.scope_order_to_visit = &p.scope_order_to_visit[previsited.scope_count..];
+                    continue;
+                }
                 match &stmt.data {
                     js_ast::StmtData::SLocal(local) => {
                         if (local.decls.len_u32() as usize) > 1 {
@@ -1211,6 +1334,13 @@ impl<'a> Parser<'a> {
         // If there were errors while visiting, also halt here
         if p.log().errors > orig_error_count {
             return Err(crate::Error::SyntaxError);
+        }
+
+        if let Some(retry) = p.const_call_retry() {
+            return Ok(ParseAttempt::RetryConstCalls(Box::new((
+                core::mem::take(&mut p.options),
+                retry,
+            ))));
         }
 
         // `perf::Ctx` ends the span in its `Drop` impl — bind it for the rest of `_parse`.
@@ -1671,13 +1801,17 @@ impl<'a> Parser<'a> {
                                     && !p.options.is_entry_point
                                 {
                                     part.symbol_uses = Default::default();
-                                    return Ok(crate::Result::Ast(Box::new(js_ast::Ast {
-                                        import_records: p.import_records.move_to_baby_list(p.arena),
-                                        redirect_import_record_index: Some(id),
-                                        named_imports: core::mem::take(&mut *p.named_imports),
-                                        named_exports: core::mem::take(&mut p.named_exports),
-                                        ..js_ast::Ast::empty_in(p.arena)
-                                    })));
+                                    return Ok(ParseAttempt::Done(crate::Result::Ast(Box::new(
+                                        js_ast::Ast {
+                                            import_records: p
+                                                .import_records
+                                                .move_to_baby_list(p.arena),
+                                            redirect_import_record_index: Some(id),
+                                            named_imports: core::mem::take(&mut *p.named_imports),
+                                            named_exports: core::mem::take(&mut p.named_exports),
+                                            ..js_ast::Ast::empty_in(p.arena)
+                                        },
+                                    ))));
                                 }
                             }
                         }
@@ -2534,7 +2668,7 @@ impl<'a> Parser<'a> {
             return Err(crate::Error::SyntaxError);
         }
 
-        Ok(crate::Result::Ast(ast))
+        Ok(ParseAttempt::Done(crate::Result::Ast(ast)))
     }
 
     // associated fn (was `&self` reading `self.lexer.source.contents`)

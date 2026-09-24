@@ -241,6 +241,7 @@ void us_internal_ssl_attach(us_socket_r s, struct ssl_ctx_st *ssl_ctx, int is_cl
 /* SSL_free(s->ssl); s->ssl = NULL. Idempotent. */
 void us_internal_ssl_detach(us_socket_r s);
 void us_internal_ssl_socket_relocated(us_loop_r loop, us_socket_r old_s, us_socket_r new_s);
+void us_internal_ssl_socket_left_group(us_socket_r s);
 
 /* TLS-layer event hooks. loop.c calls these instead of us_dispatch_* when
  * s->ssl != NULL; they decrypt/encrypt and re-dispatch the plaintext. */

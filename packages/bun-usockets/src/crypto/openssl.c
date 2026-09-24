@@ -118,8 +118,6 @@ struct loop_ssl_data {
   unsigned int ssl_spill_len;
   unsigned int ssl_spill_off;
 
-  /* Sessions and keylog lines parked inside SSL_read/SSL_do_handshake, in arrival order. */
-  struct us_ssl_pending_event_t *ssl_pending_events;
   /* us_socket_sni_resolve's answer; us_select_cert_cb takes it in the same re-drive. */
   SSL_CTX *ssl_sni_resolved_ctx;
 };
@@ -195,9 +193,18 @@ enum {
   US_SNI_ERROR = 3,
 };
 
-/* Allocated for an accepted socket, a client's first renegotiation, and fetch's session sink. */
+struct us_ssl_pending_event_t {
+  struct us_ssl_pending_event_t *next;
+  uint32_t length;
+  unsigned char is_keylog;
+  unsigned char data[];
+};
+
+/* Allocated for an accepted socket, a node:tls socket's events, a client's first renegotiation, and fetch's session sink. */
 struct us_ssl_rare_t {
   struct us_listen_socket_t *listener;
+  /* Sessions and keylog lines parked inside SSL_read/SSL_do_handshake, in arrival order. */
+  struct us_ssl_pending_event_t *pending_head, *pending_tail;
   void *session_sink;
   void (*session_sink_free)(void *sink);
   uint64_t reneg_window_start_ms;
@@ -214,6 +221,11 @@ static void us_ssl_rare_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
   (void)parent; (void)ad; (void)index; (void)argl; (void)argp;
   struct us_ssl_rare_t *rare = ptr;
   if (!rare) return;
+  while (rare->pending_head) {
+    struct us_ssl_pending_event_t *next = rare->pending_head->next;
+    us_free(rare->pending_head);
+    rare->pending_head = next;
+  }
   if (rare->session_sink_free) rare->session_sink_free(rare->session_sink);
   us_free(rare);
 }
@@ -222,14 +234,6 @@ static void us_ssl_rare_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
  * single keylog line. Anything larger is dropped at the parking site. */
 #define US_SSL_PENDING_SESSION_MAX 65536
 #define US_SSL_PENDING_KEYLOG_LINE_MAX 4096
-
-struct us_ssl_pending_event_t {
-  struct us_ssl_pending_event_t *next;
-  struct us_socket_t *owner;
-  uint32_t length;
-  unsigned char is_keylog;
-  unsigned char data[];
-};
 
 /* SSLWrapper (src/uws/lib.rs) routes these to the wrapper that is driving `ssl`. */
 extern int us_ssl_wrapper_server_identity(SSL *ssl);
@@ -248,55 +252,25 @@ static struct us_socket_t *us_ssl_socket(const SSL *ssl) {
   return s && s->ssl == ssl ? s : NULL;
 }
 
+static inline struct us_ssl_rare_t *us_ssl_rare(const SSL *ssl);
+static struct us_ssl_rare_t *us_ssl_rare_ensure(SSL *ssl);
+
 static struct us_ssl_pending_event_t *ssl_park_event(struct us_socket_t *s, int is_keylog,
                                                      size_t length) {
-  struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
   struct us_ssl_pending_event_t *event = us_malloc(sizeof(*event) + length);
   if (!event) return NULL;
   event->next = NULL;
-  event->owner = s;
   event->length = (uint32_t)length;
   event->is_keylog = is_keylog ? 1 : 0;
-  struct us_ssl_pending_event_t **tail = &loop_ssl_data->ssl_pending_events;
-  while (*tail) tail = &(*tail)->next;
-  *tail = event;
+  struct us_ssl_rare_t *rare = us_ssl_rare_ensure(s_ssl(s));
+  if (rare->pending_tail) {
+    rare->pending_tail->next = event;
+  } else {
+    rare->pending_head = event;
+  }
+  rare->pending_tail = event;
   s->ssl_has_pending_events = 1;
   return event;
-}
-
-/* Unlinks the events `s` parked, in arrival order. */
-static struct us_ssl_pending_event_t *ssl_take_pending_events(struct us_loop_t *loop,
-                                                              struct us_socket_t *s) {
-  struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)loop->data.ssl_data;
-  struct us_ssl_pending_event_t *taken = NULL, **taken_tail = &taken;
-  if (!loop_ssl_data) return NULL;
-  struct us_ssl_pending_event_t **link = &loop_ssl_data->ssl_pending_events;
-  while (*link) {
-    struct us_ssl_pending_event_t *event = *link;
-    if (event->owner != s) {
-      link = &event->next;
-      continue;
-    }
-    *link = event->next;
-    event->next = NULL;
-    *taken_tail = event;
-    taken_tail = &event->next;
-  }
-  return taken;
-}
-
-static void ssl_free_pending_events(struct us_ssl_pending_event_t *event) {
-  while (event) {
-    struct us_ssl_pending_event_t *next = event->next;
-    us_free(event);
-    event = next;
-  }
-}
-
-static void ssl_drop_pending_events(struct us_loop_t *loop, struct us_socket_t *s) {
-  if (!s->ssl_has_pending_events) return;
-  s->ssl_has_pending_events = 0;
-  ssl_free_pending_events(ssl_take_pending_events(loop, s));
 }
 
 static void us_ssl_keylog_cb(const SSL *ssl, const char *line) {
@@ -350,7 +324,12 @@ static void ssl_flush_pending_events(struct us_socket_t *s) {
     return;
   }
   s->ssl_has_pending_events = 0;
-  struct us_ssl_pending_event_t *events = ssl_take_pending_events(s->group->loop, s);
+  struct us_ssl_rare_t *rare = s->ssl ? us_ssl_rare(s_ssl(s)) : NULL;
+  if (!rare) {
+    return;
+  }
+  struct us_ssl_pending_event_t *events = rare->pending_head;
+  rare->pending_head = rare->pending_tail = NULL;
   /* Sessions first, then keylog lines. */
   for (int is_keylog = 0; is_keylog <= 1; is_keylog++) {
     for (struct us_ssl_pending_event_t *event = events; event; event = event->next) {
@@ -362,7 +341,11 @@ static void ssl_flush_pending_events(struct us_socket_t *s) {
       }
     }
   }
-  ssl_free_pending_events(events);
+  while (events) {
+    struct us_ssl_pending_event_t *next = events->next;
+    us_free(events);
+    events = next;
+  }
 }
 
 /* Defined in `src/runtime/api/bun/SSLContextCache.rs`: tombstones the cache entry on
@@ -693,11 +676,12 @@ void us_internal_ssl_socket_relocated(struct us_loop_t *loop, struct us_socket_t
   if (loop_ssl_data->ssl_last_fatal_error_owner == (void *)old_s) {
     loop_ssl_data->ssl_last_fatal_error_owner = (void *)new_s;
   }
-  if (new_s->ssl_has_pending_events) {
-    for (struct us_ssl_pending_event_t *e = loop_ssl_data->ssl_pending_events; e; e = e->next) {
-      if (e->owner == old_s) e->owner = new_s;
-    }
-  }
+}
+
+/* The listener cleanup walks its accept group only, so a socket that leaves the group drops the pointer. */
+void us_internal_ssl_socket_left_group(struct us_socket_t *s) {
+  struct us_ssl_rare_t *rare = s->ssl ? us_ssl_rare(s_ssl(s)) : NULL;
+  if (rare) rare->listener = NULL;
 }
 
 static int BIO_s_custom_read(BIO *bio, char *dst, int length) {
@@ -775,7 +759,6 @@ void us_internal_free_loop_ssl_data(struct us_loop_t *loop) {
     us_free(loop_ssl_data->ssl_read_output);
     us_free(loop_ssl_data->ssl_write_batch);
     us_free(loop_ssl_data->ssl_spill);
-    ssl_free_pending_events(loop_ssl_data->ssl_pending_events);
     BIO_free(loop_ssl_data->shared_rbio);
     BIO_free(loop_ssl_data->shared_wbio);
     BIO_meth_free(loop_ssl_data->shared_biom);
@@ -1689,7 +1672,6 @@ void us_internal_ssl_detach(struct us_socket_t *s) {
    * reused socket address would drain the dead socket's records). */
   ssl_release_spill(s->group->loop, s);
   ssl_release_batch(s->group->loop, s);
-  ssl_drop_pending_events(s->group->loop, s);
   if (s->ssl) {
     if (s->ssl_in_use) {
       /* SSL_do_handshake/SSL_read is on the stack (a JS callback run from

@@ -290,14 +290,14 @@ describe.concurrent.skipIf(isWindows)("process.stdout/stderr do not set O_NONBLO
 
   test("process.stdout.write to a full real pipe returns false, emits drain, and fd 1 stays blocking", async () => {
     // The reader only starts draining on SIGUSR1, so the writer's 1 MiB must hit a full pipe first.
-    const reader = `require("fs").writeSync(2, JSON.stringify({ reader: process.pid }) + "\\n");
-      process.on("SIGUSR1", async () => { for await (const c of Bun.stdin.stream()) require("fs").writeSync(1, c); process.exit(0); });
-      setInterval(() => {}, 1 << 30);`;
+    const reader = `process.on("SIGUSR1", async () => { for await (const c of Bun.stdin.stream()) require("fs").writeSync(1, c); process.exit(0); });
+      setInterval(() => {}, 1 << 30);
+      require("fs").writeSync(2, JSON.stringify({ reader: process.pid }) + "\\n");`;
     const writer = `const ret = process.stdout.write(Buffer.alloc(1 << 20, "A"));
       require("fs").writeSync(2, JSON.stringify({ ret }) + "\\n");
       process.stdout.once("drain", () => {
-        const r = Bun.spawnSync([process.execPath, ${JSON.stringify(probe)}, "1"], { stdio: ["inherit", "pipe", "inherit"] });
-        require("fs").writeSync(2, JSON.stringify({ drained: true, probe: r.stdout.toString().trim() }) + "\\n");
+        const r = Bun.spawnSync([process.execPath, ${JSON.stringify(probe)}, "1"], { stdio: ["inherit", "inherit", "pipe"], env: { ...process.env, PROBE_OUT_FD: "2" } });
+        require("fs").writeSync(2, JSON.stringify({ drained: true, probe: r.stderr.toString().trim() }) + "\\n");
       });`;
     await using proc = spawn({
       cmd: ["sh", "-c", `"$0" -e "$1" | "$0" -e "$2"`, bunExe(), writer, reader],

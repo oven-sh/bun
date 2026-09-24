@@ -135,10 +135,23 @@ impl Lazy {
         let mut file_buf = bun_paths::path_buffer_pool::get();
         #[cfg(unix)]
         let mut is_nonblocking = false;
+        #[cfg(unix)]
+        let mut verified_stat: Option<sys::Stat> = None;
 
-        let fd: Fd = match file.lazy_pathlike() {
-            None => return Err(file.pinned_refusal(sys::Tag::open)),
-            Some(&PathOrFileDescriptor::Fd(pl_fd)) => {
+        let fd: Fd = match file.source() {
+            blob::store::FileSource::Pinned(pinned) => {
+                let (fd, stat) =
+                    pinned.open_verified(sys::O::RDONLY | sys::O::NONBLOCK | sys::O::CLOEXEC)?;
+                #[cfg(unix)]
+                {
+                    is_nonblocking = true;
+                    verified_stat = Some(stat);
+                }
+                #[cfg(not(unix))]
+                let _ = stat;
+                fd
+            }
+            blob::store::FileSource::Lazy(&PathOrFileDescriptor::Fd(pl_fd)) => {
                 if pl_fd.stdio_tag().is_some() {
                     'brk: {
                         #[cfg(unix)]
@@ -173,7 +186,7 @@ impl Lazy {
                     fd.make_lib_uv_owned_for_syscall(sys::Tag::dup, sys::ErrorCase::CloseOnFail)?
                 }
             }
-            Some(PathOrFileDescriptor::Path(path)) => {
+            blob::store::FileSource::Lazy(PathOrFileDescriptor::Path(path)) => {
                 match sys::open(
                     bun_paths::resolve_path::z(path.slice(), &mut file_buf),
                     sys::O::RDONLY | sys::O::NONBLOCK | sys::O::CLOEXEC,
@@ -204,12 +217,15 @@ impl Lazy {
                 file.is_atty = Some(true);
             }
 
-            let stat: sys::Stat = match sys::fstat(fd) {
-                Ok(result) => result,
-                Err(err) => {
-                    fd.close();
-                    return Err(err);
-                }
+            let stat: sys::Stat = match verified_stat {
+                Some(stat) => stat,
+                None => match sys::fstat(fd) {
+                    Ok(result) => result,
+                    Err(err) => {
+                        fd.close();
+                        return Err(err);
+                    }
+                },
             };
 
             let mode = stat.st_mode as _;
@@ -310,24 +326,38 @@ impl FileReader {
 
     pub(crate) fn on_start(&self) -> streams::Start {
         self.reader().set_parent(self.as_ctx_ptr().cast());
-        let was_lazy = !matches!(self.lazy.get(), Lazy::None);
+        // A pinned file keeps its store in `lazy`, so `started` marks the first start.
+        let was_lazy = !self.started.get() && !matches!(self.lazy.get(), Lazy::None);
         let mut pollable = false;
         #[cfg(unix)]
         let mut file_type = FileType::File;
         // R-2: move the `Lazy` out of the cell up-front (it's reset to `None`
         // on every path through the original `if let` body) so the `RefPtr<Store>`
         // is owned locally and the cell borrow is released immediately.
-        if let Lazy::Blob(store) = self.lazy.replace(Lazy::None) {
+        if was_lazy && let Lazy::Blob(store) = self.lazy.replace(Lazy::None) {
             // Single-threaded JS event loop; we hold the only mutating handle.
             match blob::Store::data_mut(&store) {
                 blob::store::Data::S3(_) | blob::store::Data::Bytes(_) => {
                     panic!("Invalid state in FileReader: expected file ")
                 }
                 blob::store::Data::File(file) => {
+                    let is_pinned = file.pinned().is_some();
                     let open_result = Lazy::open_file_blob(file);
-                    // drop the RefPtr<Store>; `lazy` was already cleared above
-                    drop(store);
+                    if is_pinned {
+                        self.lazy.set(Lazy::Blob(store));
+                    } else {
+                        // drop the RefPtr<Store>; `lazy` was already cleared above
+                        drop(store);
+                    }
                     match open_result {
+                        Err(err) if is_pinned => {
+                            // As in node, `getReader()` does not throw: the first read fails.
+                            self.fd.set(Fd::INVALID);
+                            self.read_error.set(Some(err));
+                            self.done.set(true);
+                            self.started.set(true);
+                            return streams::Start::Ready;
+                        }
                         Err(err) => {
                             self.fd.set(Fd::INVALID);
                             return streams::Start::Err(err);
@@ -472,7 +502,7 @@ impl FileReader {
 
         self.started.set(true);
 
-        if self.reader().is_done() {
+        if self.reader().is_done() && self.may_end_with_bytes() {
             self.consume_reader_buffer();
             if !self.buffered.get().is_empty() {
                 return streams::Start::OwnedAndDone(Vec::<u8>::move_from_list(
@@ -508,6 +538,47 @@ impl FileReader {
         // heap-allocated `Source`. Reading the `Copy` `global_this` via
         // `(*ptr).field` is a raw-place read, not a `&Source` borrow.
         unsafe { (*self.parent()).global_this }.expect("NewSource.global_this set before use")
+    }
+
+    /// The pin of the streamed file. Its store stays in `lazy` past the start for `check_pinned`.
+    fn pinned(&self) -> Option<&blob::store::PinnedFile> {
+        match self.lazy.get() {
+            Lazy::Blob(store) => match &store.data {
+                blob::store::Data::File(file) => file.pinned(),
+                _ => None,
+            },
+            Lazy::None => None,
+        }
+    }
+
+    /// node compares a pinned file before and after each read (`FdEntry::ReaderImpl`, queue.cc).
+    fn check_pinned(&self) -> sys::Result<()> {
+        let Some(pinned) = self.pinned() else {
+            return Ok(());
+        };
+        let fd = self.reader().get_fd();
+        if fd == Fd::INVALID {
+            // The reader closes the file when it reaches the end.
+            return pinned.recheck_path();
+        }
+        pinned.recheck(fd)
+    }
+
+    /// A pinned file ends on a pull of its own, so one more `check_pinned` runs first, as in node.
+    fn may_end_with_bytes(&self) -> bool {
+        self.pinned().is_none()
+    }
+
+    /// What a consumer sees for `err`: node's `NotReadableError` for a pinned file.
+    fn stream_error(&self, err: sys::Error) -> streams::StreamError {
+        if self.pinned().is_none() {
+            return streams::StreamError::Error(err);
+        }
+        let global = self.parent_global();
+        streams::StreamError::JSValue(jsc::strong::Optional::create(
+            blob::not_readable_error(&global),
+            &global,
+        ))
     }
 
     /// Lazily start the reader for a native-sink hookup. Bun's file-backed
@@ -583,7 +654,7 @@ impl FileReader {
             let err = self
                 .read_error
                 .replace(None)
-                .map(streams::StreamError::Error);
+                .map(|err| self.stream_error(err));
             self.detach_sink(err.as_ref());
             sink.end(err);
             return;
@@ -668,6 +739,15 @@ impl FileReader {
             self.reader().close();
             return false;
         }
+        if let Err(err) = self.check_pinned() {
+            // These bytes may be the changed file's.
+            drop(chunk);
+            // SAFETY: see `parent()`. `deliver_error` can run user JS.
+            let _pin = unsafe { SourcePin::new(self.parent()) };
+            self.deliver_error(err);
+            self.reader().close();
+            return false;
+        }
         let has_more = state != ReadState::Eof;
 
         let sink = *self.sink.get();
@@ -734,7 +814,7 @@ impl FileReader {
 
     /// Settles the parked JS read with `chunk` (invariant: a parked read means `buffered` was already drained into it).
     fn resolve_pending_read(&self, chunk: Chunk<'_>, has_more: bool) -> bool {
-        let was_done = self.reader().is_done();
+        let was_done = self.reader().is_done() && self.may_end_with_bytes();
         let global = self.parent_global();
         let mut pending_array_buffer = self
             .pending_value
@@ -745,16 +825,24 @@ impl FileReader {
         let pending_buf = pending_array_buffer.slice_mut();
         let ret = if chunk.is_empty() {
             let buffered = self.buffered.replace(Vec::new());
+            let ends = self.may_end_with_bytes();
             let result = if buffered.is_empty() {
                 streams::Result::Done
             } else if pending_buf.len() >= buffered.len() {
                 pending_buf[..buffered.len()].copy_from_slice(&buffered);
-                streams::Result::IntoArrayAndDone(streams::IntoArray {
+                let into = streams::IntoArray {
                     value: self.pending_value.get().get().unwrap_or_default(),
                     len: buffered.len() as u64,
-                })
-            } else {
+                };
+                if ends {
+                    streams::Result::IntoArrayAndDone(into)
+                } else {
+                    streams::Result::IntoArray(into)
+                }
+            } else if ends {
                 streams::Result::OwnedAndDone(buffered)
+            } else {
+                streams::Result::Owned(buffered)
             };
             self.pending.with_mut(|p| p.result = result);
             false
@@ -799,6 +887,12 @@ impl FileReader {
         // `buffer` borrows a JS typed array kept alive by `array`.
         array.ensure_still_alive();
         let _keep = EnsureStillAlive(array);
+        if self.read_error.get().is_none()
+            && let Err(err) = self.check_pinned()
+        {
+            self.on_reader_error(err);
+            return self.end_of_reader();
+        }
         let drained = self.drain();
 
         if drained.len() > 0 {
@@ -816,7 +910,7 @@ impl FileReader {
                 // `drained` here — freeing `self.buffered` would be a no-op.
                 drop(drained);
 
-                if self.reader_finished() {
+                if self.reader_finished() && self.may_end_with_bytes() {
                     return streams::Result::IntoArrayAndDone(streams::IntoArray {
                         value: array,
                         len: drained_len as u64,
@@ -829,7 +923,7 @@ impl FileReader {
                 }
             }
 
-            if self.reader_finished() {
+            if self.reader_finished() && self.may_end_with_bytes() {
                 return streams::Result::OwnedAndDone(drained);
             } else {
                 return streams::Result::Owned(drained);
@@ -847,8 +941,15 @@ impl FileReader {
             // SAFETY: the reader cell is live for `self`'s lifetime; `read_into` is the raw re-entrancy-safe entry (EOF/error dispatch runs user JS).
             let (amount_read, state) = unsafe { IOReader::read_into(self.reader.get(), buffer) };
             bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer.len(), amount_read);
+            if amount_read > 0
+                && let Err(err) = self.check_pinned()
+            {
+                self.on_reader_error(err);
+                return self.end_of_reader();
+            }
             let done = state == ReadState::Eof || self.reader_finished();
             if amount_read > 0 {
+                let done = done && self.may_end_with_bytes();
                 let into = streams::IntoArray {
                     value: array,
                     len: amount_read as u64,
@@ -862,7 +963,7 @@ impl FileReader {
             // A completion may have landed in `buffered` while `read_into` ran user JS.
             let drained = self.drain();
             if !drained.is_empty() {
-                return if done {
+                return if done && self.may_end_with_bytes() {
                     streams::Result::OwnedAndDone(drained)
                 } else {
                     streams::Result::Owned(drained)
@@ -925,24 +1026,31 @@ impl FileReader {
         if sink.is_some() {
             self.consume_reader_buffer();
             if !self.sink_paused.get() {
-                self.detach_sink(None);
+                let err = self.check_pinned().err().map(|err| self.stream_error(err));
+                self.detach_sink(err.as_ref());
                 let buffered = self.buffered.replace(Vec::new());
-                if !buffered.is_empty() {
+                if err.is_none() && !buffered.is_empty() {
                     let _ = sink.write(&streams::Result::OwnedAndDone(buffered));
                 }
-                sink.end(None);
+                sink.end(err);
             }
         } else {
             self.consume_reader_buffer();
             if self.pending.get().state == streams::PendingState::Pending {
                 if !self.buffered.get().is_empty() {
-                    let buffered = self.buffered.replace(Vec::new());
-                    self.pending.with_mut(|p| {
-                        p.result =
-                            streams::Result::OwnedAndDone(Vec::<u8>::move_from_list(buffered))
-                    });
+                    let buffered = Vec::<u8>::move_from_list(self.buffered.replace(Vec::new()));
+                    let result = if self.may_end_with_bytes() {
+                        streams::Result::OwnedAndDone(buffered)
+                    } else {
+                        streams::Result::Owned(buffered)
+                    };
+                    self.pending.with_mut(|p| p.result = result);
                 } else {
-                    self.pending.with_mut(|p| p.result = streams::Result::Done);
+                    let result = match self.check_pinned() {
+                        Ok(()) => streams::Result::Done,
+                        Err(err) => streams::Result::Err(self.stream_error(err)),
+                    };
+                    self.pending.with_mut(|p| p.result = result);
                 }
                 self.buffered.set(Vec::new());
                 self.pending.with_mut(|p| p.run());
@@ -952,7 +1060,7 @@ impl FileReader {
         }
 
         // Only close the stream if there's no buffered data left to deliver
-        if self.buffered.get().is_empty() {
+        if self.buffered.get().is_empty() && self.may_end_with_bytes() {
             // SAFETY: see `parent()`; the pin keeps the count > 0.
             unsafe { (*parent).on_close() };
         }
@@ -975,20 +1083,7 @@ impl FileReader {
         // SAFETY: see `parent()`.
         let _pin = unsafe { SourcePin::new(parent) };
 
-        let sink = *self.sink.get();
-        if sink.is_some() {
-            let err = streams::StreamError::Error(err);
-            self.detach_sink(Some(&err));
-            sink.end(Some(err));
-        } else if self.pending.get().state == streams::PendingState::Pending {
-            self.pending.with_mut(|p| {
-                p.result = streams::Result::Err(streams::StreamError::Error(err));
-            });
-            self.pending.with_mut(|p| p.run());
-        } else {
-            // `p.run()` would no-op and the pull promise would never settle.
-            self.read_error.set(Some(err));
-        }
+        self.deliver_error(err);
 
         if self.waiting_for_on_reader_done.get() && !self.done.get() {
             self.waiting_for_on_reader_done.set(false);
@@ -996,6 +1091,24 @@ impl FileReader {
             let _ = unsafe { Source::decrement_count(parent) };
         }
         self.close_after_error();
+    }
+
+    /// Hands `err` to whoever reads: the sink, the parked pull, or the next pull.
+    fn deliver_error(&self, err: sys::Error) {
+        let sink = *self.sink.get();
+        if sink.is_some() {
+            let err = self.stream_error(err);
+            self.detach_sink(Some(&err));
+            sink.end(Some(err));
+        } else if self.pending.get().state == streams::PendingState::Pending {
+            let err = self.stream_error(err);
+            self.pending
+                .with_mut(|p| p.result = streams::Result::Err(err));
+            self.pending.with_mut(|p| p.run());
+        } else {
+            // `p.run()` would no-op and the pull promise would never settle.
+            self.read_error.set(Some(err));
+        }
     }
 
     /// An errored stream is never cancelled, so release the poll and the fd here.
@@ -1016,7 +1129,7 @@ impl FileReader {
     /// The stored read error, or a clean end.
     fn end_of_reader(&self) -> streams::Result {
         match self.read_error.replace(None) {
-            Some(err) => streams::Result::Err(streams::StreamError::Error(err)),
+            Some(err) => streams::Result::Err(self.stream_error(err)),
             None => streams::Result::Done,
         }
     }

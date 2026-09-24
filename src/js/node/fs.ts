@@ -5,7 +5,10 @@ const {
   validateFunction,
   validateInteger,
   validateEncoding,
+  validateObject,
+  validateString,
   getValidatedPath,
+  getValidatedFsPath,
   throwIfNullBytesInFileName,
 } = require("internal/validators");
 
@@ -57,8 +60,14 @@ function settleCallbackWithNull(promise, callback) {
   );
 }
 
-function openAsBlob(path, options) {
-  return Promise.$resolve(Bun.file(path, options));
+let openAsBlobNative;
+function openAsBlob(path, options = kEmptyObject) {
+  validateObject(options, "options");
+  const type = options.type || "";
+  validateString(type, "options.type");
+  path = getValidatedFsPath(path);
+  openAsBlobNative ??= $newRustFunction("node_fs_binding.rs", "open_as_blob", 2);
+  return Promise.$resolve(openAsBlobNative(path, type));
 }
 
 interface WriteSyncErrorContext {

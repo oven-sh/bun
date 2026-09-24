@@ -447,6 +447,12 @@ pub(crate) fn create_binding(global: &JSGlobalObject) -> JSValue {
 /// exact argument parser `fs.rm` uses and return the parsed options, so node's
 /// `internal/fs/utils` `validateRmOptionsSync` tests exercise the production
 /// validation (including its rejection of own-but-`undefined` booleans).
+/// `fs.openAsBlob(path, type)`.
+#[bun_jsc::host_fn]
+pub(crate) fn open_as_blob(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    crate::webcore::blob::construct_open_as_blob(global, frame)
+}
+
 #[bun_jsc::host_fn]
 pub(crate) fn rm_options_for_testing(
     global: &JSGlobalObject,

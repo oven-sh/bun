@@ -160,6 +160,229 @@ it("fs.openAsBlob", async () => {
   expect((await openAsBlob(import.meta.path)).size).toBe(statSync(import.meta.path).size);
 });
 
+// node pins the Blob to the file as it is when openAsBlob() returns. A same-size
+// rewrite inside one timestamp tick looks the same to node and to bun, so every
+// change below changes the size, or sets an mtime that differs.
+describe.concurrent("fs.openAsBlob pins the file", () => {
+  const notReadable = expect.objectContaining({ name: "NotReadableError", message: "The blob could not be read" });
+
+  async function pinned(contents: string | Uint8Array = "hello", options?: { type?: string }) {
+    const dir = tempDir("open-as-blob", { "a.txt": contents });
+    const file = join(String(dir), "a.txt");
+    return { dir, file, blob: await openAsBlob(file, options) };
+  }
+
+  it("reads an unchanged file, more than once", async () => {
+    const { dir, file, blob } = await pinned();
+    using _ = dir;
+    expect(blob.size).toBe(5);
+    expect(await blob.text()).toBe("hello");
+    expect(await blob.text()).toBe("hello");
+    expect(new Uint8Array(await blob.arrayBuffer())).toEqual(new TextEncoder().encode("hello"));
+    expect(await blob.bytes()).toEqual(new TextEncoder().encode("hello"));
+    expect(await blob.slice(1, 4).text()).toBe("ell");
+    expect(await blob.slice(1).slice(1, 3).text()).toBe("ll");
+    expect(await new Response(blob).text()).toBe("hello");
+    expect(await new Response(blob.stream()).text()).toBe("hello");
+    expect(await new File([blob], "n").text()).toBe("hello");
+    expect(await (await openAsBlob(Buffer.from(file))).text()).toBe("hello");
+    expect(await (await openAsBlob(Bun.pathToFileURL(file))).text()).toBe("hello");
+  });
+
+  it("keeps the size and does not sniff the type", async () => {
+    const { dir, file, blob } = await pinned();
+    using _ = dir;
+    expect(blob.type).toBe("");
+    expect((await openAsBlob(file, {})).type).toBe("");
+    expect((await openAsBlob(file, { type: "" })).type).toBe("");
+    expect((await openAsBlob(file, { type: "text/plain" })).type).toBe("text/plain");
+    expect((await openAsBlob(file, { type: "TEXT/Plain" })).type).toBe("TEXT/Plain");
+    writeFileSync(file, "swapped!");
+    expect(blob.size).toBe(5);
+    expect(blob.slice(1, 4).size).toBe(3);
+  });
+
+  it("rejects every read once the file changes", async () => {
+    const { dir, file, blob } = await pinned();
+    using _ = dir;
+    const sliceBefore = blob.slice(1, 4);
+    writeFileSync(file, "swapped!");
+
+    await expect(blob.text()).rejects.toEqual(notReadable);
+    await expect(blob.text()).rejects.toBeInstanceOf(DOMException);
+    await expect(blob.arrayBuffer()).rejects.toEqual(notReadable);
+    await expect(blob.bytes()).rejects.toEqual(notReadable);
+    await expect(blob.json()).rejects.toEqual(notReadable);
+    await expect(sliceBefore.text()).rejects.toEqual(notReadable);
+    await expect(blob.slice(1, 4).text()).rejects.toEqual(notReadable);
+    await expect(new File([blob], "n").text()).rejects.toEqual(notReadable);
+    await expect(new Response(blob).text()).rejects.toEqual(notReadable);
+    await expect(new Request("http://example.com", { method: "POST", body: blob }).text()).rejects.toEqual(
+      notReadable,
+    );
+    const url = URL.createObjectURL(blob);
+    try {
+      await expect(fetch(url).then(res => res.text())).rejects.toEqual(notReadable);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  });
+
+  it.each([
+    ["truncated", (file: string) => writeFileSync(file, "hi")],
+    ["appended", (file: string) => fs.appendFileSync(file, " world")],
+    ["deleted", (file: string) => unlinkSync(file)],
+    [
+      "touched",
+      (file: string) => {
+        // Only the nanoseconds of the mtime count, so move them.
+        const ms = Number((statSync(file, { bigint: true }).mtimeNs / 1_000_000n) % 1000n);
+        fs.utimesSync(file, new Date(), new Date(1_700_000_000_000 + ((ms + 500) % 1000)));
+      },
+    ],
+  ])("rejects a read of a %s file", async (_name, change) => {
+    const { dir, file, blob } = await pinned();
+    using _ = dir;
+    change(file);
+    await expect(blob.text()).rejects.toEqual(notReadable);
+    await expect(blob.stream().getReader().read()).rejects.toEqual(notReadable);
+  });
+
+  it("fails the first read of a stream, not getReader()", async () => {
+    const { dir, file, blob } = await pinned();
+    using _ = dir;
+    const before = blob.stream();
+    writeFileSync(file, "swapped!");
+    const after = blob.stream();
+    for (const stream of [before, after, new Response(blob).body!]) {
+      const reader = stream.getReader();
+      await expect(reader.read()).rejects.toEqual(notReadable);
+    }
+  });
+
+  it("fails a stream when the file changes between two reads", async () => {
+    // 300000 bytes reach the consumer as more than one chunk.
+    const { dir, file, blob } = await pinned(Buffer.alloc(300_000, "a"));
+    using _ = dir;
+    let chunks = 0;
+    const read = async () => {
+      for await (const _chunk of blob.stream()) {
+        chunks++;
+        writeFileSync(file, "swapped!");
+      }
+    };
+    await expect(read()).rejects.toEqual(notReadable);
+    expect(chunks).toBeGreaterThan(0);
+  });
+
+  it("rejects a read of an empty file that is written later", async () => {
+    const { dir, file, blob } = await pinned("");
+    using _ = dir;
+    expect(blob.size).toBe(0);
+    expect(await blob.text()).toBe("");
+    writeFileSync(file, "abc");
+    await expect(blob.text()).rejects.toEqual(notReadable);
+    await expect(blob.stream().getReader().read()).rejects.toEqual(notReadable);
+  });
+
+  it("opens a directory and rejects the read", async () => {
+    using dir = tempDir("open-as-blob-dir", {});
+    const blob = await openAsBlob(String(dir));
+    await expect(blob.text()).rejects.toEqual(notReadable);
+  });
+
+  it("resolves a relative path again at each read", async () => {
+    using dir = tempDir("open-as-blob-cwd", { "a.txt": "hello", "other/.keep": "" });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const blob = await require("node:fs").openAsBlob("a.txt");
+        console.log(await blob.text());
+        process.chdir("other");
+        console.log(await blob.text().then(() => "resolved", err => err.name));`,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "hello\nNotReadableError\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  it.each([
+    ["below", 5],
+    ["above", 100_000],
+  ])("rejects a fetch body %s the sendfile threshold once the file changes", async (_name, size) => {
+    const { dir, file, blob } = await pinned(Buffer.alloc(size, "a"));
+    using _ = dir;
+    await using server = Bun.serve({ port: 0, fetch: async req => new Response(String((await req.bytes()).length)) });
+    expect(await (await fetch(server.url, { method: "POST", body: blob })).text()).toBe(String(size));
+    writeFileSync(file, Buffer.alloc(size + 1, "b"));
+    await expect(fetch(server.url, { method: "POST", body: blob })).rejects.toEqual(notReadable);
+  });
+
+  it("does not send a changed file in a multipart retry", async () => {
+    const { dir, file, blob } = await pinned();
+    using _ = dir;
+    await using server = Bun.serve({
+      port: 0,
+      fetch: async req => new Response(await ((await req.formData()).get("file") as File).text()),
+    });
+    const upload = async () => {
+      const form = new FormData();
+      form.append("file", blob, "a.txt");
+      const res = await fetch(server.url, { method: "POST", body: form });
+      return await res.text();
+    };
+    expect(await upload()).toBe("hello");
+    writeFileSync(file, "swapped!");
+    await expect(upload()).rejects.toEqual(notReadable);
+  });
+
+  it("throws when the path cannot be stat'd", () => {
+    using dir = tempDir("open-as-blob-missing", {});
+    const missing = join(String(dir), "missing.txt");
+    // node v26.3.0 throws ERR_INVALID_ARG_VALUE here. node main throws the stat
+    // error, since https://github.com/nodejs/node/pull/65517.
+    expect(() => openAsBlob(missing)).toThrow(
+      expect.objectContaining({ code: "ENOENT", syscall: "stat", path: missing }),
+    );
+  });
+
+  it("validates its arguments like node", () => {
+    const invalidArgType = expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" });
+    // @ts-expect-error
+    expect(() => openAsBlob()).toThrow(invalidArgType);
+    // @ts-expect-error
+    expect(() => openAsBlob(123)).toThrow(invalidArgType);
+    // @ts-expect-error
+    expect(() => openAsBlob(import.meta.path, null)).toThrow(invalidArgType);
+    // @ts-expect-error
+    expect(() => openAsBlob(import.meta.path, { type: 123 })).toThrow(invalidArgType);
+  });
+
+  it("is not cloneable", async () => {
+    const blob = await openAsBlob(import.meta.path);
+    expect(() => structuredClone(blob)).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_STATE",
+        message: "Invalid state: File-backed Blobs are not cloneable",
+      }),
+    );
+  });
+
+  it("sends no Content-Type for an empty type", async () => {
+    const { dir, file, blob } = await pinned();
+    using _ = dir;
+    await using server = Bun.serve({ port: 0, fetch: req => new Response(String(req.headers.get("content-type"))) });
+    expect(await (await fetch(server.url, { method: "POST", body: blob })).text()).toBe("null");
+    const typed = await openAsBlob(file, { type: "text/x-pinned" });
+    expect(await (await fetch(server.url, { method: "POST", body: typed })).text()).toBe("text/x-pinned");
+  });
+});
+
 it("writing to 1, 2 are possible", () => {
   expect(fs.writeSync(1, Buffer.from("\nhello-stdout-test\n"))).toBe(19);
   expect(fs.writeSync(2, Buffer.from("\nhello-stderr-test\n"))).toBe(19);

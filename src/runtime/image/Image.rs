@@ -1360,7 +1360,19 @@ impl<'a> BlobReadChain<'a> {
             }
             ReadBytesResult::Err(e) => {
                 drop(deliver);
-                outer.reject(global, Ok(e.to_error_instance(global)))
+                let pinned = matches!(
+                    image.source.get(),
+                    Source::Blob(blob) if blob
+                        .get()
+                        .as_class_ref::<Blob>()
+                        .is_some_and(|blob| blob.pinned_file().is_some())
+                );
+                let err = if pinned {
+                    crate::webcore::blob::not_readable_error(global)
+                } else {
+                    e.to_error_instance(global)
+                };
+                outer.reject(global, Ok(err))
             }
         }
     }

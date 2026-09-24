@@ -31,7 +31,7 @@ use super::SizeType;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) use bun_jsc::webcore_types::store::{
-    Bytes, Data, DataTag, File, IsAllAscii, S3, SerializeTag, Store,
+    Bytes, Data, DataTag, File, FileSource, IsAllAscii, PinnedFile, S3, SerializeTag, Store,
 };
 
 // ──────────────────────────────────────────────────────────────────────────

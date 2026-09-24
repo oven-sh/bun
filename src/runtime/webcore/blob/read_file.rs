@@ -136,7 +136,11 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
                 // from here to `reject` it is a JS-thread stack local, kept
                 // alive by JSC's conservative stack scan.
                 let promise = unsafe { &mut *promise };
-                let val = err.to_error_instance_with_async_stack(global_this, promise);
+                let val = if blob.pinned_file().is_some() {
+                    crate::webcore::blob::not_readable_error(global_this)
+                } else {
+                    err.to_error_instance_with_async_stack(global_this, promise)
+                };
                 promise.reject(global_this, Ok(val))?;
             }
         }
@@ -312,6 +316,9 @@ bun_io::intrusive_io_request!(ReadFile, io_request);
 
 // The default methods on the FileOpener/FileCloser traits provide the bodies.
 impl FileOpener for ReadFile {
+    /// In `resolve_size_and_last_modified`.
+    const VERIFIES_PINNED: bool = true;
+
     fn opened_fd(&self) -> Fd {
         self.opened_fd
     }
@@ -694,6 +701,14 @@ impl ReadFile {
             }
         };
 
+        if let Some(pinned) = self.file_store.pinned()
+            && let Err(err) = pinned.verify(&stat)
+        {
+            self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
+            self.system_error = Some(err.to_system_error().into());
+            return;
+        }
+
         if let Some(store) = &self.store {
             if let Data::File(file) = Store::data_mut(store) {
                 let mtime = bun_sys::PosixStat::init(&stat).mtime();
@@ -909,6 +924,15 @@ impl ReadFile {
             }
             self.buffer = buffer;
 
+            // node compares the file again after it has read it.
+            if self.system_error.is_none()
+                && let Some(pinned) = self.file_store.pinned()
+                && let Err(err) = pinned.recheck(self.opened_fd)
+            {
+                self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
+                self.system_error = Some(err.to_system_error().into());
+            }
+
             if self.system_error.is_some() {
                 self.buffer = Vec::new(); // clearAndFree
             }
@@ -957,6 +981,9 @@ pub(crate) struct ReadFileUV<'a> {
 
 #[cfg(windows)]
 impl<'a> FileOpener for ReadFileUV<'a> {
+    /// In `on_file_initial_stat`.
+    const VERIFIES_PINNED: bool = true;
+
     fn opened_fd(&self) -> Fd {
         self.opened_fd
     }
@@ -1213,6 +1240,15 @@ impl<'a> ReadFileUV<'a> {
 
         let stat = this.req.statbuf;
 
+        if let Some(pinned) = this.file_store.pinned()
+            && let Err(err) = pinned.verify(&stat)
+        {
+            this.errno = Some(bun_errno::from_errno(err.errno as i32).into());
+            this.system_error = Some(err.to_system_error().into());
+            this.on_finish();
+            return;
+        }
+
         // keep in sync with resolveSizeAndLastModified
         if let Data::File(file) = Store::data_mut(&this.store) {
             // `uv_timespec_t` fields are `c_long` (i32 on Windows); widen to the
@@ -1379,12 +1415,55 @@ impl<'a> ReadFileUV<'a> {
             }
         } else {
             log!("ReadFileUV.queueRead done");
-
-            // We are done reading.
-            let owned = core::mem::take(&mut self.buffer).into_boxed_slice();
-            self.byte_store = ByteStore::init_owned(owned);
-            self.on_finish();
+            self.on_read_done();
         }
+    }
+
+    /// The read is complete. node compares a pinned file once more before it delivers the bytes.
+    fn on_read_done(&mut self) {
+        let owned = core::mem::take(&mut self.buffer).into_boxed_slice();
+        self.byte_store = ByteStore::init_owned(owned);
+        if self.file_store.pinned().is_none() {
+            self.on_finish();
+            return;
+        }
+
+        self.req.deinit();
+        self.req.data = core::ptr::from_mut(self).cast::<c_void>();
+        // SAFETY: FFI — same contract as the `uv_fs_fstat` in `on_file_open`;
+        // `on_final_stat` recovers `self` from `req.data` (set above).
+        let rc = unsafe {
+            libuv::uv_fs_fstat(
+                self.loop_,
+                &mut self.req,
+                self.opened_fd.uv(),
+                Some(Self::on_final_stat),
+            )
+        };
+        if let Some(errno) = rc.errno() {
+            self.fail_final_stat(bun_sys::Error::from_code(errno, bun_sys::Tag::fstat));
+        }
+    }
+
+    extern "C" fn on_final_stat(req: *mut libuv::fs_t) {
+        // SAFETY: req.data was set to *mut Self in on_read_done().
+        let this: &mut ReadFileUV = unsafe { bun_ptr::callback_ctx::<ReadFileUV>((*req).data) };
+        if let Some(errno) = this.req.result.errno() {
+            this.fail_final_stat(bun_sys::Error::from_code(errno, bun_sys::Tag::fstat));
+            return;
+        }
+        let stat = this.req.statbuf;
+        match this.file_store.pinned().map(|pinned| pinned.verify(&stat)) {
+            Some(Err(err)) => this.fail_final_stat(err),
+            _ => this.on_finish(),
+        }
+    }
+
+    fn fail_final_stat(&mut self, err: bun_sys::Error) {
+        self.byte_store = ByteStore::default();
+        self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
+        self.system_error = Some(err.to_system_error().into());
+        self.on_finish();
     }
 
     pub(crate) extern "C" fn on_read(req: *mut libuv::fs_t) {
@@ -1407,10 +1486,7 @@ impl<'a> ReadFileUV<'a> {
         }
 
         if result.int() == 0 {
-            // We are done reading.
-            let owned = core::mem::take(&mut this.buffer).into_boxed_slice();
-            this.byte_store = ByteStore::init_owned(owned);
-            this.on_finish();
+            this.on_read_done();
             return;
         }
 

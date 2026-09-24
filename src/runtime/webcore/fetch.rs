@@ -1551,27 +1551,39 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // `path.slice_z()` (the `vm.node_fs()` accessor is gated behind a
             // jsc↔runtime cycle).
             let mut open_path_buf = bun_paths::path_buffer_pool::get();
+            let flags = if cfg!(windows) {
+                bun_sys::O::RDONLY
+            } else {
+                bun_sys::O::RDONLY | bun_sys::O::NOCTTY
+            };
+            let is_pinned = body.any_blob().blob().pinned_file().is_some();
+            // The `fstat` that let a pinned file through its verified open.
+            let mut verified_stat: Option<bun_sys::Stat> = None;
             let opened_fd_res: bun_sys::Result<bun_sys::Fd> = {
                 let store = body.store().expect("needs_to_read_file implies store");
-                let file = store.data.as_file();
-                match file.lazy_pathlike() {
-                    Some(PathOrFileDescriptor::Fd(fd)) => bun_sys::dup(*fd),
-                    Some(PathOrFileDescriptor::Path(path)) => {
-                        let zpath = path.slice_z(&mut open_path_buf);
-                        let flags = if cfg!(windows) {
-                            bun_sys::O::RDONLY
-                        } else {
-                            bun_sys::O::RDONLY | bun_sys::O::NOCTTY
-                        };
-                        bun_sys::open(zpath, flags, 0)
+                match store.data.as_file().source() {
+                    blob::store::FileSource::Lazy(PathOrFileDescriptor::Fd(fd)) => {
+                        bun_sys::dup(*fd)
                     }
-                    None => Err(file.pinned_refusal(bun_sys::Tag::open)),
+                    blob::store::FileSource::Lazy(PathOrFileDescriptor::Path(path)) => {
+                        bun_sys::open(path.slice_z(&mut open_path_buf), flags, 0)
+                    }
+                    blob::store::FileSource::Pinned(pinned) => {
+                        pinned.open_verified(flags).map(|(fd, stat)| {
+                            verified_stat = Some(stat);
+                            fd
+                        })
+                    }
                 }
             };
 
             let opened_fd = match opened_fd_res {
                 Err(err) => {
-                    let err_js = err.to_js(global_this);
+                    let err_js = if is_pinned {
+                        blob::not_readable_error(global_this)
+                    } else {
+                        err.to_js(global_this)
+                    };
                     let rejected_value = JSPromise::rejected_promise(global_this, err_js).to_js();
                     return Ok(rejected_value);
                 }
@@ -1583,10 +1595,13 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // over https/proxy/<32 KiB/Windows but silently not over plain http.
             if proxy.is_none() && compress.is_none() && http::SendFile::is_eligible(&url) {
                 'use_sendfile: {
-                    let stat: bun_sys::Stat = match bun_sys::fstat(opened_fd) {
-                        Ok(result) => result,
-                        // bail out for any reason
-                        Err(_) => break 'use_sendfile,
+                    let stat: bun_sys::Stat = match verified_stat {
+                        Some(stat) => stat,
+                        None => match bun_sys::fstat(opened_fd) {
+                            Ok(result) => result,
+                            // bail out for any reason
+                            Err(_) => break 'use_sendfile,
+                        },
                     };
 
                     #[cfg(target_os = "macos")]
@@ -1655,7 +1670,17 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             rf_args.path = PathOrFileDescriptor::Fd(*opened_fd);
             rf_args.offset = blob_offset;
             rf_args.max_size = Some(blob_size);
-            let res = node_fs.read_file(&rf_args, node::fs::Flavor::Sync);
+            let mut res = node_fs.read_file(&rf_args, node::fs::Flavor::Sync);
+            // node compares a pinned file again after it has read it.
+            if res.is_ok()
+                && let Some(pinned) = body.any_blob().blob().pinned_file()
+                && let Err(err) = pinned.recheck(*opened_fd)
+            {
+                if let Ok(crate::node::types::StringOrBuffer::Buffer(buf)) = &mut res {
+                    buf.destroy();
+                }
+                res = Err(err);
+            }
 
             // Eagerly close before constructing the (potentially large) JS
             // result. Dropping the guard runs the close exactly once.
@@ -1663,8 +1688,12 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
             match res {
                 Err(err) => {
-                    let rejected_value =
-                        JSPromise::rejected_promise(global_this, err.to_js(global_this)).to_js();
+                    let err_js = if is_pinned {
+                        blob::not_readable_error(global_this)
+                    } else {
+                        err.to_js(global_this)
+                    };
+                    let rejected_value = JSPromise::rejected_promise(global_this, err_js).to_js();
                     body.detach();
                     return Ok(rejected_value);
                 }

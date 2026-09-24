@@ -74,6 +74,12 @@ pub(crate) fn is_valid_blob_type(slice: &[u8]) -> bool {
     slice.iter().all(|&c| matches!(c, 0x20..=0x7E))
 }
 
+/// What every failed read of an `fs.openAsBlob` file rejects with, as in node.
+pub(crate) fn not_readable_error(global: &JSGlobalObject) -> JSValue {
+    EncodedSlice::latin1(b"The blob could not be read")
+        .to_dom_exception_instance(global, bun_jsc::DOMExceptionCode::NotReadableError)
+}
+
 /// Result delivered to `ReadBytesHandler::on_read_bytes`.
 pub(crate) enum ReadBytesResult {
     /// global-allocator-owned by the callback.
@@ -778,10 +784,20 @@ impl BlobExt for Blob {
 
     fn on_structured_clone_serialize(
         &self,
-        _global_this: &JSGlobalObject,
+        global_this: &JSGlobalObject,
         ctx: *mut c_void,
         write_bytes: crate::generated_classes::WriteBytesFn,
     ) {
+        if self.pinned_file().is_some() {
+            // As in node. The serializer stops at the pending exception.
+            let _ = global_this
+                .err(
+                    jsc::ErrorCode::INVALID_STATE_TypeError,
+                    format_args!("Invalid state: File-backed Blobs are not cloneable"),
+                )
+                .throw();
+            return;
+        }
         let mut writer = StructuredCloneWriter {
             ctx,
             impl_: write_bytes,
@@ -3685,11 +3701,22 @@ impl FormDataContext<'_> {
                             // we need to make this async and use download/downloadSlice
                         }
                         store::Data::File(file) => {
-                            let Some(pathlike) = file.lazy_pathlike() else {
-                                self.failed = true;
-                                let err = file.pinned_refusal(bun_sys::Tag::open);
-                                let _ = global_this.throw_value(err.to_js(global_this));
-                                return;
+                            // A pinned file is read through its verified descriptor, never by path.
+                            let (path, pinned) = match file.source() {
+                                store::FileSource::Lazy(pathlike) => (pathlike.clone(), None),
+                                store::FileSource::Pinned(pinned) => {
+                                    match pinned.open_verified(bun_sys::O::RDONLY) {
+                                        Ok((fd, _)) => {
+                                            (PathOrFileDescriptor::Fd(fd), Some((pinned, fd)))
+                                        }
+                                        Err(_) => {
+                                            self.failed = true;
+                                            let _ = global_this
+                                                .throw_value(not_readable_error(global_this));
+                                            return;
+                                        }
+                                    }
+                                }
                             };
                             // TODO: make this async + lazy
                             // Use a fresh stack
@@ -3699,11 +3726,31 @@ impl FormDataContext<'_> {
                             // `ReadFile` has `Drop`; can't use FRU `..Default::default()`.
                             let mut rf_args = crate::node::fs::args::ReadFile::default();
                             rf_args.encoding = crate::node::types::Encoding::Buffer;
-                            rf_args.path = pathlike.clone();
+                            rf_args.path = path;
                             rf_args.offset = blob.offset.get();
                             rf_args.max_size = Some(blob.size.get());
-                            let res = node_fs.read_file(&rf_args, crate::node::fs::Flavor::Sync);
+                            let mut res =
+                                node_fs.read_file(&rf_args, crate::node::fs::Flavor::Sync);
+                            if let Some((pinned, fd)) = pinned {
+                                // node compares the file again after it has read it.
+                                if res.is_ok()
+                                    && let Err(err) = pinned.recheck(fd)
+                                {
+                                    if let Ok(crate::node::types::StringOrBuffer::Buffer(buf)) =
+                                        &mut res
+                                    {
+                                        buf.destroy();
+                                    }
+                                    res = Err(err);
+                                }
+                                bun_sys::FdExt::close(fd);
+                            }
                             match res {
+                                Err(_) if pinned.is_some() => {
+                                    self.failed = true;
+                                    let _ =
+                                        global_this.throw_value(not_readable_error(global_this));
+                                }
                                 Err(err) => {
                                     self.failed = true;
                                     let js_err = err.to_js(global_this);
@@ -5502,6 +5549,82 @@ pub(crate) fn construct_bun_file(
     Ok(unsafe { BlobExt::to_js(&*ptr, global_object) })
 }
 
+/// `fs.openAsBlob(path, type)`, validated in `src/js/node/fs.ts`. Unlike `Bun.file()`, it pins.
+pub(crate) fn construct_open_as_blob(
+    global_object: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    let arguments_slice = callframe.arguments();
+    let mut args = jsc::ArgumentsSlice::init(global_object.bun_vm(), arguments_slice);
+    let Some(path) = PathLike::from_js(global_object, &mut args)? else {
+        return Err(global_object.throw_invalid_argument_type_value(
+            b"path",
+            b"string or an instance of Buffer or URL",
+            callframe.argument(0),
+        ));
+    };
+
+    let mime_type = match arguments_slice.get(1) {
+        Some(file_type) if file_type.is_string() => {
+            let file_type = file_type.to_utf8(global_object)?;
+            let slice = file_type.slice();
+            if slice.is_empty() || !is_valid_blob_type(slice) {
+                bun_http_types::MimeType::NONE
+            } else {
+                // `MimeType::init` would intern `text/plain` as `text/plain;charset=utf-8`.
+                bun_http_types::MimeType::MimeType {
+                    value: std::borrow::Cow::Owned(slice.to_vec()),
+                    category: bun_http_types::MimeType::MimeType::init(slice, false, None).category,
+                }
+            }
+        }
+        _ => bun_http_types::MimeType::NONE,
+    };
+
+    // A file embedded in a compiled executable is bytes in memory. It cannot change.
+    if let Some(file) =
+        bun_standalone_graph::Graph::get_ref().and_then(|graph| graph.find_ref(path.slice()))
+    {
+        let blob = crate::api::standalone_graph_jsc::file_blob(file, global_object);
+        blob.content_type_was_set.set(!mime_type.value.is_empty());
+        blob.content_type
+            .set(BlobContentType::from_mime(&mime_type));
+        let ptr = Blob::new(blob);
+        // SAFETY: ptr was just produced by heap::alloc in Blob::new.
+        return Ok(unsafe { BlobExt::to_js(&*ptr, global_object) });
+    }
+
+    let stat = {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        match bun_sys::stat(path.slice_z(&mut buf)) {
+            Ok(stat) => stat,
+            // node throws the `stat` error: https://github.com/nodejs/node/pull/65517
+            Err(err) => {
+                let err = err.with_path(path.slice());
+                return Err(global_object.throw_value(err.to_js(global_object)));
+            }
+        }
+    };
+    let mut file = store::File::init_pinned(path.slice(), &stat, mime_type);
+    apply_file_stat(&mut file, &stat);
+    let blob = Blob::init_with_store(
+        RefPtr::new(Store {
+            data: store::Data::File(file),
+            mime_type: bun_http_types::MimeType::NONE,
+            ref_count: bun_ptr::ThreadSafeRefCount::init(),
+            is_all_ascii: store::IsAllAscii::default(),
+        }),
+        global_object,
+    );
+    blob.resolve_size();
+
+    let ptr = Blob::new(blob);
+    // SAFETY: ptr was just produced by heap::alloc in Blob::new. Spelled
+    // `BlobExt::to_js(&*ptr, ..)` to pick the `&self` impl over the by-value
+    // `JsClass::to_js`.
+    Ok(unsafe { BlobExt::to_js(&*ptr, global_object) })
+}
+
 // `find_or_create_file_from_path`: canonical impl lives later in this file
 // (runtime `check_s3: bool` form). Const-generic duplicate removed here.
 
@@ -6484,6 +6607,8 @@ pub(crate) trait FileOpener: Sized {
     /// Override if you need different open flags; defaults to RDONLY.
     const OPEN_FLAGS: i32 = bun_sys::O::RDONLY;
     const OPENER_FLAGS: i32 = bun_sys::O::NONBLOCK | bun_sys::O::CLOEXEC;
+    /// Whether the implementor passes its `fstat` to `PinnedFile::verify`. If not, it is refused.
+    const VERIFIES_PINNED: bool = false;
 
     fn opened_fd(&self) -> Fd;
     fn set_opened_fd(&mut self, fd: Fd);
@@ -6518,10 +6643,13 @@ pub(crate) trait FileOpener: Sized {
 
     fn get_fd_by_opening(&mut self, callback: fn(&mut Self, Fd)) {
         let mut buf = bun_paths::path_buffer_pool::get();
-        let path_string = match self.file().lazy_pathlike() {
-            Some(PathOrFileDescriptor::Path(p)) => p.clone(),
-            Some(PathOrFileDescriptor::Fd(_)) => unreachable!(),
-            None => {
+        let path_string = match (self.file().lazy_pathlike(), self.file().pinned()) {
+            (Some(PathOrFileDescriptor::Path(p)), _) => p.clone(),
+            (Some(PathOrFileDescriptor::Fd(_)), _) => unreachable!(),
+            (None, Some(pinned)) if Self::VERIFIES_PINNED => {
+                PathLike::owned(pinned.path_for_unverified_open().as_bytes().to_vec())
+            }
+            (None, _) => {
                 let err = self.file().pinned_refusal(bun_sys::Tag::open);
                 self.set_errno(bun_errno::from_errno(err.errno as i32).into());
                 self.set_system_error(jsc::SysErrorJsc::to_system_error(&err));

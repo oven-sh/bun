@@ -389,7 +389,14 @@ impl Blob {
         self.content_type_was_set.get()
             || self
                 .store()
-                .map(|s| matches!(s.data, store::Data::File(_) | store::Data::S3(_)))
+                .map(|s| match &s.data {
+                    // Never sniffed: it has the type `fs.openAsBlob` was given, or none.
+                    store::Data::File(file) if file.pinned().is_some() => {
+                        !file.mime_type.value.is_empty()
+                    }
+                    store::Data::File(_) | store::Data::S3(_) => true,
+                    store::Data::Bytes(_) => false,
+                })
                 .unwrap_or(false)
     }
 
@@ -411,6 +418,14 @@ impl Blob {
     #[inline]
     pub fn is_s3(&self) -> bool {
         matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::S3(_)))
+    }
+
+    /// The pin of a Blob from `fs.openAsBlob`. Any failed read of one is a `NotReadableError`.
+    pub fn pinned_file(&self) -> Option<&store::PinnedFile> {
+        match &self.store.get().as_deref()?.data {
+            store::Data::File(file) => file.pinned(),
+            store::Data::Bytes(_) | store::Data::S3(_) => None,
+        }
     }
 
     /// `Blob.needsToReadFile()` — backed by a filesystem `Store::File` (a
@@ -808,13 +823,66 @@ pub mod store {
         /// `Bun.file()`: each reader resolves the path, or uses the descriptor, again.
         Lazy(PathOrFileDescriptor<'static>),
         /// A file that must still be the one that was stat'd when the store was made.
-        #[expect(dead_code, reason = "nothing pins a file yet")]
         Pinned(std::sync::Arc<PinnedFile>),
     }
 
-    /// The path of a pinned [`File`]. No reader gets it: see [`File::display_path`].
+    /// See [`File::source`].
+    pub enum FileSource<'a> {
+        Lazy(&'a PathOrFileDescriptor<'static>),
+        Pinned(&'a PinnedFile),
+    }
+
+    /// The path of a pinned [`File`] and the `stat` fields a read compares first.
     pub struct PinnedFile {
         path: bun_core::ZBox,
+        size: u64,
+        mtime_nsec: i64,
+    }
+
+    impl PinnedFile {
+        /// node's `FdEntry::is_modified`: `st_size` and the nanoseconds of `st_mtim`.
+        pub fn matches(&self, stat: &bun_sys::Stat) -> bool {
+            stat.st_size as u64 == self.size && bun_sys::stat_mtime(stat).nsec == self.mtime_nsec
+        }
+
+        /// [`Self::matches`] as a result. A changed file is `EINVAL`, as in node.
+        pub fn verify(&self, stat: &bun_sys::Stat) -> bun_sys::Result<()> {
+            if self.matches(stat) {
+                return Ok(());
+            }
+            Err(
+                bun_sys::Error::from_code(bun_sys::E::EINVAL, bun_sys::Tag::fstat)
+                    .with_path(self.path.as_bytes()),
+            )
+        }
+
+        /// [`Self::verify`] of an open descriptor. A failed `fstat` counts as a change, as in node.
+        pub fn recheck(&self, fd: bun_sys::Fd) -> bun_sys::Result<()> {
+            self.verify(&bun_sys::fstat(fd)?)
+        }
+
+        /// [`Self::recheck`] by path, for a reader that closed its descriptor at the end.
+        pub fn recheck_path(&self) -> bun_sys::Result<()> {
+            self.verify(&bun_sys::stat(&self.path)?)
+        }
+
+        /// The one way to read a pinned file: the descriptor comes back only if it still matches.
+        pub fn open_verified(&self, flags: i32) -> bun_sys::Result<(bun_sys::Fd, bun_sys::Stat)> {
+            let fd = bun_sys::open(&self.path, flags, 0)
+                .map_err(|err| err.with_path(self.path.as_bytes()))?;
+            match bun_sys::fstat(fd).and_then(|stat| self.verify(&stat).map(|()| stat)) {
+                Ok(stat) => Ok((fd, stat)),
+                Err(err) => {
+                    bun_sys::FdExt::close(fd);
+                    Err(err)
+                }
+            }
+        }
+
+        /// For `FileOpener`, whose open and `fstat` are separate steps. It must `verify` the latter.
+        pub fn path_for_unverified_open(&self) -> &bun_core::ZStr {
+            &self.path
+        }
     }
 
     impl Default for File {
@@ -851,6 +919,19 @@ pub mod store {
             }
         }
 
+        /// A file at `path` that must still have the size and mtime of `stat` when it is read.
+        pub fn init_pinned(path: &[u8], stat: &bun_sys::Stat, mime_type: MimeType) -> File {
+            File {
+                path: FilePath::Pinned(std::sync::Arc::new(PinnedFile {
+                    path: bun_core::ZBox::from_bytes(path),
+                    size: stat.st_size as u64,
+                    mtime_nsec: bun_sys::stat_mtime(stat).nsec,
+                })),
+                mime_type,
+                ..Default::default()
+            }
+        }
+
         /// What a reader of a `Bun.file()` opens. `None` for a pinned file: see [`File::pinned`].
         #[inline]
         pub fn lazy_pathlike(&self) -> Option<&PathOrFileDescriptor<'static>> {
@@ -874,6 +955,15 @@ pub mod store {
             match &self.path {
                 FilePath::Lazy(_) => None,
                 FilePath::Pinned(pinned) => Some(pinned),
+            }
+        }
+
+        /// Both kinds of file, for a reader that opens either.
+        #[inline]
+        pub fn source(&self) -> FileSource<'_> {
+            match &self.path {
+                FilePath::Lazy(pathlike) => FileSource::Lazy(pathlike),
+                FilePath::Pinned(pinned) => FileSource::Pinned(pinned),
             }
         }
 

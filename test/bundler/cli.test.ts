@@ -1079,6 +1079,7 @@ describe.concurrent("bun build refuses to write an output over an input", () => 
   });
 
   // The output path and the input path differ as strings but name the same file.
+  // Creating a symlink needs a privilege on Windows.
   describe.skipIf(isWindows)("through a symlink", () => {
     const files = {
       "src/app.js": `import { v } from "./lib.js";\nconsole.log(v);\n`,
@@ -1327,18 +1328,22 @@ describe.concurrent("bun build refuses to write an output over an input", () => 
     expect(exitCode).toBe(0);
   });
 
-  // An in-memory file is not on disk, so an output at its path replaces no input.
-  test("Bun.build writes an output at the path of an in-memory file", async () => {
+  // The build does not read an in-memory file from disk. The second run finds the output of the first run at its path.
+  test("Bun.build writes an output at the path of an in-memory file, on every run", async () => {
     using dir = tempDir("build-api-in-memory-input", {
       "run.js": `
         const entry = require("node:path").join(process.cwd(), "entry.js");
-        const result = await Bun.build({
-          entrypoints: [entry],
-          files: { [entry]: 'console.log("virtual");' },
-          outdir: ".",
-          throw: false,
-        });
-        console.log(JSON.stringify({ success: result.success, logs: result.logs.map(l => l.message) }));
+        const results = [];
+        for (let run = 0; run < 2; run++) {
+          const result = await Bun.build({
+            entrypoints: [entry],
+            files: { [entry]: 'console.log("virtual");' },
+            outdir: ".",
+            throw: false,
+          });
+          results.push({ success: result.success, logs: result.logs.map(l => l.message) });
+        }
+        console.log(JSON.stringify(results));
       `,
     });
 
@@ -1350,42 +1355,15 @@ describe.concurrent("bun build refuses to write an output over an input", () => 
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(JSON.parse(stdout)).toEqual({ success: true, logs: [] });
+    expect(JSON.parse(stdout)).toEqual([
+      { success: true, logs: [] },
+      { success: true, logs: [] },
+    ]);
     expect(await Bun.file(path.join(String(dir), "entry.js")).text()).toContain('console.log("virtual")');
     expect(exitCode).toBe(0);
   });
 
-  test("Bun.build refuses an output at the path of an on-disk file that an in-memory file shadows", async () => {
-    using dir = tempDir("build-api-in-memory-shadow", {
-      "entry.js": `console.log("ON DISK");\n`,
-      "run.js": `
-        const entry = require("node:path").join(process.cwd(), "entry.js");
-        const result = await Bun.build({
-          entrypoints: [entry],
-          files: { [entry]: 'console.log("virtual");' },
-          outdir: ".",
-          throw: false,
-        });
-        console.log(JSON.stringify({ success: result.success, logs: result.logs.map(l => l.message) }));
-      `,
-    });
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "run.js"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(JSON.parse(stdout)).toEqual({
-      success: false,
-      logs: [expect.stringContaining('Refusing to overwrite input file "entry.js"')],
-    });
-    expect(await Bun.file(path.join(String(dir), "entry.js")).text()).toBe(`console.log("ON DISK");\n`);
-    expect(exitCode).toBe(0);
-  });
-
+  // Creating a symlink needs a privilege on Windows.
   test.skipIf(isWindows)("--compile with a --metafile that is a symlink to an embedded --asset file", async () => {
     using dir = tempDir("build-overwrite-compile-asset-metafile-link", {
       "app.js": `console.log("APP");\n`,

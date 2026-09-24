@@ -25,7 +25,7 @@ impl OutputWrite {
     };
 }
 
-/// Absolute paths of every input file that exists on disk.
+/// Absolute paths of every input file that the build read from disk.
 #[derive(Default)]
 pub struct InputPathSet {
     paths: PathMap,
@@ -38,7 +38,7 @@ pub struct InputPathSet {
 }
 
 impl InputPathSet {
-    /// Every `file:` namespace input of the parse graph that is on disk. An in-memory file can shadow one.
+    /// Every `file:` namespace input that the build read from disk. A file at the path of an in-memory file can be the previous run's output.
     pub(crate) fn from_graph(
         graph: &crate::Graph::Graph<'_>,
         in_memory_files: Option<&crate::bundle_v2::FileMap>,
@@ -51,10 +51,7 @@ impl InputPathSet {
                 .map(|source| &source.path)
                 .filter(|path| path.namespace == b"file")
                 .map(|path| path.text)
-                .filter(|path| {
-                    !in_memory_files.is_some_and(|files| files.contains(path))
-                        || bun_sys::exists(path)
-                }),
+                .filter(|path| !in_memory_files.is_some_and(|files| files.contains(path))),
         )
     }
 

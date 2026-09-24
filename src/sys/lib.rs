@@ -3099,13 +3099,10 @@ mod posix_impl {
     }
     #[cfg(unix)]
     pub(crate) const MSG_DONTWAIT: i32 = libc::MSG_DONTWAIT;
-    /// XNU's `sosend` only honours `MSG_NBIO` (private, 0x20000) for "don't wait for buffer space"; `MSG_DONTWAIT` alone still blocks there.
-    #[cfg(target_os = "macos")]
-    const MSG_NBIO: i32 = 0x20000;
-    #[cfg(not(target_os = "macos"))]
-    const MSG_NBIO: i32 = 0;
+    // `MSG_DONTWAIT | MSG_NOSIGNAL` on all Unix including macOS
+    // (Darwin defines MSG_NOSIGNAL=0x80000).
     #[cfg(unix)]
-    pub(crate) const SEND_FLAGS_NONBLOCK: i32 = libc::MSG_DONTWAIT | MSG_NBIO | libc::MSG_NOSIGNAL;
+    pub(crate) const SEND_FLAGS_NONBLOCK: i32 = libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL;
     /// `fcntl(F_GETFD)` then OR in `FD_CLOEXEC`.
     pub fn set_close_on_exec(fd: Fd) -> Maybe<()> {
         let fl = fcntl(fd, libc::F_GETFD, 0)?;
@@ -7352,7 +7349,7 @@ pub fn read_nonblocking(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
     }
     read(fd, buf)
 }
-/// Linux: `pwritev2(.., RWF_NOWAIT)`; else `write_bounded`.
+/// Linux: `pwritev2(.., RWF_NOWAIT)`; else plain `write`.
 pub fn write_nonblocking(fd: Fd, buf: &[u8]) -> Maybe<usize> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     while linux::RWFFlagSupport::is_maybe_supported() {
@@ -7367,7 +7364,15 @@ pub fn write_nonblocking(fd: Fd, buf: &[u8]) -> Maybe<usize> {
             match e {
                 libc::EOPNOTSUPP | libc::ENOSYS | libc::EPERM | libc::EACCES => {
                     linux::RWFFlagSupport::disable();
-                    return write_bounded(fd, buf);
+                    // Poll before issuing a blocking write.
+                    return match bun_core::is_writable(fd) {
+                        bun_core::Pollable::Ready | bun_core::Pollable::Hup => write(fd, buf),
+                        _ => {
+                            let mut e = Error::retry();
+                            e.syscall = Tag::write;
+                            Err(e.with_fd(fd))
+                        }
+                    };
                 }
                 libc::EINTR => continue,
                 _ => return Err(Error::from_code_int(e, Tag::write).with_fd(fd)),
@@ -7375,63 +7380,7 @@ pub fn write_nonblocking(fd: Fd, buf: &[u8]) -> Maybe<usize> {
         }
         return Ok(rc as usize);
     }
-    write_bounded(fd, buf)
-}
-
-/// `write(2)` on a possibly-blocking fd, sized so a pipe cannot make it wait; `EAGAIN` when nothing fits now.
-pub fn write_bounded(fd: Fd, buf: &[u8]) -> Maybe<usize> {
-    let len = match pipe_writable_space(fd) {
-        Some(0) => {
-            let mut e = Error::retry();
-            e.syscall = Tag::write;
-            return Err(e.with_fd(fd));
-        }
-        Some(space) => buf.len().min(space),
-        None => match bun_core::is_writable(fd) {
-            bun_core::Pollable::Ready | bun_core::Pollable::Hup => buf.len(),
-            bun_core::Pollable::NotReady => {
-                let mut e = Error::retry();
-                e.syscall = Tag::write;
-                return Err(e.with_fd(fd));
-            }
-        },
-    };
-    write(fd, &buf[..len])
-}
-
-/// How many bytes a blocking pipe accepts right now without blocking; `None` if `fd` is not a pipe/FIFO.
-pub fn pipe_writable_space(fd: Fd) -> Option<usize> {
-    #[cfg(unix)]
-    {
-        let st = fstat(fd).ok()?;
-        if !S::ISFIFO(st.st_mode as Mode) {
-            return None;
-        }
-        // XNU anonymous pipes (st_dev 0): st_blksize is capacity, st_size is queued bytes; an empty one grows to 64K on demand.
-        #[cfg(target_os = "macos")]
-        if st.st_dev == 0 {
-            return Some(if st.st_size == 0 {
-                (st.st_blksize as usize).max(65536)
-            } else {
-                (st.st_blksize as usize).saturating_sub(st.st_size as usize)
-            });
-        }
-        // Only POLLOUT's guarantee is safe: one free page slot on Linux, PIPE_BUF (the FIFO low-water mark) on BSD.
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        let slot = bun_alloc::page_size();
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        let slot = libc::PIPE_BUF;
-        return match bun_core::is_writable(fd) {
-            bun_core::Pollable::Ready => Some(slot),
-            bun_core::Pollable::Hup => None,
-            bun_core::Pollable::NotReady => Some(0),
-        };
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = fd;
-        None
-    }
+    write(fd, buf)
 }
 
 /// `fallocate(fd, 0, offset, len)` on Linux, result discarded; no-op elsewhere.
@@ -9307,7 +9256,7 @@ fn fd_write_all_quiet(fd: Fd, mut bytes: &[u8]) -> bool {
             Ok(n) => bytes = &bytes[n..],
             #[cfg(unix)]
             Err(e) if e.get_errno() == E::EAGAIN => {
-                // Another process sharing fd 1/2 may have set O_NONBLOCK; wait instead of dropping output.
+                // fd 1/2 are O_NONBLOCK once process.stdout/stderr exist (as in Node); wait instead of dropping output.
                 let mut pfd = [posix::PollFd {
                     fd: fd.native(),
                     events: posix::POLL_OUT,

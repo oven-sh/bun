@@ -76,7 +76,7 @@ pub trait PosixPipeWriter {
             FileType::NonblockingPipe | FileType::File => {
                 self.try_write_with_write_fn(buf, sys::write)
             }
-            FileType::Pipe => self.try_write_with_write_fn(buf, sys::write_nonblocking),
+            FileType::Pipe => self.try_write_with_write_fn(buf, write_to_blocking_pipe),
             FileType::Socket => self.try_write_with_write_fn(buf, write_to_socket),
         }
     }
@@ -212,11 +212,23 @@ pub trait PosixPipeWriter {
             }
         }
 
-        if limit < buf_len {
-            // Capped by `max_write_size`, not by the fd: the tail is still buffered, so this is not `Drained`.
-            return WriteResult::Pending(drained);
-        }
         WriteResult::Wrote(drained)
+    }
+}
+
+/// Free fn for the blocking-pipe path; the other file types are handled
+/// inline in `try_write` above.
+fn write_to_blocking_pipe(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        if bun_sys::linux::RWFFlagSupport::is_maybe_supported() {
+            return sys::write_nonblocking(fd, buf);
+        }
+    }
+
+    match bun_core::is_writable(fd) {
+        bun_core::Pollable::Ready | bun_core::Pollable::Hup => sys::write(fd, buf),
+        bun_core::Pollable::NotReady => sys::Result::Err(sys::Error::retry()),
     }
 }
 
@@ -596,8 +608,6 @@ pub struct PosixStreamingWriter<Parent: PosixStreamingWriterParent> {
     pub is_done: bool,
     pub(crate) closed_without_reporting: bool,
     pub force_sync: bool,
-    /// Like `force_sync`, skip the small-write buffer, but keep the fd's nonblocking write path.
-    pub unbuffered: bool,
     /// Last reported `WriteStatus == Pending` (i.e. write(2) returned EAGAIN).
     backed_up: core::cell::Cell<bool>,
 }
@@ -611,7 +621,6 @@ impl<Parent: PosixStreamingWriterParent> Default for PosixStreamingWriter<Parent
             is_done: false,
             closed_without_reporting: false,
             force_sync: false,
-            unbuffered: false,
             backed_up: core::cell::Cell::new(false),
         }
     }
@@ -722,7 +731,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
     }
 
     pub(crate) fn should_buffer(&self, addition: usize) -> bool {
-        !self.force_sync && !self.unbuffered && self.outgoing.size() + addition < Self::CHUNK_SIZE
+        !self.force_sync && self.outgoing.size() + addition < Self::CHUNK_SIZE
     }
 
     pub fn get_buffer(&self) -> &[u8] {

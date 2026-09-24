@@ -246,6 +246,8 @@ pub(crate) trait BlobExt {
     fn stat(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
     fn get_size(&self) -> f64;
     fn resolve_size(&self);
+    /// `resolve_size`, except a file whose `st_size` is 0 (procfs) keeps its window: that size is not a read budget.
+    fn resolve_size_for_stream(&self);
     fn resolved_size(&self) -> (SizeType, SizeType);
     fn constructor(
         cx: &mut JsScope<'_>,
@@ -2061,6 +2063,18 @@ impl BlobExt for Blob {
                 self.size.set(0);
             }
             store::DataTag::S3 => self.size.set(0),
+        }
+    }
+
+    fn resolve_size_for_stream(&self) {
+        let (offset, size) = (self.offset.get(), self.size.get());
+        self.resolve_size();
+        if let Some(store) = self.store.get()
+            && let store::Data::File(file) = &store.data
+            && file.max_size == 0
+        {
+            self.offset.set(offset);
+            self.size.set(size);
         }
     }
 

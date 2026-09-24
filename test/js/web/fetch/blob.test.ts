@@ -980,48 +980,53 @@ describe("new Blob([...]) with a file-backed Blob part", () => {
 
   // The constructor reads on the JS thread, so it must never wait for a writer.
   // A child process runs it: a blocked constructor would also block this file's timeout.
-  test("a FIFO or pipe part throws instead of blocking", async () => {
-    using dir = tempDir("blob-fifo-part", {});
-    const fifo = path.join(String(dir), "fifo");
-    if (!isWindows) mkfifo(fifo);
-    // The writer waits in open(2) until a reader opens the FIFO.
-    await using writer = isWindows
-      ? null
-      : Bun.spawn({ cmd: ["sh", "-c", `printf 'from the writer' > "$1"`, "sh", fifo], stderr: "inherit" });
+  async function constructInChild(part: string, env: Record<string, string> = {}) {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
-          const parts = { stdin: Bun.stdin };
-          if (process.env.FIFO_PATH) parts.fifo = Bun.file(process.env.FIFO_PATH);
-          for (const [name, part] of Object.entries(parts)) {
-            try {
-              console.log(name, "built a Blob of", new Blob(["x", part]).size, "bytes");
-            } catch (e) {
-              console.log(name, e.message);
-            }
+          try {
+            console.log("built a Blob of", new Blob(["x", ${part}]).size, "bytes");
+          } catch (e) {
+            console.log(e.message);
           }
-          // The constructor did not open the FIFO, so the writer still waits and the async read gets its bytes.
-          if (parts.fifo) console.log("fifo, read async:", await parts.fifo.text());
         `,
       ],
-      env: { ...bunEnv, FIFO_PATH: isWindows ? "" : fifo },
+      env: { ...bunEnv, ...env },
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const message =
-      "Blob parts backed by a pipe, socket or device cannot be read synchronously; await .bytes() or .arrayBuffer() first";
-    expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
-      stdout: isWindows
-        ? [`stdin ${message}`]
-        : [`stdin ${message}`, `fifo ${message}`, "fifo, read async: from the writer"],
-      stderr: "",
-      exitCode: 0,
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+  const refused = {
+    stdout:
+      "Blob parts backed by a pipe, socket or device cannot be read synchronously; await .bytes() or .arrayBuffer() first",
+    stderr: "",
+    exitCode: 0,
+  };
+
+  test("a pipe part throws instead of blocking", async () => {
+    expect(await constructInChild("Bun.stdin")).toEqual(refused);
+  });
+
+  test.skipIf(isWindows)("a FIFO part throws and leaves its writer waiting", async () => {
+    using dir = tempDir("blob-fifo-part", {});
+    const fifo = path.join(String(dir), "fifo");
+    mkfifo(fifo);
+    // The writer waits in open(2) until a reader opens the FIFO.
+    await using writer = Bun.spawn({
+      cmd: ["sh", "-c", `printf 'from the writer' > "$1"`, "sh", fifo],
+      stdout: "ignore",
+      stderr: "inherit",
     });
-    if (writer) expect(await writer.exited).toBe(0);
+    expect(await constructInChild("Bun.file(process.env.FIFO_PATH)", { FIFO_PATH: fifo })).toEqual(refused);
+    // The constructor did not open the FIFO, so the next reader still gets the bytes of the writer.
+    await using reader = Bun.spawn({ cmd: ["cat", fifo], stdout: "pipe", stderr: "inherit" });
+    expect(await reader.stdout.text()).toBe("from the writer");
+    expect(await writer.exited).toBe(0);
   });
 
   // procfs gives a stat size of 0 for a file that has bytes, so the read must go on to the end of the file.

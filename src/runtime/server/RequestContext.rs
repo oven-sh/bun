@@ -116,9 +116,9 @@ pub(crate) enum PendingUpgrade {
     /// uWS owns this context (one per `.ws()` route) and it outlives the
     /// HTTP/1 request.
     Http1(NonNull<WebSocketUpgradeContext>),
-    /// RFC 8441 Extended CONNECT has no socket-upgrade context; the HTTP/2
-    /// response stream itself becomes the transport.
-    Http2,
+    /// Extended CONNECT has no socket-upgrade context; the multiplexed
+    /// request stream itself becomes the transport.
+    Stream,
 }
 
 /// `align(16)`: `NativePromiseContext`'s deferred-deref task packs a 4-bit

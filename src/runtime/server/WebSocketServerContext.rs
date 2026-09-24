@@ -3,7 +3,6 @@ use core::ffi::c_void;
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
 use bun_core::comptime_string_map::ComptimeStringMap as _;
 use bun_uws as uws;
-use bun_uws_sys::h2 as uws_h2;
 
 pub(crate) struct WebSocketServerContext {
     pub(crate) handler: Handler,
@@ -28,7 +27,6 @@ pub(crate) struct Handler {
     pub(crate) on_pong: JSValue,
 
     pub(crate) app: Option<*mut c_void>,
-    pub(crate) h2_app: Option<*mut uws_h2::App>,
     /// Type-erased backref to the owning `NewServer`, set alongside `app`
     /// in `set_routes` (so it is in place before any socket can upgrade and
     /// refreshed whenever a reload installs a new context).
@@ -121,7 +119,6 @@ impl Handler {
             on_ping: JSValue::ZERO,
             on_pong: JSValue::ZERO,
             app: None,
-            h2_app: None,
             server: None,
             vm: bun_ptr::BackRef::new(VirtualMachine::get()),
             global_object: bun_ptr::BackRef::new(global_object),

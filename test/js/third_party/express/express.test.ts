@@ -3,6 +3,7 @@
 // depend on @types/node which conflicts with bun-types
 import { expect, test } from "bun:test";
 import express from "express";
+import { isASAN, isDebug } from "harness";
 // https://github.com/oven-sh/bun/issues/8926
 test("should respond with 404 when wrong method is used", async () => {
   const { promise: serve, resolve } = Promise.withResolvers();
@@ -23,6 +24,8 @@ test("should respond with 404 when wrong method is used", async () => {
     const url = await serve;
     const response = await fetch(`${url}/api/hotels`, {
       method: "POST",
+      // The hang guard for #8926. The first request takes about 730 ms on a debug ASAN build.
+      signal: AbortSignal.timeout(isDebug || isASAN ? 5000 : 500),
       headers: {
         "Content-Type": "application/json",
       },

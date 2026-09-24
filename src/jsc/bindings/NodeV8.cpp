@@ -15,6 +15,8 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <wtf/StdLibExtras.h>
 
+#include "mimalloc.h"
+
 namespace Bun {
 
 using namespace JSC;
@@ -26,8 +28,10 @@ JSC_DEFINE_HOST_FUNCTION(functionGetHeapStatisticsArray, (JSGlobalObject * globa
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto& heap = vm.heap;
 
+    // Same value and same fallback as bun:jsc memoryUsage().peak.
     size_t peakRSS = 0;
-    getPeakRSS(&peakRSS);
+    if (getPeakRSS(&peakRSS) != 0)
+        mi_process_info(nullptr, nullptr, nullptr, nullptr, &peakRSS, nullptr, nullptr, nullptr);
 
     const size_t globalObjectCount = WebCore::clientData(vm)->liveGlobalObjectCount;
 

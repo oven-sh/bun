@@ -3788,10 +3788,12 @@ where
             // `.deref()` here would resolve (via DerefMut) to the inherent
             // `FetchHeaders::deref` and double-free the C++ object.
             drop(headers_);
-        } else if needs_content_range {
-            status = 206;
-            self.do_write_status(status);
         } else {
+            // An empty range has no valid Content-Range: it stays a 200 with Content-Length 0.
+            needs_content_range = needs_content_range && sendfile.remain > 0;
+            if needs_content_range {
+                status = 206;
+            }
             self.do_write_status(status);
         }
 

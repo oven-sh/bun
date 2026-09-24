@@ -123,15 +123,20 @@ describe("returning a Response with an already-used body", () => {
     },
   );
 
-  it.each(["GET", "HEAD"])(
-    "returning a Response whose body was consumed before returning calls the error handler (%s)",
-    async method => {
+  // The second input leaves a Content-Length on the used Response: it must not frame a HEAD 200.
+  it.each([
+    ["GET", undefined],
+    ["HEAD", undefined],
+    ["GET", { headers: { "Content-Length": "24" } }],
+    ["HEAD", { headers: { "Content-Length": "24" } }],
+  ] as const)(
+    "returning a Response whose body was consumed before returning calls the error handler (%s, init %j)",
+    async (method, init) => {
       const errors: unknown[] = [];
       await using server = serve({
         port: 0,
         async fetch() {
-          // A Content-Length left on the used Response must not frame a HEAD 200 either.
-          const response = new Response("consumed before returning", { headers: { "Content-Length": "24" } });
+          const response = new Response("consumed before returning", init);
           await response.text();
           return response;
         },

@@ -22,11 +22,6 @@ impl Crypto {
         crate::node::crypto::timing_safe_equal(global, callframe)
     }
 
-    // DOMJIT fast path — non-standard signature (typed-array args unwrapped by codegen).
-    // DOMJIT operations report failure by throwing on the VM and returning the empty
-    // value (`JSValue::ZERO`); the generated wrapper returns the raw EncodedJSValue and
-    // the JIT checks for a pending exception after the call.
-
     #[bun_jsc::host_fn(method)]
     pub(crate) fn get_random_values(
         &self,
@@ -76,8 +71,6 @@ impl Crypto {
         Ok(arguments[0])
     }
 
-    // DOMJIT fast path.
-
     #[bun_jsc::host_fn(method)]
     pub(crate) fn random_uuid(
         &self,
@@ -96,8 +89,6 @@ impl Crypto {
         );
         str.into_js(global)
     }
-
-    // DOMJIT fast path.
 
     // `#[JsClass]` emits `CryptoClass__construct` calling this.
     pub(crate) fn constructor(

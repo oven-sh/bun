@@ -22,7 +22,9 @@ export type OS = "linux" | "darwin" | "windows" | "freebsd";
 export type Arch = "x64" | "aarch64";
 export type Abi = "gnu" | "musl" | "android";
 export type BuildType = "Debug" | "Release" | "RelWithDebInfo" | "MinSizeRel";
-export type BuildMode = "full" | "cpp-only" | "rust-only" | "link-only" | "rust-and-link" | "archive-link";
+export type BuildMode = "full" | "archive-link";
+/** `codegen` runs the code generators and nothing else; it resolves a {@link CodegenConfig}, not a {@link Config}. */
+export type Mode = BuildMode | "codegen";
 export type WebKitMode = "prebuilt" | "local";
 /** The package manager for the package.json files the build installs. */
 export type PackageManager = "bun" | "npm";
@@ -31,15 +33,13 @@ export type PackageManager = "bun" | "npm";
  * Host platform — what's running the build. Distinguish from target
  * (Config.os/arch/windows) which is what we're building FOR.
  *
- * Host vs target matters for rust-only cross-compile: a linux CI box
- * can cross-compile libbun_runtime.a for any linux abi/arch and (with the
- * right SDK) darwin. Target determines cargo's `--target` triple and
+ * Host vs target matters for cross-compiles: a linux CI box can build for
+ * any linux abi/arch and (with the right SDK or sysroot) darwin and windows. Target determines cargo's `--target` triple and
  * rustflags; host determines shell syntax (cmd vs sh), quoting, and
  * tool executable suffixes.
  *
- * For all other modes (full, cpp-only, link-only), host == target
- * unless cfg.crossTarget is set (currently: Android), in which case
- * the C++ side is cross-compiled via clang's --target/--sysroot.
+ * host == target unless cfg.crossTarget is set, in which case the C++ side
+ * is cross-compiled via clang's --target/--sysroot.
  */
 export interface Host {
   os: OS;
@@ -83,8 +83,8 @@ export interface Config {
   arm64: boolean;
 
   /**
-   * What's running the build. Differs from os/arch/windows (target) in
-   * rust-only cross-compile. Use for: shell syntax in rule commands,
+   * What's running the build. Differs from os/arch/windows (target) in a
+   * cross-compile. Use for: shell syntax in rule commands,
    * quoteArgs(), tool executable suffixes. See Host type docs.
    */
   host: Host;
@@ -117,7 +117,7 @@ export interface Config {
   lto: boolean;
   /**
    * Cross-language LTO: rustc emits LLVM bitcode (`-Clinker-plugin-lto`) into
-   * `libbun_runtime.a` so the final lld `-flto=thin` link sees through Rust↔C++
+   * the rlibs so the final lld `-flto=thin` link sees through Rust↔C++
    * call edges. When false but `lto` is true, both halves still LTO
    * independently (C++ via `-flto=thin`, Rust via `[profile.release] lto =
    * "fat"`); only the cross-language inlining is lost.
@@ -154,12 +154,15 @@ export interface Config {
   unifiedSources: boolean;
   /**
    * Archive each `direct` dep's objects into a per-dep .a (the old
-   * behaviour). Default off — dep .o files go straight into bun's link/
-   * cpp-only archive instead. Turn on to bisect duplicate-symbol issues:
+   * behaviour). Default off — dep .o files go straight into bun's link, or
+   * its archive in an archive-link build, instead. Turn on to bisect duplicate-symbol issues:
    * a .a only contributes members the linker actually pulls.
    */
   archiveDeps: boolean;
-  /** Emit clang -ftime-trace .json next to each .o for build profiling. */
+  /**
+   * The compilers report their own phases: clang writes `-ftime-trace` JSON next to each `.o`, rustc's
+   * `-Z time-passes` are recorded next to each crate (rust/run.ts). `--timings` reads both (timings.ts).
+   */
   timeTrace: boolean;
 
   // ─── Environment ───
@@ -190,7 +193,16 @@ export interface Config {
   buildDir: string;
   /** Generated code output, e.g. buildDir/codegen/. */
   codegenDir: string;
-  /** Persistent cache for dep tarballs and builds. */
+  /**
+   * The type declarations generated for src/js (`src/js/builtins.d.ts` references them): `build/types/`. They are made
+   * from source alone, so every profile writes the same files to the one place, like `vendor/`.
+   */
+  typesDir: string;
+  /**
+   * Persistent cache for dep tarballs and builds: `--cacheDir`, else
+   * `$BUN_BUILD_CACHE_DIR`, else the default (see `sharedCacheDir`; CI keeps
+   * it inside the build directory).
+   */
   cacheDir: string;
   /** Vendored dependencies (gitignored). */
   vendorDir: string;
@@ -236,6 +248,8 @@ export interface Config {
   rustLld: string | undefined;
   /** Parsed `LLVM version:` from `rustc -vV`. Captured once; feeds workarounds.ts. */
   rustLlvmVersion: string | undefined;
+  /** rustc's bundled LLVM major is ahead of clang's: rustc's bitcode/objects need rustc's own LLVM tools (rust-lld, llvm-nm) to be read. */
+  rustLlvmNewer: boolean;
   strip: string;
   /** llvm-nm, for `DirectBuild.forbidUndefined`; undefined skips those checks. */
   nm: string | undefined;
@@ -275,8 +289,17 @@ export interface Config {
    * would otherwise pick up that worktree's pin).
    */
   rustToolchain: string | undefined;
-  /** Explicit rustc for cargo to drive (BUN_TOOLCHAIN_RUST); undefined = cargo's own resolution (rustup proxy). */
+  /**
+   * The rustc every Rust unit is compiled with: `<override>/bin/rustc` under BUN_TOOLCHAIN_RUST, else
+   * the pinned toolchain's real binary (`<sysroot>/bin/rustc`, not the rustup proxy — a couple hundred
+   * invocations each paying the proxy's manifest lookup add up). Also handed to cargo (planning, the
+   * Windows shim) as RUSTC so both agree. undefined when no Rust toolchain was found.
+   */
   rustc: string | undefined;
+  /** `rustc --print sysroot`; rustdoc and the std sources (`-Zbuild-std`) live under it. */
+  rustSysroot: string | undefined;
+  /** The host triple rustc reports (`x86_64-unknown-linux-gnu`, …): the platform of build scripts and proc-macros. */
+  rustHostTriple: string | undefined;
   /** Windows: MSVC link.exe path (to avoid Git's /usr/bin/link shadowing). */
   msvcLinker: string | undefined;
   /** Windows: llvm-rc for nested cmake (CMAKE_RC_COMPILER). */
@@ -338,7 +361,7 @@ export interface PartialConfig {
   arch?: Arch;
   abi?: Abi;
   buildType?: BuildType;
-  mode?: BuildMode;
+  mode?: Mode;
   lto?: boolean;
   pgoGenerate?: string;
   pgoUse?: string;
@@ -401,11 +424,20 @@ export interface PartialConfig {
   webkitVersion?: string;
 }
 
+/** The JavaScript tools: all that the code generators run with. */
+export interface JsToolchain {
+  bun: string;
+  /** Found only when the build installs with npm. */
+  npm?: string | undefined;
+  jsRuntime: string;
+  esbuild: string;
+}
+
 /**
  * Resolved toolchain — found by tool discovery, passed in separately so
  * tests can mock it out.
  */
-export interface Toolchain {
+export interface Toolchain extends JsToolchain {
   cc: string;
   cxx: string;
   /**
@@ -444,6 +476,10 @@ export interface Toolchain {
   rustLld: string | undefined;
   /** Parsed `LLVM version:` from `rustc -vV` (X.Y.Z). */
   rustLlvmVersion: string | undefined;
+  /** `rustc --print sysroot` for the pinned toolchain. */
+  rustSysroot: string | undefined;
+  /** `host:` from `rustc -vV`. */
+  rustHostTriple: string | undefined;
   strip: string;
   /**
    * llvm-strip. On Linux hosts GNU strip is the default (`strip` above) but
@@ -457,11 +493,6 @@ export interface Toolchain {
   objdump: string | undefined;
   cxxfilt: string | undefined;
   dsymutil: string | undefined;
-  bun: string;
-  /** Found only when the build installs with npm. */
-  npm?: string | undefined;
-  jsRuntime: string;
-  esbuild: string;
   ccache: string | undefined;
   cmake: string;
   /** Cargo executable. Required only if a rust dep (lolhtml) is being built. */
@@ -696,8 +727,7 @@ function linkNdkRuntimesIntoClang(cc: string, ndk: string, host: Host, triple: s
       if (!existsSync(dst)) symlinkSync(src, dst);
     }
   } catch (cause) {
-    // Don't throw — rust-only mode doesn't need these, and on CI the image's
-    // bake creates them as root. The actual link step will fail
+    // Don't throw — on CI the image's bake creates them as root. The actual link step will fail
     // loudly later if they're genuinely missing where needed.
     const lnCmds = Object.entries(links)
       .map(([dst, src]) => `sudo ln -sf "${src}" "${dst}"`)
@@ -715,45 +745,41 @@ function linkNdkRuntimesIntoClang(cc: string, ndk: string, host: Host, triple: s
  * This is where all the "X defaults to Y unless Z" chains get resolved into
  * concrete values. After this runs, everything downstream sees plain booleans.
  */
-export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Config {
-  const host = detectHost();
+/**
+ * The machine-shared build cache: `$BUN_BUILD_CACHE_DIR`, else
+ * `$BUN_INSTALL/build-cache` (`~/.bun/build-cache`). A relative value is
+ * anchored to the repo root (not process.cwd()) so the ninja regen rule —
+ * which runs from buildDir — resolves the same path. Like $BUN_INSTALL, the
+ * variable is read on every configure: set it in the environment of every
+ * build of a build directory, not for one invocation.
+ */
+export function sharedCacheDir(cwd: string): string {
+  if (process.env.BUN_BUILD_CACHE_DIR) return resolve(cwd, process.env.BUN_BUILD_CACHE_DIR);
+  const bunInstall = process.env.BUN_INSTALL ? resolve(cwd, process.env.BUN_INSTALL) : join(homedir(), ".bun");
+  return resolve(bunInstall, "build-cache");
+}
 
-  // ─── Target platform ───
-  const os = partial.os ?? host.os;
-  // Windows hosts: process.arch can be wrong under emulation (x64 bun on
-  // arm64 hardware). Ask the compiler what it targets — CMake does the same
-  // in project() to set CMAKE_SYSTEM_PROCESSOR. The found clang's default
-  // target is what we actually build for. Cross-compiles from a unix host
-  // skip this (the host clang-cl's default arch is just the host's).
-  const compilerArch = os === "windows" && host.os === "windows" ? clangTargetArch(toolchain.cc) : undefined;
-  const arch = partial.arch ?? compilerArch ?? host.arch;
+/**
+ * The part of the config that no native tool is needed for: the build type, where things go, the JavaScript tools,
+ * and what build_options.rs is generated from. resolveConfig() and resolveCodegenConfig() both start from it.
+ */
+function resolveBase(partial: PartialConfig, host: Host, os: OS, arch: Arch, js: JsToolchain) {
   const abi: Abi | undefined = os === "linux" ? (partial.abi ?? detectLinuxAbi()) : undefined;
 
   const linux = os === "linux";
   const darwin = os === "darwin";
   const windows = os === "windows";
   const freebsd = os === "freebsd";
-  const unix = linux || darwin || freebsd;
-  const x64 = arch === "x64";
   const arm64 = arch === "aarch64";
   // Darwin target on a non-darwin host (Linux CI box building macOS
   // binaries). Same host-clang + --target/-isysroot model as Android/FreeBSD,
   // with ld64.lld doing the Mach-O link. See the cross block further down.
   const darwinCross = darwin && host.os !== "darwin";
-  // Windows target on a non-Windows host (clang-cl + lld-link + xwin
-  // sysroot). See the cross block further down.
-
-  // Platform file conventions — MSVC style on Windows, Unix everywhere else.
-  const exeSuffix = windows ? ".exe" : "";
-  const objSuffix = windows ? ".obj" : ".o";
-  const libPrefix = windows ? "" : "lib";
-  const libSuffix = windows ? ".lib" : ".a";
 
   // ─── Build type ───
   const buildType = partial.buildType ?? "Debug";
   const debug = buildType === "Debug";
   const release = buildType === "Release" || buildType === "RelWithDebInfo" || buildType === "MinSizeRel";
-  const smol = buildType === "MinSizeRel";
 
   // ─── Environment ───
   // Explicit (not auto-detected from env) — matches CMake's optionx(CI DEFAULT OFF).
@@ -763,9 +789,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // still gets collapsible logs but not CI build flags.
   const ci = partial.ci ?? false;
   const buildkite = partial.buildkite ?? false;
-
-  // ─── Features ───
-  // Each is resolved exactly once here.
 
   // ASAN: default on for debug builds on arm64 macOS or linux
   const asanDefault = debug && ((darwin && arm64) || linux);
@@ -788,6 +811,190 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // with ASSERT_ENABLED=1, the struct layouts mismatch → crashes. CMake's
   // build:asan always set ENABLE_ASSERTIONS=ON for this reason.
   const assertions = partial.assertions ?? (debug || asan);
+
+  // ─── Paths ───
+  const cwd = findRepoRoot();
+  // Windows cross-compiles get their own default build dir — the native
+  // build of the same profile (build/debug, build/release) already holds
+  // host-target objects at the same obj/ paths, and mixing COFF into an ELF
+  // build dir (or vice versa) forces a full rebuild each time you switch.
+  const crossWindowsSuffix = windows && host.os !== "windows" ? `-windows-${arch}` : "";
+  // mode=codegen writes a manifest and a compile_commands.json with no native edges in them, so it gets a
+  // directory of its own: build/debug is where clangd reads compile_commands.json.
+  const codegenSuffix = partial.mode === "codegen" ? "-codegen" : "";
+  const defaultBuildDirName =
+    computeBuildDirName({ debug, release, asan, assertions }) + crossWindowsSuffix + codegenSuffix;
+  const buildDir =
+    partial.buildDir !== undefined
+      ? isAbsolute(partial.buildDir)
+        ? partial.buildDir
+        : resolve(cwd, partial.buildDir)
+      : resolve(cwd, "build", defaultBuildDirName);
+  const codegenDir = resolve(buildDir, "codegen");
+  const typesDir = resolve(cwd, "build", "types");
+  // Local builds share one cache across checkouts and profiles so
+  // ccache/tarballs/webkit reuse one another's work. CI stays per-build so
+  // runners remain hermetic and `rm -rf build/` is a full reset — unless
+  // $BUN_BUILD_CACHE_DIR says where the cache is, which holds everywhere.
+  const cacheDir =
+    partial.cacheDir !== undefined
+      ? isAbsolute(partial.cacheDir)
+        ? partial.cacheDir
+        : resolve(cwd, partial.cacheDir)
+      : ci && !process.env.BUN_BUILD_CACHE_DIR
+        ? resolve(buildDir, "cache")
+        : sharedCacheDir(cwd);
+
+  const packageManager = partial.packageManager ?? "bun";
+  if (packageManager !== "bun" && packageManager !== "npm") {
+    throw new BuildError(`Unknown packageManager: ${packageManager}`, { hint: "Use bun or npm" });
+  }
+  assert(packageManager === "bun" || js.npm !== undefined, "packageManager=npm needs toolchain.npm");
+
+  // ─── What build_options.rs is generated from (buildOptionsRs.ts) ───
+  const canary = partial.canary ?? true;
+  const canaryRevision = canary ? "1" : "0";
+  const fuzzilli = partial.fuzzilli ?? false;
+  const pkgJsonPath = resolve(cwd, "package.json");
+  const pkgJson = JSON.parse(readFileSync(pkgJsonPath, "utf8")) as { version: string };
+  const version = pkgJson.version;
+  const revision = getGitRevision(cwd, debug && !ci ? buildDir : undefined);
+  // Default from versions.ts. Override via --nodejs-version=<v> to test a bump.
+  const nodejsVersion = partial.nodejsVersion ?? versionDefaults.nodejsVersion;
+
+  return {
+    bun: js.bun,
+    npm: packageManager === "npm" ? js.npm : undefined,
+    jsRuntime: js.jsRuntime,
+    esbuild: js.esbuild,
+    canary,
+    canaryRevision,
+    fuzzilli,
+    version,
+    revision,
+    nodejsVersion,
+    abi,
+    linux,
+    darwin,
+    windows,
+    freebsd,
+    darwinCross,
+    buildType,
+    debug,
+    release,
+    ci,
+    buildkite,
+    asan,
+    assertions,
+    cwd,
+    buildDir,
+    codegenDir,
+    typesDir,
+    cacheDir,
+    packageManager,
+  };
+}
+
+/**
+ * The fields of {@link Config} the code generators read. They need bun, the root install and perl, and no compiler,
+ * linker, cmake or cargo. codegen.ts takes this type, so a generator that starts reading a native tool does not compile.
+ */
+export type CodegenFields = Pick<
+  Config,
+  | "host"
+  | "os"
+  | "abi"
+  | "x64"
+  | "debug"
+  | "cwd"
+  | "buildDir"
+  | "codegenDir"
+  | "typesDir"
+  | "cacheDir"
+  | "packageManager"
+  | "assertions"
+  | "canary"
+  | "canaryRevision"
+  | "fuzzilli"
+  | "version"
+  | "revision"
+  | "nodejsVersion"
+  | keyof JsToolchain
+>;
+
+/** What `mode: "codegen"` resolves: {@link CodegenFields}, with none of the native tools looked for. */
+export type CodegenConfig = CodegenFields & { mode: "codegen" };
+
+export function resolveCodegenConfig(partial: PartialConfig, toolchain: JsToolchain): CodegenConfig {
+  const host = detectHost();
+  const os = partial.os ?? host.os;
+  const arch = partial.arch ?? host.arch;
+  const { linux, darwin, windows, freebsd, darwinCross, buildType, release, ci, buildkite, asan, ...base } =
+    resolveBase(partial, host, os, arch, toolchain);
+  return { ...base, mode: "codegen", host, os, x64: arch === "x64" };
+}
+
+export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Config {
+  assert(partial.mode !== "codegen", "mode=codegen resolves a CodegenConfig: resolveCodegenConfig()");
+  const host = detectHost();
+
+  // ─── Target platform ───
+  const os = partial.os ?? host.os;
+  // Windows hosts: process.arch can be wrong under emulation (x64 bun on
+  // arm64 hardware). Ask the compiler what it targets — CMake does the same
+  // in project() to set CMAKE_SYSTEM_PROCESSOR. The found clang's default
+  // target is what we actually build for. Cross-compiles from a unix host
+  // skip this (the host clang-cl's default arch is just the host's).
+  const compilerArch = os === "windows" && host.os === "windows" ? clangTargetArch(toolchain.cc) : undefined;
+  const arch = partial.arch ?? compilerArch ?? host.arch;
+  const {
+    abi,
+    linux,
+    darwin,
+    windows,
+    freebsd,
+    darwinCross,
+    buildType,
+    debug,
+    release,
+    ci,
+    buildkite,
+    asan,
+    assertions,
+    cwd,
+    buildDir,
+    codegenDir,
+    typesDir,
+    cacheDir,
+    packageManager,
+    canary,
+    canaryRevision,
+    fuzzilli,
+    version,
+    revision,
+    nodejsVersion,
+    bun,
+    npm,
+    jsRuntime,
+    esbuild,
+  } = resolveBase(partial, host, os, arch, toolchain);
+
+  const unix = linux || darwin || freebsd;
+  const x64 = arch === "x64";
+  const arm64 = arch === "aarch64";
+  // Windows target on a non-Windows host (clang-cl + lld-link + xwin
+  // sysroot). See the cross block further down.
+
+  // Platform file conventions — MSVC style on Windows, Unix everywhere else.
+  const exeSuffix = windows ? ".exe" : "";
+  const objSuffix = windows ? ".obj" : ".o";
+  const libPrefix = windows ? "" : "lib";
+  const libSuffix = windows ? ".lib" : ".a";
+
+  const smol = buildType === "MinSizeRel";
+
+  // ─── Features ───
+  // Each is resolved exactly once here (asan and assertions: in resolveBase).
 
   // LTO (ThinLTO across bun, JSC and the Rust side): on for every release
   // build without assertions or ASAN, locally as in CI, so a local release
@@ -817,12 +1024,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // while rustc's LLVM is ahead of clang's. Both halves still LTO
   // independently when this is false — only the Rust↔C++ inlining is lost.
   // CI cross-compiles both from Linux, where the swap below applies.
-  // (aarch64-musl used to be gated too: LLVM's `globalopt` segfaulted on the
-  // per-crate `bun_runtime` bitcode module during the merged link, CI build
-  // #53109. That bitcode shape no longer exists — the Rust side is one fat,
-  // pre-merged module since the CARGO_PROFILE_RELEASE_LTO=fat switch — so
-  // the gate was lifted; see the deleted "globalopt-crash-aarch64-musl"
-  // workarounds.ts entry if it ever needs to come back.)
   // Darwin cross uses the same rust-lld swap as ELF: rustc's sysroot ships
   // `gcc-ld/ld64.lld` (rust-lld in the Mach-O flavor, built against rustc's
   // LLVM), which findRustLld() already resolves for darwin targets, so the
@@ -881,8 +1082,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const logs = partial.logs ?? debug;
 
   const baseline = partial.baseline ?? x64;
-  const canary = partial.canary ?? true;
-  const canaryRevision = canary ? "1" : "0";
 
   // Whether bun:sqlite and node:sqlite link the bundled sqlite3 directly
   // (LAZY_LOAD_SQLITE=0) or dlopen the system library at runtime. macOS
@@ -901,7 +1100,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const tinycc = partial.tinycc ?? !(abi === "android" || freebsd);
 
   const valgrind = partial.valgrind ?? false;
-  const fuzzilli = partial.fuzzilli ?? false;
   // Default follows asan: on for local debug (Linux / arm64 macOS) and CI
   // release-asan, off everywhere else. The fuzz tests are most useful when
   // memory errors are detectable, and the disarmed-hot-path cost (one acquire
@@ -909,34 +1107,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const socketFaultInjection = partial.socketFaultInjection ?? asan;
 
   // ─── Paths ───
-  const cwd = findRepoRoot();
-  // Windows cross-compiles get their own default build dir — the native
-  // build of the same profile (build/debug, build/release) already holds
-  // host-target objects at the same obj/ paths, and mixing COFF into an ELF
-  // build dir (or vice versa) forces a full rebuild each time you switch.
-  const crossWindowsSuffix = windows && host.os !== "windows" ? `-windows-${arch}` : "";
-  const defaultBuildDirName = computeBuildDirName({ debug, release, asan, assertions }) + crossWindowsSuffix;
-  const buildDir =
-    partial.buildDir !== undefined
-      ? isAbsolute(partial.buildDir)
-        ? partial.buildDir
-        : resolve(cwd, partial.buildDir)
-      : resolve(cwd, "build", defaultBuildDirName);
-  const codegenDir = resolve(buildDir, "codegen");
-  // Local builds share $BUN_INSTALL/build-cache across checkouts and profiles
-  // so ccache/tarballs/webkit reuse one another's work. CI stays per-build
-  // so runners remain hermetic and `rm -rf build/` is a full reset.
-  // Relative BUN_INSTALL is anchored to repo root (not process.cwd()) so the
-  // ninja regen rule — which runs from buildDir — resolves the same path.
-  const bunInstall = process.env.BUN_INSTALL ? resolve(cwd, process.env.BUN_INSTALL) : join(homedir(), ".bun");
-  const cacheDir =
-    partial.cacheDir !== undefined
-      ? isAbsolute(partial.cacheDir)
-        ? partial.cacheDir
-        : resolve(cwd, partial.cacheDir)
-      : ci
-        ? resolve(buildDir, "cache")
-        : resolve(bunInstall, "build-cache");
   const vendorDir = resolve(cwd, "vendor");
 
   // ─── Validation ───
@@ -1095,23 +1265,11 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   }
 
   // ─── Versioning ───
-  const pkgJsonPath = resolve(cwd, "package.json");
-  const pkgJson = JSON.parse(readFileSync(pkgJsonPath, "utf8")) as { version: string };
-  const version = pkgJson.version;
-  const revision = getGitRevision(cwd, debug && !ci ? buildDir : undefined);
-
   // Defaults from versions.ts. Override via --webkit-version=<hash> etc.
   // to test a branch before bumping the pinned default.
-  const nodejsVersion = partial.nodejsVersion ?? versionDefaults.nodejsVersion;
   const nodejsAbiVersion = partial.nodejsAbiVersion ?? versionDefaults.nodejsAbiVersion;
   const nodejsV8Version = partial.nodejsV8Version ?? versionDefaults.nodejsV8Version;
   const webkitVersion = partial.webkitVersion ?? versionDefaults.webkitVersion;
-
-  const packageManager = partial.packageManager ?? "bun";
-  if (packageManager !== "bun" && packageManager !== "npm") {
-    throw new BuildError(`Unknown packageManager: ${packageManager}`, { hint: "Use bun or npm" });
-  }
-  assert(packageManager === "bun" || toolchain.npm !== undefined, "packageManager=npm needs toolchain.npm");
 
   // ─── macOS SDK ───
   // Must be passed to nested cmake builds or they'll pick the wrong SDK.
@@ -1135,46 +1293,41 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   if (darwinCross) {
     crossTarget = `${arm64 ? "arm64" : "x86_64"}-apple-macosx`;
     osxDeploymentTarget = partial.osxDeploymentTarget ?? MIN_OSX_DEPLOYMENT_TARGET;
-    // rust-only mode never compiles C/C++ or links, so it doesn't need the
-    // SDK — skip resolution so a rust-only build doesn't download
-    // a ~730 MB sysroot it never reads.
-    if ((partial.mode ?? "full") !== "rust-only") {
-      osxSysroot = resolveMacosSdkPath(partial.macosSdk, cacheDir, cwd);
-      if (toolchain.ld64Lld === undefined) {
-        throw new BuildError("Cross-compiling for macOS requires ld64.lld (lld's Mach-O port)", {
-          hint: "Install lld for the same LLVM version as clang: apt install lld-23 (or equivalent).",
-        });
-      }
-      if (toolchain.llvmStrip === undefined) {
-        throw new BuildError("Cross-compiling for macOS requires llvm-strip (GNU strip can't read Mach-O)", {
-          hint: "Install llvm for the same version as clang: apt install llvm-23 (or equivalent).",
-        });
-      }
-      if (toolchain.clangResourceDir === undefined) {
-        throw new BuildError("Cross-compiling for macOS requires clang's resource directory", {
-          hint: "`clang -print-resource-dir` failed — is the discovered clang runnable?",
-        });
-      }
-      if (toolchain.dsymutil === undefined) {
-        throw new BuildError("Cross-compiling for macOS requires LLVM dsymutil", {
-          hint: "Install llvm for the same version as clang: apt install llvm-23 (or equivalent).",
-        });
-      }
-      // The Mach-O flavor of whichever lld the rest of the config picked.
-      // `toolchain.rustLld` is the flavor matching the *host* (gcc-ld/ld.lld
-      // on a Linux box); rustc's gcc-ld/ directory ships every flavor of the
-      // same rust-lld, so when the cross-language-LTO bitcode skew applies
-      // (see wantRustLld above) the Mach-O link uses the ld64.lld sibling.
-      // Falls back to clang's ld64.lld if rustc ever stops shipping it — the
-      // configure-time assert in validateBunConfig catches the resulting
-      // bitcode-version mismatch with a clear message.
-      const rustLd64Lld =
-        wantRustLld && toolchain.rustLld !== undefined ? join(dirname(toolchain.rustLld), "ld64.lld") : undefined;
-      ld64StripSwap = {
-        ld: rustLd64Lld !== undefined && existsSync(rustLd64Lld) ? rustLd64Lld : toolchain.ld64Lld,
-        strip: toolchain.llvmStrip,
-      };
+    osxSysroot = resolveMacosSdkPath(partial.macosSdk, cacheDir, cwd);
+    if (toolchain.ld64Lld === undefined) {
+      throw new BuildError("Cross-compiling for macOS requires ld64.lld (lld's Mach-O port)", {
+        hint: "Install lld for the same LLVM version as clang: apt install lld-23 (or equivalent).",
+      });
     }
+    if (toolchain.llvmStrip === undefined) {
+      throw new BuildError("Cross-compiling for macOS requires llvm-strip (GNU strip can't read Mach-O)", {
+        hint: "Install llvm for the same version as clang: apt install llvm-23 (or equivalent).",
+      });
+    }
+    if (toolchain.clangResourceDir === undefined) {
+      throw new BuildError("Cross-compiling for macOS requires clang's resource directory", {
+        hint: "`clang -print-resource-dir` failed — is the discovered clang runnable?",
+      });
+    }
+    if (toolchain.dsymutil === undefined) {
+      throw new BuildError("Cross-compiling for macOS requires LLVM dsymutil", {
+        hint: "Install llvm for the same version as clang: apt install llvm-23 (or equivalent).",
+      });
+    }
+    // The Mach-O flavor of whichever lld the rest of the config picked.
+    // `toolchain.rustLld` is the flavor matching the *host* (gcc-ld/ld.lld
+    // on a Linux box); rustc's gcc-ld/ directory ships every flavor of the
+    // same rust-lld, so when the cross-language-LTO bitcode skew applies
+    // (see wantRustLld above) the Mach-O link uses the ld64.lld sibling.
+    // Falls back to clang's ld64.lld if rustc ever stops shipping it — the
+    // configure-time assert in validateBunConfig catches the resulting
+    // bitcode-version mismatch with a clear message.
+    const rustLd64Lld =
+      wantRustLld && toolchain.rustLld !== undefined ? join(dirname(toolchain.rustLld), "ld64.lld") : undefined;
+    ld64StripSwap = {
+      ld: rustLd64Lld !== undefined && existsSync(rustLd64Lld) ? rustLd64Lld : toolchain.ld64Lld,
+      strip: toolchain.llvmStrip,
+    };
   }
 
   return {
@@ -1225,6 +1378,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     cwd,
     buildDir,
     codegenDir,
+    typesDir,
     cacheDir,
     vendorDir,
     cc: toolchain.cc,
@@ -1238,6 +1392,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     ld: ld64StripSwap?.ld ?? ld,
     rustLld: toolchain.rustLld,
     rustLlvmVersion: toolchain.rustLlvmVersion,
+    rustLlvmNewer,
     // Cross strips: linux-gnu uses <triple>-strip (GNU, handles -R .eh_frame
     // fully; host strip rejects foreign-arch ELF); other cross targets use
     // llvm-strip.
@@ -1253,10 +1408,10 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     objdump: toolchain.objdump,
     cxxfilt: toolchain.cxxfilt,
     dsymutil: toolchain.dsymutil,
-    bun: toolchain.bun,
-    npm: packageManager === "npm" ? toolchain.npm : undefined,
-    jsRuntime: toolchain.jsRuntime,
-    esbuild: toolchain.esbuild,
+    bun,
+    npm,
+    jsRuntime,
+    esbuild,
     ccache: toolchain.ccache,
     cmake: toolchain.cmake,
     cargo: toolchain.cargo,
@@ -1264,8 +1419,14 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     rustupHome: toolchain.rustupHome,
     rustToolchain: toolchainOverride.rust !== undefined ? undefined : readRustToolchainChannel(cwd),
     rustc:
-      toolchainOverride.rust !== undefined ? join(toolchainOverride.rust, "bin", `rustc${host.exeSuffix}`) : undefined,
-    // Cargo-driven links (the bun_shim_impl.exe edge, any future target
+      toolchainOverride.rust !== undefined
+        ? join(toolchainOverride.rust, "bin", `rustc${host.exeSuffix}`)
+        : toolchain.rustSysroot !== undefined
+          ? join(toolchain.rustSysroot, "bin", `rustc${host.exeSuffix}`)
+          : undefined,
+    rustSysroot: toolchain.rustSysroot,
+    rustHostTriple: toolchain.rustHostTriple,
+    // rustc-driven links (the .bin/ shim's executable, any future target
     // cdylib) must keep using a real lld-link/link.exe, not the gcc-ld/
     // lld-link wrapper `ld` may have been swapped to above: rustc treats a
     // linker living in its own sysroot's gcc-ld/ as the bundled rust-lld and

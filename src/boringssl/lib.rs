@@ -439,17 +439,17 @@ fn match_dns_name(pattern: &[u8], hostname: &[u8]) -> bool {
 }
 
 unsafe extern "C" {
-    /// `url.domainToASCII` in NodeURL.cpp. `Tag::Dead` when `domain` is not a valid host.
-    safe fn Bun__domainToASCII(domain: &bun_core::String) -> bun_core::String;
+    /// UTS #46 ToASCII in NodeURL.cpp, with no URL host parse. `Tag::Dead` when `domain` does not convert.
+    safe fn Bun__idnaToASCII(domain: &bun_core::String) -> bun_core::String;
 }
 
 pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> bool {
     // As in Node.js, a host is an IP address only as typed, not after the IDNA mapping.
     let host_is_ip = bun_core::ip_address::is_ip_address(unfqdn(hostname));
     let ascii_hostname;
-    // CVE-2026-48618: IDNA maps "。" to ".", so a non-ASCII host is matched on `domainToASCII(host)`.
+    // CVE-2026-48618: IDNA maps "。" to ".", so a non-ASCII host is matched on its UTS #46 form, as in `tls.checkServerIdentity`.
     let hostname = if strings::first_non_ascii(hostname).is_some() {
-        let ascii = Bun__domainToASCII(&bun_core::String::borrow_utf8(hostname));
+        let ascii = Bun__idnaToASCII(&bun_core::String::borrow_utf8(hostname));
         if ascii.is_dead() {
             return false;
         }
@@ -531,20 +531,10 @@ fn match_dot_subdomain(pattern: &[u8], host: &[u8], single_label: bool) -> bool 
     eq_nocase(&pattern[skip.len()..], host)
 }
 
-fn alloc_peer(name: &[u8], out_ptr: *mut *mut u8, out_len: *mut usize) {
-    if out_ptr.is_null() || out_len.is_null() {
-        return;
-    }
-    let buf = OPENSSL_memory_alloc(name.len() + 1).cast::<u8>();
-    if buf.is_null() {
-        return;
-    }
-    // SAFETY: `buf` is a fresh allocation of `name.len() + 1` bytes.
-    unsafe {
-        ptr::copy_nonoverlapping(name.as_ptr(), buf, name.len());
-        *buf.add(name.len()) = 0;
-        *out_ptr = buf;
-        *out_len = name.len();
+fn set_peer(name: &[u8], out_peer: *mut bun_core::String) {
+    if !out_peer.is_null() {
+        // SAFETY: caller contract of `Bun__X509__checkHost`: `out_peer` is writable and holds no string.
+        unsafe { out_peer.write(bun_core::String::clone_utf8(name)) };
     }
 }
 
@@ -555,20 +545,18 @@ fn alloc_peer(name: &[u8], out_ptr: *mut *mut u8, out_len: *mut usize) {
 /// values.
 ///
 /// Returns `1` (match), `0` (no match) or `-2` (invalid `host`). On match,
-/// `*out_peer` receives the matched certificate name as a NUL-terminated
-/// OPENSSL_malloc'd buffer the caller owns.
+/// `*out_peer` receives the matched certificate name.
 ///
 /// # Safety
 /// `x509` must be a live BoringSSL certificate, `host_ptr[..host_len]` must be
-/// readable, and `out_peer` / `out_len` must be null or writable.
+/// readable, and `out_peer` must be null or point to an empty string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Bun__X509__checkHost(
     x509: *mut boring::X509,
     host_ptr: *const u8,
     host_len: usize,
     flags: u32,
-    out_peer: *mut *mut u8,
-    out_len: *mut usize,
+    out_peer: *mut bun_core::String,
 ) -> c_int {
     // SAFETY: caller contract — `x509` is null or a live BoringSSL certificate.
     let Some(x509) = (unsafe { x509.as_mut() }) else {
@@ -614,7 +602,7 @@ pub unsafe extern "C" fn Bun__X509__checkHost(
                 if let boring::SubjectAltName::Dns(name) = entry {
                     has_dns_san = true;
                     if matches(name) {
-                        alloc_peer(name, out_peer, out_len);
+                        set_peer(name, out_peer);
                         return 1;
                     }
                 }
@@ -632,7 +620,7 @@ pub unsafe extern "C" fn Bun__X509__checkHost(
     }
     for cn in x509.common_names() {
         if matches(&cn) {
-            alloc_peer(&cn, out_peer, out_len);
+            set_peer(&cn, out_peer);
             return 1;
         }
     }
@@ -814,6 +802,38 @@ pub fn check_server_identity(ssl_ptr: &mut boring::SSL, hostname: &[u8]) -> bool
     ssl_ptr
         .peer_leaf_certificate()
         .is_some_and(|x509| check_x509_server_identity(x509, hostname))
+}
+
+/// Node.js's `ERR_TLS_CERT_ALTNAME_INVALID` message for the peer's leaf certificate and `hostname`.
+pub fn server_identity_mismatch_message(ssl_ptr: &mut boring::SSL, hostname: &[u8]) -> String {
+    let mut message = String::from("Hostname/IP does not match certificate's altnames: ");
+    // Infallible: the writer is a `String`.
+    let _ = write_server_identity_mismatch_reason(ssl_ptr, hostname, &mut message);
+    message
+}
+
+/// What a client says about the name on the server's certificate, inside the handshake. openssl.c's `US_IDENTITY_*`.
+#[repr(i32)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ServerIdentity {
+    Rejected = 0,
+    Accepted = 1,
+    /// No native check here: the owner decides after the handshake.
+    Unchecked = 2,
+}
+
+/// [`check_server_identity`] as a verdict. `None` or an empty `host` is [`ServerIdentity::Unchecked`].
+pub fn server_identity(ssl: &mut boring::SSL, host: Option<&[u8]>) -> ServerIdentity {
+    match host {
+        Some(host) if !host.is_empty() => {
+            if check_server_identity(ssl, host) {
+                ServerIdentity::Accepted
+            } else {
+                ServerIdentity::Rejected
+            }
+        }
+        _ => ServerIdentity::Unchecked,
+    }
 }
 
 #[cfg(test)]

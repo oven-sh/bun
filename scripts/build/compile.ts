@@ -12,9 +12,10 @@ import { basename, dirname, extname, relative, resolve, sep } from "node:path";
 import type { Config } from "./config.ts";
 import { assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
-import type { BuildNode, Ninja, Rule } from "./ninja.ts";
+import type { BuildNode, Ninja, PoolName, Rule } from "./ninja.ts";
 import { quote } from "./shell.ts";
 import { elfDebugCompressPostlinkCommand, machoPostlinkCommand } from "./shims.ts";
+import { toolIdentityFile } from "./tools.ts";
 
 // ---------------------------------------------------------------------------
 // Rule registration — call once per Ninja instance
@@ -41,7 +42,7 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
     ? { deps: "msvc" }
     : { depfile: "$out.d", deps: "gcc" };
 
-  // Compiles are capped at the core count, below ninja's default -j of cores+2, so cargo / dep builds start the moment they are ready: without a .ninja_log ninja weighs every edge as 1, and the cc → ar → link chain outranks cargo → link.
+  // Compiles are capped at the core count, below ninja's default -j of cores+2, so rustc edges / dep builds start the moment they are ready even when every C++ compile could run: the Rust crate chain is the critical path and must never wait for a slot behind a wall of interchangeable `.o` compiles.
   n.pool("compile", availableParallelism());
 
   // ─── C++ compile ───
@@ -139,14 +140,21 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   // header at B's path → #pragma once doesn't match → "redefinition of
   // 'DOMClientIsoSubspaces'" et al. The pch compile is one ~10-15s job per
   // build; the cross-worktree correctness hazard outweighs the cache savings.
-  n.rule("pch", {
-    command: cfg.windows
-      ? `${cxx} /nologo /showIncludes $cxxflags /clang:-fpch-instantiate-templates -Xclang -fno-pch-timestamp /Yc$pch_header -Xclang -include -Xclang $pch_header /Fp$out /c $in /Fo$pch_stub_obj`
-      : `${cxx} $cxxflags -Winvalid-pch -fpch-instantiate-templates -Xclang -fno-pch-timestamp -Xclang -emit-pch -Xclang -include -Xclang $pch_header -x c++-header -MD -MT $out -MF $out.d -c $in -o $out`,
-    description: "pch $out",
-    ...depfileOpts,
-    pool: "compile",
-  });
+  if (cfg.windows) {
+    n.rule("pch_msvc", {
+      command: `${cxx} /nologo /showIncludes $cxxflags /clang:-fpch-instantiate-templates -Xclang -fno-pch-timestamp /Yc$pch_header -Xclang -include -Xclang $pch_header /Fp$out /c $in /Fo$pch_stub_obj`,
+      description: "pch $out",
+      ...depfileOpts,
+      pool: "compile",
+    });
+  } else {
+    n.rule("pch", {
+      command: `${cxx} $cxxflags -Winvalid-pch -fpch-instantiate-templates -Xclang -fno-pch-timestamp -Xclang -emit-pch -Xclang -include -Xclang $pch_header -x c++-header -MD -MT $out -MF $out.d -c $in -o $out`,
+      description: "pch $out",
+      ...depfileOpts,
+      pool: "compile",
+    });
+  }
 
   // ─── Link executable ───
   // Uses response file because object lists get long (>32k args breaks on
@@ -221,7 +229,7 @@ export interface CompileOpts {
    */
   orderOnlyInputs?: string[];
   /** Job pool override. */
-  pool?: string;
+  pool?: PoolName;
 }
 
 /**
@@ -275,6 +283,7 @@ export function nasm(
     outputs: [out],
     rule: "nasm",
     inputs: [resolve(cfg.cwd, src)],
+    implicitInputs: [toolIdentityFile(cfg, "nasm")],
     orderOnlyInputs: [objectDirStamp(cfg), ...(opts.orderOnlyInputs ?? [])],
     vars: { nasmflags: opts.flags.join(" ") },
   });
@@ -285,32 +294,32 @@ function compile(n: Ninja, cfg: Config, src: string, opts: CompileOpts, lang: "c
   const absSrc = resolve(cfg.cwd, src);
   const out = objectPath(cfg, src);
 
-  const rule = opts.pch !== undefined && lang === "cxx" ? "cxx_pch" : lang;
-  const flagVar = lang === "cxx" ? "cxxflags" : "cflags";
-
-  const implicitInputs: string[] = [...(opts.implicitInputs ?? [])];
-  const vars: Record<string, string> = {
-    [flagVar]: opts.flags.join(" "),
-  };
-
-  // PCH is always an implicit dep — if it changes, recompile.
-  if (opts.pch !== undefined) {
-    assert(opts.pchHeader !== undefined, "cxx with pch requires pchHeader (the wrapper .hxx)");
-    implicitInputs.push(opts.pch);
-    vars.pch_file = n.rel(opts.pch);
-    vars.pch_header = n.rel(opts.pchHeader);
-  }
-
-  const node: BuildNode = {
+  // The compiler's identity and the PCH are always implicit deps — if either changes, recompile.
+  const implicitInputs = [
+    toolIdentityFile(cfg, lang),
+    ...(opts.implicitInputs ?? []),
+    ...(opts.pch !== undefined ? [opts.pch] : []),
+  ];
+  const node = {
     outputs: [out],
-    rule,
     inputs: [absSrc],
     orderOnlyInputs: [objectDirStamp(cfg), ...(opts.orderOnlyInputs ?? [])],
-    vars,
+    implicitInputs,
+    ...(opts.pool !== undefined ? { pool: opts.pool } : {}),
   };
-  if (implicitInputs.length > 0) node.implicitInputs = implicitInputs;
-  if (opts.pool !== undefined) node.pool = opts.pool;
-  n.build(node);
+  const flags = opts.flags.join(" ");
+  if (lang === "cc") {
+    n.build({ ...node, rule: "cc", vars: { cflags: flags } });
+  } else if (opts.pch === undefined) {
+    n.build({ ...node, rule: "cxx", vars: { cxxflags: flags } });
+  } else {
+    assert(opts.pchHeader !== undefined, "cxx with pch requires pchHeader (the wrapper .hxx)");
+    n.build({
+      ...node,
+      rule: "cxx_pch",
+      vars: { cxxflags: flags, pch_file: n.rel(opts.pch), pch_header: n.rel(opts.pchHeader) },
+    });
+  }
 
   // Record for compile_commands.json
   n.addCompileCommand({
@@ -407,26 +416,27 @@ export function pch(
   // The pragma is ignored in main files but works in includes, hence this dance.
   writeIfChanged(stubCxx, `/* generated by scripts/build/compile.ts */\n`);
 
-  const node: BuildNode = {
+  const node = {
     outputs: [out],
-    rule: "pch",
     // Compile the STUB, force-include the wrapper.
     inputs: [stubCxx],
     // absHeader + wrapper editing must rebuild PCH. Dep outputs too — see
     // the docstring above for why these can't be order-only (startup-stat
     // vs mid-build header regeneration). The depfile tracks the REST.
-    implicitInputs: [absHeader, wrapperHeader, ...(opts.implicitInputs ?? [])],
+    implicitInputs: [absHeader, wrapperHeader, toolIdentityFile(cfg, "cxx"), ...(opts.implicitInputs ?? [])],
     orderOnlyInputs: [pchDirStamp(cfg), ...(opts.orderOnlyInputs ?? [])],
-    vars: {
-      cxxflags: opts.flags.join(" "),
-      pch_header: n.rel(wrapperHeader),
-    },
   };
+  const vars = { cxxflags: opts.flags.join(" "), pch_header: n.rel(wrapperHeader) };
   if (cfg.windows) {
-    node.implicitOutputs = [stubObj];
-    node.vars!.pch_stub_obj = n.rel(stubObj);
+    n.build({
+      ...node,
+      rule: "pch_msvc",
+      implicitOutputs: [stubObj],
+      vars: { ...vars, pch_stub_obj: n.rel(stubObj) },
+    });
+  } else {
+    n.build({ ...node, rule: "pch", vars });
   }
-  n.build(node);
 
   return { pch: out, wrapperHeader };
 }
@@ -442,7 +452,7 @@ export interface LinkOpts {
   flags: string[];
   /**
    * Files the link reads that aren't in $in — symbol lists (symbols.def,
-   * symbols.txt, symbols.dyn), linker scripts (linker.lds), manifests.
+   * symbols.txt, the ELF export list), linker scripts (linker.lds), manifests.
    * Editing these should trigger relink (cmake's LINK_DEPENDS equivalent).
    */
   implicitInputs?: string[];
@@ -471,12 +481,14 @@ export function link(n: Ninja, cfg: Config, out: string, objects: string[], opts
     },
   };
   if (implicitOutputs.length > 0) node.implicitOutputs = implicitOutputs;
-  if (opts.implicitInputs !== undefined && opts.implicitInputs.length > 0) {
-    node.implicitInputs = opts.implicitInputs;
-  }
+  // clang++ drives the link; `ld` is "" on macOS, where it finds the linker itself.
+  node.implicitInputs = [
+    toolIdentityFile(cfg, "cxx"),
+    ...(cfg.ld !== "" ? [toolIdentityFile(cfg, "ld")] : []),
+    ...(opts.implicitInputs ?? []),
+  ];
   // lld-link writes the exe's import library under obj/ (flags.ts /IMPLIB)
-  // and does not create the directory; link-only and rust-and-link compile
-  // no objects, so nothing else would have made it.
+  // and does not create the directory.
   if (cfg.windows) node.orderOnlyInputs = [objectDirStamp(cfg)];
   if (opts.validations !== undefined && opts.validations.length > 0) node.validations = opts.validations;
   n.build(node);
@@ -550,18 +562,18 @@ function objectPath(cfg: Config, src: string): string {
  * Stamp file for the obj/ directory. Object files depend on this order-only
  * so the dir exists before compilation runs.
  */
-function objectDirStamp(cfg: Config): string {
+function objectDirStamp(cfg: Pick<Config, "buildDir">): string {
   return resolve(cfg.buildDir, "obj", ".dir");
 }
 
-function pchDirStamp(cfg: Config): string {
+function pchDirStamp(cfg: Pick<Config, "buildDir">): string {
   return resolve(cfg.buildDir, "pch", ".dir");
 }
 
 /**
  * Register directory stamp rules. Call once.
  */
-export function registerDirStamps(n: Ninja, cfg: Config): void {
+export function registerDirStamps(n: Ninja, cfg: Pick<Config, "host" | "buildDir">): void {
   const objDir = dirname(objectDirStamp(cfg));
   const pchDir = dirname(pchDirStamp(cfg));
 

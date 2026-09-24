@@ -30,7 +30,7 @@ use crate::cli::which_npm_client::NPMClient;
 // so `SourceFileProjectGenerator::generate(...)` resolves. The submodule itself
 // reaches back into `crate::cli::create_command::Example` via absolute path.
 #[path = "create/SourceFileProjectGenerator.rs"]
-pub mod SourceFileProjectGenerator;
+pub(crate) mod SourceFileProjectGenerator;
 
 // PORTING.md §Global mutable state: single-thread CLI scratch buffer →
 // RacyCell. Touched on the main thread for `--open` *and* the spawned git
@@ -1672,7 +1672,7 @@ fn run_on_entry_point(
     crate::cli::build_command::BuildCommand::exec(crate::cli::Command::get(), Some(&fetcher))
 }
 
-pub struct Example {
+pub(crate) struct Example {
     // `&'static` is sound for these three fields: they borrow either static
     // literals, the process-lifetime CLI arena (`cli_arena()` — remote
     // examples JSON), or `filesystem.filename_store` (local examples).

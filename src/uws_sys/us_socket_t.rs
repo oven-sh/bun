@@ -213,11 +213,8 @@ impl us_socket_t {
     /// Install a socket-level SNI resolver on an already-adopted server-side
     /// TLS socket (there is no listen socket to hang it off). Must run before
     /// the handshake is driven.
-    pub fn on_server_name(
-        &mut self,
-        cb: extern "C" fn(*mut us_socket_t, *const core::ffi::c_char, *mut c_int) -> *mut SslCtx,
-    ) {
-        c::us_socket_on_server_name(self, cb);
+    pub fn on_server_name(&mut self) {
+        c::us_socket_on_server_name(self);
     }
 
     /// Node-compat `_handle` shape: `SSL*` for TLS sockets, fd-as-pointer for
@@ -304,6 +301,12 @@ impl us_socket_t {
     /// repointed before any handshake/close dispatch can fire.
     pub fn start_tls_handshake(&mut self) {
         c::us_socket_start_tls_handshake(self);
+    }
+
+    /// Refuse a bad server chain during the handshake, before the client
+    /// certificate goes out. No-op on a server socket or after the handshake.
+    pub fn set_inline_reject(&mut self) {
+        c::us_socket_set_inline_reject(self);
     }
 
     /// Feed bytes that were already read off the wire (e.g. a ClientHello the
@@ -513,14 +516,7 @@ mod c {
             ctx: *mut SslCtx,
             error: c_int,
         );
-        pub(super) safe fn us_socket_on_server_name(
-            s: &mut us_socket_t,
-            cb: extern "C" fn(
-                *mut us_socket_t,
-                *const core::ffi::c_char,
-                *mut c_int,
-            ) -> *mut SslCtx,
-        );
+        pub(super) safe fn us_socket_on_server_name(s: &mut us_socket_t);
         pub(super) safe fn us_socket_keepalive(
             s: &mut us_socket_t,
             enable: c_int,
@@ -601,6 +597,7 @@ mod c {
             length: i32,
         ) -> *mut us_socket_t;
         pub(super) safe fn us_socket_start_tls_handshake(s: &mut us_socket_t);
+        pub(super) safe fn us_socket_set_inline_reject(s: &mut us_socket_t);
     }
 }
 

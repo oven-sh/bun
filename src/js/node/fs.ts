@@ -998,7 +998,9 @@ function cp(src, dest, options, callback) {
   dest = getValidatedFsPath(dest, "dest");
   callback = guardCallback(callback);
 
-  settleCallbackWithNull(require("node:fs/promises").cp(src, dest, options), callback);
+  // node's fs.cp is util.callbackify(cpFn), so it calls back with (null, undefined):
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L1098
+  settleCallback(require("node:fs/promises").cp(src, dest, options), callback);
 }
 
 function _toUnixTimestamp(time: any, name = "time") {

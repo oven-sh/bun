@@ -1115,7 +1115,8 @@ mod _async_tasks {
     /// What a `node:fs` callback gets when the result of its operation converts to `undefined`.
     #[derive(Clone, Copy)]
     pub(crate) enum UndefinedResult {
-        /// `callback(null)`, the rule of node's `FSReqCallback::Resolve`.
+        /// `callback(null)`, the rule of node's `FSReqCallback::Resolve`:
+        /// https://github.com/nodejs/node/blob/v26.3.0/src/node_file.cc#L736-L741
         Omitted,
         /// `callback(null, undefined)`.
         Passed,
@@ -1206,7 +1207,8 @@ mod _async_tasks {
         }
     }
     impl FsReturn for StatOrNotFound {
-        /// With `throwIfNoEntry: false`, `undefined` is the result of the stat, not the lack of one.
+        /// Node's `makeStatsCallback` passes `(null, undefined)` when `throwIfNoEntry: false` finds nothing:
+        /// https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L186-L194
         const UNDEFINED_RESULT: UndefinedResult = UndefinedResult::Passed;
         #[inline]
         fn fs_to_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {

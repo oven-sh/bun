@@ -75,14 +75,6 @@ pub(crate) fn is_external_url(url: &[u8]) -> bool {
         .any(|prefix| url.starts_with(prefix.as_bytes()))
 }
 
-/// The `?query#fragment` of a local URL: `?v=2#icon` for `./sprite.svg?v=2#icon`, nothing for `https://x/y?z` or `#icon`.
-pub(crate) fn url_suffix(url: &[u8]) -> &[u8] {
-    match strings::index_of_any(url, b"?#") {
-        Some(i) if i > 0 && !is_external_url(url) => &url[i..],
-        _ => b"",
-    }
-}
-
 /// The character reference at the start of `text` and its length. A number that names no character, or a control character, reads as U+FFFD.
 fn char_ref(text: &[u8]) -> Option<(char, usize)> {
     const NAMED: [(&[u8], char); 5] = [
@@ -116,50 +108,65 @@ fn char_ref(text: &[u8]) -> Option<(char, usize)> {
     Some((c, end + 1))
 }
 
-/// The text that an attribute value spells (`&amp;` is how HTML writes `&`).
-fn decode_char_refs(value: &[u8]) -> Cow<'_, [u8]> {
-    let Some(mut ampersand) = strings::index_of_char_usize(value, b'&') else {
-        return Cow::Borrowed(value);
-    };
-    let mut text = Vec::with_capacity(value.len());
-    let mut rest = value;
-    loop {
-        text.extend_from_slice(&rest[..ampersand]);
-        rest = &rest[ampersand..];
-        let (c, len) = char_ref(rest).unwrap_or(('&', 1));
-        text.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
-        rest = &rest[len..];
-        match strings::index_of_char_usize(rest, b'&') {
-            Some(next) => ampersand = next,
-            None => {
-                text.extend_from_slice(rest);
-                return Cow::Owned(text);
-            }
+/// Index of the first of `delimiters` in an attribute value, written as itself or as a character reference. The `#` inside `&#38;` is not one.
+pub(crate) fn index_of_delimiter(value: &[u8], delimiters: &[u8]) -> Option<usize> {
+    let mut at = 0;
+    while let Some(next) = strings::index_of_any(&value[at..], b"?#&") {
+        at += next;
+        let (c, len) = char_ref(&value[at..]).unwrap_or_else(|| (char::from(value[at]), 1));
+        if c.is_ascii() && strings::contains_char(delimiters, c as u8) {
+            return Some(at);
         }
+        at += len;
+    }
+    None
+}
+
+/// The `?query#fragment` of a local URL: `?v=2#icon` for `./sprite.svg?v=2#icon`, nothing for `https://x/y?z` or `#icon`.
+pub(crate) fn url_suffix(url: &[u8]) -> &[u8] {
+    match index_of_delimiter(url, b"?#") {
+        Some(i) if i > 0 && !is_external_url(url) => &url[i..],
+        _ => b"",
     }
 }
 
-/// The file name that a URL path spells, or `None` to keep the path as written: a malformed escape, bytes that are not UTF-8, a decoded scheme (`data%3Ax`), or a byte that the output URL, which is the raw file name, cannot carry as itself.
-fn percent_decode(path: &[u8], in_srcset: bool) -> Option<Vec<u8>> {
-    let mut escape = strings::index_of_char_usize(path, b'%')?;
+/// The file name that the path of a URL spells. `None` keeps the path as written: a malformed escape, bytes that are not UTF-8, a decoded scheme (`data%3Ax`), or a decoded byte that the output URL, which is the raw file name, cannot carry as itself.
+fn decode_path(path: &[u8], in_srcset: bool) -> Option<Vec<u8>> {
     let mut decoded = Vec::with_capacity(path.len());
     let mut rest = path;
-    loop {
-        let byte = bun_core::fmt::hex_pair_value(*rest.get(escape + 1)?, *rest.get(escape + 2)?)?;
-        if byte.is_ascii_control()
-            || matches!(byte, b'#' | b'?' | b'%' | b'/' | b'\\' | b'"')
+    while let Some(next) = strings::index_of_any(rest, b"&%") {
+        decoded.extend_from_slice(&rest[..next]);
+        rest = &rest[next..];
+        let (c, len) = match rest[0] {
+            b'%' => {
+                let byte = bun_core::fmt::hex_pair_value(*rest.get(1)?, *rest.get(2)?)?;
+                (char::from(byte), 3)
+            }
+            _ => match char_ref(rest) {
+                Some(reference) => reference,
+                None => {
+                    decoded.push(b'&');
+                    rest = &rest[1..];
+                    continue;
+                }
+            },
+        };
+        if c.is_ascii_control()
+            || matches!(c, '#' | '?' | '%' | '/' | '\\' | '"')
             // A `srcset` splits its URLs at spaces and commas.
-            || (in_srcset && matches!(byte, b' ' | b','))
+            || (in_srcset && matches!(c, ' ' | ','))
         {
             return None;
         }
-        decoded.extend_from_slice(&rest[..escape]);
-        decoded.push(byte);
-        rest = &rest[escape + 3..];
-        match strings::index_of_char_usize(rest, b'%') {
-            Some(next) => escape = next,
-            None => break,
+        if rest[0] == b'%' {
+            decoded.push(c as u8);
+        } else {
+            decoded.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
         }
+        rest = &rest[len..];
+    }
+    if rest.len() == path.len() {
+        return None;
     }
     decoded.extend_from_slice(rest);
     let first_segment = strings::index_of_char_usize(&decoded, b'/').unwrap_or(decoded.len());
@@ -229,7 +236,7 @@ impl<'a> HTMLScanner<'a> {
         let decoded = if is_external_url(url) {
             None
         } else {
-            percent_decode(&input_path[..input_path.len() - suffix.len()], in_srcset)
+            decode_path(&input_path[..input_path.len() - suffix.len()], in_srcset)
                 .map(|path| [&path, suffix].concat())
         };
         let input_path = decoded.as_deref().unwrap_or(input_path);
@@ -461,17 +468,8 @@ fn element_entry<'h>(
     ))
 }
 
-/// `value` is decoded text and lol-html escapes only `"` on output, so `&` is written as `&amp;` here.
+/// lol-html escapes only `"` on output, so entities in `value` pass through as written.
 fn set_attribute(element: &mut Element<'_, '_>, name: &str, value: &[u8]) {
-    let escaped;
-    let value = if strings::contains_char(value, b'&') {
-        escaped = strings::split(value, b"&")
-            .collect::<Vec<_>>()
-            .join(&b"&amp;"[..]);
-        &escaped
-    } else {
-        value
-    };
     let ok = match core::str::from_utf8(value) {
         Ok(value) => element.set_attribute(name, value).is_ok(),
         Err(_) => false,
@@ -530,15 +528,13 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
                         .get_attribute(tag_info.url_attribute)
                         .unwrap_or_default();
                     bun_core::scoped_log!(HTMLScanner, "{} {}", tag_info.selector, value);
-                    // Both passes read the decoded text, so they split it the same way.
-                    let value = decode_char_refs(value.as_bytes());
                     let action = if tag_info.url_attribute == "srcset" {
                         // SAFETY: `this_ptr` was derived from `run`'s `&mut T`,
                         // which is not reborrowed while the rewriter — the only
                         // holder of these closures — is alive.
-                        rewrite_srcset(unsafe { &mut *this_ptr }, &value, tag_info.kind)
+                        rewrite_srcset(unsafe { &mut *this_ptr }, value.as_bytes(), tag_info.kind)
                     } else {
-                        match strings::trim(&value, HTML_WHITESPACE) {
+                        match strings::trim(value.as_bytes(), HTML_WHITESPACE) {
                             b"" => UrlAction::Keep,
                             // SAFETY: as for `rewrite_srcset` above.
                             url => unsafe { (*this_ptr).on_url(url, tag_info.kind) },

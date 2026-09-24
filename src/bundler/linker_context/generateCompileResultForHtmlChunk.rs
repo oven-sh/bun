@@ -11,7 +11,9 @@ use bun_threading::thread_pool::Task as ThreadPoolLibTask;
 use lol_html::HandlerResult;
 use lol_html::html_content::{ContentType, Element, EndTag};
 
-use crate::HTMLScanner::{HTMLProcessor, HTMLProcessorHandler, UrlAction, url_suffix};
+use crate::HTMLScanner::{
+    HTMLProcessor, HTMLProcessorHandler, UrlAction, index_of_delimiter, url_suffix,
+};
 use crate::linker_context_mod::{GenerateChunkCtx, LinkerContext, debug};
 use crate::options::Loader;
 use crate::{Chunk, CompileResult};
@@ -197,8 +199,7 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
                 parse_graph.ast.items_url_for_css()[import_record.source_index.get() as usize];
             if !url_for_css.is_empty() {
                 // A `?query` would land inside the base64 body; keep only the fragment.
-                let fragment =
-                    strings::index_of_char_usize(suffix, b'#').map_or(&b""[..], |i| &suffix[i..]);
+                let fragment = index_of_delimiter(suffix, b"#").map_or(&b""[..], |i| &suffix[i..]);
                 return replace(url_for_css, fragment);
             }
         }

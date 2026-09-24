@@ -321,7 +321,7 @@ describe("bundler", () => {
   <body>
     <img src="./sprite&#x26;2.svg?v=3#home">
     <img src="./my%20photo.jpg?w=100&amp;h=50">
-    <img src="./my%20photo.jpg?raw=1&x=2">
+    <img src="./my%20photo.jpg?raw=1&x=2&t=caf&eacute;">
     <img srcset="./ic%C3%B6n.png?a=1&amp;b=2 1x, ./sprite&amp;2.svg 2x">
   </body>
 </html>`,
@@ -343,9 +343,9 @@ describe("bundler", () => {
       expect(servedFile(api, sprite)).toBe("<svg></svg>");
       expect(sprite).toEndWith("?v=3#home");
       expect(servedFile(api, photo)).toBe("photo");
-      // The query is decoded with the rest of the value, so its "&" is written back as "&amp;".
+      // Only the path is decoded. The ?query#fragment goes back as written, whatever references it has.
       expect(photo).toEndWith("?w=100&amp;h=50");
-      expect(rawPhoto).toEndWith("?raw=1&amp;x=2");
+      expect(rawPhoto).toEndWith("?raw=1&x=2&t=caf&eacute;");
       const candidates = srcset.split(", ").map(candidate => candidate.split(" "));
       expect(candidates.map(([url, descriptor]) => [servedFile(api, url), descriptor])).toEqual([
         ["icon", "1x"],
@@ -357,9 +357,9 @@ describe("bundler", () => {
 
   // A path the decoder cannot turn into a file name is resolved as written, so
   // the build fails with the text of the page: a malformed escape, bytes that
-  // are not UTF-8, a name that reads as a scheme, and an escape for a byte that
-  // the output URL cannot carry as itself. Each file below exists under its
-  // decoded name.
+  // are not UTF-8, a name that reads as a scheme, and an escape or a character
+  // reference for a byte that the output URL cannot carry as itself. Each file
+  // below exists under its decoded name.
   itBundled("html/url-decoding-keeps-unsafe-path-as-written", {
     outdir: "out/",
     files: {
@@ -376,6 +376,8 @@ describe("bundler", () => {
     <img src="./100%25.png">
     <img src="./dir%2Fphoto.png">
     <img src="data%3Aphoto.png">
+    <img src="./c&quot;d.png">
+    <img src="./a&#92;b.png">
     <img srcset="./my%20photo.png 2x">
   </body>
 </html>`,
@@ -384,7 +386,7 @@ describe("bundler", () => {
       "/100%.png": "percent",
       "/dir/photo.png": "slash",
       "/my photo.png": "space",
-      ...(isWindows ? {} : { "/data:photo.png": "colon" }),
+      ...(isWindows ? {} : { "/data:photo.png": "colon", '/c"d.png': "quote", "/a\\b.png": "backslash" }),
     },
     entryPoints: ["/index.html"],
     bundleErrors: {
@@ -397,6 +399,8 @@ describe("bundler", () => {
         `Could not resolve: "./100%25.png"`,
         `Could not resolve: "./dir%2Fphoto.png"`,
         `Could not resolve: "data%3Aphoto.png"`,
+        `Could not resolve: "./c&quot;d.png"`,
+        `Could not resolve: "./a&#92;b.png"`,
         `Could not resolve: "./my%20photo.png"`,
       ],
     },

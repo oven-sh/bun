@@ -75,7 +75,7 @@ pub(crate) fn is_external_url(url: &[u8]) -> bool {
         .any(|prefix| url.starts_with(prefix.as_bytes()))
 }
 
-/// The character reference at the start of `text` and its length. A number that names no character, or a control character, reads as U+FFFD.
+/// The character reference at the start of `text` and its length. A number that names no character reads as U+FFFD.
 fn char_ref(text: &[u8]) -> Option<(char, usize)> {
     const NAMED: [(&[u8], char); 5] = [
         (b"&amp;", '&'),
@@ -103,7 +103,6 @@ fn char_ref(text: &[u8]) -> Option<(char, usize)> {
     }
     let c = code_point
         .and_then(char::from_u32)
-        .filter(|c| !c.is_control())
         .unwrap_or(char::REPLACEMENT_CHARACTER);
     Some((c, end + 1))
 }
@@ -137,13 +136,13 @@ fn decode_path(path: &[u8], in_srcset: bool) -> Option<Vec<u8>> {
     while let Some(next) = strings::index_of_any(rest, b"&%") {
         decoded.extend_from_slice(&rest[..next]);
         rest = &rest[next..];
-        let (c, len) = match rest[0] {
+        let (c, len, is_usable) = match rest[0] {
             b'%' => {
                 let byte = bun_core::fmt::hex_pair_value(*rest.get(1)?, *rest.get(2)?)?;
-                (char::from(byte), 3)
+                (char::from(byte), 3, !byte.is_ascii_control())
             }
             _ => match char_ref(rest) {
-                Some(reference) => reference,
+                Some((c, len)) => (c, len, !c.is_control() && c != char::REPLACEMENT_CHARACTER),
                 None => {
                     decoded.push(b'&');
                     rest = &rest[1..];
@@ -151,7 +150,7 @@ fn decode_path(path: &[u8], in_srcset: bool) -> Option<Vec<u8>> {
                 }
             },
         };
-        if c.is_ascii_control()
+        if !is_usable
             || matches!(c, '#' | '?' | '%' | '/' | '\\' | '"')
             // A `srcset` splits its URLs at spaces and commas.
             || (in_srcset && matches!(c, ' ' | ','))

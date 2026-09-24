@@ -450,6 +450,54 @@ describe("util", () => {
       expect(util.stripVTControlCharacters("\u2603 abc\u001b")).toBe("\u2603 abc\u001b");
     });
 
+    it("strips a long string like node's RegExp does", () => {
+      // Past 128 characters Bun strips what follows the last OSC terminator without the OSC alternative.
+      const ansi = new RegExp(
+        "(?:\\u001B\\][\\s\\S]*?(?:\\u0007|\\u001B\\u005C|\\u009C))" +
+          "|[\\u001B\\u009B][[\\]()#;?]*" +
+          "(?:\\d{1,4}(?:[;:]\\d{0,4})*)?" +
+          "[\\dA-PR-TZcf-nq-uy=><~]",
+        "g",
+      );
+      const pieces = [
+        "\u001b]8;;u\u0007",
+        "\u001b]0;t\u001b\\",
+        "\u001b]0;t\u009c",
+        "\u001b]0;t",
+        "\u001b]",
+        "\u001b[31m",
+        "\u009b1;2m",
+        "\u001b",
+        "\\",
+        "\u0007",
+        "\u009c",
+        "]",
+        "text ",
+      ];
+      const pad = Buffer.alloc(128, "x").toString();
+      const inputs = [];
+      for (const a of pieces)
+        for (const b of pieces) for (const c of pieces) inputs.push(pad + a + b + c, a + b + pad + c + "\u2603");
+      const mismatches = inputs
+        .map(input => ({ input, expected: input.replace(ansi, ""), actual: util.stripVTControlCharacters(input) }))
+        .filter(({ expected, actual }) => expected !== actual);
+      expect(mismatches).toEqual([]);
+    });
+
+    it("is linear in the number of OSC introducers that no terminator follows", async () => {
+      // node's RegExp scans to the end of the string from each one: 256 KB of them takes it half a minute.
+      const script = `
+        import { stripVTControlCharacters } from "node:util";
+        const terminated = Buffer.alloc(8 * 1024, "\\x1b]8;;u\\x07x").toString();
+        const unterminated = Buffer.alloc(256 * 1024, "\\x1b]").toString();
+        const output = stripVTControlCharacters(terminated + unterminated + "\\x1b[31mred");
+        console.log(output === Buffer.alloc(1024, "x").toString() + unterminated + "red");
+      `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "true", stderr: "", exitCode: 0 });
+    });
+
     it("does not call a replaced RegExp.prototype[Symbol.replace]", async () => {
       const script = `
         import { stripVTControlCharacters } from "node:util";

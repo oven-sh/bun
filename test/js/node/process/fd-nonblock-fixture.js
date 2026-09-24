@@ -1,4 +1,4 @@
-// Prints "<fd>:blocking" or "<fd>:nonblocking" for each fd in argv, using fs.writeSync so this process sets no flags itself.
+// Prints "<fd>:blocking" or "<fd>:nonblocking" for each fd in argv to fd PROBE_OUT_FD (default 1), via fs.writeSync so this process sets no flags itself.
 import { dlopen } from "bun:ffi";
 import { existsSync, readFileSync, writeSync } from "node:fs";
 
@@ -14,7 +14,7 @@ if (existsSync("/proc/self/fdinfo")) {
 }
 
 writeSync(
-  1,
+  Number(process.env.PROBE_OUT_FD ?? 1),
   process.argv
     .slice(2)
     .map(fd => `${fd}:${isNonblocking(Number(fd)) ? "nonblocking" : "blocking"}`)

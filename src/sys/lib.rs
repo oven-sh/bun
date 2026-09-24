@@ -7380,47 +7380,29 @@ pub fn write_bounded(fd: Fd, buf: &[u8]) -> Maybe<usize> {
 pub fn pipe_writable_space(fd: Fd) -> Option<usize> {
     #[cfg(unix)]
     {
-        // POLLOUT on a pipe/FIFO guarantees one free slot (Linux: a page) or PIPE_BUF (BSD sb_lowat).
-        let by_poll = |slot: usize| match bun_core::is_writable(fd) {
+        let st = fstat(fd).ok()?;
+        if !S::ISFIFO(st.st_mode as Mode) {
+            return None;
+        }
+        // XNU anonymous pipes (st_dev 0): st_blksize is capacity, st_size is queued bytes; an empty one grows to 64K on demand.
+        #[cfg(target_os = "macos")]
+        if st.st_dev == 0 {
+            return Some(if st.st_size == 0 {
+                (st.st_blksize as usize).max(65536)
+            } else {
+                (st.st_blksize as usize).saturating_sub(st.st_size as usize)
+            });
+        }
+        // Only POLLOUT's guarantee is safe: one free page slot on Linux, PIPE_BUF (the FIFO low-water mark) on BSD.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        let slot = bun_alloc::page_size();
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        let slot = libc::PIPE_BUF;
+        return match bun_core::is_writable(fd) {
             bun_core::Pollable::Ready => Some(slot),
             bun_core::Pollable::Hup => None,
             bun_core::Pollable::NotReady => Some(0),
         };
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            // SAFETY: plain fcntl/ioctl on a caller-owned fd; F_GETPIPE_SZ fails on anything but a pipe.
-            let cap = unsafe { libc::fcntl(fd.native(), libc::F_GETPIPE_SZ) };
-            if cap < 0 {
-                return None;
-            }
-            let page = bun_alloc::page_size();
-            let mut queued: c_int = 0;
-            // SAFETY: FIONREAD writes one c_int.
-            if unsafe { libc::ioctl(fd.native(), libc::FIONREAD, &mut queued) } < 0 {
-                return by_poll(page);
-            }
-            // Slots are page-sized; a part-read head and a part-filled tail can each hold less than a page.
-            let used_slots = (queued.max(0) as usize) / page + 2;
-            let safe = (cap as usize / page).saturating_sub(used_slots) * page;
-            return if safe >= page {
-                Some(safe)
-            } else {
-                by_poll(page)
-            };
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        {
-            let st = fstat(fd).ok()?;
-            if !S::ISFIFO(st.st_mode as Mode) {
-                return None;
-            }
-            // XNU anonymous pipes (st_dev 0) report capacity in st_blksize and queued bytes in st_size; named FIFOs are socket-backed.
-            #[cfg(target_os = "macos")]
-            if st.st_dev == 0 {
-                return Some((st.st_blksize as usize).saturating_sub(st.st_size as usize));
-            }
-            return by_poll(libc::PIPE_BUF);
-        }
     }
     #[cfg(not(unix))]
     {

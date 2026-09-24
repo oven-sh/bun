@@ -298,7 +298,7 @@ complete -c bun -n "__fish_seen_subcommand_from x" -l "no-install" -d "Do not in
 complete -c bun -n "__fish_seen_subcommand_from x" -l "verbose" -d "Show verbose output"
 complete -c bun -n "__fish_seen_subcommand_from x" -l "silent" -d "Silence output"
 complete -c bun -n "__fish_seen_subcommand_from x" -s "h" -l "help" -d "Print help" -x
-complete -c bun -n "__fish_seen_subcommand_from x" -l "cwd" -r -a '(__fish_complete_directories)' -d "Change working directory"
+complete -c bun -n "__fish_seen_subcommand_from x" -l "cwd" -x -a '(__fish_complete_directories)' -d "Change working directory"
 
 complete -c bun -n "__fish_use_subcommand" -a "create" -f -d "Create a new project from a template"
 complete -c bun -n "__fish_use_subcommand" -a "build bun" --require-parameter -F -d "Transpile and bundle one or more files"
@@ -331,7 +331,7 @@ complete -c bun -n "__fish_seen_subcommand_from prune" -l "cpu" -r -d "Prune for
 complete -c bun -n "__fish_seen_subcommand_from prune" -l "linker" -r -a "isolated hoisted" -d "Linker to assume when node_modules mixes isolated and hoisted installs" -f
 complete -c bun -n "__fish_seen_subcommand_from prune" -s "F" -l "filter" -r -d "Prune only the matching workspaces" -f
 complete -c bun -n "__fish_seen_subcommand_from prune" -l "silent" -d "Don't log anything" -f
-complete -c bun -n "__fish_seen_subcommand_from audit prune" -l "cwd" -r -a '(__fish_complete_directories)' -d "Set a specific cwd"
+complete -c bun -n "__fish_seen_subcommand_from audit prune" -l "cwd" -x -a '(__fish_complete_directories)' -d "Set a specific cwd"
 complete -c bun -n "__fish_use_subcommand" -a "update" -d "Update dependencies to their latest versions" -f
 complete -c bun -n "__fish_seen_subcommand_from update" -s "p" -l "production" -d "Only update dependencies and optionalDependencies" -f
 complete -c bun -n "__fish_seen_subcommand_from update" -s "P" -l "prod" -d "Only update dependencies and optionalDependencies" -f
@@ -358,7 +358,7 @@ complete -c bun -n "__fish_seen_subcommand_from repl" -s "p" -l "print" -r -d "E
 complete -c bun -n "__fish_seen_subcommand_from repl" -s "r" -l "preload" -r -d "Import a module before other modules are loaded"
 complete -c bun -n "__fish_seen_subcommand_from repl" -l "smol" -d "Use less memory, but run garbage collection more often" -f
 complete -c bun -n "__fish_seen_subcommand_from repl" -s "c" -l "config" -r -d "Specify path to Bun config file"
-complete -c bun -n "__fish_seen_subcommand_from repl" -l "cwd" -r -a '(__fish_complete_directories)' -d "Absolute path to resolve files & entry points from"
+complete -c bun -n "__fish_seen_subcommand_from repl" -l "cwd" -x -a '(__fish_complete_directories)' -d "Absolute path to resolve files & entry points from"
 complete -c bun -n "__fish_seen_subcommand_from repl" -l "env-file" -r -d "Load environment variables from the specified file(s)"
 complete -c bun -n "__fish_seen_subcommand_from repl" -l "no-env-file" -d "Disable automatic loading of .env files" -f
 
@@ -370,5 +370,5 @@ complete -c bunx -l "no-install" -d "Do not install package"
 complete -c bunx -l "verbose" -d "Show verbose output"
 complete -c bunx -l "silent" -d "Silence output"
 complete -c bunx -s "h" -l "help" -d "Print help" -x
-complete -c bunx -l "cwd" -r -a '(__fish_complete_directories)' -d "Change working directory"
+complete -c bunx -l "cwd" -x -a '(__fish_complete_directories)' -d "Change working directory"
 complete -c bunx -a "(__fish__get_bun_bins)" -d "package bin"

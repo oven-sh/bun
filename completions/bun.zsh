@@ -1149,7 +1149,6 @@ _bun_run_param_script_completion() {
 }
 
 _bun_link_param_package_completion() {
-    # Read packages from ~/.bun/install/global/node_modules
     install_env=$BUN_INSTALL
     install_dir=${(P)install_env:-$HOME/.bun}
     global_node_modules=$install_dir/install/global/node_modules

@@ -159,6 +159,7 @@ void JSOneShotDirectSink::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::ArrayBufferSink), "arrayBufferSink"_s);
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::CapabilityPromise), "capabilityPromise"_s);
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::Source), "source"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::CloseReason), "closeReason"_s);
 }
 
 // JSReadableStreamIntoArrayOperation — the queue-backed array pump's persistent state.
@@ -1650,18 +1651,15 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectConsumeLoopReadRejected, (J
     return {};
 }
 
-// close()/end(), and the implicit close when an async pull() resolves without calling either. A truthy reason is close(error): the consumer rejects with it.
-static void oneShotDirectClose(JSC::VM& vm, JSGlobalObject* globalObject, JSOneShotDirectSink* sink, JSValue reason)
+// The second half of close()/end(): ends the ArrayBufferSink and settles the result with the stored close reason. Runs at most once per sink.
+static void oneShotDirectFinish(JSC::VM& vm, JSGlobalObject* globalObject, JSOneShotDirectSink* sink)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (sink->m_closed)
+    if (!sink->m_finishOwed)
         return;
-    sink->m_closed = true;
-    if (auto* source = sink->source()) {
-        sink->clearSource();
-        source->close(globalObject, reason);
-        RETURN_IF_EXCEPTION(scope, );
-    }
+    sink->m_finishOwed = false;
+    JSValue reason = sink->closeReason();
+    sink->clearCloseReason();
     MarkedArgumentBuffer noArguments;
     JSValue endResult = Bun::WebStreams::invokeMethod(vm, globalObject, sink->arrayBufferSink(), builtinNames(vm).endPublicName(), noArguments);
     RETURN_IF_EXCEPTION(scope, );
@@ -1686,6 +1684,23 @@ static void oneShotDirectClose(JSC::VM& vm, JSGlobalObject* globalObject, JSOneS
         RETURN_IF_EXCEPTION(scope, );
     }
     capability->fulfill(vm, endResult);
+}
+
+// close()/end(), and the implicit close when an async pull() resolves without calling either. A truthy reason is close(error): the consumer rejects with it.
+static void oneShotDirectClose(JSC::VM& vm, JSGlobalObject* globalObject, JSOneShotDirectSink* sink, JSValue reason)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (sink->m_closed)
+        return;
+    sink->m_closed = true;
+    sink->m_finishOwed = true;
+    sink->setCloseReason(vm, reason);
+    if (auto* source = sink->source()) {
+        sink->clearSource();
+        source->close(globalObject, reason);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+    RELEASE_AND_RETURN(scope, oneShotDirectFinish(vm, globalObject, sink));
 }
 
 // pull() failed: the stream errors and the consumer rejects, unless close()/end() already settled the result.

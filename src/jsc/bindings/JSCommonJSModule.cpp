@@ -110,6 +110,7 @@ static bool canPerformFastEnumeration(Structure* s)
 }
 
 extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);
+extern "C" bool Bun__VM__specifierIsEntryPoint(void*, EncodedJSValue);
 extern "C" void Bun__VM__setEntryPointEvalResultCJS(void*, EncodedJSValue);
 extern "C" void Bun__VM__noteCommonJSEvaluation(void*, EncodedJSValue);
 
@@ -237,6 +238,8 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         // exit 0 silently. Use the out-param overload and rethrow.
         WTF::NakedPtr<JSC::Exception> returnedException;
         JSValue result = JSC::evaluate(globalObject, code, jsUndefined(), returnedException);
+        if (moduleObject->isEntryPoint)
+            globalObject->armNextTickQueueCheckAfterEntryPoint();
         if (returnedException) [[unlikely]] {
             scope.throwException(globalObject, returnedException.get());
             return false;
@@ -309,6 +312,8 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     //    fn(exports, require, module, __filename, __dirname) { /* code */ }(exports, require, module, __filename, __dirname)
     //
     JSC::profiledCall(globalObject, ProfilingReason::API, fn, callData, moduleObject, args);
+    if (moduleObject->isEntryPoint)
+        globalObject->armNextTickQueueCheckAfterEntryPoint();
     RETURN_IF_EXCEPTION(scope, false);
     return true;
 }
@@ -1661,6 +1666,8 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     }
 
     moduleObject->ignoreESModuleAnnotation = ignoreESModuleAnnotation;
+    // A graph has no entry point.
+    moduleObject->isEntryPoint = !graph && moduleObject->filename().isString() && Bun__VM__specifierIsEntryPoint(globalObject->bunVM(), JSValue::encode(moduleObject->filename()));
 
     return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL, graph);
 }
@@ -1776,6 +1783,8 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     }
 
     moduleObject->ignoreESModuleAnnotation = ignoreESModuleAnnotation;
+    // A graph has no entry point.
+    moduleObject->isEntryPoint = !graph && moduleObject->filename().isString() && Bun__VM__specifierIsEntryPoint(globalObject->bunVM(), JSValue::encode(moduleObject->filename()));
 
     return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL, graph);
 }

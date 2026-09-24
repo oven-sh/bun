@@ -226,3 +226,14 @@ tsd.expectAssignable<SyncSubprocess<Bun.SpawnOptions.Readable, Bun.SpawnOptions.
   Bun.spawnSync({ cmd: ["echo", "hello"], stdout: "pipe", stderr: "pipe", lazy: true,
   });
 }
+
+import { spawn as nodeSpawn, spawnSync as nodeSpawnSync } from "node:child_process";
+
+{
+  const limited = Bun.spawn(["echo", "hi"], { maxMemory: 64 * 1024 * 1024, killSignal: "SIGKILL" });
+  tsd.expectType(limited.memoryUsage()).is<{ current: number; peak: number }>();
+  tsd.expectType(limited.exitedDueToMaxMemory).is<boolean>();
+  tsd.expectType(Bun.spawnSync(["echo", "hi"], { maxMemory: 1024 }).exitedDueToMaxMemory).is<boolean | undefined>();
+  nodeSpawn("echo", ["hi"], { maxMemory: 1024 });
+  nodeSpawnSync("echo", ["hi"], { maxMemory: 1024 });
+}

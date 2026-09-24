@@ -472,6 +472,9 @@ pub mod cgroup {
         path: Vec<u8>,
         v2: bool,
         group_kill: bool,
+        /// v1 only: the kernel adds to this eventfd each time this cgroup itself runs out of memory.
+        oom_events: Option<File>,
+        own_oom: core::sync::atomic::AtomicBool,
     }
 
     static NEXT: AtomicU32 = AtomicU32::new(0);
@@ -536,6 +539,26 @@ pub mod cgroup {
             .retain(|path| rmdir(path).is_err_and(|err| is_busy(&err)));
     }
 
+    /// v1 has no counter for "this cgroup's own limit could not be met", so ask for the kernel's OOM event on it.
+    fn register_v1_oom_events(path: &[u8]) -> Option<File> {
+        // SAFETY: eventfd has no memory-safety preconditions.
+        let raw = unsafe { libc::eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC) };
+        if raw < 0 {
+            return None;
+        }
+        let events = File::from_fd(Fd::from_native(raw));
+        let control = File::openat(
+            Fd::cwd(),
+            &[path, b"/memory.oom_control"].concat(),
+            O::RDONLY,
+            0,
+        )
+        .ok()?;
+        let request = format!("{} {}", raw, control.handle().native());
+        write(path, "cgroup.event_control", request.as_bytes()).ok()?;
+        Some(events)
+    }
+
     /// Only places inside our own cgroup: a sibling would leave our systemd unit or container and escape its limits.
     fn candidates(name: &str) -> Vec<(Vec<u8>, bool)> {
         let mut out = Vec::new();
@@ -590,11 +613,22 @@ pub mod cgroup {
                     let _ = rmdir(&path);
                     continue;
                 }
+                let oom_events = if v2 {
+                    None
+                } else {
+                    register_v1_oom_events(&path)
+                };
+                if !v2 && oom_events.is_none() {
+                    let _ = rmdir(&path);
+                    continue;
+                }
                 let group_kill = v2 && write(&path, "memory.oom.group", b"1").is_ok();
                 return Some(Cgroup {
                     path,
                     v2,
                     group_kill,
+                    oom_events,
+                    own_oom: core::sync::atomic::AtomicBool::new(false),
                 });
             }
             None
@@ -626,7 +660,7 @@ pub mod cgroup {
             }
         }
 
-        /// A member was OOM-killed and this cgroup hit its own limit. A kill by the host or a parent cgroup alone does not count.
+        /// A member was OOM-killed because this cgroup's own limit could not be met. A kill by the host or by a parent cgroup does not count, and a limit hit that reclaim solved does not count.
         pub(super) fn exceeded(&self) -> bool {
             if self.v2 {
                 let Some(events) = read(&self.path, "memory.events.local")
@@ -634,13 +668,19 @@ pub mod cgroup {
                 else {
                     return false;
                 };
-                field(&events, b"oom_kill").unwrap_or(0) > 0
-                    && field(&events, b"max").unwrap_or(0) > 0
-            } else {
-                read(&self.path, "memory.oom_control")
-                    .is_some_and(|b| field(&b, b"oom_kill").unwrap_or(0) > 0)
-                    && read(&self.path, "memory.failcnt").is_some_and(|b| number(&b) > 0)
+                return field(&events, b"oom_group_kill").unwrap_or(0) > 0
+                    || (field(&events, b"oom").unwrap_or(0) > 0
+                        && field(&events, b"oom_kill").unwrap_or(0) > 0);
             }
+            if let Some(events) = &self.oom_events {
+                let mut count = [0u8; 8];
+                if events.read(&mut count).is_ok_and(|n| n == 8) && u64::from_ne_bytes(count) > 0 {
+                    self.own_oom.store(true, Ordering::Release);
+                }
+            }
+            self.own_oom.load(Ordering::Acquire)
+                && read(&self.path, "memory.oom_control")
+                    .is_some_and(|b| field(&b, b"oom_kill").unwrap_or(0) > 0)
         }
 
         pub(super) fn kill_all(&self) {

@@ -349,6 +349,18 @@ declare module "node:fs/promises" {
   function exists(path: Bun.PathLike): Promise<boolean>;
 }
 
+declare module "node:child_process" {
+  interface ProcessEnvOptions {
+    /**
+     * The maximum number of bytes of memory the process and its descendants
+     * may use, combined. If the tree goes over this limit, it is killed.
+     *
+     * @see {@link Bun.SpawnOptions.BaseOptions.maxMemory}
+     */
+    maxMemory?: number | undefined;
+  }
+}
+
 declare module "node:tls" {
   interface BunConnectionOptions extends Omit<ConnectionOptions, "key" | "ca" | "tls" | "cert"> {
     /**

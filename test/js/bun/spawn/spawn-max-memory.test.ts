@@ -68,11 +68,14 @@ function canCreateMemoryCgroup(): boolean {
       continue;
     }
     try {
-      writeFileSync(join(dir, v2 ? "memory.max" : "memory.limit_in_bytes"), String(1024 * MB));
+      // "r+" never creates a file. On a tmpfs that is not a cgroup mount, the limit files do not exist, as for Bun.
+      writeFileSync(join(dir, v2 ? "memory.max" : "memory.limit_in_bytes"), String(1024 * MB), { flag: "r+" });
       // Before Linux 4.13 a v1 cgroup does not report its OOM kills, and Bun does not use such a cgroup.
       if (!v2 && !/^oom_kill /m.test(readFileSync(join(dir, "memory.oom_control"), "utf8"))) continue;
       try {
-        writeFileSync(join(dir, v2 ? "memory.swap.max" : "memory.memsw.limit_in_bytes"), v2 ? "0" : String(1024 * MB));
+        writeFileSync(join(dir, v2 ? "memory.swap.max" : "memory.memsw.limit_in_bytes"), v2 ? "0" : String(1024 * MB), {
+          flag: "r+",
+        });
       } catch {
         if (hasSwap) continue;
       }

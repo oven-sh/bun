@@ -18,8 +18,7 @@
 
 namespace Bun {
 
-// What v8.getHeapStatistics() and worker.getHeapStatistics() report for one heap. Bytes. O(1).
-// Only on the thread that owns the VM.
+// The heap numbers behind v8.getHeapStatistics() and worker.getHeapStatistics(). O(1), on the VM's thread only.
 struct HeapSizes {
     size_t used;
     size_t capacity;

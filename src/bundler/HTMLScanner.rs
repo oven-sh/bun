@@ -75,12 +75,102 @@ pub(crate) fn is_external_url(url: &[u8]) -> bool {
         .any(|prefix| url.starts_with(prefix.as_bytes()))
 }
 
+/// The character reference at the start of `text` and its length. A number that names no character reads as U+FFFD.
+fn char_ref(text: &[u8]) -> Option<(char, usize)> {
+    const NAMED: [(&[u8], char); 5] = [
+        (b"&amp;", '&'),
+        (b"&lt;", '<'),
+        (b"&gt;", '>'),
+        (b"&quot;", '"'),
+        (b"&apos;", '\''),
+    ];
+    if let Some((name, c)) = NAMED.iter().find(|(name, _)| text.starts_with(name)) {
+        return Some((*c, name.len()));
+    }
+    let (radix, digits_at) = match text {
+        [b'&', b'#', b'x' | b'X', ..] => (16, 3),
+        [b'&', b'#', ..] => (10, 2),
+        _ => return None,
+    };
+    let mut code_point = Some(0u32);
+    let mut end = digits_at;
+    while let Some(digit) = text.get(end).and_then(|&d| char::from(d).to_digit(radix)) {
+        code_point = code_point.and_then(|value| value.checked_mul(radix)?.checked_add(digit));
+        end += 1;
+    }
+    if end == digits_at || text.get(end) != Some(&b';') {
+        return None;
+    }
+    let c = code_point
+        .and_then(char::from_u32)
+        .unwrap_or(char::REPLACEMENT_CHARACTER);
+    Some((c, end + 1))
+}
+
+/// Index of the first of `delimiters` in an attribute value that is not part of a character reference, like the `#` of `&#38;`.
+pub(crate) fn index_of_delimiter(value: &[u8], delimiters: &[u8]) -> Option<usize> {
+    let mut at = 0;
+    while let Some(next) = strings::index_of_any(&value[at..], b"?#&") {
+        at += next;
+        match char_ref(&value[at..]) {
+            Some((_, len)) => at += len,
+            None if strings::contains_char(delimiters, value[at]) => return Some(at),
+            None => at += 1,
+        }
+    }
+    None
+}
+
 /// The `?query#fragment` of a local URL: `?v=2#icon` for `./sprite.svg?v=2#icon`, nothing for `https://x/y?z` or `#icon`.
 pub(crate) fn url_suffix(url: &[u8]) -> &[u8] {
-    match strings::index_of_any(url, b"?#") {
+    match index_of_delimiter(url, b"?#") {
         Some(i) if i > 0 && !is_external_url(url) => &url[i..],
         _ => b"",
     }
+}
+
+/// The file name that the path of a URL spells. `None` keeps the path as written: a malformed escape, bytes that are not UTF-8, a decoded scheme (`data%3Ax`), or a decoded byte that the output URL, which is the raw file name, cannot carry as itself.
+fn decode_path(path: &[u8], in_srcset: bool) -> Option<Vec<u8>> {
+    let mut decoded = Vec::with_capacity(path.len());
+    let mut rest = path;
+    while let Some(next) = strings::index_of_any(rest, b"&%") {
+        decoded.extend_from_slice(&rest[..next]);
+        rest = &rest[next..];
+        let (c, len, is_usable) = match rest[0] {
+            b'%' => {
+                let byte = bun_core::fmt::hex_pair_value(*rest.get(1)?, *rest.get(2)?)?;
+                (char::from(byte), 3, !byte.is_ascii_control())
+            }
+            _ => match char_ref(rest) {
+                Some((c, len)) => (c, len, !c.is_control() && c != char::REPLACEMENT_CHARACTER),
+                None => {
+                    decoded.push(b'&');
+                    rest = &rest[1..];
+                    continue;
+                }
+            },
+        };
+        if !is_usable
+            || matches!(c, '#' | '?' | '%' | '/' | '\\' | '"')
+            // A `srcset` splits its URLs at spaces and commas.
+            || (in_srcset && matches!(c, ' ' | ','))
+        {
+            return None;
+        }
+        if rest[0] == b'%' {
+            decoded.push(c as u8);
+        } else {
+            decoded.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
+        }
+        rest = &rest[len..];
+    }
+    if rest.len() == path.len() {
+        return None;
+    }
+    decoded.extend_from_slice(rest);
+    let first_segment = strings::index_of_char_usize(&decoded, b'/').unwrap_or(decoded.len());
+    (strings::is_valid_utf8(&decoded) && !strings::contains_char(&decoded[..first_segment], b':'))
+        .then_some(decoded)
 }
 
 const HTML_WHITESPACE: &[u8] = b" \t\n\r\x0c";
@@ -129,12 +219,26 @@ impl Iterator for SrcsetUrls<'_> {
 }
 
 impl<'a> HTMLScanner<'a> {
-    fn create_import_record(&mut self, url: &[u8], kind: ImportKind) -> Result<(), Error> {
+    fn create_import_record(
+        &mut self,
+        url: &[u8],
+        kind: ImportKind,
+        in_srcset: bool,
+    ) -> Result<(), Error> {
         // The resolver retries without `?query#fragment` for assets and stylesheets only; a bundled script has no use for its `?v=3`.
         let input_path = match strings::index_of_char_usize(url, b'?') {
             Some(query) if kind == ImportKind::Stmt && !is_external_url(url) => &url[..query],
             _ => url,
         };
+        // Only the path of a local URL spells a file name. `url_suffix` is empty for an external URL.
+        let suffix = url_suffix(input_path);
+        let decoded = if is_external_url(url) {
+            None
+        } else {
+            decode_path(&input_path[..input_path.len() - suffix.len()], in_srcset)
+                .map(|path| [&path, suffix].concat())
+        };
+        let input_path = decoded.as_deref().unwrap_or(input_path);
         // In HTML, sometimes people do /src/index.js
         // In that case, we don't want to use the absolute filesystem path, we want to use the path relative to the project root
         let path_to_use: &[u8] = if is_external_url(url) {
@@ -224,6 +328,10 @@ pub(crate) enum UrlAction<'a> {
 pub(crate) trait HTMLProcessorHandler {
     /// Once per URL (per `srcset` candidate), in document order: one import record made or consumed per call.
     fn on_url(&mut self, url: &[u8], kind: ImportKind) -> UrlAction<'_>;
+    /// `on_url` for a `srcset` candidate.
+    fn on_srcset_url(&mut self, url: &[u8], kind: ImportKind) -> UrlAction<'_> {
+        self.on_url(url, kind)
+    }
     fn on_write_html(&mut self, bytes: &[u8]);
     fn on_html_parse_error(&mut self, message: &[u8]);
 
@@ -243,7 +351,11 @@ pub(crate) trait HTMLProcessorHandler {
 
 impl<'a> HTMLProcessorHandler for HTMLScanner<'a> {
     fn on_url(&mut self, url: &[u8], kind: ImportKind) -> UrlAction<'_> {
-        let _ = self.create_import_record(url, kind);
+        let _ = self.create_import_record(url, kind, false);
+        UrlAction::Keep
+    }
+    fn on_srcset_url(&mut self, url: &[u8], kind: ImportKind) -> UrlAction<'_> {
+        let _ = self.create_import_record(url, kind, true);
         UrlAction::Keep
     }
     fn on_write_html(&mut self, bytes: &[u8]) {
@@ -377,7 +489,7 @@ fn rewrite_srcset<T: HTMLProcessorHandler>(
     let mut remove = false;
     // No early exit: every candidate reaches `on_url` so both passes stay in step.
     for url in (SrcsetUrls { value, pos: 0 }) {
-        match this.on_url(&value[url.clone()], kind) {
+        match this.on_srcset_url(&value[url.clone()], kind) {
             UrlAction::Keep => {}
             UrlAction::Replace(new_url) => {
                 out.extend_from_slice(&value[copied..url.start]);

@@ -106,6 +106,13 @@ describe("bun exec", () => {
       .stderr(stderr => expect(stderr).toEndWith(`due to error ${reserved("for")}\n`))
       .runAsTest("bun exec");
 
+    TestBuilder.command`${BUN} exec ${"if ! false; then echo THEN; else echo ELSE; fi"}`
+      .env(bunEnv)
+      .exitCode(1)
+      .stdout("")
+      .stderr(stderr => expect(stderr).toEndWith(`due to error ${reserved("!")}\n`))
+      .runAsTest("bun exec with a pipeline negation");
+
     test("a package.json script under --shell=bun", async () => {
       using dir = tempDir("exec-reserved-word", {
         "package.json": JSON.stringify({

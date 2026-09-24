@@ -952,20 +952,6 @@ impl<'bump> Parser<'bump> {
         panic!("Expected: {}", bstr::BStr::new(tagname));
     }
 
-    fn is_if_clause_text_token(&mut self, if_clause_token: IfClauseTok) -> bool {
-        match self.peek() {
-            Token::Text(range) => {
-                self.delimits(self.peek_n(1))
-                    && self.is_if_clause_text_token_impl(range, if_clause_token)
-            }
-            _ => false,
-        }
-    }
-
-    fn is_if_clause_text_token_impl(&self, range: TextRange, if_clause_token: IfClauseTok) -> bool {
-        self.if_clause_tok_at(range) == Some(if_clause_token)
-    }
-
     fn skip_newlines(&mut self) {
         while self.r#match(TokenTag::Newline) {}
     }
@@ -984,13 +970,6 @@ impl<'bump> Parser<'bump> {
             return Ok(ast::Expr::Subshell(self.allocate(subshell)));
         }
 
-        if self.is_if_clause_text_token(IfClauseTok::If) {
-            return self
-                .parse_if_clause()?
-                .to_expr(self.alloc)
-                .map_err(Into::into);
-        }
-
         match self.peek() {
             Token::DoubleBracketOpen => {
                 return self
@@ -998,15 +977,32 @@ impl<'bump> Parser<'bump> {
                     .to_expr(self.alloc)
                     .map_err(Into::into);
             }
-            Token::Text(range) => {
-                let word = self.text(range);
-                if reserved_word(word) == Some(ReservedWord::Unsupported)
-                    && self.delimits(self.peek_n(1))
-                    && !self.is_interpolated_position(range.start)
-                    && !self.has_escaped_char(range)
-                {
-                    return self.unsupported_reserved_word(word);
+            Token::Text(range) => match self.reserved_word_at(range) {
+                Some(_) if !self.delimits(self.peek_n(1)) => {}
+                Some(ReservedWord::IfClause(IfClauseTok::If)) => {
+                    return self
+                        .parse_if_clause()?
+                        .to_expr(self.alloc)
+                        .map_err(Into::into);
                 }
+                // `parse_if_clause` consumes the other words of an open `if`, so this one has none.
+                Some(ReservedWord::IfClause(tok)) => {
+                    self.add_error(format_args!(
+                        "Unexpected token: `{}`",
+                        <&'static str>::from(tok)
+                    ))?;
+                    return Err(ParseError::Unexpected.into());
+                }
+                Some(ReservedWord::Unsupported) => {
+                    return self.unsupported_reserved_word(self.text(range));
+                }
+                None => {}
+            },
+            Token::BraceBegin if self.delimits(self.peek_n(1)) => {
+                return self.unsupported_reserved_word(b"{");
+            }
+            Token::BraceEnd if self.delimits(self.peek_n(1)) => {
+                return self.unsupported_reserved_word(b"}");
             }
             _ => {}
         }
@@ -1396,6 +1392,10 @@ impl<'bump> Parser<'bump> {
         } else {
             ast::RedirectFlags::default()
         };
+        if redirect.stdin() && redirect.append() {
+            self.add_error(format_args!("Here-documents \"<<\" are not supported yet."))?;
+            return Err(ParseError::Unsupported.into());
+        }
         let redirect_file: Option<ast::Redirect<'bump>> = 'redirect_file: {
             if has_redirect {
                 if self.r#match(TokenTag::JSObjRef) {
@@ -1719,11 +1719,20 @@ impl<'bump> Parser<'bump> {
             .is_some_and(|&pos| pos < range.end)
     }
 
-    fn if_clause_tok_at(&self, range: TextRange) -> Option<IfClauseTok> {
-        if self.is_interpolated_position(range.start) {
+    /// The reserved word that the bare text at `range` is. An interpolated or escaped word is none.
+    fn reserved_word_at(&self, range: TextRange) -> Option<ReservedWord> {
+        let word = reserved_word(self.text(range))?;
+        if self.is_interpolated_position(range.start) || self.has_escaped_char(range) {
             return None;
         }
-        IfClauseTok::from_text(self.text(range))
+        Some(word)
+    }
+
+    fn if_clause_tok_at(&self, range: TextRange) -> Option<IfClauseTok> {
+        match self.reserved_word_at(range)? {
+            ReservedWord::IfClause(tok) => Some(tok),
+            ReservedWord::Unsupported => None,
+        }
     }
 
     fn advance(&mut self) -> Token {
@@ -1956,21 +1965,13 @@ pub enum IfClauseTok {
 impl IfClauseTok {
     /// Classify the *current peeked* token as an if-clause keyword.
     ///
-    /// `tok` must be `p.peek()`: like `match_if_clausetok` and
-    /// `is_if_clause_text_token`, this only treats the text as a keyword when
+    /// `tok` must be `p.peek()`: like `match_if_clausetok`, this only treats the text as a keyword when
     /// the *next* token delimits it, so `fi$x` / `else$x` / `elif$x` are not
     /// misclassified and routed into the panicking
     /// `expect_if_clause_text_token`.
     pub(crate) fn from_tok(p: &Parser<'_>, tok: Token) -> Option<IfClauseTok> {
         match tok {
             Token::Text(range) if p.delimits(p.peek_n(1)) => p.if_clause_tok_at(range),
-            _ => None,
-        }
-    }
-
-    pub fn from_text(txt: &[u8]) -> Option<IfClauseTok> {
-        match reserved_word(txt) {
-            Some(ReservedWord::IfClause(tok)) => Some(tok),
             _ => None,
         }
     }
@@ -2002,6 +2003,7 @@ bun_core::comptime_string_map! {
         b"function" => ReservedWord::Unsupported,
         b"do" => ReservedWord::Unsupported,
         b"done" => ReservedWord::Unsupported,
+        b"!" => ReservedWord::Unsupported,
     };
 }
 
@@ -3181,6 +3183,10 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                     Some(flags)
                 }
                 c if c == u32::from(b'<') => {
+                    if !flags.stdin() {
+                        return None;
+                    }
+                    let _ = self.eat();
                     let is_double = self.eat_simple_redirect_operator(RedirectDirection::In);
                     if is_double {
                         flags |= ast::RedirectFlags::APPEND;

@@ -810,6 +810,14 @@ function settingsEntries(f: Frame): Array<[number, number]> {
   return entries;
 }
 
+/** Matches a SETTINGS frame (not an ACK) that sets INITIAL_WINDOW_SIZE to `value`. */
+function settingsWithInitialWindow(value: number) {
+  return (f: Frame) =>
+    f.type === FrameType.SETTINGS &&
+    (f.flags & 0x1) === 0 &&
+    settingsEntries(f).some(([id, v]) => id === 0x4 && v === value);
+}
+
 /**
  * Upload `total` bytes of DATA on `streamId` the way a compliant sender does (RFC 9113 §6.9):
  * never exceed the connection or stream window, grow them on WINDOW_UPDATE, and on a server
@@ -874,6 +882,13 @@ async function openPostStream(c: RawH2): Promise<RawH2> {
   const block = Buffer.concat([Buffer.from([0x83, 0x86, 0x84, 0x01]), hpackLiteral("localhost")]);
   c.sendFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 1, block);
   return c;
+}
+
+/** Resolves once the server has handled, and answered, every frame sent before this call. */
+async function pingRoundTrip(c: RawH2) {
+  const sent = c.frames.length;
+  c.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+  await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0 && c.frames.indexOf(f) >= sent);
 }
 
 describe("inbound flow control after local end-stream (RFC 9113 §6.9)", () => {
@@ -1035,6 +1050,155 @@ describe("inbound flow control after a SETTINGS change (RFC 9113 §6.9.2)", () =
     } finally {
       c.destroy();
       server.close();
+    }
+  });
+
+  const streamFrames = (c: RawH2, from: number) =>
+    c.frames
+      .slice(from)
+      .filter(f => f.streamId === 1)
+      .map(f => (f.type === FrameType.WINDOW_UPDATE ? `WINDOW_UPDATE +${f.payload.readUInt32BE(0)}` : "HEADERS"));
+
+  // nghttp2 checks every stream for a WINDOW_UPDATE while it applies the SETTINGS ACK. The
+  // update is on the wire before anything that the 'localSettings' handler writes.
+  // node v26.3.0 sends WINDOW_UPDATE(1, +1000), then HEADERS(1).
+  test("the ACK of a smaller INITIAL_WINDOW_SIZE sends the stream WINDOW_UPDATE before 'localSettings' runs", async () => {
+    const [clientSide, serverSide] = duplexPair();
+    const server = http2.createServer();
+    let session: http2.ServerHttp2Session | undefined;
+    const errors: unknown[] = [];
+    server.on("session", s => (session = s).on("error", err => errors.push(err)));
+    const gotData = Promise.withResolvers<http2.ServerHttp2Stream>();
+    server.on("stream", stream => {
+      stream.on("error", err => errors.push(err));
+      stream.on("data", () => gotData.resolve(stream));
+    });
+    const c = new RawH2(clientSide);
+    server.emit("connection", serverSide);
+    try {
+      await openPostStream(c);
+      c.sendFrame(FrameType.DATA, 0, 1, Buffer.alloc(1000, 0x61));
+      const stream = await gotData.promise;
+      session!.on("localSettings", settings => {
+        if (settings.initialWindowSize === 1024) stream.respond({ ":status": 200 });
+      });
+      const from = c.frames.length;
+      session!.settings({ initialWindowSize: 1024 });
+      await c.waitFor(settingsWithInitialWindow(1024));
+      // The ACK leaves a 1024-byte stream window, and the client has used 1000 bytes of it.
+      c.sendSettingsAck();
+      await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      await c.waitFor(f => f.type === FrameType.WINDOW_UPDATE && f.streamId === 1);
+      expect({ errors, frames: streamFrames(c, from) }).toEqual({
+        errors: [],
+        frames: ["WINDOW_UPDATE +1000", "HEADERS"],
+      });
+    } finally {
+      c.destroy();
+      session?.destroy();
+    }
+  });
+
+  // The check at the ACK keeps the rule of the check at the end of a read: a stream that nobody
+  // reads gets no WINDOW_UPDATE. 81920 buffered bytes are over the highWaterMark of the
+  // Readable, so the stream is not reading. node v26.3.0 sends WINDOW_UPDATE(1, +81920) only
+  // after resume().
+  test("the ACK of a smaller INITIAL_WINDOW_SIZE sends no WINDOW_UPDATE for a stream that is not reading", async () => {
+    const [clientSide, serverSide] = duplexPair();
+    const server = http2.createServer({ settings: { initialWindowSize: 200000 } });
+    let session: http2.ServerHttp2Session | undefined;
+    const errors: unknown[] = [];
+    server.on("session", s => (session = s).on("error", err => errors.push(err)));
+    const gotStream = Promise.withResolvers<http2.ServerHttp2Stream>();
+    server.on("stream", stream => {
+      stream.on("error", err => errors.push(err));
+      stream.pause();
+      gotStream.resolve(stream);
+    });
+    const c = new RawH2(clientSide);
+    server.emit("connection", serverSide);
+    try {
+      await openPostStream(c);
+      const stream = await gotStream.promise;
+      // Five 16384-byte DATA frames, within the 65535-byte connection window.
+      let connectionWindow = 65535;
+      let harvested = 0;
+      for (let i = 0; i < 5; i++) {
+        if (connectionWindow < 16384) {
+          const seen = harvested;
+          await c.waitFor(f => f.type === FrameType.WINDOW_UPDATE && f.streamId === 0 && c.frames.indexOf(f) >= seen);
+        }
+        for (; harvested < c.frames.length; harvested++) {
+          const f = c.frames[harvested];
+          if (f.type === FrameType.WINDOW_UPDATE && f.streamId === 0) connectionWindow += f.payload.readUInt32BE(0);
+        }
+        c.sendFrame(FrameType.DATA, 0, 1, Buffer.alloc(16384, 0x61));
+        connectionWindow -= 16384;
+      }
+      await pingRoundTrip(c);
+      expect(stream.readableLength).toBe(81920);
+
+      const from = c.frames.length;
+      const acked = Promise.withResolvers<void>();
+      session!.on("localSettings", settings => {
+        if (settings.initialWindowSize === 1024) acked.resolve();
+      });
+      session!.settings({ initialWindowSize: 1024 });
+      await c.waitFor(settingsWithInitialWindow(1024));
+      c.sendSettingsAck();
+      await acked.promise;
+      await pingRoundTrip(c);
+      expect({ errors, frames: streamFrames(c, from) }).toEqual({ errors: [], frames: [] });
+
+      stream.resume();
+      await c.waitFor(f => f.type === FrameType.WINDOW_UPDATE && f.streamId === 1);
+      expect({ errors, frames: streamFrames(c, from) }).toEqual({ errors: [], frames: ["WINDOW_UPDATE +81920"] });
+    } finally {
+      c.destroy();
+      session?.destroy();
+    }
+  });
+
+  // The WINDOW_UPDATE at the ACK gives the 1000 used bytes back, so DATA that comes in the same
+  // read as the ACK has the whole new window. A client that obeys the rules sends 24 bytes at
+  // most there. node v26.3.0 accepts 1024 bytes, and ends the session for 1025 bytes.
+  test.each([
+    [1024, { received: 2024, update: 1024, error: null }],
+    [1025, { received: 1000, update: null, error: "ERR_HTTP2_ERROR" }],
+  ])("DATA of %d bytes in the same read as the ACK of a 1024-byte INITIAL_WINDOW_SIZE", async (size, expected) => {
+    const [clientSide, serverSide] = duplexPair();
+    const server = http2.createServer();
+    let session: http2.ServerHttp2Session | undefined;
+    server.on("session", s => (session = s).on("error", () => {}));
+    let received = 0;
+    const gotData = Promise.withResolvers<void>();
+    const failed = Promise.withResolvers<string>();
+    server.on("stream", stream => {
+      stream.on("error", (err: NodeJS.ErrnoException) => failed.resolve(err.code!));
+      stream.on("data", (d: Buffer) => {
+        received += d.length;
+        gotData.resolve();
+      });
+    });
+    const c = new RawH2(clientSide);
+    server.emit("connection", serverSide);
+    try {
+      await openPostStream(c);
+      c.sendFrame(FrameType.DATA, 0, 1, Buffer.alloc(1000, 0x61));
+      await gotData.promise;
+      session!.settings({ initialWindowSize: 1024 });
+      await c.waitFor(settingsWithInitialWindow(1024));
+      const ack = encodeFrame(FrameType.SETTINGS, 0x1, 0);
+      c.send(Buffer.concat([ack, encodeFrame(FrameType.DATA, 0, 1, Buffer.alloc(size, 0x61))]));
+      // The first WINDOW_UPDATE of the stream is for the 1000 bytes, the second for this DATA.
+      const second = c.waitFor(
+        f => f.type === FrameType.WINDOW_UPDATE && f.streamId === 1 && f.payload.readUInt32BE(0) === size,
+      );
+      const outcome = await Promise.race([second.then(() => null), failed.promise]);
+      expect({ received, update: outcome === null ? size : null, error: outcome }).toEqual(expected);
+    } finally {
+      c.destroy();
+      session?.destroy();
     }
   });
 });

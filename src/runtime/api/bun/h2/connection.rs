@@ -554,7 +554,8 @@ impl Connection {
         }
         // Re-open consumed receive windows once per batch (RFC 9113 §6.9; mirrors how the
         // application-consumption-driven update works in node) — doing it per frame would both spam
-        // WINDOW_UPDATE and make burst flow-control violations undetectable.
+        // WINDOW_UPDATE and make burst flow-control violations undetectable. The one exception is
+        // the ACK of a new INITIAL_WINDOW_SIZE (handle_settings).
         self.replenish_windows(sink);
         Feed {
             consumed: offset,
@@ -562,16 +563,8 @@ impl Connection {
         }
     }
 
-    /// Send WINDOW_UPDATE for every receive window that has consumed at least half its size.
-    fn replenish_windows(&mut self, sink: &impl Sink) {
-        if self.recv_window.needs_update() {
-            let inc = self.recv_window.take_update();
-            if inc > 0 {
-                // Before the write: a JS transport can run user code inside it.
-                self.note_recv_window(sink);
-                self.send_window_update(sink, 0, inc);
-            }
-        }
+    /// Send WINDOW_UPDATE for every stream that is read and has consumed at least half its window.
+    fn replenish_streams(&mut self, sink: &impl Sink) {
         let mut buf = std::mem::take(&mut self.replenish_buf);
         buf.clear();
         for (id, s) in self.streams.iter_mut() {
@@ -589,6 +582,19 @@ impl Connection {
             self.send_window_update(sink, *id, *inc);
         }
         self.replenish_buf = buf;
+    }
+
+    /// Send WINDOW_UPDATE for every receive window that has consumed at least half its size.
+    fn replenish_windows(&mut self, sink: &impl Sink) {
+        if self.recv_window.needs_update() {
+            let inc = self.recv_window.take_update();
+            if inc > 0 {
+                // Before the write: a JS transport can run user code inside it.
+                self.note_recv_window(sink);
+                self.send_window_update(sink, 0, inc);
+            }
+        }
+        self.replenish_streams(sink);
         // Evict closed streams so the map (and this scan) stay bounded on long-lived connections.
         // A late DATA/RST/WINDOW_UPDATE for an evicted id takes the unknown-stream path, which
         // answers RST_STREAM(STREAM_CLOSED) - the 5.1 closed-state behavior. A late HEADERS for an
@@ -702,6 +708,11 @@ impl Connection {
             // The peer has acknowledged this submission: header-list enforcement may now use the
             // limit it carried.
             self.enforced_max_header_list_size = acked.settings.max_header_list_size;
+            if delta != 0 {
+                // Like nghttp2, before 'localSettings' and before DATA later in this batch:
+                // https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L4189-L4221
+                self.replenish_streams(sink);
+            }
             sink.on_local_settings(&acked.settings);
             return false;
         }
@@ -1582,6 +1593,7 @@ impl Connection {
         // Window replenishment is deferred to the end of the receive() batch (replenish_windows):
         // re-opening the window per frame would both spam WINDOW_UPDATE and make a peer that
         // ignores flow control (sending a whole burst past the window in one batch) undetectable.
+        // DATA that follows the ACK of a new INITIAL_WINDOW_SIZE in one batch is the exception.
 
         if end_stream {
             if self.enforce_content_length(sink, hdr.stream_id) {

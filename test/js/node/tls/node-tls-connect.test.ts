@@ -3,6 +3,7 @@ import { describe, expect, it } from "bun:test";
 import { once } from "events";
 import { writeFileSync } from "fs";
 import { bunEnv, bunExe, tls as COMMON_CERT_, isASAN, nodeExe, tempDir } from "harness";
+import http2 from "http2";
 import https from "https";
 import net from "net";
 import { join } from "path";
@@ -1347,9 +1348,24 @@ describe("a write callback on a TLS socket over a Duplex waits for the transport
   }
   const serverContext = () => ({ isServer: true, secureContext: tls.createSecureContext(COMMON_CERT_) });
 
-  async function run(pair: ReturnType<typeof makePair>, writer: "server" | "client", method: "write" | "end") {
+  // Both sockets, destroyed when the `using` scope ends, so a failed
+  // assertion does not leave two engines behind.
+  function connectPair(pair: ReturnType<typeof makePair>, clientOptions: tls.ConnectionOptions = {}) {
     const server = new TLSSocket(pair.serverSide, serverContext());
-    const client = tls.connect({ socket: pair.clientSide, rejectUnauthorized: false });
+    const client = tls.connect({ socket: pair.clientSide, rejectUnauthorized: false, ...clientOptions });
+    return {
+      server,
+      client,
+      [Symbol.dispose]() {
+        client.destroy();
+        server.destroy();
+      },
+    };
+  }
+
+  async function run(pair: ReturnType<typeof makePair>, writer: "server" | "client", method: "write" | "end") {
+    using sockets = connectPair(pair);
+    const { server, client } = sockets;
     const failed = Promise.withResolvers<never>();
     server.on("error", failed.reject);
     client.on("error", failed.reject);
@@ -1370,8 +1386,6 @@ describe("a write callback on a TLS socket over a Duplex waits for the transport
     pair.release();
 
     expect(await Promise.race([atCallback.promise, failed.promise])).toEqual({ received: "x", queued: 0 });
-    client.destroy();
-    server.destroy();
   }
 
   describe.each(["write", "end"] as const)("%s(data, cb)", method => {
@@ -1387,8 +1401,8 @@ describe("a write callback on a TLS socket over a Duplex waits for the transport
     // Node's JSStreamSocket maps the stream's write error to UV_EPIPE on the
     // TLS write request, after the stream has handled it itself.
     const pair = makePair("server");
-    const server = new TLSSocket(pair.serverSide, serverContext());
-    const client = tls.connect({ socket: pair.clientSide, rejectUnauthorized: false });
+    using sockets = connectPair(pair);
+    const { server, client } = sockets;
     client.on("error", () => {});
     const log: string[] = [];
     const done = Promise.withResolvers<void>();
@@ -1413,8 +1427,8 @@ describe("a write callback on a TLS socket over a Duplex waits for the transport
     // Node cancels the pending shutdown on close and afterShutdown ignores
     // that status, so 'finish' still follows.
     const pair = makePair("server");
-    const server = new TLSSocket(pair.serverSide, serverContext());
-    const client = tls.connect({ socket: pair.clientSide, rejectUnauthorized: false });
+    using sockets = connectPair(pair);
+    const { server, client } = sockets;
     client.on("error", () => {});
     client.on("data", () => {});
     const log: string[] = [];
@@ -1432,6 +1446,29 @@ describe("a write callback on a TLS socket over a Duplex waits for the transport
 
     await closed.promise;
     expect(log).toEqual(["end cb null", "finish"]);
+  });
+
+  it("end(cb) completes while an http2 parser owns the socket's drain", async () => {
+    // An http2 client whose server did not negotiate h2 calls socket.end()
+    // and then attaches its native parser. That parser takes the native
+    // drain, so a parked end callback has to complete through the JS drain
+    // anyway. The peer's replies are stalled, so no close can complete it.
+    const pair = makePair("server");
+    using sockets = connectPair(pair, { ALPNProtocols: ["h2"] });
+    const { server, client } = sockets;
+    server.on("error", () => {});
+    server.on("data", () => {});
+    const log: string[] = [];
+    await once(client, "secureConnect");
+    const finished = once(client, "finish").then(() => log.push("finish"));
+    const session = http2.connect("https://localhost", { createConnection: () => client });
+    session.on("error", (err: NodeJS.ErrnoException) => {
+      log.push(`session error ${err.code}`);
+      pair.stall();
+    });
+    await finished;
+    expect(log).toEqual(["session error ERR_HTTP2_ERROR", "finish"]);
+    session.destroy();
   });
 });
 

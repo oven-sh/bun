@@ -280,7 +280,10 @@ impl UpgradedDuplex {
         self.in_flight.set(self.in_flight.get() + 1);
         if let Err(err) = write_or_end.call(&global, duplex, &[payload, done]) {
             // A throw means the stream never took the chunk: no callback comes.
-            self.in_flight.set(self.in_flight.get().saturating_sub(1));
+            match self.in_flight.get().checked_sub(1) {
+                Some(n) => self.in_flight.set(n),
+                None => debug_assert!(false, "a throw from a write that was not counted"),
+            }
             (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
         }
     }
@@ -724,9 +727,9 @@ impl Drop for UpgradedDuplex {
     }
 }
 
-// SAFETY (all four host fns): the function data is the `*mut UpgradedDuplex`
-// installed by `get_js_handlers`; `teardown` clears it before the storage is
-// freed, so a non-null data pointer is live for the call.
+// SAFETY (all five host fns): the function data is the `*mut UpgradedDuplex`
+// installed by `get_js_handlers` and `write_done_handler`; `teardown` clears
+// it before the storage is freed, so a non-null data pointer is live for the call.
 
 #[bun_jsc::host_fn]
 fn on_received_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
@@ -825,7 +828,10 @@ fn on_write_done(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
             }
             return Ok(JSValue::UNDEFINED);
         }
-        let remaining = this.in_flight.get().saturating_sub(1);
+        let Some(remaining) = this.in_flight.get().checked_sub(1) else {
+            debug_assert!(false, "a write callback without a counted write");
+            return Ok(JSValue::UNDEFINED);
+        };
         this.in_flight.set(remaining);
         if this.origin.get().is_empty() {
             return Ok(JSValue::UNDEFINED);

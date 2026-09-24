@@ -14,8 +14,11 @@ import { join } from "node:path";
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 
 // SPAWN_FAULT_RECV_AT=N  the Nth recv() on each AF_UNIX socket fails with EIO (1-based).
+// SPAWN_FAULT_RECV_MID_FILL=1  the recv() that directly follows a recv() that returned bytes fails with EIO: the
+//   reader asks again in the same pass because its buffer has room, so the failure lands behind bytes it holds.
 // SPAWN_FAULT_SEND_AT=N  the Nth send() on each AF_UNIX socket fails with ENOBUFS.
 // SPAWN_FAULT_REPORT=path  the failing recv() writes how many bytes that socket received before it to this file.
+// SPAWN_FAULT_READS_AFTER=path  how many recv() calls that socket got after the failing one (0 from the failure on).
 const SHIM_C = /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
@@ -36,16 +39,24 @@ static ssize_t (*real_send)(int, const void *, size_t, int);
 static int (*real_close)(int);
 static long (*real_syscall)(long, long, long, long, long, long, long);
 static int fail_recv_at = -1;
+static int fail_recv_mid_fill = -1;
 static int fail_send_at = -1;
 static unsigned int recv_count[MAX_FD];
 static unsigned int send_count[MAX_FD];
 static unsigned long recv_bytes[MAX_FD];
+static unsigned char recv_had_bytes[MAX_FD];
+static unsigned char recv_failed[MAX_FD];
+static unsigned long recv_after_failure[MAX_FD];
 
 static void init_modes(void) {
   const char *s;
   if (fail_recv_at < 0) {
     s = getenv("SPAWN_FAULT_RECV_AT");
     fail_recv_at = s ? atoi(s) : 0;
+  }
+  if (fail_recv_mid_fill < 0) {
+    s = getenv("SPAWN_FAULT_RECV_MID_FILL");
+    fail_recv_mid_fill = s ? atoi(s) : 0;
   }
   if (fail_send_at < 0) {
     s = getenv("SPAWN_FAULT_SEND_AT");
@@ -62,24 +73,33 @@ static int is_unix_sock(int fd) {
   return getsockopt(fd, SOL_SOCKET, SO_DOMAIN, &domain, &len) == 0 && domain == AF_UNIX;
 }
 
+static void write_number(const char *env, unsigned long value) {
+  const char *path = getenv(env);
+  FILE *f = path ? fopen(path, "w") : NULL;
+  if (f) {
+    fprintf(f, "%lu", value);
+    fclose(f);
+  }
+}
+
 ssize_t recv(int fd, void *buf, size_t len, int flags) {
   if (!real_recv) {
     real_recv = (ssize_t (*)(int, void *, size_t, int))dlsym(RTLD_NEXT, "recv");
     init_modes();
   }
-  if (fail_recv_at > 0 && is_unix_sock(fd)) {
-    if (++recv_count[fd] == (unsigned)fail_recv_at) {
-      const char *report = getenv("SPAWN_FAULT_REPORT");
-      FILE *f = report ? fopen(report, "w") : NULL;
-      if (f) {
-        fprintf(f, "%lu", recv_bytes[fd]);
-        fclose(f);
-      }
+  if ((fail_recv_at > 0 || fail_recv_mid_fill > 0) && is_unix_sock(fd)) {
+    if (recv_failed[fd]) {
+      write_number("SPAWN_FAULT_READS_AFTER", ++recv_after_failure[fd]);
+    } else if (fail_recv_mid_fill > 0 ? recv_had_bytes[fd] : ++recv_count[fd] == (unsigned)fail_recv_at) {
+      recv_failed[fd] = 1;
+      write_number("SPAWN_FAULT_REPORT", recv_bytes[fd]);
+      write_number("SPAWN_FAULT_READS_AFTER", 0);
       errno = EIO;
       return -1;
     }
     ssize_t n = real_recv(fd, buf, len, flags);
     if (n > 0) recv_bytes[fd] += (unsigned long)n;
+    recv_had_bytes[fd] = n > 0;
     return n;
   }
   return real_recv(fd, buf, len, flags);
@@ -105,6 +125,9 @@ static void reset_fd(int fd) {
     recv_count[fd] = 0;
     send_count[fd] = 0;
     recv_bytes[fd] = 0;
+    recv_had_bytes[fd] = 0;
+    recv_failed[fd] = 0;
+    recv_after_failure[fd] = 0;
   }
 }
 
@@ -236,6 +259,72 @@ child.on("close", () => {
 });
 `;
 
+// The writer holds its bytes until the parent says "go". By then the parent's first read has found the socket
+// empty and is parked, so the bytes come in through the poll: one pass that reads "hello" and asks again.
+const GO_WRITER_CMD = ["sh", "-c", "read go; printf hello; read done"];
+
+const REPORTS_SOURCE = /* js */ `
+const reports = () => ({
+  received: Number(readFileSync(process.env.SPAWN_FAULT_REPORT, "utf8")),
+  readsAfterError: Number(readFileSync(process.env.SPAWN_FAULT_READS_AFTER, "utf8")),
+});
+`;
+
+// node:child_process: the bytes read before the failed read reach 'data', then 'error', and nothing reads the socket
+// again. With CONSUMER_STOPS the listener destroys the stream while it takes those bytes, and 'close' is all that follows.
+const CHILD_PROCESS_MID_FILL_FIXTURE = /* js */ `
+import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
+${REPORTS_SOURCE}
+const events = [];
+const child = spawn(${JSON.stringify(GO_WRITER_CMD[0])}, ${JSON.stringify(GO_WRITER_CMD.slice(1))}, { stdio: ["pipe", "pipe", "ignore"] });
+child.stdout.on("data", chunk => {
+  events.push("stdout.data:" + chunk.length);
+  if (process.env.CONSUMER_STOPS) child.stdout.destroy();
+});
+child.stdout.on("error", e => events.push("stdout.error:" + e.code));
+child.stdout.on("close", () => {
+  events.push("stdout.close");
+  child.stdin.end();
+});
+child.on("close", () => {
+  events.push("close");
+  console.log(JSON.stringify({ ...reports(), events }));
+});
+setImmediate(() => child.stdin.write("go\\n"));
+`;
+
+// Bun.spawn stdout: the same for a stream reader. The stream asks for the next chunk from inside the delivery of
+// this one. With CONSUMER_STOPS the reader cancels after the chunk, which also lands inside that delivery.
+const STDOUT_STREAM_MID_FILL_FIXTURE = /* js */ `
+import { readFileSync } from "node:fs";
+${REPORTS_SOURCE}
+const p = Bun.spawn(${JSON.stringify(GO_WRITER_CMD)}, { stdin: "pipe", stdout: "pipe", stderr: "inherit" });
+const events = [];
+setImmediate(() => {
+  p.stdin.write("go\\n");
+  p.stdin.flush();
+});
+const reader = p.stdout.getReader();
+try {
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    events.push("chunk:" + value.length);
+    if (process.env.CONSUMER_STOPS) {
+      await reader.cancel();
+      events.push("cancelled");
+      break;
+    }
+  }
+} catch (e) {
+  events.push("error:" + e.code);
+}
+p.stdin.end();
+await p.exited;
+console.log(JSON.stringify({ ...reports(), events }));
+`;
+
 // Bun.spawnSync / child_process.spawnSync / execFileSync: the lost output is an error, not a success.
 const SPAWN_SYNC_FIXTURE = /* js */ `
 import { spawnSync, execFileSync } from "node:child_process";
@@ -274,6 +363,8 @@ beforeAll(async () => {
     "stdout-write.mjs": STDOUT_WRITE_FIXTURE,
     "child-process.mjs": CHILD_PROCESS_FIXTURE,
     "child-process-bytes.mjs": CHILD_PROCESS_BYTES_FIXTURE,
+    "child-process-mid-fill.mjs": CHILD_PROCESS_MID_FILL_FIXTURE,
+    "stdout-stream-mid-fill.mjs": STDOUT_STREAM_MID_FILL_FIXTURE,
     "spawn-sync.mjs": SPAWN_SYNC_FIXTURE,
   });
   shimPath = join(String(dir), "shim.so");
@@ -298,8 +389,11 @@ async function runWithFault(fixture: string, fault: Record<string, string>) {
     ...bunEnv,
     LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shimPath}:${bunEnv.LD_PRELOAD}` : shimPath,
     SPAWN_FAULT_RECV_AT: undefined,
+    SPAWN_FAULT_RECV_MID_FILL: undefined,
     SPAWN_FAULT_SEND_AT: undefined,
     SPAWN_FAULT_REPORT: undefined,
+    SPAWN_FAULT_READS_AFTER: undefined,
+    CONSUMER_STOPS: undefined,
     ...fault,
   };
   await using proc = Bun.spawn({
@@ -392,6 +486,49 @@ describe.skipIf(!isLinux || !cc)("subprocess stdio syscall errors", () => {
       parsed: { receivedSome: true, lost: 0, events: ["stdout.error:EIO", "stdout.close", "close"] },
       stderr: "",
       exitCode: 0,
+    });
+  });
+
+  // One pass of the read loop can hold bytes when a read fails. The consumer takes them first and, from inside that
+  // delivery, asks for more. That request must not reach the socket: only the one call failed, the next would succeed,
+  // and its bytes would come out as data ahead of the error. A consumer that stops inside that delivery gets no error.
+  describe("a read that fails behind bytes of the same pass is the last read", () => {
+    test.concurrent.each([
+      {
+        name: "node:child_process: 'data', then 'error'",
+        fixture: "child-process-mid-fill.mjs",
+        events: ["stdout.data:5", "stdout.error:EIO", "stdout.close", "close"],
+      },
+      {
+        name: "node:child_process: destroy() in that 'data' listener leaves only 'close'",
+        fixture: "child-process-mid-fill.mjs",
+        consumerStops: true,
+        events: ["stdout.data:5", "stdout.close", "close"],
+      },
+      {
+        name: "Bun.spawn: the chunk, then the read rejects",
+        fixture: "stdout-stream-mid-fill.mjs",
+        events: ["chunk:5", "error:EIO"],
+      },
+      {
+        name: "Bun.spawn: cancel() after that chunk resolves",
+        fixture: "stdout-stream-mid-fill.mjs",
+        consumerStops: true,
+        events: ["chunk:5", "cancelled"],
+      },
+    ])("$name", async ({ fixture, consumerStops, events }) => {
+      const reportPrefix = join(String(dir), `${fixture}${consumerStops ? "-stops" : ""}`);
+      const result = await runWithFault(fixture, {
+        SPAWN_FAULT_RECV_MID_FILL: "1",
+        SPAWN_FAULT_REPORT: `${reportPrefix}-received.txt`,
+        SPAWN_FAULT_READS_AFTER: `${reportPrefix}-reads-after.txt`,
+        ...(consumerStops ? { CONSUMER_STOPS: "1" } : {}),
+      });
+      expect(result).toEqual({
+        parsed: { received: 5, readsAfterError: 0, events },
+        stderr: "",
+        exitCode: 0,
+      });
     });
   });
 

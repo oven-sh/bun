@@ -209,7 +209,10 @@ bitflags::bitflags! {
         const MEMFD                    = 1 << 7;
         const USE_PREAD                = 1 << 8;
         const IS_PAUSED                = 1 << 9;
-        const KEEP_ALIVE               = 1 << 10; // default true
+        /// A read failed with a non-retry errno, and nothing reads the fd again until `start()`.
+        /// Not part of `is_done()`: a parent that finds a done reader with no error stored reports a clean EOF.
+        const READ_FAILED              = 1 << 10; // next to IS_PAUSED: `begin_read` tests both with one immediate
+        const KEEP_ALIVE               = 1 << 11; // default true
     }
 }
 
@@ -258,6 +261,7 @@ impl PosixBufferedReader {
     }
 
     pub fn from(&mut self, other: &mut PosixBufferedReader, parent: *mut c_void) {
+        debug_assert!(!other.flags.contains(PosixFlags::READ_FAILED));
         let kind = self.vtable.kind;
         *self = PosixBufferedReader {
             handle: mem::replace(&mut other.handle, PollOrFd::Closed),
@@ -545,6 +549,8 @@ impl PosixBufferedReader {
     }
 
     pub fn start(&mut self, fd: Fd, is_pollable: bool) -> sys::Result<()> {
+        // The parent starts the reader again on purpose: the only way out of a failed read.
+        self.flags.remove(PosixFlags::READ_FAILED);
         if !is_pollable {
             self.buffer().clear();
             self.flags.remove(PosixFlags::IS_DONE);
@@ -651,8 +657,12 @@ impl PosixBufferedReader {
         unsafe { Self::read_loop(this, file_type, fd, received_hup) };
     }
 
+    /// `None` while paused and after a failed read. The frame that saw the failure reports it once the bytes it holds are delivered, so a consumer that asks for more from inside that delivery reads nothing and waits.
     fn begin_read(&self) -> Option<(Fd, FileType, BufferedReaderVTable)> {
-        if self.flags.contains(PosixFlags::IS_PAUSED) {
+        if self
+            .flags
+            .intersects(PosixFlags::IS_PAUSED.union(PosixFlags::READ_FAILED))
+        {
             return None;
         }
         Some((self.get_fd(), self.get_file_type(), self.vtable))
@@ -698,7 +708,10 @@ impl PosixBufferedReader {
                 }
             }
             sys::Result::Err(err) if err.is_retry() => ReadOnce::Stop(Stop::WouldBlock),
-            sys::Result::Err(err) => ReadOnce::Stop(Stop::Error(err)),
+            sys::Result::Err(err) => {
+                self.flags.insert(PosixFlags::READ_FAILED);
+                ReadOnce::Stop(Stop::Error(err))
+            }
         }
     }
 
@@ -833,15 +846,20 @@ impl PosixBufferedReader {
                     return;
                 }
                 Some(Stop::Error(err)) => {
+                    // A consumer that closed the reader while it took the bytes read before the failure was already told the reader is done.
                     // SAFETY: caller contract; `on_error` is the tail.
-                    unsafe { Self::on_error(this, err) };
+                    unsafe {
+                        if !(*this).flags.contains(PosixFlags::IS_DONE) {
+                            Self::on_error(this, err);
+                        }
+                    }
                     return;
                 }
                 _ => {}
             }
-            // Re-entrant JS inside on_read_chunk can close the reader (nested on_pull -> read -> EOF); the captured `fd` is then stale.
+            // Re-entrant JS inside on_read_chunk can close the reader (nested on_pull -> read -> EOF), and the captured `fd` is then stale. Its nested read can also fail, and that frame has reported the error.
             // SAFETY: caller contract (re-entry never frees `*this`).
-            if unsafe { (*this).is_done() } {
+            if unsafe { (*this).is_done() || (*this).flags.contains(PosixFlags::READ_FAILED) } {
                 return;
             }
             if let Some(Stop::WouldBlock) = stop {

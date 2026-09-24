@@ -197,7 +197,11 @@ describe("WriteStream end()", () => {
   // The parent does not read the child's stdout until the child has called
   // end(), so most of the 1 MiB sits in the stream's sink at that point. The
   // callback must wait for it, or process.exit truncates the output.
-  it("fires the callback after the backlog is flushed", async () => {
+  //
+  // Windows: a write to an inherited stdout pipe blocks until the reader
+  // drains it (every write() returns true), so the child never reaches end()
+  // while the parent waits, and there is no backlog to flush.
+  it.skipIf(isWindows)("fires the callback after the backlog is flushed", async () => {
     const child = spawn(
       bunExe(),
       [

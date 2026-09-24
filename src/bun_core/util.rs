@@ -2639,7 +2639,7 @@ pub fn is_writable(fd: Fd) -> Pollable {
 }
 
 // ── os_entropy ────────────────────────────────────────────────────────────
-// Raw OS entropy source: getrandom(2) on Linux, getentropy on Darwin/BSD,
+// Raw OS entropy source: the `getrandom` crate on Linux, getentropy on Darwin/BSD,
 // RtlGenRandom on Windows. bun_core sits below boringssl_sys in the crate
 // graph so it cannot reach `RAND_bytes`; this is used only to seed
 // `fast_random()`'s thread-local PRNG once per thread. Every other caller
@@ -2648,27 +2648,15 @@ pub fn is_writable(fd: Fd) -> Pollable {
 fn os_entropy(bytes: &mut [u8]) {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        let mut filled = 0usize;
-        while filled < bytes.len() {
-            // SAFETY: writes at most len-filled bytes into the slice.
-            let rc = unsafe {
-                libc::getrandom(
-                    bytes.as_mut_ptr().add(filled).cast(),
-                    bytes.len() - filled,
-                    0,
-                )
-            };
-            if rc < 0 {
-                let err = crate::ffi::errno();
-                if err == libc::EINTR {
-                    continue;
-                }
-                if err == libc::ENOSYS {
-                    return dev_urandom(&mut bytes[filled..]);
-                }
-                panic!("getrandom failed: errno {err}");
+        // The crate selects its own /dev/urandom fallback with a zero-length probe. glibc 2.41+
+        // answers that probe from the vDSO, so a seccomp filter on the syscall still fails here.
+        if let Err(err) = getrandom::fill(bytes) {
+            use std::io::Read;
+            if let Err(io_err) =
+                std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(bytes))
+            {
+                panic!("getrandom failed ({err}), /dev/urandom failed ({io_err})");
             }
-            filled += rc as usize;
         }
     }
     #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd"))]
@@ -2697,45 +2685,6 @@ fn os_entropy(bytes: &mut [u8]) {
             }
         }
     }
-}
-
-/// getrandom(2) answers ENOSYS on Linux older than 3.17.
-#[cfg(any(target_os = "linux", target_os = "android"))]
-fn dev_urandom(bytes: &mut [u8]) {
-    let fd = loop {
-        // SAFETY: the path is a NUL-terminated literal.
-        let fd = unsafe { libc::open(c"/dev/urandom".as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC) };
-        if fd >= 0 {
-            break fd;
-        }
-        let err = crate::ffi::errno();
-        if err != libc::EINTR {
-            panic!("getrandom is not available and /dev/urandom failed to open: errno {err}");
-        }
-    };
-    let mut filled = 0usize;
-    while filled < bytes.len() {
-        // SAFETY: writes at most len-filled bytes into the slice.
-        let rc = unsafe {
-            libc::read(
-                fd,
-                bytes.as_mut_ptr().add(filled).cast(),
-                bytes.len() - filled,
-            )
-        };
-        if rc > 0 {
-            filled += rc as usize;
-        } else if rc == 0 {
-            panic!("/dev/urandom returned EOF");
-        } else {
-            let err = crate::ffi::errno();
-            if err != libc::EINTR {
-                panic!("/dev/urandom read failed: errno {err}");
-            }
-        }
-    }
-    // SAFETY: `fd` came from the open above and nothing else holds it.
-    unsafe { libc::close(fd) };
 }
 
 // ── self_exe_path ─────────────────────────────────────────────────────────

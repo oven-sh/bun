@@ -15,6 +15,12 @@ import { join } from "node:path";
 //
 // This test installs a seccomp filter that makes getrandom(2) fail with ENOSYS,
 // which is what such a kernel answers, and runs those entry points under it.
+//
+// A filter is not a full copy of an old kernel: glibc 2.41+ answers a
+// zero-length getrandom() from the vDSO with no syscall. The getrandom crate
+// probes with that call. So on glibc the crate fails under the filter and
+// `os_entropy` reads /dev/urandom itself. On musl the crate takes its own
+// fallback.
 describe.skipIf(!isLinux)("getrandom(2) answers ENOSYS", () => {
   const ENOSYS = 38;
 

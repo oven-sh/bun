@@ -30,3 +30,6 @@ thiserror.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 bun_windows_sys.workspace = true
+
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
+getrandom.workspace = true

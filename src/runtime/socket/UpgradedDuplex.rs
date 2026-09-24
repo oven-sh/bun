@@ -48,6 +48,8 @@ pub(crate) struct UpgradedDuplex {
     pub on_write_done_callback: Cell<JSValue>,
     /// Transport writes whose `cb` has not run yet. Zero means the Duplex took everything.
     pub in_flight: Cell<u32>,
+    /// Nesting depth of `duplex.write()` / `duplex.end()` calls on the stack.
+    pub write_depth: Cell<u32>,
     pub event_loop_timer: JsCell<EventLoopTimer>,
     pub current_timeout: Cell<u32>,
     /// Transport bytes that arrived before the TLS engine existed.
@@ -278,7 +280,10 @@ impl UpgradedDuplex {
         let done = self.write_done_handler(&global);
         // Before the call: an erroring Duplex can run `done` inside it.
         self.in_flight.set(self.in_flight.get() + 1);
-        if let Err(err) = write_or_end.call(&global, duplex, &[payload, done]) {
+        self.write_depth.set(self.write_depth.get() + 1);
+        let result = write_or_end.call(&global, duplex, &[payload, done]);
+        self.write_depth.set(self.write_depth.get() - 1);
+        if let Err(err) = result {
             // Fatal: the count stays high, so nothing completes before teardown resets it.
             (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
         }
@@ -429,6 +434,7 @@ impl UpgradedDuplex {
             on_close_callback: Cell::new(JSValue::ZERO),
             on_write_done_callback: Cell::new(JSValue::ZERO),
             in_flight: Cell::new(0),
+            write_depth: Cell::new(0),
             event_loop_timer: JsCell::new(EventLoopTimer::init_paused(
                 EventLoopTimerTag::UpgradedDuplex,
             )),
@@ -802,7 +808,8 @@ fn on_writable(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>
     Ok(JSValue::UNDEFINED)
 }
 
-/// `cb` of one `duplex.write()`; an error re-enters here next tick as `err == js_wrapper`.
+/// `cb` of one `duplex.write()`. Re-entered next tick with `err == js_wrapper` (an error) or
+/// `err == origin` (a drain deferred out of the write that completed synchronously).
 #[bun_jsc::host_fn]
 fn on_write_done(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     bun_output::scoped_log!(UpgradedDuplex, "onWriteDone");
@@ -813,6 +820,13 @@ fn on_write_done(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     if let Some(self_ptr) = host_fn::get_function_data(function) {
         // SAFETY: see host-fn note above.
         let this = unsafe { &*self_ptr.cast::<UpgradedDuplex>() };
+        // A drain deferred from inside a write (see below).
+        if err == this.origin.get() && !err.is_empty() {
+            if this.in_flight.get() == 0 {
+                (this.handlers.on_writable)(this.handlers.ctx);
+            }
+            return Ok(JSValue::UNDEFINED);
+        }
         if err == this.js_wrapper {
             if !this.origin.get().is_empty() {
                 let epipe = bun_sys::Error::from_code_int(
@@ -835,7 +849,13 @@ fn on_write_done(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
         if !err.is_empty_or_undefined_or_null() && !this.is_shutdown() {
             JSValue::call_next_tick_1(function, global, this.js_wrapper)?;
         } else if remaining == 0 {
-            (this.handlers.on_writable)(this.handlers.ctx);
+            if this.write_depth.get() > 0 {
+                // A Duplex that runs `cb` inside `write()`: a drain now re-enters the
+                // flush that issued the write, before it took its bytes off the buffer.
+                JSValue::call_next_tick_1(function, global, this.origin.get())?;
+            } else {
+                (this.handlers.on_writable)(this.handlers.ctx);
+            }
         }
     }
 

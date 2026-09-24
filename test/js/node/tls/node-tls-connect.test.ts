@@ -1448,6 +1448,47 @@ describe("a write callback on a TLS socket over a Duplex waits for the transport
     expect(log).toEqual(["end cb null", "finish"]);
   });
 
+  it("a transport whose write() runs the callback synchronously delivers a pre-handshake write once", async () => {
+    // A Writable defers the callback, a custom write() need not. The drain
+    // would then re-enter the flush that issued the write, with the plaintext
+    // still on the buffer, and send it again without end.
+    class SyncSide extends Duplex {
+      peer!: SyncSide;
+      _read() {}
+      write(chunk: Buffer, encoding: unknown, callback?: (err?: Error) => void): boolean {
+        if (typeof encoding === "function") callback = encoding as typeof callback;
+        this.peer.push(chunk);
+        callback?.();
+        return true;
+      }
+      _final(callback: () => void) {
+        this.peer.push(null);
+        callback();
+      }
+    }
+    const serverSide = new SyncSide();
+    const clientSide = new SyncSide();
+    serverSide.peer = clientSide;
+    clientSide.peer = serverSide;
+    using sockets = connectPair({ serverSide, clientSide } as ReturnType<typeof makePair>);
+    const { server, client } = sockets;
+    const failed = Promise.withResolvers<never>();
+    server.on("error", failed.reject);
+    client.on("error", failed.reject);
+    let received = "";
+    const got = Promise.withResolvers<void>();
+    server.on("data", (chunk: Buffer) => {
+      received += chunk;
+      got.resolve();
+    });
+    const written = Promise.withResolvers<void>();
+    client.write("x", () => written.resolve());
+    await Promise.race([Promise.all([written.promise, got.promise]), failed.promise]);
+    // One more turn for any repeat the recursion would produce.
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(received).toBe("x");
+  });
+
   it("end(cb) completes while an http2 parser owns the socket's drain", async () => {
     // An http2 client whose server did not negotiate h2 calls socket.end()
     // and then attaches its native parser. That parser takes the native

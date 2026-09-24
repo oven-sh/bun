@@ -340,6 +340,26 @@ describe("Bun.file in serve routes", () => {
         unsatisfiable: { status: 416, contentRange: "bytes */16" },
       });
     });
+
+    // A slice of an fd-backed file sends no Content-Range, so Content-Length has to be the
+    // length of the slice, not the size of the whole file, for HEAD as for GET.
+    it("frames a slice of an fd-backed file by the bytes it sends", async () => {
+      const fd = openSync(join(tempDir, "partial.txt"), "r");
+      try {
+        using handlerServer = Bun.serve({
+          port: 0,
+          fetch: () => new Response(Bun.file(fd).slice(5, 10)),
+        });
+        const probe = async (method: string) => {
+          const res = await fetch(handlerServer.url, { method });
+          return { status: res.status, contentLength: res.headers.get("Content-Length"), body: await res.text() };
+        };
+        expect(await probe("HEAD")).toEqual({ status: 200, contentLength: "5", body: "" });
+        expect(await probe("GET")).toEqual({ status: 200, contentLength: "5", body: "56789" });
+      } finally {
+        closeSync(fd);
+      }
+    });
   });
 
   describe.concurrent("Custom headers and status", () => {

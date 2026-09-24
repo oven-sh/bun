@@ -1888,6 +1888,10 @@ where
                 .max(sendfile.offset)
                 .min(stat_size)
                 .saturating_sub(sendfile.offset);
+            // An fd-backed slice sets no Content-Range, so its Content-Length comes from the blob.
+            if !auto_close && let AnyBlob::Blob(b) = blob_ref {
+                b.size.set(sendfile.remain);
+            }
         }
         self.sendfile.set(sendfile);
 

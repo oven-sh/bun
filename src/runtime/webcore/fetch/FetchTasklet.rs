@@ -1608,9 +1608,6 @@ impl FetchTasklet {
             http::Error::Cert(http::CertError::SUITE_B_CANNOT_SIGN_P_384_WITH_P_256) => {
                 BunString::static_("Suite B: cannot sign P-384 with P-256")
             }
-            http::Error::Cert(http::CertError::HOSTNAME_MISMATCH) => {
-                BunString::static_("Hostname mismatch")
-            }
             http::Error::Cert(http::CertError::EMAIL_MISMATCH) => {
                 BunString::static_("Email address mismatch")
             }
@@ -1727,7 +1724,7 @@ impl FetchTasklet {
         // between would otherwise reach the stream with its task finding the buffer empty, and
         // nothing left to undo that pause. Unconditional: also flushes body bytes the client
         // holds that arrived with no follow-up read (`drain_response_body`).
-        this.signal_store.unpause_receive();
+        this.signal_store.receive_on_demand();
         this.schedule_receive_resume();
 
         if drained.is_empty() {
@@ -2005,7 +2002,7 @@ impl FetchTasklet {
             abort_handle: jsc::AbortHandle::for_owner::<FetchTasklet>(),
             context: cx.context().id(),
             signals: Signals::default(),
-            signal_store: http::signals::Store::default(),
+            signal_store: http::signals::Store::unclaimed(),
             has_schedule_callback: AtomicBool::new(false),
             abort_reason: StrongOptional::empty(),
             check_server_identity: fetch_options.check_server_identity,

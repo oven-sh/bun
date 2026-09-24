@@ -61,6 +61,8 @@ pub struct FileSink {
     stream_js_error: Cell<bool>,
     /// Bytes accepted since `pipe_stream` (`written` counts buffered bytes again when flushed).
     pub(crate) stream_bytes: Cell<Option<u64>>,
+    /// `assign_to_js_stream` holds a ref for the pump promise's reactions, which release it.
+    pump_promise_ref: Cell<bool>,
 
     /// Strong reference to the JS wrapper object to prevent GC from collecting it
     /// while an async operation is pending. This is set when endFromJS returns a
@@ -573,7 +575,7 @@ impl FileSink {
         crate::dispatch::fold(result);
     }
 
-    /// The pipe is over: detach the controller cell (its destructor must never see this sink) and drop the root on it.
+    /// The pipe is over: detach the controller cell (it must never outlive this sink attached) and drop the root on it.
     fn release_pipe(&self) {
         let pipe = self.pipe.replace(streams::PipeCell::default());
         pipe.clear_slots();
@@ -1035,27 +1037,9 @@ impl FileSink {
         // contexts: no touching live JS cells (sweep), and no tearing down
         // state that in-flight IO still needs (close).
 
-        // Shutdown never unwinds the writer: the loop stops ticking, so the
-        // `onWrite`/`onClose`/EOF callbacks that balance these refs can no
-        // longer arrive, and a queued FlushPendingFileSinkTask never runs.
-        // Release them here (a piped stdout whose write once returned
-        // `.pending` otherwise strands its keep-alive ref forever and the sink
-        // leaks). Only under `is_shutting_down`: on a live VM those events
-        // still arrive and must keep the sink alive past the wrapper.
-        // `clear_keep_alive_ref` is flag-gated, so a (theoretical) late
-        // `onClose` is a no-op.
         // SAFETY: caller contract — the wrapper's +1 is held until the trailing
         // `deref` below, so neither release here can free `this`.
-        unsafe {
-            if (*this).js_vm().is_some_and(|vm| vm.is_shutting_down()) {
-                FileSink::clear_keep_alive_ref(this);
-                if (*this).run_pending_later.has.replace(false) {
-                    // Balances the `ref_()` taken in `run_pending_later()` for
-                    // a task that will never run.
-                    FileSink::deref(this);
-                }
-            }
-        }
+        unsafe { FileSink::release_refs_stranded_by_shutdown(this) };
 
         // Per-wrapper accounting is on `ref_count` directly: each path that
         // hands `self` to C++ (`to_js` / `to_js_with_destructor`) takes a +1
@@ -1070,6 +1054,55 @@ impl FileSink {
         unsafe {
             (*this).js_sink_ref.with_mut(|r| r.deinit());
             FileSink::deref(this);
+        }
+    }
+
+    /// `~JSReadableFileSinkController` with this sink still attached. `pipe` roots that cell until
+    /// `release_pipe` detaches it, so it only dies attached in the heap's last sweep. Unlike the
+    /// wrapper in [`finalize`](Self::finalize) it holds no ref: there is none to release for it.
+    ///
+    /// # Safety
+    /// `this` is the cell's live sink; it must not be used after the call, which may free it.
+    unsafe fn controller_finalize(this: *mut FileSink) {
+        // SAFETY: caller contract; `_guard` keeps `this` live across the releases.
+        unsafe {
+            let _guard = RefPtr::init_ref(this);
+            // The root is on the cell being destroyed: dropped here, `Drop` finds no cell to detach.
+            drop((*this).pipe.replace(streams::PipeCell::default()));
+            FileSink::release_refs_stranded_by_shutdown(this);
+            if (*this).js_vm().is_some_and(|vm| vm.is_shutting_down())
+                && (*this).pump_promise_ref.replace(false)
+            {
+                // The pump promise's reactions never run.
+                FileSink::deref(this);
+            }
+        }
+    }
+
+    /// Shutdown never unwinds the writer: the loop stops ticking, so the
+    /// `onWrite`/`onClose`/EOF callbacks that balance these refs can no
+    /// longer arrive, and a queued FlushPendingFileSinkTask never runs.
+    /// Release them here (a piped stdout whose write once returned
+    /// `.pending` otherwise strands its keep-alive ref forever and the sink
+    /// leaks). Only under `is_shutting_down`: on a live VM those events
+    /// still arrive and must keep the sink alive past its JS cells.
+    /// `clear_keep_alive_ref` is flag-gated, so a (theoretical) late
+    /// `onClose` is a no-op.
+    ///
+    /// # Safety
+    /// `this` is live and the caller holds a ref of its own across the call: these can be all
+    /// the others.
+    unsafe fn release_refs_stranded_by_shutdown(this: *mut FileSink) {
+        // SAFETY: caller contract — its ref keeps `this` live past both releases.
+        unsafe {
+            if (*this).js_vm().is_some_and(|vm| vm.is_shutting_down()) {
+                FileSink::clear_keep_alive_ref(this);
+                if (*this).run_pending_later.has.replace(false) {
+                    // Balances the `ref_()` taken in `run_pending_later()` for
+                    // a task that will never run.
+                    FileSink::deref(this);
+                }
+            }
         }
     }
 
@@ -1432,6 +1465,10 @@ impl crate::webcore::sink::JsSinkType for FileSink {
         // SAFETY: same contract, forwarded.
         unsafe { Self::finalize(this) }
     }
+    unsafe fn controller_finalize(this: *mut Self) {
+        // SAFETY: same contract, forwarded.
+        unsafe { Self::controller_finalize(this) }
+    }
     fn construct(this: &mut core::mem::MaybeUninit<Self>) {
         // `Self::construct()` allocates with `ref_count=1`; that +1 belongs to
         // the C++ `JSFileSink` wrapper `js_construct` is about to create.
@@ -1590,6 +1627,7 @@ impl FileSink {
             stream_error: JsCell::new(None),
             stream_js_error: Cell::new(false),
             stream_bytes: Cell::new(None),
+            pump_promise_ref: Cell::new(false),
             js_sink_ref: JsCell::new(bun_jsc::strong::Optional::empty()),
             abort_handle: bun_jsc::AbortHandle::for_owner::<FileSink>(),
         }
@@ -1715,7 +1753,10 @@ fn on_resolve_stream(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsR
     // SAFETY: `this` is kept alive by the ref taken in `assign_to_stream`; this guard balances it.
     let _guard = unsafe { RefPtr::from_raw(this) };
     // SAFETY: `as_promise_ptr` recovers the `*mut FileSink` stashed by `assign_to_stream`.
-    unsafe { (*this).handle_resolve_stream(global_this) };
+    unsafe {
+        (*this).pump_promise_ref.set(false);
+        (*this).handle_resolve_stream(global_this);
+    }
     Ok(JSValue::UNDEFINED)
 }
 
@@ -1727,7 +1768,10 @@ fn on_reject_stream(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
     // SAFETY: `this` is kept alive by the ref taken in `assign_to_stream`; this guard balances it.
     let _guard = unsafe { RefPtr::from_raw(this) };
     // SAFETY: `as_promise_ptr` recovers the `*mut FileSink` stashed by `assign_to_stream`.
-    unsafe { (*this).handle_reject_stream(global_this, err)? };
+    unsafe {
+        (*this).pump_promise_ref.set(false);
+        (*this).handle_reject_stream(global_this, err)?;
+    }
     Ok(JSValue::UNDEFINED)
 }
 
@@ -1877,6 +1921,7 @@ impl FileSink {
                 self.writer
                     .with_mut(|w| w.enable_keeping_process_alive(self.io_evtloop()));
                 self.ref_();
+                self.pump_promise_ref.set(true);
                 promise_result.then(
                     global_this,
                     std::ptr::from_mut::<FileSink>(self),

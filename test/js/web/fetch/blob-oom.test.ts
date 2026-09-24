@@ -1,7 +1,7 @@
 import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rmSync, truncateSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir, tempDirWithFiles } from "harness";
 import os from "node:os";
 import path from "path";
 
@@ -251,4 +251,64 @@ describeFourGiB.skipIf(isWindows || !fitsOneChild)("Bun.file().arrayBuffer() at 
   test("a file of 2^32 + 1 bytes rejects with the RangeError that new ArrayBuffer() throws for that size", async () => {
     expect(await readSparseFileAsArrayBuffer(2 ** 32 + 1)).toEqual(childPrinted({ error: outOfMemory }));
   }, 120_000);
+});
+
+// arrayBuffer() and bytes() hand a body that was buffered natively to JSC
+// without a copy, and JSC's adopting constructor asserts above
+// MAX_ARRAY_BUFFER_SIZE where the allocating ones throw. A 4 MiB gzip response
+// that inflates to 2^32 + 1 bytes therefore aborted the process that fetched
+// it. Each child buffers a real 4 GiB (about 9 GiB of RSS under ASAN), so the
+// cases stay out of the concurrent batch above and run one at a time.
+describe.skipIf(!fitsOneChild)("natively buffered bodies above the 4 GiB ArrayBuffer limit", () => {
+  function fetchOversizedBody(method: "arrayBuffer" | "bytes"): Promise<ChildResult> {
+    return runChild(`
+      // 64 gzip members of 64 MiB of zeros and one of a single byte: 2^32 + 1 once inflated.
+      const members = Array(64).fill(Bun.gzipSync(Buffer.alloc(64 * 1024 * 1024)));
+      members.push(Bun.gzipSync(Buffer.alloc(1)));
+      const body = Buffer.concat(members);
+      const server = Bun.serve({
+        port: 0,
+        fetch: () => new Response(body, { headers: { "Content-Encoding": "gzip" } }),
+      });
+      const response = await fetch(server.url);
+      const result = await response.${method}().then(
+        buffer => ({ unexpectedByteLength: buffer.byteLength }),
+        e => ({ error: { name: e.name, message: e.message } }),
+      );
+      console.log(JSON.stringify(result));
+      await server.stop(true);
+    `);
+  }
+
+  test("fetch().arrayBuffer() of 2^32 + 1 bytes rejects with the RangeError that new ArrayBuffer() throws for that size", async () => {
+    expect(await fetchOversizedBody("arrayBuffer")).toEqual(childPrinted({ error: outOfMemory }));
+  }, 120_000);
+
+  test("fetch().bytes() of 2^32 + 1 bytes rejects with the RangeError that new Uint8Array() throws for that size", async () => {
+    expect(await fetchOversizedBody("bytes")).toEqual(childPrinted({ error: outOfMemory }));
+  }, 120_000);
+
+  // The utf8 encoding of a 16-bit string body can pass the limit as well (3 bytes
+  // per code unit). Encoding it takes 28 s per call in a debug ASAN build and
+  // 2 s in a release build, so this case runs in release builds only.
+  test.skipIf(isASAN || isDebug)(
+    "a string body with more than 2^32 bytes of utf8 rejects from arrayBuffer() and bytes()",
+    async () => {
+      const result = await runChild(`
+        const body = "\\u20ac".repeat(1431655766); // 3 utf8 bytes each: 2^32 + 2
+        const results = [];
+        for (const method of ["arrayBuffer", "bytes"]) {
+          results.push(
+            await new Response(body)[method]().then(
+              buffer => ({ unexpectedByteLength: buffer.byteLength }),
+              e => ({ error: { name: e.name, message: e.message } }),
+            ),
+          );
+        }
+        console.log(JSON.stringify(results));
+      `);
+      expect(result).toEqual(childPrinted([{ error: outOfMemory }, { error: outOfMemory }]));
+    },
+    120_000,
+  );
 });

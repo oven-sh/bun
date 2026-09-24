@@ -4,6 +4,7 @@ import { readFileSync } from "fs";
 import { bunEnv, bunExe, isIPv6, tls } from "harness";
 import type { IncomingMessage } from "http";
 import { join } from "path";
+import { startRecordingProxy } from "../../web/websocket/proxy-test-utils";
 let url: URL;
 let process: Subprocess<"ignore", "pipe", "ignore"> | null = null;
 beforeAll(async () => {
@@ -516,3 +517,67 @@ it.concurrent.each(["localhost", "127.0.0.1"])(
     expect(result).toEqual({ client: ["open", "close 1006"], server: "client sent alert 47" });
   },
 );
+
+// A server can ask for the client certificate in a renegotiation only (IIS, Apache per-location SSLVerifyClient).
+const nodeKeys = join(import.meta.dir, "..", "test", "fixtures", "keys");
+const agent3 = {
+  cert: readFileSync(join(nodeKeys, "agent3-cert.pem"), "utf8"),
+  key: readFileSync(join(nodeKeys, "agent3-key.pem"), "utf8"),
+};
+
+it("fetch sends the client certificate a renegotiation asks for", async () => {
+  const res = await fetch(url, { keepalive: false, tls: { ca: tls.cert, ...agent3 } });
+  expect({ body: await res.text(), peerCN: res.headers.get("x-peer-cn") }).toEqual({
+    body: "Hello World",
+    peerCN: "agent3",
+  });
+});
+
+it("fetch through a CONNECT proxy sends the client certificate a renegotiation asks for", async () => {
+  // An ambient NO_PROXY applies to an explicit `proxy` option too and would send this request direct.
+  const noProxyKeys = ["NO_PROXY", "no_proxy"];
+  const saved = noProxyKeys.map(key => [key, Bun.env[key]] as const);
+  for (const key of noProxyKeys) Bun.env[key] = "";
+  try {
+    using proxy = await startRecordingProxy();
+    const res = await fetch(url, {
+      keepalive: false,
+      tls: { ca: tls.cert, ...agent3 },
+      proxy: `http://127.0.0.1:${proxy.port}`,
+    });
+    expect({ body: await res.text(), peerCN: res.headers.get("x-peer-cn") }).toEqual({
+      body: "Hello World",
+      peerCN: "agent3",
+    });
+    expect(proxy.requests.map(r => r.requestLine)).toEqual([`CONNECT localhost:${url.port} HTTP/1.1`]);
+  } finally {
+    for (const [key, value] of saved) {
+      if (value === undefined) delete Bun.env[key];
+      else Bun.env[key] = value;
+    }
+  }
+});
+
+it("Bun.connect sends the client certificate a renegotiation asks for", async () => {
+  const response = Promise.withResolvers<string>();
+  let received = "";
+  const socket = await Bun.connect({
+    hostname: url.hostname,
+    port: Number(url.port),
+    tls: { ca: tls.cert, ...agent3 },
+    socket: {
+      open: socket => void socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"),
+      data(_socket, chunk) {
+        received += chunk.toString();
+        if (received.includes("0\r\n\r\n")) response.resolve(received);
+      },
+      error: (_socket, error) => response.reject(error),
+      close: () => response.reject(new Error("closed before the response: " + received)),
+    },
+  });
+  try {
+    expect(await response.promise).toContain("X-Peer-CN: agent3\r\n");
+  } finally {
+    socket.end();
+  }
+});

@@ -29,7 +29,7 @@ use super::SizeType;
 // Re-export the canonical data types from `bun_jsc`.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub use bun_jsc::webcore_types::store::{
+pub(crate) use bun_jsc::webcore_types::store::{
     Bytes, Data, DataTag, File, IsAllAscii, S3, SerializeTag, Store,
 };
 
@@ -39,7 +39,7 @@ pub use bun_jsc::webcore_types::store::{
 // `init`/…) live on the `bun_jsc` types directly.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub trait StoreExt {
+pub(crate) trait StoreExt {
     fn to_any_blob(&mut self) -> Option<super::Any>;
     fn init_s3(
         pathlike: PathLike<'static>,
@@ -61,7 +61,7 @@ pub trait StoreExt {
     fn serialize(&self, writer: &mut impl bun_io::Write) -> Result<(), crate::Error>;
 }
 
-pub trait S3Ext {
+pub(crate) trait S3Ext {
     fn get_credentials_with_options(
         &self,
         options: Option<JSValue>,
@@ -71,24 +71,24 @@ pub trait S3Ext {
     fn unlink(
         &self,
         store: &RefPtr<Store>,
-        global_this: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         extra_options: Option<JSValue>,
     ) -> JsResult<JSValue>;
     /// See `unlink`.
     fn list_objects(
         &self,
         store: &RefPtr<Store>,
-        global_this: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         list_options: JSValue,
         extra_options: Option<JSValue>,
     ) -> JsResult<JSValue>;
 }
 
-pub trait FileExt {
-    fn unlink(&self, global_this: &JSGlobalObject) -> JsResult<JSValue>;
+pub(crate) trait FileExt {
+    fn unlink(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue>;
 }
 
-pub trait BytesExt {
+pub(crate) trait BytesExt {
     #[cfg(unix)]
     fn init_mmap(slice: &'static mut [u8]) -> Bytes
     where
@@ -218,7 +218,7 @@ impl StoreExt for Store {
 }
 
 impl FileExt for File {
-    fn unlink(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    fn unlink(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
         match &self.pathlike {
             PathOrFileDescriptor::Path(path_like) => {
                 // The `*Binding` arg is unused in `AsyncFSTask::create`.
@@ -226,18 +226,19 @@ impl FileExt for File {
                 // SAFETY: `bun_vm()` returns the live per-global VM pointer; the
                 // task is created on the JS thread that owns it.
                 Ok(node_fs::async_::Unlink::create(
-                    global_this,
+                    cx,
                     &binding,
                     node_fs::args::Unlink::owned(path_like.slice().to_vec()),
-                    global_this.bun_vm().as_mut(),
+                    cx.vm().as_mut(),
+                    None,
                 ))
             }
             PathOrFileDescriptor::Fd(_) => Ok(JSPromise::resolved_promise_value(
-                global_this,
+                cx.global(),
                 // `JSGlobalObject::create_invalid_args` lives in the still-gated
                 // `JSGlobalObject.rs`; `ERR_INVALID_ARG_TYPE` (lib.rs) is the
                 // same `ErrorCode::INVALID_ARG_TYPE.fmt(...)` body.
-                global_this.ERR_INVALID_ARG_TYPE(format_args!(
+                cx.global().ERR_INVALID_ARG_TYPE(format_args!(
                     "Is not possible to unlink a file descriptor"
                 )),
             )),
@@ -270,7 +271,7 @@ impl S3Ext for S3 {
     fn unlink(
         &self,
         store: &RefPtr<Store>,
-        global_this: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         extra_options: Option<JSValue>,
     ) -> JsResult<JSValue> {
         struct Wrapper {
@@ -311,19 +312,20 @@ impl S3Ext for S3 {
             }
         }
 
-        let promise = bun_jsc::JSPromiseStrong::init(global_this);
+        let promise = bun_jsc::JSPromiseStrong::init(cx.global());
         let value = promise.value();
-        let aws_options = self.get_credentials_with_options(extra_options, global_this)?;
+        let aws_options = self.get_credentials_with_options(extra_options, cx.global())?;
         // `defer aws_options.deinit()` → Drop handles it.
 
         s3_client::delete(
             &aws_options.credentials,
+            cx.context(),
             self.path(),
             Wrapper::resolve,
             bun_core::heap::into_raw(Wrapper::new(Wrapper {
                 promise,
                 store: store.clone(),
-                global: bun_ptr::BackRef::new(global_this),
+                global: bun_ptr::BackRef::new(cx.global()),
             }))
             .cast::<c_void>(),
             aws_options.request_payer,
@@ -335,12 +337,12 @@ impl S3Ext for S3 {
     fn list_objects(
         &self,
         store: &RefPtr<Store>,
-        global_this: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         list_options: JSValue,
         extra_options: Option<JSValue>,
     ) -> JsResult<JSValue> {
         if !list_options.is_empty_or_undefined_or_null() && !list_options.is_object() {
-            return Err(global_this.throw_invalid_arguments(format_args!(
+            return Err(cx.global().throw_invalid_arguments(format_args!(
                 "S3Client.listObjects() needs a S3ListObjectsOption as it's first argument"
             )));
         }
@@ -387,12 +389,17 @@ impl S3Ext for S3 {
             }
         }
 
-        let promise = bun_jsc::JSPromiseStrong::init(global_this);
+        // (`list_objects` puts its request on the HTTP thread itself: asked here, before there is
+        // a completion to release, as `execute_simple_s3_request` asks for the others.)
+        if crate::webcore::s3::simple_request::nothing_new_leaves(cx.context()) {
+            return Ok(bun_jsc::JSPromise::create(cx.global()).to_js());
+        }
+        let promise = bun_jsc::JSPromiseStrong::init(cx.global());
         let value = promise.value();
-        let aws_options = self.get_credentials_with_options(extra_options, global_this)?;
+        let aws_options = self.get_credentials_with_options(extra_options, cx.global())?;
         // `defer aws_options.deinit()` → Drop handles it.
 
-        let options = s3_client::get_list_objects_options_from_js(global_this, list_options)?;
+        let options = s3_client::get_list_objects_options_from_js(cx.global(), list_options)?;
 
         // Box the wrapper first so the options live on the heap, then hand a
         // borrow to `list_objects` (which only reads them synchronously to
@@ -402,11 +409,12 @@ impl S3Ext for S3 {
             promise,
             store: store.clone(),
             resolved_list_options: options,
-            global: bun_ptr::BackRef::new(global_this),
+            global: bun_ptr::BackRef::new(cx.global()),
         }));
 
         s3_client::list_objects(
             &aws_options.credentials,
+            cx.context(),
             // SAFETY: `wrapper` is freshly leaked and untouched until the
             // callback; this borrow ends before any other access.
             unsafe { &(*wrapper).resolved_list_options },

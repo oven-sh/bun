@@ -13,11 +13,9 @@ use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, SystemError};
 use bun_sys::{self as sys, Fd};
 use bun_threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask};
 
-use crate::webcore::blob::{
-    self, Blob, FileOpener, MkdirpTarget, Retry, SizeType, mkdir_if_not_exists,
-};
+use crate::webcore::blob::{self, Blob, FileOpener, SizeType};
 #[cfg(not(windows))]
-use crate::webcore::blob::{ClosingState, FileCloser};
+use crate::webcore::blob::{ClosingState, FileCloser, MkdirpTarget, Retry, mkdir_if_not_exists};
 use crate::webcore::body;
 
 bun_output::declare_scope!(WriteFile, hidden);
@@ -36,16 +34,16 @@ pub(crate) enum WriteStep {
     Failed,
 }
 
-pub enum WriteFileResultType {
+pub(crate) enum WriteFileResultType {
     Result(SizeType),
     Err(Box<SystemError>),
 }
 
-pub type WriteFileOnWriteFileCallback =
+pub(crate) type WriteFileOnWriteFileCallback =
     fn(ctx: *mut c_void, count: WriteFileResultType) -> jsc::JsResult<()>;
 
 /// The completion token a `WriteFile` keeps across its async I/O.
-pub type WriteFileTask = bun_jsc::Completion<WriteFile>;
+pub(crate) type WriteFileTask = bun_jsc::Completion<WriteFile>;
 
 // SAFETY: the two blobs are native values holding store refs (atomic counts);
 // io-loop registration state and an opaque completion ctx that only the
@@ -55,15 +53,20 @@ unsafe impl Send for WriteFile {}
 impl bun_jsc::JobContext for WriteFile {
     const CANCELLABLE: bool = cfg!(not(windows));
     type OffThread = Self;
-    /// The completion is delivered through `on_complete_callback(ctx, ..)`.
-    type Js = ();
+    /// Whom the write is reported to. (Dropped with the job when that is released unrun: the
+    /// promise then stays pending.)
+    type Js = Box<WriteFilePromise>;
     fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         // Starts the write; finishes from the io loop via the token.
         this.run(done);
         None
     }
-    fn then(this: Self, _: (), cx: &bun_jsc::JsThread<'_>) -> jsc::JsResult<()> {
-        WriteFile::then(this, cx.global())
+    fn then(
+        this: Self,
+        promise: Box<WriteFilePromise>,
+        _: &bun_jsc::JsThread<'_>,
+    ) -> jsc::JsResult<()> {
+        WriteFile::then(this, promise)
     }
     /// As `ReadFile`: a write parked on a full pipe nobody drains is the one
     /// state this job can be stuck in.
@@ -81,12 +84,17 @@ impl bun_jsc::JobContext for WriteFile {
 impl WriteFile {
     /// JS thread: hand a prepared `WriteFile` to the work pool (the job is
     /// its one heap allocation).
-    pub fn schedule(this: WriteFile, global: &JSGlobalObject) {
-        bun_jsc::Job::<WriteFile>::schedule(&global.js_thread(), this, ());
+    #[cfg(not(windows))]
+    pub(crate) fn schedule(
+        this: WriteFile,
+        promise: Box<WriteFilePromise>,
+        cx: &bun_jsc::JsThread<'_>,
+    ) {
+        bun_jsc::Job::<WriteFile>::schedule(cx, this, promise);
     }
 }
 
-pub struct WriteFile {
+pub(crate) struct WriteFile {
     pub(crate) file_blob: Blob,
     #[cfg(not(windows))]
     pub(crate) bytes_blob: Blob,
@@ -103,13 +111,12 @@ pub struct WriteFile {
     pub(crate) io_parking: super::IoParking,
     pub(crate) state: AtomicU8, // ClosingState
 
-    pub(crate) on_complete_ctx: *mut c_void,
-    pub(crate) on_complete_callback: WriteFileOnWriteFileCallback,
     pub(crate) total_written: usize,
 
     #[cfg(not(windows))]
     pub(crate) could_block: bool,
     pub(crate) close_after_io: bool,
+    #[cfg(not(windows))]
     pub(crate) mkdirp_if_not_exists: bool,
 }
 
@@ -147,6 +154,7 @@ impl FileOpener for WriteFile {
             .as_file()
             .pathlike
     }
+    #[cfg(not(windows))]
     fn try_mkdirp(
         &mut self,
         err: bun_sys::Error,
@@ -173,6 +181,7 @@ impl FileOpener for WriteFile {
     }
 }
 
+#[cfg(not(windows))]
 impl MkdirpTarget for WriteFile {
     fn mkdirp_if_not_exists(&self) -> bool {
         self.mkdirp_if_not_exists
@@ -197,7 +206,7 @@ impl WriteFile {
     #[cfg(not(windows))]
     pub(crate) const IO_TAG: io::Tag = io::Tag::WriteFile;
 
-    pub fn on_ready(&mut self) {
+    pub(crate) fn on_ready(&mut self) {
         bun_output::scoped_log!(WriteFile, "WriteFile.onReady()");
         #[cfg(not(windows))]
         if !self.io_parking.fire() {
@@ -276,11 +285,9 @@ impl WriteFile {
     }
 
     #[cfg(not(windows))]
-    pub(crate) fn create_with_ctx(
+    pub(crate) fn create(
         file_blob: Blob,
         bytes_blob: Blob,
-        on_write_file_context: *mut c_void,
-        on_complete_callback: WriteFileOnWriteFileCallback,
         mkdirp_if_not_exists: bool,
     ) -> Result<WriteFile, Error> {
         let write_file = WriteFile {
@@ -299,34 +306,12 @@ impl WriteFile {
             #[cfg(not(windows))]
             io_parking: super::IoParking::new(),
             state: AtomicU8::new(ClosingState::Running as u8),
-            on_complete_ctx: on_write_file_context,
-            on_complete_callback,
             total_written: 0,
             could_block: false,
             close_after_io: false,
             mkdirp_if_not_exists,
         };
         Ok(write_file)
-    }
-
-    #[cfg(not(windows))]
-    pub(crate) fn create<C>(
-        file_blob: Blob,
-        bytes_blob: Blob,
-        context: *mut C,
-        callback: WriteFileOnWriteFileCallback,
-        mkdirp_if_not_exists: bool,
-    ) -> Result<WriteFile, Error> {
-        // The caller supplies a
-        // `*mut c_void`-typed callback directly (see `WriteFilePromise::run`),
-        // so this is just a `.cast()` on `context`.
-        WriteFile::create_with_ctx(
-            file_blob,
-            bytes_blob,
-            context.cast::<c_void>(),
-            callback,
-            mkdirp_if_not_exists,
-        )
     }
 
     // reshaped for borrowck — take (off, len) here and re-derive the slice
@@ -360,9 +345,9 @@ impl WriteFile {
         }
     }
 
-    pub(crate) fn then(mut this: WriteFile, _global: &JSGlobalObject) -> jsc::JsResult<()> {
-        let cb = this.on_complete_callback;
-        let cb_ctx = this.on_complete_ctx;
+    pub(crate) fn then(mut this: WriteFile, promise: Box<WriteFilePromise>) -> jsc::JsResult<()> {
+        let cb: WriteFileOnWriteFileCallback = WriteFilePromise::run;
+        let cb_ctx = bun_core::heap::into_raw(promise).cast::<c_void>();
         let system_error = this.system_error.take();
         let total_written = this.total_written;
         drop(this);
@@ -559,7 +544,9 @@ impl WriteFile {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[cfg(windows)]
-pub(crate) use self::windows_impl::{WriteFileWindows, WriteFileWindowsError};
+pub(crate) use self::windows_impl::{
+    WriteFileWindows, WriteFileWindowsError, WriteFileWindowsMkdirp,
+};
 
 #[cfg(windows)]
 mod windows_impl {
@@ -567,9 +554,9 @@ mod windows_impl {
     use core::ptr::null_mut;
 
     use bun_io::{self as aio, IntrusiveUvFs as _, KeepAlive};
-    // `bun_jsc::EventLoop`/`ManagedTask` are *modules* (namespace
-    // re-exports); the structs live one level deeper.
-    use bun_jsc::{ConcurrentTask, ManagedTask::ManagedTask, event_loop::EventLoop};
+    // `bun_jsc::EventLoop` is a *module* (namespace re-export); the struct
+    // lives one level deeper.
+    use bun_jsc::{ConcurrentTask, event_loop::EventLoop};
     use bun_sys::ReturnCodeExt as _;
     use bun_sys::windows::libuv as uv;
 
@@ -579,6 +566,8 @@ mod windows_impl {
         pub(crate) bytes_blob: Blob,
         pub(crate) on_complete_callback: WriteFileOnWriteFileCallback,
         pub(crate) on_complete_ctx: *mut c_void,
+        /// The context of the script that asked for the write.
+        pub(crate) context: bun_jsc::ContextId,
         pub(crate) mkdirp_if_not_exists: bool,
         pub(crate) uv_bufs: [uv::uv_buf_t; 1],
 
@@ -608,11 +597,37 @@ mod windows_impl {
         }
     }
 
+    /// `mkdirp` finished on the work pool: the hop back to the JS thread. Same pointer as the
+    /// write, its own tag.
+    #[repr(transparent)]
+    pub(crate) struct WriteFileWindowsMkdirp(WriteFileWindows);
+
+    impl bun_event_loop::Taskable for WriteFileWindowsMkdirp {
+        const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::WriteFileWindowsMkdirp;
+        /// Frees nothing: the write is not this task's.
+        unsafe fn release_unrun(_: *mut Self) {}
+        /// Enters no context.
+        unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+            bun_event_loop::ContextId::NONE
+        }
+    }
+
+    impl WriteFileWindowsMkdirp {
+        /// # Safety
+        /// `this` is the live `WriteFileWindows` `on_mkdirp_complete_concurrent` posted;
+        /// `on_mkdirp_complete` may free it.
+        pub(crate) unsafe fn run(this: *mut Self) {
+            // SAFETY: fn contract.
+            unsafe { WriteFileWindows::on_mkdirp_complete(this.cast::<WriteFileWindows>()) };
+        }
+    }
+
     impl WriteFileWindows {
         pub(crate) fn create_with_ctx(
             file_blob: Blob,
             bytes_blob: Blob,
             event_loop: *mut EventLoop,
+            script_context: &bun_jsc::ScriptExecutionContext,
             on_write_file_context: *mut c_void,
             on_complete_callback: WriteFileOnWriteFileCallback,
             mkdirp_if_not_exists: bool,
@@ -632,6 +647,7 @@ mod windows_impl {
                 bytes_blob,
                 on_complete_ctx: on_write_file_context,
                 on_complete_callback,
+                context: script_context.id(),
                 mkdirp_if_not_exists: mkdirp,
                 io_request: bun_core::ffi::zeroed::<uv::fs_t>(),
                 uv_bufs: [uv::uv_buf_t {
@@ -936,18 +952,6 @@ mod windows_impl {
             }
         }
 
-        /// `ManagedTask`-shaped trampoline for [`on_mkdirp_complete`]: takes
-        /// `*mut Self` and returns the event-loop `jsc::JsResult<()>` (always `Ok`: the inner body
-        /// reports a delivery exception itself).
-        fn on_mkdirp_complete_task(this: *mut WriteFileWindows) -> bun_event_loop::JsResult<()> {
-            // SAFETY: `this` is the live Box-allocated `WriteFileWindows` whose
-            // pointer was stashed in `on_mkdirp_complete_concurrent` below;
-            // the JS thread is the sole accessor at this point. `*this` may be
-            // freed inside; not accessed afterward.
-            unsafe { Self::on_mkdirp_complete(this) };
-            Ok(())
-        }
-
         fn on_mkdirp_complete_concurrent(
             ctx: *mut (),
             err_: bun_sys::Result<()>,
@@ -962,8 +966,8 @@ mod windows_impl {
                 bun_sys::Result::Err(e) => Some(e),
                 bun_sys::Result::Ok(()) => None,
             };
-            ticket.post(ConcurrentTask::create(
-                ManagedTask::new::<WriteFileWindows>(this, Self::on_mkdirp_complete_task),
+            ticket.post(ConcurrentTask::create_from(
+                std::ptr::from_mut(this).cast::<WriteFileWindowsMkdirp>(),
             ));
         }
 
@@ -1020,7 +1024,14 @@ mod windows_impl {
         pub(crate) unsafe fn run_from_js_thread(this: *mut Self) -> WriteFileWindowsError {
             // SAFETY: caller contract — `this` is live; copy out everything we
             // need before `deinit` frees the allocation.
-            let (cb, cb_ctx) = unsafe { ((*this).on_complete_callback, (*this).on_complete_ctx) };
+            let (cb, cb_ctx, context) = unsafe {
+                (
+                    (*this).on_complete_callback,
+                    (*this).on_complete_ctx,
+                    (*this).context,
+                )
+            };
+            let _context = bun_jsc::virtual_machine::VirtualMachine::get().enter_context(context);
 
             // SAFETY: caller contract — `this` is live.
             if let Some(err) = unsafe { (*this).to_system_error() } {
@@ -1170,6 +1181,7 @@ mod windows_impl {
 
         pub(crate) fn create<C>(
             event_loop: *mut EventLoop,
+            script_context: &bun_jsc::ScriptExecutionContext,
             file_blob: Blob,
             bytes_blob: Blob,
             context: *mut C,
@@ -1182,6 +1194,7 @@ mod windows_impl {
                 file_blob,
                 bytes_blob,
                 event_loop,
+                script_context,
                 context.cast::<c_void>(),
                 callback,
                 mkdirp_if_not_exists,
@@ -1192,10 +1205,14 @@ mod windows_impl {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct WriteFilePromise {
+pub(crate) struct WriteFilePromise {
     pub(crate) promise: jsc::JSPromiseStrong,
     pub global_this: *const JSGlobalObject,
 }
+
+// SAFETY: a promise handle and the global it was made in: used and dropped on that global's
+// JS thread only (a job's `Js` half).
+unsafe impl bun_jsc::job::JsAffine for WriteFilePromise {}
 
 impl WriteFilePromise {
     pub(crate) fn run(handler: *mut c_void, count: WriteFileResultType) -> jsc::JsResult<()> {
@@ -1237,8 +1254,10 @@ impl WriteFilePromise {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct WriteFileWaitFromLockedValueTask {
+pub(crate) struct WriteFileWaitFromLockedValueTask {
     pub(crate) file_blob: Blob,
+    /// The context of the script that asked for the write.
+    pub(crate) context: bun_jsc::ContextId,
     /// JSC_BORROW: process-lifetime global; `BackRef` so the deref is safe and
     /// (being `Copy`) detaches from `&self` for use across `&mut self` and
     /// past `heap::take(this)`.
@@ -1265,6 +1284,7 @@ impl WriteFileWaitFromLockedValueTask {
         let promise: *mut JSPromise = std::ptr::from_mut(this.promise.get());
         let global_ref = this.global_this;
         let global_this = global_ref.get();
+        let context = global_this.bun_vm().context_of(this.context);
         let mut file_blob = core::mem::take(&mut this.file_blob);
         match value {
             body::Value::Error(err_ref) => {
@@ -1296,7 +1316,7 @@ impl WriteFileWaitFromLockedValueTask {
                 let mut blob = value.use_();
                 // TODO: this should be one promise not two!
                 let new_promise = match blob::write_file_with_source_destination(
-                    global_this,
+                    &global_this.js_thread(context),
                     &mut blob,
                     &mut file_blob,
                     &blob::WriteFileOptions {

@@ -155,7 +155,7 @@ fn fmt_status_text_line(
 /// currently failing, captured as they are printed so structured reporters
 /// get them without re-running the exception formatter.
 #[derive(Default)]
-pub struct TestFailure {
+pub(crate) struct TestFailure {
     pub name: Vec<u8>,
     pub(crate) message: Vec<u8>,
     pub(crate) body: Vec<u8>,
@@ -210,7 +210,7 @@ fn push_stripping_ansi(out: &mut Vec<u8>, input: &[u8]) {
 // - Add stdout/stderr to the JUnit report
 // - Add timestamp field to the JUnit report
 #[derive(Default)]
-pub struct JunitReporter {
+pub(crate) struct JunitReporter {
     pub(crate) contents: Vec<u8>,
     pub(crate) total_metrics: Metrics,
     pub(crate) offset_of_testsuites_value: usize,
@@ -225,7 +225,7 @@ pub struct JunitReporter {
 }
 
 #[derive(Default)]
-pub struct SuiteInfo {
+pub(crate) struct SuiteInfo {
     pub name: Box<[u8]>,
     pub(crate) offset_of_attributes: usize,
     pub(crate) metrics: Metrics,
@@ -237,7 +237,7 @@ pub struct SuiteInfo {
 // unconditional drop is correct.
 
 #[derive(Default, Clone, Copy)]
-pub struct Metrics {
+pub(crate) struct Metrics {
     pub(crate) test_cases: u32,
     pub(crate) assertions: u32,
     pub(crate) failures: u32,
@@ -948,7 +948,7 @@ pub(crate) fn exit_is_requested() -> bool {
     !should_drain_event_loop()
 }
 
-pub struct CommandLineReporter {
+pub(crate) struct CommandLineReporter {
     // `TestRunner<'a>` borrows `TestOptions`/regex from the CLI ctx; the
     // reporter is held in a `Box` local to `TestCommand::exec` which never
     // returns before process exit, so `'static` is sound here. Revisit if the
@@ -979,7 +979,7 @@ pub struct CommandLineReporter {
 }
 
 #[derive(Default)]
-pub struct ReportersConfig {
+pub(crate) struct ReportersConfig {
     pub(crate) dots: bool,
     pub(crate) only_failures: bool,
     pub(crate) junit: Option<Box<JunitReporter>>,

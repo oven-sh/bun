@@ -26,35 +26,29 @@ pub fn decode<C: Copy, R: ReaderContext>(
         }
         let byte_length = reader.int4()?;
         remaining_bytes -= 4;
-        match byte_length {
+        let index = u32::try_from(index).expect("int cast");
+        let more = match byte_length {
             0 => {
                 let mut empty = Data::EMPTY;
-                if !for_each(
-                    context,
-                    u32::try_from(index).expect("int cast"),
-                    Some(&mut empty),
-                )? {
-                    break;
-                }
+                for_each(context, index, Some(&mut empty))
             }
-            NULL_INT4 => {
-                if !for_each(context, u32::try_from(index).expect("int cast"), None)? {
-                    break;
-                }
-            }
+            NULL_INT4 => for_each(context, index, None),
             _ => {
                 if byte_length > remaining_bytes {
                     return Err(AnyPostgresError::InvalidMessage);
                 }
                 remaining_bytes -= byte_length;
                 let mut bytes = reader.bytes(usize::try_from(byte_length).expect("int cast"))?;
-                if !for_each(
-                    context,
-                    u32::try_from(index).expect("int cast"),
-                    Some(&mut bytes),
-                )? {
-                    break;
-                }
+                for_each(context, index, Some(&mut bytes))
+            }
+        };
+        match more {
+            Ok(true) => {}
+            Ok(false) => break,
+            // The rest of the row is skipped first, so the caller can fail this row alone.
+            Err(err) => {
+                reader.skip(usize::try_from(remaining_bytes).expect("int cast"))?;
+                return Err(err);
             }
         }
     }

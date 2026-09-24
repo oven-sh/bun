@@ -1178,6 +1178,8 @@ try {
 | `ERR_POSTGRES_MULTIDIMENSIONAL_ARRAY_NOT_SUPPORTED_YET` | Multidimensional arrays not supported |
 | `ERR_POSTGRES_NULLS_IN_ARRAY_NOT_SUPPORTED_YET`         | NULL values in arrays not supported   |
 
+The client raises these errors while it decodes a result, after the server ran the query. Only that query rejects. The connection stays open, and the other queries on it continue. An `INSERT`, `UPDATE` or `DELETE ... RETURNING` can already be stored at that point, so do not retry a write blindly. To read the value, cast the column to `text` or use `.raw()`.
+
 ### Protocol Errors
 
 | Protocol Errors                         | Description                 |

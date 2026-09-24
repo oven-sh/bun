@@ -476,6 +476,7 @@ function WriteStream(this: FSStream, path: string | null | undefined, options?: 
     this._write = underscoreWriteFast;
     this._writev = undefined;
     this.write = writeFast as any;
+    this._final = finalFast;
     if (fd != null) {
       // Already-open fd (stdio): skip the async _construct round-trip so the
       // stream is born constructed, like node's stdio streams (net.Socket /
@@ -629,6 +630,29 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
     require("internal/streams/destroy").errorOrDestroy(this, e, true);
     return false;
   }
+}
+
+// writeFast hands data to the FileSink without touching _writableState, so
+// Writable's finish logic sees no pending writes. The sink's flush() returns
+// the promise of the backlog still queued behind backpressure; 'finish' and
+// the end() callback wait for it, as node waits for its write callbacks.
+function finalFast(this: FSStream, cb: (err?: any) => void) {
+  const fileSink = this[kWriteStreamFastPath];
+  if (!fileSink || fileSink === true) {
+    cb(null);
+    return;
+  }
+  try {
+    const maybePromise = fileSink.flush();
+    if ($isPromise(maybePromise)) {
+      maybePromise.then(() => cb(null), cb);
+      return;
+    }
+  } catch (err) {
+    cb(err);
+    return;
+  }
+  cb(null);
 }
 
 // This function implementation is not correct.

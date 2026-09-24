@@ -389,6 +389,46 @@ describe("spawn()", () => {
     expect(result.trim()).toBe("hello");
   });
 
+  // The child does not read stdin until the parent tells it to over IPC, so
+  // every write past the pipe buffer sits in the parent's sink when end() runs.
+  it("stdin.end(cb) and 'finish' wait for the backlog to drain", async () => {
+    const child = spawn(
+      bunExe(),
+      [
+        "-e",
+        `let n = 0;
+         process.on("message", () => {
+           process.stdin.on("data", d => { n += d.length; });
+           process.stdin.on("end", () => { process.stdout.write(String(n)); process.disconnect(); });
+         });`,
+      ],
+      { env: bunEnv, stdio: ["pipe", "pipe", "pipe", "ipc"] },
+    );
+    const stdout = new Promise<string>(resolve => {
+      let out = "";
+      child.stdout!.on("data", d => (out += d));
+      child.stdout!.on("end", () => resolve(out));
+    });
+    const exited = new Promise<number | null>(resolve => child.on("exit", resolve));
+
+    const order: string[] = [];
+    const chunk = Buffer.alloc(256 * 1024, 1);
+    for (let i = 0; i < 3; i++) child.stdin!.write(chunk);
+    child.stdin!.write(chunk, () => order.push("write"));
+    child.stdin!.on("finish", () => order.push("finish"));
+    const { promise: ended, resolve: onEnd } = Promise.withResolvers<void>();
+    child.stdin!.end(() => {
+      order.push("end");
+      onEnd();
+    });
+    child.send("go");
+
+    await ended;
+    expect(await stdout).toBe(String(4 * chunk.length));
+    expect(order).toEqual(["write", "end", "finish"]);
+    expect(await exited).toBe(0);
+  });
+
   it("should allow us to timeout hanging processes", async () => {
     const child = spawn(shellExe(), ["-c", "sleep", "2"], { timeout: 3 });
     const start = performance.now();

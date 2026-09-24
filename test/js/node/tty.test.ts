@@ -1,5 +1,6 @@
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
+import { spawn } from "node:child_process";
 import { WriteStream } from "node:tty";
 
 describe("ReadStream.prototype.setRawMode", () => {
@@ -189,6 +190,44 @@ describe("ReadStream.prototype.setRawMode", () => {
       afterStdinCooked: false,
     });
     expect(await proc.exited).toBe(0);
+  });
+});
+
+describe("WriteStream end()", () => {
+  // The parent does not read the child's stdout until the child says it is
+  // about to call end(), so most of the 1 MiB sits in the stream's sink when
+  // end() runs. The callback must wait for it, or process.exit truncates it.
+  it.skipIf(isWindows)("fires the callback after the backlog is flushed", async () => {
+    const child = spawn(
+      bunExe(),
+      [
+        "-e",
+        `const { WriteStream } = require("node:tty");
+         const out = new WriteStream(1);
+         const chunk = Buffer.alloc(256 * 1024, 120);
+         for (let i = 0; i < 4; i++) out.write(chunk);
+         process.send("ending");
+         out.end(() => process.exit(0));`,
+      ],
+      { env: bunEnv, stdio: ["ignore", "pipe", "pipe", "ipc"] },
+    );
+    let received = 0;
+    const read = () => child.stdout!.on("data", d => (received += d.length));
+    child.on("message", read);
+    child.on("exit", read);
+    const stderr = new Promise<string>(resolve => {
+      let err = "";
+      child.stderr!.on("data", d => (err += d));
+      child.stderr!.on("end", () => resolve(err));
+    });
+    const { promise: ended, resolve: onEnd } = Promise.withResolvers<void>();
+    child.stdout!.on("end", onEnd);
+    const exited = new Promise<number | null>(resolve => child.on("exit", resolve));
+
+    await ended;
+    expect(await stderr).toBe("");
+    expect(received).toBe(4 * 256 * 1024);
+    expect(await exited).toBe(0);
   });
 });
 

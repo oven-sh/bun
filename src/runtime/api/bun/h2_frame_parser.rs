@@ -1230,6 +1230,20 @@ impl H2FrameParser {
 
     /// Hold a ref on `self` for the guard's lifetime (across re-entrant calls).
     #[inline]
+    fn abort_stream_for_signal(&self, stream_id: u32, reason: JSValue) {
+        bun_output::scoped_log!(H2FrameParser, "abortListener");
+        reason.ensure_still_alive();
+        let Some(stream) = self.streams.get().get(&stream_id).copied() else {
+            return;
+        };
+        // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
+        let stream = unsafe { &mut *stream };
+        if stream.state != StreamState::CLOSED {
+            let wrapped = Bun__wrapAbortError(&self.global_this, reason);
+            self.abort_stream(stream, wrapped);
+        }
+    }
+
     pub(crate) fn ref_guard(&self) -> RefPtr<Self> {
         // SAFETY: `self` is the live heap allocation.
         unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }
@@ -1345,29 +1359,22 @@ pub(crate) struct SignalRef {
     stream_id: u32,
 }
 
-impl SignalRef {
-    pub(crate) fn abort_listener(this: &mut SignalRef, reason: JSValue) {
-        bun_output::scoped_log!(H2FrameParser, "abortListener");
-        reason.ensure_still_alive();
-        let parser = &*this.parser;
-        let Some(stream) = parser.streams.get().get(&this.stream_id).copied() else {
-            return;
-        };
-        // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
-        let stream = unsafe { &mut *stream };
-        if stream.state != StreamState::CLOSED {
-            let wrapped = Bun__wrapAbortError(&parser.global_this, reason);
-            parser.abort_stream(stream, wrapped);
+bun_jsc::impl_abort_handle_owner!(
+    SignalRef,
+    abort_handle,
+    keep_alive = |this| -> RefPtr<H2FrameParser> {
+        // SAFETY: trait contract — `this` is live.
+        unsafe { (*this).parser.ref_guard() }
+    },
+    |this, cause| {
+        if let bun_jsc::AbortCause::Signal(reason) = cause {
+            // SAFETY: trait contract — `this` is live; aborting the stream frees it.
+            let (parser, stream_id) = unsafe { ((*this).parser.as_ptr(), (*this).stream_id) };
+            // SAFETY: `keep_alive` holds the parser.
+            unsafe { (*parser).abort_stream_for_signal(stream_id, reason) };
         }
     }
-}
-
-bun_jsc::impl_abort_handle_owner!(SignalRef, abort_handle, |this, cause| {
-    if let bun_jsc::AbortCause::Signal(reason) = cause {
-        // SAFETY: trait contract — `this` is live.
-        SignalRef::abort_listener(unsafe { &mut *this }, reason)
-    }
-});
+);
 
 #[derive(Default)]
 struct PendingQueue {

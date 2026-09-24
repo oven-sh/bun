@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDirWithFiles } from "harness";
-import { appendFileSync } from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
 
@@ -1225,16 +1224,16 @@ describe("clone() of a body over an unread native stream keeps the Blob behind i
       ["Request over Bun.file()", file => new Request("http://example.com/", { method: "POST", body: file })],
     ];
     test.each(cases)("%s", async (_, make) => {
-      async function afterCloneAndAppend<T>(read: (file: Bun.BunFile) => T | Promise<T>) {
+      async function afterCloneAndGrowth<T>(read: (file: Bun.BunFile) => T | Promise<T>) {
         const path = join(tempDirWithFiles("body-clone-grow", { "log.txt": "12345" }), "log.txt");
         const file = Bun.file(path);
         make(file).clone();
-        appendFileSync(path, "6789");
+        await Bun.write(path, "123456789");
         return await read(file);
       }
       expect({
-        size: await afterCloneAndAppend(file => file.size),
-        bodyStream: await afterCloneAndAppend(file => Bun.readableStreamToText(new Response(file).body!)),
+        size: await afterCloneAndGrowth(file => file.size),
+        bodyStream: await afterCloneAndGrowth(file => Bun.readableStreamToText(new Response(file).body!)),
       }).toEqual({ size: 9, bodyStream: "123456789" });
     });
   });

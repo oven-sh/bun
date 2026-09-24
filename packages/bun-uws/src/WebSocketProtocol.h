@@ -70,6 +70,8 @@ inline constexpr WebSocketFailure FAIL_INVALID_TEXT{WebSocketFailureKind::Invali
 inline constexpr WebSocketFailure FAIL_INVALID_COMPRESSED_DATA{WebSocketFailureKind::InvalidCompressedData, 1007, "Received invalid compressed data"};
 inline constexpr WebSocketFailure FAIL_TOO_BIG_MESSAGE{WebSocketFailureKind::MessageTooBig, 1009, "Received too big message"};
 inline constexpr WebSocketFailure FAIL_UNSUPPORTED_LENGTH{WebSocketFailureKind::UnsupportedPayloadLength, 1009, "Received too big message"};
+/* RFC 6455 5.2 requires the minimal number of bytes to encode the length */
+inline constexpr WebSocketFailure FAIL_NONCANONICAL_LENGTH{WebSocketFailureKind::UnsupportedPayloadLength, 1002, "Received non-minimal payload length"};
 /* Allocating a buffer for the peer's message failed. See WebSocket::failOutOfMemory(). */
 inline constexpr WebSocketFailure FAIL_OUT_OF_MEMORY{WebSocketFailureKind::OutOfMemory, 1011, "Received message that does not fit in memory"};
 
@@ -486,13 +488,31 @@ public:
                 } else if (payloadLength(src) == 126) {
                     if (length < MEDIUM_MESSAGE_HEADER) {
                         break;
-                    } else if(consumeMessage<MEDIUM_MESSAGE_HEADER, uint16_t>(protocol::cond_byte_swap<uint16_t>(protocol::bit_cast<uint16_t>(src + 2)), src, length, wState, user)) {
+                    }
+                    uint16_t decodedLength = protocol::cond_byte_swap<uint16_t>(protocol::bit_cast<uint16_t>(src + 2));
+                    /* RFC 6455 §5.2 requires the shortest possible length
+                     * encoding; accepting aliases complicates intermediaries. */
+                    if (decodedLength < 126) {
+                        Impl::failConnection(wState, user, FAIL_NONCANONICAL_LENGTH);
+                        return;
+                    } else if(consumeMessage<MEDIUM_MESSAGE_HEADER, uint16_t>(decodedLength, src, length, wState, user)) {
                         return;
                     }
                 } else if (length < LONG_MESSAGE_HEADER) {
                     break;
-                } else if (consumeMessage<LONG_MESSAGE_HEADER, uint64_t>(protocol::cond_byte_swap<uint64_t>(protocol::bit_cast<uint64_t>(src + 2)), src, length, wState, user)) {
-                    return;
+                } else {
+                    uint64_t decodedLength = protocol::cond_byte_swap<uint64_t>(protocol::bit_cast<uint64_t>(src + 2));
+                    /* The most significant bit MUST be zero, and values that
+                     * fit in 16 bits must use the shorter encoding. */
+                    if (decodedLength & (uint64_t(1) << 63)) {
+                        Impl::failConnection(wState, user, FAIL_UNSUPPORTED_LENGTH);
+                        return;
+                    } else if (decodedLength <= UINT16_MAX) {
+                        Impl::failConnection(wState, user, FAIL_NONCANONICAL_LENGTH);
+                        return;
+                    } else if (consumeMessage<LONG_MESSAGE_HEADER, uint64_t>(decodedLength, src, length, wState, user)) {
+                        return;
+                    }
                 }
             }
             /* A server's SHORT_MESSAGE_HEADER includes the 4-byte masking key, but the mask

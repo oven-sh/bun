@@ -38,7 +38,7 @@ use bun_resolver::fs::FileSystem;
 use bun_standalone_graph::StandaloneModuleGraph;
 use bun_sys as sys;
 use bun_url::URL;
-use bun_uws::{self as uws, AnyWebSocket, ResponseKind, WebSocketUpgradeContext};
+use bun_uws::{self as uws, ResponseKind, WebSocketUpgradeContext};
 use bun_uws_sys as uws_sys;
 use bun_wyhash::hash;
 
@@ -61,7 +61,7 @@ pub(super) use super::any_request_context::AnyRequestContext;
 pub(super) use super::file_route::FileRoute;
 pub(super) use super::node_http_response::NodeHTTPResponse;
 pub(super) use super::request_context::{
-    DeferDeinitFlag, RequestContext as NewRequestContext, UpgradeState,
+    DeferDeinitFlag, PendingUpgrade, RequestContext as NewRequestContext, UpgradeState,
 };
 pub(super) use super::server_config::{self as server_config, ServerConfig};
 pub(super) use super::server_web_socket::ServerWebSocket;
@@ -131,6 +131,7 @@ trait RequestCtxOps: RequestCtx {
     fn set_is_transfer_encoding(&self, v: bool);
     fn set_is_waiting_for_request_body(&self, v: bool);
     fn arm_on_data(&self, resp: uws::AnyResponse);
+    fn set_pending_h2_upgrade(&self);
     // body-streaming callback hooks (type-erased, stored on `Body::PendingValue`).
     // `this` must be a live `*mut Self::RequestCtx` cast to `*mut c_void`.
     fn on_start_buffering_callback(this: NonNull<c_void>);
@@ -149,6 +150,11 @@ where
     ThisServer: super::ServerLike + 'static,
 {
     type Server = ThisServer;
+    #[inline]
+    fn set_pending_h2_upgrade(&self) {
+        self.upgrade_context
+            .set(UpgradeState::Pending(PendingUpgrade::Http2));
+    }
     #[inline]
     fn create_in(
         slot: *mut Self,
@@ -346,11 +352,17 @@ pub(super) trait RespLike {
     fn to_any_response(&mut self) -> uws::AnyResponse;
     /// HTTP/2 only: END_STREAM on the HEADERS frame, or `content-length: 0`.
     fn request_body_ended(&mut self) -> bool;
+    /// HTTP/2 only: RFC 8441 Extended CONNECT for `websocket`.
+    fn is_websocket_connect(&mut self) -> bool;
 }
 impl<const SSL: bool> RespLike for uws_sys::NewAppResponse<SSL> {
     const IS_MUX: bool = false;
     #[inline]
     fn request_body_ended(&mut self) -> bool {
+        false
+    }
+    #[inline]
+    fn is_websocket_connect(&mut self) -> bool {
         false
     }
     #[inline]
@@ -399,6 +411,10 @@ impl RespLike for uws_sys::h3::Response {
         false
     }
     #[inline]
+    fn is_websocket_connect(&mut self) -> bool {
+        false
+    }
+    #[inline]
     fn write_status(&mut self, s: &[u8]) {
         uws_sys::h3::Response::write_status(self, s)
     }
@@ -428,6 +444,10 @@ impl RespLike for uws_sys::h2::Response {
     #[inline]
     fn request_body_ended(&mut self) -> bool {
         uws_sys::h2::Response::request_body_ended(self)
+    }
+    #[inline]
+    fn is_websocket_connect(&mut self) -> bool {
+        uws_sys::h2::Response::is_websocket_connect(self)
     }
     #[inline]
     fn write_status(&mut self, s: &[u8]) {
@@ -480,6 +500,31 @@ fn is_valid_sec_websocket_key(key: &[u8]) -> bool {
         && key[..22]
             .iter()
             .all(|&c| c.is_ascii_alphanumeric() || c == b'+' || c == b'/')
+}
+
+#[inline]
+fn is_http_token(value: &[u8]) -> bool {
+    !value.is_empty()
+        && value.iter().all(|&c| {
+            c.is_ascii_alphanumeric()
+                || matches!(
+                    c,
+                    b'!' | b'#'
+                        | b'$'
+                        | b'%'
+                        | b'&'
+                        | b'\''
+                        | b'*'
+                        | b'+'
+                        | b'-'
+                        | b'.'
+                        | b'^'
+                        | b'_'
+                        | b'`'
+                        | b'|'
+                        | b'~'
+                )
+        })
 }
 
 type ServerRequestContext<const SSL: bool, const DEBUG: bool> =
@@ -1320,17 +1365,17 @@ pub(crate) struct PreparedRequestFor<Ctx> {
     pub ctx: *mut Ctx,
 }
 
-// `WebSocketUpgradeServer<SSL>` so `ServerWebSocket::behavior::<Self, SSL>` and
+// `H1WebSocketUpgradeServer<SSL>` so `ServerWebSocket::behavior_h1::<Self, SSL>` and
 // `app.ws(...)` accept `*mut Self` / `*mut UserRoute<..>` as the upgrade ctx.
-impl<const SSL: bool, const DEBUG: bool> uws_sys::web_socket::WebSocketUpgradeServer<SSL>
+impl<const SSL: bool, const DEBUG: bool> uws_sys::web_socket::H1WebSocketUpgradeServer<SSL>
     for NewServer<SSL, DEBUG>
 where
     // NOTE: see the bounded `impl NewServer` below for why these are
-    // spelled out — `on_web_socket_upgrade` lives in that impl.
+    // spelled out — `on_h1_websocket_upgrade` lives in that impl.
     NewRequestContext<Self, SSL, DEBUG, false>: super::request_context::RequestContextHostFns,
     NewRequestContext<Self, SSL, DEBUG, true>: super::request_context::RequestContextHostFns,
 {
-    unsafe fn on_websocket_upgrade(
+    unsafe fn on_h1_websocket_upgrade(
         this: *mut Self,
         res: *mut uws_sys::NewAppResponse<SSL>,
         req: &mut uws_sys::Request,
@@ -1339,9 +1384,9 @@ where
     ) {
         // S008: `Response<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
         // SAFETY: forwarded raw — `this` is only dereferenced after the `id`
-        // dispatch inside `on_web_socket_upgrade`.
+        // dispatch inside `on_h1_websocket_upgrade`.
         unsafe {
-            Self::on_web_socket_upgrade(this, bun_opaque::opaque_deref_mut(res), req, context, id)
+            Self::on_h1_websocket_upgrade(this, bun_opaque::opaque_deref_mut(res), req, context, id)
         };
     }
 }
@@ -1504,7 +1549,13 @@ where
             return Ok(0);
         }
 
-        Ok(self.app_mut().num_subscribers(topic.slice()))
+        let h1 = self.app_mut().num_subscribers(topic.slice());
+        let h2 = self
+            .h2_app
+            .get()
+            .map(|app| bun_opaque::opaque_deref_mut(app).num_subscribers(topic.slice()))
+            .unwrap_or(0);
+        Ok(JSValue::js_number(f64::from(h1.saturating_add(h2))))
     }
 
     pub(crate) fn publish(
@@ -1538,12 +1589,11 @@ where
         if topic.slice().is_empty() {
             return Err(global.throw(format_args!("publish requires a topic string")));
         }
-        let Some(app) = self.app.get() else {
+        if self.app.get().is_none() {
             return Ok(JSValue::js_number(0.0));
-        };
-        let status = AnyWebSocket::publish_with_options(
-            SSL,
-            app.cast::<c_void>(),
+        }
+        // Mixed H1/H2 listeners deliver once to each topic tree and merge their send status.
+        let status = self.as_any_server().publish(
             topic.slice(),
             bytes.slice(),
             payload.opcode(),
@@ -1641,6 +1691,13 @@ where
             )));
         }
 
+        if let Some(upgrader_ptr) = request
+            .request_context
+            .get::<ServerMuxRequestContext<SSL, DEBUG>>()
+        {
+            return self.upgrade_h2(global, request_ptr, upgrader_ptr, options.to_js());
+        }
+
         let Some(upgrader_ptr) = request
             .request_context
             .get::<ServerRequestContext<SSL, DEBUG>>()
@@ -1654,7 +1711,9 @@ where
             return Ok(false);
         }
 
-        let UpgradeState::Pending(upgrade_ctx) = upgrader.upgrade_context.get() else {
+        let UpgradeState::Pending(PendingUpgrade::Http1(upgrade_ctx)) =
+            upgrader.upgrade_context.get()
+        else {
             return Ok(false);
         };
 
@@ -1729,7 +1788,7 @@ where
                 resp.write_status(b"101 Switching Protocols");
                 if let Some(headers) = options.headers() {
                     headers
-                        .to_uws_response_for_websocket_upgrade(SSL, resp.socket().cast::<c_void>());
+                        .to_uws_response_for_websocket_upgrade(ResponseKind::of(resp), resp.as_ptr());
                 }
                 if let Some(c) = cookies_to_write.as_mut()
                     && let Err(err) = c.write(
@@ -1786,7 +1845,7 @@ where
             upgrader.deref();
 
             if resp
-                .upgrade(
+                .upgrade_h1_websocket(
                     ws,
                     sec_websocket_key.slice(),
                     sec_websocket_protocol,
@@ -1805,6 +1864,183 @@ where
         });
 
         upgraded
+    }
+
+    /// RFC 8441: accepts an Extended CONNECT stream as a WebSocket.
+    fn upgrade_h2(
+        &self,
+        global: &JSGlobalObject,
+        request_ptr: *mut Request,
+        upgrader_ptr: *mut ServerMuxRequestContext<SSL, DEBUG>,
+        options: JSValue,
+    ) -> JsResult<bool> {
+        use bun_core::Utf8Bytes;
+        use bun_jsc::HTTPHeaderName;
+
+        // SAFETY: AnyRequestContext's tag matched this exact mux monomorphization.
+        let upgrader = unsafe { &*upgrader_ptr };
+        let is_pending = || {
+            !upgrader.is_aborted_or_ended()
+                && matches!(
+                    upgrader.upgrade_context.get(),
+                    UpgradeState::Pending(PendingUpgrade::Http2)
+                )
+        };
+        if !is_pending() {
+            return Ok(false);
+        }
+        let Some(uws::AnyResponse::H2(resp_ptr)) = upgrader.resp.get() else {
+            return Ok(false);
+        };
+        upgrader.ref_();
+        let _upgrader_guard = scopeguard::guard(upgrader_ptr, |p| {
+            // SAFETY: paired with the ref_ above.
+            unsafe { (*p).deref() }
+        });
+
+        // SAFETY: from_js in `upgrade` returned a live *mut Request.
+        let request = unsafe { &*request_ptr };
+        let Some(head) = request.get_fetch_headers_unless_empty() else {
+            return Ok(false);
+        };
+        let mut header = |name: HTTPHeaderName| {
+            head.fast_get(name)
+                .map_or(Utf8Bytes::EMPTY, |value| value.to_utf8().into_owned())
+        };
+        let sec_websocket_version = header(HTTPHeaderName::SecWebSocketVersion);
+        let sec_websocket_extensions = header(HTTPHeaderName::SecWebSocketExtensions);
+        let offered_protocols = header(HTTPHeaderName::SecWebSocketProtocol);
+        if sec_websocket_version.slice() != b"13" {
+            // Keep native response borrows shorter than every operation that
+            // can re-enter JavaScript (most importantly the later `open`
+            // callback during activation).
+            let resp = bun_opaque::opaque_deref_mut(resp_ptr);
+            resp.write_status(b"426 Upgrade Required");
+            resp.write_header(b"sec-websocket-version", b"13");
+            upgrader.flags.set_has_written_status(true);
+            upgrader.end_without_body(false);
+            return Ok(false);
+        }
+
+        // END_STREAM may arrive while an asynchronous fetch handler is still
+        // deciding whether to upgrade. A WebSocket tunnel must remain
+        // bidirectional.
+        if bun_opaque::opaque_deref_mut(resp_ptr).request_body_ended() {
+            return Ok(false);
+        }
+
+        let options = UpgradeOptions::from_js(global, options)?;
+
+        // The option getters may have already upgraded, responded to, or closed the request.
+        if !is_pending() || bun_opaque::opaque_deref_mut(resp_ptr).request_body_ended() {
+            return Ok(false);
+        }
+
+        let requested_protocols: &[u8] = options.protocol.as_deref().unwrap_or(&offered_protocols);
+        let selected_protocol = requested_protocols
+            .split(|byte| *byte == b',')
+            .next()
+            .map(|value| value.trim_ascii())
+            .filter(|value| is_http_token(value))
+            .filter(|selected| {
+                offered_protocols
+                    .slice()
+                    .split(|byte| *byte == b',')
+                    .map(|offered| offered.trim_ascii())
+                    .any(|offered| offered == *selected)
+            });
+
+        bun_opaque::opaque_deref_mut(resp_ptr).write_status(b"200");
+        if let Some(headers) = options.headers() {
+            headers.to_uws_response_for_websocket_upgrade(ResponseKind::H2, resp_ptr.cast::<c_void>());
+        }
+        if let Some(protocol) = selected_protocol {
+            bun_opaque::opaque_deref_mut(resp_ptr).write_header(b"sec-websocket-protocol", protocol);
+        }
+        if let Some(mut cookies) = upgrader.cookies.replace(None) {
+            cookies.write(global, ResponseKind::H2, resp_ptr.cast::<c_void>())?;
+        }
+
+        let behavior = ServerWebSocket::behavior_h2(
+            &self.config.get().websocket.as_ref().unwrap().to_behavior(),
+        );
+        // Transition the native response before creating a JS-facing
+        // ServerWebSocket. A failed stream adoption therefore cannot strand a
+        // strong wrapper or its AbortSignal without an open/close callback.
+        // SAFETY: `resp_ptr` is the live H2 response of this pending upgrade.
+        let Some(upgraded) = (unsafe {
+            uws_sys::h2::WebSocket::prepare_upgrade(
+                resp_ptr,
+                behavior,
+                sec_websocket_extensions.slice(),
+            )
+        }) else {
+            return Ok(false);
+        };
+
+        // --- After this point, do not throw an exception
+        // SAFETY: re-derived after the JS-running option getters above.
+        let request = unsafe { &*request_ptr };
+        if request.ensure_url().is_err() {
+            request.url.set(BunString::EMPTY);
+        }
+        upgrader.upgrade_context.set(UpgradeState::Upgraded);
+        let signal = upgrader.signal.take();
+        upgrader.resp.set(None);
+        // SAFETY: plain-field detach through the root pointer.
+        unsafe { (*request_ptr).request_context = AnyRequestContext::NULL };
+        upgrader.request_weakref.set(request::WeakRef::EMPTY);
+
+        options.data.ensure_still_alive();
+        let ws = ServerWebSocket::init(
+            &self.config.get().websocket.as_ref().unwrap().handler,
+            options.data,
+            signal,
+        );
+        options.data.ensure_still_alive();
+
+        // Take any tunnel bytes that arrived while JavaScript decided whether
+        // to accept the Extended CONNECT stream. This uses the regular bounded
+        // multiplexed-body buffer and must happen before `deref()` can retire
+        // the request context.
+        let pending_websocket_data = upgrader.request_body_buf.replace(Vec::new());
+        upgrader.flags.set_is_waiting_for_request_body(false);
+
+        {
+            let resp = bun_opaque::opaque_deref_mut(resp_ptr);
+            resp.clear_aborted();
+            resp.clear_on_data();
+            resp.clear_on_writable();
+            resp.clear_timeout();
+        }
+        upgrader.reclaim_promise_cell();
+        upgrader.deref();
+
+        // SAFETY: `upgraded` is the prepared Extended CONNECT stream and `ws`
+        // is kept alive by its JS wrapper until the close callback retires it.
+        if !unsafe { uws_sys::h2::WebSocket::activate(upgraded, ws.cast()) } {
+            // SAFETY: `ws` is stored inline in its JS wrapper, which it keeps alive.
+            unsafe { &*ws }.discard_unopened();
+            return Ok(false);
+        }
+
+        // `on_data` is now owned by the WebSocket adapter. Resume a stream
+        // that the bounded pre-upgrade buffer paused, then synchronously feed
+        // the bytes in their original order after the open callback.
+        // `activate` synchronously invokes user JavaScript. It may close this
+        // stream, stop the server, or reload handlers. Re-derive the response
+        // only after that call and never carry a Rust reference across it.
+        let resp = bun_opaque::opaque_deref_mut(resp_ptr);
+        if resp.is_closed() {
+            return Ok(true);
+        }
+        resp.resume();
+        if !pending_websocket_data.is_empty() {
+            // SAFETY: `upgraded` is the live stream handle returned above and
+            // the Vec remains alive for this synchronous consume call.
+            unsafe { uws_sys::h2::WebSocket::consume(upgraded, &pending_websocket_data) };
+        }
+        Ok(true)
     }
 
     /// Swaps the live server's mutable
@@ -1846,7 +2082,7 @@ where
                 .with_mut(|config| config.on_request = new_config.on_request);
         }
         // Swap on any change, *including* clearing to ZERO when the reload
-        // config omits the handler, so subsequent `on_web_socket_upgrade` /
+        // config omits the handler, so subsequent `on_h1_websocket_upgrade` /
         // `set_routes` stop routing through the node:http path.
         //
         // Never the other direction: a server that was not created as a
@@ -2580,8 +2816,12 @@ where
         // Resolve once, reuse for both `has_request_body()` and the forward to
         // `Ctx::create`.
         let method = method.or_else(|| http::Method::which(ReqLike::method(req)));
+        let is_websocket_connect = RespLike::is_websocket_connect(resp);
 
         let request_body_length: Option<usize> = 'request_body_length: {
+            if is_websocket_connect {
+                break 'request_body_length None;
+            }
             if method.unwrap_or(http::Method::OPTIONS).has_request_body() {
                 let len: usize = 'brk: {
                     if let Some(content_length) = ReqLike::header(req, b"content-length") {
@@ -2669,6 +2909,10 @@ where
         // SAFETY: ctx_slot was just initialized by create_in.
         let ctx = unsafe { &*ctx_slot };
 
+        if is_websocket_connect && !RespLike::request_body_ended(resp) {
+            ctx.set_pending_h2_upgrade();
+        }
+
         server
             .vm()
             .jsc_vm()
@@ -2681,6 +2925,16 @@ where
         ctx.set_request_body(Some(body_hive.clone()));
 
         let _context = server.vm().enter_context(server.context.get());
+
+        if is_websocket_connect && !RespLike::request_body_ended(resp) {
+            // Extended CONNECT tunnel bytes may arrive in the same transport
+            // read as the request HEADERS, before JavaScript calls upgrade().
+            // Buffer them through the normal bounded request-body path, then
+            // hand them to the RFC 6455 codec once the stream is adopted.
+            ctx.set_is_waiting_for_request_body(true);
+            ctx.arm_on_data(any_resp);
+        }
+
         let signal = AbortSignal::new(&server.global());
         ctx.set_signal(signal);
         // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe deref.
@@ -2813,7 +3067,7 @@ where
         })
     }
 
-    fn upgrade_web_socket_user_route(
+    fn upgrade_h1_websocket_user_route(
         this: &UserRoute<SSL, DEBUG>,
         resp: &mut uws_sys::NewAppResponse<SSL>,
         req: &mut uws::Request,
@@ -2852,7 +3106,9 @@ where
         unsafe {
             (*prepared.ctx)
                 .upgrade_context
-                .set(UpgradeState::Pending(NonNull::from(upgrade_ctx)))
+                .set(UpgradeState::Pending(PendingUpgrade::Http1(NonNull::from(
+                    upgrade_ctx,
+                ))))
         };
         let _entered = server_ref.vm().enter_event_loop_scope_without_checkpoint();
         let server_request_list = Self::js_route_list_get_cached(server_js).unwrap();
@@ -2890,7 +3146,7 @@ where
     /// kept raw and only dereferenced *after* dispatching on `id`, so no
     /// wrong-typed `&mut Self` reference is ever materialized (which would be
     /// instant UB regardless of whether it is read).
-    pub(crate) unsafe fn on_web_socket_upgrade(
+    pub(crate) unsafe fn on_h1_websocket_upgrade(
         this: *mut Self,
         resp: &mut uws_sys::NewAppResponse<SSL>,
         req: &mut uws::Request,
@@ -2905,7 +3161,7 @@ where
             // intermediate `&mut Self` was ever created; shared suffices (the
             // route entry is only read).
             let user_route = unsafe { &*this.cast::<UserRoute<SSL, DEBUG>>() };
-            Self::upgrade_web_socket_user_route(user_route, resp, req, upgrade_ctx, None);
+            Self::upgrade_h1_websocket_user_route(user_route, resp, req, upgrade_ctx, None);
             return;
         }
         // Access `this` as *ThisServer only if id is 0
@@ -2972,7 +3228,9 @@ where
             body_hive,
         ));
         ctx.upgrade_context
-            .set(UpgradeState::Pending(NonNull::from(upgrade_ctx)));
+            .set(UpgradeState::Pending(PendingUpgrade::Http1(NonNull::from(
+                upgrade_ctx,
+            ))));
         // Leaked so the ctx (which outlives this stack frame) can hold the
         // pointer; freed via ctx.deinit's request_weakref. Everything below
         // goes through this raw pointer rather than a `&mut Request` reborrow:

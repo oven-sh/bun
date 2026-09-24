@@ -983,7 +983,7 @@ JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject)
 
 /* Http2Response and Http3Response share this surface: headers are buffered
  * as a list and framed by the transport, so there is no Transfer-Encoding. */
-template<typename Response, typename ResponseData>
+template<typename Response, typename ResponseData, bool forWebSocketUpgrade = false>
 static void writeFetchHeadersToStreamResponse(WebCore::FetchHeaders& headers, Response* res)
 {
     auto& internalHeaders = headers.internalHeaders();
@@ -1002,6 +1002,10 @@ static void writeFetchHeadersToStreamResponse(WebCore::FetchHeaders& headers, Re
     }
 
     for (const auto& header : internalHeaders.commonHeaders()) {
+        if constexpr (forWebSocketUpgrade) {
+            if (isReservedWebSocketUpgradeHeader(header.key))
+                continue;
+        }
         if (header.key == WebCore::HTTPHeaderName::ContentLength) {
             if (!(data->state & ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
                 data->state |= ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER;
@@ -1039,12 +1043,21 @@ extern "C" void WebCore__FetchHeaders__toUWSResponse(WebCore::FetchHeaders* arg0
     }
 }
 
-extern "C" void WebCore__FetchHeaders__toUWSResponseForWebSocketUpgrade(WebCore::FetchHeaders* arg0, bool isSSL, void* arg1)
+extern "C" void WebCore__FetchHeaders__toUWSResponseForWebSocketUpgrade(WebCore::FetchHeaders* arg0, UWSResponseKind kind, void* arg1)
 {
-    if (isSSL) {
-        writeFetchHeadersToUWSResponse<true, true>(*arg0, reinterpret_cast<uWS::HttpResponse<true>*>(arg1));
-    } else {
+    switch (kind) {
+    case UWSResponseKind::TCP:
         writeFetchHeadersToUWSResponse<false, true>(*arg0, reinterpret_cast<uWS::HttpResponse<false>*>(arg1));
+        break;
+    case UWSResponseKind::SSL:
+        writeFetchHeadersToUWSResponse<true, true>(*arg0, reinterpret_cast<uWS::HttpResponse<true>*>(arg1));
+        break;
+    case UWSResponseKind::H2:
+        writeFetchHeadersToStreamResponse<uWS::Http2Response, uWS::Http2ResponseData, true>(*arg0, reinterpret_cast<uWS::Http2Response*>(arg1));
+        break;
+    case UWSResponseKind::H3:
+        writeFetchHeadersToStreamResponse<uWS::Http3Response, uWS::Http3ResponseData, true>(*arg0, reinterpret_cast<uWS::Http3Response*>(arg1));
+        break;
     }
 }
 

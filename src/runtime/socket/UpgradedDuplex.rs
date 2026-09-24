@@ -803,8 +803,7 @@ fn on_writable(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>
     Ok(JSValue::UNDEFINED)
 }
 
-/// `cb` of one `duplex.write()` / `duplex.end()`; the last one drains. An error is
-/// re-dispatched as `write EPIPE` on the next tick (called again with the wrapper as `err`).
+/// `cb` of one `duplex.write()`; an error re-enters here next tick as `err == js_wrapper`.
 #[bun_jsc::host_fn]
 fn on_write_done(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     bun_output::scoped_log!(UpgradedDuplex, "onWriteDone");

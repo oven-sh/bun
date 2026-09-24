@@ -84,6 +84,8 @@ test.concurrent("import('bun:main') from a preload (before the module map is pop
 });
 
 const isSlowBuild = isDebug || isASAN;
+// A reload test spawns a child and waits for several reloads. A debug build on
+// a busy machine needs more than the default 5 s for that (measured: up to 7 s).
 const reloadTestTimeout = isSlowBuild ? 60_000 : 30_000;
 // How long a --hot or --watch child can print nothing before its entry is saved again.
 const resaveAfter = isSlowBuild ? 10_000 : 3_000;

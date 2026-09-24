@@ -212,7 +212,13 @@ describe("WriteStream end()", () => {
       { env: bunEnv, stdio: ["ignore", "pipe", "pipe", "ipc"] },
     );
     let received = 0;
-    const read = () => child.stdout!.on("data", d => (received += d.length));
+    let reading = false;
+    // 'exit' is the fallback for a child that dies before it sends "ending".
+    const read = () => {
+      if (reading) return;
+      reading = true;
+      child.stdout!.on("data", d => (received += d.length));
+    };
     child.on("message", read);
     child.on("exit", read);
     const stderr = new Promise<string>(resolve => {

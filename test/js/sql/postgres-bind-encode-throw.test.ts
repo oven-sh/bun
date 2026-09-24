@@ -111,11 +111,14 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     later.execute();
     const [nestedResult, laterResult] = await Promise.all([nested, settled(later)]);
 
-    // The connection may be lost (the server rejects the mixed frame), but
-    // every query settles, and one that resolves has its own row.
-    expect(outer).toBe("boom after dispatch");
-    expect([[{ nested: "nested value" }], "ERR_POSTGRES_CONNECTION_CLOSED"]).toContainEqual(nestedResult);
-    expect([[{ nested: "later value" }], "ERR_POSTGRES_CONNECTION_CLOSED"]).toContainEqual(laterResult);
+    // The server rejects the mixed frame and closes the connection. Both queries
+    // were written to it, so both reject. Neither hangs or gets the other's row.
+    expect({ outer, nested: nestedResult, later: laterResult }).toEqual({
+      outer: "boom after dispatch",
+      nested: "ERR_POSTGRES_CONNECTION_CLOSED",
+      later: "ERR_POSTGRES_CONNECTION_CLOSED",
+    });
+    // The pool reconnects.
     expect(await sql`SELECT ${"after"}::text AS v`).toEqual([{ v: "after" }]);
   });
 });

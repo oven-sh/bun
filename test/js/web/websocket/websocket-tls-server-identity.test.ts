@@ -653,9 +653,11 @@ describe.concurrent("WebSocket tls.checkServerIdentity", () => {
         },
       },
     });
+    // The first event decides. A close with no error before it must fail the assertion, not hang.
     const outcome = await new Promise<string>(resolve => {
       ws.on("open", () => resolve("open"));
       ws.on("error", () => resolve("error"));
+      ws.on("close", code => resolve(`close ${code}`));
     });
     expect({ outcome, calls, sni: server.sni }).toEqual({ outcome: "error", calls: ["localhost"], sni: ["localhost"] });
     expect(await server.receivedInTotal()).toBe("");

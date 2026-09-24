@@ -939,8 +939,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if this.socket.get().is_detached() {
             return Ok(());
         }
-        // A native writer owns the drain while it can still write. After the
-        // shutdown only a parked node:net end callback is left, which the JS drain completes.
+        // After the shutdown the native writer is done; a parked node:net end callback needs the JS drain.
         if this.native_callback.get().on_writable() && !this.socket.get().is_shutdown() {
             return Ok(());
         }

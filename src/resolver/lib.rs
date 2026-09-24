@@ -58,7 +58,9 @@ pub use result::{
     MatchStatus, PathPair, PendingResolution, PendingResolutionTag, Result, ResultFlags,
     ResultUnion,
 };
-pub use standalone_module_graph::StandaloneModuleGraph;
+pub use standalone_module_graph::{
+    BytecodeModule, LINKED_BYTECODE_REGION_COUNT, StandaloneModuleGraph,
+};
 
 /// `bun_resolver::fs` namespace; re-exports from `fs_full` plus the
 /// in-tree types (`FileSystem`, `RealFS`, `Entry`, ...).

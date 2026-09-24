@@ -51,6 +51,48 @@ macro_rules! init_p {
     }};
 }
 
+/// What `Parser::parse_only` parsed.
+pub struct ParsedOnly<'p, 'a> {
+    pub stmts: &'p [js_ast::Stmt],
+    p: &'p P<'a, false, false>,
+}
+
+impl<'a> ParsedOnly<'_, 'a> {
+    /// An unvisited identifier is its spelling.
+    #[inline]
+    pub fn name_of(&self, r#ref: js_ast::Ref) -> &'a [u8] {
+        self.p.load_name_from_ref(r#ref)
+    }
+    /// Where the parameters of the async arrow at `at` start.
+    pub fn async_arrow_parameters(&self, at: js_ast::Loc) -> Option<i32> {
+        self.starts()?
+            .async_arrow_parameters
+            .get(&at.start)
+            .copied()
+    }
+    /// Where the expression after the `=>` at `at` starts.
+    pub fn arrow_expression_body(&self, at: js_ast::Loc) -> Option<i32> {
+        self.starts()?
+            .arrow_expression_bodies
+            .get(&at.start)
+            .copied()
+    }
+    /// Where the class element whose name or static block is at `at` starts.
+    pub fn class_element(&self, at: js_ast::Loc) -> Option<i32> {
+        self.starts()?.class_elements.get(&at.start).copied()
+    }
+    fn starts(&self) -> Option<&crate::p::StartsForParseOnly> {
+        self.p.starts_for_parse_only.as_ref()
+    }
+    pub fn import_path(&self, import_record_index: u32) -> &[u8] {
+        self.p
+            .import_records
+            .items()
+            .get(import_record_index as usize)
+            .map_or(&[], |record| record.path.text)
+    }
+}
+
 pub struct Parser<'a> {
     pub(crate) options: Options<'a>,
     pub(crate) lexer: js_lexer::Lexer<'a>,
@@ -88,6 +130,8 @@ pub struct Options<'a> {
     pub allow_unresolved: &'a options::AllowUnresolved,
 
     pub module_type: options::ModuleType,
+    /// The source is one of JavaScriptCore's builtins: `@name` is a name.
+    pub jsc_builtin_syntax: bool,
     pub output_format: options::Format,
 
     pub transform_only: bool,
@@ -138,6 +182,7 @@ impl<'a> Default for Options<'a> {
             warn_about_unbundled_modules: true,
             allow_unresolved: &options::AllowUnresolved::DEFAULT,
             module_type: options::ModuleType::Unknown,
+            jsc_builtin_syntax: false,
             output_format: options::Format::Esm,
             transform_only: false,
             import_meta_main_value: None,
@@ -224,6 +269,7 @@ impl<'a> Options<'a> {
             warn_about_unbundled_modules: self.warn_about_unbundled_modules,
             allow_unresolved: self.allow_unresolved,
             module_type: self.module_type,
+            jsc_builtin_syntax: self.jsc_builtin_syntax,
             output_format: self.output_format,
             transform_only: self.transform_only,
             import_meta_main_value: self.import_meta_main_value,
@@ -297,6 +343,7 @@ impl<'a> Options<'a> {
             warn_about_unbundled_modules: true,
             allow_unresolved: &options::AllowUnresolved::DEFAULT,
             module_type: options::ModuleType::Unknown,
+            jsc_builtin_syntax: false,
             output_format: options::Format::Esm,
             transform_only: false,
             import_meta_main_value: None,
@@ -329,6 +376,7 @@ impl<'a> Parser<'a> {
         // Must be set before the priming `next()` so leading comments are seen.
         lexer.track_comments = options.features.minify_identifiers;
         lexer.track_react_suppressions = options.features.react_compiler.is_enabled();
+        lexer.jsc_builtin_syntax = options.jsc_builtin_syntax;
         lexer.step();
         lexer.next()?;
         // Copy the lexer's `NonNull<Log>` so both handles share one provenance
@@ -374,6 +422,46 @@ impl<'a> Parser<'a> {
                 self._parse::<false>()
             }
         }
+    }
+
+    /// Parses, and visits nothing: `f` gets the statements as they were written (nothing folded, dropped or bound).
+    /// `Err`: the source does not parse.
+    #[cold]
+    pub fn parse_only<R>(mut self, f: impl FnOnce(&ParsedOnly<'_, 'a>) -> R) -> Result<R, Error> {
+        type Pi<'a> = P<'a, false, false>;
+        let lexer = core::mem::replace(
+            &mut self.lexer,
+            js_lexer::Lexer::init_without_reading(
+                self.bump.alloc(bun_ast::Log::default()),
+                self.source,
+                self.bump,
+            ),
+        );
+        let options = core::mem::take(&mut self.options);
+        let mut __p = init_p!(Pi<'_>;
+            self.bump, self.log, self.source, self.define, lexer, options);
+        // SAFETY: `init_p!` only yields after `init` succeeded.
+        let p: &mut Pi<'_> = unsafe { __p.assume_init_mut() };
+        p.starts_for_parse_only = Some(Default::default());
+        if p.lexer.token == js_lexer::T::THashbang {
+            p.lexer.next()?;
+        }
+        if p.log().errors > self.orig_error_count {
+            return Err(crate::Error::SyntaxError);
+        }
+        let mut opts = ParseStatementOptions {
+            scope: StatementScope::Module,
+            ..Default::default()
+        };
+        let stmts = p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts)?;
+        // What the parser only logs is an error all the same: the statements are its best guess.
+        if p.log().errors > self.orig_error_count {
+            return Err(crate::Error::SyntaxError);
+        }
+        Ok(f(&ParsedOnly {
+            stmts: stmts.as_slice(),
+            p,
+        }))
     }
 
     /// Bundler-only scan pass (see `bundler/cache.rs`). Never reached from

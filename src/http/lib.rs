@@ -1538,7 +1538,10 @@ pub(crate) fn get_cert_error_from_no(error_no: i32) -> crate::Error {
         59 => CertError::SUITE_B_INVALID_SIGNATURE_ALGORITHM,
         60 => CertError::SUITE_B_LOS_NOT_ALLOWED,
         61 => CertError::SUITE_B_CANNOT_SIGN_P_384_WITH_P_256,
-        62 => CertError::HOSTNAME_MISMATCH,
+        // The verdict of the in-handshake server identity check.
+        uws::us_bun_verify_error_t::HOSTNAME_MISMATCH => {
+            return crate::Error::ERR_TLS_CERT_ALTNAME_INVALID;
+        }
         63 => CertError::EMAIL_MISMATCH,
         64 => CertError::IP_ADDRESS_MISMATCH,
         65 => CertError::INVALID_CALL,
@@ -1671,6 +1674,15 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
+    /// Whether the outer socket's peer carries the name `check_server_identity` matches after the handshake.
+    pub(crate) fn server_identity(&self, ssl: &mut boringssl::c::SSL) -> boringssl::ServerIdentity {
+        let native = self.socket_verification() == PeerVerification::Native;
+        boringssl::server_identity(
+            ssl,
+            native.then(|| get_tls_hostname(self, self.http_proxy.is_some())),
+        )
+    }
+
     /// `PooledSocket::verification` to record when releasing the outer socket.
     fn pooled_socket_verification(&self) -> PeerVerification {
         self.flags
@@ -1759,8 +1771,7 @@ impl<'a> HTTPClient<'a> {
                     } else {
                         // we check with native code if the cert is valid
                         // fast path
-                        // SAFETY: x509 is a live *mut X509 borrowed from cert_chain
-                        if boringssl::check_x509_server_identity(unsafe { &mut *x509 }, hostname) {
+                        if uws::check_server_identity(ssl, hostname) {
                             return true;
                         }
                     }
@@ -1878,7 +1889,11 @@ impl<'a> HTTPClient<'a> {
                     socket.set_inline_reject();
                 }
 
-                if crate::session_cache::eligible(self) {
+                if let Some(raw_socket) = socket
+                    .socket
+                    .get()
+                    .filter(|_| crate::session_cache::eligible(self))
+                {
                     let want_tunnel = self.http_proxy.is_some() && self.url.is_https();
                     // SAFETY: `ssl_ptr` is live and pre-handshake (guarded by
                     // `SSL_is_init_finished == 0` above); `get_ssl_ctx` returns
@@ -1887,6 +1902,7 @@ impl<'a> HTTPClient<'a> {
                     // every SSL attached to their socket group.
                     unsafe {
                         crate::session_cache::install(
+                            raw_socket,
                             ssl_ptr,
                             self.get_ssl_ctx::<true>(),
                             self.connected_url.hostname,
@@ -4121,14 +4137,22 @@ impl<'a> HTTPClient<'a> {
 
     /// Decodes what has arrived under the consumer's budget. Returns whether to report bytes.
     fn process_received_body(&mut self, is_final_chunk: bool) -> crate::Result<bool> {
-        let max_output = self.decompress_output_cap();
-        // Nothing is decoded for a paused consumer (a tunnelled socket keeps reading anyway).
-        if max_output != usize::MAX
-            && self.state.encoding.is_compressed()
-            && self.signals.is_receive_paused()
-        {
-            self.state.flags.decompress_output_pending = true;
-            return Ok(false);
+        let mut max_output = self.decompress_output_cap();
+        if max_output != usize::MAX && self.state.encoding.is_compressed() {
+            // Nothing is decoded for a paused consumer (a tunnelled socket keeps reading anyway).
+            if self.signals.is_receive_paused() {
+                self.state.flags.decompress_output_pending = true;
+                return Ok(false);
+            }
+            // A body that one libdeflate call can inflate waits whole for its consumer.
+            if is_final_chunk && self.state.wants_exact_size_inflate() {
+                if self.signals.hold_for_consumer() {
+                    self.state.flags.decompress_output_pending = true;
+                    return Ok(false);
+                }
+                // A consumer attached after the cap was read.
+                max_output = self.decompress_output_cap();
+            }
         }
         // `process_body_buffer` takes `&mut self.state`, so the bytes move out first.
         let buffer = core::mem::take(&mut self.state.get_body_buffer().list);
@@ -4704,11 +4728,11 @@ impl<'a> HTTPClient<'a> {
             || self.signals.body_receive_mode.is_some();
         if is_done || is_streaming || content_length.is_none() {
             let is_final_chunk = is_done;
+            // A body that arrived whole keeps the libdeflate fast path: it may be held.
+            if !is_final_chunk {
+                self.state.flags.is_libdeflate_fast_path_disabled = true;
+            }
             let processed = self.process_received_body(is_final_chunk)?;
-
-            // We can only use the libdeflate fast path when we are not streaming
-            // If we ever call processBodyBuffer again, it cannot go through the fast path.
-            self.state.flags.is_libdeflate_fast_path_disabled = true;
 
             let total_received = self.state.total_body_received;
             self.report_progress(total_received);

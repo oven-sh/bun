@@ -116,21 +116,33 @@ impl Drop for HeadersRef {
 
 /// Errors the owning fetch `Response`'s body on abort (Fetch spec "abort a fetch" step 4).
 pub(crate) struct BodyAbortListener {
-    response: WeakRef,
+    abort_handle: bun_jsc::AbortHandle,
+    /// `Response` owns `Box<Self>`, so a ref-counted pointer here would cycle.
+    response: bun_ptr::ParentRef<Response, bun_ptr::Mut>,
     global: GlobalRef,
     /// The context of the script that fetched: the body's error is reported to it.
     context: bun_jsc::ContextId,
 }
 
-impl bun_jsc::abort_signal::OwnedAbortListener for BodyAbortListener {
-    fn on_abort(&mut self, reason: JSValue) {
+bun_jsc::impl_abort_handle_owner!(
+    BodyAbortListener,
+    abort_handle,
+    keep_alive = |this| -> RefPtr<Response> {
+        // SAFETY: the `Response` drops this box, and with it the handle, before it goes.
+        unsafe { RefPtr::init_ref((*this).response.as_mut_ptr()) }
+    },
+    |this, cause| {
+        if let bun_jsc::AbortCause::Signal(reason) = cause {
+            // SAFETY: the `Response` that owns the box is kept alive.
+            unsafe { (*this).on_abort(reason) }
+        }
+    }
+);
+
+impl BodyAbortListener {
+    fn on_abort(&self, reason: JSValue) {
         reason.ensure_still_alive();
-        let Some(response) = self.response.get().map(core::ptr::from_mut) else {
-            return;
-        };
-        // SAFETY: `get` returned a live `Response`; nothing has run since.
-        let response = unsafe { RefPtr::init_ref(response) };
-        let global = self.global;
+        let (response, global) = (self.response, self.global);
         let _context = global.bun_vm().enter_context(self.context);
         if !matches!(
             response.get_body_value(),
@@ -212,7 +224,7 @@ pub(crate) struct Response {
     reported_estimated_size: Cell<usize>,
 
     /// Fetch's `AbortSignal` listener; survives `FetchTasklet` teardown so a fully-buffered body is still errored.
-    abort_listener: JsCell<Option<bun_jsc::abort_signal::AbortListenerHandle>>,
+    abort_listener: JsCell<Option<Box<BodyAbortListener>>>,
 }
 
 impl Default for Response {
@@ -475,22 +487,29 @@ impl Response {
         <Self as BodyMixin>::detach_readable_stream(self, global_object)
     }
 
-    /// SAFETY: `this` is a live heap `Response`, with the provenance of its allocation.
+    /// Install a [`BodyAbortListener`] so abort reaches this body after `FetchTasklet` has detached.
+    ///
+    /// SAFETY: `this` must be a live heap `Response` (stored as the listener's [`ParentRef`]).
     pub(crate) unsafe fn attach_abort_signal(
         this: *mut Response,
         global: &JSGlobalObject,
         signal: &AbortSignal,
         context: bun_jsc::ContextId,
     ) {
-        let listener = Box::new(BodyAbortListener {
-            // SAFETY: caller contract.
-            response: unsafe { WeakRef::init_ref(this) },
+        let listener = bun_core::heap::into_raw(Box::new(BodyAbortListener {
+            abort_handle: bun_jsc::AbortHandle::for_owner::<BodyAbortListener>(),
+            // SAFETY: caller contract; `this` is live and owns the box.
+            response: unsafe { bun_ptr::ParentRef::from_raw_mut(this) },
             global: GlobalRef::new(global),
             context,
-        });
-        let handle = signal.listen_owned(listener);
+        }));
+        // SAFETY: `listener` is a live heap allocation; both calls keep its provenance.
+        let listener = unsafe {
+            bun_jsc::AbortHandle::follow_owner(listener, signal.ref_());
+            bun_core::heap::take(listener)
+        };
         // SAFETY: caller contract; `this` is live.
-        unsafe { (*this).abort_listener.set(handle) };
+        unsafe { (*this).abort_listener.set(Some(listener)) };
     }
 
     #[inline]

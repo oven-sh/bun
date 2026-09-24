@@ -22,7 +22,6 @@ use bun_http::lshpack;
 use bun_jsc::AbortSignal;
 use bun_jsc::ErrorCode as JscErrorCode;
 use bun_jsc::StringJsc as _;
-use bun_jsc::abort_signal::AbortListener;
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
@@ -1340,7 +1339,7 @@ pub(crate) struct Stream {
 }
 
 pub(crate) struct SignalRef {
-    signal: bun_jsc::AbortSignalRef,
+    abort_handle: bun_jsc::AbortHandle,
     // TODO: We should not need this ref counting here, since Parser owns Stream
     parser: RefPtr<H2FrameParser>,
     stream_id: u32,
@@ -1363,13 +1362,12 @@ impl SignalRef {
     }
 }
 
-impl Drop for SignalRef {
-    fn drop(&mut self) {
-        // Release our listener; dropping `signal` then unrefs it.
-        let this = std::ptr::from_mut(self).cast::<c_void>();
-        self.signal.clean_native_bindings(this);
+bun_jsc::impl_abort_handle_owner!(SignalRef, abort_handle, |this, cause| {
+    if let bun_jsc::AbortCause::Signal(reason) = cause {
+        // SAFETY: trait contract — `this` is live.
+        SignalRef::abort_listener(unsafe { &mut *this }, reason)
     }
-}
+});
 
 #[derive(Default)]
 struct PendingQueue {
@@ -1882,15 +1880,16 @@ impl Stream {
     }
 
     pub(crate) fn attach_signal(&mut self, parser: &H2FrameParser, signal: &mut AbortSignal) {
-        // we need a stable pointer to know what signal points to what stream_id + parser
-        let mut signal_ref = Box::new(SignalRef {
-            signal: signal.ref_(),
+        let signal_ref = bun_core::heap::into_raw(Box::new(SignalRef {
+            abort_handle: bun_jsc::AbortHandle::for_owner::<SignalRef>(),
             parser: parser.ref_guard(),
             stream_id: self.id,
-        });
-        // `signal_ref` is heap-allocated and outlives the listener registration
-        // (cleared via `detach` in `Drop for SignalRef`).
-        signal.listen(&raw mut *signal_ref);
+        }));
+        // SAFETY: `signal_ref` is a live heap allocation; both calls keep its provenance.
+        let signal_ref = unsafe {
+            bun_jsc::AbortHandle::follow_owner(signal_ref, signal.ref_());
+            bun_core::heap::take(signal_ref)
+        };
         self.signal = Some(signal_ref);
     }
 
@@ -1955,14 +1954,6 @@ impl Stream {
         if let Some(signal) = self.signal.take() {
             drop(signal);
         }
-    }
-}
-
-// Route AbortSignal callbacks through the trait —
-// `bun_jsc::abort_signal::listen` expects `*mut C: AbortListener`.
-impl AbortListener for SignalRef {
-    fn on_abort(&mut self, reason: JSValue) {
-        SignalRef::abort_listener(self, reason);
     }
 }
 

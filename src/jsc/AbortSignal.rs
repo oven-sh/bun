@@ -40,13 +40,6 @@ unsafe extern "C" {
     // comparison on the C++ side (removes the listener entry whose `ctx == arg1`);
     // never dereferenced, so no caller-side precondition beyond the `&AbortSignal`.
     safe fn WebCore__AbortSignal__cleanNativeBindings(arg0: &AbortSignal, arg1: *mut c_void);
-    safe fn WebCore__AbortSignal__addOwnedListener(
-        signal: &AbortSignal,
-        ctx: *mut c_void,
-        call: unsafe extern "C" fn(*mut c_void, JSValue),
-        destroy: unsafe extern "C" fn(*mut c_void),
-    ) -> *mut NativeAbortListener;
-    fn Bun__NativeAbortListener__cancel(listener: *mut NativeAbortListener);
     safe fn WebCore__AbortSignal__create(arg0: &JSGlobalObject) -> JSValue;
     safe fn WebCore__AbortSignal__fromJS(value0: JSValue) -> *mut AbortSignal;
     safe fn WebCore__AbortSignal__ref(arg0: &AbortSignal) -> *mut AbortSignal;
@@ -75,66 +68,9 @@ unsafe extern "C" {
     safe fn Bun__wrapAbortError(global_object: &JSGlobalObject, cause: JSValue) -> JSValue;
 }
 
-bun_opaque::opaque_ffi! {
-    /// Opaque FFI handle to `Bun::NativeAbortListener`.
-    pub struct NativeAbortListener;
-}
-
-/// A listener the signal owns: it is live for the whole of `on_abort`, and freed after.
-pub trait OwnedAbortListener: 'static {
-    fn on_abort(&mut self, reason: JSValue);
-}
-
-/// Keeps an [`OwnedAbortListener`] registered; dropping it cancels the listener.
-pub struct AbortListenerHandle(NonNull<NativeAbortListener>);
-
-impl Drop for AbortListenerHandle {
-    fn drop(&mut self) {
-        // SAFETY: the handle holds the one ref `addOwnedListener` returned.
-        unsafe { Bun__NativeAbortListener__cancel(self.0.as_ptr()) }
-    }
-}
-
-/// Abort-callback monomorphization for `listen`. Implement on your context type.
-pub trait AbortListener {
-    fn on_abort(&mut self, reason: JSValue);
-}
-
 impl AbortSignal {
-    pub fn listen<C: AbortListener>(&self, ctx: *mut C) -> &AbortSignal {
-        extern "C" fn callback<C: AbortListener>(ptr: *mut c_void, reason: JSValue) {
-            // SAFETY: ptr was registered below as `*mut C`; C++ calls back on
-            // the same thread before `cleanNativeBindings` removes it.
-            let val = unsafe { bun_ptr::callback_ctx::<C>(ptr) };
-            C::on_abort(val, reason);
-        }
-        self.add_listener(ctx.cast::<c_void>(), callback::<C>)
-    }
-
-    /// Runs `listener` when the signal aborts; at once, returning `None`, if it already has.
-    pub fn listen_owned<L: OwnedAbortListener>(
-        &self,
-        listener: Box<L>,
-    ) -> Option<AbortListenerHandle> {
-        unsafe extern "C" fn call<L: OwnedAbortListener>(ctx: *mut c_void, reason: JSValue) {
-            // SAFETY: `ctx` is the `Box<L>` below, which C++ frees only after this returns.
-            unsafe { (*ctx.cast::<L>()).on_abort(reason) }
-        }
-        unsafe extern "C" fn destroy<L: OwnedAbortListener>(ctx: *mut c_void) {
-            // SAFETY: `ctx` is the `Box<L>` below; C++ calls this exactly once.
-            unsafe { bun_core::heap::destroy(ctx.cast::<L>()) }
-        }
-        let ctx = bun_core::heap::into_raw(listener).cast::<c_void>();
-        NonNull::new(WebCore__AbortSignal__addOwnedListener(
-            self,
-            ctx,
-            call::<L>,
-            destroy::<L>,
-        ))
-        .map(AbortListenerHandle)
-    }
-
-    pub fn add_listener(
+    /// For [`AbortHandle`](crate::AbortHandle), which removes `ctx` before it moves or drops.
+    pub(crate) fn add_listener(
         &self,
         ctx: *mut c_void,
         callback: unsafe extern "C" fn(*mut c_void, JSValue),
@@ -146,7 +82,7 @@ impl AbortSignal {
         self
     }
 
-    pub fn clean_native_bindings(&self, ctx: *mut c_void) {
+    pub(crate) fn clean_native_bindings(&self, ctx: *mut c_void) {
         WebCore__AbortSignal__cleanNativeBindings(self, ctx)
     }
 

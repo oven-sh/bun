@@ -169,6 +169,92 @@ describe.concurrent.skipIf(isWindows)(
   () => {
     const probe = path.join(import.meta.dir, "fd-nonblock-fixture.js");
 
+    // Newline-delimited JSON events from a child's stderr, one at a time, plus the raw remainder at EOF.
+    function jsonLines(stream: ReadableStream<Uint8Array>) {
+      const reader = stream.getReader();
+      const seen: any[] = [];
+      let buf = "";
+      return {
+        seen,
+        async next() {
+          while (true) {
+            const nl = buf.indexOf("\n");
+            if (nl >= 0) {
+              const v = JSON.parse(buf.slice(0, nl));
+              buf = buf.slice(nl + 1);
+              seen.push(v);
+              return v;
+            }
+            const { value, done } = await reader.read();
+            if (done) throw new Error("stderr closed early: " + JSON.stringify(seen) + " " + JSON.stringify(buf));
+            buf += Buffer.from(value).toString();
+          }
+        },
+        async rest() {
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) return buf;
+            buf += Buffer.from(value).toString();
+          }
+        },
+      };
+    }
+
+    // Child that writes 1 MiB to stdout and reports write()'s return, then 'drain' (plus `drainExtra`, evaluated then) on stderr.
+    const writerScript = (prelude: string, drainExtra = "{}") => `${prelude}
+      const ret = process.stdout.write(Buffer.alloc(1 << 20, "A"));
+      require("fs").writeSync(2, JSON.stringify({ ret }) + "\\n");
+      process.stdout.once("drain", () => require("fs").writeSync(2, JSON.stringify({ drained: true, ...(${drainExtra}) }) + "\\n"));`;
+    // Reader end of a shell pipe that only starts draining stdin on SIGUSR1, so the writer is guaranteed to hit a full pipe.
+    const gatedReader = `process.on("SIGUSR1", async () => { for await (const c of Bun.stdin.stream()) require("fs").writeSync(1, c); process.exit(0); });
+      setInterval(() => {}, 1 << 30);
+      require("fs").writeSync(2, JSON.stringify({ reader: process.pid }) + "\\n");`;
+
+    // Socketpair stdout (Bun.spawn "pipe") with a lazy parent: nothing reads stdout until write() has reported.
+    async function expectDrainOverSocket(prelude: string, expectedBytes: number) {
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", writerScript(prelude)],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        lazy: true,
+      });
+      const events = jsonLines(proc.stderr);
+      expect(await events.next()).toEqual({ ret: false });
+      const [stdout, drained, exitCode] = await Promise.all([proc.stdout.bytes(), events.next(), proc.exited]);
+      expect(stdout.byteLength).toBe(expectedBytes);
+      expect(drained).toEqual({ drained: true });
+      expect(exitCode).toBe(0);
+    }
+
+    // Real pipe(2) via sh, reader gated on SIGUSR1.
+    async function expectDrainOverPipe(
+      prelude: string,
+      drainExtra: string,
+      expectedDrain: object,
+      expectedBytes: number,
+    ) {
+      await using proc = spawn({
+        cmd: ["sh", "-c", `"$0" -e "$1" | "$0" -e "$2"`, bunExe(), writerScript(prelude, drainExtra), gatedReader],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const events = jsonLines(proc.stderr);
+      let readerPid: number | undefined, ret: boolean | undefined;
+      while (readerPid === undefined || ret === undefined) {
+        const v = await events.next();
+        if ("reader" in v) readerPid = v.reader;
+        if ("ret" in v) ret = v.ret;
+      }
+      expect(ret).toBe(false);
+      process.kill(readerPid!, "SIGUSR1");
+      expect(await events.next()).toEqual(expectedDrain);
+      const [stdout, exitCode] = await Promise.all([proc.stdout.bytes(), proc.exited]);
+      expect(stdout.byteLength).toBe(expectedBytes);
+      expect(exitCode).toBe(0);
+    }
+
     test("an inherit child sees blocking fd 1 and 2 after the parent wrote to process.stdout/stderr", async () => {
       await using proc = spawn({
         cmd: [
@@ -235,44 +321,9 @@ describe.concurrent.skipIf(isWindows)(
     });
 
     test("process.stdout.write to a full pipe still returns false and emits drain", async () => {
-      // lazy: nothing reads the child's stdout until we ask, so the 1 MiB write must hit a full pipe.
-      await using proc = spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `const ret = process.stdout.write(Buffer.alloc(1 << 20, "A"));
-         process.stderr.write(JSON.stringify({ ret }) + "\\n");
-         process.stdout.once("drain", () => process.stderr.write(JSON.stringify({ drained: true }) + "\\n"));`,
-        ],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-        lazy: true,
-      });
-      const stderr = proc.stderr.getReader();
-      let first = "";
-      while (!first.includes("\n")) {
-        const { value, done } = await stderr.read();
-        if (done) break;
-        first += Buffer.from(value).toString();
-      }
-      expect(JSON.parse(first.split("\n")[0])).toEqual({ ret: false });
-      const [stdout, rest, exitCode] = await Promise.all([
-        proc.stdout.bytes(),
-        (async () => {
-          let out = first.slice(first.indexOf("\n") + 1);
-          while (true) {
-            const { value, done } = await stderr.read();
-            if (done) return out;
-            out += Buffer.from(value).toString();
-          }
-        })(),
-        proc.exited,
-      ]);
-      expect(stdout.byteLength).toBe(1 << 20);
-      expect(JSON.parse(rest.trim())).toEqual({ drained: true });
-      expect(exitCode).toBe(0);
+      await expectDrainOverSocket("", 1 << 20);
     });
+
     // Bun.spawn's "pipe" is a socketpair; these go through sh so fd 1 is a real pipe(2).
     test("console.log and process.stdout.write are not truncated over a real pipe", async () => {
       await using proc = spawn({
@@ -295,97 +346,16 @@ describe.concurrent.skipIf(isWindows)(
     });
 
     test("process.stdout.write to a full real pipe returns false and emits drain; a child spawned after still gets a blocking fd 1", async () => {
-      // The reader only starts draining on SIGUSR1, so the writer's 1 MiB must hit a full pipe first.
-      const reader = `process.on("SIGUSR1", async () => { for await (const c of Bun.stdin.stream()) require("fs").writeSync(1, c); process.exit(0); });
-      setInterval(() => {}, 1 << 30);
-      require("fs").writeSync(2, JSON.stringify({ reader: process.pid }) + "\\n");`;
-      const writer = `const ret = process.stdout.write(Buffer.alloc(1 << 20, "A"));
-      require("fs").writeSync(2, JSON.stringify({ ret }) + "\\n");
-      process.stdout.once("drain", () => {
-        const r = Bun.spawnSync([process.execPath, ${JSON.stringify(probe)}, "1"], { stdio: ["inherit", "inherit", "pipe"], env: { ...process.env, PROBE_OUT_FD: "2" } });
-        require("fs").writeSync(2, JSON.stringify({ drained: true, probe: r.stderr.toString().trim() }) + "\\n");
-      });`;
-      await using proc = spawn({
-        cmd: ["sh", "-c", `"$0" -e "$1" | "$0" -e "$2"`, bunExe(), writer, reader],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const lines: any[] = [];
-      let buf = "";
-      const stderr = proc.stderr.getReader();
-      const next = async () => {
-        while (true) {
-          const nl = buf.indexOf("\n");
-          if (nl >= 0) {
-            const line = buf.slice(0, nl);
-            buf = buf.slice(nl + 1);
-            const v = JSON.parse(line);
-            lines.push(v);
-            return v;
-          }
-          const { value, done } = await stderr.read();
-          if (done) throw new Error("stderr closed early: " + JSON.stringify(lines) + " " + JSON.stringify(buf));
-          buf += Buffer.from(value).toString();
-        }
-      };
-      let readerPid: number | undefined, ret: boolean | undefined;
-      while (readerPid === undefined || ret === undefined) {
-        const v = await next();
-        if ("reader" in v) readerPid = v.reader;
-        if ("ret" in v) ret = v.ret;
-      }
-      expect(ret).toBe(false);
-      process.kill(readerPid!, "SIGUSR1");
-      const drained = await next();
-      expect(drained).toEqual({ drained: true, probe: "1:blocking" });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.bytes(), proc.exited]);
-      expect(stdout.byteLength).toBe(1 << 20);
-      expect(exitCode).toBe(0);
+      const probeFd1 = `{ probe: Bun.spawnSync([process.execPath, ${JSON.stringify(probe)}, "1"], { stdio: ["inherit", "inherit", "pipe"], env: { ...process.env, PROBE_OUT_FD: "2" } }).stderr.toString().trim() }`;
+      await expectDrainOverPipe("", probeFd1, { drained: true, probe: "1:blocking" }, 1 << 20);
     });
 
     // Spawning an inherit child clears O_NONBLOCK on the shared description (above). The parent's own process.stdout must
     // stay asynchronous after that where the OS has a per-call nonblocking write: sockets everywhere (send + MSG_DONTWAIT /
     // MSG_NBIO), pipes on Linux (pwritev2 + RWF_NOWAIT). macOS pipes have no such call, so they behave like Node there.
+    const afterInheritSpawn = `process.stdout.write("x"); Bun.spawnSync(["true"], { stdio: ["inherit", "inherit", "inherit"] });`;
     test("process.stdout.write on a socket stays asynchronous after an inherit spawn cleared O_NONBLOCK", async () => {
-      await using proc = spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `process.stdout.write("x");
-           Bun.spawnSync(["true"], { stdio: ["inherit", "inherit", "inherit"] });
-           const ret = process.stdout.write(Buffer.alloc(1 << 20, "A"));
-           process.stderr.write(JSON.stringify({ ret }) + "\\n");
-           process.stdout.once("drain", () => process.stderr.write(JSON.stringify({ drained: true }) + "\\n"));`,
-        ],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-        lazy: true,
-      });
-      const stderr = proc.stderr.getReader();
-      let first = "";
-      while (!first.includes("\n")) {
-        const { value, done } = await stderr.read();
-        if (done) break;
-        first += Buffer.from(value).toString();
-      }
-      expect(JSON.parse(first.split("\n")[0])).toEqual({ ret: false });
-      const [stdout, rest, exitCode] = await Promise.all([
-        proc.stdout.bytes(),
-        (async () => {
-          let out = first.slice(first.indexOf("\n") + 1);
-          while (true) {
-            const { value, done } = await stderr.read();
-            if (done) return out;
-            out += Buffer.from(value).toString();
-          }
-        })(),
-        proc.exited,
-      ]);
-      expect(stdout.byteLength).toBe(1 + (1 << 20));
-      expect(JSON.parse(rest.trim())).toEqual({ drained: true });
-      expect(exitCode).toBe(0);
+      await expectDrainOverSocket(afterInheritSpawn, 1 + (1 << 20));
     });
 
     // pwritev2(RWF_NOWAIT) works on pipes from Linux 6.4 (FMODE_NOWAIT on pipes); older kernels behave like macOS/Node here.
@@ -398,50 +368,7 @@ describe.concurrent.skipIf(isWindows)(
     test.skipIf(!pipesHaveNowait)(
       "process.stdout.write on a pipe stays asynchronous after an inherit spawn cleared O_NONBLOCK (RWF_NOWAIT)",
       async () => {
-        const reader = `process.on("SIGUSR1", async () => { for await (const c of Bun.stdin.stream()) require("fs").writeSync(1, c); process.exit(0); });
-        setInterval(() => {}, 1 << 30);
-        require("fs").writeSync(2, JSON.stringify({ reader: process.pid }) + "\\n");`;
-        const writer = `process.stdout.write("x");
-        Bun.spawnSync(["true"], { stdio: ["inherit", "inherit", "inherit"] });
-        const ret = process.stdout.write(Buffer.alloc(1 << 20, "A"));
-        require("fs").writeSync(2, JSON.stringify({ ret }) + "\\n");
-        process.stdout.once("drain", () => require("fs").writeSync(2, JSON.stringify({ drained: true }) + "\\n"));`;
-        await using proc = spawn({
-          cmd: ["sh", "-c", `"$0" -e "$1" | "$0" -e "$2"`, bunExe(), writer, reader],
-          env: bunEnv,
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const lines: any[] = [];
-        let buf = "";
-        const stderr = proc.stderr.getReader();
-        const next = async () => {
-          while (true) {
-            const nl = buf.indexOf("\n");
-            if (nl >= 0) {
-              const line = buf.slice(0, nl);
-              buf = buf.slice(nl + 1);
-              const v = JSON.parse(line);
-              lines.push(v);
-              return v;
-            }
-            const { value, done } = await stderr.read();
-            if (done) throw new Error("stderr closed early: " + JSON.stringify(lines) + " " + JSON.stringify(buf));
-            buf += Buffer.from(value).toString();
-          }
-        };
-        let readerPid: number | undefined, ret: boolean | undefined;
-        while (readerPid === undefined || ret === undefined) {
-          const v = await next();
-          if ("reader" in v) readerPid = v.reader;
-          if ("ret" in v) ret = v.ret;
-        }
-        expect(ret).toBe(false);
-        process.kill(readerPid!, "SIGUSR1");
-        expect(await next()).toEqual({ drained: true });
-        const [stdout, exitCode] = await Promise.all([proc.stdout.bytes(), proc.exited]);
-        expect(stdout.byteLength).toBe(1 + (1 << 20));
-        expect(exitCode).toBe(0);
+        await expectDrainOverPipe(afterInheritSpawn, "{}", { drained: true }, 1 + (1 << 20));
       },
     );
   },

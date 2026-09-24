@@ -687,9 +687,7 @@ impl PosixBufferedReader {
                         Err(e) => return Err(e),
                     }
                 }
-                if file_type == FileType::NonblockingPipe {
-                    return sys::read(fd, buf);
-                }
+                // Poll first even when labelled nonblocking: some callers (FileResponseStream) label by fd kind, not by O_NONBLOCK.
                 match bun_core::is_readable(fd) {
                     bun_core::Pollable::Ready | bun_core::Pollable::Hup => sys::read(fd, buf),
                     bun_core::Pollable::NotReady => Err(sys::Error::retry().with_fd(fd)),

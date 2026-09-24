@@ -149,7 +149,8 @@ long us_ssl_ctx_live_count(void) {
  *     free_func also decrements ssl_ctx_live so the counter tracks ACTUAL
  *     destruction (refcount→0), not every SSL_CTX_free.
  *   - us_sni_ex_idx (SSL_CTX): per-domain userdata (uWS HttpRouter*).
- *   - us_ssl_rare_ex_idx (SSL): us_ssl_rare_t, the only per-SSL slot.
+ *   - us_ssl_rare_ex_idx (SSL): us_ssl_rare_t.
+ *   - us_ssl_wrapper_ex_idx (SSL): the owner of an SSL that no us_socket_t drives.
  *
  * SSL_CTX creation runs from both the JS thread (SecureContext, Bun.connect/
  * listen) and the HTTP-client thread (HTTPContext.initWithOpts). A racy `<0`
@@ -165,6 +166,8 @@ static int us_ctx_cache_ex_idx = -1;
  * not replace such a store with the process-shared default roots. */
 static int us_ctx_user_ca_ex_idx = -1;
 static int us_ssl_rare_ex_idx = -1;
+/* (SSL) The SSLWrapper (src/uws/lib.rs) that owns this SSL. Not set on the SSL of a us_socket_t. */
+static int us_ssl_wrapper_ex_idx = -1;
 /* BIO type of the loop's shared BIO: tells a us_socket_t's SSL from an SSLWrapper's. */
 static int us_ssl_bio_type = 0;
 /* (SSL_CTX) packed client-certificate policy of a Bun.serve per-serverName
@@ -235,10 +238,14 @@ static void us_ssl_rare_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
 #define US_SSL_PENDING_SESSION_MAX 65536
 #define US_SSL_PENDING_KEYLOG_LINE_MAX 4096
 
-/* SSLWrapper (src/uws/lib.rs) routes these to the wrapper that is driving `ssl`. */
-extern int us_ssl_wrapper_server_identity(SSL *ssl);
-extern void us_ssl_wrapper_new_session(SSL *ssl, SSL_SESSION *session);
-extern void us_ssl_wrapper_keylog(SSL *ssl, const char *line, size_t length);
+/* Defined in src/uws/lib.rs. `wrapper` is what us_ssl_set_wrapper stored. */
+extern int us_ssl_wrapper_server_identity(void *wrapper, SSL *ssl);
+extern void us_ssl_wrapper_new_session(void *wrapper, SSL_SESSION *session);
+extern void us_ssl_wrapper_keylog(void *wrapper, const char *line, size_t length);
+
+static inline void *us_ssl_wrapper(const SSL *ssl) {
+  return us_ssl_wrapper_ex_idx >= 0 ? SSL_get_ex_data(ssl, us_ssl_wrapper_ex_idx) : NULL;
+}
 
 static int us_ssl_is_socket(const SSL *ssl) {
   BIO *bio = SSL_get_wbio(ssl);
@@ -278,8 +285,9 @@ static void us_ssl_keylog_cb(const SSL *ssl, const char *line) {
   if (line_len == 0 || line_len > US_SSL_PENDING_KEYLOG_LINE_MAX) {
     return;
   }
-  if (!us_ssl_is_socket(ssl)) {
-    us_ssl_wrapper_keylog((SSL *)ssl, line, line_len);
+  void *wrapper = us_ssl_wrapper(ssl);
+  if (wrapper) {
+    us_ssl_wrapper_keylog(wrapper, line, line_len);
     return;
   }
   struct us_socket_t *s = us_ssl_socket(ssl);
@@ -296,8 +304,9 @@ static void us_ssl_keylog_cb(const SSL *ssl, const char *line) {
 }
 
 static int us_ssl_new_session_cb(SSL *ssl, SSL_SESSION *session) {
-  if (!us_ssl_is_socket(ssl)) {
-    us_ssl_wrapper_new_session(ssl, session);
+  void *wrapper = us_ssl_wrapper(ssl);
+  if (wrapper) {
+    us_ssl_wrapper_new_session(wrapper, session);
     return 0;
   }
   struct us_socket_t *s = us_ssl_socket(ssl);
@@ -361,6 +370,7 @@ static void us_ex_idx_init(void) {
   us_ctx_user_ca_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ctx_sni_policy_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ssl_rare_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_rare_free);
+  us_ssl_wrapper_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ssl_bio_type = BIO_get_new_index() | BIO_TYPE_SOURCE_SINK;
 }
 
@@ -408,6 +418,16 @@ static struct us_ssl_rare_t *us_ssl_rare_ensure(SSL *ssl) {
   rare = us_calloc(1, sizeof(*rare));
   if (!rare || !SSL_set_ex_data(ssl, us_ssl_rare_ex_idx, rare)) Bun__outOfMemory();
   return rare;
+}
+
+void us_ssl_set_wrapper(SSL *ssl, void *wrapper) {
+  us_ex_idx_ensure();
+  if (!SSL_set_ex_data(ssl, us_ssl_wrapper_ex_idx, wrapper)) Bun__outOfMemory();
+}
+
+void *us_ssl_wrapper_from_verify(void *ctx) {
+  SSL *ssl = X509_STORE_CTX_get_ex_data(ctx, SSL_get_ex_data_X509_STORE_CTX_idx());
+  return ssl ? us_ssl_wrapper(ssl) : NULL;
 }
 
 /* `sink` lives until SSL_free, then `on_free(sink)` runs. Replaces the sink set before. */
@@ -1074,7 +1094,8 @@ static int us_client_cert_cb(SSL *ssl, void *arg) {
   if (SSL_is_server(ssl) || !SSL_get_certificate(ssl)) return 1;
   /* A failed chain is the verify recorder's verdict. */
   if (SSL_get_verify_result(ssl) != X509_V_OK) return 1;
-  if (!us_ssl_is_socket(ssl)) return us_ssl_wrapper_server_identity(ssl);
+  void *wrapper = us_ssl_wrapper(ssl);
+  if (wrapper) return us_ssl_wrapper_server_identity(wrapper, ssl);
   struct us_socket_t *s = us_ssl_socket(ssl);
   if (!s) return 1;
   if (!s->ssl_identity_rejected && !us_dispatch_server_identity(s, ssl)) {

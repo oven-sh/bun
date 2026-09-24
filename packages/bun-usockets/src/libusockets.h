@@ -558,6 +558,10 @@ long us_ssl_ctx_live_count(void);
 /* Appends the certificates in the PEM `content` to `ctx`'s trust store;
  * returns 0 when nothing could be added. */
 int us_ssl_ctx_add_ca_cert(struct ssl_ctx_st *ctx, const char *content);
+/* For an SSL that no us_socket_t drives: its callbacks go to `wrapper`, which must outlive `ssl`. */
+void us_ssl_set_wrapper(struct ssl_st *ssl, void *wrapper);
+/* `ctx` is the X509_STORE_CTX of a verify callback. */
+void *us_ssl_wrapper_from_verify(void *ctx);
 /* Owner data for us_dispatch_new_session. `on_free(sink)` runs once, on SSL_free. */
 void us_socket_set_session_sink(us_socket_r s, void *sink, void (*on_free)(void *));
 void *us_socket_session_sink(us_socket_r s);

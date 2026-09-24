@@ -1351,23 +1351,20 @@ b {
 `);
     },
   });
-  // An onResolve plugin answers some url() records, and the resolver gets the
-  // ones the plugin declines. A plugin has no way to say what it removed, so a
-  // returned path that still ends with the suffix kept it.
+  // An onResolve result cannot say what the plugin removed, so a record that a
+  // plugin answers gets its suffix back, as before. The resolver gets the
+  // records that the plugin declines.
   itBundled("css/URLLiteralHashInPathPlugin", {
     files: {
       "/entry.css": /* css */ `
-        .a { background: url("./C#/logo.svg") }
-        .b { mask: url("virtual:sprites.svg#icon") }
+        .a { mask: url("virtual:sprites.svg#icon") }
+        .b { mask: url("echo:small.svg#icon") }
         .c { background: url("./D#/declined.svg") }
         .d { mask: url("./sprites.svg?declined#c") }
         .e { mask: url("#sprite") }
         .f { background: url("?theme=dark") }
-        .g { background: url("#dir/logo.svg") }
       `,
-      "/C#/logo.svg": Buffer.alloc(128 * 1024 + 1, "A").toString(),
       "/D#/declined.svg": Buffer.alloc(128 * 1024 + 1, "D").toString(),
-      "/#dir/logo.svg": Buffer.alloc(128 * 1024 + 1, "G").toString(),
       "/sprites.svg": Buffer.alloc(128 * 1024 + 1, "Z").toString(),
     },
     loader: {
@@ -1375,9 +1372,15 @@ b {
     },
     outdir: "/out",
     plugins(builder) {
-      builder.onResolve({ filter: /C#|^#dir/ }, args => ({ path: join(dirname(args.importer), args.path) }));
+      // The plugin removes the suffix itself.
       builder.onResolve({ filter: /^virtual:/ }, args => ({
         path: join(dirname(args.importer), args.path.slice("virtual:".length).replace(/#.*$/, "")),
+      }));
+      // The plugin hands the specifier back in its own namespace.
+      builder.onResolve({ filter: /^echo:/ }, args => ({ path: args.path, namespace: "echo" }));
+      builder.onLoad({ filter: /.*/, namespace: "echo" }, () => ({
+        contents: `<svg xmlns="http://www.w3.org/2000/svg"><mask id="icon"/></svg>`,
+        loader: "file",
       }));
       // The whole specifier is the suffix.
       builder.onResolve({ filter: /^#sprite$|^\?theme=/ }, args => ({
@@ -1386,13 +1389,14 @@ b {
       builder.onResolve({ filter: /declined/ }, () => undefined);
     },
     onAfterBundle(api) {
+      const echoed = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg"><mask id="icon"/></svg>`).toString("base64");
       api.expectFile("/out/entry.css").toEqualIgnoringWhitespace(/* css */ `
 /* entry.css */
 .a {
-  background: url("./logo-chnz2qpd.svg");
+  mask: url("./sprites-mrrzcz3w.svg#icon");
 }
 .b {
-  mask: url("./sprites-mrrzcz3w.svg#icon");
+  mask: url("data:application/octet-stream;base64,${echoed}#icon");
 }
 .c {
   background: url("./declined-cxysrr0j.svg");
@@ -1405,9 +1409,6 @@ b {
 }
 .f {
   background: url("./sprites-mrrzcz3w.svg?theme=dark");
-}
-.g {
-  background: url("./logo-cm5ryxbh.svg");
 }
 `);
     },

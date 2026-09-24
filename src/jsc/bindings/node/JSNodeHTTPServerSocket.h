@@ -54,6 +54,9 @@ public:
     unsigned ended : 1 = 0;
     unsigned upgraded : 1 = 0;
     unsigned peer_cert_verified : 1 = 0;
+    /* Set by onClose() for the peerEnded / closeError getters: the peer's FIN, the error of a failed read. */
+    unsigned peer_ended : 1 = 0;
+    int closeReadError = 0;
     const char* peerCertVerifyErrorCode = nullptr;
     JSC::Strong<JSNodeHTTPServerSocket> strongThis = {};
 
@@ -156,7 +159,7 @@ public:
 
     void detach();
     void syncPeerCertificateVerification();
-    void onClose();
+    void onClose(int readError, bool peerEnded);
     void onDrain();
     void onData(const char* data, int length, bool last);
 

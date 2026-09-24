@@ -32,6 +32,7 @@
 #include "ScriptExecutionContext.h"
 #include "headers-handwritten.h"
 #include "ZigGlobalObject.h"
+#include "ModuleGraph.h"
 #include "FormatStackTraceForJS.h"
 #include "headers.h"
 #include "JSEnvironmentVariableMap.h"
@@ -861,11 +862,9 @@ extern "C" void Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, u
     auto fired = process->wrapped().emit(Identifier::fromString(vm, "beforeExit"_s), arguments);
     RETURN_IF_EXCEPTION(scope, );
     if (fired) {
-        if (globalObject->m_nextTickQueue) {
-            auto nextTickQueue = globalObject->m_nextTickQueue.get();
-            nextTickQueue->drain(vm, globalObject);
-            RETURN_IF_EXCEPTION(scope, );
-        }
+        // The ticks and the microtasks of the listeners run now, with or without a tick queue (node: MakeCallback).
+        globalObject->drainMicrotasks();
+        RETURN_IF_EXCEPTION(scope, );
     }
 }
 
@@ -1332,6 +1331,8 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     auto& vm = JSC::getVM(globalObject);
     if (vm.hasPendingTerminationException()) [[unlikely]]
         return true;
+    // The process's handlers are the realm's: they run as it, whichever Bun.ModuleGraph's error this is.
+    Bun::ErrorHandlerContextScope inRealmsContext(globalObject, nullptr);
 
     // Node exits with code 6 (InvalidFatalExceptionMonkeyPatching) when process._fatalException
     // is replaced with a non-callable. Top exception scope: no caller declares a ThrowScope
@@ -1486,6 +1487,8 @@ extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalO
     if (vm.hasPendingTerminationException()) [[unlikely]]
         return true;
     auto* process = globalObject->processObject();
+    // As in Bun__handleUncaughtException.
+    Bun::ErrorHandlerContextScope inRealmsContext(globalObject, nullptr);
 
     auto eventType = Identifier::fromString(vm, "unhandledRejection"_s);
     auto& wrapped = process->wrapped();
@@ -4568,7 +4571,6 @@ JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObjec
     args.append(this);
     args.append(nextTickQueueObject);
     args.append(JSC::JSFunction::create(vm, globalObject, 1, String(), jsFunctionDrainMicrotaskQueue, ImplementationVisibility::Private));
-    args.append(JSC::JSFunction::create(vm, globalObject, 1, String(), jsFunctionReportUncaughtException, ImplementationVisibility::Private));
 
     // Lazy property builder: exceptions must not propagate into
     // reifyStaticProperty, which performs no exception check.
@@ -4724,7 +4726,7 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessTitle, (JSC::JSGlobalObject * globalObject, J
 #endif
 }
 
-static inline JSValue getCachedCwd(JSC::JSGlobalObject* globalObject)
+JSValue getCachedCwd(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);

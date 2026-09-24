@@ -1236,6 +1236,26 @@ impl<'a> Resolver<'a> {
 
         match DataURL::parse(import_path) {
             Err(_) => {
+                // Malformed data URL (e.g. "data:" with no comma). For url()
+                // tokens pass it through as external like http:// above; for
+                // JS imports the bundler surfaces a resolve error.
+                if kind.is_from_css() {
+                    if let Some(debug) = self.debug_logs.as_mut() {
+                        debug.add_note(b"Marking malformed \"dataurl\" as external".to_vec());
+                    }
+                    let _ = self.flush_debug_logs(FlushMode::Success);
+                    self.extension_order = original_order;
+                    return ResultUnion::Success(Result {
+                        import_kind: kind,
+                        path_pair: PathPair {
+                            primary: Path::init(import_path),
+                            secondary: None,
+                        },
+                        module_type: options::ModuleType::Unknown,
+                        flags: ResultFlags::IS_EXTERNAL,
+                        ..Default::default()
+                    });
+                }
                 self.extension_order = original_order;
                 return ResultUnion::Failure(crate::Error::InvalidDataURL);
             }
@@ -2061,7 +2081,8 @@ impl<'a> Resolver<'a> {
 
         // Check the "browser" map
         if self.care_about_browser_field {
-            let dirname = bun_paths::dirname(abs_path).expect("unreachable");
+            // ".." segments can reach the filesystem root, which has no parent.
+            let dirname = bun_paths::dirname(abs_path).unwrap_or(abs_path);
             if let Ok(Some(import_dir_info_outer)) = self.dir_info_cached(dirname) {
                 if let Some(import_dir_info) = import_dir_info_outer.get_enclosing_browser_scope() {
                     let pkg = import_dir_info.package_json().unwrap();

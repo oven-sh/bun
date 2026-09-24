@@ -118,7 +118,7 @@ enum Backend {
 }
 
 #[derive(bun_ptr::ThreadSafeRefCounted)]
-pub struct CompressionStreamCoder {
+pub(crate) struct CompressionStreamCoder {
     backend: Backend,
     /// Shared-ownership count: 1 for the JS cell (released by its finalizer /
     /// `nativeTransformReleaseState` via `CompressionStreamCoder__destroy`), plus 1 per in-flight
@@ -141,6 +141,9 @@ pub struct CompressionStreamCoder {
     high_water_mark: usize,
     /// Set while a chunk's transform spans steps; `None` between chunks.
     pending: Option<Pending>,
+    /// The context of the script that made the stream: its off-thread steps belong to it, also
+    /// the ones a native sink asks for.
+    context: bun_jsc::ContextId,
 }
 
 // SAFETY: the z_stream / Brotli*Instance / ZSTD_*Ctx handles are single-owner
@@ -293,6 +296,9 @@ impl CompressionStreamCoder {
             zstd_head_len: 0,
             high_water_mark,
             pending: None,
+            context: bun_jsc::virtual_machine::VirtualMachine::get()
+                .context_of_caller_no_frame()
+                .id(),
         }))
     }
 
@@ -778,7 +784,7 @@ impl AsyncInput {
 
 /// `level` (present when `has_level`) is range-checked by the caller; ignored for decompression.
 #[unsafe(no_mangle)]
-pub extern "C" fn CompressionStreamCoder__create(
+pub(crate) extern "C" fn CompressionStreamCoder__create(
     format: u8,
     decompress: bool,
     high_water_mark: usize,
@@ -798,7 +804,7 @@ pub extern "C" fn CompressionStreamCoder__create(
 /// Releases the C++ cell's reference; see [`CompressionStreamCoder::ref_count`].
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn CompressionStreamCoder__destroy(this: *mut CompressionStreamCoder) {
+pub(crate) extern "C" fn CompressionStreamCoder__destroy(this: *mut CompressionStreamCoder) {
     if !this.is_null() {
         // SAFETY: `this` was returned by `CompressionStreamCoder__create` and
         // the cell's reference has not been released yet.
@@ -811,7 +817,7 @@ pub extern "C" fn CompressionStreamCoder__destroy(this: *mut CompressionStreamCo
 /// stepped again (with `input` null), or throws a `TypeError` and returns zero.
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn CompressionStreamCoder__transform(
+pub(crate) extern "C" fn CompressionStreamCoder__transform(
     this: *mut CompressionStreamCoder,
     global: &JSGlobalObject,
     input: *const u8,
@@ -883,7 +889,7 @@ fn throw_codec_error(global: &JSGlobalObject, e: CodecError) {
 /// nativeSinkWriteIsBackpressure), `undefined` when there was no output.
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn CompressionStreamCoder__transformInto(
+pub(crate) extern "C" fn CompressionStreamCoder__transformInto(
     this: *mut CompressionStreamCoder,
     global: &JSGlobalObject,
     input: *const u8,
@@ -920,7 +926,7 @@ pub extern "C" fn CompressionStreamCoder__transformInto(
                     .write(&crate::webcore::streams::Result::Temporary(
                         bun_ptr::RawSlice::new(&out),
                     ))
-                    .to_js(global)
+                    .to_js(&global.js_thread_of_caller_no_frame())
             }
         }
         Err(e) => {
@@ -950,7 +956,7 @@ unsafe extern "C" {
 
 /// One step of a large `CompressionStream`/`DecompressionStream` chunk, run
 /// off the JS thread.
-pub struct CompressionAsyncCtx {
+pub(crate) struct CompressionAsyncCtx {
     /// See [`CompressionStreamCoder::ref_count`]. TransformStream serializes
     /// writes, so nothing else touches the coder while the pool has it.
     coder: bun_ptr::RefPtr<CompressionStreamCoder>,
@@ -967,7 +973,7 @@ pub struct CompressionAsyncCtx {
 unsafe impl Send for CompressionAsyncCtx {}
 
 #[derive(bun_jsc::JsAffine)]
-pub struct CompressionAsyncJs {
+pub(crate) struct CompressionAsyncJs {
     /// GC root for the `JSTransformStream` cell; its `m_asyncCodecInFlight`
     /// flag defers the eager ClearAlgorithms release while this task holds it,
     /// and its `m_codecPromise` WriteBarrier keeps the pending
@@ -1020,7 +1026,7 @@ impl bun_jsc::JobContext for CompressionAsyncCtx {
 /// input (the coder kept the tail).
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn CompressionStreamCoder__transformAsync(
+pub(crate) extern "C" fn CompressionStreamCoder__transformAsync(
     this: *mut CompressionStreamCoder,
     global: &JSGlobalObject,
     stream_cell: JSValue,
@@ -1037,7 +1043,19 @@ pub extern "C" fn CompressionStreamCoder__transformAsync(
         unsafe { core::slice::from_raw_parts(input, input_len) }
     };
     let (input, pin) = AsyncInput::new(global, chunk, fallback);
-    let cx = global.js_thread();
+    // Called by script, the step is that script's; asked for by a native sink, it is the
+    // stream's maker's.
+    let vm = global.bun_vm();
+    let entered = if vm.jsc_vm().is_entered() {
+        None
+    } else {
+        // SAFETY: `this` is the live coder owned by the calling JS cell.
+        Some(vm.enter_context(unsafe { (*this).context }))
+    };
+    let cx = global.js_thread(match &entered {
+        Some(scope) => scope.context(),
+        None => vm.context_of_caller_no_frame(),
+    });
     bun_jsc::Job::<CompressionAsyncCtx>::schedule(
         &cx,
         CompressionAsyncCtx {

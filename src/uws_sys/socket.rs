@@ -570,6 +570,28 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
 
     // ── TLS ─────────────────────────────────────────────────────────────────
 
+    /// Refuse a bad server chain during the handshake, before the client
+    /// certificate goes out. Client-only; call it before the handshake is driven.
+    pub fn set_inline_reject(&self) {
+        match self.socket {
+            InternalSocket::Connected(s) => sock(s).set_inline_reject(),
+            InternalSocket::UpgradedDuplex(d) => duplex(d).set_inline_reject(),
+            #[cfg(windows)]
+            InternalSocket::Pipe(p) => pipe(p).set_inline_reject(),
+            _ => {}
+        }
+    }
+
+    /// The session an SSLWrapper-backed socket got last from the new-session callback, borrowed.
+    pub fn wrapper_latest_session(&self) -> *mut bun_boringssl_sys::SSL_SESSION {
+        match self.socket {
+            InternalSocket::UpgradedDuplex(d) => duplex(d).latest_session(),
+            #[cfg(windows)]
+            InternalSocket::Pipe(p) => pipe(p).latest_session(),
+            _ => core::ptr::null_mut(),
+        }
+    }
+
     /// `SSL*` if this is a TLS socket, else `None`.
     #[inline]
     pub fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {

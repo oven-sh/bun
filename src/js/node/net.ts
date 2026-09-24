@@ -394,8 +394,7 @@ function endNT(socket, callback, self) {
     callback();
     return;
   }
-  // A wrapped Duplex still holds the close_notify: the drain completes the
-  // callback, a close completes it with no error (Node's afterShutdown).
+  // A wrapped Duplex still holds the close_notify; its drain or close completes this.
   self[kshutdownCallback] = callback;
 }
 function completeShutdown(self, socket) {

@@ -803,11 +803,8 @@ fn on_writable(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>
     Ok(JSValue::UNDEFINED)
 }
 
-/// `cb` of one `duplex.write()` / `duplex.end()`; the last one is the drain.
-/// An error becomes `write EPIPE` on the next tick, via this function called
-/// again with the socket wrapper as `err`: the Writable runs `cb` before its
-/// own `errorOrDestroy`, so a synchronous dispatch swallows the stream's 'error'.
-/// After close_notify the status is ignored (node's `afterShutdown`).
+/// `cb` of one `duplex.write()` / `duplex.end()`; the last one drains. An error is
+/// re-dispatched as `write EPIPE` on the next tick (called again with the wrapper as `err`).
 #[bun_jsc::host_fn]
 fn on_write_done(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     bun_output::scoped_log!(UpgradedDuplex, "onWriteDone");

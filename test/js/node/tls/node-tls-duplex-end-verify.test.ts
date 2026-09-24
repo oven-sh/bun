@@ -12,6 +12,9 @@ const cert = fs.readFileSync(new URL("./fixtures/agent1-cert.pem", import.meta.u
 // agent2 is signed by a CA that neither side trusts here, so it is the client certificate the server must refuse.
 const clientKey = fs.readFileSync(new URL("./fixtures/agent2-key.pem", import.meta.url));
 const clientCert = fs.readFileSync(new URL("./fixtures/agent2-cert.pem", import.meta.url));
+// Both runtimes refuse an untrusted client. Bun reports the certificate check to 'tlsClientError', Node reports how
+// the connection ended.
+const isBun = process.versions.bun !== undefined;
 
 // A client wraps a Duplex in TLS and calls end() right after its first flight left, so the handshake is still running.
 // The server's certificate is not trusted. Returns the ordered events of the client.
@@ -276,6 +279,11 @@ async function serverEndMidHandshake(rejectUnauthorized, afterHandshakeTimeout =
   });
   client.on("secureConnect", () => client.write("privileged-command"));
   client.on("error", () => {});
+  // The server reports first in every expected outcome. This only ends the test when the server reported nothing.
+  client.on("close", () => {
+    events.push("client close");
+    resolve();
+  });
   await promise;
   client.destroy();
   close();
@@ -292,11 +300,10 @@ test("a server that end()s while the handshake runs still reports the failed che
 });
 
 test("a server that end()s while the handshake runs does not accept an untrusted client certificate", async () => {
-  // Node reports ECONNRESET here (its own handshake never completes), Bun reports the verdict. Both refuse the peer,
-  // so this asserts what they share: no secureConnection, and no application data from that client.
-  const events = await serverEndMidHandshake(true);
-  assert.ok(events.length > 0, "the server reported nothing");
-  assert.ok(!events.some(event => event.startsWith("secureConnection") || event.startsWith("data")), events.join(", "));
+  // Node cannot complete its own handshake after end(), so it reports a reset.
+  assert.deepStrictEqual(await serverEndMidHandshake(true), [
+    isBun ? "tlsClientError DEPTH_ZERO_SELF_SIGNED_CERT" : "tlsClientError ECONNRESET",
+  ]);
 });
 
 test("a server that end()s after a handshake timeout does not accept an untrusted client certificate", async () => {
@@ -363,6 +370,11 @@ async function badRecordBehindFinished(from, rejectUnauthorized) {
     events.push(`error ${err.code}`);
     resolve();
   });
+  // The observed peer reports first in every expected outcome. This only ends the test when it reported nothing.
+  client.on("close", () => {
+    events.push("client close");
+    resolve();
+  });
   await promise;
   client.destroy();
   close();
@@ -388,8 +400,8 @@ test("a bad record behind the client's Finished still reports the failed check o
 });
 
 test("a bad record behind the client's Finished does not make a server accept an untrusted client certificate", async () => {
-  // Node reports the bad record, Bun reports the verdict. Both refuse the peer: no secureConnection.
   const events = await badRecordBehindFinished("client", true);
-  assert.ok(events.length > 0, "the server reported nothing");
-  assert.ok(!events.some(event => event.startsWith("secureConnection")), events.join(", "));
+  assert.strictEqual(events.length, 1, events.join(", "));
+  // Node reports the bad record. Its code depends on the cipher, so only the class of the error is fixed.
+  assert.match(events[0], isBun ? /^tlsClientError DEPTH_ZERO_SELF_SIGNED_CERT$/ : /^tlsClientError ERR_SSL_/);
 });

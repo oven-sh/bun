@@ -61,6 +61,12 @@ struct H3App {
         return http3Context->addServerName(hostname, raw);
     }
     void *getNativeHandle() { return http3Context; }
+
+    /* Server-wide publish to this app's RFC 9220 WebSockets. */
+    uint32_t publish(std::string_view topic, std::string_view message, int opCode, bool compress) {
+        return http3Context->publish(topic, message, opCode, compress);
+    }
+    unsigned int numSubscribers(std::string_view topic) { return http3Context->numSubscribers(topic); }
 };
 
 }

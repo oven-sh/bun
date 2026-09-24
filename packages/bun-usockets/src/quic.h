@@ -53,6 +53,10 @@ us_quic_socket_context_t *us_create_quic_socket_context(
 /* Send GOAWAY on every connection and stop accepting new ones; the engine and
  * timer keep running so in-flight streams drain. */
 void us_quic_socket_context_shutdown(us_quic_socket_context_t *ctx);
+/* Close every connection (on_stream_close / on_close fire for each) and stop
+ * listening, keeping the context and its ext alive. Idempotent;
+ * us_quic_socket_context_free runs it first. */
+void us_quic_socket_context_destroy_engine(us_quic_socket_context_t *ctx);
 void us_quic_socket_context_free(us_quic_socket_context_t *ctx);
 
 /* Register an additional SSL_CTX for the given SNI hostname (exact or `*.`). */
@@ -128,6 +132,11 @@ void us_quic_socket_context_on_stream_writable(us_quic_socket_context_t *ctx,
     void (*on_writable)(us_quic_stream_t *));
 void us_quic_socket_context_on_stream_close(us_quic_socket_context_t *ctx,
     void (*on_close)(us_quic_stream_t *));
+/* Runs from the uSockets timeout sweep, like socket timeouts. */
+void us_quic_socket_context_on_sweep(us_quic_socket_context_t *ctx,
+    void (*on_sweep)(us_quic_socket_context_t *));
+/* Called by us_internal_timer_sweep for every context on `loop`. */
+void us_quic_loop_sweep(struct us_loop_t *loop);
 
 /* Stream I/O. Read happens via on_stream_data; write returns bytes accepted
  * (may be < len under flow-control backpressure). */
@@ -144,6 +153,11 @@ void us_quic_stream_flush(us_quic_stream_t *s);
 void us_quic_stream_shutdown_read(us_quic_stream_t *s);
 void us_quic_stream_close(us_quic_stream_t *s);
 void us_quic_stream_reset(us_quic_stream_t *s);
+/* Bytes us_quic_stream_write would accept without buffering right now. */
+size_t us_quic_stream_write_avail(us_quic_stream_t *s);
+/* us_quic_stream_reset with an explicit HTTP/3 error code, e.g.
+ * H3_MESSAGE_ERROR for a malformed request (RFC 9114 §4.1.2). */
+void us_quic_stream_reset_with_code(us_quic_stream_t *s, uint64_t error_code);
 int us_quic_stream_has_unacked(us_quic_stream_t *s);
 
 void *us_quic_stream_ext(us_quic_stream_t *s);

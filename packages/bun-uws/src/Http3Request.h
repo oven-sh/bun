@@ -5,6 +5,7 @@
 #include "QueryParser.h"
 
 #include <cctype>
+#include <optional>
 #include <string_view>
 #include <utility>
 
@@ -35,6 +36,14 @@ struct Http3Request {
                 query = q == std::string_view::npos ? std::string_view{} : value.substr(q);
             } else if (name == ":authority") {
                 authority = value;
+                hasAuthorityPseudoHeader = true;
+            } else if (name == ":scheme") {
+                scheme = value;
+            } else if (name == ":protocol") {
+                /* RFC 9220 Extended CONNECT. Presence matters even when the
+                 * value is empty, so it is tracked separately. */
+                protocol = value;
+                hasProtocol = true;
             } else if (authority.empty() && name.size() == 4 && equalsIgnoreCase(name, "host")) {
                 /* RFC 9114 §4.3.1: a request must contain :authority OR a
                  * Host field. Promote the literal Host so getHeader("host"),
@@ -50,6 +59,15 @@ struct Http3Request {
     void setYield(bool y) { yield = y; }
 
     std::string_view getUrl() { return url; }
+    std::string_view getScheme() { return scheme; }
+    /* :method exactly as sent; getMethod() lowercases for the router. */
+    std::string_view getWireMethod() { return method; }
+    /* :authority itself, not a Host field promoted into it. */
+    bool hasAuthority() { return hasAuthorityPseudoHeader; }
+    /* The :protocol pseudo-header of an Extended CONNECT request. */
+    std::optional<std::string_view> getProtocol() {
+        return hasProtocol ? std::optional<std::string_view>{protocol} : std::nullopt;
+    }
     std::string_view getFullUrl() { return fullUrl; }
     std::string_view getQuery() { return query.empty() ? query : query.substr(1); }
     std::string_view getQuery(std::string_view key) {
@@ -112,7 +130,9 @@ private:
 
     const us_quic_header_t *headers;
     unsigned int headerCount;
-    std::string_view method, url, fullUrl, query, authority;
+    std::string_view method, url, fullUrl, query, authority, scheme, protocol;
+    bool hasProtocol = false;
+    bool hasAuthorityPseudoHeader = false;
     std::pair<int, std::string_view *> params{-1, nullptr};
     char methodLower[32];
     bool yield = false;

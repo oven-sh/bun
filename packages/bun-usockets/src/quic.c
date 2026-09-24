@@ -92,6 +92,10 @@ struct us_quic_socket_context_s {
     void (*on_stream_data)(us_quic_stream_t *, const char *, unsigned int, int);
     void (*on_stream_writable)(us_quic_stream_t *);
     void (*on_stream_close)(us_quic_stream_t *);
+    /* Called from the uSockets timeout sweep (every LIBUS_TIMEOUT_GRANULARITY
+     * seconds while connections are open). */
+    void (*on_sweep)(us_quic_socket_context_t *);
+    unsigned int sweep_epoch;
 
     char read_buf[US_QUIC_READ_BUF];
     /* ext follows */
@@ -199,6 +203,30 @@ void us_quic_loop_process(struct us_loop_t *loop) {
         us_timer_set(loop->data.quic_timer, us_quic_on_timer, ms, 0);
     }
 #endif
+}
+
+/* Never hold a list pointer across a sweep callback, in case one frees a
+ * context on this loop: restart from the head and skip contexts already
+ * visited in this sweep. */
+void us_quic_loop_sweep(struct us_loop_t *loop) {
+    /* One loop per thread, so a thread-local counter needs no loop field. */
+    static _Thread_local unsigned int quic_sweep_epoch;
+    unsigned int epoch = ++quic_sweep_epoch;
+    for (;;) {
+        us_quic_socket_context_t *ctx = loop->data.quic_head;
+        while (ctx && (ctx->sweep_epoch == epoch || !ctx->on_sweep)) {
+            ctx->sweep_epoch = epoch;
+            ctx = ctx->next;
+        }
+        if (!ctx) return;
+        ctx->sweep_epoch = epoch;
+        ctx->on_sweep(ctx);
+    }
+}
+
+void us_quic_socket_context_on_sweep(us_quic_socket_context_t *ctx,
+    void (*on_sweep)(us_quic_socket_context_t *)) {
+    ctx->on_sweep = on_sweep;
 }
 
 /* Called after the deferred-task queue drains. Only does work when a
@@ -849,6 +877,12 @@ us_quic_socket_context_t *us_create_quic_socket_context(
      * 9218 scheduler and the patched determine_bpt short-circuits the O(N)
      * stream-hash walk on every write. */
     ctx->settings.es_ext_http_prio = 0;
+    /* RFC 9220 Extended CONNECT is a transport capability, as for Bun.serve's
+     * HTTP/2 SETTINGS: a server.reload() can add a WebSocket handler later.
+     * An unaccepted Extended CONNECT never gets a 2xx (Http3Response). Early
+     * data is disabled (us_quic_prepare_ssl_ctx), so an Extended CONNECT is
+     * never replayable 0-RTT data (RFC 8470). */
+    ctx->settings.es_h3_connect_protocol = 1;
     if (idle_timeout_s) ctx->settings.es_idle_timeout = idle_timeout_s > 600 ? 600 : idle_timeout_s;
 
     struct lsquic_engine_api api;
@@ -923,7 +957,7 @@ void us_quic_socket_context_shutdown(us_quic_socket_context_t *ctx) {
     us_quic_socket_context_finish_shutdown(ctx);
 }
 
-void us_quic_socket_context_free(us_quic_socket_context_t *ctx) {
+void us_quic_socket_context_destroy_engine(us_quic_socket_context_t *ctx) {
     if (!ctx) return;
     ctx->closing = 1;
     struct us_loop_t *loop = ctx->loop;
@@ -932,9 +966,14 @@ void us_quic_socket_context_free(us_quic_socket_context_t *ctx) {
     }
     if (!loop->data.quic_head) loop->data.quic_next_tick_us = -1;
     /* Close any UDP fds the caller never closed (graceful drain leaves them
-     * open); on_close moves each into closed_listeners for the loop below. */
+     * open); on_close moves each into closed_listeners for the free below. */
     while (ctx->listeners) us_udp_socket_close(ctx->listeners->udp);
     if (ctx->engine) { lsquic_engine_destroy(ctx->engine); ctx->engine = NULL; }
+}
+
+void us_quic_socket_context_free(us_quic_socket_context_t *ctx) {
+    if (!ctx) return;
+    us_quic_socket_context_destroy_engine(ctx);
     if (ctx->ssl_ctx) { SSL_CTX_free(ctx->ssl_ctx); ctx->ssl_ctx = NULL; }
     for (unsigned i = 0; i < ctx->sni_count; i++) {
         us_free(ctx->sni[i].name);
@@ -1255,10 +1294,22 @@ void lsquic_stream_maybe_reset(struct lsquic_stream *, uint64_t error_code, int)
  * as a stream-level cancellation rather than a malformed message.
  * Sends nothing once lsquic_stream_close/shutdown has run, so call it first. */
 void us_quic_stream_reset(us_quic_stream_t *s) {
+    us_quic_stream_reset_with_code(s, 0x10C);
+}
+
+void us_quic_stream_reset_with_code(us_quic_stream_t *s, uint64_t error_code) {
     if (!s->stream) return;
     /* do_close=0: with no reset due, maybe_reset's own close shuts only the read half. */
-    lsquic_stream_maybe_reset(s->stream, 0x10C, 0);
+    lsquic_stream_maybe_reset(s->stream, error_code, 0);
     lsquic_stream_close(s->stream);
+}
+
+size_t lsquic_stream_write_avail(struct lsquic_stream *);
+
+/* Bytes the stream accepts right now (stream and connection flow control,
+ * minus HTTP/3 framing); a write of up to this many is not buffered. */
+size_t us_quic_stream_write_avail(us_quic_stream_t *s) {
+    return s->stream ? lsquic_stream_write_avail(s->stream) : 0;
 }
 
 int us_quic_stream_has_unacked(us_quic_stream_t *s) {

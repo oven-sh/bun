@@ -3720,16 +3720,18 @@ pub(crate) type DebugHTTPSServer = NewServer<true, true>;
 pub(crate) enum WebSocketTree {
     H1,
     H2,
+    H3,
 }
 
 impl WebSocketTree {
-    pub(crate) const ALL: [Self; 2] = [Self::H1, Self::H2];
+    pub(crate) const ALL: [Self; 3] = [Self::H1, Self::H2, Self::H3];
 
     #[inline]
     pub(crate) fn of(ws: uws::AnyWebSocket) -> Self {
         match ws {
             uws::AnyWebSocket::Ssl(_) | uws::AnyWebSocket::Tcp(_) => Self::H1,
             uws::AnyWebSocket::H2(_) => Self::H2,
+            uws::AnyWebSocket::H3(_) => Self::H3,
         }
     }
 }
@@ -4043,7 +4045,7 @@ impl AnyServer {
     /// Whether any stream transport (Extended CONNECT) keeps its own
     /// WebSocket topic tree beside the HTTP/1 app's.
     pub(crate) fn has_stream_websocket_trees(&self) -> bool {
-        any_server_dispatch!(self, |s| s.h2_app.is_some())
+        any_server_dispatch!(self, |s| s.h2_app.is_some() || s.h3_app.is_some())
     }
 
     pub(crate) fn num_subscribers_in(&self, tree: WebSocketTree, topic: &[u8]) -> u32 {
@@ -4053,6 +4055,8 @@ impl AnyServer {
             WebSocketTree::H1 => s.app.map_or(0, |app| bun_opaque::opaque_deref_mut(app)
                 .num_subscribers(topic)),
             WebSocketTree::H2 => s.h2_app.map_or(0, |app| bun_opaque::opaque_deref_mut(app)
+                .num_subscribers(topic)),
+            WebSocketTree::H3 => s.h3_app.map_or(0, |app| bun_opaque::opaque_deref_mut(app)
                 .num_subscribers(topic)),
         })
     }
@@ -4070,6 +4074,9 @@ impl AnyServer {
                 bun_opaque::opaque_deref_mut(app).publish(topic, message, opcode, compress)
             }),
             WebSocketTree::H2 => s.h2_app.map_or(uws::SendStatus::Dropped, |app| {
+                bun_opaque::opaque_deref_mut(app).publish(topic, message, opcode, compress)
+            }),
+            WebSocketTree::H3 => s.h3_app.map_or(uws::SendStatus::Dropped, |app| {
                 bun_opaque::opaque_deref_mut(app).publish(topic, message, opcode, compress)
             }),
         })

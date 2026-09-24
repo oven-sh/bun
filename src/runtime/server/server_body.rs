@@ -401,14 +401,15 @@ impl<const SSL: bool> RespLike for uws_sys::NewAppResponse<SSL> {
 }
 impl RespLike for uws_sys::h3::Response {
     const IS_MUX: bool = true;
-    /// The QUIC FIN is only seen by a read after dispatch.
+    /// The QUIC FIN is only seen by a read after dispatch, so this is false
+    /// while the request HEADERS are dispatched.
     #[inline]
     fn request_body_ended(&mut self) -> bool {
-        false
+        uws_sys::h3::Response::request_body_ended(self)
     }
     #[inline]
     fn is_websocket_connect(&mut self) -> bool {
-        false
+        uws_sys::h3::Response::is_websocket_connect(self)
     }
     #[inline]
     fn write_status(&mut self, s: &[u8]) {
@@ -524,6 +525,28 @@ impl StreamUpgradeResponse for uws_sys::h2::Response {
     #[inline]
     fn write_header(&mut self, key: &[u8], value: &[u8]) {
         uws_sys::h2::Response::write_header(self, key, value)
+    }
+    #[inline]
+    fn clear_request_callbacks(&mut self) {
+        self.clear_aborted();
+        self.clear_on_data();
+        self.clear_on_writable();
+        self.clear_timeout();
+    }
+}
+impl StreamUpgradeResponse for uws_sys::h3::Response {
+    type Transport = uws_sys::h3::H3Transport;
+    const KIND: ResponseKind = ResponseKind::H3;
+    #[inline]
+    fn from_any(resp: uws::AnyResponse) -> Option<*mut Self> {
+        match resp {
+            uws::AnyResponse::H3(resp) => Some(resp),
+            _ => None,
+        }
+    }
+    #[inline]
+    fn write_header(&mut self, key: &[u8], value: &[u8]) {
+        uws_sys::h3::Response::write_header(self, key, value)
     }
     #[inline]
     fn clear_request_callbacks(&mut self) {
@@ -1872,6 +1895,13 @@ where
             return match unsafe { (*upgrader_ptr).resp.get() } {
                 Some(uws::AnyResponse::H2(_)) => self
                     .on_stream_websocket_upgrade::<uws_sys::h2::Response>(
+                        global,
+                        request_ptr,
+                        upgrader_ptr,
+                        optional,
+                    ),
+                Some(uws::AnyResponse::H3(_)) => self
+                    .on_stream_websocket_upgrade::<uws_sys::h3::Response>(
                         global,
                         request_ptr,
                         upgrader_ptr,

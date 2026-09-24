@@ -301,6 +301,11 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
         loop_data->iterator = group->next;
         outer_continue:;
     }
+#ifdef LIBUS_USE_QUIC
+    /* QUIC streams are not us_socket_t; let each HTTP/3 context run its own
+     * timeouts (WebSocket idle/close deadlines) at the same granularity. */
+    if (loop_data->quic_head) us_quic_loop_sweep(loop);
+#endif
 }
 
 /* We do not want to block the loop with tons and tons of CPU-intensive work for SSL handshakes.

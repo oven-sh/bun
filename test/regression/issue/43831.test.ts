@@ -43,11 +43,13 @@ test.skipIf(!isWindows && !isMacOS)(
     try {
       if (isWindows) {
         // A copy has one hard link. While it runs, NTFS refuses to delete it.
-        copyFileSync(bunExe(), held);
+        // `pause` blocks on stdin until the pipe closes.
+        copyFileSync(process.env.ComSpec ?? "C:\\Windows\\System32\\cmd.exe", held);
         heldProc = Bun.spawn({
-          cmd: [held, "-e", "setInterval(() => {}, 1000)"],
+          cmd: [held, "/c", "pause"],
           cwd: String(dir),
           env: bunEnv,
+          stdin: "pipe",
           stdout: "ignore",
           stderr: "ignore",
         });

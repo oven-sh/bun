@@ -142,11 +142,9 @@ impl Dir {
         'process_stack: while let Some(top) = stack.last_mut() {
             while let Some(entry) = top.iter.next()? {
                 let mut treat_as_dir = matches!(entry.kind, EntryKind::Directory);
-                // The unlink error that made us retry the entry as a directory.
-                // If the directory open then says it is not a directory, the
-                // unlink error is the real failure: EPERM also means "cannot
-                // delete" (Windows: the last link of a mapped image; macOS: a
-                // `uchg` file), and retrying unlink would loop forever.
+                // EPERM from unlink can also mean "cannot delete" (a mapped exe
+                // on Windows, a `uchg` file on macOS). ENOTDIR from the
+                // directory open then returns it instead of retrying unlink.
                 let mut unlink_err: Option<Error> = None;
                 'handle_entry: loop {
                     if treat_as_dir {

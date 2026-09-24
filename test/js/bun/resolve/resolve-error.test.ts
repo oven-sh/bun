@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import path from "node:path";
 
 describe("ResolveMessage", () => {
@@ -117,7 +117,7 @@ describe("ResolveMessage", () => {
     expect(async () => {
       // @ts-ignore
       await import(":://filesystem");
-    }).toThrow("Cannot find module");
+    }).toThrow("Cannot find package '::'");
   });
 
   it("referrer is not freed before it is read", () => {
@@ -283,3 +283,98 @@ describe.concurrent("tsconfig paths wildcard with overlapping prefix/suffix", ()
     await run("xy*xy", "xy");
   });
 });
+
+// Bun.resolve() resolves synchronously and returns an already-settled promise.
+// A rejected one has to be reported like any other unhandled rejection.
+describe.concurrent("Bun.resolve() rejections are tracked", () => {
+  async function run(body: string) {
+    using dir = tempDir("bun-resolve-unhandled", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `const dir = ${JSON.stringify(String(dir))};\n${body}`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it("an unhandled rejection is reported", async () => {
+    const { stdout, stderr, exitCode } = await run(`Bun.resolve("./does-not-exist", dir);`);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("Cannot find module './does-not-exist'");
+    expect(exitCode).toBe(1);
+  });
+
+  it("the returned promise is the one passed to 'unhandledRejection'", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      process.on("unhandledRejection", (reason, promise) => {
+        console.log(reason.code, promise === p);
+      });
+      const p = Bun.resolve("./does-not-exist", dir);
+    `);
+    expect(stdout).toBe("ERR_MODULE_NOT_FOUND true\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  it("a handled rejection is not reported", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      Bun.resolve("./does-not-exist", dir).catch(e => console.log("caught", e.code));
+    `);
+    expect(stdout).toBe("caught ERR_MODULE_NOT_FOUND\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+});
+
+// Bun.resolve() allocates its rejected promise while the exception the resolve
+// threw is still pending on the VM. That allocation is a GC safepoint, and the
+// concurrent collector's end phase materializes the stack of every live Error
+// whose frames died, through the onComputeErrorInfo hook. The hook used to
+// clear whatever exception was pending, so the rejection then found nothing:
+// `panic: A JavaScript exception was thrown, but it was cleared before it could be read.`
+//
+// Each call comes from a fresh closure and the reasons are kept in a ring, so
+// every collection has live Errors with a dead top frame to materialize. The
+// calls have to be awaited one at a time (64 per tick never fires), and
+// collectContinuously keeps an end phase always imminent. The unfixed debug
+// build panics after 2500 to 8500 iterations. Not concurrent with the tests
+// above: a busy machine starves the collector and hides the race.
+//
+// Skipped on Windows: collectContinuously is several times slower under
+// Windows + ASAN in CI, and the fixed C++ path is not platform-specific.
+it.skipIf(isWindows)(
+  "Bun.resolve() rejection survives a GC stack-trace finalizer",
+  async () => {
+    using dir = tempDir("bun-resolve-rejection-gc", {
+      "fixture.mjs": `
+        const keep = [];
+        let rejections = 0;
+        for (let i = 0; i < 20000; i++) {
+          const call = () => Bun.resolve();
+          await call().catch(e => {
+            rejections++;
+            keep.push(e);
+            if (keep.length > 1024) keep.shift();
+          });
+        }
+        console.log("ok rejections=" + rejections);
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.mjs"],
+      env: { ...bunEnv, BUN_JSC_collectContinuously: "1" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ok rejections=20000", exitCode: 0 });
+    void stderr;
+  },
+  // 20000 awaited rejections under collectContinuously on a debug+ASAN build
+  // take well over the default 5s.
+  120_000,
+);

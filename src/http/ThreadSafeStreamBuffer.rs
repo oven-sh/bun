@@ -9,9 +9,8 @@ pub struct ThreadSafeStreamBuffer {
     pub(crate) mutex: Mutex,
     /// Intrusive atomic refcount. Starts at 2: 1 for main thread and 1 for http thread.
     pub(crate) ref_count: bun_ptr::ThreadSafeRefCount<ThreadSafeStreamBuffer>,
-    /// callback will be called passing the context for the http callback
-    /// this is used to report when the buffer is drained and only if end chunk was not sent/reported
-    pub(crate) callback: Option<Callback>,
+    /// Called by the http thread when the buffer drains; guarded by `mutex`, like `buffer`.
+    callback: Option<Callback>,
 }
 
 pub struct Callback {
@@ -102,13 +101,16 @@ impl ThreadSafeStreamBuffer {
         self.callback = Some(Callback::init(callback, context));
     }
 
+    /// Main thread; the request may still be in flight on the http thread.
     pub fn clear_drain_callback(&mut self) {
+        let _guard = self.mutex.lock_guard();
         self.callback = None;
     }
 
     /// This is exclusively called from the http thread.
-    /// Buffer should be acquired before calling this.
+    /// Buffer must be acquired before calling this.
     pub(crate) fn report_drain(&self) {
+        debug_assert!(self.mutex.is_held_by_current_thread());
         if self.buffer.is_empty() {
             if let Some(callback) = &self.callback {
                 callback.call();

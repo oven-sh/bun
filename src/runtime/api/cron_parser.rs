@@ -14,11 +14,12 @@
 //!   - Nicknames: @yearly, @annually, @monthly, @weekly, @daily, @midnight, @hourly
 
 use bun_core::strings;
+use bun_jsc::wtf::MAX_ECMASCRIPT_TIME;
 use bun_jsc::{GregorianDateTime, JSGlobalObject, JsResult};
 
 /// Time zone for `CronExpression::next`.
 #[derive(Clone, Copy)]
-pub enum CronTz {
+pub(crate) enum CronTz {
     /// The process's local time zone (default).
     Local,
     /// A resolved IANA time-zone ID from `JSGlobalObject::resolve_time_zone_id`.
@@ -52,7 +53,7 @@ impl CronTz {
 }
 
 #[derive(Clone, Copy)]
-pub struct CronExpression {
+pub(crate) struct CronExpression {
     pub(crate) minutes: u64,               // bits 0-59
     pub(crate) hours: u32,                 // bits 0-23
     pub(crate) days: u32,                  // bits 1-31
@@ -101,9 +102,7 @@ impl CronExpression {
 
         let mut count: usize = 0;
         let mut fields: [&[u8]; 5] = [&[]; 5];
-        let mut iter = expr
-            .split(|b| *b == b' ' || *b == b'\t')
-            .filter(|s| !s.is_empty());
+        let mut iter = strings::tokenize_any(expr, b" \t");
         while let Some(field) = iter.next() {
             if count >= 5 {
                 return Err(CronError::TooManyFields);
@@ -224,13 +223,17 @@ impl CronExpression {
 
     /// Compute the next time (in ms since epoch) that matches this expression
     /// in `tz`, strictly after `from_ms`. Returns None if no match found
-    /// within 8 years.
+    /// within 8 years and inside the Date range.
     pub(crate) fn next(
         &self,
         global_object: &JSGlobalObject,
         from_ms: f64,
         tz: CronTz,
     ) -> JsResult<Option<f64>> {
+        // The scheduler's clock can be mocked past the Date range, which JSC does not convert.
+        if from_ms.is_nan() || from_ms.abs() > MAX_ECMASCRIPT_TIME {
+            return Ok(None);
+        }
         let from_dt = tz.ms_to_gregorian(global_object, from_ms);
         let start_year = from_dt.year;
         let mut dt = from_dt;
@@ -249,10 +252,13 @@ impl CronExpression {
                 dt.hour -= 24;
                 dt.day += 1;
             }
-            let n = global_object.ms_to_gregorian_date_time_utc(
-                global_object
-                    .gregorian_date_time_to_ms_utc(dt.year, dt.month, dt.day, 12, 0, 0, 0)?,
-            );
+            let noon_ms = global_object
+                .gregorian_date_time_to_ms_utc(dt.year, dt.month, dt.day, 12, 0, 0, 0)?;
+            // Check before the conversion: JSC asserts or returns year 0 for a later day.
+            if noon_ms > LAST_DAY_NOON_MS {
+                return Ok(None);
+            }
+            let n = global_object.ms_to_gregorian_date_time_utc(noon_ms);
             dt.year = n.year;
             dt.month = n.month;
             dt.day = n.day;
@@ -282,7 +288,10 @@ impl CronExpression {
             }
 
             if let Some(r) = self.resolve_local_match(global_object, tz, dt, from_ms, from_dt)? {
-                return Ok(Some(r));
+                // A candidate on the last day can still resolve past the range.
+                if r <= MAX_ECMASCRIPT_TIME {
+                    return Ok(Some(r));
+                }
             }
             dt.minute += 1;
         }
@@ -296,6 +305,8 @@ impl CronExpression {
 
 const MINUTE_MS: f64 = 60_000.0;
 const MAX_DST_SHIFT_MIN: f64 = 120.0;
+/// UTC noon of +275760-09-13. No instant on a later wall-clock day fits in a Date, in any zone.
+const LAST_DAY_NOON_MS: f64 = MAX_ECMASCRIPT_TIME + 12.0 * 60.0 * MINUTE_MS;
 
 const ALL_MINUTES: u64 = (1 << 60) - 1;
 const ALL_HOURS: u32 = (1 << 24) - 1;
@@ -403,13 +414,13 @@ fn parse_field<T: BitInt>(field: &[u8], min: u8, max: u8, kind: NameKind) -> Res
         return Err(CronError::InvalidField);
     }
     let mut result: T = T::ZERO;
-    let mut parts = field.split(|b| *b == b',');
+    let mut parts = strings::split(field, b",");
     while let Some(part) = parts.next() {
         if part.is_empty() {
             return Err(CronError::InvalidField);
         }
         // Split by / for step
-        let mut step_iter = part.split(|b| *b == b'/');
+        let mut step_iter = strings::split(part, b"/");
         let base = step_iter.next().ok_or(CronError::InvalidField)?;
         let step_str = step_iter.next();
         if step_iter.next().is_some() {

@@ -51,12 +51,12 @@ class Utf8Stream extends EventEmitter {
   #maxWrite = kMaxWrite;
   #opening = false;
   #periodicFlush = 0;
-  #periodicFlushTimer = undefined;
+  #periodicFlushTimer: ReturnType<typeof setInterval> | undefined = undefined;
   #sync = false;
   #fsync = false;
   #append = true;
   #mode;
-  #retryEAGAIN = () => true;
+  #retryEAGAIN: (err: unknown, writeBufferLen: number, remainingBufferLen: number) => boolean = () => true;
   #mkdir = false;
   #writingBuf: any = "";
   #write;
@@ -188,7 +188,7 @@ class Utf8Stream extends EventEmitter {
     return this.#write(data);
   }
 
-  flush(cb = function (_err) {}) {
+  flush(cb: ((err?: Error | null) => void) | null = function (_err) {}) {
     this.#flush(cb);
   }
 
@@ -455,7 +455,11 @@ class Utf8Stream extends EventEmitter {
       if ((!this.#writing && this.#len > this.#minLength) || this.#flushPending) {
         this.#actualWrite();
       } else if (reopening) {
-        process.nextTick(() => this.emit("drain"));
+        // A 'ready' listener may have started a write; that write's completion
+        // emits 'drain', so don't announce an empty buffer while it is in flight.
+        process.nextTick(() => {
+          if (!this.#writing) this.emit("drain");
+        });
       }
     };
 
@@ -594,7 +598,8 @@ class Utf8Stream extends EventEmitter {
           this.#lens.shift();
         }
       } catch (err) {
-        const shouldRetry = err.code === "EAGAIN" || err.code === "EBUSY";
+        const shouldRetry =
+          (err as NodeJS.ErrnoException).code === "EAGAIN" || (err as NodeJS.ErrnoException).code === "EBUSY";
         if (shouldRetry && !this.#retryEAGAIN(err, buf.length, this.#len - buf.length)) {
           throw err;
         }
@@ -632,7 +637,8 @@ class Utf8Stream extends EventEmitter {
           this.#bufs.shift();
         }
       } catch (err) {
-        const shouldRetry = err.code === "EAGAIN" || err.code === "EBUSY";
+        const shouldRetry =
+          (err as NodeJS.ErrnoException).code === "EAGAIN" || (err as NodeJS.ErrnoException).code === "EBUSY";
         if (shouldRetry && !this.#retryEAGAIN(err, buf.length, this.#len - buf.length)) {
           throw err;
         }

@@ -1,9 +1,10 @@
 //! `Bun.markdown` — html/ansi/react/render host fns over `bun_md`.
 
 use bun_core::StackCheck;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{
-    ArrayBuffer, CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer,
-    RangeErrorOptions,
+    CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, PinnedArrayBuffer,
+    RangeErrorOptions, StringJsc as _,
 };
 // Note: the `bun_md` crate's lib.rs is a
 // thin mod-decl shim, so alias the `root` module (which re-exports BlockType,
@@ -11,13 +12,6 @@ use bun_jsc::{
 use crate::node::StringOrBuffer;
 use bun_md::parser::{MAX_INPUT_LEN, ParserError};
 use bun_md::root as md;
-
-// `bun_core::String::create_utf8_for_js` lives in `bun_jsc::bun_string_jsc`
-// (tier-6), not on `bun_core::String` itself.
-#[inline]
-fn create_utf8_for_js(global: &JSGlobalObject, utf8: &[u8]) -> JsResult<JSValue> {
-    bun_jsc::bun_string_jsc::create_utf8_for_js(global, utf8)
-}
 
 #[inline]
 fn js_array_push(arr: JSValue, global: &JSGlobalObject, item: JSValue) -> JsResult<()> {
@@ -29,9 +23,8 @@ fn js_array_push(arr: JSValue, global: &JSGlobalObject, item: JSValue) -> JsResu
 #[inline]
 fn js_to_parser_err(e: bun_jsc::JsError) -> ParserError {
     match e {
-        bun_jsc::JsError::Thrown => ParserError::JSError,
+        bun_jsc::JsError::Thrown | bun_jsc::JsError::Terminated => ParserError::JSError,
         bun_jsc::JsError::OutOfMemory => ParserError::OutOfMemory,
-        bun_jsc::JsError::Terminated => ParserError::JSTerminated,
     }
 }
 
@@ -48,7 +41,6 @@ fn parser_err_to_js(
         // A renderer callback threw (or the VM is terminating); the exception
         // is already pending on the VM.
         ParserError::JSError => bun_jsc::JsError::Thrown,
-        ParserError::JSTerminated => bun_jsc::JsError::Terminated,
         ParserError::OutOfMemory => global_this.throw_out_of_memory(),
         ParserError::StackOverflow => global_this.throw_stack_overflow(),
         ParserError::InputTooLarge => global_this.throw_range_error(
@@ -72,28 +64,14 @@ fn parser_err_to_js(
     }
 }
 
-struct PinnedView(ArrayBuffer);
-
-impl PinnedView {
-    fn pin(global: &JSGlobalObject, buffer: &StringOrBuffer) -> JsResult<Option<Self>> {
-        let Some(b) = buffer.buffer() else {
-            return Ok(None);
-        };
-        match b.buffer.value.as_pinned_arraybuffer(global) {
-            Some(pinned) => Ok(Some(Self(pinned))),
-            None => Err(global.throw_out_of_memory()),
-        }
-    }
-
-    #[inline]
-    fn slice(&self) -> &[u8] {
-        self.0.byte_slice()
-    }
-}
-
-impl Drop for PinnedView {
-    fn drop(&mut self) {
-        self.0.unpin();
+/// Pins a buffer input for the render, which can re-enter JS; `None` for a string.
+fn pin(global: &JSGlobalObject, input: &StringOrBuffer) -> JsResult<Option<PinnedArrayBuffer>> {
+    let StringOrBuffer::Buffer(buffer) = input else {
+        return Ok(None);
+    };
+    match PinnedArrayBuffer::pin(global, buffer.buffer.value) {
+        Some(pinned) => Ok(Some(pinned)),
+        None => Err(global.throw_out_of_memory()),
     }
 }
 
@@ -150,7 +128,7 @@ pub(crate) fn render_to_ansi(
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     };
 
-    let pinned = PinnedView::pin(global_this, &buffer)?;
+    let pinned = pin(global_this, &buffer)?;
     let input: &[u8] = match &pinned {
         Some(p) => p.slice(),
         None => buffer.slice(),
@@ -193,7 +171,7 @@ pub(crate) fn render_to_ansi(
     let result = match md::render_to_ansi(input, md::Options::TERMINAL, theme) {
         Ok(Some(r)) => r,
         Ok(None) => {
-            // The parser can only return null via JSError / JSTerminated
+            // The parser can only return null via JSError
             // from a renderer callback; the ANSI renderer has none, so this
             // path is unreachable but handle it safely.
             return Err(global_this.throw_out_of_memory());
@@ -201,7 +179,7 @@ pub(crate) fn render_to_ansi(
         Err(err) => return Err(parser_err_to_js(global_this, err, input.len())),
     };
 
-    create_utf8_for_js(global_this, &result)
+    bun_string_jsc::create_utf8_for_js(global_this, &result)
 }
 
 #[bun_jsc::host_fn]
@@ -218,7 +196,7 @@ fn render_to_html(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     };
 
-    let pinned = PinnedView::pin(global_this, &buffer)?;
+    let pinned = pin(global_this, &buffer)?;
     let input: &[u8] = match &pinned {
         Some(p) => p.slice(),
         None => buffer.slice(),
@@ -231,7 +209,7 @@ fn render_to_html(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
         Err(err) => return Err(parser_err_to_js(global_this, err, input.len())),
     };
 
-    create_utf8_for_js(global_this, &result)
+    bun_string_jsc::create_utf8_for_js(global_this, &result)
 }
 
 fn parse_options(global_this: &JSGlobalObject, opts_value: JSValue) -> JsResult<md::Options> {
@@ -321,7 +299,7 @@ fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVal
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     };
 
-    let pinned = PinnedView::pin(global_this, &buffer)?;
+    let pinned = pin(global_this, &buffer)?;
     let input: &[u8] = match &pinned {
         Some(p) => p.slice(),
         None => buffer.slice(),
@@ -350,7 +328,7 @@ fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVal
 
     // Return accumulated result
     let result = js_renderer.get_result();
-    create_utf8_for_js(global_this, result)
+    bun_string_jsc::create_utf8_for_js(global_this, result)
 }
 
 /// `Bun.markdown.react(text, components?, options?)` — returns a React Fragment element
@@ -414,7 +392,7 @@ fn render_ast(
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     };
 
-    let pinned = PinnedView::pin(global_this, &buffer)?;
+    let pinned = pin(global_this, &buffer)?;
     let input: &[u8] = match &pinned {
         Some(p) => p.slice(),
         None => buffer.slice(),
@@ -805,7 +783,7 @@ impl<'a> ParseRenderer<'a> {
         match block_type {
             md::BlockType::H => {
                 if let Some(s) = slug {
-                    props.put(g, b"id", create_utf8_for_js(g, &s)?);
+                    props.put(g, b"id", bun_string_jsc::create_utf8_for_js(g, &s)?);
                 }
             }
             md::BlockType::Ol => {
@@ -825,14 +803,14 @@ impl<'a> ParseRenderer<'a> {
                 if entry.flags & md::BLOCK_FENCED_CODE != 0 {
                     let lang = extract_language(self.src_text, entry.data);
                     if !lang.is_empty() {
-                        props.put(g, b"language", create_utf8_for_js(g, lang)?);
+                        props.put(g, b"language", bun_string_jsc::create_utf8_for_js(g, lang)?);
                     }
                 }
             }
             md::BlockType::Th | md::BlockType::Td => {
                 let alignment = md::types::alignment_from_data(entry.data);
                 if let Some(align_str) = md::types::alignment_name(alignment) {
-                    props.put(g, b"align", create_utf8_for_js(g, align_str)?);
+                    props.put(g, b"align", bun_core::String::static_(align_str).to_js(g)?);
                 }
             }
             _ => {}
@@ -923,19 +901,39 @@ impl<'a> ParseRenderer<'a> {
         // Set metadata props
         match span_type {
             md::SpanType::A => {
-                props.put(g, b"href", create_utf8_for_js(g, &entry.href)?);
+                props.put(
+                    g,
+                    b"href",
+                    bun_string_jsc::create_utf8_for_js(g, &entry.href)?,
+                );
                 if !entry.title.is_empty() {
-                    props.put(g, b"title", create_utf8_for_js(g, &entry.title)?);
+                    props.put(
+                        g,
+                        b"title",
+                        bun_string_jsc::create_utf8_for_js(g, &entry.title)?,
+                    );
                 }
             }
             md::SpanType::Img => {
-                props.put(g, b"src", create_utf8_for_js(g, &entry.href)?);
+                props.put(
+                    g,
+                    b"src",
+                    bun_string_jsc::create_utf8_for_js(g, &entry.href)?,
+                );
                 if !entry.title.is_empty() {
-                    props.put(g, b"title", create_utf8_for_js(g, &entry.title)?);
+                    props.put(
+                        g,
+                        b"title",
+                        bun_string_jsc::create_utf8_for_js(g, &entry.title)?,
+                    );
                 }
             }
             md::SpanType::Wikilink => {
-                props.put(g, b"target", create_utf8_for_js(g, &entry.href)?);
+                props.put(
+                    g,
+                    b"target",
+                    bun_string_jsc::create_utf8_for_js(g, &entry.href)?,
+                );
             }
             md::SpanType::LatexmathDisplay => {
                 props.put(g, b"display", JSValue::TRUE);
@@ -957,12 +955,12 @@ impl<'a> ParseRenderer<'a> {
                 for i in 0..len {
                     let child = entry.children.get_index(g, i as u32)?;
                     if child.is_string() {
-                        let str = child.to_slice(g)?;
+                        let str = child.to_utf8(g)?;
                         let _ = alt_buf.extend_from_slice(str.slice());
                     }
                 }
                 if !alt_buf.is_empty() {
-                    props.put(g, b"alt", create_utf8_for_js(g, &alt_buf)?);
+                    props.put(g, b"alt", bun_string_jsc::create_utf8_for_js(g, &alt_buf)?);
                 }
             }
         } else {
@@ -1012,12 +1010,12 @@ impl<'a> ParseRenderer<'a> {
                 js_array_push(parent_children, g, obj)?;
             }
             md::TextType::Softbr => {
-                let str = create_utf8_for_js(g, b"\n")?;
+                let str = bun_core::String::static_("\n").to_js(g)?;
                 self.marked_args.append(str);
                 js_array_push(parent_children, g, str)?;
             }
             md::TextType::NullChar => {
-                let str = create_utf8_for_js(g, b"\xEF\xBF\xBD")?;
+                let str = bun_string_jsc::create_utf8_for_js(g, b"\xEF\xBF\xBD")?;
                 self.marked_args.append(str);
                 js_array_push(parent_children, g, str)?;
             }
@@ -1025,12 +1023,12 @@ impl<'a> ParseRenderer<'a> {
                 let mut buf = [0u8; 8];
                 let decoded =
                     md::helpers::decode_entity_to_utf8(content, &mut buf).unwrap_or(content);
-                let str = create_utf8_for_js(g, decoded)?;
+                let str = bun_string_jsc::create_utf8_for_js(g, decoded)?;
                 self.marked_args.append(str);
                 js_array_push(parent_children, g, str)?;
             }
             _ => {
-                let str = create_utf8_for_js(g, content)?;
+                let str = bun_string_jsc::create_utf8_for_js(g, content)?;
                 self.marked_args.append(str);
                 js_array_push(parent_children, g, str)?;
             }
@@ -1040,15 +1038,16 @@ impl<'a> ParseRenderer<'a> {
 }
 
 /// Renderer that calls JavaScript callbacks for each markdown element.
-/// Uses a content-stack pattern: each enter pushes a new buffer, text
-/// appends to the top buffer, and each leave pops the buffer, calls
-/// the JS callback with the accumulated children, and appends the
-/// callback's return value to the parent buffer.
+/// Only an element with a callback buffers its children; the rest write to the enclosing buffer.
 struct JsCallbackRenderer<'a> {
     global_object: &'a JSGlobalObject,
     // Note: #allocator field dropped — global mimalloc.
     src_text: &'a [u8],
     stack: Vec<CallbackStackEntry>,
+    /// Indices into `stack` of the entries that collect output, innermost last.
+    collecting: Vec<usize>,
+    /// Number of ul/ol entries on `stack`.
+    list_depth: u32,
     callbacks: Callbacks,
     heading_tracker: md::helpers::HeadingIdTracker,
     stack_check: StackCheck,
@@ -1148,11 +1147,13 @@ impl<'a> JsCallbackRenderer<'a> {
             global_object,
             src_text,
             stack: Vec::new(),
+            collecting: Vec::new(),
+            list_depth: 0,
             callbacks: Callbacks::default(),
             heading_tracker: md::helpers::HeadingIdTracker::init(heading_ids),
             stack_check: StackCheck::init(),
         };
-        self_.stack.push(CallbackStackEntry::default());
+        self_.push_entry(CallbackStackEntry::default(), true);
         Ok(self_)
     }
 
@@ -1205,26 +1206,45 @@ impl<'a> JsCallbackRenderer<'a> {
     // Content stack operations
     // ========================================
 
-    fn append_to_top(&mut self, data: &[u8]) -> Result<(), bun_alloc::AllocError> {
-        if let Some(top) = self.stack.last_mut() {
-            top.buffer.extend_from_slice(data);
+    fn push_entry(&mut self, entry: CallbackStackEntry, collects: bool) {
+        if collects {
+            self.collecting.push(self.stack.len());
+        }
+        if matches!(entry.block_type, md::BlockType::Ul | md::BlockType::Ol) {
+            self.list_depth += 1;
+        }
+        self.stack.push(entry);
+    }
+
+    /// Never pops the root.
+    fn pop_entry(&mut self) -> Option<CallbackStackEntry> {
+        if self.stack.len() <= 1 {
+            return None;
+        }
+        let entry = self.stack.pop()?;
+        if self.collecting.last() == Some(&self.stack.len()) {
+            self.collecting.pop();
+        }
+        if matches!(entry.block_type, md::BlockType::Ul | md::BlockType::Ol) {
+            self.list_depth -= 1;
+        }
+        Some(entry)
+    }
+
+    fn append_output(&mut self, data: &[u8]) -> Result<(), bun_alloc::AllocError> {
+        if let Some(&i) = self.collecting.last() {
+            self.stack[i].buffer.extend_from_slice(data);
         }
         Ok(())
     }
 
     fn pop_and_callback(&mut self, callback: JSValue, meta: Option<JSValue>) -> JsResult<()> {
-        if self.stack.len() <= 1 {
-            return Ok(()); // don't pop root
-        }
-        let Some(entry) = self.stack.pop() else {
+        let Some(entry) = self.pop_entry() else {
             return Ok(());
         };
-
-        let children = entry.buffer.as_slice();
-
         if callback.is_empty() {
-            // No callback registered - pass children through to parent
-            self.append_to_top(children)?;
+            // Empty unless the parser's enter/leave events were unbalanced (#39496).
+            self.append_output(&entry.buffer)?;
             return Ok(());
         }
 
@@ -1233,7 +1253,8 @@ impl<'a> JsCallbackRenderer<'a> {
         }
 
         // Convert children to JS string
-        let children_js = create_utf8_for_js(self.global_object, children)?;
+        let children_js =
+            bun_string_jsc::create_utf8_for_js(self.global_object, entry.buffer.as_slice())?;
 
         // Call the JS callback
         let result = if let Some(m) = meta {
@@ -1245,8 +1266,8 @@ impl<'a> JsCallbackRenderer<'a> {
         if result.is_undefined_or_null() {
             return Ok(()); // callback returned null/undefined → omit element
         }
-        let slice = result.to_slice(self.global_object)?;
-        self.append_to_top(slice.slice())?;
+        let slice = result.to_utf8(self.global_object)?;
+        self.append_output(slice.slice())?;
         Ok(())
     }
 
@@ -1286,13 +1307,17 @@ impl<'a> JsCallbackRenderer<'a> {
             parent.child_index += 1;
         }
 
-        self.stack.push(CallbackStackEntry {
-            block_type,
-            data,
-            flags,
-            child_index,
-            ..Default::default()
-        });
+        let collects = !self.get_block_callback(block_type).is_empty();
+        self.push_entry(
+            CallbackStackEntry {
+                block_type,
+                data,
+                flags,
+                child_index,
+                ..Default::default()
+            },
+            collects,
+        );
         Ok(())
     }
 
@@ -1305,19 +1330,18 @@ impl<'a> JsCallbackRenderer<'a> {
         }
 
         let callback = self.get_block_callback(block_type);
-        // Note: reshaped for borrowck — clone the saved entry (cheap; buffer not used) instead of holding a borrow across method calls.
-        let saved = if self.stack.len() > 1 {
-            CallbackStackEntry {
-                block_type: self.stack.last().unwrap().block_type,
-                data: self.stack.last().unwrap().data,
-                flags: self.stack.last().unwrap().flags,
-                child_index: self.stack.last().unwrap().child_index,
-                ..Default::default()
+        let meta = if callback.is_empty() {
+            if block_type == md::BlockType::H {
+                let _ = self.heading_tracker.leave_heading();
             }
+            None
         } else {
-            CallbackStackEntry::default()
+            let (data, flags) = self
+                .stack
+                .last()
+                .map_or((0, 0), |top| (top.data, top.flags));
+            self.create_block_meta(block_type, data, flags)?
         };
-        let meta = self.create_block_meta(block_type, saved.data, saved.flags)?;
         self.pop_and_callback(callback, meta)?;
 
         if block_type == md::BlockType::H {
@@ -1326,15 +1350,25 @@ impl<'a> JsCallbackRenderer<'a> {
         Ok(())
     }
 
-    fn enter_span_impl(&mut self, _: md::SpanType, detail: md::SpanDetail<'_>) -> JsResult<()> {
+    fn enter_span_impl(
+        &mut self,
+        span_type: md::SpanType,
+        detail: md::SpanDetail<'_>,
+    ) -> JsResult<()> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(self.global_object.throw_stack_overflow());
         }
-        self.stack.push(CallbackStackEntry {
-            href: Box::from(detail.href),
-            title: Box::from(detail.title),
-            ..Default::default()
-        });
+        let collects = !self.get_span_callback(span_type).is_empty();
+        let entry = if collects {
+            CallbackStackEntry {
+                href: Box::from(detail.href),
+                title: Box::from(detail.title),
+                ..Default::default()
+            }
+        } else {
+            CallbackStackEntry::default()
+        };
+        self.push_entry(entry, collects);
         Ok(())
     }
 
@@ -1344,13 +1378,12 @@ impl<'a> JsCallbackRenderer<'a> {
         }
 
         let callback = self.get_span_callback(span_type);
-        let (href, title): (&[u8], &[u8]) = if self.stack.len() > 1 {
-            let top = self.stack.last().unwrap();
-            (&top.href, &top.title)
-        } else {
-            (b"", b"")
+        let meta = match self.stack.last() {
+            Some(top) if !callback.is_empty() => {
+                self.create_span_meta(span_type, &top.href, &top.title)?
+            }
+            _ => None,
         };
-        let meta = self.create_span_meta(span_type, href, title)?;
         self.pop_and_callback(callback, meta)?;
         Ok(())
     }
@@ -1364,15 +1397,15 @@ impl<'a> JsCallbackRenderer<'a> {
         self.heading_tracker.track_text(text_type, content);
 
         match text_type {
-            md::TextType::NullChar => self.append_to_top(b"\xEF\xBF\xBD")?,
-            md::TextType::Br => self.append_to_top(b"\n")?,
-            md::TextType::Softbr => self.append_to_top(b"\n")?,
+            md::TextType::NullChar => self.append_output(b"\xEF\xBF\xBD")?,
+            md::TextType::Br => self.append_output(b"\n")?,
+            md::TextType::Softbr => self.append_output(b"\n")?,
             md::TextType::Entity => self.decode_and_append_entity(content)?,
             _ => {
                 if !self.callbacks.text.is_empty() {
                     self.call_text_callback(content)?;
                 } else {
-                    self.append_to_top(content)?;
+                    self.append_output(content)?;
                 }
             }
         }
@@ -1387,14 +1420,14 @@ impl<'a> JsCallbackRenderer<'a> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(self.global_object.throw_stack_overflow());
         }
-        let text_js = create_utf8_for_js(self.global_object, content)?;
+        let text_js = bun_string_jsc::create_utf8_for_js(self.global_object, content)?;
         let result =
             self.callbacks
                 .text
                 .call(self.global_object, JSValue::UNDEFINED, &[text_js])?;
         if !result.is_undefined_or_null() {
-            let slice = result.to_slice(self.global_object)?;
-            self.append_to_top(slice.slice())?;
+            let slice = result.to_utf8(self.global_object)?;
+            self.append_output(slice.slice())?;
         }
         Ok(())
     }
@@ -1414,7 +1447,7 @@ impl<'a> JsCallbackRenderer<'a> {
         if !self.callbacks.text.is_empty() {
             self.call_text_callback(content)
         } else {
-            self.append_to_top(content)?;
+            self.append_output(content)?;
             Ok(())
         }
     }
@@ -1459,24 +1492,6 @@ impl<'a> JsCallbackRenderer<'a> {
     // Metadata object creation
     // ========================================
 
-    /// Walks the stack to count enclosing ul/ol blocks. Called during leave,
-    /// so the top entry is the block itself (skip it for li, count it for ul/ol's
-    /// own depth which excludes self).
-    fn count_list_depth(&self) -> u32 {
-        let mut depth: u32 = 0;
-        // Skip the top entry (self) — we want enclosing lists only.
-        let len = self.stack.len();
-        if len < 2 {
-            return 0;
-        }
-        for entry in &self.stack[0..len - 1] {
-            if entry.block_type == md::BlockType::Ul || entry.block_type == md::BlockType::Ol {
-                depth += 1;
-            }
-        }
-        depth
-    }
-
     /// Returns the parent ul/ol entry for the current li (top of stack).
     /// Returns None if the stack shape is unexpected.
     fn parent_list(&self) -> Option<&CallbackStackEntry> {
@@ -1505,7 +1520,7 @@ impl<'a> JsCallbackRenderer<'a> {
                 let obj = JSValue::create_empty_object(g, field_count);
                 obj.put(g, b"level", JSValue::js_number(data as f64));
                 if let Some(s) = slug {
-                    obj.put(g, b"id", create_utf8_for_js(g, s)?);
+                    obj.put(g, b"id", bun_string_jsc::create_utf8_for_js(g, s)?);
                 }
                 Ok(Some(obj))
             }
@@ -1515,7 +1530,7 @@ impl<'a> JsCallbackRenderer<'a> {
                     g,
                     true,
                     JSValue::js_number(data as f64),
-                    self.count_list_depth(),
+                    self.list_depth.saturating_sub(1),
                 )))
             }
             md::BlockType::Ul => {
@@ -1524,7 +1539,7 @@ impl<'a> JsCallbackRenderer<'a> {
                     g,
                     false,
                     JSValue::UNDEFINED,
-                    self.count_list_depth(),
+                    self.list_depth.saturating_sub(1),
                 )))
             }
             md::BlockType::Code => {
@@ -1532,7 +1547,7 @@ impl<'a> JsCallbackRenderer<'a> {
                     let lang = extract_language(self.src_text, data);
                     if !lang.is_empty() {
                         let obj = JSValue::create_empty_object(g, 1);
-                        obj.put(g, b"language", create_utf8_for_js(g, lang)?);
+                        obj.put(g, b"language", bun_string_jsc::create_utf8_for_js(g, lang)?);
                         return Ok(Some(obj));
                     }
                 }
@@ -1541,7 +1556,7 @@ impl<'a> JsCallbackRenderer<'a> {
             md::BlockType::Th | md::BlockType::Td => {
                 let alignment = md::types::alignment_from_data(data);
                 let align_js = if let Some(align_str) = md::types::alignment_name(alignment) {
-                    create_utf8_for_js(g, align_str)?
+                    bun_core::String::static_(align_str).to_js(g)?
                 } else {
                     JSValue::UNDEFINED
                 };
@@ -1559,10 +1574,9 @@ impl<'a> JsCallbackRenderer<'a> {
                 let parent = self.parent_list();
                 let is_ordered =
                     parent.is_some() && parent.unwrap().block_type == md::BlockType::Ol;
-                // count_list_depth() includes the immediate parent list; subtract it
+                // `list_depth` includes the immediate parent list; subtract it
                 // so that items in a top-level list report depth 0.
-                let enclosing = self.count_list_depth();
-                let depth: u32 = if enclosing > 0 { enclosing - 1 } else { 0 };
+                let depth = self.list_depth.saturating_sub(1);
                 let task_mark = md::types::task_mark_from_data(data);
 
                 let start_js = if is_ordered {
@@ -1594,9 +1608,9 @@ impl<'a> JsCallbackRenderer<'a> {
         let g = self.global_object;
         match span_type {
             md::SpanType::A => {
-                let href = create_utf8_for_js(g, href)?;
+                let href = bun_string_jsc::create_utf8_for_js(g, href)?;
                 let title = if !title.is_empty() {
-                    create_utf8_for_js(g, title)?
+                    bun_string_jsc::create_utf8_for_js(g, title)?
                 } else {
                     JSValue::UNDEFINED
                 };
@@ -1609,9 +1623,9 @@ impl<'a> JsCallbackRenderer<'a> {
                 // second slot, so just fall back to the generic path here —
                 // images are rare enough that it doesn't matter.
                 let obj = JSValue::create_empty_object(g, 2);
-                obj.put(g, b"src", create_utf8_for_js(g, href)?);
+                obj.put(g, b"src", bun_string_jsc::create_utf8_for_js(g, href)?);
                 if !title.is_empty() {
-                    obj.put(g, b"title", create_utf8_for_js(g, title)?);
+                    obj.put(g, b"title", bun_string_jsc::create_utf8_for_js(g, title)?);
                 }
                 Ok(Some(obj))
             }

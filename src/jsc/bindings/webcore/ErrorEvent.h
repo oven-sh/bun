@@ -75,9 +75,6 @@ public:
     JSC::JSValue error(JSC::JSGlobalObject&);
 
     const JSValueInWrappedObject& originalError() const { return m_error; }
-    // SerializedScriptValue* serializedError() const { return m_serializedError.get(); }
-
-    // RefPtr<SerializedScriptValue> trySerializeError(JSC::JSGlobalObject&);
 
 private:
     ErrorEvent(const AtomString& type, const String& message, const String& fileName, unsigned lineNumber, unsigned columnNumber, JSC::Strong<JSC::Unknown> error);

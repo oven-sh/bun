@@ -29,11 +29,14 @@ pub fn load() {
         boring::OpenSSL_add_all_algorithms();
 
         if !cfg!(test) {
-            // D006 added the bun_core dep for `run_once!`; keep_symbols! could
-            // now be used here too — left as inline `black_box` for this pass.
-            core::hint::black_box(OPENSSL_memory_alloc as *const ());
-            core::hint::black_box(OPENSSL_memory_get_size as *const ());
-            core::hint::black_box(OPENSSL_memory_free as *const ());
+            bun_core::keep_symbols!(
+                OPENSSL_memory_alloc,
+                OPENSSL_memory_get_size,
+                OPENSSL_memory_free,
+                OPENSSL_system_malloc,
+                OPENSSL_system_realloc,
+                OPENSSL_system_free,
+            );
         }
     }}
 }
@@ -94,30 +97,69 @@ pub unsafe fn ssl_ctx_setup(ctx: *mut boring::SSL_CTX) {
 // into the process, including pthreads locks. Failing to meet these constraints
 // may result in deadlocks, crashes, or memory corruption.
 
+// Routed through `default_alloc` (mimalloc, or libc under `cfg(bun_asan)`)
+// rather than `mimalloc` directly. The BoringSSL build already drops
+// `BORINGSSL_REQUIRE_MEMORY_HOOKS` under ASAN so Mach-O/COFF fall back to
+// libc, but on ELF the weak hook symbols still resolve to these definitions;
+// hard-coding mimalloc here put every `OPENSSL_malloc` allocation outside
+// LeakSanitizer's scanned set and any libc-backed allocation reachable only
+// via one (an SSL's ex_data array, the per-SSL session-sink owner it holds)
+// was reported as a leak at exit.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn OPENSSL_memory_alloc(size: usize) -> *mut c_void {
-    bun_alloc::mimalloc::mi_malloc(size)
+    // ASan (LLVM 23+) poisons the one byte it hands back for `malloc(0)` while
+    // `malloc_usable_size` still reports it, and both `OPENSSL_memory_free`
+    // below and `OPENSSL_realloc` touch `usable_size` bytes (`CBB_init(_, 0)`
+    // then a grow is the first TLS handshake's ECDSA verify).
+    let size = if cfg!(bun_asan) && size == 0 { 1 } else { size };
+    bun_alloc::default_alloc::malloc(size)
 }
 
 // BoringSSL always expects memory to be zero'd
 /// # Safety
-/// `ptr` must be non-null and have been returned by `OPENSSL_memory_alloc`
-/// (i.e. `mi_malloc`); BoringSSL guarantees both for this hook.
+/// `ptr` must be non-null and returned by `OPENSSL_memory_alloc`; BoringSSL
+/// guarantees both for this hook.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn OPENSSL_memory_free(ptr: *mut c_void) {
     // SAFETY: BoringSSL guarantees ptr is non-null and was returned by
-    // OPENSSL_memory_alloc above (i.e. mi_malloc).
+    // OPENSSL_memory_alloc above.
     unsafe {
-        let len = bun_alloc::usable_size(ptr.cast());
+        let len = bun_alloc::default_alloc::usable_size(ptr);
         ptr::write_bytes(ptr.cast::<u8>(), 0, len);
-        bun_alloc::mimalloc::mi_free(ptr);
+        bun_alloc::default_alloc::free(ptr);
     }
 }
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn OPENSSL_memory_get_size(ptr: *const c_void) -> usize {
-    // ptr was returned by mi_malloc (or is null, which usable_size handles).
-    bun_alloc::usable_size(ptr.cast())
+    // SAFETY: ptr was returned by OPENSSL_memory_alloc (null-safe).
+    unsafe { bun_alloc::default_alloc::usable_size(ptr) }
+}
+
+// Backs the sites BoringSSL keeps off OPENSSL_malloc; see OPENSSL_system_malloc in crypto/internal.h.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn OPENSSL_system_malloc(size: usize) -> *mut c_void {
+    bun_alloc::default_alloc::malloc(size)
+}
+
+/// # Safety
+/// `ptr` must be null or a live block from `OPENSSL_system_malloc`/`realloc`.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn OPENSSL_system_realloc(
+    ptr: *mut c_void,
+    size: usize,
+) -> *mut c_void {
+    // SAFETY: BoringSSL only passes blocks it obtained from the two functions
+    // above, which allocate from the default allocator.
+    unsafe { bun_alloc::default_alloc::realloc(ptr, size) }
+}
+
+/// # Safety
+/// `ptr` must be null or a live block from `OPENSSL_system_malloc`/`realloc`.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn OPENSSL_system_free(ptr: *mut c_void) {
+    // SAFETY: as for OPENSSL_system_realloc; the default allocator accepts NULL.
+    unsafe { bun_alloc::default_alloc::free(ptr) }
 }
 
 pub use bun_sys::posix::INET6_ADDRSTRLEN;
@@ -187,7 +229,7 @@ fn eq_nocase(a: &[u8], b: &[u8]) -> bool {
 
 /// Wildcard interpretation for [`match_hostname`]'s left-most label.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Wildcards {
+enum Wildcards {
     /// No wildcard expansion: a `*` is matched literally.
     None,
     /// Full-label `*` only (OpenSSL `X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS`).
@@ -201,7 +243,7 @@ pub enum Wildcards {
 /// Options for [`match_hostname`]. Each defaults to the stricter setting so
 /// callers opt in explicitly.
 #[derive(Clone, Copy)]
-pub struct MatchOpts {
+struct MatchOpts {
     pub wildcards: Wildcards,
     /// A full-label `*` may span multiple host labels
     /// (OpenSSL `X509_CHECK_FLAG_MULTI_LABEL_WILDCARDS`).
@@ -214,7 +256,7 @@ pub struct MatchOpts {
 impl MatchOpts {
     /// Node.js lib/tls.js `check()` — the matcher behind `tls.connect`,
     /// `https`, and undici `fetch`.
-    pub const TLS_CHECK: Self = Self {
+    const TLS_CHECK: Self = Self {
         wildcards: Wildcards::Anywhere,
         multi_label_wildcards: false,
         strip_trailing_dot: true,
@@ -257,7 +299,7 @@ fn openssl_valid_pattern(pattern: &[u8]) -> bool {
 /// hostname matcher every native TLS client and `X509Certificate#checkHost`
 /// share; [`MatchOpts`] selects between Node.js lib/tls.js `check()` semantics
 /// and OpenSSL `X509_check_host` semantics where they differ.
-pub fn match_hostname(pattern: &[u8], hostname: &[u8], opts: MatchOpts) -> bool {
+fn match_hostname(pattern: &[u8], hostname: &[u8], opts: MatchOpts) -> bool {
     let (pattern, hostname) = if opts.strip_trailing_dot {
         (unfqdn(pattern), unfqdn(hostname))
     } else {
@@ -358,6 +400,10 @@ pub fn match_hostname(pattern: &[u8], hostname: &[u8], opts: MatchOpts) -> bool 
         &hostname[..end]
     };
 
+    // Node lets `*` match the empty label of ".example.com", the IDNA form of "。example.com".
+    if host_first.is_empty() {
+        return false;
+    }
     if prefix.len() + suffix.len() > host_first.len() {
         return false;
     }
@@ -392,9 +438,27 @@ fn match_dns_name(pattern: &[u8], hostname: &[u8]) -> bool {
     match_hostname(pattern, hostname, MatchOpts::TLS_CHECK)
 }
 
+unsafe extern "C" {
+    /// UTS #46 ToASCII in NodeURL.cpp, with no URL host parse. `Tag::Dead` when `domain` does not convert.
+    safe fn Bun__idnaToASCII(domain: &bun_core::String) -> bun_core::String;
+}
+
 pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> bool {
+    // As in Node.js, a host is an IP address only as typed, not after the IDNA mapping.
+    let host_is_ip = bun_core::ip_address::is_ip_address(unfqdn(hostname));
+    let ascii_hostname;
+    // CVE-2026-48618: IDNA maps "。" to ".", so a non-ASCII host is matched on its UTS #46 form, as in `tls.checkServerIdentity`.
+    let hostname = if strings::first_non_ascii(hostname).is_some() {
+        let ascii = Bun__idnaToASCII(&bun_core::String::borrow_utf8(hostname));
+        if ascii.is_dead() {
+            return false;
+        }
+        ascii_hostname = ascii.to_owned_slice();
+        &ascii_hostname[..]
+    } else {
+        hostname
+    };
     let hostname = unfqdn(hostname);
-    let host_is_ip = bun_core::ip_address::is_ip_address(hostname);
     let mut has_dns_san = false;
 
     match x509.subject_alt_names() {
@@ -467,20 +531,10 @@ fn match_dot_subdomain(pattern: &[u8], host: &[u8], single_label: bool) -> bool 
     eq_nocase(&pattern[skip.len()..], host)
 }
 
-fn alloc_peer(name: &[u8], out_ptr: *mut *mut u8, out_len: *mut usize) {
-    if out_ptr.is_null() || out_len.is_null() {
-        return;
-    }
-    let buf = OPENSSL_memory_alloc(name.len() + 1).cast::<u8>();
-    if buf.is_null() {
-        return;
-    }
-    // SAFETY: `buf` is a fresh allocation of `name.len() + 1` bytes.
-    unsafe {
-        ptr::copy_nonoverlapping(name.as_ptr(), buf, name.len());
-        *buf.add(name.len()) = 0;
-        *out_ptr = buf;
-        *out_len = name.len();
+fn set_peer(name: &[u8], out_peer: *mut bun_core::String) {
+    if !out_peer.is_null() {
+        // SAFETY: caller contract of `Bun__X509__checkHost`: `out_peer` is writable and holds no string.
+        unsafe { out_peer.write(bun_core::String::clone_utf8(name)) };
     }
 }
 
@@ -491,20 +545,18 @@ fn alloc_peer(name: &[u8], out_ptr: *mut *mut u8, out_len: *mut usize) {
 /// values.
 ///
 /// Returns `1` (match), `0` (no match) or `-2` (invalid `host`). On match,
-/// `*out_peer` receives the matched certificate name as a NUL-terminated
-/// OPENSSL_malloc'd buffer the caller owns.
+/// `*out_peer` receives the matched certificate name.
 ///
 /// # Safety
 /// `x509` must be a live BoringSSL certificate, `host_ptr[..host_len]` must be
-/// readable, and `out_peer` / `out_len` must be null or writable.
+/// readable, and `out_peer` must be null or point to an empty string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Bun__X509__checkHost(
     x509: *mut boring::X509,
     host_ptr: *const u8,
     host_len: usize,
     flags: u32,
-    out_peer: *mut *mut u8,
-    out_len: *mut usize,
+    out_peer: *mut bun_core::String,
 ) -> c_int {
     // SAFETY: caller contract — `x509` is null or a live BoringSSL certificate.
     let Some(x509) = (unsafe { x509.as_mut() }) else {
@@ -550,7 +602,7 @@ pub unsafe extern "C" fn Bun__X509__checkHost(
                 if let boring::SubjectAltName::Dns(name) = entry {
                     has_dns_san = true;
                     if matches(name) {
-                        alloc_peer(name, out_peer, out_len);
+                        set_peer(name, out_peer);
                         return 1;
                     }
                 }
@@ -568,7 +620,7 @@ pub unsafe extern "C" fn Bun__X509__checkHost(
     }
     for cn in x509.common_names() {
         if matches(&cn) {
-            alloc_peer(&cn, out_peer, out_len);
+            set_peer(&cn, out_peer);
             return 1;
         }
     }
@@ -606,6 +658,18 @@ impl core::fmt::Display for NameBytes<'_> {
             }
         }
         f.write_char('"')
+    }
+}
+
+/// The host as typed, as Node.js prints it. Invalid UTF-8 takes the `NameBytes` escaping.
+struct HostName<'a>(&'a [u8]);
+
+impl core::fmt::Display for HostName<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match core::str::from_utf8(self.0) {
+            Ok(host) => f.write_str(host),
+            Err(_) => NameBytes(self.0).fmt(f),
+        }
     }
 }
 
@@ -698,7 +762,7 @@ pub fn write_server_identity_mismatch_reason(
 ) -> core::fmt::Result {
     const NO_DNS: &str = "Cert does not contain a DNS name";
     let hostname = unfqdn(hostname);
-    let host = NameBytes(hostname);
+    let host = HostName(hostname);
     let host_is_ip = bun_core::ip_address::is_ip_address(hostname);
 
     let Some(x509) = ssl_ptr.peer_leaf_certificate() else {
@@ -738,6 +802,38 @@ pub fn check_server_identity(ssl_ptr: &mut boring::SSL, hostname: &[u8]) -> bool
     ssl_ptr
         .peer_leaf_certificate()
         .is_some_and(|x509| check_x509_server_identity(x509, hostname))
+}
+
+/// Node.js's `ERR_TLS_CERT_ALTNAME_INVALID` message for the peer's leaf certificate and `hostname`.
+pub fn server_identity_mismatch_message(ssl_ptr: &mut boring::SSL, hostname: &[u8]) -> String {
+    let mut message = String::from("Hostname/IP does not match certificate's altnames: ");
+    // Infallible: the writer is a `String`.
+    let _ = write_server_identity_mismatch_reason(ssl_ptr, hostname, &mut message);
+    message
+}
+
+/// What a client says about the name on the server's certificate, inside the handshake. openssl.c's `US_IDENTITY_*`.
+#[repr(i32)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ServerIdentity {
+    Rejected = 0,
+    Accepted = 1,
+    /// No native check here: the owner decides after the handshake.
+    Unchecked = 2,
+}
+
+/// [`check_server_identity`] as a verdict. `None` or an empty `host` is [`ServerIdentity::Unchecked`].
+pub fn server_identity(ssl: &mut boring::SSL, host: Option<&[u8]>) -> ServerIdentity {
+    match host {
+        Some(host) if !host.is_empty() => {
+            if check_server_identity(ssl, host) {
+                ServerIdentity::Accepted
+            } else {
+                ServerIdentity::Rejected
+            }
+        }
+        _ => ServerIdentity::Unchecked,
+    }
 }
 
 #[cfg(test)]

@@ -48,6 +48,17 @@ pub fn top_level_dir() -> &'static [u8] {
 /// the crash signals need resetting to `SIG_DFL` before re-raising.
 pub static CRASH_HANDLER_INSTALLED: AtomicBool = AtomicBool::new(false);
 
+/// What `bun_crash_handler` catches. SIGABRT and SIGTRAP cover abort() and traps (#34771).
+#[cfg(unix)]
+pub const CRASH_HANDLER_SIGNALS: [c_int; 6] = [
+    libc::SIGSEGV,
+    libc::SIGILL,
+    libc::SIGBUS,
+    libc::SIGFPE,
+    libc::SIGABRT,
+    libc::SIGTRAP,
+];
+
 /// VEH handle returned by `AddVectoredExceptionHandler`, written by
 /// `bun_crash_handler::init()` on Windows. `raise_ignoring_panic_handler`
 /// removes it before re-raising so the signal goes to the OS default.
@@ -225,61 +236,112 @@ pub fn sleep_forever_if_another_thread_is_crashing() {
 }
 
 // ─── SignalCode — single source of truth ──────────────────────────────────
-// Rust has no enum reflection, so the 31
+// Rust has no enum reflection, so this platform's
 // (name,number) pairs live in ONE X-macro below; every consumer — the closed
-// enum here, the open newtype in `bun_sys`, `SIGNAL_NAMES`, `from_raw`,
+// enum here (a discriminant is the platform's own number), `ALL`, `name`, `description`,
 // `from_name` — is generated from it. Never re-spell a signal pair elsewhere.
-#[macro_export]
+#[cfg(unix)]
 macro_rules! for_each_signal {
     ($cb:ident) => {
         $cb! {
-            SIGHUP = 1, SIGINT = 2, SIGQUIT = 3, SIGILL = 4, SIGTRAP = 5, SIGABRT = 6,
-            SIGBUS = 7, SIGFPE = 8, SIGKILL = 9, SIGUSR1 = 10, SIGSEGV = 11, SIGUSR2 = 12,
-            SIGPIPE = 13, SIGALRM = 14, SIGTERM = 15, SIG16 = 16, SIGCHLD = 17, SIGCONT = 18,
-            SIGSTOP = 19, SIGTSTP = 20, SIGTTIN = 21, SIGTTOU = 22, SIGURG = 23, SIGXCPU = 24,
-            SIGXFSZ = 25, SIGVTALRM = 26, SIGPROF = 27, SIGWINCH = 28, SIGIO = 29, SIGPWR = 30,
-            SIGSYS = 31,
+            SIGHUP = libc::SIGHUP, "Terminal hung up";
+            SIGINT = libc::SIGINT, "Quit request";
+            SIGQUIT = libc::SIGQUIT, "Quit request";
+            SIGILL = libc::SIGILL, "Illegal instruction";
+            SIGTRAP = libc::SIGTRAP, "Trace or breakpoint trap";
+            SIGABRT = libc::SIGABRT, "Abort";
+            SIGBUS = libc::SIGBUS, "Misaligned address error";
+            SIGFPE = libc::SIGFPE, "Floating point exception";
+            SIGKILL = libc::SIGKILL, "Forced quit";
+            SIGUSR1 = libc::SIGUSR1, "User defined signal 1";
+            SIGSEGV = libc::SIGSEGV, "Address boundary error";
+            SIGUSR2 = libc::SIGUSR2, "User defined signal 2";
+            SIGPIPE = libc::SIGPIPE, "Broken pipe";
+            SIGALRM = libc::SIGALRM, "Timer expired";
+            SIGTERM = libc::SIGTERM, "Polite quit request";
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            SIGSTKFLT = libc::SIGSTKFLT, "Stack fault";
+            SIGCHLD = libc::SIGCHLD, "Child process status changed";
+            SIGCONT = libc::SIGCONT, "Continue previously stopped process";
+            SIGSTOP = libc::SIGSTOP, "Forced stop";
+            SIGTSTP = libc::SIGTSTP, "Stop request from job control (^Z)";
+            SIGTTIN = libc::SIGTTIN, "Stop from terminal input";
+            SIGTTOU = libc::SIGTTOU, "Stop from terminal output";
+            SIGURG = libc::SIGURG, "Urgent socket condition";
+            SIGXCPU = libc::SIGXCPU, "CPU time limit exceeded";
+            SIGXFSZ = libc::SIGXFSZ, "File size limit exceeded";
+            SIGVTALRM = libc::SIGVTALRM, "Virtual timer expired";
+            SIGPROF = libc::SIGPROF, "Profiling timer expired";
+            SIGWINCH = libc::SIGWINCH, "Window size change";
+            SIGIO = libc::SIGIO, "I/O on asynchronous file descriptor is possible";
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            SIGPWR = libc::SIGPWR, "Power failure";
+            SIGSYS = libc::SIGSYS, "Bad system call";
+        }
+    };
+}
+
+// Windows: the CRT's <signal.h>, plus SIGHUP, SIGQUIT, SIGKILL and SIGWINCH from libuv's uv/win.h.
+#[cfg(not(unix))]
+macro_rules! for_each_signal {
+    ($cb:ident) => {
+        $cb! {
+            SIGHUP = 1, "Terminal hung up";
+            SIGINT = 2, "Quit request";
+            SIGQUIT = 3, "Quit request";
+            SIGILL = 4, "Illegal instruction";
+            SIGABRT = 22, "Abort";
+            SIGFPE = 8, "Floating point exception";
+            SIGKILL = 9, "Forced quit";
+            SIGSEGV = 11, "Address boundary error";
+            SIGTERM = 15, "Polite quit request";
+            SIGWINCH = 28, "Window size change";
         }
     };
 }
 
 macro_rules! __define_signal_code {
-    ($($name:ident = $n:literal),* $(,)?) => {
-        /// Signal name table. Index = POSIX signal number; `[0]` is "" sentinel
-        /// (callers range-check `1..=31`). Generated from `for_each_signal!`.
-        pub const SIGNAL_NAMES: [&str; 32] = ["", $(stringify!($name),)*];
-
-        /// Closed `#[repr(u8)]` enum over `1..=31` (the open newtype lives in
-        /// `bun_sys::SignalCode`). Generated from `for_each_signal!`.
-        #[repr(u8)]
+    ($($(#[$cfg:meta])* $name:ident = $n:expr, $desc:literal;)*) => {
+        /// This platform's named signals and their numbers; `bun_sys::SignalCode` holds any number.
+        #[repr(i32)]
         #[derive(Clone, Copy, PartialEq, Eq, Debug)]
         #[allow(clippy::upper_case_acronyms)]
-        pub enum SignalCode { $($name = $n,)* }
+        pub enum SignalCode { $($(#[$cfg])* $name = $n,)* }
 
         impl SignalCode {
             pub const DEFAULT: SignalCode = SignalCode::SIGTERM;
 
-            /// Raw signal number → variant for the closed `1..=31` range;
-            /// `None` for `0` or anything outside it.
-            #[inline]
-            pub const fn from_raw(n: u8) -> Option<SignalCode> {
-                match n { $($n => Some(Self::$name),)* _ => None }
-            }
+            /// Every variant, in table order.
+            pub const ALL: &'static [SignalCode] = &[$($(#[$cfg])* Self::$name,)*];
 
             /// Signal name — every variant is named (enum is exhaustive).
             #[inline]
-            pub fn name(self) -> &'static str { SIGNAL_NAMES[self as u8 as usize] }
+            pub fn name(self) -> &'static str {
+                match self { $($(#[$cfg])* Self::$name => stringify!($name),)* }
+            }
+
+            /// From https://github.com/fish-shell/fish-shell/blob/00ffc397b493f67e28f18640d3de808af29b1434/fish-rust/src/signal.rs#L420
+            pub fn description(self) -> &'static str {
+                match self { $($(#[$cfg])* Self::$name => $desc,)* }
+            }
 
             /// Name-bytes → variant.
             /// 31-arm match; the optimizer turns it into a small string switch.
             #[inline]
             pub fn from_name(s: &[u8]) -> Option<SignalCode> {
-                match s { $(_ if s == stringify!($name).as_bytes() => Some(Self::$name),)* _ => None }
+                match s { $($(#[$cfg])* _ if s == stringify!($name).as_bytes() => Some(Self::$name),)* _ => None }
             }
         }
     };
 }
 for_each_signal!(__define_signal_code);
+
+impl SignalCode {
+    /// `None` when this platform has no name for `n` (Linux real-time signals, macOS SIGEMT, 0).
+    pub fn from_number(n: i32) -> Option<SignalCode> {
+        Self::ALL.iter().copied().find(|signal| *signal as i32 == n)
+    }
+}
 
 // ─── analytics::features (MOVE_DOWN from bun_analytics) ───────────────────
 // Atomic counters so cross-thread `.fetch_add` is sound. Only the
@@ -297,7 +359,7 @@ pub mod features {
         SHELL, SPAWN, STANDALONE_EXECUTABLE, STANDALONE_SHELL, TODO_PANIC, TRANSPILER_CACHE,
         TSCONFIG, TSCONFIG_PATHS, VIRTUAL_MODULES, WORKERS_SPAWNED, WORKERS_TERMINATED,
         NAPI_MODULE_REGISTER, EXITED, YAML_PARSE, YARN_MIGRATION, PNPM_MIGRATION,
-        VALKEY,
+        VALKEY, XML_PARSE,
     }
     /// dotenv crate calls `bun_core::analytics::Features::dotenv_inc()`.
     #[inline]
@@ -318,6 +380,12 @@ pub mod features {
     #[inline]
     pub fn yaml_parse_inc() {
         YAML_PARSE.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    }
+    /// Bumped by the `Bun.XML` API and `.xml` imports (not by internal users
+    /// of the parser, such as the S3 client).
+    #[inline]
+    pub fn xml_parse_inc() {
+        XML_PARSE.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     }
     /// install/yarn crate calls `bun_core::analytics::Features::yarn_migration_inc(1)`.
     #[inline]
@@ -552,7 +620,7 @@ pub fn set_thread_name(name: &ZStr) {
 // Safe `extern "C" fn()` — every registrant (C++ `Bun__atexit` lambdas, Rust
 // `extern "C"` thunks in fs_events / ParentDeathWatchdog) takes no args and has
 // no memory-safety preconditions, so the call site needs no `unsafe` block.
-pub type ExitFn = extern "C" fn();
+type ExitFn = extern "C" fn();
 
 // Registration can happen from any thread (FFI `Bun__atexit`), so this is
 // guarded with a Mutex.
@@ -645,7 +713,13 @@ pub fn exit(code: u32) -> ! {
     }
     #[cfg(windows)]
     {
+        // c-bindings.cpp: no WTF thread may hold this one suspended when ExitProcess
+        // kills it. No args, no preconditions: `safe fn`.
+        unsafe extern "C" {
+            safe fn Bun__lockThreadSuspensionForExit();
+        }
         Bun__onExit();
+        Bun__lockThreadSuspensionForExit();
         // `ExitProcess` is `safe fn` (no preconditions; never returns).
         crate::windows_sys::kernel32::ExitProcess(code)
     }
@@ -681,14 +755,7 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
             let mut act: libc::sigaction = crate::ffi::zeroed();
             act.sa_sigaction = libc::SIG_DFL;
             libc::sigemptyset(&raw mut act.sa_mask);
-            for &s in &[
-                libc::SIGSEGV,
-                libc::SIGBUS,
-                libc::SIGILL,
-                libc::SIGFPE,
-                libc::SIGABRT,
-                libc::SIGTRAP,
-            ] {
+            for s in CRASH_HANDLER_SIGNALS {
                 let _ = libc::sigaction(s, &raw const act, core::ptr::null_mut());
             }
         }
@@ -758,7 +825,7 @@ pub fn crash() -> ! {
     exit(1);
 }
 
-// `BunInfo` (struct + `generate()`) lives at `bun_runtime::server::BunInfo`
+// `BunInfo` (struct + `generate()`) lives in `bun_runtime`'s server module
 // because it depends on analytics/js_parser/interchange — all higher-tier. Only the version constants below
 // are needed at this tier.
 

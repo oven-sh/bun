@@ -1,0 +1,259 @@
+{
+  "src/event_loop/AnyEventLoop.rs": {
+    "unsafe impl Send": [
+      "JsPoster"
+    ],
+    "unsafe impl Sync": [
+      "JsPoster"
+    ]
+  },
+  "src/jsc/CppTask.rs": {
+    "WorkPool::schedule*": 1,
+    "owned_task!": [
+      "ConcurrentCppTask"
+    ]
+  },
+  "src/jsc/Debugger.rs": {
+    "thread spawn": 1
+  },
+  "src/jsc/JSSecrets.rs": {
+    "unsafe impl Send": [
+      "SecretsOptions"
+    ]
+  },
+  "src/jsc/NodeCompileCache.rs": {
+    "thread spawn": 1,
+    "unsafe impl Send": [
+      "AlignedBlob",
+      "CacheState"
+    ]
+  },
+  "src/jsc/RuntimeTranspilerStore.rs": {
+    "WorkPool::schedule*": 1
+  },
+  "src/jsc/TopExceptionScope.rs": {
+    "unsafe impl Send": [
+      "SourceLocation"
+    ],
+    "unsafe impl Sync": [
+      "SourceLocation"
+    ]
+  },
+  "src/jsc/hot_reloader.rs": {
+    "thread spawn": 1,
+    "unsafe impl Send": [
+      "WatchChangedPaths"
+    ],
+    "unsafe impl Sync": [
+      "WatchChangedPaths"
+    ]
+  },
+  "src/jsc/web_worker.rs": {
+    "thread spawn": 1,
+    "unsafe impl Send": [
+      "ThreadStart"
+    ]
+  },
+  "src/jsc/webcore_types.rs": {
+    "unsafe impl Send": [
+      "Blob",
+      "Bytes",
+      "Store"
+    ],
+    "unsafe impl Sync": [
+      "Blob",
+      "Bytes",
+      "Store"
+    ]
+  },
+  "src/runtime/api/JSTranspiler.rs": {
+    "unsafe impl Send": [
+      "TransformTask"
+    ]
+  },
+  "src/runtime/api/bun/Terminal.rs": {
+    "thread spawn": 1
+  },
+  "src/runtime/api/glob.rs": {
+    "unsafe impl Send": [
+      "WalkTask"
+    ]
+  },
+  "src/runtime/api/js_bundle_completion_task.rs": {
+    "unsafe impl Send": [
+      "JSBundleCompletionTask"
+    ]
+  },
+  "src/runtime/bake/production.rs": {
+    "unsafe impl Sync": [
+      "DotenvSingleton"
+    ]
+  },
+  "src/runtime/cli/create_command.rs": {
+    "thread spawn": 1
+  },
+  "src/runtime/cli/open.rs": {
+    "thread spawn": 1
+  },
+  "src/runtime/cli/publish_command.rs": {
+    "thread spawn": 1
+  },
+  "src/runtime/cli/run_command.rs": {
+    "HTTPThread::schedule": 1
+  },
+  "src/runtime/dns_jsc/dns.rs": {
+    "WorkPool::schedule*": 1,
+    "unsafe impl Send": [
+      "GlobalCache",
+      "SendPtr<T>"
+    ]
+  },
+  "src/runtime/image/Image.rs": {
+    "unsafe impl Send": [
+      "PipelineTask"
+    ]
+  },
+  "src/runtime/napi/napi_body.rs": {
+    "WorkPool::schedule*": 1,
+    "intrusive_work_task!": [
+      "napi_async_work"
+    ],
+    "unsafe impl Sync": [
+      "napi_node_version"
+    ]
+  },
+  "src/runtime/node/fs_events.rs": {
+    "thread spawn": 1,
+    "unsafe impl Send": [
+      "CoreFoundation",
+      "FSEventsLoop"
+    ],
+    "unsafe impl Sync": [
+      "CoreFoundation",
+      "FSEventsLoop"
+    ]
+  },
+  "src/runtime/node/memory_pressure.rs": {
+    "thread spawn": 1
+  },
+  "src/runtime/node/node_crypto_binding.rs": {
+    "unsafe impl Send": [
+      "OwnedCtx"
+    ]
+  },
+  "src/runtime/node/node_fs.rs": {
+    "WorkPool::schedule*": 4,
+    "owned_task!": [
+      "AsyncMkdirp",
+      "ReaddirSubtask"
+    ],
+    "unsafe impl Send": [
+      "AsyncFSTask<R, A, F>",
+      "AsyncReaddirRecursiveTask"
+    ]
+  },
+  "src/runtime/node/node_fs_stat_watcher.rs": {
+    "WorkPool::schedule*": 2,
+    "owned_task!": [
+      "InitialStatTask"
+    ]
+  },
+  "src/runtime/node/node_process.rs": {
+    "unsafe impl Sync": [
+      "CStrPtr"
+    ]
+  },
+  "src/runtime/node/node_zlib_binding.rs": {
+    "WorkPool::schedule*": 1
+  },
+  "src/runtime/node/path_watcher.rs": {
+    "thread spawn": 2,
+    "unsafe impl Send": [
+      "PathWatcherManager"
+    ],
+    "unsafe impl Sync": [
+      "PathWatcherManager"
+    ]
+  },
+  "src/runtime/node/types.rs": {
+    "unsafe impl Send": [
+      "ThreadIsolated<T>"
+    ]
+  },
+  "src/runtime/shell/IOReader.rs": {
+    "unsafe impl Send": [
+      "IOReader"
+    ],
+    "unsafe impl Sync": [
+      "IOReader"
+    ]
+  },
+  "src/runtime/shell/IOWriter.rs": {
+    "unsafe impl Send": [
+      "IOWriter"
+    ],
+    "unsafe impl Sync": [
+      "IOWriter"
+    ]
+  },
+  "src/runtime/shell/builtin/cp.rs": {
+    "WorkPool::schedule*": 1
+  },
+  "src/runtime/shell/builtin/rm.rs": {
+    "WorkPool::schedule*": 2,
+    "unsafe impl Send": [
+      "DirTask",
+      "ShellRmTask"
+    ]
+  },
+  "src/runtime/shell/interpreter.rs": {
+    "WorkPool::schedule*": 1
+  },
+  "src/runtime/webcore/Blob.rs": {
+    "WorkPool::schedule*": 1
+  },
+  "src/runtime/webcore/CompressionStreamCoder.rs": {
+    "unsafe impl Send": [
+      "AsyncInput",
+      "CompressionAsyncCtx",
+      "CompressionStreamCoder"
+    ]
+  },
+  "src/runtime/webcore/blob/copy_file.rs": {
+    "unsafe impl Send": [
+      "CopyFile"
+    ]
+  },
+  "src/runtime/webcore/blob/read_file.rs": {
+    "WorkPool::schedule*": 2,
+    "intrusive_work_task!": [
+      "ReadFile"
+    ],
+    "unsafe impl Send": [
+      "ReadFile"
+    ]
+  },
+  "src/runtime/webcore/blob/write_file.rs": {
+    "WorkPool::schedule*": 2,
+    "intrusive_work_task!": [
+      "WriteFile"
+    ],
+    "unsafe impl Send": [
+      "WriteFile"
+    ]
+  },
+  "src/runtime/webcore/fetch/FetchTasklet.rs": {
+    "HTTPThread::schedule": 1
+  },
+  "src/runtime/webcore/s3/client.rs": {
+    "HTTPThread::schedule": 2
+  },
+  "src/runtime/webcore/s3/simple_request.rs": {
+    "HTTPThread::schedule": 1
+  },
+  "src/sql_jsc/jsc.rs": {
+    "unsafe impl Send": [
+      "SSLConfig"
+    ]
+  }
+}

@@ -56,6 +56,11 @@ impl Expr {
             // https://github.com/oven-sh/bun/issues/2594
             Data::ESpread(_) => false,
             Data::EMissing(_) => false,
+            // `[[a?.b]][0]?.[0].c` must not become `a?.b.c`: inlining would
+            // splice this chain onto the parent's `?.` continuation.
+            Data::EDot(e) => e.optional_chain.is_none(),
+            Data::EIndex(e) => e.optional_chain.is_none(),
+            Data::ECall(e) => e.optional_chain.is_none(),
             _ => true,
         }
     }
@@ -129,16 +134,6 @@ pub struct Query {
     pub expr: Expr,
     pub loc: Loc,
     pub i: u32,
-}
-
-impl Default for Query {
-    fn default() -> Self {
-        Self {
-            expr: Expr::EMPTY,
-            loc: Loc::EMPTY,
-            i: 0,
-        }
-    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -727,6 +722,8 @@ impl Expr {
 pub enum EFlags {
     None,
     TsDecorator,
+    /// Between the `?` and `:` of a conditional, where an arrow return type is ambiguous.
+    AfterQuestionAndBeforeColon,
 }
 
 // `is_missing` lives in the `init`/`allocate` impl block below.
@@ -1625,11 +1622,6 @@ impl Data {
             None
         }
     }
-    /// True if this is an `EString`.
-    #[inline]
-    pub fn is_e_string(&self) -> bool {
-        matches!(self, Data::EString(_))
-    }
 
     // ── Remaining StoreRef<E::*> field-style accessors ──────────────────
     // Callers `.unwrap()` (or pattern-match) — the `Option` is the cheapest
@@ -2022,6 +2014,7 @@ impl Data {
                     optional_chain: el.optional_chain,
                     can_be_removed_if_unused: el.can_be_removed_if_unused,
                     call_can_be_unwrapped_if_unused: el.call_can_be_unwrapped_if_unused,
+                    is_import_property_use: el.is_import_property_use,
                 });
                 Ok(Data::EDot(StoreRef::from_bump(item)))
             }
@@ -2030,6 +2023,7 @@ impl Data {
                     target: el.target.deep_clone_no_detach(bump)?,
                     index: el.index.deep_clone_no_detach(bump)?,
                     optional_chain: el.optional_chain,
+                    is_import_property_use: el.is_import_property_use,
                 });
                 Ok(Data::EIndex(StoreRef::from_bump(item)))
             }
@@ -2133,6 +2127,7 @@ impl Data {
                     expr: el.expr.deep_clone_no_detach(bump)?,
                     options: el.options.deep_clone_no_detach(bump)?,
                     import_record_index: el.import_record_index,
+                    namespace_ref: el.namespace_ref,
                 });
                 Ok(Data::EImport(StoreRef::from_bump(item)))
             }
@@ -2148,6 +2143,7 @@ impl Data {
                     end: el.end,
                     rope_len: el.rope_len,
                     is_utf16: el.is_utf16,
+                    toml_datetime: el.toml_datetime,
                 });
                 Ok(Data::EString(StoreRef::from_bump(item)))
             }

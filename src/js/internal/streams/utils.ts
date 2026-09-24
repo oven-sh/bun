@@ -90,7 +90,7 @@ function isWebStream(obj) {
   return isReadableStream(obj) || isWritableStream(obj) || isTransformStream(obj);
 }
 
-function isIterable(obj, isAsync) {
+function isIterable(obj, isAsync?) {
   if (obj == null) return false;
   if (isAsync === true) return typeof obj[SymbolAsyncIterator] === "function";
   if (isAsync === false) return typeof obj[SymbolIterator] === "function";
@@ -272,14 +272,10 @@ export default {
   isDestroyed,
   kIsDestroyed,
   isDisturbed,
-  kIsDisturbed,
   isErrored,
-  kIsErrored,
   isReadable,
-  kIsReadable,
   kIsClosedPromise,
   kControllerErrorFunction,
-  kIsWritable,
   isClosed,
   isDuplexNodeStream,
   isFinished,
@@ -297,7 +293,6 @@ export default {
   isWritableFinished,
   isWritableErrored,
   isServerRequest,
-  isServerResponse,
   willEmitClose,
   isTransformStream,
   kState,
@@ -311,4 +306,4 @@ export default {
   kCloseEmitted,
   kErrored,
   kConstructed,
-};
+} as const;

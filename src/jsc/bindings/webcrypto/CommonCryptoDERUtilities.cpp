@@ -37,7 +37,7 @@ size_t bytesUsedToEncodedLength(uint8_t octet)
     return octet - MaxLengthInOneByte + 1;
 }
 
-size_t extraBytesNeededForEncodedLength(size_t length)
+static size_t extraBytesNeededForEncodedLength(size_t length)
 {
     if (!length)
         return 0;

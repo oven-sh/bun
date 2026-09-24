@@ -44,6 +44,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
             inspector_server_id: _,
             configuration_hash_key: _,
             vm: _,
+            vm_handle: _,
             server: _,
             router: _,
             route_bundles: _,
@@ -233,7 +234,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     // .testing_batch_events
     match &dev.testing_batch_events {
         TestingBatchEvents::Disabled => {}
-        TestingBatchEvents::Enabled(batch) => {
+        TestingBatchEvents::Enabled(batch) | TestingBatchEvents::ReleaseAfterBundle(batch) => {
             other_bytes += memory_cost_array_hash_map(&batch.entry_points.set);
         }
         TestingBatchEvents::EnableAfterBundle => {}

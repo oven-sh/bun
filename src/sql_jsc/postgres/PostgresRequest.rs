@@ -51,7 +51,7 @@ const MAX_PARAMETERS: usize = u16::MAX as usize;
 
 pub(crate) fn write_bind<Context: WriterContext>(
     name: &[u8],
-    cursor_name: BunString,
+    cursor_name: &BunString,
     global: &JSGlobalObject,
     values_array: JSValue,
     columns_value: JSValue,
@@ -63,7 +63,7 @@ pub(crate) fn write_bind<Context: WriterContext>(
     let length = writer.length()?;
 
     // The bun.String overload is `bun_string` on NewWriter.
-    writer.bun_string(&cursor_name)?;
+    writer.bun_string(cursor_name)?;
     writer.string(name)?;
 
     if parameter_fields.len() > MAX_PARAMETERS {
@@ -166,16 +166,14 @@ pub(crate) fn write_bind<Context: WriterContext>(
         };
         match effective_tag {
             types::Tag::jsonb | types::Tag::json => {
-                let mut str = BunString::empty();
                 // Use jsonStringifyFast for SIMD-optimized serialization
-                value
-                    .json_stringify_fast(global, &mut str)
+                let str = value
+                    .json_stringify_fast(global)
                     .map_err(js_error_to_postgres)?;
-                let slice = str.to_utf8_without_ref();
+                let slice = str.to_utf8();
                 let l = writer.length()?;
                 writer.write(slice.slice())?;
                 l.write_excluding_self()?;
-                // `str.deref()` and `slice.deinit()` handled by Drop
             }
             types::Tag::bool => {
                 let l = writer.length()?;
@@ -191,11 +189,18 @@ pub(crate) fn write_bind<Context: WriterContext>(
                 l.write_excluding_self()?;
             }
             types::Tag::bytea => {
-                let buf = value.as_array_buffer(global);
-                let bytes: &[u8] = match buf.as_ref() {
-                    Some(b) => b.byte_slice(),
-                    None => b"",
+                let Some(buf) = value.as_array_buffer(global) else {
+                    let received = JSGlobalObject::determine_specific_type(global, value)
+                        .map_err(js_error_to_postgres)?;
+                    return Err(js_error_to_postgres(global.throw_value(
+                        global.ERR_INVALID_ARG_TYPE(format_args!(
+                            "Query parameter ${} of type bytea must be a Buffer, TypedArray, ArrayBuffer or string. Received {}",
+                            i + 1,
+                            received,
+                        )),
+                    )));
                 };
+                let bytes = buf.byte_slice();
                 let l = writer.length()?;
                 bun_core::scoped_log!(Postgres, "    {} bytes", bytes.len());
                 writer.write(bytes)?;
@@ -218,13 +223,11 @@ pub(crate) fn write_bind<Context: WriterContext>(
             }
 
             _ => {
-                let str = bun_core::OwnedString::new(
-                    BunString::from_js(value, global).map_err(js_error_to_postgres)?,
-                );
+                let str = BunString::from_js(value, global).map_err(js_error_to_postgres)?;
                 if str.tag() == bun_core::Tag::Dead {
                     return Err(AnyPostgresError::OutOfMemory);
                 }
-                let slice = str.to_utf8_without_ref();
+                let slice = str.to_utf8();
                 let l = writer.length()?;
                 writer.write(slice.slice())?;
                 l.write_excluding_self()?;
@@ -289,36 +292,38 @@ pub(crate) fn prepare_and_query_with_signature<Context: WriterContext>(
     global: &JSGlobalObject,
     query: &[u8],
     array_value: JSValue,
-    mut writer: protocol::NewWriter<Context>,
+    writer: protocol::NewWriter<Context>,
     signature: &mut Signature,
 ) -> Result<(), AnyPostgresError> {
-    write_query(
-        query,
-        &signature.prepared_statement_name,
-        &signature.fields,
-        writer,
-    )?;
-    write_bind(
-        &signature.prepared_statement_name,
-        BunString::empty(),
-        global,
-        array_value,
-        JSValue::ZERO,
-        &[],
-        &[],
-        writer,
-    )?;
-    let exec = protocol::Execute {
-        p: protocol::PortalOrPreparedStatement::PreparedStatement(
+    writer.atomically(|mut writer| {
+        write_query(
+            query,
             &signature.prepared_statement_name,
-        ),
-        ..Default::default()
-    };
-    exec.write_internal(&mut writer)?;
+            &signature.fields,
+            writer,
+        )?;
+        write_bind(
+            &signature.prepared_statement_name,
+            &BunString::EMPTY,
+            global,
+            array_value,
+            JSValue::ZERO,
+            &[],
+            &[],
+            writer,
+        )?;
+        let exec = protocol::Execute {
+            p: protocol::PortalOrPreparedStatement::PreparedStatement(
+                &signature.prepared_statement_name,
+            ),
+            ..Default::default()
+        };
+        exec.write_internal(&mut writer)?;
 
-    writer.write(&protocol::FLUSH)?;
-    writer.write(&protocol::SYNC)?;
-    Ok(())
+        writer.write(&protocol::FLUSH)?;
+        writer.write(&protocol::SYNC)?;
+        Ok(())
+    })
 }
 
 pub(crate) fn bind_and_execute<Context: WriterContext>(
@@ -326,29 +331,31 @@ pub(crate) fn bind_and_execute<Context: WriterContext>(
     statement: &PostgresSQLStatement,
     array_value: JSValue,
     columns_value: JSValue,
-    mut writer: protocol::NewWriter<Context>,
+    writer: protocol::NewWriter<Context>,
 ) -> Result<(), AnyPostgresError> {
-    write_bind(
-        &statement.signature.prepared_statement_name,
-        BunString::empty(),
-        global,
-        array_value,
-        columns_value,
-        &statement.parameters,
-        &statement.fields,
-        writer,
-    )?;
-    let exec = protocol::Execute {
-        p: protocol::PortalOrPreparedStatement::PreparedStatement(
+    writer.atomically(|mut writer| {
+        write_bind(
             &statement.signature.prepared_statement_name,
-        ),
-        ..Default::default()
-    };
-    exec.write_internal(&mut writer)?;
+            &BunString::EMPTY,
+            global,
+            array_value,
+            columns_value,
+            &statement.parameters,
+            &statement.fields,
+            writer,
+        )?;
+        let exec = protocol::Execute {
+            p: protocol::PortalOrPreparedStatement::PreparedStatement(
+                &statement.signature.prepared_statement_name,
+            ),
+            ..Default::default()
+        };
+        exec.write_internal(&mut writer)?;
 
-    writer.write(&protocol::FLUSH)?;
-    writer.write(&protocol::SYNC)?;
-    Ok(())
+        writer.write(&protocol::FLUSH)?;
+        writer.write(&protocol::SYNC)?;
+        Ok(())
+    })
 }
 
 /// Atomically sends Parse + [Describe] + Bind + Execute + Flush + Sync as a single message batch.
@@ -363,61 +370,63 @@ pub(crate) fn parse_and_bind_and_execute<Context: WriterContext>(
     array_value: JSValue,
     columns_value: JSValue,
     include_describe: bool,
-    mut writer: protocol::NewWriter<Context>,
+    writer: protocol::NewWriter<Context>,
 ) -> Result<(), AnyPostgresError> {
     let name = &statement.signature.prepared_statement_name;
 
-    // Parse
-    {
-        let q = protocol::Parse {
+    writer.atomically(|mut writer| {
+        // Parse
+        {
+            let q = protocol::Parse {
+                name,
+                params: &statement.signature.fields,
+                query,
+            };
+            q.write_internal(&mut writer)?;
+            bun_core::scoped_log!(Postgres, "Parse: {}", bun_fmt::quote(query));
+        }
+
+        // Describe (needed on first execution to learn parameter/result types for caching)
+        if include_describe {
+            let d = protocol::Describe {
+                p: protocol::PortalOrPreparedStatement::PreparedStatement(name),
+            };
+            d.write_internal(writer)?;
+            bun_core::scoped_log!(Postgres, "Describe: {}", bun_fmt::quote(name));
+        }
+
+        // Bind — use server-provided types if available (binary format), otherwise
+        // fall back to signature types (text format for unknowns). The server will
+        // handle text-to-type conversion based on the parameter types from Parse.
+        let param_fields = if !statement.parameters.is_empty() {
+            &statement.parameters[..]
+        } else {
+            &statement.signature.fields[..]
+        };
+        let result_fields = &statement.fields;
+
+        write_bind(
             name,
-            params: &statement.signature.fields,
-            query,
-        };
-        q.write_internal(&mut writer)?;
-        bun_core::scoped_log!(Postgres, "Parse: {}", bun_fmt::quote(query));
-    }
+            &BunString::EMPTY,
+            global,
+            array_value,
+            columns_value,
+            param_fields,
+            result_fields,
+            writer,
+        )?;
 
-    // Describe (needed on first execution to learn parameter/result types for caching)
-    if include_describe {
-        let d = protocol::Describe {
+        // Execute
+        let exec = protocol::Execute {
             p: protocol::PortalOrPreparedStatement::PreparedStatement(name),
+            ..Default::default()
         };
-        d.write_internal(writer)?;
-        bun_core::scoped_log!(Postgres, "Describe: {}", bun_fmt::quote(name));
-    }
+        exec.write_internal(&mut writer)?;
 
-    // Bind — use server-provided types if available (binary format), otherwise
-    // fall back to signature types (text format for unknowns). The server will
-    // handle text-to-type conversion based on the parameter types from Parse.
-    let param_fields = if !statement.parameters.is_empty() {
-        &statement.parameters[..]
-    } else {
-        &statement.signature.fields[..]
-    };
-    let result_fields = &statement.fields;
-
-    write_bind(
-        name,
-        BunString::empty(),
-        global,
-        array_value,
-        columns_value,
-        param_fields,
-        result_fields,
-        writer,
-    )?;
-
-    // Execute
-    let exec = protocol::Execute {
-        p: protocol::PortalOrPreparedStatement::PreparedStatement(name),
-        ..Default::default()
-    };
-    exec.write_internal(&mut writer)?;
-
-    writer.write(&protocol::FLUSH)?;
-    writer.write(&protocol::SYNC)?;
-    Ok(())
+        writer.write(&protocol::FLUSH)?;
+        writer.write(&protocol::SYNC)?;
+        Ok(())
+    })
 }
 
 pub(crate) fn execute_query<Context: WriterContext>(
@@ -535,11 +544,7 @@ pub(crate) fn on_data<Context: ReaderContext>(
     }
 }
 
-// `bun.LinearFifo(*PostgresSQLQuery, .Dynamic)` — element is a raw pointer
-// (queries are JS-wrapper-owned, not Box-owned by the queue).
-pub(crate) type Queue = bun_collections::linear_fifo::LinearFifo<
-    *mut PostgresSQLQuery,
-    bun_collections::linear_fifo::DynamicBuffer<*mut PostgresSQLQuery>,
->;
+/// Each entry holds a ref on its query.
+pub(crate) type Queue = std::collections::VecDeque<bun_ptr::RefPtr<PostgresSQLQuery>>;
 
 use crate::postgres::postgres_sql_connection::{SslMode, TlsStatus};

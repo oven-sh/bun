@@ -862,11 +862,9 @@ extern "C" void Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, u
     auto fired = process->wrapped().emit(Identifier::fromString(vm, "beforeExit"_s), arguments);
     RETURN_IF_EXCEPTION(scope, );
     if (fired) {
-        if (globalObject->m_nextTickQueue) {
-            auto nextTickQueue = globalObject->m_nextTickQueue.get();
-            nextTickQueue->drain(vm, globalObject);
-            RETURN_IF_EXCEPTION(scope, );
-        }
+        // The ticks and the microtasks of the listeners run now, with or without a tick queue (node: MakeCallback).
+        globalObject->drainMicrotasks();
+        RETURN_IF_EXCEPTION(scope, );
     }
 }
 

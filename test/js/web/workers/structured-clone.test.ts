@@ -3,6 +3,7 @@ import { openSync } from "fs";
 import { bunEnv, bunExe, tls } from "harness";
 import { createPrivateKey, createPublicKey, createSecretKey, KeyObject, X509Certificate } from "node:crypto";
 import { BlockList } from "node:net";
+import { deserialize as v8Deserialize } from "node:v8";
 import { deflate } from "node:zlib";
 import { join } from "path";
 
@@ -1089,6 +1090,88 @@ describe("truncated Set/Map payloads are rejected without hanging", () => {
   test("valid Set and Map payloads still round-trip", () => {
     expect(deserialize(serialize(new Set([1, 0])))).toEqual(new Set([1, 0]));
     expect(deserialize(serialize(new Map([[1, 1]])))).toEqual(new Map([[1, 1]]));
+  });
+});
+
+// An X509Certificate record is [tag][u32 derLength][DER]. The serializer never writes
+// derLength 0, but the reader used to accept it and return an X509Certificate with no
+// certificate inside, a state `new X509Certificate()` cannot produce. Its .publicKey
+// wrapped a null EVP_PKEY, and key.equals(key) crashed the process.
+describe("X509Certificate records whose DER does not decode are rejected", () => {
+  const cert = new X509Certificate(tls.cert);
+  const der = cert.raw;
+  // Wire header + tag bytes derived from a real serialize() so a CurrentVersion
+  // bump doesn't invalidate the crafted payloads.
+  const real = Buffer.from(serialize(cert));
+  const headerAndTag = real.subarray(0, real.length - der.length - 4);
+  const record = (derBytes: Uint8Array) => {
+    const length = Buffer.alloc(4);
+    length.writeUInt32LE(derBytes.length);
+    return Buffer.concat([headerAndTag, length, derBytes]);
+  };
+
+  // Report only the class of a returned value: inspecting a certificate-less
+  // X509Certificate is exactly what must not be possible.
+  const outcome = (fn: (bytes: Buffer) => unknown, bytes: Buffer) => {
+    try {
+      return { returned: Object.prototype.toString.call(fn(bytes)) };
+    } catch (e: any) {
+      return { threw: `${e.name}: ${e.message}` };
+    }
+  };
+
+  describe.each([
+    ["bun:jsc deserialize", deserialize],
+    ["v8.deserialize", v8Deserialize],
+  ])("%s", (_api, fn) => {
+    test.each([
+      ["an empty DER", Buffer.alloc(0)],
+      ["a DER that is not a certificate", Buffer.from([0xde, 0xad, 0xbe, 0xef])],
+      ["a truncated certificate DER", der.subarray(0, der.length - 1)],
+    ])("rejects %s", (_name, derBytes) => {
+      expect(outcome(fn, record(derBytes))).toEqual({ threw: "TypeError: Unable to deserialize data." });
+    });
+  });
+
+  test("the crashing input: no key reaches equals() from an empty-DER record", async () => {
+    // A subprocess, because on a build that accepts the record equals() dies with a SEGV.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `import { deserialize } from "bun:jsc";
+         import { deserialize as v8Deserialize } from "node:v8";
+         for (const [name, fn] of [["bun:jsc", deserialize], ["node:v8", v8Deserialize]]) {
+           try {
+             const key = fn(new Uint8Array(${JSON.stringify([...record(Buffer.alloc(0))])})).publicKey;
+             console.log(name + ": RETURNED " + key.equals(key));
+           } catch (e) {
+             console.log(name + ": " + e.message);
+           }
+         }`,
+      ],
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim().split("\n"), stderr, signalCode: proc.signalCode, exitCode }).toEqual({
+      stdout: ["bun:jsc: Unable to deserialize data.", "node:v8: Unable to deserialize data."],
+      stderr: expect.any(String),
+      signalCode: null,
+      exitCode: 0,
+    });
+  });
+
+  test("a real certificate rebuilt through record() still round-trips", () => {
+    // Guards the record layout the crafted payloads assume.
+    expect(record(der)).toEqual(real);
+    const cloned = deserialize(record(der));
+    expect(cloned).toBeInstanceOf(X509Certificate);
+    expect(cloned.fingerprint256).toBe(cert.fingerprint256);
+    expect(cloned.publicKey.equals(cert.publicKey)).toBe(true);
   });
 });
 

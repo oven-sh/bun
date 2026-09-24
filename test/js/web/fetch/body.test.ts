@@ -1,10 +1,11 @@
-import { file, S3Client, spawn, version, type Socket } from "bun";
+import { file, spawn, version, type Socket } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, exampleSite, tempDir } from "harness";
 import net from "net";
 import { join } from "node:path";
 import { isDisturbed, isErrored, isReadable, Readable } from "node:stream";
 import { finished } from "node:stream/promises";
+import { s3LocalEndpoint } from "../../bun/s3/s3-local-endpoint";
 
 const exampleServer = exampleSite("http");
 
@@ -2048,33 +2049,6 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
 describe("a body made from an S3 file", () => {
   const payload = Buffer.alloc(100, "0123456789").toString();
 
-  // A local stand-in for the S3 endpoint. It records the Range header of each GET.
-  function s3Endpoint(object: string | Uint8Array = payload) {
-    const bytes = Buffer.from(object);
-    const ranges: (string | null)[] = [];
-    const server = Bun.serve({
-      port: 0,
-      fetch(req) {
-        const range = req.headers.get("range");
-        ranges.push(range);
-        const match = range && /^bytes=(\d+)-(\d*)$/.exec(range);
-        if (!match) return new Response(bytes);
-        const start = Number(match[1]);
-        const end = match[2] === "" ? bytes.length - 1 : Math.min(Number(match[2]), bytes.length - 1);
-        return new Response(bytes.subarray(start, end + 1), {
-          status: 206,
-          headers: { "Content-Range": `bytes ${start}-${end}/${bytes.length}` },
-        });
-      },
-    });
-    const s3 = new S3Client({ endpoint: server.url.href, accessKeyId: "x", secretAccessKey: "y", bucket: "b" });
-    return {
-      ranges,
-      file: (type?: string) => s3.file("key", { type }),
-      [Symbol.dispose]: () => void server.stop(true),
-    };
-  }
-
   const owners = [
     {
       name: "Request",
@@ -2097,7 +2071,7 @@ describe("a body made from an S3 file", () => {
   for (const { name, make } of owners) {
     describe(name, () => {
       test(".body and textStream() download the whole object", async () => {
-        using endpoint = s3Endpoint();
+        using endpoint = s3LocalEndpoint(payload);
         const body = await Bun.readableStreamToText((await make(endpoint.file())).body!);
         const textStream = (await Array.fromAsync((await make(endpoint.file())).textStream())).join("");
         expect({ body, textStream, ranges: endpoint.ranges }).toEqual({
@@ -2108,7 +2082,7 @@ describe("a body made from an S3 file", () => {
       });
 
       test(".body of a slice downloads the whole slice", async () => {
-        using endpoint = s3Endpoint();
+        using endpoint = s3LocalEndpoint(payload);
         const body = await Bun.readableStreamToText((await make(endpoint.file().slice(10, 30))).body!);
         const textStream = (await Array.fromAsync((await make(endpoint.file().slice(10, 30))).textStream())).join("");
         expect({ body, textStream, ranges: endpoint.ranges }).toEqual({
@@ -2119,7 +2093,7 @@ describe("a body made from an S3 file", () => {
       });
 
       test("a clone and its original both download the whole object", async () => {
-        using endpoint = s3Endpoint();
+        using endpoint = s3LocalEndpoint(payload);
         const original = await make(endpoint.file());
         const clone = original.clone();
         expect({
@@ -2130,7 +2104,7 @@ describe("a body made from an S3 file", () => {
       });
 
       test("Bun.inspect() does not change what the body reads", async () => {
-        using endpoint = s3Endpoint();
+        using endpoint = s3LocalEndpoint(payload);
         const inspected = async () => {
           const subject = await make(endpoint.file());
           // The size in the header is unknown, so it prints as 0.
@@ -2141,13 +2115,13 @@ describe("a body made from an S3 file", () => {
         expect({
           body: await Bun.readableStreamToText((await inspected()).body!),
           text: await (await inspected()).text(),
-          bytes: (await (await inspected()).bytes()).length,
+          bytes: Buffer.from(await (await inspected()).bytes()).toString(),
           blob: [blob.size, await blob.text()],
           ranges: endpoint.ranges,
         }).toEqual({
           body: payload,
           text: payload,
-          bytes: payload.length,
+          bytes: payload,
           blob: [NaN, payload],
           ranges: [null, null, null, null],
         });
@@ -2156,7 +2130,7 @@ describe("a body made from an S3 file", () => {
   }
 
   test("new Request(request) downloads the whole object", async () => {
-    using endpoint = s3Endpoint();
+    using endpoint = s3LocalEndpoint(payload);
     const request = new Request(new Request("http://example.com/", { method: "POST", body: endpoint.file() }));
     expect({ body: await Bun.readableStreamToText(request.body!), ranges: endpoint.ranges }).toEqual({
       body: payload,
@@ -2165,7 +2139,7 @@ describe("a body made from an S3 file", () => {
   });
 
   test("fetch(request) uploads the whole object after Bun.inspect(request)", async () => {
-    using endpoint = s3Endpoint();
+    using endpoint = s3LocalEndpoint(payload);
     const uploads: string[] = [];
     await using sink = Bun.serve({
       port: 0,
@@ -2181,7 +2155,7 @@ describe("a body made from an S3 file", () => {
   });
 
   test("HTMLRewriter.transform() reads the whole object", async () => {
-    using endpoint = s3Endpoint("<p>" + payload + "</p>");
+    using endpoint = s3LocalEndpoint("<p>" + payload + "</p>");
     const seen: string[] = [];
     const response = await owners[1].make(endpoint.file());
     const output = await new HTMLRewriter()
@@ -2197,7 +2171,7 @@ describe("a body made from an S3 file", () => {
 
   test("WebAssembly.compileStreaming() reads the whole object", async () => {
     // The smallest module: the magic number and the version.
-    using endpoint = s3Endpoint(new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]));
+    using endpoint = s3LocalEndpoint(new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]));
     const response = owners[1].make(endpoint.file("application/wasm")) as Promise<Response>;
     const module = await WebAssembly.compileStreaming(response);
     expect({ exports: WebAssembly.Module.exports(module), ranges: endpoint.ranges }).toEqual({

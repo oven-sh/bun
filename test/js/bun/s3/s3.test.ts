@@ -5,6 +5,7 @@ import child_process from "child_process";
 import { createHash, createHmac, randomUUID } from "crypto";
 import { bunEnv, bunExe, dockerExe, getSecret, isCI, isDockerEnabled, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
+import { s3LocalEndpoint } from "./s3-local-endpoint";
 const s3 = (...args) => defaultS3.file(...args);
 const S3 = (...args) => new S3Client(...args);
 
@@ -2187,30 +2188,8 @@ describe("presigned url signature", () => {
 describe("s3 file size stays unknown", () => {
   const payload = Buffer.alloc(100, "0123456789").toString();
 
-  // A local stand-in for the S3 endpoint. It records the Range header of each GET.
-  function s3Endpoint() {
-    const ranges: (string | null)[] = [];
-    const server = Bun.serve({
-      port: 0,
-      fetch(req) {
-        const range = req.headers.get("range");
-        ranges.push(range);
-        const match = range && /^bytes=(\d+)-(\d*)$/.exec(range);
-        if (!match) return new Response(payload);
-        const start = Number(match[1]);
-        const end = match[2] === "" ? payload.length - 1 : Math.min(Number(match[2]), payload.length - 1);
-        return new Response(payload.slice(start, end + 1), {
-          status: 206,
-          headers: { "Content-Range": `bytes ${start}-${end}/${payload.length}` },
-        });
-      },
-    });
-    const client = new S3Client({ endpoint: server.url.href, accessKeyId: "x", secretAccessKey: "y", bucket: "b" });
-    return { ranges, file: () => client.file("key"), [Symbol.dispose]: () => void server.stop(true) };
-  }
-
   async function readsAfter(look: (file: Bun.S3File) => unknown) {
-    using endpoint = s3Endpoint();
+    using endpoint = s3LocalEndpoint(payload);
     const file = endpoint.file();
     await look(file);
     const requestsWhileLooking = endpoint.ranges.length;
@@ -2235,8 +2214,8 @@ describe("s3 file size stays unknown", () => {
   it("after expect().toHaveLength() and expect().toBeEmpty()", async () => {
     expect(
       await readsAfter(file => {
-        expect(() => expect(file).toHaveLength(0)).toThrow();
-        expect(() => expect(file).toBeEmpty()).toThrow();
+        expect(() => expect(file).toHaveLength(0)).toThrow("Received length");
+        expect(() => expect(file).toBeEmpty()).toThrow("Expected value to be empty");
       }),
     ).toEqual(untouched);
   });
@@ -2252,7 +2231,7 @@ describe("s3 file size stays unknown", () => {
   });
 
   it("for a FormData entry after the FormData became a body", async () => {
-    using endpoint = s3Endpoint();
+    using endpoint = s3LocalEndpoint(payload);
     const form = new FormData();
     form.append("file", endpoint.file());
     try {
@@ -2267,7 +2246,7 @@ describe("s3 file size stays unknown", () => {
   });
 
   it("a slice requests its own window", async () => {
-    using endpoint = s3Endpoint();
+    using endpoint = s3LocalEndpoint(payload);
     const file = endpoint.file();
     expect({
       "slice(10, 20).text()": await file.slice(10, 20).text(),
@@ -2284,6 +2263,7 @@ describe("s3 file size stays unknown", () => {
       "slice(0, 5).stream()": payload.slice(0, 5),
       sizes: [10, 5],
     });
+    // The end that an open-ended slice sends is not pinned here, only its start.
     expect(endpoint.ranges.map(range => range?.replace(/^(bytes=95-)\d+$/, "$1"))).toEqual([
       "bytes=10-19",
       "bytes=0-4",

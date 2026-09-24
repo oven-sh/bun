@@ -115,6 +115,7 @@ pub trait Transport {
         response: *mut Self::Response,
     ) -> Option<crate::SocketAddress>;
     unsafe fn response_end_stream(response: *mut Self::Response, close_connection: bool);
+    unsafe fn response_resume(response: *mut Self::Response);
     unsafe fn response_cancel(response: *mut Self::Response);
     unsafe fn response_cork(
         response: *mut Self::Response,
@@ -274,6 +275,29 @@ impl<T: Transport> WebSocket<T> {
         // `open` synchronously closes this stream or stops the server. This
         // matches HTTP/1: server.upgrade() must not fall through and attempt
         // to write a second HTTP response after user code closes the socket.
+        true
+    }
+
+    /// [`activate`](Self::activate), then resume reading and feed the tunnel
+    /// bytes that arrived before the upgrade. `open` runs JavaScript that may
+    /// close the stream, and a microtask drain may retire it; the pin keeps
+    /// this allocation alive and `response()` reports a retired stream.
+    ///
+    /// # Safety
+    /// Same as [`activate`](Self::activate).
+    pub unsafe fn activate_with_pending(this: *mut Self, user_data: *mut c_void, pending: &[u8]) -> bool {
+        let Some(_guard) = Self::pin(this) else {
+            return false;
+        };
+        if !unsafe { Self::activate(this, user_data) } {
+            return false;
+        }
+        if let Some(response) = Self::response(this) {
+            unsafe { T::response_resume(response) };
+            if !pending.is_empty() {
+                unsafe { Self::consume(this, pending) };
+            }
+        }
         true
     }
 

@@ -252,6 +252,9 @@ impl websocket_core::Transport for H2Transport {
     unsafe fn response_end_stream(response: *mut Response, close_connection: bool) {
         super::c::uws_h2_res_end_stream(&mut *response, close_connection)
     }
+    unsafe fn response_resume(response: *mut Response) {
+        super::c::uws_h2_res_resume(&mut *response)
+    }
     unsafe fn response_cancel(response: *mut Response) {
         super::c::uws_h2_res_cancel(&mut *response)
     }

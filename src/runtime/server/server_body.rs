@@ -507,8 +507,6 @@ pub(super) trait StreamUpgradeResponse: RespLike + Sized {
     const KIND: ResponseKind;
     fn from_any(resp: uws::AnyResponse) -> Option<*mut Self>;
     fn write_header(&mut self, key: &[u8], value: &[u8]);
-    fn is_closed(&mut self) -> bool;
-    fn resume(&mut self);
     /// Detach the request context's callbacks before the WebSocket adapter
     /// installs its own.
     fn clear_request_callbacks(&mut self);
@@ -526,14 +524,6 @@ impl StreamUpgradeResponse for uws_sys::h2::Response {
     #[inline]
     fn write_header(&mut self, key: &[u8], value: &[u8]) {
         uws_sys::h2::Response::write_header(self, key, value)
-    }
-    #[inline]
-    fn is_closed(&mut self) -> bool {
-        uws_sys::h2::Response::is_closed(self)
-    }
-    #[inline]
-    fn resume(&mut self) {
-        uws_sys::h2::Response::resume(self)
     }
     #[inline]
     fn clear_request_callbacks(&mut self) {
@@ -2374,32 +2364,19 @@ where
 
         // SAFETY: `upgraded` is the prepared Extended CONNECT stream and `ws`
         // is kept alive by its JS wrapper until the close callback retires it.
+        // `on_data` is now owned by the WebSocket adapter: it resumes a stream
+        // that the bounded pre-upgrade buffer paused and feeds those bytes in
+        // their original order after the open callback. The open callback runs
+        // user JavaScript that may close the stream, stop the server, or reload
+        // handlers, so no response borrow is carried across it.
         if !unsafe {
-            uws_sys::stream_websocket::WebSocket::<R::Transport>::activate(upgraded, ws.cast())
+            uws_sys::stream_websocket::WebSocket::<R::Transport>::activate_with_pending(
+                upgraded,
+                ws.cast(),
+                &pending_websocket_data,
+            )
         } {
             return Ok(JSValue::FALSE);
-        }
-
-        // `on_data` is now owned by the WebSocket adapter. Resume a stream
-        // that the bounded pre-upgrade buffer paused, then synchronously feed
-        // the bytes in their original order after the open callback.
-        // `activate` synchronously invokes user JavaScript. It may close this
-        // stream, stop the server, or reload handlers. Re-derive the response
-        // only after that call and never carry a Rust reference across it.
-        let resp = bun_opaque::opaque_deref_mut(resp_ptr);
-        if resp.is_closed() {
-            return Ok(JSValue::TRUE);
-        }
-        resp.resume();
-        if !pending_websocket_data.is_empty() {
-            // SAFETY: `upgraded` is the live stream handle returned above and
-            // the Vec remains alive for this synchronous consume call.
-            unsafe {
-                uws_sys::stream_websocket::WebSocket::<R::Transport>::consume(
-                    upgraded,
-                    &pending_websocket_data,
-                )
-            };
         }
         Ok(JSValue::TRUE)
     }

@@ -2648,8 +2648,7 @@ pub fn is_writable(fd: Fd) -> Pollable {
 fn os_entropy(bytes: &mut [u8]) {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        // The crate selects its own /dev/urandom fallback with a zero-length probe. glibc 2.41+
-        // answers that probe from the vDSO, so a seccomp filter on the syscall still fails here.
+        // Under seccomp the crate never falls back: glibc 2.41+ answers its probe from the vDSO.
         if let Err(err) = getrandom::fill(bytes) {
             use std::io::Read;
             if let Err(io_err) =

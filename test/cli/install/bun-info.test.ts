@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir, tempDirWithFiles } from "harness";
 import { join } from "node:path";
 
 describe.concurrent("bun info", () => {
@@ -463,4 +463,54 @@ test("a proxy that refuses CONNECT fails the command with ProxyConnectFailed", a
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toContain("ProxyConnectFailed");
   expect(exitCode).toBe(1);
+});
+
+describe.concurrent("a registry response whose matched `versions` entry is not an object", () => {
+  const entries = { number: 5, string: "x", null: null, array: [] };
+
+  async function run(entry: keyof typeof entries, args: string[]) {
+    const manifest = JSON.stringify({
+      name: "pkg",
+      "dist-tags": { latest: "1.0.0" },
+      versions: { "1.0.0": entries[entry] },
+    });
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(manifest, { headers: { "content-type": "application/json" } }),
+    });
+    using dir = tempDir("bun-info-version-entry", {
+      "package.json": JSON.stringify({ name: "test", version: "1.0.0" }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: server.url.href } }),
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const rejected = {
+    stdout: "",
+    stderr: 'error: failed to parse package manifest: version "1.0.0" is not an object\n',
+    exitCode: 1,
+  };
+
+  for (const entry of Object.keys(entries) as (keyof typeof entries)[]) {
+    test(`bun info: ${entry}`, async () => {
+      expect(await run(entry, ["info", "pkg"])).toEqual(rejected);
+    });
+  }
+
+  test("bun pm view --json", async () => {
+    expect(await run("number", ["pm", "view", "pkg", "--json"])).toEqual(rejected);
+  });
+
+  test("bun pm view <property>", async () => {
+    expect(await run("number", ["pm", "view", "pkg@1.0.0", "name"])).toEqual(rejected);
+  });
 });

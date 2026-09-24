@@ -67,7 +67,7 @@ public:
     // Certificate validation methods
     // `peerName`, when provided, receives the subject name that matched, which
     // can differ from the queried host (wildcard SANs, case-insensitive matches).
-    bool checkHost(JSGlobalObject*, std::span<const char>, uint32_t flags, ncrypto::DataPointer* peerName = nullptr);
+    bool checkHost(JSGlobalObject*, std::span<const char>, uint32_t flags, WTF::String* peerName = nullptr);
     bool checkEmail(JSGlobalObject*, std::span<const char>, uint32_t flags);
     bool checkIP(JSGlobalObject*, const char*);
     bool checkIssued(JSGlobalObject*, JSX509Certificate* issuer);
@@ -89,10 +89,6 @@ public:
     void finishCreation(JSC::VM& vm);
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSValue prototype);
-
-    static JSX509Certificate* create(
-        JSC::VM& vm,
-        JSC::Structure* structure);
 
     static JSX509Certificate* create(
         JSC::VM& vm,
@@ -136,15 +132,18 @@ public:
     static JSString* computeSubjectAltName(ncrypto::X509View view, JSGlobalObject*);
     static JSObject* computePublicKey(ncrypto::X509View view, JSGlobalObject*);
 
+    // Convert the certificate to PEM format
+    String toPEMString() const;
+
+private:
     JSX509Certificate(JSC::VM& vm, JSC::Structure* structure)
         : Base(vm, structure)
     {
     }
 
-    // Convert the certificate to PEM format
-    String toPEMString() const;
+    // Leaves m_x509 null, so only the overloads that take a certificate are public.
+    static JSX509Certificate* create(JSC::VM& vm, JSC::Structure* structure);
 
-private:
     uint16_t m_extraMemorySizeForGC = 0;
 };
 

@@ -870,6 +870,17 @@ impl PostgresSQLConnection {
         self.start();
     }
 
+    /// verify-full's name check, asked inside the handshake.
+    pub fn server_identity(&self, ssl: &mut bun_boringssl_sys::SSL) -> BoringSSL::ServerIdentity {
+        BoringSSL::server_identity(ssl, self.native_identity_hostname())
+    }
+
+    /// The name verify-full matches, in and after the handshake. Empty (none configured) matches no certificate.
+    fn native_identity_hostname(&self) -> Option<&[u8]> {
+        (self.tls_config.reject_unauthorized() != 0 && self.ssl_mode == SSLMode::VerifyFull)
+            .then(|| self.tls_config.server_name_bytes())
+    }
+
     pub(crate) fn on_handshake(&self, success: i32, ssl_error: uws::us_bun_verify_error_t) {
         debug!("onHandshake: {} {}", success, ssl_error.error_no);
         let handshake_success = success == 1;
@@ -885,27 +896,20 @@ impl PostgresSQLConnection {
                             return;
                         }
 
-                        if self.ssl_mode == SSLMode::VerifyFull {
-                            let servername = self.tls_config.server_name();
-                            let ok = if servername.is_null() {
-                                false
-                            } else {
-                                // SAFETY: native handle of a connected TLS socket is `SSL*`.
-                                let ssl_ptr: *mut BoringSSL::c::SSL = self
-                                    .socket
-                                    .get()
-                                    .get_native_handle()
-                                    .map_or(core::ptr::null_mut(), |p| p.cast());
-                                // SAFETY: `servername` is a NUL-terminated C string owned by `tls_config`.
-                                let hostname =
-                                    unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
-                                // SAFETY: `ssl_ptr` is the live SSL* of a connected TLS socket.
-                                !ssl_ptr.is_null()
-                                    && BoringSSL::check_server_identity(
-                                        unsafe { &mut *ssl_ptr },
-                                        hostname,
-                                    )
-                            };
+                        if let Some(hostname) = self.native_identity_hostname() {
+                            // SAFETY: native handle of a connected TLS socket is `SSL*`.
+                            let ssl_ptr: *mut BoringSSL::c::SSL = self
+                                .socket
+                                .get()
+                                .get_native_handle()
+                                .map_or(core::ptr::null_mut(), |p| p.cast());
+                            let ok = !hostname.is_empty()
+                                && !ssl_ptr.is_null()
+                                && uws::check_server_identity(
+                                    // SAFETY: `ssl_ptr` is the live SSL* of a connected TLS socket.
+                                    unsafe { &mut *ssl_ptr },
+                                    hostname,
+                                );
                             if !ok {
                                 let v = verify_error_to_js(&ssl_error, self.global());
                                 self.fail_with_js_value(v);

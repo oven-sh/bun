@@ -111,11 +111,6 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
       return;
     }
 
-    if (status & SQLQueryStatus.cancelled) {
-      this.reject(this[_adapter].queryCancelledError());
-      return;
-    }
-
     this[_queryStatus] |= SQLQueryStatus.executed;
     const handle = this.#getQueryHandle();
 
@@ -140,11 +135,6 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
 
     if (this[_flags] & SQLQueryFlags.notTagged) {
       this.reject(this[_adapter].notTaggedCallError());
-      return;
-    }
-
-    if (status & SQLQueryStatus.cancelled) {
-      this.reject(this[_adapter].queryCancelledError());
       return;
     }
 

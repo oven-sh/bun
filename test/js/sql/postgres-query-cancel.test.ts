@@ -44,6 +44,7 @@ const TEXT_OID = 25;
  */
 async function backend() {
   const cancelPacket = Promise.withResolvers<Buffer>();
+  const queryConnectionClosed = Promise.withResolvers<void>();
   const sockets = new Set<net.Socket>();
   const waiters = new Map<number, () => void>();
   let queryConnection: net.Socket | undefined;
@@ -88,6 +89,7 @@ async function backend() {
     }
 
     queryConnection = socket;
+    socket.on("close", () => queryConnectionClosed.resolve());
     let handshaken = false;
     let buffered = Buffer.alloc(0);
     socket.on("data", data => {
@@ -112,6 +114,8 @@ async function backend() {
   return {
     url: `postgres://postgres@127.0.0.1:${port}/postgres`,
     cancelPacket: cancelPacket.promise,
+    /** Resolves once the client has closed the connection its queries run on. */
+    queryConnectionClosed: queryConnectionClosed.promise,
     get connections() {
       return connections;
     },
@@ -285,6 +289,26 @@ test("a connection still pipelines after a queued query on it was cancelled", as
   server.answerPrepared("first");
   server.answerPrepared("second");
   expect(await Promise.all([first, second])).toEqual([[{ v: "first" }], [{ v: "second" }]]);
+});
+
+// A reserved connection keeps its queries in a scope set, and close({ timeout })
+// waits on that set. Only the query's own handler takes a cancelled query back out
+// of it. A rejected query left in the set ends the wait at once, before the
+// connection is closed, and the pool never gets the connection back.
+test("a query cancelled before it runs leaves the scope of its reserved connection", async () => {
+  await using server = await backend();
+  await using sql = new SQL({ url: server.url, max: 1, connectionTimeout: 5 });
+
+  const reserved = await sql.reserve();
+  const query = reserved`select 1`;
+  query.cancel();
+  const err = await query.catch((e: any) => e);
+  expect(err.code).toBe("ERR_POSTGRES_QUERY_CANCELLED");
+
+  await reserved.close({ timeout: 1 });
+  await server.queryConnectionClosed;
+  // Nothing was ever sent for the cancelled query, so there was nothing to cancel.
+  expect(server.connections).toBe(1);
 });
 
 // A CancelRequest names the backend process, not a statement. Once a statement is

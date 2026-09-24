@@ -3746,26 +3746,19 @@ declare module "bun" {
      */
     autoloadPackageJson?: boolean;
     /**
-     * Order files to lay the executable's bytecode out by. Requires `bytecode: true`.
+     * Profile-guided layout for the executable's bytecode. Requires `bytecode: true`.
      *
-     * An executable built with `bytecode: true` writes an order file when it exits if
-     * the `BUN_BYTECODE_ORDER_OUT` environment variable names a path (`%p` in the path
-     * becomes the process id). The file lists the functions, strings and modules that
-     * run read from the embedded bytecode, as hashes (of a function's syntax, not of
-     * the names a minifier picks; it contains no source code). Building
-     * again with that file places what the run read at the front of the bytecode, so
-     * the executable reads fewer pages of itself at startup and keeps fewer in memory.
+     * Run an executable built with `bytecode: true` with `BUN_BYTECODE_ORDER_OUT=<path>`
+     * to record which functions it uses, then build again with that file. Bun places
+     * the bytecode the run used together at the front, so the executable starts faster
+     * and uses less memory. A profile from an older build of the app still applies.
      *
-     * An order file only changes where bytecode is placed. Entries that match nothing
-     * in the build are ignored, so an order file from an older version of the app
-     * still helps; functions that are new or changed since the recording are placed
-     * right after the ones the run read. With several files (one per way of starting
-     * the app), what the first file lists comes first in that file's order, then
-     * what the second file adds, and so on. A file that cannot be read fails the build.
-     *
-     * `false` and `null` mean no order file, so `bytecodeOrder: haveProfile && path` works.
+     * With several files, list the most common way of starting the app first.
+     * `false` and `null` mean no profile, so `bytecodeOrder: haveProfile && path` works.
      *
      * Equivalent CLI flag: `--bytecode-order <file>[,<file>...]`
+     *
+     * @see https://bun.com/docs/bundler/executables#profile-guided-bytecode-layout
      */
     bytecodeOrder?: string | string[] | false | null;
     /**

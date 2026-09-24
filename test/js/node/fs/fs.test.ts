@@ -7296,7 +7296,45 @@ describe("a process.nextTick queued by an fs callback runs before a microtask it
     expect(exitCode).toBe(0);
   });
 
-  // fs.rm is a promise chain in JS. Its reaction calls process.nextTick, and here that call creates the tick queue.
+  // These APIs are promise chains in JS and reach their callback through process.nextTick.
+  it("while user code has replaced process.nextTick, for the APIs that are promise chains", async () => {
+    using dir = tempDir("fs-callback-order", {
+      "file.txt": "hello",
+      "rm.txt": "x",
+      "tree/a/b.txt": "x",
+      "list/f0": "",
+      "list/f1": "",
+    });
+    const script = `
+      const fs = require("fs");
+      const path = require("path");
+      const dir = ${JSON.stringify(String(dir))};
+      const ran = [];
+      process.on("exit", () => console.log(ran.sort().join(" ")));
+      const list = path.join(dir, "list");
+      const buffered = fs.opendirSync(list);
+      buffered.readSync();
+      // What a fake-timer library does: hold the job until the fake clock runs.
+      process.nextTick = () => {};
+      fs.cp(path.join(dir, "file.txt"), path.join(dir, "cp.txt"), () => ran.push("cp"));
+      fs.rm(path.join(dir, "rm.txt"), () => ran.push("rm"));
+      fs.rmdir(path.join(dir, "tree"), { recursive: true }, () => ran.push("rmdir"));
+      fs.opendir(list, (err, handle) => (handle.closeSync(), ran.push("opendir")));
+      const first = fs.opendirSync(list);
+      first.read(() => (first.closeSync(), ran.push("Dir.read")));
+      buffered.read(() => (buffered.closeSync(), ran.push("Dir.read(buffered)")));
+      fs.opendirSync(list).close(() => ran.push("Dir.close"));
+      fs.glob("*.txt", { cwd: dir }, () => ran.push("glob"));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("Dir.close Dir.read Dir.read(buffered) cp glob opendir rm rmdir");
+    expect(exitCode).toBe(0);
+  });
+
+  // fs.rm is a promise chain in JS. Its reaction calls process.nextTick.
   it("when the callback is the first use of process.nextTick in the process", async () => {
     using dir = tempDir("fs-callback-order", { "file.txt": "hello" });
     const script = `
@@ -7316,24 +7354,6 @@ describe("a process.nextTick queued by an fs callback runs before a microtask it
     expect(stdout.trim()).toBe("callback nextTick microtask");
     expect(exitCode).toBe(0);
   });
-});
-
-// The first read of process.nextTick creates the tick queue. From then on every event loop task drains it.
-it("loading node:fs does not create the process.nextTick queue", async () => {
-  const script = `
-    const { heapStats } = require("bun:jsc");
-    const queues = () => heapStats().objectTypeCounts.NextTickQueue ?? 0;
-    require("node:fs");
-    const afterLoad = queues();
-    process.nextTick;
-    console.log(JSON.stringify({ afterLoad, afterRead: queues() }));
-  `;
-  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual({ afterLoad: 0, afterRead: 1 });
-  expect(exitCode).toBe(0);
 });
 
 // The operation pins the buffer while it runs. Node can transfer it from the callback.

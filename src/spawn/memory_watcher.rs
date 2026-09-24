@@ -895,19 +895,26 @@ mod os {
         }
     }
 
-    /// The sum of the named "Key:   123 kB" lines, or `None` when the file has none of them.
-    fn sum_kb(buf: &[u8], keys: &[&[u8]]) -> Option<u64> {
+    /// The digits after any spaces and tabs, as in "\t    1234 kB". `status` uses a tab and `smaps_rollup` uses spaces.
+    fn leading_number(bytes: &[u8]) -> Option<u64> {
+        let start = bytes.iter().position(|b| !matches!(b, b' ' | b'\t'))?;
+        let digits = &bytes[start..];
+        let end = digits
+            .iter()
+            .position(|b| !b.is_ascii_digit())
+            .unwrap_or(digits.len());
+        core::str::from_utf8(&digits[..end]).ok()?.parse().ok()
+    }
+
+    /// The sum of the named "Key:   123 kB" lines, or `None` when the text has none of them.
+    fn sum_kb(text: &[u8], keys: &[&[u8]]) -> Option<u64> {
         let mut total = None;
-        for line in bun_core::strings::split(buf, b"\n") {
+        for line in bun_core::strings::split(text, b"\n") {
             let Some((key, rest)) = bun_core::strings::split_once_char(line, b':') else {
                 continue;
             };
             if keys.contains(&key) {
-                let kb = bun_core::strings::tokenize(rest, b" \t")
-                    .next()
-                    .and_then(parse::<u64>)
-                    .unwrap_or(0);
-                total = Some(total.unwrap_or(0) + kb);
+                total = Some(total.unwrap_or(0) + leading_number(rest).unwrap_or(0));
             }
         }
         total

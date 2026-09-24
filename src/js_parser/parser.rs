@@ -1830,8 +1830,7 @@ pub struct ReactRefresh<'a> {
 
     /// If a comment with '@refresh reset' is seen, we will forward a
     /// force refresh to the refresh runtime. This lets you reset the
-    /// state of hooks on an update on a per-component basis.
-    // TODO: this is never set
+    /// state of hooks on an update on a per-file basis.
     pub(crate) force_reset: bool,
 
     /// The last hook that was scanned. This is used when visiting

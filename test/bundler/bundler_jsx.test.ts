@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { join } from "path";
 import { BundlerTestInput, itBundled } from "./expectBundled";
 
 const helpers = {
@@ -525,6 +526,71 @@ describe("bundler", () => {
     run: {
       stdout: `{\n  $$typeof: Symbol(hello_jsxDEV),\n  type: \"div\",\n  props: {\n    children: \"Hello World\",\n  },\n  key: undefined,\n}`,
     },
+  });
+
+  test("jsx/React Fast Refresh passes forceReset for a file with a '@refresh reset' comment", async () => {
+    const component = (name: string, { hook = "useState(0)", openingTag = "<div>" } = {}) => `
+      import { useState } from "react";
+      function useCustom() {
+        return 1;
+      }
+      export function ${name}() {
+        const value = ${hook};
+        return ${openingTag}{value}</div>;
+      }
+    `;
+    const files = {
+      "leading-line-comment.jsx": "// @refresh reset\n" + component("LeadingLineComment"),
+      "trailing-block-comment.tsx": component("TrailingBlockComment") + "/* @refresh reset */",
+      "inside-longer-comment.tsx": component("InsideLongerComment", {
+        hook: "useState(0) /* remove @refresh reset later */",
+      }),
+      "jsx-child-comment.jsx": component("JsxChildComment", { openingTag: "<div>{/* @refresh reset */}" }),
+      "jsx-tag-block-comment.jsx": component("JsxTagBlockComment", { openingTag: "<div /* @refresh reset */>" }),
+      "tsx-tag-block-comment.tsx": component("TsxTagBlockComment", { openingTag: "<div /* @refresh reset */>" }),
+      "jsx-tag-line-comment.jsx": component("JsxTagLineComment", {
+        openingTag: '<div\n// @refresh reset\nid="a">',
+      }),
+      "legacy-html-close-comment.jsx": component("LegacyHtmlCloseComment") + "\n--> @refresh reset\n",
+      "with-custom-hook.jsx": "// @refresh reset\n" + component("WithCustomHook", { hook: "useCustom()" }),
+      "no-comment.tsx": component("NoComment"),
+      "no-comment-with-custom-hook.jsx": component("NoCommentWithCustomHook", { hook: "useCustom()" }),
+      "only-in-string.jsx": component("OnlyInString", { hook: `useState("// @refresh reset")` }),
+      "only-in-jsx-text.jsx": component("OnlyInJsxText", { openingTag: "<div>// @refresh reset " }),
+      "split-across-comments.tsx": "// @refresh\n// reset\n" + component("SplitAcrossComments"),
+    };
+    using dir = tempDir("jsx-react-refresh-reset", files);
+
+    const build = await Bun.build({
+      entrypoints: Object.keys(files).map(file => join(String(dir), file)),
+      reactFastRefresh: true,
+      target: "browser",
+      external: ["react", "react-refresh/runtime"],
+    });
+
+    // `_s(Component, "<hash>", forceReset, () => [customHooks])`. The last two arguments are optional.
+    const forceReset: Record<string, string | null> = {};
+    for (const output of build.outputs) {
+      for (const [, name, force] of (await output.text()).matchAll(/\b_s\d*\((\w+), "[^"]+"(?:, (true|false))?/g)) {
+        forceReset[name] = force ?? null;
+      }
+    }
+    expect(forceReset).toEqual({
+      LeadingLineComment: "true",
+      TrailingBlockComment: "true",
+      InsideLongerComment: "true",
+      JsxChildComment: "true",
+      JsxTagBlockComment: "true",
+      TsxTagBlockComment: "true",
+      JsxTagLineComment: "true",
+      LegacyHtmlCloseComment: "true",
+      WithCustomHook: "true",
+      NoComment: null,
+      NoCommentWithCustomHook: "false",
+      OnlyInString: null,
+      OnlyInJsxText: null,
+      SplitAcrossComments: null,
+    });
   });
 
   // The classic transform reads the first member of the factory and fragment

@@ -231,6 +231,59 @@ export function pgParameterDescription(typeOids: number[]): Buffer {
   return pgRaw("t", body);
 }
 
+// PostgreSQL FE/BE protocol §55.7 NoData: Byte1('n') Int32(4)
+export function pgNoData(): Buffer {
+  return pgRaw("n", Buffer.alloc(0));
+}
+
+export type PgBind = {
+  portal: string;
+  statement: string;
+  /** One per parameter (expanded if the client sent 0 or 1 codes). 0 = text, 1 = binary. */
+  paramFormats: number[];
+  params: (Buffer | null)[];
+  resultFormats: number[];
+};
+
+// PostgreSQL FE/BE protocol §55.7 Bind (frontend): String(portal) String(statement)
+//   Int16(nFormats) Int16[nFormats] Int16(nParams) per param: Int32(len | -1) Byte[len]
+//   Int16(nResultFormats) Int16[nResultFormats]
+// `body` is the message without the type byte and length, as pgReadFrontendMessages hands it out.
+export function pgDecodeBind(body: Buffer): PgBind {
+  let o = 0;
+  const cstring = () => {
+    const end = body.indexOf(0, o);
+    const s = body.toString("utf8", o, end);
+    o = end + 1;
+    return s;
+  };
+  const int16 = () => {
+    const v = body.readInt16BE(o);
+    o += 2;
+    return v;
+  };
+  const portal = cstring();
+  const statement = cstring();
+  const formats: number[] = [];
+  for (let n = int16(), i = 0; i < n; i++) formats.push(int16());
+  const params: (Buffer | null)[] = [];
+  for (let n = int16(), i = 0; i < n; i++) {
+    const len = body.readInt32BE(o);
+    o += 4;
+    if (len === -1) {
+      params.push(null);
+    } else {
+      params.push(Buffer.from(body.subarray(o, o + len)));
+      o += len;
+    }
+  }
+  const resultFormats: number[] = [];
+  for (let n = int16(), i = 0; i < n; i++) resultFormats.push(int16());
+  const paramFormats =
+    formats.length === params.length ? formats : params.map(() => (formats.length === 1 ? formats[0] : 0));
+  return { portal, statement, paramFormats, params, resultFormats };
+}
+
 /**
  * Drain complete PostgreSQL frontend messages from `buffered`, calling
  * onMessage(type, body) for each; returns the leftover bytes. The very first

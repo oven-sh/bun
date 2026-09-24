@@ -37,9 +37,14 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
     ld64Lld: "/fake/llvm/bin/ld64.lld",
     rustLld: undefined,
     rustLlvmVersion: "22.1.4",
+    rustSysroot: undefined,
+    rustHostTriple: undefined,
     strip: "/fake/bin/strip",
     llvmStrip: "/fake/llvm/bin/llvm-strip",
     nm: "/fake/llvm/bin/llvm-nm",
+    readobj: "/fake/llvm/bin/llvm-readobj",
+    objdump: "/fake/llvm/bin/llvm-objdump",
+    cxxfilt: "/fake/llvm/bin/llvm-cxxfilt",
     dsymutil: "/fake/llvm/bin/dsymutil",
     bun: "/fake/bin/bun",
     jsRuntime: "/fake/bin/bun",
@@ -89,12 +94,6 @@ describe.skipIf(isMacOS)("macOS cross-compile config (non-darwin host)", () => {
   test("requires ld64.lld and llvm-strip from the toolchain", () => {
     expect(() => resolveDarwin({}, mockToolchain({ ld64Lld: undefined }))).toThrow(/ld64\.lld/);
     expect(() => resolveDarwin({}, mockToolchain({ llvmStrip: undefined }))).toThrow(/llvm-strip/);
-  });
-
-  test("rust-only mode skips SDK resolution (no Mach-O tools needed)", () => {
-    const cfg = resolveDarwin({ mode: "rust-only" }, mockToolchain({ ld64Lld: undefined, llvmStrip: undefined }));
-    expect(cfg.crossTarget).toBe("arm64-apple-macosx");
-    expect(cfg.osxSysroot).toBeUndefined();
   });
 
   test("deployment target is overridable", () => {
@@ -204,15 +203,20 @@ describe.skipIf(isMacOS)("macOS cross-compile config (non-darwin host)", () => {
   });
 
   test("WebKit prebuilt resolves to the macOS tarball with a macos-keyed cache dir", () => {
-    const cfg = resolveDarwin();
+    const cfg = resolveDarwin({ lto: false });
     const source = webkit.source(cfg);
     if (source.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${source.kind}`);
     expect(source.url).toContain("bun-webkit-macos-arm64.tar.gz");
     expect(source.destDir).toContain("-macos-arm64");
 
-    const x64 = webkit.source(resolveDarwin({ arch: "x64" }));
+    const x64 = webkit.source(resolveDarwin({ arch: "x64", lto: false }));
     if (x64.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${x64.kind}`);
     expect(x64.url).toContain("bun-webkit-macos-amd64.tar.gz");
+
+    // Release defaults to LTO, which selects the bitcode (-lto) tarball.
+    const lto = webkit.source(resolveDarwin());
+    if (lto.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${lto.kind}`);
+    expect(lto.url).toContain("bun-webkit-macos-arm64-lto.tar.gz");
   });
 
   test("rust-lld links compress ELF debug sections post-link, not at link time", () => {
@@ -231,9 +235,9 @@ describe.skipIf(isMacOS)("macOS cross-compile config (non-darwin host)", () => {
     expect(computeFlags(withRustLld).ldflags).not.toContain("-Wl,--compress-debug-sections=zlib");
     expect(elfDebugCompressPostlinkCommand(withRustLld)).toContain("--compress-debug-sections=zlib $out");
 
-    // System lld (no swap): compress at link time, no postlink pass.
+    // System lld (no LTO, so no swap): compress at link time, no postlink pass.
     const systemLld = resolveConfig(
-      linux,
+      { ...linux, lto: false },
       mockToolchain({ ld64Lld: undefined, llvmStrip: undefined, dsymutil: undefined, rustLld }),
     );
     expect(systemLld.ld).toBe("/fake/llvm/bin/ld.lld");

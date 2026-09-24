@@ -25,7 +25,9 @@ use crate::postgres::AuthenticationState;
 use crate::postgres::PostgresSQLQuery;
 use crate::postgres::PostgresSQLStatement;
 use crate::postgres::data_cell as DataCell;
-use crate::postgres::error_jsc::{create_postgres_error, postgres_error_to_js};
+use crate::postgres::error_jsc::{
+    create_postgres_error, postgres_error_to_js, postgres_error_to_js_with_hint,
+};
 use crate::postgres::postgres_request as PostgresRequest;
 use crate::postgres::postgres_request::MessageType;
 use crate::postgres::postgres_sql_query::{self, RequestCounter, Status as QueryStatus};
@@ -425,17 +427,12 @@ impl PostgresSQLConnection {
     bun_jsc::cached_prop_hostfns! {
         crate::jsc::codegen::JSPostgresSQLConnection;
         lazy_array(get_queries => queries_get_cached, queries_set_cached),
-        (get_on_connect, set_on_connect => onconnect_get_cached, onconnect_set_cached),
         (get_on_close,   set_on_close   => onclose_get_cached, onclose_set_cached),
         (get_on_notification, set_on_notification => onnotification_get_cached, onnotification_set_cached),
     }
 
     pub(crate) fn setup_tls(&self) {
         debug!("setupTLS");
-        // `vm_mut()` is `'static`, so `tls_group` borrows the VM singleton —
-        // not `*self` — and stays live across the field reads below.
-        let tls_group: &mut bun_uws::SocketGroup = self.vm_mut().postgres_socket_group::<true>();
-
         // At this point we are
         // a plain TCP socket in the Connected state.
         let Socket::SocketTcp(tcp) = self.socket.get() else {
@@ -451,6 +448,11 @@ impl PostgresSQLConnection {
                 AnyPostgresError::TLSUpgradeFailed,
             );
             return;
+        };
+        // SAFETY: `raw` is a live connected socket in its context's Postgres TCP group.
+        let tls_group: &mut bun_uws::SocketGroup = unsafe {
+            bun_jsc::rare_data::SocketGroups::of((*raw).group())
+                .postgres_group::<true>(self.vm_mut().uws_loop())
         };
 
         // SAFETY: `secure` is set to a live `SSL_CTX*` before `setup_tls` is
@@ -487,7 +489,7 @@ impl PostgresSQLConnection {
             sni,
             true,  // is_client
             false, // request_cert (server-only)
-            false, // reject_unauthorized (server-only)
+            false, // reject_unauthorized (server-only; the client policy is set_inline_reject below)
             ext_size,
             ext_size,
         ) else {
@@ -505,6 +507,11 @@ impl PostgresSQLConnection {
         let sock = unsafe { &mut *new_socket };
         *sock.ext::<Option<core::ptr::NonNull<PostgresSQLConnection>>>() =
             core::ptr::NonNull::new(self.as_ctx_ptr());
+        if self.tls_config.reject_unauthorized() != 0
+            && matches!(self.ssl_mode, SSLMode::VerifyCa | SSLMode::VerifyFull)
+        {
+            sock.set_inline_reject();
+        }
         self.socket.set(Socket::SocketTls(uws::SocketTLS {
             socket: uws::InternalSocket::Connected(new_socket),
         }));
@@ -732,6 +739,7 @@ impl PostgresSQLConnection {
             // Reported here rather than returned: the pending queries are still
             // rejected and the socket closed below whatever `onclose` did.
             self.event_loop().run_callback(
+                bun_event_loop::ContextId::NONE,
                 on_close,
                 self.global(),
                 JSValue::UNDEFINED,
@@ -1073,6 +1081,8 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
     // is the canonical safe escape hatch (one audited unsafe in bun_jsc) for
     // `&mut self` helpers like `ssl_ctx_cache()` / `postgres_socket_group()`.
     let vm = global_object.bun_vm().as_mut();
+    // The connection is the calling script's.
+    let context = global_object.bun_vm().context_of_caller(callframe);
     let arguments = callframe.arguments();
     let Some(args) = ConnectionCtorArgs::<SSLMode>::parse(global_object, &mut *vm, arguments)?
     else {
@@ -1227,7 +1237,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
         // Postgres always opens plain TCP first (SSLRequest happens in-band),
         // so even `ssl_mode != .disable` lands in the TCP group; `setupTLS()`
         // adopts into `postgres_tls_group` after the server's `S`.
-        let group = vm.postgres_socket_group::<false>();
+        let group = vm.postgres_socket_group::<false>(context);
         let path_slice = this.path.slice();
         let result = if !path_slice.is_empty() {
             uws::SocketTCP::connect_unix_group(
@@ -1763,6 +1773,19 @@ impl PostgresSQLConnection {
             }
             QueryStatus::Success | QueryStatus::Fail => {}
         }
+    }
+
+    /// What a request rejects with for a row the client cannot decode. `Err`: the VM is stopping.
+    fn undecodable_row_error(&self, err: AnyPostgresError) -> Result<JSValue, AnyPostgresError> {
+        if self.global().has_pending_termination_exception() {
+            return Err(err);
+        }
+        Ok(postgres_error_to_js_with_hint(
+            self.global(),
+            Some(b"Failed to read data"),
+            Some(b"The query may have run on the server. The client could not decode a value in its result. Cast that column to text, or use .raw()."),
+            err,
+        ))
     }
 
     pub(crate) fn can_prepare_query(&self) -> bool {
@@ -2318,9 +2341,8 @@ impl PostgresSQLConnection {
         match message_type {
             MessageType::DataRow => {
                 let request = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
-                if request.status.get() == QueryStatus::Fail {
-                    // ErrorResponse already rejected this request and dropped
-                    // its GC protection; consume and discard until ReadyForQuery.
+                if request.is_rejected() {
+                    // Already rejected, GC protection dropped: discard until ReadyForQuery.
                     return reader.skip_message();
                 }
 
@@ -2384,10 +2406,14 @@ impl PostgresSQLConnection {
                 // `DataRow::decode`'s callback is `FnMut`, so capture `&mut putter`
                 // directly instead of laundering it through a raw `*mut` context —
                 // the by-value `C: Copy` slot is unused (`()`).
+                // Tells a cell the client cannot decode from a framing error of `decode` itself.
+                let mut cell_failed = false;
                 let decode_result = if request_flags.result_mode == SQLQueryResultMode::Raw {
                     protocol::DataRow::decode((), &mut reader, |(), i, b| putter.put_raw(i, b))
                 } else {
-                    protocol::DataRow::decode((), &mut reader, |(), i, b| putter.put(i, b))
+                    protocol::DataRow::decode((), &mut reader, |(), i, b| {
+                        putter.put(i, b).inspect_err(|_| cell_failed = true)
+                    })
                 };
                 // Cell cleanup (deinit each cell, then free the buffer)
                 // runs on ALL exits (decode error, to_js error, success). `putter.count` is final
@@ -2408,7 +2434,14 @@ impl PostgresSQLConnection {
                     }
                     // `if free_cells free(cells)`: heap_cells Vec drops at scope end.
                 };
-                decode_result?;
+                if let Err(err) = decode_result {
+                    if !cell_failed {
+                        return Err(err);
+                    }
+                    let js_err = self.undecodable_row_error(err)?;
+                    request.on_undecodable_row(js_err, self.global());
+                    return Ok(());
+                }
 
                 let Some(this_value) = request.this_value.get().try_get() else {
                     debug_assert!(false, "query value was freed earlier than expected");
@@ -2417,7 +2450,7 @@ impl PostgresSQLConnection {
                 let pending_value = postgres_sql_query::js::pending_value_get_cached(this_value)
                     .unwrap_or_default();
                 pending_value.ensure_still_alive();
-                let result = putter.to_js(
+                let result = match putter.to_js(
                     self.global(),
                     pending_value,
                     structure,
@@ -2426,7 +2459,14 @@ impl PostgresSQLConnection {
                     // `ParentRef::Deref` recovers `&CachedStructure`; statement
                     // outlives this call (held via `request.statement` ref).
                     cached_structure.as_deref(),
-                )?;
+                ) {
+                    Ok(result) => result,
+                    Err(err) => {
+                        let js_err = self.undecodable_row_error(err)?;
+                        request.on_undecodable_row(js_err, self.global());
+                        return Ok(());
+                    }
+                };
 
                 if pending_value.is_empty() {
                     postgres_sql_query::js::pending_value_set_cached(
@@ -2473,7 +2513,11 @@ impl PostgresSQLConnection {
                 self.socket.get().set_timeout(300);
 
                 if let Some(request) = self.current() {
-                    if request.status.get() == QueryStatus::PartialResponse {
+                    if request.flags.get().discard_response {
+                        // The end of the response it was kept in flight for.
+                        self.finish_request(&request);
+                        request.status.set(QueryStatus::Fail);
+                    } else if request.status.get() == QueryStatus::PartialResponse {
                         self.finish_request(&request);
                         // if is a partial response, just signal that the query is now complete
                         request.on_result(
@@ -2491,7 +2535,7 @@ impl PostgresSQLConnection {
             }
             MessageType::CommandComplete => {
                 let request = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
-                if request.status.get() == QueryStatus::Fail {
+                if request.is_rejected() {
                     return reader.skip_message();
                 }
 
@@ -2970,7 +3014,7 @@ impl PostgresSQLConnection {
             MessageType::CloseComplete => {
                 reader.eat_message(&protocol::CLOSE_COMPLETE)?;
                 let request = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
-                if request.status.get() == QueryStatus::Fail {
+                if request.is_rejected() {
                     return Ok(());
                 }
                 request.on_result(
@@ -2997,7 +3041,7 @@ impl PostgresSQLConnection {
             MessageType::EmptyQueryResponse => {
                 reader.eat_message(&protocol::EMPTY_QUERY_RESPONSE)?;
                 let request = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
-                if request.status.get() == QueryStatus::Fail {
+                if request.is_rejected() {
                     return Ok(());
                 }
                 request.on_result(b"", self.global(), self.js_value.get().get(), false);
@@ -3035,10 +3079,6 @@ impl PostgresSQLConnection {
                 ))
             });
         }
-    }
-
-    pub fn get_connected(this: &Self, _: &JSGlobalObject) -> JSValue {
-        JSValue::from(this.status.get() == Status::Connected)
     }
 
     const MAX_INTERNED_CHANNELS: usize = 256;
@@ -3083,6 +3123,7 @@ impl PostgresSQLConnection {
         let payload_js = bun_string_jsc::create_utf8_for_js(global, payload)
             .map_err(crate::jsc::js_error_to_postgres)?;
         self.event_loop().run_callback(
+            bun_event_loop::ContextId::NONE,
             callback,
             global,
             JSValue::UNDEFINED,

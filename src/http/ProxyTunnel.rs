@@ -783,6 +783,13 @@ impl ProxyTunnel {
         client: &mut HTTPClient,
         socket: HTTPSocket<IS_SSL>,
     ) {
+        raw_as_mut(tunnel.as_ptr()).socket = Socket::from_generic::<IS_SSL>(socket);
+        Self::adopt_owner(tunnel, client);
+    }
+
+    /// `adopt` without the socket, so it is compiled once for both `IS_SSL`.
+    #[inline(never)]
+    fn adopt_owner(tunnel: RefPtr<ProxyTunnel>, client: &mut HTTPClient) {
         scoped_log!(
             http_proxy_tunnel,
             "ProxyTunnel adopt (reusing pooled tunnel)"
@@ -801,7 +808,6 @@ impl ProxyTunnel {
             handlers.ctx = client.as_erased_ptr().as_ptr();
             wrapper.handlers.set(handlers);
         }
-        this.socket = Socket::from_generic::<IS_SSL>(socket);
         // Restore the cert-error flag captured in detachOwner() — no handshake
         // runs here, so the client's own flag would otherwise stay false and
         // re-pooling would erase the record.

@@ -859,7 +859,7 @@ pub mod ssl_wrapper {
                 boring_sys::SSL_write(
                     ssl.as_ptr(),
                     data.as_ptr().cast::<c_void>(),
-                    c_int::try_from(data.len()).expect("int cast"),
+                    c_int::try_from(data.len()).unwrap_or(c_int::MAX),
                 )
             };
             if written <= 0 {

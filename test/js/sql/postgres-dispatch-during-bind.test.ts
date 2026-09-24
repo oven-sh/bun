@@ -100,6 +100,44 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
       exitCode: 0,
     });
   });
+
+  // Neither query sends a byte, so no reply comes back to release the event loop ref of the nested query.
+  test.concurrent.each([true, false])(
+    "a script exits on its own when the outer and the nested conversion both throw (prepare: %p)",
+    async prepare => {
+      await container.ready;
+      const script = `
+        const sql = new Bun.SQL({ url: process.env.DATABASE_URL, max: 1, prepare: ${prepare} });
+        const text = value => ({ toString: () => value });
+        await sql\`select \${text("warm")}::text as x\`;
+        await sql\`select \${text("warm")}::text as y\`;
+        // A later tick: the idle connection does not hold the process any more.
+        await new Promise(resolve => setImmediate(resolve));
+        const message = query => query.then(() => "resolved", e => e.message);
+        let nested;
+        const param = {
+          toString() {
+            const throws = { toString() { throw new Error("nested boom"); } };
+            nested = message(sql\`select \${throws}::text as y\`.execute());
+            throw new Error("outer boom");
+          },
+        };
+        console.log(await message(sql\`select \${param}::text as x\`), await nested);
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...bunEnv, DATABASE_URL: `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test` },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "outer boom nested boom\n",
+        stderr: expect.any(String),
+        exitCode: 0,
+      });
+    },
+  );
 });
 
 // The mock answers each Execute with the parameter of the Bind before it. B(x) is a Bind that

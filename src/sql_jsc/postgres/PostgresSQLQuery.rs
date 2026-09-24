@@ -662,6 +662,8 @@ impl PostgresSQLQuery {
                                         && !global_object.has_exception()
                                     {
                                         connection.advance_and_flush();
+                                        // A dispatched request can be rejected with nothing sent.
+                                        connection.update_poll_ref();
                                     }
                                     return Err(match thrown {
                                         Some(thrown) => global_object.throw_value(thrown),

@@ -1,12 +1,6 @@
-// Fault-injection test: requires a server that refuses / drops / sends malformed
-// frames, which a healthy container will not do on demand. DO NOT COPY THIS
-// PATTERN — anything a real server can produce belongs in describeWithContainer.
-// All wire-protocol bytes come from test/js/sql/wire-frames.ts; do not inline
-// Buffer.alloc frame construction here.
-//
 // Pins the exact frontend bytes of an extended-protocol query for each kind of
-// parameter the Bind encoder handles, so a change to the encoder cannot change
-// the wire by accident.
+// parameter, so a change to the Bind encoder cannot change the wire by accident.
+// A real server does not show what it received, so this uses a mock.
 import { SQL } from "bun";
 import { afterAll, describe, expect, test } from "bun:test";
 import type { Socket } from "node:net";
@@ -21,6 +15,7 @@ import {
   pgParameterDescription,
   pgParse,
   pgParseComplete,
+  pgRaw,
   pgReadyForQuery,
   pgRowDescription,
   pgSync,
@@ -49,15 +44,9 @@ function described(query: string): { params: number[]; cols: number[] } {
 
 const received = new Map<Socket, Buffer[]>();
 const lastParse = new Map<Socket, { params: number[]; cols: number[] }>();
-const frame = (type: string, body: Buffer) => {
-  const header = Buffer.alloc(5);
-  header.write(type, 0, "latin1");
-  header.writeInt32BE(body.length + 4, 1);
-  return Buffer.concat([header, body]);
-};
 const mock = await pgMockServer((type, body, socket) => {
   if (!received.has(socket)) received.set(socket, []);
-  received.get(socket)!.push(frame(type, body));
+  received.get(socket)!.push(pgRaw(type, body));
   switch (type) {
     case "P": {
       const query = body.toString("utf8", body.indexOf(0) + 1, body.indexOf(0, body.indexOf(0) + 1));
@@ -103,7 +92,7 @@ const cases: [string, unknown, number, number, 0 | 1, Buffer | null][] = [
   ["null", null, OID.int4, 0, 1, null],
   ["boolean as bool", true, OID.bool, OID.bool, 1, Buffer.from([1])],
   ["integer as int4", 42, OID.int4, OID.int4, 1, Buffer.from("0000002a", "hex")],
-  ["integer as int8", 123, OID.int8, OID.int4, 0, Buffer.from("123")],
+  ["BigInt as int8", 123n, OID.int8, OID.int8, 0, Buffer.from("123")],
   ["double as float8", 1.5, OID.float8, OID.float8, 1, Buffer.from("3ff8000000000000", "hex")],
   // Microseconds since 2000-01-01T00:00:00Z.
   ["Date as timestamptz", date, OID.timestamptz, 0, 1, Buffer.from("00000000000f4240", "hex")],

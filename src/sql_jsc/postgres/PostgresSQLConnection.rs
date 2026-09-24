@@ -1843,10 +1843,10 @@ impl PostgresSQLConnection {
         }
     }
 
-    /// Reject `req` after `encode_request` failed for it. `new_statement` is
-    /// the statement whose first Parse was in the failed batch: an error that
-    /// is not a JS exception fails it for every later query too.
-    fn reject_failed_encode(
+    /// Reject `req` after its messages failed to encode. `new_statement` is the
+    /// statement whose first Parse was among them: an error that is not a JS
+    /// exception fails it for every later query too.
+    fn reject_failed_write(
         &self,
         req: &PostgresSQLQuery,
         new_statement: Option<&mut PostgresSQLStatement>,
@@ -1930,11 +1930,7 @@ impl PostgresSQLConnection {
                         if let Err(err) =
                             PostgresRequest::execute_query(query_str.slice(), self.writer())
                         {
-                            if let Some(err_) = self.global().try_take_exception() {
-                                req.on_js_error(err_, self.global());
-                            } else {
-                                req.on_write_fail(err, self.global(), self.get_queries_array());
-                            }
+                            self.reject_failed_write(&req, None, err);
                             if offset == 0 {
                                 self.discard_request(&req);
                             } else {
@@ -2021,7 +2017,7 @@ impl PostgresSQLConnection {
                                                 include_describe: false,
                                             },
                                         ) {
-                                            self.reject_failed_encode(&req, None, err);
+                                            self.reject_failed_write(&req, None, err);
                                             if offset == 0 {
                                                 self.discard_request(&req);
                                             } else {
@@ -2046,7 +2042,7 @@ impl PostgresSQLConnection {
                                                 columns_value,
                                             },
                                         ) {
-                                            self.reject_failed_encode(&req, None, err);
+                                            self.reject_failed_write(&req, None, err);
                                             if offset == 0 {
                                                 self.discard_request(&req);
                                             } else {
@@ -2125,7 +2121,7 @@ impl PostgresSQLConnection {
                                                 binding_value,
                                             },
                                         ) {
-                                            self.reject_failed_encode(
+                                            self.reject_failed_write(
                                                 &req,
                                                 Some(&mut *statement),
                                                 err,
@@ -2191,7 +2187,7 @@ impl PostgresSQLConnection {
                                                 include_describe: true,
                                             },
                                         ) {
-                                            self.reject_failed_encode(
+                                            self.reject_failed_write(
                                                 &req,
                                                 Some(&mut *statement),
                                                 err,
@@ -2230,36 +2226,14 @@ impl PostgresSQLConnection {
                                         &statement.signature.fields,
                                         connection_writer,
                                     ) {
-                                        if let Some(err_) = self.global().try_take_exception() {
-                                            req.on_js_error(err_, self.global());
-                                        } else {
-                                            statement.error_response =
-                                                Some(StatementError::PostgresError(err));
-                                            statement.status = StatementStatus::Failed;
-                                            req.on_write_fail(
-                                                err,
-                                                self.global(),
-                                                self.get_queries_array(),
-                                            );
-                                        }
+                                        self.reject_failed_write(&req, Some(&mut *statement), err);
                                         debug_assert!(offset == 0);
                                         self.discard_request(&req);
                                         debug!("write query failed: {}", <&'static str>::from(err));
                                         continue;
                                     }
                                     if let Err(err) = connection_writer.write(&protocol::SYNC) {
-                                        if let Some(err_) = self.global().try_take_exception() {
-                                            req.on_js_error(err_, self.global());
-                                        } else {
-                                            statement.error_response =
-                                                Some(StatementError::PostgresError(err));
-                                            statement.status = StatementStatus::Failed;
-                                            req.on_write_fail(
-                                                err,
-                                                self.global(),
-                                                self.get_queries_array(),
-                                            );
-                                        }
+                                        self.reject_failed_write(&req, Some(&mut *statement), err);
                                         debug_assert!(offset == 0);
                                         self.discard_request(&req);
                                         debug!(

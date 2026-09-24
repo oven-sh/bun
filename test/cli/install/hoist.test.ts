@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { realpathSync } from "fs";
+import { existsSync, realpathSync } from "fs";
 import { VerdaccioRegistry, bunEnv, bunExe, runBunInstall } from "harness";
 import { join } from "node:path";
 
@@ -78,8 +78,10 @@ async function lockfileTree(dir: string) {
 // to a version other than the exact one it declares.
 const probe = `
   const { join, dirname } = require("node:path");
+  const { existsSync } = require("node:fs");
   const out = [];
   for (const root of JSON.parse(process.argv[1])) {
+    if (!existsSync(root)) continue;
     for (const rel of new Bun.Glob("**/package.json").scanSync({ cwd: root, dot: true })) {
       const dir = dirname(join(root, rel));
       const pkg = require(join(dir, "package.json"));
@@ -284,6 +286,12 @@ describe.concurrent("a self-contained workspace", () => {
 
       for (const dir of [packageDir, reloadDir]) {
         const desktop = join(dir, "apps", "desktop");
+        // bun.lock is the same with and without `selfContained`, so where the plugin is placed
+        // only shows on disk: inside the workspace, and not above it.
+        expect({
+          inWorkspace: existsSync(join(desktop, "node_modules", plugin, "package.json")),
+          aboveWorkspace: existsSync(join(dir, "node_modules", plugin)),
+        }).toEqual({ inWorkspace: true, aboveWorkspace: false });
         expect(realpathSync(join(desktop, "node_modules", "self-contained-app"))).toBe(realpathSync(desktop));
       }
     },

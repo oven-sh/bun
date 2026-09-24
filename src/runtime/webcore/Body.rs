@@ -1576,9 +1576,7 @@ impl Value {
         }
 
         if let Value::Blob(b) = self {
-            // Only a file descriptor is teed here. A path is duped without
-            // asking the filesystem what it names: clone() of a Blob body does
-            // no I/O, and a FIFO given by path as the Blob is not detected.
+            // No stat here: a path is duped as it is, so a FIFO given by path is not detected.
             if b.store().is_some_and(blob::store_is_fd) {
                 // A pipe or other fd yields its bytes once: read it as one
                 // stream and tee that.

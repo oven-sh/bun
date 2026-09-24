@@ -5831,21 +5831,11 @@ fn resolve_file_stat(store: &RefPtr<Store>) {
     }
 }
 
-/// Whether `store` is a file descriptor. Its offset, and for a pipe its bytes,
-/// are shared, so a second Blob over it never reads the same bytes.
 pub(crate) fn store_is_fd(store: &RefPtr<Store>) -> bool {
     matches!(&store.data, store::Data::File(file) if file.pathlike.is_fd())
 }
 
-/// Whether a second Blob over `store` reads the same bytes from the start.
-/// Memory and S3 do, a file descriptor never does ([`store_is_fd`]). A path
-/// does when it names a regular file (each read opens it again), and when it
-/// cannot be stat'd: both readers then fail the same way.
-///
-/// `clone()` asks this before it turns an unread file stream back into its
-/// Blob. The stat made here is not cached. The store is shared with the other
-/// body and with the user's `Bun.file()`, whose reads, `size`, `lastModified`
-/// and `exists()` all answer from a cached stat.
+/// Whether a second Blob over `store` reads the same bytes. Must not cache the stat it makes.
 pub(crate) fn store_reads_repeatably(store: &RefPtr<Store>) -> bool {
     let store::Data::File(file) = &store.data else {
         return true;

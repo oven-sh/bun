@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, realpathSync } from "fs";
-import { VerdaccioRegistry, bunEnv, bunExe, runBunInstall } from "harness";
+import { rm } from "fs/promises";
+import { VerdaccioRegistry, bunEnv, bunExe, isASAN, runBunInstall } from "harness";
 import { join } from "node:path";
 
 const registry = new VerdaccioRegistry();
@@ -13,8 +14,20 @@ afterAll(() => {
   registry.stop();
 });
 
+// `createTestDir` hands back a plain path, so nothing removes the directory. Each case below
+// installs into two of them, with a cache inside each.
+const createdDirs: string[] = [];
+async function createTestDir(opts: Parameters<typeof registry.createTestDir>[0]) {
+  const { packageDir } = await registry.createTestDir(opts);
+  createdDirs.push(packageDir);
+  return packageDir;
+}
+afterAll(async () => {
+  await Promise.all(createdDirs.map(dir => rm(dir, { recursive: true, force: true })));
+});
+
 test("should handle resolving optional peer from multiple instances of same package", async () => {
-  const { packageDir } = await registry.createTestDir({
+  const packageDir = await createTestDir({
     files: {
       "package.json": JSON.stringify({
         name: "pkg",
@@ -40,8 +53,9 @@ test("should handle resolving optional peer from multiple instances of same pack
 
 type Linker = "hoisted" | "isolated";
 
-// The child is killed if it does not exit, so a layout that stops terminating fails here instead
-// of leaving an install running after the test.
+// The timeout only matters if an install never returns. The runner does not clean up the children
+// of concurrent tests, so without it a layout that stops terminating would keep running, and
+// growing, after its test has failed.
 //
 // CI exports one BUN_INSTALL_CACHE_DIR per test file, which overrides the per-directory cache in
 // bunfig.toml. These cases run concurrently and install the same packages, and on Windows installs
@@ -53,7 +67,7 @@ async function run(cwd: string, ...cmd: string[]) {
     env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
     stdout: "pipe",
     stderr: "pipe",
-    timeout: 10_000,
+    timeout: isASAN ? 90_000 : 30_000,
     killSignal: "SIGKILL",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -73,56 +87,83 @@ async function lockfileTree(dir: string) {
   return Object.fromEntries(Object.entries(packages).map(([path, [resolution]]) => [path, resolution]));
 }
 
-// Loads every installed fixture package from where it is on disk and lets it resolve its own
-// dependencies. Returns one entry per installed copy: what it is, and any dependency that resolved
-// to a version other than the exact one it declares.
+// The same `edges()` every fixture package exports. The project gets one too, because under the
+// isolated linker only the project itself goes through the links in its node_modules.
+const edgesJs = `exports.edges = () => {
+  const { dependencies = {}, peerDependencies = {} } = require("./package.json");
+  return Object.fromEntries(
+    Object.keys({ ...dependencies, ...peerDependencies }).map(name => [name, require(name + "/package.json").version]),
+  );
+};
+`;
+
+// Loads the project and every installed fixture package from where it is on disk and lets each
+// resolve its own dependencies. Returns one entry per project and per installed copy: what it is,
+// and any dependency that resolved to a version other than the exact one it declares.
 const probe = `
   const { join, dirname } = require("node:path");
   const { existsSync } = require("node:fs");
-  const out = [];
-  for (const root of JSON.parse(process.argv[1])) {
+  const [projects, roots] = JSON.parse(process.argv[1]);
+  const dirs = [...projects];
+  for (const root of roots) {
     if (!existsSync(root)) continue;
-    for (const rel of new Bun.Glob("**/package.json").scanSync({ cwd: root, dot: true })) {
-      const dir = dirname(join(root, rel));
-      const pkg = require(join(dir, "package.json"));
-      let edges;
-      try { edges = require(join(dir, "index.js")).edges(); } catch (e) { edges = { error: String(e) }; }
-      const declared = { ...pkg.dependencies, ...pkg.peerDependencies };
-      const wrong = Object.keys(declared).filter(name => edges[name] !== declared[name]).map(name => name + ": wanted " + declared[name] + ", got " + edges[name]);
-      out.push({ id: pkg.name + "@" + pkg.version, wrong });
-    }
+    for (const rel of new Bun.Glob("**/package.json").scanSync({ cwd: root, dot: true })) dirs.push(dirname(join(root, rel)));
   }
+  const out = dirs.map(dir => {
+    const pkg = require(join(dir, "package.json"));
+    const declared = { ...pkg.dependencies, ...pkg.peerDependencies };
+    let wrong;
+    try {
+      const edges = require(join(dir, "index.js")).edges();
+      wrong = Object.keys(declared).filter(name => edges[name] !== declared[name]).map(name => name + ": wanted " + declared[name] + ", got " + edges[name]);
+    } catch (e) {
+      // Also for a package without dependencies: a copy that cannot be loaded is not a good copy.
+      wrong = ["edges() failed: " + String(e)];
+    }
+    return { id: pkg.version ? pkg.name + "@" + pkg.version : pkg.name, wrong };
+  });
   console.log(JSON.stringify(out.sort((a, b) => a.id.localeCompare(b.id))));
 `;
 
-async function installedCopies(dir: string, nodeModules: string[] = ["node_modules"]) {
-  const roots = nodeModules.map(rel => join(dir, rel));
-  return JSON.parse(await run(dir, "-e", probe, JSON.stringify(roots))) as { id: string; wrong: string[] }[];
+async function installedCopies(dir: string, project: string, nodeModules: string[]) {
+  const args = [[join(dir, project)], nodeModules.map(rel => join(dir, rel))];
+  return JSON.parse(await run(dir, "-e", probe, JSON.stringify(args))) as { id: string; wrong: string[] }[];
 }
 
 // Installs `files` from scratch, then in a new directory from the bun.lock that produced.
+// `project` is the directory of the package whose dependencies are installed: "." or a workspace.
 async function installFreshAndFromLockfile(opts: {
   files: Record<string, string>;
   linker: Linker;
   tree: Record<string, string>;
   copies: string[];
+  project?: string;
   nodeModules?: string[];
 }) {
-  const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker: opts.linker }, files: opts.files });
+  const project = opts.project ?? ".";
+  const nodeModules = opts.nodeModules ?? ["node_modules"];
+  // Keys of `files` use "/" on every platform, so they are not built with path.join.
+  const prefix = project === "." ? "" : `${project}/`;
+  const files = { ...opts.files, [`${prefix}index.js`]: edgesJs };
+  const { name, version } = JSON.parse(files[`${prefix}package.json`]);
+
+  const packageDir = await createTestDir({ bunfigOpts: { linker: opts.linker }, files });
   await run(packageDir, "install");
   const lockfile = await Bun.file(join(packageDir, "bun.lock")).text();
   expect(await lockfileTree(packageDir)).toEqual(opts.tree);
 
-  // Every copy is there, and every one of them resolves each dependency to the version it asks for.
-  const expected = opts.copies.map(id => ({ id, wrong: [] })).sort((a, b) => a.id.localeCompare(b.id));
-  expect(await installedCopies(packageDir, opts.nodeModules)).toEqual(expected);
+  // The project and every copy are there, and each resolves every dependency to the version it asks for.
+  const expected = [version ? `${name}@${version}` : name, ...opts.copies]
+    .map(id => ({ id, wrong: [] }))
+    .sort((a, b) => a.id.localeCompare(b.id));
+  expect(await installedCopies(packageDir, project, nodeModules)).toEqual(expected);
 
-  const { packageDir: reloadDir } = await registry.createTestDir({
+  const reloadDir = await createTestDir({
     bunfigOpts: { linker: opts.linker },
-    files: { ...opts.files, "bun.lock": lockfile },
+    files: { ...files, "bun.lock": lockfile },
   });
   await run(reloadDir, "install", "--frozen-lockfile");
-  expect(await installedCopies(reloadDir, opts.nodeModules)).toEqual(expected);
+  expect(await installedCopies(reloadDir, project, nodeModules)).toEqual(expected);
 
   // --lockfile-only always writes, so this is the tree a reload builds, printed back.
   await run(reloadDir, "install", "--lockfile-only");
@@ -192,7 +233,6 @@ describe.concurrent("a package installed again below another copy of itself", ()
               ],
       });
     },
-    30_000,
   );
 
   test.each(["hoisted", "isolated"] as const)(
@@ -249,7 +289,6 @@ describe.concurrent("a package installed again below another copy of itself", ()
             : [a1, a2, b1, "below-self-again-b@2.0.0", b3, "below-self-again-c@1.0.0", "below-self-again-c@2.0.0"],
       });
     },
-    30_000,
   );
 });
 
@@ -259,42 +298,39 @@ describe.concurrent("a self-contained workspace", () => {
   test.each([
     ["a dependency", "self-contained-plugin"],
     ["a peer dependency", "self-contained-peer-plugin"],
-  ])(
-    "is linked into its own node_modules for a package with %s on it",
-    async (_, plugin) => {
-      const { packageDir, reloadDir } = await installFreshAndFromLockfile({
-        linker: "hoisted",
-        files: {
-          "package.json": JSON.stringify({
-            name: "root",
-            private: true,
-            workspaces: { packages: ["apps/*"], selfContained: ["apps/desktop"] },
-          }),
-          "apps/desktop/package.json": JSON.stringify({
-            name: "self-contained-app",
-            version: "1.0.0",
-            dependencies: { [plugin]: "1.0.0" },
-          }),
-        },
-        tree: {
-          "self-contained-app": "self-contained-app@workspace:apps/desktop",
-          [plugin]: `${plugin}@1.0.0`,
-        },
-        copies: [`${plugin}@1.0.0`],
-        nodeModules: ["node_modules", "apps/desktop/node_modules"],
-      });
+  ])("is linked into its own node_modules for a package with %s on it", async (_, plugin) => {
+    const { packageDir, reloadDir } = await installFreshAndFromLockfile({
+      linker: "hoisted",
+      files: {
+        "package.json": JSON.stringify({
+          name: "root",
+          private: true,
+          workspaces: { packages: ["apps/*"], selfContained: ["apps/desktop"] },
+        }),
+        "apps/desktop/package.json": JSON.stringify({
+          name: "self-contained-app",
+          version: "1.0.0",
+          dependencies: { [plugin]: "1.0.0" },
+        }),
+      },
+      tree: {
+        "self-contained-app": "self-contained-app@workspace:apps/desktop",
+        [plugin]: `${plugin}@1.0.0`,
+      },
+      copies: [`${plugin}@1.0.0`],
+      project: "apps/desktop",
+      nodeModules: ["node_modules", "apps/desktop/node_modules"],
+    });
 
-      for (const dir of [packageDir, reloadDir]) {
-        const desktop = join(dir, "apps", "desktop");
-        // bun.lock is the same with and without `selfContained`, so where the plugin is placed
-        // only shows on disk: inside the workspace, and not above it.
-        expect({
-          inWorkspace: existsSync(join(desktop, "node_modules", plugin, "package.json")),
-          aboveWorkspace: existsSync(join(dir, "node_modules", plugin)),
-        }).toEqual({ inWorkspace: true, aboveWorkspace: false });
-        expect(realpathSync(join(desktop, "node_modules", "self-contained-app"))).toBe(realpathSync(desktop));
-      }
-    },
-    30_000,
-  );
+    for (const dir of [packageDir, reloadDir]) {
+      const desktop = join(dir, "apps", "desktop");
+      // bun.lock is the same with and without `selfContained`, so where the plugin is placed
+      // only shows on disk: inside the workspace, and not above it.
+      expect({
+        inWorkspace: existsSync(join(desktop, "node_modules", plugin, "package.json")),
+        aboveWorkspace: existsSync(join(dir, "node_modules", plugin)),
+      }).toEqual({ inWorkspace: true, aboveWorkspace: false });
+      expect(realpathSync(join(desktop, "node_modules", "self-contained-app"))).toBe(realpathSync(desktop));
+    }
+  });
 });

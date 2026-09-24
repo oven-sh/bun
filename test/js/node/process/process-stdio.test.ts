@@ -162,8 +162,8 @@ describe.concurrent("process-stdio", () => {
 
 // process.stdout/stderr must leave fd 1/2 blocking: O_NONBLOCK lives on the open file description, which children and the
 // native console writer share. Writes stay asynchronous through per-call nonblocking I/O instead.
-describe.skipIf(isWindows)("process.stdout/stderr do not set O_NONBLOCK on fd 1/2", () => {
-  const probe = path.join(import.meta.dir, "fd-nonblock-probe.js");
+describe.concurrent.skipIf(isWindows)("process.stdout/stderr do not set O_NONBLOCK on fd 1/2", () => {
+  const probe = path.join(import.meta.dir, "fd-nonblock-fixture.js");
 
   test("fd 1 and 2 are still blocking in an inherit child after the parent wrote to process.stdout/stderr", async () => {
     await using proc = spawn({
@@ -267,6 +267,74 @@ describe.skipIf(isWindows)("process.stdout/stderr do not set O_NONBLOCK on fd 1/
     ]);
     expect(stdout.byteLength).toBe(1 << 20);
     expect(JSON.parse(rest.trim())).toEqual({ drained: true });
+    expect(exitCode).toBe(0);
+  });
+  // Bun.spawn's "pipe" is a socketpair; these go through sh so fd 1 is a real pipe(2) and the pipe write path runs.
+  test("console.log and process.stdout.write are not truncated over a real pipe", async () => {
+    await using proc = spawn({
+      cmd: [
+        "sh",
+        "-c",
+        `"$0" -e 'void process.stdout.isTTY; console.log(Buffer.alloc(1 << 20, "A").toString()); process.stdout.write(Buffer.alloc(1 << 20, "B"));' | cat`,
+        bunExe(),
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.byteLength).toBe((1 << 20) + 1 + (1 << 20));
+    expect(exitCode).toBe(0);
+  });
+
+  test("process.stdout.write to a full real pipe returns false, emits drain, and fd 1 stays blocking", async () => {
+    // The reader only starts draining on SIGUSR1, so the writer's 1 MiB must hit a full pipe first.
+    const reader = `require("fs").writeSync(2, JSON.stringify({ reader: process.pid }) + "\\n");
+      process.on("SIGUSR1", async () => { for await (const c of Bun.stdin.stream()) require("fs").writeSync(1, c); process.exit(0); });
+      setInterval(() => {}, 1 << 30);`;
+    const writer = `const ret = process.stdout.write(Buffer.alloc(1 << 20, "A"));
+      require("fs").writeSync(2, JSON.stringify({ ret }) + "\\n");
+      process.stdout.once("drain", () => {
+        const r = Bun.spawnSync([process.execPath, ${JSON.stringify(probe)}, "1"], { stdio: ["inherit", "pipe", "inherit"] });
+        require("fs").writeSync(2, JSON.stringify({ drained: true, probe: r.stdout.toString().trim() }) + "\\n");
+      });`;
+    await using proc = spawn({
+      cmd: ["sh", "-c", `"$0" -e "$1" | "$0" -e "$2"`, bunExe(), writer, reader],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const lines: any[] = [];
+    let buf = "";
+    const stderr = proc.stderr.getReader();
+    const next = async () => {
+      while (true) {
+        const nl = buf.indexOf("\n");
+        if (nl >= 0) {
+          const line = buf.slice(0, nl);
+          buf = buf.slice(nl + 1);
+          const v = JSON.parse(line);
+          lines.push(v);
+          return v;
+        }
+        const { value, done } = await stderr.read();
+        if (done) throw new Error("stderr closed early: " + JSON.stringify(lines) + " " + JSON.stringify(buf));
+        buf += Buffer.from(value).toString();
+      }
+    };
+    let readerPid: number | undefined, ret: boolean | undefined;
+    while (readerPid === undefined || ret === undefined) {
+      const v = await next();
+      if ("reader" in v) readerPid = v.reader;
+      if ("ret" in v) ret = v.ret;
+    }
+    expect(ret).toBe(false);
+    process.kill(readerPid!, "SIGUSR1");
+    const drained = await next();
+    expect(drained).toEqual({ drained: true, probe: "1:blocking" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.bytes(), proc.exited]);
+    expect(stdout.byteLength).toBe(1 << 20);
     expect(exitCode).toBe(0);
   });
 });

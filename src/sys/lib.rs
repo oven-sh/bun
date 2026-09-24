@@ -7329,7 +7329,7 @@ pub fn read_nonblocking(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
     }
     read(fd, buf)
 }
-/// Linux: `pwritev2(.., RWF_NOWAIT)`; else plain `write`.
+/// Linux: `pwritev2(.., RWF_NOWAIT)`; else `write_bounded`.
 pub fn write_nonblocking(fd: Fd, buf: &[u8]) -> Maybe<usize> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     while linux::RWFFlagSupport::is_maybe_supported() {
@@ -7344,15 +7344,7 @@ pub fn write_nonblocking(fd: Fd, buf: &[u8]) -> Maybe<usize> {
             match e {
                 libc::EOPNOTSUPP | libc::ENOSYS | libc::EPERM | libc::EACCES => {
                     linux::RWFFlagSupport::disable();
-                    // Poll before issuing a blocking write.
-                    return match bun_core::is_writable(fd) {
-                        bun_core::Pollable::Ready | bun_core::Pollable::Hup => write(fd, buf),
-                        _ => {
-                            let mut e = Error::retry();
-                            e.syscall = Tag::write;
-                            Err(e.with_fd(fd))
-                        }
-                    };
+                    return write_bounded(fd, buf);
                 }
                 libc::EINTR => continue,
                 _ => return Err(Error::from_code_int(e, Tag::write).with_fd(fd)),
@@ -7360,27 +7352,75 @@ pub fn write_nonblocking(fd: Fd, buf: &[u8]) -> Maybe<usize> {
         }
         return Ok(rc as usize);
     }
-    write(fd, buf)
+    write_bounded(fd, buf)
+}
+
+/// `write(2)` on a possibly-blocking fd, sized so a pipe cannot make it wait; `EAGAIN` when nothing fits now.
+pub fn write_bounded(fd: Fd, buf: &[u8]) -> Maybe<usize> {
+    let len = match pipe_writable_space(fd) {
+        Some(0) => {
+            let mut e = Error::retry();
+            e.syscall = Tag::write;
+            return Err(e.with_fd(fd));
+        }
+        Some(space) => buf.len().min(space),
+        None => match bun_core::is_writable(fd) {
+            bun_core::Pollable::Ready | bun_core::Pollable::Hup => buf.len(),
+            bun_core::Pollable::NotReady => {
+                let mut e = Error::retry();
+                e.syscall = Tag::write;
+                return Err(e.with_fd(fd));
+            }
+        },
+    };
+    write(fd, &buf[..len])
 }
 
 /// How many bytes a blocking pipe accepts right now without blocking; `None` if `fd` is not a pipe/FIFO.
 pub fn pipe_writable_space(fd: Fd) -> Option<usize> {
     #[cfg(unix)]
     {
-        let st = fstat(fd).ok()?;
-        if !S::ISFIFO(st.st_mode as Mode) {
-            return None;
-        }
-        // XNU reports a pipe's capacity in st_blksize and its queued bytes in st_size (for either end).
-        #[cfg(target_os = "macos")]
-        return Some((st.st_blksize as usize).saturating_sub(st.st_size as usize));
-        // Elsewhere POLLOUT on a pipe guarantees PIPE_BUF bytes; byte counts would overstate what a fragmented pipe takes.
-        #[cfg(not(target_os = "macos"))]
-        return match bun_core::is_writable(fd) {
-            bun_core::Pollable::Ready => Some(libc::PIPE_BUF),
+        // POLLOUT on a pipe/FIFO guarantees one free slot (Linux: a page) or PIPE_BUF (BSD sb_lowat).
+        let by_poll = |slot: usize| match bun_core::is_writable(fd) {
+            bun_core::Pollable::Ready => Some(slot),
             bun_core::Pollable::Hup => None,
             bun_core::Pollable::NotReady => Some(0),
         };
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            // SAFETY: plain fcntl/ioctl on a caller-owned fd; F_GETPIPE_SZ fails on anything but a pipe.
+            let cap = unsafe { libc::fcntl(fd.native(), libc::F_GETPIPE_SZ) };
+            if cap < 0 {
+                return None;
+            }
+            let page = bun_alloc::page_size();
+            let mut queued: c_int = 0;
+            // SAFETY: FIONREAD writes one c_int.
+            if unsafe { libc::ioctl(fd.native(), libc::FIONREAD, &mut queued) } < 0 {
+                return by_poll(page);
+            }
+            // Slots are page-sized; a part-read head and a part-filled tail can each hold less than a page.
+            let used_slots = (queued.max(0) as usize) / page + 2;
+            let safe = (cap as usize / page).saturating_sub(used_slots) * page;
+            return if safe >= page {
+                Some(safe)
+            } else {
+                by_poll(page)
+            };
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        {
+            let st = fstat(fd).ok()?;
+            if !S::ISFIFO(st.st_mode as Mode) {
+                return None;
+            }
+            // XNU anonymous pipes (st_dev 0) report capacity in st_blksize and queued bytes in st_size; named FIFOs are socket-backed.
+            #[cfg(target_os = "macos")]
+            if st.st_dev == 0 {
+                return Some((st.st_blksize as usize).saturating_sub(st.st_size as usize));
+            }
+            return by_poll(libc::PIPE_BUF);
+        }
     }
     #[cfg(not(unix))]
     {
@@ -9263,14 +9303,12 @@ fn fd_write_all_quiet(fd: Fd, mut bytes: &[u8]) -> bool {
             #[cfg(unix)]
             Err(e) if e.get_errno() == E::EAGAIN => {
                 // Another process sharing fd 1/2 may have set O_NONBLOCK; wait instead of dropping output.
-                let mut pfd = [libc::pollfd {
+                let mut pfd = [posix::PollFd {
                     fd: fd.native(),
-                    events: libc::POLLOUT,
+                    events: posix::POLL_OUT,
                     revents: 0,
                 }];
-                // SAFETY: valid 1-element pollfd array.
-                if unsafe { libc::poll(pfd.as_mut_ptr(), 1, -1) } < 0 && last_errno() != libc::EINTR
-                {
+                if posix::poll(&mut pfd, -1).is_err() {
                     return false;
                 }
             }

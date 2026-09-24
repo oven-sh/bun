@@ -146,7 +146,9 @@ describe("a failed operation calls back with the error alone", () => {
 
   test("symlink", async () => {
     const dir = freshDir();
-    const args = await argumentsPassedTo(cb => fs.symlink(path.join(dir, "file.txt"), path.join(dir, "subdir"), cb));
+    const taken = path.join(dir, "taken.txt");
+    fs.writeFileSync(taken, "");
+    const args = await argumentsPassedTo(cb => fs.symlink(path.join(dir, "file.txt"), taken, cb));
     assert.strictEqual(args.length, 1);
     const { code, syscall } = args[0] as NodeJS.ErrnoException;
     assert.deepStrictEqual({ code, syscall }, { code: "EEXIST", syscall: "symlink" });

@@ -3099,10 +3099,13 @@ mod posix_impl {
     }
     #[cfg(unix)]
     pub(crate) const MSG_DONTWAIT: i32 = libc::MSG_DONTWAIT;
-    // `MSG_DONTWAIT | MSG_NOSIGNAL` on all Unix including macOS
-    // (Darwin defines MSG_NOSIGNAL=0x80000).
+    /// XNU's `sosend` only honours `MSG_NBIO` (private, 0x20000) for "don't wait for buffer space"; `MSG_DONTWAIT` alone still blocks there.
+    #[cfg(target_os = "macos")]
+    const MSG_NBIO: i32 = 0x20000;
+    #[cfg(not(target_os = "macos"))]
+    const MSG_NBIO: i32 = 0;
     #[cfg(unix)]
-    pub(crate) const SEND_FLAGS_NONBLOCK: i32 = libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL;
+    pub(crate) const SEND_FLAGS_NONBLOCK: i32 = libc::MSG_DONTWAIT | MSG_NBIO | libc::MSG_NOSIGNAL;
     /// `fcntl(F_GETFD)` then OR in `FD_CLOEXEC`.
     pub fn set_close_on_exec(fd: Fd) -> Maybe<()> {
         let fl = fcntl(fd, libc::F_GETFD, 0)?;

@@ -2083,6 +2083,16 @@ impl VirtualMachine {
         bun_core::env_var::feature_flag::BUN_DESTRUCT_VM_ON_EXIT::get().unwrap_or(false)
     }
 
+    /// What `uncaught_exception` and `unhandled_rejection_owned` hold while they call the handlers:
+    /// see [`EventLoop::enter_scope_without_checkpoint`]. Nothing under `bun test`, whose runner can
+    /// start the next test from inside the report: that test runs with the count the runner has.
+    fn enter_error_handler_scope(
+        &self,
+    ) -> Option<crate::event_loop::EventLoopEnterNoCheckpointGuard> {
+        (!isBunTest.load(core::sync::atomic::Ordering::Relaxed))
+            .then(|| self.enter_event_loop_scope_without_checkpoint())
+    }
+
     pub fn uncaught_exception(
         &mut self,
         global_object: &JSGlobalObject,
@@ -2095,7 +2105,7 @@ impl VirtualMachine {
             return true;
         }
 
-        let entered = self.enter_event_loop_scope_without_checkpoint();
+        let _entered = self.enter_error_handler_scope();
         // An exception thrown by a Bun.ModuleGraph's module code is that graph's to
         // handle, ahead of the test runner and the thread-wide path. (A rejection
         // re-entering here under --unhandled-rejections=strict/throw was already judged.)
@@ -2104,8 +2114,6 @@ impl VirtualMachine {
         }
 
         if isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
-            // The runner can start the next test from here: it runs with the count the runner has.
-            drop(entered);
             self.unhandled_error_counter += 1;
             (self.on_unhandled_rejection)(self, global_object, err);
             return true;
@@ -4342,7 +4350,7 @@ impl VirtualMachine {
             return;
         }
 
-        let entered = self.enter_event_loop_scope_without_checkpoint();
+        let _entered = self.enter_error_handler_scope();
         if owner.is_cell()
             && Bun__ModuleGraph__handleUnhandledRejection(global_object, reason, owner)
         {
@@ -4351,8 +4359,6 @@ impl VirtualMachine {
         }
 
         if isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
-            // As in `uncaught_exception`.
-            drop(entered);
             self.unhandled_error_counter += 1;
             (self.on_unhandled_rejection)(self, global_object, reason);
             return;

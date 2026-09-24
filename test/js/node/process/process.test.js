@@ -2887,7 +2887,8 @@ it("no socket close handler runs after the 'exit' event", async () => {
 // Native code calls these between event loop turns. A native call they make that
 // dispatches a callback of its own (socket.destroy() runs the close callback)
 // must return before the nextTicks and promise jobs they queued run, as it does
-// in every other callback and in Node.
+// in every other callback and in Node. They run once the listener has returned,
+// except after 'exit', where Bun runs nothing more.
 describe.concurrent("socket.destroy() returns before the queued nextTicks and promise jobs run", () => {
   const fixture = /* js */ `
     import net from "node:net";
@@ -2903,15 +2904,14 @@ describe.concurrent("socket.destroy() returns before the queued nextTicks and pr
     socket.unref();
     socket.on("error", () => {});
 
+    const ran = [];
     function probe() {
-      const order = [];
-      Promise.resolve().then(() => order.push("promise job"));
-      process.nextTick(() => order.push("nextTick"));
-      order.push("before destroy()");
+      Promise.resolve().then(() => ran.push("promise job"));
+      process.nextTick(() => ran.push("nextTick"));
       socket.destroy();
-      order.push("after destroy()");
-      console.log(JSON.stringify(order));
+      console.log("inside destroy():", JSON.stringify(ran));
     }
+    process.on("exit", () => console.log("by the end:", JSON.stringify(ran.sort())));
 
     let graph;
     switch (caller) {
@@ -2922,7 +2922,7 @@ describe.concurrent("socket.destroy() returns before the queued nextTicks and pr
         process.once("beforeExit", () => process.nextTick(probe));
         break;
       case "an 'exit' listener":
-        process.once("exit", probe);
+        process.prependOnceListener("exit", probe);
         break;
       case "an 'unhandledRejection' listener":
         process.once("unhandledRejection", probe);
@@ -2941,13 +2941,14 @@ describe.concurrent("socket.destroy() returns before the queued nextTicks and pr
   `;
 
   it.each([
-    "a 'beforeExit' listener",
-    "a nextTick that a 'beforeExit' listener queued",
-    "an 'exit' listener",
-    "an 'unhandledRejection' listener",
-    "an 'uncaughtException' listener, for a throw of the entry module",
-    "the onError of a Bun.ModuleGraph, for an unhandled rejection",
-  ])("called from %s", async caller => {
+    ["a 'beforeExit' listener", ["nextTick", "promise job"]],
+    ["a nextTick that a 'beforeExit' listener queued", ["nextTick", "promise job"]],
+    ["an 'exit' listener", []],
+    // Whether what this one queued still runs once the loop has ended is not the subject here.
+    ["an 'unhandledRejection' listener", undefined],
+    ["an 'uncaughtException' listener, for a throw of the entry module", ["nextTick", "promise job"]],
+    ["the onError of a Bun.ModuleGraph, for an unhandled rejection", ["nextTick", "promise job"]],
+  ])("called from %s", async (caller, byTheEnd) => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture, caller],
       env: bunEnv,
@@ -2955,7 +2956,41 @@ describe.concurrent("socket.destroy() returns before the queued nextTicks and pr
       stderr: "inherit",
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout).toBe(JSON.stringify(["before destroy()", "after destroy()"]) + "\n");
+    const [insideDestroy, atTheEnd] = stdout.split("\n");
+    expect(insideDestroy).toBe("inside destroy(): []");
+    if (byTheEnd) expect(atTheEnd).toBe("by the end: " + JSON.stringify(byTheEnd));
+    expect(exitCode).toBe(0);
+  });
+
+  // Nothing here touches process.nextTick, so the nextTick queue, which the
+  // checkpoint after 'beforeExit' drains, does not exist.
+  it("a 'beforeExit' listener's promise job runs after it in a program without a nextTick queue", async () => {
+    using dir = tempDir("before-exit-promise-job", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `import fs from "node:fs";
+         const watcher = fs.watch(process.cwd());
+         watcher.unref();
+         process.once("beforeExit", () => {
+           const order = [];
+           Promise.resolve().then(() => {
+             order.push("promise job");
+             console.log(JSON.stringify(order));
+           });
+           order.push("before close()");
+           watcher.close();
+           order.push("after close()");
+         });`,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe(JSON.stringify(["before close()", "after close()", "promise job"]) + "\n");
     expect(exitCode).toBe(0);
   });
 });

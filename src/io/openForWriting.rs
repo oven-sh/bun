@@ -6,10 +6,6 @@ use bun_sys::{self, Fd, Mode};
 // A sealed trait whose impls cover each accepted input type
 // (`PathOrFileDescriptor` and zero-terminated path slices).
 pub trait OpenForWritingInput {
-    /// A caller-supplied fd shares its open file description with other processes, so `O_NONBLOCK` must not be set on it.
-    fn is_caller_fd(&self) -> bool {
-        false
-    }
     fn open_for_writing_result(
         &self,
         dir: Fd,
@@ -21,9 +17,6 @@ pub trait OpenForWritingInput {
 }
 
 impl OpenForWritingInput for crate::PathOrFileDescriptor<'_> {
-    fn is_caller_fd(&self) -> bool {
-        matches!(self, crate::PathOrFileDescriptor::Fd(_))
-    }
     fn open_for_writing_result(
         &self,
         dir: Fd,
@@ -164,7 +157,7 @@ where
                     };
                     is_nonblocking = (flags as i32 & bun_sys::O::NONBLOCK) != 0;
 
-                    if !is_nonblocking && !input_path.is_caller_fd() {
+                    if !is_nonblocking {
                         if bun_sys::set_nonblocking(fd).is_ok() {
                             is_nonblocking = true;
                         }

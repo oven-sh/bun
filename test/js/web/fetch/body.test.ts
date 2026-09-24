@@ -1,4 +1,4 @@
-import { file, spawn, version, type Socket } from "bun";
+import { file, S3Client, spawn, version, type Socket } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, exampleSite, tempDir } from "harness";
 import net from "net";
@@ -2040,5 +2040,168 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
     });
     release();
     expect(await text).toBe("payload");
+  });
+});
+
+// The size of an S3 object is not known before the download. A body made from
+// one reads the whole object, or the whole slice, whatever looked at it first.
+describe("a body made from an S3 file", () => {
+  const payload = Buffer.alloc(100, "0123456789").toString();
+
+  // A local stand-in for the S3 endpoint. It records the Range header of each GET.
+  function s3Endpoint(object: string | Uint8Array = payload) {
+    const bytes = Buffer.from(object);
+    const ranges: (string | null)[] = [];
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const range = req.headers.get("range");
+        ranges.push(range);
+        const match = range && /^bytes=(\d+)-(\d*)$/.exec(range);
+        if (!match) return new Response(bytes);
+        const start = Number(match[1]);
+        const end = match[2] === "" ? bytes.length - 1 : Number(match[2]);
+        return new Response(bytes.subarray(start, end + 1), {
+          status: 206,
+          headers: { "Content-Range": `bytes ${start}-${end}/${bytes.length}` },
+        });
+      },
+    });
+    const s3 = new S3Client({ endpoint: server.url.href, accessKeyId: "x", secretAccessKey: "y", bucket: "b" });
+    return {
+      ranges,
+      file: (type?: string) => s3.file("key", { type }),
+      [Symbol.dispose]: () => void server.stop(true),
+    };
+  }
+
+  const owners = [
+    {
+      name: "Request",
+      make: async (blob: Blob) => new Request("http://example.com/", { method: "POST", body: blob }),
+    },
+    {
+      // new Response(s3file) is a redirect. fetch() of a blob: URL gives a Response that holds the S3 blob.
+      name: "Response",
+      make: async (blob: Blob) => {
+        const url = URL.createObjectURL(blob);
+        try {
+          return await fetch(url);
+        } finally {
+          URL.revokeObjectURL(url);
+        }
+      },
+    },
+  ];
+
+  for (const { name, make } of owners) {
+    describe(name, () => {
+      test(".body and textStream() download the whole object", async () => {
+        using endpoint = s3Endpoint();
+        const body = await Bun.readableStreamToText((await make(endpoint.file())).body!);
+        const textStream = (await Array.fromAsync((await make(endpoint.file())).textStream())).join("");
+        expect({ body, textStream, ranges: endpoint.ranges }).toEqual({
+          body: payload,
+          textStream: payload,
+          ranges: [null, null],
+        });
+      });
+
+      test(".body of a slice downloads the whole slice", async () => {
+        using endpoint = s3Endpoint();
+        const body = await Bun.readableStreamToText((await make(endpoint.file().slice(10, 30))).body!);
+        const textStream = (await Array.fromAsync((await make(endpoint.file().slice(10, 30))).textStream())).join("");
+        expect({ body, textStream, ranges: endpoint.ranges }).toEqual({
+          body: payload.slice(10, 30),
+          textStream: payload.slice(10, 30),
+          ranges: ["bytes=10-29", "bytes=10-29"],
+        });
+      });
+
+      test("a clone and its original both download the whole object", async () => {
+        using endpoint = s3Endpoint();
+        const original = await make(endpoint.file());
+        const clone = original.clone();
+        expect({
+          clone: await Bun.readableStreamToText(clone.body!),
+          original: await Bun.readableStreamToText(original.body!),
+          ranges: endpoint.ranges,
+        }).toEqual({ clone: payload, original: payload, ranges: [null, null] });
+      });
+
+      test("Bun.inspect() does not change what the body reads", async () => {
+        using endpoint = s3Endpoint();
+        const inspected = async () => {
+          const subject = await make(endpoint.file());
+          Bun.inspect(subject);
+          return subject;
+        };
+        const blob = await (await inspected()).blob();
+        expect({
+          body: await Bun.readableStreamToText((await inspected()).body!),
+          text: await (await inspected()).text(),
+          bytes: (await (await inspected()).bytes()).length,
+          blob: [blob.size, await blob.text()],
+          ranges: endpoint.ranges,
+        }).toEqual({
+          body: payload,
+          text: payload,
+          bytes: payload.length,
+          blob: [NaN, payload],
+          ranges: [null, null, null, null],
+        });
+      });
+    });
+  }
+
+  test("new Request(request) downloads the whole object", async () => {
+    using endpoint = s3Endpoint();
+    const request = new Request(new Request("http://example.com/", { method: "POST", body: endpoint.file() }));
+    expect({ body: await Bun.readableStreamToText(request.body!), ranges: endpoint.ranges }).toEqual({
+      body: payload,
+      ranges: [null],
+    });
+  });
+
+  test("fetch(request) uploads the whole object after Bun.inspect(request)", async () => {
+    using endpoint = s3Endpoint();
+    const uploads: string[] = [];
+    await using sink = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        uploads.push(await req.text());
+        return new Response("ok");
+      },
+    });
+    const request = new Request(sink.url, { method: "POST", body: endpoint.file() });
+    Bun.inspect(request);
+    expect(await (await fetch(request)).text()).toBe("ok");
+    expect({ uploads, ranges: endpoint.ranges }).toEqual({ uploads: [payload], ranges: [null] });
+  });
+
+  test("HTMLRewriter.transform() reads the whole object", async () => {
+    using endpoint = s3Endpoint("<p>" + payload + "</p>");
+    const seen: string[] = [];
+    const response = await owners[1].make(endpoint.file());
+    const output = await new HTMLRewriter()
+      .on("p", { text: chunk => void seen.push(chunk.text) })
+      .transform(response as Response)
+      .text();
+    expect({ output, seen: seen.join(""), ranges: endpoint.ranges }).toEqual({
+      output: "<p>" + payload + "</p>",
+      seen: payload,
+      ranges: [null],
+    });
+  });
+
+  test("WebAssembly.compileStreaming() reads the whole object", async () => {
+    // The smallest module: the magic number and the version.
+    using endpoint = s3Endpoint(new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]));
+    const response = owners[1].make(endpoint.file("application/wasm")) as Promise<Response>;
+    const module = await WebAssembly.compileStreaming(response);
+    expect({ exports: WebAssembly.Module.exports(module), ranges: endpoint.ranges }).toEqual({
+      exports: [],
+      ranges: [null],
+    });
   });
 });

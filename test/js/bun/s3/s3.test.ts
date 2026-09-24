@@ -2180,3 +2180,116 @@ describe("presigned url signature", () => {
     }
   });
 });
+
+// The size of an S3 object is not known before the download. Whatever asks the file
+// for its size must leave it unknown: a file whose size became 0 requests one byte
+// (`Range: bytes=0-0`) on the next read and returns an empty Blob from slice().
+describe("s3 file size stays unknown", () => {
+  const payload = Buffer.alloc(100, "0123456789").toString();
+
+  // A local stand-in for the S3 endpoint. It records the Range header of each GET.
+  function s3Endpoint() {
+    const ranges: (string | null)[] = [];
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const range = req.headers.get("range");
+        ranges.push(range);
+        const match = range && /^bytes=(\d+)-(\d*)$/.exec(range);
+        if (!match) return new Response(payload);
+        const start = Number(match[1]);
+        const end = match[2] === "" ? payload.length - 1 : Math.min(Number(match[2]), payload.length - 1);
+        return new Response(payload.slice(start, end + 1), {
+          status: 206,
+          headers: { "Content-Range": `bytes ${start}-${end}/${payload.length}` },
+        });
+      },
+    });
+    const client = new S3Client({ endpoint: server.url.href, accessKeyId: "x", secretAccessKey: "y", bucket: "b" });
+    return { ranges, file: () => client.file("key"), [Symbol.dispose]: () => void server.stop(true) };
+  }
+
+  async function readsAfter(look: (file: Bun.S3File) => unknown) {
+    using endpoint = s3Endpoint();
+    const file = endpoint.file();
+    await look(file);
+    const requestsWhileLooking = endpoint.ranges.length;
+    return {
+      requestsWhileLooking,
+      size: file.size,
+      text: await file.text(),
+      stream: await Bun.readableStreamToText(file.stream()),
+      slice: await file.slice(10, 20).text(),
+      ranges: endpoint.ranges,
+    };
+  }
+  const untouched = {
+    requestsWhileLooking: 0,
+    size: NaN,
+    text: payload,
+    stream: payload,
+    slice: payload.slice(10, 20),
+    ranges: [null, null, "bytes=10-19"],
+  };
+
+  it("after expect().toHaveLength() and expect().toBeEmpty()", async () => {
+    expect(
+      await readsAfter(file => {
+        expect(() => expect(file).toHaveLength(0)).toThrow();
+        expect(() => expect(file).toBeEmpty()).toThrow();
+      }),
+    ).toEqual(untouched);
+  });
+
+  it("after structuredClone()", async () => {
+    expect(
+      await readsAfter(file => {
+        try {
+          structuredClone(file);
+        } catch {}
+      }),
+    ).toEqual(untouched);
+  });
+
+  it("for a FormData entry after the FormData became a body", async () => {
+    using endpoint = s3Endpoint();
+    const form = new FormData();
+    form.append("file", endpoint.file());
+    try {
+      await new Response(form).arrayBuffer();
+    } catch {}
+    const entry = form.get("file") as Blob;
+    expect({ size: entry.size, text: await entry.text(), ranges: endpoint.ranges }).toEqual({
+      size: NaN,
+      text: payload,
+      ranges: [null],
+    });
+  });
+
+  it("a slice requests its own window", async () => {
+    using endpoint = s3Endpoint();
+    const file = endpoint.file();
+    expect({
+      "slice(10, 20).text()": await file.slice(10, 20).text(),
+      "slice(0, 5).text()": await file.slice(0, 5).text(),
+      "slice(95).text()": await file.slice(95).text(),
+      "slice(10, 20).stream()": await Bun.readableStreamToText(file.slice(10, 20).stream()),
+      "slice(0, 5).stream()": await Bun.readableStreamToText(file.slice(0, 5).stream()),
+      sizes: [file.slice(10, 20).size, file.slice(0, 5).size],
+    }).toEqual({
+      "slice(10, 20).text()": payload.slice(10, 20),
+      "slice(0, 5).text()": payload.slice(0, 5),
+      "slice(95).text()": payload.slice(95),
+      "slice(10, 20).stream()": payload.slice(10, 20),
+      "slice(0, 5).stream()": payload.slice(0, 5),
+      sizes: [10, 5],
+    });
+    expect(endpoint.ranges.map(range => range?.replace(/^(bytes=95-)\d+$/, "$1"))).toEqual([
+      "bytes=10-19",
+      "bytes=0-4",
+      "bytes=95-",
+      "bytes=10-19",
+      "bytes=0-4",
+    ]);
+  });
+});

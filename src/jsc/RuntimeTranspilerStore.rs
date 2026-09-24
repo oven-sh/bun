@@ -252,7 +252,7 @@ impl RuntimeTranspilerStore {
                 (*job).promise.deinit();
                 (*job).module_loader.deinit();
                 (*job).reset_for_pool();
-                VirtualMachine::module_fetch_settled((*job).vm, (*job).fetch_generation);
+                (*(*job).vm).module_fetches.settled((*job).fetch_generation);
                 self.store.put(job);
             }
         }
@@ -396,7 +396,7 @@ impl RuntimeTranspilerStore {
         }
         // SAFETY: job fully initialized above; `vm` is the live VM that owns this store.
         unsafe {
-            (*job).fetch_generation = VirtualMachine::module_fetch_started(vm);
+            (*job).fetch_generation = (*vm).module_fetches.started();
             (*job).schedule();
         }
         promise.cast::<c_void>()
@@ -437,7 +437,7 @@ pub struct TranspilerJob {
     pub global_this: BackRef<JSGlobalObject>,
     pub(crate) poll_ref: KeepAlive,
     pub(crate) generation_number: u32,
-    /// From `VirtualMachine::module_fetch_started`, for `module_fetch_settled`.
+    /// From `GenerationFetches::started`, for `settled`.
     pub(crate) fetch_generation: u32,
     pub(crate) log: bun_ast::Log,
     pub(crate) parse_error: Option<crate::CrateError>,
@@ -569,7 +569,7 @@ impl TranspilerJob {
                 .transpiler_store
                 .store
                 .put(std::ptr::from_mut::<TranspilerJob>(self));
-            VirtualMachine::module_fetch_settled(vm, fetch_generation);
+            (*vm).module_fetches.settled(fetch_generation);
         }
 
         AsyncModule::fulfill(

@@ -632,10 +632,8 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
   }
 }
 
-// writeFast hands data to the FileSink without touching _writableState, so
-// Writable's finish logic sees no pending writes. The sink's flush() returns
-// the promise of the backlog still queued behind backpressure; 'finish' and
-// the end() callback wait for it, as node waits for its write callbacks.
+// writeFast bypasses _writableState, so 'finish' must wait on the sink's own
+// backlog: flush() returns its promise while writes are pending.
 function finalFast(this: FSStream, cb: (err?: any) => void) {
   const fileSink = this[kWriteStreamFastPath];
   if (!fileSink || fileSink === true) {

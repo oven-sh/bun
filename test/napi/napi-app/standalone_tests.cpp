@@ -4175,8 +4175,8 @@ test_external_buffer_length_limit(const Napi::CallbackInfo &info) {
           nullptr, &result);
     } else if (api == 1) {
       status = napi_create_external_buffer(env, static_cast<size_t>(length),
-                                           reserved, finalize_reserved,
-                                           nullptr, &result);
+                                           reserved, finalize_reserved, nullptr,
+                                           &result);
     } else {
       status = node_api_create_external_sharedarraybuffer(
           env, reserved, static_cast<size_t>(length), finalize_reserved_noenv,
@@ -4192,8 +4192,8 @@ test_external_buffer_length_limit(const Napi::CallbackInfo &info) {
       double byte_length = -1;
       NODE_API_CALL(env, napi_get_named_property(env, result, "byteLength",
                                                  &byte_length_value));
-      NODE_API_CALL(env,
-                    napi_get_value_double(env, byte_length_value, &byte_length));
+      NODE_API_CALL(
+          env, napi_get_value_double(env, byte_length_value, &byte_length));
       printf(" byteLength=%.0f", byte_length);
     } else if (reserved_finalize_count == 0) {
       // The call failed and the finalizer did not run: the bytes are still
@@ -4209,8 +4209,7 @@ test_external_buffer_length_limit(const Napi::CallbackInfo &info) {
 // and print the same lines. The message is not printed because it names each
 // runtime's limit. The finalizer is NULL because Node runs it on this path
 // and Bun leaves the bytes with the caller.
-static napi_value
-test_buffer_too_large_parity(const Napi::CallbackInfo &info) {
+static napi_value test_buffer_too_large_parity(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
   const size_t too_large = size_t{1} << 53;
   static uint8_t never_read;
@@ -4255,8 +4254,7 @@ test_buffer_too_large_parity(const Napi::CallbackInfo &info) {
   napi_get_and_clear_last_exception(env, &pending_before_the_call);
   printf("with an exception pending: napi_create_external_buffer status=%d "
          "napi_create_external_arraybuffer status=%d\n",
-         static_cast<int>(buffer_status),
-         static_cast<int>(arraybuffer_status));
+         static_cast<int>(buffer_status), static_cast<int>(arraybuffer_status));
   return ok(env);
 }
 

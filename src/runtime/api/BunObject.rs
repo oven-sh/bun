@@ -1148,6 +1148,17 @@ fn resolve_sync(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResu
     do_resolve(global_object, callframe.arguments())
 }
 
+/// `bun:internal-for-testing`: how many resolutions this VM answered without the resolver.
+#[bun_jsc::host_fn]
+pub(crate) fn js_resolution_memo_hits(
+    global: &JSGlobalObject,
+    _callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    Ok(JSValue::js_number(
+        global.bun_vm().resolution_memo_hits() as f64
+    ))
+}
+
 #[bun_jsc::host_fn]
 fn resolve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let value = match do_resolve(global_object, callframe.arguments()) {

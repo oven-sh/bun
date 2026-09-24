@@ -76,6 +76,9 @@ export const napiThreadsafeFunctionLiveCount = $newRustFunction("napi_body.rs", 
 
 export const bundlerWorkerLiveCount: () => number = $newRustFunction("JSBundler.rs", "jsWorkerLiveCount", 0);
 
+/** How many module resolutions this thread answered from its memo, without the resolver. */
+export const resolutionMemoHits: () => number = $newRustFunction("BunObject.rs", "jsResolutionMemoHits", 0);
+
 export const escapeRegExp = $newRustFunction("escapeRegExp.rs", "jsEscapeRegExp", 1);
 export const escapeRegExpForPackageNameMatching = $newRustFunction(
   "escapeRegExp.rs",

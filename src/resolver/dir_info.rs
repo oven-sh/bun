@@ -423,9 +423,15 @@ pub(crate) unsafe fn put_slot(
         map.cast_const(),
         hash_map_instance().cast_const()
     ));
+    let checked_before = result.has_checked_if_exists();
     // SAFETY: `map` is the live singleton; resolver mutex held. The auto-ref
     // `&mut *map` ends when `put` returns, before `slot_ptr_at` runs.
-    unsafe { (*map).put(result, value) }.map_err(crate::Error::from)?;
+    let put = unsafe { (*map).put(result, value) }.map(|_| ());
+    // A directory that was found or not found before gets another answer.
+    if checked_before {
+        crate::resolution_epoch::bump();
+    }
+    put.map_err(crate::Error::from)?;
     // SAFETY: `put` just assigned a non-sentinel, initialized index.
     Ok(unsafe { slot_ptr_at(result.index) }.expect("put assigned a non-sentinel index"))
 }

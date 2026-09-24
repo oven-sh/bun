@@ -1961,3 +1961,441 @@ describe.concurrent("dot specifiers resolve to the directory index, not a siblin
     expect(exitCode).toBe(1);
   });
 });
+
+// Three of these tests count the answers of the VM's memo of resolver answers. A stale answer from it fails the others.
+describe.concurrent("a repeated resolution", () => {
+  async function run(files: Record<string, string>, cmd = ["main.cjs"], env = bunEnv) {
+    using dir = tempDir("repeated-resolution", files);
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...cmd], env, cwd: String(dir), stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("is answered without the resolver, from every entry point", async () => {
+    const { stdout, stderr, exitCode } = await run({
+      "child.cjs": `module.exports = 1;`,
+      "hooked.cjs": `module.exports = 1;`,
+      "after.cjs": `module.exports = 1;`,
+      ...Object.fromEntries(Array.from({ length: 300 }, (_, i) => [`one-off-${i}.cjs`, ""])),
+      "node_modules/pkg/package.json": `{ "name": "pkg", "main": "index.js" }`,
+      "node_modules/pkg/index.js": `module.exports = 2;`,
+      "main.cjs": `
+        const { resolutionMemoHits } = require("bun:internal-for-testing");
+        const Module = require("node:module");
+        // How many of 5 calls the memo answered.
+        const hits = fn => {
+          const before = resolutionMemoHits();
+          for (let i = 0; i < 5; i++) fn();
+          return resolutionMemoHits() - before;
+        };
+        // 3 of 5: an entry starts at the second resolution. 4 when a pair seen before has the same tag.
+        const repeats = fn => [3, 4].includes(hits(fn));
+        const blobUrl = URL.createObjectURL(new Blob(["export default 1;"], { type: "text/javascript" }));
+        const longDataUrl = "data:text/javascript,//" + Buffer.alloc(300_000, "a").toString();
+        (async () => {
+          const out = {
+            require: repeats(() => require("./child.cjs")),
+            // The same pair as require(): the answer is already there.
+            requireResolve: hits(() => require.resolve("./child.cjs")),
+            bare: repeats(() => require("pkg")),
+            resolveSync: repeats(() => Bun.resolveSync("./child.cjs", __dirname)),
+            builtin: hits(() => require("node:fs")),
+            withPaths: hits(() => require.resolve("pkg", { paths: [__dirname] })),
+            withQuery: hits(() => require.resolve("./child.cjs?query")),
+            relativeSource: hits(() => Bun.resolveSync("./child.cjs", ".")),
+            blobUrl: hits(() => Bun.resolveSync(blobUrl, __dirname)),
+            longDataUrl: hits(() => Bun.resolveSync(longDataUrl, __dirname)),
+          };
+          const before = resolutionMemoHits();
+          for (let i = 0; i < 5; i++) await import("./child.cjs");
+          out.import = [3, 4].includes(resolutionMemoHits() - before);
+
+          const resolveFilename = Module._resolveFilename;
+          Module._resolveFilename = function (...args) { return resolveFilename.apply(this, args); };
+          out.hooked = repeats(() => require("./hooked.cjs"));
+          Module._resolveFilename = resolveFilename;
+
+          // The epoch moves. A pair that had an entry keeps it: the first call checks the answer, the next four get it.
+          require.extensions[".custom"] = require.extensions[".js"];
+          out.afterChange = repeats(() => require("./child.cjs"));
+          delete require.extensions[".custom"];
+
+          // One resolution keeps no entry. Almost no hit in the second round: two pairs seldom share a bucket and a tag.
+          const oneOffs = () => { for (let i = 0; i < 300; i++) require.resolve("./one-off-" + i + ".cjs"); };
+          oneOffs();
+          const beforeSecondRound = resolutionMemoHits();
+          oneOffs();
+          out.oneOffs = resolutionMemoHits() - beforeSecondRound < 10;
+
+          // A failed lookup is not kept. It can make the resolver read the directory again, which empties the memo.
+          out.missing = hits(() => { try { require.resolve("./missing.cjs"); } catch {} });
+          out.afterMissing = repeats(() => require.resolve("./after.cjs"));
+          console.log(JSON.stringify(out));
+        })();
+      `,
+    });
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      require: true,
+      requireResolve: 5,
+      bare: true,
+      resolveSync: true,
+      builtin: 0,
+      withPaths: 0,
+      withQuery: 0,
+      relativeSource: 0,
+      blobUrl: 0,
+      longDataUrl: 0,
+      import: true,
+      hooked: true,
+      afterChange: true,
+      oneOffs: true,
+      missing: 0,
+      afterMissing: true,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("runs the resolver with BUN_FEATURE_FLAG_DISABLE_RESOLUTION_MEMO", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "child.cjs": `module.exports = 1;`,
+        "main.cjs": `
+          const { resolutionMemoHits } = require("bun:internal-for-testing");
+          for (let i = 0; i < 5; i++) require("./child.cjs");
+          console.log(resolutionMemoHits());
+        `,
+      },
+      ["main.cjs"],
+      { ...bunEnv, BUN_FEATURE_FLAG_DISABLE_RESOLUTION_MEMO: "1" },
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe("0\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("of a blob: URL does not outlive URL.revokeObjectURL()", async () => {
+    const { stdout, stderr, exitCode } = await run({
+      "main.cjs": `
+        const url = URL.createObjectURL(new Blob(["export default 1;"], { type: "text/javascript" }));
+        const where = () => {
+          try {
+            return Bun.resolveSync(url, __dirname) === url;
+          } catch (error) {
+            return error.code;
+          }
+        };
+        const out = [where(), where(), where()];
+        URL.revokeObjectURL(url);
+        out.push(where(), where());
+        console.log(JSON.stringify(out));
+      `,
+    });
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([true, true, true, "ERR_MODULE_NOT_FOUND", "ERR_MODULE_NOT_FOUND"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // Only Linux lets a file name hold bytes that are not UTF-8.
+  test.skipIf(!isLinux)("gives the same string for a path that is not UTF-8", async () => {
+    const { stdout, stderr, exitCode } = await run({
+      "main.cjs": `
+        const fs = require("node:fs");
+        const path = require("node:path");
+        const target = Buffer.concat([Buffer.from(path.join(__dirname, "f")), Buffer.from([0xff]), Buffer.from(".cjs")]);
+        fs.writeFileSync(target, "module.exports = 1;");
+        fs.symlinkSync(target, path.join(__dirname, "link.cjs"));
+        const out = [];
+        for (let i = 0; i < 4; i++) out.push(require.resolve("./link.cjs"));
+        console.log(JSON.stringify(out.map(resolved => resolved === out[0] && resolved.endsWith("\ufffd.cjs"))));
+      `,
+    });
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([true, true, true, true]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("finds a new file once a failed lookup made the resolver read the directory again", async () => {
+    const { stdout, stderr, exitCode } = await run({
+      "x.json": `{}`,
+      "main.cjs": `
+        const fs = require("node:fs");
+        const path = require("node:path");
+        const where = () => [
+          path.basename(require.resolve("./x")),
+          path.basename(Bun.resolveSync("./x", __dirname)),
+          path.basename(require("node:module")._resolveFilename("./x", module)),
+        ];
+        const out = [where(), where()];
+        fs.writeFileSync(path.join(__dirname, "x.js"), "module.exports = 1;");
+        out.push(where());
+        // The cached listing does not have it, so the first lookup fails and the resolver reads the directory again.
+        require.resolve("./x.js");
+        out.push(where(), where());
+        console.log(JSON.stringify(out));
+      `,
+    });
+    const json = ["x.json", "x.json", "x.json"];
+    const js = ["x.js", "x.js", "x.js"];
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([json, json, json, js, js]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("follows a change to require.extensions", async () => {
+    const { stdout, stderr, exitCode } = await run({
+      "y/index.js": `module.exports = 1;`,
+      "y.custom": `module.exports = 2;`,
+      "main.cjs": `
+        const path = require("node:path");
+        const where = () => path.relative(__dirname, require.resolve("./y")).replaceAll(path.sep, "/");
+        const out = [where(), where()];
+        require.extensions[".custom"] = require.extensions[".js"];
+        out.push(where(), where());
+        delete require.extensions[".custom"];
+        out.push(where(), where());
+        console.log(JSON.stringify(out));
+      `,
+    });
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([
+      "y/index.js",
+      "y/index.js",
+      "y.custom",
+      "y.custom",
+      "y/index.js",
+      "y/index.js",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("finds a new file once Bun.build() read the directory again", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "x.json": `{}`,
+        "lib/x.json": `{}`,
+        // The build reads the directory of its entry point again, and then the one it imports from.
+        "entry.js": `import x from "./lib/x"; export default x;`,
+        "main.mjs": `
+          import { writeFileSync } from "node:fs";
+          import { createRequire } from "node:module";
+          import { basename, join } from "node:path";
+          const require = createRequire(import.meta.url);
+          const where = () => [basename(require.resolve("./x")), basename(require.resolve("./lib/x"))];
+          const out = [where(), where()];
+          writeFileSync(join(import.meta.dir, "x.js"), "module.exports = 1;");
+          writeFileSync(join(import.meta.dir, "lib", "x.js"), "module.exports = 'new file';");
+          out.push(where());
+          // A build at the resolver generation of the runtime reads no directory again. Build until one does.
+          let sawNewFile = false;
+          for (let builds = 0; !sawNewFile && builds < 100; builds++) {
+            const { outputs } = await Bun.build({ entrypoints: [join(import.meta.dir, "entry.js")] });
+            sawNewFile = (await outputs[0].text()).includes("new file");
+          }
+          out.push(sawNewFile, where(), where());
+          console.log(JSON.stringify(out));
+        `,
+      },
+      ["main.mjs"],
+    );
+    const json = ["x.json", "x.json"];
+    const js = ["x.js", "x.js"];
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([json, json, json, true, js, js]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("does not find a module once Bun.build() found its directory gone", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "lib/x.js": `module.exports = 1;`,
+        "entry.js": `import x from "./lib/x.js"; export default x;`,
+        "main.mjs": `
+          import { rmSync } from "node:fs";
+          import { createRequire } from "node:module";
+          import { basename, join } from "node:path";
+          const require = createRequire(import.meta.url);
+          const where = () => {
+            try {
+              return basename(require.resolve("./lib/x.js"));
+            } catch (error) {
+              return error.code;
+            }
+          };
+          const out = [where(), where(), where()];
+          rmSync(join(import.meta.dir, "lib"), { recursive: true });
+          out.push(where());
+          // A build at the resolver generation of the runtime reads no directory again. Build until one does.
+          let sawDirectoryGone = false;
+          for (let builds = 0; !sawDirectoryGone && builds < 100; builds++) {
+            const { logs } = await Bun.build({ entrypoints: [join(import.meta.dir, "entry.js")], throw: false });
+            sawDirectoryGone = logs.some(log => log.message.includes("Could not resolve"));
+          }
+          out.push(sawDirectoryGone, where(), where());
+          console.log(JSON.stringify(out));
+        `,
+      },
+      ["main.mjs"],
+    );
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(["x.js", "x.js", "x.js", "x.js", true, "MODULE_NOT_FOUND", "MODULE_NOT_FOUND"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("finds a nearer package once a Bun.build() in progress found it", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "node_modules/pkg/sub.js": `module.exports = "outer package";`,
+        "b/node_modules/other/index.js": `module.exports = 1;`,
+        "b/x.cjs": ``,
+        // "other" makes the build read b/node_modules again before the plugin runs.
+        "b/entry.js": `import "other"; export { default } from "./second.js";`,
+        "b/second.js": `export default 0;`,
+        "main.mjs": `
+          import { mkdirSync, writeFileSync } from "node:fs";
+          import { createRequire } from "node:module";
+          import { join, relative, sep } from "node:path";
+          const from = join(import.meta.dir, "b", "x.cjs");
+          const require = createRequire(from);
+          const file = resolved => relative(import.meta.dir, resolved).replaceAll(sep, "/");
+          const repeated = () => file(require.resolve("pkg/sub"));
+          // A specifier with a query is never kept, so the resolver answers this one.
+          const resolver = () => file(Bun.resolveSync("pkg/sub?resolver", from)).replace("?resolver", "");
+          const out = [repeated(), repeated(), resolver()];
+          mkdirSync(join(import.meta.dir, "b", "node_modules", "pkg"));
+          writeFileSync(join(import.meta.dir, "b", "node_modules", "pkg", "sub.js"), "module.exports = 'nearer package';");
+          // A build at the resolver generation of the runtime reads no directory again. Build until one does.
+          let sawNearerPackage = false;
+          for (let builds = 0; !sawNearerPackage && builds < 100; builds++) {
+            const { outputs } = await Bun.build({
+              entrypoints: [join(import.meta.dir, "b", "entry.js")],
+              plugins: [
+                {
+                  name: "resolve during the build",
+                  setup(build) {
+                    // The build has read b/node_modules again, and has not yet looked for b/node_modules/pkg.
+                    build.onLoad({ filter: /second\\.js$/ }, () => {
+                      repeated(), repeated(), repeated();
+                      return { contents: 'export { default } from "pkg/sub";', loader: "js" };
+                    });
+                  },
+                },
+              ],
+            });
+            sawNearerPackage = (await outputs[0].text()).includes("nearer package");
+          }
+          out.push(sawNearerPackage, repeated(), repeated(), resolver());
+          console.log(JSON.stringify(out));
+        `,
+      },
+      ["main.mjs"],
+    );
+    const outer = "node_modules/pkg/sub.js";
+    const nearer = "b/node_modules/pkg/sub.js";
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([outer, outer, outer, true, nearer, nearer, nearer]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("from a relative source follows process.chdir()", async () => {
+    const { stdout, stderr, exitCode } = await run({
+      "a/package.json": `{ "name": "a" }`,
+      "b/package.json": `{ "name": "b" }`,
+      "main.cjs": `
+        const path = require("node:path");
+        const out = [];
+        for (const dir of ["a", "b", "a", "b"]) {
+          process.chdir(path.join(__dirname, dir));
+          const resolved = [Bun.resolveSync("./package.json", "."), Bun.resolveSync("./package.json", ".")];
+          out.push(...resolved.map(file => path.basename(path.dirname(file))));
+        }
+        console.log(JSON.stringify(out));
+      `,
+    });
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(["a", "a", "b", "b", "a", "a", "b", "b"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("in a compiled executable follows process.chdir()", async () => {
+    using dir = tempDir("repeated-resolution-compile", {
+      "a/package.json": `{ "name": "a" }`,
+      "b/package.json": `{ "name": "b" }`,
+      "main.cjs": `
+        const path = require("node:path");
+        // Not a literal: the bundler leaves this require() for run time.
+        const specifier = ["./package", "json"].join(".");
+        const out = [];
+        for (const dir of ["a", "a", "b", "b", "a"]) {
+          process.chdir(path.join(process.argv[2], dir));
+          out.push(require.resolve(specifier) === path.join(process.cwd(), "package.json"));
+        }
+        console.log(JSON.stringify(out));
+      `,
+    });
+    const exe = join(String(dir), isWindows ? "main.exe" : "main");
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "main.cjs", "--outfile", exe],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    expect([await build.stderr.text(), await build.exited]).toEqual([expect.any(String), 0]);
+    await using proc = Bun.spawn({ cmd: [exe, String(dir)], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([true, true, true, true, true]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("calls an onResolve plugin that was registered after the first calls", async () => {
+    const { stdout, stderr, exitCode } = await run({
+      "a.cjs": `module.exports = "a";`,
+      "b.cjs": `module.exports = "b";`,
+      "main.cjs": `
+        const path = require("node:path");
+        const where = () => path.basename(require.resolve("./a.cjs"));
+        const out = [where(), where(), where()];
+        let calls = 0;
+        Bun.plugin({
+          name: "a is b",
+          setup(build) {
+            build.onResolve({ filter: /a\\.cjs$/ }, () => (calls++, { path: path.join(__dirname, "b.cjs") }));
+          },
+        });
+        out.push(where(), where(), calls);
+        console.log(JSON.stringify(out));
+      `,
+    });
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(["a.cjs", "a.cjs", "a.cjs", "b.cjs", "b.cjs", 2]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("gives each pair its own answer when entries replace each other", async () => {
+    const { stdout, stderr, exitCode } = await run({
+      "main.cjs": `
+        const { resolutionMemoHits } = require("bun:internal-for-testing");
+        const fs = require("node:fs");
+        const path = require("node:path");
+        const count = 800;
+        for (let i = 0; i < count; i++) fs.writeFileSync(path.join(__dirname, "m" + i + ".cjs"), "");
+        let wrong = 0;
+        const resolve = i => {
+          if (require.resolve("./m" + i + ".cjs") !== path.join(__dirname, "m" + i + ".cjs")) wrong++;
+        };
+        // Two resolutions in a row give a pair an entry. A bucket holds two, and about 45 of the 1024 get a third pair.
+        for (let i = 0; i < count; i++) resolve(i), resolve(i);
+        const before = resolutionMemoHits();
+        for (let i = 0; i < count; i++) resolve(i);
+        const hits = resolutionMemoHits() - before;
+        // The memo answered the pairs that are left, and not all: it had replaced the others.
+        console.log(JSON.stringify({ wrong, answeredSome: hits > 0, replacedSome: hits < count }));
+      `,
+    });
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ wrong: 0, answeredSome: true, replacedSome: true });
+    expect(exitCode).toBe(0);
+  });
+});

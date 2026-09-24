@@ -52,6 +52,7 @@ pub use tsconfig_json::TSConfigJSON;
 pub use ::bun_install_types::resolver_hooks as install_types;
 pub use resolver::{
     AnyResolveWatcher, BrowserMapPathKind, Bufs, Dirname, Resolver, module_type_from_ext,
+    resolution_epoch,
 };
 pub use result::{
     DebugLogs, DirEntryResolveQueueItem, ExternalKind, FlushMode, LoadResult, MatchResult,
@@ -1027,13 +1028,24 @@ pub mod fs {
             // `BSSMapInner::put` mutates `result.index` to record placement; callers
             // (e.g. `dir_info_cached_maybe_log`) re-read `result.index` post-`put`, so the
             // mutation must be visible — pass through directly.
-            self.inner()
+            let checked_before = result.has_checked_if_exists();
+            let slot = self
+                .inner()
                 .put(result, value)
                 .map(std::ptr::from_mut::<EntriesOption>)
-                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))
+                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError));
+            // A directory that was found or not found before gets another answer.
+            if checked_before {
+                crate::resolution_epoch::bump();
+            }
+            slot
         }
         pub(crate) fn mark_not_found(&mut self, result: bun_alloc::Result) {
-            self.inner().mark_not_found(result)
+            let was_found = result.status == bun_alloc::ItemStatus::Exists;
+            self.inner().mark_not_found(result);
+            if was_found {
+                crate::resolution_epoch::bump();
+            }
         }
         pub(crate) fn remove(&mut self, key: &[u8]) -> bool {
             self.inner().remove(key)
@@ -1265,6 +1277,10 @@ pub mod fs {
                     )));
                 }
             }
+
+            // From here on a cached listing is read again, or found unreadable: on every way out.
+            let _bump_epoch =
+                in_place.map(|_| scopeguard::guard((), |()| crate::resolution_epoch::bump()));
 
             let had_handle = maybe_handle.is_some();
             let handle: Fd = match maybe_handle {
@@ -1609,6 +1625,8 @@ pub mod fs {
             // SAFETY: BSSMap-owned slot; uniquely held under `entries_mutex`.
             if let EntriesOption::Entries(existing) = unsafe { &mut *result_ptr } {
                 if existing.generation < generation {
+                    // The cached listing is read again, or found unreadable: on every way out.
+                    let _bump_epoch = scopeguard::guard((), |()| crate::resolution_epoch::bump());
                     let e_ptr: *mut DirEntry = std::ptr::from_mut::<DirEntry>(*existing);
                     // SAFETY: BSSMap-owned `DirEntry` (boxed/leaked into `EntriesOption`); `entries_mutex` held.
                     let dir = unsafe { (*e_ptr).dir };

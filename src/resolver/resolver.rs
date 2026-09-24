@@ -439,6 +439,30 @@ macro_rules! bufs {
 // (the resolver mutex is one of the two documented guards for the entries singleton).
 static RESOLVER_MUTEX: Mutex = Mutex::new();
 
+/// Moves when a past resolution can come out differently. One per process, like the directory cache.
+pub mod resolution_epoch {
+    use core::sync::atomic::{AtomicU64, Ordering};
+
+    /// On a cache line of its own: every resolution reads it, and it is seldom written.
+    #[repr(align(64))]
+    struct Epoch(AtomicU64);
+
+    static EPOCH: Epoch = Epoch(AtomicU64::new(0));
+
+    /// Read before the resolver runs, so an answer from during a change carries the old epoch.
+    #[inline]
+    pub fn get() -> u64 {
+        EPOCH.0.load(Ordering::SeqCst)
+    }
+
+    /// Call after the change. Cold: its callers are on the resolver's hot path.
+    #[cold]
+    #[inline(never)]
+    pub fn bump() {
+        EPOCH.0.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
 type BinFolderArray = BoundedArray<&'static [u8], 128>;
 // `BoundedArray` has no const constructor; init lazily under
 // `BIN_FOLDERS_LOADED`.
@@ -2437,8 +2461,15 @@ impl<'a> Resolver<'a> {
     /// See `assertValidCacheKey` for requirements on the input
     pub fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
         Self::assert_valid_cache_key(path);
+        // Not under one lock: the check of a memo hit on another thread must not see the drop with the old epoch.
+        if bun_core::Environment::CI_ASSERT {
+            resolution_epoch::bump();
+        }
         let first_bust = self.fs_mut().fs.bust_entries_cache(path);
         let second_bust = self.dir_cache_mut().remove(path);
+        if first_bust || second_bust {
+            resolution_epoch::bump();
+        }
         bun_core::scoped_log!(
             ResolverDev,
             "Bust {} = {}, {}",
@@ -3416,6 +3447,7 @@ impl<'a> Resolver<'a> {
                 Some(p) => {
                     // SAFETY: dir_entries_ptr is a live BSSMap slot (`in_place`).
                     unsafe { *p = new_entry };
+                    resolution_epoch::bump();
                     p
                 }
                 None => bun_core::heap::into_raw(Box::new(new_entry)),
@@ -4675,6 +4707,7 @@ impl<'a> Resolver<'a> {
                     Some(p) => {
                         // SAFETY: dir_entries_ptr is a live BSSMap slot (`in_place`).
                         unsafe { *p = new_entry };
+                        resolution_epoch::bump();
                         p
                     }
                     None => bun_core::heap::into_raw(Box::new(new_entry)),

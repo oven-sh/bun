@@ -51,7 +51,7 @@ If you pass `url`, the view begins navigating before the constructor returns, th
 
 ### Persistent storage
 
-By default, each view uses **ephemeral** in-memory storage — cookies, `localStorage`, IndexedDB, and cache are discarded when the view closes. To persist state across runs, pass a directory:
+By default, each view uses **ephemeral** in-memory storage of its own — cookies, `localStorage`, IndexedDB, and cache are shared with no other view and are discarded when the view closes. To persist state across runs, pass a directory:
 
 ```ts
 const view = new Bun.WebView({
@@ -63,8 +63,25 @@ Views that share the same `directory` share cookies and storage. Pass `dataStore
 
 <Note>
   With the Chrome backend, `dataStore.directory` maps to `--user-data-dir` and applies to the **entire Chrome process**,
-  not per-view. Bun spawns Chrome once per Bun process, so the first view's directory wins for all subsequent views.
+  not per-view. Bun spawns Chrome once per Bun process, so the first view's directory wins for all subsequent views, and
+  every view with a `directory` shares that process-wide default context, cookies included. An ephemeral view gets a
+  browser context of its own (a CDP `Target.createBrowserContext`) inside that one Chrome. If Chrome refuses to create
+  one (an enterprise policy that disables incognito), the view's first `navigate()` rejects with an error that says so,
+  and `dataStore: {directory}` is the way to use the default context.
 </Note>
+
+### Per-view proxy (Chrome)
+
+With the Chrome backend, `proxy` routes one view's requests through a proxy server. Each view can have a different one. A string names the server; the object form adds `bypass`, a list of hosts that skip the proxy in Chrome's bypass-rule syntax. Chrome skips the proxy for loopback addresses on its own; the rule `"<-loopback>"` removes that implicit bypass.
+
+```ts
+const view = new Bun.WebView({
+  backend: "chrome",
+  proxy: { server: "http://proxy.internal:8080", bypass: ["*.internal", "<-loopback>"] },
+});
+```
+
+A proxied view always uses in-memory storage, so `proxy` cannot be combined with `dataStore: { directory }`.
 
 <Note>
   With the WebKit backend, persistent storage requires macOS 15.2+. On older macOS versions, use `dataStore:
@@ -119,7 +136,7 @@ If Bun finds none, the constructor throws.
 
 #### Connecting to an already-running Chrome {#existing-chrome}
 
-By default, before spawning, Bun reads the `DevToolsActivePort` file from standard profile directories to check whether a Chrome-family browser is **already running** with remote debugging enabled. If found, Bun connects to that browser over WebSocket instead of spawning a new one — your views open as tabs in your existing browser.
+By default, before spawning, Bun reads the `DevToolsActivePort` file from standard profile directories to check whether a Chrome-family browser is **already running** with remote debugging enabled. If found, Bun connects to that browser over WebSocket instead of spawning a new one — your views open as windows in your existing browser. An ephemeral view (the default) opens as an incognito window with a browser context of its own, so it does not see the browser's logged-in cookies. Pass `dataStore: { directory }` to open the view in the browser's own profile instead; Bun did not launch that browser, so the directory value is not used.
 
 To enable remote debugging in a running Chrome, visit `chrome://inspect/#remote-debugging` and flip the toggle, or launch Chrome with `--remote-debugging-port=9222`. Chrome prompts for permission on each new connection when you use the `chrome://inspect` toggle.
 
@@ -548,15 +565,16 @@ Operations on **different views** are fully independent and run in parallel — 
 
 ### `new Bun.WebView(options?)`
 
-| Option      | Type                                            | Default                                   | Description                                                                                    |
-| ----------- | ----------------------------------------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `width`     | `number`                                        | `800`                                     | Viewport width in CSS pixels. Range 1-16384.                                                   |
-| `height`    | `number`                                        | `600`                                     | Viewport height in CSS pixels. Range 1-16384.                                                  |
-| `url`       | `string`                                        | —                                         | Begin navigating to this URL immediately.                                                      |
-| `headless`  | `boolean`                                       | `true`                                    | Only `true` is implemented; `false` throws.                                                    |
-| `backend`   | `"webkit"` \| `"chrome"` \| [object](#backends) | `"webkit"` on macOS, `"chrome"` elsewhere | Rendering engine.                                                                              |
-| `console`   | `typeof console` \| `(type, ...args) => void`   | —                                         | Capture page-side `console.*` calls. See [Console capture](#console-capture).                  |
-| `dataStore` | `"ephemeral"` \| `{ directory: string }`        | `"ephemeral"`                             | Storage for cookies / localStorage / IndexedDB. See [Persistent storage](#persistent-storage). |
+| Option      | Type                                                | Default                                   | Description                                                                                    |
+| ----------- | --------------------------------------------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `width`     | `number`                                            | `800`                                     | Viewport width in CSS pixels. Range 1-16384.                                                   |
+| `height`    | `number`                                            | `600`                                     | Viewport height in CSS pixels. Range 1-16384.                                                  |
+| `url`       | `string`                                            | —                                         | Begin navigating to this URL immediately.                                                      |
+| `headless`  | `boolean`                                           | `true`                                    | Only `true` is implemented; `false` throws.                                                    |
+| `backend`   | `"webkit"` \| `"chrome"` \| [object](#backends)     | `"webkit"` on macOS, `"chrome"` elsewhere | Rendering engine.                                                                              |
+| `console`   | `typeof console` \| `(type, ...args) => void`       | —                                         | Capture page-side `console.*` calls. See [Console capture](#console-capture).                  |
+| `dataStore` | `"ephemeral"` \| `{ directory: string }`            | `"ephemeral"`                             | Storage for cookies / localStorage / IndexedDB. See [Persistent storage](#persistent-storage). |
+| `proxy`     | `string` \| `{ server: string, bypass?: string[] }` | —                                         | (`chrome` only) Proxy for this view's requests. See [Per-view proxy](#per-view-proxy-chrome).  |
 
 #### `backend` object form
 

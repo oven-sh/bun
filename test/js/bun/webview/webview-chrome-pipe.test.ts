@@ -126,6 +126,148 @@ test.concurrent("many views interleave their commands on the one transport", asy
   });
 });
 
+// Chrome has one default browser context (one cookie jar) per process. An
+// ephemeral view (the default) gets a context of its own:
+// Target.createBrowserContext precedes its Target.createTarget, the tab is
+// created inside that context, and close() disposes it. A proxy rides on
+// that context. A view with dataStore.directory lands in the default context.
+test.concurrent("an ephemeral or proxied view gets its own browser context", async () => {
+  const result = await runScenario(`
+    const shared = new Bun.WebView({ backend, width: 100, height: 100, dataStore: { directory: "/tmp/unused" } });
+    await shared.navigate("http://fake/shared");
+    const own = newView();
+    await own.navigate("http://fake/own");
+    const proxied = new Bun.WebView({
+      backend,
+      width: 100,
+      height: 100,
+      proxy: { server: "http://127.0.0.1:1", bypass: ["localhost", "*.internal"] },
+    });
+    await proxied.navigate("http://fake/proxied");
+    const asString = new Bun.WebView({ backend, width: 100, height: 100, proxy: "socks5://127.0.0.1:2" });
+    await asString.navigate("http://fake/string");
+    own.close();
+    proxied.close();
+    asString.close();
+    print(await shared.evaluate("__fake_targets()"));
+    shared.close();
+  `);
+  const tab = { url: "about:blank", newWindow: true, width: 100, height: 100 };
+  expect(result).toEqual([
+    { method: "Target.createTarget", params: tab },
+    { method: "Target.createBrowserContext", params: { disposeOnDetach: true } },
+    { method: "Target.createTarget", params: { ...tab, browserContextId: "C1" } },
+    {
+      method: "Target.createBrowserContext",
+      params: { disposeOnDetach: true, proxyServer: "http://127.0.0.1:1", proxyBypassList: "localhost,*.internal" },
+    },
+    { method: "Target.createTarget", params: { ...tab, browserContextId: "C2" } },
+    { method: "Target.createBrowserContext", params: { disposeOnDetach: true, proxyServer: "socks5://127.0.0.1:2" } },
+    { method: "Target.createTarget", params: { ...tab, browserContextId: "C3" } },
+    { method: "Target.disposeBrowserContext", params: { browserContextId: "C1" } },
+    { method: "Target.disposeBrowserContext", params: { browserContextId: "C2" } },
+    { method: "Target.disposeBrowserContext", params: { browserContextId: "C3" } },
+  ]);
+});
+
+// close() while Target.createBrowserContext is still in flight: the reply is
+// the only place the new context's id ever appears, so it must still be read
+// and the context disposed. The scenario process also has to exit, so that
+// in-flight entry must not hold the event loop open after the reply.
+test.concurrent("close() before the browser context reply still disposes the context", async () => {
+  const result = await runScenario(`
+    const own = newView();
+    const navigation = outcome(own.navigate("http://fake/own"));
+    own.close();
+    const shared = new Bun.WebView({ backend, width: 100, height: 100, dataStore: { directory: "/tmp/unused" } });
+    await shared.navigate("http://fake/shared");
+    print({ navigation: await navigation, targets: await shared.evaluate("__fake_targets()") });
+    shared.close();
+  `);
+  expect(result).toEqual({
+    navigation: { rejected: "WebView closed" },
+    targets: [
+      { method: "Target.createBrowserContext", params: { disposeOnDetach: true } },
+      { method: "Target.createTarget", params: { url: "about:blank", newWindow: true, width: 100, height: 100 } },
+      { method: "Target.disposeBrowserContext", params: { browserContextId: "C1" } },
+    ],
+  });
+});
+
+// Target.createTarget failing after the context was made: the context is
+// disposed with the failure, and the retry creates a new one instead of
+// reusing an id nothing else would ever clean up.
+test.concurrent("a failed createTarget disposes the view's context and the retry creates a new one", async () => {
+  const result = await runScenario(`
+    const view = new Bun.WebView({
+      backend: { ...backend, argv: [...backend.argv, "--cdp-error-on=Target.createTarget:1"] },
+      width: 100,
+      height: 100,
+      dataStore: "ephemeral",
+    });
+    const first = await outcome(view.navigate("http://fake/first"));
+    await view.navigate("http://fake/second");
+    print({ first, targets: await view.evaluate("__fake_targets()") });
+    view.close();
+  `);
+  const tab = { url: "about:blank", newWindow: true, width: 100, height: 100 };
+  expect(result).toEqual({
+    first: { rejected: "Cannot navigate to invalid URL" },
+    targets: [
+      { method: "Target.createBrowserContext", params: { disposeOnDetach: true } },
+      { method: "Target.createTarget", params: { ...tab, browserContextId: "C1" } },
+      { method: "Target.disposeBrowserContext", params: { browserContextId: "C1" } },
+      { method: "Target.createBrowserContext", params: { disposeOnDetach: true } },
+      { method: "Target.createTarget", params: { ...tab, browserContextId: "C2" } },
+    ],
+  });
+});
+
+// A Target.createBrowserContext failure (a Chrome that refuses incognito under
+// policy) rejects navigate() with a message that names the option to drop.
+test.concurrent("a refused browser context rejects navigate() with the cause", async () => {
+  const result = await runScenario(`
+    const view = new Bun.WebView({
+      backend: { ...backend, argv: [...backend.argv, "--cdp-error-on=Target.createBrowserContext"] },
+      width: 100,
+      height: 100,
+      dataStore: "ephemeral",
+    });
+    print(await outcome(view.navigate("http://fake/refused")));
+    view.close();
+  `);
+  expect(result).toEqual({
+    rejected: expect.stringMatching(
+      /^Chrome refused a browser context for this view .*: Cannot navigate to invalid URL$/,
+    ),
+  });
+});
+
+test("proxy option validates", () => {
+  const chrome = { type: "chrome" as const, url: false as const };
+  expect(() => new Bun.WebView({ backend: chrome, proxy: 42 as any })).toThrow(
+    expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+  );
+  expect(() => new Bun.WebView({ backend: chrome, proxy: { server: 1 as any } })).toThrow(
+    expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+  );
+  expect(() => new Bun.WebView({ backend: chrome, proxy: { server: "http://p:1", bypass: "x" as any } })).toThrow(
+    expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+  );
+  expect(() => new Bun.WebView({ backend: chrome, proxy: "" })).toThrow(
+    expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+  );
+  expect(() => new Bun.WebView({ backend: "webkit", proxy: "http://p:1" })).toThrow(
+    expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE", message: expect.stringContaining('backend: "chrome"') }),
+  );
+  expect(
+    () => new Bun.WebView({ backend: chrome, proxy: "http://p:1", dataStore: { directory: "/tmp/never-used" } }),
+  ).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE", message: expect.stringContaining("directory") }));
+  expect(() => new Bun.WebView({ backend: chrome, proxy: "http://p:1", dataStore: { directory: "" } })).toThrow(
+    expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE", message: expect.stringContaining("directory") }),
+  );
+});
+
 test.concurrent("an expression that throws rejects", async () => {
   const result = await runScenario(`
     const view = newView();

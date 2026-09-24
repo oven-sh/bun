@@ -37,9 +37,7 @@ pub struct ServerEntryPoint {
 // auto-generated `Drop`, so no explicit impl is needed.
 
 impl ServerEntryPoint {
-    /// One wrapper for every mode. Under `--hot` it is evaluated once per
-    /// reload and calls `Bun.serve` again: `serve()` finds the previous
-    /// generation's server in the VM's hot map and swaps its handlers.
+    /// A `--hot` reload evaluates this again. `Bun.serve` reuses the running server (VM hot map).
     pub fn generate(entry: &mut ServerEntryPoint, path_to_use: &[u8]) -> crate::Result<()> {
         // Use the global arena so this buffer's lifetime is decoupled
         // from whichever arena the caller's VM happens to be using; the

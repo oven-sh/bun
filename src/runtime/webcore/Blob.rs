@@ -245,6 +245,8 @@ pub(crate) trait BlobExt {
     fn get_stat(&self, global_this: &JSGlobalObject, callback: &CallFrame) -> JsResult<JSValue>;
     fn get_size(&self, _: &JSGlobalObject) -> JSValue;
     fn resolve_size(&self);
+    /// `resolve_size`, except an S3 blob keeps its size: no size is known for it before the download.
+    fn resolve_size_for_stream(&self);
     fn resolved_size(&self) -> (SizeType, SizeType);
     fn constructor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<*mut Blob>
     where
@@ -2144,6 +2146,13 @@ impl BlobExt for Blob {
             }
             store::DataTag::S3 => self.size.set(0),
         }
+    }
+
+    fn resolve_size_for_stream(&self) {
+        if self.is_s3() {
+            return;
+        }
+        self.resolve_size();
     }
 
     /// Non-mutating variant of [`resolve_size`]: returns the `(offset, size)` that

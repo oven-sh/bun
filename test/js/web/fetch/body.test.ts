@@ -1,4 +1,4 @@
-import { file, spawn, version, type Socket } from "bun";
+import { file, S3Client, spawn, version, type Socket } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, exampleSite, tempDir } from "harness";
 import net from "net";
@@ -350,6 +350,35 @@ for (const { body, fn } of bodyTypes) {
           const subject = fn(Bun.file(`${dir}/data.txt`).slice(3, 8));
           expect(subject.body).toBeInstanceOf(ReadableStream);
           expect([Buffer.from(await subject.bytes()).toString(), subject.bodyUsed]).toEqual(["defgh", true]);
+        });
+      });
+
+      // An S3 object has no local size, so the body stream must fetch the whole
+      // object, not a zero-length range. (A Response made from an S3 file is a
+      // redirect by design, so only Request applies.)
+      describe.skipIf(body !== Request)("made from an S3 file", () => {
+        test("the body stream downloads the whole object", async () => {
+          const payload = Buffer.alloc(100, "0123456789").toString();
+          const ranges: (string | null)[] = [];
+          using server = Bun.serve({
+            port: 0,
+            fetch(req) {
+              const range = req.headers.get("range");
+              ranges.push(range);
+              const match = range && /^bytes=(\d+)-(\d*)$/.exec(range);
+              if (!match) return new Response(payload, { headers: { "Content-Type": "text/plain" } });
+              const start = Number(match[1]);
+              const end = match[2] === "" ? payload.length - 1 : Number(match[2]);
+              return new Response(payload.slice(start, end + 1), {
+                status: 206,
+                headers: { "Content-Type": "text/plain", "Content-Range": `bytes ${start}-${end}/${payload.length}` },
+              });
+            },
+          });
+          const s3 = new S3Client({ endpoint: server.url.href, accessKeyId: "x", secretAccessKey: "y", bucket: "b" });
+          const text = await Bun.readableStreamToText(fn(s3.file("key")).body!);
+          const textStream = (await Array.fromAsync(fn(s3.file("key")).textStream())).join("");
+          expect({ text, textStream, ranges }).toEqual({ text: payload, textStream: payload, ranges: [null, null] });
         });
       });
     });

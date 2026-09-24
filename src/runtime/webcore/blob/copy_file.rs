@@ -170,7 +170,7 @@ impl CopyFile {
     ) -> jsc::JsResult<()> {
         drop(self.source_store.take()); // source_store.?.deref()
 
-        if self.system_error.is_some() {
+        if self.system_error.is_some() || self.source_not_readable {
             return self.reject(promise, global_this);
         }
 
@@ -185,6 +185,14 @@ impl CopyFile {
         let close_input =
             self.destination_file_store.fd().is_none() && self.destination_fd != Fd::INVALID;
         let close_output = self.source_file_store.fd().is_none() && self.source_fd != Fd::INVALID;
+
+        // node compares a pinned file again after it has read it.
+        if close_output
+            && self.system_error.is_none()
+            && let Some(pinned) = self.source_file_store.pinned()
+        {
+            self.source_not_readable = pinned.recheck(self.source_fd).is_err();
+        }
 
         // Apply destination mode using fchmod before closing.
         // This ensures mode is applied even when overwriting existing files, since
@@ -1353,6 +1361,14 @@ impl<'a> CopyFileWindows<'a> {
 
         if let Some(err) = self.err.take() {
             self.throw(err);
+            return;
+        }
+
+        // node compares a pinned file again after it has read it.
+        if let Some(pinned) = self.source_file_store.data.as_file().pinned()
+            && pinned.recheck(self.read_write_loop.source_fd).is_err()
+        {
+            self.reject(|global_this, _| Ok(blob::not_readable_error(global_this)));
             return;
         }
 

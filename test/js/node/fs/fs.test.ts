@@ -413,6 +413,41 @@ describe.concurrent("fs.openAsBlob pins the file", () => {
     expect(statSync(destination).size).toBe(100_000);
   });
 
+  // A FIFO holds 1 MiB back, so the copy cannot end before this test drains it.
+  it.skipIf(isWindows)("Bun.write rejects when the source changes during the copy", async () => {
+    const size = 1024 * 1024;
+    const { dir, file, blob } = await pinned(Buffer.alloc(size, "a"));
+    using _ = dir;
+    const fifo = join(String(dir), "fifo");
+    mkfifo(fifo, 0o666);
+    const readEnd = openSync(fifo, constants.O_RDONLY | constants.O_NONBLOCK);
+    const writeEnd = openSync(fifo, "w");
+    try {
+      const write = Bun.write(Bun.file(writeEnd), blob);
+      const chunk = Buffer.alloc(65536);
+      const deadline = performance.now() + 10_000;
+      let drained = 0;
+      const drain = (until: number) => {
+        while (drained < until && performance.now() < deadline) {
+          try {
+            drained += readSync(readEnd, chunk, 0, Math.min(chunk.length, until - drained));
+          } catch (err: any) {
+            // EAGAIN: the copy has not filled the FIFO again yet.
+            if (err.code !== "EAGAIN") throw err;
+          }
+        }
+      };
+      drain(1);
+      fs.appendFileSync(file, "b");
+      drain(size);
+      expect(drained).toBe(size);
+      await expect(write).rejects.toEqual(notReadable);
+    } finally {
+      closeSync(writeEnd);
+      closeSync(readEnd);
+    }
+  });
+
   it("TLS options read a key through the pin", async () => {
     using dir = tempDir("open-as-blob-tls", { "key.pem": tls.key, "cert.pem": tls.cert });
     const keyFile = join(String(dir), "key.pem");

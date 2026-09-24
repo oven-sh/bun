@@ -1842,7 +1842,7 @@ describe.concurrent(() => {
         bunExe(),
         "-e",
         `
-          const { heapStats } = require("bun:jsc");
+          import { heapStats } from "bun:jsc";
           const noop = () => {};
           const drain = async () => { for (let i = 0; i < 3; i++) await new Promise(r => setImmediate(r)); };
           // Nothing else in this script makes a Date, so this counts the rejection reasons that are alive.

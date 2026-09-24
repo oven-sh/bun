@@ -11,6 +11,7 @@ use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 use std::borrow::Cow;
 
+use crate::api::h2::connection::{Connection, View};
 use crate::api::socket::{TCPSocket, TLSSocket};
 use crate::node::{Encoding, StringOrBuffer};
 use crate::socket::NativeCallbacks;
@@ -1153,10 +1154,6 @@ pub(crate) struct H2FrameParser {
     pending_header_compression_error: Cell<bool>,
     /// Frames written by the legacy outbound encoder (perf_hooks http2 session stats).
     frames_sent_legacy: Cell<u64>,
-    /// Engine counters mirrored at the end of each rewrite_read batch, so reading them
-    /// never contends with the engine borrow.
-    engine_frames_received: Cell<u64>,
-    engine_frames_sent: Cell<u64>,
     /// Where the bytes emitted through `write()` over a JS-backed transport stand relative to
     /// frame and header-block boundaries.
     tx_tracker: Cell<TxFrameTracker>,
@@ -1172,6 +1169,9 @@ pub(crate) struct H2FrameParser {
     // The fields above are the legacy frame state being retired; read()/host functions will route
     // through `engine` instead. `None` until configured with is_server + settings.
     engine: core::cell::RefCell<Option<crate::api::h2::connection::Connection>>,
+    /// The engine, while a `Sink` call that took a `View` runs. `engine` is mutably borrowed
+    /// then, so `with_engine` reads through this.
+    lent_engine: Cell<Option<NonNull<Connection>>>,
     /// Unconsumed inbound tail (the engine holds no reassembly buffer — design B): bytes after the
     /// last complete frame are kept here and prepended to the next read().
     rewrite_tail: JsCell<Vec<u8>>,
@@ -3537,13 +3537,36 @@ impl H2FrameParser {
         });
     }
 
-    /// Mirror the engine's frame counters into plain Cells so getFrameCounters() never
-    /// contends with the engine borrow (destroy can run inside a dispatch).
-    fn sync_engine_frame_counters(&self) {
-        if let Ok(guard) = self.engine.try_borrow() {
-            if let Some(engine) = guard.as_ref() {
-                self.engine_frames_received.set(engine.frames_received);
-                self.engine_frames_sent.set(engine.frames_sent);
+    /// Park the view that a `Sink` call received, until the returned guard drops at the end of
+    /// that call. JS that the call runs can then read the engine through `with_engine`.
+    #[inline]
+    fn lend_engine<'a>(&'a self, view: View<'a>) -> LentEngine<'a> {
+        LentEngine {
+            parser: self,
+            previous: self.lent_engine.replace(Some(view.as_non_null())),
+            _view: core::marker::PhantomData,
+        }
+    }
+
+    /// Read the engine. `None` means that it does not exist yet (nothing was read so far).
+    fn with_engine<R>(&self, read: impl FnOnce(&Connection) -> R) -> Option<R> {
+        if let Some(lent) = self.lent_engine.get() {
+            // SAFETY: `lent` comes from the `View` of the `Sink` call that is running now
+            // (`lend_engine`). That view is a shared reborrow of the engine's `&mut Connection`,
+            // so the engine cannot touch the connection before the call returns, and
+            // `LentEngine::drop` takes the pointer back before it does. The connection cannot
+            // move or drop either: it lives in `self.engine`, and whoever reached the `Sink`
+            // call holds that cell mutably borrowed.
+            return Some(read(unsafe { lent.as_ref() }));
+        }
+        match self.engine.try_borrow() {
+            Ok(engine) => engine.as_ref().map(read),
+            Err(_) => {
+                debug_assert!(
+                    false,
+                    "JS ran under the engine borrow in a Sink call without a View"
+                );
+                None
             }
         }
     }
@@ -3705,6 +3728,21 @@ impl H2FrameParser {
     }
 }
 
+/// Takes the engine view back from `H2FrameParser::lent_engine` when the `Sink` call that
+/// received it returns. Holds the view, so it cannot outlive that call.
+struct LentEngine<'a> {
+    parser: &'a H2FrameParser,
+    previous: Option<NonNull<Connection>>,
+    _view: core::marker::PhantomData<View<'a>>,
+}
+
+impl Drop for LentEngine<'_> {
+    #[inline]
+    fn drop(&mut self) {
+        self.parser.lent_engine.set(self.previous);
+    }
+}
+
 /// The from-scratch engine calls back into H2FrameParser (the embedder) through this.
 impl crate::api::h2::connection::Sink for H2FrameParser {
     /// A frame callback left an exception pending (a value it could not build): no later frame
@@ -3715,17 +3753,13 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         self.left_exception.get()
     }
 
-    fn on_frame_counters(&self, received: u64, sent: u64) {
-        self.engine_frames_received.set(received);
-        self.engine_frames_sent.set(sent);
-    }
-
     fn on_recv_window(&self, size: i64, consumed: i64) {
         self.recv_window_size.set(size);
         self.recv_window_consumed.set(consumed);
     }
 
-    fn write(&self, bytes: &[u8]) -> crate::api::h2::connection::WriteResult {
+    fn write(&self, view: View<'_>, bytes: &[u8]) -> crate::api::h2::connection::WriteResult {
+        let _lent = self.lend_engine(view);
         if self.write(bytes) {
             crate::api::h2::connection::WriteResult::Sent
         } else {
@@ -3733,7 +3767,8 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         }
     }
 
-    fn on_error(&self, lib_error_code: i32, _last: u32, debug: &[u8]) {
+    fn on_error(&self, view: View<'_>, lib_error_code: i32, _last: u32, debug: &[u8]) {
+        let _lent = self.lend_engine(view);
         // The engine detected a connection error and already wrote the GOAWAY: surface it to JS
         // as the negative nghttp2-style library error code (the JS handler builds node's
         // NghttpError from it: code ERR_HTTP2_ERROR, message nghttp2_strerror), then the end
@@ -3757,7 +3792,8 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         );
     }
 
-    fn on_too_many_invalid_frames(&self) {
+    fn on_too_many_invalid_frames(&self, view: View<'_>) {
+        let _lent = self.lend_engine(view);
         // The peer exceeded maxSessionInvalidFrames: surface a session error. The JS error handler
         // recognizes the string code and destroys the session with ERR_HTTP2_TOO_MANY_INVALID_FRAMES.
         if !self.can_dispatch(JSH2FrameParser::Gc::onError) {
@@ -3777,7 +3813,8 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         );
     }
 
-    fn on_local_settings(&self, settings: &crate::api::h2::settings::Settings) {
+    fn on_local_settings(&self, view: View<'_>, settings: &crate::api::h2::settings::Settings) {
+        let _lent = self.lend_engine(view);
         // Bridge: our SETTINGS was ACKed — release the legacy outstanding-settings slot so the
         // legacy settings() host fn doesn't hit MAX_PENDING_SETTINGS_ACK.
         self.outstanding_settings
@@ -3814,7 +3851,8 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         });
     }
 
-    fn on_remote_settings(&self, settings: &crate::api::h2::settings::Settings) {
+    fn on_remote_settings(&self, view: View<'_>, settings: &crate::api::h2::settings::Settings) {
+        let _lent = self.lend_engine(view);
         // Bridge: the legacy outbound (frame sizing, window init) reads the remote_settings Cell.
         let fp = FullSettingsPayload {
             header_table_size: settings.header_table_size,
@@ -3864,7 +3902,8 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         self.dispatch(JSH2FrameParser::Gc::onRemoteSettings, js);
     }
 
-    fn on_ping(&self, payload: &[u8], is_ack: bool) {
+    fn on_ping(&self, view: View<'_>, payload: &[u8], is_ack: bool) {
+        let _lent = self.lend_engine(view);
         if is_ack {
             // node (Http2Session::HandlePingFrame): a PING ACK with no outstanding ping is
             // unsolicited and treated as a connection error (NGHTTP2_ERR_PROTO -> NghttpError
@@ -3900,7 +3939,8 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         self.dispatch_with_extra(JSH2FrameParser::Gc::onPing, buffer, JSValue::from(is_ack));
     }
 
-    fn on_go_away(&self, code: u32, last: u32, debug: &[u8]) {
+    fn on_go_away(&self, view: View<'_>, code: u32, last: u32, debug: &[u8]) {
+        let _lent = self.lend_engine(view);
         // Always a Buffer (possibly empty) to match the legacy dispatch shape. The lastStreamID
         // surfaced to JS is the peer's Last-Stream-ID from the GOAWAY payload (node's documented
         // semantics for the 'goaway' event).
@@ -3916,7 +3956,8 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         );
     }
 
-    fn on_window_update(&self, stream_id: u32, increment: u32) {
+    fn on_window_update(&self, view: View<'_>, stream_id: u32, increment: u32) {
+        let _lent = self.lend_engine(view);
         bun_output::scoped_log!(
             H2FrameParser,
             "engine WU received stream={} inc={}",
@@ -3934,7 +3975,8 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         let _ = self.flush();
     }
 
-    fn on_altsvc(&self, stream_id: u32, origin: &[u8], value: &[u8]) {
+    fn on_altsvc(&self, view: View<'_>, stream_id: u32, origin: &[u8], value: &[u8]) {
+        let _lent = self.lend_engine(view);
         if !self.can_dispatch(JSH2FrameParser::Gc::onAltSvc) {
             return;
         }
@@ -3984,7 +4026,8 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         self.rewrite_pending_push.set(promised_id);
     }
 
-    fn on_origin(&self, payload: &[u8]) {
+    fn on_origin(&self, view: View<'_>, payload: &[u8]) {
+        let _lent = self.lend_engine(view);
         // Match the legacy dispatch shape: a single origin is passed as a string, multiple origins
         // as an array — one onOrigin dispatch per ORIGIN frame.
         if !self.can_dispatch(JSH2FrameParser::Gc::onOrigin) {
@@ -4033,7 +4076,8 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         self.dispatch(JSH2FrameParser::Gc::onOrigin, origin_value);
     }
 
-    fn on_stream_open(&self, stream_id: u32) {
+    fn on_stream_open(&self, view: View<'_>, stream_id: u32) {
+        let _lent = self.lend_engine(view);
         // Bridge: create the legacy stream entry (the legacy outbound host fns — respond/sendData/
         // rstStream/getStreamState — look streams up there) AND dispatch onStreamStart, which the
         // legacy helper already does. The JS streamStart handler then calls setStreamContext,
@@ -4058,7 +4102,8 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         });
     }
 
-    fn on_headers_complete(&self, stream_id: u32, end_stream: bool, flags: u8) {
+    fn on_headers_complete(&self, view: View<'_>, stream_id: u32, end_stream: bool, flags: u8) {
+        let _lent = self.lend_engine(view);
         // Bridge: the JS endAfterHeaders getter reads the legacy stream's end_after_headers flag.
         if let Some(stream) = self.streams.get().get(&stream_id).copied() {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
@@ -4107,7 +4152,8 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         }
     }
 
-    fn on_data(&self, stream_id: u32, data: &[u8]) {
+    fn on_data(&self, view: View<'_>, stream_id: u32, data: &[u8]) {
+        let _lent = self.lend_engine(view);
         let g = self.global();
         let stream_ctx = self.rewrite_stream_ctx(stream_id);
         let Some(chunk) = self.or_stop(self.handlers.get().binary_type.to_js(data, &g)) else {
@@ -4116,7 +4162,8 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         self.dispatch_with_extra(JSH2FrameParser::Gc::onStreamData, stream_ctx, chunk);
     }
 
-    fn on_stream_end(&self, stream_id: u32, state: u8) {
+    fn on_stream_end(&self, view: View<'_>, stream_id: u32, state: u8) {
+        let _lent = self.lend_engine(view);
         // The engine only sees the inbound half while outbound flows through the legacy path, so it
         // can't know the local side already sent END_STREAM. Combine with the legacy stream's local
         // state: remote-closed (6) on a stream whose local half is closed (5/7) is fully CLOSED (7),
@@ -4166,7 +4213,8 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         }
     }
 
-    fn on_stream_rejected(&self, stream_id: u32) {
+    fn on_stream_rejected(&self, view: View<'_>, stream_id: u32) {
+        let _lent = self.lend_engine(view);
         // maxSessionRejectedStreams: counts only locally-initiated rejections (oversized or
         // malformed header blocks) - peer-sent RST_STREAM frames must not consume the budget.
         self.rejected_streams.set(self.rejected_streams.get() + 1);
@@ -4181,7 +4229,8 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         }
     }
 
-    fn on_stream_reset(&self, stream_id: u32, code: u32) {
+    fn on_stream_reset(&self, view: View<'_>, stream_id: u32, code: u32) {
+        let _lent = self.lend_engine(view);
         // A mid-block rejection (e.g. max_header_list_size) leaves partially-accumulated header
         // arrays behind; drop them so they can't leak into the next stream's dispatch. The same
         // applies to the pending PUSH_PROMISE marker - a rejected push block must not make the
@@ -4600,19 +4649,19 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        this.sync_engine_frame_counters();
+        let (engine_received, engine_sent) = this
+            .with_engine(|engine| (engine.frames_received, engine.frames_sent))
+            .unwrap_or((0, 0));
         let result = JSValue::create_empty_object(global_object, 2);
         result.put(
             global_object,
             b"framesReceived",
-            JSValue::js_number(this.engine_frames_received.get() as f64),
+            JSValue::js_number(engine_received as f64),
         );
         result.put(
             global_object,
             b"framesSent",
-            JSValue::js_number(
-                (this.frames_sent_legacy.get() + this.engine_frames_sent.get()) as f64,
-            ),
+            JSValue::js_number((this.frames_sent_legacy.get() + engine_sent) as f64),
         );
         Ok(result)
     }
@@ -7478,12 +7527,11 @@ impl H2FrameParser {
             transport_write_fatal: Cell::new(false),
             pending_header_compression_error: Cell::new(false),
             frames_sent_legacy: Cell::new(0),
-            engine_frames_received: Cell::new(0),
-            engine_frames_sent: Cell::new(0),
             tx_tracker: Cell::new(TxFrameTracker::default()),
             auto_flusher: JsCell::new(AutoFlusher::default()),
             padding_strategy: Cell::new(PaddingStrategy::None),
             engine: core::cell::RefCell::new(None),
+            lent_engine: Cell::new(None),
             rewrite_tail: JsCell::new(Vec::new()),
             rewrite_pending_push: Cell::new(0),
             sctx: JsCell::new(BunHashMap::default()),

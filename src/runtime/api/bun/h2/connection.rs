@@ -135,23 +135,43 @@ pub(crate) struct Feed {
 /// behind a non-reading peer before the session is treated as flooded (NGHTTP2_ERR_FLOODED).
 const MAX_OUTBOUND_ACK_QUEUE: u32 = 1000;
 
+/// A read-only view of the connection, lent to one `Sink` call. Only `Connection::view` makes
+/// one, from a shared reborrow of the engine's `&mut self`, so the borrow checker proves that the
+/// engine holds no `&mut` into the connection while the call runs.
+#[derive(Clone, Copy)]
+pub(crate) struct View<'a>(&'a Connection);
+
+impl View<'_> {
+    /// For an embedder that parks the view for the span of the call. Read-only.
+    #[inline]
+    pub(crate) fn as_non_null(self) -> core::ptr::NonNull<Connection> {
+        core::ptr::NonNull::from(self.0)
+    }
+}
+
 /// What the connection engine calls back into the embedder (the JSC binding) for. Methods take
 /// `&self`: the JSC binding (H2FrameParser) is fully interior-mutable (Cell/JsCell) and its host
 /// functions receive `&Self`, so it can own the `Connection` and pass itself as the sink without an
 /// ownership cycle.
+///
+/// Only a method that takes a `View` may run embedder code that reads the connection back (for
+/// H2FrameParser: anything that can run JS). The embedder owns the connection behind a cell that
+/// stays exclusively borrowed for the whole `receive()`, so the view is its only way to read the
+/// connection during such a call. The view is valid for that call only. The methods without one
+/// only store their arguments or answer a query.
 pub(crate) trait Sink {
-    fn write(&self, bytes: &[u8]) -> WriteResult;
+    fn write(&self, view: View<'_>, bytes: &[u8]) -> WriteResult;
     /// A locally-detected connection error: the GOAWAY (when one applies) is already on the wire.
     /// `lib_error_code` is the negative nghttp2-style library error code (`wire::lib_error`) the
     /// embedder maps to node's NghttpError.
-    fn on_error(&self, lib_error_code: i32, last_stream_id: u32, debug: &[u8]);
-    fn on_local_settings(&self, settings: &Settings);
-    fn on_remote_settings(&self, settings: &Settings);
-    fn on_ping(&self, payload: &[u8], is_ack: bool);
+    fn on_error(&self, view: View<'_>, lib_error_code: i32, last_stream_id: u32, debug: &[u8]);
+    fn on_local_settings(&self, view: View<'_>, settings: &Settings);
+    fn on_remote_settings(&self, view: View<'_>, settings: &Settings);
+    fn on_ping(&self, view: View<'_>, payload: &[u8], is_ack: bool);
     /// `code` is the raw u32 from the wire so unknown error codes survive to JS (node parity).
-    fn on_go_away(&self, code: u32, last_stream_id: u32, debug: &[u8]);
+    fn on_go_away(&self, view: View<'_>, code: u32, last_stream_id: u32, debug: &[u8]);
     /// After a WINDOW_UPDATE has been applied (for resuming sends).
-    fn on_window_update(&self, stream_id: u32, increment: u32);
+    fn on_window_update(&self, view: View<'_>, stream_id: u32, increment: u32);
 
     /// The embedder cannot take further callbacks in this batch (its VM has an exception pending
     /// from an earlier one): stop before the next frame; the unconsumed bytes stay queued.
@@ -162,7 +182,7 @@ pub(crate) trait Sink {
     // ---- Stream-level (default no-op so simple sinks can ignore them) ----
 
     /// A new stream was created by an inbound HEADERS (the embedder allocates its JS wrapper).
-    fn on_stream_open(&self, _stream_id: u32) {}
+    fn on_stream_open(&self, _view: View<'_>, _stream_id: u32) {}
     /// Whether the embedder can afford the state for a new peer-initiated stream (the session
     /// memory budget, node's maxSessionMemory). `false` refuses the HEADERS with RST_STREAM
     /// (ENHANCE_YOUR_CALM, node's Http2Session::OnBeginHeadersCallback) before any stream state
@@ -175,33 +195,30 @@ pub(crate) trait Sink {
     /// One decoded header field. `name`/`value` alias a shared buffer — copy before returning.
     fn on_header(&self, _stream_id: u32, _name: &[u8], _value: &[u8], _never_index: bool) {}
     /// The header block for `stream_id` is complete. `end_stream` = the HEADERS carried END_STREAM.
-    fn on_headers_complete(&self, _stream_id: u32, _end_stream: bool, _flags: u8) {}
+    fn on_headers_complete(&self, _view: View<'_>, _stream_id: u32, _end_stream: bool, _flags: u8) {
+    }
     /// A DATA payload (padding already stripped).
-    fn on_data(&self, _stream_id: u32, _data: &[u8]) {}
+    fn on_data(&self, _view: View<'_>, _stream_id: u32, _data: &[u8]) {}
     /// The stream half/fully closed; `state` is the `stream::State` integer.
-    fn on_stream_end(&self, _stream_id: u32, _state: u8) {}
+    fn on_stream_end(&self, _view: View<'_>, _stream_id: u32, _state: u8) {}
     /// The stream was reset (inbound RST_STREAM or a local stream error). `code` is the raw
     /// u32 from the wire so unknown error codes survive to JS (node parity).
-    fn on_stream_reset(&self, _stream_id: u32, _code: u32) {}
+    fn on_stream_reset(&self, _view: View<'_>, _stream_id: u32, _code: u32) {}
     /// A locally-initiated stream rejection (oversized/malformed header block) - distinct from
     /// peer-sent resets so the embedder can budget rejections (maxSessionRejectedStreams).
-    fn on_stream_rejected(&self, _stream_id: u32) {}
+    fn on_stream_rejected(&self, _view: View<'_>, _stream_id: u32) {}
     /// A server PUSH_PROMISE reserved `promised_id` on behalf of `parent_id`. Fires before the
     /// promised request's on_header/on_headers_complete (which use `promised_id`).
     fn on_push_promise(&self, _parent_id: u32, _promised_id: u32) {}
     /// RFC 7838 ALTSVC.
-    fn on_altsvc(&self, _stream_id: u32, _origin: &[u8], _value: &[u8]) {}
+    fn on_altsvc(&self, _view: View<'_>, _stream_id: u32, _origin: &[u8], _value: &[u8]) {}
     /// RFC 8336 ORIGIN — the full frame payload (a sequence of 2-byte-length-prefixed origins),
     /// delivered once per frame so the embedder can surface them as a single event.
-    fn on_origin(&self, _payload: &[u8]) {}
+    fn on_origin(&self, _view: View<'_>, _payload: &[u8]) {}
     /// The peer exceeded the session's invalid-frame allowance (node's maxSessionInvalidFrames):
     /// the embedder should destroy the session with ERR_HTTP2_TOO_MANY_INVALID_FRAMES.
-    fn on_too_many_invalid_frames(&self) {}
-    /// Frame-counter update (perf_hooks http2 session stats). Called whenever either
-    /// counter moves, while the connection is mutably borrowed — the embedder must only
-    /// store the values.
-    fn on_frame_counters(&self, _received: u64, _sent: u64) {}
-    /// The connection-level receive window moved. Same contract as `on_frame_counters`.
+    fn on_too_many_invalid_frames(&self, _view: View<'_>) {}
+    /// The connection-level receive window moved. The embedder must only store the values.
     fn on_recv_window(&self, _size: i64, _consumed: i64) {}
     /// Transition shim while the outbound path still flows through the embedder's legacy encoder:
     /// returns true if `stream_id` was initiated locally (HEADERS already sent by the embedder), so
@@ -335,6 +352,11 @@ impl Connection {
         }
     }
 
+    #[inline]
+    fn view(&self) -> View<'_> {
+        View(self)
+    }
+
     // ---- Outbound -------------------------------------------------------
 
     fn write_frame(
@@ -346,7 +368,6 @@ impl Connection {
         payload: &[u8],
     ) {
         self.frames_sent += 1;
-        sink.on_frame_counters(self.frames_received, self.frames_sent);
         let mut hdr_buf = [0u8; wire::FRAME_HEADER_SIZE];
         let hdr = FrameHeader {
             length: payload.len() as u32,
@@ -355,9 +376,9 @@ impl Connection {
             stream_id,
         };
         hdr.write(&mut hdr_buf);
-        sink.write(&hdr_buf);
+        sink.write(self.view(), &hdr_buf);
         if !payload.is_empty() {
-            sink.write(payload);
+            sink.write(self.view(), payload);
         }
     }
 
@@ -387,7 +408,7 @@ impl Connection {
         payload.extend_from_slice(debug);
         self.write_frame(sink, FrameType::GoAway, 0, 0, &payload);
         let last = self.last_stream_id;
-        sink.on_error(lib_code, last, debug);
+        sink.on_error(self.view(), lib_code, last, debug);
     }
 
     /// Connection error with the generic NGHTTP2_ERR_PROTO library code — the same thing node
@@ -478,7 +499,11 @@ impl Connection {
             let avail = (bytes.len() - offset).min(inflight.payload_remaining as usize);
             let data_now = avail.min(inflight.data_remaining as usize);
             if data_now > 0 && !inflight.discard {
-                sink.on_data(inflight.stream_id, &bytes[offset..offset + data_now]);
+                sink.on_data(
+                    self.view(),
+                    inflight.stream_id,
+                    &bytes[offset..offset + data_now],
+                );
             }
             inflight.data_remaining -= data_now as u32;
             inflight.payload_remaining -= avail as u32;
@@ -619,7 +644,6 @@ impl Connection {
         // read off a session that stopped processing at that frame — never include it.
         if !matches!(hdr.typ(), Some(FrameType::GoAway)) {
             self.frames_received += 1;
-            sink.on_frame_counters(self.frames_received, self.frames_sent);
         }
         // RFC 9113 §4.3 / §6.10: once a HEADERS/PUSH_PROMISE without END_HEADERS is received, the
         // ONLY permitted frame is a CONTINUATION for that same stream until the block completes.
@@ -713,7 +737,7 @@ impl Connection {
                 // https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L4189-L4221
                 self.replenish_streams(sink);
             }
-            sink.on_local_settings(&acked.settings);
+            sink.on_local_settings(self.view(), &acked.settings);
             return false;
         }
         // node's maxSettings (nghttp2 max_settings): refuse SETTINGS frames carrying more entries
@@ -784,7 +808,7 @@ impl Connection {
             return true;
         }
         let snapshot = self.remote_settings;
-        sink.on_remote_settings(&snapshot);
+        sink.on_remote_settings(self.view(), &snapshot);
         false
     }
 
@@ -817,14 +841,14 @@ impl Connection {
 
     fn handle_ping(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
         if wire::flags::has(hdr.flags, wire::flags::ACK) {
-            sink.on_ping(payload, true);
+            sink.on_ping(self.view(), payload, true);
             return false;
         }
         // copy the 8-byte payload before echoing (sink.write may reuse buffers).
         let mut echo = [0u8; 8];
         echo.copy_from_slice(&payload[..8]);
         self.send_ping_ack(sink, &echo);
-        sink.on_ping(&echo, false);
+        sink.on_ping(self.view(), &echo, false);
         self.note_outbound_ack(sink)
     }
 
@@ -854,7 +878,7 @@ impl Connection {
             return true;
         }
         self.going_away = true;
-        sink.on_go_away(code_raw, last_stream_id, &payload[8..]);
+        sink.on_go_away(self.view(), code_raw, last_stream_id, &payload[8..]);
         false
     }
 
@@ -883,7 +907,11 @@ impl Connection {
             if let Some(s) = self.streams.get_mut(&hdr.stream_id) {
                 s.state = State::Closed;
             }
-            sink.on_stream_reset(hdr.stream_id, ErrorCode::ProtocolError.as_u32());
+            sink.on_stream_reset(
+                self.view(),
+                hdr.stream_id,
+                ErrorCode::ProtocolError.as_u32(),
+            );
             return false;
         }
         if hdr.stream_id == 0 {
@@ -901,11 +929,15 @@ impl Connection {
             if s.send_window.increase(increment).is_err() {
                 s.state = State::Closed;
                 self.send_rst_stream(sink, hdr.stream_id, ErrorCode::FlowControlError);
-                sink.on_stream_reset(hdr.stream_id, ErrorCode::FlowControlError.as_u32());
+                sink.on_stream_reset(
+                    self.view(),
+                    hdr.stream_id,
+                    ErrorCode::FlowControlError.as_u32(),
+                );
                 return false;
             }
         }
-        sink.on_window_update(hdr.stream_id, increment);
+        sink.on_window_update(self.view(), hdr.stream_id, increment);
         false
     }
 
@@ -1023,7 +1055,7 @@ impl Connection {
                 self.last_stream_id = hdr.stream_id;
             }
             if !refused {
-                sink.on_stream_open(hdr.stream_id);
+                sink.on_stream_open(self.view(), hdr.stream_id);
             }
         }
 
@@ -1263,7 +1295,7 @@ impl Connection {
                 // the session memory budget is answered with RST_STREAM(ENHANCE_YOUR_CALM), which
                 // is what node's own test-http2-max-session-memory asserts.
                 self.send_rst_stream(sink, target, ErrorCode::EnhanceYourCalm);
-                sink.on_stream_rejected(target);
+                sink.on_stream_rejected(self.view(), target);
                 return false;
             }
             BlockDisposition::StreamClosed => {
@@ -1273,7 +1305,7 @@ impl Connection {
                 if let Some(s) = self.streams.get_mut(&target) {
                     s.state = State::Closed;
                 }
-                sink.on_stream_reset(target, ErrorCode::StreamClosed.as_u32());
+                sink.on_stream_reset(self.view(), target, ErrorCode::StreamClosed.as_u32());
                 return false;
             }
             BlockDisposition::Deliver => {}
@@ -1315,7 +1347,7 @@ impl Connection {
             self.invalid_frame_count = count.saturating_add(1);
             if count > self.max_invalid_frames {
                 self.terminated = true;
-                sink.on_too_many_invalid_frames();
+                sink.on_too_many_invalid_frames(self.view());
                 return true;
             }
             // RFC 9113 §8.2: a malformed header block gets a stream error of type PROTOCOL_ERROR and
@@ -1324,8 +1356,8 @@ impl Connection {
             if let Some(s) = self.streams.get_mut(&target) {
                 s.state = State::Closed;
             }
-            sink.on_stream_reset(target, ErrorCode::ProtocolError.as_u32());
-            sink.on_stream_rejected(target);
+            sink.on_stream_reset(self.view(), target, ErrorCode::ProtocolError.as_u32());
+            sink.on_stream_rejected(self.view(), target);
             return false;
         }
         if rejected {
@@ -1335,8 +1367,8 @@ impl Connection {
             if let Some(s) = self.streams.get_mut(&target) {
                 s.state = State::Closed;
             }
-            sink.on_stream_reset(target, ErrorCode::EnhanceYourCalm.as_u32());
-            sink.on_stream_rejected(target);
+            sink.on_stream_reset(self.view(), target, ErrorCode::EnhanceYourCalm.as_u32());
+            sink.on_stream_rejected(self.view(), target);
             return false;
         }
         if push_parent.is_none()
@@ -1345,11 +1377,11 @@ impl Connection {
         {
             s.recv_final_headers = true;
         }
-        sink.on_headers_complete(target, end_stream, flags);
+        sink.on_headers_complete(self.view(), target, end_stream, flags);
         if end_stream {
             let state = self.streams.get(&target).map(|s| s.state as u8);
             if let Some(state) = state {
-                sink.on_stream_end(target, state);
+                sink.on_stream_end(self.view(), target, state);
             }
         }
         false
@@ -1406,7 +1438,7 @@ impl Connection {
         match self.streams.get_mut(&hdr.stream_id) {
             None => {
                 self.send_rst_stream(sink, hdr.stream_id, ErrorCode::StreamClosed);
-                sink.on_stream_reset(hdr.stream_id, ErrorCode::StreamClosed.as_u32());
+                sink.on_stream_reset(self.view(), hdr.stream_id, ErrorCode::StreamClosed.as_u32());
                 discard = true;
             }
             Some(st) => {
@@ -1415,7 +1447,11 @@ impl Connection {
                     if let Some(st2) = self.streams.get_mut(&hdr.stream_id) {
                         st2.state = State::Closed;
                     }
-                    sink.on_stream_reset(hdr.stream_id, ErrorCode::StreamClosed.as_u32());
+                    sink.on_stream_reset(
+                        self.view(),
+                        hdr.stream_id,
+                        ErrorCode::StreamClosed.as_u32(),
+                    );
                     discard = true;
                 } else {
                     st.recv_window.on_data(hdr.length as i64);
@@ -1440,7 +1476,7 @@ impl Connection {
         let body_avail = &payload_avail[off..];
         let data_now = body_avail.len().min(data_total);
         if data_now > 0 && !discard {
-            sink.on_data(hdr.stream_id, &body_avail[..data_now]);
+            sink.on_data(self.view(), hdr.stream_id, &body_avail[..data_now]);
         }
         let consumed_payload = off + body_avail.len();
         let inflight = DataInFlight {
@@ -1455,7 +1491,6 @@ impl Connection {
         // An incrementally-streamed DATA frame never reaches dispatch(); count it here,
         // once, when its header is accepted.
         self.frames_received += 1;
-        sink.on_frame_counters(self.frames_received, self.frames_sent);
         StreamedDataStart::Consumed(wire::FRAME_HEADER_SIZE + consumed_payload)
     }
 
@@ -1476,7 +1511,7 @@ impl Connection {
                 None => None,
             };
             if let Some(state) = state {
-                sink.on_stream_end(inflight.stream_id, state);
+                sink.on_stream_end(self.view(), inflight.stream_id, state);
             }
         }
     }
@@ -1519,7 +1554,7 @@ impl Connection {
             self.invalid_frame_count = count.saturating_add(1);
             if count > self.max_invalid_frames {
                 self.terminated = true;
-                sink.on_too_many_invalid_frames();
+                sink.on_too_many_invalid_frames(self.view());
                 return true;
             }
         }
@@ -1567,7 +1602,7 @@ impl Connection {
                     s.state = State::Closed;
                 }
                 // Surface the stream error (e.g. a peer protocol violation) to the embedder.
-                sink.on_stream_reset(hdr.stream_id, code.as_u32());
+                sink.on_stream_reset(self.view(), hdr.stream_id, code.as_u32());
                 return false;
             }
             DataDecision::FlowControlViolation => {
@@ -1587,7 +1622,7 @@ impl Connection {
 
         let end_stream = wire::flags::has(hdr.flags, wire::flags::END_STREAM);
         if end != off {
-            sink.on_data(hdr.stream_id, &payload[off..end]);
+            sink.on_data(self.view(), hdr.stream_id, &payload[off..end]);
         }
 
         // Window replenishment is deferred to the end of the receive() batch (replenish_windows):
@@ -1609,7 +1644,7 @@ impl Connection {
                 None => None,
             };
             if let Some(state) = state {
-                sink.on_stream_end(hdr.stream_id, state);
+                sink.on_stream_end(self.view(), hdr.stream_id, state);
             }
         }
         false
@@ -1633,7 +1668,7 @@ impl Connection {
         if let Some(s) = self.streams.get_mut(&stream_id) {
             s.state = State::Closed;
         }
-        sink.on_stream_reset(stream_id, ErrorCode::ProtocolError.as_u32());
+        sink.on_stream_reset(self.view(), stream_id, ErrorCode::ProtocolError.as_u32());
         true
     }
 
@@ -1674,7 +1709,7 @@ impl Connection {
             self.send_go_away(sink, ErrorCode::ProtocolError, b"RST_STREAM on idle stream");
             return true;
         }
-        sink.on_stream_reset(hdr.stream_id, code_raw);
+        sink.on_stream_reset(self.view(), hdr.stream_id, code_raw);
         false
     }
 
@@ -1794,7 +1829,7 @@ impl Connection {
         {
             return false;
         }
-        sink.on_altsvc(hdr.stream_id, origin, value);
+        sink.on_altsvc(self.view(), hdr.stream_id, origin, value);
         false
     }
 
@@ -1806,7 +1841,7 @@ impl Connection {
         if hdr.stream_id != 0 || self.is_server {
             return false;
         }
-        sink.on_origin(payload);
+        sink.on_origin(self.view(), payload);
         false
     }
 
@@ -2048,26 +2083,26 @@ mod tests {
         origins: RefCell<Vec<Vec<u8>>>,
     }
     impl Sink for CaptureSink {
-        fn write(&self, bytes: &[u8]) -> WriteResult {
+        fn write(&self, _view: View<'_>, bytes: &[u8]) -> WriteResult {
             self.out.borrow_mut().extend_from_slice(bytes);
             WriteResult::Sent
         }
-        fn on_error(&self, lib_code: i32, _l: u32, _d: &[u8]) {
+        fn on_error(&self, _view: View<'_>, lib_code: i32, _l: u32, _d: &[u8]) {
             // send_go_away() reports through on_error; record it so the _is_goaway tests can assert.
             self.local_error.set(Some(lib_code));
         }
-        fn on_local_settings(&self, _s: &Settings) {}
-        fn on_remote_settings(&self, _s: &Settings) {
+        fn on_local_settings(&self, _view: View<'_>, _s: &Settings) {}
+        fn on_remote_settings(&self, _view: View<'_>, _s: &Settings) {
             self.remote_settings.set(self.remote_settings.get() + 1);
         }
-        fn on_ping(&self, payload: &[u8], is_ack: bool) {
+        fn on_ping(&self, _view: View<'_>, payload: &[u8], is_ack: bool) {
             self.pings.borrow_mut().push((payload.to_vec(), is_ack));
         }
-        fn on_go_away(&self, c: u32, l: u32, _d: &[u8]) {
+        fn on_go_away(&self, _view: View<'_>, c: u32, l: u32, _d: &[u8]) {
             self.goaway.set(Some((c, l)));
         }
-        fn on_window_update(&self, _id: u32, _inc: u32) {}
-        fn on_stream_open(&self, id: u32) {
+        fn on_window_update(&self, _view: View<'_>, _id: u32, _inc: u32) {}
+        fn on_stream_open(&self, _view: View<'_>, id: u32) {
             self.opens.borrow_mut().push(id);
         }
         fn on_header(&self, id: u32, name: &[u8], value: &[u8], _never: bool) {
@@ -2075,27 +2110,27 @@ mod tests {
                 .borrow_mut()
                 .push((id, name.to_vec(), value.to_vec()));
         }
-        fn on_headers_complete(&self, id: u32, end_stream: bool, _flags: u8) {
+        fn on_headers_complete(&self, _view: View<'_>, id: u32, end_stream: bool, _flags: u8) {
             self.headers_done.borrow_mut().push((id, end_stream));
         }
-        fn on_data(&self, id: u32, data: &[u8]) {
+        fn on_data(&self, _view: View<'_>, id: u32, data: &[u8]) {
             self.data.borrow_mut().push((id, data.to_vec()));
         }
-        fn on_stream_end(&self, id: u32, _state: u8) {
+        fn on_stream_end(&self, _view: View<'_>, id: u32, _state: u8) {
             self.ended.borrow_mut().push(id);
         }
-        fn on_stream_reset(&self, id: u32, code: u32) {
+        fn on_stream_reset(&self, _view: View<'_>, id: u32, code: u32) {
             self.resets.borrow_mut().push((id, code));
         }
         fn on_push_promise(&self, parent: u32, promised: u32) {
             self.pushes.borrow_mut().push((parent, promised));
         }
-        fn on_altsvc(&self, id: u32, origin: &[u8], value: &[u8]) {
+        fn on_altsvc(&self, _view: View<'_>, id: u32, origin: &[u8], value: &[u8]) {
             self.altsvc
                 .borrow_mut()
                 .push((id, origin.to_vec(), value.to_vec()));
         }
-        fn on_origin(&self, origin: &[u8]) {
+        fn on_origin(&self, _view: View<'_>, origin: &[u8]) {
             self.origins.borrow_mut().push(origin.to_vec());
         }
     }

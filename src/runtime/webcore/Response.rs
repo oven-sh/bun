@@ -1,10 +1,9 @@
 use core::cell::Cell;
-use core::ffi::c_void;
 use core::mem;
 use core::ptr::NonNull;
 
 use bun_jsc::JsCell;
-use bun_jsc::{AbortSignal, AbortSignalRef, GlobalRef};
+use bun_jsc::{AbortSignal, GlobalRef};
 use bun_ptr::RefPtr;
 
 use crate::webcore::jsc::{
@@ -117,38 +116,27 @@ impl Drop for HeadersRef {
 
 /// Errors the owning fetch `Response`'s body on abort (Fetch spec "abort a fetch" step 4).
 pub(crate) struct BodyAbortListener {
-    signal: AbortSignalRef,
-    /// `Response` owns `Box<Self>`, so a ref-counted pointer here would cycle.
-    response: bun_ptr::ParentRef<Response, bun_ptr::Mut>,
+    response: WeakRef,
     global: GlobalRef,
     /// The context of the script that fetched: the body's error is reported to it.
     context: bun_jsc::ContextId,
 }
 
-impl BodyAbortListener {
-    unsafe extern "C" fn on_abort(ctx: *mut c_void, reason: JSValue) {
+impl bun_jsc::abort_signal::OwnedAbortListener for BodyAbortListener {
+    fn on_abort(&mut self, reason: JSValue) {
         reason.ensure_still_alive();
-        // SAFETY: `ctx` is the `Box<BodyAbortListener>` registered in
-        // `attach_abort_signal`; `clean_native_bindings` removes it before the
-        // box is dropped, so it is live here. Copy out up front: erroring a
-        // still-streaming body can re-enter `Response::unref` via
-        // `FetchTasklet::abandon_response_body` and destroy this box.
-        let (response, global, context) = unsafe {
-            let this = &*ctx.cast::<Self>();
-            (this.response, this.global, this.context)
+        let Some(response) = self.response.get().map(core::ptr::from_mut) else {
+            return;
         };
-        let _context = global.bun_vm().enter_context(context);
-        // SAFETY: `response` is live (see above).
-        let _keepalive = unsafe { RefPtr::init_ref(response.as_mut_ptr()) };
+        // SAFETY: `get` returned a live `Response`; nothing has run since.
+        let response = unsafe { RefPtr::init_ref(response) };
+        let global = self.global;
+        let _context = global.bun_vm().enter_context(self.context);
         if !matches!(
             response.get_body_value(),
             BodyValue::Used | BodyValue::Error(_) | BodyValue::Null | BodyValue::Empty
         ) {
-            // Not `get_body_readable_stream`: its `js_ref()` path reads a raw
-            // JSValue to a wrapper that may be unmarked but not yet swept,
-            // reaching a `NewSource` box the source cell's (PreciseAllocation)
-            // destructor already freed. `Locked.readable` is a real `JSC::Weak`
-            // on the stream and reads `None` exactly when the box is gone.
+            // `Locked.readable` is a real `JSC::Weak`: `None` exactly when the stream's source is gone.
             if let BodyValue::Locked(locked) = response.get_body_value() {
                 if let Some(readable) = locked.readable.get() {
                     readable.value.ensure_still_alive();
@@ -159,13 +147,6 @@ impl BodyAbortListener {
             // R-2: re-derive after `error()` ran JS.
             let _ = response.get_body_value().to_error_instance(err, &global);
         }
-    }
-}
-
-impl Drop for BodyAbortListener {
-    fn drop(&mut self) {
-        let ctx = core::ptr::from_mut(self).cast::<c_void>();
-        self.signal.clean_native_bindings(ctx);
     }
 }
 
@@ -231,7 +212,7 @@ pub(crate) struct Response {
     reported_estimated_size: Cell<usize>,
 
     /// Fetch's `AbortSignal` listener; survives `FetchTasklet` teardown so a fully-buffered body is still errored.
-    abort_listener: JsCell<Option<Box<BodyAbortListener>>>,
+    abort_listener: JsCell<Option<bun_jsc::abort_signal::AbortListenerHandle>>,
 }
 
 impl Default for Response {
@@ -494,29 +475,22 @@ impl Response {
         <Self as BodyMixin>::detach_readable_stream(self, global_object)
     }
 
-    /// Install a [`BodyAbortListener`] so abort reaches this body after `FetchTasklet` has detached.
-    ///
-    /// SAFETY: `this` must be a live heap `Response` (stored as the listener's [`ParentRef`]).
+    /// SAFETY: `this` is a live heap `Response`, with the provenance of its allocation.
     pub(crate) unsafe fn attach_abort_signal(
         this: *mut Response,
         global: &JSGlobalObject,
         signal: &AbortSignal,
         context: bun_jsc::ContextId,
     ) {
-        let signal_ref = signal.ref_();
-        let mut listener = Box::new(BodyAbortListener {
-            signal: signal_ref,
-            // SAFETY: caller contract; `this` is live and owns the box.
-            response: unsafe { bun_ptr::ParentRef::from_raw_mut(this) },
+        let listener = Box::new(BodyAbortListener {
+            // SAFETY: caller contract.
+            response: unsafe { WeakRef::init_ref(this) },
             global: GlobalRef::new(global),
             context,
         });
-        signal.add_listener(
-            core::ptr::from_mut(&mut *listener).cast::<c_void>(),
-            BodyAbortListener::on_abort,
-        );
+        let handle = signal.listen_owned(listener);
         // SAFETY: caller contract; `this` is live.
-        unsafe { (*this).abort_listener.set(Some(listener)) };
+        unsafe { (*this).abort_listener.set(handle) };
     }
 
     #[inline]

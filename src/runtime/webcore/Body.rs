@@ -1580,12 +1580,12 @@ impl Value {
             // duped without a syscall.
             if b.store().is_some_and(blob::store_known_read_once) {
                 // A pipe or other fd yields its bytes once: read it as one
-                // stream and tee that. The stream takes the Blob's window as
-                // it is. `to_readable_stream` would resolve the size first: an
-                // fstat whose result lands on the store this body shares with
-                // the user's `Bun.file(fd)`.
+                // stream and tee that. Not through `to_readable_stream`: its
+                // `resolve_size` caches the fstat on the store this body
+                // shares with the user's `Bun.file(fd)`.
                 let stream = {
                     let blob = scopeguard::guard(self.use_(), |mut b| b.deinit());
+                    blob::resolve_fd_window_uncached(&blob);
                     ReadableStream::from_blob_copy_ref(cx, &blob, 0)?
                 };
                 *self = Value::from_readable_stream_without_lock_check(

@@ -5854,6 +5854,35 @@ pub(crate) fn store_known_read_once(store: &RefPtr<Store>) -> bool {
     }
 }
 
+/// [`BlobExt::resolve_size`] for the stream `clone()` tees a `Bun.file(fd)`
+/// body from. The window comes from an `fstat` that is not cached on the
+/// store, which the body shares with the user's `Bun.file(fd)`. A size that
+/// does not bound a read (not a regular file, or the `st_size == 0` procfs
+/// reports) leaves the window as it is, so the stream reads to the end.
+pub(crate) fn resolve_fd_window_uncached(blob: &Blob) {
+    let Some(store) = blob.store.get() else {
+        return;
+    };
+    let store::Data::File(file) = &store.data else {
+        return;
+    };
+    let PathOrFileDescriptor::Fd(fd) = &file.pathlike else {
+        return;
+    };
+    let bun_sys::Result::Ok(stat) = bun_sys::fstat(*fd) else {
+        return;
+    };
+    let bounds_a_read = bun_sys::S::ISREG(stat.st_mode as _) && stat.st_size > 0;
+    if !bounds_a_read {
+        return;
+    }
+    let store_size = (stat.st_size as u64) as SizeType;
+    let offset = store_size.min(blob.offset.get());
+    blob.offset.set(offset);
+    blob.size
+        .set(window_size(blob.size.get(), store_size - offset));
+}
+
 /// Whether a second Blob over `store` reads the same bytes from the start.
 /// `clone()` asks this before it turns an unread file stream back into its
 /// Blob. A path that no one has stat'd yet is stat'd here. One that cannot be

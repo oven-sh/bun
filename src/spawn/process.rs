@@ -192,8 +192,7 @@ impl ProcessHandle {
         self.process_mut().on_exit(status, rusage)
     }
 
-    /// See [`Process::on_watch_failed`]; runs the exit handler (same rule as
-    /// [`watch_or_reap`](Self::watch_or_reap)).
+    /// See [`Process::on_watch_failed`]; it runs the exit handler.
     pub fn on_watch_failed(&self, err: bun_sys::Error) {
         self.process_mut().on_watch_failed(err)
     }
@@ -411,15 +410,12 @@ impl Process {
         self.on_exit(status, &rusage_result);
     }
 
-    /// `Ok(true)`: the exit handler already ran. `Err`: it never will, see
-    /// [`watch`](Self::watch) and [`on_watch_failed`](Self::on_watch_failed).
+    /// `Ok(true)`: the exit handler ran. `Err`: it never will, see [`on_watch_failed`](Self::on_watch_failed).
     pub fn watch_or_reap(&mut self) -> bun_sys::Result<bool> {
         self.watch_or_reap_impl::<true>()
     }
 
-    /// [`watch_or_reap`](Self::watch_or_reap) for a caller that blocks in
-    /// `wait(true)` on `Err` (spawnSync): a child whose exit watch cannot be
-    /// registered is left running.
+    /// For spawnSync, which blocks in `wait(true)` on `Err`: an unwatchable child is left running.
     pub fn watch_or_reap_leave_running(&mut self) -> bun_sys::Result<bool> {
         self.watch_or_reap_impl::<false>()
     }
@@ -444,18 +440,12 @@ impl Process {
         }
     }
 
-    /// The owner's `watch_or_reap()` returned `Err`, so no exit will be
-    /// reported for this process: run the exit handler with that error.
+    /// After `watch_or_reap()` returned `Err` no exit will be reported: run the exit handler with the error.
     pub fn on_watch_failed(&mut self, err: bun_sys::Error) {
         self.on_exit(Status::Err(err), &rusage_zeroed());
     }
 
-    /// Nothing would report the exit of a running child whose exit watch
-    /// cannot be registered (`ENOMEM`, `ENOSPC` at `fs.epoll.max_user_watches`):
-    /// kill and reap it. `ESRCH` stands for a child reaped before the watch.
-    ///
-    /// Linux only: on XNU a pty session leader cannot be reaped until this
-    /// thread drains the pty master, so the blocking `wait4` could deadlock.
+    /// Kill and reap a running child whose exit nothing would report. `ESRCH`: it was reaped before the watch.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     #[cold]
     #[inline(never)]
@@ -474,8 +464,7 @@ impl Process {
         err
     }
 
-    /// On Linux an `Err` other than `ESRCH` describes a child that has been
-    /// killed and reaped, never a live one. With kqueue it can still run.
+    /// On Linux an `Err` other than `ESRCH` describes a killed and reaped child (kqueue: it can still run).
     pub fn watch(&mut self) -> bun_sys::Result<()> {
         self.watch_impl::<true>()
     }
@@ -548,6 +537,7 @@ impl Process {
                 Err(err) => {
                     // SAFETY: poll is live; borrow scoped to the call.
                     unsafe { (*poll).disable_keeping_process_alive(ctx) };
+                    // Linux only: on XNU a pty session leader is not reapable until this thread drains the pty master.
                     #[cfg(any(target_os = "linux", target_os = "android"))]
                     if KILL_UNWATCHABLE && err.get_errno() != bun_sys::E::ESRCH {
                         return Err(self.kill_and_reap_unwatchable(err));

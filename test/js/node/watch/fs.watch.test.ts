@@ -237,32 +237,23 @@ describe("fs.watch", () => {
     const views = path.join(root, "views");
 
     const seen = { recursive: new Set<string>(), flat: new Set<string>() };
-    let onEvent = () => {};
+    const errors: unknown[] = [];
     const watchers = [
       fs.watch(root, { recursive: true }, () => {}),
-      fs.watch(views, { recursive: true }, (_, filename) => {
-        seen.recursive.add(String(filename));
-        onEvent();
-      }),
-      fs.watch(views, (_, filename) => {
-        seen.flat.add(String(filename));
-        onEvent();
-      }),
+      fs.watch(views, { recursive: true }, (_, filename) => void seen.recursive.add(String(filename))),
+      fs.watch(views, (_, filename) => void seen.flat.add(String(filename))),
     ];
+    for (const watcher of watchers) watcher.on("error", error => void errors.push(error));
+    const sawBoth = (name: string) => seen.recursive.has(name) && seen.flat.has(name);
     // Writes the siblings and then `name`, until both watchers on "views" report `name`.
     // The siblings come first, so a watcher that matches them reports them before `name`.
     const writeUntilSeen = async (name: string) => {
-      const { promise, resolve } = Promise.withResolvers<void>();
-      onEvent = () => {
-        if (seen.recursive.has(name) && seen.flat.has(name)) resolve();
-      };
-      const interval = repeat(() => {
+      for (let round = 0; round < 100 && errors.length === 0 && !sawBoth(name); round++) {
         fs.writeFileSync(path.join(root, "views2", "a.txt"), "x");
         fs.writeFileSync(path.join(root, "views.bak"), "x");
         fs.writeFileSync(path.join(views, name), "x");
-      });
-      await promise;
-      clearInterval(interval);
+        await Bun.sleep(20);
+      }
     };
 
     try {
@@ -273,10 +264,38 @@ describe("fs.watch", () => {
       for (const watcher of watchers) watcher.close();
     }
 
-    expect({ recursive: [...seen.recursive], flat: [...seen.flat] }).toEqual({
+    expect({ errors, recursive: [...seen.recursive], flat: [...seen.flat] }).toEqual({
+      errors: [],
       recursive: ["b.txt", "c.txt"],
       flat: ["b.txt", "c.txt"],
     });
+  });
+
+  // The boundary check exempts a watched path that ends in "/". Without the exemption a
+  // watcher on "/" reports nothing. Linux and Windows have no prefix filter to exempt from,
+  // and a recursive watch of the root walks the whole tree there.
+  test.skipIf(!isMacOS)("a recursive watcher on / reports a file below it", async () => {
+    using dir = tempDir("fs-watch-root", {});
+    const file = path.join(String(dir), "a.txt");
+    const suffix = path.join(path.basename(String(dir)), "a.txt");
+
+    let reported = false;
+    const errors: unknown[] = [];
+    const watcher = fs.watch("/", { recursive: true }, (_, filename) => {
+      if (String(filename).endsWith(suffix)) reported = true;
+    });
+    watcher.on("error", error => void errors.push(error));
+
+    try {
+      for (let round = 0; round < 100 && errors.length === 0 && !reported; round++) {
+        fs.writeFileSync(file, "x");
+        await Bun.sleep(20);
+      }
+    } finally {
+      watcher.close();
+    }
+
+    expect({ errors, reported }).toEqual({ errors: [], reported: true });
   });
 
   test("should emit 'change' event when file is modified", done => {

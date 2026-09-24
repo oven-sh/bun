@@ -2494,18 +2494,22 @@ describe.each([
   // native handle. Node shuts that stream down, a net.Socket once it is connected:
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L155-L160
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L964-L973
+  // peerSawFin is what the peer observed. The fixture reports it only where a FIN is owed:
+  // end() and destroySoon() over a socket, and destroy() over a socket that is already connected.
+  const fin = (owed: boolean) => (owed ? { peerSawFin: true } : {});
+
   describe.concurrent.each([
-    ["a connected net.Socket", "connected", [], true],
-    ["a net.Socket that is still connecting", "connecting", ["transport connect"], true],
-    ["a net.Socket that connects later", "unconnected", ["transport connect"], true],
-    ["a Duplex", "duplex", ["transport final"], false],
-    ["a Duplex that has a close(code, callback) of its own", "duplex-with-close", ["transport final"], false],
-  ])("a client-side wrap of %s", (_name, transport, before, peerSawFin) => {
+    ["a connected net.Socket", "connected", [], true, true],
+    ["a net.Socket that is still connecting", "connecting", ["transport connect"], true, false],
+    ["a net.Socket that connects later", "unconnected", ["transport connect"], true, false],
+    ["a Duplex", "duplex", ["transport final"], false, false],
+    ["a Duplex that has a close(code, callback) of its own", "duplex-with-close", ["transport final"], false, false],
+  ])("a client-side wrap of %s", (_name, transport, before, finOnEnd, finOnDestroy) => {
     it.skipIf(!exe)("end(), destroySoon() and destroy() shut the stream down", async () => {
       expect(await run("wrap", transport)).toEqual({
         end: {
           log: [...before, "finish"],
-          peerSawFin,
+          ...fin(finOnEnd),
           writableFinished: true,
           readyState: "readOnly",
           destroyed: false,
@@ -2513,7 +2517,7 @@ describe.each([
         },
         destroySoon: {
           log: [...before, "finish", "close"],
-          peerSawFin,
+          ...fin(finOnEnd),
           writableFinished: true,
           readyState: "closed",
           destroyed: true,
@@ -2521,7 +2525,7 @@ describe.each([
         },
         destroy: {
           log: ["close"],
-          peerSawFin: false,
+          ...fin(finOnDestroy),
           writableFinished: false,
           readyState: "closed",
           destroyed: true,
@@ -2538,18 +2542,18 @@ describe.each([
 
     it.skipIf(!exe)("a peer that closes on the FIN closes the wrap after end()", async () => {
       expect(await run("wrap", "peer-closes")).toEqual({
-        end: { log: ["finish", "close"], peerSawFin: true, writableFinished: true, ...closed },
-        destroySoon: { log: ["finish", "close"], peerSawFin: true, writableFinished: true, ...closed },
-        destroy: { log: ["close"], peerSawFin: false, writableFinished: false, ...closed },
+        end: { log: ["finish", "close"], writableFinished: true, ...closed, ...fin(true) },
+        destroySoon: { log: ["finish", "close"], writableFinished: true, ...closed, ...fin(true) },
+        destroy: { log: ["close"], writableFinished: false, ...closed, ...fin(true) },
       });
     });
 
     it.skipIf(!exe)("a refused connection closes a wrap whose end() waits for 'connect'", async () => {
       const refused = ["transport error:ECONNREFUSED", "close"];
       expect(await run("wrap", "refused")).toEqual({
-        end: { log: refused, peerSawFin: false, writableFinished: false, ...closed },
-        destroySoon: { log: refused, peerSawFin: false, writableFinished: false, ...closed },
-        destroy: { log: ["close"], peerSawFin: false, writableFinished: false, ...closed },
+        end: { log: refused, writableFinished: false, ...closed },
+        destroySoon: { log: refused, writableFinished: false, ...closed },
+        destroy: { log: ["close"], writableFinished: false, ...closed },
       });
     });
   });

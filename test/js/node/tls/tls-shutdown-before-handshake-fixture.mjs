@@ -31,16 +31,23 @@ process.on("uncaughtException", error => {
 async function stalledPeer(allowHalfOpen = true) {
   const sawFin = Promise.withResolvers();
   let accepted;
+  let finSeen = false;
   const server = net.createServer({ allowHalfOpen }, socket => {
     accepted = socket;
     socket.on("data", () => {});
     socket.on("error", () => {});
-    socket.on("end", () => sawFin.resolve());
+    socket.on("end", () => {
+      finSeen = true;
+      sawFin.resolve();
+    });
   });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   return {
     port: server.address().port,
     sawFin: sawFin.promise,
+    get finSeen() {
+      return finSeen;
+    },
     close() {
       accepted?.destroy();
       server.close();
@@ -150,15 +157,18 @@ if (mode === "end" || mode === "destroySoon") {
     socket.on("close", () => log.push("close"));
 
     socket[method]();
-    // Only the graceful shapes owe the peer a FIN, and destroy() leaves nothing to connect.
-    const peerSawFin = peer !== undefined && method !== "destroy";
-    if (transport === "unconnected" && peerSawFin) raw.connect(peer.port, "127.0.0.1");
+    // The peer gets a FIN when the wrap ends its stream, and when destroy() closes a
+    // stream that is connected. destroy() before the connection exists owes it nothing.
+    const graceful = method !== "destroy";
+    const finOwed = peer !== undefined && (graceful || transport === "connected" || peerCloses);
+    if (transport === "unconnected" && graceful) raw.connect(peer.port, "127.0.0.1");
 
     const settled = method === "end" && !peerCloses && !refused ? "finish" : "close";
-    await Promise.all([once(socket, settled), peerSawFin && peer.sawFin]);
+    await Promise.all([once(socket, settled), finOwed && peer.sawFin]);
 
     const { writableFinished, readyState, destroyed } = socket;
-    const result = { log: [...log], peerSawFin, writableFinished, readyState, destroyed, transportDestroyed: raw.destroyed };
+    const result = { log: [...log], writableFinished, readyState, destroyed, transportDestroyed: raw.destroyed };
+    if (finOwed) result.peerSawFin = peer.finSeen;
     socket.destroy();
     raw.destroy();
     peer?.close();

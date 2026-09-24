@@ -107,10 +107,9 @@ pub(crate) struct OpenedFileBlob {
     pub(crate) nonblocking: bool,
     #[cfg(not(windows))]
     pub(crate) file_type: FileType,
-    /// Size from this open's `fstat`, for a regular file whose store was
-    /// statted before the open. The reader stops there, so it needs no extra
-    /// `read()` to find EOF.
-    #[cfg(not(windows))]
+    /// Size taken from the open fd, for a regular file whose store was statted
+    /// before the open. The reader stops there, so it needs no extra read to
+    /// find EOF.
     pub(crate) known_size: Option<usize>,
 }
 
@@ -122,7 +121,6 @@ impl Default for OpenedFileBlob {
             nonblocking: true,
             #[cfg(not(windows))]
             file_type: FileType::File,
-            #[cfg(not(windows))]
             known_size: None,
         }
     }
@@ -257,6 +255,14 @@ impl Lazy {
             }
         }
 
+        // No `fstat` runs at open on Windows, so ask for the size alone.
+        #[cfg(windows)]
+        if file.seekable == Some(true) {
+            if let Ok(size @ 1..) = sys::get_file_size(fd) {
+                this.known_size = usize::try_from(size).ok();
+            }
+        }
+
         this.fd = fd;
 
         Ok(this)
@@ -322,7 +328,6 @@ impl FileReader {
         let mut pollable = false;
         #[cfg(unix)]
         let mut file_type = FileType::File;
-        #[cfg(unix)]
         let mut known_size: Option<usize> = None;
         // R-2: move the `Lazy` out of the cell up-front (it's reset to `None`
         // on every path through the original `if let` body) so the `RefPtr<Store>`
@@ -346,10 +351,10 @@ impl FileReader {
                             debug_assert!(opened.fd.is_valid());
                             self.fd.set(opened.fd);
                             pollable = opened.pollable;
+                            known_size = opened.known_size;
                             #[cfg(unix)]
                             {
                                 file_type = opened.file_type;
-                                known_size = opened.known_size;
                             }
                             #[cfg(unix)]
                             {
@@ -409,7 +414,6 @@ impl FileReader {
                 unsafe { (*self.parent()).increment_count() };
                 self.waiting_for_on_reader_done.set(true);
             }
-            #[cfg(unix)]
             let limit = match known_size {
                 Some(size) => {
                     let available = size.saturating_sub(self.start_offset.unwrap_or(0));
@@ -417,8 +421,6 @@ impl FileReader {
                 }
                 None => self.max_size,
             };
-            #[cfg(windows)]
-            let limit = self.max_size;
             self.reader().set_limit(limit);
             let start_result = if let Some(offset) = self.start_offset {
                 self.reader()

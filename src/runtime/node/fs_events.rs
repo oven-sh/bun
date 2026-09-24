@@ -548,13 +548,10 @@ impl FSEventsLoop {
                 if path.len() < handle_path.len() || !path.starts_with(handle_path) {
                     continue;
                 }
-                // The stream is shared, so "/a/views2/x" reaches a watcher on "/a/views"
-                // once another watcher covers "/a". The match has to end on a path
-                // boundary. A watched "/" already ends on one. Same check as libuv:
-                // https://github.com/libuv/libuv/blob/v1.52.0/src/unix/fsevents.c#L263-L269
-                if !handle_path.ends_with(b"/")
-                    && !matches!(path.get(handle_path.len()), None | Some(b'/'))
-                {
+                // "/a/views2" also starts with "/a/views": the match must end on a path boundary.
+                let ends_on_boundary = handle_path.ends_with(b"/")
+                    || matches!(path.get(handle_path.len()), None | Some(b'/'));
+                if !ends_on_boundary {
                     continue;
                 }
                 let is_file = (flags & K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_IS_DIR) == 0;

@@ -300,7 +300,7 @@ impl FileRoute {
         // early returns — is `Serve::Done`, so neither the fd nor the route ref
         // (or the server's pending_requests counter) can leak regardless of
         // which branch ran.
-        match route.serve(fd, verified_stat, path, &mut req, resp, method) {
+        match route.serve(fd, verified_stat.as_ref(), path, &mut req, resp, method) {
             Serve::Done => {
                 #[cfg(windows)]
                 Closer::close(fd, bun_sys::windows::libuv::Loop::get());
@@ -334,14 +334,14 @@ impl FileRoute {
     fn serve(
         &self,
         fd: Fd,
-        verified_stat: Option<bun_sys::Stat>,
+        verified_stat: Option<&bun_sys::Stat>,
         path: &[u8],
         req: &mut AnyRequest,
         resp: AnyResponse,
         method: Method,
     ) -> Serve {
         let (can_serve_file, offset, size, file_type, pollable) = 'brk: {
-            let stat = match verified_stat.map_or_else(|| bun_sys::fstat(fd), Ok) {
+            let stat = match verified_stat.map_or_else(|| bun_sys::fstat(fd), |stat| Ok(*stat)) {
                 Ok(s) => s,
                 // file_type is never read because can_serve_file == false
                 Err(_) => break 'brk (false, 0, 0, FileType::File, false),

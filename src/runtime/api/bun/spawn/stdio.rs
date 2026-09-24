@@ -637,8 +637,7 @@ impl Stdio {
                             let webcore::blob::Any::Blob(file_blob) = &blob else {
                                 unreachable!("only `Any::Blob` has a store")
                             };
-                            let (offset, size) = (file_blob.offset.get(), file_blob.size.get());
-                            match webcore::blob::read_file_sync(file, offset, size) {
+                            match webcore::blob::read_file_sync(file, file_blob) {
                                 Ok(bytes) => pinned_bytes = Some(bytes),
                                 Err(_) => {
                                     let err = webcore::blob::not_readable_error(global);

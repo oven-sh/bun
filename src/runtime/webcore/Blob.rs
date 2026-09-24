@@ -96,18 +96,14 @@ pub(crate) fn sync_read_source(
     }
 }
 
-/// The window `offset..offset + size` of `file`, read on this thread through [`sync_read_source`].
-pub(crate) fn read_file_sync(
-    file: &store::File,
-    offset: SizeType,
-    size: SizeType,
-) -> bun_sys::Result<Vec<u8>> {
+/// The bytes `window` covers of `file`, read on this thread through [`sync_read_source`].
+pub(crate) fn read_file_sync(file: &store::File, window: &Blob) -> bun_sys::Result<Vec<u8>> {
     let (path, read) = sync_read_source(file)?;
     let mut args = crate::node::fs::args::ReadFile::default();
     args.encoding = crate::node::types::Encoding::Buffer;
     args.path = path;
-    args.offset = offset;
-    args.max_size = Some(size);
+    args.offset = window.offset.get();
+    args.max_size = Some(window.size.get());
     let mut result =
         crate::node::fs::NodeFS::default().read_file(&args, crate::node::fs::Flavor::Sync)?;
     let bytes = result.slice().to_vec();

@@ -102,14 +102,9 @@ describe("v8.getHeapStatistics", () => {
     expect(rssDeltaMB, `RSS grew by ${rssDeltaMB.toFixed(2)} MB over 1000 iterations`).toBeLessThan(rssLimit);
   });
 
-  // As in Node, used_heap_size and process.memoryUsage().heapUsed are one number. A walk of the
-  // heap at call time reports 0 before the first collection and counts a new ArrayBuffer at once.
-  test("used_heap_size equals process.memoryUsage().heapUsed and does not exceed the heap size", async () => {
-    const script = /* js */ `
-      const { Worker } = require("node:worker_threads");
-
-      // A collection that finishes between two reads moves the number, and so does a new heap block
-      // before the first collection. Read heapUsed on both sides and retry until it held still.
+  // For the child scripts. A collection that finishes between two reads moves the number, and so does a
+  // new heap block before the first collection. Read heapUsed on both sides and retry until it held still.
+  const readSource = /* js */ `
       function read() {
         const { getHeapStatistics, getHeapSpaceStatistics } = require("node:v8");
         for (let attempt = 0; attempt < 1000; attempt++) {
@@ -121,6 +116,14 @@ describe("v8.getHeapStatistics", () => {
         }
         throw new Error("process.memoryUsage().heapUsed changed on every attempt");
       }
+  `;
+
+  // As in Node, used_heap_size and process.memoryUsage().heapUsed are one number. A walk of the
+  // heap at call time reports 0 before the first collection and counts a new ArrayBuffer at once.
+  test("used_heap_size equals process.memoryUsage().heapUsed and does not exceed the heap size", async () => {
+    const script = /* js */ `
+      const { Worker } = require("node:worker_threads");
+      ${readSource}
 
       const beforeFirstCollection = read();
       Bun.gc(true);
@@ -174,6 +177,67 @@ describe("v8.getHeapStatistics", () => {
       expect(stats.total_allocated_bytes, point).toBeGreaterThanOrEqual(stats.used_heap_size);
       expect(stats.space_size, point).toBeGreaterThanOrEqual(stats.space_used_size);
     }
+    expect(exitCode).toBe(0);
+  });
+
+  // The parent reads the same number through worker.getHeapStatistics(). The worker grows an array
+  // that a full collection has marked: a walk of the heap counts that growth at once.
+  test("worker.getHeapStatistics() reports the worker's process.memoryUsage().heapUsed", async () => {
+    const script = /* js */ `
+      const { once } = require("node:events");
+      const { Worker } = require("node:worker_threads");
+      ${readSource}
+
+      const worker = new Worker(
+        "const { parentPort } = require('node:worker_threads');" +
+          "const numbers = new Array(100_000).fill(0.5);" +
+          "parentPort.on('message', message => {" +
+          "  if (message === 'grow') {" +
+          "    Bun.gc(true);" +
+          "    for (let i = 0; i < 500_000; i++) numbers.push(i + 0.5);" +
+          "  }" +
+          "  parentPort.postMessage({ ...(" + read + ")(), elements: numbers.length });" +
+          "});",
+        { eval: true },
+      );
+      const exited = once(worker, "exit").then(([code]) => {
+        throw new Error("the worker exited with code " + code);
+      });
+      exited.catch(() => {});
+      async function ask(message) {
+        worker.postMessage(message);
+        return (await Promise.race([once(worker, "message"), exited]))[0];
+      }
+
+      let result;
+      for (let attempt = 0; attempt < 1000 && !result; attempt++) {
+        const inWorker = await ask(attempt === 0 ? "grow" : "read");
+        const fromParent = await worker.getHeapStatistics();
+        if ((await ask("read")).heapUsed === inWorker.heapUsed) result = { inWorker, fromParent };
+      }
+      if (!result) throw new Error("process.memoryUsage().heapUsed of the worker changed on every attempt");
+      await worker.terminate();
+      process.stdout.write(JSON.stringify(result));
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    const { inWorker, fromParent } = JSON.parse(stdout) as Record<"inWorker" | "fromParent", Record<string, number>>;
+    expect(inWorker.elements).toBe(600_000);
+    expect(inWorker.heapUsed).toBeGreaterThan(0);
+    expect({ inWorker: inWorker.used_heap_size, fromParent: fromParent.used_heap_size }).toEqual({
+      inWorker: inWorker.heapUsed,
+      fromParent: inWorker.heapUsed,
+    });
+    expect(fromParent.total_physical_size).toBeGreaterThanOrEqual(fromParent.used_heap_size);
     expect(exitCode).toBe(0);
   });
 

@@ -21,12 +21,19 @@ namespace Bun {
 
 using namespace JSC;
 
+HeapSizes heapSizes(JSC::VM& vm)
+{
+    // heap.size() walks every block. This is what process.memoryUsage().heapUsed reports, as in Node.
+    const size_t used = heapUsage(vm).used;
+    // capacity() is live and can be below a size that dates from the last collection. Used is never more than size.
+    return { used, std::max(vm.heap.capacity(), used), vm.heap.extraMemorySize() };
+}
+
 // Returns: [heapUsed, heapCapacity, extraMemorySize, globalObjectCount, peakRSS]
 JSC_DEFINE_HOST_FUNCTION(functionGetHeapStatisticsArray, (JSGlobalObject * globalObject, CallFrame*))
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto& heap = vm.heap;
 
     // Same value and same fallback as bun:jsc memoryUsage().peak.
     size_t peakRSS = 0;
@@ -39,17 +46,13 @@ JSC_DEFINE_HOST_FUNCTION(functionGetHeapStatisticsArray, (JSGlobalObject * globa
     RETURN_IF_EXCEPTION(scope, {});
 
     // Read the heap after the allocation above, which can run a collection: the three numbers describe one state.
-    // heap.size() walks every block. This is what process.memoryUsage().heapUsed reports, as in Node.
-    const size_t heapUsed = heapUsage(vm).used;
-    // capacity() is live and can be below a size that dates from the last collection. Used is never more than size.
-    const size_t heapCapacity = std::max(heap.capacity(), heapUsed);
-    const size_t extraMemorySize = heap.extraMemorySize();
+    const HeapSizes sizes = heapSizes(vm);
 
-    result->putDirectIndex(globalObject, 0, jsNumber(heapUsed));
+    result->putDirectIndex(globalObject, 0, jsNumber(sizes.used));
     RETURN_IF_EXCEPTION(scope, {});
-    result->putDirectIndex(globalObject, 1, jsNumber(heapCapacity));
+    result->putDirectIndex(globalObject, 1, jsNumber(sizes.capacity));
     RETURN_IF_EXCEPTION(scope, {});
-    result->putDirectIndex(globalObject, 2, jsNumber(extraMemorySize));
+    result->putDirectIndex(globalObject, 2, jsNumber(sizes.extraMemory));
     RETURN_IF_EXCEPTION(scope, {});
     result->putDirectIndex(globalObject, 3, jsNumber(globalObjectCount));
     RETURN_IF_EXCEPTION(scope, {});

@@ -80,6 +80,44 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     ]);
     expect({ badResult, s }).toEqual({ badResult: "boom from toString", s: [{ v: "x" }] });
   });
+
+  test("a query dispatched from inside a conversion that then fails never gets another query's row", async () => {
+    await container.ready;
+    await using sql = new SQL({ url: url(), max: 1, idleTimeout: 5, connectionTimeout: 5 });
+    const settled = (query: Promise<unknown>) =>
+      query.then(
+        rows => [...(rows as unknown[])],
+        e => e.code ?? e.message,
+      );
+
+    // Prepare both statements first, so each Bind is written at query time.
+    await sql`SELECT ${{ toString: () => "warm" }}::text AS outer_q`;
+    await sql`SELECT ${"warm"}::text AS nested`;
+
+    let nested!: Promise<unknown>;
+    const dispatchesThenThrows = {
+      toString() {
+        // execute() starts the query synchronously: its frames land inside the
+        // outer query's partial Bind, so the tail of the buffer is not only the
+        // outer query's and must not be discarded.
+        const query = sql`SELECT ${"nested value"}::text AS nested`;
+        query.execute();
+        nested = settled(query);
+        throw new Error("boom after dispatch");
+      },
+    };
+    const outer = await settled(sql`SELECT ${dispatchesThenThrows}::text AS outer_q`);
+    const later = sql`SELECT ${"later value"}::text AS nested`;
+    later.execute();
+    const [nestedResult, laterResult] = await Promise.all([nested, settled(later)]);
+
+    // The connection may be lost (the server rejects the mixed frame), but
+    // every query settles, and one that resolves has its own row.
+    expect(outer).toBe("boom after dispatch");
+    expect([[{ nested: "nested value" }], "ERR_POSTGRES_CONNECTION_CLOSED"]).toContainEqual(nestedResult);
+    expect([[{ nested: "later value" }], "ERR_POSTGRES_CONNECTION_CLOSED"]).toContainEqual(laterResult);
+    expect(await sql`SELECT ${"after"}::text AS v`).toEqual([{ v: "after" }]);
+  });
 });
 
 describe("postgres bind encode failure (mock server)", () => {

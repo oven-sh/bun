@@ -103,6 +103,8 @@ pub struct PostgresSQLConnection {
     ref_count: Cell<u32>,
 
     pub(crate) write_buffer: JsCell<OffsetByteList>,
+    /// Bumped when a `Writer` is handed out and when `write_buffer` is drained or freed.
+    write_epoch: Cell<u32>,
     // Private — `JsCell` aliasing invariant; only `Reader` and `on_data`
     // touch these (both in this module).
     read_buffer: JsCell<OffsetByteList>,
@@ -708,6 +710,7 @@ impl PostgresSQLConnection {
             SocketMonitor::write(&chunk[..usize::try_from(wrote).expect("int cast")]);
             self.write_buffer
                 .with_mut(|b| b.consume(u32::try_from(wrote).expect("int cast")));
+            self.bump_write_epoch();
         }
     }
 
@@ -1181,6 +1184,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
             status: Cell::new(Status::Connecting),
             ref_count: Cell::new(1),
             write_buffer: JsCell::new(OffsetByteList::default()),
+            write_epoch: Cell::new(0),
             read_buffer: JsCell::new(OffsetByteList::default()),
             last_message_start: Cell::new(0),
             requests: JsCell::new(PostgresRequest::Queue::new()),
@@ -1412,6 +1416,7 @@ impl PostgresSQLConnection {
         }
         self.unregister_auto_flusher();
         self.write_buffer.with_mut(|b| b.clear_and_free());
+        self.bump_write_epoch();
     }
 
     pub fn do_close(
@@ -1645,10 +1650,19 @@ impl protocol::WriterContext for Writer {
     fn truncate(mut self, offset: usize) {
         Writer::truncate(&mut self, offset)
     }
+    #[inline]
+    fn epoch(self) -> u32 {
+        self.connection.write_epoch.get()
+    }
 }
 
 impl PostgresSQLConnection {
+    fn bump_write_epoch(&self) {
+        self.write_epoch.set(self.write_epoch.get().wrapping_add(1));
+    }
+
     pub(crate) fn writer(&self) -> protocol::NewWriter<Writer> {
+        self.bump_write_epoch();
         protocol::NewWriter {
             wrapped: Writer {
                 connection: BackRef::new(self),

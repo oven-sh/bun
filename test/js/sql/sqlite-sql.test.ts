@@ -1,7 +1,7 @@
 import { randomUUIDv7, SQL } from "bun";
 import { Database } from "bun:sqlite";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import { isDebug, tempDir } from "harness";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { rm, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -2116,6 +2116,224 @@ describe("Connection management", () => {
     );
 
     await sql.close();
+  });
+});
+
+// A query is lazy. These tests pin when each way to start one gives the statement to the database, and when it settles.
+describe("Query start", () => {
+  // `order` is what happens after the call: a number is a promise job that was queued before the call, "database" is
+  // the statement reaching the database, and "settled" is a reaction on the promise that the start returned.
+  const starts = {
+    "execute()": { order: "database 1 settled 2 3 4 5 6", start: query => query.execute() },
+    "then()": { order: "1 database 2 3 settled 4 5 6", start: query => query.then(rows => rows) },
+    "catch()": { order: "1 database 2 3 settled 4 5 6", start: query => query.catch(e => Promise.reject(e)) },
+    "finally()": { order: "1 database 2 3 4 5 settled 6", start: query => query.finally(() => {}) },
+    "run()": { order: "1 database 2 3 4 5 settled 6", start: query => query.run() },
+    "values().then()": { order: "1 database 2 3 settled 4 5 6", start: query => query.values().then(rows => rows) },
+    "raw().then()": { order: "1 database 2 3 settled 4 5 6", start: query => query.raw().then(rows => rows) },
+    "simple().then()": { order: "1 database 2 3 settled 4 5 6", start: query => query.simple().then(rows => rows) },
+    "await": { order: "1 2 database 3 4 5 settled 6", start: query => (async () => await query)() },
+    "return from an async function": { order: "1 2 database 3 4 settled 5 6", start: query => (async () => query)() },
+    "Promise.resolve()": { order: "1 2 database 3 4 settled 5 6", start: query => Promise.resolve(query) },
+    "Promise.all()": { order: "1 2 database 3 4 5 settled 6", start: query => Promise.all([query]) },
+  };
+
+  for (const [name, { order: expected, start }] of Object.entries(starts)) {
+    test(`${name} reaches the database and settles between the same promise jobs`, async () => {
+      const sql = new SQL("sqlite://:memory:");
+      await sql`SELECT 1`;
+      const order: (string | number)[] = [];
+      const prepare = Database.prototype.prepare;
+      const spy = spyOn(Database.prototype, "prepare").mockImplementation(function (this: Database, ...args) {
+        order.push("database");
+        return prepare.apply(this, args);
+      });
+      try {
+        let jobs = Promise.resolve();
+        for (let job = 1; job <= 6; job++) jobs = jobs.then(() => void order.push(job));
+        const settled = start(sql`SELECT 1 AS x`).then(() => void order.push("settled"));
+        await jobs;
+        await settled;
+        expect(order.join(" ")).toBe(expected);
+      } finally {
+        spy.mockRestore();
+        await sql.close();
+      }
+    });
+  }
+
+  test("queries reach the database in the order they started", async () => {
+    const sql = new SQL("sqlite://:memory:");
+    try {
+      await sql`CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT, x INTEGER)`;
+      const deferred = [starts["then()"], starts["catch()"], starts["finally()"], starts["run()"]];
+      const startOrder: number[] = [];
+      const finished: Promise<unknown>[] = [];
+      // Every query that finishes starts two more, so a start lands between the hand-offs of earlier starts.
+      function startNext() {
+        if (startOrder.length === 600) return;
+        const x = startOrder.length;
+        startOrder.push(x);
+        finished.push(
+          deferred[x % 4].start(sql`INSERT INTO t (x) VALUES (${x})`).then(() => (startNext(), startNext())),
+        );
+      }
+      for (let burst = 0; burst < 5; burst++) startNext();
+      for (let i = 0; i < finished.length; i++) await finished[i];
+      expect((await sql`SELECT x FROM t ORDER BY id`.values()).flat()).toEqual(startOrder);
+    } finally {
+      await sql.close();
+    }
+  });
+
+  test("a query that is cancelled in the tick that started it does not run", async () => {
+    const sql = new SQL("sqlite://:memory:");
+    try {
+      await sql`CREATE TABLE t (x INTEGER)`;
+      const query = sql`INSERT INTO t VALUES (1)`;
+      const settled = query.then(
+        rows => ({ rows }),
+        e => ({ code: e.code }),
+      );
+      query.cancel();
+      expect({ query: await settled, rows: await sql`SELECT x FROM t` }).toEqual({
+        query: { code: "ERR_SQLITE_QUERY_CANCELLED" },
+        rows: [],
+      });
+    } finally {
+      await sql.close();
+    }
+  });
+
+  test("run() returns a promise for the rows that is not the query", async () => {
+    const sql = new SQL("sqlite://:memory:");
+    try {
+      const query = sql`SELECT 1 AS x`;
+      const running = query.run();
+      expect(running).not.toBe(query);
+      expect(running.constructor).toBe(Promise);
+      expect(await running).toEqual([{ x: 1 }]);
+    } finally {
+      await sql.close();
+    }
+  });
+
+  test("run() rejects, and does not throw, for a query that was not made by a tagged template", async () => {
+    const sql = new SQL("sqlite://:memory:");
+    try {
+      const running = sql("t").run();
+      expect(running.constructor).toBe(Promise);
+      expect(await running.catch(e => e.code)).toBe("ERR_SQLITE_NOT_TAGGED_CALL");
+    } finally {
+      await sql.close();
+    }
+  });
+
+  // run() settles one promise job earlier when the query started before the call. Each entry returns the query in an
+  // object, because a promise that resolves with the query takes the rows of the query.
+  const startedBeforeRun = {
+    "execute() started in the same tick": sql => ({ query: sql`SELECT 1 AS x`.execute() }),
+    "then() started in the same tick": sql => {
+      const query = sql`SELECT 1 AS x`;
+      query.then(rows => rows);
+      return { query };
+    },
+    "settled": async sql => {
+      const query = sql`SELECT 1 AS x`;
+      await query;
+      return { query };
+    },
+    "failed": async sql => {
+      const query = sql`SELECT * FROM missing`;
+      await query.catch(() => {});
+      return { query };
+    },
+  };
+
+  for (const [name, make] of Object.entries(startedBeforeRun)) {
+    test(`run() on a query that ${name} settles between the same promise jobs`, async () => {
+      const sql = new SQL("sqlite://:memory:");
+      try {
+        const made = make(sql);
+        const { query } = made instanceof Promise ? await made : made;
+        const order: (string | number)[] = [];
+        let jobs = Promise.resolve();
+        for (let job = 1; job <= 6; job++) jobs = jobs.then(() => void order.push(job));
+        const settled = query.run().then(
+          () => void order.push("settled"),
+          () => void order.push("settled"),
+        );
+        await jobs;
+        await settled;
+        expect(order.join(" ")).toBe("1 2 3 4 settled 5 6");
+      } finally {
+        await sql.close();
+      }
+    });
+  }
+
+  // Runs in a child process: bun:test turns an unhandled rejection into a test failure.
+  test("a query that fails is reported as unhandled only when the caller gave it no rejection handler", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const reported = [];
+          process.on("unhandledRejection", err => reported.push(err.code));
+          const starts = {
+            "then(f)": query => query.then(() => {}),
+            "then(f, g)": query => query.then(() => {}, () => {}),
+            "then()": query => query.then(),
+            "catch(g)": query => query.catch(() => {}),
+            "catch()": query => query.catch(),
+            "finally(f)": query => query.finally(() => {}),
+            "run()": query => query.run(),
+            "execute()": query => query.execute(),
+            "await": query => void (async () => await query)(),
+          };
+          const failures = {
+            "the statement fails": sql => sql\`SELECT * FROM missing\`,
+            "the pool is closed": sql => (sql.close(), sql\`SELECT 1\`),
+          };
+          const events = {};
+          for (const [failure, fail] of Object.entries(failures)) {
+            events[failure] = {};
+            for (const [name, start] of Object.entries(starts)) {
+              const sql = new Bun.SQL("sqlite://:memory:");
+              reported.length = 0;
+              start(fail(sql));
+              // Unhandled rejections are reported after the promise jobs of the turn that made them.
+              await new Promise(resolve => setImmediate(resolve));
+              events[failure][name] = [...reported];
+              await sql.close();
+            }
+          }
+          console.log(JSON.stringify(events));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const eventsFor = (code: string) => ({
+      "then(f)": [code],
+      "then(f, g)": [],
+      "then()": [code],
+      "catch(g)": [],
+      "catch()": [],
+      "finally(f)": [],
+      "run()": [code],
+      "execute()": [code],
+      "await": [code],
+    });
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      "the statement fails": eventsFor("SQLITE_ERROR"),
+      "the pool is closed": eventsFor("ERR_SQLITE_CONNECTION_CLOSED"),
+    });
+    expect(exitCode).toBe(0);
   });
 });
 

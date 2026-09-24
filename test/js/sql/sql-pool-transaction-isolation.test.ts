@@ -439,4 +439,32 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
       await new Promise<void>(r => server.close(() => r()));
     }
   });
+
+  test("a query that is cancelled in the tick that started it is never sent and holds no slot", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      await sql.unsafe("SELECT 'warm'");
+      const query = sql.unsafe("SELECT 'cancelled'");
+      const settled = query.then(
+        () => "resolved",
+        e => e.code,
+      );
+      query.cancel();
+      const cancelled = await settled;
+      // max is 1, so this query only runs when the cancelled one left the slot free.
+      await sql.unsafe("SELECT 'next'");
+      expect({ cancelled, received }).toEqual({
+        cancelled: `ERR_${adapter.toUpperCase()}_QUERY_CANCELLED`,
+        received: [
+          { conn: 0, sql: "SELECT 'warm'" },
+          { conn: 0, sql: "SELECT 'next'" },
+        ],
+      });
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
 });

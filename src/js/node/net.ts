@@ -572,7 +572,6 @@ function onClientHandshake(self, socket, success, verifyError) {
   }
 }
 // A constructor wrap gets node's _finishInit only: no hostname check, no 'secureConnect', `authorized` stays false.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1081-L1108
 function finishStandaloneWrap(self, verifyError) {
   // Unlike node, rejectUnauthorized is enforced. The error reaches '_tlsError', so 'secure' must not report it again.
   if (verifyError && self._rejectUnauthorized) {

@@ -913,8 +913,7 @@ TLSSocket.prototype._destroySSL = function _destroySSL() {
 };
 
 TLSSocket.prototype._start = function _start() {
-  // Node sends a constructor wrap's ClientHello here (the mysql driver calls it); ours went out in the constructor.
-  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1110-L1129
+  // Node sends the ClientHello of a constructor wrap here (the mysql driver calls it). Ours went out in the constructor.
 };
 
 TLSSocket.prototype._final = function _final(callback) {

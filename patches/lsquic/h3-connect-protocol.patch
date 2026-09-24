@@ -1,0 +1,72 @@
+--- a/include/lsquic.h
++++ b/include/lsquic.h
+@@ -1292,7 +1292,8 @@
+     double          es_sreset_rate;
+ 
+     /**
+-     * bun: HTTP/3 SETTINGS_ENABLE_CONNECT_PROTOCOL — currently only
++     * bun: HTTP/3 SETTINGS_ENABLE_CONNECT_PROTOCOL.  A server advertises
++     * Extended CONNECT (RFC 9220) in its SETTINGS; the value also
+      * participates in the 0-RTT early-data context.
+      */
+     int             es_h3_connect_protocol;
+--- a/src/liblsquic/lsquic_full_conn_ietf.c	2026-09-24 15:49:36
++++ b/src/liblsquic/lsquic_full_conn_ietf.c	2026-09-24 15:49:36
+@@ -3854,7 +3854,8 @@
+                 conn->ifc_settings->es_max_header_list_size, dyn_table_size,
+                 max_risked_streams, conn->ifc_flags & IFC_SERVER,
+                 conn->ifc_settings->es_datagrams
+-                    && conn->ifc_settings->es_h3_datagram /* bun */
++                    && conn->ifc_settings->es_h3_datagram /* bun */,
++                conn->ifc_settings->es_h3_connect_protocol /* bun */
+ #if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
+                 ,
+                 conn->ifc_settings->es_webtransport_server,
+--- a/src/liblsquic/lsquic_hcso_writer.c	2026-09-24 15:49:36
++++ b/src/liblsquic/lsquic_hcso_writer.c	2026-09-24 15:49:36
+@@ -122,7 +122,8 @@
+                         unsigned max_header_list_size,
+                         unsigned dyn_table_size, unsigned max_risked_streams,
+                         int is_server,
+-                        int h3_datagram /* bun */
++                        int h3_datagram /* bun */,
++                        int h3_connect_protocol /* bun */
+ #if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
+                         , int webtransport_server,
+                         unsigned max_webtransport_server_streams
+@@ -195,6 +196,23 @@
+ #define BUN_H3_DATAGRAM (0x33)
+         bits = hcso_setting_type2bits(writer, BUN_H3_DATAGRAM);
+         vint_write(p, BUN_H3_DATAGRAM, bits, 1 << bits);
++        p += 1 << bits;
++        bits = vint_val2bits(1);
++        vint_write(p, 1, bits, 1 << bits);
++        p += 1 << bits;
++    }
++
++    /* bun: write out SETTINGS_ENABLE_CONNECT_PROTOCOL=1 (RFC 8441, RFC 9220)
++     * for Extended CONNECT.  The WebTransport block below writes it itself. */
++    if (is_server && h3_connect_protocol
++#if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
++        && !(webtransport_server && max_webtransport_server_streams)
++#endif
++        )
++    {
++#define BUN_H3_ENABLE_CONNECT_PROTOCOL (0x8)
++        bits = hcso_setting_type2bits(writer, BUN_H3_ENABLE_CONNECT_PROTOCOL);
++        vint_write(p, BUN_H3_ENABLE_CONNECT_PROTOCOL, bits, 1 << bits);
+         p += 1 << bits;
+         bits = vint_val2bits(1);
+         vint_write(p, 1, bits, 1 << bits);
+--- a/src/liblsquic/lsquic_hcso_writer.h	2026-09-24 15:49:36
++++ b/src/liblsquic/lsquic_hcso_writer.h	2026-09-24 15:49:36
+@@ -24,7 +24,8 @@
+ int
+ lsquic_hcso_write_settings (struct hcso_writer *,
+                             unsigned, unsigned, unsigned, int,
+-                            int /* bun: advertise SETTINGS_H3_DATAGRAM=1 */
++                            int /* bun: advertise SETTINGS_H3_DATAGRAM=1 */,
++                            int /* bun: advertise SETTINGS_ENABLE_CONNECT_PROTOCOL=1 */
+ #if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
+                             ,int, unsigned
+ #endif

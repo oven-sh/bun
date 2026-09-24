@@ -6,6 +6,7 @@
 // clang-format off
 #include "_libusockets.h"
 #include "quic.h"
+#include "StreamWebSocketParser.h"
 
 #include <bun-uws/src/Http3App.h>
 #include <bun-uws/src/Http3Response.h>
@@ -23,6 +24,45 @@ using uWS::Http3ResponseData;
 
 static inline std::string_view sv(const char* p, size_t n) { return p ? std::string_view { p, n } : std::string_view {}; }
 
+struct H3WebSocketTransport {
+    using Response = Http3Response;
+
+    static bool isWritable(Response* r) { return r->isTunnelWritable(); }
+    static size_t bufferedAmount(Response* r) { return r->getBufferedAmount(); }
+    static size_t backpressureMemory(Response* r) { return r->getHttpResponseData()->backpressure.totalLength(); }
+    /* lsquic frames every write into DATA itself, and write_avail does not
+     * reserve the next DATA header: count at most one per write (the split
+     * path writes the header and payload separately). */
+    static size_t frameBudget(size_t frameLength, size_t payloadLength)
+    {
+        constexpr size_t MAX_DATA_FRAME_HEADER = 9;
+        return frameLength + (payloadLength >= 16 * 1024 ? 2 : 1) * MAX_DATA_FRAME_HEADER;
+    }
+    static bool canWriteWithinBackpressure(Response* r, size_t budget, size_t maxBackpressure)
+    {
+        return r->canWriteWithinBackpressure(budget, maxBackpressure);
+    }
+    static bool write(Response* r, std::string_view data) { return r->write(data); }
+    /* A QUIC write may accept part of a buffer, so a separate header and
+     * payload cannot be all-or-nothing; send() then copies the frame. */
+    static bool tryWriteFrame(Response*, std::string_view, std::string_view) { return false; }
+    static void cancel(Response* r) { r->cancel(); }
+    static void writeHeader(Response* r, std::string_view name, std::string_view value) { r->writeHeader(name, value); }
+    static uWS::Http3ContextData* contextData(Response* r)
+    {
+        return (uWS::Http3ContextData*)us_quic_socket_context_ext(us_quic_stream_context((us_quic_stream_t*)r));
+    }
+    static uWS::StreamTopicTree* topics(Response* r) { return contextData(r)->topicTree; }
+    /* The context drains its tree from the Loop pre/post handlers. */
+    static void scheduleTopicDrain(Response*) {}
+    static uWS::LoopData* loopData(Response* r)
+    {
+        return (uWS::LoopData*)us_loop_ext((us_loop_t*)us_quic_socket_context_loop(us_quic_stream_context((us_quic_stream_t*)r)));
+    }
+};
+
+using H3WebSocketParser = Bun::StreamWebSocketParser<H3WebSocketTransport>;
+
 extern "C" {
 
 // Same treatment as libuwsockets.cpp: every function below is a thin C-ABI
@@ -33,6 +73,8 @@ extern "C" {
 typedef struct uws_h3_app_s uws_h3_app_t;
 typedef struct uws_h3_res_s uws_h3_res_t;
 typedef struct uws_h3_req_s uws_h3_req_t;
+
+typedef struct uws_h3_ws_parser_s uws_h3_ws_parser_t;
 
 typedef void (*uws_h3_method_handler)(uws_h3_res_t*, uws_h3_req_t*, void*);
 typedef void (*uws_h3_listen_handler)(us_quic_listen_socket_t*, void*);
@@ -52,6 +94,88 @@ uws_h3_app_t* uws_h3_create_app(struct us_bun_socket_context_options_t options, 
 void uws_h3_app_destroy(uws_h3_app_t* app) { delete (H3App*)app; }
 void uws_h3_app_close(uws_h3_app_t* app) { ((H3App*)app)->close(); }
 void uws_h3_app_clear_routes(uws_h3_app_t* app) { ((H3App*)app)->clearRoutes(); }
+uint32_t uws_h3_app_publish(uws_h3_app_t* app, const char* topic, size_t topic_length,
+    const char* data, size_t data_length, int op_code, bool compress)
+{
+    return app ? ((H3App*)app)->publish(sv(topic, topic_length), sv(data, data_length), op_code, compress) : 2;
+}
+unsigned int uws_h3_app_num_subscribers(uws_h3_app_t* app, const char* topic, size_t topic_length)
+{
+    return app ? ((H3App*)app)->numSubscribers(sv(topic, topic_length)) : 0;
+}
+
+/* ───── RFC 9220 WebSocket ───── */
+
+uws_h3_ws_parser_t* uws_h3_ws_parser_create(uws_h3_res_t* response, size_t max_payload_length,
+    size_t max_backpressure, bool close_on_backpressure_limit, uint16_t compression,
+    const char* extension_offer, size_t extension_offer_length, void* user,
+    bool (*fragment_handler)(void*, const char*, size_t, unsigned int, int, bool),
+    void (*fail_handler)(void*, int))
+{
+    if (!response || !fragment_handler || !fail_handler) return nullptr;
+    H3WebSocketParser* parser = new H3WebSocketParser((Http3Response*)response, max_payload_length, max_backpressure,
+        close_on_backpressure_limit, user, fragment_handler, fail_handler);
+    parser->negotiateCompression(compression, sv(extension_offer, extension_offer_length));
+    if (!((Http3Response*)response)->upgradeToWebSocket()) {
+        delete parser;
+        return nullptr;
+    }
+    return (uws_h3_ws_parser_t*)parser;
+}
+
+void uws_h3_ws_parser_consume(uws_h3_ws_parser_t* parser, const char* data, size_t length)
+{
+    if (parser) ((H3WebSocketParser*)parser)->consume(data, length);
+}
+
+void uws_h3_ws_parser_destroy(uws_h3_ws_parser_t* parser)
+{
+    delete (H3WebSocketParser*)parser;
+}
+
+uint32_t uws_h3_ws_send(uws_h3_ws_parser_t* parser, const char* data, size_t length,
+    int op_code, bool compress, bool fin, size_t max_backpressure, bool* limit_exceeded)
+{
+    if (!parser || !limit_exceeded) return 2;
+    return ((H3WebSocketParser*)parser)->send(data, length, op_code, compress, fin, max_backpressure, limit_exceeded);
+}
+
+size_t uws_h3_ws_parser_memory_cost(uws_h3_ws_parser_t* parser)
+{
+    return parser ? ((H3WebSocketParser*)parser)->memoryCost() : 0;
+}
+
+bool uws_h3_ws_subscribe(uws_h3_ws_parser_t* parser, const char* topic, size_t length)
+{
+    return parser && ((H3WebSocketParser*)parser)->subscribe(sv(topic, length));
+}
+
+bool uws_h3_ws_unsubscribe(uws_h3_ws_parser_t* parser, const char* topic, size_t length)
+{
+    return parser && ((H3WebSocketParser*)parser)->unsubscribe(sv(topic, length));
+}
+
+bool uws_h3_ws_is_subscribed(uws_h3_ws_parser_t* parser, const char* topic, size_t length)
+{
+    return parser && ((H3WebSocketParser*)parser)->isSubscribed(sv(topic, length));
+}
+
+uint32_t uws_h3_ws_publish(uws_h3_ws_parser_t* parser, const char* topic, size_t topic_length,
+    const char* data, size_t data_length, int op_code, bool compress)
+{
+    return parser ? ((H3WebSocketParser*)parser)->publish(sv(topic, topic_length), sv(data, data_length), op_code, compress) : 2;
+}
+
+void uws_h3_ws_get_topics(uws_h3_ws_parser_t* parser, void (*callback)(void*, const char*, size_t), void* user)
+{
+    if (!parser || !callback) return;
+    ((H3WebSocketParser*)parser)->iterateTopics([&](std::string_view topic) { callback(user, topic.data(), topic.size()); });
+}
+
+void uws_h3_ws_unsubscribe_all(uws_h3_ws_parser_t* parser)
+{
+    if (parser) ((H3WebSocketParser*)parser)->unsubscribeAll();
+}
 
 bool uws_h3_app_add_server_name(uws_h3_app_t* app, const char* hostname,
     struct us_bun_socket_context_options_t options)
@@ -177,6 +301,21 @@ bool uws_h3_res_write(uws_h3_res_t* res, const char* data, size_t* length)
 
 bool uws_h3_res_has_responded(uws_h3_res_t* res) { return ((Http3Response*)res)->hasResponded(); }
 size_t uws_h3_res_get_buffered_amount(uws_h3_res_t* res) { return ((Http3Response*)res)->getBufferedAmount(); }
+
+bool uws_h3_res_request_body_ended(uws_h3_res_t* res) { return ((Http3Response*)res)->requestBodyEnded(); }
+bool uws_h3_res_is_websocket_connect(uws_h3_res_t* res) { return ((Http3Response*)res)->isWebSocketConnectRequest(); }
+void uws_h3_res_cancel(uws_h3_res_t* res) { ((Http3Response*)res)->cancel(); }
+void uws_h3_res_websocket_timeout(uws_h3_res_t* res, uint16_t seconds) { ((Http3Response*)res)->setWebSocketTimeout(seconds); }
+void uws_h3_res_websocket_timeout_config(uws_h3_res_t* res, uint16_t seconds, bool refresh_on_write)
+{
+    auto* response = (Http3Response*)res;
+    response->setWebSocketTimeoutRefreshOnWrite(refresh_on_write);
+    response->setWebSocketTimeout(seconds);
+}
+void uws_h3_res_websocket_timeout_refresh_on_write(uws_h3_res_t* res, bool enabled)
+{
+    ((Http3Response*)res)->setWebSocketTimeoutRefreshOnWrite(enabled);
+}
 
 void uws_h3_res_reset_timeout(uws_h3_res_t*) {}
 void uws_h3_res_timeout(uws_h3_res_t*, uint8_t) {}

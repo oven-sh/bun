@@ -153,6 +153,10 @@ export const lsquic: Dependency = {
     // and failed for a larger one. Such a block gets a heap buffer, sized from
     // the header list.
     "patches/lsquic/large-header-block.patch",
+    // SETTINGS_ENABLE_CONNECT_PROTOCOL was only written inside the
+    // WebTransport server block, which Bun does not compile. Emit it from
+    // es_h3_connect_protocol so Bun.serve can accept RFC 9220 WebSockets.
+    "patches/lsquic/h3-connect-protocol.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

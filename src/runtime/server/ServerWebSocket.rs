@@ -57,7 +57,6 @@ enum TransportKind {
     H1Plain = 0,
     H1Tls = 1,
     H2 = 2,
-    // Reserved for the future HTTP/3 WebSocket adapter.
     H3 = 3,
 }
 
@@ -153,7 +152,7 @@ impl Flags {
                 // SAFETY: same as above
                 AnyWebSocket::Tcp(ptr.cast::<uws::RawWebSocket>())
             }
-            TransportKind::H3 => unreachable!("HTTP/3 WebSockets are not wired yet"),
+            TransportKind::H3 => AnyWebSocket::H3(ptr.cast::<bun_uws_sys::h3::WebSocket>()),
         }
     }
 }
@@ -648,6 +647,7 @@ impl ServerWebSocket {
                 AnyWebSocket::Tcp(_) => TransportKind::H1Plain,
                 AnyWebSocket::Ssl(_) => TransportKind::H1Tls,
                 AnyWebSocket::H2(_) => TransportKind::H2,
+                AnyWebSocket::H3(_) => TransportKind::H3,
             });
         });
         // Live-socket accounting lives on the server (`Cell`), reached

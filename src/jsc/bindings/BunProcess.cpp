@@ -4205,10 +4205,7 @@ extern "C" int getPeakRSS(size_t* peak)
 #endif
 }
 
-// heap.size() walks every block of the heap, so `used` is the size JSC measured
-// at the end of the most recent collection instead. Nothing requests a
-// collection while Bun starts up, and until the first one nothing has been
-// freed either, so the whole heap counts as used.
+// heap.size() walks every block. Until the first collection nothing has been freed, so the whole heap counts as used.
 HeapUsage heapUsage(JSC::VM& vm)
 {
     size_t total = vm.heap.blockBytesAllocated();

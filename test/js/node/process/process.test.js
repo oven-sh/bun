@@ -2928,6 +2928,10 @@ describe.concurrent("socket.destroy() returns before the queued nextTicks and pr
         process.once("unhandledRejection", probe);
         setImmediate(() => Promise.reject(new Error("rejected")));
         break;
+      case "a nextTick that an 'unhandledRejection' listener queued, with --unhandled-rejections=none":
+        process.once("unhandledRejection", () => process.nextTick(probe));
+        setImmediate(() => Promise.reject(new Error("rejected")));
+        break;
       case "an 'uncaughtException' listener, for a throw of the entry module":
         process.once("uncaughtException", probe);
         throw new Error("thrown");
@@ -2946,19 +2950,25 @@ describe.concurrent("socket.destroy() returns before the queued nextTicks and pr
     ["an 'exit' listener", []],
     // Whether what this one queued still runs once the loop has ended is not the subject here.
     ["an 'unhandledRejection' listener", undefined],
+    [
+      "a nextTick that an 'unhandledRejection' listener queued, with --unhandled-rejections=none",
+      ["nextTick", "promise job"],
+      ["--unhandled-rejections=none"],
+    ],
     ["an 'uncaughtException' listener, for a throw of the entry module", ["nextTick", "promise job"]],
     ["the onError of a Bun.ModuleGraph, for an unhandled rejection", ["nextTick", "promise job"]],
-  ])("called from %s", async (caller, byTheEnd) => {
+  ])("called from %s", async (caller, byTheEnd, flags = []) => {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", fixture, caller],
+      cmd: [bunExe(), ...flags, "-e", fixture, caller],
       env: bunEnv,
       stdout: "pipe",
-      stderr: "inherit",
+      stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const [insideDestroy, atTheEnd] = stdout.split("\n");
     expect(insideDestroy).toBe("inside destroy(): []");
     if (byTheEnd) expect(atTheEnd).toBe("by the end: " + JSON.stringify(byTheEnd));
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 
@@ -2986,10 +2996,13 @@ describe.concurrent("socket.destroy() returns before the queued nextTicks and pr
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
-      stderr: "inherit",
+      stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout).toBe(JSON.stringify(["before close()", "after close()", "promise job"]) + "\n");
-    expect(exitCode).toBe(0);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify(["before close()", "after close()", "promise job"]) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });

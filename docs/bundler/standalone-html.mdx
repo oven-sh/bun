@@ -77,7 +77,7 @@ Open `dist/index.html` — the React app works with no server.
 
 ## Everything gets inlined
 
-Bun inlines every local asset it finds in your HTML: anything with a relative path, of any file type, is embedded into the output file.
+Bun inlines every local asset it finds in your HTML: anything with a relative path, of any file type, is embedded into the output file. [What is not inlined](#what-is-not-inlined) lists the exceptions.
 
 ### What gets inlined
 
@@ -94,6 +94,10 @@ Bun inlines every local asset it finds in your HTML: anything with a relative pa
 | `<source src="./clip.webm">`                     | `<source src="data:video/webm;base64,...">`                                 |
 | `<video poster="./thumb.jpg">`                   | `<video poster="data:image/jpeg;base64,...">`                               |
 | `<link rel="icon" href="./favicon.ico">`         | `<link rel="icon" href="data:image/x-icon;base64,...">`                     |
+| `<input type="image" src="./go.png">`            | `<input type="image" src="data:image/png;base64,...">`                      |
+| SVG `<image href="./photo.jpg">`                 | `<image href="data:image/jpeg;base64,...">`                                 |
+| `<link rel="preload" as="image" href="./a.png">` | Removed: the file is inline in the page                                     |
+| `<link rel="modulepreload" href="./app.js">`     | Removed: the script is inline in the page                                   |
 | `<link rel="manifest" href="./app.webmanifest">` | `<link rel="manifest" href="data:application/manifest+json;base64,...">`    |
 | CSS `url("./bg.png")`                            | CSS `url(data:image/png;base64,...)`                                        |
 | CSS `@import "./reset.css"`                      | Flattened into the `<style>` tag                                            |
@@ -103,6 +107,20 @@ Bun inlines every local asset it finds in your HTML: anything with a relative pa
 Images, fonts, WASM binaries, videos, audio files, SVGs: Bun base64-encodes any file referenced by a relative path into a `data:` URI and embeds it directly in the HTML. Bun detects the MIME type from the file extension.
 
 Bun leaves external URLs (like CDN links or absolute URLs) untouched.
+
+### What is not inlined
+
+Bun leaves these references as written. If one of them points at a local file, put that file next to the output:
+
+- `<iframe src>`, `<a href>`, `<object data>` and `<embed src>`
+- `<track src>` and SVG `<use href="./icons.svg#menu">`. Browsers do not load a `data:` URL from `<use>`. Copy the `<symbol>` into the page and use `<use href="#menu">`.
+- `<meta property="og:image" content>` and the other `<meta>` images. A crawler reads them, and a crawler needs an `https://` URL.
+- `<link rel="prefetch" href>`, `<link rel="preload" as="fetch">` and other hints for a URL that the browser reads later
+- `url()` in a `style="..."` attribute or a `<style>` block. Put the CSS in a `.css` file and `<link>` it.
+- `import` specifiers in an inline `<script type="module">` block. Use `<script src>`.
+- Everything inside `<noscript>`
+- URLs that JavaScript builds at runtime, such as `fetch("./data.json")` or `new Worker(new URL("./worker.js", import.meta.url))`. Import the file (`import data from "./data.json"`) so that the bundler can see it.
+- An `<input type="image">`, SVG `<image>` or icon `<link>` URL whose file is not on disk. `bun build` prints a warning for it.
 
 ## Using with React
 

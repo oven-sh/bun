@@ -1,5 +1,5 @@
-import { describe, expect } from "bun:test";
-import { isWindows } from "harness";
+import { describe, expect, test } from "bun:test";
+import { isWindows, tempDir } from "harness";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -299,6 +299,249 @@ describe("bundler", () => {
       ]);
       api.expectFile(`out/${html.match(/index-[a-z0-9]+\.js/)![0]}`).toContain("app");
     },
+  });
+
+  // Every element/attribute pair the scanner follows, and the look-alikes it does not; see URL_ELEMENTS
+  // in src/bundler/HTMLScanner.rs. One table makes both the page and the expected URLs, so they cannot drift.
+  {
+    // [element, the URL values it has in the output]. An upper-case word stands for the hashed path of that file.
+    const rows: [string, ...string[]][] = [
+      // Followed before. The rel/as/type match moved from lol-html selectors into Rust, so each spelling is here.
+      [`<link rel="icon" href="./a.png">`, "PNG"],
+      [`<link href="./a.png" rel="icon">`, "PNG"], // the attribute order does not matter
+      [`<link REL="ICON" href="./a.png">`, "PNG"], // a selector compares rel and type without case
+      [`<link rel="apple-touch-icon" href="./a.png">`, "PNG"],
+      [`<link rel="manifest" href="./a.webmanifest">`, "WEBMANIFEST"],
+      [`<link rel="preload" as="font" href="./a.woff2" crossorigin>`, "WOFF2"],
+      [`<link rel="preload" type="FONT/woff2" href="./a.woff2" crossorigin>`, "WOFF2"],
+      [`<link rel="preload" href="./a.png" as="image">`, "PNG"],
+      [`<link rel="preload" as="video" href="./a.mp4">`, "MP4"],
+      [`<link rel="preload" as="audio" href="./a.mp3">`, "MP3"],
+      [`<link rel="icon" as="image" href="./a.png">`, "PNG"], // matched two selectors before: still one rewrite
+      [`<link rel="preload" as="IMAGE" href="./not-followed.png">`, "./not-followed.png"], // `as` is compared as written
+      [`<link rel="alternate stylesheet" href="./not-followed.css">`, "./not-followed.css"],
+      [`<link rel="canonical" href="./index.html">`, "./index.html"],
+      [`<link rel="modulepreload" href="./not-followed.js">`, "./not-followed.js"],
+      [`<link href="./s.css" rel="stylesheet">`], // bundled: the element is gone
+      [`<link rel="preload" as="style" href="./t.css">`],
+      [`<link rel="preload" as="worker" href="./w.js">`],
+      [`<video poster="./a.png"></video>`, "PNG"],
+      [`<audio src="./a.mp3"></audio>`, "MP3"],
+      [`<video><source src="./a.mp4"></video>`, "MP4"],
+      // New.
+      [`<link rel="shortcut icon" href="./a.png">`, "PNG"],
+      [`<link rel="apple-touch-icon-precomposed" href="./a.png">`, "PNG"],
+      [`<link rel="apple-touch-startup-image" href="./a.png">`, "PNG"],
+      [`<link rel="mask-icon" href="./a.svg" color="#000">`, "SVG"],
+      [`<link rel="preload" as="image" href="./a.png" imagesrcset="./a.png 1x, ./b.png 2x">`, "PNG", "PNG 1x, PNG2 2x"],
+      [`<link imagesrcset="./b.png 2x" as="image" rel="preload">`, "PNG2 2x"],
+      ...[
+        "og:image",
+        "og:image:url",
+        "og:image:secure_url",
+        "og:audio",
+        "og:audio:secure_url",
+        "og:video",
+        "og:video:secure_url",
+      ].map((property): [string, string] => [`<meta property="${property}" content="./a.png">`, "PNG"]),
+      ...[
+        "twitter:image",
+        "msapplication-TileImage",
+        "msapplication-square70x70logo",
+        "msapplication-square150x150logo",
+        "msapplication-wide310x150logo",
+        "msapplication-square310x310logo",
+      ].map((name): [string, string] => [`<meta name="${name}" content="./a.png">`, "PNG"]),
+      [`<meta content="./a.png" property="og:image">`, "PNG"],
+      [`<meta name="image" property="og:image" content="./a.png">`, "PNG"],
+      [`<meta name="twitter:image" property="og:image" content="./a.png">`, "PNG"], // one rewrite
+      [`<meta name="og:image" content="./not-followed.png">`, "./not-followed.png"], // og:image is a property
+      [`<meta property="og:image:alt" content="./not-followed.png">`, "./not-followed.png"],
+      [`<meta name="description" content="./not-followed.png">`, "./not-followed.png"],
+      [`<meta name="msapplication-config" content="none">`, "none"],
+      [`<input type="image" src="./a.png">`, "PNG"],
+      [`<svg><image href="./a.png"/><image xlink:href="./a.png"/></svg>`, "PNG", "PNG"],
+      // Not followed: a page, a link to a page, and elements whose file a browser reads in a special way.
+      [`<iframe src="./page.html"></iframe>`, "./page.html"],
+      [`<object data="./a.pdf"><embed src="./a.pdf"></object>`, "./a.pdf", "./a.pdf"],
+      [`<video><track src="./a.vtt"></video>`, "./a.vtt"],
+      [`<svg><use href="./a.svg#x"/><use href="#local"/></svg>`, "./a.svg#x", "#local"],
+      [`<a href="./a.pdf">download</a>`, "./a.pdf"],
+    ];
+    const inHead = ([element]: [string, ...string[]]) => /^<(link|meta)\b/.test(element);
+
+    itBundled("html/asset-attributes", {
+      outdir: "out/",
+      files: {
+        "/index.html": `<!DOCTYPE html>
+<html>
+  <head>
+${rows
+  .filter(inHead)
+  .map(([element]) => element)
+  .join("\n")}
+  </head>
+  <body>
+${rows
+  .filter(row => !inHead(row))
+  .map(([element]) => element)
+  .join("\n")}
+  </body>
+</html>`,
+        "/a.png": "png",
+        "/b.png": "png two",
+        "/a.svg": `<svg xmlns="http://www.w3.org/2000/svg"/>`,
+        "/a.webmanifest": `{"name":"a"}`,
+        "/a.woff2": "woff2",
+        "/a.mp4": "mp4",
+        "/a.mp3": "mp3",
+        "/s.css": `.from-s { color: red }`,
+        "/t.css": `.from-t { color: blue }`,
+        "/w.js": `console.log("from w.js")`,
+      },
+      entryPoints: ["/index.html"],
+      onAfterBundle(api) {
+        const html = api.readFile("out/index.html");
+        const hashed = (stem: string, ext: string) => {
+          const name = html.match(new RegExp(`[" ]\\./(${stem}-[a-z0-9]+\\.${ext})[?#" ]`))![1];
+          api.assertFileExists(`out/${name}`);
+          return `./${name}`;
+        };
+        const paths: Record<string, string> = {
+          PNG2: hashed("b", "png"),
+          PNG: hashed("a", "png"),
+          SVG: hashed("a", "svg"),
+          WEBMANIFEST: hashed("a", "webmanifest"),
+          WOFF2: hashed("a", "woff2"),
+          MP4: hashed("a", "mp4"),
+          MP3: hashed("a", "mp3"),
+        };
+        const expected = [...rows.filter(inHead), ...rows.filter(row => !inHead(row))]
+          .flatMap(([, ...urls]) => urls)
+          .map(url => url.replace(/[A-Z0-9]+/g, word => paths[word] ?? word));
+        const urls = [...html.matchAll(/ (?:src|href|xlink:href|content|data|poster|imagesrcset)="([^"]*)"/g)].map(
+          m => m[1],
+        );
+        expect(urls.filter(url => !/^\.\/index-\w+\.(js|css)$/.test(url))).toEqual(expected);
+
+        const css = api.readFile(`out/${html.match(/index-\w+\.css/)![0]}`);
+        expect(css).toContain(".from-s");
+        expect(css).toContain(".from-t");
+        expect(api.readFile(`out/${html.match(/index-\w+\.js/)![0]}`)).toContain("from w.js");
+      },
+    });
+  }
+
+  // An optional URL names a file on disk, or it stays as written. Nothing else is tried: no package,
+  // no directory index, no long file name error. Every page here builds before the new attributes exist.
+  {
+    const longQuery = Buffer.alloc(300, "x").toString();
+    const values = [
+      "/served-elsewhere/og.png",
+      `/api/og?title=${longQuery}&logo=/logo.svg`,
+      "{{ og_image }}",
+      "logo", // a package of this name exists
+      "./dir", // a directory, with a package.json
+      "./missing.png?v=2#x",
+      "https://example.com/og.png",
+      "//example.com/og.png",
+      `data:image/svg+xml,${longQuery}`,
+      "blob:https://example.com/1234",
+      "?page=2",
+      "#og",
+    ];
+
+    itBundled("html/optional-assets-unresolved", {
+      outdir: "out/",
+      files: {
+        "/index.html": `<!DOCTYPE html>
+<html>
+  <head>
+${values.map(value => `<meta property="og:image" content="${value}">`).join("\n")}
+    <link rel="shortcut icon" href="./missing.ico">
+    <link rel="preload" as="image" imagesrcset="./missing-1x.png 1x, ./here.png 2x">
+  </head>
+  <body>
+    <input type="image" src="javascript:void(0)">
+    <svg><image href="missing.svg"/></svg>
+  </body>
+</html>`,
+        "/here.png": "here",
+        "/dir/package.json": `{"main":"./main.png"}`,
+        "/dir/main.png": "main",
+        "/node_modules/logo/package.json": `{"name":"logo","main":"./index.js"}`,
+        "/node_modules/logo/index.js": `console.log("the logo package")`,
+      },
+      entryPoints: ["/index.html"],
+      onAfterBundle(api) {
+        const html = api.readFile("out/index.html");
+        const here = html.match(/here-[a-z0-9]+\.png/)![0];
+        api.assertFileExists(`out/${here}`);
+        const urls = [...html.matchAll(/ (?:src|href|content|imagesrcset)="([^"]*)"/g)].map(m => m[1]);
+        expect(urls.filter(url => !/^\.\/index-\w+\.js$/.test(url))).toEqual([
+          ...values,
+          "./missing.ico",
+          `./missing-1x.png 1x, ./${here} 2x`,
+          "javascript:void(0)",
+          "missing.svg",
+        ]);
+        expect(api.readFile(`out/${html.match(/index-\w+\.js/)![0]}`)).not.toContain("the logo package");
+      },
+    });
+  }
+
+  // What main follows is strict: a missing file fails the build. A new attribute warns and stays as written.
+  // A record that an onResolve plugin matches and declines takes a second resolve path in the bundler.
+  test("html/asset-attributes-strict-and-optional", async () => {
+    using dir = tempDir("html-asset-attributes-tiers", {
+      "index.html": `<!DOCTYPE html><html><head>
+<link rel="icon" href="./strict-icon.png">
+<link rel="manifest" href="./strict.webmanifest">
+<link rel="preload" as="font" href="./strict.woff2">
+<link rel="shortcut icon" href="./optional-icon.png">
+<link rel="preload" as="image" imagesrcset="./optional-1x.png 1x">
+<meta property="og:image" content="./optional-og.png">
+</head><body>
+<video poster="./strict-poster.png"></video>
+<input type="image" src="./optional-input.png">
+<svg><image href="./optional-image.png"/></svg>
+</body></html>`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/index.html`],
+      outdir: `${dir}/out`,
+      throw: false,
+      plugins: [
+        {
+          name: "declines",
+          setup(build) {
+            build.onResolve({ filter: /.*/ }, () => undefined);
+          },
+        },
+      ],
+    });
+
+    const messages = (level: string) =>
+      result.logs
+        .filter(log => log.level === level)
+        .map(log => log.message)
+        .sort();
+    expect(messages("warn")).toEqual(
+      [
+        "./optional-1x.png",
+        "./optional-icon.png",
+        "./optional-image.png",
+        "./optional-input.png",
+        "./optional-og.png",
+      ].map(url => `Could not resolve: "${url}". The URL stays as written.`),
+    );
+    expect(messages("error")).toEqual(
+      ["./strict-icon.png", "./strict-poster.png", "./strict.webmanifest", "./strict.woff2"].map(
+        url => `Could not resolve: "${url}"`,
+      ),
+    );
+    expect(result.success).toBe(false);
   });
 
   // Test external assets preservation

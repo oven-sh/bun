@@ -445,16 +445,22 @@ The loader uses [`lol-html`](https://github.com/cloudflare/lol-html) to extract 
 The list of selectors is:
 
 - `audio[src]`
+- `image[href]`, `image[xlink:href]` (SVG)
 - `img[src]`
 - `img[srcset]`
+- `input[src]`
 - `link[as='font'][href], link[type^='font/'][href]`
 - `link[as='image'][href]`
 - `link[as='style'][href]`
 - `link[as='video'][href], link[as='audio'][href]`
 - `link[as='worker'][href]`
+- `link[imagesrcset]`
 - `link[rel='icon'][href], link[rel='apple-touch-icon'][href]`
+- `link[rel~='icon'][href], link[rel~='mask-icon'][href], link[rel~='apple-touch-icon-precomposed'][href], link[rel~='apple-touch-startup-image'][href]`
 - `link[rel='manifest'][href]`
 - `link[rel='stylesheet'][href]`
+- `meta[content]` with `property="og:image"`, `og:image:url`, `og:image:secure_url`, `og:audio`, `og:audio:secure_url`, `og:video` or `og:video:secure_url`
+- `meta[content]` with `name="twitter:image"`, `msapplication-TileImage`, `msapplication-square70x70logo`, `msapplication-square150x150logo`, `msapplication-wide310x150logo` or `msapplication-square310x310logo`
 - `script[src]`
 - `source[src]`
 - `source[srcset]`

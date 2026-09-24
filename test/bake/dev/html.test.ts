@@ -126,6 +126,36 @@ devTest("srcset candidates and #fragments on asset URLs", {
     await dev.fetch(logo).expect.toBe("C SHARP");
   },
 });
+devTest("imagesrcset, svg <image href>, optional assets that are not on disk", {
+  files: {
+    "index.html": `
+      <!DOCTYPE html><html><head>
+      <meta property="og:image" content="/served-elsewhere/og.png">
+      <meta name="twitter:image" content="./a.png">
+      <link rel="preload" as="image" imagesrcset="./a.png 1x, ./b.png 2x">
+      </head><body>
+      <svg><image href="./sprite.svg"/></svg>
+      <input type="image" src="./missing.png">
+      </body></html>
+    `,
+    "a.png": "A",
+    "b.png": "B",
+    "sprite.svg": `<svg xmlns="http://www.w3.org/2000/svg"><symbol id="icon"/></svg>`,
+  },
+  async test(dev) {
+    const html = await dev.fetch("/").text();
+    const [, a, b] = html.match(
+      /imagesrcset="(\/_bun\/asset\/[0-9a-f]+\.png) 1x, (\/_bun\/asset\/[0-9a-f]+\.png) 2x"/,
+    )!;
+    await dev.fetch(a).expect.toBe("A");
+    await dev.fetch(b).expect.toBe("B");
+    expect(html).toInclude(`<meta name="twitter:image" content="${a}">`);
+    const [, sprite] = html.match(/<image href="(\/_bun\/asset\/[0-9a-f]+\.svg)"/)!;
+    await dev.fetch(sprite).expect.toInclude(`<symbol id="icon"/>`);
+    expect(html).toInclude(`content="/served-elsewhere/og.png"`);
+    expect(html).toInclude(`<input type="image" src="./missing.png">`);
+  },
+});
 devTest("image import in JS", {
   files: {
     "index.html": `

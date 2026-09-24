@@ -112,7 +112,11 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
         ));
     }
 
-    fn on_url(&mut self, url: &[u8], _kind: ImportKind) -> UrlAction<'_> {
+    fn is_standalone_html(&self) -> bool {
+        self.compile_to_standalone_html
+    }
+
+    fn on_url(&mut self, url: &[u8], _kind: ImportKind, optional: bool) -> UrlAction<'_> {
         if self.current_import_record_index as usize >= self.import_records.len() {
             bun_core::Output::panic(format_args!(
                 "Assertion failure in HTMLLoader.onTag: current_import_record_index ({}) >= import_records.len ({})",
@@ -162,6 +166,11 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
                 "Leaving external import: {}",
                 BStr::new(import_record.path.text)
             );
+            return UrlAction::Keep;
+        }
+
+        // An onLoad plugin can make a module of an image (`.svg` as a component): an optional URL keeps its element.
+        if optional && (loader.is_javascript_like() || loader.is_css()) {
             return UrlAction::Keep;
         }
 
@@ -417,6 +426,11 @@ fn generate_compile_result_for_html_chunk_impl<'a>(
 
     HTMLProcessor::<HTMLLoader, true>::run(&mut html_loader, contents)
         .unwrap_or_else(|_| panic!("unexpected error from HTMLProcessor.run"));
+    debug_assert_eq!(
+        html_loader.current_import_record_index as usize,
+        records.len(),
+        "the scan pass made an import record for a URL that the rewrite pass did not visit"
+    );
 
     // There are some cases where invalid HTML will make it so </head> is
     // never emitted, even if the literal text DOES appear. These cases are

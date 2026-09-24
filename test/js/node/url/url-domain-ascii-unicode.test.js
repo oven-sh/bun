@@ -104,6 +104,7 @@ describe("url.domainToUnicode", () => {
 // hasValidPunycodeHost still rejects these hosts, so domainToUnicode returns "" where Node v26.10.0 returns the value
 // in the tables below. The list goes away with that check (whatwg/url#914).
 const knownRejectDeviations = new Set([
+  "xn--xn--zca-hia.xn--mgbh0fb",
   "xn--nxa.xn--",
   "xn--nxa.xn--abc-",
   "xn--nxa-",
@@ -115,8 +116,6 @@ const knownRejectDeviations = new Set([
   "xn--nxa.xn--%41.xn--nxa",
   "xn--nxa_.xn--nxa",
 ]);
-// A right-to-left label sends the host to ICU's check, which rejects a decoded "xn--" prefix from ICU 76 on.
-if (parseInt(process.versions.icu) >= 76) knownRejectDeviations.add("xn--xn--zca-hia.xn--mgbh0fb");
 
 // Node keeps a label that fails UTS #46 as it is (ada::idna::to_unicode). ICU appends U+FFFD to it. Values are from
 // Node v26.10.0. The ASCII fast path of hasValidPunycodeHost lacks the rule these labels break, so they get here.
@@ -147,46 +146,43 @@ describe("url.domainToUnicode with many xn-- labels", () => {
   });
 
   // Expected values are from Node v26.10.0.
-  test("matches Node", () => {
-    const cases = [
-      ["xn--nxa.xn--nxa.xn--nxa.com", "β.β.β.com"],
-      ["xn--nxa..xn--nxa", "β..β"],
-      ["xn--nxa.", "β."],
-      [".xn--nxa", ".β"],
-      ["xn--nxa.xn--", "β.xn--"],
-      ["xn--nxa.xn--abc-", "β.xn--abc-"],
-      ["xn--nxa-", "xn--nxa-"],
-      ["xn--nxa.ab--cd", "β.ab--cd"],
-      ["xn--nxa.-ab.ab-", "β.-ab.ab-"],
-      ["XN--NXA.Com", "β.com"],
-      ["xn--zca.xn--zca", "ß.ß"],
-      ["xn--mgbh0fb.xn--nxa", "مثال.β"],
-      ["xn--4dbklr2c8d.xn--4dbrk0ce.museum", "איקו״ם.ישראל.museum"],
-      ["xn--mgba3a4fra.xn--fiqs8s.xn--h2brj9c", "ايران.中国.भारत"],
-      ["xn--ls8h.xn--nxa", "💩.β"],
-      ["xn--1ug.xn--nxa", "xn--1ug.β"],
-      ["xn--nxa.xn--1ug", "β.xn--1ug"],
-      ["xn--9ca.xn--nxa", "é.β"],
-      ["xn--n3h.xn--nxa", "☃.β"],
-      ["xn--a.b", "xn--a.b"],
-      [
-        "xn--nxa." + "xn--80aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "β." + Buffer.alloc(120, "а").toString(),
-      ],
-      ["xn--nxa.xn--nxa.1.2.3.4", ""],
-      ["xn--nxa.0x7f.1", ""],
-      ["[::1]", "[::1]"],
-      ["ß.β.xn--nxa", "ß.β.β"],
-      ["xn--nxa.xn--abc.xn--nxa", "β.xn--abc.β"],
-      ["xn--nxa.xn--fffd.xn--nxa", "β.xn--fffd.β"],
-      ["xn--nxa.xn--\u0000.xn--nxa", ""],
-      ["xn--nxa.xn--%41.xn--nxa", "β.xn--a.β"],
-      ["xn--nxa_.xn--nxa", "xn--nxa_.β"],
-      ["xn--nxa.xn--nxa/path", "β.β"],
-      ["xn--nxa.xn--nxa?query", "β.β"],
-    ];
-    expect(cases.map(([input]) => [input, url.domainToUnicode(input)])).toEqual(
-      cases.map(([input, expected]) => [input, knownRejectDeviations.has(input) ? "" : expected]),
-    );
+  test.each([
+    ["xn--nxa.xn--nxa.xn--nxa.com", "β.β.β.com"],
+    ["xn--nxa..xn--nxa", "β..β"],
+    ["xn--nxa.", "β."],
+    [".xn--nxa", ".β"],
+    ["xn--nxa.xn--", "β.xn--"],
+    ["xn--nxa.xn--abc-", "β.xn--abc-"],
+    ["xn--nxa-", "xn--nxa-"],
+    ["xn--nxa.ab--cd", "β.ab--cd"],
+    ["xn--nxa.-ab.ab-", "β.-ab.ab-"],
+    ["XN--NXA.Com", "β.com"],
+    ["xn--zca.xn--zca", "ß.ß"],
+    ["xn--mgbh0fb.xn--nxa", "مثال.β"],
+    ["xn--4dbklr2c8d.xn--4dbrk0ce.museum", "איקו״ם.ישראל.museum"],
+    ["xn--mgba3a4fra.xn--fiqs8s.xn--h2brj9c", "ايران.中国.भारत"],
+    ["xn--ls8h.xn--nxa", "💩.β"],
+    ["xn--1ug.xn--nxa", "xn--1ug.β"],
+    ["xn--nxa.xn--1ug", "β.xn--1ug"],
+    ["xn--9ca.xn--nxa", "é.β"],
+    ["xn--n3h.xn--nxa", "☃.β"],
+    ["xn--a.b", "xn--a.b"],
+    [
+      "xn--nxa." + "xn--80aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "β." + Buffer.alloc(120, "а").toString(),
+    ],
+    ["xn--nxa.xn--nxa.1.2.3.4", ""],
+    ["xn--nxa.0x7f.1", ""],
+    ["[::1]", "[::1]"],
+    ["ß.β.xn--nxa", "ß.β.β"],
+    ["xn--nxa.xn--abc.xn--nxa", "β.xn--abc.β"],
+    ["xn--nxa.xn--fffd.xn--nxa", "β.xn--fffd.β"],
+    ["xn--nxa.xn--\u0000.xn--nxa", ""],
+    ["xn--nxa.xn--%41.xn--nxa", "β.xn--a.β"],
+    ["xn--nxa_.xn--nxa", "xn--nxa_.β"],
+    ["xn--nxa.xn--nxa/path", "β.β"],
+    ["xn--nxa.xn--nxa?query", "β.β"],
+  ])("matches Node: %j", (input, expected) => {
+    expect(url.domainToUnicode(input)).toBe(knownRejectDeviations.has(input) ? "" : expected);
   });
 });

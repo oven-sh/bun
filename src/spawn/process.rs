@@ -192,6 +192,12 @@ impl ProcessHandle {
         self.process_mut().on_exit(status, rusage)
     }
 
+    /// See [`Process::on_watch_failed`]; runs the exit handler (same rule as
+    /// [`watch_or_reap`](Self::watch_or_reap)).
+    pub fn on_watch_failed(&self, err: bun_sys::Error) {
+        self.process_mut().on_watch_failed(err)
+    }
+
     pub fn kill(&self, signal: u8) -> Maybe<()> {
         self.process_mut().kill(signal)
     }
@@ -405,14 +411,27 @@ impl Process {
         self.on_exit(status, &rusage_result);
     }
 
+    /// `Ok(true)`: the exit handler already ran. `Err`: it never will, see
+    /// [`watch`](Self::watch) and [`on_watch_failed`](Self::on_watch_failed).
     pub fn watch_or_reap(&mut self) -> bun_sys::Result<bool> {
+        self.watch_or_reap_impl::<true>()
+    }
+
+    /// [`watch_or_reap`](Self::watch_or_reap) for a caller that blocks in
+    /// `wait(true)` on `Err` (spawnSync): a child whose exit watch cannot be
+    /// registered is left running.
+    pub fn watch_or_reap_leave_running(&mut self) -> bun_sys::Result<bool> {
+        self.watch_or_reap_impl::<false>()
+    }
+
+    fn watch_or_reap_impl<const KILL_UNWATCHABLE: bool>(&mut self) -> bun_sys::Result<bool> {
         if self.has_exited() {
             let zeroed = rusage_zeroed();
             self.on_exit(self.status.clone(), &zeroed);
             return Ok(true);
         }
 
-        match self.watch() {
+        match self.watch_impl::<KILL_UNWATCHABLE>() {
             Err(err) => {
                 #[cfg(unix)]
                 if err.get_errno() == bun_sys::E::ESRCH {
@@ -425,20 +444,45 @@ impl Process {
         }
     }
 
-    /// Monitor the child via the shared waiter thread (a per-pid `wait4` loop).
-    #[cfg(unix)]
-    fn watch_with_waiter_thread(&mut self, ctx: bun_io::EventLoopCtx) {
-        if !matches!(self.poller, Poller::WaiterThread(_)) {
-            self.poller = Poller::WaiterThread(KeepAlive::default());
-        }
-        if let Poller::WaiterThread(w) = &mut self.poller {
-            w.ref_(ctx);
-        }
-        self.ref_();
-        WaiterThread::append(self);
+    /// The owner's `watch_or_reap()` returned `Err`, so no exit will be
+    /// reported for this process: run the exit handler with that error.
+    pub fn on_watch_failed(&mut self, err: bun_sys::Error) {
+        self.on_exit(Status::Err(err), &rusage_zeroed());
     }
 
+    /// The exit watch of a running child cannot be registered (`ENOMEM`, or
+    /// `ENOSPC` at `fs.epoll.max_user_watches`), so nothing would report its
+    /// exit: kill and reap it. Returns `ESRCH` for a child that was reaped
+    /// before the watch was tried, `err` otherwise.
+    ///
+    /// Linux only: on XNU a pty session leader is not reapable until this
+    /// thread drains the pty master, so the blocking `wait4` could deadlock.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cold]
+    #[inline(never)]
+    fn kill_and_reap_unwatchable(&mut self, err: bun_sys::Error) -> bun_sys::Error {
+        let already_reaped = self.has_exited();
+        if !already_reaped {
+            let _ = self.kill(libc::SIGKILL as u8);
+            let reaped = posix_spawn::wait4(self.pid, 0, None);
+            self.status =
+                Status::from(self.pid, &reaped).unwrap_or_else(|| Status::Err(err.clone()));
+        }
+        self.close();
+        if already_reaped {
+            return bun_sys::Error::from_code(bun_sys::E::ESRCH, err.syscall);
+        }
+        err
+    }
+
+    /// On Linux an `Err` other than `ESRCH` means the child has been killed
+    /// and reaped (`kill_and_reap_unwatchable`): it never describes a live
+    /// child. With kqueue the child can still be running.
     pub fn watch(&mut self) -> bun_sys::Result<()> {
+        self.watch_impl::<true>()
+    }
+
+    fn watch_impl<const KILL_UNWATCHABLE: bool>(&mut self) -> bun_sys::Result<()> {
         #[cfg(windows)]
         {
             if let Poller::Uv(p) = &mut self.poller {
@@ -451,7 +495,12 @@ impl Process {
         {
             let ctx = self.event_loop_ctx();
             if WaiterThread::should_use_waiter_thread() {
-                self.watch_with_waiter_thread(ctx);
+                self.poller = Poller::WaiterThread(KeepAlive::default());
+                if let Poller::WaiterThread(w) = &mut self.poller {
+                    w.ref_(ctx);
+                }
+                self.ref_();
+                WaiterThread::append(self);
                 return Ok(());
             }
 
@@ -501,18 +550,11 @@ impl Process {
                 Err(err) => {
                     // SAFETY: poll is live; borrow scoped to the call.
                     unsafe { (*poll).disable_keeping_process_alive(ctx) };
-                    // ESRCH: already gone; callers reap via `wait()`.
-                    if err.get_errno() == bun_sys::E::ESRCH {
-                        return Err(err);
+                    #[cfg(any(target_os = "linux", target_os = "android"))]
+                    if KILL_UNWATCHABLE && err.get_errno() != bun_sys::E::ESRCH {
+                        return Err(self.kill_and_reap_unwatchable(err));
                     }
-                    // Unwatchable but still running (ENOMEM/ENOSPC): fall
-                    // back to the waiter thread, like `pifd_from_pid` does.
-                    if let Some(poll) = self.poller.fd_poll_mut() {
-                        poll.deinit();
-                    }
-                    self.poller = Poller::Detached;
-                    self.watch_with_waiter_thread(ctx);
-                    Ok(())
+                    Err(err)
                 }
             }
         }
@@ -522,37 +564,40 @@ impl Process {
     pub(crate) fn rewatch_posix(&mut self) -> bun_sys::Result<()> {
         let ctx = self.event_loop_ctx();
         if WaiterThread::should_use_waiter_thread() {
-            self.watch_with_waiter_thread(ctx);
+            if !matches!(self.poller, Poller::WaiterThread(_)) {
+                self.poller = Poller::WaiterThread(KeepAlive::default());
+            }
+            if let Poller::WaiterThread(w) = &mut self.poller {
+                w.ref_(ctx);
+            }
+            self.ref_();
+            WaiterThread::append(self);
             return Ok(());
         }
 
-        let Some(fd) = self.poller.fd_poll_mut() else {
+        if let Some(fd) = self.poller.fd_poll_mut() {
+            // SAFETY: `platform_event_loop` returns the live uws loop; borrow
+            // scoped to the `register` call.
+            let maybe = fd.register(
+                unsafe { &mut *self.event_loop.platform_event_loop() },
+                bun_io::PollKind::Process,
+                PROCESS_POLL_ONE_SHOT,
+            );
+            if maybe.is_ok() {
+                self.ref_();
+            }
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            if let Err(err) = maybe {
+                if err.get_errno() == bun_sys::E::ESRCH {
+                    return Err(err);
+                }
+                return Err(self.kill_and_reap_unwatchable(err));
+            }
+            maybe
+        } else {
             panic!(
                 "Internal Bun error: poll_ref in Subprocess is null unexpectedly. Please file a bug report."
             );
-        };
-        // SAFETY: `platform_event_loop` returns the live uws loop; borrow
-        // scoped to the `register` call.
-        let maybe = fd.register(
-            unsafe { &mut *self.event_loop.platform_event_loop() },
-            bun_io::PollKind::Process,
-            PROCESS_POLL_ONE_SHOT,
-        );
-        match maybe {
-            Ok(()) => {
-                self.ref_();
-                Ok(())
-            }
-            // The process is already gone; `on_wait_pid` handles ESRCH.
-            Err(err) if err.get_errno() == bun_sys::E::ESRCH => Err(err),
-            Err(_) => {
-                // See the matching fallback in `watch()`.
-                fd.disable_keeping_process_alive(ctx);
-                fd.deinit();
-                self.poller = Poller::Detached;
-                self.watch_with_waiter_thread(ctx);
-                Ok(())
-            }
         }
     }
 
@@ -1361,8 +1406,10 @@ pub mod waiter_thread_posix {
         }
 
         pub(crate) fn reload_handlers() {
-            // No `waiter_thread_flag` gate: `watch_with_waiter_thread` also
-            // runs this thread without the flag and needs SIGCHLD installed.
+            if !bun_spawn_sys::waiter_thread_flag::get() {
+                return;
+            }
+
             #[cfg(any(target_os = "linux", target_os = "android"))]
             {
                 // SAFETY: sigaction with a valid handler.
@@ -1383,6 +1430,8 @@ pub mod waiter_thread_posix {
     }
 
     pub(crate) fn init() -> Result<(), std::io::Error> {
+        debug_assert!(bun_spawn_sys::waiter_thread_flag::get());
+
         if instance_ref().started.fetch_max(1, Ordering::Relaxed) > 0 {
             return Ok(());
         }

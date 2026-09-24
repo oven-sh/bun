@@ -83,8 +83,7 @@ pub(crate) fn url_suffix(url: &[u8]) -> &[u8] {
     }
 }
 
-/// The character reference at the start of `text` and its length. A number
-/// that names no character, or a control character, reads as U+FFFD.
+/// The character reference at the start of `text` and its length. A number that names no character, or a control character, reads as U+FFFD.
 fn char_ref(text: &[u8]) -> Option<(char, usize)> {
     const NAMED: [(&[u8], char); 5] = [
         (b"&amp;", '&'),
@@ -140,10 +139,7 @@ fn decode_char_refs(value: &[u8]) -> Cow<'_, [u8]> {
     }
 }
 
-/// The file name that a URL path spells. `None` keeps the path as written: a
-/// malformed escape (`%PUBLIC_URL%`), bytes that are not UTF-8 (`%E9`), a name
-/// that reads as a scheme (`data%3Ax`), or a byte that the output URL, which
-/// is the raw file name, cannot carry as itself.
+/// The file name that a URL path spells, or `None` to keep the path as written: a malformed escape, bytes that are not UTF-8, a decoded scheme (`data%3Ax`), or a byte that the output URL, which is the raw file name, cannot carry as itself.
 fn percent_decode(path: &[u8], in_srcset: bool) -> Option<Vec<u8>> {
     let mut escape = strings::index_of_char_usize(path, b'%')?;
     let mut decoded = Vec::with_capacity(path.len());

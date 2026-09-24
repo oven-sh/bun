@@ -896,6 +896,284 @@ describe("integer arguments whose JSValue is a double", () => {
   });
 });
 
+// Node decodes each of these arguments with getArrayBufferOrView(buffer, name, encoding) or toBuf(val, encoding)
+// (lib/internal/crypto/util.js): "buffer" means utf8, then Buffer.from(string, encoding) decodes the string.
+describe("string arguments are decoded like Buffer.from(string, encoding)", () => {
+  // With this key and IV the 4-byte tag of "plaintext" is the ASCII text "yquh", so it has a utf8 form.
+  const gcmKey = Buffer.alloc(16, "k");
+  const gcmIv = Buffer.from("00000000000000000000009e", "hex");
+  const gcmOptions = { authTagLength: 4 };
+  // 2^127 - 1. The constructor checks it in milliseconds. A modp group takes most of a second in a debug build.
+  const prime127 = Buffer.concat([Buffer.from([0x7f]), Buffer.alloc(15, 0xff)]);
+  // A compressed P-256 point that is also ASCII text: 0x02, then the X coordinate 0x3030...30.
+  const asciiPoint = "\x02" + Buffer.alloc(32, "0").toString();
+
+  // The first test that needs them creates them, so a filtered run does not pay for the keys.
+  let shared;
+  const fixtures = () =>
+    (shared ??= (() => {
+      const { privateKey, publicKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 1024 });
+      const gcmCipher = crypto.createCipheriv("aes-128-gcm", gcmKey, gcmIv, gcmOptions);
+      return {
+        privateKey,
+        publicKey,
+        publicPem: publicKey.export({ type: "spki", format: "pem" }),
+        privatePem: privateKey.export({ type: "pkcs8", format: "pem" }),
+        encryptedPem: privateKey.export({ type: "pkcs8", format: "pem", cipher: "aes-128-cbc", passphrase: "pass" }),
+        signatureHex: crypto.createSign("sha256").update("x").sign(privateKey, "hex"),
+        gcmCiphertext: Buffer.concat([gcmCipher.update("plaintext"), gcmCipher.final()]),
+        // 2^521 - 1. OpenSSL computes a secret only for a modulus of 512 bits or more.
+        dhWithPrivateKey: crypto
+          .createDiffieHellman(Buffer.concat([Buffer.from([0x01]), Buffer.alloc(65, 0xff)]), 2)
+          .setPrivateKey(Buffer.from([3])),
+      };
+    })());
+
+  const hexOf = text => Buffer.from(text).toString("hex");
+  const resolve = value => (typeof value === "function" ? value() : value);
+
+  // `call(input, encoding)` returns a value that shows the bytes `input` decodes to.
+  // `text` is an input for utf8 and `hex` is an even-length input for "hex".
+  const cases = [
+    {
+      name: "createSecretKey(key, encoding)",
+      text: "abc\u00e9",
+      hex: "abcd",
+      call: (key, encoding) => crypto.createSecretKey(key, encoding).export().toString("hex"),
+    },
+    {
+      name: "createHmac(algorithm, key, { encoding })",
+      // Node validates options.encoding with getStringOption(), so only a string reaches the decoder.
+      stringEncodingOnly: true,
+      text: "abc\u00e9",
+      hex: "abcd",
+      call: (key, encoding) => crypto.createHmac("sha256", key, { encoding }).digest("hex"),
+    },
+    {
+      name: "createCipheriv(algorithm, key, iv, { encoding })",
+      stringEncodingOnly: true,
+      text: "kkkkkkkkkkkkkkkk",
+      hex: hexOf("kkkkkkkkkkkkkkkk"),
+      call: (key, encoding) => crypto.createCipheriv("aes-128-cbc", key, Buffer.alloc(16), { encoding }).final("hex"),
+    },
+    {
+      name: "publicEncrypt({ key, encoding }, buffer)",
+      text: "abc\u00e9",
+      hex: "abcd",
+      call: (buffer, encoding) => {
+        const { privateKey, publicKey } = fixtures();
+        return crypto
+          .privateDecrypt(privateKey, crypto.publicEncrypt({ key: publicKey, encoding }, buffer))
+          .toString("hex");
+      },
+    },
+    {
+      name: "createPublicKey({ key, encoding })",
+      text: () => fixtures().publicPem,
+      hex: () => hexOf(fixtures().publicPem),
+      call: (key, encoding) => crypto.createPublicKey({ key, encoding }).export({ type: "spki", format: "pem" }),
+    },
+    {
+      name: "createPrivateKey({ key, encoding })",
+      text: () => fixtures().privatePem,
+      hex: () => hexOf(fixtures().privatePem),
+      call: (key, encoding) => crypto.createPrivateKey({ key, encoding }).export({ type: "pkcs8", format: "pem" }),
+    },
+    {
+      name: "createPrivateKey({ key, passphrase, encoding })",
+      text: "pass",
+      hex: hexOf("pass"),
+      // The key is a Buffer here, so the encoding only applies to the passphrase.
+      call: (passphrase, encoding) =>
+        crypto
+          .createPrivateKey({ key: Buffer.from(fixtures().encryptedPem), passphrase, encoding })
+          .export({ type: "pkcs8", format: "pem" }),
+    },
+    {
+      name: "sign.sign({ key, encoding })",
+      text: () => fixtures().privatePem,
+      hex: () => hexOf(fixtures().privatePem),
+      call: (key, encoding) => crypto.createSign("sha256").update("x").sign({ key, encoding }, "hex"),
+    },
+    {
+      name: "verify.verify({ key, encoding }, signature)",
+      text: () => fixtures().publicPem,
+      hex: () => hexOf(fixtures().publicPem),
+      call: (key, encoding) =>
+        crypto
+          .createVerify("sha256")
+          .update("x")
+          .verify({ key, encoding }, Buffer.from(fixtures().signatureHex, "hex")),
+    },
+    {
+      name: "verify.verify(key, signature, signatureEncoding)",
+      // No signature is utf8 text. `text` only shows that verify() decodes it and returns false.
+      text: "abcd",
+      hex: () => fixtures().signatureHex,
+      call: (signature, encoding) =>
+        crypto.createVerify("sha256").update("x").verify(fixtures().publicKey, signature, encoding),
+    },
+    {
+      name: "decipher.setAuthTag(tag, encoding)",
+      text: "yquh",
+      hex: hexOf("yquh"),
+      call: (tag, encoding) => {
+        const decipher = crypto.createDecipheriv("aes-128-gcm", gcmKey, gcmIv, gcmOptions).setAuthTag(tag, encoding);
+        return Buffer.concat([decipher.update(fixtures().gcmCiphertext), decipher.final()]).toString();
+      },
+    },
+    {
+      name: "cipher.setAAD(aad, { encoding })",
+      stringEncodingOnly: true,
+      text: "abc\u00e9",
+      hex: "abcd",
+      call: (aad, encoding) => {
+        const cipher = crypto.createCipheriv("aes-128-gcm", gcmKey, gcmIv).setAAD(aad, { encoding });
+        cipher.final();
+        return cipher.getAuthTag().toString("hex");
+      },
+    },
+    {
+      name: "createDiffieHellman(prime, primeEncoding, generator, generatorEncoding)",
+      text: "02",
+      hex: "05",
+      call: (generator, encoding) =>
+        crypto.createDiffieHellman(prime127.toString("hex"), "hex", generator, encoding).getGenerator("hex"),
+    },
+    {
+      name: "dh.setPublicKey(key, encoding)",
+      text: "abc\u00e9",
+      hex: "abcd",
+      call: (key, encoding) => crypto.createDiffieHellman(prime127, 2).setPublicKey(key, encoding).getPublicKey("hex"),
+    },
+    {
+      name: "dh.setPrivateKey(key, encoding)",
+      text: "abc\u00e9",
+      hex: "abcd",
+      call: (key, encoding) =>
+        crypto.createDiffieHellman(prime127, 2).setPrivateKey(key, encoding).getPrivateKey("hex"),
+    },
+    {
+      name: "dh.computeSecret(key, inputEncoding)",
+      text: "abc\u00e9",
+      hex: "abcd",
+      call: (key, encoding) => fixtures().dhWithPrivateKey.computeSecret(key, encoding).toString("hex"),
+    },
+    {
+      name: "ecdh.setPrivateKey(key, encoding)",
+      text: "abc\u00e9",
+      hex: "abcd",
+      call: (key, encoding) => crypto.createECDH("prime256v1").setPrivateKey(key, encoding).getPrivateKey("hex"),
+    },
+    {
+      name: "ecdh.setPublicKey(key, encoding)",
+      text: asciiPoint,
+      hex: hexOf(asciiPoint),
+      call: (key, encoding) => crypto.createECDH("prime256v1").setPublicKey(key, encoding).getPublicKey("hex"),
+    },
+    {
+      name: "ecdh.computeSecret(key, inputEncoding)",
+      text: asciiPoint,
+      hex: hexOf(asciiPoint),
+      call: (key, encoding) =>
+        crypto
+          .createECDH("prime256v1")
+          .setPrivateKey(Buffer.from([3]))
+          .computeSecret(key, encoding)
+          .toString("hex"),
+    },
+    {
+      name: "ECDH.convertKey(key, curve, inputEncoding)",
+      text: asciiPoint,
+      hex: hexOf(asciiPoint),
+      call: (key, encoding) => crypto.ECDH.convertKey(key, "prime256v1", encoding, "hex", "uncompressed"),
+    },
+  ];
+
+  function outcome(fn) {
+    try {
+      return { value: fn() };
+    } catch (e) {
+      return { code: e.code, message: e.message };
+    }
+  }
+
+  describe.each(cases)("$name", ({ call, text, hex, stringEncodingOnly }) => {
+    // Node only maps the exact name "buffer" to utf8.
+    it.each(["bogus", "BUFFER"])("throws ERR_UNKNOWN_ENCODING for the encoding %p", encoding => {
+      expect(outcome(() => call(resolve(text), encoding))).toEqual({
+        code: "ERR_UNKNOWN_ENCODING",
+        message: `Unknown encoding: ${encoding}`,
+      });
+    });
+
+    it.each(["buffer", "", ...(stringEncodingOnly ? [] : [123, true, {}, Symbol("hex")])])(
+      "uses utf8 for the encoding %p",
+      encoding => {
+        const expected = outcome(() => call(Buffer.from(resolve(text), "utf8")));
+        expect(expected).toEqual({ value: expect.anything() });
+        expect(outcome(() => call(resolve(text), encoding))).toEqual(expected);
+      },
+    );
+
+    it("drops the last digit of an odd-length hex string", () => {
+      const expected = outcome(() => call(Buffer.from(resolve(hex), "hex")));
+      expect(expected).toEqual({ value: expect.anything() });
+      expect(outcome(() => call(resolve(hex) + "0", "hex"))).toEqual(expected);
+    });
+  });
+
+  it("publicEncrypt decodes options.oaepLabel with options.encoding", () => {
+    const { privateKey, publicKey } = fixtures();
+    const encrypt = (oaepLabel, encoding) =>
+      crypto.publicEncrypt({ key: publicKey, oaepLabel, encoding }, Buffer.from("data"));
+    const decrypt = (encrypted, oaepLabel) => crypto.privateDecrypt({ key: privateKey, oaepLabel }, encrypted);
+
+    expect(outcome(() => encrypt("abcd", "bogus"))).toEqual({
+      code: "ERR_UNKNOWN_ENCODING",
+      message: "Unknown encoding: bogus",
+    });
+    expect(decrypt(encrypt("abcd", "hex"), Buffer.from("abcd", "hex")).toString()).toBe("data");
+    expect(decrypt(encrypt("abc\u00e9", "buffer"), Buffer.from("abc\u00e9")).toString()).toBe("data");
+  });
+
+  // cipher.update() does not call getArrayBufferOrView() in Node. It decodes natively with
+  // ParseEncoding(encoding, UTF8) (Decode() in src/crypto/crypto_util.h): an unknown name is utf8.
+  it.each(["bogus", "BUFFER", "buffer", "", 123, true, {}, Symbol("hex")])(
+    "cipher.update() uses utf8 for the input encoding %p",
+    encoding => {
+      const update = (data, inputEncoding) =>
+        crypto.createCipheriv("aes-128-ctr", gcmKey, Buffer.alloc(16)).update(data, inputEncoding).toString("hex");
+      expect(update("abc\u00e9", encoding)).toBe(update(Buffer.from("abc\u00e9", "utf8")));
+    },
+  );
+
+  // validateEncoding() in lib/internal/validators.js. Node calls it from the update() methods only.
+  it.each([
+    ["cipher", () => crypto.createCipheriv("aes-128-gcm", gcmKey, gcmIv)],
+    ["decipher", () => crypto.createDecipheriv("aes-128-gcm", gcmKey, gcmIv)],
+    ["hash", () => crypto.createHash("sha256")],
+    ["hmac", () => crypto.createHmac("sha256", "key")],
+    ["sign", () => crypto.createSign("sha256")],
+    ["verify", () => crypto.createVerify("sha256")],
+  ])("%s.update() still rejects an odd-length hex string", (_name, create) => {
+    expect(outcome(() => create().update("abc", "hex"))).toEqual({
+      code: "ERR_INVALID_ARG_VALUE",
+      message: "The argument 'encoding' is invalid for data of length 3. Received 'hex'",
+    });
+  });
+
+  // A cipher stream keeps strings (decodeStrings is false), and Node's _transform() skips validateEncoding().
+  // Node v26.3.0 aborts the process here (CHECK in StringBytes::StorageSize). Bun throws the update() error.
+  it("cipher.write() rejects an odd-length hex string like cipher.update()", () => {
+    const cipher = crypto.createCipheriv("aes-128-ctr", gcmKey, Buffer.alloc(16));
+    expect(outcome(() => cipher.write("abc", "hex"))).toEqual({
+      code: "ERR_INVALID_ARG_VALUE",
+      message: "The argument 'encoding' is invalid for data of length 3. Received 'hex'",
+    });
+  });
+});
+
 describe("ECDH", () => {
   it("should have correct method names", () => {
     const ecdh = crypto.createECDH("prime256v1");

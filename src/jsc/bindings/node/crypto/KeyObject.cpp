@@ -1994,19 +1994,10 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
             auto dataView = dataString->view(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
 
-            BufferEncodingType encoding = BufferEncodingType::utf8;
-            if (encodingValue.isString()) {
-                auto* encodingString = encodingValue.toString(globalObject);
-                RETURN_IF_EXCEPTION(scope, {});
-                auto encodingView = encodingString->view(globalObject);
-                RETURN_IF_EXCEPTION(scope, {});
+            auto encoding = getStringInputEncoding(globalObject, scope, encodingValue);
+            RETURN_IF_EXCEPTION(scope, {});
 
-                if (encodingView != "buffer"_s) {
-                    encoding = parseEnumerationFromView<BufferEncodingType>(encodingView).value_or(BufferEncodingType::utf8);
-                }
-            }
-
-            JSValue decoded = JSValue::decode(constructFromEncoding(globalObject, dataView, encoding));
+            JSValue decoded = JSValue::decode(constructFromEncoding(globalObject, dataView, *encoding));
             RETURN_IF_EXCEPTION(scope, {});
             if (auto* decodedView = dynamicDowncast<JSArrayBufferView>(decoded)) {
                 EVPKeyPointer::PrivateKeyEncodingConfig config;
@@ -2112,10 +2103,10 @@ KeyObject KeyObject::prepareSecretKey(JSGlobalObject* globalObject, ThrowScope& 
         auto keyView = keyString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
-        BufferEncodingType encoding = parseEnumerationAllowBuffer(*globalObject, encodingValue).value_or(BufferEncodingType::utf8);
+        auto encoding = getStringInputEncoding(globalObject, scope, encodingValue);
         RETURN_IF_EXCEPTION(scope, {});
 
-        JSValue buffer = JSValue::decode(constructFromEncoding(globalObject, keyView, encoding));
+        JSValue buffer = JSValue::decode(constructFromEncoding(globalObject, keyView, *encoding));
         RETURN_IF_EXCEPTION(scope, {});
 
         if (buffer.isEmpty()) {

@@ -173,7 +173,7 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncGetPrivateKey, (JSC::JSGlobalObject * gl
     // Get the private key as a BIGNUM
     const BIGNUM* privKey = ecdh->m_key.getPrivateKey();
     if (!privKey) {
-        throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_INVALID_STATE, "Failed to get ECDH private key"_s);
+        throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to get ECDH private key"_s);
         return {};
     }
 

@@ -114,6 +114,17 @@ test("ECDH - exports and imports private keys", () => {
   expect(ecdh2.getPublicKey("hex")).toBe(ecdh.getPublicKey("hex"));
 });
 
+// ECDH::GetPublicKey and ECDH::GetPrivateKey in Node's src/crypto/crypto_ec.cc
+test("ECDH - the key getters throw ERR_CRYPTO_OPERATION_FAILED before a key exists", () => {
+  const ecdh = createECDH("prime256v1");
+  expect(() => ecdh.getPublicKey()).toThrow(
+    expect.objectContaining({ code: "ERR_CRYPTO_OPERATION_FAILED", message: "Failed to get ECDH public key" }),
+  );
+  expect(() => ecdh.getPrivateKey()).toThrow(
+    expect.objectContaining({ code: "ERR_CRYPTO_OPERATION_FAILED", message: "Failed to get ECDH private key" }),
+  );
+});
+
 // Test setting public key
 test("ECDH - can set public key and compute secret", () => {
   const curve = getCurves()[0];
@@ -212,11 +223,25 @@ test("ECDH.convertKey - supports different input and output encodings", () => {
   expect(Buffer.from(convertedToBase64, "base64").toString("hex")).toBe(compressedHex);
 });
 
+// Node returns "" for an empty key before it looks up the curve (ECDH::ConvertKey in src/crypto/crypto_ec.cc).
+test.each([
+  // Buffer.from("invalid-key", "hex") is empty: hex decoding stops at the first invalid digit.
+  ["a hex string with no hex digits", () => ECDH.convertKey("invalid-key", "prime256v1", "hex", "hex", "compressed")],
+  ["an empty Buffer", () => ECDH.convertKey(Buffer.alloc(0), "prime256v1")],
+  [
+    "an empty Buffer and the output encoding 'buffer'",
+    () => ECDH.convertKey(Buffer.alloc(0), "prime256v1", undefined, "buffer"),
+  ],
+  ["an empty string and an unknown curve", () => ECDH.convertKey("", "not-a-valid-curve")],
+])("ECDH.convertKey - returns an empty string for %s", (_label, convert) => {
+  expect(convert()).toBe("");
+});
+
 test("ECDH.convertKey - throws on invalid input", () => {
   // Invalid key
   expect(() => {
-    ECDH.convertKey("invalid-key", "prime256v1", "hex", "hex", "compressed");
-  }).toThrow("The argument 'encoding' is invalid for data of length 11. Received 'hex'");
+    ECDH.convertKey("0102030405", "prime256v1", "hex", "hex", "compressed");
+  }).toThrow("Failed to convert Buffer to EC_POINT");
 
   // Invalid curve
   expect(() => {

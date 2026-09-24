@@ -99,6 +99,10 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHConvertKey, (JSC::JSGlobalObject * lexicalGlobalO
 
     auto buffer = keyView->span();
 
+    // Node returns "" for an empty key before the curve lookup (ECDH::ConvertKey in src/crypto/crypto_ec.cc).
+    if (buffer.empty())
+        return JSValue::encode(jsEmptyString(vm));
+
     int nid = OBJ_sn2nid(curveName.utf8().data());
     if (nid == NID_undef)
         return Bun::ERR::CRYPTO_INVALID_CURVE(scope, lexicalGlobalObject);

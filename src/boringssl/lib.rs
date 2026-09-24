@@ -443,7 +443,7 @@ unsafe extern "C" {
     safe fn Bun__idnaToASCII(domain: &bun_core::String) -> bun_core::String;
 }
 
-/// Letters, digits, `-`, `_` and `.`. A host with any other byte has a second reading: `*.evil.test` covers "localhost/.evil.test".
+/// Letters, digits, `-`, `_` and `.`. Not in Node.js: a host with any other byte matches nothing, as in rustls and mozilla::pkix. `*.evil.test` would cover "localhost/.evil.test".
 fn is_hostname(host: &[u8]) -> bool {
     host.iter()
         .all(|&b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))

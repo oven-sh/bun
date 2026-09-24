@@ -571,8 +571,7 @@ function onClientHandshake(self, socket, success, verifyError) {
     reportError(err);
   }
 }
-// new tls.TLSSocket(socket) gets node's _finishInit and not onConnectSecure, which only tls.connect() installs:
-// no hostname check, no 'secureConnect', and `authorized` stays false. The verdict is ssl.verifyError().
+// A constructor wrap gets node's _finishInit only: no hostname check, no 'secureConnect', `authorized` stays false.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1081-L1108
 function finishStandaloneWrap(self, verifyError) {
   // Unlike node, rejectUnauthorized is enforced. The error reaches '_tlsError', so 'secure' must not report it again.
@@ -2657,8 +2656,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
   });
 };
 
-// Client-side counterpart for `new tls.TLSSocket(socket)`: the tls.connect({ socket }) upgrade without the two
-// listeners only tls.connect() installs, onConnectSecure and onConnectEnd.
+// Client-side `new tls.TLSSocket(socket)`: the tls.connect({ socket }) upgrade, without onConnectSecure and onConnectEnd.
 Socket.prototype[kUpgradeClientTLS] = function (connection, servername) {
   this[kStandaloneWrap] = true;
   Socket.prototype.connect.$call(this, { socket: connection, servername });

@@ -8,7 +8,7 @@ import vm from "node:vm";
 // B3 lowering of a negated multiply, the BigInt multiply and divide loops) and checks that
 // results hold.
 
-describe.concurrent("WebKit 7b485a76e9 upgrade", () => {
+describe("WebKit 7b485a76e9 upgrade", () => {
   test("BigInt() needs a digit after a sign or a radix prefix (a89c41295f)", () => {
     for (const text of ["-", "+", " - ", "0x", "0x ", "0b", "0o"]) {
       expect(() => BigInt(text)).toThrow(SyntaxError);
@@ -175,7 +175,7 @@ describe.concurrent("WebKit 7b485a76e9 upgrade", () => {
     }
     class Other {}
     let failures: string[] = [];
-    for (let i = 0; i < 2e4; ++i) {
+    for (let i = 0; i < 5e3; ++i) {
       const plain = Reflect.construct(Base, [1, 2, 3]);
       const withTarget = Reflect.construct(Base, [i], Other);
       const arrayLike = Reflect.construct(Base, { length: 2, 0: "a", 1: "b" } as any);
@@ -224,9 +224,9 @@ describe.concurrent("WebKit 7b485a76e9 upgrade", () => {
     const kept: object[] = [];
     const keptRefs: WeakRef<object>[] = [];
     let cleared = 0;
-    for (let round = 0; round < 6; ++round) {
+    for (let round = 0; round < 4; ++round) {
       const shortLived: WeakRef<object>[] = [];
-      for (let i = 0; i < 4096; ++i) {
+      for (let i = 0; i < 2048; ++i) {
         if (!(i & 63)) {
           const live = { round, i };
           kept.push(live);

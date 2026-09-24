@@ -85,11 +85,13 @@ void JSNextTickQueue::drain(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
         return;
 
     // processTicksAndRejections does not catch: a tick that throws ends that call with the
-    // exception as it was thrown and the tick's async context still current. It is reported here,
-    // inside that context; then the async context is put back to what each tick is entered from
-    // (the one current now), and the call is made again for the ticks queued after it.
+    // exception as it was thrown and the tick's context (the async context, and the
+    // Bun.ModuleGraph's next to it) still current. It is reported here, inside that context; then
+    // the context is put back to what each tick is entered from (the one current now), and the
+    // call is made again for the ticks queued after it.
     auto* asyncContextData = globalObject->m_asyncContextData.get();
     JSValue asyncContextBetweenTicks = asyncContextData->getInternalField(0);
+    JSValue graphBetweenTicks = asyncContextData->getInternalField(1);
     for (;;) {
         RETURN_IF_EXCEPTION(scope, );
         auto* drainFn = internalField(2).get().getObject();
@@ -105,6 +107,7 @@ void JSNextTickQueue::drain(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
             return;
         Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
         asyncContextData->putInternalField(vm, 0, asyncContextBetweenTicks);
+        asyncContextData->putInternalField(vm, 1, graphBetweenTicks);
     }
 }
 

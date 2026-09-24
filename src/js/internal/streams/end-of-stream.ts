@@ -43,11 +43,12 @@ function bindAsyncResource(fn, type) {
   };
 }
 
-// True when an AsyncLocalStorage context is active (node's
-// AsyncContextFrame.current()) or createHook() hooks are enabled: eos() then
+// True when an AsyncLocalStorage context (node's AsyncContextFrame.current()) or a
+// Bun.ModuleGraph's is active, or createHook() hooks are enabled: eos() then
 // binds an AsyncResource so hooks see STREAM_END_OF_STREAM events.
 function hasAsyncContext() {
-  if ($getInternalField($asyncContext, 0) !== undefined) return true;
+  if ($getInternalField($asyncContext, 0) !== undefined || $getInternalField($asyncContext, 1) !== undefined)
+    return true;
   enabledHooksExist ??= require("internal/async_hooks").enabledHooksExist;
   return enabledHooksExist();
 }

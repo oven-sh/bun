@@ -355,11 +355,15 @@ const bunHTTP2StreamStatus = Symbol.for("::bunhttp2StreamStatus::");
 const bunHTTP2Session = Symbol.for("::bunhttp2session::");
 const bunHTTP2Headers = Symbol.for("::bunhttp2headers::");
 const bunHTTP2AsyncContextFrame = Symbol("::bunhttp2asynccontextframe::");
+// The Bun.ModuleGraph context that was current next to that frame (undefined: the host's).
+const bunHTTP2Graph = Symbol("::bunhttp2graph::");
 const bunHTTP2SessionTeardownFrame = Symbol("::bunhttp2sessionteardownframe::");
+// The Bun.ModuleGraph context of the destroy() caller, next to that frame.
+const bunHTTP2SessionTeardownGraph = Symbol("::bunhttp2sessionteardowngraph::");
 // Sentinel for bunHTTP2SessionTeardownFrame: a captured frame can itself be
 // undefined (the root context), so "no teardown in progress" needs its own value.
 const kNoSessionTeardown = Symbol("::bunhttp2noteardown::");
-const runInFrame = require("internal/async_context_frame").run;
+const { runInContext } = require("internal/async_context_frame");
 
 const ReflectGetPrototypeOf = Reflect.getPrototypeOf;
 
@@ -444,9 +448,9 @@ function emitEventNT(self: any, event: string, ...args: any[]) {
 // The frame is passed in: destroy() clears it off the session before emitting
 // 'error', so a throwing listener on either event cannot leave a retained
 // session pinning the store.
-function emitSessionCloseNT(self: Http2Session, frame) {
+function emitSessionCloseNT(self: Http2Session, frame, graph) {
   if (self.listenerCount("close") > 0) {
-    runInFrame(frame, self.emit, self, "close");
+    runInContext(frame, graph, self.emit, self, "close");
   }
 }
 function emitErrorNT(self: any, error: any, destroy: boolean) {
@@ -1901,11 +1905,13 @@ abstract class Http2Session extends EventEmitter {
   abstract destroy(error?: Error | number | null, code?: number): void;
   [bunHTTP2SessionTeardownFrame]: typeof kNoSessionTeardown | import("./async_hooks").Frame | undefined =
     kNoSessionTeardown;
+  [bunHTTP2SessionTeardownGraph]: Bun.ModuleGraph | undefined = undefined;
   [bunHTTP2Socket]: TLSSocket | Socket | null | undefined;
   [bunHTTP2OriginSet]: Set<string> | undefined = undefined;
   // Session-level frame (Node's Http2Session AsyncWrap): destroy()'s emits
   // run inside it so 'close' doesn't inherit the last stream's frame.
   [bunHTTP2AsyncContextFrame] = $getInternalField($asyncContext, 0);
+  [bunHTTP2Graph] = $getInternalField($asyncContext, 1);
   [kDeferWriteCallback]: typeof process.nextTick | typeof setImmediate = setImmediate;
   // The GOAWAY this side received (not one it sent), like node's Http2Session getters.
   get goawayCode() {
@@ -2326,6 +2332,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
   // frame is snapshotted directly so session.request() does not flip on
   // async-context tracking when no AsyncLocalStorage is in use.
   [bunHTTP2AsyncContextFrame] = $getInternalField($asyncContext, 0);
+  [bunHTTP2Graph] = $getInternalField($asyncContext, 1);
 
   rstCode: number | undefined = undefined;
   [bunHTTP2Headers]: any;
@@ -2609,6 +2616,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
     // push(null)) and a throwing listener would otherwise skip the clear and
     // leave a retained stream pinning the store.
     this[bunHTTP2AsyncContextFrame] = undefined;
+    this[bunHTTP2Graph] = undefined;
     const { ending } = this._writableState;
     this.push(null);
     // A pushed stream's request was synthesized by the server, so its local (writable) half is
@@ -2990,9 +2998,22 @@ function withStreamFrame(handler) {
     // A session mid-destroy() fans onStreamError out via emitErrorToAllStreams
     // under the destroy() caller's captured frame (Node's teardown context),
     // scoped to that session so a coincident dispatch elsewhere is unaffected.
+    // (With the caller's Bun.ModuleGraph context too: the parser calls these handlers in the
+    // context the session was made in.)
     const teardownFrame = self != null ? self[bunHTTP2SessionTeardownFrame] : kNoSessionTeardown;
-    const frame = teardownFrame !== kNoSessionTeardown ? teardownFrame : stream[bunHTTP2AsyncContextFrame];
-    return runInFrame(frame, handler, undefined, self, stream, a, b, c);
+    if (teardownFrame !== kNoSessionTeardown)
+      return runInContext(teardownFrame, self[bunHTTP2SessionTeardownGraph], handler, undefined, self, stream, a, b, c);
+    return runInContext(
+      stream[bunHTTP2AsyncContextFrame],
+      stream[bunHTTP2Graph],
+      handler,
+      undefined,
+      self,
+      stream,
+      a,
+      b,
+      c,
+    );
   };
 }
 function tryClose(fd) {
@@ -4831,13 +4852,15 @@ class ServerHttp2Session extends Http2Session {
     // Read-and-clear the frame first: emitting 'error' with no listener throws,
     // which would skip the clear and leave a retained session pinning the store.
     const asyncFrame = this[bunHTTP2AsyncContextFrame];
+    const graph = this[bunHTTP2Graph];
     this[bunHTTP2AsyncContextFrame] = undefined;
+    this[bunHTTP2Graph] = undefined;
     if (error) {
-      runInFrame(asyncFrame, this.emit, this, "error", error);
+      runInContext(asyncFrame, graph, this.emit, this, "error", error);
     }
     // node emits the session 'close' event asynchronously (a listener attached right after
     // close()/destroy() returns must still observe it).
-    process.nextTick(emitSessionCloseNT, this, asyncFrame);
+    process.nextTick(emitSessionCloseNT, this, asyncFrame, graph);
   }
 }
 function emitTimeout(session: ClientHttp2Session) {
@@ -5920,10 +5943,12 @@ class ClientHttp2Session extends Http2Session {
         // Like Node's Http2Stream._destroy: a received GOAWAY's code takes
         // precedence over the destroy code when streams are torn down.
         this[bunHTTP2SessionTeardownFrame] = $getInternalField($asyncContext, 0);
+        this[bunHTTP2SessionTeardownGraph] = $getInternalField($asyncContext, 1);
         try {
           parser.emitErrorToAllStreams(this[kGoawayCode] || (code !== undefined ? code : constants.NGHTTP2_CANCEL));
         } finally {
           this[bunHTTP2SessionTeardownFrame] = kNoSessionTeardown;
+          this[bunHTTP2SessionTeardownGraph] = undefined;
         }
         parser.detach();
       }
@@ -5940,13 +5965,15 @@ class ClientHttp2Session extends Http2Session {
     // Read-and-clear the frame first: emitting 'error' with no listener throws,
     // which would skip the clear and leave a retained session pinning the store.
     const asyncFrame = this[bunHTTP2AsyncContextFrame];
+    const graph = this[bunHTTP2Graph];
     this[bunHTTP2AsyncContextFrame] = undefined;
+    this[bunHTTP2Graph] = undefined;
     if (error) {
-      runInFrame(asyncFrame, this.emit, this, "error", error);
+      runInContext(asyncFrame, graph, this.emit, this, "error", error);
     }
     // node emits the session 'close' event asynchronously (a listener attached right after
     // close()/destroy() returns must still observe it).
-    process.nextTick(emitSessionCloseNT, this, asyncFrame);
+    process.nextTick(emitSessionCloseNT, this, asyncFrame, graph);
   }
 
   request(headers?: HeadersObject | any[] | null, options?: ClientRequestOptions) {

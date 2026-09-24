@@ -1731,8 +1731,8 @@ test("node:http: socket events of a server and of a client request run in the as
         // keep that one, as in node.
         function step3() {
           const agent = new http.Agent();
-          out["util.inspect(agent) mentions ownerFrame"] = util.inspect(agent).includes("ownerFrame");
-          out["own symbols of an Agent"] = Object.getOwnPropertySymbols(agent).map(String).filter(name => name.includes("ownerFrame"));
+          out["util.inspect(agent) mentions ownerGraph"] = util.inspect(agent).includes("ownerGraph");
+          out["own symbols of an Agent"] = Object.getOwnPropertySymbols(agent).map(String).filter(name => name.includes("ownerGraph"));
           agent.createConnection = (options, callback) => {
             als.run("the store createConnection answered in", () => setTimeout(() => callback(null, net.connect(options)), 5));
           };
@@ -1760,7 +1760,7 @@ test("node:http: socket events of a server and of a client request run in the as
       "server: request.socket 'close'": "undefined",
       "server: upgraded socket 'data'": "undefined",
       "server: upgraded socket 'close'": "undefined",
-      "util.inspect(agent) mentions ownerFrame": false,
+      "util.inspect(agent) mentions ownerGraph": false,
       "own symbols of an Agent": [],
       "client: 'socket'": "the store createConnection answered in",
       "client: 'response'": "the store createConnection answered in",

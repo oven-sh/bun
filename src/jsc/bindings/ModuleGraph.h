@@ -1,6 +1,7 @@
 #pragma once
 
 #include "root.h"
+#include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSModuleLoader.h>
 #include <JavaScriptCore/JSObject.h>
@@ -57,6 +58,13 @@ public:
     bool disposed() const { return m_context->isStopped(); }
     // The context that owns what the graph's script opens.
     WebCore::ScriptExecutionContext& context() const { return m_context.get(); }
+    // A captured async context (AsyncContextSwapScope) that is this graph's context and no
+    // AsyncLocalStorage stores: what the graph's modules are evaluated in, and what a callback
+    // kept on something long-lived is later called in.
+    JSC::JSValue capturedContext() const { return m_loader->asyncContext(); }
+    // What is current next to the async context while the graph's context is: [the graph, the
+    // identifier of its context].
+    JSC::InternalFieldTuple* owner() const { return m_owner.get(); }
 
     // require.cache of the graph's require(): one object, made on first use.
     JSC::JSValue requireCache() const { return m_requireCache.get(); }
@@ -72,6 +80,7 @@ private:
     Ref<WebCore::ScriptExecutionContext> m_context;
     JSC::WriteBarrier<JSC::JSModuleLoader> m_loader;
     JSC::WriteBarrier<JSC::JSMap> m_requireMap;
+    JSC::WriteBarrier<JSC::InternalFieldTuple> m_owner;
     JSC::WriteBarrier<JSC::Unknown> m_requireCache;
     JSC::WriteBarrier<JSC::JSObject> m_onError;
     JSC::WriteBarrier<JSModuleGraph> m_maker;
@@ -79,9 +88,7 @@ private:
     unsigned m_overlayShape { 0 };
 };
 
-JSC_DECLARE_HOST_FUNCTION(jsFunctionIsFrameOfStoppedModuleGraph);
-JSC_DECLARE_HOST_FUNCTION(jsFunctionModuleGraphOfFrame);
-JSC_DECLARE_HOST_FUNCTION(jsFunctionModuleGraphFrameOfFrame);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionIsDisposedModuleGraph);
 
 // Per-global state that is not a GC object (Zig::GlobalObject::m_moduleGraphs).
 struct ModuleGraphState {
@@ -99,23 +106,24 @@ public:
     // The same keys -> JSModuleGraph::overlayShape(). Never forgets, so a number is never reused
     // for another name set while code compiled under the first may still be cached.
     WTF::HashMap<WTF::String, unsigned> overlayShapes;
-    // The async context native code entered from the top of the event loop
-    // (VirtualMachine::enter_context): what a microtask checkpoint there goes back to.
-    JSC::Strong<JSC::Unknown> enteredFromEventLoop;
 };
 
 void initJSModuleGraphClassStructure(JSC::LazyClassStructure::Initializer&);
-JSC::Structure* createModuleGraphFrameStructure(JSC::VM&, JSC::JSGlobalObject*);
 
 // ── Which graph ──────────────────────────────────────────────────────────────────────
 // The graph `loader` is the loader of; null for the global object's own.
 JSModuleGraph* moduleGraphOfLoader(JSC::JSGlobalObject*, JSC::JSModuleLoader*);
-// promiseRejectionTracker: the graph whose onError a promise rejected now is reported to, or null.
-JSModuleGraph* moduleGraphRejecting(Zig::GlobalObject*);
-// The innermost graph that the current async context is inside of; null in the host's.
+// promiseRejectionTracker: the graph whose onError a promise rejected now is reported to, or null
+// (the host's handlers). Nothing: it was a graph's that is gone, and is dropped with it.
+std::optional<JSModuleGraph*> moduleGraphRejecting(Zig::GlobalObject*);
+// The graph of an owner (what is next to the async context), or of the number a promise kept of
+// one; null: the host, or a graph that is gone.
+JSModuleGraph* moduleGraphOfOwner(JSC::JSValue);
+// The graph whose context is current; null in the host's.
 JSModuleGraph* currentModuleGraph(Zig::GlobalObject*);
-// The frame the running script's Bun.ModuleGraph context was entered with; null when it is in none.
-JSC::JSObject* currentModuleGraphFrame(Zig::GlobalObject*);
+// The graph whose context a captured async context (AsyncContextSwapScope::current(): what an
+// AsyncContextFrame holds, Exception::asyncContext()) was captured in; null: the host's.
+JSModuleGraph* moduleGraphOfCapturedContext(JSC::JSValue);
 
 // ── What a graph's require() and import() use ────────────────────────────────────────
 // `graph` null: the global object's.
@@ -129,15 +137,12 @@ JSC::JSModuleLoader* moduleLoaderOf(JSC::JSGlobalObject*, JSC::ThrowScope&, JSMo
 void disposeModuleGraphOfContext(WebCore::ScriptExecutionContext&);
 
 // ── The graph's context ──────────────────────────────────────────────────────────────
-// What runs while this is alive runs inside a graph's context: an async context frame naming
-// the graph is current, and every continuation captured meanwhile carries it. Nothing for a
-// null graph, or when already inside it.
-// What runs while this is alive runs in `graph`'s context (null: the realm's own). For a call made
+// What runs while this is alive runs in `owner`'s context (null: the realm's own). For a call made
 // from wherever an error is being delivered: a handler runs as its owner, not as whoever failed.
-// Both halves of "the context that is current" are swapped: the async context, and the context
-// native code entered (VirtualMachine::entered_context), so a handler called from inside a
-// stopped graph's dispatch is not itself called for nobody.
-// It runs on top of the async context that is current where the error is reported: a reporter
+// Both halves of "the context that is current" are swapped: the owner next to the async context,
+// and the context native code entered (VirtualMachine::entered_context), so a handler called from
+// inside a stopped graph's dispatch is not itself called for nobody.
+// The async context stays the one that is current where the error is reported: a reporter
 // that reports before it restores the failing callback's context (timers, the tick queue) shows
 // the handler that callback's AsyncLocalStorage stores, as node does. What the handler leaves in
 // the async context (enterWith()) ends with it.
@@ -151,8 +156,20 @@ public:
 
 private:
     Zig::GlobalObject* m_globalObject;
-    JSC::JSValue m_previous;
+    JSC::JSValue m_previousAsyncContext;
+    JSC::JSValue m_previousOwner;
     uint32_t m_previousEntered;
+};
+
+// What runs while this is alive runs inside a graph's context: the graph is the owner that is
+// current, and every continuation captured meanwhile carries it. Nothing for a null graph, or
+// when already inside it.
+// What entering a graph's context (or the realm's own) replaced, to put back on leaving it: the
+// owner and the async context. An empty owner: nothing was replaced. Shared with
+// VirtualMachine.rs's ContextScope, which keeps it on the stack as the scopes here do.
+struct PreviousModuleGraphContext {
+    JSC::EncodedJSValue owner;
+    JSC::EncodedJSValue asyncContext;
 };
 
 class ModuleGraphContextScope {
@@ -168,15 +185,11 @@ public:
 
 private:
     Zig::GlobalObject* m_globalObject { nullptr };
-    JSC::JSValue m_previous;
+    PreviousModuleGraphContext m_previous {};
 };
 
-// Whether a callback that captured `asyncContext` when it was handed to native code is not to
+// Whether a callback that captured `capturedContext` when it was handed to native code is not to
 // be called: it was handed over inside the context of a graph that has since been disposed.
-bool shouldDropCallbackOfStoppedModuleGraph(Zig::GlobalObject*, JSC::JSValue asyncContext);
-
-// What GlobalObject::drainMicrotasks resets the async context to when no script is on the stack:
-// undefined, or what native code entered with VirtualMachine::enter_context.
-JSC::JSValue moduleGraphAsyncContextAtEventLoop(Zig::GlobalObject*);
+bool shouldDropCallbackOfStoppedModuleGraph(JSC::JSValue capturedContext);
 
 } // namespace Bun

@@ -231,7 +231,7 @@ declare const $processBindingConstants: {
   crypto: typeof import("crypto").constants;
   zlib: typeof import("zlib").constants;
 };
-declare const $asyncContext: InternalFieldObject<[import("./node/async_hooks").Frame | undefined]>;
+declare const $asyncContext: InternalFieldObject<[import("./node/async_hooks").Frame | undefined, object | undefined]>;
 
 // We define our intrinsics in ./BunBuiltinNames.h. Some of those are globals.
 

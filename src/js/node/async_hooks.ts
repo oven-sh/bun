@@ -4,8 +4,9 @@
 // API: https://nodejs.org/api/async_hooks.html
 //
 // JSC has been patched to include a special global variable $asyncContext which is set to
-// a constant InternalFieldTuple<[AsyncContextData, never]>. `get` and `set` read/write to the
-// first element of this tuple. Inside of PromiseOperations.js, we "snapshot" the context (store it
+// a constant InternalFieldTuple<[AsyncContextData, Bun.ModuleGraph | undefined]>. `get` and `set`
+// read/write to the first element of this tuple; the second is the Bun.ModuleGraph whose context
+// is current, which JSC and native code capture and restore together with the first. Inside of PromiseOperations.js, we "snapshot" the context (store it
 // in the promise reaction) and then just before we call .then, we restore it.
 //
 // This means context tracking is *kind-of* manual. If we receive a callback in native code
@@ -63,17 +64,8 @@ class Frame {
 // Only run during debug
 function assertValidFrame(frame: unknown): boolean {
   for (var f = frame, n = 0; f !== undefined; f = (f as Frame).prev, n++) {
-    // A Bun.ModuleGraph's context is a frame whose storage is the graph: made in
-    // ModuleGraph.cpp (null prototype), or a copy of one made here.
-    $assert(
-      f instanceof Frame || Object.getPrototypeOf(f) === null,
-      "AsyncContextData must be a Frame chain or undefined, got",
-      f,
-    );
-    $assert(
-      $isObject((f as Frame).storage),
-      "Frame.storage must be an AsyncLocalStorage, a ModuleGraph, or (leaving a graph's context) the global object",
-    );
+    $assert(f instanceof Frame, "AsyncContextData must be a Frame chain or undefined, got", f);
+    $assert((f as Frame).storage instanceof AsyncLocalStorage, "Frame.storage must be an AsyncLocalStorage");
     $assert((f as Frame).masked === undefined || $isJSArray((f as Frame).masked), "Frame.masked must be an array");
     $assert(n < 10000, "AsyncContextData chain is unreasonably long (cycle?)");
   }
@@ -103,6 +95,16 @@ function set(frame: Frame | undefined) {
   $assert(assertValidFrame(frame));
   $debug("set", debugFormatContextValue(frame));
   return $putInternalField($asyncContext, 0, frame);
+}
+
+// The Bun.ModuleGraph context, which travels next to the frame (undefined: the host's). Whatever
+// captures the frame to run something in it later (snapshot(), AsyncResource) captures both.
+function getGraph() {
+  return $getInternalField($asyncContext, 1);
+}
+
+function setGraph(graph) {
+  return $putInternalField($asyncContext, 1, graph);
 }
 
 function isMasked(frame: Frame | undefined, storage: AsyncLocalStorage): boolean {
@@ -241,13 +243,17 @@ class AsyncLocalStorage<T = any> {
 
   static snapshot() {
     var context = get();
+    var graph = getGraph();
     return (fn, ...args) => {
       var prev = get();
+      var prevGraph = getGraph();
       set(context);
+      setGraph(graph);
       try {
         return fn.$apply(undefined, args);
       } finally {
         set(prev);
+        setGraph(prevGraph);
       }
     };
   }
@@ -364,6 +370,7 @@ if (IS_BUN_DEVELOPMENT) {
 class AsyncResource {
   type;
   #snapshot;
+  #graph;
   #triggerAsyncId;
 
   constructor(type, opts?) {
@@ -382,6 +389,7 @@ class AsyncResource {
     setAsyncHooksEnabled(true);
     this.type = type;
     this.#snapshot = get();
+    this.#graph = getGraph();
     this.#triggerAsyncId = triggerAsyncId;
   }
 
@@ -407,11 +415,14 @@ class AsyncResource {
 
   runInAsyncScope(fn, thisArg, ...args) {
     var prev = get();
+    var prevGraph = getGraph();
     set(this.#snapshot);
+    setGraph(this.#graph);
     try {
       return fn.$apply(thisArg, args);
     } finally {
       set(prev);
+      setGraph(prevGraph);
     }
   }
 

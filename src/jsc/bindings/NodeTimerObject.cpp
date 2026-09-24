@@ -1,7 +1,7 @@
 
 #include "root.h"
 
-#include "JavaScriptCore/InternalFieldTuple.h"
+#include "JavaScriptCore/AsyncContextSwapScope.h"
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSObject.h"
@@ -23,14 +23,10 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    JSValue restoreAsyncContext {};
-    JSC::InternalFieldTuple* asyncContextData = nullptr;
-
+    std::optional<AsyncContextSwapScope> asyncContextScope;
     if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(callbackValue)) {
         callbackValue = wrapper->callback.get();
-        asyncContextData = globalObject->m_asyncContextData.get();
-        restoreAsyncContext = asyncContextData->getInternalField(0);
-        asyncContextData->putInternalField(vm, 0, wrapper->context.get());
+        asyncContextScope.emplace(vm, globalObject, wrapper->context.get());
     }
 
     if (auto* promise = dynamicDowncast<JSPromise>(callbackValue)) {
@@ -69,10 +65,6 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
         else
             Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
         hadException = true;
-    }
-
-    if (asyncContextData) {
-        asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
     }
 
     return hadException;

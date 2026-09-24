@@ -2,6 +2,7 @@ import { pathToFileURL } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { chmodSync, chownSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, bunRun, isLinux, isMacOS, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
+import { createRequire } from "module";
 import { join, resolve, sep } from "path";
 
 const fixture = (...segs: string[]) => resolve(import.meta.dir, "fixtures", ...segs);
@@ -1098,6 +1099,60 @@ describe("resolving external URL specifiers with non-ASCII characters", () => {
     expect(stderr).toBe("");
     expect(stdout).toContain("caught");
     expect(exitCode).toBe(0);
+  });
+});
+
+describe("resolving external URL specifiers with an uppercase scheme", () => {
+  // A URL scheme is ASCII case-insensitive (RFC 3986 section 3.1), so every
+  // spelling of the scheme resolves like the lowercase one.
+  const spellings = [
+    ["HTTPS://example.invalid/x.js?q=1", "https://example.invalid/x.js?q=1"],
+    ["hTTps://example.invalid/x.js", "https://example.invalid/x.js"],
+    ["Http://example.invalid/x.js", "http://example.invalid/x.js"],
+  ];
+  // One slash, another scheme, and U+017F (the fold is ASCII-only) are not http(s) URLs.
+  const notExternal = [
+    "HTTPS:/example.invalid/x.js",
+    "HTTPX://example.invalid/x.js",
+    "http\u017F://example.invalid/x.js",
+  ];
+
+  const bunResolvers: [string, (specifier: string) => string | Promise<string>][] = [
+    ["Bun.resolveSync", specifier => Bun.resolveSync(specifier, import.meta.dir)],
+    ["Bun.resolve", specifier => Bun.resolve(specifier, import.meta.dir)],
+    ["import.meta.resolveSync", specifier => import.meta.resolveSync(specifier)],
+  ];
+  // Node throws or returns the lowercase URL from these, so they only compare with the lowercase spelling.
+  const nodeResolvers: [string, (specifier: string) => string][] = [
+    ["import.meta.resolve", specifier => import.meta.resolve(specifier)],
+    ["require.resolve", specifier => require.resolve(specifier)],
+    ["createRequire().resolve", specifier => createRequire(import.meta.url).resolve(specifier)],
+  ];
+
+  it.each(bunResolvers)("%s returns the specifier as written", async (_, resolveSpecifier) => {
+    const written = spellings.map(([spelling]) => spelling);
+    expect(await Promise.all(written.map(specifier => resolveSpecifier(specifier)))).toEqual(written);
+  });
+
+  it.each(nodeResolvers)("%s resolves every spelling like the lowercase one", (_, resolveSpecifier) => {
+    const outcome = (specifier: string) => {
+      let resolved: string;
+      try {
+        resolved = resolveSpecifier(specifier);
+      } catch (error) {
+        return { code: (error as NodeJS.ErrnoException).code };
+      }
+      return { resolved: resolved.toLowerCase() };
+    };
+    expect(spellings.map(([spelling]) => outcome(spelling))).toEqual(
+      spellings.map(([, lowercase]) => outcome(lowercase)),
+    );
+  });
+
+  it.each([...bunResolvers, ...nodeResolvers])("%s does not match another scheme", async (_, resolveSpecifier) => {
+    for (const specifier of notExternal) {
+      expect(async () => await resolveSpecifier(specifier)).toThrow(/Cannot find (package|module)/);
+    }
   });
 });
 

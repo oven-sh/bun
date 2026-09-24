@@ -353,10 +353,32 @@ for (const { body, fn } of bodyTypes) {
         });
       });
 
-      // A procfs file is a regular file whose st_size is 0. The body getter stats the
-      // file, and that cached stat must not turn a later read of the Bun.file() into "".
+      // A procfs file is a regular file whose st_size is 0. A stream that trusts that size
+      // as a byte budget ends before it reads anything, and the stat the body getter
+      // caches must not turn a later read of the Bun.file() into "".
       describe.skipIf(!isLinux)("made from a procfs Bun.file()", () => {
         const path = "/proc/version";
+
+        test("the body stream reads the whole file", async () => {
+          const expected = await Bun.file(path).text();
+          expect(expected.length).toBeGreaterThan(0);
+          const drain = async (stream: ReadableStream<Uint8Array>) => {
+            let text = "";
+            for await (const chunk of stream) text += Buffer.from(chunk).toString();
+            return text;
+          };
+          expect({
+            "for await": await drain(fn(Bun.file(path)).body!),
+            "Bun.readableStreamToText": await Bun.readableStreamToText(fn(Bun.file(path)).body!),
+            "new Response(body).text()": await new Response(fn(Bun.file(path)).body).text(),
+            "textStream()": (await Array.fromAsync(fn(Bun.file(path)).textStream())).join(""),
+          }).toEqual({
+            "for await": expected,
+            "Bun.readableStreamToText": expected,
+            "new Response(body).text()": expected,
+            "textStream()": expected,
+          });
+        });
 
         test("the body getter does not make a later text() on the same Bun.file() empty", async () => {
           const expected = await Bun.file(path).text();
@@ -364,6 +386,17 @@ for (const { body, fn } of bodyTypes) {
           const file = Bun.file(path);
           expect(fn(file).body).toBeInstanceOf(ReadableStream);
           expect(await file.text()).toBe(expected);
+        });
+
+        test("clone() after the body getter reads the whole file on both copies", async () => {
+          const expected = await Bun.file(path).text();
+          const original = fn(Bun.file(path));
+          expect(original.body).toBeInstanceOf(ReadableStream);
+          const clone = original.clone();
+          expect({ clone: await clone.text(), original: await original.text() }).toEqual({
+            clone: expected,
+            original: expected,
+          });
         });
       });
     });

@@ -726,6 +726,14 @@ impl ReadFile {
             SizeType::try_from((stat.st_size as i64).max(0).min(MAX_SIZE as i64)).unwrap();
 
         if stat.st_size > 0 && !self.could_block {
+            // A store that was statted before this read holds a file of known
+            // size. Stop at this `fstat`'s size, so the read needs no extra
+            // `read()` to find EOF.
+            if self.file_store.seekable.is_some() {
+                self.max_length = self
+                    .max_length
+                    .min(self.total_size.saturating_sub(self.offset));
+            }
             self.size = self.total_size.min(self.max_length);
             // read up to 4k at a time if
             // they didn't explicitly set a size and we're reading from something that's not a regular file
@@ -1252,6 +1260,13 @@ impl<'a> ReadFileUV<'a> {
         log!("is_regular_file: {}", this.is_regular_file);
 
         if stat.size() > 0 && this.is_regular_file {
+            // keep in sync with resolveSizeAndLastModified: a store that was
+            // statted before this read stops at this `fstat`'s size.
+            if this.file_store.seekable.is_some() {
+                this.max_length = this
+                    .max_length
+                    .min(this.total_size.saturating_sub(this.offset));
+            }
             this.size = this.total_size.min(this.max_length);
         } else if stat.size() == 0 && !this.is_regular_file {
             // read up to 4k at a time if they didn't explicitly set a size and

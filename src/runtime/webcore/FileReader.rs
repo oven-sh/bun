@@ -107,6 +107,11 @@ pub(crate) struct OpenedFileBlob {
     pub(crate) nonblocking: bool,
     #[cfg(not(windows))]
     pub(crate) file_type: FileType,
+    /// Size from this open's `fstat`, for a regular file whose store was
+    /// statted before the open. The reader stops there, so it needs no extra
+    /// `read()` to find EOF.
+    #[cfg(not(windows))]
+    pub(crate) known_size: Option<usize>,
 }
 
 impl Default for OpenedFileBlob {
@@ -117,6 +122,8 @@ impl Default for OpenedFileBlob {
             nonblocking: true,
             #[cfg(not(windows))]
             file_type: FileType::File,
+            #[cfg(not(windows))]
+            known_size: None,
         }
     }
 }
@@ -218,6 +225,9 @@ impl Lazy {
 
             if sys::S::ISREG(mode) {
                 is_nonblocking = false;
+                if stat.st_size > 0 && file.seekable.is_some() {
+                    this.known_size = usize::try_from(stat.st_size).ok();
+                }
             }
 
             // pollable: `S.ISFIFO(mode) or S.ISSOCK(mode)`
@@ -312,6 +322,8 @@ impl FileReader {
         let mut pollable = false;
         #[cfg(unix)]
         let mut file_type = FileType::File;
+        #[cfg(unix)]
+        let mut known_size: Option<usize> = None;
         // R-2: move the `Lazy` out of the cell up-front (it's reset to `None`
         // on every path through the original `if let` body) so the `RefPtr<Store>`
         // is owned locally and the cell borrow is released immediately.
@@ -337,6 +349,7 @@ impl FileReader {
                             #[cfg(unix)]
                             {
                                 file_type = opened.file_type;
+                                known_size = opened.known_size;
                             }
                             #[cfg(unix)]
                             {
@@ -396,7 +409,17 @@ impl FileReader {
                 unsafe { (*self.parent()).increment_count() };
                 self.waiting_for_on_reader_done.set(true);
             }
-            self.reader().set_limit(self.max_size);
+            #[cfg(unix)]
+            let limit = match known_size {
+                Some(size) => {
+                    let available = size.saturating_sub(self.start_offset.unwrap_or(0));
+                    Some(self.max_size.map_or(available, |max| max.min(available)))
+                }
+                None => self.max_size,
+            };
+            #[cfg(windows)]
+            let limit = self.max_size;
+            self.reader().set_limit(limit);
             let start_result = if let Some(offset) = self.start_offset {
                 self.reader()
                     .start_file_offset(self.fd.get(), pollable, offset)

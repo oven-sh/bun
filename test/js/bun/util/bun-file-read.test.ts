@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -52,5 +52,70 @@ describe("Bun.file read-loop target selection", () => {
     const buf = new Uint8Array(await Bun.file(p).slice(start, end).arrayBuffer());
     expect(buf.length).toBe(end - start);
     expect(Bun.hash(buf)).toBe(Bun.hash(bytes.subarray(start, end)));
+  });
+});
+
+// A Bun.file() whose store was already statted is a file of known size. Its
+// readers stop at the size from their own fstat. They do not issue one more
+// read() to find EOF. /proc/self/io counts the read syscalls of the subprocess.
+describe.skipIf(!isLinux)("Bun.file read syscalls for a file of known size", () => {
+  const fixture = /* js */ `
+    import { readFileSync } from "node:fs";
+    const file = process.argv.at(-1);
+    const io = () => /^syscr: (\\d+)$/m.exec(readFileSync("/proc/self/io", "utf8"));
+    if (!io()) {
+      console.log(JSON.stringify({ supported: false }));
+      process.exit(0);
+    }
+    const syscr = () => Number(io()[1]);
+    const expected = readFileSync(file, "utf8");
+    const drain = async stream => {
+      const decoder = new TextDecoder();
+      let out = "";
+      for await (const chunk of stream) out += decoder.decode(chunk, { stream: true });
+      return out + decoder.decode();
+    };
+    const N = 100;
+    async function perOp(op) {
+      for (let i = 0; i < 5; i++) await op();
+      const before = syscr();
+      let ok = true;
+      for (let i = 0; i < N; i++) ok = (await op()) === expected && ok;
+      return { ok, readsPerOp: Math.round((syscr() - before) / N) };
+    }
+    const open = touch => { const f = Bun.file(file); touch(f); return f; };
+    console.log(JSON.stringify({
+      supported: true,
+      lastModifiedThenText: await perOp(() => open(f => f.lastModified).text()),
+      lastModifiedThenStream: await perOp(() => drain(open(f => f.lastModified).stream())),
+      sizeThenText: await perOp(() => open(f => f.size).text()),
+      sizeThenStream: await perOp(() => drain(open(f => f.size).stream())),
+    }));
+  `;
+
+  it("one read() per operation, no EOF probe", async () => {
+    using dir = tempDir("bun-file-read-count", { "data.txt": Buffer.alloc(64 * 1024, "a").toString() });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture, path.join(String(dir), "data.txt")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    const { supported, ...counts } = JSON.parse(stdout);
+    if (!supported) {
+      console.warn("/proc/self/io has no syscr on this kernel, nothing to count");
+      return;
+    }
+    // One read() returns the whole 64 KiB. A second one per operation is the EOF probe.
+    expect(counts).toEqual({
+      lastModifiedThenText: { ok: true, readsPerOp: 1 },
+      lastModifiedThenStream: { ok: true, readsPerOp: 1 },
+      sizeThenText: { ok: true, readsPerOp: 1 },
+      sizeThenStream: { ok: true, readsPerOp: 1 },
+    });
+    expect(exitCode).toBe(0);
   });
 });

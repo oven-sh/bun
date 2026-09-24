@@ -14,7 +14,7 @@ use super::PostgresSQLConnection;
 use super::PostgresSQLStatement;
 use super::Signature;
 use super::command_tag_jsc::CommandTagJsc;
-use super::error_jsc::postgres_error_to_js;
+use super::error_jsc::{postgres_error_to_js, postgres_error_to_js_with_hint};
 use super::postgres_request as PostgresRequest;
 use super::postgres_sql_connection;
 use super::postgres_sql_statement::Status as StatementStatus;
@@ -868,20 +868,26 @@ impl PostgresSQLQuery {
 
         // A CancelRequest names the backend process, not a statement, so it only
         // ever stops the FIFO head. Anything else is settled locally.
-        if status == Status::Pending || !connection.is_current_request(this) {
+        if status == Status::Pending {
+            // Nothing on the wire yet: a Fail entry is discarded, never written.
             let err = postgres_error_to_js(
                 global_object,
                 Some(b"Query cancelled"),
                 AnyPostgresError::QueryCancelled,
             );
-            if status == Status::Pending {
-                // Nothing on the wire yet: a Fail entry is discarded, never written.
-                connection.finish_request(this);
-                this.on_js_error(err, global_object);
-            } else {
-                // Already on the wire: the backend will answer it regardless.
-                this.reject_in_flight(err, global_object);
-            }
+            connection.finish_request(this);
+            this.on_js_error(err, global_object);
+            return Ok(JSValue::UNDEFINED);
+        }
+        if !connection.is_current_request(this) {
+            // Already on the wire: the backend runs it regardless, so the error says so.
+            let err = postgres_error_to_js_with_hint(
+                global_object,
+                Some(b"Query cancelled"),
+                Some(b"The server already received this query and still runs it. Bun discards the result."),
+                AnyPostgresError::QueryCancelled,
+            );
+            this.reject_in_flight(err, global_object);
             return Ok(JSValue::UNDEFINED);
         }
 

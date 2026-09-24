@@ -233,11 +233,13 @@ test("cancel() on a queued query does not cancel the one the backend is running"
   );
   queued.cancel();
 
+  // No hint: this query never reaches the server.
   const err = await queuedSettled;
-  expect({ name: err.name, code: err.code, message: err.message }).toEqual({
+  expect({ name: err.name, code: err.code, message: err.message, hint: err.hint }).toEqual({
     name: "PostgresError",
     code: "ERR_POSTGRES_QUERY_CANCELLED",
     message: "Query cancelled",
+    hint: undefined,
   });
 
   server.reply(
@@ -342,11 +344,14 @@ test("cancel() on a pipelined query does not cancel the one the backend is runni
 
   pipelined.cancel();
 
+  // The hint tells this case apart from a query that was never sent: the backend
+  // still runs this one, so a retry of a write would apply it twice.
   const err = await pipelinedSettled;
-  expect({ name: err.name, code: err.code, message: err.message }).toEqual({
+  expect({ name: err.name, code: err.code, message: err.message, hint: err.hint }).toEqual({
     name: "PostgresError",
     code: "ERR_POSTGRES_QUERY_CANCELLED",
     message: "Query cancelled",
+    hint: "The server already received this query and still runs it. Bun discards the result.",
   });
   // No CancelRequest went out, so the running query was left alone.
   expect(server.connections).toBe(1);

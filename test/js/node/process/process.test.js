@@ -2962,9 +2962,8 @@ describe.concurrent("socket.destroy() returns before the queued nextTicks and pr
     expect(exitCode).toBe(0);
   });
 
-  // Nothing here touches process.nextTick, so the nextTick queue, which the
-  // checkpoint after 'beforeExit' drains, does not exist.
-  it("a 'beforeExit' listener's promise job runs after it in a program without a nextTick queue", async () => {
+  // Another native call that runs its callback before it returns, in a program without a nextTick queue.
+  it("fs.watch().close() in a 'beforeExit' listener returns before the queued promise job runs", async () => {
     using dir = tempDir("before-exit-promise-job", {});
     await using proc = Bun.spawn({
       cmd: [

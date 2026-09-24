@@ -85,12 +85,16 @@ fn read_from_blob(
         StoreData::File(f) => f,
         _ => return Err(ReadFromBlobError::NotAFile),
     };
+    let Some(pathlike) = file.lazy_pathlike() else {
+        let err = file.pinned_refusal(bun_sys::Tag::open);
+        return Err(global.throw_value(err.to_js(global)).into());
+    };
     let mut fs = node_fs::NodeFS::default();
     // `ReadFile` has a `Drop` impl (releases its `signal` ref), so functional
     // record update from `..Default::default()` would partially move out of a
     // `Drop` type. Mutate-after-default instead.
     let mut read_args = node_fs::args::ReadFile::default();
-    read_args.path = file.pathlike.clone();
+    read_args.path = pathlike.clone();
     let maybe = fs.read_file_with_options(
         &read_args,
         node_fs::Flavor::Sync,

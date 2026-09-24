@@ -14,7 +14,6 @@ use crate::webcore::blob::ClosingState;
 use crate::webcore::blob::store::Bytes as ByteStore;
 use crate::webcore::blob::store::{Data, File as FileStore};
 use crate::webcore::blob::{Blob, FileCloser, FileOpener, MAX_SIZE, SizeType, Store};
-use crate::webcore::node_types::PathOrFileDescriptor;
 #[cfg(windows)]
 use bun_collections::ByteVecExt as _;
 use bun_core::String as BunString;
@@ -325,8 +324,8 @@ impl FileOpener for ReadFile {
     fn set_system_error(&mut self, e: jsc::SystemError) {
         self.system_error = Some(e);
     }
-    fn pathlike(&self) -> &PathOrFileDescriptor<'static> {
-        &self.file_store.pathlike
+    fn file(&self) -> &FileStore {
+        &self.file_store
     }
     #[cfg(windows)]
     fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t {
@@ -577,12 +576,9 @@ impl ReadFile {
                             self.system_error = Some(err.to_system_error().into());
                             if self.system_error.as_ref().unwrap().path.is_empty() {
                                 self.system_error.as_mut().unwrap().path =
-                                    if self.file_store.pathlike.is_path() {
-                                        BunString::clone_utf8(
-                                            self.file_store.pathlike.path().slice(),
-                                        )
-                                    } else {
-                                        BunString::EMPTY
+                                    match self.file_store.display_path() {
+                                        Some(path) => BunString::clone_utf8(path),
+                                        None => BunString::EMPTY,
                                     };
                             }
                             return false;
@@ -654,8 +650,8 @@ impl ReadFile {
         {
             self.io_task = Some(task);
 
-            if self.file_store.pathlike.is_fd() {
-                self.opened_fd = self.file_store.pathlike.fd();
+            if let Some(fd) = self.file_store.fd() {
+                self.opened_fd = fd;
             }
 
             self.get_fd(Self::run_async_with_fd);
@@ -664,7 +660,7 @@ impl ReadFile {
 
     #[cfg(not(windows))]
     pub(crate) fn is_allowed_to_close(&self) -> bool {
-        self.file_store.pathlike.is_path()
+        self.file_store.fd().is_none()
     }
 
     #[cfg(not(windows))]
@@ -709,10 +705,9 @@ impl ReadFile {
             self.errno = Some(crate::Error::Sys(bun_errno::SystemErrno::EISDIR));
             self.system_error = Some(SystemError {
                 code: BunString::static_("EISDIR"),
-                path: if self.file_store.pathlike.is_path() {
-                    BunString::clone_utf8(self.file_store.pathlike.path().slice())
-                } else {
-                    BunString::EMPTY
+                path: match self.file_store.display_path() {
+                    Some(path) => BunString::clone_utf8(path),
+                    None => BunString::EMPTY,
                 },
                 message: BunString::static_("Directories cannot be read like files"),
                 syscall: BunString::static_("read"),
@@ -974,8 +969,8 @@ impl<'a> FileOpener for ReadFileUV<'a> {
     fn set_system_error(&mut self, e: jsc::SystemError) {
         self.system_error = Some(e);
     }
-    fn pathlike(&self) -> &PathOrFileDescriptor<'static> {
-        &self.file_store.pathlike
+    fn file(&self) -> &FileStore {
+        &self.file_store
     }
     fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t {
         self.loop_
@@ -1141,7 +1136,7 @@ impl<'a> ReadFileUV<'a> {
     }
 
     pub(crate) fn is_allowed_to_close(&self) -> bool {
-        self.file_store.pathlike.is_path()
+        self.file_store.fd().is_none()
     }
 
     fn on_finish(&mut self) {
@@ -1230,10 +1225,9 @@ impl<'a> ReadFileUV<'a> {
             this.errno = Some(crate::Error::Sys(bun_errno::SystemErrno::EISDIR));
             this.system_error = Some(SystemError {
                 code: BunString::static_("EISDIR").into(),
-                path: if this.file_store.pathlike.is_path() {
-                    BunString::clone_utf8(this.file_store.pathlike.path().slice())
-                } else {
-                    BunString::EMPTY
+                path: match this.file_store.display_path() {
+                    Some(path) => BunString::clone_utf8(path),
+                    None => BunString::EMPTY,
                 }
                 .into(),
                 message: BunString::static_("Directories cannot be read like files").into(),

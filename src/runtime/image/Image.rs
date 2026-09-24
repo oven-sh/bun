@@ -1181,7 +1181,7 @@ impl Image {
             // unreachable, but this path should throw, not abort, when it isn't.)
             if let Some(store) = blob.store.get() {
                 if let blob_store::Data::File(file) = &store.data {
-                    if let PathOrFileDescriptor::Path(path) = &file.pathlike {
+                    if let Some(PathOrFileDescriptor::Path(path)) = file.lazy_pathlike() {
                         let p = ZBox::from_bytes(path.slice());
                         // `Source::Blob`'s `Strong` Drop releases the JS ref.
                         self.source.set(Source::Path(p));

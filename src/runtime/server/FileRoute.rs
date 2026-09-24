@@ -13,7 +13,6 @@ use bun_resolver::fs::StatHash;
 use bun_sys::{self, Fd};
 use bun_uws::{AnyRequest, AnyResponse};
 
-use crate::node::types::PathOrFileDescriptor;
 use crate::server::file_response_stream::{StartOptions as FileResponseStreamOptions, StreamOwner};
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
 use bun_jsc::bun_string_jsc;
@@ -147,8 +146,7 @@ impl FileRoute {
                     BodyValue::Blob(b)
                         if matches!(
                             b.store.get().as_ref().unwrap().data,
-                            StoreData::File(ref f)
-                                if matches!(f.pathlike, PathOrFileDescriptor::Fd(_))
+                            StoreData::File(ref f) if f.fd().is_some()
                         )
                 );
                 if is_fd {
@@ -249,7 +247,7 @@ impl FileRoute {
             resp.timeout(server.config().idle_timeout);
         }
         let store = route.blob.store().unwrap().clone();
-        let Some(path) = store.get_path() else {
+        let Some(path) = store.path_for_open() else {
             req.set_yield(true);
             route.on_response_complete(resp);
             return;

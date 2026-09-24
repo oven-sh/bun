@@ -20,6 +20,7 @@ use crate::webcore::s3::client::{
 };
 use bun_core::strings;
 use bun_http_types::MimeType::MimeType;
+use bun_jsc::SysErrorJsc as _;
 use bun_ptr::RefPtr;
 
 #[cfg(unix)]
@@ -173,15 +174,18 @@ impl StoreExt for Store {
     fn serialize(&self, writer: &mut impl bun_io::Write) -> Result<(), crate::Error> {
         match &self.data {
             Data::File(file) => {
+                let Some(pathlike) = file.lazy_pathlike() else {
+                    return Err(file.pinned_refusal(bun_sys::Tag::open).into());
+                };
                 let pathlike_tag: PathOrFileDescriptorSerializeTag =
-                    if matches!(file.pathlike, PathOrFileDescriptor::Fd(_)) {
+                    if matches!(pathlike, PathOrFileDescriptor::Fd(_)) {
                         PathOrFileDescriptorSerializeTag::Fd
                     } else {
                         PathOrFileDescriptorSerializeTag::Path
                     };
                 writer.write_int_le::<u8>(pathlike_tag as u8)?;
 
-                match &file.pathlike {
+                match pathlike {
                     PathOrFileDescriptor::Fd(fd) => {
                         // Write the raw bytes of the FD wrapper. `bun_sys::Fd` is
                         // `#[repr(transparent)]` over an integer (`i32` posix /
@@ -219,7 +223,11 @@ impl StoreExt for Store {
 
 impl FileExt for File {
     fn unlink(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
-        match &self.pathlike {
+        let Some(pathlike) = self.lazy_pathlike() else {
+            let err = self.pinned_refusal(bun_sys::Tag::unlink).to_js(cx.global());
+            return Ok(JSPromise::rejected_promise(cx.global(), err).to_js());
+        };
+        match pathlike {
             PathOrFileDescriptor::Path(path_like) => {
                 // The `*Binding` arg is unused in `AsyncFSTask::create`.
                 let binding = node_fs::Binding::default();
@@ -302,7 +310,7 @@ impl S3Ext for S3 {
                         // compute the error (which reads `promise.get()`) first.
                         let err_val = err.to_js_with_async_stack(
                             global_object,
-                            self_.store.get_path(),
+                            self_.store.path_for_display(),
                             self_.promise.get(),
                         );
                         self_.promise.reject(global_object, err_val)?;
@@ -379,7 +387,7 @@ impl S3Ext for S3 {
                         // compute the error (which reads `promise.get()`) first.
                         let err_val = err.to_js_with_async_stack(
                             global_object,
-                            self_.store.get_path(),
+                            self_.store.path_for_display(),
                             self_.promise.get(),
                         );
                         self_.promise.reject(global_object, err_val)?;

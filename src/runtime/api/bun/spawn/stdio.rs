@@ -85,6 +85,7 @@ pub(crate) enum ToSpawnOptsError {
     StdinUsedAsOut,
     OutUsedAsStdin,
     BlobUsedAsOut,
+    PinnedFile,
 }
 
 impl ToSpawnOptsError {
@@ -93,6 +94,7 @@ impl ToSpawnOptsError {
             Self::StdinUsedAsOut => b"Stdin cannot be used for stdout or stderr",
             Self::OutUsedAsStdin => b"Stdout and stderr cannot be used for stdin",
             Self::BlobUsedAsOut => b"Blobs are immutable, and cannot be used for stdout/stderr",
+            Self::PinnedFile => b"A Blob from fs.openAsBlob() cannot be used for stdio",
         }
     }
 
@@ -238,8 +240,8 @@ impl Stdio {
                 if blob.needs_to_read_file() {
                     if let Some(store) = blob.store() {
                         if let StoreData::File(ref file) = store.data {
-                            match file.pathlike {
-                                PathOrFileDescriptor::Fd(store_fd) => {
+                            match file.lazy_pathlike() {
+                                Some(&PathOrFileDescriptor::Fd(store_fd)) => {
                                     if Some(store_fd) == fd {
                                         break 'brk SpawnOptionsStdio::Inherit;
                                     }
@@ -265,11 +267,12 @@ impl Stdio {
 
                                     break 'brk SpawnOptionsStdio::Pipe(store_fd);
                                 }
-                                PathOrFileDescriptor::Path(ref path) => {
+                                Some(PathOrFileDescriptor::Path(path)) => {
                                     break 'brk SpawnOptionsStdio::Path(
                                         path.slice().to_vec().into_boxed_slice(),
                                     );
                                 }
+                                None => return ResultT::Err(ToSpawnOptsError::PinnedFile),
                             }
                         }
                     }
@@ -590,8 +593,8 @@ impl Stdio {
         if blob.needs_to_read_file() {
             if let Some(store) = blob.store() {
                 if let StoreData::File(ref file) = store.data {
-                    match file.pathlike {
-                        PathOrFileDescriptor::Fd(store_fd) => {
+                    match file.lazy_pathlike() {
+                        Some(&PathOrFileDescriptor::Fd(store_fd)) => {
                             if Some(store_fd) == fd {
                                 *self = Stdio::Inherit;
                             } else {
@@ -624,10 +627,11 @@ impl Stdio {
 
                             return Ok(());
                         }
-                        PathOrFileDescriptor::Path(ref path) => {
+                        Some(PathOrFileDescriptor::Path(path)) => {
                             *self = Stdio::Path(path.clone());
                             return Ok(());
                         }
+                        None => return Err(ToSpawnOptsError::PinnedFile.throw_js(global)),
                     }
                 }
             }

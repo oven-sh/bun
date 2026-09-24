@@ -13,6 +13,7 @@ use bun_core::ZStr;
 use bun_core::strings;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::StringJsc as _;
+use bun_jsc::SysErrorJsc as _;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     self as jsc, CallFrame, JSArrayIterator, JSGlobalObject, JSValue, JsResult,
@@ -346,7 +347,11 @@ pub(crate) fn handle_template_value(
         if let Some(blob) = template_value.as_class_ref::<crate::webcore::Blob>() {
             if let Some(store) = blob.store.get().as_deref() {
                 if let crate::webcore::blob::store::Data::File(file) = &store.data {
-                    if let crate::node::PathOrFileDescriptor::Path(p) = &file.pathlike {
+                    let Some(pathlike) = file.lazy_pathlike() else {
+                        let err = file.pinned_refusal(bun_sys::Tag::open);
+                        return Err(global.throw_value(err.to_js(global)));
+                    };
+                    if let crate::node::PathOrFileDescriptor::Path(p) = pathlike {
                         let path: &[u8] = p.slice();
 
                         // Check for null bytes in path (security: prevent null byte injection)

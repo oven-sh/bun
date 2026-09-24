@@ -1774,24 +1774,26 @@ where
         let crate::webcore::blob::store::Data::File(file) = &blob_ref.store().unwrap().data else {
             unreachable!("do_sendfile called with non-file blob");
         };
+        let Some(pathlike) = file.lazy_pathlike() else {
+            let js_err = file.pinned_refusal(bun_sys::Tag::open).to_js(global_this);
+            return self.run_error_handler(js_err);
+        };
         let mut file_buf = bun_paths::path_buffer_pool::get();
         let auto_close = !matches!(
-            file.pathlike,
+            pathlike,
             crate::webcore::node_types::PathOrFileDescriptor::Fd(_)
         );
         let fd: bun_sys::Fd = if !auto_close {
-            file.pathlike.fd()
+            pathlike.fd()
         } else {
             match bun_sys::open(
-                file.pathlike.path().slice_z(&mut file_buf),
+                pathlike.path().slice_z(&mut file_buf),
                 bun_sys::O::RDONLY | bun_sys::O::NONBLOCK | bun_sys::O::CLOEXEC,
                 0,
             ) {
                 bun_sys::Result::Ok(fd_) => fd_,
                 bun_sys::Result::Err(err) => {
-                    let js_err = err
-                        .with_path(file.pathlike.path().slice())
-                        .to_js(global_this);
+                    let js_err = err.with_path(pathlike.path().slice()).to_js(global_this);
                     return self.run_error_handler(js_err);
                 }
             }
@@ -1804,7 +1806,7 @@ where
                     fd.close();
                 }
                 // Attach the path for the Path arm and the fd for the Fd arm.
-                let js_err = match &file.pathlike {
+                let js_err = match pathlike {
                     crate::webcore::node_types::PathOrFileDescriptor::Path(p) => {
                         err.with_path(p.slice()).to_js(global_this)
                     }
@@ -1835,7 +1837,7 @@ where
                     syscall: bun_sys::Tag::read,
                     ..Default::default()
                 };
-                let err = match &file.pathlike {
+                let err = match pathlike {
                     crate::webcore::node_types::PathOrFileDescriptor::Path(p) => {
                         base_err.with_path(p.slice())
                     }

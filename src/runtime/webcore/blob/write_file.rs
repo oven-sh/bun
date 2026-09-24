@@ -8,6 +8,7 @@ use crate::Error;
 use bun_io as io;
 #[cfg(not(windows))]
 use bun_io::IntrusiveIoRequest as _;
+#[cfg(windows)]
 use bun_jsc::node_path::PathOrFileDescriptor;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, SystemError};
 use bun_sys::{self as sys, Fd};
@@ -143,16 +144,8 @@ impl FileOpener for WriteFile {
     fn set_system_error(&mut self, e: SystemError) {
         self.system_error = Some(e);
     }
-    fn pathlike(&self) -> &PathOrFileDescriptor<'static> {
-        &self
-            .file_blob
-            .store
-            .get()
-            .as_ref()
-            .unwrap()
-            .data
-            .as_file()
-            .pathlike
+    fn file(&self) -> &blob::store::File {
+        self.file_blob.store.get().as_ref().unwrap().data.as_file()
     }
     #[cfg(not(windows))]
     fn try_mkdirp(
@@ -392,8 +385,8 @@ impl WriteFile {
             .unwrap()
             .data
             .as_file()
-            .pathlike
-            .is_path()
+            .fd()
+            .is_none()
     }
 
     #[cfg(not(windows))]
@@ -423,7 +416,7 @@ impl WriteFile {
         self.could_block = 'brk: {
             if let Some(store) = self.file_blob.store.get().as_ref() {
                 if let blob::store::Data::File(file) = &store.data {
-                    if file.pathlike.is_fd() {
+                    if file.fd().is_some() {
                         // If seekable was set, then so was mode
                         if file.seekable.is_some() {
                             // This is mostly to handle pipes which were passsed to the process somehow
@@ -582,6 +575,22 @@ mod windows_impl {
 
     bun_io::intrusive_uv_fs!(WriteFileWindows, io_request);
 
+    /// The path `open` opens. `create_with_ctx` starts `open` only for a `Bun.file(path)` store.
+    fn open_path(file_blob: &Blob) -> &[u8] {
+        match file_blob
+            .store
+            .get()
+            .as_ref()
+            .unwrap()
+            .data
+            .as_file()
+            .lazy_pathlike()
+        {
+            Some(PathOrFileDescriptor::Path(path)) => path.slice(),
+            _ => unreachable!("WriteFileWindows::open on a store with no lazy path"),
+        }
+    }
+
     #[derive(thiserror::Error, Debug)]
     pub(crate) enum WriteFileWindowsError {
         #[error("WriteFileWindowsDeinitialized")]
@@ -640,8 +649,8 @@ mod windows_impl {
                     .unwrap()
                     .data
                     .as_file()
-                    .pathlike
-                    .is_path();
+                    .fd()
+                    .is_none();
             let write_file = Self::new(WriteFileWindows {
                 file_blob,
                 bytes_blob,
@@ -670,20 +679,23 @@ mod windows_impl {
                 (*write_file).io_request.loop_ = (*event_loop).uv_loop();
                 (*write_file).io_request.data = write_file.cast::<c_void>();
 
-                match &(*write_file)
+                let file = (*write_file)
                     .file_blob
                     .store
                     .get()
                     .as_ref()
                     .unwrap()
                     .data
-                    .as_file()
-                    .pathlike
-                {
-                    PathOrFileDescriptor::Path(_) => {
+                    .as_file();
+                match file.lazy_pathlike() {
+                    None => {
+                        let err = file.pinned_refusal(sys::Tag::open);
+                        return Err(Self::throw(write_file, err));
+                    }
+                    Some(PathOrFileDescriptor::Path(_)) => {
                         Self::open(write_file)?;
                     }
-                    PathOrFileDescriptor::Fd(fd) => {
+                    Some(PathOrFileDescriptor::Fd(fd)) => {
                         (*write_file).fd = 'brk: {
                             // `EventLoop.virtual_machine` is `Option<NonNull<VirtualMachine>>`;
                             // `RareData::std{out,err,in}_store` is type-erased
@@ -747,16 +759,7 @@ mod windows_impl {
             unsafe { (*this).io_request.data = this.cast::<c_void>() };
             // SAFETY: caller contract — `this` is live; the borrow is released
             // before any path that may free `*this`.
-            let path = unsafe { &(*this).file_blob }
-                .store
-                .get()
-                .as_ref()
-                .unwrap()
-                .data
-                .as_file()
-                .pathlike
-                .path()
-                .slice();
+            let path = open_path(unsafe { &(*this).file_blob });
             let posix_path = match sys::to_posix_path(path) {
                 Ok(p) => p,
                 Err(_) => {
@@ -822,16 +825,7 @@ mod windows_impl {
                 "onOpen({}) = {}",
                 bstr::BStr::new(
                     // SAFETY: `this` is live.
-                    unsafe { &(*this).file_blob }
-                        .store
-                        .get()
-                        .as_ref()
-                        .unwrap()
-                        .data
-                        .as_file()
-                        .pathlike
-                        .path()
-                        .slice()
+                    open_path(unsafe { &(*this).file_blob })
                 ),
                 rc
             );
@@ -851,17 +845,7 @@ mod windows_impl {
                 }
 
                 // SAFETY: `this` is live; borrow released before `throw` consumes `*this`.
-                let path = unsafe { &(*this).file_blob }
-                    .store
-                    .get()
-                    .as_ref()
-                    .unwrap()
-                    .data
-                    .as_file()
-                    .pathlike
-                    .path()
-                    .slice()
-                    .into();
+                let path = open_path(unsafe { &(*this).file_blob }).into();
                 // SAFETY: `this` is live; `throw` consumes it.
                 match unsafe {
                     Self::throw(
@@ -901,17 +885,7 @@ mod windows_impl {
             // `path` (into `self.file_blob.store`) does not conflict with the
             // `&mut self` reborrow needed by `from_mut`.
             let ctx = core::ptr::from_mut(self).cast::<()>();
-            let path = self
-                .file_blob
-                .store
-                .get()
-                .as_ref()
-                .unwrap()
-                .data
-                .as_file()
-                .pathlike
-                .path()
-                .slice();
+            let path = open_path(&self.file_blob);
             crate::node::fs::async_::AsyncMkdirp::schedule(crate::node::fs::async_::AsyncMkdirp {
                 completion: Self::on_mkdirp_complete_concurrent,
                 completion_ctx: ctx,
@@ -1068,18 +1042,10 @@ mod windows_impl {
         pub(crate) fn to_system_error(&self) -> Option<SystemError> {
             if let Some(err) = &self.err {
                 let mut sys_err = err.clone();
-                sys_err = match &self
-                    .file_blob
-                    .store
-                    .get()
-                    .as_ref()
-                    .unwrap()
-                    .data
-                    .as_file()
-                    .pathlike
-                {
-                    PathOrFileDescriptor::Path(path) => sys_err.with_path(path.slice()),
-                    PathOrFileDescriptor::Fd(fd) => sys_err.with_fd(*fd),
+                let file = self.file_blob.store.get().as_ref().unwrap().data.as_file();
+                sys_err = match file.fd() {
+                    Some(fd) => sys_err.with_fd(fd),
+                    None => sys_err.with_path(file.display_path().unwrap_or_default()),
                 };
 
                 return Some(sys_err.to_system_error().into());

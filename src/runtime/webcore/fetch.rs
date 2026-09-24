@@ -1553,9 +1553,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             let mut open_path_buf = bun_paths::path_buffer_pool::get();
             let opened_fd_res: bun_sys::Result<bun_sys::Fd> = {
                 let store = body.store().expect("needs_to_read_file implies store");
-                match &store.data.as_file().pathlike {
-                    PathOrFileDescriptor::Fd(fd) => bun_sys::dup(*fd),
-                    PathOrFileDescriptor::Path(path) => {
+                let file = store.data.as_file();
+                match file.lazy_pathlike() {
+                    Some(PathOrFileDescriptor::Fd(fd)) => bun_sys::dup(*fd),
+                    Some(PathOrFileDescriptor::Path(path)) => {
                         let zpath = path.slice_z(&mut open_path_buf);
                         let flags = if cfg!(windows) {
                             bun_sys::O::RDONLY
@@ -1564,6 +1565,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         };
                         bun_sys::open(zpath, flags, 0)
                     }
+                    None => Err(file.pinned_refusal(bun_sys::Tag::open)),
                 }
             };
 

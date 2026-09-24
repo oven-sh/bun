@@ -136,8 +136,9 @@ impl Lazy {
         #[cfg(unix)]
         let mut is_nonblocking = false;
 
-        let fd: Fd = match &file.pathlike {
-            PathOrFileDescriptor::Fd(pl_fd) => {
+        let fd: Fd = match file.lazy_pathlike() {
+            None => return Err(file.pinned_refusal(sys::Tag::open)),
+            Some(&PathOrFileDescriptor::Fd(pl_fd)) => {
                 if pl_fd.stdio_tag().is_some() {
                     'brk: {
                         #[cfg(unix)]
@@ -149,14 +150,14 @@ impl Lazy {
                                 break 'brk Fd::from_native(rc);
                             }
                         }
-                        break 'brk *pl_fd;
+                        break 'brk pl_fd;
                     }
                 } else {
-                    let duped = sys::dup_with_flags(*pl_fd, 0);
+                    let duped = sys::dup_with_flags(pl_fd, 0);
 
                     let fd: Fd = match duped {
                         Ok(fd) => fd,
-                        Err(err) => return Err(err.with_fd(*pl_fd)),
+                        Err(err) => return Err(err.with_fd(pl_fd)),
                     };
 
                     #[cfg(unix)]
@@ -172,7 +173,7 @@ impl Lazy {
                     fd.make_lib_uv_owned_for_syscall(sys::Tag::dup, sys::ErrorCase::CloseOnFail)?
                 }
             }
-            PathOrFileDescriptor::Path(path) => {
+            Some(PathOrFileDescriptor::Path(path)) => {
                 match sys::open(
                     bun_paths::resolve_path::z(path.slice(), &mut file_buf),
                     sys::O::RDONLY | sys::O::NONBLOCK | sys::O::CLOEXEC,
@@ -196,8 +197,9 @@ impl Lazy {
         {
             if file.is_atty.unwrap_or(false)
                 || (fd.stdio_tag().is_some() && sys::isatty(fd))
-                || (matches!(&file.pathlike, PathOrFileDescriptor::Fd(pl_fd)
-                        if pl_fd.stdio_tag().is_some() && sys::isatty(*pl_fd)))
+                || file
+                    .fd()
+                    .is_some_and(|pl_fd| pl_fd.stdio_tag().is_some() && sys::isatty(pl_fd))
             {
                 file.is_atty = Some(true);
             }

@@ -113,8 +113,8 @@ use bun_s3_signing::storage_class::StorageClass;
 // re-export hub instead.
 use crate::webcore::s3::multipart_options::MultiPartUploadOptions;
 use crate::webcore::s3::simple_request::{
-    self as s3_simple_request, S3CommitResult, S3DownloadResult, S3PartResult, S3UploadResult,
-    execute_simple_s3_request,
+    self as s3_simple_request, S3CommitResult, S3DeleteResult, S3DownloadResult, S3PartResult,
+    S3UploadResult, execute_simple_s3_request,
 };
 use crate::webcore::s3::xml_response;
 use bun_collections::index_sort;
@@ -184,9 +184,35 @@ bun_jsc::impl_abort_handle_owner!(MultiPartUpload, abort_handle, |this, _cause| 
     }
 });
 
+/// [`MultiPartUpload::fail_writer_collected`]'s task: same pointer as the upload, its own tag.
+#[repr(transparent)]
+pub(crate) struct WriterCollected(MultiPartUpload);
+impl bun_event_loop::Taskable for WriterCollected {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::S3UploadWriterCollected;
+    /// Drops the task's +1. The context that stopped fails the upload through `abort_handle`.
+    unsafe fn release_unrun(this: *mut Self) {
+        MultiPartUpload::deref_(this.cast::<MultiPartUpload>());
+    }
+    /// The context of the script that made the writer.
+    unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
+        // SAFETY: fn contract — the live upload `fail_writer_collected` queued.
+        unsafe { (*this.cast::<MultiPartUpload>()).context }
+    }
+}
+impl WriterCollected {
+    pub(crate) fn run(this: *mut Self) -> bun_jsc::JsResult<()> {
+        // SAFETY: adopts the +1 `fail_writer_collected` took; released after `fail`.
+        let upload = unsafe { RefPtr::from_raw(this.cast::<MultiPartUpload>()) };
+        upload.fail(S3Error {
+            code: b"UnknownError",
+            message: b"S3 writer was garbage collected before end() was called",
+        })
+    }
+}
+
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum State {
+pub(crate) enum State {
     WaitStreamCheck,
     NotStarted,
     MultipartStarted,
@@ -236,7 +262,7 @@ impl MultiPartUpload {
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum PartState {
+pub(crate) enum PartState {
     NotAssigned = 0,
     Pending = 1,
     Started = 2,
@@ -244,7 +270,7 @@ pub enum PartState {
     Canceled = 4,
 }
 
-pub struct UploadPart {
+pub(crate) struct UploadPart {
     /// Raw owned slice; backing allocation length is `allocated_size` (may exceed `data.len()`).
     /// Freed via `free_allocated_slice`. Default is a static empty slice.
     pub(crate) data: Cell<*const [u8]>,
@@ -256,7 +282,7 @@ pub struct UploadPart {
     pub(crate) index: Cell<u8>,
 }
 
-pub struct UploadPartResult {
+pub(crate) struct UploadPartResult {
     pub(crate) number: u16,
     pub(crate) etag: Box<[u8]>,
 }
@@ -623,6 +649,16 @@ impl MultiPartUpload {
         Ok(())
     }
 
+    /// `fail` from a task: the caller is a finalizer inside a GC sweep, and `fail` settles promises.
+    pub(crate) fn fail_writer_collected(&self) {
+        self.ref_();
+        self.vm
+            .event_loop_ref()
+            .enqueue_task(bun_event_loop::Task::init(
+                self.root_ptr().cast::<WriterCollected>(),
+            ));
+    }
+
     fn done(&self) -> bun_jsc::JsResult<()> {
         let state = self.state.get();
         if state == State::MultipartCompleted && self.is_queue_empty() {
@@ -674,11 +710,13 @@ impl MultiPartUpload {
         let _guard = unsafe { RefPtr::from_raw(this) };
         // SAFETY: `this` is live for at least the guard's duration.
         let self_ = unsafe { &*this };
-        if self_.state.get() == State::Finished {
-            return Ok(());
-        }
+        // `fail` ran while this request was in flight: an upload the server created is still open.
+        let failed = self_.state.get() == State::Finished;
         match result {
             S3DownloadResult::Failure(err) => {
+                if failed {
+                    return Ok(());
+                }
                 scoped_log!(
                     S3MultiPartUpload,
                     "startMultiPartRequestResult {} failed {}: {}",
@@ -711,6 +749,20 @@ impl MultiPartUpload {
                 if let Some(upload_id) = upload_id {
                     self_.upload_id.set(upload_id);
                 }
+                if failed {
+                    if valid {
+                        scoped_log!(
+                            S3MultiPartUpload,
+                            "startMultiPartRequestResult {} aborting after fail id: {}",
+                            BStr::new(&self_.path),
+                            BStr::new(self_.upload_id.get())
+                        );
+                        // The rollback callback releases this ref.
+                        self_.ref_();
+                        self_.rollback_multi_part_request()?;
+                    }
+                    return Ok(());
+                }
                 if !valid {
                     // Unknown type of response error from AWS
                     scoped_log!(
@@ -735,10 +787,15 @@ impl MultiPartUpload {
                 self_.drain_enqueued_parts(0)
             }
             // this is "unreachable" but we cover in case AWS returns 404
-            S3DownloadResult::NotFound(_) => self_.fail(S3Error {
-                code: b"UnknownError",
-                message: b"Failed to initiate multipart upload",
-            }),
+            S3DownloadResult::NotFound(_) => {
+                if failed {
+                    return Ok(());
+                }
+                self_.fail(S3Error {
+                    code: b"UnknownError",
+                    message: b"Failed to initiate multipart upload",
+                })
+            }
         }
     }
 
@@ -792,7 +849,7 @@ impl MultiPartUpload {
 
     /// We do a best effort to rollback the multipart upload, if it fails we will retry, if it still we just deinit the upload
     pub(crate) fn on_rollback_multi_part_request(
-        result: S3UploadResult,
+        result: S3DeleteResult,
         this: *mut c_void,
     ) -> bun_jsc::JsResult<()> {
         let this = this.cast::<Self>();
@@ -805,7 +862,7 @@ impl MultiPartUpload {
             BStr::new(self_.upload_id.get())
         );
         match result {
-            S3UploadResult::Failure(_err) => {
+            S3DeleteResult::Failure(_err) => {
                 let mut options = self_.options.get();
                 if options.retry > 0 {
                     options.retry -= 1;
@@ -817,7 +874,8 @@ impl MultiPartUpload {
                 MultiPartUpload::deref_(this);
                 Ok(())
             }
-            S3UploadResult::Success => {
+            // 404: the store no longer has the upload, which is what a rollback is for.
+            S3DeleteResult::Success | S3DeleteResult::NotFound(_) => {
                 MultiPartUpload::deref_(this);
                 Ok(())
             }
@@ -883,7 +941,7 @@ impl MultiPartUpload {
                 request_payer: self.request_payer,
                 ..Default::default()
             },
-            s3_simple_request::S3Callback::Upload(Self::on_rollback_multi_part_request),
+            s3_simple_request::S3Callback::Delete(Self::on_rollback_multi_part_request),
             self.as_ctx_ptr(),
         )
     }
@@ -1200,7 +1258,7 @@ impl MultiPartUpload {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum UploadBackpressure {
+pub(crate) enum UploadBackpressure {
     WantMore,
     Backpressure,
     Done,

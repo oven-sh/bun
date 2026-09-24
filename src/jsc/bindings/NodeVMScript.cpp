@@ -142,6 +142,7 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     RETURN_IF_EXCEPTION(scope, {});
 
     fetcher->owner(vm, script);
+    ensureStillAliveHere(importer);
 
     // Node's vm.Script throws SyntaxError at construction; the REPL's
     // recoverable-error flow (and user code) relies on that.
@@ -289,6 +290,7 @@ void NodeVMScript::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_cachedExecutable);
     visitor.append(thisObject->m_cachedBytecodeBuffer);
     visitor.append(thisObject->m_unlinkedCodeBlock);
+    NodeVMScriptFetcher::visitSource(visitor, thisObject->m_source);
 }
 
 NodeVMScriptConstructor::NodeVMScriptConstructor(VM& vm, Structure* structure)

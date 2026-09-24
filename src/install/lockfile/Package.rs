@@ -868,17 +868,6 @@ impl Package<u64> {
             // Shrink off the unused default-initialized tail (`new_length <= total_len`).
             dependencies_list.truncate(new_length);
 
-            #[cfg(debug_assertions)]
-            {
-                if package.resolution.npm().url.is_empty() {
-                    Output::panic(format_args!(
-                        "tarball_url is empty for package {}@{}",
-                        bstr::BStr::new(manifest.name()),
-                        version.fmt(&manifest.string_buf),
-                    ));
-                }
-            }
-
             string_builder.clamp();
             return Ok(package);
         }

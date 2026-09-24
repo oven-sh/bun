@@ -123,7 +123,8 @@ pub enum Protocol {
 
 pub use bun_http_types::Encoding::Encoding;
 pub use header_value_iterator::{
-    HeaderValueIterator, connection_header_keep_alive, upgrade_header_is_not_h2,
+    HeaderValueIterator, connection_header_keep_alive, fold_transfer_encoding,
+    upgrade_header_is_not_h2,
 };
 pub use init_error::InitError;
 
@@ -1879,6 +1880,10 @@ impl<'a> HTTPClient<'a> {
                     self.alpn_offer(),
                 );
 
+                if self.flags.reject_unauthorized {
+                    socket.set_inline_reject();
+                }
+
                 if crate::session_cache::eligible(self) {
                     let want_tunnel = self.http_proxy.is_some() && self.url.is_https();
                     // SAFETY: `ssl_ptr` is live and pre-handshake (guarded by
@@ -2416,7 +2421,6 @@ impl<'a> HTTPClient<'a> {
         let mut override_connection_header = false;
         let mut connection_close_requested = false;
         let mut override_user_agent = false;
-        let mut add_transfer_encoding = true;
         let mut original_content_length: Option<&[u8]> = None;
 
         // Reserve slots for default headers that may be appended after user headers
@@ -2495,13 +2499,8 @@ impl<'a> HTTPClient<'a> {
                     }
                 }
                 h if h == hash_header_const(CHUNKED_ENCODED_HEADER.name()) => {
-                    if !self.flags.is_streaming_request_body {
-                        continue;
-                    }
-                    // We don't want to override chunked encoding header if it was set by the user
-                    if will_append {
-                        add_transfer_encoding = false;
-                    }
+                    // Framing is ours: a computed Content-Length, or what the `Stream` carries.
+                    continue;
                 }
                 _ => {}
             }
@@ -2545,22 +2544,29 @@ impl<'a> HTTPClient<'a> {
 
         if body_len > 0 || self.method.has_request_body() {
             if self.flags.is_streaming_request_body {
-                if let Some(content_length) = original_content_length {
-                    if add_transfer_encoding {
-                        // User explicitly set Content-Length and did not set Transfer-Encoding;
-                        // preserve Content-Length instead of using chunked encoding.
-                        // This matches Node.js behavior where an explicit Content-Length is always honored.
-                        request_headers_buf[header_count] =
-                            picohttp::Header::new(CONTENT_LENGTH_HEADER_NAME, content_length);
-                        header_count += 1;
-                    }
-                    // If !add_transfer_encoding, the user explicitly set Transfer-Encoding,
-                    // which was already added to request_headers_buf. We respect that and
-                    // do not add Content-Length (they are mutually exclusive per HTTP/1.1).
-                } else if add_transfer_encoding
-                    && self.flags.upgrade_state == HTTPUpgradeState::None
-                {
-                    request_headers_buf[header_count] = CHUNKED_ENCODED_HEADER;
+                // `StreamFraming`, decided by the producer. An upgrade tunnels the bytes unframed.
+                let framing = match &self.state.original_request_body {
+                    HTTPRequestBody::Stream(stream) => stream.framing,
+                    _ => Default::default(),
+                };
+                if let Some(content_length) = framing.content_length {
+                    let value: &[u8] = bun_core::fmt::int_as_bytes(
+                        &mut self.request_content_len_buf,
+                        content_length,
+                    );
+                    // SAFETY: borrows `self.request_content_len_buf` which lives for `self`.
+                    let value: &[u8] = unsafe { bun_ptr::detach_lifetime(value) };
+                    request_headers_buf[header_count] =
+                        picohttp::Header::new(CONTENT_LENGTH_HEADER_NAME, value);
+                    header_count += 1;
+                } else if self.flags.upgrade_state == HTTPUpgradeState::None {
+                    request_headers_buf[header_count] = match framing.transfer_encoding {
+                        Some(value) => picohttp::Header::new(
+                            CHUNKED_ENCODED_HEADER.name(),
+                            self.header_str(value),
+                        ),
+                        None => CHUNKED_ENCODED_HEADER,
+                    };
                     header_count += 1;
                 }
             } else {
@@ -3102,6 +3108,22 @@ impl<'a> HTTPClient<'a> {
     pub(crate) fn flush_stream<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
         // only flush the stream if needed no additional data is being added
         self.write_to_stream::<IS_SSL>(socket, b"");
+    }
+
+    /// From the producer of this request's stream body; a no-op once that body was dropped.
+    pub(crate) fn on_request_stream_message<const IS_SSL: bool>(
+        &mut self,
+        message: http_thread::WriteMessageType,
+        socket: HttpSocket<IS_SSL>,
+    ) {
+        let HTTPRequestBody::Stream(stream) = &mut self.state.original_request_body else {
+            return;
+        };
+        if message == http_thread::WriteMessageType::LengthMismatch {
+            return self.close_and_fail::<IS_SSL>(crate::Error::RequestBodyLengthMismatch, socket);
+        }
+        stream.ended = message == http_thread::WriteMessageType::End;
+        self.flush_stream::<IS_SSL>(socket);
     }
 
     /// Write buffered data to the socket returning true if there is backpressure
@@ -4106,17 +4128,28 @@ impl<'a> HTTPClient<'a> {
 
     /// Decodes what has arrived under the consumer's budget. Returns whether to report bytes.
     fn process_received_body(&mut self, is_final_chunk: bool) -> crate::Result<bool> {
-        let max_output = self.decompress_output_cap(is_final_chunk);
+        let mut max_output = self.decompress_output_cap(is_final_chunk);
         if self.state.encoding.is_compressed() {
             // Nothing will read it, and its transport is being shut down.
             if self.signals.is_body_abandoned() {
                 self.state.discard_held_input();
                 return Ok(false);
             }
-            // Nothing is decoded for a paused consumer (a tunnelled socket keeps reading anyway).
-            if max_output != usize::MAX && self.signals.is_receive_paused() {
-                self.state.flags.decompress_output_pending = true;
-                return Ok(false);
+            if max_output != usize::MAX {
+                // Nothing is decoded for a paused consumer (a tunnelled socket keeps reading anyway).
+                if self.signals.is_receive_paused() {
+                    self.state.flags.decompress_output_pending = true;
+                    return Ok(false);
+                }
+                // A body that one libdeflate call can inflate goes whole to its consumer.
+                if is_final_chunk && self.state.wants_exact_size_inflate() {
+                    if self.signals.is_body_unclaimed() {
+                        self.state.flags.decompress_output_pending = true;
+                        return Ok(false);
+                    }
+                    // A consumer attached after the cap was read.
+                    max_output = self.decompress_output_cap(is_final_chunk);
+                }
             }
         }
         // `process_body_buffer` takes `&mut self.state`, so the bytes move out first.
@@ -4702,11 +4735,11 @@ impl<'a> HTTPClient<'a> {
             || self.signals.body_receive_mode.is_some();
         if is_done || is_streaming || content_length.is_none() {
             let is_final_chunk = is_done;
+            // A body that arrived whole keeps the libdeflate fast path: it may be held.
+            if !is_final_chunk {
+                self.state.flags.is_libdeflate_fast_path_disabled = true;
+            }
             let processed = self.process_received_body(is_final_chunk)?;
-
-            // We can only use the libdeflate fast path when we are not streaming
-            // If we ever call processBodyBuffer again, it cannot go through the fast path.
-            self.state.flags.is_libdeflate_fast_path_disabled = true;
 
             let total_received = self.state.total_body_received;
             self.report_progress(total_received);
@@ -4906,11 +4939,10 @@ impl<'a> HTTPClient<'a> {
                     // Content-Length is an unrecoverable framing error —
                     // falling back to 0 would release a desynchronized socket
                     // into the keep-alive pool.
-                    let value = header.value();
-                    if value.is_empty() || !value.iter().all(u8::is_ascii_digit) {
-                        return Err(crate::Error::InvalidContentLength);
-                    }
-                    let Ok(content_length) = bun_core::parse_unsigned::<usize>(value, 10) else {
+                    let Some(content_length) =
+                        bun_http_types::parse_content_length_strict(header.value())
+                            .and_then(|n| usize::try_from(n).ok())
+                    else {
                         return Err(crate::Error::InvalidContentLength);
                     };
                     if self.method.has_body() {
@@ -4953,19 +4985,7 @@ impl<'a> HTTPClient<'a> {
                     }
                 }
                 h if h == hash_header_const(b"Transfer-Encoding") => {
-                    // RFC 9112 §6.1: `chunked`, if present, must be the final coding.
-                    for token in HeaderValueIterator::init(header.value()) {
-                        if self.state.transfer_encoding == Encoding::Chunked {
-                            return Err(crate::Error::UnsupportedTransferEncoding);
-                        }
-                        match Encoding::from_token(token) {
-                            Some(Encoding::Chunked) => {
-                                self.state.transfer_encoding = Encoding::Chunked;
-                            }
-                            Some(_) => {}
-                            None => return Err(crate::Error::UnsupportedTransferEncoding),
-                        }
-                    }
+                    fold_transfer_encoding(header.value(), &mut self.state.transfer_encoding)?;
                 }
                 h if h == hash_header_const(b"Location") => {
                     location = header.value();

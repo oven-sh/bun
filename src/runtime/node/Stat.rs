@@ -6,10 +6,10 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 // `bun.sys.PosixStat` — uv-shaped stat struct. Re-exported from `bun_sys` now
 // that the crate declares it; `PosixStat::init(&bun_sys::Stat)` handles the
 // libc-stat → uv_stat_t field copy on both POSIX and Windows there.
-pub use bun_sys::PosixStat;
+pub(crate) use bun_sys::PosixStat;
 
 /// Stats and BigIntStats classes from node:fs. `BIG` selects BigIntStats vs Stats.
-pub struct StatType<const BIG: bool> {
+pub(crate) struct StatType<const BIG: bool> {
     pub value: PosixStat,
 }
 
@@ -165,8 +165,8 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
-pub type StatsSmall = StatType<false>;
-pub type StatsBig = StatType<true>;
+pub(crate) type StatsSmall = StatType<false>;
+pub(crate) type StatsBig = StatType<true>;
 
 /// Test-only: build a Stats/BigIntStats from a raw u64 ino via the real
 /// statToJS path, so regression tests can exercise high-inode values without
@@ -184,7 +184,7 @@ pub(crate) fn create_stats_for_ino(
 }
 
 /// Union between `Stats` and `BigIntStats` where the type can be decided at runtime
-pub enum Stats {
+pub(crate) enum Stats {
     Big(StatsBig),
     Small(StatsSmall),
 }

@@ -893,6 +893,27 @@ describe.concurrent(() => {
       expect(stdout.trim()).toBe("beforeExit: 0\nbeforeExit: 1\nexit: 2");
     });
 
+    // The script never touches process.nextTick, so no tick queue exists when the event is emitted.
+    it("runs the microtasks and the ticks that a listener queues, before 'exit'", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("beforeExit", async () => {
+             await null;
+             console.log("microtask");
+             process.nextTick(() => console.log("tick"));
+           });
+           process.on("exit", () => console.log("exit"));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "microtask\ntick\nexit\n", stderr: "", exitCode: 0 });
+    });
+
     it("throwing inside preserves exit code", async () => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", `process.on("beforeExit", () => {throw new Error("boom")});`],
@@ -1164,6 +1185,51 @@ describe.concurrent(() => {
     expect(closestDelta(() => jscMemoryUsage().peak, maxRSS)).toBeLessThan(slack);
     expect(closestDelta(() => process.report.getReport().resourceUsage.maxRss, maxRSS)).toBeLessThan(slack);
     expect(maxRSS() + slack).toBeGreaterThan(rss());
+  });
+
+  it("process.report's JavaScript stack names frames as error.stack does", () => {
+    // The report and the error are made at the same place, and nothing here is in tail position.
+    const seen = {};
+    const record = kind => {
+      seen[kind] = {
+        report: process.report.getReport().javascriptStack.stack,
+        error: new Error().stack.split("\n").slice(1),
+      };
+    };
+    class Widget {
+      constructor() {
+        record("constructor");
+        this.done = true;
+      }
+    }
+    function viaConstructor() {
+      const widget = new Widget();
+      expect(widget.done).toBe(true);
+    }
+    function viaEval() {
+      const made = (0, eval)("(function (record) { record('eval'); return true; })")(record);
+      expect(made).toBe(true);
+    }
+    function viaBuiltin() {
+      const made = [0].map(() => {
+        record("builtin");
+        return true;
+      });
+      expect(made).toEqual([true]);
+    }
+    viaConstructor();
+    viaEval();
+    viaBuiltin();
+
+    // "at new Widget (file:1:2)" -> "new Widget". The first frame is record().
+    const names = lines => lines.slice(1, 3).map(line => /^\s*at (.*?) ?\(/.exec(line)?.[1]);
+    const framesOf = kind => ({ report: names(seen[kind].report), error: names(seen[kind].error) });
+    expect({ constructor: framesOf("constructor"), eval: framesOf("eval"), builtin: framesOf("builtin") }).toEqual({
+      // `new Widget`, as in Node's report.
+      constructor: { report: ["new Widget", "viaConstructor"], error: ["new Widget", "viaConstructor"] },
+      eval: { report: ["<anonymous>", "viaEval"], error: ["<anonymous>", "viaEval"] },
+      builtin: { report: ["<anonymous>", "map"], error: ["<anonymous>", "map"] },
+    });
   });
 
   // JSC measures the live size of the heap at the end of each collection and

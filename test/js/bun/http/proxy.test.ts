@@ -1124,10 +1124,10 @@ test("HTTPS origin close-delimited body via HTTP proxy does not ECONNRESET", asy
   }
 });
 
-// Use-after-free in the proxy tunnel close path: when the final response
-// bytes and the TLS close_notify arrive in one TCP batch, SSLWrapper's
-// handle_reading sets sent_ssl_shutdown before flushing the decrypted bytes.
-// The data callback completes the response, and the done path's
+// Use-after-free in the proxy tunnel close path: the final response bytes and
+// the TLS close_notify arrive in one TCP batch, so the data callback completes
+// the response while SSLWrapper's handle_reading is still on the stack. Back
+// then handle_reading had already set sent_ssl_shutdown, and the done path's
 // ProxyTunnel.shutdown() hit SSLWrapper.shutdown()'s already-shut-down early
 // return without marking the wrapper closed_notified, so after the client was
 // freed handle_reading still fired on_close into the stale handlers.ctx.

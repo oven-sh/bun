@@ -613,6 +613,10 @@ impl ProxyTunnel {
                 return;
             }
         };
+        // The inner connection's form of the `set_inline_reject` call in `HTTPClient::on_open`.
+        if this.flags.reject_unauthorized {
+            wrapper.set_inline_reject();
+        }
         // `RefPtr::new` owns the tunnel's initial ref (`ref_count == 1` from
         // `Default`); the client holds it until `close_proxy_tunnel` or the
         // hand-off to the keep-alive pool.

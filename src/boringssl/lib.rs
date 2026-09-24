@@ -450,8 +450,8 @@ fn is_hostname(host: &[u8]) -> bool {
 }
 
 pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> bool {
-    // As in Node.js, a host is an IP address only as typed, not after the IDNA mapping.
-    let host_is_ip = bun_core::ip_address::is_ip_address(unfqdn(hostname));
+    // As in Node.js, a host is an IP address only as typed, and only in the strict form of `net.isIP`: `ares_inet_pton` reads "127.1" as 127.1.0.0 and takes "1.2.3.4/8".
+    let host_is_ip = bun_core::ip_address::parse_strict(unfqdn(hostname)).is_some();
     let ascii_hostname;
     // CVE-2026-48618: IDNA maps "。" to ".", so a non-ASCII host is matched on its UTS #46 form, as in `tls.checkServerIdentity`.
     let hostname = if strings::first_non_ascii(hostname).is_some() {
@@ -782,7 +782,7 @@ pub fn write_server_identity_mismatch_reason(
     const NO_DNS: &str = "Cert does not contain a DNS name";
     let hostname = unfqdn(hostname);
     let host = HostName(hostname);
-    let host_is_ip = bun_core::ip_address::is_ip_address(hostname);
+    let host_is_ip = bun_core::ip_address::parse_strict(hostname).is_some();
 
     let Some(x509) = ssl_ptr.peer_leaf_certificate() else {
         return out.write_str(NO_DNS);

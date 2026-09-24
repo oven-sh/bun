@@ -695,6 +695,35 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
     });
   });
 
+  // A host is an IP address only in the strict form that net.isIP takes. The
+  // native matcher used ares_inet_pton, which also reads "127.1" (as
+  // 127.1.0.0), "10", hex, zero-padded octets and a trailing "/bits". A
+  // resolver reads "127.1" as 127.0.0.1, so such a name has two readings.
+  describe.concurrent("IP shorthand is not an IP address", () => {
+    const ipCert = makeCert("x", [
+      ["ip", "127.0.0.1"],
+      ["ip", "127.1.0.0"],
+      ["ip", "10.0.0.0"],
+      ["ip", "1.2.3.4"],
+      ["ip", "1.2.3.0"],
+    ]);
+    it.each([
+      ["127.0.0.1", true],
+      ["127.1", false],
+      ["10", false],
+      ["0x7f000001", false],
+      ["127.000.000.001", false],
+      ["1.2.3.4/8", false],
+      ["127.0.0.1/32", false],
+      ["1.2.3", false],
+    ])("%j", async (host, match) => {
+      expect({ csi: csi(ipCert.x509, host), fetch: await fetchOk(ipCert, host) }).toEqual({
+        csi: match,
+        fetch: match ? { ok: true } : { ok: false, code: "ERR_TLS_CERT_ALTNAME_INVALID" },
+      });
+    });
+  });
+
   // tls.serverName is a C string in the native TLS configuration. SNI and the
   // native matcher would see "exact.test" for "exact.test\0.wild.test", so
   // fetch and Bun.connect refuse the option. node:tls does what Node.js does:
@@ -777,6 +806,12 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
     ["IP-only SAN", "ipcn.a.test", [["ip", "10.0.0.1"]], "ipcn.a.test", true, true],
     ["URI-only SAN", "uricn.a.test", [["uri", "https://x.test/"]], "uricn.a.test", true, true],
     ["DNS SAN present", "dnscn.a.test", [["dns", "other.a.test"]], "dnscn.a.test", false, false],
+    // The CN fallback has the rule of the SAN path: a host with a character
+    // that no hostname has matches nothing. OpenSSL lets "*" cover letters,
+    // digits and "-" only, so checkHost also rejects the underscore.
+    ["wildcard CN", "*.cn.a.test", [], "foo.cn.a.test", true, true],
+    ["wildcard CN, underscore", "*.cn.a.test", [], "foo_bar.cn.a.test", true, false],
+    ["wildcard CN, URL delimiter in the label", "*.cn.a.test", [], "localhost/.cn.a.test", false, false],
   ];
   describe.concurrent("CN fallback", () => {
     it.each(cnRows)("%s -> %j", async (_label, cn, sans, host, csiMatch, checkHostMatch) => {

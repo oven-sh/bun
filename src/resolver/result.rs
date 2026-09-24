@@ -133,8 +133,7 @@ bitflags::bitflags! {
         const IS_STANDALONE_MODULE = 1 << 2;
         // This is true when the package was loaded from within the node_modules directory.
         const IS_FROM_NODE_MODULES = 1 << 3;
-        /// The import path of a CSS or HTML URL did not resolve as written. This
-        /// result is for the path without its `?query#fragment`.
+        /// The import path (a CSS or HTML URL) resolved only after its `?query#fragment` was removed.
         const REMOVED_URL_SUFFIX = 1 << 4;
         const EMIT_DECORATOR_METADATA = 1 << 5;
         const EXPERIMENTAL_DECORATORS = 1 << 6;

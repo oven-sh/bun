@@ -114,23 +114,19 @@ bitflags::bitflags! {
         /// import), and those records must never be resolved.
         const IS_BARREL_DEFERRED = 1 << 19;
 
-        /// `original_path` did not resolve as written: the file was found after
-        /// its `?query#fragment` was removed. See `ImportRecord::removed_url_suffix`.
+        /// The file was found only after the `?query#fragment` of `original_path` was removed.
         const RESOLVED_WITHOUT_URL_SUFFIX = 1 << 20;
     }
 }
 
 impl ImportRecord {
-    /// Where the `?query#fragment` of a CSS or HTML URL starts. A `#` or `?` can
-    /// also be part of a file name (`./C#/logo.png`), so the resolver removes
-    /// the suffix only when the specifier does not resolve as written.
+    /// Where the `?query#fragment` of a URL starts. It can also be part of a file name (`./C#/logo.png`).
     #[inline]
     pub fn url_suffix_start(specifier: &[u8]) -> Option<usize> {
         bun_core::strings::index_of_any(specifier, b"?#")
     }
 
-    /// The `?query#fragment` that was removed from `original_path` to find the
-    /// file. Empty when the file was found as written.
+    /// The `?query#fragment` that was removed from `original_path` to find the file, or empty.
     pub fn removed_url_suffix(&self) -> &'static [u8] {
         if !self.flags.contains(Flags::RESOLVED_WITHOUT_URL_SUFFIX) {
             return b"";

@@ -4695,8 +4695,7 @@ pub mod bv2_impl {
         BundleV2::on_resolve(unsafe { &mut *resolve }, unsafe { &mut *this });
     }
 
-    /// Whether the path an onResolve plugin returned still ends with `suffix`, the
-    /// `?query#fragment` of the URL it resolved. A `/` in the URL matches a native separator.
+    /// Whether a path from an onResolve plugin still ends with the URL's `suffix`. A `/` matches a native separator.
     fn path_ends_with_url_suffix(path: &[u8], suffix: &[u8]) -> bool {
         let Some(start) = path.len().checked_sub(suffix.len()) else {
             return false;
@@ -5033,8 +5032,7 @@ pub mod bv2_impl {
                 }
                 jsc_api::JSBundler::ResolveValue::Success(result) => {
                     let mut out_source_index: Option<Index> = None;
-                    // An onResolve result has no `suffix` field (esbuild's has one), so a plugin
-                    // cannot say what it removed. A path that still ends with the suffix kept it.
+                    // An onResolve result has no `suffix` field, so a path that still ends with the suffix kept it.
                     let specifier: &[u8] = &resolve.import_record.specifier;
                     let resolved_without_url_suffix = resolve.import_record.kind.is_from_css()
                         && ImportRecord::url_suffix_start(specifier).is_some_and(|i| {

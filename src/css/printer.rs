@@ -338,9 +338,9 @@ impl<'a> Printer<'a> {
         };
         let record = &import_info.import_records[import_record_idx as usize];
         if record.source_index.is_valid() {
-            // When the resolver removed a `url()`'s `?query`/`#fragment` to find the
-            // file (e.g. `url(sprites.svg#icon)`), re-append it to the rewritten
-            // reference so the fragment still addresses the element.
+            // A `url()`'s `?query`/`#fragment` (e.g. `url(sprites.svg#icon)`) is
+            // stripped by the resolver to find the file; re-append it to the
+            // rewritten reference so the fragment still addresses the element.
             let suffix: &[u8] = if record.kind == bun_ast::ImportKind::Url {
                 record.removed_url_suffix()
             } else {

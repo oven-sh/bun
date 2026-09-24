@@ -1,0 +1,22 @@
+{
+  "_id": "self-contained-plugin",
+  "name": "self-contained-plugin",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "self-contained-plugin",
+      "version": "1.0.0",
+      "dependencies": {
+        "self-contained-app": "1.0.0"
+      },
+      "_id": "self-contained-plugin@1.0.0",
+      "dist": {
+        "integrity": "sha512-rG8VgE4ld94+yZMjhKEZvcSRJZYaCd4lDq+d/8RIS9+8B4QjZbGjWTmquvdr5Tbt+qGu9WLZsEPp58IszznBtA==",
+        "shasum": "d7ef649b36ccd31f4dae76ffff465f57362e8d06",
+        "tarball": "http://localhost:4873/self-contained-plugin/-/self-contained-plugin-1.0.0.tgz"
+      }
+    }
+  }
+}

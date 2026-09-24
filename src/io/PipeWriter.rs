@@ -76,7 +76,7 @@ pub trait PosixPipeWriter {
             FileType::NonblockingPipe | FileType::File => {
                 self.try_write_with_write_fn(buf, sys::write)
             }
-            FileType::Pipe => self.try_write_with_write_fn(buf, write_to_blocking_pipe),
+            FileType::Pipe => self.try_write_with_write_fn(buf, sys::write_nonblocking),
             FileType::Socket => self.try_write_with_write_fn(buf, write_to_socket),
         }
     }
@@ -212,28 +212,11 @@ pub trait PosixPipeWriter {
             }
         }
 
-        WriteResult::Wrote(drained)
-    }
-}
-
-/// Free fn for the blocking-pipe path; the other file types are handled
-/// inline in `try_write` above.
-fn write_to_blocking_pipe(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    {
-        if bun_sys::linux::RWFFlagSupport::is_maybe_supported() {
-            return sys::write_nonblocking(fd, buf);
+        if limit < buf_len {
+            // Capped by `max_write_size`, not by the fd: the tail is still buffered, so this is not `Drained`.
+            return WriteResult::Pending(drained);
         }
-    }
-
-    // No per-call nonblocking write here: ask how much fits so a large write can't park the thread.
-    match sys::pipe_writable_space(fd) {
-        Some(0) => sys::Result::Err(sys::Error::retry()),
-        Some(space) => sys::write(fd, &buf[..buf.len().min(space)]),
-        None => match bun_core::is_writable(fd) {
-            bun_core::Pollable::Ready | bun_core::Pollable::Hup => sys::write(fd, buf),
-            bun_core::Pollable::NotReady => sys::Result::Err(sys::Error::retry()),
-        },
+        WriteResult::Wrote(drained)
     }
 }
 

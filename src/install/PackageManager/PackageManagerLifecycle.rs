@@ -17,7 +17,7 @@ use super::directories;
 use crate::lifecycle_script_runner::{
     InstallCtx, LifecycleScriptSubprocess as RealLifecycleScriptSubprocess,
 };
-use crate::lockfile_real::package::scripts::List as ScriptsList;
+use crate::lockfile_real::package::scripts::{Gypfile, List as ScriptsList};
 use crate::package_manager_real::Command;
 use crate::resolution_real::Tag as ResolutionTag;
 use bun_install::lockfile::{Lockfile, Package};
@@ -303,7 +303,7 @@ impl PackageManager {
 
         let add_node_gyp_rebuild_script = root_package
             .scripts
-            .wants_default_node_gyp(FileSystem::instance().top_level_dir());
+            .wants_default_node_gyp(FileSystem::instance().top_level_dir(), Gypfile::Unread);
 
         if root_package.scripts.has_any() || add_node_gyp_rebuild_script {
             self.root_lifecycle_scripts = root_package.scripts.create_list(

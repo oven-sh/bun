@@ -1,0 +1,27 @@
+{
+  "_id": "gypfile-false",
+  "name": "gypfile-false",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "gypfile-false",
+      "version": "1.0.0",
+      "gypfile": false,
+      "dependencies": {
+        "node-gyp": "1.5.0"
+      },
+      "scripts": {
+        "postinstall": "node -e \"require('fs').writeFileSync('postinstall.txt', 'ran')\""
+      },
+      "_id": "gypfile-false@1.0.0",
+      "hasInstallScript": true,
+      "dist": {
+        "integrity": "sha512-BuSJNAEXWoraTlWYAlV9SOfiwqcFaXh9gO83Y3rAoWriMHXyrF9fgE5yHaM7ek8UJEAAAxRc5oaTdl4wqQgBXg==",
+        "shasum": "6b6c272f8da15f177abb42ef672f3bcd5cd2a568",
+        "tarball": "http://localhost:4873/gypfile-false/-/gypfile-false-1.0.0.tgz"
+      }
+    }
+  }
+}

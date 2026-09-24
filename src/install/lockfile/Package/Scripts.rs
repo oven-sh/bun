@@ -114,14 +114,21 @@ impl Scripts {
     }
 
     /// npm's rule for the default `node-gyp rebuild` install script.
-    pub(crate) fn wants_default_node_gyp(&self, package_dir: &[u8]) -> bool {
+    pub(crate) fn wants_default_node_gyp(&self, package_dir: &[u8], gypfile: Gypfile) -> bool {
         if !self.install.is_empty() || !self.preinstall.is_empty() {
             return false;
         }
         let mut buf = bun_paths::path_buffer_pool::get();
         let binding_gyp =
             join_abs_string_buf_z::<platform::Auto>(package_dir, &mut buf.0, &[b"binding.gyp"]);
-        bun_sys::exists_z(binding_gyp)
+        if !bun_sys::exists_z(binding_gyp) {
+            return false;
+        }
+        let gypfile = match gypfile {
+            Gypfile::Unread => Gypfile::read(package_dir, &mut buf.0),
+            known => known,
+        };
+        gypfile == Gypfile::Enabled
     }
 
     /// return: (first_index, total, entries)
@@ -310,7 +317,7 @@ impl Scripts {
         if self.has_any() {
             let add_node_gyp_rebuild_script =
                 lockfile.has_trusted_dependency(folder_name, folder_name, resolution)
-                    && self.wants_default_node_gyp(folder_path.slice());
+                    && self.wants_default_node_gyp(folder_path.slice(), Gypfile::Unread);
 
             return Ok(self.create_list(
                 lockfile,
@@ -333,12 +340,13 @@ impl Scripts {
         Ok(None)
     }
 
+    /// Also returns the `gypfile` setting for `wants_default_node_gyp`.
     pub(crate) fn fill_from_package_json(
         &mut self,
         string_builder: &mut LockfileStringBuilder<'_>,
         log: &mut bun_ast::Log,
         folder_path: &mut bun_paths::AutoAbsPath,
-    ) -> Result<(), crate::Error> {
+    ) -> Result<Gypfile, crate::Error> {
         let json_buf;
         let parsed;
         let json: Expr = {
@@ -359,7 +367,7 @@ impl Scripts {
         string_builder.allocate()?;
         self.parse_alloc(string_builder, json);
         self.filled = true;
-        Ok(())
+        Ok(Gypfile::from_json(json))
     }
 
     pub(crate) fn create_from_package_json(
@@ -374,9 +382,9 @@ impl Scripts {
         // `defer tmp.deinit()` — `tmp` stays empty (only `string_builder` borrows it), so field
         // auto-drop suffices; Lockfile has no `impl Drop`.
         let mut builder = tmp.string_builder();
-        self.fill_from_package_json(&mut builder, log, folder_path)?;
+        let gypfile = self.fill_from_package_json(&mut builder, log, folder_path)?;
 
-        let add_node_gyp_rebuild_script = self.wants_default_node_gyp(folder_path.slice());
+        let add_node_gyp_rebuild_script = self.wants_default_node_gyp(folder_path.slice(), gypfile);
 
         Ok(self.create_list(
             lockfile,
@@ -386,6 +394,39 @@ impl Scripts {
             resolution_tag,
             add_node_gyp_rebuild_script,
         ))
+    }
+}
+
+/// The `gypfile` property of a package.json. Only a literal `false` opts out.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Gypfile {
+    /// Read package.json only once a `binding.gyp` is found.
+    Unread,
+    Enabled,
+    Disabled,
+}
+
+impl Gypfile {
+    pub(crate) fn from_json(json: Expr) -> Gypfile {
+        match json.get(b"gypfile").and_then(|value| value.as_bool()) {
+            Some(false) => Gypfile::Disabled,
+            _ => Gypfile::Enabled,
+        }
+    }
+
+    /// An unreadable package.json keeps the default script.
+    fn read(package_dir: &[u8], buf: &mut [u8]) -> Gypfile {
+        let path = join_abs_string_buf_z::<platform::Auto>(package_dir, buf, &[b"package.json"]);
+        let Ok(json_buf) = bun_sys::File::read_from(Fd::cwd(), path) else {
+            return Gypfile::Enabled;
+        };
+        let json_src = bun_ast::Source::init_path_string(path.as_bytes(), json_buf.as_slice());
+        let mut log = bun_ast::Log::init();
+        initialize_store();
+        match bun_json::ParsedJson::parse_package_json(&json_src, &mut log) {
+            Ok(parsed) => Gypfile::from_json(parsed.root),
+            Err(_) => Gypfile::Enabled,
+        }
     }
 }
 

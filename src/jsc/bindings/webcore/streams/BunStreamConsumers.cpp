@@ -217,6 +217,9 @@ void JSReadableStreamIntoArrayOperation::analyzeHeap(JSCell* cell, HeapAnalyzer&
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::Result), "result"_s);
 }
 
+static void oneShotDirectFinish(JSC::VM&, JSC::JSGlobalObject*, JSOneShotDirectSink*);
+static void oneShotDirectFail(JSC::VM&, JSC::JSGlobalObject*, JSOneShotDirectSink*, JSC::JSValue error);
+
 } // namespace WebCore
 
 namespace Bun {
@@ -1117,12 +1120,20 @@ JSValue consumeDirectStreamToArrayBuffer(JSGlobalObject* globalObject, WebCore::
         RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, exception->value()));
     }
     if (auto* pullPromise = dynamicDowncast<JSPromise>(firstPull)) {
-        // The caller holds the capability that close()/end() settle, so it does not wait for a pull() that outlives them. The reactions settle it only when pull() settles first.
+        // The caller holds the capability that close()/end() settle, so it does not wait for a pull() that outlives them. The reactions settle it only when pull() settles first, or when a close() hook threw and left the finish owed.
         pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onConsumeDirectToArrayBufferPullFulfilled(), runtime->onConsumeDirectToArrayBufferPullRejected(), jsUndefined(), sink);
         if (capability->status() == JSPromise::Status::Pending)
             return capability;
     }
     // A synchronous (non-promise) producer, or a result that close()/end() settled inside the pull() call: close the stream and return the capability.
+    // pull() returned normally after a close()/end() whose hook threw: the owed finish runs here. Without a close() the capability keeps waiting for one.
+    WebCore::oneShotDirectFinish(vm, globalObject, sink);
+    if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
+        TRY_CLEAR_EXCEPTION(scope, {});
+        WebCore::oneShotDirectFail(vm, globalObject, sink, exception->value());
+        RETURN_IF_EXCEPTION(scope, {});
+        return capability;
+    }
     stream->m_lockedWithoutReader = false;
     readableStreamCloseIfPossible(globalObject, stream);
     RETURN_IF_EXCEPTION(scope, {});
@@ -1728,6 +1739,9 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onConsumeDirectToArrayBufferPullFul
     return enterStreams(globalObject, [&] {
         auto scope = DECLARE_THROW_SCOPE(vm);
         oneShotDirectClose(vm, globalObject, sink, jsUndefined());
+        RETURN_IF_EXCEPTION(scope, );
+        // An earlier close()/end() whose hook threw left the finish owed, and pull() still resolved: finish it, without the hook.
+        oneShotDirectFinish(vm, globalObject, sink);
         RETURN_IF_EXCEPTION(scope, );
         if (auto* stream = sink->stream()) {
             stream->m_lockedWithoutReader = false;

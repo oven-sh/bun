@@ -714,6 +714,8 @@ pub struct Parser<'bump> {
     /// Strpool ranges that came from interpolated JS values (`\x08__bunstr_N`
     /// refs). See `Lexer::js_string_ranges`.
     pub(crate) js_string_ranges: &'bump [TextRange],
+    /// Strpool positions of the chars that a backslash escaped. See `Lexer::escaped_positions`.
+    pub(crate) escaped_positions: &'bump [u32],
     pub(crate) alloc: &'bump Bump,
     pub(crate) jsobjs: &'bump mut [JSValue],
     pub(crate) current: u32,
@@ -746,13 +748,14 @@ type ParseResult<T> = crate::Result<T>;
 impl<'bump> Parser<'bump> {
     pub fn new(
         bump: &'bump Bump,
-        lex_result: LexResult<'bump>,
+        lex_result: &LexResult<'bump>,
         jsobjs: &'bump mut [JSValue],
     ) -> ParseResult<Parser<'bump>> {
         Ok(Parser {
             strpool: lex_result.strpool,
             tokens: lex_result.tokens,
             js_string_ranges: lex_result.js_string_ranges,
+            escaped_positions: lex_result.escaped_positions,
             alloc: bump,
             jsobjs,
             current: 0,
@@ -771,6 +774,7 @@ impl<'bump> Parser<'bump> {
             strpool: self.strpool,
             tokens: self.tokens,
             js_string_ranges: self.js_string_ranges,
+            escaped_positions: self.escaped_positions,
             alloc: self.alloc,
             // reshaped for borrowck — move the
             // exclusive borrow into the subparser and restore it in continue_from_subparser.
@@ -987,12 +991,22 @@ impl<'bump> Parser<'bump> {
                 .map_err(Into::into);
         }
 
-        match self.peek().tag() {
-            TokenTag::DoubleBracketOpen => {
+        match self.peek() {
+            Token::DoubleBracketOpen => {
                 return self
                     .parse_cond_expr()?
                     .to_expr(self.alloc)
                     .map_err(Into::into);
+            }
+            Token::Text(range) => {
+                let word = self.text(range);
+                if reserved_word(word) == Some(ReservedWord::Unsupported)
+                    && self.delimits(self.peek_n(1))
+                    && !self.is_interpolated_position(range.start)
+                    && !self.has_escaped_char(range)
+                {
+                    return self.unsupported_reserved_word(word);
+                }
             }
             _ => {}
         }
@@ -1000,6 +1014,14 @@ impl<'bump> Parser<'bump> {
         self.parse_simple_cmd()?
             .to_expr(self.alloc)
             .map_err(Into::into)
+    }
+
+    fn unsupported_reserved_word<T>(&mut self, word: &[u8]) -> ParseResult<T> {
+        self.add_error(format_args!(
+            "\"{0}\" is a reserved word that Bun Shell does not support yet. To run a command named \"{0}\", quote it.",
+            bstr::BStr::new(word)
+        ))?;
+        Err(ParseError::Unsupported.into())
     }
 
     fn parse_subshell(&mut self) -> ParseResult<ast::Subshell<'bump>> {
@@ -1688,6 +1710,15 @@ impl<'bump> Parser<'bump> {
             .any(|r| pos >= r.start && pos < r.end)
     }
 
+    fn has_escaped_char(&self, range: TextRange) -> bool {
+        let first = self
+            .escaped_positions
+            .partition_point(|&pos| pos < range.start);
+        self.escaped_positions
+            .get(first)
+            .is_some_and(|&pos| pos < range.end)
+    }
+
     fn if_clause_tok_at(&self, range: TextRange) -> Option<IfClauseTok> {
         if self.is_interpolated_position(range.start) {
             return None;
@@ -1938,23 +1969,55 @@ impl IfClauseTok {
     }
 
     pub fn from_text(txt: &[u8]) -> Option<IfClauseTok> {
-        if txt == b"if" {
-            return Some(IfClauseTok::If);
+        match reserved_word(txt) {
+            Some(ReservedWord::IfClause(tok)) => Some(tok),
+            _ => None,
         }
-        if txt == b"else" {
-            return Some(IfClauseTok::Else);
-        }
-        if txt == b"elif" {
-            return Some(IfClauseTok::Elif);
-        }
-        if txt == b"then" {
-            return Some(IfClauseTok::Then);
-        }
-        if txt == b"fi" {
-            return Some(IfClauseTok::Fi);
-        }
-        None
     }
+}
+
+/// What a reserved word is to the parser.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ReservedWord {
+    /// `parse_if_clause` consumes it.
+    IfClause(IfClauseTok),
+    /// Bun Shell does not implement it. The parse fails on one in command position.
+    Unsupported,
+}
+
+bun_core::comptime_string_map! {
+    /// The words that are syntax in command position. A JS value equal to one stays a plain word.
+    static RESERVED_WORDS: ReservedWord = {
+        b"if" => ReservedWord::IfClause(IfClauseTok::If),
+        b"then" => ReservedWord::IfClause(IfClauseTok::Then),
+        b"elif" => ReservedWord::IfClause(IfClauseTok::Elif),
+        b"else" => ReservedWord::IfClause(IfClauseTok::Else),
+        b"fi" => ReservedWord::IfClause(IfClauseTok::Fi),
+        b"for" => ReservedWord::Unsupported,
+        b"while" => ReservedWord::Unsupported,
+        b"until" => ReservedWord::Unsupported,
+        b"select" => ReservedWord::Unsupported,
+        b"case" => ReservedWord::Unsupported,
+        b"esac" => ReservedWord::Unsupported,
+        b"function" => ReservedWord::Unsupported,
+        b"do" => ReservedWord::Unsupported,
+        b"done" => ReservedWord::Unsupported,
+    };
+}
+
+pub fn reserved_word(txt: &[u8]) -> Option<ReservedWord> {
+    RESERVED_WORDS.get(txt).copied()
+}
+
+pub fn reserved_word_bunstr(bunstr: &BunString) -> Option<ReservedWord> {
+    let slice = bunstr.to_encoded_slice();
+    if slice.is_16bit() {
+        let units = slice.utf16_slice();
+        return RESERVED_WORDS
+            .get_with_len_and_eql(units, units.len(), strings::eql_comptime_utf16)
+            .copied();
+    }
+    reserved_word(slice.slice())
 }
 
 // ───────────────────────────── Token ─────────────────────────────
@@ -2112,6 +2175,7 @@ pub struct LexResult<'bump> {
     pub tokens: &'bump [Token],
     pub strpool: &'bump [u8],
     pub(crate) js_string_ranges: &'bump [TextRange],
+    pub(crate) escaped_positions: &'bump [u32],
 }
 
 impl<'bump> LexResult<'bump> {
@@ -2209,6 +2273,9 @@ pub struct Lexer<'bump, const ENCODING: StringEncoding> {
     /// one must not create an env assignment).
     pub(crate) js_string_ranges: bun_alloc::ArenaVec<'bump, TextRange>,
 
+    /// Strpool positions of the chars that a backslash escaped, in ascending order.
+    pub(crate) escaped_positions: bun_alloc::ArenaVec<'bump, u32>,
+
     /// Contains a list of strings we need to escape
     /// Not owned by this struct
     pub(crate) string_refs: &'bump [BunString],
@@ -2230,6 +2297,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             strpool: bun_alloc::ArenaVec::new_in(bump),
             errors: bun_alloc::ArenaVec::new_in(bump),
             js_string_ranges: bun_alloc::ArenaVec::new_in(bump),
+            escaped_positions: bun_alloc::ArenaVec::new_in(bump),
             word_start: 0,
             j: 0,
             delimit_quote: false,
@@ -2246,6 +2314,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             strpool: self.strpool.into_bump_slice(),
             errors: self.errors.into_bump_slice(),
             js_string_ranges: self.js_string_ranges.into_bump_slice(),
+            escaped_positions: self.escaped_positions.into_bump_slice(),
         }
     }
 
@@ -2275,6 +2344,10 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 &mut self.js_string_ranges,
                 bun_alloc::ArenaVec::new_in(bump),
             ),
+            escaped_positions: core::mem::replace(
+                &mut self.escaped_positions,
+                bun_alloc::ArenaVec::new_in(bump),
+            ),
             in_subshell: Some(kind),
             subshell_depth: self.subshell_depth + 1,
             word_start: self.word_start,
@@ -2295,6 +2368,10 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         self.errors = core::mem::replace(&mut sublexer.errors, bun_alloc::ArenaVec::new_in(bump));
         self.js_string_ranges = core::mem::replace(
             &mut sublexer.js_string_ranges,
+            bun_alloc::ArenaVec::new_in(bump),
+        );
+        self.escaped_positions = core::mem::replace(
+            &mut sublexer.escaped_positions,
             bun_alloc::ArenaVec::new_in(bump),
         );
 
@@ -2883,6 +2960,8 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                     self.break_word(AddDelimiter::AfterWord)?;
                 }
                 continue;
+            } else {
+                self.escaped_positions.push(self.j);
             }
 
             self.append_char_to_str_pool(char)?;
@@ -4080,13 +4159,6 @@ pub fn needs_escape_utf8_ascii_latin1(str: &[u8]) -> bool {
         }
     }
     false
-}
-
-pub fn is_if_clause_keyword_bunstr(bunstr: &BunString) -> bool {
-    use IfClauseTok::{Elif, Else, Fi, If, Then};
-    [If, Else, Elif, Then, Fi]
-        .iter()
-        .any(|&kw| bunstr.eq_ascii(<&'static str>::from(kw).as_bytes()))
 }
 
 // ───────────────────────────── SmolList ─────────────────────────────

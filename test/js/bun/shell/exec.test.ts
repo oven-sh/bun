@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
 import { join } from "path";
 import { createTestBuilder } from "./test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -93,5 +93,37 @@ describe("bun exec", () => {
       .cwd(join(tempdir, "Í"))
       .quiet();
     expect(result.text()).toBe("hi\n");
+  });
+
+  describe("an unsupported reserved word runs no command", () => {
+    const reserved = (w: string) =>
+      `"${w}" is a reserved word that Bun Shell does not support yet. To run a command named "${w}", quote it.`;
+
+    TestBuilder.command`${BUN} exec ${'echo before\nfor f in a b; do\n  echo "f=[$f]"\ndone'}`
+      .env(bunEnv)
+      .exitCode(1)
+      .stdout("")
+      .stderr(stderr => expect(stderr).toEndWith(`due to error ${reserved("for")}\n`))
+      .runAsTest("bun exec");
+
+    test("a package.json script under --shell=bun", async () => {
+      using dir = tempDir("exec-reserved-word", {
+        "package.json": JSON.stringify({
+          name: "reserved-word-fixture",
+          scripts: { loop: "echo before; while true; do echo BODY; done" },
+        }),
+      });
+      await using proc = Bun.spawn({
+        cmd: [BUN, "--shell=bun", "run", "loop"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("");
+      expect(stderr).toEndWith(`error: Failed to run script loop due to error ${reserved("while")}\n`);
+      expect(exitCode).toBe(1);
+    });
   });
 });

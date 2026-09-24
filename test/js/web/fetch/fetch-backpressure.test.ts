@@ -1287,7 +1287,8 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
         (async () => {
           for await (const line of console) if (line === "done") done = true;
         })();
-        while (!done) {
+        // Bounded, so that a tasklet that is never freed fails the count below.
+        for (let turn = 0; turn < 200 && !done; turn++) {
           Bun.gc(true);
           await new Promise(resolve => setImmediate(resolve));
         }
@@ -1295,7 +1296,7 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
       `;
         await using proc = Bun.spawn({
           cmd: [bunExe(), "-e", script],
-          env: { ...bunEnv, BUN_DEBUG_FetchTasklet: "1", BUN_DEBUG_HTTPInternalState: "1" },
+          env: { ...clientEnv, BUN_DEBUG_FetchTasklet: "1", BUN_DEBUG_HTTPInternalState: "1" },
           stdin: "pipe",
           stdout: "pipe",
           stderr: "pipe",

@@ -1926,6 +1926,10 @@ impl FetchTasklet {
                 let scheduled = &mut self.scheduled_response_buffer;
                 if scheduled.list.is_empty() {
                     scheduled.list = pass.out;
+                } else if scheduled.list.len() < pass.out.len() {
+                    let mut out = pass.out;
+                    out.splice(0..0, scheduled.list.drain(..));
+                    scheduled.list = out;
                 } else {
                     bun_core::handle_oom(scheduled.write(&pass.out));
                 }

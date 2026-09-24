@@ -2,11 +2,26 @@
 
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use bun_threading::{Condvar, Guarded};
 
 use crate::process::PidT;
+
+/// False where this module cannot measure a process tree, so `maxMemory` and `memoryUsage()` must be refused.
+pub const SUPPORTED: bool = cfg!(any(
+    target_os = "macos",
+    target_os = "linux",
+    target_os = "android",
+    windows
+));
+
+/// A process seen in the tree, with its start time so a recycled pid is never counted or signalled.
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
+struct Member {
+    pid: PidT,
+    identity: u64,
+}
 
 pub struct Watch {
     #[cfg(not(windows))]
@@ -14,14 +29,18 @@ pub struct Watch {
     limit: u64,
     #[cfg(not(windows))]
     signal: u8,
-    /// Start time of `pid`, so a recycled pid is never signalled.
     #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
     identity: u64,
+    /// Kept across samples so a descendant that is reparented to init stays in the tree.
+    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
+    members: Guarded<Vec<Member>>,
     peak: AtomicU64,
     exceeded: AtomicBool,
     done: AtomicBool,
     #[cfg(any(target_os = "linux", target_os = "android"))]
     cgroup: Option<cgroup::Cgroup>,
+    #[cfg(windows)]
+    id: usize,
     #[cfg(windows)]
     job: bun_sys::windows::HANDLE,
     #[cfg(windows)]
@@ -30,7 +49,7 @@ pub struct Watch {
     notified: AtomicBool,
 }
 
-// SAFETY: HANDLEs are process-global kernel object references; every other field is atomic or immutable.
+// SAFETY: HANDLEs are process-global kernel object references; every other field is atomic, locked or immutable.
 #[cfg(windows)]
 unsafe impl Send for Watch {}
 #[cfg(windows)]
@@ -40,7 +59,7 @@ impl Watch {
     /// What enforces the limit: `"job"` or `"cgroup"` when the kernel does, `"sampler"` when this module's thread does.
     pub fn route(&self) -> &'static str {
         #[cfg(windows)]
-        if self.notified.load(Ordering::Relaxed) {
+        if self.notified.load(Ordering::Acquire) {
             return "job";
         }
         #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -51,50 +70,154 @@ impl Watch {
     }
 
     pub fn exceeded(&self) -> bool {
-        self.exceeded.load(Ordering::Relaxed)
+        self.exceeded.load(Ordering::Acquire)
     }
+
     pub fn peak(&self) -> u64 {
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        if let Some(cgroup) = &self.cgroup {
-            self.peak.fetch_max(cgroup.peak(), Ordering::Relaxed);
-        }
-        self.peak.load(Ordering::Relaxed)
+        self.peak.load(Ordering::Acquire)
     }
-    /// Call before the pid is reaped so a recycled pid is never sampled or signalled.
+
+    /// Call when the root process has exited, before its pid can be reused.
     pub fn unwatch(&self) {
         self.done.store(true, Ordering::Release);
         #[cfg(any(target_os = "linux", target_os = "android"))]
         if let Some(cgroup) = &self.cgroup {
-            if cgroup.oom_killed() {
-                self.exceeded.store(true, Ordering::Relaxed);
-                cgroup.kill_all();
+            if cgroup.settle() {
+                self.exceeded.store(true, Ordering::Release);
             }
         }
+        #[cfg(windows)]
+        os::finish(self);
     }
 
+    /// The tree's memory right now, as exact as this platform allows.
     pub fn sample_now(&self) -> u64 {
-        self.sample()
+        self.sample(true)
     }
 
-    fn sample(&self) -> u64 {
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        if let Some(cgroup) = &self.cgroup {
-            let usage = cgroup.current();
-            self.peak.fetch_max(usage, Ordering::Relaxed);
-            return usage;
-        }
-        let usage = os::tree_usage(self);
-        self.peak.fetch_max(usage, Ordering::Relaxed);
+    fn sample(&self, precise: bool) -> u64 {
+        let usage = self.measure(precise);
+        self.peak.fetch_max(usage, Ordering::AcqRel);
         if usage > self.limit {
             self.kill_once();
         }
         usage
     }
 
-    fn kill_once(&self) {
-        if !self.done.load(Ordering::Acquire) && !self.exceeded.swap(true, Ordering::Relaxed) {
-            os::kill_tree(self);
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn measure(&self, precise: bool) -> u64 {
+        if let Some(cgroup) = &self.cgroup {
+            if os::identity(self.pid) != self.identity {
+                self.done.store(true, Ordering::Release);
+            } else if cgroup.exceeded() {
+                self.kill_once();
+            }
+            return cgroup.anon();
         }
+        let estimate = self.walk();
+        // The cheap sum counts copy-on-write pages once per process, so it can only be too high.
+        if precise || estimate > self.limit {
+            if let Some(exact) = self.exact() {
+                return exact;
+            }
+        }
+        estimate
+    }
+
+    #[cfg(target_os = "macos")]
+    fn measure(&self, _precise: bool) -> u64 {
+        self.walk()
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
+    fn measure(&self, _precise: bool) -> u64 {
+        os::tree_usage(self)
+    }
+
+    /// Refresh `members` and return the sum of their cheap footprints.
+    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
+    fn walk(&self) -> u64 {
+        if os::identity(self.pid) != self.identity {
+            self.done.store(true, Ordering::Release);
+            return 0;
+        }
+        let mut members = self.members.lock();
+        let mut walker = os::Walker::default();
+        let mut order: Vec<PidT> = Vec::with_capacity(members.len() + 4);
+        let mut kids: Vec<PidT> = Vec::new();
+        let mut stack: Vec<PidT> = vec![self.pid];
+        for pass in 0..2 {
+            while let Some(pid) = stack.pop() {
+                if order.contains(&pid) {
+                    continue;
+                }
+                order.push(pid);
+                kids.clear();
+                walker.children(pid, &mut kids);
+                stack.extend_from_slice(&kids);
+            }
+            if pass == 0 {
+                stack.extend(
+                    members
+                        .iter()
+                        .filter(|m| !order.contains(&m.pid) && os::identity(m.pid) == m.identity)
+                        .map(|m| m.pid),
+                );
+            }
+        }
+        let mut total = 0u64;
+        let mut next: Vec<Member> = Vec::with_capacity(order.len());
+        for pid in order {
+            let identity = match members.iter().find(|m| m.pid == pid) {
+                Some(m) => m.identity,
+                None => os::identity(pid),
+            };
+            if identity == 0 {
+                continue;
+            }
+            total += walker.footprint(pid);
+            next.push(Member { pid, identity });
+        }
+        *members = next;
+        total
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn exact(&self) -> Option<u64> {
+        let members = self.members.lock();
+        let mut total = 0u64;
+        for m in members.iter() {
+            total += os::exact_footprint(m.pid)?;
+        }
+        Some(total)
+    }
+
+    fn kill_once(&self) {
+        if self.done.load(Ordering::Acquire) || self.exceeded.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        if let Some(cgroup) = &self.cgroup {
+            cgroup.kill_all();
+            return;
+        }
+        self.kill_tree();
+    }
+
+    /// Children first, so a shell cannot see its child die and start a replacement before its own signal arrives.
+    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
+    fn kill_tree(&self) {
+        for m in self.members.lock().iter().rev() {
+            if os::identity(m.pid) == m.identity {
+                // SAFETY: kill(2) has no memory-safety preconditions.
+                unsafe { libc::kill(m.pid, self.signal as core::ffi::c_int) };
+            }
+        }
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
+    fn kill_tree(&self) {
+        os::kill_tree(self);
     }
 }
 
@@ -107,51 +230,77 @@ impl Drop for Watch {
 
 static ENTRIES: Guarded<Vec<Arc<Watch>>> = Guarded::new(Vec::new());
 static WAKE: Condvar = Condvar::new();
-
 static THREAD_STARTED: AtomicBool = AtomicBool::new(false);
 
 const MIN_INTERVAL: Duration = Duration::from_millis(1);
 const MAX_INTERVAL: Duration = Duration::from_millis(100);
 
-/// Headroom below which sampling runs at `MIN_INTERVAL`; above it the interval scales linearly to `MAX_INTERVAL`.
-const FAST_BELOW_HEADROOM: f64 = 0.15;
+/// A child that only touches fresh pages reaches about this rate. The sleep is how long such a child needs to use the headroom.
+const WORST_CASE_BYTES_PER_SEC: u128 = 10 << 30;
 
-fn interval_for(min_headroom: f64) -> Duration {
-    if min_headroom <= FAST_BELOW_HEADROOM {
-        return MIN_INTERVAL;
-    }
-    let t = ((min_headroom - FAST_BELOW_HEADROOM) / (1.0 - FAST_BELOW_HEADROOM)).clamp(0.0, 1.0);
-    MIN_INTERVAL + (MAX_INTERVAL - MIN_INTERVAL).mul_f64(t)
+/// Never spend more than a fifth of one core on sampling, however large the trees are.
+fn interval_for(headroom_bytes: u64, sample_cost: Duration) -> Duration {
+    let nanos = u128::from(headroom_bytes) * 1_000_000_000 / WORST_CASE_BYTES_PER_SEC;
+    Duration::from_nanos(nanos.min(MAX_INTERVAL.as_nanos()) as u64)
+        .max(MIN_INTERVAL)
+        .max(sample_cost * 4)
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn has_background_work() -> bool {
+    cgroup::has_pending_rmdir()
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
+fn has_background_work() -> bool {
+    false
 }
 
 fn run() {
     let mut snapshot: Vec<Arc<Watch>> = Vec::new();
     let mut guard = ENTRIES.lock();
     loop {
-        guard.retain(|e| !e.done.load(Ordering::Relaxed));
-        if guard.is_empty() {
+        guard.retain(|e| !e.done.load(Ordering::Acquire));
+        if guard.is_empty() && !has_background_work() {
             WAKE.wait_guarded(&mut guard);
             continue;
         }
         snapshot.extend(guard.iter().map(Arc::clone));
         drop(guard);
 
-        let mut min_headroom = 1.0f64;
+        let started = Instant::now();
+        let mut min_headroom = u64::MAX;
         for e in &snapshot {
-            if e.done.load(Ordering::Relaxed) || e.exceeded() {
+            if e.done.load(Ordering::Acquire) || e.exceeded() {
                 continue;
             }
-            let usage = e.sample();
-            let headroom = 1.0 - (usage as f64 / e.limit as f64);
-            if headroom < min_headroom {
-                min_headroom = headroom;
-            }
+            let usage = e.sample(false);
+            min_headroom = min_headroom.min(e.limit.saturating_sub(usage));
         }
         snapshot.clear();
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        cgroup::retry_pending_rmdir();
+        let interval = interval_for(min_headroom, started.elapsed());
 
         guard = ENTRIES.lock();
-        let _ = WAKE.timed_wait_guarded(&mut guard, interval_for(min_headroom).as_nanos() as u64);
+        let _ = WAKE.timed_wait_guarded(&mut guard, interval.as_nanos() as u64);
     }
+}
+
+/// Start the background thread before the child exists, so a failure is an error and never a child with no limit.
+pub fn ensure_ready() -> std::io::Result<()> {
+    if THREAD_STARTED.swap(true, Ordering::AcqRel) {
+        return Ok(());
+    }
+    let spawned = std::thread::Builder::new()
+        .name("MemoryWatcher".into())
+        .stack_size(256 * 1024)
+        .spawn(run);
+    if let Err(e) = spawned {
+        THREAD_STARTED.store(false, Ordering::Release);
+        return Err(e);
+    }
+    Ok(())
 }
 
 /// Memory of an unwatched child's tree. Windows counts only the root process, because there is no Job Object to ask.
@@ -185,12 +334,13 @@ pub struct WatchOptions {
     pub signal: u8,
     #[cfg(windows)]
     pub process: bun_sys::windows::HANDLE,
-    /// The cgroup the child was spawned into. With one, the kernel enforces the limit and nothing samples.
+    /// The cgroup the child was spawned into, where the kernel enforces the limit.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub cgroup: Option<cgroup::Cgroup>,
 }
 
-pub fn watch(opts: &mut WatchOptions) -> std::io::Result<Arc<Watch>> {
+/// Call `ensure_ready` first.
+pub fn watch(opts: &mut WatchOptions) -> Arc<Watch> {
     let entry = Arc::new(Watch {
         #[cfg(not(windows))]
         pid: opts.pid,
@@ -199,47 +349,40 @@ pub fn watch(opts: &mut WatchOptions) -> std::io::Result<Arc<Watch>> {
         signal: opts.signal,
         #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
         identity: os::identity(opts.pid),
+        #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
+        members: Guarded::new(Vec::new()),
         peak: AtomicU64::new(0),
         exceeded: AtomicBool::new(false),
         done: AtomicBool::new(false),
         #[cfg(any(target_os = "linux", target_os = "android"))]
         cgroup: opts.cgroup.take(),
         #[cfg(windows)]
+        id: os::next_id(),
+        #[cfg(windows)]
         job: os::create_job(opts.process),
         #[cfg(windows)]
-        process: opts.process,
+        process: os::duplicate(opts.process),
         #[cfg(windows)]
         notified: AtomicBool::new(false),
     });
     // A child can allocate a lot before the thread's first tick; sample once synchronously.
-    entry.sample();
+    entry.sample(false);
 
     #[cfg(windows)]
     if os::arm_kernel_limit(&entry) {
-        return Ok(entry);
+        return entry;
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    if entry.cgroup.is_some() {
-        return Ok(entry);
+    if entry.cgroup.as_ref().is_some_and(|c| c.kills_whole_group()) {
+        return entry;
     }
 
     ENTRIES.lock().push(Arc::clone(&entry));
-    if !THREAD_STARTED.swap(true, Ordering::AcqRel) {
-        if let Err(e) = std::thread::Builder::new()
-            .name("MemoryWatcher".into())
-            .stack_size(256 * 1024)
-            .spawn(run)
-        {
-            THREAD_STARTED.store(false, Ordering::Release);
-            entry.unwatch();
-            return Err(e);
-        }
-    }
     WAKE.notify_one();
-    Ok(entry)
+    entry
 }
 
-/// A memory cgroup that Bun creates for one child tree, so the kernel enforces `maxMemory` with no sampling.
+/// A memory cgroup that Bun creates for one child tree, so the kernel enforces `maxMemory`.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub mod cgroup {
     use bun_core::ZBox;
@@ -249,6 +392,7 @@ pub mod cgroup {
     pub struct Cgroup {
         path: Vec<u8>,
         v2: bool,
+        group_kill: bool,
     }
 
     static NEXT: AtomicU32 = AtomicU32::new(0);
@@ -277,15 +421,15 @@ pub mod cgroup {
     }
 
     /// The value after `key` in a "key value" per line file such as `memory.events`.
-    fn field(bytes: &[u8], key: &[u8]) -> u64 {
+    fn field(bytes: &[u8], key: &[u8]) -> Option<u64> {
         for line in bun_core::strings::split(bytes, b"\n") {
             if let Some((k, v)) = bun_core::strings::split_once_char(line, b' ') {
                 if k == key {
-                    return number(v);
+                    return Some(number(v));
                 }
             }
         }
-        0
+        None
     }
 
     /// With swap and no swap cap, a child over its limit is swapped out and never killed.
@@ -297,40 +441,43 @@ pub mod cgroup {
         bun_sys::rmdir(&ZBox::from_bytes(path))
     }
 
-    fn retry_pending_rmdir() {
+    pub(super) fn has_pending_rmdir() -> bool {
+        !PENDING_RMDIR.lock().is_empty()
+    }
+
+    /// A cgroup cannot be removed until its killed processes are gone, so the sampler thread retries.
+    pub(super) fn retry_pending_rmdir() {
         PENDING_RMDIR.lock().retain(|path| rmdir(path).is_err());
     }
 
-    /// A v2 cgroup with processes cannot give controllers to its children, so v2 uses a sibling of our own cgroup.
+    /// Only places inside our own cgroup: a sibling would leave our systemd unit or container and escape its limits.
     fn candidates(name: &str) -> Vec<(Vec<u8>, bool)> {
         let mut out = Vec::new();
-        if read(b"/sys/fs/cgroup/memory", "memory.limit_in_bytes").is_some() {
-            out.push((format!("/sys/fs/cgroup/memory/{name}").into_bytes(), false));
-        }
-        if read(b"/sys/fs/cgroup", "cgroup.controllers").is_some() {
-            if let Some(own) = read(b"/proc/self", "cgroup") {
-                for line in bun_core::strings::split(&own, b"\n") {
-                    let Some(own_path) = line.strip_prefix(b"0::") else {
-                        continue;
-                    };
-                    if let Some(slash) = bun_core::strings::last_index_of_char(own_path, b'/') {
-                        let parent = &own_path[..slash];
-                        out.push((
-                            [b"/sys/fs/cgroup", parent, b"/", name.as_bytes()].concat(),
-                            true,
-                        ));
-                    }
-                }
+        let Some(own) = read(b"/proc/self", "cgroup") else {
+            return out;
+        };
+        for line in bun_core::strings::split(&own, b"\n") {
+            let Some((controllers, path)) = bun_core::strings::split_once_char(line, b':')
+                .and_then(|(_, rest)| bun_core::strings::split_once_char(rest, b':'))
+            else {
+                continue;
+            };
+            let path = path.strip_suffix(b"/").unwrap_or(path);
+            if bun_core::strings::split(controllers, b",").any(|c| c == b"memory") {
+                // v1 lets a cgroup that holds processes have child cgroups with their own limit.
+                let dir = [b"/sys/fs/cgroup/memory", path, b"/", name.as_bytes()].concat();
+                out.push((dir, false));
+            } else if controllers.is_empty() && path.is_empty() {
+                // v2 allows that only in the real root cgroup.
+                out.push((format!("/sys/fs/cgroup/{name}").into_bytes(), true));
             }
-            out.push((format!("/sys/fs/cgroup/{name}").into_bytes(), true));
         }
         out
     }
 
     impl Cgroup {
-        /// `None` when this process may not create a memory cgroup here; the caller then samples.
+        /// `None` when this process may not create a memory cgroup inside its own; the caller then samples.
         pub fn create(limit: u64) -> Option<Cgroup> {
-            retry_pending_rmdir();
             // SAFETY: getpid has no preconditions.
             let pid = unsafe { libc::getpid() };
             let name = format!("bun-{pid}-{}", NEXT.fetch_add(1, Ordering::Relaxed));
@@ -353,10 +500,12 @@ pub mod cgroup {
                     let _ = rmdir(&path);
                     continue;
                 }
-                if v2 {
-                    let _ = write(&path, "memory.oom.group", b"1");
-                }
-                return Some(Cgroup { path, v2 });
+                let group_kill = v2 && write(&path, "memory.oom.group", b"1").is_ok();
+                return Some(Cgroup {
+                    path,
+                    v2,
+                    group_kill,
+                });
             }
             None
         }
@@ -365,36 +514,43 @@ pub mod cgroup {
             &self.path
         }
 
-        pub fn current(&self) -> u64 {
-            let name = if self.v2 {
-                "memory.current"
-            } else {
-                "memory.usage_in_bytes"
-            };
-            read(&self.path, name).map_or(0, |b| number(&b))
+        /// False when the kernel kills one process at the limit and leaves the rest; the sampler thread then finishes the job.
+        pub(super) fn kills_whole_group(&self) -> bool {
+            self.group_kill
         }
 
-        /// 0 when the kernel has no peak file (v2 before Linux 5.19).
-        pub fn peak(&self) -> u64 {
-            let name = if self.v2 {
-                "memory.peak"
-            } else {
-                "memory.max_usage_in_bytes"
+        /// Anonymous memory only, so page cache from file I/O does not look like the child's own memory.
+        pub(super) fn anon(&self) -> u64 {
+            let Some(stat) = read(&self.path, "memory.stat") else {
+                return 0;
             };
-            read(&self.path, name).map_or(0, |b| number(&b))
+            if self.v2 {
+                field(&stat, b"anon").unwrap_or(0)
+            } else {
+                field(&stat, b"total_rss")
+                    .or_else(|| field(&stat, b"rss"))
+                    .unwrap_or(0)
+            }
         }
 
-        pub fn oom_killed(&self) -> bool {
-            let name = if self.v2 {
-                "memory.events"
+        /// A member was OOM-killed and this cgroup hit its own limit. A kill by the host or a parent cgroup alone does not count.
+        pub(super) fn exceeded(&self) -> bool {
+            if self.v2 {
+                let Some(events) = read(&self.path, "memory.events.local")
+                    .or_else(|| read(&self.path, "memory.events"))
+                else {
+                    return false;
+                };
+                field(&events, b"oom_kill").unwrap_or(0) > 0
+                    && field(&events, b"max").unwrap_or(0) > 0
             } else {
-                "memory.oom_control"
-            };
-            read(&self.path, name).is_some_and(|b| field(&b, b"oom_kill") > 0)
+                read(&self.path, "memory.oom_control")
+                    .is_some_and(|b| field(&b, b"oom_kill").unwrap_or(0) > 0)
+                    && read(&self.path, "memory.failcnt").is_some_and(|b| number(&b) > 0)
+            }
         }
 
-        /// Kill what the kernel left alive. One process can survive when `memory.oom.group` is not available.
-        pub fn kill_all(&self) {
+        pub(super) fn kill_all(&self) {
             if self.v2 && write(&self.path, "cgroup.kill", b"1").is_ok() {
                 return;
             }
@@ -408,12 +564,22 @@ pub mod cgroup {
                 }
             }
         }
+
+        /// When the kernel killed for the limit, kill what it left alive and return true.
+        pub fn settle(&self) -> bool {
+            let exceeded = self.exceeded();
+            if exceeded {
+                self.kill_all();
+            }
+            exceeded
+        }
     }
 
     impl Drop for Cgroup {
         fn drop(&mut self) {
             if rmdir(&self.path).is_err() {
                 PENDING_RMDIR.lock().push(core::mem::take(&mut self.path));
+                super::WAKE.notify_one();
             }
         }
     }
@@ -421,7 +587,7 @@ pub mod cgroup {
 
 #[cfg(target_os = "macos")]
 mod os {
-    use super::Watch;
+    use super::PidT;
     use core::ffi::{c_int, c_void};
 
     #[repr(C)]
@@ -444,53 +610,65 @@ mod os {
         fn proc_pid_rusage(pid: c_int, flavor: c_int, buffer: *mut RusageInfoV0) -> c_int;
     }
 
-    fn footprint(pid: c_int) -> u64 {
-        let mut info = RusageInfoV0::default();
-        // SAFETY: `info` is a valid out-buffer of the size `RUSAGE_INFO_V0` (flavor 0) writes.
-        if unsafe { proc_pid_rusage(pid, 0, &raw mut info) } != 0 {
-            return 0;
-        }
-        info.ri_phys_footprint
+    pub(super) struct Walker {
+        buf: Vec<c_int>,
     }
 
-    pub(super) fn for_each_in_tree(root: c_int, mut f: impl FnMut(c_int)) {
-        let mut stack: Vec<c_int> = Vec::with_capacity(16);
-        let mut buf: Vec<c_int> = vec![0; 64];
-        stack.push(root);
-        while let Some(pid) = stack.pop() {
-            f(pid);
+    impl Default for Walker {
+        fn default() -> Self {
+            Walker { buf: vec![0; 64] }
+        }
+    }
+
+    impl Walker {
+        pub(super) fn children(&mut self, pid: PidT, out: &mut Vec<PidT>) {
             loop {
-                let cap = c_int::try_from(buf.len() * core::mem::size_of::<c_int>())
+                let cap = c_int::try_from(self.buf.len() * core::mem::size_of::<c_int>())
                     .unwrap_or(c_int::MAX);
                 // SAFETY: `buf` is a writable buffer of `cap` bytes.
                 let n = unsafe {
-                    bun_sys::c::proc_listchildpids(pid, buf.as_mut_ptr().cast::<c_void>(), cap)
+                    bun_sys::c::proc_listchildpids(pid, self.buf.as_mut_ptr().cast::<c_void>(), cap)
                 };
                 if n <= 0 {
-                    break;
+                    return;
                 }
                 let n = n as usize;
-                if n >= buf.len() {
-                    buf.resize(buf.len() * 2, 0);
+                if n >= self.buf.len() {
+                    self.buf.resize(self.buf.len() * 2, 0);
                     continue;
                 }
-                stack.extend_from_slice(&buf[..n]);
-                break;
+                out.extend_from_slice(&self.buf[..n]);
+                return;
             }
+        }
+
+        /// `phys_footprint` is what Activity Monitor shows and what the kernel's own limits use.
+        pub(super) fn footprint(&mut self, pid: PidT) -> u64 {
+            let mut info = RusageInfoV0::default();
+            // SAFETY: `info` is a valid out-buffer of the size `RUSAGE_INFO_V0` (flavor 0) writes.
+            if unsafe { proc_pid_rusage(pid, 0, &raw mut info) } != 0 {
+                return 0;
+            }
+            info.ri_phys_footprint
         }
     }
 
-    pub(super) fn tree_usage(w: &Watch) -> u64 {
-        usage_of(w.pid)
-    }
-
-    pub(super) fn usage_of(root: c_int) -> u64 {
+    pub(super) fn usage_of(root: PidT) -> u64 {
+        let mut walker = Walker::default();
+        let mut stack = vec![root];
+        let mut kids = Vec::new();
         let mut total = 0u64;
-        for_each_in_tree(root, |pid| total += footprint(pid));
+        while let Some(pid) = stack.pop() {
+            total += walker.footprint(pid);
+            kids.clear();
+            walker.children(pid, &mut kids);
+            stack.extend_from_slice(&kids);
+        }
         total
     }
 
-    pub(super) fn identity(pid: c_int) -> u64 {
+    /// The process start time, or 0 when the pid does not exist.
+    pub(super) fn identity(pid: PidT) -> u64 {
         let mut info: bun_sys::c::struct_proc_bsdinfo = bun_core::ffi::zeroed();
         let size = core::mem::size_of::<bun_sys::c::struct_proc_bsdinfo>() as c_int;
         // SAFETY: `info` is a valid out-buffer of `size` bytes.
@@ -509,18 +687,15 @@ mod os {
         info.pbi_start_tvsec
             .wrapping_mul(1_000_000)
             .wrapping_add(info.pbi_start_tvusec)
-    }
-
-    pub(super) fn kill_tree(w: &Watch) {
-        super::posix_kill_tree(w);
+            .max(1)
     }
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 mod os {
-    use super::Watch;
+    use super::PidT;
     use bun_sys::{Fd, FdExt, File, O, SizeHint};
-    use core::ffi::c_int;
+    use core::sync::atomic::{AtomicU8, Ordering};
 
     fn read_small(path: &str, buf: &mut Vec<u8>) -> bool {
         buf.clear();
@@ -532,102 +707,168 @@ mod os {
         }
     }
 
+    fn parse<T: core::str::FromStr>(bytes: &[u8]) -> Option<T> {
+        core::str::from_utf8(bytes).ok()?.trim().parse().ok()
+    }
+
     fn page_size() -> u64 {
         // SAFETY: sysconf has no preconditions.
         let n = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
         if n > 0 { n as u64 } else { 4096 }
     }
 
-    /// Resident minus file-backed shared pages, from `/proc/<pid>/statm`; the closest cheap analogue of macOS `phys_footprint`.
-    fn footprint(pid: c_int, buf: &mut Vec<u8>) -> u64 {
-        if !read_small(&format!("/proc/{pid}/statm"), buf) {
-            return 0;
-        }
-        let mut it = bun_core::strings::split(buf, b" ").skip(1).map(|f| {
-            core::str::from_utf8(f)
-                .ok()
-                .and_then(|s| s.trim().parse::<u64>().ok())
-                .unwrap_or(0)
-        });
-        let resident = it.next().unwrap_or(0);
-        let shared = it.next().unwrap_or(0);
-        resident.saturating_sub(shared) * page_size()
+    /// The fields of `/proc/<pid>/stat` after the command name, which can itself hold spaces and parentheses.
+    fn stat_fields(buf: &[u8]) -> Option<bun_core::strings::TokenizeIterator<'_>> {
+        let close = bun_core::strings::last_index_of_char(buf, b')')?;
+        Some(bun_core::strings::tokenize(&buf[close + 1..], b" "))
     }
 
-    pub(super) fn for_each_in_tree(root: c_int, mut f: impl FnMut(c_int)) {
-        let mut stack: Vec<c_int> = Vec::with_capacity(16);
-        let mut buf: Vec<u8> = Vec::with_capacity(256);
-        stack.push(root);
-        while let Some(pid) = stack.pop() {
-            f(pid);
+    const UNKNOWN: u8 = 0;
+    const YES: u8 = 1;
+    const NO: u8 = 2;
+    /// `/proc/<pid>/task/<tid>/children` needs `CONFIG_PROC_CHILDREN`, which some kernels and sandboxes lack.
+    static HAS_CHILDREN_FILES: AtomicU8 = AtomicU8::new(UNKNOWN);
+
+    fn has_children_files() -> bool {
+        match HAS_CHILDREN_FILES.load(Ordering::Relaxed) {
+            YES => true,
+            NO => false,
+            _ => {
+                // SAFETY: getpid has no preconditions.
+                let pid = unsafe { libc::getpid() };
+                let mut buf = Vec::new();
+                let yes = read_small(&format!("/proc/{pid}/task/{pid}/children"), &mut buf);
+                HAS_CHILDREN_FILES.store(if yes { YES } else { NO }, Ordering::Relaxed);
+                yes
+            }
+        }
+    }
+
+    #[derive(Default)]
+    pub(super) struct Walker {
+        buf: Vec<u8>,
+        /// `(pid, parent)` for every process, built once per sample when the children files are missing.
+        parents: Option<Vec<(PidT, PidT)>>,
+    }
+
+    impl Walker {
+        pub(super) fn children(&mut self, pid: PidT, out: &mut Vec<PidT>) {
+            if has_children_files() {
+                self.children_from_files(pid, out);
+            } else {
+                self.children_from_scan(pid, out);
+            }
+        }
+
+        fn children_from_files(&mut self, pid: PidT, out: &mut Vec<PidT>) {
             let Ok(task_dir) = bun_sys::open_dir_absolute(format!("/proc/{pid}/task").as_bytes())
             else {
-                continue;
+                return;
             };
             let mut tasks = bun_sys::iterate_dir(task_dir);
             while let Ok(Some(task)) = tasks.next() {
                 let Ok(tid) = core::str::from_utf8(task.name.slice_u8()) else {
                     continue;
                 };
-                if !read_small(&format!("/proc/{pid}/task/{tid}/children"), &mut buf) {
+                if !read_small(&format!("/proc/{pid}/task/{tid}/children"), &mut self.buf) {
                     continue;
                 }
-                for child in bun_core::strings::tokenize(&buf, b" ") {
-                    if let Some(c) = core::str::from_utf8(child)
-                        .ok()
-                        .and_then(|s| s.trim().parse::<c_int>().ok())
-                    {
-                        stack.push(c);
-                    }
-                }
+                out.extend(bun_core::strings::tokenize(&self.buf, b" ").filter_map(parse::<PidT>));
             }
             task_dir.close();
         }
+
+        fn children_from_scan(&mut self, pid: PidT, out: &mut Vec<PidT>) {
+            if self.parents.is_none() {
+                let mut parents = Vec::new();
+                if let Ok(proc_dir) = bun_sys::open_dir_absolute(b"/proc") {
+                    let mut entries = bun_sys::iterate_dir(proc_dir);
+                    while let Ok(Some(entry)) = entries.next() {
+                        let Some(child) = parse::<PidT>(entry.name.slice_u8()) else {
+                            continue;
+                        };
+                        if !read_small(&format!("/proc/{child}/stat"), &mut self.buf) {
+                            continue;
+                        }
+                        if let Some(parent) = stat_fields(&self.buf)
+                            .and_then(|mut f| f.nth(1))
+                            .and_then(parse::<PidT>)
+                        {
+                            parents.push((child, parent));
+                        }
+                    }
+                    proc_dir.close();
+                }
+                self.parents = Some(parents);
+            }
+            if let Some(parents) = &self.parents {
+                out.extend(parents.iter().filter(|(_, p)| *p == pid).map(|(c, _)| *c));
+            }
+        }
+
+        /// Resident minus file-backed and shared-memory pages. Copy-on-write pages count once per process, so a sum can be too high.
+        pub(super) fn footprint(&mut self, pid: PidT) -> u64 {
+            if !read_small(&format!("/proc/{pid}/statm"), &mut self.buf) {
+                return 0;
+            }
+            let mut it = bun_core::strings::tokenize(&self.buf, b" ")
+                .skip(1)
+                .map(|f| parse::<u64>(f).unwrap_or(0));
+            let resident = it.next().unwrap_or(0);
+            let shared = it.next().unwrap_or(0);
+            resident.saturating_sub(shared) * page_size()
+        }
     }
 
-    pub(super) fn tree_usage(w: &Watch) -> u64 {
-        usage_of(w.pid)
+    /// Proportional anonymous memory: each shared page is divided between the processes that map it. `None` before Linux 4.14.
+    pub(super) fn exact_footprint(pid: PidT) -> Option<u64> {
+        let mut buf = Vec::with_capacity(1024);
+        if !read_small(&format!("/proc/{pid}/smaps_rollup"), &mut buf) {
+            return None;
+        }
+        let mut anon = None;
+        let mut all = 0u64;
+        for line in bun_core::strings::split(&buf, b"\n") {
+            let Some((key, rest)) = bun_core::strings::split_once_char(line, b':') else {
+                continue;
+            };
+            let kb = bun_core::strings::tokenize(rest, b" ")
+                .next()
+                .and_then(parse::<u64>)
+                .unwrap_or(0);
+            match key {
+                b"Pss_Anon" | b"Pss_Shmem" => anon = Some(anon.unwrap_or(0) + kb),
+                b"Pss" => all = kb,
+                _ => {}
+            }
+        }
+        Some(anon.unwrap_or(all) * 1024)
     }
 
-    pub(super) fn usage_of(root: c_int) -> u64 {
+    pub(super) fn usage_of(root: PidT) -> u64 {
+        let mut walker = Walker::default();
+        let mut stack = vec![root];
+        let mut kids = Vec::new();
         let mut total = 0u64;
-        let mut buf: Vec<u8> = Vec::with_capacity(128);
-        for_each_in_tree(root, |pid| total += footprint(pid, &mut buf));
+        while let Some(pid) = stack.pop() {
+            total += exact_footprint(pid).unwrap_or_else(|| walker.footprint(pid));
+            kids.clear();
+            walker.children(pid, &mut kids);
+            stack.extend_from_slice(&kids);
+        }
         total
     }
 
-    pub(super) fn identity(pid: c_int) -> u64 {
+    /// The process start time, or 0 when the pid does not exist.
+    pub(super) fn identity(pid: PidT) -> u64 {
         let mut buf: Vec<u8> = Vec::with_capacity(256);
         if !read_small(&format!("/proc/{pid}/stat"), &mut buf) {
             return 0;
         }
-        // comm may contain spaces/parens; fields after the last ')' are space-separated, starttime is the 20th of those.
-        let Some(close) = bun_core::strings::last_index_of_char(&buf, b')') else {
-            return 0;
-        };
-        bun_core::strings::tokenize(&buf[close + 1..], b" ")
-            .nth(19)
-            .and_then(|f| core::str::from_utf8(f).ok())
-            .and_then(|s| s.trim().parse::<u64>().ok())
-            .unwrap_or(0)
-    }
-
-    pub(super) fn kill_tree(w: &Watch) {
-        super::posix_kill_tree(w);
-    }
-}
-
-#[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
-fn posix_kill_tree(w: &Watch) {
-    if os::identity(w.pid) != w.identity {
-        return;
-    }
-    let mut pids: Vec<libc::pid_t> = Vec::with_capacity(16);
-    os::for_each_in_tree(w.pid, |pid| pids.push(pid));
-    // Children first so a shell cannot observe its child dying and spawn a replacement before it is signalled itself.
-    for pid in pids.iter().rev() {
-        // SAFETY: kill(2) has no memory-safety preconditions.
-        unsafe { libc::kill(*pid, w.signal as core::ffi::c_int) };
+        stat_fields(&buf)
+            .and_then(|mut f| f.nth(19))
+            .and_then(parse::<u64>)
+            .map_or(0, |start| start.max(1))
     }
 }
 
@@ -635,6 +876,34 @@ fn posix_kill_tree(w: &Watch) {
 mod os {
     use super::Watch;
     use bun_sys::windows::{self, HANDLE};
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
+
+    /// The completion key. It is never reused, so a late message cannot reach a newer watch.
+    pub(super) fn next_id() -> usize {
+        NEXT_ID.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// libuv closes its own process handle when the child is reaped, so the watch keeps its own.
+    pub(super) fn duplicate(process: HANDLE) -> HANDLE {
+        let mut out: HANDLE = core::ptr::null_mut();
+        let me = windows::GetCurrentProcess();
+        // SAFETY: `out` is a valid out-pointer; bad handles fail with 0.
+        let ok = unsafe {
+            windows::kernel32::DuplicateHandle(
+                me,
+                process,
+                me,
+                &raw mut out,
+                0,
+                0,
+                windows::DUPLICATE_SAME_ACCESS,
+            )
+        };
+        if ok == 0 { core::ptr::null_mut() } else { out }
+    }
 
     pub(super) fn create_job(process: HANDLE) -> HANDLE {
         // SAFETY: null attributes/name are documented-valid.
@@ -652,20 +921,24 @@ mod os {
     }
 
     pub(super) fn close(w: &Watch) {
-        if !w.job.is_null() {
-            // SAFETY: `job` is owned by this Watch.
-            unsafe { windows::CloseHandle(w.job) };
+        for handle in [w.job, w.process] {
+            if !handle.is_null() {
+                // SAFETY: both handles are owned by this Watch.
+                unsafe { windows::CloseHandle(handle) };
+            }
         }
     }
 
     pub(super) fn tree_usage(w: &Watch) -> u64 {
         if !w.job.is_null() {
             let (current, peak) = windows::job_memory_usage(w.job);
-            w.peak
-                .fetch_max(peak, core::sync::atomic::Ordering::Relaxed);
+            w.peak.fetch_max(peak, Ordering::AcqRel);
             if let Some(current) = current {
                 return current;
             }
+        }
+        if w.process.is_null() {
+            return 0;
         }
         windows::GetProcessMemoryInfo(w.process)
             .map(|c| c.PagefileUsage as u64)
@@ -673,7 +946,7 @@ mod os {
     }
 
     static PORT: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    static NOTIFIED: bun_threading::Guarded<Vec<std::sync::Arc<Watch>>> =
+    static NOTIFIED: bun_threading::Guarded<Vec<Arc<Watch>>> =
         bun_threading::Guarded::new(Vec::new());
 
     fn port() -> Option<HANDLE> {
@@ -717,56 +990,47 @@ mod os {
                     windows::INFINITE,
                 )
             };
-            if ok == 0 {
+            if ok == 0 || message != windows::JOB_OBJECT_MSG_NOTIFICATION_LIMIT {
                 continue;
             }
-            let mut watches = NOTIFIED.lock();
-            let Some(index) = watches
-                .iter()
-                .position(|w| std::sync::Arc::as_ptr(w) as usize == key)
-            else {
-                continue;
-            };
-            match message {
-                windows::JOB_OBJECT_MSG_NOTIFICATION_LIMIT => {
-                    let w = std::sync::Arc::clone(&watches[index]);
-                    drop(watches);
-                    w.kill_once();
-                }
-                windows::JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO => {
-                    watches.swap_remove(index);
-                }
-                _ => {}
+            let watch = NOTIFIED.lock().iter().find(|w| w.id == key).map(Arc::clone);
+            if let Some(watch) = watch {
+                watch.kill_once();
             }
         }
     }
 
-    /// True when the kernel now enforces the limit for this watch, so the sampler is not needed.
-    pub(super) fn arm_kernel_limit(entry: &std::sync::Arc<Watch>) -> bool {
+    /// True when the kernel now reports the limit for this watch, so the sampler is not needed.
+    pub(super) fn arm_kernel_limit(entry: &Arc<Watch>) -> bool {
         if entry.job.is_null() {
             return false;
         }
         let Some(port) = port() else { return false };
-        let key = std::sync::Arc::as_ptr(entry) as usize;
-        NOTIFIED.lock().push(std::sync::Arc::clone(entry));
-        if windows::job_notify_memory_limit(entry.job, port, key, entry.limit) {
-            entry
-                .notified
-                .store(true, core::sync::atomic::Ordering::Relaxed);
+        NOTIFIED.lock().push(Arc::clone(entry));
+        if windows::job_notify_memory_limit(entry.job, port, entry.id, entry.limit) {
+            entry.notified.store(true, Ordering::Release);
             return true;
         }
-        NOTIFIED
-            .lock()
-            .retain(|w| std::sync::Arc::as_ptr(w) as usize != key);
+        forget(entry);
         false
+    }
+
+    fn forget(w: &Watch) {
+        NOTIFIED.lock().retain(|other| other.id != w.id);
+    }
+
+    /// The root exited: read the job's real peak, and stop holding the watch for a message that may never come.
+    pub(super) fn finish(w: &Watch) {
+        let _ = tree_usage(w);
+        forget(w);
     }
 
     pub(super) fn kill_tree(w: &Watch) {
         if !w.job.is_null() {
             // SAFETY: `job` is a live job handle.
             unsafe { windows::TerminateJobObject(w.job, 1) };
-        } else {
-            // SAFETY: `process` is a live process handle.
+        } else if !w.process.is_null() {
+            // SAFETY: `process` is a live handle that this Watch owns.
             unsafe { windows::TerminateProcess(w.process, 1) };
         }
     }

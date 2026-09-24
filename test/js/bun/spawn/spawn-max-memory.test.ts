@@ -1,14 +1,35 @@
 import { subprocessInternals } from "bun:internal-for-testing";
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows } from "harness";
-import { existsSync, mkdirSync, readFileSync, rmdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { spawn as cpSpawn, spawnSync as cpSpawnSync } from "node:child_process";
+import { mkdirSync, readFileSync, rmdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 const MB = 1024 * 1024;
 
 // Touch every page so the memory is resident, then park.
 const hog = (mb: number) =>
   `const b = Buffer.allocUnsafe(${mb} * 1024 * 1024); for (let i = 0; i < b.length; i += 4096) b[i] = 1; globalThis.keep = b; setInterval(() => {}, 1000);`;
+
+// An idle debug build uses far more memory than a release build, so every limit comes from a measured idle size.
+let idleBytes = 0;
+beforeAll(async () => {
+  await using idle = Bun.spawn({
+    cmd: [bunExe(), "-e", `console.log("ready"); setInterval(() => {}, 1000);`],
+    env: bunEnv,
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  for await (const chunk of idle.stdout) {
+    if (Buffer.from(chunk).includes("ready")) break;
+  }
+  idleBytes = idle.memoryUsage().current;
+  expect(idleBytes).toBeGreaterThan(0);
+});
+
+// A limit that a tree of `processes` idle Bun processes stays well below.
+const limitFor = (processes: number) => Math.ceil((processes * idleBytes * 1.5) / MB) * MB + 64 * MB;
+// A program that goes well over that limit.
+const hogFor = (processes: number) => hog(limitFor(processes) / MB + 256);
 
 // A killed process stays visible as a zombie until its new parent reaps it, so wait for the pid to go away.
 async function gone(pid: number) {
@@ -22,23 +43,24 @@ async function gone(pid: number) {
   }
 }
 
-// True when this host lets us create a memory cgroup with a swap cap, which is when Bun must pick the cgroup route.
+// True when this host lets us create a memory cgroup inside our own, which is when Bun must pick the cgroup route.
 function canCreateMemoryCgroup(): boolean {
   if (!isLinux) return false;
   const name = `bun-max-memory-probe-${process.pid}`;
   const candidates: { dir: string; v2: boolean }[] = [];
-  if (existsSync("/sys/fs/cgroup/memory/memory.limit_in_bytes")) {
-    candidates.push({ dir: `/sys/fs/cgroup/memory/${name}`, v2: false });
+  for (const line of readFileSync("/proc/self/cgroup", "utf8").split("\n")) {
+    const [, controllers, ...rest] = line.split(":");
+    if (controllers === undefined) continue;
+    const own = rest.join(":").replace(/\/$/, "");
+    // v1 lets a populated cgroup have limited children. v2 allows that only in the real root cgroup.
+    if (controllers.split(",").includes("memory"))
+      candidates.push({ dir: `/sys/fs/cgroup/memory${own}/${name}`, v2: false });
+    else if (controllers === "" && own === "") candidates.push({ dir: `/sys/fs/cgroup/${name}`, v2: true });
   }
-  if (existsSync("/sys/fs/cgroup/cgroup.controllers")) {
-    const own = readFileSync("/proc/self/cgroup", "utf8")
-      .split("\n")
-      .find(l => l.startsWith("0::"))
-      ?.slice(3);
-    if (own) candidates.push({ dir: join("/sys/fs/cgroup", dirname(own), name), v2: true });
-    candidates.push({ dir: `/sys/fs/cgroup/${name}`, v2: true });
-  }
-  const hasSwap = readFileSync("/proc/swaps", "utf8").trim().split("\n").length > 1;
+  let hasSwap = false;
+  try {
+    hasSwap = readFileSync("/proc/swaps", "utf8").trim().split("\n").length > 1;
+  } catch {}
   for (const { dir, v2 } of candidates) {
     try {
       mkdirSync(dir);
@@ -81,10 +103,10 @@ describe("Bun.spawn maxMemory", () => {
 
   test.concurrent("kills a child that exceeds the limit", async () => {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", hog(256)],
+      cmd: [bunExe(), "-e", hogFor(1)],
       env: bunEnv,
       stdio: ["ignore", "ignore", "ignore"],
-      maxMemory: 128 * MB,
+      maxMemory: limitFor(1),
       killSignal: "SIGKILL",
     });
     await proc.exited;
@@ -108,7 +130,7 @@ describe("Bun.spawn maxMemory", () => {
   test.concurrent("counts and kills grandchildren", async () => {
     // Parent is small; the grandchild is the hog. The limit applies to the tree.
     const parent = `
-      const child = Bun.spawn({ cmd: [process.execPath, "-e", ${JSON.stringify(hog(256))}], stdio: ["ignore", "ignore", "ignore"] });
+      const child = Bun.spawn({ cmd: [process.execPath, "-e", ${JSON.stringify(hogFor(2))}], stdio: ["ignore", "ignore", "ignore"] });
       console.log(child.pid);
       await child.exited;
       console.log("grandchild exited", child.signalCode ?? child.exitCode);
@@ -118,7 +140,7 @@ describe("Bun.spawn maxMemory", () => {
       cmd: [bunExe(), "-e", parent],
       env: bunEnv,
       stdio: ["ignore", "pipe", "inherit"],
-      maxMemory: 128 * MB,
+      maxMemory: limitFor(2),
       killSignal: "SIGKILL",
     });
     const [stdout] = await Promise.all([proc.stdout.text(), proc.exited]);
@@ -131,10 +153,10 @@ describe("Bun.spawn maxMemory", () => {
 
   test.concurrent("honors killSignal", async () => {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", hog(256)],
+      cmd: [bunExe(), "-e", hogFor(1)],
       env: bunEnv,
       stdio: ["ignore", "ignore", "ignore"],
-      maxMemory: 64 * MB,
+      maxMemory: limitFor(1),
       killSignal: "SIGTERM",
     });
     await proc.exited;
@@ -184,10 +206,10 @@ describe("Bun.spawn maxMemory", () => {
 
   test("spawnSync reports exitedDueToMaxMemory", () => {
     const over = Bun.spawnSync({
-      cmd: [bunExe(), "-e", hog(256)],
+      cmd: [bunExe(), "-e", hogFor(1)],
       env: bunEnv,
       stdio: ["ignore", "ignore", "ignore"],
-      maxMemory: 64 * MB,
+      maxMemory: limitFor(1),
       killSignal: "SIGKILL",
     });
     expect(over.exitedDueToMaxMemory).toBe(true);
@@ -206,10 +228,124 @@ describe("Bun.spawn maxMemory", () => {
   test("validates the option", () => {
     expect(() => Bun.spawn({ cmd: [bunExe(), "-e", "1"], maxMemory: -1 })).toThrow(RangeError);
     expect(() => Bun.spawn({ cmd: [bunExe(), "-e", "1"], maxMemory: 1.5 })).toThrow(TypeError);
+    // NaN must not turn the limit off without an error.
+    expect(() => Bun.spawn({ cmd: [bunExe(), "-e", "1"], maxMemory: NaN })).toThrow(RangeError);
     // 0, null, undefined and Infinity all mean "no limit".
     for (const maxMemory of [0, null, undefined, Infinity]) {
       const r = Bun.spawnSync({ cmd: [bunExe(), "-e", "1"], env: bunEnv, maxMemory: maxMemory as any });
       expect(r.exitCode).toBe(0);
+    }
+  });
+
+  test.concurrent("exitedDueToMaxMemory tells a memory kill from a normal exit", async () => {
+    await using over = Bun.spawn({
+      cmd: [bunExe(), "-e", hogFor(1)],
+      env: bunEnv,
+      stdio: ["ignore", "ignore", "ignore"],
+      maxMemory: limitFor(1),
+      killSignal: "SIGKILL",
+    });
+    await over.exited;
+    expect(over.exitedDueToMaxMemory).toBe(true);
+
+    await using under = Bun.spawn({
+      cmd: [bunExe(), "-e", "1"],
+      env: bunEnv,
+      stdio: ["ignore", "ignore", "ignore"],
+      maxMemory: 1024 * MB,
+    });
+    expect(await under.exited).toBe(0);
+    expect(under.exitedDueToMaxMemory).toBe(false);
+  });
+
+  test.concurrent("a descendant whose parent exited is still counted and killed", async () => {
+    // root -> middle -> hog. The hog allocates only after the middle process is gone, so it has been reparented by then.
+    const hogSrc = `process.stdin.on("close", () => { ${hogFor(3)} }).resume();`;
+    const middleSrc = `
+      const h = Bun.spawn({ cmd: [process.execPath, "-e", ${JSON.stringify(hogSrc)}], stdio: ["pipe", "ignore", "ignore"] });
+      console.log(h.pid);
+      process.stdin.on("close", () => process.exit(0)).resume();
+    `;
+    const rootSrc = `
+      const m = Bun.spawn({ cmd: [process.execPath, "-e", ${JSON.stringify(middleSrc)}], stdio: ["pipe", "inherit", "ignore"] });
+      process.stdin.on("data", () => m.stdin.end()).resume();
+      setInterval(() => {}, 1000);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", rootSrc],
+      env: bunEnv,
+      stdio: ["pipe", "pipe", "inherit"],
+      maxMemory: limitFor(3),
+      killSignal: "SIGKILL",
+    });
+    let output = "";
+    for await (const chunk of proc.stdout) {
+      output += Buffer.from(chunk).toString();
+      if (output.includes("\n")) break;
+    }
+    const hogPid = parseInt(output, 10);
+    expect(hogPid).toBeGreaterThan(0);
+    // This walk records the hog as a member while its parent is still alive.
+    expect(proc.memoryUsage().current).toBeGreaterThan(0);
+
+    proc.stdin.write("go");
+    await proc.stdin.flush();
+    await proc.exited;
+    expect(proc.exitedDueToMaxMemory).toBe(true);
+    await gone(hogPid);
+  });
+});
+
+describe("node:child_process maxMemory", () => {
+  test.concurrent("a lower-case killSignal still works, with and without maxMemory", async () => {
+    for (const maxMemory of [undefined, 1024 * MB]) {
+      const child = cpSpawn(bunExe(), ["-e", "setInterval(() => {}, 1000)"], {
+        env: bunEnv,
+        killSignal: "sigterm",
+        maxMemory,
+      });
+      const { promise, resolve, reject } = Promise.withResolvers<NodeJS.Signals | null>();
+      child.on("error", reject);
+      child.on("exit", (_, signal) => resolve(signal));
+      child.on("spawn", () => child.kill());
+      const signal = await promise;
+      if (!isWindows) expect(signal).toBe("SIGTERM");
+    }
+  });
+
+  test.concurrent("spawn kills a child that exceeds the limit", async () => {
+    const child = cpSpawn(bunExe(), ["-e", hogFor(1)], {
+      env: bunEnv,
+      stdio: "ignore",
+      maxMemory: limitFor(1),
+      killSignal: "SIGKILL",
+    });
+    const { promise, resolve, reject } = Promise.withResolvers<[number | null, NodeJS.Signals | null]>();
+    child.on("error", reject);
+    child.on("exit", (code, signal) => resolve([code, signal]));
+    const [code, signal] = await promise;
+    if (isWindows) expect(code).not.toBe(0);
+    else expect(signal).toBe("SIGKILL");
+  });
+
+  test("spawnSync reports ENOMEM", () => {
+    const result = cpSpawnSync(bunExe(), ["-e", hogFor(1)], {
+      env: bunEnv,
+      stdio: "ignore",
+      maxMemory: limitFor(1),
+      killSignal: "SIGKILL",
+    });
+    expect((result.error as NodeJS.ErrnoException)?.code).toBe("ENOMEM");
+  });
+
+  test("an invalid maxMemory throws before anything is spawned", () => {
+    for (const maxMemory of [-1, 1.5, NaN, "64"]) {
+      expect(() => cpSpawn(bunExe(), ["-e", "1"], { maxMemory: maxMemory as any })).toThrow(
+        expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
+      );
+      expect(() => cpSpawnSync(bunExe(), ["-e", "1"], { maxMemory: maxMemory as any })).toThrow(
+        expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
+      );
     }
   });
 });

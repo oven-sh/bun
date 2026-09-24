@@ -371,6 +371,11 @@ impl Subprocess<'_> {
         global_object: &JSGlobalObject,
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
+        if !bun_spawn::memory_watcher::SUPPORTED {
+            return Err(global_object.throw(format_args!(
+                "memoryUsage() is not supported on this platform"
+            )));
+        }
         let current = if this.has_exited() {
             0
         } else if let Some(w) = this.memory_watch.get() {
@@ -697,6 +702,7 @@ impl Subprocess<'_> {
         crate::jsc_hooks::timer_all_mut()
     }
 
+    /// Call `memory_watcher::ensure_ready` before the spawn.
     pub(crate) fn watch_memory(
         &self,
         limit: u64,
@@ -705,6 +711,10 @@ impl Subprocess<'_> {
         >,
     ) {
         if self.has_exited() {
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            if cgroup.is_some_and(|c| c.settle()) {
+                self.exited_due_to_max_memory.set(true);
+            }
             return;
         }
         let mut opts = bun_spawn::memory_watcher::WatchOptions {
@@ -712,27 +722,38 @@ impl Subprocess<'_> {
             limit,
             signal: self.kill_signal.0,
             #[cfg(windows)]
-            process: match self.process.os_handle() {
-                Some(h) => h,
-                None => return,
-            },
+            process: self.process.os_handle().unwrap_or(core::ptr::null_mut()),
             #[cfg(any(target_os = "linux", target_os = "android"))]
             cgroup,
         };
-        if let Ok(w) = bun_spawn::memory_watcher::watch(&mut opts) {
-            self.memory_route.set(Some(w.route()));
-            self.memory_watch.set(Some(w));
-        }
+        let w = bun_spawn::memory_watcher::watch(&mut opts);
+        self.memory_route.set(Some(w.route()));
+        self.memory_watch.set(Some(w));
     }
 
     fn unwatch_memory(&self) {
-        if let Some(w) = self.memory_watch.replace(None) {
-            w.unwatch();
-            self.memory_peak.set(self.memory_peak.get().max(w.peak()));
-            if w.exceeded() {
-                self.exited_due_to_max_memory.set(true);
-            }
+        let Some(w) = self.memory_watch.replace(None) else {
+            return;
+        };
+        // A child that outlives this object, such as after a Worker ends, keeps its limit: the watcher holds its own reference.
+        if !self.has_exited() {
+            return;
         }
+        w.unwatch();
+        self.memory_peak.set(self.memory_peak.get().max(w.peak()));
+        if w.exceeded() {
+            self.exited_due_to_max_memory.set(true);
+        }
+    }
+
+    /// True as soon as the limit was crossed, which is before the exit is reported.
+    pub(crate) fn killed_for_max_memory(&self) -> bool {
+        self.exited_due_to_max_memory.get()
+            || self
+                .memory_watch
+                .get()
+                .as_ref()
+                .is_some_and(|w| w.exceeded())
     }
 
     pub(crate) fn timeout_callback(&self) {
@@ -937,6 +958,11 @@ impl Subprocess<'_> {
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_killed(this: &Self, _global: &JSGlobalObject) -> JSValue {
         JSValue::from(this.has_killed())
+    }
+
+    #[bun_jsc::host_fn(getter)]
+    pub(crate) fn get_exited_due_to_max_memory(this: &Self, _global: &JSGlobalObject) -> JSValue {
+        JSValue::from(this.killed_for_max_memory())
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -1154,6 +1180,7 @@ impl Subprocess<'_> {
         // hold the write end and the caller already opted into a bounded wait.
         if self.event_loop_timer.get().state == EventLoopTimerState::FIRED
             || self.exited_due_to_maxbuf.get().is_some()
+            || self.exited_due_to_max_memory.get()
             || self.flags.get().contains(Flags::ABORT_SIGNAL_KILLED)
         {
             self.close_readable_pipes();

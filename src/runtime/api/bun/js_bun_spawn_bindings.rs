@@ -768,6 +768,16 @@ fn spawn_maybe_sync(
             }
 
             if let Some(val) = args.get(cx.global(), "maxMemory")? {
+                if val.is_number() && val.as_number().is_nan() {
+                    return Err(cx.global().throw_range_error(
+                        val.as_number(),
+                        bun_fmt::OutOfRangeOptions {
+                            field_name: b"maxMemory",
+                            msg: b"a non-negative integer",
+                            ..Default::default()
+                        },
+                    ));
+                }
                 if !val.is_undefined_or_null()
                     && !(val.is_number() && val.as_number().is_infinite() && val.as_number() > 0.0)
                 {
@@ -781,6 +791,11 @@ fn spawn_maybe_sync(
                         },
                     )?;
                     if bytes > 0 {
+                        if !bun_spawn::memory_watcher::SUPPORTED {
+                            return Err(cx.global().throw(format_args!(
+                                "maxMemory is not supported on this platform"
+                            )));
+                        }
                         max_memory = Some(bytes);
                     }
                 }
@@ -1116,6 +1131,14 @@ fn spawn_maybe_sync(
 
     let loop_handle = EventLoopHandle::init(event_loop.cast::<()>());
 
+    if max_memory.is_some() {
+        if let Err(err) = bun_spawn::memory_watcher::ensure_ready() {
+            return Err(cx
+                .global()
+                .throw(format_args!("Failed to start the maxMemory watcher: {err}")));
+        }
+    }
+
     #[cfg(any(target_os = "linux", target_os = "android"))]
     let mut memory_cgroup = match (max_memory, &cgroup) {
         (Some(limit), None) => bun_spawn::memory_watcher::cgroup::Cgroup::create(limit),
@@ -1199,9 +1222,21 @@ fn spawn_maybe_sync(
 
     // SAFETY: `argv`/`env_array` are local null-terminated C-string arrays
     // with argv[0] non-null; valid for this call.
-    let mut spawned = match unsafe {
-        spawn::spawn_process(&spawn_options, argv.as_ptr(), env_array.as_ptr())
-    } {
+    let spawn_result =
+        unsafe { spawn::spawn_process(&spawn_options, argv.as_ptr(), env_array.as_ptr()) };
+    // The cgroup was our choice, not the caller's, so a child that cannot join it runs with the sampler.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    let spawn_result = if memory_cgroup.is_some()
+        && matches!(&spawn_result, Ok(sys::Result::Err(err)) if err.syscall == sys::Tag::clone3)
+    {
+        memory_cgroup = None;
+        spawn_options.cgroup_fd = None;
+        // SAFETY: same arrays as the first call.
+        unsafe { spawn::spawn_process(&spawn_options, argv.as_ptr(), env_array.as_ptr()) }
+    } else {
+        spawn_result
+    };
+    let mut spawned = match spawn_result {
         Err(err)
             if err == bun_spawn::Error::Sys(bun_errno::SystemErrno::EMFILE)
                 || err == bun_spawn::Error::Sys(bun_errno::SystemErrno::ENFILE) =>
@@ -2016,7 +2051,11 @@ fn spawn_maybe_sync(
             // Once the wait is being terminated (timeout, maxBuffer, bun:test
             // per-test timeout), stop waiting on pipe EOF; a grandchild may
             // still hold the write end (Node.js SyncProcessRunner::Kill()).
-            if did_timeout || bun_test_fired || subprocess.exited_due_to_maxbuf.get().is_some() {
+            if did_timeout
+                || bun_test_fired
+                || subprocess.exited_due_to_maxbuf.get().is_some()
+                || subprocess.killed_for_max_memory()
+            {
                 subprocess.close_readable_pipes();
             }
         }

@@ -159,6 +159,7 @@ function spawn(file, args, options) {
   const windowsBatchFileError = options.windowsBatchFileError;
   if (windowsBatchFileError) throw windowsBatchFileError;
   validateTimeout(options.timeout);
+  validateMaxMemory(options.maxMemory);
   validateAbortSignal(options.signal, "options.signal");
   const killSignal = sanitizeKillSignal(options.killSignal);
   const child = new ChildProcess();
@@ -253,6 +254,7 @@ function execFile(file, args, options?, callback?) {
 
   // Validate the timeout, if present.
   validateTimeout(options.timeout);
+  validateMaxMemory(options.maxMemory);
 
   // Validate maxBuffer, if present.
   validateMaxBuffer(maxBuffer);
@@ -554,6 +556,7 @@ function spawnSync(file, args, options?): SpawnSyncResult {
 
   // Validate the timeout, if present.
   validateTimeout(options.timeout);
+  validateMaxMemory(options.maxMemory);
 
   // Validate maxBuffer, if present.
   validateMaxBuffer(maxBuffer);
@@ -1487,7 +1490,7 @@ class ChildProcess extends EventEmitter {
         gid: options.gid,
         cgroup: options.cgroup,
         maxMemory: options.maxMemory,
-        killSignal: options.killSignal,
+        killSignal: options.maxMemory == null ? undefined : sanitizeKillSignal(options.killSignal),
         onExit: (handle, exitCode, signalCode, err) => {
           this.#handle = handle;
           this.pid = this.#handle.pid;
@@ -1951,6 +1954,12 @@ function validateArgumentNullCheck(arg, propName) {
 function validateArgumentsNullCheck(args, propName) {
   for (let i = 0; i < args.length; ++i) {
     validateArgumentNullCheck(args[i], `${propName}[${i}]`);
+  }
+}
+
+function validateMaxMemory(maxMemory) {
+  if (maxMemory != null && maxMemory !== Infinity && !(NumberIsInteger(maxMemory) && maxMemory >= 0)) {
+    throw $ERR_OUT_OF_RANGE("options.maxMemory", "a non-negative integer", maxMemory);
   }
 }
 

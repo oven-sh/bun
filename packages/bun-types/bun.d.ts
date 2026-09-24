@@ -7939,9 +7939,10 @@ declare module "bun" {
        * may use, combined. If the tree goes over this limit, every process in
        * it is killed with `killSignal` (defaults to SIGTERM).
        *
-       * The kernel enforces the limit where it can: a Job Object on Windows and a
-       * memory cgroup on Linux when Bun may create one. Otherwise Bun samples the
-       * tree. `killSignal` applies only when Bun does the kill.
+       * Windows: the child runs in a Job Object, the kernel tells Bun when the tree
+       * goes over the limit, and Bun terminates the job. Linux: when Bun may create
+       * a memory cgroup inside its own, the kernel kills the tree. In all other
+       * cases Bun samples the tree. `killSignal` applies only when Bun sends the signal.
        *
        * @default undefined (no limit)
        */
@@ -8255,6 +8256,13 @@ declare module "bun" {
      * On Windows without `maxMemory`, only the process itself is counted.
      */
     memoryUsage(): { current: number; peak: number };
+
+    /**
+     * `true` when Bun or the kernel killed this process tree because it went over
+     * {@link SpawnOptions.maxMemory}. Use this to tell a memory kill from an
+     * ordinary failure. On Windows and in a Linux cgroup, `signalCode` does not show it.
+     */
+    readonly exitedDueToMaxMemory: boolean;
   }
 
   /**

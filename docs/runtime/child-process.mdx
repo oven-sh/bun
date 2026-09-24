@@ -269,13 +269,15 @@ result.exitedDueToMaxMemory; // true if the build was killed for exceeding 4 GiB
 
 Bun uses the kernel to enforce the limit where the kernel can do it, and samples only as a fallback:
 
-| Platform | How the limit is enforced                                                                                                                                |
-| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Windows  | The child runs in a Job Object. The kernel notifies Bun when the tree commits more than `maxMemory`, and Bun terminates the job.                         |
-| Linux    | When Bun can create a memory cgroup (v2 or v1), the child starts inside one with `memory.max` set, and the kernel kills the tree. Otherwise Bun samples. |
-| macOS    | The kernel has no memory limit for a group of processes, so one background thread samples the tree's physical footprint.                                 |
+| Platform | How the limit is enforced                                                                                                                                                                                                                                                                                                                   |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Windows  | The child runs in a Job Object. The kernel tells Bun when the tree commits more than `maxMemory`, and Bun then terminates the job.                                                                                                                                                                                                          |
+| Linux    | When Bun may create a memory cgroup inside its own cgroup, the child starts in one and the kernel kills the tree. The limit file is `memory.limit_in_bytes` on cgroup v1 and `memory.max` on cgroup v2. Bun never moves the child outside its own cgroup, so a systemd unit or a container still covers it. In all other cases Bun samples. |
+| macOS    | The kernel has no memory limit for a group of processes, so one background thread samples the tree's physical footprint.                                                                                                                                                                                                                    |
 
-The sampler runs slowly while every tree is far from its limit and every millisecond once any tree is within 15% of it. `killSignal` applies when Bun does the kill. When the kernel does it (Linux cgroup, Windows job), the tree is killed at once, as with `SIGKILL`.
+The sampler sleeps for as long as a child that allocates at full speed needs to use the bytes that are left, from 1 ms to 100 ms. It also counts a descendant whose parent has exited, if Bun saw it at least one time before that. `killSignal` applies when Bun sends the signal. When the kernel does the kill (Linux cgroup), or Bun terminates a Windows job, the tree stops at once, as with `SIGKILL`.
+
+After the process exits, `proc.exitedDueToMaxMemory` is `true` when the limit was the cause. Use it to tell a memory kill from an ordinary failure, because on Windows and in a Linux cgroup the exit code and `signalCode` do not show it.
 
 To read the number yourself, call `proc.memoryUsage()`. It works with or without `maxMemory`:
 

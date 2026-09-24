@@ -114,6 +114,9 @@ export default [
       killed: {
         getter: "getKilled",
       },
+      exitedDueToMaxMemory: {
+        getter: "getExitedDueToMaxMemory",
+      },
       exitCode: {
         getter: "getExitCode",
       },

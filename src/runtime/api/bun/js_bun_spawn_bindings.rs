@@ -1377,6 +1377,9 @@ fn spawn_maybe_sync(
     ) {
         Ok(v) => subprocess.stdin.set(v),
         Err(err) => {
+            // Nothing watches the child yet and the caller never gets a Subprocess to kill it
+            // with. `try_kill` does nothing before `watch()`.
+            subprocess.process_mut().dispose_failed_spawn();
             // ref_count = 2 from the aggregate above, but neither the JS
             // wrapper nor the process exit handler are wired up yet, so
             // release both. stdout/stderr are still `.ignore` — close the raw
@@ -1430,13 +1433,7 @@ fn spawn_maybe_sync(
             subprocess.stderr_maxbuf.set(mb);
             subprocess.deref();
             subprocess.deref();
-            // Note: `Writable::init` returns
-            // `crate::Error`. Map non-thrown to OOM.
-            if cx.global().has_exception() {
-                return Err(JsError::Thrown);
-            }
-            let _ = err;
-            return Err(cx.global().throw_out_of_memory());
+            return Err(err);
         }
     }
 
@@ -1503,7 +1500,8 @@ fn spawn_maybe_sync(
     if cx.global().has_exception() {
         let err = cx.global().take_exception(JsError::Thrown);
         // Ensure we kill the process so we don't leave things in an unexpected state.
-        let _ = subprocess.try_kill(subprocess.kill_signal);
+        // `try_kill` does nothing before `watch()`.
+        subprocess.process_mut().dispose_failed_spawn();
 
         if cx.global().has_exception() {
             return Err(JsError::Thrown);

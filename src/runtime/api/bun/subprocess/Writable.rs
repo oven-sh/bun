@@ -1,6 +1,6 @@
 use core::ffi::c_void;
 
-use bun_jsc::{JSGlobalObject, JSValue, event_loop::EventLoop};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, SysErrorJsc as _, event_loop::EventLoop};
 use bun_ptr::RefPtr;
 use bun_sys::{self, Fd, FdExt};
 
@@ -118,13 +118,14 @@ impl<'a> Writable<'a> {
         process.on_stdin_destroyed();
     }
 
+    /// On `Err` the ref and flags taken from `subprocess` are given back and `result` is released.
     pub(crate) fn init(
         stdio: &mut Stdio,
         event_loop: &EventLoop,
         subprocess: &mut Subprocess<'a>,
         result: StdioResult,
         promise_for_stream: &mut JSValue,
-    ) -> crate::Result<Writable<'a>> {
+    ) -> JsResult<Writable<'a>> {
         super::assert_stdio_result!(result);
 
         let global = event_loop.global_ref();
@@ -154,11 +155,11 @@ impl<'a> Writable<'a> {
 
                         match pipe.writer.with_mut(|w| w.start_with_current_pipe()) {
                             bun_sys::Result::Ok(()) => {}
-                            bun_sys::Result::Err(_err) => {
+                            bun_sys::Result::Err(err) => {
                                 if let Stdio::ReadableStream(rs) = stdio {
                                     rs.cancel(global)?;
                                 }
-                                return Err(crate::Error::UnexpectedCreatingStdin);
+                                return Err(err.throw(global));
                             }
                         }
                         pipe.writer.with_mut(|w| w.set_parent(pipe_ref.as_ptr()));
@@ -179,8 +180,7 @@ impl<'a> Writable<'a> {
                                     f.set(Flags::DEREF_ON_STDIN_DESTROYED, false)
                                 });
                                 subprocess.deref();
-                                let _ = global.throw_value(err_val);
-                                return Err(crate::Error::JSError);
+                                return Err(global.throw_value(err_val));
                             }
                             *promise_for_stream = assign_result;
                         }
@@ -244,13 +244,13 @@ impl<'a> Writable<'a> {
 
                 match pipe.writer.with_mut(|w| w.start(fd, true)) {
                     bun_sys::Result::Ok(()) => {}
-                    bun_sys::Result::Err(_err) => {
+                    bun_sys::Result::Err(err) => {
                         // The writer did not take `fd`; nothing else closes it.
                         fd.close();
                         if let Stdio::ReadableStream(rs) = stdio {
                             rs.cancel(global)?;
                         }
-                        return Err(crate::Error::UnexpectedCreatingStdin);
+                        return Err(err.throw(global));
                     }
                 }
 
@@ -277,8 +277,7 @@ impl<'a> Writable<'a> {
                         subprocess.weak_file_sink_stdin_ptr.set(None);
                         subprocess.update_flags(|f| f.set(Flags::DEREF_ON_STDIN_DESTROYED, false));
                         subprocess.deref();
-                        let _ = global.throw_value(err_val);
-                        return Err(crate::Error::JSError);
+                        return Err(global.throw_value(err_val));
                     }
                     *promise_for_stream = assign_result;
                 }

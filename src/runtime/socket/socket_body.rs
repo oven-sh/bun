@@ -2620,7 +2620,9 @@ impl<const SSL: bool> NewSocket<SSL> {
                         // node:net fails the write like Node's onWriteComplete;
                         // -1 stays the legacy closed/shutdown sentinel.
                         JSValue::js_number(f64::from(wrote))
-                    } else if usize::try_from(wrote.max(0)).expect("int cast") == total {
+                    } else if usize::try_from(wrote.max(0)).expect("int cast") == total
+                        && this.flushed_to_transport()
+                    {
                         JSValue::TRUE
                     } else {
                         JSValue::FALSE
@@ -2628,6 +2630,15 @@ impl<const SSL: bool> NewSocket<SSL> {
                 }
             },
         )
+    }
+
+    /// A write or end is complete for JS only once the transport accepted
+    /// every byte: `false` parks the callback in node:net until the drain
+    /// that `UpgradedDuplex::on_write_done` fires. Only a TLS socket can run
+    /// over a JS Duplex, so a plain socket never asks.
+    #[inline]
+    fn flushed_to_transport(&self) -> bool {
+        !SSL || self.socket.get().transport_idle()
     }
 
     #[bun_jsc::host_fn(method)]
@@ -2652,7 +2663,10 @@ impl<const SSL: bool> NewSocket<SSL> {
                     let _ = this.internal_flush();
                 }
 
-                JSValue::from(usize::try_from(wrote.max(0)).expect("int cast") == total)
+                JSValue::from(
+                    usize::try_from(wrote.max(0)).expect("int cast") == total
+                        && this.flushed_to_transport(),
+                )
             }
         };
         Ok(result)
@@ -3027,6 +3041,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // just mimic the side-effect dont actually write empty non-TLS data onto the socket, we just wanna to have same behavior of node.js
             if !self.flags.get().contains(Flags::HANDSHAKE_COMPLETE)
                 || self.buffered_data_for_node_net.get().len() > 0
+                || !self.flushed_to_transport()
             {
                 return false;
             }
@@ -3043,6 +3058,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             && flags.contains(Flags::END_AFTER_FLUSH)
             && !flags.contains(Flags::EMPTY_PACKET_PENDING)
             && self.buffered_data_for_node_net.get().len() == 0
+            && self.flushed_to_transport()
     }
 
     /// Flushes the node:net buffered tail. Returns 0, or the positive errno of
@@ -3183,7 +3199,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             this.socket.get().shutdown();
         }
 
-        Ok(JSValue::UNDEFINED)
+        // `true` when the transport took the shutdown (node's handle.shutdown
+        // returning 1: done now). `false` means a drain completes it, the
+        // same contract as a `$write` that returns false.
+        Ok(JSValue::from(this.flushed_to_transport()))
     }
 
     #[bun_jsc::host_fn(method)]

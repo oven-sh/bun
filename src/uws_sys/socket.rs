@@ -296,6 +296,17 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         )
     }
 
+    /// The transport has accepted every byte written to it. A transport with
+    /// an fd accepts at the write call (the kernel or libuv holds the rest).
+    /// A JS Duplex accepts a chunk when it runs that chunk's write callback,
+    /// so it can still hold bytes after `write` returned.
+    pub fn transport_idle(&self) -> bool {
+        match self.socket {
+            InternalSocket::UpgradedDuplex(d) => duplex(d).transport_idle(),
+            _ => true,
+        }
+    }
+
     #[inline]
     pub fn is_closed_or_has_error(&self) -> bool {
         self.is_closed() || self.is_shutdown() || self.get_error() != 0

@@ -44,6 +44,14 @@ pub(crate) struct UpgradedDuplex {
     pub on_end_callback: Cell<JSValue>,
     pub on_writable_callback: Cell<JSValue>,
     pub on_close_callback: Cell<JSValue>,
+    /// The callback handed to every `duplex.write(chunk, cb)` and the trailing
+    /// `duplex.end(null, cb)`. One function per socket, rooted in the
+    /// wrapper's `duplexOnWriteDone` slot.
+    pub on_write_done_callback: Cell<JSValue>,
+    /// Transport writes (and the end) whose callback has not run yet. The
+    /// socket's own write and end callbacks wait for this to reach zero,
+    /// which is when node's JSStreamSocket completes its write request.
+    pub in_flight: Cell<u32>,
     pub event_loop_timer: JsCell<EventLoopTimer>,
     pub current_timeout: Cell<u32>,
     /// Transport bytes that arrived before the TLS engine existed.
@@ -259,24 +267,47 @@ impl UpgradedDuplex {
             _ => return,
         };
 
-        if let Some(data) = data {
-            let buffer = match bun_jsc::array_buffer::BinaryType::Buffer.to_js(data, &global) {
+        let payload = match data {
+            Some(data) => match bun_jsc::array_buffer::BinaryType::Buffer.to_js(data, &global) {
                 Ok(b) => b,
                 Err(err) => {
                     (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
                     return;
                 }
-            };
-            buffer.ensure_still_alive();
+            },
+            None => JSValue::NULL,
+        };
+        payload.ensure_still_alive();
 
-            if let Err(err) = write_or_end.call(&global, duplex, &[buffer]) {
-                (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
-            }
-        } else {
-            if let Err(err) = write_or_end.call(&global, duplex, &[JSValue::NULL]) {
-                (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
-            }
+        let done = self.write_done_handler(&global);
+        // Counted before the call: a Duplex whose `_write` completes
+        // synchronously still runs the callback on a later tick, but one
+        // that reports an error can run it inside the call.
+        self.in_flight.set(self.in_flight.get() + 1);
+        if let Err(err) = write_or_end.call(&global, duplex, &[payload, done]) {
+            // Thrown before the stream took the chunk, so no callback comes.
+            self.in_flight.set(self.in_flight.get().saturating_sub(1));
+            (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
         }
+    }
+
+    fn write_done_handler(&self, global: &JSGlobalObject) -> JSValue {
+        lazy_js_handler(
+            &self.on_write_done_callback,
+            self.js_wrapper,
+            js_TLSSocket::duplex_on_write_done_set_cached,
+            global,
+            __jsc_host_on_write_done,
+            std::ptr::from_ref(self).cast_mut().cast::<c_void>(),
+        )
+    }
+
+    /// The Duplex has accepted every byte handed to it: nothing is waiting on
+    /// a write callback. An fd transport is always idle; only a JS stream can
+    /// hold a chunk without completing it.
+    #[uws_callback(export = "UpgradedDuplex__transport_idle", no_catch)]
+    pub(crate) fn transport_idle(&self) -> bool {
+        self.in_flight.get() == 0
     }
 
     fn internal_write(this: *mut Self, encoded_data: &[u8]) {
@@ -405,6 +436,8 @@ impl UpgradedDuplex {
             on_end_callback: Cell::new(JSValue::ZERO),
             on_writable_callback: Cell::new(JSValue::ZERO),
             on_close_callback: Cell::new(JSValue::ZERO),
+            on_write_done_callback: Cell::new(JSValue::ZERO),
+            in_flight: Cell::new(0),
             event_loop_timer: JsCell::new(EventLoopTimer::init_paused(
                 EventLoopTimerTag::UpgradedDuplex,
             )),
@@ -676,6 +709,7 @@ impl UpgradedDuplex {
             &self.on_end_callback,
             &self.on_writable_callback,
             &self.on_close_callback,
+            &self.on_write_done_callback,
         ] {
             let value = cb.get();
             if !value.is_empty() {
@@ -683,6 +717,7 @@ impl UpgradedDuplex {
                 cb.set(JSValue::ZERO);
             }
         }
+        self.in_flight.set(0);
         self.ssl_error.set(CertError::default());
         self.pending_data.set(Vec::new());
         self.pending_end.set(false);
@@ -771,6 +806,38 @@ fn on_writable(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>
         this.flush();
         // call onWritable (will flush on demand)
         (this.handlers.on_writable)(this.handlers.ctx);
+    }
+
+    Ok(JSValue::UNDEFINED)
+}
+
+/// The Duplex completed one `write(chunk, cb)` or its `end(null, cb)`. The
+/// last completion is the drain a parked write or end callback waits for.
+///
+/// An error fails the socket the way node's JSStreamSocket fails the TLS
+/// write request. Once close_notify went out, the chunks still in flight
+/// belong to the shutdown, whose completion node ignores the status of
+/// (`afterShutdown`), so their error only counts as a completion.
+#[bun_jsc::host_fn]
+fn on_write_done(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    bun_output::scoped_log!(UpgradedDuplex, "onWriteDone");
+
+    let function = frame.callee();
+    let [err] = frame.arguments_as_array::<1>();
+
+    if let Some(self_ptr) = host_fn::get_function_data(function) {
+        // SAFETY: see host-fn note above.
+        let this = unsafe { &*self_ptr.cast::<UpgradedDuplex>() };
+        let remaining = this.in_flight.get().saturating_sub(1);
+        this.in_flight.set(remaining);
+        if this.origin.get().is_empty() {
+            return Ok(JSValue::UNDEFINED);
+        }
+        if !err.is_empty_or_undefined_or_null() && !this.is_shutdown() {
+            (this.handlers.on_error)(this.handlers.ctx, err);
+        } else if remaining == 0 {
+            (this.handlers.on_writable)(this.handlers.ctx);
+        }
     }
 
     Ok(JSValue::UNDEFINED)

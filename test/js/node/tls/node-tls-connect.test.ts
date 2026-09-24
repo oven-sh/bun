@@ -1300,6 +1300,90 @@ describe("a TLS socket over a Duplex transport follows that transport's teardown
   });
 });
 
+describe("a write callback on a TLS socket over a Duplex waits for the transport", () => {
+  // Node's JSStreamSocket passes its own callback into `stream.write(chunk, cb)`
+  // and completes the TLS write only when the stream calls it, so `write(cb)`
+  // and `end(cb)` mean "the transport took the ciphertext". The transport's
+  // boolean return does not carry this: a small chunk stays under the
+  // highWaterMark, so write() returns true while _write has not completed.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js
+  // Two in-memory duplexes. Once `stall()` ran, the side named by `stalls`
+  // queues each ciphertext chunk with its write callback instead of
+  // delivering it, until `release()`.
+  function makePair(stalls: "server" | "client") {
+    const held: [Buffer, () => void][] = [];
+    let stalled = false;
+    const makeSide = (peer: () => Duplex, name: "server" | "client") =>
+      new Duplex({
+        read() {},
+        write(chunk: Buffer, _encoding, callback) {
+          if (stalled && name === stalls) {
+            held.push([chunk, callback]);
+            return;
+          }
+          peer().push(chunk);
+          callback();
+        },
+        final(callback) {
+          peer().push(null);
+          callback();
+        },
+      });
+    const clientSide: Duplex = makeSide(() => serverSide, "client");
+    const serverSide: Duplex = makeSide(() => clientSide, "server");
+    return {
+      clientSide,
+      serverSide,
+      held,
+      stall: () => (stalled = true),
+      release() {
+        stalled = false;
+        for (const [chunk, callback] of held.splice(0)) {
+          (stalls === "server" ? clientSide : serverSide).push(chunk);
+          callback();
+        }
+      },
+    };
+  }
+  const serverContext = () => ({ isServer: true, secureContext: tls.createSecureContext(COMMON_CERT_) });
+
+  async function run(pair: ReturnType<typeof makePair>, writer: "server" | "client", method: "write" | "end") {
+    const server = new TLSSocket(pair.serverSide, serverContext());
+    const client = tls.connect({ socket: pair.clientSide, rejectUnauthorized: false });
+    const failed = Promise.withResolvers<never>();
+    server.on("error", failed.reject);
+    client.on("error", failed.reject);
+    const [from, to] = writer === "server" ? [server, client] : [client, server];
+    let received = "";
+    to.on("data", (chunk: Buffer) => (received += chunk));
+    await Promise.race([once(client, "secureConnect"), failed.promise]);
+
+    // Everything up to here reached the peer. The transport takes the next
+    // chunk but does not complete it until `release()`.
+    pair.stall();
+    const atCallback = Promise.withResolvers<{ received: string; queued: number }>();
+    from[method]("x", () => atCallback.resolve({ received, queued: pair.held.length }));
+    // The ciphertext for "x" is queued in the transport by now. A callback
+    // that ran before this turn ran too early.
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(pair.held.length).toBeGreaterThan(0);
+    pair.release();
+
+    expect(await Promise.race([atCallback.promise, failed.promise])).toEqual({ received: "x", queued: 0 });
+    client.destroy();
+    server.destroy();
+  }
+
+  describe.each(["write", "end"] as const)("%s(data, cb)", method => {
+    it("on a server-side TLSSocket fires after the stalled transport completes the write", async () => {
+      await run(makePair("server"), "server", method);
+    });
+    it("on tls.connect({ socket }) fires after the stalled transport completes the write", async () => {
+      await run(makePair("client"), "client", method);
+    });
+  });
+});
+
 it("delivers 'session' even when the data handler destroys the socket immediately", async () => {
   // The TLS1.3 NewSessionTickets ride in the same read pass as the response
   // bytes. If the parked session were only flushed after the data dispatch,

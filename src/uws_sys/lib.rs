@@ -208,6 +208,7 @@ unsafe extern "C" {
     safe fn UpgradedDuplex__is_established(this: &UpgradedDuplex) -> bool;
     safe fn UpgradedDuplex__is_closed(this: &UpgradedDuplex) -> bool;
     safe fn UpgradedDuplex__is_shutdown(this: &UpgradedDuplex) -> bool;
+    safe fn UpgradedDuplex__transport_idle(this: &UpgradedDuplex) -> bool;
     safe fn UpgradedDuplex__ssl(this: &UpgradedDuplex) -> *mut bun_boringssl_sys::SSL;
     safe fn UpgradedDuplex__set_timeout(this: &mut UpgradedDuplex, seconds: core::ffi::c_uint);
     safe fn UpgradedDuplex__flush(this: &mut UpgradedDuplex);
@@ -238,6 +239,10 @@ impl UpgradedDuplex {
     #[inline]
     pub(crate) fn is_shutdown(&self) -> bool {
         UpgradedDuplex__is_shutdown(self)
+    }
+    #[inline]
+    pub(crate) fn transport_idle(&self) -> bool {
+        UpgradedDuplex__transport_idle(self)
     }
     #[inline]
     pub(crate) fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {

@@ -385,12 +385,19 @@ function writeErrnoException(negErrno) {
   }
   return er;
 }
-function endNT(socket, callback, err) {
+function endNT(socket, callback, self) {
   // Node's _final half-closes the writable side (sends FIN) and leaves the
   // readable side open; the Duplex's allowHalfOpen drives the eventual destroy.
   // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/net.js#L500
-  socket.shutdown();
-  callback(err);
+  if (socket.shutdown() || self[kwriteCallback]) {
+    callback();
+    return;
+  }
+  // The transport still holds the shutdown (a wrapped Duplex whose _write has
+  // not completed the close_notify). Its drain completes the callback, the
+  // same way it completes a parked write. Node's JSStreamSocket waits for
+  // stream.end(cb) before it finishes the shutdown request.
+  self[kwriteCallback] = callback;
 }
 function emitCloseNT(self, hasError) {
   self.emit("close", hasError);
@@ -2458,7 +2465,7 @@ Socket.prototype._final = function _final(callback) {
   if (!socket) return callback();
 
   // emit FIN allowHalfOpen only allow the readable side to close first
-  process.nextTick(endNT, socket, callback);
+  process.nextTick(endNT, socket, callback, this);
 };
 
 Object.defineProperty(Socket.prototype, "localAddress", {

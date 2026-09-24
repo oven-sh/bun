@@ -558,7 +558,7 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
         auto hostUtf8 = m_url.host().toString().utf8();
         // The effective port, so a `host:443` entry matches a default-port URL.
         uint16_t port = m_url.port().value_or(is_secure ? 443 : 80);
-        if (Bun__isNoProxy(hostUtf8.data(), hostUtf8.length(), port)) {
+        if (Bun__isNoProxy(hostUtf8.legacyCStringPointer(), hostUtf8.length(), port)) {
             proxyConfig = std::nullopt;
             hasProxy = false;
         }
@@ -999,7 +999,7 @@ ExceptionOr<void> WebSocket::ping(const String& message)
     if (payloadSize > maxControlFramePayloadSize)
         return controlFramePayloadTooLargeException(payloadSize);
 
-    this->sendWebSocketData(utf8.data(), payloadSize, Opcode::Ping);
+    this->sendWebSocketData(utf8.legacyCStringPointer(), payloadSize, Opcode::Ping);
 
     return {};
 }
@@ -1085,7 +1085,7 @@ ExceptionOr<void> WebSocket::pong(const String& message)
     if (payloadSize > maxControlFramePayloadSize)
         return controlFramePayloadTooLargeException(payloadSize);
 
-    this->sendWebSocketData(utf8.data(), payloadSize, Opcode::Pong);
+    this->sendWebSocketData(utf8.legacyCStringPointer(), payloadSize, Opcode::Pong);
 
     return {};
 }

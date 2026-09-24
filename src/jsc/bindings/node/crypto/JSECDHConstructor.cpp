@@ -61,7 +61,7 @@ JSC_DEFINE_HOST_FUNCTION(constructECDH, (JSC::JSGlobalObject * globalObject, JSC
 
     auto curve = curveString.utf8();
 
-    int nid = OBJ_sn2nid(curve.data());
+    int nid = OBJ_sn2nid(curve.legacyCStringPointer());
     if (nid == NID_undef) {
         return Bun::ERR::CRYPTO_INVALID_CURVE(scope, globalObject);
     }
@@ -99,7 +99,7 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHConvertKey, (JSC::JSGlobalObject * lexicalGlobalO
 
     auto buffer = keyView->span();
 
-    int nid = OBJ_sn2nid(curveName.utf8().data());
+    int nid = OBJ_sn2nid(curveName.utf8().legacyCStringPointer());
     if (nid == NID_undef)
         return Bun::ERR::CRYPTO_INVALID_CURVE(scope, lexicalGlobalObject);
 

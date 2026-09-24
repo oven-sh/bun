@@ -173,7 +173,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     auto scope = DECLARE_THROW_SCOPE(vm);
     SourceCode code = WTF::move(moduleObject->sourceCode);
     if (JSModuleGraph* graph = moduleObject->moduleGraph(); graph && code.provider())
-        code = SourceCode(RefPtr<JSC::SourceProvider>(GraphCommonJSSourceProvider::create(*code.provider(), graph->overlayShape())), code.startOffset(), code.endOffset(), code.firstLine().oneBasedInt(), code.startColumn().oneBasedInt());
+        code = SourceCode(RefPtr<JSC::SourceProvider>(GraphCommonJSSourceProvider::create(*code.provider(), graph->overlayShape())), code.startOffset(), code.endOffset());
 
     // If an exception occurred somewhere else, we might have cleared the source code.
     if (code.isNull()) [[unlikely]] {

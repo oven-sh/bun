@@ -111,7 +111,7 @@
 #include "wtf/text/StringImpl.h"
 #include "wtf/text/StringView.h"
 #include "wtf/text/WTFString.h"
-#include "wtf/GregorianDateTime.h"
+#include "wtf/PlainGregorianDateTime.h"
 #include "JavaScriptCore/IntlObject.h"
 #include "JavaScriptCore/ISO8601.h"
 #include "JavaScriptCore/JSCTimeZone.h"

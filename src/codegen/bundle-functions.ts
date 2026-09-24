@@ -465,7 +465,7 @@ JSC::FunctionExecutable* ${lowerBasename}${cap(fn.name)}CodeGenerator(JSC::VM& v
 
   const initializeSourceCodeFn = (fn: BundledBuiltin, basename: string) => {
     const name = `${low(basename)}${cap(fn.name)}CodeSource`;
-    return `m_${name}(SourceCode(sourceProvider.copyRef(), ${fn.sourceOffset}, ${fn.source.length + fn.sourceOffset}, 1, 1))`;
+    return `m_${name}(SourceCode(sourceProvider.copyRef(), ${fn.sourceOffset}, ${fn.source.length + fn.sourceOffset}))`;
   };
   for (const { basename, internal, functions } of files) {
     bundledCPP += `

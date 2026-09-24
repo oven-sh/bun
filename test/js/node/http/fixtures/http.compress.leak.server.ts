@@ -1,5 +1,6 @@
 import jsc from "bun:jsc";
 import { createServer, Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { URL } from "node:url";
 import zlib from "node:zlib";
 
@@ -8,14 +9,9 @@ const data = `<!DOCTYPE html><html lang="en"><head><meta charSet="utf-8"/><meta 
 function listen(server: Server, protocol: string = "http"): Promise<URL> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject("Timed out"), 5000).unref();
-    server.listen({ port: 0 }, (err, hostname, port) => {
+    server.listen({ port: 0 }, () => {
       clearTimeout(timeout);
-
-      if (err) {
-        reject(err);
-      } else {
-        resolve(new URL(`${protocol}://${hostname}:${port}`));
-      }
+      resolve(new URL(`${protocol}://localhost:${(server.address() as AddressInfo).port}`));
     });
   });
 }

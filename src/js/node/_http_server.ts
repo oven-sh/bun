@@ -232,12 +232,11 @@ function onNodeHTTPServerSocketTimeout() {
   if (!reqTimeout && !resTimeout && !serverTimeout) this.destroy();
 }
 
-function emitListeningNextTick(self, hostname, port) {
+function emitListeningNextTick(self) {
   // Nothing to announce if close() ran in the same tick as listen(), or the Bun.ModuleGraph
   // whose script listened has been disposed (its listener was closed with it).
   if (!self[serverSymbol] || isStoppedModuleGraphRunning()) return;
-  // Node passes no arguments. The extra ones are a Bun extension.
-  self.emit("listening", null, hostname, port);
+  self.emit("listening");
 }
 
 function emitListenErrorNextTick(self, err) {
@@ -1075,7 +1074,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
     }
 
     // A tick, not a timer, as in node: a timer never fires on its own under jest.useFakeTimers().
-    process.nextTick(emitListeningNextTick, this, this[serverSymbol]?.hostname, this[serverSymbol]?.port);
+    process.nextTick(emitListeningNextTick, this);
   }
 };
 

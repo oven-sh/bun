@@ -94,11 +94,12 @@ describe("WebKit 7b485a76e9 upgrade", () => {
     function count() {
       return arguments.length;
     }
+    // Module code is strict, so this `arguments` object is the strict kind. A sloppy one still wraps.
     function makeArguments(..._: unknown[]) {
-      "use strict";
       arguments.length = 2 ** 32 + 1;
       return arguments;
     }
+    expect(Object.getOwnPropertyDescriptor(makeArguments(), "callee")?.get).toBeFunction();
     expect(() => count.apply(null, makeArguments(1, 2) as any)).toThrow(RangeError);
     expect(() => Reflect.apply(count, null, makeArguments(1, 2))).toThrow(RangeError);
     expect(count.apply(null, [1, 2] as any)).toBe(2);

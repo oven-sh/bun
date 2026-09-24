@@ -2423,6 +2423,11 @@ describe("expect()", () => {
       // if a file doesn't exist, it should throw (not return 0 size)
       expect(() => expect(Bun.file(tmpFile(false))).toHaveLength(0)).toThrow();
 
+      // its size is unknown: no length equals it, and no length differs from it
+      expect(() => expect(Bun.file(tmpFile(false))).toHaveLength(0)).toThrow("unknown length");
+      expect(() => expect(Bun.file(tmpFile(false))).not.toHaveLength(0)).toThrow("unknown length");
+      expect(() => expect(Bun.file(tmpFile(false))).not.toHaveLength(5)).toThrow("unknown length");
+
       // Blob
       expect(new Blob(ANY([1, 2, 3]))).toHaveLength(3);
       expect(new Blob()).toHaveLength(0);
@@ -3810,6 +3815,14 @@ describe("expect()", () => {
       });
     }
   });
+
+  if (isBun) {
+    test("toBeEmpty() throws for a Bun.file() of unknown size", () => {
+      // A missing file is not empty and is not non-empty.
+      expect(() => expect(Bun.file(tmpFile(false))).toBeEmpty()).toThrow("unknown length");
+      expect(() => expect(Bun.file(tmpFile(false))).not.toBeEmpty()).toThrow("unknown length");
+    });
+  }
 
   test("toBeEmptyObject()", () => {
     // Map and Set are not considered as object in jest-extended

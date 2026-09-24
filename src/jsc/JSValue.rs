@@ -2886,9 +2886,10 @@ impl JSValue {
     }
 
     // ── Length introspection. ──────────────────────────
-    /// `JSValue.getLengthIfPropertyExistsInternal` — returns `f64::MAX` when
-    /// no `length`-ish property exists. Do not call directly; prefer
-    /// [`JSValue::get_length`].
+    /// `JSValue.getLengthIfPropertyExistsInternal` — returns `f64::INFINITY` when
+    /// no `length`-ish property exists, and `f64::MAX` for a `Blob` whose size is
+    /// unknown (a missing file, a pipe, an S3 object). Do not call directly;
+    /// prefer [`JSValue::get_length`].
     pub fn get_length_if_property_exists_internal(self, global: &JSGlobalObject) -> JsResult<f64> {
         host_fn::from_js_host_call_generic(global, || {
             JSC__JSValue__getLengthIfPropertyExistsInternal(self, global)

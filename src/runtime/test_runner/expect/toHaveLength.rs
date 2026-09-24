@@ -64,6 +64,12 @@ pub(crate) fn to_have_length(
             "Received value has non-number length property: {}",
             actual_length,
         )));
+    } else if actual_length == f64::MAX {
+        let mut fmt = super::make_formatter(global);
+        return Err(global.throw(format_args!(
+            "Received value has an unknown length: {}",
+            value.to_fmt(&mut fmt),
+        )));
     }
 
     if actual_length == expected_length {

@@ -79,6 +79,11 @@ pub(crate) fn to_be_empty(
             "Received value has non-number length property: {}",
             actual_length
         )));
+    } else if actual_length == f64::MAX {
+        return Err(global.throw(format_args!(
+            "Received value has an unknown length: {}",
+            value.to_fmt(&mut formatter)
+        )));
     } else {
         pass = actual_length == 0.0;
     }

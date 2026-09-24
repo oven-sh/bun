@@ -2235,8 +2235,10 @@ describe("s3 file size stays unknown", () => {
   it("after expect().toHaveLength() and expect().toBeEmpty()", async () => {
     expect(
       await readsAfter(file => {
-        expect(() => expect(file).toHaveLength(0)).toThrow();
-        expect(() => expect(file).toBeEmpty()).toThrow();
+        expect(() => expect(file).toHaveLength(0)).toThrow("unknown length");
+        expect(() => expect(file).not.toHaveLength(5)).toThrow("unknown length");
+        expect(() => expect(file).toBeEmpty()).toThrow("unknown length");
+        expect(() => expect(file).not.toBeEmpty()).toThrow("unknown length");
       }),
     ).toEqual(untouched);
   });

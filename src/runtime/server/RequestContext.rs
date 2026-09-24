@@ -736,13 +736,16 @@ where
         Ok(JSValue::UNDEFINED)
     }
 
-    /// Cancel the body stream of a Response the server will not transmit.
+    /// Cancel the body stream of a Response the server will not transmit, unless a reader holds it.
     fn cancel_unread_body(response: &Response, global_this: &JSGlobalObject) {
         if let Some(stream) = response.get_body_readable_stream() {
             let _keep = jsc::EnsureStillAlive(stream.value);
             response.detach_readable_stream(global_this);
-            // Not `cancel()`: it skips a stream with no reader, which an unattached body is.
-            crate::dispatch::fold(stream.cancel_with_reason(global_this, JSValue::UNDEFINED));
+            // A locked stream belongs to its reader, which can be the sink of another Response.
+            if !stream.is_locked(global_this) {
+                // Not `cancel()`: it skips a stream with no reader, which an unattached body is.
+                crate::dispatch::fold(stream.cancel_with_reason(global_this, JSValue::UNDEFINED));
+            }
         }
         *response.get_body_value() = Body::Value::Used;
     }
@@ -3136,7 +3139,10 @@ where
                             ),
                             ..Default::default()
                         };
-                        stream.value.unprotect();
+                        // Teardown must not find the stream: it belongs to its reader.
+                        if let Some(response) = this.response_mut() {
+                            response.detach_readable_stream(global_this);
+                        }
                         let js_err = err.to_error_instance(global_this);
                         this.run_error_handler(js_err);
                         return;

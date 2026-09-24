@@ -12,9 +12,10 @@
 // everywhere. Each scenario runs in a subprocess because the throwing
 // callback is reported as a process-level uncaughtException.
 //
-// The AsyncLocalStorage section at the end of the file covers the other
-// property of the same two callback invocations: they run in the async
-// context the SQL instance was created in (see that section's comment).
+// The AsyncLocalStorage section covers the other property of the same two
+// callback invocations: they run in the async context the SQL instance was
+// created in (see that section's comment). The last section covers pool calls
+// made synchronously inside onclose.
 
 import { SQL } from "bun";
 import { expect, test } from "bun:test";
@@ -389,4 +390,317 @@ for (const [adapter, scheme, refusedCode] of [
       expect({ code, events }).toStrictEqual({ code: refusedCode, events: [["onclose", "created-in"]] });
     },
   );
+}
+
+// ---------------------------------------------------------------------------
+// Pool calls made inside onclose. The slot of the connection that closed used
+// to stay in the pool's ready set while onclose ran, so query.execute(),
+// sql.reserve(), sql.begin(), sql.notify() and sql.connect() made there were
+// handed the dead slot. Only an awaited query worked, because a query reaches
+// the pool one microtask after it is awaited. The slot now finishes closing
+// before onclose runs, so all of them are served like the awaited query.
+//
+// A second pool makes the server drop the connection of the pool under test
+// (pg_terminate_backend / KILL), which a healthy server does on demand.
+// ---------------------------------------------------------------------------
+
+type PoolEntry = "execute" | "reserve" | "begin" | "notify" | "connect";
+type CloseTrigger = "a server-side disconnect" | "reserved.close()";
+
+type OncloseDriver = {
+  /** Selects one row `{ id }`: the server-side session of the connection that runs it. */
+  idQuery: string;
+  /** Makes the server drop session `$id`. */
+  killQuery: string;
+  /** What a handle rejects with once its connection is closed. */
+  closedCode: string;
+  entries: PoolEntry[];
+};
+
+const postgresOnclose: OncloseDriver = {
+  idQuery: "select pg_backend_pid() as id",
+  killQuery: "select pg_terminate_backend($id)",
+  closedCode: "ERR_POSTGRES_CONNECTION_CLOSED",
+  entries: ["execute", "reserve", "begin", "notify", "connect"],
+};
+
+const mysqlOnclose: OncloseDriver = {
+  idQuery: "select connection_id() as id",
+  killQuery: "kill $id",
+  closedCode: "ERR_MYSQL_CONNECTION_CLOSED",
+  entries: ["execute", "reserve", "begin", "connect"],
+};
+
+async function sessionId(query: PromiseLike<{ id: number | bigint | string }[]>) {
+  return Number((await query)[0].id);
+}
+
+function errorCode(err: unknown) {
+  return (err as { code?: string } | null)?.code ?? String(err);
+}
+
+function rejectionCode(promise: PromiseLike<unknown>): Promise<string> {
+  return Promise.resolve(promise).then(() => "resolved", errorCode);
+}
+
+/**
+ * What a user's onclose starts. Each one reaches the pool before it returns. Resolves to the
+ * session that served it, when it runs a query.
+ */
+const enterPool: Record<PoolEntry, (sql: SQL, idQuery: string) => Promise<number | undefined>> = {
+  execute: (sql, idQuery) => sessionId(sql.unsafe(idQuery).execute()),
+  async reserve(sql, idQuery) {
+    using reserved = await sql.reserve();
+    return await sessionId(reserved.unsafe(idQuery));
+  },
+  begin: (sql, idQuery) => sql.begin(tx => sessionId(tx.unsafe(idQuery))),
+  notify: sql => sql.notify("onclose_entry", "from onclose").then(() => undefined),
+  connect: sql => sql.connect().then(() => undefined),
+};
+
+// onclose makes its pool call, then throws. Prints which session served the call.
+const throwingOncloseEntryFixture = /* ts */ `
+import { SQL } from "bun";
+process.on("uncaughtException", err => console.log("uncaught:", err.message));
+const { FIXTURE_URL: url, FIXTURE_ID_QUERY: idQuery, FIXTURE_KILL_QUERY: killQuery } = process.env;
+const sessionId = async query => Number((await query)[0].id);
+const entry = Promise.withResolvers();
+let oncloses = 0;
+const sql = new SQL({
+  url,
+  max: 1,
+  onclose() {
+    if (++oncloses !== 1) return;
+    console.log("onclose");
+    entry.resolve(sessionId(sql.unsafe(idQuery).execute()));
+    throw new Error("boom from onclose");
+  },
+});
+const admin = new SQL({ url, max: 1 });
+const killed = await sessionId(sql.unsafe(idQuery));
+await admin.unsafe(killQuery.replace("$id", String(killed)));
+const served = await entry.promise.catch(err => err.message);
+console.log("entry:", served === killed ? "killed session" : typeof served === "number" ? "new session" : served);
+await admin.close();
+await sql.close();
+process.exit(0);
+`;
+
+function poolEntryInsideOncloseTests({ idQuery, killQuery, closedCode, entries }: OncloseDriver, url: () => string) {
+  const dropSession = (admin: SQL, id: number) => admin.unsafe(killQuery.replace("$id", String(id)));
+
+  /** Closes the only connection of `sql`. Resolves to the session that closed. */
+  async function closeConnection(trigger: CloseTrigger, sql: SQL, admin: SQL) {
+    if (trigger === "reserved.close()") {
+      const reserved = await sql.reserve();
+      const closed = await sessionId(reserved.unsafe(idQuery));
+      await reserved.close();
+      return closed;
+    }
+    const killed = await sessionId(sql.unsafe(idQuery));
+    await dropSession(admin, killed);
+    return killed;
+  }
+
+  const triggers: CloseTrigger[] = ["a server-side disconnect", "reserved.close()"];
+  test.each(entries.flatMap(entry => triggers.map(trigger => [entry, trigger] as const)))(
+    "%s inside onclose after %s is served by a new connection",
+    async (entry, trigger) => {
+      const served = Promise.withResolvers<{ session: number | undefined; onconnects: number }>();
+      let onconnects = 0;
+      let oncloses = 0;
+      await using admin = new SQL({ url: url(), max: 1 });
+      await using sql = new SQL({
+        url: url(),
+        max: 1,
+        onconnect() {
+          onconnects++;
+        },
+        onclose() {
+          // only for the first close: closing the pool fires onclose again
+          if (++oncloses !== 1) return;
+          served.resolve(enterPool[entry](sql, idQuery).then(session => ({ session, onconnects })));
+        },
+      });
+      const closed = await closeConnection(trigger, sql, admin);
+      // rejects with the error of the pool call when the dead slot served it
+      const { session, onconnects: onconnectsWhenServed } = await served.promise;
+      expect({ servedByClosedSession: session === closed, onconnectsWhenServed, oncloses }).toEqual({
+        servedByClosedSession: false,
+        onconnectsWhenServed: 2,
+        oncloses: 1,
+      });
+    },
+  );
+
+  // The close must leave nothing to do after onclose: anything it still wrote to the slot
+  // would undo the dial that onclose started, and the second query would dial again.
+  test("a query awaited inside onclose shares the dial that execute() started there", async () => {
+    const served = Promise.withResolvers<number[]>();
+    let dials = 0;
+    let oncloses = 0;
+    await using admin = new SQL({ url: url(), max: 1 });
+    await using sql = new SQL({
+      url: url(),
+      max: 1,
+      // the pool calls a password function once for each dial
+      password: () => (dials++, ""),
+      onclose() {
+        if (++oncloses !== 1) return;
+        served.resolve(
+          Promise.all([
+            // reaches the pool inside onclose
+            sessionId(sql.unsafe(idQuery).execute()),
+            // reaches the pool one microtask after onclose returned
+            sessionId(sql.unsafe(idQuery)),
+          ]),
+        );
+      },
+    });
+    const killed = await closeConnection("a server-side disconnect", sql, admin);
+    const [first, second] = await served.promise;
+    expect({ dials, sameSession: first === second, servedByKilledSession: first === killed, oncloses }).toEqual({
+      dials: 2,
+      sameSession: true,
+      servedByKilledSession: false,
+      oncloses: 1,
+    });
+  });
+
+  // Both connections are idle, so both slots are in the ready set when one of them is dropped.
+  test.each([0, 1])(
+    "max 2: execute() inside onclose runs on the live connection when connection %d is dropped",
+    async dropped => {
+      const served = Promise.withResolvers<number | undefined>();
+      let oncloses = 0;
+      await using admin = new SQL({ url: url(), max: 1 });
+      await using sql = new SQL({
+        url: url(),
+        max: 2,
+        onclose() {
+          if (++oncloses !== 1) return;
+          served.resolve(enterPool.execute(sql, idQuery));
+        },
+      });
+      // hold both connections to learn their sessions, then hand them back idle
+      const reserved = [await sql.reserve(), await sql.reserve()];
+      const sessions = await Promise.all(reserved.map(handle => sessionId(handle.unsafe(idQuery))));
+      for (const handle of reserved) handle.release();
+      await dropSession(admin, sessions[dropped]);
+      expect(await served.promise).toBe(sessions[1 - dropped]);
+    },
+  );
+
+  // A handle belongs to the connection it was made on. It is closed before onclose runs, so a
+  // statement sent through it inside onclose cannot reach the connection that onclose dials.
+  test.each(
+    (["reserved", "transaction"] as const).flatMap(handle =>
+      [false, true].map(redial => [handle, redial ? "and a redial" : "alone"] as const),
+    ),
+  )("a statement on the dropped %s handle inside onclose, %s, rejects", async (handle, redial) => {
+    const outcome = Promise.withResolvers<{ unsafe: string; tagged: string }>();
+    const oncloseReturned = Promise.withResolvers<void>();
+    let held: Bun.ReservedSQL | Bun.TransactionSQL;
+    let oncloses = 0;
+    await using admin = new SQL({ url: url(), max: 1 });
+    await using sql = new SQL({
+      url: url(),
+      max: 1,
+      onclose() {
+        if (++oncloses !== 1) return;
+        const redialed = redial === "and a redial" ? sql.connect() : undefined;
+        outcome.resolve(
+          Promise.all([rejectionCode(held.unsafe(idQuery)), rejectionCode(held`select 1`), redialed]).then(
+            ([unsafe, tagged]) => ({ unsafe, tagged }),
+          ),
+        );
+        oncloseReturned.resolve();
+      },
+    });
+    let session: number;
+    let transaction: Promise<string> | undefined;
+    if (handle === "reserved") {
+      held = await sql.reserve();
+      session = await sessionId(held.unsafe(idQuery));
+    } else {
+      const inside = Promise.withResolvers<number>();
+      transaction = rejectionCode(
+        sql.begin(async tx => {
+          held = tx;
+          inside.resolve(await sessionId(tx.unsafe(idQuery)));
+          await oncloseReturned.promise;
+        }),
+      );
+      session = await inside.promise;
+    }
+    await dropSession(admin, session);
+    expect(await outcome.promise).toEqual({ unsafe: closedCode, tagged: closedCode });
+    await transaction;
+  });
+
+  test("execute() inside an onclose that throws is still served by a new connection", async () => {
+    const { stdout, exitCode } = await runFixture(throwingOncloseEntryFixture, {
+      FIXTURE_URL: url(),
+      FIXTURE_ID_QUERY: idQuery,
+      FIXTURE_KILL_QUERY: killQuery,
+    });
+    expect(stdout).toBe("onclose\nuncaught: boom from onclose\nentry: new session\n");
+    expect(exitCode).toBe(0);
+  });
+}
+
+// Runs wherever a postgres_plain service is reachable.
+describeWithContainer(
+  "postgres: pool calls inside onclose",
+  { image: "postgres_plain", concurrent: true },
+  container => {
+    poolEntryInsideOncloseTests(
+      postgresOnclose,
+      () => `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`,
+    );
+  },
+);
+
+// Like the other MySQL tests of this file, these run where docker provides the service.
+if (isDockerEnabled()) {
+  describeWithContainer("mysql: pool calls inside onclose", { image: "mysql_plain", concurrent: true }, container => {
+    poolEntryInsideOncloseTests(mysqlOnclose, () => `mysql://root@${container.host}:${container.port}/bun_sql_test`);
+  });
+}
+
+// Fault-injection test (a refused connection), see the DO NOT COPY THIS PATTERN
+// note above: anything a real server can produce belongs in describeWithContainer.
+// A refused connection closes the slot through the connect-failure path, and
+// since nothing has to be listening it also covers the mysql adapter. The
+// close used to reject what onclose had just queued together with the queries
+// that were waiting before it. onclose makes its call only once: the redial is
+// refused too, and an unguarded onclose would redial forever.
+for (const [adapter, scheme, refusedCode] of [
+  ["postgres", "postgres://postgres@127.0.0.1:", "ERR_POSTGRES_CONNECTION_REFUSED"],
+  ["mysql", "mysql://root@127.0.0.1:", "ERR_MYSQL_CONNECTION_REFUSED"],
+] as const) {
+  test.concurrent(`${adapter}: execute() inside onclose for a refused connection redials`, async () => {
+    const events: string[] = [];
+    let entry: Promise<unknown> | undefined;
+    const sql = new SQL({
+      url: `${scheme}${await closedPort()}/db`,
+      max: 1,
+      onclose(err) {
+        events.push(`onclose: ${errorCode(err)}`);
+        entry ??= rejectionCode(sql.unsafe("SELECT 2").execute()).then(code => events.push(`entry: ${code}`));
+      },
+    });
+    try {
+      events.push(`query: ${await rejectionCode(sql.unsafe("SELECT 1"))}`);
+      await entry;
+    } finally {
+      await sql.close();
+    }
+    expect(events).toEqual([
+      `onclose: ${refusedCode}`,
+      `query: ${refusedCode}`,
+      `onclose: ${refusedCode}`,
+      `entry: ${refusedCode}`,
+    ]);
+  });
 }

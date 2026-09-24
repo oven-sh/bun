@@ -31,7 +31,7 @@ bun_core::declare_scope!(NodeHTTPResponse, visible);
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy).
 #[bun_jsc::JsClass(no_constructor)]
 #[derive(bun_ptr::RefCounted)]
-pub struct NodeHTTPResponse {
+pub(crate) struct NodeHTTPResponse {
     ref_count: bun_ptr::RefCount<Self>,
 
     pub(crate) raw_response: Cell<Option<uws::AnyResponse>>,
@@ -118,7 +118,7 @@ impl Flags {
     }
 }
 
-pub struct UpgradeCTX {
+pub(crate) struct UpgradeCTX {
     pub(crate) context: *mut uws_sys::WebSocketUpgradeContext,
     // request will be detached when go async
     pub(crate) request: *mut uws_sys::Request,
@@ -178,7 +178,7 @@ impl UpgradeCTX {
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub enum BodyReadState {
+pub(crate) enum BodyReadState {
     #[default]
     None = 0,
     Pending = 1,
@@ -287,6 +287,24 @@ fn err_throw<T>(global: &JSGlobalObject, code: ErrorCode, msg: &'static str) -> 
     Err(err_throw_cold(global, code, msg))
 }
 
+/// Same text as the `ERR_HTTP_CONTENT_LENGTH_MISMATCH` row of `simpleErrorMessages` in ErrorCode.cpp.
+#[cold]
+#[inline(never)]
+fn err_throw_content_length_mismatch(
+    global: &JSGlobalObject,
+    actual: usize,
+    expected: u64,
+) -> jsc::JsError {
+    global
+        .err(
+            ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH,
+            format_args!(
+                "Response body's content-length of {actual} byte(s) does not match the content-length of {expected} byte(s) set in header"
+            ),
+        )
+        .throw()
+}
+
 /// AnyResponse `is_ssl()` shim (upstream lacks this accessor).
 #[inline]
 fn any_response_is_ssl(r: &uws::AnyResponse) -> bool {
@@ -352,7 +370,7 @@ fn any_server_from_packed(packed: u64) -> AnyServer {
 /// `codegen_cached_accessors!` emits `on_{data,aborted,writable}_{get,set}_cached`
 /// thin wrappers over the C++ `NodeHTTPResponsePrototype__on*{Get,Set}CachedValue`
 /// `WriteBarrier<Unknown>` slots.
-pub mod js {
+pub(crate) mod js {
     bun_jsc::codegen_cached_accessors!("NodeHTTPResponse"; onData, onAborted, onWritable, pendingWriteBuffer);
 }
 
@@ -655,40 +673,26 @@ impl NodeHTTPResponse {
             return false;
         }
 
+        // The body keeps the request pending only while uws still owes it
+        // chunks. A fin that arrived while the request was paused leaves
+        // `body_read_state` at `Pending` so JS can still drain the buffered
+        // tail (`drainRequestBody`), but uws will not deliver anything further,
+        // so for this accounting that body is complete as well.
+        let body_pending = self.body_read_state.get() == BodyReadState::Pending
+            && !flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST);
+
         // A raw 'upgrade'/'connect' tunnel handoff ends the HTTP exchange the
         // same way, except an Upgrade carrying a body keeps parsing as HTTP
         // until the body's fin chunk (the actual tunnel start).
         if flags.contains(Flags::TUNNELED) {
-            return self.body_read_state.get() == BodyReadState::Pending;
+            return body_pending;
         }
 
         if flags.contains(Flags::ENDED) {
-            return self.body_read_state.get() == BodyReadState::Pending;
+            return body_pending;
         }
 
         true
-    }
-
-    pub(crate) fn dump_request_body(
-        &self,
-        global_object: &JSGlobalObject,
-        _callframe: &CallFrame,
-        this_value: JSValue,
-    ) -> JsResult<JSValue> {
-        if self
-            .buffered_request_body_data_during_pause
-            .get()
-            .capacity()
-            > 0
-        {
-            self.buffered_request_body_data_during_pause
-                .with_mut(|b| b.clear_and_free());
-        }
-        if !self.flags.get().contains(Flags::REQUEST_HAS_COMPLETED) {
-            self.clear_on_data_callback(this_value, global_object);
-        }
-
-        Ok(JSValue::UNDEFINED)
     }
 
     fn mark_request_as_done(&self) {
@@ -723,8 +727,18 @@ impl NodeHTTPResponse {
             }
         });
 
-        self.buffered_request_body_data_during_pause
-            .with_mut(|b| b.clear_and_free());
+        // A body whose fin was buffered during a pause is still owed to the
+        // IncomingMessage, which drains it through `drainRequestBody` when it
+        // next reads (possibly only after the response has ended). Keep it while
+        // JS can still get at it; `set_on_data` frees it once the reader lets go.
+        let flags = self.flags.get();
+        let tail_still_readable = flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST)
+            && !flags.contains(Flags::SOCKET_CLOSED)
+            && !flags.contains(Flags::UPGRADED);
+        if !tail_still_readable {
+            self.buffered_request_body_data_during_pause
+                .with_mut(|b| b.clear_and_free());
+        }
         let mut server = self.server;
         self.poll_ref.with_mut(|r| r.unref(vm));
         self.unregister_auto_flush();
@@ -766,10 +780,6 @@ impl NodeHTTPResponse {
         // detach and
         self.upgrade_context
             .with_mut(|c| c.preserve_web_socket_headers_if_needed());
-    }
-
-    pub(crate) fn get_ended(&self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::from(self.flags.get().contains(Flags::ENDED))
     }
 
     pub(crate) fn get_finished(&self, _global: &JSGlobalObject) -> JSValue {
@@ -1220,7 +1230,7 @@ impl NodeHTTPResponse {
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
-pub enum AbortEvent {
+pub(crate) enum AbortEvent {
     None = 0,
     Abort = 1,
     Timeout = 2,
@@ -1233,9 +1243,8 @@ impl NodeHTTPResponse {
                 // The socket is gone — no further uws callback will arrive to
                 // balance the IS_REQUEST_PENDING ref. `on_request_complete()`
                 // can set REQUEST_HAS_COMPLETED while `body_read_state` is
-                // still `.pending` (e.g. the request body's last chunk was
-                // buffered during pause before `res.end()` — the
-                // `Expect: 100-continue` path), in which case
+                // still `.pending` (a custom `ondata` reader keeps the body
+                // pending across `res.end()`, see `write_or_end`), in which case
                 // `mark_request_as_done()` never ran there and both that ref
                 // and the server's pending-request counter are stranded. The
                 // synchronous `set_closed()` from `JSNodeHTTPServerSocket::
@@ -1268,6 +1277,7 @@ impl NodeHTTPResponse {
                 let event_loop = vm.event_loop_ref();
 
                 event_loop.run_callback(
+                    bun_event_loop::ContextId::NONE,
                     on_aborted,
                     global_this,
                     js_this,
@@ -1670,6 +1680,7 @@ impl NodeHTTPResponse {
                 let bytes = self.get_bytes(global_this, chunk);
 
                 event_loop.run_callback(
+                    bun_event_loop::ContextId::NONE,
                     callback,
                     global_this,
                     JSValue::UNDEFINED,
@@ -1798,6 +1809,7 @@ impl NodeHTTPResponse {
         js::on_writable_set_cached(this_value, global_this, JSValue::ZERO);
 
         vm.event_loop_ref().run_callback(
+            bun_event_loop::ContextId::NONE,
             on_writable,
             global_this,
             JSValue::UNDEFINED,
@@ -1980,20 +1992,17 @@ impl NodeHTTPResponse {
         if let Some(content_length) = strict_content_length {
             let bytes_written = self.bytes_written.get() + bytes.len();
 
-            if IS_END {
-                if bytes_written as u64 != content_length {
-                    return err_throw(
-                        global_object,
-                        ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH,
-                        "Content-Length mismatch",
-                    );
-                }
-            } else if bytes_written as u64 > content_length {
-                return err_throw(
+            let mismatch = if IS_END {
+                bytes_written as u64 != content_length
+            } else {
+                bytes_written as u64 > content_length
+            };
+            if mismatch {
+                return Err(err_throw_content_length_mismatch(
                     global_object,
-                    ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH,
-                    "Content-Length mismatch",
-                );
+                    bytes_written,
+                    content_length,
+                ));
             }
             self.bytes_written.set(bytes_written);
         } else {
@@ -2269,6 +2278,11 @@ impl NodeHTTPResponse {
                 self.body_read_ref
                     .with_mut(|r| r.unref(bun_vm_mut(global_object)));
             }
+            // The reader is letting go of the body (_dump / _destroy, or it has
+            // already drained what was buffered), so nothing will drain a tail
+            // that `mark_request_as_done` left in place for it.
+            self.buffered_request_body_data_during_pause
+                .with_mut(|b| b.clear_and_free());
             return;
         }
 

@@ -918,7 +918,7 @@ use core::ffi::{c_char, c_void};
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports from lower-tier crates (PORTING.md crate map).
 // ──────────────────────────────────────────────────────────────────────────
-pub use bun_core::{Fd, FdKind, FdNative, FdOptional, FileKind, Mode, Stdio, kind_from_mode};
+pub use bun_core::{Fd, FdKind, FdNative, FileKind, Mode, Stdio, kind_from_mode};
 
 /// Anything that can hand out an [`Fd`] without giving up ownership: a raw
 /// `Fd`, or a reference to an owning [`File`] / [`Dir`]. Mirrors
@@ -1528,15 +1528,6 @@ impl Tag {
         ];
         NAMES.get(self.0 as usize).copied().unwrap_or("unknown")
     }
-
-    /// Tags strictly above `WriteFile`
-    /// belong to the Windows-only block. Bounded by `SetEndOfFile` so the
-    /// later-added POSIX tags (`dup2`/`fchdir`/`fchownat`/`ioctl`) parked
-    /// above that range don't read as Windows.
-    #[inline]
-    pub const fn is_windows(self) -> bool {
-        self.0 > Self::WriteFile.0 && self.0 <= Self::SetEndOfFile.0
-    }
 }
 impl From<Tag> for &'static str {
     #[inline]
@@ -1897,8 +1888,10 @@ mod posix_impl {
         // Linux/FreeBSD, `openat$NOCANCEL(AT_FDCWD, ..)` on Darwin.
         openat(Fd::cwd(), path, flags, mode)
     }
+    /// Always `O_CLOEXEC`. A child gets a descriptor only through the spawn path.
     pub fn openat(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
         let dir = dir.as_fd();
+        let flags = flags | O::CLOEXEC;
         // macOS: `openat$NOCANCEL`, retried on EINTR.
         #[cfg(target_os = "macos")]
         {
@@ -1929,6 +1922,7 @@ mod posix_impl {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn openat2_beneath(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
         let dir = dir.as_fd();
+        let flags = flags | O::CLOEXEC;
         super::linux_syscall::openat2_beneath(dir, path, flags, mode)
             .map_err(|e| Error::from_code_int(e, Tag::open).with_path(path.as_bytes()))
     }
@@ -1941,6 +1935,7 @@ mod posix_impl {
         static UNAVAILABLE: AtomicBool = AtomicBool::new(false);
 
         let dir = dir.as_fd();
+        let flags = flags | O::CLOEXEC;
         if !UNAVAILABLE.load(Ordering::Relaxed) {
             match super::linux_syscall::openat2_in_root(dir, path, flags, mode) {
                 Ok(fd) => return Ok(fd),
@@ -2614,6 +2609,28 @@ mod posix_impl {
     pub fn dup_at_least(fd: Fd, min: i32) -> Maybe<Fd> {
         fcntl(fd, libc::F_DUPFD_CLOEXEC, min as isize).map(|rc| Fd::from_native(rc as i32))
     }
+    /// A descriptor created while fd 0, 1 or 2 is closed gets that number, where [`FdExt::close`] skips it and a spawned child inherits it as stdio. Returns its duplicate at 3 or higher (same `FD_CLOEXEC` state) with `fd` closed, or `fd` itself when it is above stdio already or no higher number is free.
+    pub(crate) fn move_above_stdio(fd: Fd) -> Fd {
+        if fd.stdio_tag().is_none() {
+            return fd;
+        }
+        let moved = fcntl(fd, libc::F_GETFD, 0).and_then(|flags| {
+            let dup = if flags & libc::FD_CLOEXEC as isize != 0 {
+                libc::F_DUPFD_CLOEXEC
+            } else {
+                libc::F_DUPFD
+            };
+            fcntl(fd, dup, 3)
+        });
+        match moved {
+            Ok(rc) => {
+                let _ = fd.close_allowing_standard_io(None);
+                Fd::from_native(rc as i32)
+            }
+            // At the descriptor limit the creator still succeeds, as it did before the move existed.
+            Err(_) => fd,
+        }
+    }
     pub fn fchmod(fd: Fd, mode: Mode) -> Maybe<()> {
         check!(
             safe_libc::fchmod(fd.native(), mode as libc::mode_t),
@@ -2880,11 +2897,7 @@ mod posix_impl {
     }
     /// Never errors; any non-zero rc → `Ok(false)`.
     pub fn faccessat(dir: impl AsFd, sub: &ZStr) -> Maybe<bool> {
-        let dir = dir.as_fd();
-        // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
-        // valid NUL-terminated C string.
-        let rc = unsafe { libc::faccessat(dir.native(), sub.as_ptr(), libc::F_OK, 0) };
-        Ok(rc == 0)
+        Ok(exists_at(dir, sub))
     }
     pub fn futimens(fd: Fd, atime: TimeLike, mtime: TimeLike) -> Maybe<()> {
         let ts = [atime.to_timespec(), mtime.to_timespec()];
@@ -2932,9 +2945,16 @@ mod posix_impl {
     }
     pub fn exists_at(dir: impl AsFd, sub: &ZStr) -> bool {
         let dir = dir.as_fd();
-        // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
-        // valid NUL-terminated C string.
-        unsafe { libc::faccessat(dir.native(), sub.as_ptr(), libc::F_OK, 0) == 0 }
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            super::linux_syscall::faccessat(dir, sub, libc::F_OK).is_ok()
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        {
+            // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
+            // valid NUL-terminated C string.
+            unsafe { libc::faccessat(dir.native(), sub.as_ptr(), libc::F_OK, 0) == 0 }
+        }
     }
     /// Calls extern C `is_executable_file` (c-bindings.cpp:72-89) via FFI.
     pub fn is_executable_file_path(path: &ZStr) -> bool {
@@ -3203,7 +3223,7 @@ mod posix_impl {
                 }
             }
         }
-        Ok([Fd::from_native(fds[0]), Fd::from_native(fds[1])])
+        Ok([Fd::from_native(fds[0]), Fd::from_native(fds[1])].map(move_above_stdio))
     }
 
     /// `pidfd_open(2)` — Linux ≥ 5.3. Returns a pollable fd referring to `pid`.
@@ -3212,6 +3232,7 @@ mod posix_impl {
     pub fn pidfd_open(pid: libc::pid_t, flags: u32) -> Maybe<Fd> {
         super::linux_syscall::pidfd_open(pid, flags)
             .map_err(|e| Error::from_code_int(e, Tag::pidfd_open))
+            .map(move_above_stdio)
     }
 
     // ── macOS clonefile / copyfile ──
@@ -3457,7 +3478,7 @@ mod posix_impl {
                 }
                 return Err(Error::from_code_int(e, Tag::memfd_create));
             }
-            return Ok(Fd::from_native(rc));
+            return Ok(move_above_stdio(Fd::from_native(rc)));
         }
     }
 
@@ -4814,20 +4835,28 @@ pub use bun_core::Timespec;
 /// `bun_sys::time::timestamp()` resolve without an extra dep.
 pub use bun_core::time;
 
-/// `bun.sys.selfProcessMemoryUsage()` — returns the resident set size of the
-/// current process in bytes, or `None` on failure. Thin wrapper around the
-/// C++ `getRSS` shim (lives in `src/jsc/bindings/memory.cpp`).
+unsafe extern "C" {
+    // safe: the out-param is a valid `&mut usize`; C++ only writes it and returns a status code.
+    safe fn getRSS(rss: &mut usize) -> ::core::ffi::c_int;
+    safe fn getPeakRSS(peak: &mut usize) -> ::core::ffi::c_int;
+}
+
+/// What `process.memoryUsage().rss` reports, in bytes (C++ `getRSS` in `BunProcess.cpp`), or `None` on failure.
 pub fn self_process_memory_usage() -> Option<usize> {
-    unsafe extern "C" {
-        // safe: out-param is `&mut usize` (non-null, valid for write); C++ side
-        // only writes the slot and returns a status code — no other preconditions.
-        safe fn getRSS(rss: &mut usize) -> ::core::ffi::c_int;
-    }
     let mut rss: usize = 0;
     if getRSS(&mut rss) != 0 {
         return None;
     }
     Some(rss)
+}
+
+/// High-water mark of [`self_process_memory_usage`], in bytes.
+pub fn self_process_peak_memory_usage() -> Option<usize> {
+    let mut peak: usize = 0;
+    if getPeakRSS(&mut peak) != 0 {
+        return None;
+    }
+    Some(peak)
 }
 
 /// `bun.sys.PosixStat` — uv-shaped stat struct.
@@ -5211,8 +5240,8 @@ pub mod linux {
     type time_t = libc::time_t;
 
     /// kernel-shaped timespec (`sec`/`nsec`, no `tv_` prefix).
-    /// Layout-identical to `libc::timespec` so a `*const timespec` can be
-    /// passed straight to `syscall(SYS_futex, ..)`.
+    /// Layout-identical to `libc::timespec`; cast the pointer to that type where
+    /// it is passed to a variadic `syscall(SYS_futex, ..)`.
     #[repr(C)]
     #[derive(Clone, Copy)]
     pub struct timespec {
@@ -5335,6 +5364,9 @@ pub mod linux {
         val: u32,
         timeout: *const timespec,
     ) -> isize {
+        // `syscall` is variadic, and Miri checks the pointee type of each argument
+        // against the one the kernel interface declares: `libc::timespec` here.
+        let timeout = timeout.cast::<libc::timespec>();
         // SAFETY: caller contract — `uaddr` points to a live `u32`; `timeout`
         // is null or points to a valid `timespec` for the syscall's duration.
         let rc = unsafe { libc::syscall(libc::SYS_futex, uaddr, op.raw(), val, timeout) };
@@ -9089,7 +9121,7 @@ pub fn eventfd(initval: u32, flags: i32) -> Maybe<Fd> {
     if rc < 0 {
         return Err(err_with(Tag::open));
     }
-    Ok(Fd::from_native(rc))
+    Ok(move_above_stdio(Fd::from_native(rc)))
 }
 
 // ──────────────────────────────────────────────────────────────────────────

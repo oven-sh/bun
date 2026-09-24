@@ -39,6 +39,9 @@ pub struct OutputFile {
     /// The chunk is in the entry point's static import closure, i.e. it loads
     /// before the first `import()`.
     pub loads_at_startup: bool,
+    /// This chunk's module index in the `OutputKind::PrelinkedModuleGraph` blob (see
+    /// `prelinked_module_graph::build`); `u32::MAX` when it is not an ES module of that graph.
+    pub prelinked_module_index: u32,
 }
 
 impl OutputFile {
@@ -66,6 +69,7 @@ impl OutputFile {
             bake_extra: BakeExtra::default(),
             load_order: u32::MAX,
             loads_at_startup: false,
+            prelinked_module_index: u32::MAX,
         }
     }
 }
@@ -215,6 +219,7 @@ impl OutputFile {
             bake_extra: options.bake_extra,
             load_order: u32::MAX,
             loads_at_startup: false,
+            prelinked_module_index: u32::MAX,
         }
     }
 

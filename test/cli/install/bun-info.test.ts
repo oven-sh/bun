@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir, tempDirWithFiles } from "harness";
 import { join } from "node:path";
 
 describe.concurrent("bun info", () => {
@@ -431,3 +431,86 @@ test.skipIf(!isASAN)(
   },
   30_000,
 );
+
+test("a proxy that refuses CONNECT fails the command with ProxyConnectFailed", async () => {
+  using proxy = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      data(socket) {
+        socket.end("HTTP/1.1 407 Proxy Authentication Required\r\nContent-Length: 0\r\n\r\n");
+      },
+    },
+  });
+  const dir = tempDirWithFiles("bun-info-proxy-refused", {
+    "package.json": JSON.stringify({ name: "test", version: "1.0.0" }),
+    "bunfig.toml": Bun.TOML.stringify({ install: { registry: "https://registry.invalid/" } }),
+  });
+  await using proc = spawn({
+    cmd: [bunExe(), "info", "anything"],
+    cwd: dir,
+    env: {
+      ...bunEnv,
+      HTTPS_PROXY: `http://127.0.0.1:${proxy.port}`,
+      https_proxy: undefined,
+      NO_PROXY: undefined,
+      no_proxy: undefined,
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("ProxyConnectFailed");
+  expect(exitCode).toBe(1);
+});
+
+describe.concurrent("a registry response whose matched `versions` entry is not an object", () => {
+  const entries = { number: 5, string: "x", null: null, array: [] };
+
+  async function run(entry: keyof typeof entries, args: string[]) {
+    const manifest = JSON.stringify({
+      name: "pkg",
+      "dist-tags": { latest: "1.0.0" },
+      versions: { "1.0.0": entries[entry] },
+    });
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(manifest, { headers: { "content-type": "application/json" } }),
+    });
+    using dir = tempDir("bun-info-version-entry", {
+      "package.json": JSON.stringify({ name: "test", version: "1.0.0" }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: server.url.href } }),
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const rejected = {
+    stdout: "",
+    stderr: 'error: failed to parse package manifest: version "1.0.0" is not an object\n',
+    exitCode: 1,
+  };
+
+  for (const entry of Object.keys(entries) as (keyof typeof entries)[]) {
+    test(`bun info: ${entry}`, async () => {
+      expect(await run(entry, ["info", "pkg"])).toEqual(rejected);
+    });
+  }
+
+  test("bun pm view --json", async () => {
+    expect(await run("number", ["pm", "view", "pkg", "--json"])).toEqual(rejected);
+  });
+
+  test("bun pm view <property>", async () => {
+    expect(await run("number", ["pm", "view", "pkg@1.0.0", "name"])).toEqual(rejected);
+  });
+});

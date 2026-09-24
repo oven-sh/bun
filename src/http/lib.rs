@@ -1538,7 +1538,10 @@ pub(crate) fn get_cert_error_from_no(error_no: i32) -> crate::Error {
         59 => CertError::SUITE_B_INVALID_SIGNATURE_ALGORITHM,
         60 => CertError::SUITE_B_LOS_NOT_ALLOWED,
         61 => CertError::SUITE_B_CANNOT_SIGN_P_384_WITH_P_256,
-        62 => CertError::HOSTNAME_MISMATCH,
+        // The verdict of the in-handshake server identity check.
+        uws::us_bun_verify_error_t::HOSTNAME_MISMATCH => {
+            return crate::Error::ERR_TLS_CERT_ALTNAME_INVALID;
+        }
         63 => CertError::EMAIL_MISMATCH,
         64 => CertError::IP_ADDRESS_MISMATCH,
         65 => CertError::INVALID_CALL,
@@ -1671,6 +1674,15 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
+    /// Whether the outer socket's peer carries the name `check_server_identity` matches after the handshake.
+    pub(crate) fn server_identity(&self, ssl: &mut boringssl::c::SSL) -> boringssl::ServerIdentity {
+        let native = self.socket_verification() == PeerVerification::Native;
+        boringssl::server_identity(
+            ssl,
+            native.then(|| get_tls_hostname(self, self.http_proxy.is_some())),
+        )
+    }
+
     /// `PooledSocket::verification` to record when releasing the outer socket.
     fn pooled_socket_verification(&self) -> PeerVerification {
         self.flags
@@ -1759,8 +1771,7 @@ impl<'a> HTTPClient<'a> {
                     } else {
                         // we check with native code if the cert is valid
                         // fast path
-                        // SAFETY: x509 is a live *mut X509 borrowed from cert_chain
-                        if boringssl::check_x509_server_identity(unsafe { &mut *x509 }, hostname) {
+                        if uws::check_server_identity(ssl, hostname) {
                             return true;
                         }
                     }
@@ -1878,7 +1889,11 @@ impl<'a> HTTPClient<'a> {
                     socket.set_inline_reject();
                 }
 
-                if crate::session_cache::eligible(self) {
+                if let Some(raw_socket) = socket
+                    .socket
+                    .get()
+                    .filter(|_| crate::session_cache::eligible(self))
+                {
                     let want_tunnel = self.http_proxy.is_some() && self.url.is_https();
                     // SAFETY: `ssl_ptr` is live and pre-handshake (guarded by
                     // `SSL_is_init_finished == 0` above); `get_ssl_ctx` returns
@@ -1887,6 +1902,7 @@ impl<'a> HTTPClient<'a> {
                     // every SSL attached to their socket group.
                     unsafe {
                         crate::session_cache::install(
+                            raw_socket,
                             ssl_ptr,
                             self.get_ssl_ctx::<true>(),
                             self.connected_url.hostname,

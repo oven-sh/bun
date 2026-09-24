@@ -623,33 +623,15 @@ where
             };
             // `tls.checkServerIdentity` may close the WebSocket, which frees `this`.
             let _guard = RefPtr::from_this(this);
-            // Through a proxy this socket's peer is the proxy. The tunnel handshakes with the target.
-            let peer = if this.proxy.get().is_some() {
-                TlsPeer::Proxy
-            } else {
-                TlsPeer::Target
-            };
             // That close clears `hostname`, so the name is moved out while the verdict borrows it.
             let hostname = this.hostname.take();
             let ssl = socket.ssl_mut();
-            let sni: Vec<u8>;
-            let name: &[u8] = if !hostname.is_empty() {
-                hostname.as_bytes()
-            } else {
-                sni = ssl
-                    .as_deref()
-                    .and_then(|ssl| ssl.servername())
-                    .map(<[u8]>::to_vec)
-                    .unwrap_or_default();
-                &sni
+            let name = identity_name(hostname.as_bytes(), ssl.as_deref());
+            let handshake = TlsHandshake::First {
+                context: this.context,
+                peer: this.tls_peer(),
             };
-            let context = this.context;
-            let accepted = ws.accepts_tls_peer(
-                TlsHandshake::First { context, peer },
-                ssl,
-                ssl_error.error_no == 0,
-                name,
-            );
+            let accepted = ws.accepts_tls_peer(handshake, ssl, ssl_error.error_no == 0, &name);
             if this.cpp_websocket().is_none() {
                 // `tls.checkServerIdentity` closed the WebSocket.
                 return;
@@ -670,7 +652,37 @@ where
         }
     }
 
-    /// The tunnel's handshake is with the target. See `CppWebSocket::accepts_tls_peer`.
+    /// The name check inside the handshake. See `CppWebSocket::server_identity`.
+    pub fn server_identity(&self, ssl: &mut boringssl::c::SSL) -> boringssl::ServerIdentity {
+        let Some(ws) = self.cpp_websocket() else {
+            return boringssl::ServerIdentity::Unchecked;
+        };
+        let hostname = identity_name(self.hostname.get().as_bytes(), Some(ssl));
+        ws.server_identity(self.tls_peer(), ssl, &hostname)
+    }
+
+    /// Through a proxy this socket's peer is the proxy. The tunnel handshakes with the target.
+    fn tls_peer(&self) -> TlsPeer {
+        if self.proxy.get().is_some() {
+            TlsPeer::Proxy
+        } else {
+            TlsPeer::Target
+        }
+    }
+
+    /// `server_identity` for the tunnel, whose peer is the target.
+    pub(crate) fn tunnel_server_identity(
+        this: ThisPtr<Self>,
+        ssl: &mut boringssl::c::SSL,
+        hostname: &[u8],
+    ) -> boringssl::ServerIdentity {
+        this.cpp_websocket()
+            .map_or(boringssl::ServerIdentity::Unchecked, |ws| {
+                ws.server_identity(TlsPeer::Target, ssl, hostname)
+            })
+    }
+
+    /// `accepts_tls_peer` for the tunnel, whose peer is the target.
     pub(crate) fn accepts_tunnel_peer(
         this: ThisPtr<Self>,
         ssl: Option<&mut boringssl::c::SSL>,
@@ -1854,6 +1866,21 @@ fn compute_accept_value(key: &[u8]) -> [u8; 28] {
     let mut result = [0u8; 28];
     let _ = bun_base64::encode(&mut result, &hash);
     result
+}
+
+/// The name to match: `hostname` (`tls.serverName`, else the dialed host), else the SNI.
+fn identity_name<'a>(
+    hostname: &'a [u8],
+    ssl: Option<&boringssl::c::SSL>,
+) -> std::borrow::Cow<'a, [u8]> {
+    if !hostname.is_empty() {
+        hostname.into()
+    } else {
+        ssl.and_then(|ssl| ssl.servername())
+            .map(<[u8]>::to_vec)
+            .unwrap_or_default()
+            .into()
+    }
 }
 
 // LAYERING: `Bun__WebSocket__parseSSLConfig` / `Bun__WebSocket__freeSSLConfig`

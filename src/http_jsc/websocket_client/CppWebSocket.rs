@@ -34,6 +34,18 @@ pub(crate) enum TlsPeer {
     Proxy,
 }
 
+/// Who decides whether a certificate whose chain verified names the server.
+enum NameCheck {
+    /// `rejectUnauthorized: false` and no callback.
+    Nobody,
+    BuiltIn,
+    /// `tls.checkServerIdentity`. Without `enforce` it still runs, as in Node, and its verdict is dropped.
+    Callback {
+        callback: JSValue,
+        enforce: bool,
+    },
+}
+
 #[derive(Clone, Copy)]
 pub(crate) enum TlsHandshake {
     /// `tls.checkServerIdentity` runs in the context of the script that made the WebSocket.
@@ -177,6 +189,32 @@ impl CppWebSocket {
         (!callback.is_empty_or_undefined_or_null() && callback.is_callable()).then_some(callback)
     }
 
+    fn name_check(&self, peer: TlsPeer) -> NameCheck {
+        let enforce = self.reject_unauthorized();
+        let callback = match peer {
+            TlsPeer::Target => self.check_server_identity(),
+            TlsPeer::Proxy => None,
+        };
+        match callback {
+            Some(callback) => NameCheck::Callback { callback, enforce },
+            None if enforce => NameCheck::BuiltIn,
+            None => NameCheck::Nobody,
+        }
+    }
+
+    /// The name check inside the handshake. `Unchecked` leaves the name to `accepts_tls_peer`.
+    pub(crate) fn server_identity(
+        &self,
+        peer: TlsPeer,
+        ssl: &mut boringssl::c::SSL,
+        hostname: &[u8],
+    ) -> boringssl::ServerIdentity {
+        match self.name_check(peer) {
+            NameCheck::BuiltIn => boringssl::server_identity(ssl, Some(hostname)),
+            NameCheck::Nobody | NameCheck::Callback { .. } => boringssl::ServerIdentity::Unchecked,
+        }
+    }
+
     /// The one verdict on a completed TLS handshake. May run JS that closes the WebSocket.
     pub(crate) fn accepts_tls_peer(
         &self,
@@ -186,10 +224,9 @@ impl CppWebSocket {
         // The name the certificate must carry. That JS must not be able to free it.
         hostname: &[u8],
     ) -> bool {
-        let enforce = self.reject_unauthorized();
         if !chain_verified {
             // As in Node, the callback never sees a chain that did not verify.
-            return !enforce;
+            return !self.reject_unauthorized();
         }
         let peer = match handshake {
             TlsHandshake::First { peer, .. } => peer,
@@ -197,22 +234,16 @@ impl CppWebSocket {
             TlsHandshake::Renegotiation if WebSocket__isProxyTLS(self) => TlsPeer::Proxy,
             TlsHandshake::Renegotiation => TlsPeer::Target,
         };
-        let callback = match peer {
-            TlsPeer::Target => self.check_server_identity(),
-            TlsPeer::Proxy => None,
-        };
-        match (callback, handshake) {
-            (Some(_), TlsHandshake::Renegotiation) => true,
-            // As in Node and fetch, it replaces the built-in name check, and runs even when not enforced.
-            (Some(callback), TlsHandshake::First { context, .. }) => {
+        match (self.name_check(peer), handshake) {
+            (NameCheck::Nobody, _) | (NameCheck::Callback { .. }, TlsHandshake::Renegotiation) => {
+                true
+            }
+            (NameCheck::BuiltIn, _) => ssl.is_some_and(|ssl| {
+                !hostname.is_empty() && bun_uws::check_server_identity(ssl, hostname)
+            }),
+            (NameCheck::Callback { callback, enforce }, TlsHandshake::First { context, .. }) => {
                 ssl.is_some_and(|ssl| run_check_server_identity(context, callback, ssl, hostname))
                     || !enforce
-            }
-            (None, _) => {
-                !enforce
-                    || ssl.is_some_and(|ssl| {
-                        !hostname.is_empty() && boringssl::check_server_identity(ssl, hostname)
-                    })
             }
         }
     }

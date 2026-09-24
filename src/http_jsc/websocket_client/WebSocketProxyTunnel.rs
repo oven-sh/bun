@@ -25,7 +25,6 @@
 
 use core::cell::{Cell, OnceCell};
 
-use bun_boringssl as boringssl;
 use bun_io::StreamBuffer;
 use bun_ptr::{BackRef, JsCell, RefPtr, Root, ThisPtr};
 use bun_uws::ssl_wrapper::{Handlers as SslHandlers, SslWrapper};
@@ -98,9 +97,24 @@ impl UpgradeClientRef {
         );
     }
 
+    fn tunnel_server_identity(
+        self,
+        ssl: &mut bun_boringssl::c::SSL,
+        hostname: &[u8],
+    ) -> bun_boringssl::ServerIdentity {
+        match self {
+            UpgradeClientRef::Http(client) => {
+                HttpUpgradeClient::tunnel_server_identity(client.this_ptr(), ssl, hostname)
+            }
+            UpgradeClientRef::Https(client) => {
+                HttpsUpgradeClient::tunnel_server_identity(client.this_ptr(), ssl, hostname)
+            }
+        }
+    }
+
     fn accepts_tunnel_peer(
         self,
-        ssl: Option<&mut boringssl::c::SSL>,
+        ssl: Option<&mut bun_boringssl::c::SSL>,
         chain_verified: bool,
         hostname: &[u8],
     ) -> bool {
@@ -211,6 +225,7 @@ impl WebSocketProxyTunnel {
                 // SSL off the parked session/keylog queues entirely.
                 on_session: None,
                 on_keylog: None,
+                server_identity: Some(Self::server_identity),
             },
         )
         .map_err(|_| crate::Error::InvalidOptions)?;
@@ -260,6 +275,19 @@ impl WebSocketProxyTunnel {
             wrapper.start();
         }
         Ok(())
+    }
+
+    /// SSLWrapper callback: the name check inside the handshake. The WebSocket decides.
+    fn server_identity(
+        this: ThisPtr<Self>,
+        ssl: &mut bun_boringssl::c::SSL,
+    ) -> bun_boringssl::ServerIdentity {
+        match (this.upgrade_client.get(), this.sni_hostname.as_deref()) {
+            (Some(upgrade_client), Some(hostname)) => {
+                upgrade_client.tunnel_server_identity(ssl, hostname)
+            }
+            _ => bun_boringssl::ServerIdentity::Unchecked,
+        }
     }
 
     /// SSLWrapper callback: Called before TLS handshake starts

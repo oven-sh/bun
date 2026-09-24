@@ -209,9 +209,8 @@ bitflags::bitflags! {
         const MEMFD                    = 1 << 7;
         const USE_PREAD                = 1 << 8;
         const IS_PAUSED                = 1 << 9;
-        /// A read failed with a non-retry errno, and nothing reads the fd again until `start()`.
-        /// Not part of `is_done()`: a parent that finds a done reader with no error stored reports a clean EOF.
-        const READ_FAILED              = 1 << 10; // next to IS_PAUSED: `begin_read` tests both with one immediate
+        /// A read failed with a non-retry errno. Nothing reads the fd again until `start()`.
+        const READ_FAILED              = 1 << 10;
         const KEEP_ALIVE               = 1 << 11; // default true
     }
 }
@@ -549,7 +548,6 @@ impl PosixBufferedReader {
     }
 
     pub fn start(&mut self, fd: Fd, is_pollable: bool) -> sys::Result<()> {
-        // The parent starts the reader again on purpose: the only way out of a failed read.
         self.flags.remove(PosixFlags::READ_FAILED);
         if !is_pollable {
             self.buffer().clear();
@@ -657,7 +655,7 @@ impl PosixBufferedReader {
         unsafe { Self::read_loop(this, file_type, fd, received_hup) };
     }
 
-    /// `None` while paused and after a failed read. The frame that saw the failure reports it once the bytes it holds are delivered, so a consumer that asks for more from inside that delivery reads nothing and waits.
+    /// `None` while paused and after a failed read. The frame that saw the failure reports it after the bytes it holds, so a consumer that asks for more in between reads nothing and waits.
     fn begin_read(&self) -> Option<(Fd, FileType, BufferedReaderVTable)> {
         if self
             .flags

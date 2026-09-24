@@ -357,6 +357,16 @@ impl Connection {
         View(self)
     }
 
+    /// What the peer may still send on `stream_id`. A stream that the embedder opened has no
+    /// entry before its first inbound frame: it has the INITIAL_WINDOW_SIZE that the peer ACKed.
+    /// https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L7694-L7712
+    pub(crate) fn stream_recv_credit(&self, stream_id: u32) -> i64 {
+        match self.streams.get(&stream_id) {
+            Some(s) => s.recv_window.remaining(),
+            None => self.acked_local_initial_window as i64,
+        }
+    }
+
     // ---- Outbound -------------------------------------------------------
 
     fn write_frame(

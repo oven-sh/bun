@@ -13,6 +13,7 @@ import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
 import { Duplex, duplexPair, Writable } from "node:stream";
+import { inspect } from "node:util";
 
 const PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "latin1");
 
@@ -1278,6 +1279,469 @@ describe("inbound flow control after setLocalWindowSize() (RFC 9113 §6.9.1)", (
     } finally {
       c.destroy();
       session?.destroy();
+    }
+  });
+});
+
+// node reports nghttp2_session_get_stream_local_window_size(): the stream window, minus the DATA
+// (padding included) that arrived since the last WINDOW_UPDATE of the stream. Every expected
+// number below is what node v26.3.0 reports for the same frames. Each frame is its own write, so
+// it is its own read on the other side of the duplexPair().
+describe("Http2Stream#state.localWindowSize", () => {
+  /** Collects values, and lets a test wait for the next one. */
+  function recorder<T>() {
+    const values: T[] = [];
+    let wake: (() => void) | undefined;
+    return {
+      values,
+      push(value: T) {
+        values.push(value);
+        wake?.();
+      },
+      next() {
+        return new Promise<void>(resolve => (wake = resolve));
+      },
+    };
+  }
+
+  /** A server on one side of a duplexPair(), a raw client on the other. Stream 1 is open. */
+  async function serverWithRawClient(options: http2.ServerOptions = {}) {
+    const [clientSide, serverSide] = duplexPair();
+    const server = http2.createServer(options);
+    let session!: http2.ServerHttp2Session;
+    server.on("session", s => (session = s).on("error", () => {}));
+    const opened = Promise.withResolvers<http2.ServerHttp2Stream>();
+    let onStream = -1;
+    server.once("stream", stream => {
+      stream.on("error", () => {});
+      onStream = stream.state.localWindowSize!;
+      opened.resolve(stream);
+    });
+    const c = new RawH2(clientSide);
+    server.emit("connection", serverSide);
+    await openPostStream(c);
+    const stream = await opened.promise;
+    return {
+      c,
+      session,
+      stream,
+      onStream,
+      [Symbol.dispose]() {
+        c.destroy();
+        session.destroy();
+      },
+    };
+  }
+
+  /** Submit SETTINGS, let the raw peer ACK them, and read the stream inside 'localSettings'. */
+  async function changeInitialWindow(
+    peer: Pick<RawH2, "frames" | "waitFor" | "sendFrame">,
+    session: http2.Http2Session,
+    value: number,
+    read: () => number,
+  ) {
+    const { promise, resolve } = Promise.withResolvers<number>();
+    const onSettings = (settings: http2.Settings) => {
+      if (settings.initialWindowSize !== value) return;
+      session.off("localSettings", onSettings);
+      resolve(read());
+    };
+    session.on("localSettings", onSettings);
+    const from = peer.frames.length;
+    session.settings({ initialWindowSize: value });
+    await peer.waitFor(f => settingsWithInitialWindow(value)(f) && peer.frames.indexOf(f) >= from);
+    peer.sendFrame(FrameType.SETTINGS, 0x1 /* ACK */, 0);
+    return await promise;
+  }
+
+  const streamUpdates = (c: RawH2, streamId = 1) =>
+    c.frames
+      .filter(f => f.type === FrameType.WINDOW_UPDATE && f.streamId === streamId)
+      .map(f => f.payload.readUInt32BE(0));
+
+  test("counts the DATA that arrived since the last WINDOW_UPDATE of the stream", async () => {
+    using peer = await serverWithRawClient();
+    const { c, stream } = peer;
+    const inData = recorder<number>();
+    stream.on("data", () => inData.push(stream.state.localWindowSize!));
+    // The second frame takes the stream past half of its window, so the server opens it again.
+    for (const size of [16384, 16384, 7232]) {
+      const seen = inData.next();
+      c.sendFrame(FrameType.DATA, 0, 1, Buffer.alloc(size, 0x61));
+      await seen;
+    }
+    await pingRoundTrip(c);
+    expect({
+      onStream: peer.onStream,
+      inData: inData.values,
+      afterwards: stream.state.localWindowSize,
+      updates: streamUpdates(c),
+    }).toEqual({
+      onStream: 65535,
+      inData: [65535 - 16384, 65535 - 32768, 65535 - 7232],
+      afterwards: 65535 - 7232,
+      updates: [32768],
+    });
+  });
+
+  test("counts the padding of a DATA frame", async () => {
+    using peer = await serverWithRawClient();
+    const { c, stream } = peer;
+    const inData = recorder<number>();
+    stream.on("data", (d: Buffer) => {
+      inData.values.push(d.length);
+      inData.push(stream.state.localWindowSize!);
+    });
+    const seen = inData.next();
+    // 1000 bytes of data and 10 bytes of padding, after the Pad Length octet.
+    const padded = Buffer.concat([Buffer.from([10]), Buffer.alloc(1000, 0x61), Buffer.alloc(10)]);
+    c.sendFrame(FrameType.DATA, 0x8 /* PADDED */, 1, padded);
+    await seen;
+    expect(inData.values).toEqual([1000, 65535 - 1011]);
+    // 100 bytes that are all padding: no 'data' event, and the window still moves.
+    c.sendFrame(FrameType.DATA, 0x8 /* PADDED */, 1, Buffer.concat([Buffer.from([99]), Buffer.alloc(99)]));
+    await pingRoundTrip(c);
+    expect(inData.values).toEqual([1000, 65535 - 1011]);
+    expect(stream.state.localWindowSize).toBe(65535 - 1011 - 100);
+  });
+
+  test("moves with the ACK of a new INITIAL_WINDOW_SIZE", async () => {
+    using peer = await serverWithRawClient();
+    const { c, session, stream } = peer;
+    const inData = recorder<number>();
+    stream.on("data", () => inData.push(stream.state.localWindowSize!));
+    const seen = inData.next();
+    c.sendFrame(FrameType.DATA, 0, 1, Buffer.alloc(1000, 0x61));
+    await seen;
+    const read = () => stream.state.localWindowSize!;
+    // 64535 + (1024 - 65535) leaves 24 bytes. The stream is past half of the 1024-byte window,
+    // so the WINDOW_UPDATE for the 1000 bytes goes out with the ACK, before 'localSettings'.
+    const inShrink = await changeInitialWindow(c, session, 1024, read);
+    const afterShrink = read();
+    const inGrow = await changeInitialWindow(c, session, 65535, read);
+    expect({ inData: inData.values, inShrink, afterShrink, inGrow, updates: streamUpdates(c) }).toEqual({
+      inData: [64535],
+      inShrink: 1024,
+      afterShrink: 1024,
+      inGrow: 65535,
+      updates: [1000],
+    });
+  });
+
+  test("keeps the used part of the window while nobody reads the stream, and does not go below 0", async () => {
+    using peer = await serverWithRawClient({ settings: { initialWindowSize: 200000 } });
+    const { c, session, stream } = peer;
+    stream.pause();
+    // 81920 buffered bytes are over the highWaterMark of the Readable, so the stream is not
+    // reading, and gets no WINDOW_UPDATE.
+    let connectionWindow = 65535;
+    let harvested = 0;
+    for (let i = 0; i < 5; i++) {
+      if (connectionWindow < 16384) {
+        const seen = harvested;
+        await c.waitFor(f => f.type === FrameType.WINDOW_UPDATE && f.streamId === 0 && c.frames.indexOf(f) >= seen);
+      }
+      for (; harvested < c.frames.length; harvested++) {
+        const f = c.frames[harvested];
+        if (f.type === FrameType.WINDOW_UPDATE && f.streamId === 0) connectionWindow += f.payload.readUInt32BE(0);
+      }
+      c.sendFrame(FrameType.DATA, 0, 1, Buffer.alloc(16384, 0x61));
+      connectionWindow -= 16384;
+    }
+    await pingRoundTrip(c);
+    const read = () => stream.state.localWindowSize!;
+    const afterData = read();
+    const inShrink = await changeInitialWindow(c, session, 1024, read);
+    const inGrow = await changeInitialWindow(c, session, 100000, read);
+    await pingRoundTrip(c);
+    const updatesWhilePaused = streamUpdates(c);
+    stream.resume();
+    await c.waitFor(f => f.type === FrameType.WINDOW_UPDATE && f.streamId === 1);
+    expect({
+      onStream: peer.onStream,
+      afterData,
+      inShrink,
+      inGrow,
+      updatesWhilePaused,
+      afterResume: read(),
+      updates: streamUpdates(c),
+    }).toEqual({
+      onStream: 200000,
+      afterData: 200000 - 81920,
+      inShrink: 0,
+      inGrow: 100000 - 81920,
+      updatesWhilePaused: [],
+      afterResume: 100000,
+      updates: [81920],
+    });
+  });
+
+  test("starts at the INITIAL_WINDOW_SIZE that the peer has ACKed", async () => {
+    const [clientSide, serverSide] = duplexPair();
+    const server = http2.createServer({ settings: { initialWindowSize: 1000 } });
+    let session!: http2.ServerHttp2Session;
+    server.on("session", s => (session = s).on("error", () => {}));
+    const onStream = recorder<[number, number]>();
+    const streams: http2.ServerHttp2Stream[] = [];
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      stream.resume();
+      streams.push(stream);
+      onStream.push([stream.id!, stream.state.localWindowSize!]);
+    });
+    const c = new RawH2(clientSide);
+    server.emit("connection", serverSide);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      await c.waitFor(settingsWithInitialWindow(1000));
+      // Stream 1 opens before the client ACKs the 1000, so it has the default window.
+      let opened = onStream.next();
+      c.sendFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 1, requestHeaderBlock("POST"));
+      await opened;
+      const inFirstAck = Promise.withResolvers<number>();
+      session.once("localSettings", () => inFirstAck.resolve(streams[0].state.localWindowSize!));
+      // A second SETTINGS frame is in flight when stream 3 opens. Stream 3 has the 1000 that
+      // the client ACKed, not the 3000 and not the default.
+      session.settings({ initialWindowSize: 3000 });
+      await c.waitFor(settingsWithInitialWindow(3000));
+      c.sendSettingsAck();
+      expect(await inFirstAck.promise).toBe(1000);
+      opened = onStream.next();
+      c.sendFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 3, requestHeaderBlock("POST"));
+      await opened;
+      c.sendFrame(FrameType.DATA, 0, 3, Buffer.alloc(400, 0x61));
+      await pingRoundTrip(c);
+      const after400 = streams[1].state.localWindowSize;
+      const inSecondAck = Promise.withResolvers<number[]>();
+      session.once("localSettings", () => inSecondAck.resolve(streams.map(s => s.state.localWindowSize!)));
+      c.sendSettingsAck();
+      expect({ onStream: onStream.values, after400, inSecondAck: await inSecondAck.promise }).toEqual({
+        onStream: [
+          [1, 65535],
+          [3, 1000],
+        ],
+        after400: 600,
+        inSecondAck: [3000, 2600],
+      });
+    } finally {
+      c.destroy();
+      session.destroy();
+    }
+  });
+
+  test("does not move with setLocalWindowSize()", async () => {
+    using peer = await serverWithRawClient();
+    const { c, session, stream } = peer;
+    const gotData = once(stream, "data");
+    c.sendFrame(FrameType.DATA, 0, 1, Buffer.alloc(1000, 0x61));
+    await gotData;
+    session.setLocalWindowSize(1 << 20);
+    expect({ stream: stream.state.localWindowSize, session: session.state.localWindowSize }).toEqual({
+      stream: 65535 - 1000,
+      session: (1 << 20) - 1000,
+    });
+  });
+
+  test("is the live value in util.inspect(), and in 'end' of a client stream", async () => {
+    using peer = await serverWithRawClient();
+    const { c, stream } = peer;
+    const gotData = once(stream, "data");
+    c.sendFrame(FrameType.DATA, 0, 1, Buffer.alloc(1000, 0x61));
+    await gotData;
+    expect(inspect(stream)).toContain("localWindowSize: 64535");
+
+    // The response ends the stream of the client. node v26.3.0 reports 65526 in 'end'.
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    client.on("error", () => {});
+    try {
+      const req = client.request({ ":path": "/" });
+      req.on("error", () => {});
+      req.resume();
+      const inEnd = Promise.withResolvers<number>();
+      req.on("end", () => inEnd.resolve(req.state.localWindowSize!));
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      raw.sendFrame(FrameType.SETTINGS, 0x1 /* ACK */, 0);
+      raw.sendFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 1, Buffer.from([0x88])); // :status 200
+      raw.sendFrame(FrameType.DATA, 0x1 /* END_STREAM */, 1, Buffer.alloc(9, 0x62));
+      expect(await inEnd.promise).toBe(65535 - 9);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  test("is the same value inside the callbacks of the session", async () => {
+    using peer = await serverWithRawClient();
+    const { c, session, stream } = peer;
+    const seen: Record<string, Set<number>> = {};
+    const read = (where: string) => (seen[where] ??= new Set()).add(stream.state.localWindowSize!);
+    stream.on("data", () => read("data"));
+    session.on("remoteSettings", () => read("remoteSettings"));
+    session.on("ping", () => read("ping"));
+    session.on("stream", other => {
+      other.on("error", () => {});
+      other.resume();
+      read("stream");
+      other.on("aborted", () => {
+        read("aborted");
+        seen["aborted, own window"] = new Set([other.state.localWindowSize!]);
+      });
+    });
+    session.on("goaway", () => read("goaway"));
+    c.sendFrame(FrameType.DATA, 0, 1, Buffer.alloc(1000, 0x61));
+    await pingRoundTrip(c);
+    const maxConcurrentStreams = Buffer.from([0x00, 0x03, 0x00, 0x00, 0x00, 0x64]);
+    c.sendFrame(FrameType.SETTINGS, 0, 0, maxConcurrentStreams);
+    const pinged = Promise.withResolvers<void>();
+    session.ping(() => (read("ping callback"), pinged.resolve()));
+    const ping = await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) === 0);
+    c.sendFrame(FrameType.PING, 0x1 /* ACK */, 0, ping.payload);
+    await pinged.promise;
+    // The response is larger than the window of the client, so the end of it waits for a
+    // WINDOW_UPDATE. The write callback runs when that frame arrives.
+    stream.respond({ ":status": 200 });
+    const written = Promise.withResolvers<void>();
+    stream.write(Buffer.alloc(70000, 0x62), () => (read("write callback"), written.resolve()));
+    const received = () => c.frames.reduce((n, f) => (f.type === FrameType.DATA ? n + f.length : n), 0);
+    await c.waitFor(() => received() >= 65535);
+    const increment = Buffer.alloc(4);
+    increment.writeUInt32BE(70000);
+    c.sendFrame(FrameType.WINDOW_UPDATE, 0, 0, increment);
+    c.sendFrame(FrameType.WINDOW_UPDATE, 0, 1, increment);
+    await written.promise;
+    c.sendFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 3, requestHeaderBlock("POST"));
+    const cancel = Buffer.alloc(4);
+    cancel.writeUInt32BE(ErrorCode.CANCEL);
+    c.sendFrame(FrameType.RST_STREAM, 0, 3, cancel);
+    await pingRoundTrip(c);
+    const gotGoaway = once(session, "goaway");
+    // Last-Stream-ID 0 (the server opened no stream) and NO_ERROR.
+    c.sendFrame(FrameType.GOAWAY, 0, 0, Buffer.alloc(8));
+    await gotGoaway;
+    expect(Object.fromEntries(Object.entries(seen).map(([where, values]) => [where, [...values]]))).toEqual({
+      data: [64535],
+      remoteSettings: [64535],
+      ping: [64535],
+      "ping callback": [64535],
+      "write callback": [64535],
+      stream: [64535],
+      aborted: [64535],
+      "aborted, own window": [65535],
+      goaway: [64535],
+    });
+  });
+
+  // Every session of a thread shares one cork. A frame that another session corked goes out
+  // inside the next write of this session, and a JS transport runs its _write at once. So user
+  // code can run inside a write that the session makes while it reads.
+  test("is the same value inside a transport write that the session flushes while it reads", async () => {
+    using peer = await serverWithRawClient();
+    const { c, session, stream } = peer;
+    const gotData = once(stream, "data");
+    c.sendFrame(FrameType.DATA, 0, 1, Buffer.alloc(1000, 0x61));
+    await gotData;
+    let inWrite: (() => void) | undefined;
+    const other = http2.connect("http://localhost", {
+      createConnection: () =>
+        new Duplex({
+          read() {},
+          write(chunk, encoding, callback) {
+            inWrite?.();
+            callback();
+          },
+        }),
+    });
+    other.on("error", () => {});
+    try {
+      await once(other, "connect");
+      const flushed = Promise.withResolvers<number>();
+      session.once("ping", () => {
+        // This runs in the read of the first PING. The ACK of the second PING is the next write
+        // of the session, and it flushes the PING of `other` first.
+        inWrite = () => flushed.resolve(stream.state.localWindowSize!);
+        other.ping(() => {});
+      });
+      c.send(
+        Buffer.concat([
+          encodeFrame(FrameType.PING, 0, 0, Buffer.alloc(8)),
+          encodeFrame(FrameType.PING, 0, 0, Buffer.alloc(8)),
+        ]),
+      );
+      expect(await flushed.promise).toBe(64535);
+    } finally {
+      other.destroy();
+    }
+  });
+
+  // The client reads from a TCP socket here, and the servers above read from a Duplex.
+  test("client streams: a request without a response yet, DATA, and a new INITIAL_WINDOW_SIZE", async () => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    client.on("error", () => {});
+    try {
+      const first = client.request({ ":path": "/first" }, { endStream: false });
+      first.on("error", () => {});
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      raw.sendFrame(FrameType.SETTINGS, 0x1 /* ACK */, 0);
+      const inFirst = recorder<[string, number]>();
+      first.on("response", () => inFirst.push(["response", first.state.localWindowSize!]));
+      first.on("data", () => inFirst.push(["data", first.state.localWindowSize!]));
+      let seen = inFirst.next();
+      raw.sendFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 1, Buffer.from([0x88])); // :status 200
+      await seen;
+      seen = inFirst.next();
+      raw.sendFrame(FrameType.DATA, 0, 1, Buffer.alloc(1000, 0x62));
+      await seen;
+      const inAltsvc = Promise.withResolvers<number>();
+      client.once("altsvc", () => inAltsvc.resolve(first.state.localWindowSize!));
+      // ALTSVC (type 0xa) on stream 0: Origin-Len, Origin, Alt-Svc-Field-Value.
+      const altsvc = Buffer.concat([Buffer.from([0, 11]), Buffer.from("https://a.b"), Buffer.from('h2=":443"')]);
+      raw.sendFrame(0xa, 0, 0, altsvc);
+      const firstInAltsvc = await inAltsvc.promise;
+
+      // The second request has no frame from the server yet when the client changes its window.
+      const second = client.request({ ":path": "/second" }, { endStream: false });
+      second.on("error", () => {});
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 3);
+      const beforeAck = second.state.localWindowSize;
+      const inAck = await changeInitialWindow(raw, client, 2048, () => second.state.localWindowSize!);
+      const firstAfterAck = first.state.localWindowSize;
+      const inSecond = recorder<number>();
+      second.on("data", () => inSecond.push(second.state.localWindowSize!));
+      seen = inSecond.next();
+      raw.sendFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 3, Buffer.from([0x88]));
+      raw.sendFrame(FrameType.DATA, 0, 3, Buffer.alloc(500, 0x62));
+      await seen;
+      const third = client.request({ ":path": "/third" }, { endStream: false });
+      third.on("error", () => {});
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 5);
+      expect({
+        first: inFirst.values,
+        firstInAltsvc,
+        beforeAck,
+        inAck,
+        firstAfterAck,
+        secondInData: inSecond.values,
+        third: third.state.localWindowSize,
+      }).toEqual({
+        first: [
+          ["response", 65535],
+          ["data", 64535],
+        ],
+        firstInAltsvc: 64535,
+        beforeAck: 65535,
+        inAck: 2048,
+        firstAfterAck: 64535 + (2048 - 65535),
+        secondInData: [2048 - 500],
+        third: 2048,
+      });
+    } finally {
+      client.destroy();
+      raw.close();
     }
   });
 });

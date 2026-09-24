@@ -6062,6 +6062,37 @@ describe("Http2Session.setLocalWindowSize()", () => {
   });
 });
 
+// node reads nghttp2_session_get_stream_local_window_size() on each access: the stream window,
+// minus the DATA that arrived since the last WINDOW_UPDATE of the stream. node v26.3.0 reports
+// 64535, then 1024. The raw-frame cases are in h2-conformance.test.ts.
+it("stream.state.localWindowSize follows the DATA received and an ACKed initialWindowSize", async () => {
+  const server = http2.createServer();
+  const { promise, resolve, reject } = Promise.withResolvers();
+  server.on("stream", stream => {
+    stream.on("error", reject);
+    stream.once("data", () => {
+      const afterData = stream.state.localWindowSize;
+      stream.session.on("localSettings", settings => {
+        if (settings.initialWindowSize !== 1024) return;
+        resolve({ afterData, afterAck: stream.state.localWindowSize });
+      });
+      stream.session.settings({ initialWindowSize: 1024 });
+    });
+  });
+  await new Promise(r => server.listen(0, "127.0.0.1", r));
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  try {
+    client.on("error", reject);
+    const req = client.request({ ":path": "/", ":method": "POST" });
+    req.on("error", reject);
+    req.write(Buffer.alloc(1000, "x"));
+    expect(await promise).toEqual({ afterData: 65535 - 1000, afterAck: 1024 });
+  } finally {
+    client.destroy();
+    server.close();
+  }
+});
+
 // The outbound cork buffer is thread-local across every Http2Session. Interleaving
 // respond()/write() across two sessions used to let the second session's corked
 // HEADERS be prepended to the first session's multi-frame DATA batch and sent to

@@ -130,6 +130,12 @@ impl RecvWindow {
     pub(crate) fn grow(&mut self, delta: i64) {
         self.size += delta;
     }
+
+    /// What the peer may still send. A smaller INITIAL_WINDOW_SIZE can put `size` under `consumed`.
+    #[inline]
+    pub(crate) fn remaining(&self) -> i64 {
+        (self.size - self.consumed).max(0)
+    }
 }
 
 #[cfg(test)]

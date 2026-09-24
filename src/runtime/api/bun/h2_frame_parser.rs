@@ -1323,8 +1323,6 @@ pub(crate) struct Stream {
     padding_strategy: PaddingStrategy,
     rst_code: u32,
     weight: u16,
-    // current window size for the stream
-    window_size: u64,
     // remote window size for the stream
     remote_window_size: u64,
     // remote used window size for the stream
@@ -1821,7 +1819,6 @@ impl Stream {
 
     pub(crate) fn init(
         stream_identifier: u32,
-        initial_window_size: u32,
         remote_window_size: u32,
         padding_strategy: PaddingStrategy,
     ) -> Stream {
@@ -1836,7 +1833,6 @@ impl Stream {
             // RFC 7540 §5.3.5 / nghttp2 NGHTTP2_DEFAULT_WEIGHT: streams default to weight 16,
             // which is what stream.state.weight reports when no priority was signaled.
             weight: 16,
-            window_size: initial_window_size as u64,
             remote_window_size: remote_window_size as u64,
             remote_used_window_size: 0,
             signal: None,
@@ -3382,14 +3378,8 @@ impl H2FrameParser {
         }
 
         // new stream open
-        let local_window_size = if self.outstanding_settings.get() > 0 {
-            DEFAULT_WINDOW_SIZE as u32
-        } else {
-            self.local_settings.get().initial_window_size
-        };
         let stream = bun_core::heap::into_raw(Box::new(Stream::init(
             stream_identifier,
-            local_window_size,
             self.remote_settings
                 .get()
                 .map(|s| s.initial_window_size)
@@ -5018,10 +5008,14 @@ impl H2FrameParser {
         let stream = unsafe { &mut *stream };
         let state = JSValue::create_empty_object(global_object, 6);
 
+        // No engine before the first read: the peer has ACKed no SETTINGS of ours.
+        let local_window_size = this
+            .with_engine(|engine| engine.stream_recv_credit(stream_id))
+            .unwrap_or(DEFAULT_WINDOW_SIZE as i64);
         state.put(
             global_object,
             b"localWindowSize",
-            JSValue::js_number(stream.window_size as f64),
+            JSValue::js_number(local_window_size as f64),
         );
         state.put(
             global_object,

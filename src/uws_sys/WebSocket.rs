@@ -3,6 +3,7 @@ use core::marker::PhantomData;
 
 use crate as uws;
 use crate::app::uws_app_t;
+use crate::stream_websocket::WebSocket as StreamWebSocket;
 use crate::thunk;
 use crate::{Opcode, Request, SendStatus, WebSocketUpgradeContext, uws_res};
 
@@ -26,6 +27,19 @@ impl RawWebSocket {
 // AnyWebSocket
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Runs `$body` with `$ws` bound to the stream WebSocket pointer and wraps
+/// the result in `Some`; `None` for the uSockets-backed HTTP/1 variants.
+/// Every stream transport instantiates the same generic core, so `$body`
+/// type-checks once per variant.
+macro_rules! with_stream {
+    ($self:expr, |$ws:ident| $body:expr) => {
+        match $self {
+            AnyWebSocket::H2($ws) => Some($body),
+            AnyWebSocket::Ssl(_) | AnyWebSocket::Tcp(_) => None,
+        }
+    };
+}
+
 #[derive(Clone, Copy)]
 pub enum AnyWebSocket {
     Ssl(*mut RawWebSocket),
@@ -36,24 +50,35 @@ pub enum AnyWebSocket {
 impl AnyWebSocket {
     #[inline]
     pub fn raw(self) -> *mut c_void {
-        match self {
-            AnyWebSocket::Ssl(p) | AnyWebSocket::Tcp(p) => p.cast(),
-            AnyWebSocket::H2(p) => p.cast(),
+        if let Some(p) = with_stream!(self, |ws| ws.cast::<c_void>()) {
+            return p;
         }
+        let (AnyWebSocket::Ssl(p) | AnyWebSocket::Tcp(p)) = self else {
+            unreachable!("stream WebSockets returned above")
+        };
+        p.cast()
     }
 
-    /// A `uWS::WebSocket` is its `us_socket_t`. HTTP/2 WebSockets have none.
+    /// A `uWS::WebSocket` is its `us_socket_t`. Stream WebSockets have none.
     #[inline]
     pub fn us_socket(self) -> Option<*mut crate::us_socket_t> {
         match self {
             AnyWebSocket::Ssl(p) | AnyWebSocket::Tcp(p) => Some(p.cast()),
-            AnyWebSocket::H2(_) => None,
+            _ => None,
         }
     }
 
+    /// Carried on a multiplexed request stream (Extended CONNECT) rather
+    /// than a uSockets connection.
     #[inline]
-    pub fn is_h2(self) -> bool {
-        matches!(self, AnyWebSocket::H2(_))
+    pub fn is_stream(self) -> bool {
+        with_stream!(self, |_ws| ()).is_some()
+    }
+
+    /// Subscribed topics of a stream WebSocket; `None` for HTTP/1, whose
+    /// topics live in the uWS WebSocket data.
+    pub fn stream_topics(self) -> Option<Vec<Vec<u8>>> {
+        with_stream!(self, |ws| StreamWebSocket::topics(ws))
     }
 
     /// Raw user-data pointer cast to `*mut T` (NULL if unset).
@@ -70,8 +95,8 @@ impl AnyWebSocket {
     /// requires the caller's "user data was set to a `*mut T`" guarantee.
     #[inline]
     pub(crate) fn as_ptr<T>(self) -> *mut T {
-        if let AnyWebSocket::H2(ws) = self {
-            return uws::h2::WebSocket::user_data(ws).cast::<T>();
+        if let Some(result) = with_stream!(self, |ws| StreamWebSocket::user_data(ws).cast::<T>()) {
+            return result;
         }
         let (ssl, ws) = self.h1_parts();
         c::uws_ws_get_user_data(ssl, ws).cast::<T>()
@@ -88,7 +113,7 @@ impl AnyWebSocket {
         let (ssl, p) = match self {
             AnyWebSocket::Ssl(p) => (1, p),
             AnyWebSocket::Tcp(p) => (0, p),
-            AnyWebSocket::H2(_) => unreachable!("HTTP/2 WebSockets do not have a uSockets handle"),
+            _ => unreachable!("stream WebSockets do not have a uSockets handle"),
         };
         // S012: `RawWebSocket` is an `opaque_ffi!` ZST — route the
         // `*mut → &mut` deref through the const-asserted safe accessor.
@@ -96,16 +121,16 @@ impl AnyWebSocket {
     }
 
     pub fn memory_cost(self) -> usize {
-        if let AnyWebSocket::H2(ws) = self {
-            return uws::h2::WebSocket::memory_cost(ws);
+        if let Some(result) = with_stream!(self, |ws| StreamWebSocket::memory_cost(ws)) {
+            return result;
         }
         let (ssl, ws) = self.h1_parts();
         ws.memory_cost(ssl)
     }
 
     pub fn close(self) {
-        if let AnyWebSocket::H2(ws) = self {
-            return uws::h2::WebSocket::close(ws);
+        if let Some(result) = with_stream!(self, |ws| StreamWebSocket::close(ws)) {
+            return result;
         }
         let (ssl, ws) = self.h1_parts();
         c::uws_ws_close(ssl, ws)
@@ -118,8 +143,10 @@ impl AnyWebSocket {
     }
 
     pub fn send(self, message: &[u8], opcode: Opcode, compress: bool, fin: bool) -> SendStatus {
-        if let AnyWebSocket::H2(ws) = self {
-            return uws::h2::WebSocket::send(ws, message, opcode, compress, fin);
+        if let Some(result) = with_stream!(self, |ws| StreamWebSocket::send(
+            ws, message, opcode, compress, fin
+        )) {
+            return result;
         }
         let (ssl, ws) = self.h1_parts();
         // SAFETY: `ws` is a live uWS-owned socket (S012 opaque); ptr+len from &[u8].
@@ -137,8 +164,8 @@ impl AnyWebSocket {
     }
 
     pub fn end(self, code: i32, message: &[u8]) {
-        if let AnyWebSocket::H2(ws) = self {
-            return uws::h2::WebSocket::end(ws, code, message);
+        if let Some(result) = with_stream!(self, |ws| StreamWebSocket::end(ws, code, message)) {
+            return result;
         }
         let (ssl, ws) = self.h1_parts();
         // SAFETY: `ws` is a live uWS-owned socket (S012 opaque); ptr+len from &[u8].
@@ -147,8 +174,8 @@ impl AnyWebSocket {
 
     // See NewWebSocket::cork — same fn-pointer tunneling.
     pub fn cork<C>(self, ctx: &mut C, callback: fn(&mut C)) {
-        if let AnyWebSocket::H2(ws) = self {
-            return uws::h2::WebSocket::cork(ws, ctx, callback);
+        if let Some(result) = with_stream!(self, |ws| StreamWebSocket::cork(ws, ctx, callback)) {
+            return result;
         }
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
@@ -169,8 +196,8 @@ impl AnyWebSocket {
     }
 
     pub fn subscribe(self, topic: &[u8]) -> bool {
-        if let AnyWebSocket::H2(ws) = self {
-            return uws::h2::WebSocket::subscribe(ws, topic);
+        if let Some(result) = with_stream!(self, |ws| StreamWebSocket::subscribe(ws, topic)) {
+            return result;
         }
         let (ssl, ws) = self.h1_parts();
         // SAFETY: `ws` is a live uWS-owned socket (S012 opaque); ptr+len from &[u8].
@@ -178,8 +205,8 @@ impl AnyWebSocket {
     }
 
     pub fn unsubscribe(self, topic: &[u8]) -> bool {
-        if let AnyWebSocket::H2(ws) = self {
-            return uws::h2::WebSocket::unsubscribe(ws, topic);
+        if let Some(result) = with_stream!(self, |ws| StreamWebSocket::unsubscribe(ws, topic)) {
+            return result;
         }
         let (ssl, ws) = self.h1_parts();
         // SAFETY: `ws` is a live uWS-owned socket (S012 opaque); ptr+len from &[u8].
@@ -187,8 +214,8 @@ impl AnyWebSocket {
     }
 
     pub fn is_subscribed(self, topic: &[u8]) -> bool {
-        if let AnyWebSocket::H2(ws) = self {
-            return uws::h2::WebSocket::is_subscribed(ws, topic);
+        if let Some(result) = with_stream!(self, |ws| StreamWebSocket::is_subscribed(ws, topic)) {
+            return result;
         }
         let (ssl, ws) = self.h1_parts();
         // SAFETY: `ws` is a live uWS-owned socket (S012 opaque); ptr+len from &[u8].
@@ -205,8 +232,10 @@ impl AnyWebSocket {
         opcode: Opcode,
         compress: bool,
     ) -> SendStatus {
-        if let AnyWebSocket::H2(ws) = self {
-            return uws::h2::WebSocket::publish(ws, topic, message, opcode, compress);
+        if let Some(result) = with_stream!(self, |ws| StreamWebSocket::publish(
+            ws, topic, message, opcode, compress
+        )) {
+            return result;
         }
         let (ssl, ws) = self.h1_parts();
         // SAFETY: `ws` is a live uWS-owned socket (S012 opaque); ptr+len from &[u8].
@@ -256,8 +285,8 @@ impl AnyWebSocket {
     }
 
     pub fn get_buffered_amount(self) -> usize {
-        if let AnyWebSocket::H2(ws) = self {
-            return uws::h2::WebSocket::buffered_amount(ws);
+        if let Some(result) = with_stream!(self, |ws| StreamWebSocket::buffered_amount(ws)) {
+            return result;
         }
         let (ssl, ws) = self.h1_parts();
         c::uws_ws_get_buffered_amount(ssl, ws)
@@ -280,8 +309,8 @@ impl AnyWebSocket {
     }
 
     pub fn get_remote_address<'a>(self, buf: &'a mut [u8]) -> &'a mut [u8] {
-        if let AnyWebSocket::H2(ws) = self {
-            let Some(address) = uws::h2::WebSocket::remote_address(ws) else {
+        if let Some(address) = with_stream!(self, |ws| StreamWebSocket::remote_address(ws)) {
+            let Some(address) = address else {
                 return &mut buf[..0];
             };
             let ip = address.ip();
@@ -429,18 +458,30 @@ pub trait H1WebSocketUpgradeServer<const SSL: bool>: Sized + 'static {
 /// methods, plus `apply()` to fill a `WebSocketBehavior`.
 pub struct H1Wrap<Server, T, const SSL: bool>(PhantomData<(Server, T)>);
 
-/// Callback adapter for stream-backed HTTP/2 WebSockets. Unlike [`H1Wrap`], it
-/// does not implement the HTTP/1 socket-upgrade callback and never fabricates
-/// a uSockets handle.
-pub struct H2Wrap<T>(PhantomData<T>);
+/// A stream transport whose WebSockets surface as one [`AnyWebSocket`] variant.
+pub trait StreamWebSocketTransport: crate::stream_websocket::Transport + Sized {
+    fn any_websocket(ws: *mut StreamWebSocket<Self>) -> AnyWebSocket;
+}
 
-impl<T: WebSocketHandler> H2Wrap<T> {
+impl StreamWebSocketTransport for uws::h2::H2Transport {
     #[inline(always)]
-    fn make_ws(raw_ws: *mut uws::h2::WebSocket) -> AnyWebSocket {
-        AnyWebSocket::H2(raw_ws)
+    fn any_websocket(ws: *mut StreamWebSocket<Self>) -> AnyWebSocket {
+        AnyWebSocket::H2(ws)
+    }
+}
+
+/// Callback adapter for stream-backed WebSockets. Unlike [`H1Wrap`], it does
+/// not implement the HTTP/1 socket-upgrade callback and never fabricates a
+/// uSockets handle.
+pub struct StreamWrap<T, X>(PhantomData<(T, X)>);
+
+impl<T: WebSocketHandler, X: StreamWebSocketTransport> StreamWrap<T, X> {
+    #[inline(always)]
+    fn make_ws(raw_ws: *mut StreamWebSocket<X>) -> AnyWebSocket {
+        X::any_websocket(raw_ws)
     }
 
-    unsafe fn on_open(raw_ws: *mut uws::h2::WebSocket) {
+    unsafe fn on_open(raw_ws: *mut StreamWebSocket<X>) {
         let ws = Self::make_ws(raw_ws);
         let this = ws.as_ptr::<T>();
         if !this.is_null() {
@@ -448,7 +489,7 @@ impl<T: WebSocketHandler> H2Wrap<T> {
         }
     }
     unsafe fn on_message(
-        raw_ws: *mut uws::h2::WebSocket,
+        raw_ws: *mut StreamWebSocket<X>,
         message: *const u8,
         length: usize,
         opcode: Opcode,
@@ -459,21 +500,21 @@ impl<T: WebSocketHandler> H2Wrap<T> {
             unsafe { T::on_message(this, ws, thunk::c_slice(message, length), opcode) };
         }
     }
-    unsafe fn on_drain(raw_ws: *mut uws::h2::WebSocket) {
+    unsafe fn on_drain(raw_ws: *mut StreamWebSocket<X>) {
         let ws = Self::make_ws(raw_ws);
         let this = ws.as_ptr::<T>();
         if !this.is_null() {
             unsafe { T::on_drain(this, ws) };
         }
     }
-    unsafe fn on_ping(raw_ws: *mut uws::h2::WebSocket, message: *const u8, length: usize) {
+    unsafe fn on_ping(raw_ws: *mut StreamWebSocket<X>, message: *const u8, length: usize) {
         let ws = Self::make_ws(raw_ws);
         let this = ws.as_ptr::<T>();
         if !this.is_null() {
             unsafe { T::on_ping(this, ws, thunk::c_slice(message, length)) };
         }
     }
-    unsafe fn on_pong(raw_ws: *mut uws::h2::WebSocket, message: *const u8, length: usize) {
+    unsafe fn on_pong(raw_ws: *mut StreamWebSocket<X>, message: *const u8, length: usize) {
         let ws = Self::make_ws(raw_ws);
         let this = ws.as_ptr::<T>();
         if !this.is_null() {
@@ -481,7 +522,7 @@ impl<T: WebSocketHandler> H2Wrap<T> {
         }
     }
     unsafe fn on_close(
-        raw_ws: *mut uws::h2::WebSocket,
+        raw_ws: *mut StreamWebSocket<X>,
         code: i32,
         message: *const u8,
         length: usize,
@@ -493,7 +534,7 @@ impl<T: WebSocketHandler> H2Wrap<T> {
         }
     }
 
-    pub fn apply(behavior: &WebSocketBehavior) -> uws::h2::WebSocketBehavior {
+    pub fn apply(behavior: &WebSocketBehavior) -> crate::stream_websocket::WebSocketBehavior<X> {
         let mut ping_timeout = 4;
         while i32::from(behavior.idle_timeout) - i32::from(ping_timeout) * 2
             >= i32::from(ping_timeout) * 2
@@ -508,7 +549,7 @@ impl<T: WebSocketHandler> H2Wrap<T> {
         } else {
             behavior.idle_timeout
         };
-        uws::h2::WebSocketBehavior {
+        crate::stream_websocket::WebSocketBehavior {
             compression: behavior.compression as u16,
             idle_timeout,
             ping_timeout,

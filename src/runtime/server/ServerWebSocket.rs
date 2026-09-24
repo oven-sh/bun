@@ -6,16 +6,18 @@ use bun_jsc::JsCell;
 use bun_jsc::bindgen::{self, Callable, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_uws::{self as uws, AnyWebSocket, WebSocketBehavior};
-use bun_uws_sys::web_socket::{H1WebSocketUpgradeServer, H1Wrap, H2Wrap, WebSocketHandler};
+use bun_uws_sys::web_socket::{
+    H1WebSocketUpgradeServer, H1Wrap, StreamWebSocketTransport, StreamWrap, WebSocketHandler,
+};
 use bun_uws_sys::{Opcode, SendStatus};
 
 use crate::generated_bindgen::server::js_ServerWebSocket as js;
-use crate::server::WebSocketServerHandler;
 use crate::server::jsc::{
     self, AbortSignal, ArrayBuffer, CommonAbortReason, JSGlobalObject, JSType, JSValue, JsError,
     JsRef, JsResult,
 };
 use crate::server::web_socket_server_context::HandlerFlags;
+use crate::server::{WebSocketServerHandler, WebSocketTree};
 use crate::webcore::{Blob, BlobExt};
 
 bun_output::declare_scope!(WebSocketServer, visible);
@@ -508,8 +510,8 @@ impl ServerWebSocket {
         let (topic, message, opcode) = (topic.slice(), bytes.slice(), payload.opcode());
         let ws = self.websocket();
         let server = match handler.server {
-            Some(server) if handler.h2_app.is_some() => server,
-            // Without an H2 app every subscriber is in the one uWS topic tree.
+            Some(server) if ws.is_stream() || server.has_stream_websocket_trees() => server,
+            // Without a stream transport every subscriber is in the one uWS topic tree.
             _ => {
                 let status = if !publish_to_self && !self.is_closed() {
                     ws.publish(topic, message, opcode, compress)
@@ -529,30 +531,21 @@ impl ServerWebSocket {
         let status = if publish_to_self || self.is_closed() {
             server.publish(topic, message, opcode, compress)
         } else {
-            // Publishing through `ws` skips `ws` itself. The other transport's tree has to be
-            // published to separately.
-            let self_is_h2 = ws.is_h2();
+            // The socket publishes into its own tree so uWS skips it as the sender. Every other
+            // tree receives the message as a server-wide publication.
+            let own_tree = WebSocketTree::of(ws);
             let self_subscribed = u32::from(ws.is_subscribed(topic));
-            let own_count = if self_is_h2 {
-                server.num_subscribers_h2(topic)
-            } else {
-                server.num_subscribers_h1(topic)
-            }
-            .saturating_sub(self_subscribed);
-            let other_count = if self_is_h2 {
-                server.num_subscribers_h1(topic)
-            } else {
-                server.num_subscribers_h2(topic)
-            };
-            let own = (own_count != 0).then(|| ws.publish(topic, message, opcode, compress));
-            let other = (other_count != 0).then(|| {
-                if self_is_h2 {
-                    server.publish_h1(topic, message, opcode, compress)
-                } else {
-                    server.publish_h2(topic, message, opcode, compress)
-                }
-            });
-            SendStatus::worst(own.into_iter().chain(other))
+            let own = (server
+                .num_subscribers_in(own_tree, topic)
+                .saturating_sub(self_subscribed)
+                != 0)
+                .then(|| ws.publish(topic, message, opcode, compress));
+            let others = WebSocketTree::ALL
+                .into_iter()
+                .filter(|tree| *tree != own_tree)
+                .filter(|tree| server.num_subscribers_in(*tree, topic) != 0)
+                .map(|tree| server.publish_in(tree, topic, message, opcode, compress));
+            SendStatus::worst(own.into_iter().chain(others))
         };
         Ok(send_status_to_js(status, bytes.len(), fn_name))
     }
@@ -1010,8 +1003,10 @@ impl ServerWebSocket {
         H1Wrap::<ServerType, Self, SSL>::apply(opts)
     }
 
-    pub(crate) fn behavior_h2(opts: &WebSocketBehavior) -> bun_uws_sys::h2::WebSocketBehavior {
-        H2Wrap::<Self>::apply(opts)
+    pub(crate) fn behavior_stream<X: StreamWebSocketTransport>(
+        opts: &WebSocketBehavior,
+    ) -> bun_uws_sys::stream_websocket::WebSocketBehavior<X> {
+        StreamWrap::<Self, X>::apply(opts)
     }
 
     pub(crate) fn constructor<'a>(heap: &JsHeap<'a>) -> bindgen::Result<'a, Self> {

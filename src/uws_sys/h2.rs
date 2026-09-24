@@ -14,7 +14,7 @@ use bun_ptr::ThisPtr;
 
 #[path = "h2_websocket.rs"]
 mod websocket;
-pub use websocket::{WebSocket, WebSocketBehavior};
+pub use websocket::{H2Transport, WebSocket, WebSocketBehavior};
 
 pub use crate::h3::Request;
 

@@ -131,7 +131,7 @@ trait RequestCtxOps: RequestCtx {
     fn set_is_transfer_encoding(&self, v: bool);
     fn set_is_waiting_for_request_body(&self, v: bool);
     fn arm_on_data(&self, resp: uws::AnyResponse);
-    fn set_pending_h2_upgrade(&self);
+    fn set_pending_stream_upgrade(&self);
     // body-streaming callback hooks (type-erased, stored on `Body::PendingValue`).
     // `this` must be a live `*mut Self::RequestCtx` cast to `*mut c_void`.
     fn on_start_buffering_callback(this: NonNull<c_void>);
@@ -151,9 +151,9 @@ where
 {
     type Server = ThisServer;
     #[inline]
-    fn set_pending_h2_upgrade(&self) {
+    fn set_pending_stream_upgrade(&self) {
         self.upgrade_context
-            .set(UpgradeState::Pending(PendingUpgrade::Http2));
+            .set(UpgradeState::Pending(PendingUpgrade::Stream));
     }
     #[inline]
     fn create_in(
@@ -352,7 +352,7 @@ pub(super) trait RespLike {
     fn to_any_response(&mut self) -> uws::AnyResponse;
     /// HTTP/2 only: END_STREAM on the HEADERS frame, or `content-length: 0`.
     fn request_body_ended(&mut self) -> bool;
-    /// HTTP/2 only: RFC 8441 Extended CONNECT for `websocket`.
+    /// Extended CONNECT for `websocket`; false on transports without it.
     fn is_websocket_connect(&mut self) -> bool;
 }
 impl<const SSL: bool> RespLike for uws_sys::NewAppResponse<SSL> {
@@ -500,6 +500,52 @@ fn is_valid_sec_websocket_key(key: &[u8]) -> bool {
         && key[..22]
             .iter()
             .all(|&c| c.is_ascii_alphanumeric() || c == b'+' || c == b'/')
+}
+
+/// A multiplexed response stream that Extended CONNECT can turn into a
+/// WebSocket tunnel. The upgrade path is shared; each transport supplies its
+/// stream WebSocket core and these few response operations.
+pub(super) trait StreamUpgradeResponse: RespLike + Sized {
+    type Transport: uws_sys::web_socket::StreamWebSocketTransport
+        + uws_sys::stream_websocket::Transport<Response = Self>;
+    const KIND: ResponseKind;
+    fn from_any(resp: uws::AnyResponse) -> Option<*mut Self>;
+    fn write_header(&mut self, key: &[u8], value: &[u8]);
+    fn is_closed(&mut self) -> bool;
+    fn resume(&mut self);
+    /// Detach the request context's callbacks before the WebSocket adapter
+    /// installs its own.
+    fn clear_request_callbacks(&mut self);
+}
+impl StreamUpgradeResponse for uws_sys::h2::Response {
+    type Transport = uws_sys::h2::H2Transport;
+    const KIND: ResponseKind = ResponseKind::H2;
+    #[inline]
+    fn from_any(resp: uws::AnyResponse) -> Option<*mut Self> {
+        match resp {
+            uws::AnyResponse::H2(resp) => Some(resp),
+            _ => None,
+        }
+    }
+    #[inline]
+    fn write_header(&mut self, key: &[u8], value: &[u8]) {
+        uws_sys::h2::Response::write_header(self, key, value)
+    }
+    #[inline]
+    fn is_closed(&mut self) -> bool {
+        uws_sys::h2::Response::is_closed(self)
+    }
+    #[inline]
+    fn resume(&mut self) {
+        uws_sys::h2::Response::resume(self)
+    }
+    #[inline]
+    fn clear_request_callbacks(&mut self) {
+        self.clear_aborted();
+        self.clear_on_data();
+        self.clear_on_writable();
+        self.clear_timeout();
+    }
 }
 
 #[inline]
@@ -1549,13 +1595,9 @@ where
             return Ok(0);
         }
 
-        let h1 = self.app_mut().num_subscribers(topic.slice());
-        let h2 = self
-            .h2_app
-            .get()
-            .map(|app| bun_opaque::opaque_deref_mut(app).num_subscribers(topic.slice()))
-            .unwrap_or(0);
-        Ok(JSValue::js_number(f64::from(h1.saturating_add(h2))))
+        Ok(JSValue::js_number(f64::from(
+            self.as_any_server().num_subscribers(topic.slice()),
+        )))
     }
 
     pub(crate) fn publish(
@@ -1695,7 +1737,17 @@ where
             .request_context
             .get::<ServerMuxRequestContext<SSL, DEBUG>>()
         {
-            return self.upgrade_h2(global, request_ptr, upgrader_ptr, options.to_js());
+            // SAFETY: AnyRequestContext's tag matched this exact mux monomorphization.
+            return match unsafe { (*upgrader_ptr).resp.get() } {
+                Some(uws::AnyResponse::H2(_)) => self
+                    .upgrade_stream::<uws_sys::h2::Response>(
+                        global,
+                        request_ptr,
+                        upgrader_ptr,
+                        options.to_js(),
+                    ),
+                _ => Ok(false),
+            };
         }
 
         let Some(upgrader_ptr) = request
@@ -1866,8 +1918,8 @@ where
         upgraded
     }
 
-    /// RFC 8441: accepts an Extended CONNECT stream as a WebSocket.
-    fn upgrade_h2(
+    /// Accepts an Extended CONNECT stream as a WebSocket (RFC 8441 / RFC 9220).
+    fn upgrade_stream<R: StreamUpgradeResponse>(
         &self,
         global: &JSGlobalObject,
         request_ptr: *mut Request,
@@ -1883,13 +1935,13 @@ where
             !upgrader.is_aborted_or_ended()
                 && matches!(
                     upgrader.upgrade_context.get(),
-                    UpgradeState::Pending(PendingUpgrade::Http2)
+                    UpgradeState::Pending(PendingUpgrade::Stream)
                 )
         };
         if !is_pending() {
             return Ok(false);
         }
-        let Some(uws::AnyResponse::H2(resp_ptr)) = upgrader.resp.get() else {
+        let Some(resp_ptr) = upgrader.resp.get().and_then(R::from_any) else {
             return Ok(false);
         };
         upgrader.ref_();
@@ -1952,24 +2004,24 @@ where
 
         bun_opaque::opaque_deref_mut(resp_ptr).write_status(b"200");
         if let Some(headers) = options.headers() {
-            headers.to_uws_response_for_websocket_upgrade(ResponseKind::H2, resp_ptr.cast::<c_void>());
+            headers.to_uws_response_for_websocket_upgrade(R::KIND, resp_ptr.cast::<c_void>());
         }
         if let Some(protocol) = selected_protocol {
             bun_opaque::opaque_deref_mut(resp_ptr).write_header(b"sec-websocket-protocol", protocol);
         }
         if let Some(mut cookies) = upgrader.cookies.replace(None) {
-            cookies.write(global, ResponseKind::H2, resp_ptr.cast::<c_void>())?;
+            cookies.write(global, R::KIND, resp_ptr.cast::<c_void>())?;
         }
 
-        let behavior = ServerWebSocket::behavior_h2(
+        let behavior = ServerWebSocket::behavior_stream::<R::Transport>(
             &self.config.get().websocket.as_ref().unwrap().to_behavior(),
         );
         // Transition the native response before creating a JS-facing
         // ServerWebSocket. A failed stream adoption therefore cannot strand a
         // strong wrapper or its AbortSignal without an open/close callback.
-        // SAFETY: `resp_ptr` is the live H2 response of this pending upgrade.
+        // SAFETY: `resp_ptr` is the live response of this pending upgrade.
         let Some(upgraded) = (unsafe {
-            uws_sys::h2::WebSocket::prepare_upgrade(
+            uws_sys::stream_websocket::WebSocket::<R::Transport>::prepare_upgrade(
                 resp_ptr,
                 behavior,
                 sec_websocket_extensions.slice(),
@@ -2008,17 +2060,16 @@ where
 
         {
             let resp = bun_opaque::opaque_deref_mut(resp_ptr);
-            resp.clear_aborted();
-            resp.clear_on_data();
-            resp.clear_on_writable();
-            resp.clear_timeout();
+            resp.clear_request_callbacks();
         }
         upgrader.reclaim_promise_cell();
         upgrader.deref();
 
         // SAFETY: `upgraded` is the prepared Extended CONNECT stream and `ws`
         // is kept alive by its JS wrapper until the close callback retires it.
-        if !unsafe { uws_sys::h2::WebSocket::activate(upgraded, ws.cast()) } {
+        if !unsafe {
+            uws_sys::stream_websocket::WebSocket::<R::Transport>::activate(upgraded, ws.cast())
+        } {
             // SAFETY: `ws` is stored inline in its JS wrapper, which it keeps alive.
             unsafe { &*ws }.discard_unopened();
             return Ok(false);
@@ -2038,7 +2089,12 @@ where
         if !pending_websocket_data.is_empty() {
             // SAFETY: `upgraded` is the live stream handle returned above and
             // the Vec remains alive for this synchronous consume call.
-            unsafe { uws_sys::h2::WebSocket::consume(upgraded, &pending_websocket_data) };
+            unsafe {
+                uws_sys::stream_websocket::WebSocket::<R::Transport>::consume(
+                    upgraded,
+                    &pending_websocket_data,
+                )
+            };
         }
         Ok(true)
     }
@@ -2910,7 +2966,7 @@ where
         let ctx = unsafe { &*ctx_slot };
 
         if is_websocket_connect && !RespLike::request_body_ended(resp) {
-            ctx.set_pending_h2_upgrade();
+            ctx.set_pending_stream_upgrade();
         }
 
         server

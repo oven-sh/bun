@@ -52,7 +52,6 @@
 #include "JavaScriptCore/JSGlobalObjectInlines.h"
 #include "JavaScriptCore/JSFunction.h"
 #include "JavaScriptCore/ErrorInstanceInlines.h"
-#include "JavaScriptCore/ErrorPrototype.h"
 #include "JavaScriptCore/BigIntObject.h"
 #include "JavaScriptCore/SymbolObject.h"
 #include "JavaScriptCore/JSOrderedHashTableHelper.h"
@@ -3966,23 +3965,6 @@ bool JSC__JSValue__isAnyError(JSC::EncodedJSValue JSValue0)
     }
 
     return type == JSC::ErrorInstanceType;
-}
-
-bool JSC__JSValue__hasErrorPrototype(JSC::EncodedJSValue JSValue0)
-{
-    JSC::JSObject* object = JSC::JSValue::decode(JSValue0).getObject();
-
-    // Proxy targets and stored prototypes: no trap and no getter runs. A Proxy can close a cycle, hence the bound.
-    for (unsigned steps = 0; object && steps < 256; steps++) {
-        if (auto* proxy = dynamicDowncast<JSC::ProxyObject>(object)) {
-            object = proxy->target();
-            continue;
-        }
-        if (object->inherits<JSC::ErrorPrototype>())
-            return true;
-        object = object->getPrototypeDirect().getObject();
-    }
-    return false;
 }
 
 // This implementation closely mimics the one in JSC::JSPromise::reject

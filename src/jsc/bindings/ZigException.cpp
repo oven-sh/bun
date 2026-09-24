@@ -26,6 +26,7 @@
 #include "JavaScriptCore/CodeBlock.h"
 #include "JavaScriptCore/ErrorInstance.h"
 #include "JavaScriptCore/ErrorInstanceInlines.h"
+#include "JavaScriptCore/ErrorPrototype.h"
 #include "JavaScriptCore/ExceptionScope.h"
 #include "JavaScriptCore/JSObject.h"
 #include "JavaScriptCore/JSString.h"
@@ -34,6 +35,7 @@
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 #include "JavaScriptCore/JSObjectInlines.h"
+#include "JavaScriptCore/ProxyObject.h"
 
 #include "wtf/Assertions.h"
 #include "wtf/text/OrdinalNumber.h"
@@ -819,6 +821,23 @@ void exceptionFromString(ZigException& except, JSC::JSValue value, JSC::JSGlobal
     }
 
     except.message = Bun::toStringRef(str);
+}
+
+extern "C" bool JSC__JSValue__hasErrorPrototype(JSC::EncodedJSValue JSValue0)
+{
+    JSC::JSObject* object = JSC::JSValue::decode(JSValue0).getObject();
+
+    // Proxy targets and stored prototypes: no trap and no getter runs. A Proxy can close a cycle, hence the bound.
+    for (unsigned steps = 0; object && steps < 256; steps++) {
+        if (auto* proxy = dynamicDowncast<JSC::ProxyObject>(object)) {
+            object = proxy->target();
+            continue;
+        }
+        if (object->inherits<JSC::ErrorPrototype>())
+            return true;
+        object = object->getPrototypeDirect().getObject();
+    }
+    return false;
 }
 
 extern "C" void JSC__Exception__getStackTrace(JSC::Exception* arg0, JSC::JSGlobalObject* global, ZigStackTrace* trace)

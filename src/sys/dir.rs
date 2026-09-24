@@ -182,7 +182,11 @@ impl Dir {
                             Err(e) => match e.get_errno() {
                                 E::ENOENT => break 'handle_entry,
                                 // EISDIR (Linux) / EPERM (POSIX rmdir-required)
-                                E::EISDIR | E::EPERM => {
+                                E::EISDIR => {
+                                    treat_as_dir = true;
+                                    continue 'handle_entry;
+                                }
+                                E::EPERM => {
                                     unlink_err = Some(e);
                                     treat_as_dir = true;
                                     continue 'handle_entry;
@@ -256,29 +260,36 @@ impl Dir {
     /// directory and return the fd. Returns `None` when removal succeeded or
     /// the path doesn't exist.
     fn delete_tree_open_initial_subpath(&self, sub_path: &[u8]) -> Maybe<Option<Fd>> {
-        let unlink_err = match unlinkat_a(self.fd, sub_path, 0) {
-            Ok(()) => return Ok(None),
-            Err(e) => match e.get_errno() {
-                E::ENOENT => return Ok(None),
-                // Linux: EISDIR. POSIX: EPERM when target is a directory.
-                E::EISDIR | E::EPERM => e,
-                _ => return Err(e),
-            },
-        };
-        match openat_a(
-            self.fd,
-            sub_path,
-            O::DIRECTORY | O::RDONLY | O::CLOEXEC | O::NOFOLLOW,
-            0,
-        ) {
-            Ok(fd) => Ok(Some(fd)),
-            Err(e) => match e.get_errno() {
-                E::ENOENT => Ok(None),
-                // Not a directory, so the unlink error is the real failure
-                // (EPERM: cannot delete). Retrying unlink would loop forever.
-                E::ENOTDIR => Err(unlink_err),
-                _ => Err(e),
-            },
+        let mut unlink_err: Option<Error> = None;
+        loop {
+            match unlinkat_a(self.fd, sub_path, 0) {
+                Ok(()) => return Ok(None),
+                Err(e) => match e.get_errno() {
+                    E::ENOENT => return Ok(None),
+                    // Linux: EISDIR. POSIX: EPERM when target is a directory.
+                    E::EISDIR => {}
+                    // EPERM can also mean "cannot delete". Keep the error so
+                    // that ENOTDIR below returns it instead of retrying unlink.
+                    E::EPERM => unlink_err = Some(e),
+                    _ => return Err(e),
+                },
+            }
+            match openat_a(
+                self.fd,
+                sub_path,
+                O::DIRECTORY | O::RDONLY | O::CLOEXEC | O::NOFOLLOW,
+                0,
+            ) {
+                Ok(fd) => return Ok(Some(fd)),
+                Err(e) => match e.get_errno() {
+                    E::ENOENT => return Ok(None),
+                    E::ENOTDIR => match unlink_err.take() {
+                        Some(unlink_err) => return Err(unlink_err),
+                        None => continue,
+                    },
+                    _ => return Err(e),
+                },
+            }
         }
     }
 }

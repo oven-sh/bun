@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "child_process";
-import { copyFileSync, readdirSync, readFileSync, writeFileSync } from "fs";
+import { copyFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
 import { join } from "path";
 
@@ -64,9 +64,16 @@ test.skipIf(!isWindows && !isMacOS)(
       );
 
       const second = await install();
+      if (heldProc) expect(heldProc.exitCode).toBeNull();
+      expect(second.stderr).not.toContain("error");
+      expect(second.stdout).toContain("dep@../dep-v2");
       expect(second.exitCode).toBe(0);
       expect(JSON.parse(readFileSync(join(nodeModules, "dep", "package.json"), "utf8")).version).toBe("2.0.0");
       expect(readFileSync(join(proj, "bun.lock"), "utf8")).toContain("dep-v2");
+      // The removal stopped at the locked file instead of spinning on it.
+      const old = readdirSync(nodeModules).filter(name => name.startsWith(".old-"));
+      expect(old).toHaveLength(1);
+      expect(existsSync(join(nodeModules, old[0], isWindows ? "held.exe" : "held"))).toBe(true);
     } finally {
       if (heldProc) {
         heldProc.kill();

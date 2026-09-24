@@ -1719,6 +1719,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 self.unref();
                 if let Some(ws) = self.config.websocket.as_mut() {
                     ws.handler.app = None;
+                    ws.handler.h2_app = None;
                 }
                 self.flags.insert(ServerFlags::TERMINATED);
                 if let Some(app) = self.app {
@@ -1785,6 +1786,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         } else if !self.flags.contains(ServerFlags::TERMINATED) {
             if let Some(ws) = self.config.websocket.as_mut() {
                 ws.handler.app = None;
+                ws.handler.h2_app = None;
             }
             self.flags.insert(ServerFlags::TERMINATED);
             // `app.close()` synchronously drains every open websocket; their
@@ -1917,6 +1919,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             self.js_value.downgrade();
             if let Some(ws) = self.config.websocket.as_mut() {
                 ws.handler.app = None;
+                ws.handler.h2_app = None;
                 ws.handler.server = None;
             }
 
@@ -2132,6 +2135,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 .event_loop_ref()
                 .deferred_tasks
                 .unregister_task(core::ptr::NonNull::new(h2a.cast::<c_void>()));
+            bun_opaque::opaque_deref_mut(h2a).cancel_drain();
             // SAFETY: live h2::App handle owned by this server; detaches from `app`.
             unsafe { uws_sys::h2::App::destroy(h2a) };
         }
@@ -2318,6 +2322,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // --- 2. WebSocket handler app reference ---
         if let Some(websocket) = self.config.websocket.as_mut() {
             websocket.handler.app = Some(std::ptr::from_mut(app).cast::<c_void>());
+            websocket.handler.h2_app = self.h2_app;
             websocket.handler.server = Some(any_server);
             websocket
                 .handler
@@ -2338,7 +2343,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // from rustc's POV. Replaces the `Option<*mut _>` + per-site
         // `unsafe { &*p }` pattern with one safe accessor.
         let websocket_ptr: Option<bun_ptr::BackRef<WebSocketServerContext>> =
-            self.config.websocket.as_ref().map(bun_ptr::BackRef::new);
+            self.config.websocket.as_deref().map(bun_ptr::BackRef::new);
 
         for user_route in self.user_routes.iter_mut() {
             let ud: *mut c_void = std::ptr::from_mut::<UserRoute<SSL, DEBUG>>(user_route).cast();
@@ -2379,7 +2384,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             path,
                             ud,
                             1, // id 1 means is a user route
-                            ServerWebSocket::behavior::<Self, SSL>(&websocket.to_behavior()),
+                            ServerWebSocket::behavior_h1::<Self, SSL>(&websocket.to_behavior()),
                         );
                     }
                 }
@@ -2409,7 +2414,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 path,
                                 ud,
                                 1, // id 1 means is a user route
-                                ServerWebSocket::behavior::<Self, SSL>(&websocket.to_behavior()),
+                                ServerWebSocket::behavior_h1::<Self, SSL>(&websocket.to_behavior()),
                             );
                         }
                     }
@@ -2629,7 +2634,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     b"/*",
                     self_ptr.cast(),
                     0, // id 0 means is a fallback route and ctx is the server
-                    ServerWebSocket::behavior::<Self, SSL>(&websocket.to_behavior()),
+                    ServerWebSocket::behavior_h1::<Self, SSL>(&websocket.to_behavior()),
                 );
             }
         }
@@ -2760,9 +2765,19 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return true;
         }
         // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-        let Some(h2) =
-            uws_sys::h2::App::create::<SSL>(bun_opaque::opaque_deref_mut(app), http1, idle_timeout)
-        else {
+        let Some(h2) = uws_sys::h2::App::create::<SSL>(
+            bun_opaque::opaque_deref_mut(app),
+            http1,
+            idle_timeout,
+            // Extended CONNECT is a transport capability, not a snapshot of
+            // the routes installed at listen time.  Advertising it for every
+            // Bun.serve HTTP/2 context keeps server.reload() able to add a
+            // WebSocket handler and leaves the same gate reusable by future
+            // protocols such as WebTransport. An unsupported protocol or
+            // route is still dispatched to the application, but the H2 layer
+            // prevents a non-tunnel response from accidentally returning 2xx.
+            true,
+        ) else {
             // SAFETY: `this` is live; `global_this()` borrows the STATIC global, not `*this`.
             let global = unsafe { (*this).global_this() };
             if !global.has_exception() {
@@ -4008,7 +4023,7 @@ impl AnyServer {
         any_server_dispatch_mut!(self, |s| s.on_static_request_complete())
     }
 
-    pub(crate) fn num_subscribers(&self, topic: &[u8]) -> u32 {
+    pub(crate) fn num_subscribers_h1(&self, topic: &[u8]) -> u32 {
         any_server_dispatch!(self, |s| match s.app {
             // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` via
             // `bun_opaque::opaque_deref_mut` (const-asserted ZST/align-1).
@@ -4022,7 +4037,32 @@ impl AnyServer {
         })
     }
 
-    pub(crate) fn publish(
+    pub(crate) fn num_subscribers_h2(&self, topic: &[u8]) -> u32 {
+        any_server_dispatch!(self, |s| match s.h2_app {
+            Some(app) => bun_opaque::opaque_deref_mut(app).num_subscribers(topic),
+            None => 0,
+        })
+    }
+
+    pub(crate) fn num_subscribers(&self, topic: &[u8]) -> u32 {
+        any_server_dispatch!(self, |s| {
+            let h1 = match s.app {
+                Some(app) => bun_opaque::opaque_deref_mut(app).num_subscribers(topic),
+                None => {
+                    debug_assert!(false, "num_subscribers on server with no app");
+                    0
+                }
+            };
+            match s.h2_app {
+                Some(app) => {
+                    h1.saturating_add(bun_opaque::opaque_deref_mut(app).num_subscribers(topic))
+                }
+                None => h1,
+            }
+        })
+    }
+
+    pub(crate) fn publish_h1(
         &self,
         topic: &[u8],
         message: &[u8],
@@ -4030,14 +4070,59 @@ impl AnyServer {
         compress: bool,
     ) -> uws::SendStatus {
         any_server_dispatch!(self, |s| match s.app {
-            // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` via
-            // `bun_opaque::opaque_deref_mut` (const-asserted ZST/align-1).
             Some(app) =>
                 bun_opaque::opaque_deref_mut(app).publish(topic, message, opcode, compress),
-            // Defensive for the post-stop window; assert in debug to catch misuse.
-            None => {
-                debug_assert!(false, "publish on server with no app");
-                uws::SendStatus::Dropped
+            None => uws::SendStatus::Dropped,
+        })
+    }
+
+    pub(crate) fn publish_h2(
+        &self,
+        topic: &[u8],
+        message: &[u8],
+        opcode: uws::Opcode,
+        compress: bool,
+    ) -> uws::SendStatus {
+        any_server_dispatch!(self, |s| match s.h2_app {
+            Some(app) =>
+                bun_opaque::opaque_deref_mut(app).publish(topic, message, opcode, compress),
+            None => uws::SendStatus::Dropped,
+        })
+    }
+
+    pub(crate) fn publish(
+        &self,
+        topic: &[u8],
+        message: &[u8],
+        opcode: uws::Opcode,
+        compress: bool,
+    ) -> uws::SendStatus {
+        any_server_dispatch!(self, |s| match s.h2_app {
+            /* Preserve the old single-tree call on HTTP/1-only listeners. */
+            None => match s.app {
+                Some(app) =>
+                    bun_opaque::opaque_deref_mut(app).publish(topic, message, opcode, compress),
+                None => {
+                    debug_assert!(false, "publish on server with no app");
+                    uws::SendStatus::Dropped
+                }
+            },
+            Some(h2_app) => {
+                let h1_count = match s.app {
+                    Some(app) => bun_opaque::opaque_deref_mut(app).num_subscribers(topic),
+                    None => 0,
+                };
+                let h2_count = bun_opaque::opaque_deref_mut(h2_app).num_subscribers(topic);
+                let h1 = (h1_count != 0).then(|| match s.app {
+                    Some(app) => {
+                        bun_opaque::opaque_deref_mut(app).publish(topic, message, opcode, compress)
+                    }
+                    None => uws::SendStatus::Dropped,
+                });
+                let h2 = (h2_count != 0).then(|| {
+                    bun_opaque::opaque_deref_mut(h2_app).publish(topic, message, opcode, compress)
+                });
+                uws::SendStatus::worst(h1.into_iter().chain(h2))
             }
         })
     }

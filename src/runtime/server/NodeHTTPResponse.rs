@@ -614,7 +614,7 @@ impl NodeHTTPResponse {
             // S008: `WebSocketUpgradeContext` is an `opaque_ffi!` ZST — safe deref
             // (`upgrade_ctx` checked non-null above).
             let ctx = bun_opaque::opaque_deref_mut(upgrade_ctx);
-            let _ = raw_response.upgrade::<ServerWebSocket>(
+            let _ = raw_response.upgrade_h1_websocket::<ServerWebSocket>(
                 ws,
                 websocket_key,
                 sec_websocket_protocol_value,
@@ -624,7 +624,7 @@ impl NodeHTTPResponse {
         }
 
         // The sec-websocket-* headers were already copied into
-        // raw_response.upgrade(); the underlying HttpParser::fallback buffer is
+        // raw_response.upgrade_h1_websocket(); the underlying HttpParser::fallback buffer is
         // freed when uWS adopts the socket above, so set_on_aborted_handler
         // (which would call preserve_web_socket_headers_if_needed) must not run
         // post-upgrade — it would read freed header views.

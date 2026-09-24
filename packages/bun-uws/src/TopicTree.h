@@ -298,13 +298,7 @@ public:
     }
 
     /* Linear in number of affected subscribers */
-    bool publish(Subscriber *sender, std::string_view topic, T &&message) {
-        /* Do we even have this topic? */
-        auto it = topics.find(topic);
-        if (it == topics.end()) {
-            return false;
-        }
-
+    bool publish(Subscriber *sender, Topic &topic, T &&message) {
         /* If we have more than 65k messages we need to drain every socket. */
         if (outgoingMessages.size() == UINT16_MAX) {
             /* If there is a socket that is currently corked, this will be ugly as all sockets will drain
@@ -316,7 +310,7 @@ public:
         bool referencedMessage = false;
 
         /* For all subscribers in topic */
-        for (Subscriber *s : *it->second) {
+        for (Subscriber *s : topic) {
 
             /* If we are sender then ignore us */
             if (sender != s) {
@@ -352,6 +346,15 @@ public:
 
         /* Success if someone wants it */
         return referencedMessage;
+    }
+
+    bool publish(Subscriber *sender, std::string_view topic, T &&message) {
+        /* Do we even have this topic? */
+        auto it = topics.find(topic);
+        if (it == topics.end()) {
+            return false;
+        }
+        return publish(sender, *it->second, std::move(message));
     }
 };
 

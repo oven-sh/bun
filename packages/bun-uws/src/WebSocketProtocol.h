@@ -284,7 +284,7 @@ protected:
     template <unsigned int MESSAGE_HEADER, typename T>
     static inline bool consumeMessage(T payLength, char *&src, unsigned int &length, WebSocketState<isServer> *wState, void *user) {
         if (getOpCode(src)) {
-            if (wState->state.opStack == 1 || (!wState->state.lastFin && getOpCode(src) < 2)) {
+            if (wState->state.opStack == 1 || (!wState->state.lastFin && getOpCode(src) < 3)) {
                 Impl::forceClose(wState, user);
                 return true;
             }
@@ -437,13 +437,28 @@ public:
                 } else if (payloadLength(src) == 126) {
                     if (length < MEDIUM_MESSAGE_HEADER) {
                         break;
-                    } else if(consumeMessage<MEDIUM_MESSAGE_HEADER, uint16_t>(protocol::cond_byte_swap<uint16_t>(protocol::bit_cast<uint16_t>(src + 2)), src, length, wState, user)) {
+                    }
+                    uint16_t decodedLength = protocol::cond_byte_swap<uint16_t>(protocol::bit_cast<uint16_t>(src + 2));
+                    /* RFC 6455 §5.2 requires the shortest possible length
+                     * encoding; accepting aliases complicates intermediaries. */
+                    if (decodedLength < 126) {
+                        Impl::forceClose(wState, user);
+                        return;
+                    } else if(consumeMessage<MEDIUM_MESSAGE_HEADER, uint16_t>(decodedLength, src, length, wState, user)) {
                         return;
                     }
                 } else if (length < LONG_MESSAGE_HEADER) {
                     break;
-                } else if (consumeMessage<LONG_MESSAGE_HEADER, uint64_t>(protocol::cond_byte_swap<uint64_t>(protocol::bit_cast<uint64_t>(src + 2)), src, length, wState, user)) {
-                    return;
+                } else {
+                    uint64_t decodedLength = protocol::cond_byte_swap<uint64_t>(protocol::bit_cast<uint64_t>(src + 2));
+                    /* The most significant bit MUST be zero, and values that
+                     * fit in 16 bits must use the shorter encoding. */
+                    if ((decodedLength & (uint64_t(1) << 63)) || decodedLength <= UINT16_MAX) {
+                        Impl::forceClose(wState, user);
+                        return;
+                    } else if (consumeMessage<LONG_MESSAGE_HEADER, uint64_t>(decodedLength, src, length, wState, user)) {
+                        return;
+                    }
                 }
             }
             /* A server's SHORT_MESSAGE_HEADER includes the 4-byte masking key, but the mask

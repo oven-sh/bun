@@ -1034,7 +1034,7 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.run_corked_with_type(handler, optional_data))
     }
 
-    pub fn upgrade<D>(
+    pub fn upgrade_h1_websocket<D>(
         self,
         data: *mut D,
         sec_web_socket_key: &[u8],

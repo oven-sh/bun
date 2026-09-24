@@ -21,7 +21,14 @@ export type FixtureOptions = {
   tls: boolean;
   http1?: boolean;
   http3?: boolean;
+  websocket?: boolean;
   idleTimeout?: number;
+  websocketIdleTimeout?: number;
+  websocketPings?: boolean;
+  websocketDedicatedCompression?: boolean;
+  websocketMaxPayloadLength?: number;
+  websocketBackpressureLimit?: number;
+  websocketCloseOnBackpressureLimit?: boolean;
   execArgv?: string[];
 };
 
@@ -49,9 +56,19 @@ async function spawnFixture(opts: FixtureOptions, dir: ReturnType<typeof tempDir
       join(String(dir), "big.bin"),
       "--idle-timeout",
       String(opts.idleTimeout ?? 30),
+      "--ws-idle-timeout",
+      String(opts.websocketIdleTimeout ?? 120),
+      "--ws-max-payload-length",
+      String(opts.websocketMaxPayloadLength ?? 16 * 1024 * 1024),
+      "--ws-backpressure-limit",
+      String(opts.websocketBackpressureLimit ?? 16 * 1024 * 1024),
       ...(opts.tls ? ["--tls"] : []),
       ...(opts.http1 === false ? ["--no-http1"] : []),
       ...(opts.http3 ? ["--http3"] : []),
+      ...(opts.websocket === false ? ["--no-websocket"] : []),
+      ...(opts.websocketPings === false ? ["--no-ws-pings"] : []),
+      ...(opts.websocketDedicatedCompression ? ["--ws-dedicated-compression"] : []),
+      ...(opts.websocketCloseOnBackpressureLimit ? ["--ws-close-on-backpressure-limit"] : []),
     ],
     env: bunEnv,
     stdin: "pipe",
@@ -159,6 +176,56 @@ export function request(
 }
 
 export const sha256 = (b: Buffer | Uint8Array) => createHash("sha256").update(b).digest("hex");
+
+/** RFC 6455 client frame. HTTP/2 changes the handshake, not WebSocket framing:
+ * client-to-server frames remain masked inside DATA payloads. */
+export function wsClientFrame(
+  opcode: number,
+  payload: Buffer | string = Buffer.alloc(0),
+  fin = true,
+  compressed = false,
+) {
+  payload = Buffer.from(payload);
+  const extended = payload.length < 126 ? 0 : payload.length <= 0xffff ? 2 : 8;
+  const out = Buffer.alloc(2 + extended + 4 + payload.length);
+  out[0] = (fin ? 0x80 : 0) | (compressed ? 0x40 : 0) | opcode;
+  let maskAt: number;
+  if (extended === 0) {
+    out[1] = 0x80 | payload.length;
+    maskAt = 2;
+  } else if (extended === 2) {
+    out[1] = 0x80 | 126;
+    out.writeUInt16BE(payload.length, 2);
+    maskAt = 4;
+  } else {
+    out[1] = 0x80 | 127;
+    out.writeBigUInt64BE(BigInt(payload.length), 2);
+    maskAt = 10;
+  }
+  const mask = Buffer.from([0x12, 0x34, 0x56, 0x78]);
+  mask.copy(out, maskAt);
+  for (let i = 0; i < payload.length; i++) out[maskAt + 4 + i] = payload[i] ^ mask[i & 3];
+  return out;
+}
+
+/** Decode one complete, unmasked server frame from an HTTP/2 DATA payload. */
+export function wsServerFrame(frame: Buffer) {
+  if (frame.length < 2 || (frame[1] & 0x80) !== 0) throw new Error("invalid server WebSocket frame");
+  const opcode = frame[0] & 0x0f;
+  const fin = (frame[0] & 0x80) !== 0;
+  const compressed = (frame[0] & 0x40) !== 0;
+  let length = frame[1] & 0x7f;
+  let offset = 2;
+  if (length === 126) {
+    length = frame.readUInt16BE(offset);
+    offset += 2;
+  } else if (length === 127) {
+    length = Number(frame.readBigUInt64BE(offset));
+    offset += 8;
+  }
+  if (frame.length !== offset + length) throw new Error("split or trailing WebSocket frame");
+  return { opcode, fin, compressed, payload: frame.subarray(offset) };
+}
 
 // ─── raw frame client ───────────────────────────────────────────────────────
 // For protocol-level assertions node:http2 can't express (malformed frames,

@@ -91,9 +91,8 @@ pub(crate) type RequestContextStackAllocator<
 pub(crate) enum UpgradeState {
     /// Plain HTTP request.
     None,
-    /// WebSocket handshake waiting for `server.upgrade()`. uWS owns the
-    /// context (one per `.ws()` route) and it outlives the request.
-    Pending(NonNull<WebSocketUpgradeContext>),
+    /// WebSocket handshake waiting for `server.upgrade()`.
+    Pending(PendingUpgrade),
     /// `server.upgrade()` handed the socket over to a `ServerWebSocket`.
     Upgraded,
 }
@@ -110,6 +109,16 @@ impl ResponseRoot {
     pub(crate) fn clear(&self) {
         self.0.set(bun_jsc::strong::Optional::empty());
     }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum PendingUpgrade {
+    /// uWS owns this context (one per `.ws()` route) and it outlives the
+    /// HTTP/1 request.
+    Http1(NonNull<WebSocketUpgradeContext>),
+    /// RFC 8441 Extended CONNECT has no socket-upgrade context; the HTTP/2
+    /// response stream itself becomes the transport.
+    Http2,
 }
 
 /// `align(16)`: `NativePromiseContext`'s deferred-deref task packs a 4-bit

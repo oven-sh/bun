@@ -75,56 +75,12 @@ class DOMWrapperWorld;
 #include "DOMURLBaseCache.h"
 #include "NodeVMOptionNames.h"
 #include "NodeVMSourceOriginCache.h"
-#include <JavaScriptCore/HeapObserver.h>
 namespace Zig {
 class GlobalObject;
 }
 
 namespace Bun {
 class StrongRootBlock;
-
-// JSC measures the live size of the heap at the end of each collection, but only
-// publishes it per scope: an eden collection updates
-// Heap::sizeAfterLastEdenCollection() and a full collection updates
-// Heap::sizeAfterLastFullCollection(), so one of the two is always stale. The
-// combined counter (Heap::m_sizeAfterLastCollect) has no accessor. Attached to
-// the heap for the life of the VM, this copies the counter of whichever scope
-// just finished. Unlike Heap::size(), reading it does not walk the heap.
-class HeapSizeAfterLastCollection final : public JSC::HeapObserver {
-    WTF_MAKE_NONCOPYABLE(HeapSizeAfterLastCollection);
-
-public:
-    explicit HeapSizeAfterLastCollection(JSC::Heap& heap)
-        : m_heap(heap)
-    {
-        m_heap.addObserver(this);
-    }
-
-    ~HeapSizeAfterLastCollection() final
-    {
-        m_heap.removeObserver(this);
-    }
-
-    // 0 until the first collection of this heap finishes.
-    size_t get() const { return m_sizeAfterLastCollection; }
-
-private:
-    void willGarbageCollect() final {}
-
-    // Heap::didFinishCollection() notifies observers after updateAllocationLimits()
-    // stored this collection's size, in the end phase of the collection, while
-    // the mutator is stopped. The mutator reads m_sizeAfterLastCollection once
-    // it resumes, the same way it reads JSC's own counters.
-    void didGarbageCollect(JSC::CollectionScope scope) final
-    {
-        m_sizeAfterLastCollection = scope == JSC::CollectionScope::Full
-            ? m_heap.sizeAfterLastFullCollection()
-            : m_heap.sizeAfterLastEdenCollection();
-    }
-
-    JSC::Heap& m_heap;
-    size_t m_sizeAfterLastCollection { 0 };
-};
 }
 
 namespace JSC {
@@ -249,9 +205,6 @@ public:
     Bun::NodeVMOptionNames& nodeVMOptionNames() { return m_nodeVMOptionNames; }
     Bun::NodeVMSourceOriginCache& nodeVMSourceOriginCache() { return m_nodeVMSourceOriginCache; }
 
-    // Live size of the heap as measured by the most recent collection, eden or full.
-    size_t heapSizeAfterLastCollection() const { return m_heapSizeAfterLastCollection.get(); }
-
     // The VM's default (first) Zig::GlobalObject: what defaultGlobalObject(JSC::VM&) returns on threads whose thread-local
     // default is not this VM's, e.g. the collector thread running a collection's end phase. gcProtect'ed for the VM's life.
     JSC::JSGlobalObject* defaultGlobalObject { nullptr };
@@ -344,8 +297,6 @@ private:
     WebCore::DOMURLBaseCache m_urlBaseCache;
     Bun::NodeVMOptionNames m_nodeVMOptionNames;
     Bun::NodeVMSourceOriginCache m_nodeVMSourceOriginCache;
-
-    Bun::HeapSizeAfterLastCollection m_heapSizeAfterLastCollection;
 
     SentinelLinkedList<JSVMClientDataClient, BasicRawSentinelNode<JSVMClientDataClient>> m_clients;
     bool m_isWorkerVM { false };

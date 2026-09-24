@@ -1,3 +1,4 @@
+import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import { GCProfiler, getHeapStatistics, isStringOneByteRepresentation } from "node:v8";
@@ -37,6 +38,21 @@ describe("v8.getHeapStatistics", () => {
     const before = getHeapStatistics().number_of_native_contexts;
     const contexts = [vm.createContext({}), vm.createContext({}), vm.createContext({})];
     expect(getHeapStatistics().number_of_native_contexts).toBe(before + contexts.length);
+  });
+
+  // A full GC does not always return the count to its starting value, so the
+  // reference after each collection is the heap walk that the counter replaces.
+  test("number_of_native_contexts matches the heap walk after contexts are collected", () => {
+    for (let round = 0; round < 3; round++) {
+      (() => {
+        const contexts = Array.from({ length: 5 }, () => vm.createContext({}));
+        Bun.gc(true);
+        expect(getHeapStatistics().number_of_native_contexts).toBe(heapStats().globalObjectCount);
+        expect(contexts).toHaveLength(5);
+      })();
+      Bun.gc(true);
+      expect(getHeapStatistics().number_of_native_contexts).toBe(heapStats().globalObjectCount);
+    }
   });
 
   // https://github.com/oven-sh/bun/issues/19254

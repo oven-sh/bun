@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDirWithFiles } from "harness";
-import net from "node:net";
 import { unlinkSync, utimesSync } from "node:fs";
+import net from "node:net";
 import { join } from "node:path";
 
 test("Request with streaming body can be cloned", async () => {

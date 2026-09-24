@@ -2462,7 +2462,11 @@ test.concurrent("timeout during a nested event-loop wait beneath the script", as
 
 test("SourceTextModule applies lineOffset and columnOffset to reported positions the way Script does", async () => {
   const options = { lineOffset: 5, columnOffset: 10 };
-  const position = (error: unknown) => /:(\d+):(\d+)\)?$/m.exec((error as Error).stack!)?.slice(1, 3).map(Number);
+  const position = (error: unknown) =>
+    /:(\d+):(\d+)\)?$/m
+      .exec((error as Error).stack!)
+      ?.slice(1, 3)
+      .map(Number);
   for (const [code, line] of [
     ['throw new Error("first line")', 6],
     ['1;\nthrow new Error("second line")', 7],

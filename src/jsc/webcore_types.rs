@@ -808,26 +808,13 @@ pub mod store {
         /// `Bun.file()`: each reader resolves the path, or uses the descriptor, again.
         Lazy(PathOrFileDescriptor<'static>),
         /// A file that must still be the one that was stat'd when the store was made.
+        #[expect(dead_code, reason = "nothing pins a file yet")]
         Pinned(std::sync::Arc<PinnedFile>),
     }
 
-    /// The path of a pinned [`File`] and the `stat` fields a read compares first.
+    /// The path of a pinned [`File`]. No reader gets it: see [`File::display_path`].
     pub struct PinnedFile {
         path: bun_core::ZBox,
-        size: u64,
-        mtime_nsec: i64,
-    }
-
-    impl PinnedFile {
-        #[inline]
-        pub fn size(&self) -> u64 {
-            self.size
-        }
-
-        /// node's `FdEntry::is_modified`: `st_size` and the nanoseconds of `st_mtim`.
-        pub fn matches(&self, stat: &bun_sys::Stat) -> bool {
-            stat.st_size as u64 == self.size && bun_sys::stat_mtime(stat).nsec == self.mtime_nsec
-        }
     }
 
     impl Default for File {
@@ -860,19 +847,6 @@ pub mod store {
                 path: FilePath::Lazy(PathOrFileDescriptor::Fd(fd)),
                 is_atty: Some(is_atty),
                 mode,
-                ..Default::default()
-            }
-        }
-
-        /// A file at `path` that must still have the size and mtime of `stat` when it is read.
-        pub fn init_pinned(path: &[u8], stat: &bun_sys::Stat, mime_type: MimeType) -> File {
-            File {
-                path: FilePath::Pinned(std::sync::Arc::new(PinnedFile {
-                    path: bun_core::ZBox::from_bytes(path),
-                    size: stat.st_size as u64,
-                    mtime_nsec: bun_sys::stat_mtime(stat).nsec,
-                })),
-                mime_type,
                 ..Default::default()
             }
         }

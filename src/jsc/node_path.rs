@@ -172,16 +172,6 @@ impl core::fmt::Display for PathOrFileDescriptor<'_> {
 }
 
 impl<'a> PathOrFileDescriptor<'a> {
-    #[inline]
-    pub fn is_path(&self) -> bool {
-        matches!(self, Self::Path(_))
-    }
-
-    #[inline]
-    pub fn is_fd(&self) -> bool {
-        matches!(self, Self::Fd(_))
-    }
-
     /// Unwrap the `Path` arm. Panics on `Fd` (used only after the caller has
     /// matched on the tag).
     #[inline]

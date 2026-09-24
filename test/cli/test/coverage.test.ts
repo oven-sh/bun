@@ -94,7 +94,9 @@ test("lcov reporter fails when lcov.info is a directory with entries, and leaves
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov"],
     cwd: String(dir),
-    env: bunEnv,
+    // This failure exits with Global::exit(1) and skips the VM teardown, so LeakSanitizer
+    // reports the live VM and aborts. Leak detection is not what this test asserts.
+    env: { ...bunEnv, ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":") },
     stdout: "pipe",
     stderr: "pipe",
   });

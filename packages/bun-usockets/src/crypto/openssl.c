@@ -195,7 +195,7 @@ enum {
   US_SNI_ERROR = 3,
 };
 
-/* Allocated for a server socket whose listener has SNI, a client's first renegotiation, and fetch's session sink. */
+/* Allocated for an accepted socket, a client's first renegotiation, and fetch's session sink. */
 struct us_ssl_rare_t {
   struct us_listen_socket_t *listener;
   void *session_sink;
@@ -1657,9 +1657,7 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
     SSL_set_accept_state(ssl);
     SSL_set_renegotiate_mode(ssl, ssl_renegotiate_never);
     /* sni_cb recovers ls per-SSL — never via the shared SSL_CTX. */
-    if (listener && (listener->sni || listener->on_server_name)) {
-      us_ssl_rare_ensure(ssl)->listener = listener;
-    }
+    if (listener) us_ssl_rare_ensure(ssl)->listener = listener;
   }
 
   s->ssl = ssl;

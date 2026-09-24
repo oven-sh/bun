@@ -1608,9 +1608,6 @@ impl FetchTasklet {
             http::Error::Cert(http::CertError::SUITE_B_CANNOT_SIGN_P_384_WITH_P_256) => {
                 BunString::static_("Suite B: cannot sign P-384 with P-256")
             }
-            http::Error::Cert(http::CertError::HOSTNAME_MISMATCH) => {
-                BunString::static_("Hostname mismatch")
-            }
             http::Error::Cert(http::CertError::EMAIL_MISMATCH) => {
                 BunString::static_("Email address mismatch")
             }

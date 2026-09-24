@@ -305,13 +305,17 @@ describe.concurrent("TLS wildcard hostname verification", () => {
   // looks up "foo.bar.example.com", two labels below example.com (Node.js
   // CVE-2026-48618). The mapping must not be a URL host parse: that stops at
   // "/" and would match "foo.example.com". U+FF46 maps to "f" and sends the
-  // name through the IDNA mapping of both matchers.
+  // name through the IDNA mapping of both matchers. The name as typed is not
+  // safe either: "*" would cover the label "localhost/", and a URL parser reads
+  // that name as the host "localhost". U+FF0F maps to "/".
   const rejectedServernames = [
     ["a U+3002 full stop", "foo\u3002bar.example.com"],
     ["a U+FF0E full stop", "foo\uff0ebar.example.com"],
     ["a U+FF61 full stop", "foo\uff61bar.example.com"],
     ["a URL path", "foo.example.com/x.evil.test"],
     ["a URL path after a non-ASCII label", "\uff46oo.example.com/x.evil.test"],
+    ["a URL delimiter in the label under the wildcard", "localhost/.example.com"],
+    ["a U+FF0F solidus in the label under the wildcard", "localhost\uff0f.example.com"],
   ];
 
   it.each(rejectedServernames)("tls.connect should reject %s in servername", async (_name, servername) => {
@@ -552,9 +556,23 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
     ["\uff45%78act.test", false, undefined],
     ["\uff46oo.wild.test/x.evil.test", false, undefined],
     ["\uff46oo%2ewild.test", false, undefined],
-    // An ASCII host that is not a valid URL host is still one label under "*".
-    ["a b.wild.test", true, undefined],
-    ["user@foo.wild.test", true, undefined],
+    // The host as typed is not safe either. "*" would cover the label
+    // "localhost/", and a URL parser reads "localhost/.wild.test" as the host
+    // "localhost". So a host with a character that no hostname has matches
+    // nothing, in both matchers. Node.js v26.3.0 accepts these hosts as typed.
+    // v26.8.2 rejects them, because they are not URL hosts. U+FF0F maps to "/".
+    ["localhost/.wild.test", false, undefined],
+    ["localhost?.wild.test", false, undefined],
+    ["localhost#.wild.test", false, undefined],
+    ["localhost\\.wild.test", false, undefined],
+    ["db:5432/.wild.test", false, undefined],
+    ["localhost\uff0f.wild.test", false, undefined],
+    ["a b.wild.test", false, undefined],
+    ["user@foo.wild.test", false, undefined],
+    ["*.wild.test", false, undefined],
+    // Letters, digits, "-", "_" and "." are the characters of a hostname.
+    ["foo_bar.wild.test", true, undefined],
+    ["foo-bar.wild.test", true, "*.wild.test"],
     ["xn--a.wild.test", true, "*.wild.test"],
   ];
 
@@ -577,6 +595,7 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
   describe("checkServerIdentity maps a non-ASCII host with UTS #46", () => {
     const wildcardSan = { subjectaltname: "DNS:*.example.com", subject: {} };
     const evilSan = { subjectaltname: "DNS:evil.test", subject: {} };
+    const wildEvilSan = { subjectaltname: "DNS:*.evil.test", subject: {} };
     const notInAltnames = (host: string, altnames = "DNS:*.example.com") =>
       `Host: ${host}. is not in the cert's altnames: ${altnames}`;
     const expectReason = (host: string, cert: object, reason: string | undefined) => {
@@ -629,11 +648,39 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
       ["\uff45%76il.test", evilSan, notInAltnames("\uff45%76il.test", "DNS:evil.test")],
       ["\uff46oo.example.com/x.evil.test", wildcardSan, notInAltnames("\uff46oo.example.com/x.evil.test")],
       ["\uff46oo%2eexample.com", wildcardSan, notInAltnames("\uff46oo%2eexample.com")],
-      ["a b.example.com", wildcardSan, undefined],
-      ["user@foo.example.com", wildcardSan, undefined],
       ["xn--a.example.com", wildcardSan, undefined],
       // A URL host with a numeric last label must parse as IPv4, so url.domainToASCII("db.1") is "".
       ["db.1", { subjectaltname: "DNS:db.1", subject: {} }, undefined],
+    ])("%j vs %j", expectReason);
+
+    // The host as typed is not safe either. "*" would cover the label
+    // "localhost/", and a URL parser reads "localhost/.evil.test" as the host
+    // "localhost". A host with a character that no hostname has matches nothing.
+    // Node.js v26.3.0 accepts the rejected hosts as typed. v26.8.2 rejects them,
+    // because they are not URL hosts, and it also rejects "db.1". U+FF0F maps
+    // to "/".
+    it.each([
+      ["localhost/.evil.test", wildEvilSan, notInAltnames("localhost/.evil.test", "DNS:*.evil.test")],
+      ["localhost?.evil.test", wildEvilSan, notInAltnames("localhost?.evil.test", "DNS:*.evil.test")],
+      ["localhost#.evil.test", wildEvilSan, notInAltnames("localhost#.evil.test", "DNS:*.evil.test")],
+      ["localhost\\.evil.test", wildEvilSan, notInAltnames("localhost\\.evil.test", "DNS:*.evil.test")],
+      ["db:5432/.evil.test", wildEvilSan, notInAltnames("db:5432/.evil.test", "DNS:*.evil.test")],
+      ["localhost\uff0f.evil.test", wildEvilSan, notInAltnames("localhost\uff0f.evil.test", "DNS:*.evil.test")],
+      [
+        "localhost/.evil.test",
+        { subject: { CN: "*.evil.test" } },
+        "Host: localhost/.evil.test. is not cert's CN: *.evil.test",
+      ],
+      ["a b.example.com", wildcardSan, notInAltnames("a b.example.com")],
+      ["user@foo.example.com", wildcardSan, notInAltnames("user@foo.example.com")],
+      ["*.example.com", wildcardSan, notInAltnames("*.example.com")],
+      [
+        "exact!name.test",
+        { subjectaltname: "DNS:exact!name.test", subject: {} },
+        notInAltnames("exact!name.test", "DNS:exact!name.test"),
+      ],
+      ["foo_bar.example.com", wildcardSan, undefined],
+      ["foo-bar.example.com.", wildcardSan, undefined],
     ])("%j vs %j", expectReason);
 
     // A host is an IP address only as typed. UTS #46 maps this one to

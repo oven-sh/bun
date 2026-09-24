@@ -485,7 +485,9 @@ function checkServerIdentity(hostname, cert) {
   } else {
     const hasDnsNames = dnsNames.length > 0;
     if (hasDnsNames || subject?.CN) {
-      const hostParts = splitHost(hostnameASCIIWithoutFQDN);
+      // A host with a character that no hostname has matches nothing: "*.evil.test" would cover "localhost/.evil.test".
+      const isHostname = RegExpPrototypeExec.$call(/[^A-Za-z0-9._-]/, hostnameASCIIWithoutFQDN) === null;
+      const hostParts = isHostname ? splitHost(hostnameASCIIWithoutFQDN) : [];
       const wildcard = pattern => check(hostParts, pattern, true);
 
       if (hasDnsNames) {

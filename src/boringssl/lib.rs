@@ -443,6 +443,12 @@ unsafe extern "C" {
     safe fn Bun__idnaToASCII(domain: &bun_core::String) -> bun_core::String;
 }
 
+/// Letters, digits, `-`, `_` and `.`. A host with any other byte has a second reading: `*.evil.test` covers "localhost/.evil.test".
+fn is_hostname(host: &[u8]) -> bool {
+    host.iter()
+        .all(|&b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+}
+
 pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> bool {
     // As in Node.js, a host is an IP address only as typed, not after the IDNA mapping.
     let host_is_ip = bun_core::ip_address::is_ip_address(unfqdn(hostname));
@@ -459,6 +465,7 @@ pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> b
         hostname
     };
     let hostname = unfqdn(hostname);
+    let host_is_dns_name = !host_is_ip && is_hostname(hostname);
     let mut has_dns_san = false;
 
     match x509.subject_alt_names() {
@@ -476,7 +483,7 @@ pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> b
                 match entry {
                     boring::SubjectAltName::Dns(name) => {
                         has_dns_san = true;
-                        if !host_is_ip && match_dns_name(name, hostname) {
+                        if host_is_dns_name && match_dns_name(name, hostname) {
                             return true;
                         }
                     }
@@ -499,7 +506,7 @@ pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> b
     // Subject CN is consulted only when the certificate carries no dNSName
     // SAN, and never for IP hosts. Non-DNS SANs (email / IP / URI) do not
     // suppress the fallback.
-    if !host_is_ip && !has_dns_san {
+    if host_is_dns_name && !has_dns_san {
         return x509.common_names().any(|cn| match_dns_name(&cn, hostname));
     }
     false

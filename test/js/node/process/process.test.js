@@ -893,6 +893,27 @@ describe.concurrent(() => {
       expect(stdout.trim()).toBe("beforeExit: 0\nbeforeExit: 1\nexit: 2");
     });
 
+    // The script never touches process.nextTick, so no tick queue exists when the event is emitted.
+    it("runs the microtasks and the ticks that a listener queues, before 'exit'", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("beforeExit", async () => {
+             await null;
+             console.log("microtask");
+             process.nextTick(() => console.log("tick"));
+           });
+           process.on("exit", () => console.log("exit"));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "microtask\ntick\nexit\n", stderr: "", exitCode: 0 });
+    });
+
     it("throwing inside preserves exit code", async () => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", `process.on("beforeExit", () => {throw new Error("boom")});`],

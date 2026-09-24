@@ -728,6 +728,7 @@ const ksession = Symbol("ksession");
 const krenegotiationDisabled = Symbol("renegotiationDisabled");
 
 const buntls = Symbol.for("::buntls::");
+const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 const kSharedCreds = Symbol.for("::buntlssharedcreds::");
 // net.ts's SNI dispatch uses this to recognize a raw native SecureContext
 // (Node's `context.context || context` unwrap accepts both the wrapper and
@@ -853,7 +854,7 @@ function TLSSocket(socket?, options?) {
       // The rule of tls.connect(): an untrusted certificate is rejected unless the caller passes `false`.
       this._rejectUnauthorized = ObjectPrototypeHasOwnProperty.$call(options, "rejectUnauthorized")
         ? options.rejectUnauthorized !== false
-        : rejectUnauthorizedDefault();
+        : !getAllowUnauthorized();
       this[kUpgradeClientTLS](socket, options.servername);
       // http2-wrapper reads `new TLSSocket(new PassThrough())._handle._parentWrap.constructor` as its JSStreamSocket.
       const handle = this._handle;
@@ -1074,8 +1075,9 @@ TLSSocket.prototype.setServername = function setServername(name) {
 
 TLSSocket.prototype.setSession = function setSession(session) {
   this[ksession] = session;
-  if (typeof session === "string") session = Buffer.from(session, "latin1");
-  return this._handle?.setSession?.(session);
+  // Only stored for `open`: BoringSSL aborts the process when a session is set after the handshake started.
+  const options = this[bunTLSConnectOptions];
+  if (options) options.session = session;
 };
 
 TLSSocket.prototype.getPeerCertificate = function getPeerCertificate(detailed) {

@@ -2722,6 +2722,25 @@ describe("new tls.TLSSocket(socket) on the client side", () => {
     }
   });
 
+  it("NODE_TLS_REJECT_UNAUTHORIZED=0 gives the warning of tls.connect() for a wrap too", async () => {
+    // In a process of its own: the warning comes one time for each process.
+    const script = `
+      const { TLSSocket } = require("node:tls");
+      const { PassThrough } = require("node:stream");
+      process.on("warning", warning => console.log(warning.message));
+      new TLSSocket(new PassThrough()).on("error", () => {}).destroy();
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toStartWith("Setting the NODE_TLS_REJECT_UNAUTHORIZED environment variable to '0'");
+    expect(exitCode).toBe(0);
+  });
+
   it("verifies the chain but, unlike tls.connect({ socket }), not the hostname", async () => {
     // agent1's certificate names no host at all, so only tls.connect()'s
     // onConnectSecure has something to object to.
@@ -2838,9 +2857,9 @@ describe("new tls.TLSSocket(socket) on the client side", () => {
 
   // Bun runs the functions of the fixture in this process. Node runs the same file as a
   // script, so each expected report below is also node v26.3.0's.
-  async function underNode(mode: string) {
+  async function asScript(exe: string, mode: string) {
     await using proc = Bun.spawn({
-      cmd: [nodeExe()!, join(import.meta.dir, "node-tls-client-wrap-fixture.mjs"), mode],
+      cmd: [exe, join(import.meta.dir, "node-tls-client-wrap-fixture.mjs"), mode],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -2850,11 +2869,13 @@ describe("new tls.TLSSocket(socket) on the client side", () => {
     expect(exitCode).toBe(0);
     return JSON.parse(stdout);
   }
+  const onNode = (mode: string) => () => asScript(nodeExe()!, mode);
 
   describe.concurrent.each([
-    ["bun", clientWrap.shutdown, clientWrap.mysql, clientWrap.peerCloses, false],
-    ["node", () => underNode("shutdown"), () => underNode("mysql"), () => underNode("peer-closes"), !nodeExe()],
-  ] as const)("under %s", (_runtime, shutdown, mysql, peerCloses, skip) => {
+    ["bun", false, clientWrap.shutdown, clientWrap.mysql, clientWrap.peerCloses, clientWrap.session, bunExe()],
+    ["node", !nodeExe(), onNode("shutdown"), onNode("mysql"), onNode("peer-closes"), onNode("session"), nodeExe()],
+  ] as const)("under %s", (_runtime, skip, shutdown, mysql, peerCloses, session, exe) => {
+    // Each cell calls the method and then destroy(): end() alone leaves a wrap open, on node too.
     it.skipIf(skip)(
       "end(), end(cb), destroySoon() and destroy() do not throw, and destroy() closes the wrap",
       async () => {
@@ -2881,6 +2902,24 @@ describe("new tls.TLSSocket(socket) on the client side", () => {
       expect(await peerCloses()).toEqual({
         wrap: ["end", "finish"],
         connect: ["end", "error ECONNRESET"],
+      });
+    });
+
+    it.skipIf(skip)("a session that is set before the handshake starts is resumed", async () => {
+      expect(await session()).toEqual({
+        "tls.connect({ port, session })": true,
+        "tls.connect({ socket, session })": true,
+        "new TLSSocket(socket, { session })": true,
+        "tls.connect({ port }), then setSession()": true,
+      });
+    });
+
+    // As a script under bun too: BoringSSL aborts the process when a session is set after the handshake started.
+    it.skipIf(skip)("setSession() after the handshake started has no effect", async () => {
+      expect(await asScript(exe!, "late-set-session")).toEqual({
+        "new TLSSocket(socket), then setSession() and _start()": "secure",
+        "tls.connect({ socket }), then setSession()": "secureConnect",
+        "setSession() after 'secureConnect', isSessionReused()": false,
       });
     });
   });

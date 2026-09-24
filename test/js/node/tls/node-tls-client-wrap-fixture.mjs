@@ -273,8 +273,110 @@ export async function peerCloses() {
   }
 }
 
+// A TLS 1.2 server and one session from it. With TLS 1.2 the session is ready at 'secureConnect'.
+async function serverWithSession() {
+  const server = tls.createServer({ key: fixture("agent1-key.pem"), cert: fixture("agent1-cert.pem"), maxVersion: "TLSv1.2" });
+  server.on("secureConnection", socket => socket.on("error", () => {}).resume());
+  const port = await listening(server);
+  const first = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+  await once(first, "secureConnect");
+  const session = first.getSession();
+  first.destroy();
+  const connected = async () => {
+    const raw = net.connect(port, "127.0.0.1");
+    raw.on("error", () => {});
+    await once(raw, "connect");
+    return raw;
+  };
+  return { server, port, session, connected };
+}
+
+// A session that is set before the handshake starts is offered to the server: as an option
+// on each path, and through setSession() on a socket that has not connected yet.
+export async function session() {
+  const { server, port, session, connected } = await serverWithSession();
+  const host = "127.0.0.1";
+  const options = { session, rejectUnauthorized: false };
+  // The listener is attached in the turn that makes the socket: a wrap starts its handshake at once.
+  async function reused(socket, event, prepare) {
+    try {
+      const done = once(socket, event);
+      prepare?.(socket);
+      await done;
+      return socket.isSessionReused();
+    } finally {
+      socket.destroy();
+    }
+  }
+  try {
+    return {
+      "tls.connect({ port, session })": await reused(tls.connect({ port, host, ...options }), "secureConnect"),
+      "tls.connect({ socket, session })": await reused(
+        tls.connect({ socket: await connected(), ...options }),
+        "secureConnect",
+      ),
+      "new TLSSocket(socket, { session })": await reused(new TLSSocket(await connected(), options), "secure", socket =>
+        socket._start(),
+      ),
+      "tls.connect({ port }), then setSession()": await reused(
+        tls.connect({ port, host, rejectUnauthorized: false }),
+        "secureConnect",
+        socket => socket.setSession(session),
+      ),
+    };
+  } finally {
+    server.close();
+  }
+}
+
+// setSession() after the handshake started. Node accepts the call, with no effect on that
+// handshake. BoringSSL aborts the process for it, so the test runs this one as a script.
+// Node starts the handshake of a wrap in _start(), so only node resumes in the first shape:
+// the report has the event and not isSessionReused().
+export async function lateSetSession() {
+  const { server, port, session, connected } = await serverWithSession();
+  const options = { rejectUnauthorized: false };
+  async function completes(socket, event, start) {
+    try {
+      const done = once(socket, event);
+      socket.setSession(session);
+      start?.(socket);
+      await done;
+      return event;
+    } finally {
+      socket.destroy();
+    }
+  }
+  async function afterSecureConnect() {
+    const socket = tls.connect({ port, host: "127.0.0.1", ...options });
+    try {
+      await once(socket, "secureConnect");
+      socket.setSession(session);
+      return socket.isSessionReused();
+    } finally {
+      socket.destroy();
+    }
+  }
+  try {
+    return {
+      "new TLSSocket(socket), then setSession() and _start()": await completes(
+        new TLSSocket(await connected(), options),
+        "secure",
+        socket => socket._start(),
+      ),
+      "tls.connect({ socket }), then setSession()": await completes(
+        tls.connect({ socket: await connected(), ...options }),
+        "secureConnect",
+      ),
+      "setSession() after 'secureConnect', isSessionReused()": await afterSecureConnect(),
+    };
+  } finally {
+    server.close();
+  }
+}
+
 if (import.meta.main) {
-  const reports = { shutdown, mysql, "peer-closes": peerCloses };
+  const reports = { shutdown, mysql, "peer-closes": peerCloses, session, "late-set-session": lateSetSession };
   // Ends the run at once, also while the await below is still pending.
   process.on("uncaughtException", error => {
     console.error(error);

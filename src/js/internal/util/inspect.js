@@ -2782,8 +2782,8 @@ function endOfLastOscTerminator(str) {
   );
 }
 
-// A shorter string has at most 63 of the rescans described below, of at most 127 characters each.
-const kMinLengthToCheckForOscRescans = 128;
+// A shorter string has at most 63 of the scans described below, of at most 127 characters each.
+const kMinLengthToCheckOscTerminators = 128;
 
 function stripVTControlCharacters(str) {
   if (typeof str !== "string") throw $ERR_INVALID_ARG_TYPE("str", "string", str);
@@ -2794,10 +2794,9 @@ function stripVTControlCharacters(str) {
   ) {
     return str;
   }
-  if (str.length >= kMinLengthToCheckForOscRescans && StringPrototypeIndexOfUnbound.$call(str, "\u001B]") !== -1) {
-    // The OSC alternative scans to the end of the string from each "\x1b]" that no terminator follows.
-    // No match goes past a terminator, so what follows the last one is stripped without that alternative.
+  if (str.length >= kMinLengthToCheckOscTerminators && StringPrototypeIndexOfUnbound.$call(str, "\u001B]") !== -1) {
     const end = endOfLastOscTerminator(str);
+    // An "\x1b]" past `end` makes the OSC alternative scan the rest of the string and fail. No match spans `end`.
     if (StringPrototypeIndexOfUnbound.$call(str, "\u001B]", end) !== -1) {
       return (
         replaceAnsi(StringPrototypeSlice(str, 0, end), getAnsiRegExp()) +

@@ -1832,23 +1832,28 @@ describe.concurrent(() => {
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
   });
 
-  // Pins which events fire, and in what order, for every way the queue of
-  // unreported rejections finds and drops a handled promise: a hole left in the
-  // middle, compaction, the next in order, a pop from the back, a short queue,
-  // an indexed queue that shrinks and grows again, and the batch that is being
-  // reported. The "handling N rejected promises is O(N)" tests below cover the cost.
+  // Pins which events fire, and in what order, whatever order the rejections of a
+  // turn are handled in, and that the queue keeps a promise alive exactly as long
+  // as it can still be reported. The "handling N rejected promises is O(N)" tests
+  // below cover the cost.
   it("reports exactly the rejections that stay unhandled, in order, whatever order the others are handled in", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
+          const { heapStats } = require("bun:jsc");
           const noop = () => {};
           const drain = async () => { for (let i = 0; i < 3; i++) await new Promise(r => setImmediate(r)); };
+          // Nothing else in this script makes a Date, so this counts the rejection reasons that are alive.
+          const datesAlive = () => (Bun.gc(true), heapStats().objectTypeCounts.Date ?? 0);
           let seen = [];
           let rejectionHandled = 0;
           let onUnhandled = noop;
-          process.on("unhandledRejection", reason => { seen.push(reason); onUnhandled(reason); });
+          process.on("unhandledRejection", reason => {
+            seen.push(reason instanceof Date ? reason.getTime() : reason);
+            onUnhandled(reason);
+          });
           process.on("rejectionHandled", () => rejectionHandled++);
           const result = {};
 
@@ -1856,16 +1861,30 @@ describe.concurrent(() => {
           // step late, when it is no longer the newest rejection.
           let previous;
           for (let i = 0; i < 1000; i++) {
-            const promise = Promise.reject(i);
+            const promise = Promise.reject(i % 7 === 0 ? new Date(i) : i);
             if (i % 7 === 0) continue;
             previous?.catch(noop);
             previous = promise;
           }
           previous.catch(noop);
-          // The promises that stay unhandled are reachable only through the queue now.
-          Bun.gc(true);
+          // The promises that stay unhandled, and their reasons, are reachable only through the queue now.
+          const queuedAlive = datesAlive();
           await drain();
-          result.oneStepLate = { seen, rejectionHandled };
+          result.oneStepLate = { seen, rejectionHandled, queuedAlive };
+
+          // The same in a loop that awaits, so that each handled promise is garbage at once. The queue
+          // must not keep them until the end of the turn: the number alive stays far below the 2,000 made.
+          const before = datesAlive();
+          let mostAlive = 0;
+          previous = Promise.reject(new Date(0));
+          for (let i = 1; i <= 2000; i++) {
+            const promise = Promise.reject(new Date(i));
+            try { await previous; } catch {}
+            previous = promise;
+            if (i % 500 === 0) mostAlive = Math.max(mostAlive, datesAlive() - before);
+          }
+          try { await previous; } catch {}
+          result.handledAreReleased = mostAlive < 200 ? true : mostAlive;
 
           // Handled oldest first, as Promise.all does. Every 50th stays unhandled.
           seen = [];
@@ -1891,7 +1910,7 @@ describe.concurrent(() => {
           await drain();
           result.few = { seen, rejectionHandled };
 
-          // A queue too long to scan is searched, loses its newest entry, then grows again.
+          // A long queue loses an entry in the middle and its newest entry, then grows again.
           seen = [];
           const regrown = [];
           for (let i = 0; i < 300; i++) regrown.push(Promise.reject("r" + i));
@@ -1938,7 +1957,12 @@ describe.concurrent(() => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({
-      oneStepLate: { seen: Array.from({ length: Math.ceil(1000 / 7) }, (_, i) => i * 7), rejectionHandled: 0 },
+      oneStepLate: {
+        seen: Array.from({ length: Math.ceil(1000 / 7) }, (_, i) => i * 7),
+        rejectionHandled: 0,
+        queuedAlive: Math.ceil(1000 / 7),
+      },
+      handledAreReleased: true,
       oldestFirst: { seen: ["o49", "o99", "o149", "o199"], rejectionHandled: 0 },
       newestFirst: { seen: ["n0", "n50"], rejectionHandled: 0 },
       few: { seen: ["f1", "f2", "f5"], rejectionHandled: 0 },
@@ -1979,14 +2003,14 @@ it("process.hasUncaughtExceptionCaptureCallback", () => {
 // handling N of them cost O(N^2). Not concurrent: these measure time.
 describe("handling N rejected promises is O(N)", () => {
   const N = 100_000;
-  // Measured for N = 100,000 (first test / second test):
+  // Measured for N = 100,000 (oldest first / from the listener):
   //   before: release 23,900 / 4,600 ms, debug+ASAN ~55,000 / ~85,000 ms
-  //   after:  release 25 / 20 ms, debug+ASAN 700 / 440 ms
+  //   after:  release 7 / 6 ms, debug+ASAN 350 / 240 ms
   const limit = isDebug || isASAN ? 5_000 : 1_000;
   // A machine too slow for `limit` still passes if the calls stay within 20x of
   // `baseline`: the same calls again, on promises that are handled by then, so
-  // none of them reaches the rejection tracker. Measured ms / baseline: 0.7 to
-  // 2.2 after, 600 and up before.
+  // none of them reaches the rejection tracker. Measured ms / baseline: 0.4 to
+  // 1.2 after, 190 and up before.
   const expectLinear = ({ ms, baseline }) => expect(ms).toBeLessThan(Math.max(limit, 20 * baseline));
   // A debug build needs about 2 s to start and make the promises, too close to
   // the 5 s default. The spawn timeout turns a quadratic run into a failure.
@@ -2063,8 +2087,8 @@ describe("handling N rejected promises is O(N)", () => {
   );
 
   // Nanoseconds per promise must not depend on how many are rejected in one turn.
-  // Measured, release: batches of 17 / 64 / 300 take 87 / 86 / 83 (before: 87 / 87 / 95).
-  // The allSettled loop takes 319 / 484 at N = 100 / 1,000 (before: 345 / 2,674).
+  // Measured, release: batches of 17 / 64 / 300 take 69 / 64 / 64 (before: 85 / 83 / 93).
+  // The allSettled loop takes 297 / 292 at N = 100 / 1,000 (before: 310 / 2,017).
   const perPromise = `
     const noop = () => {};
     const total = ${isDebug || isASAN ? 6_000 : 240_000};

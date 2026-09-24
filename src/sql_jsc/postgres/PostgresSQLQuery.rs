@@ -77,7 +77,8 @@ pub struct Flags {
     pub(crate) binary: bool,
     pub(crate) bigint: bool,
     pub(crate) simple: bool,
-    /// Rejected for an undecodable row: in flight, its response skipped, until `ReadyForQuery`.
+    /// Rejected while in flight (an undecodable row, a cancel behind the FIFO head): its
+    /// response is skipped until `ReadyForQuery`.
     pub(crate) discard_response: bool,
     /// Which connection counter this request's dispatch incremented; reset to
     /// `None` when `finish_request` consumes that contribution, so the
@@ -231,7 +232,7 @@ impl PostgresSQLQuery {
     }
 
     /// Rejects now, but `status` stays in flight: the server is still answering this query.
-    pub(crate) fn on_undecodable_row(&self, err: JSValue, global_object: &JSGlobalObject) {
+    pub(crate) fn reject_in_flight(&self, err: JSValue, global_object: &JSGlobalObject) {
         self.update_flags(|f| f.discard_response = true);
         self.reject(err, global_object);
     }
@@ -251,31 +252,7 @@ impl PostgresSQLQuery {
         let Some(target_value) = self.get_target(global_object, true) else {
             return;
         };
-        self.run_reject_callback(global_object, this_value, target_value, err);
-    }
 
-    /// Reject a request whose Bind/Execute is already on the wire. Unlike
-    /// `on_js_error` this leaves `status` and the FIFO entry alone: the backend
-    /// will still answer, and a `Fail` entry gets discarded by `advance()`, so
-    /// the next BindComplete would land on the wrong request.
-    pub(crate) fn reject_in_place(&self, err: JSValue, global_object: &JSGlobalObject) {
-        let _guard = self.ref_guard();
-        let Some(this_value) = self.this_value.get().try_get() else {
-            return;
-        };
-        let Some(target_value) = self.get_target(global_object, false) else {
-            return;
-        };
-        self.run_reject_callback(global_object, this_value, target_value, err);
-    }
-
-    fn run_reject_callback(
-        &self,
-        global_object: &JSGlobalObject,
-        this_value: JSValue,
-        target_value: JSValue,
-        err: JSValue,
-    ) {
         // SAFETY: JS-thread only; short-lived `&mut` to the singleton VM, no other live borrow.
         let vm = crate::jsc::VirtualMachine::get().as_mut();
         let function = vm
@@ -904,7 +881,7 @@ impl PostgresSQLQuery {
                 this.on_js_error(err, global_object);
             } else {
                 // Already on the wire: the backend will answer it regardless.
-                this.reject_in_place(err, global_object);
+                this.reject_in_flight(err, global_object);
             }
             return Ok(JSValue::UNDEFINED);
         }

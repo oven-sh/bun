@@ -7363,68 +7363,26 @@ pub fn write_nonblocking(fd: Fd, buf: &[u8]) -> Maybe<usize> {
     write(fd, buf)
 }
 
-/// How many bytes a blocking pipe accepts right now without blocking; `None` if the fd can't say (not a pipe).
+/// How many bytes a blocking pipe accepts right now without blocking; `None` if `fd` is not a pipe/FIFO.
 pub fn pipe_writable_space(fd: Fd) -> Option<usize> {
-    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cfg(unix)]
     {
-        // SAFETY: plain fcntl/ioctl on a caller-owned fd.
-        let cap = unsafe { libc::fcntl(fd.native(), libc::F_GETPIPE_SZ) };
-        if cap < 0 {
+        let st = fstat(fd).ok()?;
+        if !S::ISFIFO(st.st_mode as Mode) {
             return None;
         }
-        let mut queued: c_int = 0;
-        if unsafe { libc::ioctl(fd.native(), libc::FIONREAD, &mut queued) } < 0 {
-            return None;
-        }
-        return Some((cap as usize).saturating_sub(queued as usize));
-    }
-    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-    {
-        thread_local! {
-            static KQ: core::cell::Cell<c_int> = const { core::cell::Cell::new(-1) };
-        }
-        let kq = KQ.with(|kq| {
-            if kq.get() < 0 {
-                kq.set(safe_libc::kqueue());
-            }
-            kq.get()
-        });
-        if kq < 0 {
-            return None;
-        }
-        // SAFETY: all-zero is a valid kevent.
-        let mut change: libc::kevent = unsafe { core::mem::zeroed() };
-        change.ident = fd.native() as usize;
-        change.filter = libc::EVFILT_WRITE;
-        change.flags = libc::EV_ADD | libc::EV_ONESHOT;
-        let mut out: [libc::kevent; 1] = unsafe { core::mem::zeroed() };
-        let zero = libc::timespec {
-            tv_sec: 0,
-            tv_nsec: 0,
+        // XNU reports a pipe's capacity in st_blksize and its queued bytes in st_size (for either end).
+        #[cfg(target_os = "macos")]
+        return Some((st.st_blksize as usize).saturating_sub(st.st_size as usize));
+        // Elsewhere POLLOUT on a pipe guarantees PIPE_BUF bytes; byte counts would overstate what a fragmented pipe takes.
+        #[cfg(not(target_os = "macos"))]
+        return match bun_core::is_writable(fd) {
+            bun_core::Pollable::Ready => Some(libc::PIPE_BUF),
+            bun_core::Pollable::Hup => None,
+            bun_core::Pollable::NotReady => Some(0),
         };
-        let n = kevent(
-            Fd::from_native(kq),
-            core::slice::from_ref(&change),
-            &mut out,
-            Some(&zero),
-        )
-        .ok()?;
-        if n == 1 && out[0].ident == change.ident {
-            if out[0].flags & (libc::EV_ERROR | libc::EV_EOF) != 0 {
-                return None;
-            }
-            return Some(out[0].data.max(0) as usize);
-        }
-        change.flags = libc::EV_DELETE;
-        let _ = kevent(
-            Fd::from_native(kq),
-            core::slice::from_ref(&change),
-            &mut [],
-            Some(&zero),
-        );
-        return Some(0);
     }
-    #[allow(unreachable_code)]
+    #[cfg(not(unix))]
     {
         let _ = fd;
         None

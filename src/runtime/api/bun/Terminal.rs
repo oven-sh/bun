@@ -461,7 +461,13 @@ impl Terminal {
             .writer
             .with_mut(|w| w.start(pty_result.write_fd, true))
         {
-            sys::Result::Ok(()) => terminal.ref_(),
+            sys::Result::Ok(()) => {
+                #[cfg(unix)]
+                if let Some(poll) = terminal.writer.get().get_poll() {
+                    poll.set_flag(bun_io::FilePollFlag::Nonblocking);
+                }
+                terminal.ref_()
+            }
             sys::Result::Err(_) => {
                 // The writer took neither its ref nor write_fd, and the reader never started.
                 terminal.update_flags(|f| f.insert(Flags::WRITER_DONE));

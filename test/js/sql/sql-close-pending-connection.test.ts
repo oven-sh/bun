@@ -30,7 +30,8 @@ import {
   pgAuthenticationOk,
   pgCommandComplete,
   pgDataRow,
-  pgReadFrontendMessages,
+  pgHold,
+  pgMockServer,
   pgReadyForQuery,
   pgRowDescription,
 } from "./wire-frames";
@@ -212,33 +213,19 @@ function failUntilCommand(socket: Socket, received: PromiseWithResolvers<void>) 
 const heldQueryMocks = {
   async postgres(): Promise<HeldQueryMock> {
     const received = Promise.withResolvers<void>();
-    let respond = () => {};
-    const { port, server } = await listeningServer(socket => {
-      let startup = true;
-      let buffered = Buffer.alloc(0);
-      socket.on("data", chunk => {
-        if (startup) {
-          startup = false;
-          socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
-          return;
-        }
-        buffered = pgReadFrontendMessages(Buffer.concat([buffered, chunk]), type => {
-          if (type !== 0x51 /* Query */) return;
-          respond = () =>
-            socket.write(
-              Buffer.concat([
-                pgRowDescription([{ name: "x", typeOid: 25 }]),
-                pgDataRow([Buffer.from("1")]),
-                pgCommandComplete("SELECT 1"),
-                pgReadyForQuery(),
-              ]),
-            );
-          received.resolve();
-        });
-      });
-      failUntilCommand(socket, received);
+    const { port, server, release } = await pgMockServer(type => {
+      if (type !== "Q") return;
+      received.resolve();
+      return [
+        pgHold,
+        pgRowDescription([{ name: "x", typeOid: 25 }]),
+        pgDataRow([Buffer.from("1")]),
+        pgCommandComplete("SELECT 1"),
+        pgReadyForQuery(),
+      ];
     });
-    return { port, server, commandReceived: received.promise, respond: () => respond() };
+    server.on("connection", socket => failUntilCommand(socket, received));
+    return { port, server, commandReceived: received.promise, respond: release };
   },
   async mysql(): Promise<HeldQueryMock> {
     const received = Promise.withResolvers<void>();

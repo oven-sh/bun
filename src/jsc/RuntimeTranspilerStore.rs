@@ -394,11 +394,8 @@ impl RuntimeTranspilerStore {
                 <&'static str>::from(unsafe { (*job).loader })
             );
         }
-        // SAFETY: job fully initialized above; `vm` is the live VM that owns this store.
-        unsafe {
-            (*job).fetch_generation = (*vm).module_fetches.started();
-            (*job).schedule();
-        }
+        // SAFETY: job fully initialized above
+        unsafe { (*job).schedule() };
         promise.cast::<c_void>()
     }
 }
@@ -589,7 +586,10 @@ impl TranspilerJob {
         // `bun_runtime::init`).
         self.poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
         // SAFETY: JS thread; the VM owns the store this slot lives in.
-        self.ticket = Some(unsafe { (*self.vm).ticket() });
+        unsafe {
+            self.fetch_generation = (*self.vm).module_fetches.started();
+            self.ticket = Some((*self.vm).ticket());
+        }
         WorkPool::schedule(&raw mut self.work_task);
     }
 

@@ -1,6 +1,7 @@
 // Runs one scenario (SCENARIO) against the server at DATABASE_URL and prints what every query
 // settled with. It is a subprocess because a broken build aborts or hangs in these scenarios.
 import { SQL, type ReservedSQL } from "bun";
+import { drainMicrotasks } from "bun:jsc";
 
 const url = process.env.DATABASE_URL!;
 const sql = new SQL({ url, max: 1, idleTimeout: 30 });
@@ -139,10 +140,44 @@ const scenarios: Record<string, () => Promise<unknown>> = {
     return await report(unprepared, pid, unprepared`select ${param}::text as x`);
   },
 
+  // then() starts a query one microtask later. drainMicrotasks() runs that microtask at once.
+  async "prepared statement, nested query started by drainMicrotasks()"() {
+    const pid = await backendPid(sql);
+    await sql`select ${text("0")}::text as x`;
+    return report(
+      sql,
+      pid,
+      sql`select ${dispatching("1", () => {
+        dispatched.push(sql`select 2 as y`.then(rows => rows));
+        drainMicrotasks();
+      })}::text as x`,
+    );
+  },
+
+  // notify() starts its query with execute().
+  async "prepared statement, nested notify()"() {
+    const pid = await backendPid(sql);
+    await sql`select ${text("0")}::text as x`;
+    return report(
+      sql,
+      pid,
+      sql`select ${dispatching("1", () => dispatched.push(sql.notify("dispatch_during_bind", "payload")))}::text as x`,
+    );
+  },
+
+  async "first execution, conversion throws after dispatching"() {
+    return throwAfterDispatching(sql, await backendPid(sql));
+  },
+
   async "prepared statement, conversion throws after dispatching"() {
     const pid = await backendPid(sql);
     await sql`select ${text("0")}::text as x`;
-    return throwAfterDispatching(pid);
+    return throwAfterDispatching(sql, pid);
+  },
+
+  async "prepare: false, conversion throws after dispatching"() {
+    await using unprepared = new SQL({ url, max: 1, idleTimeout: 30, prepare: false });
+    return await throwAfterDispatching(unprepared, await backendPid(unprepared));
   },
 
   // The outer request is not at the head of the queue when its Bind fails.
@@ -151,7 +186,7 @@ const scenarios: Record<string, () => Promise<unknown>> = {
     await sql`select ${text("0")}::text as x`;
     const ahead = sql`select ${text("7")}::text as x`.execute();
     // Issues the outer query synchronously, while `ahead` is still in flight.
-    const rest = throwAfterDispatching(pid);
+    const rest = throwAfterDispatching(sql, pid);
     return { ahead: await settle(ahead), ...(await rest) };
   },
 };
@@ -219,15 +254,15 @@ const closeScenarios: Record<string, () => Promise<unknown>> = {
 };
 
 /** Issues the outer query synchronously. Everything after the first await is reporting. */
-async function throwAfterDispatching(pid: number) {
+async function throwAfterDispatching(db: SQL, pid: number) {
   const param = {
     toString() {
       conversions++;
-      dispatched.push(sql`select 2 as y`.execute());
+      dispatched.push(db`select 2 as y`.execute());
       throw new RangeError("boom");
     },
   };
-  return report(sql, pid, sql`select ${param}::text as x`);
+  return report(db, pid, db`select ${param}::text as x`);
 }
 
 const scenario = scenarios[process.env.SCENARIO!] ?? closeScenarios[process.env.SCENARIO!];

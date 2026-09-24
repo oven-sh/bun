@@ -48,7 +48,23 @@ const scenarios: [string, object][] = [
     { outer: ok({ x: "1" }), dispatched: [ok({ y: 2 }), ok({ t: "nested" })], conversions: 1, sameBackend: true },
   ],
   [
+    "prepared statement, nested query started by drainMicrotasks()",
+    { outer: ok({ x: "1" }), dispatched: [ok({ y: 2 })], conversions: 1, sameBackend: true },
+  ],
+  [
+    "prepared statement, nested notify()",
+    { outer: ok({ x: "1" }), dispatched: [ok({ pg_notify: "" })], conversions: 1, sameBackend: true },
+  ],
+  [
+    "first execution, conversion throws after dispatching",
+    { outer: { err: "boom" }, dispatched: [ok({ y: 2 })], conversions: 1, sameBackend: true },
+  ],
+  [
     "prepared statement, conversion throws after dispatching",
+    { outer: { err: "boom" }, dispatched: [ok({ y: 2 })], conversions: 1, sameBackend: true },
+  ],
+  [
+    "prepare: false, conversion throws after dispatching",
     { outer: { err: "boom" }, dispatched: [ok({ y: 2 })], conversions: 1, sameBackend: true },
   ],
   [
@@ -89,13 +105,18 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
 // The mock answers each Execute with the parameter of the Bind before it. B(x) is a Bind that
 // carries exactly the parameter x: a Bind with another query's messages inside does not decode.
 const nested = ["B(nested)", "E", "H", "S"];
-const wire: [string, string[]][] = [
-  ["prepared statement", ["B(outer)", "E", "H", "S", ...nested]],
-  ["first execution", ["P", "D", "S", "B(outer)", "E", "H", "S", ...nested]],
-  ["prepare: false", ["P", "D", "B(outer)", "E", "H", "S", "P", "D", ...nested]],
+const wire: [string, string, string[]][] = [
+  ["prepared statement", "nested", ["B(outer)", "E", "H", "S", ...nested]],
+  [
+    "prepared statement, nested query without parameters",
+    "",
+    ["B(outer)", "E", "H", "S", "P", "D", "B()", "E", "H", "S"],
+  ],
+  ["first execution", "nested", ["P", "D", "S", "B(outer)", "E", "H", "S", ...nested]],
+  ["prepare: false", "nested", ["P", "D", "B(outer)", "E", "H", "S", "P", "D", ...nested]],
 ];
 
-test.concurrent.each(wire)("wire order equals queue order: %s", async (scenario, frames) => {
+test.concurrent.each(wire)("wire order equals queue order: %s", async (scenario, nestedValue, frames) => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), wireFixture],
     env: { ...bunEnv, SCENARIO: scenario },
@@ -104,7 +125,7 @@ test.concurrent.each(wire)("wire order equals queue order: %s", async (scenario,
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ report: stdout.trim() && JSON.parse(stdout), stderr, exitCode }).toEqual({
-    report: { outer: ok({ v: "outer" }), nested: ok({ v: "nested" }), frames },
+    report: { outer: ok({ v: "outer" }), nested: ok({ v: nestedValue }), frames },
     stderr: expect.any(String),
     exitCode: 0,
   });

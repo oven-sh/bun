@@ -657,7 +657,10 @@ impl PostgresSQLQuery {
                                     this.release_statement();
                                     // Nothing else dispatches what the conversion queued.
                                     let thrown = global_object.try_take_exception();
-                                    if connection.pending_requests.get() > 0 {
+                                    // A termination cannot be taken. No JS can run then.
+                                    if connection.pending_requests.get() > 0
+                                        && !global_object.has_exception()
+                                    {
                                         connection.advance_and_flush();
                                     }
                                     return Err(match thrown {

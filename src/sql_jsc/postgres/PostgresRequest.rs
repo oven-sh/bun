@@ -462,6 +462,7 @@ impl PostgresSQLConnection {
     ) -> Result<(), AnyPostgresError> {
         debug_assert!(!self.is_encoding.get());
         self.is_encoding.set(true);
+        scopeguard::defer! { self.is_encoding.set(false); }
         let writer = self.writer();
         let result = match request {
             EncodeRequest::BindAndExecute {
@@ -490,7 +491,6 @@ impl PostgresSQLConnection {
                 binding_value,
             } => prepare_and_query_with_signature(global, query, binding_value, writer, signature),
         };
-        self.is_encoding.set(false);
         if self.status.get() != Status::Connected {
             // A conversion closed the connection. The close left the buffer to the encoder.
             self.free_write_buffer();

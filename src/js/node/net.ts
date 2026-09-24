@@ -888,6 +888,7 @@ function SocketEmitEndNT(self, _err?) {
       const er = new ErrnoException(errErrno, "read") as Error & { code?: string };
       if (typeof er.code === "string" && /^E[A-Z0-9]+$/.test(er.code)) {
         self.destroy(er);
+        completeShutdown(self, null);
         return;
       }
     }
@@ -906,6 +907,7 @@ function SocketEmitEndNT(self, _err?) {
       // Any other coded error (ETIMEDOUT, EPIPE, ...) keeps its identity.
       self.destroy(_err);
     }
+    completeShutdown(self, null);
     return;
   }
   if (!self[kended]) {
@@ -1586,6 +1588,7 @@ const SocketHandlers2 = {
         // enum values are filtered out in NewSocket::on_close).
         self.destroy(err);
       }
+      completeShutdown(self, null);
       return;
     }
     if (!leftToTLSSocket && !deferEndForOnreadTail(self)) finishSocketEnd(self);

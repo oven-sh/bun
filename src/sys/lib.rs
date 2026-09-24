@@ -7336,7 +7336,10 @@ pub fn read_nonblocking(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
             let e = last_errno();
             match e {
                 libc::EOPNOTSUPP | libc::ENOSYS | libc::EPERM | libc::EACCES => {
-                    linux::RWFFlagSupport::disable();
+                    // ENOSYS: no preadv2 at all. The others are about this fd's file type (tty, some FIFOs), not the kernel.
+                    if e == libc::ENOSYS {
+                        linux::RWFFlagSupport::disable();
+                    }
                     // Only fall through to BLOCKING read if the fd is
                     // actually readable now; otherwise return retry (EAGAIN).
                     return match bun_core::is_readable(fd) {
@@ -7366,7 +7369,9 @@ pub fn write_nonblocking(fd: Fd, buf: &[u8]) -> Maybe<usize> {
             let e = last_errno();
             match e {
                 libc::EOPNOTSUPP | libc::ENOSYS | libc::EPERM | libc::EACCES => {
-                    linux::RWFFlagSupport::disable();
+                    if e == libc::ENOSYS {
+                        linux::RWFFlagSupport::disable();
+                    }
                     // Poll before issuing a blocking write.
                     return match bun_core::is_writable(fd) {
                         bun_core::Pollable::Ready | bun_core::Pollable::Hup => write(fd, buf),
@@ -7384,6 +7389,62 @@ pub fn write_nonblocking(fd: Fd, buf: &[u8]) -> Maybe<usize> {
         return Ok(rc as usize);
     }
     write(fd, buf)
+}
+
+/// `preadv2(RWF_NOWAIT)` with no fallback: `Ok(None)` means this fd's file type (or the kernel) lacks it and the caller should remember that.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub fn read_nowait(fd: Fd, buf: &mut [u8]) -> Maybe<Option<usize>> {
+    if !linux::RWFFlagSupport::is_maybe_supported() {
+        return Ok(None);
+    }
+    loop {
+        let iov = [libc::iovec {
+            iov_base: buf.as_mut_ptr().cast(),
+            iov_len: buf.len(),
+        }];
+        // SAFETY: fd valid; iov points at a live stack array.
+        let rc = unsafe { sys_preadv2(fd.native(), iov.as_ptr(), 1, -1, RWF_NOWAIT) };
+        if rc >= 0 {
+            return Ok(Some(rc as usize));
+        }
+        match last_errno() {
+            libc::EINTR => continue,
+            libc::ENOSYS => {
+                linux::RWFFlagSupport::disable();
+                return Ok(None);
+            }
+            libc::EOPNOTSUPP | libc::EPERM | libc::EACCES => return Ok(None),
+            e => return Err(Error::from_code_int(e, Tag::read).with_fd(fd)),
+        }
+    }
+}
+
+/// `pwritev2(RWF_NOWAIT)` with no fallback: `Ok(None)` means this fd's file type (or the kernel) lacks it and the caller should remember that.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub fn write_nowait(fd: Fd, buf: &[u8]) -> Maybe<Option<usize>> {
+    if !linux::RWFFlagSupport::is_maybe_supported() {
+        return Ok(None);
+    }
+    loop {
+        let iov = [libc::iovec {
+            iov_base: buf.as_ptr().cast_mut().cast::<_>(),
+            iov_len: buf.len(),
+        }];
+        // SAFETY: fd valid; iov points at a live stack array.
+        let rc = unsafe { sys_pwritev2(fd.native(), iov.as_ptr(), 1, -1, RWF_NOWAIT) };
+        if rc >= 0 {
+            return Ok(Some(rc as usize));
+        }
+        match last_errno() {
+            libc::EINTR => continue,
+            libc::ENOSYS => {
+                linux::RWFFlagSupport::disable();
+                return Ok(None);
+            }
+            libc::EOPNOTSUPP | libc::EPERM | libc::EACCES => return Ok(None),
+            e => return Err(Error::from_code_int(e, Tag::write).with_fd(fd)),
+        }
+    }
 }
 
 /// `fallocate(fd, 0, offset, len)` on Linux, result discarded; no-op elsewhere.

@@ -154,7 +154,8 @@ async function endMidHandshakeOverTcp(maxVersion, rejectUnauthorized) {
       });
       downstream.on("end", () => {
         clientEnded = true;
-        for (const chunk of held.splice(0)) downstream.write(chunk);
+        // One write, so the client reads the flight in one piece.
+        if (held.length > 0) downstream.write(Buffer.concat(held.splice(0)));
       });
       upstream.on("data", chunk => {
         if (ending && !clientEnded) held.push(chunk);
@@ -242,7 +243,8 @@ async function serverEndMidHandshake(rejectUnauthorized) {
       upstream.on("data", chunk => downstream.write(chunk));
       upstream.on("end", () => {
         serverEnded = true;
-        for (const record of held.splice(0)) upstream.write(record);
+        // One write, so the server reads the flight in one piece.
+        upstream.write(Buffer.concat(held.splice(0)));
       });
     },
     { allowHalfOpen: true },

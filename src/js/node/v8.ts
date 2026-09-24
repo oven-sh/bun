@@ -188,7 +188,13 @@ function totalmem() {
 }
 
 function getHeapStatistics() {
-  const [heapSize, heapCapacity, extraMemorySize, globalObjectCount, peakRSS] = getHeapStatisticsArray();
+  // Indexed reads: a destructure would run a user-replaced Array.prototype[Symbol.iterator].
+  const stats = getHeapStatisticsArray();
+  const heapSize = stats[0];
+  const heapCapacity = stats[1];
+  const extraMemorySize = stats[2];
+  const globalObjectCount = stats[3];
+  const peakRSS = stats[4];
 
   // These numbers need to be plausible, even if incorrect
   // From npm's codebase:
@@ -236,7 +242,9 @@ const kHeapSpaces = [
   "trusted_large_object_space",
 ];
 function getHeapSpaceStatistics() {
-  const [heapSize, heapCapacity] = getHeapStatisticsArray();
+  const stats = getHeapStatisticsArray();
+  const heapSize = stats[0];
+  const heapCapacity = stats[1];
   const spaces = [];
   for (let i = 0; i < kHeapSpaces.length; i++) {
     const space_name = kHeapSpaces[i];

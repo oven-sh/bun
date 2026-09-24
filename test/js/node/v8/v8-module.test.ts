@@ -101,6 +101,40 @@ describe("v8.getHeapStatistics", () => {
     const rssLimit = isASAN || isDebug ? 20 : 10;
     expect(rssDeltaMB, `RSS grew by ${rssDeltaMB.toFixed(2)} MB over 1000 iterations`).toBeLessThan(rssLimit);
   });
+
+  test("does not run a replaced Array.prototype[Symbol.iterator]", async () => {
+    const script = /* js */ `
+      const { getHeapStatistics, getHeapSpaceStatistics } = require("node:v8");
+      const original = Array.prototype[Symbol.iterator];
+      let calls = 0;
+      Array.prototype[Symbol.iterator] = function () {
+        calls++;
+        throw new Error("user iterator ran");
+      };
+      let result;
+      try {
+        result = { used: typeof getHeapStatistics().used_heap_size, spaces: getHeapSpaceStatistics().length };
+      } catch (e) {
+        result = { error: String(e) };
+      } finally {
+        Array.prototype[Symbol.iterator] = original;
+      }
+      process.stdout.write(JSON.stringify({ ...result, calls }));
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ used: "number", spaces: 13, calls: 0 });
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("v8.isStringOneByteRepresentation", () => {

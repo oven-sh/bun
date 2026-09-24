@@ -31,7 +31,7 @@ pub struct BuildResult {
 pub enum BundleV2Result {
     Pending,
     Err(crate::Error),
-    Value(BuildResult),
+    Value(Box<BuildResult>),
 }
 
 /// Originally, bake.DevServer required a separate bundling thread, but that was

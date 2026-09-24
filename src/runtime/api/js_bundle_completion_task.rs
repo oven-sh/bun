@@ -1170,7 +1170,10 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.metafile_markdown_path =
             Box::from(config.metafile_markdown_path.list.as_slice());
         if let Some(compile) = config.compile.as_ref() {
-            transpiler.options.caller_input_roots = compile.assets.clone();
+            transpiler
+                .options
+                .caller_input_roots
+                .clone_from(&compile.assets);
         }
         if config.optimize_imports.count() > 0 {
             // SAFETY: `self.config` outlives `bump` and `optimize_imports` is not mutated
@@ -1378,7 +1381,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         // source-map wait-group waits run only on the error path.
         match run {
             Ok(build) => {
-                self.set_result(BundleV2Result::Value(build));
+                self.set_result(BundleV2Result::Value(Box::new(build)));
                 bv2.deinit_without_freeing_arena();
                 Ok(())
             }

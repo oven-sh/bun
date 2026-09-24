@@ -332,6 +332,8 @@ for (const res of result.outputs) {
 
 When `outdir` is set, the `path` property on a `BuildArtifact` is the absolute path it was written to.
 
+A build fails with `Refusing to overwrite input file` when an output path is also one of the build's input files, for example `outdir: "."` with a `.js` entry point. This check covers the files that the build reads from disk. It does not cover a file on disk at the path of an in-memory [`files`](#files) entry.
+
 ### target
 
 The intended execution environment for the bundle.

@@ -31,9 +31,6 @@ use bun_spawn_sys::posix_spawn::posix_spawn;
 /// is `u32` there; `Status::from` casts before matching.
 #[cfg(unix)]
 pub use posix_spawn::WaitPidResult;
-#[cfg(windows)]
-#[derive(Clone, Copy)]
-pub struct WaitPidResult {}
 
 /// Low-level fd / memfd helpers historically grouped here as `spawn_sys`.
 /// MOVE_DOWN: real impls now live in `bun_sys` (lower crate); re-export so

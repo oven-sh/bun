@@ -394,6 +394,8 @@ export function initializeNextTickQueue(process: typeof globalThis.process, next
 
         drainMicrotasks();
       } while (!queue.isEmpty());
+      // Without this, every checkpoint after the first tick calls this function to find an empty queue.
+      $putInternalField(nextTickQueue, 0, 0);
     }
 
     $putInternalField(nextTickQueue, 0, 0);

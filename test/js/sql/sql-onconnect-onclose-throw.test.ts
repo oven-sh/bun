@@ -266,7 +266,7 @@ const sql = new SQL({
 });
 const queryError = sql.unsafe("SELECT 1").catch(err => err);
 await accepted;
-await sql.close({ timeout: "0" });
+await sql.close({ timeout: 0 });
 console.log("closed");
 console.log("query rejected:", (await queryError).code);
 process.exit(0);

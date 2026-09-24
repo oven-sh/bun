@@ -846,10 +846,10 @@ impl PosixBufferedReader {
                     return;
                 }
                 Some(Stop::Error(err)) => {
-                    // A consumer that closed the reader while it took the bytes read before the failure was already told the reader is done.
+                    // A consumer that closed or tore down the reader while it took the bytes read before the failure expects no further report.
                     // SAFETY: caller contract; `on_error` is the tail.
                     unsafe {
-                        if !(*this).flags.contains(PosixFlags::IS_DONE) {
+                        if !(*this).is_done() {
                             Self::on_error(this, err);
                         }
                     }

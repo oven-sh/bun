@@ -6766,6 +6766,8 @@ declare module "bun" {
      * Calls the `shutdown(2)` syscall internally.
      *
      * @param halfClose If `true`, only shuts down the write side (allows receiving). If `false` or omitted, shuts down both read and write. Defaults to `false`.
+     * @returns `true` when the transport has taken the shutdown. A socket with a file descriptor always returns `true`.
+     * A `node:tls` socket over a stream returns `false` while the stream still holds the close_notify, and the `drain` handler follows once it completes.
      * @example
      * ```ts
      * // Stop sending data, but allow receiving
@@ -6775,7 +6777,7 @@ declare module "bun" {
      * socket.shutdown();
      * ```
      */
-    shutdown(halfClose?: boolean): void;
+    shutdown(halfClose?: boolean): boolean;
 
     /**
      * The ready state of the socket.

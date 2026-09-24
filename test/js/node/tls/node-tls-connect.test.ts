@@ -1382,6 +1382,57 @@ describe("a write callback on a TLS socket over a Duplex waits for the transport
       await run(makePair("client"), "client", method);
     });
   });
+
+  it("a transport write error fails the write with EPIPE and leaves the transport's own 'error'", async () => {
+    // Node's JSStreamSocket maps the stream's write error to UV_EPIPE on the
+    // TLS write request, after the stream has handled it itself.
+    const pair = makePair("server");
+    const server = new TLSSocket(pair.serverSide, serverContext());
+    const client = tls.connect({ socket: pair.clientSide, rejectUnauthorized: false });
+    client.on("error", () => {});
+    const log: string[] = [];
+    const done = Promise.withResolvers<void>();
+    pair.serverSide.on("error", err => log.push(`transport error ${err.message}`));
+    server.on("error", (err: NodeJS.ErrnoException) => log.push(`socket error ${err.code}`));
+    server.on("close", () => done.resolve());
+    await once(client, "secureConnect");
+
+    // The transport's next write fails. `stall()` parks it, so the failure
+    // can be injected through the held callback.
+    pair.stall();
+    server.write("x", (err: NodeJS.ErrnoException) => log.push(`write cb ${err?.code}`));
+    await new Promise<void>(resolve => setImmediate(resolve));
+    const [, callback] = pair.held.splice(0)[0];
+    callback(new Error("transport boom"));
+
+    await done.promise;
+    expect(log.sort()).toEqual(["socket error EPIPE", "transport error transport boom", "write cb EPIPE"]);
+  });
+
+  it("end(cb) completes with no error when the transport closes before it takes the close_notify", async () => {
+    // Node cancels the pending shutdown on close and afterShutdown ignores
+    // that status, so 'finish' still follows.
+    const pair = makePair("server");
+    const server = new TLSSocket(pair.serverSide, serverContext());
+    const client = tls.connect({ socket: pair.clientSide, rejectUnauthorized: false });
+    client.on("error", () => {});
+    client.on("data", () => {});
+    const log: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    server.on("error", (err: NodeJS.ErrnoException) => log.push(`error ${err.code}`));
+    server.on("finish", () => log.push("finish"));
+    server.on("close", () => closed.resolve());
+    await once(client, "secureConnect");
+
+    pair.stall();
+    server.end(err => log.push(`end cb ${err ? (err as NodeJS.ErrnoException).code : null}`));
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(pair.held.length).toBe(1);
+    pair.serverSide.destroy();
+
+    await closed.promise;
+    expect(log).toEqual(["end cb null", "finish"]);
+  });
 });
 
 it("delivers 'session' even when the data handler destroys the socket immediately", async () => {

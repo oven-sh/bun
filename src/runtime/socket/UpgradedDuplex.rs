@@ -814,12 +814,16 @@ fn on_writable(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>
 /// The Duplex completed one `write(chunk, cb)` or its `end(null, cb)`. The
 /// last completion is the drain a parked write or end callback waits for.
 ///
-/// An error fails the socket the way node's JSStreamSocket fails the TLS
-/// write request. Once close_notify went out, the chunks still in flight
-/// belong to the shutdown, whose completion node ignores the status of
+/// An error fails the socket with `write EPIPE`, as node's JSStreamSocket
+/// `done()` fails the TLS write request. The Writable runs this callback
+/// before its own `errorOrDestroy`, so the dispatch goes through a
+/// nextTick (this same function, called with the socket wrapper as its
+/// argument): a synchronous dispatch destroys the stream from under it and
+/// swallows the stream's own 'error'. Once close_notify went out, the chunks
+/// still in flight belong to the shutdown, whose status node ignores
 /// (`afterShutdown`), so their error only counts as a completion.
 #[bun_jsc::host_fn]
-fn on_write_done(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+fn on_write_done(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     bun_output::scoped_log!(UpgradedDuplex, "onWriteDone");
 
     let function = frame.callee();
@@ -828,13 +832,24 @@ fn on_write_done(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
     if let Some(self_ptr) = host_fn::get_function_data(function) {
         // SAFETY: see host-fn note above.
         let this = unsafe { &*self_ptr.cast::<UpgradedDuplex>() };
+        if err == this.js_wrapper {
+            if !this.origin.get().is_empty() {
+                let epipe = bun_sys::Error::from_code_int(
+                    bun_sys::SystemErrno::EPIPE as core::ffi::c_int,
+                    bun_sys::Tag::write,
+                );
+                let err_value = <bun_sys::Error as bun_jsc::SysErrorJsc>::to_js(&epipe, global);
+                (this.handlers.on_error)(this.handlers.ctx, err_value);
+            }
+            return Ok(JSValue::UNDEFINED);
+        }
         let remaining = this.in_flight.get().saturating_sub(1);
         this.in_flight.set(remaining);
         if this.origin.get().is_empty() {
             return Ok(JSValue::UNDEFINED);
         }
         if !err.is_empty_or_undefined_or_null() && !this.is_shutdown() {
-            (this.handlers.on_error)(this.handlers.ctx, err);
+            JSValue::call_next_tick_1(function, global, this.js_wrapper)?;
         } else if remaining == 0 {
             (this.handlers.on_writable)(this.handlers.ctx);
         }

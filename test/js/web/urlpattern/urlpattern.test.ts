@@ -161,6 +161,60 @@ describe("URLPattern", () => {
     });
   });
 
+  // URLPattern canonicalizes a hostname with the host parser of the URL Standard, the one `new URL()` runs: remove tab
+  // and newline, percent-decode, then domain to ASCII once. A forbidden host code point in that result is an error.
+  // Every expected value is what Node v26.10.0 gives.
+  describe("hostname canonicalization", () => {
+    // [hostname, canonical hostname]. null: the pattern constructor throws and exec() of that input gives null.
+    const cases: [string, string | null][] = [
+      ["other.example", "other.example"],
+      ["B\u00FCcher.example", "xn--bcher-kva.example"],
+      ["%C3%9F.de", "xn--zca.de"],
+      ["\u00DF%41.de", "xn--a-pfa.de"],
+      ["%C3%BC\u00FC.de", "xn--tdaa.de"],
+      ["\u00DF%2e.de", "xn--zca..de"],
+      ["\u00E9.%78n--a", null],
+      ["\u00E9%2Fx", null],
+      ["\t\u00DF.de", "xn--zca.de"],
+      ["\u00DF\n.d\re", "xn--zca.de"],
+      ["a\uFF0Fb", null],
+      ["bad.c\u2100.good.com", null],
+      ["a\uFF3Cb", null],
+      ["a\uFF1Fb", null],
+      ["a\uFF03b", null],
+      ["a\uFF20b", null],
+      ["a\uFF1A81", null],
+      ["a\uFF0541", null],
+      ["[::\uFF11]", null],
+    ];
+
+    test.each(cases)("%j", (hostname, canonical) => {
+      const input = new URLPattern({ hostname: "*" }).exec({ hostname })?.hostname.input ?? null;
+      expect(input).toBe(canonical);
+      if (canonical === null) {
+        expect(() => new URLPattern({ hostname })).toThrow(TypeError);
+        return;
+      }
+      const pattern = new URLPattern({ hostname });
+      expect(pattern.hostname).toBe(canonical);
+      expect(pattern.test({ hostname })).toBe(true);
+      expect(pattern.test(`https://${hostname}/`)).toBe(true);
+      expect(pattern.test(`https://${canonical}/`)).toBe(true);
+    });
+
+    test("a hostname that maps to text with '@' does not match as the part after it", () => {
+      const pattern = new URLPattern({ hostname: "*.trusted.example" });
+      expect(pattern.test({ hostname: "a.trusted.example" })).toBe(true);
+      expect(pattern.test({ hostname: "evil.example\uFF20a.trusted.example" })).toBe(false);
+    });
+
+    test("fixed text next to a group", () => {
+      const pattern = new URLPattern({ hostname: ":sub.\u00DF%41.de" });
+      expect(pattern.hostname).toBe(":sub.xn--a-pfa.de");
+      expect(pattern.exec("https://www.\u00DF%41.de/")?.hostname.groups).toEqual({ sub: "www" });
+    });
+  });
+
   describe("hasRegExpGroups", () => {
     test("match-everything pattern", () => {
       expect(new URLPattern({}).hasRegExpGroups).toBe(false);

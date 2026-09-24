@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunRun } from "harness";
+import { pathToFileURL } from "node:url";
 import path from "path";
 
 test.concurrent(
@@ -33,4 +34,13 @@ test("pathToFileURL escapes special characters", () => {
   for (const [input, expected] of cases) {
     expect(Bun.pathToFileURL(`${input}`).toString()).toInclude(expected);
   }
+});
+
+// A UNC host goes through the hostname setter of URL. It parses the host like the host of a URL string: remove tab and
+// newline, percent-decode, then domain to ASCII. Expected values are what Node v26.10.0 gives.
+test("pathToFileURL parses a UNC host like the host of a URL string", () => {
+  const href = (filepath: string) => pathToFileURL(filepath, { windows: true }).href;
+  expect(href("\\\\\t\u00DF.de\\share\\f.txt")).toBe("file://xn--zca.de/share/f.txt");
+  expect(href("\\\\\u00DF%41.de\\share\\f.txt")).toBe("file://xn--a-pfa.de/share/f.txt");
+  expect(href("\\\\b\u00FCcher.example\\share\\f.txt")).toBe("file://xn--bcher-kva.example/share/f.txt");
 });

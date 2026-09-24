@@ -158,6 +158,11 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         /* node:http: the peer sent its FIN first (HTTP_NODE_RECEIVED_FIN only covers a
          * deferred close). onSocketClosed reports it so the JS socket emits 'end'. */
         HTTP_NODE_PEER_ENDED = 1 << 19,
+        /* The caller owns the response's Connection header (a Response header,
+         * a static or file route header, node:http's writeHead, the 101 of
+         * upgrade()): uWS writes no Connection line at all for this response,
+         * whatever the close state says. */
+        HTTP_WROTE_CONNECTION_HEADER = 1 << 20,
 
         /* Bits that describe the connection rather than the response in flight.
          * There is one HttpResponseData per socket, reused by every request on a
@@ -233,6 +238,14 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
      * order) and socket reads stay paused (bounding memory under a pipeline
      * flood). */
     uint32_t nodeHttpQueuedPipelinedCount = 0;
+
+    /* Whether the connection closes once the response in flight is out: a
+     * Connection: close or HTTP/1.0 request, a closing response, or a
+     * graceful-stop mark. Asked while the response is still being written
+     * (isIdle is false then), so a close-when-idle mark counts. */
+    bool closesAfterResponse() const {
+        return state & (HTTP_CONNECTION_CLOSE | HTTP_CLOSE_WHEN_IDLE);
+    }
 
     /* Whether the connection should be torn down once the in-flight response (if
      * any) has completed and all buffered outgoing data has been flushed. */

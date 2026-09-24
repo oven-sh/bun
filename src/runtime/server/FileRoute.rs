@@ -39,6 +39,7 @@ pub(crate) struct FileRoute {
     has_content_length_header: bool,
     has_content_range_header: bool,
     has_date_header: bool,
+    has_connection_header: bool,
 }
 
 pub(crate) struct InitOptions<'a> {
@@ -117,6 +118,7 @@ impl FileRoute {
             has_content_length_header: headers.get(b"content-length").is_some(),
             has_content_range_header: headers.get(b"content-range").is_some(),
             has_date_header: headers.get(b"date").is_some(),
+            has_connection_header: headers.get(b"connection").is_some(),
             blob,
             headers,
             status_code,
@@ -397,6 +399,9 @@ impl FileRoute {
         write_any_status(resp, status_code);
         if self.has_date_header {
             resp.mark_wrote_date_header();
+        }
+        if self.has_connection_header {
+            resp.mark_wrote_connection_header();
         }
         resp.write_mark();
         self.write_headers(resp);

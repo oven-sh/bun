@@ -1,6 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { once } from "node:events";
+import { createServer, request } from "node:http";
+import type { AddressInfo } from "node:net";
 import * as net from "node:net";
+import { join } from "node:path";
 
 // https://github.com/oven-sh/bun/issues/9180
 test("weird headers", async () => {
@@ -142,26 +146,34 @@ describe("response header values are isomorphic-encoded on the wire", () => {
   });
 });
 
+// Sends one raw request and collects the response head lines (status line
+// first) until the server closes the connection. A server that does not close
+// hangs the test, which is the failure these tests look for.
+async function rawHeadLines(port: number, request: string, onConnected?: () => Promise<void>) {
+  const socket = net.connect(port, "127.0.0.1");
+  try {
+    socket.on("error", () => {});
+    await once(socket, "connect");
+    socket.write(request);
+    await onConnected?.();
+    let raw = "";
+    await new Promise<void>(resolve => {
+      socket.on("data", chunk => (raw += chunk.toString("latin1")));
+      socket.on("close", resolve);
+    });
+    return raw.split("\r\n\r\n")[0].split("\r\n");
+  } finally {
+    socket.destroy();
+  }
+}
+
+function connectionLines(head: string[]) {
+  return head.slice(1).filter(l => /^connection:/i.test(l));
+}
+
 // RFC 9110 §6.6.1: an origin server with a clock MUST send Date. A response
 // with no body (HEAD, 204) ends its headers on a separate path that skipped it.
 describe("Date header on responses without a body", () => {
-  async function rawHead(port: number, request: string) {
-    const socket = net.connect(port, "127.0.0.1");
-    try {
-      socket.on("error", () => {});
-      await once(socket, "connect");
-      socket.write(request);
-      let raw = "";
-      await new Promise<void>(resolve => {
-        socket.on("data", chunk => (raw += chunk.toString("latin1")));
-        socket.on("close", resolve);
-      });
-      return raw.split("\r\n\r\n")[0].split("\r\n");
-    } finally {
-      socket.destroy();
-    }
-  }
-
   test("HEAD from the fetch handler, a 204, and a static route HEAD", async () => {
     using server = Bun.serve({
       port: 0,
@@ -173,7 +185,7 @@ describe("Date header on responses without a body", () => {
       },
     });
     for (const request of ["HEAD /", "GET /", "HEAD /static"]) {
-      const head = await rawHead(server.port, `${request} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
+      const head = await rawHeadLines(server.port, `${request} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
       expect({ request, date: head.filter(l => /^date:/i.test(l)) }).toEqual({
         request,
         date: [expect.stringMatching(/^date: \w{3}, \d\d \w{3} \d{4} \d\d:\d\d:\d\d GMT$/i)],
@@ -303,5 +315,221 @@ describe("response Connection: close closes the socket", () => {
     } finally {
       socket.destroy();
     }
+  });
+});
+
+// RFC 9112 §9.6: a server that closes the connection after a response SHOULD
+// send "Connection: close" in that response, also when the request asked for
+// the close. Without it, a pooling client (node:http's default agent, undici)
+// reuses the socket the server closed and loses the next request (#43853).
+describe("Connection: close is sent on every response that closes the connection", () => {
+  const dir = tempDir("serve-connection-close", {
+    "small.txt": "bye",
+    // Above the 1 MiB sendfile threshold on Linux.
+    "big.bin": Buffer.alloc(1536 * 1024, 0x61),
+  });
+  afterAll(() => dir[Symbol.dispose]());
+  const smallFile = join(String(dir), "small.txt");
+  const bigFile = join(String(dir), "big.bin");
+
+  async function rawExchange(port: number, request: string) {
+    const head = await rawHeadLines(port, request);
+    return { status: head[0], connection: connectionLines(head) };
+  }
+
+  const bodies: Record<string, () => Response> = {
+    "in-memory body": () => new Response("bye"),
+    "HEAD / no body": () => new Response("bye"),
+    "204": () => new Response(null, { status: 204 }),
+    "streamed body": () =>
+      new Response(
+        new ReadableStream({
+          async pull(c) {
+            await 1;
+            c.enqueue(new TextEncoder().encode("bye"));
+            c.close();
+          },
+        }),
+      ),
+    "small Bun.file body": () => new Response(Bun.file(smallFile)),
+    "large Bun.file body (sendfile)": () => new Response(Bun.file(bigFile)),
+    "user Connection: close header": () => new Response("bye", { headers: { connection: "close" } }),
+  };
+
+  const requests: Record<string, (method: string) => string> = {
+    "request Connection: close": m => `${m} / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`,
+    "HTTP/1.0 request": m => `${m} / HTTP/1.0\r\nHost: x\r\n\r\n`,
+  };
+
+  for (const [bodyName, makeResponse] of Object.entries(bodies)) {
+    for (const [requestName, makeRequest] of Object.entries(requests)) {
+      test(`${bodyName}, ${requestName}`, async () => {
+        using server = Bun.serve({
+          port: 0,
+          development: false,
+          idleTimeout: 0,
+          async fetch() {
+            await 1;
+            return makeResponse();
+          },
+        });
+        const method = bodyName.startsWith("HEAD") ? "HEAD" : "GET";
+        const result = await rawExchange(server.port, makeRequest(method));
+        expect(result).toEqual({
+          status: expect.stringMatching(/^HTTP\/1\.1 (200|204)/),
+          connection: [expect.stringMatching(/^connection: close$/i)],
+        });
+      });
+    }
+  }
+
+  test("static and file routes", async () => {
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      idleTimeout: 0,
+      routes: {
+        "/static": new Response("bye"),
+        "/static-close": new Response("bye", { headers: { connection: "close" } }),
+        "/file": new Response(Bun.file(smallFile)),
+        "/file-big": new Response(Bun.file(bigFile)),
+      },
+      fetch() {
+        return new Response("nf", { status: 404 });
+      },
+    });
+    for (const path of ["/static", "/static-close", "/file", "/file-big", "/404"]) {
+      for (const method of ["GET", "HEAD"]) {
+        const result = await rawExchange(
+          server.port,
+          `${method} ${path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`,
+        );
+        expect({ path, method, ...result }).toEqual({
+          path,
+          method,
+          status: expect.stringMatching(/^HTTP\/1\.1 (200|404)/),
+          connection: [expect.stringMatching(/^connection: close$/i)],
+        });
+      }
+    }
+  });
+
+  test("graceful server.stop() while a request is in flight", async () => {
+    // stop(false) marks a busy connection to close once its response is out,
+    // so that response must say so.
+    const { promise: started, resolve: markStarted } = Promise.withResolvers<void>();
+    const { promise: gate, resolve: release } = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      idleTimeout: 0,
+      async fetch() {
+        markStarted();
+        await gate;
+        return new Response("bye");
+      },
+    });
+    let stopped: Promise<void> | undefined;
+    const head = await rawHeadLines(server.port, "GET / HTTP/1.1\r\nHost: x\r\n\r\n", async () => {
+      await started;
+      stopped = server.stop(false);
+      release();
+    });
+    await stopped;
+    expect(connectionLines(head)).toEqual([expect.stringMatching(/^connection: close$/i)]);
+  });
+
+  test("node:http server: a handler that throws before writeHead()", async () => {
+    // Bun ends the response for it and closes the connection. Runs in a child
+    // because the throw reaches uncaughtException.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { createServer } = require("node:http");
+        const { connect } = require("node:net");
+        process.on("uncaughtException", err => {
+          if (err.message !== "boom") throw err;
+        });
+        const server = createServer(() => {
+          throw new Error("boom");
+        });
+        server.listen(0, "127.0.0.1", () => {
+          const socket = connect(server.address().port, "127.0.0.1", () => {
+            socket.write("GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+          });
+          let raw = "";
+          socket.on("data", chunk => (raw += chunk.toString("latin1")));
+          socket.on("error", () => {});
+          socket.on("close", () => {
+            console.log(JSON.stringify(raw.split("\\r\\n\\r\\n")[0].split("\\r\\n")));
+            server.close();
+          });
+        });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const head: string[] = JSON.parse(stdout);
+    expect({ status: head[0], connection: connectionLines(head) }).toEqual({
+      status: expect.stringMatching(/^HTTP\/1\.1 /),
+      connection: [expect.stringMatching(/^connection: close$/i)],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("node:http server: res.destroy() before writeHead() sends no response", async () => {
+    // Node destroys the socket without a status line. A fabricated 200 would
+    // tell the client its request succeeded.
+    await using server = createServer((_req, res) => {
+      res.destroy();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const head = await rawHeadLines(port, "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    expect(head).toEqual([""]);
+  });
+
+  test("node:http default agent: four requests with Connection: close all succeed", async () => {
+    // The issue's repro. Without the response header, the agent pools the
+    // socket after the first request and the second one is written to a socket
+    // the server closed (ECONNRESET).
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      development: false,
+      async fetch(req) {
+        await req.text();
+        return new Response("ok");
+      },
+    });
+    const results: (number | string)[] = [];
+    for (let i = 0; i < 4; i++) {
+      results.push(
+        await new Promise<number | string>(resolve => {
+          const req = request(
+            {
+              host: "127.0.0.1",
+              port: server.port,
+              path: "/",
+              method: "POST",
+              headers: { connection: "close" },
+            },
+            res => {
+              res.resume();
+              res.on("end", () => resolve(res.statusCode!));
+            },
+          );
+          req.on("error", e => resolve("error " + (e as NodeJS.ErrnoException).code));
+          req.end("x");
+        }),
+      );
+    }
+    expect(results).toEqual([200, 200, 200, 200]);
   });
 });

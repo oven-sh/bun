@@ -35,6 +35,7 @@ pub(crate) struct StaticRoute {
     pub(crate) blob: AnyBlob,
     pub(crate) cached_blob_size: u64,
     pub(crate) has_date: bool,
+    pub(crate) has_connection: bool,
     pub(crate) headers: Headers,
 }
 
@@ -70,6 +71,7 @@ impl StaticRoute {
             pending_responses: Cell::new(0),
             cached_blob_size: blob.size(),
             has_date: headers.get(b"date").is_some(),
+            has_connection: headers.get(b"connection").is_some(),
             blob,
             headers,
             server: Cell::new(server),
@@ -131,6 +133,7 @@ impl StaticRoute {
             blob: AnyBlob::Blob(duped),
             cached_blob_size: self.cached_blob_size,
             has_date: self.has_date,
+            has_connection: self.has_connection,
             headers: self.headers.clone(),
             server: Cell::new(self.server.get()),
             status_code: self.status_code,
@@ -386,9 +389,8 @@ impl StaticRoute {
         // Content-Length (uWS suppresses it for 1xx/204) desyncs keep-alive.
         if HTTPStatusText::is_null_body(self.status_code) {
             // 304: try_end would write Content-Length: 0 (RFC 9110 §8.6 forbids
-            // any but the 200's length); write_mark keeps Date.
+            // any but the 200's length).
             if self.status_code == 304 {
-                resp.write_mark();
                 resp.end_without_body(resp.should_close_connection());
                 *did_finish = true;
             } else {
@@ -439,6 +441,9 @@ impl StaticRoute {
         // carries one, suppress uWS's auto-Date so only the user's value is sent.
         if self.has_date {
             resp.mark_wrote_date_header();
+        }
+        if self.has_connection {
+            resp.mark_wrote_connection_header();
         }
         let entries = self.headers.entries.slice();
         let names: &[StringPointer] = entries.items_name();

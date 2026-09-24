@@ -1039,6 +1039,16 @@ extern "C"
     }
   }
 
+  void uws_res_mark_wrote_connection_header(int ssl, uws_res_r res) {
+    if (ssl) {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      uwsRes->getHttpResponseData()->state |= uWS::HttpResponseData<true>::HTTP_WROTE_CONNECTION_HEADER;
+    } else {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      uwsRes->getHttpResponseData()->state |= uWS::HttpResponseData<false>::HTTP_WROTE_CONNECTION_HEADER;
+    }
+  }
+
   void uws_res_write_mark(int ssl, uws_res_r res) {
     if (ssl) {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
@@ -1157,19 +1167,16 @@ extern "C"
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
       auto *data = uwsRes->getHttpResponseData();
-      /* Once write()/flushHeaders() (HTTP_WRITE_CALLED) or an earlier end
-       * (HTTP_END_CALLED) terminated the header section, header bytes written
-       * here would land inside the body (node:http res.destroy() mid-response
-       * ends up here). Setting HTTP_CONNECTION_CLOSE is what makes the close
-       * gates tear the connection down; the header itself is only advisory,
-       * same as in internalEnd(). */
-      bool headers_open = !(data->state & (uWS::HttpResponseData<true>::HTTP_WRITE_CALLED | uWS::HttpResponseData<true>::HTTP_END_CALLED));
+      /* After write()/flushHeaders() or an earlier end, the header section is
+       * closed and header bytes would land in the body (node:http res.destroy()
+       * mid-response ends up here). With no status written there is no
+       * response to finish: the peer sees the close, as with Node's
+       * res.destroy() before writeHead(). The close gates read
+       * HTTP_CONNECTION_CLOSE; terminateHeaders() writes the header. */
+      constexpr uint32_t closed = uWS::HttpResponseData<true>::HTTP_WRITE_CALLED | uWS::HttpResponseData<true>::HTTP_END_CALLED;
+      bool headers_open = (data->state & (closed | uWS::HttpResponseData<true>::HTTP_STATUS_CALLED)) == uWS::HttpResponseData<true>::HTTP_STATUS_CALLED;
       if (close_connection)
       {
-        if (headers_open && !(data->state & uWS::HttpResponseData<true>::HTTP_CONNECTION_CLOSE))
-        {
-          uwsRes->writeHeader("Connection", "close");
-        }
         data->state |= uWS::HttpResponseData<true>::HTTP_CONNECTION_CLOSE;
       }
       if (headers_open)
@@ -1191,13 +1198,10 @@ extern "C"
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
       auto *data = uwsRes->getHttpResponseData();
       /* See the SSL arm above. */
-      bool headers_open = !(data->state & (uWS::HttpResponseData<false>::HTTP_WRITE_CALLED | uWS::HttpResponseData<false>::HTTP_END_CALLED));
+      constexpr uint32_t closed = uWS::HttpResponseData<false>::HTTP_WRITE_CALLED | uWS::HttpResponseData<false>::HTTP_END_CALLED;
+      bool headers_open = (data->state & (closed | uWS::HttpResponseData<false>::HTTP_STATUS_CALLED)) == uWS::HttpResponseData<false>::HTTP_STATUS_CALLED;
       if (close_connection)
       {
-        if (headers_open && !(data->state & uWS::HttpResponseData<false>::HTTP_CONNECTION_CLOSE))
-        {
-          uwsRes->writeHeader("Connection", "close");
-        }
         data->state |= uWS::HttpResponseData<false>::HTTP_CONNECTION_CLOSE;
       }
       if (headers_open)

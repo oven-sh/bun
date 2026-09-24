@@ -55,6 +55,8 @@ pub use api::JSBundler::FileMap;
 pub struct PendingImport {
     pub(crate) to_source_index: Index,
     pub(crate) import_record_index: u32,
+    /// See `ImportRecordFlags::RESOLVED_WITHOUT_URL_SUFFIX`.
+    pub(crate) resolved_without_url_suffix: bool,
 }
 
 pub struct BundleV2<'a> {
@@ -5234,6 +5236,7 @@ pub mod bv2_impl {
                                 let _ = entry.value_ptr.push(PendingImport {
                                     to_source_index: source_index,
                                     import_record_index: resolve.import_record.import_record_index,
+                                    resolved_without_url_suffix,
                                 });
                             } else {
                                 let import_record: &mut ImportRecord = &mut source_import_records
@@ -7202,8 +7205,13 @@ pub mod bv2_impl {
                     if save_import_record_source_index
                         || input_file_loaders[to_assign.to_source_index.get() as usize].is_css()
                     {
-                        import_records.as_mut_slice()[to_assign.import_record_index as usize]
-                            .source_index = to_assign.to_source_index;
+                        let record = &mut import_records.as_mut_slice()
+                            [to_assign.import_record_index as usize];
+                        record.source_index = to_assign.to_source_index;
+                        record.flags.set(
+                            bun_ast::ImportRecordFlags::RESOLVED_WITHOUT_URL_SUFFIX,
+                            to_assign.resolved_without_url_suffix,
+                        );
                     }
                 }
                 drop(value);

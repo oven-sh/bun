@@ -32,7 +32,7 @@ const OID = {
   timestamptz: 1184,
   jsonb: 3802,
 };
-// Above i16::MAX, so the client treats it as a type it does not know.
+// Above u16::MAX, so the client treats it as a type it does not know.
 const CUSTOM_OID = 70000;
 
 // The mock has no SQL parser. A query tells it what to describe in a comment:

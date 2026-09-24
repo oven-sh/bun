@@ -49,6 +49,28 @@ pub enum MessageType {
 /// The PostgreSQL wire protocol uses 16-bit integers for parameter and column counts.
 const MAX_PARAMETERS: usize = u16::MAX as usize;
 
+/// The `ERR_INVALID_ARG_TYPE` a binary encoder arm of `write_bind` throws for a
+/// value it cannot encode as `pg_type`. `index` is the 0-based parameter index.
+fn invalid_bind_value(
+    global: &JSGlobalObject,
+    index: usize,
+    pg_type: &str,
+    expected: &str,
+    value: JSValue,
+) -> AnyPostgresError {
+    let received = match JSGlobalObject::determine_specific_type(global, value) {
+        Ok(received) => received,
+        Err(err) => return js_error_to_postgres(err),
+    };
+    js_error_to_postgres(global.throw_value(global.ERR_INVALID_ARG_TYPE(format_args!(
+        "Query parameter ${} of type {} must be {}. Received {}",
+        index + 1,
+        pg_type,
+        expected,
+        received,
+    ))))
+}
+
 pub(crate) fn write_bind<Context: WriterContext>(
     name: &[u8],
     cursor_name: &BunString,
@@ -176,8 +198,17 @@ pub(crate) fn write_bind<Context: WriterContext>(
                 l.write_excluding_self()?;
             }
             types::Tag::bool => {
+                if !value.is_boolean() {
+                    return Err(invalid_bind_value(
+                        global,
+                        i,
+                        "boolean",
+                        "a boolean or a string",
+                        value,
+                    ));
+                }
                 let l = writer.length()?;
-                writer.write(&[value.to_boolean() as u8])?;
+                writer.write(&[value.as_boolean() as u8])?;
                 l.write_excluding_self()?;
             }
             types::Tag::timestamp | types::Tag::timestamptz => {
@@ -190,15 +221,13 @@ pub(crate) fn write_bind<Context: WriterContext>(
             }
             types::Tag::bytea => {
                 let Some(buf) = value.as_array_buffer(global) else {
-                    let received = JSGlobalObject::determine_specific_type(global, value)
-                        .map_err(js_error_to_postgres)?;
-                    return Err(js_error_to_postgres(global.throw_value(
-                        global.ERR_INVALID_ARG_TYPE(format_args!(
-                            "Query parameter ${} of type bytea must be a Buffer, TypedArray, ArrayBuffer or string. Received {}",
-                            i + 1,
-                            received,
-                        )),
-                    )));
+                    return Err(invalid_bind_value(
+                        global,
+                        i,
+                        "bytea",
+                        "a Buffer, TypedArray, ArrayBuffer or string",
+                        value,
+                    ));
                 };
                 let bytes = buf.byte_slice();
                 let l = writer.length()?;

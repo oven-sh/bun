@@ -43,9 +43,12 @@ describe("v8.getHeapStatistics", () => {
   // A full GC does not always return the count to its starting value, so the
   // reference after each collection is the heap walk that the counter replaces.
   test("number_of_native_contexts matches the heap walk after contexts are collected", () => {
+    const before = heapStats().globalObjectCount;
+    let created = 0;
     for (let round = 0; round < 3; round++) {
       (() => {
         const contexts = Array.from({ length: 5 }, () => vm.createContext({}));
+        created += contexts.length;
         Bun.gc(true);
         expect(getHeapStatistics().number_of_native_contexts).toBe(heapStats().globalObjectCount);
         expect(contexts).toHaveLength(5);
@@ -53,6 +56,8 @@ describe("v8.getHeapStatistics", () => {
       Bun.gc(true);
       expect(getHeapStatistics().number_of_native_contexts).toBe(heapStats().globalObjectCount);
     }
+    // Some global was destroyed, so the equalities above covered the decrement.
+    expect(heapStats().globalObjectCount).toBeLessThan(before + created);
   });
 
   // https://github.com/oven-sh/bun/issues/19254

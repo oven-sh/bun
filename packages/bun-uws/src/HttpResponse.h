@@ -93,14 +93,47 @@ public:
     }
 
     /* Writes the headers uWS owns, once the caller's are out and before the
-     * header section ends. Every HTTP/1 response path goes through here, so
-     * they are decided in one place: Date (unless the caller wrote one) and,
-     * with chunked, the Transfer-Encoding: chunked that frames the body
-     * (unless the caller wrote one). */
+     * header section ends. Every HTTP/1 response path goes through here (the
+     * C API's end_without_body and prepare_for_sendfile included), so they
+     * are decided in one place: Date (unless the caller wrote one), with
+     * chunked the Transfer-Encoding: chunked that frames the body (unless
+     * the caller wrote one), and Connection: close when the connection
+     * closes after this response (unless the caller wrote a Connection
+     * header).
+     *
+     * RFC 9112 9.6: the server SHOULD send "close" in its final response on
+     * the connection, also when the request asked for the close. A client
+     * that does not see it (Node's http.Agent, undici) returns the socket to
+     * its pool and loses the next request on it. So the decision is made
+     * from closesAfterResponse() here, whoever marked the close: the
+     * request's Connection: close or HTTP/1.0 (HttpContext), the response's
+     * own header, a caller's closeConnection, or a graceful stop. The mark
+     * has to be there before the header section ends; a close decided later
+     * (a streamed body ended with close) still closes the socket, without
+     * the header. */
     void writeOwnedHeaders(bool chunked) {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
         writeMark();
-        if (chunked && !(getHttpResponseData()->state & HttpResponseData<SSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER)) {
+        if (chunked && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER)) {
             writeHeader("Transfer-Encoding", "chunked");
+        }
+        if (httpResponseData->closesAfterResponse() && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONNECTION_HEADER)) [[unlikely]] {
+            writeHeader("Connection", "close");
+            /* The header is a promise: nothing may follow this response, so a
+             * graceful-stop mark becomes a hard close (the dispatch gate in
+             * HttpContext drops a request pipelined behind it). */
+            httpResponseData->state |= HttpResponseData<SSL>::HTTP_WROTE_CONNECTION_HEADER | HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
+        }
+    }
+
+    /* A closeConnection end: the mark has to be on the state word before the
+     * header section ends, so the end paths that terminate the headers
+     * themselves (an explicit Transfer-Encoding end, the terminating chunk)
+     * call this first. internalEnd() repeats it for tryEnd(). */
+    void markCloseConnection(bool closeConnection) {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        if (closeConnection && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_END_CALLED)) {
+            httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
         }
     }
 
@@ -200,23 +233,10 @@ public:
             totalSize = 0;
         }
 
-        /* In some cases, such as when refusing huge data we want to close the connection when drained */
-        if (closeConnection) {
-            /* We can only write the header once */
-            if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_END_CALLED))) {
-
-                /* HTTP 1.1 must send this back unless the client already sent it to us.
-                * It is a connection close when either of the two parties say so but the
-                * one party must tell the other one so.
-                *
-                * This check also serves to limit writing the header only once. */
-                if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) == 0 && !(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED))) {
-                    writeHeader("Connection", "close");
-                }
-
-                httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
-            }
-        }
+        /* In some cases, such as when refusing huge data we want to close the
+         * connection when drained. writeOwnedHeaders() below writes the header
+         * when the header section is still open. */
+        markCloseConnection(closeConnection);
 
         /* if write was called and there was previously no Content-Length header set.
          * node:http compat: pending response trailers (addTrailers) also force chunked
@@ -354,6 +374,7 @@ public:
             ->writeHeader("Upgrade", "websocket")
             ->writeHeader("Connection", "Upgrade")
             ->writeHeader("Sec-WebSocket-Accept", secWebSocketAccept);
+        getHttpResponseData()->state |= HttpResponseData<SSL>::HTTP_WROTE_CONNECTION_HEADER;
 
         /* Select first subprotocol if present */
         if (secWebSocketProtocol.length()) {
@@ -588,6 +609,7 @@ public:
     /* End the response with an optional data chunk. Always starts a timeout. */
     void end(std::string_view data = {}, bool closeConnection = false) {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        markCloseConnection(closeConnection);
 
         /* 204/304 responses carry no body framing at all: no Content-Length,
          * no chunked framing and no terminating chunk, even when an explicit
@@ -643,6 +665,7 @@ public:
     bool sendTerminatingChunk(bool closeConnection = false) {
         writeStatus(HTTP_200_OK);
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        markCloseConnection(closeConnection);
         if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED | HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER))) {
             terminateHeaders(true);
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;

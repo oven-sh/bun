@@ -248,7 +248,7 @@ pub(crate) enum UrlAction<'a> {
 pub(crate) trait HTMLProcessorHandler {
     /// Once per URL (per `srcset` candidate), in document order: one import record made or consumed per call.
     fn on_url(&mut self, url: &[u8], kind: ImportKind, optional: bool) -> UrlAction<'_>;
-    /// Standalone HTML has every local file inline as a `data:` URL: a `<link rel="preload">` of one is dropped, and `<use>` keeps its URL.
+    /// Standalone HTML has every local file inline: a `<link rel="preload">` of one is dropped, and `<use>`, which cannot load a `data:` URL, keeps its URL.
     fn is_standalone_html(&self) -> bool {
         false
     }
@@ -369,6 +369,11 @@ impl UrlContext {
     /// `<link rel="preload|modulepreload">`: a hint to fetch early, not a use of the file.
     fn is_preload(&self) -> bool {
         self.rel_has("preload") || self.rel_has("modulepreload")
+    }
+
+    /// A preload of a script. No import record is made for it.
+    fn is_script_preload(&self) -> bool {
+        self.rel_has("modulepreload") || (self.rel_has("preload") && is(&self.as_, "script"))
     }
 }
 
@@ -558,19 +563,13 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
                     // which is not reborrowed while the rewriter — the only
                     // holder of these closures — is alive.
                     let standalone = unsafe { (*this_ptr).is_standalone_html() };
-                    let is_local = |url: &[u8]| is_followed(url, true) && !is_external_url(url);
+                    // Standalone HTML has the page's scripts inline, so a preload of a local one points at nothing.
                     let mut remove = standalone
-                        && context.is_preload()
-                        && attrs.iter().zip(found).any(|(&(attr, _), index)| {
-                            index.is_some_and(|index| {
-                                let value = element.attributes()[index].value();
-                                let value = value.as_bytes();
-                                if attr.ends_with("srcset") {
-                                    (SrcsetUrls { value, pos: 0 }).any(|url| is_local(&value[url]))
-                                } else {
-                                    is_local(strings::trim(value, HTML_WHITESPACE))
-                                }
-                            })
+                        && context.is_script_preload()
+                        && found[0].is_some_and(|href| {
+                            let href = element.attributes()[href].value();
+                            let href = strings::trim(href.as_bytes(), HTML_WHITESPACE);
+                            is_followed(href, true) && !is_external_url(href)
                         });
                     for (&(attr, url_attr), index) in attrs.iter().zip(found) {
                         let (Some(index), Some(kind)) = (index, url_attr.kind(&context)) else {
@@ -590,6 +589,10 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
                         };
                         match action {
                             UrlAction::Keep => {}
+                            // The file is inline now, so a preload of it points at nothing.
+                            UrlAction::Replace(_) if standalone && context.is_preload() => {
+                                remove = true
+                            }
                             UrlAction::Replace(_)
                                 if standalone && matches!(url_attr, UrlAttr::SvgUse) => {}
                             UrlAction::Replace(new_value) => {

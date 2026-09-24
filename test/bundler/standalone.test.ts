@@ -408,6 +408,8 @@ body { color: blue; }`,
 <link rel="preload" as="image" href="./i.png" imagesrcset="./h1.png 1x, ./h2.png 2x" imagesizes="100vw">
 <link rel="preload" as="image" imagesrcset="./h1.png 1x, ./h2.png 2x" imagesizes="100vw">
 <link rel="modulepreload" href="./app.js" integrity="sha384-AAAA">
+<link rel="preload" as="script" href="./app.js">
+<link rel="preload" as="fetch" href="/api/bootstrap.json" crossorigin>
 <link rel="preload" as="font" href="https://cdn.example.com/font.woff2" crossorigin>
 <link rel="prefetch" href="./about.html">
 <link rel="shortcut icon" href="./i.png">
@@ -450,8 +452,8 @@ body { color: blue; }`,
     const pdfData = "data:application/pdf;base64," + Buffer.from("%PDF-1.4\n").toString("base64");
     const urls = [...html.matchAll(/ (?:src|href|xlink:href|content|data|poster)="([^"]*)"/g)].map(m => m[1]);
     expect(urls).toEqual([
-      // <link rel="preload"> and <link rel="modulepreload"> of local files are gone:
-      // what they point at is inline. The external preload stays.
+      // A preload of an inlined file or of a local script is gone: what it points at is inline.
+      "/api/bootstrap.json", // fetched at runtime, so nothing was inlined for it
       "https://cdn.example.com/font.woff2",
       "./about.html", // prefetch is for a later navigation, not for this page
       pngData, // shortcut icon

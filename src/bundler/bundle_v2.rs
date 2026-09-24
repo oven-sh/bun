@@ -1727,6 +1727,30 @@ pub mod bv2_impl {
         unsafe { (*p).into_static() }
     }
 
+    /// `<object data="./page.html">` links to a page; bundling it would run its scripts here.
+    fn links_to_page(
+        importer: Loader,
+        record: &ImportRecord,
+        path: &Fs::Path<'_>,
+        loaders: &bun_ast::LoaderHashTable,
+    ) -> bool {
+        importer == Loader::Html
+            && record.kind == ImportKind::Url
+            && record.loader.or_else(|| path.loader(loaders)) == Some(Loader::Html)
+    }
+
+    /// Only `HTMLScanner`'s optional assets (`og:image`, `<object data>`) handle import errors in an HTML file.
+    fn warn_url_stays_as_written(log: &mut bun_ast::Log, source: &bun_ast::Source, url: &[u8]) {
+        log.add_warning_fmt(
+            Some(source),
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "Could not resolve: \"{}\". The URL stays as written.",
+                bstr::BStr::new(url)
+            ),
+        );
+    }
+
     // Unified with the canonical definitions at the parent module level (this
     // avoids two distinct nominal `BundleV2`/`PendingImport`/`BakeOptions` types
     // that previously caused widespread "expected `BundleV2`, found `BundleV2`"
@@ -2635,6 +2659,12 @@ pub mod bv2_impl {
                                         import_record.kind,
                                     );
                                 }
+                            } else if let Some(source) = source
+                                && self.graph.input_files.items_loader()
+                                    [import_record.importer_source_index as usize]
+                                    == Loader::Html
+                            {
+                                warn_url_stays_as_written(log, source, path_to_use);
                             }
                         }
                         // assume other errors are already in the log
@@ -2666,6 +2696,23 @@ pub mod bv2_impl {
 
             if resolve_result.flags.is_external() {
                 return;
+            }
+
+            {
+                let importer = self.graph.input_files.items_loader()
+                    [import_record.importer_source_index as usize];
+                let record: &mut ImportRecord = &mut self.graph.ast.items_import_records_mut()
+                    [import_record.importer_source_index as usize]
+                    .as_mut_slice()[import_record.import_record_index as usize];
+                // SAFETY: see `transpiler` note above.
+                if links_to_page(importer, record, &path, unsafe {
+                    &(*transpiler).options.loaders
+                }) {
+                    record
+                        .flags
+                        .insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
+                    return;
+                }
             }
 
             if path.pretty.as_ptr() == path.text.as_ptr() {
@@ -6700,15 +6747,7 @@ pub mod bv2_impl {
                                         );
                                     }
                                 } else if loader == Loader::Html {
-                                    // Only `HTMLScanner`'s optional assets (`og:image`, `<object data>`) handle errors.
-                                    log.add_warning_fmt(
-                                        Some(source),
-                                        bun_ast::Loc::EMPTY,
-                                        format_args!(
-                                            "Could not resolve: \"{}\". The URL stays as written.",
-                                            bstr::BStr::new(import_record.path.text)
-                                        ),
-                                    );
+                                    warn_url_stays_as_written(log, source, import_record.path.text);
                                 }
                             } else {
                                 // assume other errors are already in the log
@@ -6757,14 +6796,7 @@ pub mod bv2_impl {
                     continue;
                 }
 
-                // `<object data="./page.html">` links to a page; bundling it would run its scripts here.
-                if loader == Loader::Html
-                    && import_record.kind == ImportKind::Url
-                    && import_record
-                        .loader
-                        .or_else(|| path.loader(&transpiler.options.loaders))
-                        == Some(Loader::Html)
-                {
+                if links_to_page(loader, import_record, path, &transpiler.options.loaders) {
                     import_record
                         .flags
                         .insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);

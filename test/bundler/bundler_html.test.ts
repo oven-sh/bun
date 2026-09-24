@@ -1,5 +1,5 @@
-import { describe, expect } from "bun:test";
-import { isWindows } from "harness";
+import { describe, expect, test } from "bun:test";
+import { isWindows, tempDir } from "harness";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -437,6 +437,38 @@ describe("bundler", () => {
         "missing.svg#a",
       ]);
     },
+  });
+
+  // A record that an onResolve plugin matches and declines takes a second resolve path in the bundler.
+  test("html/asset-attributes-declining-plugin", async () => {
+    using dir = tempDir("html-asset-attributes-plugin", {
+      "index.html": `<!DOCTYPE html><html><head><meta property="og:image" content="./missing.png"></head>
+<body><object data="./page.html"></object><script src="./app.js"></script></body></html>`,
+      "app.js": `console.log("app")`,
+      // Only linked to: it must not be bundled, so its missing script is not an error.
+      "page.html": `<!DOCTYPE html><script src="./does-not-exist.js"></script>`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/index.html`],
+      outdir: `${dir}/out`,
+      plugins: [
+        {
+          name: "declines",
+          setup(build) {
+            build.onResolve({ filter: /.*/ }, () => undefined);
+          },
+        },
+      ],
+    });
+
+    expect(result.logs.map(log => [log.level, log.message])).toEqual([
+      ["warn", `Could not resolve: "./missing.png". The URL stays as written.`],
+    ]);
+    expect(result.success).toBe(true);
+    const html = await Bun.file(`${dir}/out/index.html`).text();
+    expect(html).toContain(`<object data="./page.html">`);
+    expect(html).toContain(`content="./missing.png"`);
   });
 
   // Test external assets preservation

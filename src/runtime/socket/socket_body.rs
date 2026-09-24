@@ -940,8 +940,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(());
         }
         if this.native_callback.get().on_writable() {
-            // The native drain ran JS, which can have closed the socket. Past a
-            // shutdown it writes nothing more; a parked node:net end callback needs the JS drain.
+            // The native drain ran JS that can close the socket; past a shutdown a parked end callback needs the JS drain.
             if !this.has_handlers()
                 || this.socket.get().is_detached()
                 || !this.socket.get().is_shutdown()

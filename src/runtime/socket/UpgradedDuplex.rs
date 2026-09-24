@@ -808,8 +808,7 @@ fn on_writable(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>
     Ok(JSValue::UNDEFINED)
 }
 
-/// `cb` of one `duplex.write()`. Re-entered next tick with `err == js_wrapper` (an error) or
-/// `err == origin` (a drain deferred out of the write that completed synchronously).
+/// `cb` of one `duplex.write()`; re-entered next tick with `err == js_wrapper` (error) or `err == origin` (drain).
 #[bun_jsc::host_fn]
 fn on_write_done(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     bun_output::scoped_log!(UpgradedDuplex, "onWriteDone");
@@ -850,8 +849,7 @@ fn on_write_done(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
             JSValue::call_next_tick_1(function, global, this.js_wrapper)?;
         } else if remaining == 0 {
             if this.write_depth.get() > 0 {
-                // A Duplex that runs `cb` inside `write()`: a drain now re-enters the
-                // flush that issued the write, before it took its bytes off the buffer.
+                // Inside the write that issued it: a drain now re-enters the flush too early.
                 JSValue::call_next_tick_1(function, global, this.origin.get())?;
             } else {
                 (this.handlers.on_writable)(this.handlers.ctx);

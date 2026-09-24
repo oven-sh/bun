@@ -1834,9 +1834,9 @@ describe.concurrent(() => {
 
   // Pins which events fire, and in what order, for every way the queue of
   // unreported rejections finds and drops a handled promise: a hole left in the
-  // middle, compaction, a pop from the back, a short queue, a long queue that
-  // shrinks and grows again, and the batch that is being reported. The
-  // "handling N rejected promises is O(N)" tests below cover the cost.
+  // middle, compaction, the next in order, a pop from the back, a short queue,
+  // an indexed queue that shrinks and grows again, and the batch that is being
+  // reported. The "handling N rejected promises is O(N)" tests below cover the cost.
   it("reports exactly the rejections that stay unhandled, in order, whatever order the others are handled in", async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -1862,8 +1862,18 @@ describe.concurrent(() => {
             previous = promise;
           }
           previous.catch(noop);
+          // The promises that stay unhandled are reachable only through the queue now.
+          Bun.gc(true);
           await drain();
           result.oneStepLate = { seen, rejectionHandled };
+
+          // Handled oldest first, as Promise.all does. Every 50th stays unhandled.
+          seen = [];
+          const oldestFirst = [];
+          for (let i = 0; i < 200; i++) oldestFirst.push(Promise.reject("o" + i));
+          for (let i = 0; i < 200; i++) if (i % 50 !== 49) oldestFirst[i].catch(noop);
+          await drain();
+          result.oldestFirst = { seen, rejectionHandled };
 
           // Handled newest first. The oldest and one in the middle stay unhandled.
           seen = [];
@@ -1881,12 +1891,13 @@ describe.concurrent(() => {
           await drain();
           result.few = { seen, rejectionHandled };
 
-          // A long queue is searched, loses its newest entry, then grows again.
+          // A queue too long to scan is searched, loses its newest entry, then grows again.
           seen = [];
           const regrown = [];
-          for (let i = 0; i < 20; i++) regrown.push(Promise.reject("r" + i));
+          for (let i = 0; i < 300; i++) regrown.push(Promise.reject("r" + i));
           regrown[5].catch(noop);
-          regrown[19].catch(noop);
+          Bun.gc(true);
+          regrown[299].catch(noop);
           const older = Promise.reject("older");
           const newer = Promise.reject("newer");
           older.catch(noop);
@@ -1900,10 +1911,11 @@ describe.concurrent(() => {
           seen = [];
           const batch = [];
           onUnhandled = reason => {
-            if (reason === "b0") for (let i = 1; i < 100; i += 2) batch[i].catch(noop);
+            if (reason === "b0") for (let i = 1; i < 600; i += 2) batch[i].catch(noop);
+            if (reason === "b2") Bun.gc(true);
             if (reason === "b4") batch[2].catch(noop);
           };
-          for (let i = 0; i < 100; i++) batch.push(Promise.reject("b" + i));
+          for (let i = 0; i < 600; i++) batch.push(Promise.reject("b" + i));
           await drain();
           result.handledByListener = { seen, rejectionHandled };
 
@@ -1911,8 +1923,8 @@ describe.concurrent(() => {
           // one 'rejectionHandled' each (b2 already had its own).
           seen = [];
           onUnhandled = noop;
-          for (let i = 0; i < 20; i++) Promise.reject("q" + i);
-          for (let i = 0; i < 100; i += 2) batch[i].catch(noop);
+          for (let i = 0; i < 300; i++) Promise.reject("q" + i);
+          for (let i = 0; i < 600; i += 2) batch[i].catch(noop);
           await drain();
           result.handledAfterReport = { seen, rejectionHandled };
 
@@ -1927,11 +1939,12 @@ describe.concurrent(() => {
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({
       oneStepLate: { seen: Array.from({ length: Math.ceil(1000 / 7) }, (_, i) => i * 7), rejectionHandled: 0 },
+      oldestFirst: { seen: ["o49", "o99", "o149", "o199"], rejectionHandled: 0 },
       newestFirst: { seen: ["n0", "n50"], rejectionHandled: 0 },
       few: { seen: ["f1", "f2", "f5"], rejectionHandled: 0 },
-      regrown: { seen: Array.from({ length: 19 }, (_, i) => "r" + i).filter(r => r !== "r5"), rejectionHandled: 0 },
-      handledByListener: { seen: Array.from({ length: 50 }, (_, i) => "b" + i * 2), rejectionHandled: 1 },
-      handledAfterReport: { seen: Array.from({ length: 20 }, (_, i) => "q" + i), rejectionHandled: 50 },
+      regrown: { seen: Array.from({ length: 299 }, (_, i) => "r" + i).filter(r => r !== "r5"), rejectionHandled: 0 },
+      handledByListener: { seen: Array.from({ length: 300 }, (_, i) => "b" + i * 2), rejectionHandled: 1 },
+      handledAfterReport: { seen: Array.from({ length: 300 }, (_, i) => "q" + i), rejectionHandled: 300 },
     });
     expect(exitCode).toBe(0);
   });
@@ -2019,6 +2032,94 @@ describe("handling N rejected promises is O(N)", () => {
     `);
       expect(events).toEqual({ unhandledRejection: 0, rejectionHandled: 0 });
       expectLinear({ ms, baseline });
+    },
+    timeout,
+  );
+
+  it(
+    "while they wait to be reported, in no particular order",
+    async () => {
+      const { ms, baseline, ...events } = await run(`
+      const noop = () => {};
+      const events = { unhandledRejection: 0, rejectionHandled: 0 };
+      process.on("unhandledRejection", () => events.unhandledRejection++);
+      process.on("rejectionHandled", () => events.rejectionHandled++);
+      const promises = [];
+      for (let i = 0; i < ${N}; i++) promises.push(Promise.reject(i));
+      // 7919 is coprime to N: every promise once, none next to the one before.
+      let start = performance.now();
+      for (let i = 0; i < ${N}; i++) promises[(i * 7919) % ${N}].catch(noop);
+      const ms = performance.now() - start;
+      start = performance.now();
+      for (let i = 0; i < ${N}; i++) promises[(i * 7919) % ${N}].catch(noop);
+      const baseline = performance.now() - start;
+      for (let i = 0; i < 3; i++) await new Promise(r => setImmediate(r));
+      console.log(JSON.stringify({ ms, baseline, ...events }));
+    `);
+      expect(events).toEqual({ unhandledRejection: 0, rejectionHandled: 0 });
+      expectLinear({ ms, baseline });
+    },
+    timeout,
+  );
+
+  // Nanoseconds per promise must not depend on how many are rejected in one turn.
+  // Measured, release: batches of 17 / 64 / 300 take 87 / 86 / 83 (before: 87 / 87 / 95).
+  // The allSettled loop takes 319 / 484 at N = 100 / 1,000 (before: 345 / 2,674).
+  const perPromise = `
+    const noop = () => {};
+    const total = ${isDebug || isASAN ? 6_000 : 240_000};
+    async function bestOf3(round) {
+      let best = Infinity;
+      for (let i = 0; i < 3; i++) {
+        const start = performance.now();
+        await round();
+        best = Math.min(best, performance.now() - start);
+      }
+      return (best * 1e6) / total;
+    }
+  `;
+
+  it(
+    "in batches of 17 to 300, oldest first",
+    async () => {
+      const ns = await run(`
+      ${perPromise}
+      const ns = {};
+      for (const size of [17, 64, 300]) {
+        ns[size] = await bestOf3(async () => {
+          for (let done = 0; done < total; done += size) {
+            const batch = [];
+            for (let i = 0; i < size; i++) batch.push(Promise.reject(i));
+            for (const promise of batch) promise.catch(noop);
+            await 0;
+          }
+        });
+      }
+      console.log(JSON.stringify(ns));
+    `);
+      expect(ns[64] / ns[17]).toBeLessThan(3);
+      expect(ns[300] / ns[17]).toBeLessThan(3);
+    },
+    timeout,
+  );
+
+  it(
+    "in a loop of Promise.allSettled over 100 and over 1,000 calls that throw",
+    async () => {
+      const ns = await run(`
+      ${perPromise}
+      const error = new Error("x");
+      async function fails() { throw error; }
+      const ns = {};
+      for (const size of [100, 1000]) {
+        const calls = Array.from({ length: size });
+        ns[size] = await bestOf3(async () => {
+          for (let done = 0; done < total; done += size) await Promise.allSettled(calls.map(fails));
+        });
+      }
+      console.log(JSON.stringify(ns));
+    `);
+      expect(ns[1000] / ns[100]).toBeLessThan(3);
     },
     timeout,
   );

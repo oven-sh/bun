@@ -5,6 +5,8 @@ import { readFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, tempDir, tls } from "harness";
 import { connect, QuicEndpoint } from "node:quic";
 import { join } from "path";
+import { constants as zlibConstants, deflateRawSync, inflateRawSync } from "node:zlib";
+import { wsClientFrame } from "./serve-http2-helpers";
 
 // Native HTTP/3 fetch wrapper. Every request in this file forces
 // `protocol: "http3"` so a regression that silently falls back to TCP
@@ -1967,8 +1969,7 @@ describe.concurrent("Bun.serve HTTP/3 sends the automatic 100 Continue ahead of 
 // The HTTP/3 twin of the HTTP/1 cases in websocket-server.test.ts: ws.close()
 // runs close() before it returns, and a request handler that calls it must still
 // run to completion before the nextTick and promise callbacks it queued. The
-// socket being closed lives on a plain HTTP/1 server, since HTTP/3 carries no
-// WebSockets; any handler can close it.
+// socket being closed lives on a plain HTTP/1 server; any handler can close it.
 describe("Bun.serve HTTP/3 request handlers run to completion before the callbacks they queued", () => {
   async function openHeldSocket() {
     const order: string[] = [];
@@ -2025,6 +2026,830 @@ describe("Bun.serve HTTP/3 request handlers run to completion before the callbac
       responses: { fetch: "200 ok", route: "200 ok" },
       fetch: expectedOrder,
       route: expectedOrder,
+    });
+  });
+});
+
+// ─── RFC 9220: WebSockets over HTTP/3 ────────────────────────────────────────
+// The handshake is an Extended CONNECT request (`:protocol: websocket`) and the
+// WebSocket is the rest of that one request stream: RFC 6455 frames, masked by
+// the client, carried in DATA in both directions.
+
+type WsFrame = { opcode: number; fin: boolean; compressed: boolean; payload: Buffer };
+
+/** Take one complete, unmasked server frame from the front of `buffer`. */
+function takeServerFrame(buffer: Buffer): { frame: WsFrame; rest: Buffer } | undefined {
+  if (buffer.length < 2) return;
+  if ((buffer[1] & 0x80) !== 0) throw new Error("server frames must not be masked");
+  let length = buffer[1] & 0x7f;
+  let offset = 2;
+  if (length === 126) {
+    if (buffer.length < 4) return;
+    length = buffer.readUInt16BE(2);
+    offset = 4;
+  } else if (length === 127) {
+    if (buffer.length < 10) return;
+    length = Number(buffer.readBigUInt64BE(2));
+    offset = 10;
+  }
+  if (buffer.length < offset + length) return;
+  const frame = {
+    opcode: buffer[0] & 0x0f,
+    fin: (buffer[0] & 0x80) !== 0,
+    compressed: (buffer[0] & 0x40) !== 0,
+    payload: buffer.subarray(offset, offset + length),
+  };
+  return { frame, rest: buffer.subarray(offset + length) };
+}
+
+const closePayload = (code: number, reason = "") => {
+  const payload = Buffer.alloc(2 + Buffer.byteLength(reason));
+  payload.writeUInt16BE(code, 0);
+  payload.write(reason, 2);
+  return payload;
+};
+
+function connectH3(
+  endpoint: InstanceType<typeof QuicEndpoint>,
+  port: number,
+  transportParams: Record<string, number> = {},
+) {
+  return connect(`127.0.0.1:${port}`, {
+    endpoint,
+    servername: "localhost",
+    verifyPeer: "manual",
+    transportParams: { maxIdleTimeout: 5, ...transportParams },
+    onerror() {},
+  });
+}
+
+type H3WebSocketOptions = {
+  path?: string;
+  headers?: Record<string, string>;
+  /** Frames written right after the request HEADERS, before any response. */
+  early?: Buffer[];
+  maxIdleTimeout?: number;
+  /** Reuse a QUIC connection: several WebSockets share it as request streams. */
+  client?: Awaited<ReturnType<typeof connectH3>>;
+  /** Leave server bytes unread until startReading(), so QUIC flow control stalls. */
+  readLater?: boolean;
+  transportParams?: Record<string, number>;
+  /** Send no :authority pseudo-header. */
+  omitAuthority?: boolean;
+};
+
+async function openH3WebSocket(
+  endpoint: InstanceType<typeof QuicEndpoint>,
+  port: number,
+  {
+    path = "/",
+    headers: extra = {},
+    early = [],
+    maxIdleTimeout = 5,
+    client: shared,
+    readLater = false,
+    transportParams = {},
+    omitAuthority = false,
+  }: H3WebSocketOptions = {},
+) {
+  const client = shared ?? (await connectH3(endpoint, port, { maxIdleTimeout, ...transportParams }));
+  const closeClient = () => {
+    if (!shared && !client.destroyed) client.close().catch(() => {});
+  };
+  const response = Promise.withResolvers<Record<string, string>>();
+  const stream = await client.createBidirectionalStream({
+    onheaders: (received: Record<string, string>) => response.resolve(received),
+  });
+  const streamClosed = stream.closed.then(
+    () => "closed",
+    (err: Error & { code?: string; errorCode?: bigint }) => `reset ${err?.errorCode ?? err?.code}`,
+  );
+  const requestHeaders: Record<string, string> = {
+    ":method": "CONNECT",
+    ":protocol": "websocket",
+    ":scheme": "https",
+    ":path": path,
+    ":authority": "localhost",
+    "sec-websocket-version": "13",
+    ...extra,
+  };
+  if (omitAuthority) delete requestHeaders[":authority"];
+  stream.sendHeaders(requestHeaders);
+  for (const frame of early) stream.writer.writeSync(frame);
+
+  let writesEnded = false;
+  const frames: WsFrame[] = [];
+  let arrived = Promise.withResolvers<void>();
+  let readEnded = false;
+  let reading = false;
+  const startReading = () => {
+    if (reading) return;
+    reading = true;
+    (async () => {
+      let buffered = Buffer.alloc(0);
+      try {
+        for await (const batch of stream as AsyncIterable<Uint8Array[]>) {
+          for (const chunk of batch) buffered = Buffer.concat([buffered, chunk]);
+          for (let taken = takeServerFrame(buffered); taken; taken = takeServerFrame(buffered)) {
+            frames.push(taken.frame);
+            buffered = taken.rest;
+          }
+          arrived.resolve();
+        }
+      } catch {}
+      readEnded = true;
+      arrived.resolve();
+    })();
+  };
+  if (!readLater) startReading();
+
+  const headers = await Promise.race([
+    response.promise,
+    streamClosed.then(outcome => {
+      closeClient();
+      throw new Error(`stream ended before a response: ${outcome}`);
+    }),
+  ]);
+  return {
+    headers,
+    streamClosed,
+    startReading,
+    send(opcode: number, payload: Buffer | string = Buffer.alloc(0), compressed = false) {
+      stream.writer.writeSync(wsClientFrame(opcode, payload, true, compressed));
+    },
+    /** QUIC FIN on the request stream without a close frame. */
+    endWrites() {
+      if (!writesEnded) stream.writer.endSync();
+      writesEnded = true;
+    },
+    /** The next server frame, or undefined once the server ended the stream. */
+    async nextFrame(): Promise<WsFrame | undefined> {
+      startReading();
+      while (!frames.length && !readEnded) {
+        await arrived.promise;
+        arrived = Promise.withResolvers<void>();
+      }
+      return frames.shift();
+    },
+    /** End our half of the tunnel too, then close the session unless shared. */
+    close() {
+      try {
+        if (!writesEnded) stream.writer.endSync();
+      } catch {}
+      writesEnded = true;
+      closeClient();
+    },
+  };
+}
+
+describe("Bun.serve WebSockets over HTTP/3 (RFC 9220)", () => {
+  const frameSummary = (frame: WsFrame | undefined) =>
+    frame && { opcode: frame.opcode, fin: frame.fin, payload: frame.payload.toString("latin1") };
+  const closeSummary = (frame: WsFrame | undefined) =>
+    frame && { opcode: frame.opcode, code: frame.payload.length >= 2 ? frame.payload.readUInt16BE(0) : undefined };
+
+  test("server.upgrade() accepts Extended CONNECT and the stream carries WebSocket frames", async () => {
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      http1: false,
+      fetch(req, server) {
+        if (server.upgrade(req, { data: { method: req.method, path: new URL(req.url).pathname } })) return;
+        return new Response("upgrade failed", { status: 500 });
+      },
+      websocket: {
+        open(ws) {
+          events.push(`open ${ws.data.method} ${ws.data.path}`);
+        },
+        message(ws, message) {
+          ws.send(message);
+        },
+        drain() {
+          events.push("drain");
+        },
+        close(ws, code, reason) {
+          events.push(`close ${code} ${reason}`);
+          closed.resolve();
+        },
+      },
+    });
+    await using endpoint = new QuicEndpoint();
+    const ws = await openH3WebSocket(endpoint, server.port, { path: "/chat" });
+
+    ws.send(1, "hello");
+    const text = frameSummary(await ws.nextFrame());
+    ws.send(2, Buffer.from([0, 1, 255]));
+    const binary = await ws.nextFrame();
+    ws.send(8, closePayload(1000, "bye"));
+    const close = await ws.nextFrame();
+    await closed.promise;
+    const end = await ws.nextFrame();
+    ws.close();
+
+    expect({
+      status: ws.headers[":status"],
+      accept: ws.headers["sec-websocket-accept"],
+      text,
+      binary: { opcode: binary?.opcode, payload: [...(binary?.payload ?? [])] },
+      close: { opcode: close?.opcode, code: close?.payload.readUInt16BE(0) },
+      end,
+      events,
+    }).toEqual({
+      status: "200",
+      accept: undefined,
+      text: { opcode: 1, fin: true, payload: "hello" },
+      binary: { opcode: 2, payload: [0, 1, 255] },
+      close: { opcode: 8, code: 1000 },
+      end: undefined,
+      events: ["open CONNECT /chat", "close 1000 bye"],
+    });
+  });
+
+  test("ws.close() sends a close frame and ends the stream; terminate() resets it", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      http1: false,
+      fetch: (req, server) => (server.upgrade(req) ? undefined : new Response("upgrade failed", { status: 500 })),
+      websocket: {
+        message(ws, message) {
+          if (message === "close") ws.close(4001, "done");
+          else ws.terminate();
+        },
+      },
+    });
+    await using endpoint = new QuicEndpoint();
+
+    const graceful = await openH3WebSocket(endpoint, server.port);
+    graceful.send(1, "close");
+    const close = await graceful.nextFrame();
+    const afterClose = await graceful.nextFrame();
+    graceful.close();
+
+    const abrupt = await openH3WebSocket(endpoint, server.port);
+    abrupt.send(1, "terminate");
+    const afterTerminate = await abrupt.nextFrame();
+    const abruptOutcome = await abrupt.streamClosed;
+    abrupt.close();
+
+    expect({
+      close: {
+        opcode: close?.opcode,
+        code: close?.payload.readUInt16BE(0),
+        reason: close?.payload.subarray(2).toString(),
+      },
+      afterClose,
+      afterTerminate,
+      abruptOutcome,
+    }).toEqual({
+      close: { opcode: 8, code: 4001, reason: "done" },
+      afterClose: undefined,
+      afterTerminate: undefined,
+      abruptOutcome: expect.stringMatching(/^reset /),
+    });
+  });
+
+  test("a peer FIN without a close frame closes the WebSocket with 1006", async () => {
+    const closed = Promise.withResolvers<number>();
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      http1: false,
+      fetch: (req, server) => (server.upgrade(req) ? undefined : new Response("upgrade failed", { status: 500 })),
+      websocket: {
+        message() {},
+        close(ws, code) {
+          closed.resolve(code);
+        },
+      },
+    });
+    await using endpoint = new QuicEndpoint();
+    const ws = await openH3WebSocket(endpoint, server.port);
+    ws.endWrites();
+    expect(await closed.promise).toBe(1006);
+    ws.close();
+  });
+
+  test("publish() reaches HTTP/1 and HTTP/3 subscribers of the same topic", async () => {
+    const opened = { h1: Promise.withResolvers<void>(), h3: Promise.withResolvers<void>() };
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      fetch(req, server) {
+        const via = new URL(req.url).searchParams.get("via") as "h1" | "h3";
+        return server.upgrade(req, { data: { via } }) ? undefined : new Response("upgrade failed", { status: 500 });
+      },
+      websocket: {
+        open(ws) {
+          ws.subscribe("room");
+          opened[ws.data.via].resolve();
+        },
+        message(ws, message) {
+          ws.publish("room", `${ws.data.via}: ${message}`);
+        },
+      },
+    });
+
+    const h1Messages: string[] = [];
+    const h1Received = Promise.withResolvers<void>();
+    const h1 = new WebSocket(`wss://localhost:${server.port}/?via=h1`, { tls: { rejectUnauthorized: false } });
+    h1.onmessage = event => {
+      h1Messages.push(String(event.data));
+      if (h1Messages.length === 2) h1Received.resolve();
+    };
+    await using endpoint = new QuicEndpoint();
+    const h3 = await openH3WebSocket(endpoint, server.port, { path: "/?via=h3" });
+    await Promise.all([opened.h1.promise, opened.h3.promise]);
+
+    const subscribers = server.subscriberCount("room");
+    server.publish("room", "server");
+    const h3First = frameSummary(await h3.nextFrame());
+    // An HTTP/3 publisher reaches the HTTP/1 subscriber but not itself.
+    h3.send(1, "hi");
+    await h1Received.promise;
+    h1.close();
+    h3.close();
+
+    expect({ subscribers, h3First: h3First?.payload, h1Messages }).toEqual({
+      subscribers: 2,
+      h3First: "server",
+      h1Messages: ["server", "h3: hi"],
+    });
+  });
+
+  test("an Extended CONNECT the handler does not upgrade gets 501, not a tunnel", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      http1: false,
+      fetch: () => new Response("plain response"),
+      websocket: { message() {} },
+    });
+    await using endpoint = new QuicEndpoint();
+    const ws = await openH3WebSocket(endpoint, server.port);
+    const status = ws.headers[":status"];
+    ws.close();
+    expect(status).toBe("501");
+  });
+
+  // RFC 9114 section 4.1.2: a malformed request is a stream error of type
+  // H3_MESSAGE_ERROR (0x10e). RFC 9220 applies RFC 8441 section 4: only an
+  // exact CONNECT with :scheme, :path and :authority may carry :protocol.
+  test.each([
+    ["on GET", { ":method": "GET" }],
+    ["on a lowercase connect method", { ":method": "connect" }],
+    ["with a Host field instead of :authority", { ":authority": "", host: "localhost" }],
+  ])("a :protocol pseudo-header %s is malformed", async (_what, overrides) => {
+    let reached = 0;
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      http1: false,
+      fetch() {
+        reached++;
+        return new Response("reached");
+      },
+    });
+    await using endpoint = new QuicEndpoint();
+    const headers = Object.fromEntries(Object.entries({ ...overrides }).filter(([, value]) => value !== "")) as Record<
+      string,
+      string
+    >;
+    const omitAuthority = (overrides as Record<string, string>)[":authority"] === "";
+    const outcome = await openH3WebSocket(endpoint, server.port, { headers, omitAuthority }).then(
+      ws => {
+        ws.close();
+        return `response ${ws.headers[":status"]}`;
+      },
+      (err: Error) => err.message,
+    );
+    expect({ outcome, reached }).toEqual({ outcome: "stream ended before a response: reset 270", reached: 0 });
+  });
+
+  test("an idle WebSocket gets an automatic ping, then is reset if it does not answer", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      http1: false,
+      fetch: (req, server) => (server.upgrade(req) ? undefined : new Response("hello")),
+      websocket: { idleTimeout: 8, message() {} },
+    });
+    await using endpoint = new QuicEndpoint();
+    // Outlast the silent grace phase so the client's QUIC idle timer does not
+    // close the connection first.
+    const ws = await openH3WebSocket(endpoint, server.port, { maxIdleTimeout: 30 });
+    const started = performance.now();
+    const ping = await ws.nextFrame();
+    const pingElapsed = performance.now() - started;
+    const afterPing = await ws.nextFrame();
+    const outcome = await ws.streamClosed;
+    const sibling = await h3Exchange(server.port, requestHeaders("/"));
+    ws.close();
+
+    expect({ ping: ping?.opcode, afterPing, outcome, sibling }).toEqual({
+      ping: 9,
+      afterPing: undefined,
+      outcome: "reset 268",
+      sibling: "200 hello",
+    });
+    expect(pingElapsed).toBeGreaterThanOrEqual(3_000);
+    expect(pingElapsed).toBeLessThan(9_000);
+  }, 22_000);
+
+  test("WebSockets on one QUIC connection are independent request streams", async () => {
+    const closes: string[] = [];
+    const allClosed = Promise.withResolvers<void>();
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      http1: false,
+      fetch(req, server) {
+        const id = new URL(req.url).searchParams.get("id")!;
+        return server.upgrade(req, { data: { id } }) ? undefined : new Response("upgrade failed", { status: 500 });
+      },
+      websocket: {
+        message(ws, message) {
+          if (message === "close") ws.close(1000);
+          else ws.send(`${ws.data.id}:${message}`);
+        },
+        close(ws, code) {
+          closes.push(`${ws.data.id} ${code}`);
+          if (closes.length === 3) allClosed.resolve();
+        },
+      },
+    });
+    await using endpoint = new QuicEndpoint();
+    const client = await connectH3(endpoint, server.port);
+    const [a, b, c] = await Promise.all(
+      ["a", "b", "c"].map(id => openH3WebSocket(endpoint, server.port, { client, path: `/?id=${id}` })),
+    );
+    a.send(1, "x");
+    b.send(1, "y");
+    c.send(1, "z");
+    const first = [await a.nextFrame(), await b.nextFrame(), await c.nextFrame()].map(f => f?.payload.toString());
+
+    // Closing one stream leaves its siblings working.
+    b.send(1, "close");
+    const bClose = closeSummary(await b.nextFrame());
+    a.send(1, "still");
+    const afterSiblingClosed = (await a.nextFrame())?.payload.toString();
+
+    // Dropping the connection closes the WebSockets still open on it.
+    client.destroy();
+    await allClosed.promise;
+
+    expect({ first, bClose, afterSiblingClosed, closes: closes.sort() }).toEqual({
+      first: ["a:x", "b:y", "c:z"],
+      bClose: { opcode: 8, code: 1000 },
+      afterSiblingClosed: "a:still",
+      closes: ["a 1006", "b 1000", "c 1006"],
+    });
+  });
+
+  test("send() reports backpressure under QUIC flow control and drain() fires once it clears", async () => {
+    const chunk = 256 * 1024;
+    const sent = Promise.withResolvers<number[]>();
+    const drained = Promise.withResolvers<void>();
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      http1: false,
+      fetch: (req, server) => (server.upgrade(req) ? undefined : new Response("upgrade failed", { status: 500 })),
+      websocket: {
+        open(ws) {
+          const statuses: number[] = [];
+          for (let i = 0; i < 8; i++) statuses.push(ws.send(Buffer.alloc(chunk, i)));
+          sent.resolve(statuses);
+        },
+        drain() {
+          drained.resolve();
+        },
+        message() {},
+      },
+    });
+    await using endpoint = new QuicEndpoint();
+    const ws = await openH3WebSocket(endpoint, server.port, {
+      readLater: true,
+      transportParams: { initialMaxStreamDataBidiLocal: 64 * 1024 },
+    });
+    const statuses = await sent.promise;
+    ws.startReading();
+    const received: number[][] = [];
+    for (let i = 0; i < 8; i++) {
+      const frame = await ws.nextFrame();
+      received.push([frame!.opcode, frame!.payload.length, frame!.payload[0]]);
+    }
+    await drained.promise;
+    ws.close();
+
+    // -1 is backpressure: the frame is buffered and still delivered.
+    expect(statuses).toContain(-1);
+    expect(statuses).not.toContain(0);
+    expect(received).toEqual(Array.from({ length: 8 }, (_, i) => [2, chunk, i]));
+  });
+
+  test("closeOnBackpressureLimit closes a WebSocket whose peer stops reading", async () => {
+    const closed = Promise.withResolvers<number>();
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      http1: false,
+      fetch: (req, server) => (server.upgrade(req) ? undefined : new Response("upgrade failed", { status: 500 })),
+      websocket: {
+        backpressureLimit: 64 * 1024,
+        closeOnBackpressureLimit: true,
+        message(ws) {
+          for (let i = 0; i < 8; i++) ws.send(Buffer.alloc(128 * 1024, i));
+        },
+        close(ws, code) {
+          closed.resolve(code);
+        },
+      },
+    });
+    await using endpoint = new QuicEndpoint();
+    const ws = await openH3WebSocket(endpoint, server.port, {
+      readLater: true,
+      transportParams: { initialMaxStreamDataBidiLocal: 64 * 1024 },
+    });
+    ws.send(1, "flood");
+    const code = await closed.promise;
+    const outcome = await ws.streamClosed;
+    ws.close();
+    expect({ code, outcome }).toEqual({ code: 1006, outcome: expect.stringMatching(/^reset /) });
+  });
+
+  test("a message over maxPayloadLength closes with 1009", async () => {
+    const closed = Promise.withResolvers<number>();
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      http1: false,
+      fetch: (req, server) => (server.upgrade(req) ? undefined : new Response("upgrade failed", { status: 500 })),
+      websocket: {
+        maxPayloadLength: 1024,
+        message() {},
+        close(ws, code) {
+          closed.resolve(code);
+        },
+      },
+    });
+    await using endpoint = new QuicEndpoint();
+    const ws = await openH3WebSocket(endpoint, server.port);
+    ws.send(2, Buffer.alloc(2048));
+    const close = closeSummary(await ws.nextFrame());
+    const code = await closed.promise;
+    ws.close();
+    expect({ close, code }).toEqual({ close: { opcode: 8, code: 1009 }, code: 1009 });
+  });
+
+  test("permessage-deflate is negotiated and inflates and deflates messages", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      http1: false,
+      fetch: (req, server) => (server.upgrade(req) ? undefined : new Response("upgrade failed", { status: 500 })),
+      websocket: {
+        perMessageDeflate: true,
+        message(ws, message) {
+          ws.send(`echo:${message}`, true);
+        },
+      },
+    });
+    await using endpoint = new QuicEndpoint();
+    const ws = await openH3WebSocket(endpoint, server.port, {
+      headers: {
+        "sec-websocket-extensions": "permessage-deflate; client_no_context_takeover; server_no_context_takeover",
+      },
+    });
+    const text = "compressible ".repeat(64);
+    // RFC 7692: a compressed message is a raw DEFLATE block without the
+    // trailing 00 00 ff ff of its sync flush.
+    const deflated = deflateRawSync(text, { finishFlush: zlibConstants.Z_SYNC_FLUSH });
+    ws.send(1, deflated.subarray(0, deflated.length - 4), true);
+    const reply = await ws.nextFrame();
+    const inflated = inflateRawSync(Buffer.concat([reply!.payload, Buffer.from([0, 0, 0xff, 0xff])])).toString();
+    ws.close();
+
+    expect({
+      extension: ws.headers["sec-websocket-extensions"],
+      compressed: reply?.compressed,
+      smaller: reply!.payload.length < inflated.length,
+      inflated,
+    }).toEqual({
+      extension: expect.stringContaining("permessage-deflate"),
+      compressed: true,
+      smaller: true,
+      inflated: `echo:${text}`,
+    });
+  });
+
+  test("frames sent before an asynchronous server.upgrade() are delivered once, in order", async () => {
+    const requested = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const messages: string[] = [];
+    const allReceived = Promise.withResolvers<void>();
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      http1: false,
+      async fetch(req, server) {
+        requested.resolve();
+        await release.promise;
+        return server.upgrade(req) ? undefined : new Response("upgrade failed", { status: 500 });
+      },
+      websocket: {
+        message(ws, message) {
+          messages.push(String(message));
+          if (messages.length === 3) allReceived.resolve();
+        },
+      },
+    });
+    await using endpoint = new QuicEndpoint();
+    const opening = openH3WebSocket(endpoint, server.port, {
+      early: [wsClientFrame(1, "first"), wsClientFrame(1, "second")],
+    });
+    await requested.promise;
+    release.resolve();
+    const ws = await opening;
+    ws.send(1, "third");
+    await allReceived.promise;
+    ws.close();
+    expect(messages).toEqual(["first", "second", "third"]);
+  });
+});
+
+// server.stop() and server.reload() from inside WebSocket callbacks retire or
+// replace state the HTTP/3 stream is still using. They run in a child process
+// so a crash fails the test instead of the runner.
+describe("Bun.serve HTTP/3 WebSocket callbacks can stop or reload the server", () => {
+  const fixture = `
+    const tls = ${JSON.stringify(tls)};
+    const log = event => console.log("EVENT " + event);
+    const server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      http1: false,
+      fetch(req, server) {
+        const action = new URL(req.url).searchParams.get("action") ?? "";
+        return server.upgrade(req, { data: { action } }) ? undefined : new Response("upgrade failed", { status: 500 });
+      },
+      websocket: {
+        idleTimeout: Number(process.env.IDLE_TIMEOUT ?? 120),
+        sendPings: false,
+        open(ws) {
+          log("open " + ws.data.action);
+          if (ws.data.action === "stop-on-open") server.stop(true);
+          if (ws.data.action === "reload-on-open") {
+            server.reload({
+              fetch: () => new Response("reloaded"),
+              websocket: { message: (ws, message) => ws.send("reloaded:" + message) },
+            });
+          }
+        },
+        message(ws, message) {
+          log("message " + message);
+          if (message === "stop") server.stop(true);
+          else ws.send("echo:" + message);
+        },
+        close(ws, code) {
+          log("close " + code);
+          if (ws.data.action === "stop-on-close") server.stop(true);
+        },
+      },
+    });
+    console.error("PORT=" + server.port);
+    process.stdin.on("data", () => {});
+    process.stdin.on("end", () => process.exit(0));
+  `;
+
+  async function withReentrantServer(
+    env: Record<string, string>,
+    drive: (port: number, endpoint: InstanceType<typeof QuicEndpoint>) => Promise<unknown>,
+  ) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "pipe",
+    });
+    const stderr = proc.stderr.getReader();
+    let buffered = "";
+    let port = 0;
+    while (!port) {
+      const { value, done } = await stderr.read();
+      if (done) break;
+      buffered += new TextDecoder().decode(value);
+      port = Number(buffered.match(/PORT=(\d+)/)?.[1] ?? 0);
+    }
+    const stderrText = (async () => {
+      let rest = "";
+      for (let chunk = await stderr.read(); !chunk.done; chunk = await stderr.read()) {
+        rest += new TextDecoder().decode(chunk.value);
+      }
+      return rest;
+    })();
+    let driven: unknown;
+    {
+      await using endpoint = new QuicEndpoint();
+      driven = await drive(port, endpoint);
+    }
+    proc.stdin.end();
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const events = stdout
+      .split("\n")
+      .filter(line => line.startsWith("EVENT "))
+      .map(line => line.slice(6));
+    return { driven, events, stderr: buffered + (await stderrText), exitCode, signalCode: proc.signalCode };
+  }
+
+  // The stream's outcome, whether or not the handshake response got out first.
+  const settle = async (opening: ReturnType<typeof openH3WebSocket>, after?: (ws: Awaited<typeof opening>) => void) => {
+    try {
+      const ws = await opening;
+      after?.(ws);
+      while (await ws.nextFrame()) {}
+      ws.close();
+      return "ended";
+    } catch (err) {
+      return (err as Error).message;
+    }
+  };
+
+  test("server.stop(true) inside open()", async () => {
+    const result = await withReentrantServer({}, (port, endpoint) =>
+      settle(openH3WebSocket(endpoint, port, { path: "/?action=stop-on-open" })),
+    );
+    expect({ events: result.events, exitCode: result.exitCode, signalCode: result.signalCode }).toEqual({
+      events: ["open stop-on-open", "close 1006"],
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  test("server.stop(true) inside message()", async () => {
+    const result = await withReentrantServer({}, (port, endpoint) =>
+      settle(openH3WebSocket(endpoint, port), ws => ws.send(1, "stop")),
+    );
+    expect({ events: result.events, exitCode: result.exitCode, signalCode: result.signalCode }).toEqual({
+      events: ["open ", "message stop", "close 1006"],
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  test("server.stop(true) inside close()", async () => {
+    const result = await withReentrantServer({}, (port, endpoint) =>
+      settle(openH3WebSocket(endpoint, port, { path: "/?action=stop-on-close" }), ws => ws.send(8, closePayload(1000))),
+    );
+    expect({ events: result.events, exitCode: result.exitCode, signalCode: result.signalCode }).toEqual({
+      events: ["open stop-on-close", "close 1000"],
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  // The idle deadline expires in the uSockets timeout sweep, so the close
+  // callback, and the stop() it makes, run from inside that sweep.
+  test("server.stop(true) inside a close() that an idle timeout started", async () => {
+    const result = await withReentrantServer({ IDLE_TIMEOUT: "4" }, (port, endpoint) =>
+      settle(openH3WebSocket(endpoint, port, { path: "/?action=stop-on-close", maxIdleTimeout: 30 })),
+    );
+    expect({ events: result.events, exitCode: result.exitCode, signalCode: result.signalCode }).toEqual({
+      events: ["open stop-on-close", "close 1006"],
+      exitCode: 0,
+      signalCode: null,
+    });
+  }, 20_000);
+
+  test("server.reload() inside open() keeps the socket and swaps its handlers", async () => {
+    const result = await withReentrantServer({}, async (port, endpoint) => {
+      const ws = await openH3WebSocket(endpoint, port, { path: "/?action=reload-on-open" });
+      ws.send(1, "after");
+      const reply = (await ws.nextFrame())?.payload.toString();
+      ws.close();
+      return reply;
+    });
+    expect({ reply: result.driven, events: result.events, exitCode: result.exitCode }).toEqual({
+      reply: "reloaded:after",
+      events: ["open reload-on-open"],
+      exitCode: 0,
     });
   });
 });

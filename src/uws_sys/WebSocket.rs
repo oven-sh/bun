@@ -35,6 +35,7 @@ macro_rules! with_stream {
     ($self:expr, |$ws:ident| $body:expr) => {
         match $self {
             AnyWebSocket::H2($ws) => Some($body),
+            AnyWebSocket::H3($ws) => Some($body),
             AnyWebSocket::Ssl(_) | AnyWebSocket::Tcp(_) => None,
         }
     };
@@ -45,6 +46,7 @@ pub enum AnyWebSocket {
     Ssl(*mut RawWebSocket),
     Tcp(*mut RawWebSocket),
     H2(*mut uws::h2::WebSocket),
+    H3(*mut uws::h3::WebSocket),
 }
 
 impl AnyWebSocket {
@@ -432,6 +434,13 @@ impl StreamWebSocketTransport for uws::h2::H2Transport {
     #[inline(always)]
     fn any_websocket(ws: *mut StreamWebSocket<Self>) -> AnyWebSocket {
         AnyWebSocket::H2(ws)
+    }
+}
+
+impl StreamWebSocketTransport for uws::h3::H3Transport {
+    #[inline(always)]
+    fn any_websocket(ws: *mut StreamWebSocket<Self>) -> AnyWebSocket {
+        AnyWebSocket::H3(ws)
     }
 }
 

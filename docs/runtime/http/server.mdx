@@ -190,6 +190,8 @@ Bun.serve({
 
 When `http3` is enabled, the server listens on the same port over both TCP (HTTP/1.1) and UDP (HTTP/3). HTTP/1.1 responses include an `Alt-Svc` header advertising the HTTP/3 endpoint so capable clients can upgrade automatically.
 
+`server.upgrade()` also accepts WebSockets over HTTP/3, sent as Extended CONNECT requests ([RFC 9220](https://www.rfc-editor.org/rfc/rfc9220)). Pub/Sub topics are shared across HTTP/1.1, HTTP/2 and HTTP/3 WebSockets.
+
 To serve HTTP/3 only, with no TCP listener at all, set `http1: false`:
 
 ```ts
@@ -238,7 +240,7 @@ Without `tls`, Bun serves HTTP/2 to connections that open with the HTTP/2 prefac
 
 Set `http1: false` to refuse HTTP/1.x clients. Over TLS, clients that offer ALPN without `h2` fail the handshake; clients that send no ALPN at all, and cleartext connections that don't start with the preface, receive `505 HTTP Version Not Supported`. WebSocket clients must then support HTTP/2 Extended CONNECT ([RFC 8441](https://www.rfc-editor.org/rfc/rfc8441)).
 
-`server.upgrade()` accepts both an HTTP/1.1 WebSocket upgrade and an HTTP/2 Extended CONNECT request. WebSockets over HTTP/3, server push, and response trailers (needed by gRPC) are not supported.
+`server.upgrade()` accepts an HTTP/1.1 WebSocket upgrade and an HTTP/2 Extended CONNECT request. Server push and response trailers (needed by gRPC) are not supported.
 
 ---
 

@@ -112,10 +112,10 @@ Bun leaves external URLs (like CDN links or absolute URLs) untouched.
 
 Bun leaves these references as written. If one of them points at a local file, put that file next to the output:
 
-- `<iframe src>`, `<a href>`, `<object data>`, `<embed src>` and `<link rel="prefetch">`
+- `<iframe src>`, `<a href>`, `<object data>` and `<embed src>`
 - `<track src>` and SVG `<use href="./icons.svg#menu">`. Browsers do not load a `data:` URL from `<use>`. Copy the `<symbol>` into the page and use `<use href="#menu">`.
 - `<meta property="og:image" content>` and the other `<meta>` images. A crawler reads them, and a crawler needs an `https://` URL.
-- `<link rel="preload" as="fetch">` and other preloads of a URL that your code reads at runtime
+- `<link rel="prefetch" href>`, `<link rel="preload" as="fetch">` and other hints for a URL that the browser reads later
 - `url()` in a `style="..."` attribute or a `<style>` block. Put the CSS in a `.css` file and `<link>` it.
 - `import` specifiers in an inline `<script type="module">` block. Use `<script src>`.
 - Everything inside `<noscript>`

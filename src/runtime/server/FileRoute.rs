@@ -247,49 +247,42 @@ impl FileRoute {
             resp.timeout(server.config().idle_timeout);
         }
         let store = route.blob.store().unwrap().clone();
-        let open_flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NONBLOCK;
-        // A pinned file is opened by its store, which hands back the `fstat` it compared.
-        let pinned = match &store.data {
-            StoreData::File(file) => file.pinned(),
-            _ => None,
-        };
-        let verified = match pinned.map(|pinned| pinned.open_verified(open_flags)) {
-            Some(Ok(opened)) => Some(opened),
-            Some(Err(_)) => {
-                req.set_yield(true);
-                route.on_response_complete(resp);
-                return;
-            }
-            None => None,
-        };
         let Some(path) = store.path_for_display() else {
             req.set_yield(true);
             route.on_response_complete(resp);
             return;
         };
 
-        let fd_result: bun_sys::Result<Fd> = if let Some((fd, _)) = verified {
-            Ok(fd)
-        } else {
-            #[cfg(windows)]
-            {
-                let mut path_buffer = bun_paths::path_buffer_pool::get();
-                path_buffer[..path.len()].copy_from_slice(path);
-                path_buffer[path.len()] = 0;
-                bun_sys::open(
-                    bun_core::ZStr::from_buf(&path_buffer[..], path.len()),
-                    open_flags,
-                    0,
-                )
-            }
-            #[cfg(not(windows))]
-            {
-                bun_sys::open_a(path, open_flags, 0)
+        let open_flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NONBLOCK;
+
+        // A pinned file is opened by its store, which hands back the `fstat` it compared.
+        let pinned = match &store.data {
+            StoreData::File(file) => file.pinned(),
+            _ => None,
+        };
+        let opened: bun_sys::Result<(Fd, Option<bun_sys::Stat>)> = match pinned {
+            Some(pinned) => pinned
+                .open_verified(open_flags)
+                .map(|(fd, stat)| (fd, Some(stat))),
+            None => {
+                #[cfg(windows)]
+                let fd_result = {
+                    let mut path_buffer = bun_paths::path_buffer_pool::get();
+                    path_buffer[..path.len()].copy_from_slice(path);
+                    path_buffer[path.len()] = 0;
+                    bun_sys::open(
+                        bun_core::ZStr::from_buf(&path_buffer[..], path.len()),
+                        open_flags,
+                        0,
+                    )
+                };
+                #[cfg(not(windows))]
+                let fd_result = bun_sys::open_a(path, open_flags, 0);
+                fd_result.map(|fd| (fd, None))
             }
         };
-        let verified_stat = verified.map(|(_, stat)| stat);
 
-        let Ok(fd) = fd_result else {
+        let Ok((fd, verified_stat)) = opened else {
             req.set_yield(true);
             route.on_response_complete(resp);
             return;

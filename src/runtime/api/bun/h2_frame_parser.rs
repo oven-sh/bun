@@ -4555,6 +4555,7 @@ impl H2FrameParser {
                 .throw_invalid_arguments(format_args!("Expected windowSize to be a number")));
         }
         let window_size_value: u32 = window_size.to_u32();
+        // https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_submit.c#L346-L372
         let old_window_size = this.window_size.get();
         this.window_size.set(window_size_value as u64);
         // Only the connection window moves. SETTINGS_INITIAL_WINDOW_SIZE needs a SETTINGS frame.
@@ -4614,9 +4615,10 @@ impl H2FrameParser {
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let result = JSValue::create_empty_object(global_object, 9);
-        // As nghttp2 reports them. Growth still queued for the engine is already on the wire.
-        let advertised = this.recv_window_size.get() + this.pending_recv_window_growth.get();
+        // https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L7714-L7726
         let consumed = this.recv_window_consumed.get().max(0);
+        // Growth still queued for the engine is already on the wire.
+        let advertised = this.recv_window_size.get() + this.pending_recv_window_growth.get();
         result.put(
             global_object,
             b"effectiveLocalWindowSize",

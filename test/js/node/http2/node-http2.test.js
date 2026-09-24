@@ -5761,14 +5761,16 @@ describe("Http2Session.setLocalWindowSize()", () => {
 
   // One GET over a fresh client. Reports session.state right after `prepare` and again from
   // inside the 'end' handler, where the engine is still in the middle of a read batch.
-  async function download(bodySize, prepare) {
+  async function download(bodySize, prepare, { idleEngine = false } = {}) {
     const server = http2.createServer((req, res) => res.end(Buffer.alloc(bodySize, "y")));
     await new Promise(r => server.listen(0, "127.0.0.1", r));
     const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
     try {
       const { promise, resolve, reject } = Promise.withResolvers();
       client.on("error", reject);
-      await new Promise(r => client.once("connect", r));
+      await new Promise(r => client.once(idleEngine ? "remoteSettings" : "connect", r));
+      // One turn after 'remoteSettings' the engine exists and no read holds it.
+      if (idleEngine) await new Promise(r => setImmediate(r));
       prepare?.(client);
       const windowState = ({ effectiveLocalWindowSize, localWindowSize, effectiveRecvDataLength }) => ({
         effectiveLocalWindowSize,
@@ -5789,48 +5791,51 @@ describe("Http2Session.setLocalWindowSize()", () => {
     }
   }
 
-  it("server session: receives a POST body larger than the stream window", async () => {
-    const server = http2.createServer();
-    const { promise, resolve, reject } = Promise.withResolvers();
-    let serverSession;
-    server.on("session", session => {
-      serverSession = session;
-      session.setLocalWindowSize(WINDOW);
-    });
-    server.on("stream", stream => {
-      let received = 0;
-      stream.on("data", chunk => (received += chunk.length));
-      stream.on("end", () => {
-        stream.respond({ ":status": 200 });
-        stream.end();
-        resolve(received);
+  // "session": before the first read. "stream": inside a frame callback, where the engine is busy.
+  it.each(["session", "stream"])(
+    "server session: a call in the '%s' handler receives a POST body larger than the stream window",
+    async where => {
+      const server = http2.createServer();
+      const { promise, resolve, reject } = Promise.withResolvers();
+      let serverSession;
+      server.on("session", session => {
+        serverSession = session;
+        if (where === "session") session.setLocalWindowSize(WINDOW);
       });
-      stream.on("error", reject);
-    });
-    await new Promise(r => server.listen(0, "127.0.0.1", r));
-    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
-    try {
-      client.on("error", reject);
-      const req = client.request({ ":path": "/", ":method": "POST" });
-      req.on("error", reject);
-      req.end(Buffer.alloc(PAYLOAD, "x"));
-      expect(await promise).toBe(PAYLOAD);
-      expect(serverSession.state.effectiveLocalWindowSize).toBe(WINDOW);
-    } finally {
-      client.close();
-      server.close();
-    }
-  });
+      server.on("stream", stream => {
+        if (where === "stream") stream.session.setLocalWindowSize(WINDOW);
+        let received = 0;
+        stream.on("data", chunk => (received += chunk.length));
+        stream.on("end", () => {
+          stream.respond({ ":status": 200 });
+          stream.end();
+          resolve(received);
+        });
+        stream.on("error", reject);
+      });
+      await new Promise(r => server.listen(0, "127.0.0.1", r));
+      const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+      try {
+        client.on("error", reject);
+        const req = client.request({ ":path": "/", ":method": "POST" });
+        req.on("error", reject);
+        req.end(Buffer.alloc(PAYLOAD, "x"));
+        expect(await promise).toBe(PAYLOAD);
+        expect(serverSession.state.effectiveLocalWindowSize).toBe(WINDOW);
+      } finally {
+        client.close();
+        server.close();
+      }
+    },
+  );
 
   it("client session: receives a response body larger than the stream window", async () => {
-    const { received, stateAfterPrepare } = await download(PAYLOAD, client => client.setLocalWindowSize(WINDOW));
-    expect({ received, stateAfterPrepare }).toEqual({
+    const grown = { effectiveLocalWindowSize: WINDOW, localWindowSize: WINDOW, effectiveRecvDataLength: 0 };
+    // The body is below half of WINDOW, so no connection WINDOW_UPDATE has given it back yet.
+    expect(await download(PAYLOAD, client => client.setLocalWindowSize(WINDOW))).toEqual({
       received: PAYLOAD,
-      stateAfterPrepare: {
-        effectiveLocalWindowSize: WINDOW,
-        localWindowSize: WINDOW,
-        effectiveRecvDataLength: 0,
-      },
+      stateAfterPrepare: grown,
+      stateAtEnd: { ...grown, localWindowSize: WINDOW - PAYLOAD, effectiveRecvDataLength: PAYLOAD },
     });
   });
 
@@ -5848,6 +5853,16 @@ describe("Http2Session.setLocalWindowSize()", () => {
         localWindowSize: DEFAULT_WINDOW - 1000,
         effectiveRecvDataLength: 1000,
       },
+    });
+  });
+
+  it("session.state reports a window that grew between two reads", async () => {
+    const { received, stateAfterPrepare } = await download(1000, client => client.setLocalWindowSize(WINDOW), {
+      idleEngine: true,
+    });
+    expect({ received, stateAfterPrepare }).toEqual({
+      received: 1000,
+      stateAfterPrepare: { effectiveLocalWindowSize: WINDOW, localWindowSize: WINDOW, effectiveRecvDataLength: 0 },
     });
   });
 

@@ -835,13 +835,6 @@ private:
     // happened: a Bun.ModuleGraph, or null for the global object's own code.
     // Guarded by cellLock() (visited on the GC thread).
     Bun::RejectedPromiseQueue m_aboutToBeNotifiedRejectedPromises;
-
-    // While handleRejectedPromises() is iterating its drained snapshot, this
-    // points at the not-yet-processed tail so promiseRejectionTracker(Handle)
-    // can suppress a spurious 'rejectionHandled' for a promise whose
-    // 'unhandledRejection' has not fired yet. Linked through `outer` to handle
-    // re-entrant handleRejectedPromises() calls.
-    Bun::InFlightRejections* m_rejectedPromisesBeingProcessed { nullptr };
 };
 
 class EvalGlobalObject : public GlobalObject {

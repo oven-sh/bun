@@ -464,7 +464,7 @@ pub mod socket_group;
 #[path = "SocketKind.rs"]
 pub mod socket_kind;
 #[path = "stream_websocket.rs"]
-mod stream_websocket;
+pub mod stream_websocket;
 #[path = "thunk.rs"]
 pub mod thunk;
 // libuv only — use `bun_event_loop::EventLoopTimer` elsewhere.

@@ -7,15 +7,17 @@ use bun_core::Utf8Bytes;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{ComptimeStringMapExt as _, JsCell};
 use bun_uws::{self as uws, AnyWebSocket, WebSocketBehavior};
-use bun_uws_sys::web_socket::{H1WebSocketUpgradeServer, H1Wrap, H2Wrap, WebSocketHandler};
+use bun_uws_sys::web_socket::{
+    H1WebSocketUpgradeServer, H1Wrap, StreamWebSocketTransport, StreamWrap, WebSocketHandler,
+};
 use bun_uws_sys::{Opcode, SendStatus};
 
-use crate::server::WebSocketServerHandler;
 use crate::server::jsc::{
     self, AbortSignal, ArrayBuffer, CallFrame, CommonAbortReason, JSGlobalObject, JSType, JSValue,
     JsError, JsRef, JsResult,
 };
 use crate::server::web_socket_server_context::HandlerFlags;
+use crate::server::{WebSocketServerHandler, WebSocketTree};
 use crate::webcore::{Blob, BlobExt};
 
 bun_output::declare_scope!(WebSocketServer, visible);
@@ -251,7 +253,7 @@ pub(super) fn blob_payload<'a>(
 struct PublishCtx {
     h1_app: *mut c_void,
     h1_ssl: bool,
-    has_h2: bool,
+    has_stream_trees: bool,
     server: super::AnyServer,
     publish_to_self: bool,
 }
@@ -313,11 +315,12 @@ impl ServerWebSocket {
         // `app` remains the stopped-server gate even when the current socket
         // is H2; the parent uWS app owns the listener and server lifetime.
         let app = handler.app?;
+        let server = handler.server?;
         Some(PublishCtx {
             h1_app: app,
             h1_ssl: handler.flags.contains(HandlerFlags::SSL),
-            has_h2: handler.h2_app.is_some(),
-            server: handler.server?,
+            has_stream_trees: server.has_stream_websocket_trees(),
+            server,
             publish_to_self: handler.flags.contains(HandlerFlags::PUBLISH_TO_SELF),
         })
     }
@@ -356,9 +359,9 @@ impl ServerWebSocket {
     ) -> JSValue {
         let ws = self.websocket();
         /* Keep the dominant HTTP/1-only path on the same uWebSockets calls it
-         * used before the H2 bridge existed. Cross-tree subscriber lookups
-         * are needed only on a listener that actually has an H2 app. */
-        if !ws.is_h2() && !ctx.has_h2 {
+         * used before stream transports existed. Cross-tree subscriber lookups
+         * are needed only on a listener that actually has a stream app. */
+        if !ws.is_stream() && !ctx.has_stream_trees {
             let status = if !ctx.publish_to_self && !self.is_closed() {
                 ws.publish(topic, buffer, opcode, compress)
             } else {
@@ -372,29 +375,23 @@ impl ServerWebSocket {
         let status = if ctx.publish_to_self || self.is_closed() {
             ctx.server.publish(topic, buffer, opcode, compress)
         } else {
-            let self_is_h2 = ws.is_h2();
+            /* The socket publishes into its own tree so uWS skips it as the
+             * sender; every other tree receives the message as a server-wide
+             * publication. */
+            let own_tree = WebSocketTree::of(ws);
             let self_subscribed = u32::from(ws.is_subscribed(topic));
-            let own_count = if self_is_h2 {
-                ctx.server.num_subscribers_h2(topic)
-            } else {
-                ctx.server.num_subscribers_h1(topic)
-            }
-            .saturating_sub(self_subscribed);
-            let other_count = if self_is_h2 {
-                ctx.server.num_subscribers_h1(topic)
-            } else {
-                ctx.server.num_subscribers_h2(topic)
-            };
-
-            let own = (own_count != 0).then(|| ws.publish(topic, buffer, opcode, compress));
-            let other = (other_count != 0).then(|| {
-                if self_is_h2 {
-                    ctx.server.publish_h1(topic, buffer, opcode, compress)
-                } else {
-                    ctx.server.publish_h2(topic, buffer, opcode, compress)
-                }
-            });
-            bun_uws::SendStatus::worst(own.into_iter().chain(other))
+            let own = (ctx
+                .server
+                .num_subscribers_in(own_tree, topic)
+                .saturating_sub(self_subscribed)
+                != 0)
+                .then(|| ws.publish(topic, buffer, opcode, compress));
+            let others = WebSocketTree::ALL
+                .into_iter()
+                .filter(|tree| *tree != own_tree)
+                .filter(|tree| ctx.server.num_subscribers_in(*tree, topic) != 0)
+                .map(|tree| ctx.server.publish_in(tree, topic, buffer, opcode, compress));
+            bun_uws::SendStatus::worst(own.into_iter().chain(others))
         };
         send_status_to_js(status, buffer.len(), "publish", "bytes")
     }
@@ -883,8 +880,10 @@ impl ServerWebSocket {
         H1Wrap::<ServerType, Self, SSL>::apply(opts)
     }
 
-    pub(crate) fn behavior_h2(opts: &WebSocketBehavior) -> bun_uws_sys::h2::WebSocketBehavior {
-        H2Wrap::<Self>::apply(opts)
+    pub(crate) fn behavior_stream<X: StreamWebSocketTransport>(
+        opts: &WebSocketBehavior,
+    ) -> bun_uws_sys::stream_websocket::WebSocketBehavior<X> {
+        StreamWrap::<Self, X>::apply(opts)
     }
 
     // No `#[bun_jsc::host_fn]` here — the constructor extern shim is

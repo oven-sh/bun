@@ -30,7 +30,7 @@
 #include "SocketKinds.h"
 #include "Http2ResponseData.h"
 #include "Http3Request.h"
-#include "WebSocketContextData.h"
+#include "StreamWebSocketTopics.h"
 
 #include <lshpack.h>
 
@@ -224,18 +224,6 @@ static inline bool validFieldValue(const char *p, unsigned n) {
 
 struct Http2Connection;
 struct Http2Context;
-
-/* Type-erased subscriber used by the H2 stream WebSocket adapter.  H1 keeps
- * its existing TopicTree callback (and therefore its hot path) unchanged;
- * H2 owns a separate tree whose subscribers call back into the stream
- * transport without knowing about the Rust WebSocket wrapper. */
-struct Http2TopicSubscriber {
-    void *user = nullptr;
-    uint32_t (*send)(void *, const char *, size_t, int, bool, bool *) = nullptr;
-    size_t (*buffered)(void *) = nullptr;
-    size_t maxBackpressure = 0;
-    void (*close)(void *) = nullptr;
-};
 
 /* One request/response stream. */
 struct Http2Response {
@@ -747,7 +735,7 @@ struct Http2Context {
     bool enableConnectProtocol = false;
     bool isTls = false;
 
-    TopicTree<TopicTreeMessage, TopicTreeBigMessage> *topicTree = nullptr;
+    StreamTopicTree *topicTree = nullptr;
 
     /* Output buffer lent to whichever connection is inside a socket event;
      * see Http2Connection::out. */
@@ -792,57 +780,20 @@ struct Http2Context {
         ctx->loop = loop;
         ctx->idleTimeoutS = idleTimeoutS;
         ctx->enableConnectProtocol = enableConnectProtocol;
-        ctx->topicTree = new TopicTree<TopicTreeMessage, TopicTreeBigMessage>([](Subscriber *s, TopicTreeMessage &message, auto) {
-            auto *adapter = static_cast<Http2TopicSubscriber *>(s ? s->user : nullptr);
-            if (!adapter || !adapter->send) return true;
-            bool limitExceeded = false;
-            uint32_t status = adapter->send(adapter->user, message.message.data(), message.message.size(), message.opCode, message.compress, &limitExceeded);
-            if (limitExceeded && adapter->close) adapter->close(adapter->user);
-            return status == 2;
-        });
+        ctx->topicTree = createStreamTopicTree();
         us_socket_group_init(&ctx->group, (us_loop_t *) loop, &vtable, ctx);
         return ctx;
     }
 
     uint32_t publish(std::string_view topic, std::string_view message, int opCode, bool compress) {
-        if (!topicTree) return 2;
-        if (message.size() >= LoopData::CORK_BUFFER_SIZE) {
-            bool hasReceivers = false;
-            uint32_t worst = 1;
-            topicTree->publishBig(nullptr, topic, {message, opCode, compress}, [&](Subscriber *s, TopicTreeBigMessage &item) {
-                hasReceivers = true;
-                auto *adapter = static_cast<Http2TopicSubscriber *>(s->user);
-                bool limitExceeded = false;
-                uint32_t status = adapter && adapter->send ? adapter->send(adapter->user, item.message.data(), item.message.size(), item.opCode, item.compress, &limitExceeded) : 2;
-                if (limitExceeded && adapter && adapter->close) adapter->close(adapter->user);
-                if (status == 2 || (status == 0 && worst == 1)) worst = status;
-            });
-            return hasReceivers ? worst : 2;
-        }
-        auto *topicPtr = topicTree->lookupTopic(topic);
-        if (!topicPtr) return 2;
-        bool queued = topicTree->publish(nullptr, *topicPtr, {std::string(message), opCode, compress});
+        bool queued = false;
+        uint32_t status = publishToStreamTopic(topicTree, nullptr, topic, message, opCode, compress, queued);
         if (queued) scheduleDeferredDrain();
-        bool hasReceivers = false;
-        uint32_t worst = 1;
-        for (Subscriber *s : *topicPtr) {
-            hasReceivers = true;
-            auto *adapter = static_cast<Http2TopicSubscriber *>(s->user);
-            if (!adapter || !adapter->buffered) {
-                worst = 2;
-                continue;
-            }
-            size_t buffered = adapter->buffered(adapter->user);
-            if (adapter->maxBackpressure && buffered > adapter->maxBackpressure) worst = 2;
-            else if (buffered && worst == 1) worst = 0;
-        }
-        return hasReceivers ? worst : 2;
+        return status;
     }
 
     unsigned int numSubscribers(std::string_view topic) {
-        if (!topicTree) return 0;
-        Topic *topicPtr = topicTree->lookupTopic(topic);
-        return topicPtr ? (unsigned int)topicPtr->size() : 0;
+        return streamTopicSubscriberCount(topicTree, topic);
     }
 
     void free() {

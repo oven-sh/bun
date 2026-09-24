@@ -1719,7 +1719,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 self.unref();
                 if let Some(ws) = self.config.websocket.as_mut() {
                     ws.handler.app = None;
-                    ws.handler.h2_app = None;
                 }
                 self.flags.insert(ServerFlags::TERMINATED);
                 if let Some(app) = self.app {
@@ -1786,7 +1785,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         } else if !self.flags.contains(ServerFlags::TERMINATED) {
             if let Some(ws) = self.config.websocket.as_mut() {
                 ws.handler.app = None;
-                ws.handler.h2_app = None;
             }
             self.flags.insert(ServerFlags::TERMINATED);
             // `app.close()` synchronously drains every open websocket; their
@@ -1919,7 +1917,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             self.js_value.downgrade();
             if let Some(ws) = self.config.websocket.as_mut() {
                 ws.handler.app = None;
-                ws.handler.h2_app = None;
                 ws.handler.server = None;
             }
 
@@ -2322,7 +2319,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // --- 2. WebSocket handler app reference ---
         if let Some(websocket) = self.config.websocket.as_mut() {
             websocket.handler.app = Some(std::ptr::from_mut(app).cast::<c_void>());
-            websocket.handler.h2_app = self.h2_app;
             websocket.handler.server = Some(any_server);
             websocket
                 .handler
@@ -3717,6 +3713,27 @@ pub(crate) type HTTPSServer = NewServer<true, false>;
 pub(crate) type DebugHTTPServer = NewServer<false, true>;
 pub(crate) type DebugHTTPSServer = NewServer<true, true>;
 
+/// One WebSocket Pub/Sub topic tree. HTTP/1 sockets live in the uWS app's
+/// tree; every stream transport owns a separate one, and a publish reaches
+/// each tree that has subscribers.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WebSocketTree {
+    H1,
+    H2,
+}
+
+impl WebSocketTree {
+    pub(crate) const ALL: [Self; 2] = [Self::H1, Self::H2];
+
+    #[inline]
+    pub(crate) fn of(ws: uws::AnyWebSocket) -> Self {
+        match ws {
+            uws::AnyWebSocket::Ssl(_) | uws::AnyWebSocket::Tcp(_) => Self::H1,
+            uws::AnyWebSocket::H2(_) => Self::H2,
+        }
+    }
+}
+
 // ─── AnyServer ───────────────────────────────────────────────────────────────
 // §Dispatch: the
 // `bun_ptr::impl_tagged_ptr_union!` macro would impl a foreign trait for a
@@ -4023,70 +4040,44 @@ impl AnyServer {
         any_server_dispatch_mut!(self, |s| s.on_static_request_complete())
     }
 
-    pub(crate) fn num_subscribers_h1(&self, topic: &[u8]) -> u32 {
-        any_server_dispatch!(self, |s| match s.app {
+    /// Whether any stream transport (Extended CONNECT) keeps its own
+    /// WebSocket topic tree beside the HTTP/1 app's.
+    pub(crate) fn has_stream_websocket_trees(&self) -> bool {
+        any_server_dispatch!(self, |s| s.h2_app.is_some())
+    }
+
+    pub(crate) fn num_subscribers_in(&self, tree: WebSocketTree, topic: &[u8]) -> u32 {
+        any_server_dispatch!(self, |s| match tree {
             // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` via
             // `bun_opaque::opaque_deref_mut` (const-asserted ZST/align-1).
-            Some(app) => bun_opaque::opaque_deref_mut(app).num_subscribers(topic),
-            // Defensive 0
-            // here for the post-stop window; assert in debug to catch misuse.
-            None => {
-                debug_assert!(false, "num_subscribers on server with no app");
-                0
-            }
+            WebSocketTree::H1 => s.app.map_or(0, |app| bun_opaque::opaque_deref_mut(app)
+                .num_subscribers(topic)),
+            WebSocketTree::H2 => s.h2_app.map_or(0, |app| bun_opaque::opaque_deref_mut(app)
+                .num_subscribers(topic)),
         })
     }
 
-    pub(crate) fn num_subscribers_h2(&self, topic: &[u8]) -> u32 {
-        any_server_dispatch!(self, |s| match s.h2_app {
-            Some(app) => bun_opaque::opaque_deref_mut(app).num_subscribers(topic),
-            None => 0,
+    pub(crate) fn publish_in(
+        &self,
+        tree: WebSocketTree,
+        topic: &[u8],
+        message: &[u8],
+        opcode: uws::Opcode,
+        compress: bool,
+    ) -> uws::SendStatus {
+        any_server_dispatch!(self, |s| match tree {
+            WebSocketTree::H1 => s.app.map_or(uws::SendStatus::Dropped, |app| {
+                bun_opaque::opaque_deref_mut(app).publish(topic, message, opcode, compress)
+            }),
+            WebSocketTree::H2 => s.h2_app.map_or(uws::SendStatus::Dropped, |app| {
+                bun_opaque::opaque_deref_mut(app).publish(topic, message, opcode, compress)
+            }),
         })
     }
 
     pub(crate) fn num_subscribers(&self, topic: &[u8]) -> u32 {
-        any_server_dispatch!(self, |s| {
-            let h1 = match s.app {
-                Some(app) => bun_opaque::opaque_deref_mut(app).num_subscribers(topic),
-                None => {
-                    debug_assert!(false, "num_subscribers on server with no app");
-                    0
-                }
-            };
-            match s.h2_app {
-                Some(app) => {
-                    h1.saturating_add(bun_opaque::opaque_deref_mut(app).num_subscribers(topic))
-                }
-                None => h1,
-            }
-        })
-    }
-
-    pub(crate) fn publish_h1(
-        &self,
-        topic: &[u8],
-        message: &[u8],
-        opcode: uws::Opcode,
-        compress: bool,
-    ) -> uws::SendStatus {
-        any_server_dispatch!(self, |s| match s.app {
-            Some(app) =>
-                bun_opaque::opaque_deref_mut(app).publish(topic, message, opcode, compress),
-            None => uws::SendStatus::Dropped,
-        })
-    }
-
-    pub(crate) fn publish_h2(
-        &self,
-        topic: &[u8],
-        message: &[u8],
-        opcode: uws::Opcode,
-        compress: bool,
-    ) -> uws::SendStatus {
-        any_server_dispatch!(self, |s| match s.h2_app {
-            Some(app) =>
-                bun_opaque::opaque_deref_mut(app).publish(topic, message, opcode, compress),
-            None => uws::SendStatus::Dropped,
+        WebSocketTree::ALL.into_iter().fold(0u32, |total, tree| {
+            total.saturating_add(self.num_subscribers_in(tree, topic))
         })
     }
 
@@ -4097,34 +4088,16 @@ impl AnyServer {
         opcode: uws::Opcode,
         compress: bool,
     ) -> uws::SendStatus {
-        any_server_dispatch!(self, |s| match s.h2_app {
-            /* Preserve the old single-tree call on HTTP/1-only listeners. */
-            None => match s.app {
-                Some(app) =>
-                    bun_opaque::opaque_deref_mut(app).publish(topic, message, opcode, compress),
-                None => {
-                    debug_assert!(false, "publish on server with no app");
-                    uws::SendStatus::Dropped
-                }
-            },
-            Some(h2_app) => {
-                let h1_count = match s.app {
-                    Some(app) => bun_opaque::opaque_deref_mut(app).num_subscribers(topic),
-                    None => 0,
-                };
-                let h2_count = bun_opaque::opaque_deref_mut(h2_app).num_subscribers(topic);
-                let h1 = (h1_count != 0).then(|| match s.app {
-                    Some(app) => {
-                        bun_opaque::opaque_deref_mut(app).publish(topic, message, opcode, compress)
-                    }
-                    None => uws::SendStatus::Dropped,
-                });
-                let h2 = (h2_count != 0).then(|| {
-                    bun_opaque::opaque_deref_mut(h2_app).publish(topic, message, opcode, compress)
-                });
-                uws::SendStatus::worst(h1.into_iter().chain(h2))
-            }
-        })
+        /* Preserve the old single-tree call on HTTP/1-only listeners. */
+        if !self.has_stream_websocket_trees() {
+            return self.publish_in(WebSocketTree::H1, topic, message, opcode, compress);
+        }
+        uws::SendStatus::worst(
+            WebSocketTree::ALL
+                .into_iter()
+                .filter(|tree| self.num_subscribers_in(*tree, topic) != 0)
+                .map(|tree| self.publish_in(tree, topic, message, opcode, compress)),
+        )
     }
 
     pub(crate) fn web_socket_handler(&mut self) -> Option<&mut WebSocketServerHandler> {

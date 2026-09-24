@@ -6,12 +6,9 @@
 
 // clang-format off
 #include "_libusockets.h"
-#include "PaddedWebSocketProtocol.h"
+#include "StreamWebSocketParser.h"
 
 #include <bun-uws/src/Http2App.h>
-#include <bun-uws/src/PerMessageDeflate.h>
-#include <bun-uws/src/WebSocketExtensions.h>
-#include <vector>
 #include <string_view>
 #include <string.h>
 // clang-format on
@@ -23,406 +20,44 @@ using uWS::Http2ResponseData;
 
 static inline std::string_view h2sv(const char* p, size_t n) { return p ? std::string_view { p, n } : std::string_view {}; }
 
-struct H2WebSocketParser : Bun::PaddedWebSocketProtocol<true, H2WebSocketParser, 9> {
-    using FragmentHandler = bool (*)(void*, const char*, size_t, unsigned int, int, bool);
-    using FailHandler = void (*)(void*, int);
+struct H2WebSocketTransport {
+    using Response = Http2Response;
 
-    static constexpr size_t INFLATION_POST_PADDING = 9;
-
-    Http2Response* response;
-    size_t maxPayloadLength;
-    size_t maxBackpressure;
-    bool closeOnBackpressureLimit;
-    void* user;
-    FragmentHandler fragmentHandler;
-    FailHandler failHandler;
-    std::vector<char> compressedFragments;
-    std::vector<char> sendScratch;
-    uWS::CompressOptions compressionOptions = uWS::CompressOptions::DISABLED;
-    enum CompressionStatus : uint8_t {
-        DISABLED,
-        ENABLED,
-        COMPRESSED_FRAME,
-    } compressionStatus = DISABLED;
-    uWS::DeflationStream* deflationStream = nullptr;
-    uWS::InflationStream* inflationStream = nullptr;
-    bool failed = false;
-    uWS::Subscriber* subscriber = nullptr;
-    uWS::Http2TopicSubscriber topicAdapter;
-
-    H2WebSocketParser(Http2Response* response, size_t maxPayloadLength, size_t maxBackpressure, bool closeOnBackpressureLimit,
-        void* user, FragmentHandler fragmentHandler, FailHandler failHandler)
-        : response(response)
-        , maxPayloadLength(maxPayloadLength)
-        , maxBackpressure(maxBackpressure)
-        , closeOnBackpressureLimit(closeOnBackpressureLimit)
-        , user(user)
-        , fragmentHandler(fragmentHandler)
-        , failHandler(failHandler)
+    static bool isWritable(Response* r) { return !r->dead && !r->localClosed; }
+    static size_t bufferedAmount(Response* r) { return r->getBufferedAmount(); }
+    static size_t backpressureMemory(Response* r) { return r->data.backpressure.totalLength(); }
+    /* A payload split from its frame header costs one extra DATA frame header;
+     * sendAllowance() includes the connection output high-water mark. */
+    static size_t frameBudget(size_t frameLength, size_t payloadLength)
     {
-        topicAdapter.user = this;
-        topicAdapter.send = [](void* opaque, const char* data, size_t length, int opCode, bool compress, bool* limitExceeded) -> uint32_t {
-            auto* parser = static_cast<H2WebSocketParser*>(opaque);
-            return parser->send(data, length, opCode, compress, true, parser->maxBackpressure, limitExceeded);
-        };
-        topicAdapter.buffered = [](void* opaque) -> size_t {
-            auto* parser = static_cast<H2WebSocketParser*>(opaque);
-            return parser->response ? parser->response->getBufferedAmount() : 0;
-        };
-        topicAdapter.maxBackpressure = maxBackpressure;
-        if (closeOnBackpressureLimit) {
-            topicAdapter.close = [](void* opaque) {
-                auto* parser = static_cast<H2WebSocketParser*>(opaque);
-                if (parser->response && !parser->response->dead) parser->response->close(uWS::http2::ERR_CANCEL);
-            };
-        }
+        return frameLength + (payloadLength >= 16 * 1024 ? uWS::http2::FRAME_HEADER_SIZE : 0);
     }
-
-    ~H2WebSocketParser()
+    static bool canWriteWithinBackpressure(Response* r, size_t budget, size_t maxBackpressure)
     {
-        unsubscribeAll();
-        delete deflationStream;
-        delete inflationStream;
+        return r->canWriteWithinBackpressure(budget, maxBackpressure);
     }
-
-    uWS::TopicTree<uWS::TopicTreeMessage, uWS::TopicTreeBigMessage>* topics() const
+    static bool write(Response* r, std::string_view data) { return r->write(data); }
+    static bool tryWriteFrame(Response* r, std::string_view header, std::string_view payload)
     {
-        return response && response->conn && response->conn->ctx ? response->conn->ctx->topicTree : nullptr;
+        return r->tryWriteWebSocketFrame(header, payload);
     }
-
-    bool subscribe(std::string_view topic)
+    static void cancel(Response* r)
     {
-        auto* tree = topics();
-        if (!tree) return false;
-        if (!subscriber) {
-            subscriber = tree->createSubscriber();
-            subscriber->user = &topicAdapter;
-        }
-        tree->subscribe(subscriber, topic);
-        /* Match the long-standing ServerWebSocket contract: subscribing is
-         * idempotent and reports success even when this subscriber already
-         * belongs to the topic. */
-        return true;
+        if (!r->dead) r->close(uWS::http2::ERR_CANCEL);
     }
-
-    bool unsubscribe(std::string_view topic)
+    static void writeHeader(Response* r, std::string_view name, std::string_view value) { r->writeHeader(name, value); }
+    static uWS::StreamTopicTree* topics(Response* r) { return r->conn && r->conn->ctx ? r->conn->ctx->topicTree : nullptr; }
+    static void scheduleTopicDrain(Response* r)
     {
-        auto* tree = topics();
-        if (!tree || !subscriber) return false;
-        auto [ok, last] = tree->unsubscribe(subscriber, topic);
-        if (ok && last) {
-            tree->drain(subscriber);
-            tree->freeSubscriber(subscriber);
-            subscriber = nullptr;
-        }
-        return ok;
+        if (r->conn && r->conn->ctx) r->conn->ctx->scheduleDeferredDrain();
     }
-
-    bool isSubscribed(std::string_view topic) const
+    static uWS::LoopData* loopData(Response* r)
     {
-        auto* tree = topics();
-        if (!tree || !subscriber) return false;
-        auto* topicPtr = tree->lookupTopic(topic);
-        return topicPtr && topicPtr->count(subscriber);
-    }
-
-    void unsubscribeAll()
-    {
-        if (!subscriber) return;
-        auto* tree = topics();
-        if (tree)
-            tree->freeSubscriber(subscriber);
-        else
-            delete subscriber;
-        subscriber = nullptr;
-    }
-
-    template<typename Callback>
-    void iterateTopics(Callback&& callback) const
-    {
-        if (!subscriber) return;
-        for (auto* topic : subscriber->topics)
-            callback(std::string_view(topic->name));
-    }
-
-    uint32_t publish(std::string_view topic, std::string_view message, int opCode, bool compress)
-    {
-        auto* tree = topics();
-        if (!tree) return 2;
-        if (message.size() >= uWS::LoopData::CORK_BUFFER_SIZE) {
-            bool hasReceivers = false;
-            uint32_t worst = 1;
-            tree->publishBig(subscriber, topic, { message, opCode, compress }, [&](uWS::Subscriber* s, uWS::TopicTreeBigMessage& item) {
-                hasReceivers = true;
-                auto* adapter = static_cast<uWS::Http2TopicSubscriber*>(s->user);
-                bool limitExceeded = false;
-                uint32_t status = adapter && adapter->send ? adapter->send(adapter->user, item.message.data(), item.message.size(), item.opCode, item.compress, &limitExceeded) : 2;
-                if (limitExceeded && adapter && adapter->close) adapter->close(adapter->user);
-                if (status == 2 || (status == 0 && worst == 1)) worst = status;
-            });
-            return hasReceivers ? worst : 2;
-        }
-        auto* topicPtr = tree->lookupTopic(topic);
-        if (!topicPtr) return 2;
-        bool queued = tree->publish(subscriber, *topicPtr, { std::string(message), opCode, compress });
-        if (queued && response && response->conn && response->conn->ctx) {
-            response->conn->ctx->scheduleDeferredDrain();
-        }
-        bool hasReceivers = false;
-        uint32_t worst = 1;
-        for (auto* s : *topicPtr) {
-            if (s == subscriber) continue;
-            hasReceivers = true;
-            auto* adapter = static_cast<uWS::Http2TopicSubscriber*>(s->user);
-            auto* peer = adapter ? static_cast<H2WebSocketParser*>(adapter->user) : nullptr;
-            if (!peer || !peer->response) {
-                worst = 2;
-                continue;
-            }
-            size_t buffered = peer->response->getBufferedAmount();
-            if (peer->maxBackpressure && buffered > peer->maxBackpressure)
-                worst = 2;
-            else if (buffered && worst == 1)
-                worst = 0;
-        }
-        return hasReceivers ? worst : 2;
-    }
-
-    uWS::LoopData* loopData() const
-    {
-        return (uWS::LoopData*)us_loop_ext(us_socket_group_loop(us_socket_group(response->conn->s)));
-    }
-
-    void ensureCompressionResources()
-    {
-        uWS::LoopData* ld = loopData();
-        if (!ld->zlibContext) {
-            ld->zlibContext = new uWS::ZlibContext;
-            ld->inflationStream = new uWS::InflationStream(uWS::CompressOptions::DEDICATED_DECOMPRESSOR);
-            ld->deflationStream = new uWS::DeflationStream(uWS::CompressOptions::DEDICATED_COMPRESSOR);
-        }
-    }
-
-    void negotiateCompression(uint16_t configured, std::string_view offer)
-    {
-        if (!configured || offer.empty()) return;
-        uWS::CompressOptions wanted = (uWS::CompressOptions)configured;
-
-        int wantedInflationWindow = 0;
-        if ((wanted & uWS::CompressOptions::_DECOMPRESSOR_MASK) != uWS::CompressOptions::SHARED_DECOMPRESSOR) {
-            wantedInflationWindow = (wanted & uWS::CompressOptions::_DECOMPRESSOR_MASK) >> 8;
-        }
-        int wantedCompressionWindow = (wanted & uWS::CompressOptions::_COMPRESSOR_MASK) >> 4;
-
-        auto [negotiated, compressionWindow, inflationWindow, responseHeader] = uWS::negotiateCompression(true, wantedCompressionWindow, wantedInflationWindow, offer);
-        if (!negotiated) return;
-
-        if (compressionWindow == 0) {
-            compressionOptions = uWS::CompressOptions::SHARED_COMPRESSOR;
-        } else {
-            compressionOptions = (uWS::CompressOptions)((uint32_t)(compressionWindow << 4)
-                | (uint32_t)(compressionWindow - 7));
-            /* Preserve the 3 KB memLevel selection, whose windowBits value is
-             * otherwise indistinguishable from the 4 KB option. */
-            if ((wanted & uWS::CompressOptions::_COMPRESSOR_MASK) == uWS::CompressOptions::DEDICATED_COMPRESSOR_3KB) {
-                compressionOptions = uWS::CompressOptions::DEDICATED_COMPRESSOR_3KB;
-            }
-        }
-        if (inflationWindow == 0) {
-            compressionOptions = (uWS::CompressOptions)(compressionOptions | uWS::CompressOptions::SHARED_DECOMPRESSOR);
-        } else {
-            compressionOptions = (uWS::CompressOptions)(compressionOptions | (inflationWindow << 8));
-        }
-
-        ensureCompressionResources();
-        if ((compressionOptions & uWS::CompressOptions::_COMPRESSOR_MASK) != uWS::CompressOptions::SHARED_COMPRESSOR) {
-            deflationStream = new uWS::DeflationStream(compressionOptions);
-        }
-        if ((compressionOptions & uWS::CompressOptions::_DECOMPRESSOR_MASK) != uWS::CompressOptions::SHARED_DECOMPRESSOR) {
-            inflationStream = new uWS::InflationStream(compressionOptions);
-        }
-        compressionStatus = ENABLED;
-        response->writeHeader("sec-websocket-extensions", responseHeader);
-    }
-
-    static bool setCompressed(uWS::WebSocketState<true>*, void* opaque)
-    {
-        H2WebSocketParser* parser = (H2WebSocketParser*)opaque;
-        if (parser->compressionStatus == DISABLED) return false;
-        parser->compressionStatus = COMPRESSED_FRAME;
-        return true;
-    }
-
-    static bool refusePayloadLength(uint64_t length, uWS::WebSocketState<true>*, void* opaque)
-    {
-        return length > ((H2WebSocketParser*)opaque)->maxPayloadLength;
-    }
-
-    static void forceClose(uWS::WebSocketState<true>*, void* opaque, std::string_view reason = {})
-    {
-        H2WebSocketParser* parser = (H2WebSocketParser*)opaque;
-        if (parser->failed) return;
-        parser->failed = true;
-        int code = (reason == uWS::ERR_TOO_BIG_MESSAGE || reason == uWS::ERR_TOO_BIG_MESSAGE_INFLATION) ? 1009 : 1002;
-        parser->failHandler(parser->user, code);
-    }
-
-    static bool handleFragment(char* data, size_t length, unsigned int remainingBytes, int opCode, bool fin,
-        uWS::WebSocketState<true>*, void* opaque)
-    {
-        H2WebSocketParser* parser = (H2WebSocketParser*)opaque;
-        if (opCode < 3 && parser->compressionStatus == COMPRESSED_FRAME) {
-            size_t aggregate = parser->compressedFragments.size() + length;
-            if (aggregate > parser->maxPayloadLength) {
-                forceClose(parser, opaque, uWS::ERR_TOO_BIG_MESSAGE);
-                return true;
-            }
-            if (remainingBytes || !fin || !parser->compressedFragments.empty()) {
-                parser->compressedFragments.insert(parser->compressedFragments.end(), data, data + length);
-                if (remainingBytes || !fin) return false;
-                /* InflationStream writes a four/nine-byte DEFLATE tail beyond
-                 * the supplied view.  Keep that padding owned and mutable. */
-                parser->compressedFragments.resize(parser->compressedFragments.size() + INFLATION_POST_PADDING);
-                data = parser->compressedFragments.data();
-                length = parser->compressedFragments.size() - INFLATION_POST_PADDING;
-            }
-
-            uWS::LoopData* ld = parser->loopData();
-            uWS::InflationResult inflated = parser->inflationStream
-                ? parser->inflationStream->inflateWithStatus(ld->zlibContext, { data, length }, parser->maxPayloadLength, false)
-                : ld->inflationStream->inflateWithStatus(ld->zlibContext, { data, length }, parser->maxPayloadLength, true);
-            parser->compressionStatus = ENABLED;
-            parser->compressedFragments.clear();
-            if (inflated.status != uWS::InflationStatus::SUCCESS) {
-                parser->failed = true;
-                parser->failHandler(parser->user,
-                    inflated.status == uWS::InflationStatus::TOO_LARGE ? 1009 : 1007);
-                return true;
-            }
-            return parser->fragmentHandler(parser->user, inflated.data.data(), inflated.data.size(), 0, opCode, true);
-        }
-        return parser->failed || parser->fragmentHandler(parser->user, data, length, remainingBytes, opCode, fin);
-    }
-
-    uint32_t send(const char* data, size_t length, int opCode, bool compress, bool fin,
-        size_t maxBackpressure, bool* limitExceeded)
-    {
-        *limitExceeded = false;
-        if (!response || response->dead || response->localClosed) return 2;
-
-        /* Preserve the established uWS ordering guarantee: publications
-         * queued for this subscriber are emitted before a following direct
-         * send on the same WebSocket. TopicTree clears needsDrainage before
-         * invoking this method from its callback, so this is not recursive. */
-        if (subscriber) {
-            if (auto* tree = topics()) tree->drain(subscriber);
-        }
-
-        std::string_view message { data, length };
-        compress = compress && length && fin && opCode > 0 && opCode < 3 && compressionStatus != DISABLED;
-        bool compressedTransactionally = false;
-        if (compress && deflationStream && maxBackpressure) {
-            /* A dedicated compressor carries context into the next message.
-             * Never mutate that state and then drop the result: conservatively
-             * reserve this stream's parameter-aware Z_SYNC_FLUSH bound before
-             * compression. */
-            std::optional<size_t> maybeBound = deflationStream->maxSizeForSyncFlush(length);
-            if (!maybeBound) {
-                *limitExceeded = true;
-                return 2;
-            }
-            size_t bound = *maybeBound;
-            size_t boundFrameLength = uWS::protocol::messageFrameSize(bound);
-            size_t boundBudgetLength = boundFrameLength + (bound >= 16 * 1024 ? uWS::http2::FRAME_HEADER_SIZE : 0);
-            if (boundFrameLength < bound || boundBudgetLength < boundFrameLength
-                || !response->canWriteWithinBackpressure(boundBudgetLength, maxBackpressure)) {
-                /* The worst-case bound may be much larger than the actual
-                 * compressed frame. Clone the takeover state on this slow
-                 * path, then commit it only when the exact output fits. */
-                uWS::LoopData* ld = loopData();
-                auto candidate = deflationStream->clone();
-                if (!candidate) {
-                    *limitExceeded = true;
-                    return 2;
-                }
-                std::string_view staged = candidate->deflate(ld->zlibContext, message, false);
-                size_t stagedFrameLength = uWS::protocol::messageFrameSize(staged.size());
-                size_t stagedBudgetLength = stagedFrameLength
-                    + (staged.size() >= 16 * 1024 ? uWS::http2::FRAME_HEADER_SIZE : 0);
-                if (stagedFrameLength < staged.size() || stagedBudgetLength < stagedFrameLength
-                    || !response->canWriteWithinBackpressure(stagedBudgetLength, maxBackpressure)) {
-                    *limitExceeded = true;
-                    return 2;
-                }
-
-                /* The compressed bytes belong to ZlibContext, not the stream
-                 * object. Replacing the heap object therefore commits the
-                 * dictionary without invalidating the output view. */
-                delete deflationStream;
-                deflationStream = candidate.release();
-                message = staged;
-                compressedTransactionally = true;
-            }
-        }
-        if (compress && !compressedTransactionally) {
-            uWS::LoopData* ld = loopData();
-            message = deflationStream
-                ? deflationStream->deflate(ld->zlibContext, message, false)
-                : ld->deflationStream->deflate(ld->zlibContext, message, true);
-        }
-
-        size_t frameLength = uWS::protocol::messageFrameSize(message.size());
-        bool splitLargeFrame = message.size() >= 16 * 1024;
-        /* The split path emits one extra H2 DATA header. sendAllowance()
-         * includes the connection output high-water mark, so account for that
-         * bounded overhead to keep the preflight conservative and the
-         * per-stream maxBackpressure promise exact. */
-        size_t budgetLength = frameLength + (splitLargeFrame ? uWS::http2::FRAME_HEADER_SIZE : 0);
-        if (budgetLength < frameLength || !response->canWriteWithinBackpressure(budgetLength, maxBackpressure)) {
-            *limitExceeded = true;
-            /* Stateful compression has already advanced. The bound above
-             * makes this unreachable for a live, unchanged response, but if
-             * that invariant is ever broken, retire this tunnel rather than
-             * continue with a context the peer did not receive. */
-            if (compress && deflationStream) response->close(uWS::http2::ERR_CANCEL);
-            return 2;
-        }
-        /* Match the established H1 optimization: a large server frame does
-         * not need a contiguous header+payload copy. RFC 6455 frame
-         * boundaries are independent of HTTP/2 DATA-frame boundaries, and
-         * Http2Response::write preserves byte order while copying any
-         * flow-controlled remainder into its bounded backpressure buffer. */
-        if (splitLargeFrame) {
-            char header[10];
-            size_t headerLength = uWS::protocol::formatMessage<true>(header, "", 0,
-                (uWS::OpCode)opCode, message.size(), compress, fin);
-            bool headerWritten = response->write({ header, headerLength });
-            bool payloadWritten = response->write(message);
-            return headerWritten && payloadWritten ? 1 : 0;
-        }
-
-        char header[10];
-        size_t headerLength = uWS::protocol::formatMessage<true>(header, "", 0,
-            (uWS::OpCode)opCode, message.size(), compress, fin);
-        if (response->tryWriteWebSocketFrame({ header, headerLength }, message)) return 1;
-
-        sendScratch.resize(frameLength);
-        uWS::protocol::formatMessage<true>(sendScratch.data(), message.data(), message.size(),
-            (uWS::OpCode)opCode, message.size(), compress, fin);
-        return response->write({ sendScratch.data(), sendScratch.size() }) ? 1 : 0;
-    }
-
-    size_t memoryCost() const
-    {
-        return sizeof(H2WebSocketParser) + paddedConsumeMemoryCost() + compressedFragments.capacity() + sendScratch.capacity()
-            + (response ? response->data.backpressure.totalLength() : 0);
-    }
-
-    void consume(const char* data, size_t length)
-    {
-        if (!failed) consumePadded(data, length);
+        return (uWS::LoopData*)us_loop_ext(us_socket_group_loop(us_socket_group(r->conn->s)));
     }
 };
+
+using H2WebSocketParser = Bun::StreamWebSocketParser<H2WebSocketTransport>;
 
 extern "C" {
 

@@ -116,11 +116,10 @@ pub(crate) fn any_web_socket_get_topics_as_js_array(
     this: AnyWebSocket,
     global_object: &JSGlobalObject,
 ) -> JSValue {
-    if let AnyWebSocket::H2(ws) = this {
-        let topics = bun_uws_sys::h2::WebSocket::topics(ws);
+    if let Some(topics) = this.stream_topics() {
         // create_empty_array's argument is the observable JS `length`, not a
         // capacity hint. Starting at topics.len() and then push() produced
-        // `[null, ...topics]` for every H2 WebSocket.
+        // `[null, ...topics]` for every stream WebSocket.
         let Ok(array) = JSValue::create_empty_array(global_object, 0) else {
             return JSValue::ZERO;
         };
@@ -139,7 +138,7 @@ pub(crate) fn any_web_socket_get_topics_as_js_array(
     let (ssl, ws) = match this {
         AnyWebSocket::Ssl(p) => (1, RawWebSocket::opaque_mut(p)),
         AnyWebSocket::Tcp(p) => (0, RawWebSocket::opaque_mut(p)),
-        AnyWebSocket::H2(_) => unreachable!("HTTP/2 WebSockets handled above"),
+        _ => unreachable!("stream WebSockets handled above"),
     };
     uws_ws_get_topics_as_js_array(ssl, ws, global_object)
 }

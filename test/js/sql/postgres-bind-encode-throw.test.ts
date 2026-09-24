@@ -108,7 +108,7 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     });
   });
 
-  test("a query dispatched from inside a conversion that then fails never gets another query's row", async () => {
+  test("a query dispatched from inside a conversion that then fails gets its own row", async () => {
     await container.ready;
     await using sql = new SQL({ url: url(), max: 1, idleTimeout: 5, connectionTimeout: 5 });
     const settled = (query: Promise<unknown>) =>
@@ -124,9 +124,7 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     let nested!: Promise<unknown>;
     const dispatchesThenThrows = {
       toString() {
-        // execute() starts the query synchronously: its frames land inside the
-        // outer query's partial Bind, so the tail of the buffer is not only the
-        // outer query's and must not be discarded.
+        // execute() starts the query synchronously, while the outer Bind is encoded.
         const query = sql`SELECT ${"nested value"}::text AS nested`;
         query.execute();
         nested = settled(query);
@@ -138,15 +136,11 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     later.execute();
     const [nestedResult, laterResult] = await Promise.all([nested, settled(later)]);
 
-    // The server rejects the mixed frame and closes the connection. Both queries
-    // were written to it, so both reject. Neither hangs or gets the other's row.
     expect({ outer, nested: nestedResult, later: laterResult }).toEqual({
       outer: "boom after dispatch",
-      nested: "ERR_POSTGRES_CONNECTION_CLOSED",
-      later: "ERR_POSTGRES_CONNECTION_CLOSED",
+      nested: [{ nested: "nested value" }],
+      later: [{ nested: "later value" }],
     });
-    // The pool reconnects.
-    expect(await sql`SELECT ${"after"}::text AS v`).toEqual([{ v: "after" }]);
   });
 });
 

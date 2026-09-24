@@ -1,6 +1,6 @@
 // Runs one scenario (SCENARIO) against the server at DATABASE_URL and prints what every query
 // settled with. It is a subprocess because a broken build aborts or hangs in these scenarios.
-import { SQL } from "bun";
+import { SQL, type ReservedSQL } from "bun";
 
 const url = process.env.DATABASE_URL!;
 const sql = new SQL({ url, max: 1, idleTimeout: 30 });
@@ -156,6 +156,68 @@ const scenarios: Record<string, () => Promise<unknown>> = {
   },
 };
 
+/** A text parameter whose conversion closes the connection that its query is written to. */
+function closing(reserved: ReservedSQL) {
+  let closed = false;
+  return {
+    toString() {
+      if (!closed) {
+        closed = true;
+        reserved.close();
+      }
+      return "1";
+    },
+  };
+}
+
+async function closeScenario(options: { prepare?: boolean }, run: (reserved: ReservedSQL) => Promise<object>) {
+  await using db = new SQL({ url, max: 1, ...options });
+  const reserved = await db.reserve();
+  const result = await run(reserved);
+  // The pool opens a new connection in place of the closed one.
+  return { ...result, afterwards: await settle(db`select 1 as ok`) };
+}
+
+const closeScenarios: Record<string, () => Promise<unknown>> = {
+  async "close() from a conversion, first execution"() {
+    return closeScenario({}, async reserved => ({
+      outer: await settle(reserved`select ${closing(reserved)}::text as x`),
+    }));
+  },
+
+  // advance() encodes the first request, then the one that closes.
+  async "close() from a conversion, request queued ahead"() {
+    return closeScenario({}, async reserved => {
+      const ahead = reserved`select ${text("2")}::text as x`.execute();
+      const outer = reserved`select ${closing(reserved)}::text as x`.execute();
+      return { ahead: await settle(ahead), outer: await settle(outer) };
+    });
+  },
+
+  async "close() from a conversion, prepared statement"() {
+    return closeScenario({}, async reserved => {
+      await reserved`select ${text("0")}::text as x`;
+      return { outer: await settle(reserved`select ${closing(reserved)}::text as x`) };
+    });
+  },
+
+  // The first request's Bind is still in the write buffer when the second one closes.
+  async "close() from a conversion, request buffered ahead"() {
+    return closeScenario({}, async reserved => {
+      await reserved`select ${text("0")}::text as x`;
+      const ahead = reserved`select ${text("2")}::text as x`.execute();
+      const outer = reserved`select ${closing(reserved)}::text as x`.execute();
+      return { ahead: await settle(ahead), outer: await settle(outer) };
+    });
+  },
+
+  async "close() from a conversion, prepare: false"() {
+    return closeScenario({ prepare: false }, async reserved => ({
+      outer: await settle(reserved`select ${closing(reserved)}::text as x`),
+    }));
+  },
+};
+
 /** Issues the outer query synchronously. Everything after the first await is reporting. */
 async function throwAfterDispatching(pid: number) {
   const param = {
@@ -168,7 +230,7 @@ async function throwAfterDispatching(pid: number) {
   return report(sql, pid, sql`select ${param}::text as x`);
 }
 
-const scenario = scenarios[process.env.SCENARIO!];
+const scenario = scenarios[process.env.SCENARIO!] ?? closeScenarios[process.env.SCENARIO!];
 if (!scenario) {
   console.log(JSON.stringify({ error: `unknown scenario ${process.env.SCENARIO}` }));
   process.exit(1);

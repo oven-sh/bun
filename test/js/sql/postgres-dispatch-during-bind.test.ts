@@ -6,8 +6,10 @@ import { bunEnv, bunExe, describeWithContainer } from "harness";
 import path from "node:path";
 
 const fixture = path.join(import.meta.dir, "postgres-dispatch-during-bind-fixture.ts");
+const wireFixture = path.join(import.meta.dir, "postgres-dispatch-during-bind-wire-fixture.ts");
 
 const ok = (...rows: object[]) => ({ ok: rows });
+const closed = { err: "ERR_POSTGRES_CONNECTION_CLOSED" };
 
 // `conversions`: one per Bind. A request that is encoded twice converts its parameter twice.
 const scenarios: [string, object][] = [
@@ -53,6 +55,12 @@ const scenarios: [string, object][] = [
     "prepared statement behind an in-flight query, conversion throws after dispatching",
     { ahead: ok({ x: "7" }), outer: { err: "boom" }, dispatched: [ok({ y: 2 })], conversions: 1, sameBackend: true },
   ],
+  // close() rejects every request of the connection. The pool then opens a new connection.
+  ["close() from a conversion, first execution", { outer: closed, afterwards: ok({ ok: 1 }) }],
+  ["close() from a conversion, request queued ahead", { ahead: closed, outer: closed, afterwards: ok({ ok: 1 }) }],
+  ["close() from a conversion, prepared statement", { outer: closed, afterwards: ok({ ok: 1 }) }],
+  ["close() from a conversion, request buffered ahead", { ahead: closed, outer: closed, afterwards: ok({ ok: 1 }) }],
+  ["close() from a conversion, prepare: false", { outer: closed, afterwards: ok({ ok: 1 }) }],
 ];
 
 describeWithContainer("postgres", { image: "postgres_plain" }, container => {
@@ -75,5 +83,29 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
       stderr: expect.any(String),
       exitCode: 0,
     });
+  });
+});
+
+// The mock answers each Execute with the parameter of the Bind before it. B(x) is a Bind that
+// carries exactly the parameter x: a Bind with another query's messages inside does not decode.
+const nested = ["B(nested)", "E", "H", "S"];
+const wire: [string, string[]][] = [
+  ["prepared statement", ["B(outer)", "E", "H", "S", ...nested]],
+  ["first execution", ["P", "D", "S", "B(outer)", "E", "H", "S", ...nested]],
+  ["prepare: false", ["P", "D", "B(outer)", "E", "H", "S", "P", "D", ...nested]],
+];
+
+test.concurrent.each(wire)("wire order equals queue order: %s", async (scenario, frames) => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), wireFixture],
+    env: { ...bunEnv, SCENARIO: scenario },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ report: stdout.trim() && JSON.parse(stdout), stderr, exitCode }).toEqual({
+    report: { outer: ok({ v: "outer" }), nested: ok({ v: "nested" }), frames },
+    stderr: expect.any(String),
+    exitCode: 0,
   });
 });

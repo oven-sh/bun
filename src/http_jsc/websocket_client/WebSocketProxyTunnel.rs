@@ -98,19 +98,25 @@ impl UpgradeClientRef {
         );
     }
 
-    fn verify_peer_identity(
+    fn accepts_tunnel_peer(
         self,
-        ssl: &mut boringssl::c::SSL,
+        ssl: Option<&mut boringssl::c::SSL>,
+        chain_verified: bool,
         hostname: &[u8],
-        enforce: bool,
     ) -> bool {
         match self {
-            UpgradeClientRef::Http(client) => {
-                HttpUpgradeClient::verify_peer_identity(client.this_ptr(), ssl, hostname, enforce)
-            }
-            UpgradeClientRef::Https(client) => {
-                HttpsUpgradeClient::verify_peer_identity(client.this_ptr(), ssl, hostname, enforce)
-            }
+            UpgradeClientRef::Http(client) => HttpUpgradeClient::accepts_tunnel_peer(
+                client.this_ptr(),
+                ssl,
+                chain_verified,
+                hostname,
+            ),
+            UpgradeClientRef::Https(client) => HttpsUpgradeClient::accepts_tunnel_peer(
+                client.this_ptr(),
+                ssl,
+                chain_verified,
+                hostname,
+            ),
         }
     }
 }
@@ -185,7 +191,7 @@ impl WebSocketProxyTunnel {
     ) -> crate::Result<()> {
         // Allow handshake to complete so we can access peer certificate for manual
         // hostname verification in onHandshake(). The actual reject_unauthorized
-        // check uses self.reject_unauthorized field.
+        // check is the WebSocket's: `CppWebSocket::accepts_tls_peer`.
         let options = ssl_options.for_client_verification();
 
         // tier-neutral `init_from_options` takes the lowered
@@ -303,10 +309,7 @@ impl WebSocketProxyTunnel {
         // Snapshot the fields we need; `terminate()` / `on_proxy_tls_handshake_complete()`
         // re-enter `tunnel.detach_upgrade_client()` / `tunnel.write()`, so no borrow of
         // `*this` may span the dispatch.
-        let (upgrade_client, reject_unauthorized) =
-            (this.upgrade_client.get(), this.reject_unauthorized);
-
-        let Some(mut upgrade_client) = upgrade_client else {
+        let Some(upgrade_client) = this.upgrade_client.get() else {
             return;
         };
 
@@ -315,31 +318,24 @@ impl WebSocketProxyTunnel {
             return;
         }
 
-        // Check for SSL errors if we need to reject unauthorized
-        if reject_unauthorized && ssl_error.error_no != 0 {
+        let ssl = this
+            .wrapper
+            .get()
+            .and_then(|w| w.ssl.get())
+            .map(|ssl| bun_opaque::opaque_deref_mut(ssl.as_ptr()));
+        // `sni_hostname` is not freed while the `_guard` above holds the tunnel.
+        let accepted = upgrade_client.accepts_tunnel_peer(
+            ssl,
+            ssl_error.error_no == 0,
+            this.sni_hostname.as_deref().unwrap_or_default(),
+        );
+        // `tls.checkServerIdentity` may have closed the WebSocket, which detaches the client.
+        let Some(upgrade_client) = this.upgrade_client.get() else {
+            return;
+        };
+        if !accepted {
             upgrade_client.terminate(ErrorCode::TlsHandshakeFailed);
             return;
-        }
-
-        if reject_unauthorized || ssl_error.error_no == 0 {
-            // User JS in `verify_peer_identity` may detach `upgrade_client`.
-            let ssl = this.wrapper.get().and_then(|w| w.ssl.get());
-            let failed_identity = match (ssl, this.sni_hostname.as_deref()) {
-                (Some(ssl_ptr), Some(hostname)) => !upgrade_client.verify_peer_identity(
-                    bun_opaque::opaque_deref_mut(ssl_ptr.as_ptr()),
-                    hostname,
-                    reject_unauthorized,
-                ),
-                _ => false,
-            };
-            upgrade_client = match this.upgrade_client.get() {
-                Some(client) => client,
-                None => return,
-            };
-            if failed_identity {
-                upgrade_client.terminate(ErrorCode::TlsHandshakeFailed);
-                return;
-            }
         }
 
         // TLS handshake successful - notify client to send WebSocket upgrade

@@ -286,6 +286,8 @@ public:
         return m_rejectUnauthorized;
     }
 
+    bool isProxyTLS() const { return m_connectionType == ConnectionType::ProxyTLS; }
+
     const JSValueInWrappedObject& checkServerIdentity() const { return m_checkServerIdentity; }
     void setCheckServerIdentity(JSC::VM& vm, const JSC::JSCell* wrapper, JSC::JSValue callback)
     {

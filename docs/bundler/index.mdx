@@ -1392,6 +1392,35 @@ The bundler keeps the arguments of a call when they have side effects: `isDev(tr
 
 The bundler does not replace `new f()`, `f.call()`, `f?.()`, a tagged template, or a call in the argument of `import()` or `require()`. A call above the declaration is replaced only for a top-level function, in a file that has `import` or `export` syntax.
 
+#### Functions from other files
+
+The function can be an import:
+
+```ts title="env.ts" icon="/icons/typescript.svg"
+export function isDev() {
+  return process.env.NODE_ENV === "development";
+}
+```
+
+```ts title="app.ts" icon="/icons/typescript.svg"
+import { isDev } from "./env";
+
+if (isDev()) {
+  require("./devtools").install();
+}
+```
+
+The bundler does not resolve or parse `./devtools`. The build succeeds when `./devtools` does not exist.
+
+These rules apply to an import:
+
+- A condition calls the import, with no argument or with literal arguments only. A condition is the test of `if` or `?:`, or an operand of `&&`, `||`, `??` or `!`. When one import of an `import` statement qualifies, the bundler also replaces the other calls of the imports of that statement.
+- The export is a top-level function declaration in an ES module. The bundler does not replace a call of `export const f = () => ...`, because the call can throw before the file of `f` runs. It does not replace a CommonJS export.
+- The bundler follows `export { isDev } from "./env"` and an import that a file exports again, up to 8 files. It does not follow a re-export of a pure barrel file that [`optimizeImports`](#optimizeimports) applies to. Import the function from the file that declares it.
+- The bundler does not replace `ns.isDev()` on `import * as ns`, an import between files that import each other, or an import that an `onResolve` plugin resolves.
+
+The bundler parses a file two times when a condition in it calls an import in this way, because it must parse the imported file first.
+
 ### optimizeImports
 
 Skip parsing unused submodules of barrel files (re-export index files). When you import only a few named exports from a large library, normally the bundler parses every file the barrel re-exports. With `optimizeImports`, the bundler parses only the submodules you use.

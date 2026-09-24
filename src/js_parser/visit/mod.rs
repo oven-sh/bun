@@ -2,7 +2,7 @@
 //! AST visitor pass: visits statements, expressions, bindings, function bodies,
 //! classes, and declarations. This is the second pass after parsing.
 
-pub(crate) mod const_call;
+pub mod const_call;
 pub mod visit_binary;
 pub(crate) mod visit_expr;
 pub(crate) mod visit_stmt;

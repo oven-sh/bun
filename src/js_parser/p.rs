@@ -686,6 +686,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) const_calls_enabled: bool,
     /// Visiting the argument of `import()`, `require()` or `require.resolve()`.
     pub(crate) in_import_specifier: bool,
+    /// The parse pass looks for imports that a branch condition calls.
+    pub(crate) const_call_prefilter: bool,
 
     // These are backed by stack fallback allocators in _parse, and are uninitialized until then.
     pub(crate) binary_expression_stack: ListManaged<'a, BinaryExpressionVisitor>,
@@ -9410,6 +9412,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
 
         let ts_enums = self.compute_ts_enums_map(arena)?;
+        let const_call_values = self.const_call_exports();
 
         let char_freq = self.compute_character_frequency().map(bun_alloc::ast_box);
         let scope_uses = self.take_scope_uses();
@@ -9510,6 +9513,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // TODO: cross-module constant inlining
             // const_values: self.const_values,
             ts_enums,
+            const_call_values,
             import_meta_ref: self.import_meta_ref,
 
             symbols,
@@ -9724,6 +9728,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // literal below is the *only* write to `*out`). ───
         lexer.track_comments = opts.features.minify_identifiers;
         let track_scope_uses = opts.bundle && !opts.features.minify_identifiers;
+        // The subset of `enable_const_calls` that is known before the parse pass.
+        let const_call_prefilter = opts.bundle
+            && opts.features.dead_code_elimination
+            && !opts.features.hot_module_reloading
+            && !opts.features.react_fast_refresh
+            && opts.const_call_seeds.is_none()
+            && !opts.const_call_retry.is_some_and(|retry| retry.disable);
         lexer.track_react_suppressions = opts.features.react_compiler.is_enabled();
 
         if !TYPESCRIPT {
@@ -9922,6 +9933,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             const_calls: None,
             const_calls_enabled: false,
             in_import_specifier: false,
+            const_call_prefilter,
             binary_expression_stack: BumpVec::new_in(arena),
             binary_expression_simplify_stack: BumpVec::new_in(arena),
             ref_to_ts_namespace_member: Default::default(),

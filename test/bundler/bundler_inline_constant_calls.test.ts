@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test";
+import { dirname, join } from "node:path";
 import { itBundled } from "./expectBundled";
 
 // A call of a function that always returns one primitive folds to that value
@@ -441,6 +442,457 @@ describe("bundler", () => {
       `,
     },
     dce: true,
+    run: { stdout: "off" },
+  });
+
+  // Across files. A file whose branch condition calls an import is visited after
+  // the imported file is parsed, with the value of the call already known.
+  for (const backend of ["cli", "api"] as const) {
+    itBundled(`inline_calls/${backend}/CrossModule`, {
+      backend,
+      files: {
+        "/entry.ts": /* ts */ `
+          import { isDev, hasOn, hasOff, version, nothing } from "./flags";
+          if (isDev()) console.log("DROP dev");
+          if (hasOn()) console.log("on");
+          if (hasOff()) console.log("DROP off"); else console.log("not off");
+          console.log(isDev() ? "DROP" : "prod", version(), nothing());
+        `,
+        // A TypeScript import that only folded calls use still runs the file.
+        "/flags.ts": /* ts */ `
+          import { feature } from "bun:bundle";
+          console.log("flags run");
+          export function isDev() { return process.env.NODE_ENV === "development"; }
+          export function hasOn() { return feature("ON") ? true : false; }
+          export function hasOff() { if (feature("OFF")) return true; return false; }
+          export function version() { return "1.2.3"; }
+          export function nothing() {}
+        `,
+      },
+      define: { "process.env.NODE_ENV": '"production"' },
+      features: ["ON"],
+      dce: true,
+      onAfterBundle(api) {
+        expect(api.readFile("/out.js")).not.toContain("function");
+      },
+      run: { stdout: "flags run\non\nnot off\nprod 1.2.3 undefined" },
+    });
+  }
+
+  for (const splitting of [false, true]) {
+    itBundled(`inline_calls/CrossModuleDeadBranchIsNeverResolved${splitting ? "Splitting" : ""}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import { isDev } from "./env";
+          if (isDev()) {
+            require("./dev-only/does-not-exist");
+            import("./dev-only/does-not-exist-either");
+          }
+          const tools = isDev() ? require("./dev-only/missing") : null;
+          isDev() && import("./heavy");
+          console.log(tools);
+        `,
+        "/env.js": /* js */ `
+          console.log("env runs");
+          export function isDev() { return process.env.NODE_ENV !== "production"; }
+        `,
+        "/heavy.js": /* js */ `
+          console.log("DROP heavy");
+        `,
+      },
+      define: { "process.env.NODE_ENV": '"production"' },
+      splitting,
+      outdir: "/out",
+      dce: true,
+      onAfterBundle(api) {
+        // One output file: the dead \`import()\` made no chunk.
+        expect(api.readFile("/out/entry.js")).not.toContain("heavy");
+        expect([...new Bun.Glob("**/*.js").scanSync(api.join("out"))]).toEqual(["entry.js"]);
+      },
+      run: { file: "/out/entry.js", stdout: "env runs\nnull" },
+    });
+  }
+
+  itBundled("inline_calls/CrossModuleCompile", {
+    compile: true,
+    files: {
+      "/entry.ts": /* ts */ `
+        import { isDev } from "./env";
+        if (isDev()) require("./dev-only/does-not-exist");
+        console.log(isDev() ? "DROP" : "prod");
+      `,
+      "/env.ts": /* ts */ `
+        export function isDev(): boolean { return process.env.NODE_ENV === "development"; }
+      `,
+    },
+    define: { "process.env.NODE_ENV": '"production"' },
+    run: { stdout: "prod" },
+  });
+
+  itBundled("inline_calls/CrossModuleReExports", {
+    files: {
+      "/entry.js": /* js */ `
+        import { isDevelopment, viaImport } from "./barrel";
+        import isDefault, { isDev as renamed } from "./env";
+        if (isDevelopment()) console.log("DROP a");
+        if (viaImport()) console.log("DROP b");
+        if (isDefault()) console.log("DROP c");
+        if (renamed()) console.log("DROP d");
+        console.log("done");
+      `,
+      "/barrel.js": /* js */ `
+        export { isDev as isDevelopment } from "./env";
+        import { isDev } from "./env";
+        export { isDev as viaImport };
+      `,
+      "/env.js": /* js */ `
+        function isDev() { return false; }
+        export { isDev, isDev as default };
+      `,
+    },
+    dce: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).not.toContain("isDev");
+    },
+    run: { stdout: "done" },
+  });
+
+  // Which records of a barrel are resolved depends on the order its importers finish.
+  // A re-export of one is not followed, so the output is the same for every run.
+  itBundled("inline_calls/CrossModuleOptimizedBarrel", {
+    files: {
+      "/entry.js": /* js */ `
+        import { isDev } from "flags";
+        import { isDev as direct } from "flags/env.js";
+        import "./other-importer";
+        if (isDev()) console.log("dev"); else console.log("prod");
+        if (direct()) console.log("DROP");
+      `,
+      "/other-importer.js": /* js */ `
+        import { isDev } from "flags";
+        console.log(typeof isDev);
+      `,
+      "/node_modules/flags/package.json": `{ "name": "flags", "main": "index.js", "sideEffects": false }`,
+      "/node_modules/flags/index.js": /* js */ `
+        export { isDev } from "./env.js";
+        export { unused } from "./unused.js";
+      `,
+      "/node_modules/flags/env.js": /* js */ `
+        export function isDev() { return false; }
+      `,
+      "/node_modules/flags/unused.js": /* js */ `
+        export function unused() { return "never parsed"; }
+      `,
+    },
+    dce: true,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("if (isDev())");
+      expect(out).not.toContain("never parsed");
+    },
+    run: { stdout: "function\nprod" },
+  });
+
+  itBundled("inline_calls/CrossModuleChain", {
+    files: {
+      "/entry.js": /* js */ `
+        import { isInternalDev } from "./b";
+        if (isInternalDev()) console.log("DROP"); else console.log("kept");
+      `,
+      "/b.js": /* js */ `
+        import { isDev } from "./a";
+        export function isInternalDev() { return isDev() && INTERNAL; }
+      `,
+      "/a.js": /* js */ `
+        export function isDev() { return !PRODUCTION; }
+      `,
+    },
+    define: { PRODUCTION: "true", INTERNAL: "true" },
+    dce: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).not.toContain("function");
+    },
+    run: { stdout: "kept" },
+  });
+
+  itBundled("inline_calls/CrossModuleNotFolded", {
+    files: {
+      "/entry.js": /* js */ `
+        import { arrow, reassigned, usesState, letFn, off } from "./esm";
+        import { cjsFlag } from "./cjs.cjs";
+        import * as ns from "./esm";
+        if (arrow()) console.log("arrow");
+        if (reassigned()) console.log("reassigned");
+        if (usesState()) console.log("state");
+        if (letFn()) console.log("let");
+        if (cjsFlag()) console.log("cjs");
+        if (ns.usesState()) console.log("ns");
+        function shadows(off) { if (off()) console.log("parameter"); }
+        shadows(() => true);
+        if (off()) console.log("DROP");
+      `,
+      "/esm.js": /* js */ `
+        // A \`const\` is in its temporal dead zone until this file runs.
+        export const arrow = () => true;
+        export function reassigned() { return false; }
+        reassigned = () => true;
+        export function usesState() { return globalThis.flag === undefined; }
+        export let letFn = function () { return true; };
+        export function off() { return false; }
+      `,
+      "/cjs.cjs": /* js */ `
+        exports.cjsFlag = function () { return true; };
+      `,
+    },
+    dce: true,
+    run: { stdout: "arrow\nreassigned\nstate\nlet\ncjs\nns\nparameter" },
+  });
+
+  // Which file of a cycle is parsed first differs from run to run. The output must not.
+  for (const backend of ["cli", "api"] as const) {
+    itBundled(`inline_calls/${backend}/CrossModuleImportCycle`, {
+      backend,
+      files: {
+        "/entry.js": /* js */ `
+          import "./a";
+          import "./self";
+        `,
+        "/a.js": /* js */ `
+          import { bFlag } from "./b";
+          export function aFlag() { return true; }
+          console.log("a:", bFlag() ? "b on" : "b off");
+        `,
+        "/b.js": /* js */ `
+          import { aFlag } from "./a";
+          export function bFlag() { return false; }
+          console.log("b:", aFlag() ? "a on" : "a off");
+        `,
+        "/self.js": /* js */ `
+          import { selfFlag as imported } from "./self";
+          export function selfFlag() { return 0; }
+          console.log("self:", imported() ? "on" : "off");
+        `,
+      },
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toContain("aFlag()");
+        expect(out).toContain("bFlag()");
+        expect(out).toContain('selfFlag() ? "on"');
+      },
+      run: { stdout: "b: a on\na: b off\nself: off" },
+    });
+  }
+
+  itBundled("inline_calls/CrossModuleDownstreamOfCycle", {
+    files: {
+      "/entry.js": /* js */ `
+        import { aFlag } from "./a";
+        console.log("entry:", aFlag() ? "a on" : "DROP");
+      `,
+      "/a.js": /* js */ `
+        import { bFlag } from "./b";
+        import { leaf } from "./leaf";
+        export function aFlag() { return true; }
+        console.log("a:", bFlag() ? "b on" : "b off", leaf() ? "DROP" : "leaf off");
+      `,
+      "/b.js": /* js */ `
+        import { aFlag } from "./a";
+        export function bFlag() { return false; }
+        console.log("b:", aFlag() ? "a on" : "a off");
+      `,
+      "/leaf.js": /* js */ `
+        export function leaf() { return false; }
+      `,
+    },
+    dce: true,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("bFlag()");
+      expect(out).not.toContain("leaf()");
+    },
+    run: { stdout: "b: a on\na: b off leaf off\nentry: a on" },
+  });
+
+  itBundled("inline_calls/CrossModuleUnresolvedImport", {
+    files: {
+      "/entry.js": /* js */ `
+        import { flag } from "./does-not-exist";
+        if (flag()) console.log("x");
+      `,
+    },
+    bundleErrors: {
+      "/entry.js": ['Could not resolve: "./does-not-exist"'],
+    },
+  });
+
+  itBundled("inline_calls/CrossModuleExternalImport", {
+    files: {
+      "/entry.js": /* js */ `
+        import { isatty } from "node:tty";
+        import { flag } from "./empty";
+        if (isatty(99)) console.log("tty");
+        if (flag()) console.log("flag");
+        console.log("done");
+      `,
+      // An empty file finishes without an AST. The importer must not wait for one.
+      "/empty.js": "\n",
+    },
+    target: "bun",
+    bundleErrors: {
+      "/entry.js": ['No matching export in "empty.js" for import "flag"'],
+    },
+  });
+
+  itBundled("inline_calls/CrossModuleOtherLoaders", {
+    files: {
+      "/entry.js": /* js */ `
+        import data from "./data.json";
+        import text from "./note.txt";
+        import { isDev } from "./env";
+        if (typeof data === "function" && data()) console.log("DROP");
+        if (typeof text === "function" && text()) console.log("DROP");
+        console.log(data.name, text.trim(), isDev() ? "DROP" : "prod");
+      `,
+      "/data.json": `{ "name": "json" }`,
+      "/note.txt": `text`,
+      "/env.js": /* js */ `
+        export function isDev() { return false; }
+      `,
+    },
+    run: { stdout: "json text prod" },
+  });
+
+  itBundled("inline_calls/CrossModuleJSXInJsFile", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { isDev } from "./env.js";
+        import { View } from "./view.js";
+        console.log(View().props.mode, isDev() ? "DROP" : "prod");
+      `,
+      "/view.js": /* js */ `
+        import { isDev } from "./env.js";
+        export function View() {
+          if (isDev()) return null;
+          return { props: { mode: "view" } };
+        }
+      `,
+      "/env.js": /* js */ `
+        export function isDev() { return false; }
+      `,
+    },
+    dce: true,
+    run: { stdout: "view prod" },
+  });
+
+  itBundled("inline_calls/CrossModuleJSXImporter", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        import { isDev } from "./env";
+        const el = <div className={isDev() ? "DROP" : "prod"} />;
+        if (isDev()) console.log("DROP");
+        console.log(el.props.className);
+      `,
+      "/env.ts": /* ts */ `
+        export function isDev(): boolean { return false; }
+      `,
+      "/node_modules/react/jsx-runtime.js": /* js */ `
+        export const jsx = (type, props) => ({ type, props });
+        export const jsxs = jsx;
+        export const Fragment = "Fragment";
+      `,
+      "/node_modules/react/jsx-dev-runtime.js": /* js */ `
+        export const jsxDEV = () => { throw new Error("the second run lost the production JSX options"); };
+        export const Fragment = "Fragment";
+      `,
+    },
+    env: { NODE_ENV: "production" },
+    define: { "process.env.NODE_ENV": '"production"' },
+    dce: true,
+    run: { stdout: "prod" },
+  });
+
+  itBundled("inline_calls/CrossModuleSameFileRetry", {
+    files: {
+      "/entry.js": /* js */ `
+        import { isDev } from "./env";
+        function local() { return 1; }
+        console.log(local(), isDev() ? "DROP" : "prod");
+        local = () => 2;
+        console.log(local());
+      `,
+      "/env.js": /* js */ `
+        export function isDev() { return false; }
+      `,
+    },
+    dce: true,
+    run: { stdout: "1 prod\n2" },
+  });
+
+  itBundled("inline_calls/CrossModulePluginCallee", {
+    files: {
+      "/entry.js": /* js */ `
+        import { fromLoad } from "./loaded.js";
+        import { fromResolve } from "virtual:flags";
+        import { viaReExport } from "./re-export.js";
+        if (fromLoad()) console.log("DROP load"); else console.log("load off");
+        if (fromResolve()) console.log("resolve on");
+        if (viaReExport()) console.log("re-export on");
+      `,
+      "/re-export.js": /* js */ `
+        export { fromResolve as viaReExport } from "virtual:flags";
+      `,
+      "/loaded.js": /* js */ `
+        export function fromLoad() { return true; }
+      `,
+      "/real-flags.js": /* js */ `
+        export function fromResolve() { return true; }
+      `,
+    },
+    plugins: [
+      {
+        name: "flags",
+        setup(build) {
+          build.onLoad({ filter: /loaded\.js$/ }, async () => {
+            await Bun.sleep(1);
+            return { contents: "export function fromLoad() { return false; }", loader: "js" };
+          });
+          build.onResolve({ filter: /^virtual:flags$/ }, args => ({
+            path: join(dirname(args.importer), "real-flags.js"),
+          }));
+        },
+      },
+    ],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).not.toContain("fromLoad()");
+      expect(out).toContain("if (fromResolve())");
+      expect(out).toIncludeRepeated("fromResolve()", 3);
+    },
+    run: { stdout: "load off\nresolve on\nre-export on" },
+  });
+
+  itBundled("inline_calls/CrossModuleDeferredCallee", {
+    files: {
+      "/entry.js": /* js */ `
+        import { deferred } from "./deferred.js";
+        if (deferred()) console.log("on"); else console.log("off");
+      `,
+      "/deferred.js": /* js */ `
+        export function deferred() { return false; }
+      `,
+    },
+    plugins: [
+      {
+        name: "defer",
+        setup(build) {
+          build.onLoad({ filter: /deferred\.js$/ }, async ({ defer }) => {
+            // Resolves once every other file is parsed: the importer cannot wait for this one.
+            await defer();
+            return { contents: "export function deferred() { return false; }", loader: "js" };
+          });
+        },
+      },
+    ],
     run: { stdout: "off" },
   });
 

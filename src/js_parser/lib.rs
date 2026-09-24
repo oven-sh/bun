@@ -28,6 +28,7 @@ pub mod visit;
 
 pub use p::P;
 pub use parse::parse_entry::{Options as ParserOptions, Parser};
+pub use visit::const_call::{ConstCallImport, ConstCallSeed};
 
 // Full impl lives in *_jsc; this stub re-exposes the JSC-free constants and a
 // placeholder `MacroContext` so lower-tier crates (bundler, transpiler) that
@@ -230,6 +231,10 @@ pub enum Result<'a> {
     AlreadyBundled(AlreadyBundled),
     Cached,
     Ast(Box<Ast<'a>>),
+    /// Bundler only. The parse stopped before the visit pass: a branch condition
+    /// calls these imports, and the call may fold once the bundler knows what it
+    /// returns. Parse again with `Options::const_call_seeds` set.
+    NeedsConstCallValues(Box<[ConstCallImport<'a>]>),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

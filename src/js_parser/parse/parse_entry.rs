@@ -160,6 +160,10 @@ pub struct Options<'a> {
 
     /// Set by `_parse` for its second attempt, after a folded call turned out to be unsound.
     pub const_call_retry: Option<crate::visit::const_call::ConstCallRetry<'a>>,
+
+    /// `Some` for the run after `Result::NeedsConstCallValues`: what the bundler
+    /// found for the imports that run asked about. That run does not ask again.
+    pub const_call_seeds: Option<&'a [crate::visit::const_call::ConstCallSeed<'a>]>,
 }
 
 impl<'a> Default for Options<'a> {
@@ -195,6 +199,7 @@ impl<'a> Default for Options<'a> {
             lower_toml_datetimes: false,
             is_entry_point: false,
             const_call_retry: None,
+            const_call_seeds: None,
         }
     }
 }
@@ -283,6 +288,7 @@ impl<'a> Options<'a> {
             lower_toml_datetimes: self.lower_toml_datetimes,
             is_entry_point: self.is_entry_point,
             const_call_retry: None,
+            const_call_seeds: None,
         }
     }
 
@@ -358,6 +364,7 @@ impl<'a> Options<'a> {
             lower_toml_datetimes: loader == options::Loader::Toml,
             is_entry_point: false,
             const_call_retry: None,
+            const_call_seeds: None,
         };
         opts.jsx.parse = loader.is_jsx();
         opts
@@ -1021,13 +1028,22 @@ impl<'a> Parser<'a> {
             return Err(crate::Error::SyntaxError);
         }
 
+        p.enable_const_calls();
+        // Nothing that runs in the visit pass has happened: no macro call, no
+        // `require()` or `import()` record, no symbol use.
+        if let Some(imports) = p.const_call_imports(stmts) {
+            return Ok(ParseAttempt::Done(crate::Result::NeedsConstCallValues(
+                imports.into_boxed_slice(),
+            )));
+        }
+        p.install_const_call_seeds(stmts);
+
         // A second guard dropped at end of `_parse` restores the previous action.
         let _visit_action_guard =
             bun_crash_handler::scoped_action(bun_crash_handler::Action::Visit(source.path.text));
 
         let mut visit_tracer = bun_core::perf::trace("JSParser::visit");
         p.prepare_for_visit_pass()?;
-        p.enable_const_calls();
 
         if p.options.features.react_compiler.is_enabled() {
             let rc_options = bun_react_compiler::ReactCompilerOptions {

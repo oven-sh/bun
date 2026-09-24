@@ -148,6 +148,8 @@ fn apply_barrel_optimization_impl(
         }
     }
 
+    this.graph.input_files.items_flags_mut()[source_index as usize] |= InputFileFlags::IS_BARREL;
+
     // If this barrel is a star target of another barrel, can't safely defer
     if this.graph.input_files.items_flags()[source_index as usize]
         .contains(InputFileFlags::IS_EXPORT_STAR_TARGET)

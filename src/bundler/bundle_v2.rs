@@ -2466,6 +2466,7 @@ pub mod bv2_impl {
                 return true;
             }
 
+            self.release_stopped_files_if_idle();
             false
         }
 
@@ -7486,6 +7487,12 @@ pub mod bv2_impl {
             this: &mut BundleV2,
         ) {
             let _trace = crate::perf::trace("Bundler.onParseTaskComplete");
+            // Not a completion: the file holds its unit of `pending_items` until its second run ends.
+            if let parse_task::ResultValue::NeedsConstCallValues(needs) = &mut parse_result.value {
+                let scheduled = this.on_needs_const_call_values(needs);
+                this.graph.pending_items += u32::try_from(scheduled).expect("int cast");
+                return;
+            }
             // Borrowck rejects holding a `&this.graph` alias
             // across the `this.*` method calls below (each takes
             // `&mut BundleV2`), so re-borrow `this.graph` at each use site instead.
@@ -7554,6 +7561,7 @@ pub mod bv2_impl {
                     let empty_idx = (*empty_source_index).get() as usize;
                     this.graph.input_files.items_side_effects_mut()[empty_idx] =
                         bun_ast::SideEffects::NoSideEffectsEmptyAst;
+                    this.on_file_finished_for_const_calls(empty_idx as IndexInt, None);
                     if cfg!(debug_assertions) {
                         bun_core::scoped_log!(
                             Bundle,
@@ -7740,6 +7748,10 @@ pub mod bv2_impl {
                         result_source_index,
                         core::mem::replace(&mut result.ast, JSAst::empty_in(result_heap)),
                     );
+                    this.on_file_finished_for_const_calls(
+                        result_source_index as IndexInt,
+                        Some(core::mem::take(&mut result.const_call_values)),
+                    );
 
                     // Barrel optimization: eagerly record import requests and
                     // un-defer barrel records that are now needed.
@@ -7906,7 +7918,9 @@ pub mod bv2_impl {
                                 == 0
                         );
                     }
+                    this.on_file_finished_for_const_calls(err.source_index.get(), None);
                 }
+                parse_task::ResultValue::NeedsConstCallValues(_) => unreachable!(),
             }
 
             // `defer { graph.pending_items += diff; if diff < 0 on_after_decrement }`

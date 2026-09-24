@@ -458,7 +458,7 @@ Bun automatically handles all common web assets:
 - **Stylesheets** (`<link rel="stylesheet">`, `<link rel="preload" as="style">`) are run through Bun's CSS parser & bundler
 - **Images** (`<img src>`, `<img srcset>`, `<picture><source srcset>`, `<video poster>`, `<input type="image" src>`, SVG `<image href>` and `<use href>`) are copied and hashed. Each candidate in a `srcset` is rewritten on its own and keeps its descriptor.
 - **Media** (`<video src>`, `<audio src>`, `<source src>`, `<track src>`) are copied and hashed
-- **Embedded documents** (`<object data>`, `<embed src>`) are copied and hashed
+- **Embedded documents** (`<object data>`, `<embed src>`) are copied and hashed, unless they point at another HTML page
 - **`<link href>`** with `rel="icon"` (also `shortcut icon`, `apple-touch-icon`, `apple-touch-startup-image`, `mask-icon`), `rel="manifest"`, or `rel="preload"` with `as="font|image|audio|video"` (and its `imagesrcset`) is copied and hashed
 - **Social images** in `<meta property="og:image|og:audio|og:video" content>` and `<meta name="twitter:image|msapplication-TileImage" content>` are copied and hashed
 

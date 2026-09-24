@@ -1758,7 +1758,11 @@ fn spawn_maybe_sync(
         return Err(cx.global().throw_value(err.to_js(cx.global())));
     }
     if let Some(err) = watch_err {
-        // Deliver the exit first: it releases the stdio and the wrapper, and may run `onExit`.
+        // JS never receives this Subprocess, so none of its callbacks run. Delivering the
+        // exit before the throw releases the stdio and the wrapper.
+        let _ = Subprocess::js::on_exit_callback_take_cached(out, cx.global());
+        let _ = Subprocess::js::on_disconnect_callback_take_cached(out, cx.global());
+        let _ = Subprocess::js::ipc_callback_take_cached(out, cx.global());
         drop(exit_notification);
         return Err(cx.global().throw_value(err.to_js(cx.global())));
     }

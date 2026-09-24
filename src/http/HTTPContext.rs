@@ -1318,10 +1318,15 @@ pub struct Handler<const SSL: bool>;
 
 impl<const SSL: bool> Handler<SSL> {
     /// `us_dispatch_server_identity`: only a client that is in its handshake has a name to match.
-    pub fn server_identity_ok(ptr: *mut c_void, ssl: &mut bun_boringssl_sys::SSL) -> bool {
+    pub fn server_identity(
+        ptr: *mut c_void,
+        ssl: &mut bun_boringssl_sys::SSL,
+    ) -> bun_boringssl::ServerIdentity {
         HTTPContext::<SSL>::get_tagged(ptr)
             .client_mut()
-            .is_none_or(|client| client.server_identity_ok(ssl))
+            .map_or(bun_boringssl::ServerIdentity::Unchecked, |client| {
+                client.server_identity(ssl)
+            })
     }
 
     pub fn on_open(ptr: *mut c_void, socket: HTTPSocket<SSL>) {

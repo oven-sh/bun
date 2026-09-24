@@ -148,7 +148,7 @@ extern void us_dispatch_keylog(us_socket_r s, const unsigned char *data, int len
 struct ssl_session_st;
 /* Runs inside SSL_read/SSL_do_handshake: must not run JS. Returns 1 to get us_dispatch_session later. */
 extern int us_dispatch_new_session(us_socket_r s, struct ssl_session_st *session);
-/* 1 when the owner accepts the name on the server's certificate, or does not check it natively. */
+/* Returns a US_IDENTITY_* verdict on the name of the server's certificate. Must not run JS. */
 extern int us_dispatch_server_identity(us_socket_r s, struct ssl_st *ssl);
 extern struct ssl_ctx_st *us_dispatch_socket_server_name(us_socket_r s, const char *hostname, int *abort_handshake);
 extern struct us_socket_t *us_dispatch_ssl_raw_tap(us_socket_r s, char *data, int length);
@@ -336,8 +336,8 @@ struct us_socket_t {
   unsigned char ssl_inline_reject : 1;
   /* The verify callback saw an error in this handshake. */
   unsigned char ssl_verify_failed : 1;
-  /* The owner refused the server's name before the client certificate went out. */
-  unsigned char ssl_identity_rejected : 1;
+  /* The owner checked the server's name inside this handshake. */
+  unsigned char ssl_identity_checked : 1;
   /* US_SNI_*: an async SNICallback has the handshake suspended. */
   unsigned char ssl_sni_pending : 2;
   /* Server-side socket adopted into TLS with its own SNICallback. */

@@ -99,8 +99,11 @@ impl Drop for JSMySQLConnection {
 }
 
 impl JSMySQLConnection {
-    pub fn server_identity_ok(&self, ssl: &mut bun_boringssl_sys::SSL) -> bool {
-        self.connection.get().server_identity_ok(ssl)
+    pub fn server_identity(
+        &self,
+        ssl: &mut bun_boringssl_sys::SSL,
+    ) -> bun_boringssl::ServerIdentity {
+        self.connection.get().server_identity(ssl)
     }
 
     /// Hold a ref on `self` for the guard's lifetime (across re-entrant calls).

@@ -1755,11 +1755,14 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     /// `on_handshake`'s name check, asked inside the handshake.
-    pub(crate) fn server_identity_ok(this: &JSValkeyClient, ssl: &mut boringssl::c::SSL) -> bool {
+    pub(crate) fn server_identity(
+        this: &JSValkeyClient,
+        ssl: &mut boringssl::c::SSL,
+    ) -> boringssl::ServerIdentity {
         let client = this.client.get();
         let rejects = client.tls.reject_unauthorized(client.vm);
         let hostname = rejects.then(|| Self::identity_hostname(this, ssl));
-        boringssl::server_identity_ok(ssl, hostname.as_deref())
+        boringssl::server_identity(ssl, hostname.as_deref())
     }
 
     /// The name to match: the SNI servername, else the URL host. Empty for a unix socket, which has none.
@@ -1849,7 +1852,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
                 // With no `SSL*` there is no certificate to match: fail closed.
                 let identity_ok = hostname.is_empty()
                     || (!ssl_ptr.is_null()
-                        && boringssl::check_server_identity(
+                        && uws::check_server_identity(
                             // SAFETY: non-null, so the dispatched socket's live `SSL*`.
                             unsafe { &mut *ssl_ptr },
                             &hostname,
@@ -1860,7 +1863,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
             }
             this.client_mut().start()?;
         } else if ssl_error.error_no == uws::us_bun_verify_error_t::HOSTNAME_MISMATCH {
-            // The same check, made inside the handshake (`server_identity_ok`).
+            // The same check, made inside the handshake (`server_identity`).
             let hostname = Self::identity_hostname(this, ssl_ptr);
             return Self::fail_handshake_with_altname_error(this, vm, &hostname);
         } else {

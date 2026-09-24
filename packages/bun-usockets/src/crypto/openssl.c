@@ -240,6 +240,7 @@ static void us_ssl_rare_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
 
 /* Defined in src/uws/lib.rs. `wrapper` is what us_ssl_set_wrapper stored. */
 extern int us_ssl_wrapper_server_identity(void *wrapper, SSL *ssl);
+extern int us_ssl_wrapper_identity_checked(void *wrapper);
 extern void us_ssl_wrapper_new_session(void *wrapper, SSL_SESSION *session);
 extern void us_ssl_wrapper_keylog(void *wrapper, const char *line, size_t length);
 
@@ -1082,26 +1083,44 @@ static int us_inline_reject_verify_callback(int preverify_ok, X509_STORE_CTX *ct
  * reported as failed. */
 static int us_ssl_inline_reject_tripped(struct us_socket_t *s) {
   if (!s->ssl || s->ssl_handshake_state == HANDSHAKE_COMPLETED) return 0;
-  if (s->ssl_identity_rejected) return 1;
   if (!s->ssl_inline_reject || !s->ssl_verify_failed) return 0;
   /* Only the final verdict rejects: an alternate chain can recover a per-depth failure. */
   return SSL_get_verify_result(s_ssl(s)) != X509_V_OK;
 }
 
-/* BoringSSL runs this right before it builds the client's Certificate message, after the server's chain was verified. */
-static int us_client_cert_cb(SSL *ssl, void *arg) {
+/* What the owner of a client says about the name on the server's certificate. */
+enum {
+  US_IDENTITY_REJECTED = 0,
+  US_IDENTITY_ACCEPTED = 1,
+  /* The owner does not check the name natively: its JS decides after the handshake. */
+  US_IDENTITY_UNCHECKED = 2,
+};
+
+/* Verifies the chain, then asks the owner of a client for the name: a wrong name is a verify error like any other. */
+static int us_cert_verify_cb(X509_STORE_CTX *ctx, void *arg) {
   (void)arg;
-  if (SSL_is_server(ssl) || !SSL_get_certificate(ssl)) return 1;
-  /* A failed chain is the verify recorder's verdict. */
-  if (SSL_get_verify_result(ssl) != X509_V_OK) return 1;
+  int ok = X509_verify_cert(ctx);
+  SSL *ssl = X509_STORE_CTX_get_ex_data(ctx, SSL_get_ex_data_X509_STORE_CTX_idx());
+  if (!ssl || SSL_is_server(ssl) || X509_STORE_CTX_get_error(ctx) != X509_V_OK) return ok;
   void *wrapper = us_ssl_wrapper(ssl);
-  if (wrapper) return us_ssl_wrapper_server_identity(wrapper, ssl);
-  struct us_socket_t *s = us_ssl_socket(ssl);
-  if (!s) return 1;
-  if (!s->ssl_identity_rejected && !us_dispatch_server_identity(s, ssl)) {
-    s->ssl_identity_rejected = 1;
+  struct us_socket_t *s = wrapper ? NULL : us_ssl_socket(ssl);
+  int verdict = wrapper ? us_ssl_wrapper_server_identity(wrapper, ssl)
+                : s     ? us_dispatch_server_identity(s, ssl)
+                        : US_IDENTITY_UNCHECKED;
+  if (verdict == US_IDENTITY_UNCHECKED) return ok;
+  if (s) s->ssl_identity_checked = 1;
+  if (verdict == US_IDENTITY_REJECTED) {
+    if (s) s->ssl_verify_failed = 1;
+    X509_STORE_CTX_set_error(ctx, X509_V_ERR_HOSTNAME_MISMATCH);
   }
-  return !s->ssl_identity_rejected;
+  return ok;
+}
+
+int us_ssl_identity_checked(SSL *ssl) {
+  void *wrapper = us_ssl_wrapper(ssl);
+  if (wrapper) return us_ssl_wrapper_identity_checked(wrapper);
+  struct us_socket_t *s = us_ssl_socket(ssl);
+  return s && s->ssl_identity_checked;
 }
 
 /* A rejecting client refuses a bad chain inside the handshake, before its Certificate flight. */
@@ -1407,7 +1426,7 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
                                                   SSL_SESS_CACHE_NO_AUTO_CLEAR);
   SSL_CTX_sess_set_new_cb(ssl_context, us_ssl_new_session_cb);
   SSL_CTX_set_keylog_callback(ssl_context, us_ssl_keylog_cb);
-  SSL_CTX_set_cert_cb(ssl_context, us_client_cert_cb, NULL);
+  SSL_CTX_set_cert_verify_callback(ssl_context, us_cert_verify_cb, NULL);
   return ssl_context;
 }
 
@@ -1680,7 +1699,7 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
   s->ssl_is_server = is_client ? 0 : 1;
   s->ssl_inline_reject = 0;
   s->ssl_verify_failed = 0;
-  s->ssl_identity_rejected = 0;
+  s->ssl_identity_checked = 0;
   s->ssl_sni_pending = US_SNI_NONE;
   s->ssl_sni_resolver = 0;
   s->ssl_has_pending_events = 0;
@@ -1774,27 +1793,23 @@ struct us_bun_verify_error_t us_ssl_socket_verify_error_from_ssl(SSL *ssl) {
       us_internal_verify_peer_certificate(ssl, X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT);
   if (x509_verify_error == X509_V_OK)
     return (struct us_bun_verify_error_t){.error = 0, .code = NULL, .reason = NULL};
-  const char *reason = X509_verify_cert_error_string(x509_verify_error);
-  const char *code = us_X509_error_code(x509_verify_error);
-  return (struct us_bun_verify_error_t){.error = x509_verify_error, .code = code, .reason = reason};
-}
-
-static struct us_bun_verify_error_t ssl_verify_error(struct us_socket_t *s) {
-  struct us_bun_verify_error_t error = us_ssl_socket_verify_error_from_ssl(s_ssl(s));
-  if (error.error == 0 && s->ssl_identity_rejected) {
+  /* Only us_cert_verify_cb sets this one: no X509_VERIFY_PARAM here carries a host. */
+  if (x509_verify_error == X509_V_ERR_HOSTNAME_MISMATCH) {
     return (struct us_bun_verify_error_t){
         .error = X509_V_ERR_HOSTNAME_MISMATCH,
         .code = "ERR_TLS_CERT_ALTNAME_INVALID",
         .reason = "Hostname/IP does not match certificate's altnames"};
   }
-  return error;
+  const char *reason = X509_verify_cert_error_string(x509_verify_error);
+  const char *code = us_X509_error_code(x509_verify_error);
+  return (struct us_bun_verify_error_t){.error = x509_verify_error, .code = code, .reason = reason};
 }
 
 struct us_bun_verify_error_t us_internal_ssl_verify_error(struct us_socket_t *s) {
   if (!s->ssl || !s_ssl(s) || us_socket_is_closed(s) || us_internal_ssl_is_shut_down(s)) {
     return (struct us_bun_verify_error_t){.error = 0, .code = NULL, .reason = NULL};
   }
-  return ssl_verify_error(s);
+  return us_ssl_socket_verify_error_from_ssl(s_ssl(s));
 }
 
 /* ── Handshake state machine ─────────────────────────────────────────────── */
@@ -1870,7 +1885,7 @@ static void ssl_trigger_handshake(struct us_socket_t *s, int success) {
      * graceful close (code 0) must send a bare FIN, not a close_notify it
      * cannot read, and must not wait for a reply. Fatal also refuses writes. */
     s->ssl_fatal_error = 1;
-    us_dispatch_handshake(s, 0, ssl_verify_error(s));
+    us_dispatch_handshake(s, 0, us_ssl_socket_verify_error_from_ssl(s_ssl(s)));
     /* Nothing else will tear this connection down (the peer is still waiting
      * for a Finished that will never come) - close unless JS already did. */
     if (!ssl_gone(s) && !us_socket_is_closed(s)) {
@@ -2044,7 +2059,7 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
 
   if (s->ssl_handshake_state != HANDSHAKE_COMPLETED) {
     if (us_ssl_inline_reject_tripped(s)) {
-      /* The identity check refused a renegotiation, which ssl_update_handshake does not drive. */
+      /* A renegotiation can start before the first on_handshake: report the verdict, not a reset. */
       ssl_trigger_handshake(s, 0);
     } else {
       /* Surface the ECONNRESET-style handshake failure once, so callers need no on_close check. */

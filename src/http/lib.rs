@@ -1675,9 +1675,9 @@ impl<'a> HTTPClient<'a> {
     }
 
     /// Whether the outer socket's peer carries the name `check_server_identity` matches after the handshake.
-    pub(crate) fn server_identity_ok(&self, ssl: &mut boringssl::c::SSL) -> bool {
+    pub(crate) fn server_identity(&self, ssl: &mut boringssl::c::SSL) -> boringssl::ServerIdentity {
         let native = self.socket_verification() == PeerVerification::Native;
-        boringssl::server_identity_ok(
+        boringssl::server_identity(
             ssl,
             native.then(|| get_tls_hostname(self, self.http_proxy.is_some())),
         )
@@ -1771,8 +1771,7 @@ impl<'a> HTTPClient<'a> {
                     } else {
                         // we check with native code if the cert is valid
                         // fast path
-                        // SAFETY: x509 is a live *mut X509 borrowed from cert_chain
-                        if boringssl::check_x509_server_identity(unsafe { &mut *x509 }, hostname) {
+                        if uws::check_server_identity(ssl, hostname) {
                             return true;
                         }
                     }

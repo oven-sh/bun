@@ -146,6 +146,8 @@ pub fn get_default_ciphers() -> &'static ZStr {
 // ═══════════════════════════════════════════════════════════════════════════
 // ssl_wrapper (moved down from bun_runtime::socket::ssl_wrapper for http_jsc)
 // ═══════════════════════════════════════════════════════════════════════════
+pub use ssl_wrapper::check_server_identity;
+
 pub mod ssl_wrapper {
     use core::cell::{Cell, RefCell};
     use core::ffi::{c_char, c_int, c_void};
@@ -218,9 +220,11 @@ pub mod ssl_wrapper {
     struct CallbackState {
         inline_reject: Cell<bool>,
         verify_failed: Cell<bool>,
-        identity_rejected: Cell<bool>,
+        identity_checked: Cell<bool>,
         /// `SSLWrapper::<T>::server_identity`, which finds its wrapper from this field's address.
-        server_identity: Option<unsafe fn(&CallbackState, &mut boring_sys::SSL) -> bool>,
+        server_identity: Option<
+            unsafe fn(&CallbackState, &mut boring_sys::SSL) -> bun_boringssl::ServerIdentity,
+        >,
         wants_session: bool,
         wants_keylog: bool,
         latest_session: Cell<Option<NonNull<boring_sys::SSL_SESSION>>>,
@@ -396,8 +400,8 @@ pub mod ssl_wrapper {
         /// An NSS key-log line (with the trailing newline node appends) -
         /// node's `'keylog'` event. Same opt-in rules as `on_session`.
         pub on_keylog: Option<fn(T, &[u8])>,
-        /// Asked right before the client certificate goes out: does the owner accept the server's name?
-        pub server_identity: Option<fn(T, &mut boring_sys::SSL) -> bool>,
+        /// The name check of the verify step. `None`: the owner checks after the handshake.
+        pub server_identity: Option<fn(T, &mut boring_sys::SSL) -> bun_boringssl::ServerIdentity>,
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
@@ -528,7 +532,7 @@ pub mod ssl_wrapper {
                     wants_keylog: handlers.on_keylog.is_some(),
                     inline_reject: Cell::new(false),
                     verify_failed: Cell::new(false),
-                    identity_rejected: Cell::new(false),
+                    identity_checked: Cell::new(false),
                     server_identity: handlers
                         .server_identity
                         .is_some()
@@ -634,13 +638,18 @@ pub mod ssl_wrapper {
         }
 
         /// SAFETY: `state` is the `callbacks` field of a live `Inner<T>`.
-        unsafe fn server_identity(state: &CallbackState, ssl: &mut boring_sys::SSL) -> bool {
+        unsafe fn server_identity(
+            state: &CallbackState,
+            ssl: &mut boring_sys::SSL,
+        ) -> bun_boringssl::ServerIdentity {
             // SAFETY: caller contract; `callbacks` is the first field of the `repr(C)` `Inner<T>`.
             let this = unsafe { &*core::ptr::from_ref(state).cast::<Inner<T>>() };
             let handlers = this.handlers.get();
             handlers
                 .server_identity
-                .is_none_or(|check| check(handlers.ctx, ssl))
+                .map_or(bun_boringssl::ServerIdentity::Unchecked, |check| {
+                    check(handlers.ctx, ssl)
+                })
         }
 
         /// The session most recently given to the new-session callback, borrowed.
@@ -943,15 +952,7 @@ pub mod ssl_wrapper {
                 return us_bun_verify_error_t::default();
             };
             // SAFETY: ssl is a live SSL*; uSockets helper reads the verify result off it.
-            let error = unsafe { us_ssl_socket_verify_error_from_ssl(ssl.as_ptr()) };
-            if error.error_no == 0 && self.callbacks.identity_rejected.get() {
-                return us_bun_verify_error_t {
-                    error_no: us_bun_verify_error_t::HOSTNAME_MISMATCH,
-                    code: c"ERR_TLS_CERT_ALTNAME_INVALID".as_ptr(),
-                    reason: c"Hostname/IP does not match certificate's altnames".as_ptr(),
-                };
-            }
-            error
+            unsafe { us_ssl_socket_verify_error_from_ssl(ssl.as_ptr()) }
         }
 
         /// Update the handshake state. Returns true if we can call handle_reading.
@@ -995,11 +996,10 @@ pub mod ssl_wrapper {
             // carries the client certificate. TLS 1.2 queues it before the
             // server's Finished, so `on_handshake` would be too late to stop it.
             // Only the final verdict rejects: an alternate chain can recover a per-depth failure.
-            if self.callbacks.identity_rejected.get()
-                || (self.callbacks.inline_reject.get()
-                    && self.callbacks.verify_failed.get()
-                    // SAFETY: ssl is a live SSL*.
-                    && unsafe { boring_sys::SSL_get_verify_result(ssl.as_ptr()) } != 0)
+            if self.callbacks.inline_reject.get()
+                && self.callbacks.verify_failed.get()
+                // SAFETY: ssl is a live SSL*.
+                && unsafe { boring_sys::SSL_get_verify_result(ssl.as_ptr()) } != 0
             {
                 boring_sys::ERR_clear_error();
                 // Reset, not only skip the flush below: a re-entered
@@ -1369,20 +1369,43 @@ pub mod ssl_wrapper {
         1
     }
 
-    /// openssl.c's certificate callback, for an `SSL` that no `us_socket_t` drives. 0 fails the handshake.
+    /// openssl.c's name check of the verify step, for an `SSL` that no `us_socket_t` drives: a `US_IDENTITY_*` verdict.
     #[unsafe(no_mangle)]
     extern "C" fn us_ssl_wrapper_server_identity(
         state: *const CallbackState,
         ssl: *mut boring_sys::SSL,
     ) -> c_int {
+        use bun_boringssl::ServerIdentity;
         // SAFETY: openssl.c passes the pointer that `us_ssl_set_wrapper` stored on this live `ssl`.
         let state = unsafe { &*state };
-        if let (false, Some(check)) = (state.identity_rejected.get(), state.server_identity) {
-            // SAFETY: `state` is the `callbacks` field of the wrapper that `check` was made for; `ssl` is live.
-            let ok = unsafe { check(state, &mut *ssl) };
-            state.identity_rejected.set(!ok);
+        let Some(check) = state.server_identity else {
+            return ServerIdentity::Unchecked as c_int;
+        };
+        // SAFETY: `state` is the `callbacks` field of the wrapper that `check` was made for; `ssl` is live.
+        let verdict = unsafe { check(state, &mut *ssl) };
+        state
+            .identity_checked
+            .set(verdict != ServerIdentity::Unchecked);
+        if verdict == ServerIdentity::Rejected {
+            state.verify_failed.set(true);
         }
-        c_int::from(!state.identity_rejected.get())
+        verdict as c_int
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn us_ssl_wrapper_identity_checked(state: *const CallbackState) -> c_int {
+        // SAFETY: openssl.c passes the pointer that `us_ssl_set_wrapper` stored on a live `SSL`.
+        c_int::from(unsafe { &*state }.identity_checked.get())
+    }
+
+    /// The name check after the handshake. The verify step's verdict stands when it gave one.
+    pub fn check_server_identity(ssl: &mut boring_sys::SSL, host: &[u8]) -> bool {
+        // SAFETY: `ssl` is live.
+        if unsafe { us_ssl_identity_checked(ssl) } != 0 {
+            // SAFETY: `ssl` is live.
+            return unsafe { boring_sys::SSL_get_verify_result(ssl) } == 0;
+        }
+        bun_boringssl::check_server_identity(ssl, host)
     }
 
     /// openssl.c's new-session callback, for an `SSL` that no `us_socket_t` drives.
@@ -1446,6 +1469,8 @@ pub mod ssl_wrapper {
         /// `SSL_get_verify_result` and maps it onto the C `us_bun_verify_error_t`.
         fn us_ssl_socket_verify_error_from_ssl(ssl: *mut boring_sys::SSL) -> us_bun_verify_error_t;
         fn SSL_SESSION_up_ref(session: *mut boring_sys::SSL_SESSION) -> c_int;
+        /// openssl.c: 1 when the verify step of this handshake asked the owner for the server's name.
+        fn us_ssl_identity_checked(ssl: *mut boring_sys::SSL) -> c_int;
         /// openssl.c: makes the callbacks of `ssl` go to `wrapper`. `wrapper` must outlive `ssl`.
         fn us_ssl_set_wrapper(ssl: *mut boring_sys::SSL, wrapper: *mut c_void);
         /// openssl.c: the pointer `us_ssl_set_wrapper` stored on the `SSL` that `ctx` verifies, or null.

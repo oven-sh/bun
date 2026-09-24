@@ -629,17 +629,13 @@ describe.each(["TLSv1.3", "TLSv1.2"] as const)(
       expect(srv.seen.clientTlsBytes).toBe(srv.seen.clientHelloBytes);
     });
 
-    // With no certificate to withhold the check stays where it was, after the
-    // handshake, and the error is the same. TLS 1.2 shows it on the wire: the
-    // client's second flight leaves before the server's Finished arrives.
-    // Under TLS 1.3 that flight leaves only when the client closes, so its
-    // size is a matter of the close path and not of this check.
-    test("a client with no certificate rejects after the handshake as before", async () => {
+    // The name check is a step of certificate verification: it does not depend on a client certificate.
+    test("a client with no certificate rejects inside the handshake too", async () => {
       await using srv = await mtlsServer({ identity: otherHost, onSecure: httpOk, maxVersion });
       const err = await settle(fetch(`https://localhost:${srv.port}/`, { tls: { ca: otherHostMtls.ca } }));
       expect(err?.code).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
       await srv.seen.closed;
-      if (maxVersion === "TLSv1.2") expect(srv.seen.clientTlsBytes).toBeGreaterThan(srv.seen.clientHelloBytes);
+      expect(srv.seen.clientTlsBytes).toBe(srv.seen.clientHelloBytes);
     });
 
     // A checkServerIdentity function owns the verdict, and it can accept a

@@ -629,7 +629,7 @@ where
                 };
                 let hostname = this.identity_hostname(ssl);
                 let identity_ok =
-                    !hostname.is_empty() && boringssl::check_server_identity(ssl, &hostname);
+                    !hostname.is_empty() && uws::check_server_identity(ssl, &hostname);
                 if !identity_ok {
                     Self::fail(this, ErrorCode::TlsHandshakeFailed);
                 }
@@ -642,12 +642,12 @@ where
     }
 
     /// `handle_handshake`'s name check, asked inside the handshake.
-    pub fn server_identity_ok(&self, ssl: &mut boringssl::c::SSL) -> bool {
+    pub fn server_identity(&self, ssl: &mut boringssl::c::SSL) -> boringssl::ServerIdentity {
         let rejects = self
             .cpp_websocket()
             .is_some_and(|ws| ws.reject_unauthorized());
         let hostname = rejects.then(|| self.identity_hostname(ssl));
-        boringssl::server_identity_ok(ssl, hostname.as_deref())
+        boringssl::server_identity(ssl, hostname.as_deref())
     }
 
     /// The name to match: the dialed host, else the SNI.

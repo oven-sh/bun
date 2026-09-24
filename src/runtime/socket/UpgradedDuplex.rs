@@ -112,7 +112,8 @@ pub(crate) struct Handlers {
     pub(crate) on_session: fn(*mut (), &[u8]),
     /// An NSS key-log line - node's `'keylog'` event.
     pub(crate) on_keylog: fn(*mut (), &[u8]),
-    pub(crate) server_identity: fn(*mut (), &mut bun_boringssl_sys::SSL) -> bool,
+    pub(crate) server_identity:
+        fn(*mut (), &mut bun_boringssl_sys::SSL) -> bun_boringssl::ServerIdentity,
 }
 
 use crate::jsc_hooks::timer_all_mut as timer_all;
@@ -179,7 +180,10 @@ impl UpgradedDuplex {
         (this.handlers.on_keylog)(this.handlers.ctx, line);
     }
 
-    fn server_identity(this: *mut Self, ssl: &mut bun_boringssl_sys::SSL) -> bool {
+    fn server_identity(
+        this: *mut Self,
+        ssl: &mut bun_boringssl_sys::SSL,
+    ) -> bun_boringssl::ServerIdentity {
         // SAFETY: see handler note above.
         let this = unsafe { &*this };
         (this.handlers.server_identity)(this.handlers.ctx, ssl)

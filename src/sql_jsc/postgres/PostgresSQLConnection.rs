@@ -869,8 +869,8 @@ impl PostgresSQLConnection {
     }
 
     /// verify-full's name check, asked inside the handshake.
-    pub fn server_identity_ok(&self, ssl: &mut bun_boringssl_sys::SSL) -> bool {
-        BoringSSL::server_identity_ok(ssl, self.native_identity_hostname())
+    pub fn server_identity(&self, ssl: &mut bun_boringssl_sys::SSL) -> BoringSSL::ServerIdentity {
+        BoringSSL::server_identity(ssl, self.native_identity_hostname())
     }
 
     /// The name verify-full matches, in and after the handshake. Empty (none configured) matches no certificate.
@@ -903,7 +903,7 @@ impl PostgresSQLConnection {
                                 .map_or(core::ptr::null_mut(), |p| p.cast());
                             let ok = !hostname.is_empty()
                                 && !ssl_ptr.is_null()
-                                && BoringSSL::check_server_identity(
+                                && uws::check_server_identity(
                                     // SAFETY: `ssl_ptr` is the live SSL* of a connected TLS socket.
                                     unsafe { &mut *ssl_ptr },
                                     hostname,

@@ -253,44 +253,45 @@ pub(crate) unsafe extern "C" fn us_dispatch_session(
     crate::dispatch::fold(TLSSocket::on_session(tls, slice));
 }
 
-/// BoringSSL's certificate callback, routed to the owner of the socket in the handshake: 1 accepts the server's name.
+/// The name check of the verify step, routed to the owner of the socket in the handshake: a `US_IDENTITY_*` verdict.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn us_dispatch_server_identity(
     s: *mut us_socket_t,
     ssl: *mut bun_boringssl_sys::SSL,
 ) -> c_int {
+    use bun_boringssl::ServerIdentity::Unchecked;
     use bun_uws_sys::thunk::ExtSlot;
     let s_ref = us_socket_t::opaque_mut(s);
     let ssl = bun_boringssl_sys::SSL::opaque_mut(ssl);
-    let ok = match s_ref.kind() {
+    let verdict = match s_ref.kind() {
         SocketKind::BunSocketTls => s_ref
             .ext::<Option<bun_ptr::ThisPtr<super::NewSocket<true>>>>()
-            .is_none_or(|tls| tls.server_identity_ok(ssl)),
+            .map_or(Unchecked, |tls| tls.server_identity(ssl)),
         SocketKind::HttpClientTls => s_ref
             .ext::<Option<core::ptr::NonNull<c_void>>>()
-            .is_none_or(|ext| {
-                bun_http::http_context::Handler::<true>::server_identity_ok(ext.as_ptr(), ssl)
+            .map_or(Unchecked, |ext| {
+                bun_http::http_context::Handler::<true>::server_identity(ext.as_ptr(), ssl)
             }),
         SocketKind::WsClientUpgradeTls => s_ref
             .ext::<Option<bun_ptr::ThisPtr<handlers::WSUpgradeClient<true>>>>()
-            .is_none_or(|client| client.server_identity_ok(ssl)),
+            .map_or(Unchecked, |client| client.server_identity(ssl)),
         SocketKind::PostgresTls => s_ref
             .ext::<ExtSlot<bun_sql_jsc::postgres::PostgresSQLConnection>>()
             .owner_ref()
-            .is_none_or(|connection| connection.server_identity_ok(ssl)),
+            .map_or(Unchecked, |connection| connection.server_identity(ssl)),
         SocketKind::MysqlTls => s_ref
             .ext::<ExtSlot<bun_sql_jsc::mysql::js_my_sql_connection::JSMySQLConnection>>()
             .owner_ref()
-            .is_none_or(|connection| connection.server_identity_ok(ssl)),
+            .map_or(Unchecked, |connection| connection.server_identity(ssl)),
         SocketKind::ValkeyTls => s_ref
             .ext::<ExtSlot<crate::valkey_jsc::js_valkey::JSValkeyClient>>()
             .owner_ref()
-            .is_none_or(|client| {
-                crate::valkey_jsc::js_valkey::SocketHandler::<true>::server_identity_ok(client, ssl)
+            .map_or(Unchecked, |client| {
+                crate::valkey_jsc::js_valkey::SocketHandler::<true>::server_identity(client, ssl)
             }),
-        _ => true,
+        _ => Unchecked,
     };
-    c_int::from(ok)
+    verdict as c_int
 }
 
 /// BoringSSL's new-session callback, routed to the owner of the socket in `SSL_read`: 1 asks for `us_dispatch_session`.

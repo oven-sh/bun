@@ -559,12 +559,15 @@ fn progress_update_for_proxy_socket(ctx: *mut HTTPClient, proxy: NonNull<ProxyTu
     }
 }
 
-/// The inner connection's form of `HTTPClient::server_identity_ok`.
-fn server_identity(ctx: *mut HTTPClient, ssl: &mut bun_boringssl::c::SSL) -> bool {
+/// The inner connection's form of `HTTPClient::server_identity`.
+fn server_identity(
+    ctx: *mut HTTPClient,
+    ssl: &mut bun_boringssl::c::SSL,
+) -> bun_boringssl::ServerIdentity {
     // SAFETY: `ctx` is the live client that drives this tunnel's handshake.
     let client = unsafe { &*ctx };
     let native = client.target_verification() == PeerVerification::Native;
-    bun_boringssl::server_identity_ok(ssl, native.then(|| crate::get_tls_hostname(client, false)))
+    bun_boringssl::server_identity(ssl, native.then(|| crate::get_tls_hostname(client, false)))
 }
 
 // ─── ProxyTunnel methods ─────────────────────────────────────────────────────

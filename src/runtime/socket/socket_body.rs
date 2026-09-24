@@ -1788,7 +1788,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let mut authorized = success == 1;
         let mut hostname_mismatch = false;
         let mut hostname_mismatch_message: Option<Box<[u8]>> = None;
-        // `server_identity_ok` failed the handshake: the verdict and error of the check below.
+        // `server_identity` failed the handshake: the verdict and error of the check below.
         let rejected_in_handshake = SSL
             && success == 0
             && ssl_error.error_no == uws::us_bun_verify_error_t::HOSTNAME_MISMATCH;
@@ -1797,7 +1797,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             if let Some(ssl_ptr) = this.socket.get().ssl() {
                 let hostname = this.server_identity_hostname();
                 if rejected_in_handshake
-                    || !bun_boringssl::check_server_identity(
+                    || !uws::check_server_identity(
                         boringssl_sys::SSL::opaque_mut(ssl_ptr),
                         hostname,
                     )
@@ -1982,12 +1982,15 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     /// `on_handshake`'s native name check, asked inside the handshake. node:tls is left out: its JS check decides.
-    pub(crate) fn server_identity_ok(&self, ssl: &mut boringssl_sys::SSL) -> bool {
+    pub(crate) fn server_identity(
+        &self,
+        ssl: &mut boringssl_sys::SSL,
+    ) -> bun_boringssl::ServerIdentity {
         let flags = self.flags.get();
         let enforced = !self.acts_as_tls_server()
             && flags.contains(Flags::REJECT_UNAUTHORIZED)
             && !flags.contains(Flags::DEFERS_SERVER_IDENTITY);
-        bun_boringssl::server_identity_ok(ssl, enforced.then(|| self.server_identity_hostname()))
+        bun_boringssl::server_identity(ssl, enforced.then(|| self.server_identity_hostname()))
     }
 
     /// Callers hold `on_handshake`'s ref guard, which outlives the
@@ -4386,9 +4389,14 @@ impl DuplexUpgradeContext {
         }
     }
 
-    fn server_identity(this: bun_ptr::ThisPtr<Self>, ssl: &mut boringssl_sys::SSL) -> bool {
+    fn server_identity(
+        this: bun_ptr::ThisPtr<Self>,
+        ssl: &mut boringssl_sys::SSL,
+    ) -> bun_boringssl::ServerIdentity {
         this.tls_this_ptr()
-            .is_none_or(|tls| tls.server_identity_ok(ssl))
+            .map_or(bun_boringssl::ServerIdentity::Unchecked, |tls| {
+                tls.server_identity(ssl)
+            })
     }
 
     fn on_handshake(

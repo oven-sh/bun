@@ -145,7 +145,8 @@ pub(crate) struct Handlers {
     pub(crate) on_session: fn(*mut c_void, &[u8]),
     /// An NSS key-log line - node's `'keylog'` event.
     pub(crate) on_keylog: fn(*mut c_void, &[u8]),
-    pub(crate) server_identity: fn(*mut c_void, &mut boringssl::SSL) -> bool,
+    pub(crate) server_identity:
+        fn(*mut c_void, &mut boringssl::SSL) -> bun_boringssl::ServerIdentity,
 }
 
 impl WindowsNamedPipe {
@@ -381,7 +382,10 @@ impl WindowsNamedPipe {
         // SAFETY: see block note above.
         unsafe { &*this }.on_session(d)
     }
-    fn ssl_server_identity(this: *mut Self, ssl: &mut boringssl::SSL) -> bool {
+    fn ssl_server_identity(
+        this: *mut Self,
+        ssl: &mut boringssl::SSL,
+    ) -> bun_boringssl::ServerIdentity {
         // SAFETY: see block note above.
         let this = unsafe { &*this };
         (this.handlers.server_identity)(this.handlers.ctx, ssl)

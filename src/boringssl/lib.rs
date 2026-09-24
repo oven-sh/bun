@@ -824,9 +824,28 @@ pub fn server_identity_mismatch_message(ssl_ptr: &mut boring::SSL, hostname: &[u
     message
 }
 
-/// [`check_server_identity`] for the check inside the handshake: `None` or an empty `host` is no check there.
-pub fn server_identity_ok(ssl: &mut boring::SSL, host: Option<&[u8]>) -> bool {
-    host.is_none_or(|host| host.is_empty() || check_server_identity(ssl, host))
+/// What a client says about the name on the server's certificate, inside the handshake. openssl.c's `US_IDENTITY_*`.
+#[repr(i32)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ServerIdentity {
+    Rejected = 0,
+    Accepted = 1,
+    /// No native check here: the owner decides after the handshake.
+    Unchecked = 2,
+}
+
+/// [`check_server_identity`] as a verdict. `None` or an empty `host` is [`ServerIdentity::Unchecked`].
+pub fn server_identity(ssl: &mut boring::SSL, host: Option<&[u8]>) -> ServerIdentity {
+    match host {
+        Some(host) if !host.is_empty() => {
+            if check_server_identity(ssl, host) {
+                ServerIdentity::Accepted
+            } else {
+                ServerIdentity::Rejected
+            }
+        }
+        _ => ServerIdentity::Unchecked,
+    }
 }
 
 #[cfg(test)]

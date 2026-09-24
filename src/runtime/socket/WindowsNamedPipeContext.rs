@@ -214,11 +214,14 @@ impl WindowsNamedPipeContext {
         }
     }
 
-    fn server_identity(this: *mut Self, ssl: &mut bun_boringssl_sys::SSL) -> bool {
+    fn server_identity(
+        this: *mut Self,
+        ssl: &mut bun_boringssl_sys::SSL,
+    ) -> bun_boringssl::ServerIdentity {
         // SAFETY: see `on_open`.
         match unsafe { (*this).socket } {
-            SocketType::Tls(s) => s.server_identity_ok(ssl),
-            _ => true,
+            SocketType::Tls(s) => s.server_identity(ssl),
+            _ => bun_boringssl::ServerIdentity::Unchecked,
         }
     }
 

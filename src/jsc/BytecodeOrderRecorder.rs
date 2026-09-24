@@ -222,10 +222,7 @@ fn write_order_file(graph: &'static dyn bun_resolver::StandaloneModuleGraph) {
         }
     });
     let names = bytecode_order::names_of_all(&named);
-    if let Some(path) = crate::module_loader::is_allowed_to_use_internal_testing_apis()
-        .then(|| bun_core::env_var::BUN_BYTECODE_ORDER_NAMES_OUT.get_not_empty())
-        .flatten()
-    {
+    if let Some(path) = bytecode_order::names_out() {
         let mut out = Vec::new();
         for (name, names) in module_names.iter().zip(&names) {
             bytecode_order::write_names_of(&mut out, name, names.as_ref());

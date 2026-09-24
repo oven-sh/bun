@@ -555,7 +555,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
             exitCode === 0
               ? stderr
                   .split("\n")
-                  .filter(line => line.includes("names"))
+                  .filter(line => /names|warn|error/i.test(line))
                   .join("\n")
               : stderr,
           exitCode,
@@ -582,6 +582,27 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
       };
       // Builds, records a run, builds again with the recording, and runs that: every function the program runs is one
       // the order file lists and the build places.
+      // A BUN_BYTECODE_ORDER_NAMES_OUT file: for the path of each text, what its code is called.
+      const namesIn = (dir: string, name: string) => {
+        const texts: Record<string, string[]> = {};
+        let key = "";
+        for (const line of readFileSync(join(dir, name), "utf8").trimEnd().split("\n")) {
+          if (line.startsWith("# ")) texts[(key = line.slice(2))] = [];
+          else texts[key].push(line);
+        }
+        return texts;
+      };
+      // A build without an order file, and app.order from a run of it.
+      const record = async (dir: string, args: string[], stdout: string) => {
+        expect(await buildIn(dir, args, exe("plain"))).toEqual({ stderr: "", exitCode: 0 });
+        expect(await runIn(dir, exe("plain"), [], { BUN_BYTECODE_ORDER_OUT: join(dir, "app.order") })).toEqual({
+          stdout,
+          stderr: "",
+          stats: undefined,
+          exitCode: 0,
+        });
+      };
+
       // `edit`: changes the sources between the build that records and the build that is laid out, to `unknown`
       // functions the recording cannot know.
       const roundTrip = async (
@@ -590,13 +611,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
         stdout: string,
         { edit, unknown = 0 }: { edit?: () => Promise<unknown>; unknown?: number } = {},
       ) => {
-        expect(await buildIn(dir, args, exe("plain"))).toEqual({ stderr: "", exitCode: 0 });
-        expect(await runIn(dir, exe("plain"), [], { BUN_BYTECODE_ORDER_OUT: join(dir, "app.order") })).toEqual({
-          stdout,
-          stderr: "",
-          stats: undefined,
-          exitCode: 0,
-        });
+        await record(dir, args, stdout);
         const order = readFileSync(join(dir, "app.order"), "utf8");
         expect(order).not.toContain("#");
         await edit?.();
@@ -614,18 +629,9 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
         ).toEqual({ stdout, stderr: "", stats: undefined, exitCode: 0 });
         // Nothing but the text is what a name is made of, and the two have the same text: the same names, for every
         // chunk and internal module, at the same places.
-        const namesIn = (name: string) => {
-          const texts: Record<string, string[]> = {};
-          let key = "";
-          for (const line of readFileSync(join(dir, name), "utf8").trimEnd().split("\n")) {
-            if (line.startsWith("# ")) texts[(key = line.slice(2))] = [];
-            else texts[key].push(line);
-          }
-          return texts;
-        };
-        const byTheBuild = namesIn("build.names");
+        const byTheBuild = namesIn(dir, "build.names");
         expect(Object.values(byTheBuild).flat().length).toBeGreaterThan(Object.keys(byTheBuild).length);
-        expect(namesIn("run.names")).toEqual(byTheBuild);
+        expect(namesIn(dir, "run.names")).toEqual(byTheBuild);
         // The names the build gave are the names the run that recorded gave: of what ran, and of what did not.
         expect({ cold: ran.stats.cold, unknownRegion: ran.stats.regions.unknown > 0 }).toEqual({
           cold: 0,
@@ -717,6 +723,84 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
         expect(stats.regions.lateModuleHeads).toBe(0);
         expect(stats.regions.hot).toBeGreaterThan(0);
       }, 60_000);
+
+      const twoEntryPoints = {
+        "app.js": `
+          import { twice } from "./lazy.js";
+          import { existsSync } from "node:fs";
+          import { bytecodeOrderStats } from "bun:jsc";
+          function callsTwice(n) { return twice(n) + Number(existsSync(".")); }
+          console.log(callsTwice(2));
+          if (process.argv.includes("stats")) console.error("stats " + JSON.stringify(bytecodeOrderStats()));
+        `,
+        "sub/other.js": `
+          import { twice } from "../lazy.js";
+          export function other(n) { return twice(n); }
+          console.log(other(3));
+        `,
+        "lazy.js": `export const twice = n => n * 2;`,
+      };
+      const twoEntryPointArgs = ["--format=esm", "--splitting", "app.js", "sub/other.js"];
+
+      // With a public path the chunks import each other by it, in front of the path they have in the executable.
+      test("chunks that import each other by a public path", async () => {
+        using dir = tempDir("build-compile-bytecode-order-public-path", twoEntryPoints);
+        const { stats } = await roundTrip(
+          String(dir),
+          [...twoEntryPointArgs, "--public-path=https://example.com/"],
+          "5\n",
+          // The chunk twice is in gets another path, and nothing that imports it another name: twice is all that is new.
+          { edit: () => Bun.write(join(String(dir), "lazy.js"), "export const twice = n => n + n;"), unknown: 1 },
+        );
+        expect(stats.unknown).toBe(1);
+      }, 60_000);
+
+      // An executable for Windows has its chunks at B:/~BUN/root/. This bun stands in for the Windows one (its builtins
+      // section is what the internal modules are named from), so the program cannot be put in it: the build fails
+      // there, after the link wrote what it calls the code. (On Windows that build is the round trips above.)
+      test.skipIf(isWindows)(
+        "a build for Windows calls the code what a build for this platform calls it",
+        async () => {
+          using dir = tempDir("build-compile-bytecode-order-windows", twoEntryPoints);
+          await record(String(dir), twoEntryPointArgs, "5\n");
+          const namesOfBuild = async (target: string[], outfile: string, root: string) => {
+            const build = await buildIn(
+              String(dir),
+              [...twoEntryPointArgs, ...target, "--bytecode-order=app.order"],
+              outfile,
+              {
+                BUN_BYTECODE_ORDER_NAMES_OUT: join(String(dir), outfile + ".names"),
+              },
+            );
+            // Without where the chunks are, the executable's name, and the hash of a chunk's contents (the paths it
+            // imports chunks by are part of those).
+            const names = Object.entries(namesIn(String(dir), outfile + ".names"))
+              .map(([path, names]) => [
+                path
+                  .replace(root, "")
+                  .replace(outfile, "<entry>")
+                  .replace(/-[a-z0-9]{8}\.js$/, ".js"),
+                names,
+              ])
+              .sort();
+            expect(new Set(names.map(([path]) => path)).size).toBe(names.length);
+            return { build, names };
+          };
+          const here = await namesOfBuild([], "thisplatform", "/$bunfs/root/");
+          expect(here.build).toEqual({ stderr: "", exitCode: 0 });
+          const windows = await namesOfBuild(
+            ["--target=bun-windows-x64", `--compile-executable-path=${bunExe()}`],
+            "windows.exe",
+            "B:/~BUN/root/",
+          );
+          expect(windows.build.stderr).toContain("failed to write compiled executable");
+          expect(windows.build.stderr).not.toContain("names");
+          // The three chunks, and node:fs with the internal modules it needs.
+          expect(here.names.length).toBeGreaterThan(3);
+          expect(windows.names).toEqual(here.names);
+        },
+        60_000,
+      );
 
       // The runtime runs a module from its source when the bytecode it has is not for that source. Such a run did not
       // see what the module's code does: the recording says nothing about it, not that it did not run.

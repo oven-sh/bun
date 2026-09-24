@@ -75,31 +75,23 @@ impl Default for Bytecode {
 }
 
 impl Bytecode {
-    pub fn borrowed(bytes: &[u8]) -> Self {
-        if bytes.is_empty() {
-            return Self::default();
-        }
-        Self {
-            ptr: bytes.as_ptr().cast_mut(),
-            len: bytes.len(),
-            owned: false,
-            persistent: false,
-            entry_offset: 0,
-        }
-    }
     /// Borrowed from memory the caller guarantees is never freed or unmapped for the rest of the process
     /// (the executable's module graph section, NodeCompileCache's retired blobs).
     pub fn persistent(bytes: &[u8]) -> Self {
-        Self {
-            persistent: !bytes.is_empty(),
-            ..Self::borrowed(bytes)
-        }
+        Self::persistent_at(bytes, 0)
     }
-    /// `persistent`, for a module whose cache entry starts `entry_offset` into a payload it shares with others.
-    pub fn persistent_at(payload: &[u8], entry_offset: u32) -> Self {
+    /// `persistent`, for a module whose cache entry starts `entry_offset` into a payload it shares with others. Not a
+    /// `&[u8]`: in the executable's section, JavaScriptCore patches what it decoded from, on any thread.
+    pub fn persistent_at(payload: *const [u8], entry_offset: u32) -> Self {
+        if payload.is_empty() {
+            return Self::default();
+        }
         Self {
+            ptr: payload.cast::<u8>().cast_mut(),
+            len: payload.len(),
+            owned: false,
+            persistent: true,
             entry_offset,
-            ..Self::persistent(payload)
         }
     }
     pub fn owned(bytes: Box<[u8]>) -> Self {

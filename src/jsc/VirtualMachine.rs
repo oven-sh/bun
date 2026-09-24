@@ -4294,7 +4294,10 @@ impl VirtualMachine {
                 bun_spawn::process::WaiterThread::set_should_use_waiter_thread();
             }
             // Only allowed for testing
-            crate::module_loader::allow_internal_testing_apis_from_env(|key| map.get(key));
+            if map.get(b"BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING").is_some() {
+                ModuleLoader::set_is_allowed_to_use_internal_testing_apis(true);
+                bun_resolve_builtins::set_expose_internals_enabled(true);
+            }
             if gc_level == b"1" {
                 self.aggressive_garbage_collection = GCLevel::Mild;
                 has_bun_garbage_collector_flag_enabled

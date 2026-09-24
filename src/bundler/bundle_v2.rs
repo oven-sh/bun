@@ -1488,8 +1488,6 @@ pub mod bv2_impl {
             /// Defined `#[no_mangle]` in `bun_jsc::cached_bytecode`: this executable's builtins section
             /// (`bun_exe_format::builtins`).
             safe fn __bun_jsc_host_builtins() -> &'static [u8];
-            /// `bun_jsc::module_loader::is_allowed_to_use_internal_testing_apis`.
-            safe fn __bun_jsc_is_allowed_to_use_internal_testing_apis() -> bool;
             /// Bytecode for this executable's internal module `id`, as InternalModuleRegistry consumes it.
             safe fn __bun_jsc_generate_internal_module_bytecode(
                 id: u32,
@@ -1746,11 +1744,6 @@ pub mod bv2_impl {
         #[inline]
         pub(crate) fn host_builtins() -> &'static [u8] {
             __bun_jsc_host_builtins()
-        }
-
-        #[inline]
-        pub(crate) fn is_allowed_to_use_internal_testing_apis() -> bool {
-            __bun_jsc_is_allowed_to_use_internal_testing_apis()
         }
 
         #[inline]

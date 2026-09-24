@@ -59,6 +59,17 @@ const _: () = assert!(
 /// that recorded it: a change to what a name is a hash of changes this, and older files are told to be recorded again.
 pub const VERSION: &str = "v2";
 
+/// `BUN_BYTECODE_ORDER_NAMES_OUT`, where `bun:internal-for-testing` is: a debug build, or the tests' environment.
+pub fn names_out() -> Option<&'static [u8]> {
+    let is_for_tests = bun_core::env::IS_DEBUG
+        || (bun_core::getenv_z(bun_core::zstr!("BUN_GARBAGE_COLLECTOR_LEVEL")).is_some()
+            && bun_core::getenv_z(bun_core::zstr!("BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING"))
+                .is_some());
+    is_for_tests
+        .then(|| bun_core::env_var::BUN_BYTECODE_ORDER_NAMES_OUT.get_not_empty())
+        .flatten()
+}
+
 /// `BUN_BYTECODE_ORDER_NAMES_OUT`: what the code `key` is the path of is called.
 pub fn write_names_of(out: &mut Vec<u8>, key: &[u8], names: Option<&CodeNames>) {
     use std::io::Write;

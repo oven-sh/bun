@@ -466,9 +466,6 @@ impl BuildCommand {
 
         this_transpiler.configure_defines()?;
         this_transpiler.configure_linker();
-        // A build has no VM to open the gate (for what it links, and for the macros it runs).
-        let env = this_transpiler.env();
-        bun_jsc::module_loader::allow_internal_testing_apis_from_env(|key| env.get(key));
 
         // After configure_defines(): downloading the target reads proxy/TLS settings from the loaded env.
         this_transpiler.options.compile_target_builtins = if ctx.bundler_options.compile

@@ -1371,6 +1371,13 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         }
     }
 
+    // The internal modules the executable will carry bytecode for, as its builtins section has them.
+    let target_builtins = c.options.target_builtins.clone();
+    let internal_modules = (c.options.generate_internal_module_bytecode
+        && c.options.compile_mode.is_executable())
+    .then(|| builtins_of(target_builtins.as_deref()))
+    .flatten()
+    .map(|builtins| (wanted_internal_modules(c, &builtins), builtins));
     let mut linked_bytecode: Option<LinkedBytecode> = None;
     if let Some(order) = &bytecode_order {
         let table = external_string_table
@@ -1401,23 +1408,29 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             .collect();
         chunk_paths.sort_unstable();
         let chunk_paths: Vec<&[u8]> = chunk_paths.iter().map(Vec::as_slice).collect();
-        let names = crate::bytecode_order::names_of_all(
-            &linked_bytecode_chunks
-                .iter()
-                .map(|&(chunk_index, _, _)| crate::bytecode_order::Named::Chunk {
-                    text: output_files.output_files[chunk_index].value.as_slice(),
-                    is_esm,
-                    chunk_paths: &chunk_paths,
-                })
-                .collect::<Vec<_>>(),
-        );
+        // Everything the link will hold is named in one go: the chunks, then the internal modules.
+        let mut named: Vec<crate::bytecode_order::Named<'_>> = linked_bytecode_chunks
+            .iter()
+            .map(|&(chunk_index, _, _)| crate::bytecode_order::Named::Chunk {
+                text: output_files.output_files[chunk_index].value.as_slice(),
+                is_esm,
+                chunk_paths: &chunk_paths,
+            })
+            .collect();
+        if let Some((wanted, builtins)) = &internal_modules {
+            named.extend(wanted.iter().map(|&id| {
+                crate::bytecode_order::Named::InternalModule(
+                    builtins.module(id).map_or(&[][..], |module| module.source),
+                )
+            }));
+        }
+        let mut names = crate::bytecode_order::names_of_all(&named);
+        let internal_names = names.split_off(linked_bytecode_chunks.len());
         let mut linked = LinkedBytecode {
             encoder,
             output_files: Vec::with_capacity(linked_bytecode_chunks.len()),
-            names_out: crate::bundle_v2::dispatch::is_allowed_to_use_internal_testing_apis()
-                .then(|| bun_core::env_var::BUN_BYTECODE_ORDER_NAMES_OUT.get_not_empty())
-                .flatten()
-                .map(|path| (path, Vec::new())),
+            internal_names,
+            names_out: crate::bytecode_order::names_out().map(|path| (path, Vec::new())),
         };
         for ((chunk_index, bytecode_index, source_provider_url), names) in
             linked_bytecode_chunks.iter().zip(&names)
@@ -1487,12 +1500,13 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     }
 
     let mut result = output_files.take();
-    if c.options.generate_internal_module_bytecode && c.options.compile_mode.is_executable() {
+    if let Some(internal_modules) = internal_modules {
         append_internal_module_bytecode(
             c,
             &mut result,
             external_string_table.as_ref().and_then(|t| t.get()),
             linked_bytecode.as_mut(),
+            internal_modules,
         );
     }
     let mut linked_bytecode_payload: Option<Box<[u8]>> = None;
@@ -1690,39 +1704,32 @@ fn debug_assert_no_placeholder_left(c: &LinkerContext, files: &[options::OutputF
 struct LinkedBytecode {
     encoder: crate::bundle_v2::dispatch::BytecodeLinkEncoderHandle,
     output_files: Vec<u32>,
+    /// What the code of the internal modules that will join the link is called, in their order.
+    internal_names: Vec<Option<crate::bytecode_order::CodeNames>>,
     /// `BUN_BYTECODE_ORDER_NAMES_OUT`, and what is written there.
     names_out: Option<(&'static [u8], Vec<u8>)>,
 }
 
-/// `--compile --bytecode`: the executable also carries ahead-of-time bytecode for the internal modules (node:fs, …) the
-/// bundle imports and everything those can require (while loading or lazily later), so their first `require` decodes
-/// instead of parsing. One
-/// `OutputKind::BuiltinBytecode` per module; StandaloneModuleGraph::to_bytes lays them out and InternalModuleRegistry
-/// picks them up by id. The modules, their ids and (when compiling for another platform) their sources come from the
-/// builtins section of the executable the bundle is going into.
-fn append_internal_module_bytecode(
-    c: &mut LinkerContext,
-    output_files: &mut Vec<options::OutputFile>,
-    external_strings: Option<core::ptr::NonNull<crate::bundle_v2::dispatch::EncoderStringTable>>,
-    // With an order file the internal modules are more modules of the link's one payload, and their output files
-    // cache-entry offsets like the chunks'.
-    mut linked_bytecode: Option<&mut LinkedBytecode>,
-) {
-    use crate::bundle_v2::dispatch;
-    let target_section = c.options.target_builtins.as_deref();
-    let builtins = match bun_exe_format::builtins::Builtins::parse(
-        target_section.unwrap_or_else(|| dispatch::host_builtins()),
-    ) {
-        Ok(b) => b,
+/// The builtins section of the executable being built: the target's, or this one's.
+fn builtins_of(target_section: Option<&[u8]>) -> Option<bun_exe_format::builtins::Builtins<'_>> {
+    let section = target_section.unwrap_or_else(|| crate::bundle_v2::dispatch::host_builtins());
+    match bun_exe_format::builtins::Builtins::parse(section) {
+        Ok(builtins) => Some(builtins),
         Err(e) => {
             debug!(
                 "Internal module bytecode: builtins section unreadable ({})",
                 <&'static str>::from(&e)
             );
-            return;
+            None
         }
-    };
+    }
+}
 
+/// The internal modules the program imports, and the ones those import.
+fn wanted_internal_modules(
+    c: &LinkerContext,
+    builtins: &bun_exe_format::builtins::Builtins<'_>,
+) -> Vec<u32> {
     let import_records = c.graph.ast.items_import_records();
     let mut wanted: Vec<u32> = Vec::new();
     for source_index in &c.graph.reachable_files {
@@ -1767,24 +1774,29 @@ fn append_internal_module_bytecode(
         }
         i += 1;
     }
+    wanted
+}
 
+/// `--compile --bytecode`: the executable also carries ahead-of-time bytecode for the internal modules (node:fs, …) the
+/// bundle imports and everything those can require (while loading or lazily later), so their first `require` decodes
+/// instead of parsing. One
+/// `OutputKind::BuiltinBytecode` per module; StandaloneModuleGraph::to_bytes lays them out and InternalModuleRegistry
+/// picks them up by id. The modules, their ids and (when compiling for another platform) their sources come from the
+/// builtins section of the executable the bundle is going into.
+fn append_internal_module_bytecode(
+    c: &mut LinkerContext,
+    output_files: &mut Vec<options::OutputFile>,
+    external_strings: Option<core::ptr::NonNull<crate::bundle_v2::dispatch::EncoderStringTable>>,
+    // With an order file the internal modules are more modules of the link's one payload, and their output files
+    // cache-entry offsets like the chunks'.
+    mut linked_bytecode: Option<&mut LinkedBytecode>,
+    (wanted, builtins): (Vec<u32>, bun_exe_format::builtins::Builtins<'_>),
+) {
+    use crate::bundle_v2::dispatch;
+    let target_section = c.options.target_builtins.as_deref();
     // `wanted`'s modules as the builtins section has them, and (for a link) what the order files call their code.
     let modules: Vec<Option<bun_exe_format::builtins::Module<'_>>> =
         wanted.iter().map(|&id| builtins.module(id)).collect();
-    let mut names = if linked_bytecode.is_some() {
-        crate::bytecode_order::names_of_all(
-            &modules
-                .iter()
-                .map(|module| {
-                    crate::bytecode_order::Named::InternalModule(
-                        module.as_ref().map_or(&[][..], |module| module.source),
-                    )
-                })
-                .collect::<Vec<_>>(),
-        )
-    } else {
-        Vec::new()
-    };
     let mut without_names: Vec<Vec<u8>> = Vec::new();
     for (index, id) in wanted.into_iter().enumerate() {
         let bytecode = if let Some(linked) = linked_bytecode.as_deref_mut() {
@@ -1794,7 +1806,7 @@ fn append_internal_module_bytecode(
                 continue;
             };
             // Another executable's builtins may be another version's, in a syntax the parser here does not take.
-            let names = names[index].take();
+            let names = linked.internal_names[index].take();
             if names.is_none() {
                 without_names.push(module.name.to_vec());
             }

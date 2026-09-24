@@ -684,7 +684,7 @@ impl NodeHTTPResponse {
             // S008: `WebSocketUpgradeContext` is an `opaque_ffi!` ZST — safe deref
             // (`upgrade_ctx` checked non-null above).
             let ctx = bun_opaque::opaque_deref_mut(upgrade_ctx);
-            let _ = raw_response.upgrade::<ServerWebSocket>(
+            let _ = raw_response.upgrade_h1_websocket::<ServerWebSocket>(
                 ws,
                 websocket_key,
                 sec_websocket_protocol_value,

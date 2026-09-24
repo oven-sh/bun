@@ -3,6 +3,7 @@ use core::ffi::c_void;
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
 use bun_core::comptime_string_map::ComptimeStringMap as _;
 use bun_uws as uws;
+use bun_uws_sys::h2 as uws_h2;
 
 pub(crate) struct WebSocketServerContext {
     pub(crate) handler: Handler,
@@ -27,6 +28,7 @@ pub(crate) struct Handler {
     pub(crate) on_pong: JSValue,
 
     pub(crate) app: Option<*mut c_void>,
+    pub(crate) h2_app: Option<*mut uws_h2::App>,
     /// Type-erased backref to the owning `NewServer`, set alongside `app`
     /// in `set_routes` (so it is in place before any socket can upgrade and
     /// refreshed whenever a reload installs a new context).
@@ -48,6 +50,26 @@ pub(crate) struct Handler {
     pub(crate) flags: HandlerFlags,
 }
 
+/// Copy-only view used across a potentially re-entrant JavaScript callback.
+/// `server.reload()` updates the stable Handler slot in place, so no `&Handler`
+/// may remain live while user code runs. The callback being invoked is rooted
+/// by the server wrapper until the call starts and by JSC's call frame while it
+/// runs. Only the old error callback needs an explicit pin across a re-entrant
+/// reload because it can still be invoked after the primary callback returns.
+#[derive(Clone, Copy)]
+pub(crate) struct HandlerSnapshot {
+    pub(crate) on_open: JSValue,
+    pub(crate) on_message: JSValue,
+    pub(crate) on_close: JSValue,
+    pub(crate) on_drain: JSValue,
+    pub(crate) on_error: JSValue,
+    pub(crate) on_ping: JSValue,
+    pub(crate) on_pong: JSValue,
+    pub(crate) server: Option<super::AnyServer>,
+    pub(crate) vm: bun_ptr::BackRef<VirtualMachine>,
+    pub(crate) global_object: bun_ptr::BackRef<JSGlobalObject>,
+}
+
 bitflags::bitflags! {
     #[repr(transparent)]
     #[derive(Clone, Copy, Default)]
@@ -59,6 +81,22 @@ bitflags::bitflags! {
 }
 
 impl Handler {
+    #[inline]
+    pub(crate) fn snapshot(&self) -> HandlerSnapshot {
+        HandlerSnapshot {
+            on_open: self.on_open,
+            on_message: self.on_message,
+            on_close: self.on_close,
+            on_drain: self.on_drain,
+            on_error: self.on_error,
+            on_ping: self.on_ping,
+            on_pong: self.on_pong,
+            server: self.server,
+            vm: self.vm,
+            global_object: self.global_object,
+        }
+    }
+
     /// `global_object` is a `BackRef` set by the server before any websocket
     /// connection exists; the global outlives every `ServerWebSocket`.
     #[inline]
@@ -73,46 +111,6 @@ impl Handler {
         self.vm.get()
     }
 
-    /// Route an error a websocket handler produced to the `error` handler (a
-    /// top-level call: what it throws is reported and the handler goes on), or
-    /// — with none — to the uncaught-exception path. `Err` is only a termination
-    /// pending from the preceding callback.
-    ///
-    /// `on_error` must be copied to a stack local by the caller before any
-    /// user JS runs: a re-entrant `ws.close()` on the last socket of a stopped
-    /// server can downgrade the wrapper (the sole GC root for `wsOnError`)
-    /// mid-handler, so a fresh `self.on_error` read after user JS could be a
-    /// freed cell.
-    pub(crate) fn run_error_callback(
-        &self,
-        on_error: JSValue,
-        global_object: &JSGlobalObject,
-        error_value: JSValue,
-    ) -> JsResult<()> {
-        // Termination raised inside the preceding callback.call() cannot be
-        // cleared; it is the caller's `Err`, not an error to hand to `error`.
-        if global_object.has_exception() {
-            return Err(bun_jsc::JsError::Thrown);
-        }
-        if !on_error.is_empty_or_undefined_or_null() {
-            // A top-level call of its own: what `error` throws is reported here.
-            global_object.bun_vm().event_loop_mut().run_callback(
-                bun_event_loop::ContextId::NONE,
-                on_error,
-                global_object,
-                JSValue::UNDEFINED,
-                &[error_value],
-            );
-            return Ok(());
-        }
-
-        let _ =
-            VirtualMachine::get()
-                .as_mut()
-                .uncaught_exception(global_object, error_value, false);
-        Ok(())
-    }
-
     pub(crate) fn from_js(global_object: &JSGlobalObject, object: JSValue) -> JsResult<Handler> {
         let mut handler = Handler {
             on_open: JSValue::ZERO,
@@ -123,6 +121,7 @@ impl Handler {
             on_ping: JSValue::ZERO,
             on_pong: JSValue::ZERO,
             app: None,
+            h2_app: None,
             server: None,
             vm: bun_ptr::BackRef::new(VirtualMachine::get()),
             global_object: bun_ptr::BackRef::new(global_object),
@@ -171,7 +170,75 @@ impl Handler {
     }
 }
 
+impl HandlerSnapshot {
+    #[inline]
+    pub(crate) fn global_object(&self) -> &JSGlobalObject {
+        self.global_object.get()
+    }
+
+    #[inline]
+    pub(crate) fn vm(&self) -> &VirtualMachine {
+        self.vm.get()
+    }
+
+    /// Route an error from a WebSocket callback without reading the live
+    /// handler slot again after user JavaScript may have reloaded it.
+    pub(crate) fn run_error_callback(
+        &self,
+        global_object: &JSGlobalObject,
+        error_value: JSValue,
+    ) -> JsResult<()> {
+        if global_object.has_exception() {
+            return Err(bun_jsc::JsError::Thrown);
+        }
+        if !self.on_error.is_empty_or_undefined_or_null() {
+            global_object.bun_vm().event_loop_mut().run_callback(
+                bun_event_loop::ContextId::NONE,
+                self.on_error,
+                global_object,
+                JSValue::UNDEFINED,
+                &[error_value],
+            );
+            return Ok(());
+        }
+
+        let _ =
+            VirtualMachine::get()
+                .as_mut()
+                .uncaught_exception(global_object, error_value, false);
+        Ok(())
+    }
+
+    #[inline]
+    pub(crate) fn protect_error_handler(&self) -> Option<bun_jsc::js_value::Protected> {
+        (!self.on_error.is_empty_or_undefined_or_null()).then(|| self.on_error.protected())
+    }
+}
+
 impl WebSocketServerContext {
+    /// Apply reloadable WebSocket options without moving the handler storage.
+    /// Existing H1/H2 sockets retain a `BackRef` to `self.handler`, so its
+    /// address is a server-lifetime invariant.
+    pub(crate) fn update_from(&mut self, replacement: Self) {
+        self.handler.on_open = replacement.handler.on_open;
+        self.handler.on_message = replacement.handler.on_message;
+        self.handler.on_close = replacement.handler.on_close;
+        self.handler.on_drain = replacement.handler.on_drain;
+        self.handler.on_error = replacement.handler.on_error;
+        self.handler.on_ping = replacement.handler.on_ping;
+        self.handler.on_pong = replacement.handler.on_pong;
+        self.handler.flags = replacement.handler.flags;
+
+        self.max_payload_length = replacement.max_payload_length;
+        self.max_lifetime = replacement.max_lifetime;
+        self.idle_timeout = replacement.idle_timeout;
+        self.compression = replacement.compression;
+        self.backpressure_limit = replacement.backpressure_limit;
+        self.send_pings_automatically = replacement.send_pings_automatically;
+        self.reset_idle_timeout_on_send = replacement.reset_idle_timeout_on_send;
+        self.close_on_backpressure_limit = replacement.close_on_backpressure_limit;
+    }
+
     pub(crate) fn to_behavior(&self) -> uws::WebSocketBehavior {
         uws::WebSocketBehavior {
             max_payload_length: self.max_payload_length,

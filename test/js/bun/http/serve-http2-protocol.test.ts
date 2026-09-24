@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import http2 from "node:http2";
+import { deflateRawSync, inflateRawSync, constants as zlibConstants } from "node:zlib";
 import {
   F,
   Fixture,
@@ -14,6 +15,8 @@ import {
   hpackLiteral,
   request,
   startFixture,
+  wsClientFrame,
+  wsServerFrame,
 } from "./serve-http2-helpers";
 
 // Frame-level conformance (RFC 9113 / 7541) driven by the raw client. TLS adds
@@ -36,6 +39,81 @@ const setting = (id: number, v: number) => {
 
 const received = (raw: RawH2, id: number) =>
   raw.frames.filter(f => f.type === T.DATA && f.streamId === id).reduce((a, f) => a + f.payload.length, 0);
+
+const websocketHeaders = (path = "/ws"): [string, string][] => [
+  [":method", "CONNECT"],
+  [":scheme", "http"],
+  [":path", path],
+  [":authority", "localhost"],
+  [":protocol", "websocket"],
+  ["sec-websocket-version", "13"],
+];
+
+const perMessageDeflateTail = Buffer.from([0x00, 0x00, 0xff, 0xff]);
+const deflateWebSocketMessage = (payload: Buffer | string) => {
+  const encoded = deflateRawSync(Buffer.from(payload), {
+    flush: zlibConstants.Z_SYNC_FLUSH,
+    finishFlush: zlibConstants.Z_SYNC_FLUSH,
+  });
+  return encoded.subarray(0, encoded.length - perMessageDeflateTail.length);
+};
+const inflateWebSocketMessage = (payload: Buffer) =>
+  inflateRawSync(Buffer.concat([payload, perMessageDeflateTail]), { finishFlush: zlibConstants.Z_SYNC_FLUSH });
+
+/** node:http2 deliberately does not preserve peer DATA-frame boundaries.
+ * Accumulate one complete RFC 6455 server frame rather than assuming one
+ * stream `data` event is one WebSocket frame. */
+const nextHttp2WebSocketFrame = (stream: http2.ClientHttp2Stream) =>
+  new Promise<Buffer>((resolve, reject) => {
+    let buffered = Buffer.alloc(0);
+    const cleanup = () => {
+      stream.off("data", onData);
+      stream.off("error", onError);
+    };
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+    const onData = (chunk: Buffer | Uint8Array) => {
+      buffered = Buffer.concat([buffered, Buffer.from(chunk)]);
+      if (buffered.length < 2) return;
+      const marker = buffered[1] & 0x7f;
+      const headerLength = marker < 126 ? 2 : marker === 126 ? 4 : 10;
+      if (buffered.length < headerLength) return;
+      const payloadLength =
+        marker < 126 ? marker : marker === 126 ? buffered.readUInt16BE(2) : Number(buffered.readBigUInt64BE(2));
+      const frameLength = headerLength + payloadLength;
+      if (buffered.length < frameLength) return;
+      cleanup();
+      resolve(buffered.subarray(0, frameLength));
+    };
+    stream.on("data", onData);
+    stream.on("error", onError);
+  });
+
+/** Build a masked client frame with an explicitly selected length encoding.
+ * RFC 6455 requires the shortest possible encoding and reserves the high bit
+ * of the 64-bit form.  wsClientFrame() intentionally only emits canonical
+ * frames, so malformed-wire tests use this helper. */
+const wsClientFrameWithLengthEncoding = (
+  opcode: number,
+  payload: Buffer | string,
+  marker: 126 | 127,
+  declaredLength: number | bigint,
+) => {
+  const body = Buffer.from(payload);
+  const extended = marker === 126 ? 2 : 8;
+  const out = Buffer.alloc(2 + extended + 4 + body.length);
+  out[0] = 0x80 | opcode;
+  out[1] = 0x80 | marker;
+  if (marker === 126) out.writeUInt16BE(Number(declaredLength), 2);
+  else out.writeBigUInt64BE(BigInt(declaredLength), 2);
+  const maskAt = 2 + extended;
+  const mask = Buffer.from([0x12, 0x34, 0x56, 0x78]);
+  mask.copy(out, maskAt);
+  for (let i = 0; i < body.length; i++) out[maskAt + 4 + i] = body[i] ^ mask[i & 3];
+  return out;
+};
 
 const barrier = async (raw: RawH2, tag: string) => {
   raw.write(frame(T.PING, 0, 0, Buffer.from(tag.padEnd(8).slice(0, 8))));
@@ -62,6 +140,25 @@ afterAll(async () => {
 });
 
 describe.concurrent("Bun.serve http2 protocol", () => {
+  test("SETTINGS_ENABLE_CONNECT_PROTOCOL cannot be disabled after being enabled", async () => {
+    const raw = await RawH2.connect(fx.port, secure);
+    raw.write(Buffer.concat([frame(T.SETTINGS, 0, 0, setting(8, 1)), frame(T.SETTINGS, 0, 0, setting(8, 0))]));
+    expect((await raw.goaway()).code).toBe(1); // PROTOCOL_ERROR
+    raw.close();
+  });
+
+  for (const [name, id] of [
+    ["known", 8],
+    ["unknown", 0xf00d],
+  ] as const) {
+    test(`duplicate ${name} SETTINGS identifier → GOAWAY PROTOCOL_ERROR`, async () => {
+      const raw = await RawH2.connect(fx.port, secure);
+      raw.write(frame(T.SETTINGS, 0, 0, Buffer.concat([setting(id, 1), setting(id, 1)])));
+      expect((await raw.goaway()).code).toBe(1);
+      raw.close();
+    });
+  }
+
   test("bad preface closes the connection", async () => {
     const raw = await RawH2.connect(fx.port, secure, { sendPreface: false });
     raw.write(Buffer.from("PRI * HTTP/2.0\r\n\r\nXX\r\n\r\n"));
@@ -370,6 +467,7 @@ describe.concurrent("Bun.serve http2 protocol", () => {
     ["SETTINGS on stream 1", () => frame(T.SETTINGS, 0, 1, setting(3, 100)), 1],
     ["SETTINGS ACK with payload", () => frame(T.SETTINGS, F.ACK, 0, Buffer.alloc(1)), 6],
     ["SETTINGS ENABLE_PUSH=2", () => frame(T.SETTINGS, 0, 0, setting(2, 2)), 1],
+    ["SETTINGS ENABLE_CONNECT_PROTOCOL=2", () => frame(T.SETTINGS, 0, 0, setting(8, 2)), 1],
     ["SETTINGS MAX_FRAME_SIZE=16383", () => frame(T.SETTINGS, 0, 0, setting(5, 16383)), 1],
     ["SETTINGS MAX_FRAME_SIZE=2^24", () => frame(T.SETTINGS, 0, 0, setting(5, 1 << 24)), 1],
     ["PING on stream 1", () => frame(T.PING, 0, 1, Buffer.alloc(8)), 1],
@@ -752,7 +850,9 @@ describe.concurrent("Bun.serve http2 protocol", () => {
     const raw = await RawH2.connect(fx.port, secure);
     raw.headers(1, baseHeaders("/hello"));
     expect((await raw.body(1)).toString()).toBe("hello");
-    raw.write(frame(T.WINDOW_UPDATE, 0, 1, u32(5)));
+    // A positive update may race stream retirement. Even an increment that
+    // would overflow a live stream's window is ignored once it is closed.
+    raw.write(frame(T.WINDOW_UPDATE, 0, 1, u32(0x7fffffff)));
     raw.write(frame(T.RST_STREAM, 0, 1, u32(8)));
     raw.write(frame(T.PING, 0, 0, Buffer.from("closedok")));
     await raw.waitFor(f => f.type === T.PING && f.payload.toString() === "closedok");
@@ -1228,16 +1328,13 @@ describe.concurrent("Bun.serve http2 protocol", () => {
     expect(h.payload[0]).toBe(0x20); // update to 0 (the minimum seen)…
     expect(h.payload.subarray(1, 3)).toEqual(Buffer.from([0x3f, 0xe1])); // …then to 4096 (0x3f 0xe1 0x1f)
     await raw.body(1);
-    // In one frame: same result.
-    raw.write(frame(T.SETTINGS, 0, 0, Buffer.concat([setting(1, 0), setting(1, 4096)])));
-    await raw.waitFor(f => raw.frames.filter(g => g.type === T.SETTINGS && (g.flags & F.ACK) !== 0).length >= 4);
+    // The size updates are emitted only on the first header block. Repeating
+    // identifier 1 in one SETTINGS frame is deliberately not used here:
+    // RFC 9113 section 6.5 makes that a connection error.
     raw.headers(3, baseHeaders("/hello"));
     const h3 = await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 3);
-    expect(h3.payload[0]).toBe(0x20);
-    raw.headers(5, baseHeaders("/hello"));
-    const h5 = await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 5);
-    expect(h5.payload[0]).not.toBe(0x20);
-    await raw.body(5);
+    expect(h3.payload[0]).not.toBe(0x20);
+    await raw.body(3);
     raw.close();
     const s0 = http2.connect(`${secure ? "https" : "http"}://127.0.0.1:${fx.port}`, {
       rejectUnauthorized: false,
@@ -1545,6 +1642,1608 @@ test("websocket upgrade over HTTP/1.1 still works alongside h2", async () => {
     ws.onerror = e => reject(e);
   });
   ws.close();
+});
+
+test("GET WebSocket routes accept both HTTP/1 upgrade and RFC 8441 Extended CONNECT", async () => {
+  const h1 = new WebSocket(`ws://127.0.0.1:${fx.port}/ws-route`);
+  const h1Echo = new Promise<string>((resolve, reject) => {
+    h1.onopen = () => h1.send("h1-route");
+    h1.onmessage = event => resolve(String(event.data));
+    h1.onerror = reject;
+  });
+  expect(await h1Echo).toBe("h1-route");
+  h1.close();
+
+  const raw = await RawH2.connect(fx.port, secure);
+  raw.headers(1, websocketHeaders("/ws-route"), F.END_HEADERS);
+  expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1)).payload)).toBe(200);
+  raw.write(frame(T.DATA, 0, 1, wsClientFrame(1, "h2-route")));
+  const echoed = wsServerFrame(
+    (await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && f.payload[0] === 0x81)).payload,
+  );
+  expect(echoed.payload.toString()).toBe("h2-route");
+
+  // Only the validated websocket Extended CONNECT is mapped to the public
+  // GET route. Another protocol on the same path stays on ordinary CONNECT
+  // routing and reaches the fetch fallback instead.
+  const unsupported = websocketHeaders("/ws-route").map(([name, value]) =>
+    name === ":protocol" ? ([name, "webtransport"] as [string, string]) : ([name, value] as [string, string]),
+  );
+  raw.headers(3, unsupported, F.END_HEADERS | F.END_STREAM);
+  expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 3)).payload)).toBe(404);
+  expect((await raw.body(3)).toString()).toBe("not found: /ws-route");
+
+  raw.write(frame(T.DATA, F.END_STREAM, 1, wsClientFrame(8, Buffer.from([0x03, 0xe8]))));
+  await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && (f.flags & F.END_STREAM) !== 0);
+  raw.close();
+});
+
+test("RFC 8441 handshake uses 200, omits Key/Accept, and preserves selected response headers", async () => {
+  const session = await connectH2(fx.port, secure);
+  try {
+    if (!session.remoteSettings.enableConnectProtocol) {
+      await new Promise<void>((resolve, reject) => {
+        session.once("remoteSettings", settings =>
+          settings.enableConnectProtocol ? resolve() : reject(new Error("server did not advertise Extended CONNECT")),
+        );
+        session.once("error", reject);
+      });
+    }
+
+    const stream = session.request(
+      {
+        ":method": "CONNECT",
+        ":scheme": secure ? "https" : "http",
+        ":path": "/ws-headers",
+        ":authority": "localhost",
+        ":protocol": "websocket",
+        "sec-websocket-version": "13",
+        "sec-websocket-key": "not-used-by-rfc-8441",
+        "sec-websocket-protocol": "chat, superchat",
+      },
+      { endStream: false },
+    );
+    const response = await new Promise<http2.IncomingHttpHeaders>((resolve, reject) => {
+      stream.once("response", resolve);
+      stream.once("error", reject);
+    });
+    expect(response[":status"]).toBe(200);
+    expect(response["sec-websocket-protocol"]).toBe("chat");
+    expect(response["x-upgrade-transport"]).toBe("h2");
+    expect(response["sec-websocket-accept"]).toBeUndefined();
+    expect(response["content-length"]).toBeUndefined();
+
+    const echoed = nextHttp2WebSocketFrame(stream);
+    stream.write(wsClientFrame(1, "headers-ok"));
+    expect(wsServerFrame(await echoed).payload.toString()).toBe("headers-ok");
+
+    const ended = new Promise<void>((resolve, reject) => {
+      stream.once("end", resolve);
+      stream.once("error", reject);
+    });
+    stream.end(wsClientFrame(8, Buffer.from([0x03, 0xe8])));
+    await ended;
+
+    const assertUnnegotiatedHeaderIsOmitted = async (
+      path: string,
+      requestHeaders: http2.OutgoingHttpHeaders,
+      responseHeader: string,
+    ) => {
+      const candidate = session.request(
+        {
+          ":method": "CONNECT",
+          ":scheme": secure ? "https" : "http",
+          ":path": path,
+          ":authority": "localhost",
+          ":protocol": "websocket",
+          "sec-websocket-version": "13",
+          ...requestHeaders,
+        },
+        { endStream: false },
+      );
+      const headers = await new Promise<http2.IncomingHttpHeaders>((resolve, reject) => {
+        candidate.once("response", resolve);
+        candidate.once("error", reject);
+      });
+      expect(headers[":status"]).toBe(200);
+      expect(headers[responseHeader]).toBeUndefined();
+      const candidateEnded = new Promise<void>((resolve, reject) => {
+        candidate.once("end", resolve);
+        candidate.once("error", reject);
+      });
+      // The close response is a WebSocket frame in HTTP/2 DATA. Node does not
+      // emit `end` for an unread response body, so explicitly drain it.
+      candidate.resume();
+      candidate.end(wsClientFrame(8, Buffer.from([0x03, 0xe8])));
+      await candidateEnded;
+    };
+
+    await assertUnnegotiatedHeaderIsOmitted("/ws-headers", {}, "sec-websocket-protocol");
+    await assertUnnegotiatedHeaderIsOmitted(
+      "/ws-bogus-protocol",
+      { "sec-websocket-protocol": "chat" },
+      "sec-websocket-protocol",
+    );
+    await assertUnnegotiatedHeaderIsOmitted("/ws-force-extension", {}, "sec-websocket-extensions");
+
+    // RFC 6455 version negotiation still applies to Extended CONNECT even
+    // though Sec-WebSocket-Key/Accept do not. A rejected client must learn
+    // which version this endpoint supports.
+    const rejected = session.request(
+      {
+        ":method": "CONNECT",
+        ":scheme": secure ? "https" : "http",
+        ":path": "/ws",
+        ":authority": "localhost",
+        ":protocol": "websocket",
+        "sec-websocket-version": "12",
+      },
+      { endStream: false },
+    );
+    const rejection = await new Promise<http2.IncomingHttpHeaders>((resolve, reject) => {
+      rejected.once("response", resolve);
+      rejected.once("error", reject);
+    });
+    expect(rejection[":status"]).toBe(426);
+    expect(rejection["sec-websocket-version"]).toBe("13");
+    rejected.close();
+  } finally {
+    session.destroy();
+  }
+});
+
+test("RFC 8441 handshake, binary echo, and close work over TLS/ALPN", async () => {
+  await using tlsFixture = await startFixture({ tls: true });
+  const tlsSession = await connectH2(tlsFixture.port, true);
+  try {
+    if (!tlsSession.remoteSettings.enableConnectProtocol) {
+      await new Promise<void>((resolve, reject) => {
+        tlsSession.once("remoteSettings", settings =>
+          settings.enableConnectProtocol
+            ? resolve()
+            : reject(new Error("TLS server did not advertise Extended CONNECT")),
+        );
+        tlsSession.once("error", reject);
+      });
+    }
+
+    const stream = tlsSession.request(
+      {
+        ":method": "CONNECT",
+        ":scheme": "https",
+        ":path": "/ws",
+        ":authority": "localhost",
+        ":protocol": "websocket",
+        "sec-websocket-version": "13",
+      },
+      { endStream: false },
+    );
+    const response = await new Promise<http2.IncomingHttpHeaders>((resolve, reject) => {
+      stream.once("response", resolve);
+      stream.once("error", reject);
+    });
+    expect(response[":status"]).toBe(200);
+
+    const payload = Buffer.from([0x00, 0xff, 0x54, 0x4c, 0x53]);
+    const echoed = nextHttp2WebSocketFrame(stream);
+    stream.write(wsClientFrame(2, payload));
+    const message = wsServerFrame(await echoed);
+    expect(message).toMatchObject({ opcode: 2, fin: true });
+    expect(message.payload).toEqual(payload);
+
+    const ended = new Promise<void>((resolve, reject) => {
+      stream.once("end", resolve);
+      stream.once("error", reject);
+    });
+    stream.resume();
+    stream.end(wsClientFrame(8, Buffer.from([0x03, 0xe8])));
+    await ended;
+  } finally {
+    tlsSession.destroy();
+  }
+});
+
+test("server.reload keeps an existing HTTP/1 WebSocket handler reference valid", async () => {
+  await using reloadFixture = await startFixture({ tls: secure });
+  const ws = new WebSocket(`ws://127.0.0.1:${reloadFixture.port}/ws`);
+  const messages: string[] = [];
+  let wake: (() => void) | undefined;
+  ws.onmessage = event => {
+    messages.push(String(event.data));
+    wake?.();
+    wake = undefined;
+  };
+  await new Promise<void>((resolve, reject) => {
+    ws.onopen = () => resolve();
+    ws.onerror = event => reject(event);
+  });
+  const waitForMessage = async (expected: string) => {
+    while (!messages.includes(expected)) await new Promise<void>(resolve => (wake = resolve));
+  };
+
+  ws.send("reload-handlers");
+  await waitForMessage("reload-complete");
+  ws.send("after");
+  await waitForMessage("reloaded:after");
+  ws.close();
+});
+
+test("pub/sub bridges HTTP/1 and RFC 8441 subscribers", async () => {
+  await using pubsubFixture = await startFixture({ tls: secure });
+  const h1 = new WebSocket(`ws://127.0.0.1:${pubsubFixture.port}/ws`);
+  const h1Messages: string[] = [];
+  let h1Wake: (() => void) | undefined;
+  h1.onmessage = event => {
+    h1Messages.push(String(event.data));
+    h1Wake?.();
+    h1Wake = undefined;
+  };
+  await new Promise<void>((resolve, reject) => {
+    h1.onopen = () => resolve();
+    h1.onerror = event => reject(event);
+  });
+  const waitForH1 = async (expected: string) => {
+    while (!h1Messages.includes(expected)) await new Promise<void>(resolve => (h1Wake = resolve));
+  };
+
+  const h2 = await RawH2.connect(pubsubFixture.port, secure);
+  h2.headers(1, websocketHeaders(), F.END_HEADERS);
+  expect(decodeStatus((await h2.waitFor(f => f.type === T.HEADERS && f.streamId === 1)).payload)).toBe(200);
+  const waitForH2Stream = (streamId: number, expected: string) =>
+    h2.waitFor(f => {
+      if (f.type !== T.DATA || f.streamId !== streamId || f.payload.length < 2 || f.payload[0] !== 0x81) return false;
+      return wsServerFrame(f.payload).payload.toString() === expected;
+    });
+  const waitForH2 = (expected: string) => waitForH2Stream(1, expected);
+
+  h1.send("subscribe:from-h2");
+  await waitForH1("subscribed:from-h2");
+  h2.write(frame(T.DATA, 0, 1, wsClientFrame(1, "publish:from-h2:h2-to-h1")));
+  await waitForH1("h2-to-h1");
+
+  h2.write(frame(T.DATA, 0, 1, wsClientFrame(1, "subscribe:from-h1")));
+  await waitForH2("subscribed:from-h1");
+  h2.write(frame(T.DATA, 0, 1, wsClientFrame(1, "subscriptions")));
+  expect(JSON.parse(wsServerFrame((await waitForH2('["from-h1"]')).payload).payload.toString())).toEqual(["from-h1"]);
+  h1.send("publish:from-h1:h1-to-h2");
+  await waitForH2("h1-to-h2");
+
+  // The public server.publish() API must use the same cross-transport
+  // aggregator as ws.publish(), including delivery to both topic trees.
+  h1.send("subscribe:from-server");
+  await waitForH1("subscribed:from-server");
+  h2.write(frame(T.DATA, 0, 1, wsClientFrame(1, "subscribe:from-server")));
+  await waitForH2("subscribed:from-server");
+  h2.write(frame(T.DATA, 0, 1, wsClientFrame(1, "server-publish:from-server:server-to-both")));
+  await Promise.all([waitForH1("server-to-both"), waitForH2("server-to-both")]);
+  await waitForH2("server-publish-status:14");
+
+  // Small H2-to-H2 publications use TopicTree's loop-batched queue. They
+  // must be delivered even when no later direct send happens on the receiver.
+  h2.headers(3, websocketHeaders(), F.END_HEADERS);
+  expect(decodeStatus((await h2.waitFor(f => f.type === T.HEADERS && f.streamId === 3)).payload)).toBe(200);
+  h2.write(frame(T.DATA, 0, 3, wsClientFrame(1, "subscribe:h2-only")));
+  await waitForH2Stream(3, "subscribed:h2-only");
+  h2.write(frame(T.DATA, 0, 1, wsClientFrame(1, "publish:h2-only:queued-h2-delivery")));
+  await waitForH2Stream(3, "queued-h2-delivery");
+
+  // Fill stream 3's peer window without WINDOW_UPDATE. A small queued
+  // publication must report the same -1/Backpressure result as H1 while the
+  // independent publisher on stream 1 can still send its acknowledgement.
+  const beforeFill = received(h2, 3);
+  h2.write(frame(T.DATA, 0, 3, wsClientFrame(1, "fill-backpressure")));
+  await h2.waitFor(f => f.type === T.DATA && f.streamId === 3 && received(h2, 3) >= beforeFill + 60_000);
+  // DATA consumes both the stream and connection windows. Reopen only the
+  // connection window so stream 1 can report the result while stream 3 stays
+  // flow-control blocked.
+  h2.write(frame(T.WINDOW_UPDATE, 0, 0, u32(65_535)));
+  h2.write(frame(T.DATA, 0, 1, wsClientFrame(1, "publish-status:h2-only:backpressured")));
+  await waitForH2("publish-status:-1");
+
+  h2.write(frame(T.DATA, 0, 1, wsClientFrame(1, "unsubscribe:from-h1")));
+  await waitForH2("unsubscribed:from-h1");
+  h2.write(frame(T.DATA, 0, 1, wsClientFrame(1, "subscriptions")));
+  await waitForH2('["from-server"]');
+
+  h1.close();
+  h2.write(frame(T.RST_STREAM, 0, 3, u32(8)));
+  h2.write(frame(T.DATA, F.END_STREAM, 1, wsClientFrame(8, Buffer.from([0x03, 0xe8]))));
+  await h2.waitFor(f => f.type === T.DATA && f.streamId === 1 && (f.flags & F.END_STREAM) !== 0);
+  h2.close();
+});
+
+test("RFC 8441 pub/sub honors closeOnBackpressureLimit", async () => {
+  for (const closeOnLimit of [false, true]) {
+    await using pubsubFixture = await startFixture({
+      tls: secure,
+      websocketBackpressureLimit: 1024,
+      websocketCloseOnBackpressureLimit: closeOnLimit,
+    });
+    const raw = await RawH2.connect(pubsubFixture.port, secure);
+    raw.headers(1, websocketHeaders(), F.END_HEADERS);
+    raw.headers(3, websocketHeaders(), F.END_HEADERS);
+    expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1)).payload)).toBe(200);
+    expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 3)).payload)).toBe(200);
+
+    const waitText = (streamId: number, expected: string, afterFrame = 0) =>
+      raw.waitFor(f => {
+        if (raw.frames.indexOf(f) < afterFrame || f.type !== T.DATA || f.streamId !== streamId) return false;
+        if (f.payload.length < 2 || f.payload[0] !== 0x81) return false;
+        return wsServerFrame(f.payload).payload.toString() === expected;
+      });
+
+    raw.write(frame(T.DATA, 0, 3, wsClientFrame(1, "subscribe:bounded-topic")));
+    await waitText(3, "subscribed:bounded-topic");
+    const beforeFill = received(raw, 3);
+    raw.write(frame(T.DATA, 0, 3, wsClientFrame(1, "fill-bounded-backpressure")));
+    await raw.waitFor(() => received(raw, 3) >= beforeFill + 65_000);
+
+    // Keep stream 3 flow-control blocked while stream 1 publishes more than
+    // its remaining 1 KiB budget. The option controls whether the subscriber
+    // is retained or reset; the publication itself is dropped in both cases.
+    raw.write(frame(T.WINDOW_UPDATE, 0, 0, u32(70_000)));
+    const publishAckAfter = raw.frames.length;
+    raw.write(frame(T.DATA, 0, 1, wsClientFrame(1, `publish:bounded-topic:${"p".repeat(2048)}`)));
+    await waitText(1, "published:bounded-topic", publishAckAfter);
+
+    if (closeOnLimit) {
+      expect(await raw.rst(3)).toBe(8); // CANCEL
+      const aliveAfter = raw.frames.length;
+      raw.write(frame(T.DATA, 0, 1, wsClientFrame(1, "publisher-alive")));
+      await waitText(1, "publisher-alive", aliveAfter);
+    } else {
+      await Bun.sleep(50);
+      expect(raw.frames.some(f => f.type === T.RST_STREAM && f.streamId === 3)).toBe(false);
+      raw.write(frame(T.WINDOW_UPDATE, 0, 0, u32(70_000)));
+      raw.write(frame(T.WINDOW_UPDATE, 0, 3, u32(70_000)));
+      await raw.waitFor(() => received(raw, 3) >= beforeFill + 66_010);
+      const aliveAfter = raw.frames.length;
+      raw.write(frame(T.DATA, 0, 3, wsClientFrame(1, "subscriber-alive")));
+      await waitText(3, "subscriber-alive", aliveAfter);
+      raw.write(frame(T.RST_STREAM, 0, 3, u32(8)));
+    }
+
+    raw.write(frame(T.DATA, F.END_STREAM, 1, wsClientFrame(8, Buffer.from([0x03, 0xe8]))));
+    await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && (f.flags & F.END_STREAM) !== 0);
+    raw.close();
+  }
+}, 20_000);
+
+test("SETTINGS_ENABLE_CONNECT_PROTOCOL remains a transport capability without a WebSocket handler", async () => {
+  await using noWebSocket = await startFixture({ tls: secure, websocket: false });
+  const raw = await RawH2.connect(noWebSocket.port, secure);
+  const settings = await raw.waitFor(f => f.type === T.SETTINGS && (f.flags & F.ACK) === 0);
+  const advertised = new Map<number, number>();
+  for (let i = 0; i < settings.payload.length; i += 6) {
+    advertised.set(settings.payload.readUInt16BE(i), settings.payload.readUInt32BE(i + 2));
+  }
+  expect(advertised.get(0x8)).toBe(1);
+
+  // Capability advertisement does not promise support for every protocol.
+  // A 2xx CONNECT response would claim that a tunnel exists, so an ordinary
+  // fetch response is forced to a non-success status when no adapter adopts
+  // this stream.
+  raw.headers(1, websocketHeaders("/hello"), F.END_HEADERS);
+  const response = await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1);
+  expect(decodeStatus(response.payload)).toBe(501);
+  expect((await raw.body(1)).toString()).toBe("hello");
+  raw.close();
+});
+
+test("an already half-closed Extended CONNECT is refused as HTTP, not a protocol error", async () => {
+  const raw = await RawH2.connect(fx.port, secure);
+  raw.headers(1, websocketHeaders());
+  const response = await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1);
+  expect(decodeStatus(response.payload)).toBe(400);
+  expect((await raw.body(1)).toString()).toBe("upgrade failed");
+  expect(raw.frames.some(f => f.type === T.RST_STREAM && f.streamId === 1)).toBe(false);
+  raw.close();
+});
+
+test("END_STREAM during an asynchronous RFC 8441 decision is refused as HTTP", async () => {
+  const raw = await RawH2.connect(fx.port, secure);
+  raw.write(
+    Buffer.concat([
+      frame(T.HEADERS, F.END_HEADERS, 1, hpackLiteral(websocketHeaders("/ws-delayed-end"))),
+      frame(T.DATA, F.END_STREAM, 1),
+    ]),
+  );
+  const response = await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1);
+  expect(decodeStatus(response.payload)).toBe(400);
+  expect((await raw.body(1)).toString()).toBe("upgrade failed");
+  expect(raw.frames.some(f => f.type === T.RST_STREAM && f.streamId === 1)).toBe(false);
+  raw.close();
+});
+
+for (const [name, fields] of [
+  ["missing version", websocketHeaders().filter(([header]) => header !== "sec-websocket-version")],
+  [
+    "unsupported version",
+    websocketHeaders().map(([header, value]) =>
+      header === "sec-websocket-version" ? ([header, "12"] as [string, string]) : ([header, value] as [string, string]),
+    ),
+  ],
+] as const) {
+  test(`RFC 8441 rejects ${name} without adopting the stream`, async () => {
+    const raw = await RawH2.connect(fx.port, secure);
+    raw.headers(1, fields as [string, string][], F.END_HEADERS);
+    const response = await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1);
+    expect(decodeStatus(response.payload)).toBe(426);
+
+    raw.headers(3, baseHeaders("/hello"));
+    expect((await raw.body(3)).toString()).toBe("hello");
+    expect(raw.frames.some(f => f.type === T.GOAWAY)).toBe(false);
+    raw.close();
+  });
+}
+
+test("Content-Length does not classify RFC 8441 tunnel bytes as an HTTP request body", async () => {
+  const raw = await RawH2.connect(fx.port, secure);
+  raw.headers(1, [...websocketHeaders(), ["content-length", "0"]], F.END_HEADERS);
+  expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1)).payload)).toBe(200);
+
+  raw.write(frame(T.DATA, 0, 1, wsClientFrame(1, "not an HTTP body")));
+  const echo = wsServerFrame((await raw.waitFor(f => f.type === T.DATA && f.streamId === 1)).payload);
+  expect(echo.payload.toString()).toBe("not an HTTP body");
+
+  raw.write(frame(T.DATA, F.END_STREAM, 1, wsClientFrame(8, Buffer.from([0x03, 0xe8]))));
+  await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && (f.flags & F.END_STREAM) !== 0);
+  raw.close();
+});
+
+const malformedExtendedConnectCases: [string, [string, string][]][] = [
+  ["missing :method", websocketHeaders().filter(([name]) => name !== ":method")],
+  ["missing :scheme", websocketHeaders().filter(([name]) => name !== ":scheme")],
+  ["missing :path", websocketHeaders().filter(([name]) => name !== ":path")],
+  ["missing :authority", websocketHeaders().filter(([name]) => name !== ":authority")],
+  ["missing :protocol", websocketHeaders().filter(([name]) => name !== ":protocol")],
+  ["duplicate :protocol", [...websocketHeaders(), [":protocol", "websocket"]]],
+  ["empty :protocol", websocketHeaders().map(([name, value]) => (name === ":protocol" ? [name, ""] : [name, value]))],
+  [
+    "non-token :protocol",
+    websocketHeaders().map(([name, value]) => (name === ":protocol" ? [name, "web socket"] : [name, value])),
+  ],
+  [
+    "WebSocket :scheme inconsistent with cleartext transport",
+    websocketHeaders().map(([name, value]) => (name === ":scheme" ? [name, "https"] : [name, value])),
+  ],
+  [
+    "GET with :protocol",
+    websocketHeaders().map(([name, value]) => (name === ":method" ? [name, "GET"] : [name, value])),
+  ],
+  [
+    ":protocol after a regular field",
+    [
+      [":method", "CONNECT"],
+      [":scheme", "http"],
+      [":path", "/ws"],
+      [":authority", "localhost"],
+      ["sec-websocket-version", "13"],
+      [":protocol", "websocket"],
+    ],
+  ],
+];
+
+for (const [name, fields] of malformedExtendedConnectCases) {
+  test(`RFC 8441 malformed Extended CONNECT (${name}) → RST_STREAM PROTOCOL_ERROR`, async () => {
+    const raw = await RawH2.connect(fx.port, secure);
+    raw.headers(1, fields);
+    expect(await raw.rst(1)).toBe(1);
+
+    // A malformed Extended CONNECT is a stream error.  It must not tear down
+    // unrelated streams on the multiplexed HTTP/2 connection.
+    raw.headers(3, baseHeaders("/hello"));
+    expect((await raw.body(3)).toString()).toBe("hello");
+    expect(raw.frames.some(f => f.type === T.GOAWAY)).toBe(false);
+    raw.close();
+  });
+}
+
+test("RFC 8441 does not treat an unsupported :protocol as a WebSocket", async () => {
+  const raw = await RawH2.connect(fx.port, secure);
+  const fields = websocketHeaders().map(([name, value]) =>
+    name === ":protocol" ? ([name, "webtransport"] as [string, string]) : ([name, value] as [string, string]),
+  );
+  // The fixture only implements the websocket protocol.  The request is
+  // still a valid Extended CONNECT, but must reach the ordinary HTTP route
+  // and fail its WebSocket upgrade instead of receiving a 200 tunnel.
+  raw.headers(1, fields);
+  const response = await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1);
+  expect(decodeStatus(response.payload)).toBe(400);
+  expect((await raw.body(1)).toString()).toBe("upgrade failed");
+  expect(raw.frames.some(f => f.type === T.DATA && f.streamId === 1 && f.payload[0] === 0x81)).toBe(false);
+  expect(raw.frames.some(f => f.type === T.GOAWAY)).toBe(false);
+
+  raw.headers(3, baseHeaders("/hello"));
+  expect((await raw.body(3)).toString()).toBe("hello");
+  raw.close();
+});
+
+test("RFC 8441 WebSocket Extended CONNECT uses one HTTP/2 stream", async () => {
+  const raw = await RawH2.connect(fx.port, secure);
+  const settings = await raw.waitFor(f => f.type === T.SETTINGS && (f.flags & F.ACK) === 0);
+  const advertised = new Map<number, number>();
+  for (let i = 0; i < settings.payload.length; i += 6) {
+    advertised.set(settings.payload.readUInt16BE(i), settings.payload.readUInt32BE(i + 2));
+  }
+  expect(advertised.get(0x8)).toBe(1);
+
+  raw.headers(1, websocketHeaders(), F.END_HEADERS);
+  const response = await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1);
+  expect(decodeStatus(response.payload)).toBe(200);
+  expect(response.flags & F.END_STREAM).toBe(0);
+
+  // The uWebSockets frame parser must retain its state across H2 DATA
+  // boundaries, including a split masking key.
+  const clientMessage = wsClientFrame(1, "hello over h2");
+  raw.write(frame(T.DATA, 0, 1, clientMessage.subarray(0, 4)));
+  raw.write(frame(T.DATA, 0, 1, clientMessage.subarray(4)));
+  const echoed = await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && f.payload.length > 0);
+  const message = wsServerFrame(echoed.payload);
+  expect(message).toMatchObject({ opcode: 1, fin: true });
+  expect(message.payload.toString()).toBe("hello over h2");
+
+  // The shared RFC 6455 parser must preserve binary opcode/payload across the
+  // H2 adapter and Bun's default Buffer binaryType conversion.
+  const binaryPayload = Buffer.from([0x00, 0xff, 0x7f, 0x80, 0x42]);
+  raw.write(frame(T.DATA, 0, 1, wsClientFrame(2, binaryPayload)));
+  const binary = wsServerFrame(
+    (await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && f.payload[0] === 0x82)).payload,
+  );
+  expect(binary).toMatchObject({ opcode: 2, fin: true });
+  expect(binary.payload).toEqual(binaryPayload);
+
+  const closePayload = Buffer.alloc(2);
+  closePayload.writeUInt16BE(1000);
+  raw.write(frame(T.DATA, F.END_STREAM, 1, wsClientFrame(8, closePayload)));
+  const close = await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && f.payload[0] === 0x88);
+  expect(wsServerFrame(close.payload).payload.readUInt16BE(0)).toBe(1000);
+  await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && (f.flags & F.END_STREAM) !== 0);
+
+  // Closing the tunnel retires only stream 1; the H2 connection remains usable.
+  raw.headers(3, baseHeaders("/hello"));
+  const sibling = await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 3);
+  expect(decodeStatus(sibling.payload)).toBe(200);
+  expect((await raw.body(3)).toString()).toBe("hello");
+  raw.close();
+});
+
+test("RFC 8441 preserves DATA received before an asynchronous upgrade decision", async () => {
+  const raw = await RawH2.connect(fx.port, secure);
+  const firstMessage = wsClientFrame(1, "arrived with HEADERS");
+
+  // One socket write deliberately contains the complete field section and the
+  // first tunnel DATA. The fixture yields a microtask before upgrade(), so the
+  // transport must hold these bytes until the RFC 6455 codec is attached.
+  raw.write(
+    Buffer.concat([
+      frame(T.HEADERS, F.END_HEADERS, 1, hpackLiteral(websocketHeaders("/ws-delayed"))),
+      frame(T.DATA, 0, 1, firstMessage),
+    ]),
+  );
+
+  expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1)).payload)).toBe(200);
+  const echoed = wsServerFrame((await raw.waitFor(f => f.type === T.DATA && f.streamId === 1)).payload);
+  expect(echoed.payload.toString()).toBe("arrived with HEADERS");
+
+  raw.write(frame(T.DATA, F.END_STREAM, 1, wsClientFrame(8, Buffer.from([0x03, 0xe8]))));
+  await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && (f.flags & F.END_STREAM) !== 0);
+  raw.close();
+});
+
+test("server.reload keeps an existing RFC 8441 stream on a stable handler slot", async () => {
+  await using reloadFixture = await startFixture({ tls: secure });
+  const raw = await RawH2.connect(reloadFixture.port, secure);
+  raw.headers(1, websocketHeaders(), F.END_HEADERS);
+  expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1)).payload)).toBe(200);
+
+  raw.write(frame(T.DATA, 0, 1, wsClientFrame(1, "reload-handlers")));
+  const reloaded = await raw.waitFor(f => {
+    if (f.type !== T.DATA || f.streamId !== 1 || f.payload[0] !== 0x81) return false;
+    return wsServerFrame(f.payload).payload.toString() === "reload-complete";
+  });
+  expect(wsServerFrame(reloaded.payload).payload.toString()).toBe("reload-complete");
+
+  raw.write(frame(T.DATA, 0, 1, wsClientFrame(1, "after")));
+  const after = await raw.waitFor(f => {
+    if (f.type !== T.DATA || f.streamId !== 1 || f.payload[0] !== 0x81) return false;
+    return wsServerFrame(f.payload).payload.toString() === "reloaded:after";
+  });
+  expect(wsServerFrame(after.payload).payload.toString()).toBe("reloaded:after");
+
+  raw.write(frame(T.DATA, F.END_STREAM, 1, wsClientFrame(8, Buffer.from([0x03, 0xe8]))));
+  await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && (f.flags & F.END_STREAM) !== 0);
+  raw.close();
+});
+
+test("RFC 8441 open callback can reload handlers synchronously", async () => {
+  await using reloadFixture = await startFixture({ tls: secure });
+  const raw = await RawH2.connect(reloadFixture.port, secure);
+  raw.headers(1, websocketHeaders("/ws-open-reload"), F.END_HEADERS);
+  expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1)).payload)).toBe(200);
+
+  const opened = await raw.waitFor(f => {
+    if (f.type !== T.DATA || f.streamId !== 1 || f.payload[0] !== 0x81) return false;
+    return wsServerFrame(f.payload).payload.toString() === "open-reload-complete";
+  });
+  expect(wsServerFrame(opened.payload).payload.toString()).toBe("open-reload-complete");
+
+  raw.write(frame(T.DATA, 0, 1, wsClientFrame(1, "after-open")));
+  const after = await raw.waitFor(f => {
+    if (f.type !== T.DATA || f.streamId !== 1 || f.payload[0] !== 0x81) return false;
+    return wsServerFrame(f.payload).payload.toString() === "reloaded:after-open";
+  });
+  expect(wsServerFrame(after.payload).payload.toString()).toBe("reloaded:after-open");
+
+  raw.write(frame(T.DATA, F.END_STREAM, 1, wsClientFrame(8, Buffer.from([0x03, 0xe8]))));
+  await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && (f.flags & F.END_STREAM) !== 0);
+  raw.close();
+  expect(reloadFixture.proc.signalCode).toBeNull();
+});
+
+test("RFC 8441 open callback can stop the server synchronously", async () => {
+  await using stopFixture = await startFixture({ tls: secure });
+  const raw = await RawH2.connect(stopFixture.port, secure, { sendPreface: false });
+  // Exercise the adoption fast path: the first TCP read can already contain
+  // the complete preface, SETTINGS and request that enters user JavaScript.
+  raw.write(
+    Buffer.concat([
+      PREFACE,
+      frame(T.SETTINGS, 0, 0),
+      frame(T.HEADERS, F.END_HEADERS, 1, hpackLiteral(websocketHeaders("/ws-open-stop"))),
+    ]),
+  );
+  await Promise.race([
+    raw.waitForClose(),
+    Bun.sleep(5_000).then(() => {
+      throw new Error("server.stop(true) in WebSocket open did not close the H2 connection");
+    }),
+  ]);
+  expect(stopFixture.proc.signalCode).toBeNull();
+}, 10_000);
+
+test("RFC 8441 snapshots a retained Request before detaching the H2 stream", async () => {
+  const raw = await RawH2.connect(fx.port, secure);
+  raw.headers(
+    1,
+    [...websocketHeaders("/ws-retain-request"), ["x-retained-request", "present-after-upgrade"]],
+    F.END_HEADERS,
+  );
+  expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1)).payload)).toBe(200);
+  raw.write(frame(T.DATA, 0, 1, wsClientFrame(1, "retained-request")));
+  const report = wsServerFrame(
+    (await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && f.payload[0] === 0x81)).payload,
+  );
+  expect(JSON.parse(report.payload.toString())).toEqual({
+    url: "http://localhost/ws-retain-request",
+    header: "present-after-upgrade",
+  });
+
+  raw.write(frame(T.DATA, F.END_STREAM, 1, wsClientFrame(8, Buffer.from([0x03, 0xe8]))));
+  await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && (f.flags & F.END_STREAM) !== 0);
+  raw.close();
+});
+
+test("RFC 8441 idle timeout is per stream, not refreshed by an active sibling", async () => {
+  await using timeoutFixture = await startFixture({
+    tls: secure,
+    idleTimeout: 30,
+    websocketIdleTimeout: 1,
+    websocketPings: false,
+  });
+  const raw = await RawH2.connect(timeoutFixture.port, secure);
+  raw.headers(1, websocketHeaders(), F.END_HEADERS);
+  raw.headers(3, websocketHeaders(), F.END_HEADERS);
+  expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1)).payload)).toBe(200);
+  expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 3)).payload)).toBe(200);
+
+  // Keep stream 1 active across multiple native timer ticks. Stream 3 must
+  // still expire independently with CANCEL, without GOAWAY.
+  const activity = setInterval(() => {
+    if (!raw.closed) raw.write(frame(T.DATA, 0, 1, wsClientFrame(9, "keepalive")));
+  }, 250);
+  try {
+    const reset = await Promise.race([
+      raw.rst(3),
+      Bun.sleep(10_000).then(() => {
+        const stream3Data = raw.frames
+          .filter(f => f.type === T.DATA && f.streamId === 3)
+          .map(f => f.payload.toString("hex"));
+        throw new Error(
+          "idle WebSocket stream did not time out; stream 3 DATA=" +
+            JSON.stringify(stream3Data) +
+            "; got " +
+            raw.describe(),
+        );
+      }),
+    ]);
+    expect(reset).toBe(8); // CANCEL
+  } finally {
+    clearInterval(activity);
+  }
+  expect(raw.frames.some(f => f.type === T.GOAWAY)).toBe(false);
+
+  raw.write(frame(T.DATA, 0, 1, wsClientFrame(1, "still alive")));
+  const echo = await raw.waitFor(f => {
+    if (f.type !== T.DATA || f.streamId !== 1 || f.payload[0] !== 0x81) return false;
+    return wsServerFrame(f.payload).payload.toString() === "still alive";
+  });
+  expect(wsServerFrame(echo.payload).payload.toString()).toBe("still alive");
+  raw.headers(5, baseHeaders("/hello"));
+  expect((await raw.body(5)).toString()).toBe("hello");
+
+  raw.write(frame(T.DATA, F.END_STREAM, 1, wsClientFrame(8, Buffer.from([0x03, 0xe8]))));
+  await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && (f.flags & F.END_STREAM) !== 0);
+  raw.close();
+}, 15_000);
+
+test("RFC 8441 idle timeout is not hidden by outbound-only sibling traffic", async () => {
+  await using timeoutFixture = await startFixture({
+    tls: secure,
+    idleTimeout: 30,
+    websocketIdleTimeout: 1,
+    websocketPings: false,
+  });
+  const raw = await RawH2.connect(timeoutFixture.port, secure);
+  raw.headers(1, websocketHeaders(), F.END_HEADERS);
+  expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1)).payload)).toBe(200);
+
+  // After this request HEADERS, the client sends nothing. The server produces
+  // DATA periodically on stream 3 for twelve seconds. Those connection-wide
+  // writes must not keep the silent WebSocket stream alive.
+  raw.headers(3, baseHeaders("/slow-outbound"), F.END_HEADERS | F.END_STREAM);
+  expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 3)).payload)).toBe(200);
+  await raw.waitFor(f => f.type === T.DATA && f.streamId === 3 && f.payload.length > 0);
+
+  const reset = await Promise.race([
+    raw.rst(1),
+    Bun.sleep(10_000).then(() => {
+      throw new Error("outbound sibling traffic hid the idle WebSocket deadline; got " + raw.describe());
+    }),
+  ]);
+  expect(reset).toBe(8); // CANCEL
+  expect(raw.frames.some(f => f.type === T.GOAWAY)).toBe(false);
+
+  // The timeout is stream-local: the producing sibling and the connection
+  // remain usable after stream 1 is reset.
+  expect(await raw.body(3)).toHaveLength(48);
+  raw.headers(5, baseHeaders("/hello"));
+  expect((await raw.body(5)).toString()).toBe("hello");
+  raw.close();
+}, 20_000);
+
+test("RFC 8441 automatic ping uses the uWebSockets idle/grace timeout split", async () => {
+  await using timeoutFixture = await startFixture({
+    tls: secure,
+    idleTimeout: 30,
+    websocketIdleTimeout: 8,
+    websocketPings: true,
+  });
+  const raw = await RawH2.connect(timeoutFixture.port, secure);
+  raw.headers(1, websocketHeaders(), F.END_HEADERS);
+  expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1)).payload)).toBe(200);
+
+  const started = performance.now();
+  const ping = await Promise.race([
+    raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && f.payload[0] === 0x89),
+    Bun.sleep(9_000).then(() => {
+      throw new Error("automatic ping did not use the shortened idle phase; got " + raw.describe());
+    }),
+  ]);
+  expect(wsServerFrame(ping.payload)).toMatchObject({ opcode: 9, fin: true });
+  const pingElapsed = performance.now() - started;
+  // idleTimeout=8 is split into a four-second idle phase and four-second
+  // grace phase. The uSockets wheel may wake late, but never before the
+  // monotonic stream deadline.
+  expect(pingElapsed).toBeGreaterThanOrEqual(3_000);
+  expect(pingElapsed).toBeLessThan(9_000);
+
+  // Ignore the ping. The short grace period closes only this stream; the
+  // connection remains available for ordinary multiplexed requests.
+  expect(
+    await Promise.race([
+      raw.rst(1),
+      Bun.sleep(9_000).then(() => {
+        throw new Error("automatic ping grace period did not reset the idle stream");
+      }),
+    ]),
+  ).toBe(8); // CANCEL
+  raw.headers(3, baseHeaders("/hello"));
+  expect((await raw.body(3)).toString()).toBe("hello");
+  expect(raw.frames.some(f => f.type === T.GOAWAY)).toBe(false);
+  raw.close();
+}, 22_000);
+
+test("RFC 8441 close callback keeps the full reason while the wire reason is bounded", async () => {
+  await using closeFixture = await startFixture({ tls: secure });
+  const raw = await RawH2.connect(closeFixture.port, secure);
+  raw.headers(1, websocketHeaders("/ws-close-report"), F.END_HEADERS);
+  expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1)).payload)).toBe(200);
+
+  raw.write(frame(T.DATA, 0, 1, wsClientFrame(1, "close-long")));
+  const close = wsServerFrame(
+    (await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && f.payload[0] === 0x88)).payload,
+  );
+  expect(close.payload.readUInt16BE(0)).toBe(1000);
+  expect(close.payload.subarray(2)).toEqual(Buffer.alloc(123, "x"));
+  await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && (f.flags & F.END_STREAM) !== 0);
+
+  await Promise.race([
+    (async () => {
+      while (!closeFixture.stderr().includes("WS-CLOSE-REASON:200:" + "x".repeat(200))) await Bun.sleep(10);
+    })(),
+    Bun.sleep(2_000).then(() => {
+      throw new Error("close callback did not receive the complete application reason: " + closeFixture.stderr());
+    }),
+  ]);
+  raw.write(frame(T.DATA, F.END_STREAM, 1, wsClientFrame(8, Buffer.from([0x03, 0xe8]))));
+  raw.close();
+}, 10_000);
+
+test("RFC 8441 removes subscriptions before the close callback and close-grace period", async () => {
+  await using closeFixture = await startFixture({ tls: secure });
+  const raw = await RawH2.connect(closeFixture.port, secure);
+  raw.headers(1, websocketHeaders("/ws-close-subscriptions"), F.END_HEADERS);
+  expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1)).payload)).toBe(200);
+  raw.write(frame(T.DATA, 0, 1, wsClientFrame(1, "subscribe:closing-topic")));
+  await raw.waitFor(f => {
+    if (f.type !== T.DATA || f.streamId !== 1 || f.payload[0] !== 0x81) return false;
+    return wsServerFrame(f.payload).payload.toString() === "subscribed:closing-topic";
+  });
+
+  // Leave the peer half open after the local close. The stream remains in its
+  // close-grace period, but it must no longer be a topic subscriber.
+  raw.write(frame(T.DATA, 0, 1, wsClientFrame(1, "close-local")));
+  await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && f.payload[0] === 0x88);
+  await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && (f.flags & F.END_STREAM) !== 0);
+
+  raw.headers(3, websocketHeaders(), F.END_HEADERS);
+  expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 3)).payload)).toBe(200);
+  raw.write(frame(T.DATA, 0, 3, wsClientFrame(1, "server-subscriber-count:closing-topic")));
+  await raw.waitFor(f => {
+    if (f.type !== T.DATA || f.streamId !== 3 || f.payload[0] !== 0x81) return false;
+    return wsServerFrame(f.payload).payload.toString() === "server-subscriber-count:0";
+  });
+  expect(closeFixture.stderr()).toContain("WS-CLOSE-SUBSCRIPTIONS:[]");
+
+  raw.write(frame(T.DATA, F.END_STREAM, 1, wsClientFrame(8, Buffer.from([0x03, 0xe8]))));
+  raw.write(frame(T.DATA, F.END_STREAM, 3, wsClientFrame(8, Buffer.from([0x03, 0xe8]))));
+  await raw.waitFor(f => f.type === T.DATA && f.streamId === 3 && (f.flags & F.END_STREAM) !== 0);
+  raw.close();
+}, 10_000);
+
+test("RFC 8441 terminate removes subscriptions synchronously", async () => {
+  await using terminateFixture = await startFixture({ tls: secure });
+  const raw = await RawH2.connect(terminateFixture.port, secure);
+  raw.headers(1, websocketHeaders(), F.END_HEADERS);
+  expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1)).payload)).toBe(200);
+  raw.write(frame(T.DATA, 0, 1, wsClientFrame(1, "subscribe:terminated-topic")));
+  await raw.waitFor(f => {
+    if (f.type !== T.DATA || f.streamId !== 1 || f.payload[0] !== 0x81) return false;
+    return wsServerFrame(f.payload).payload.toString() === "subscribed:terminated-topic";
+  });
+
+  raw.write(frame(T.DATA, 0, 1, wsClientFrame(1, "terminate-and-count")));
+  expect(await raw.rst(1)).toBe(8); // CANCEL
+  // The RST can reach the peer while the message callback is still resuming
+  // from terminate(), especially under ASAN. Wait for the observation made
+  // immediately after terminate() returns rather than racing stderr delivery.
+  await Promise.race([
+    (async () => {
+      while (!terminateFixture.stderr().includes("WS-TERMINATE-SUBSCRIBERS:0")) await Bun.sleep(10);
+    })(),
+    Bun.sleep(5_000).then(() => {
+      throw new Error("terminate() did not remove the subscription synchronously: " + terminateFixture.stderr());
+    }),
+  ]);
+  expect(terminateFixture.stderr()).toContain("WS-TERMINATE-SUBSCRIBERS:0");
+  expect(raw.frames.some(f => f.type === T.GOAWAY)).toBe(false);
+
+  raw.headers(3, baseHeaders("/hello"));
+  expect((await raw.body(3)).toString()).toBe("hello");
+  raw.close();
+}, 10_000);
+
+test("RFC 8441 close handshake timeout resets only the unresponsive stream", async () => {
+  await using closeTimeoutFixture = await startFixture({
+    tls: secure,
+    websocketIdleTimeout: 8,
+  });
+  const raw = await RawH2.connect(closeTimeoutFixture.port, secure);
+  raw.headers(1, websocketHeaders(), F.END_HEADERS);
+  expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1)).payload)).toBe(200);
+
+  // Ask the application to initiate a normal WebSocket close, but deliberately
+  // leave the client half of the H2 stream open and send no close reply.
+  raw.write(frame(T.DATA, 0, 1, wsClientFrame(1, "close-local")));
+  const close = await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && f.payload[0] === 0x88);
+  expect(wsServerFrame(close.payload)).toMatchObject({ opcode: 8, fin: true });
+  await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && (f.flags & F.END_STREAM) !== 0);
+
+  // Multiplexed work must continue while the WebSocket close deadline runs.
+  raw.headers(3, baseHeaders("/hello"));
+  expect((await raw.body(3)).toString()).toBe("hello");
+
+  // DATA received after local close must not refresh the short close-grace
+  // deadline. Otherwise a malicious half-open peer can keep the stream and
+  // its application state alive forever.
+  const keepSending = setInterval(() => {
+    if (!raw.closed) raw.write(frame(T.DATA, 0, 1, wsClientFrame(9, "still-open")));
+  }, 100);
+  const reset = await Promise.race([
+    raw.rst(1),
+    Bun.sleep(10_000).then(() => {
+      throw new Error("inbound DATA postponed the WebSocket close deadline");
+    }),
+  ]).finally(() => clearInterval(keepSending));
+  expect(reset).toBe(8); // CANCEL
+  expect(raw.frames.some(f => f.type === T.GOAWAY)).toBe(false);
+
+  raw.headers(5, baseHeaders("/hello"));
+  expect((await raw.body(5)).toString()).toBe("hello");
+  raw.close();
+}, 18_000);
+
+test("RFC 8441 keeps WebSocket fragmentation and control frames stream-local", async () => {
+  const raw = await RawH2.connect(fx.port, secure);
+  raw.headers(1, websocketHeaders(), F.END_HEADERS);
+  expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1)).payload)).toBe(200);
+
+  raw.write(
+    frame(
+      T.DATA,
+      0,
+      1,
+      Buffer.concat([wsClientFrame(1, "hello ", false), wsClientFrame(9, "ping"), wsClientFrame(0, "fragmented")]),
+    ),
+  );
+  const pong = await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && f.payload[0] === 0x8a);
+  expect(wsServerFrame(pong.payload).payload.toString()).toBe("ping");
+  const echoed = await raw.waitFor(f => {
+    if (f.type !== T.DATA || f.streamId !== 1 || f.payload[0] !== 0x81) return false;
+    return wsServerFrame(f.payload).payload.toString() === "hello fragmented";
+  });
+  expect(wsServerFrame(echoed.payload).fin).toBe(true);
+
+  // A normal request remains independent while the tunnel is still open.
+  raw.headers(3, baseHeaders("/hello"));
+  expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 3)).payload)).toBe(200);
+  expect((await raw.body(3)).toString()).toBe("hello");
+
+  raw.write(frame(T.DATA, F.END_STREAM, 1, wsClientFrame(8, Buffer.from([0x03, 0xe8]))));
+  await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && (f.flags & F.END_STREAM) !== 0);
+  raw.close();
+});
+
+test("RFC 8441 dispatches WebSocket ping and pong callbacks", async () => {
+  const raw = await RawH2.connect(fx.port, secure);
+  raw.headers(1, websocketHeaders("/ws-control"), F.END_HEADERS);
+  expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1)).payload)).toBe(200);
+
+  raw.write(frame(T.DATA, 0, 1, wsClientFrame(9, "client-ping")));
+  const pongFrame = wsServerFrame(
+    (await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && f.payload[0] === 0x8a)).payload,
+  );
+  expect(pongFrame.payload.toString()).toBe("client-ping");
+  const pingCallback = wsServerFrame(
+    (
+      await raw.waitFor(
+        f =>
+          f.type === T.DATA &&
+          f.streamId === 1 &&
+          f.payload[0] === 0x81 &&
+          wsServerFrame(f.payload).payload.toString() === "ping-callback:client-ping",
+      )
+    ).payload,
+  );
+  expect(pingCallback.payload.toString()).toBe("ping-callback:client-ping");
+
+  raw.write(frame(T.DATA, 0, 1, wsClientFrame(10, "client-pong")));
+  const pongCallback = wsServerFrame(
+    (
+      await raw.waitFor(
+        f =>
+          f.type === T.DATA &&
+          f.streamId === 1 &&
+          f.payload[0] === 0x81 &&
+          wsServerFrame(f.payload).payload.toString() === "pong-callback:client-pong",
+      )
+    ).payload,
+  );
+  expect(pongCallback.payload.toString()).toBe("pong-callback:client-pong");
+
+  raw.write(frame(T.DATA, F.END_STREAM, 1, wsClientFrame(8, Buffer.from([0x03, 0xe8]))));
+  await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && (f.flags & F.END_STREAM) !== 0);
+  raw.close();
+});
+
+test("RFC 8441 resets only a Ping-flooded tunnel when Pong backpressure reaches its limit", async () => {
+  await using boundedFixture = await startFixture({
+    tls: secure,
+    websocketBackpressureLimit: 1024,
+  });
+  const raw = await RawH2.connect(boundedFixture.port, secure, { settings: setting(4, 0) });
+  await raw.waitFor(f => f.type === T.SETTINGS && (f.flags & F.ACK) !== 0);
+  raw.headers(1, websocketHeaders(), F.END_HEADERS);
+  expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1)).payload)).toBe(200);
+
+  // Each 125-byte Ping requires a 127-byte Pong frame. With a zero peer
+  // stream window, an unlimited control-frame bypass would queue all 15 KiB.
+  // Once the configured 1 KiB budget is full, the server must fail this
+  // tunnel instead of retaining more Pongs or silently dropping the newest.
+  const ping = wsClientFrame(9, Buffer.alloc(125, 0x70));
+  raw.write(frame(T.DATA, 0, 1, Buffer.concat(Array.from({ length: 120 }, () => ping))));
+  expect(await raw.rst(1)).toBe(8); // CANCEL
+  expect(raw.frames.some(f => f.type === T.GOAWAY)).toBe(false);
+
+  // The multiplexed connection and independent streams remain healthy.
+  raw.headers(3, baseHeaders("/hello"));
+  // SETTINGS_INITIAL_WINDOW_SIZE=0 applies to every subsequently opened
+  // stream, not only the flooded tunnel. Give this sibling enough credit to
+  // prove that it can still make progress after stream 1 is reset.
+  raw.write(frame(T.WINDOW_UPDATE, 0, 3, u32(1024)));
+  expect((await raw.body(3)).toString()).toBe("hello");
+  raw.close();
+}, 10_000);
+
+test("RFC 8441 dispatches drain after H2 flow-control backpressure clears", async () => {
+  await using drainFixture = await startFixture({ tls: secure });
+  const raw = await RawH2.connect(drainFixture.port, secure);
+  raw.headers(1, websocketHeaders("/ws-drain"), F.END_HEADERS);
+  expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1)).payload)).toBe(200);
+
+  raw.write(frame(T.DATA, 0, 1, wsClientFrame(1, "fill-backpressure")));
+  await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && received(raw, 1) >= 60_000);
+  raw.write(frame(T.WINDOW_UPDATE, 0, 0, u32(70_000)));
+  raw.write(frame(T.WINDOW_UPDATE, 0, 1, u32(70_000)));
+
+  await Promise.race([
+    (async () => {
+      while (!drainFixture.stderr().includes("WS-DRAIN")) await Bun.sleep(10);
+    })(),
+    Bun.sleep(2_000).then(() => {
+      throw new Error("drain callback did not run after reopening flow-control windows: " + raw.describe());
+    }),
+  ]);
+
+  raw.write(frame(T.DATA, F.END_STREAM, 1, wsClientFrame(8, Buffer.from([0x03, 0xe8]))));
+  await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && (f.flags & F.END_STREAM) !== 0);
+  raw.close();
+}, 10_000);
+
+test("RFC 8441 preserves a WebSocket frame split inside its header by H2 flow control", async () => {
+  const raw = await RawH2.connect(fx.port, secure, { settings: setting(4, 0) });
+  await raw.waitFor(f => f.type === T.SETTINGS && (f.flags & F.ACK) !== 0);
+  raw.headers(1, websocketHeaders(), F.END_HEADERS);
+  expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1)).payload)).toBe(200);
+
+  const firstFrame = raw.frames.length;
+  const text = "split-output";
+  const encodedLength = 2 + Buffer.byteLength(text);
+  raw.write(frame(T.DATA, 0, 1, wsClientFrame(1, text)));
+  await barrier(raw, "ws-zero");
+  expect(received(raw, 1)).toBe(0);
+
+  // Release only the first RFC 6455 header byte, then the rest. The queued
+  // suffix must remain byte-exact even though H2 DATA boundaries bisect it.
+  raw.write(frame(T.WINDOW_UPDATE, 0, 1, u32(1)));
+  await raw.waitFor(() => received(raw, 1) === 1);
+  await barrier(raw, "ws-one");
+  expect(received(raw, 1)).toBe(1);
+  raw.write(frame(T.WINDOW_UPDATE, 0, 1, u32(encodedLength - 1)));
+  await raw.waitFor(() => received(raw, 1) === encodedLength);
+
+  const encoded = Buffer.concat(
+    raw.frames
+      .slice(firstFrame)
+      .filter(f => f.type === T.DATA && f.streamId === 1)
+      .map(f => f.payload),
+  );
+  expect(wsServerFrame(encoded).payload.toString()).toBe(text);
+  raw.write(frame(T.RST_STREAM, 0, 1, u32(8)));
+  raw.close();
+});
+
+test("RFC 8441 outbound drain progress refreshes the idle deadline", async () => {
+  await using drainFixture = await startFixture({
+    tls: secure,
+    websocketIdleTimeout: 8,
+    websocketPings: false,
+  });
+  const raw = await RawH2.connect(drainFixture.port, secure);
+  raw.headers(1, websocketHeaders("/ws-drain"), F.END_HEADERS);
+  expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1)).payload)).toBe(200);
+
+  raw.write(frame(T.DATA, 0, 1, wsClientFrame(1, "fill-slow-backpressure")));
+  await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && received(raw, 1) >= 60_000);
+
+  // Keep making real, bounded outbound progress for longer than the eight
+  // second idle timeout. WINDOW_UPDATE alone is not activity; each increment
+  // is immediately consumed by queued WebSocket bytes before the next one.
+  for (let i = 0; i < 10; i++) {
+    await Bun.sleep(1_000);
+    raw.write(frame(T.WINDOW_UPDATE, 0, 0, u32(16_000)));
+    raw.write(frame(T.WINDOW_UPDATE, 0, 1, u32(16_000)));
+    const expected = 60_000 + (i + 1) * 16_000;
+    await raw.waitFor(() => received(raw, 1) >= expected);
+    expect(raw.frames.some(f => f.type === T.RST_STREAM && f.streamId === 1)).toBe(false);
+  }
+
+  raw.write(frame(T.WINDOW_UPDATE, 0, 0, u32(256 * 1024)));
+  raw.write(frame(T.WINDOW_UPDATE, 0, 1, u32(256 * 1024)));
+  await Promise.race([
+    (async () => {
+      while (!drainFixture.stderr().includes("WS-DRAIN")) await Bun.sleep(10);
+    })(),
+    Bun.sleep(2_000).then(() => {
+      throw new Error("slow WebSocket backpressure never completed its drain: " + raw.describe());
+    }),
+  ]);
+
+  raw.write(frame(T.DATA, F.END_STREAM, 1, wsClientFrame(8, Buffer.from([0x03, 0xe8]))));
+  await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && (f.flags & F.END_STREAM) !== 0);
+  raw.close();
+}, 20_000);
+
+test("RFC 8441 preserves a publication scheduled re-entrantly from drain", async () => {
+  await using drainFixture = await startFixture({ tls: secure });
+  const raw = await RawH2.connect(drainFixture.port, secure);
+
+  raw.headers(1, websocketHeaders("/ws-drain-publish"), F.END_HEADERS);
+  raw.headers(3, websocketHeaders(), F.END_HEADERS);
+  expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1)).payload)).toBe(200);
+  expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 3)).payload)).toBe(200);
+  raw.write(frame(T.DATA, 0, 3, wsClientFrame(1, "subscribe:drain-topic")));
+  await raw.waitFor(f => {
+    if (f.type !== T.DATA || f.streamId !== 3 || f.payload[0] !== 0x81) return false;
+    return wsServerFrame(f.payload).payload.toString() === "subscribed:drain-topic";
+  });
+
+  // Block stream 1, then reopen it. Its drain callback publishes a small
+  // TopicTree message while the context-wide drain pass is already active.
+  // Stream 3 must receive it in the automatically retained next pass, with no
+  // subsequent client traffic needed to wake the queue.
+  raw.write(frame(T.DATA, 0, 1, wsClientFrame(1, "fill-backpressure")));
+  await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && received(raw, 1) >= 60_000);
+  raw.write(frame(T.WINDOW_UPDATE, 0, 0, u32(140_000)));
+  raw.write(frame(T.WINDOW_UPDATE, 0, 1, u32(70_000)));
+
+  await Promise.race([
+    raw.waitFor(f => {
+      if (f.type !== T.DATA || f.streamId !== 3 || f.payload[0] !== 0x81) return false;
+      return wsServerFrame(f.payload).payload.toString() === "published-from-drain";
+    }),
+    Bun.sleep(2_000).then(() => {
+      throw new Error("publication queued from drain lost its deferred wake-up: " + raw.describe());
+    }),
+  ]);
+
+  raw.write(frame(T.RST_STREAM, 0, 1, u32(8)));
+  raw.write(frame(T.DATA, F.END_STREAM, 3, wsClientFrame(8, Buffer.from([0x03, 0xe8]))));
+  await raw.waitFor(f => f.type === T.DATA && f.streamId === 3 && (f.flags & F.END_STREAM) !== 0);
+  raw.close();
+}, 10_000);
+
+test("RST_STREAM dispatches an abnormal WebSocket close callback", async () => {
+  await using closeFixture = await startFixture({ tls: secure });
+  const raw = await RawH2.connect(closeFixture.port, secure);
+  raw.headers(1, websocketHeaders("/ws-abnormal-close"), F.END_HEADERS);
+  expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1)).payload)).toBe(200);
+
+  raw.write(frame(T.RST_STREAM, 0, 1, u32(8)));
+  await Promise.race([
+    (async () => {
+      while (!closeFixture.stderr().includes("WS-ABNORMAL-CLOSE:1006:0")) await Bun.sleep(10);
+    })(),
+    Bun.sleep(2_000).then(() => {
+      throw new Error("RST_STREAM did not dispatch the expected abnormal close: " + closeFixture.stderr());
+    }),
+  ]);
+
+  raw.headers(3, baseHeaders("/hello"));
+  expect((await raw.body(3)).toString()).toBe("hello");
+  raw.close();
+}, 10_000);
+
+test("HEADERS after an RFC 8441 tunnel is active reset only that stream", async () => {
+  const raw = await RawH2.connect(fx.port, secure);
+  raw.headers(1, websocketHeaders(), F.END_HEADERS);
+  expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1)).payload)).toBe(200);
+
+  raw.headers(1, [["x-not-a-trailer", "inside-a-websocket-tunnel"]], F.END_HEADERS | F.END_STREAM);
+  expect(await raw.rst(1)).toBe(1); // PROTOCOL_ERROR
+  expect(raw.frames.some(f => f.type === T.GOAWAY)).toBe(false);
+
+  raw.headers(3, baseHeaders("/hello"));
+  expect((await raw.body(3)).toString()).toBe("hello");
+  raw.close();
+});
+
+test("RFC 8441 streams a large WebSocket frame without a contiguous outbound copy", async () => {
+  const payload = Buffer.allocUnsafe(1024 * 1024 + 37);
+  for (let i = 0; i < payload.length; i++) payload[i] = (i * 31 + 17) & 0xff;
+
+  // Give the server enough peer-side stream and connection credit for the
+  // complete echo. The WebSocket frame itself is deliberately split across
+  // many legal H2 DATA frames in both directions.
+  const raw = await RawH2.connect(fx.port, secure, { settings: setting(4, 2 * 1024 * 1024) });
+  await raw.waitFor(f => f.type === T.SETTINGS && (f.flags & F.ACK) !== 0);
+  raw.write(frame(T.WINDOW_UPDATE, 0, 0, u32(2 * 1024 * 1024)));
+  raw.headers(1, websocketHeaders(), F.END_HEADERS);
+  expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1)).payload)).toBe(200);
+
+  const clientFrame = wsClientFrame(2, payload);
+  for (let offset = 0; offset < clientFrame.length; offset += 16_000) {
+    raw.write(frame(T.DATA, 0, 1, clientFrame.subarray(offset, offset + 16_000)));
+  }
+
+  const expectedWireLength = payload.length + 10;
+  await raw.waitFor(
+    () =>
+      raw.frames.filter(f => f.type === T.DATA && f.streamId === 1).reduce((total, f) => total + f.payload.length, 0) >=
+      expectedWireLength,
+  );
+  const dataFrames = raw.frames.filter(f => f.type === T.DATA && f.streamId === 1 && f.payload.length !== 0);
+  expect(dataFrames.length).toBeGreaterThan(1);
+  const echoed = wsServerFrame(Buffer.concat(dataFrames.map(f => f.payload)));
+  expect(echoed).toMatchObject({ opcode: 2, fin: true, compressed: false });
+  expect(echoed.payload).toEqual(payload);
+
+  raw.write(frame(T.DATA, F.END_STREAM, 1, wsClientFrame(8, Buffer.from([0x03, 0xe8]))));
+  await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && (f.flags & F.END_STREAM) !== 0);
+  raw.close();
+}, 15_000);
+
+test("RFC 8441 rejects a projected fragmented message before reserving past maxPayloadLength", async () => {
+  await using limitedFixture = await startFixture({
+    tls: secure,
+    websocketMaxPayloadLength: 64 * 1024,
+  });
+  const raw = await RawH2.connect(limitedFixture.port, secure);
+  raw.headers(1, websocketHeaders(), F.END_HEADERS);
+  expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1)).payload)).toBe(200);
+
+  const first = wsClientFrame(2, Buffer.alloc(40 * 1024, 0x61), false);
+  for (let offset = 0; offset < first.length; offset += 16_000) {
+    raw.write(frame(T.DATA, 0, 1, first.subarray(offset, offset + 16_000)));
+  }
+
+  // Each individual RFC 6455 frame is legal, but their aggregate message is
+  // not. Sending only the next continuation's header and first payload byte
+  // is enough to expose its declared remainder; the server must reject that
+  // projected size before reserving or waiting for the rest of the frame.
+  const continuation = wsClientFrame(0, Buffer.alloc(40 * 1024, 0x62));
+  raw.write(frame(T.DATA, 0, 1, continuation.subarray(0, 9)));
+  const close = await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && f.payload[0] === 0x88);
+  expect(wsServerFrame(close.payload).payload.readUInt16BE(0)).toBe(1009);
+  await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && (f.flags & F.END_STREAM) !== 0);
+
+  raw.headers(3, baseHeaders("/hello"));
+  expect((await raw.body(3)).toString()).toBe("hello");
+  expect(raw.frames.some(f => f.type === T.GOAWAY)).toBe(false);
+  raw.close();
+});
+
+test("RFC 8441 reuses uWebSockets permessage-deflate in both directions", async () => {
+  const raw = await RawH2.connect(fx.port, secure);
+  raw.headers(
+    1,
+    [
+      ...websocketHeaders(),
+      ["sec-websocket-extensions", "permessage-deflate; client_no_context_takeover; server_no_context_takeover"],
+    ],
+    F.END_HEADERS,
+  );
+  expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1)).payload)).toBe(200);
+
+  const original = Buffer.from("compressed over an extended CONNECT stream ".repeat(32));
+  const compressed = deflateWebSocketMessage(original);
+  // Split inside the compressed payload and interleave a control frame.  The
+  // codec must retain RFC 7692 message state while H2 independently splits
+  // and multiplexes DATA frames.
+  const first = Math.max(1, Math.floor(compressed.length / 2));
+  raw.write(frame(T.DATA, 0, 1, wsClientFrame(1, compressed.subarray(0, first), false, true)));
+  raw.write(frame(T.DATA, 0, 1, wsClientFrame(9, "compressed-ping")));
+  raw.write(frame(T.DATA, 0, 1, wsClientFrame(0, compressed.subarray(first), true)));
+
+  const pong = await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && f.payload[0] === 0x8a);
+  expect(wsServerFrame(pong.payload).payload.toString()).toBe("compressed-ping");
+  const echoed = await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && (f.payload[0] & 0xcf) === 0xc1);
+  const message = wsServerFrame(echoed.payload);
+  expect(message.compressed).toBe(true);
+  expect(inflateWebSocketMessage(message.payload)).toEqual(original);
+
+  // Also cover the direct parser path where an entire compressed WebSocket
+  // frame is present in one H2 DATA chunk (no compressed fragment buffer).
+  const singleFrameOriginal = Buffer.from("one complete compressed binary frame");
+  raw.write(frame(T.DATA, 0, 1, wsClientFrame(2, deflateWebSocketMessage(singleFrameOriginal), true, true)));
+  const singleFrameEcho = await raw.waitFor(
+    f => f.type === T.DATA && f.streamId === 1 && (f.payload[0] & 0xcf) === 0xc2,
+  );
+  const singleFrameMessage = wsServerFrame(singleFrameEcho.payload);
+  expect(singleFrameMessage.compressed).toBe(true);
+  expect(inflateWebSocketMessage(singleFrameMessage.payload)).toEqual(singleFrameOriginal);
+
+  raw.write(frame(T.DATA, F.END_STREAM, 1, wsClientFrame(8, Buffer.from([0x03, 0xe8]))));
+  await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && (f.flags & F.END_STREAM) !== 0);
+  raw.close();
+});
+
+test("RFC 8441 reports malformed permessage-deflate data as invalid payload", async () => {
+  const raw = await RawH2.connect(fx.port, secure);
+  raw.headers(1, [...websocketHeaders(), ["sec-websocket-extensions", "permessage-deflate"]], F.END_HEADERS);
+  expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1)).payload)).toBe(200);
+
+  // BTYPE=3 is reserved by DEFLATE and must not be conflated with a message
+  // that expanded past maxPayloadLength.
+  raw.write(frame(T.DATA, 0, 1, wsClientFrame(2, Buffer.from([0x06]), true, true)));
+  const close = await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && f.payload[0] === 0x88);
+  expect(wsServerFrame(close.payload).payload.readUInt16BE(0)).toBe(1007);
+  await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && (f.flags & F.END_STREAM) !== 0);
+
+  raw.headers(3, baseHeaders("/hello"));
+  expect((await raw.body(3)).toString()).toBe("hello");
+  expect(raw.frames.some(f => f.type === T.GOAWAY)).toBe(false);
+  raw.close();
+});
+
+test("RFC 8441 reports an inflated message past maxPayloadLength as too large", async () => {
+  await using limitedFixture = await startFixture({
+    tls: secure,
+    websocketMaxPayloadLength: 32,
+  });
+  const raw = await RawH2.connect(limitedFixture.port, secure);
+  raw.headers(1, [...websocketHeaders(), ["sec-websocket-extensions", "permessage-deflate"]], F.END_HEADERS);
+  expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1)).payload)).toBe(200);
+
+  const compressed = deflateWebSocketMessage(Buffer.alloc(64, 0x61));
+  raw.write(frame(T.DATA, 0, 1, wsClientFrame(2, compressed, true, true)));
+  const close = await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && f.payload[0] === 0x88);
+  expect(wsServerFrame(close.payload).payload.readUInt16BE(0)).toBe(1009);
+  await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && (f.flags & F.END_STREAM) !== 0);
+
+  raw.headers(3, baseHeaders("/hello"));
+  expect((await raw.body(3)).toString()).toBe("hello");
+  expect(raw.frames.some(f => f.type === T.GOAWAY)).toBe(false);
+  raw.close();
+});
+
+test("RFC 8441 accepts a dedicated-compressor frame when its exact output fits backpressure", async () => {
+  await using compressionFixture = await startFixture({
+    tls: secure,
+    websocketBackpressureLimit: 2048,
+    websocketDedicatedCompression: true,
+  });
+  const raw = await RawH2.connect(compressionFixture.port, secure, { settings: setting(4, 0) });
+  await raw.waitFor(f => f.type === T.SETTINGS && (f.flags & F.ACK) !== 0);
+  raw.headers(1, [...websocketHeaders(), ["sec-websocket-extensions", "permessage-deflate"]], F.END_HEADERS);
+  expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1)).payload)).toBe(200);
+
+  // The conservative deflate bound is far above 2 KiB, but the exact
+  // compressed frame is tiny. With a zero peer window it must be retained
+  // inside the configured budget, not rejected based on the worst case.
+  const repeatedBlock = Buffer.allocUnsafe(1024);
+  let random = 0x9e3779b9;
+  for (let i = 0; i < repeatedBlock.length; i++) {
+    random ^= random << 13;
+    random ^= random >>> 17;
+    random ^= random << 5;
+    repeatedBlock[i] = random & 0xff;
+  }
+  const first = Buffer.allocUnsafe(64 * 1024);
+  for (let offset = 0; offset < first.length; offset += repeatedBlock.length) repeatedBlock.copy(first, offset);
+  const firstFrame = wsClientFrame(2, first);
+  for (let offset = 0; offset < firstFrame.length; offset += 16_000) {
+    raw.write(frame(T.DATA, 0, 1, firstFrame.subarray(offset, offset + 16_000)));
+  }
+  await Bun.sleep(50);
+  expect(received(raw, 1)).toBe(0);
+
+  raw.write(frame(T.WINDOW_UPDATE, 0, 0, u32(4096)));
+  raw.write(frame(T.WINDOW_UPDATE, 0, 1, u32(4096)));
+  const firstEcho = wsServerFrame(
+    (
+      await raw.waitFor(
+        f => f.type === T.DATA && f.streamId === 1 && f.payload.length > 2 && (f.payload[0] & 0xc2) === 0xc2,
+      )
+    ).payload,
+  );
+  expect(firstEcho).toMatchObject({ opcode: 2, fin: true, compressed: true });
+
+  // A following message must continue from the committed takeover state.
+  const afterFirst = raw.frames.length;
+  const second = repeatedBlock;
+  raw.write(frame(T.DATA, 0, 1, wsClientFrame(2, second)));
+  const secondEcho = wsServerFrame(
+    (
+      await raw.waitFor(
+        f =>
+          raw.frames.indexOf(f) >= afterFirst &&
+          f.type === T.DATA &&
+          f.streamId === 1 &&
+          f.payload.length > 2 &&
+          (f.payload[0] & 0xc2) === 0xc2,
+      )
+    ).payload,
+  );
+  expect(secondEcho.payload.length).toBeLessThan(deflateWebSocketMessage(second).length / 4);
+  const inflated = inflateRawSync(
+    Buffer.concat([firstEcho.payload, perMessageDeflateTail, secondEcho.payload, perMessageDeflateTail]),
+    { finishFlush: zlibConstants.Z_SYNC_FLUSH },
+  );
+  expect(inflated).toEqual(Buffer.concat([first, second]));
+
+  raw.write(frame(T.DATA, F.END_STREAM, 1, wsClientFrame(8, Buffer.from([0x03, 0xe8]))));
+  await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && (f.flags & F.END_STREAM) !== 0);
+  raw.close();
+});
+
+test("RFC 8441 does not advance a dedicated compressor when backpressure drops a message", async () => {
+  await using compressionFixture = await startFixture({
+    tls: secure,
+    websocketBackpressureLimit: 2048,
+    websocketDedicatedCompression: true,
+  });
+  const raw = await RawH2.connect(compressionFixture.port, secure, { settings: setting(4, 0) });
+  await raw.waitFor(f => f.type === T.SETTINGS && (f.flags & F.ACK) !== 0);
+  raw.headers(1, [...websocketHeaders(), ["sec-websocket-extensions", "permessage-deflate"]], F.END_HEADERS);
+  expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1)).payload)).toBe(200);
+
+  // The peer stream window is zero and this incompressible echo cannot fit
+  // the configured budget. A dedicated compressor must reject it before
+  // mutating its context, otherwise the following message can refer to bytes
+  // the peer never received.
+  const first = Buffer.allocUnsafe(64 * 1024);
+  let random = 0x6d2b79f5;
+  for (let i = 0; i < first.length; i++) {
+    random ^= random << 13;
+    random ^= random >>> 17;
+    random ^= random << 5;
+    first[i] = random & 0xff;
+  }
+  const firstFrame = wsClientFrame(2, first);
+  for (let offset = 0; offset < firstFrame.length; offset += 16_000) {
+    raw.write(frame(T.DATA, 0, 1, firstFrame.subarray(offset, offset + 16_000)));
+  }
+  await Bun.sleep(50);
+  expect(received(raw, 1)).toBe(0);
+
+  raw.write(frame(T.WINDOW_UPDATE, 0, 0, u32(4096)));
+  raw.write(frame(T.WINDOW_UPDATE, 0, 1, u32(4096)));
+  const second = first.subarray(first.length - 1024);
+  raw.write(frame(T.DATA, 0, 1, wsClientFrame(2, second)));
+  const echoed = await raw.waitFor(
+    f => f.type === T.DATA && f.streamId === 1 && f.payload.length > 2 && (f.payload[0] & 0xc2) === 0xc2,
+  );
+  const message = wsServerFrame(echoed.payload);
+  expect(message).toMatchObject({ opcode: 2, fin: true, compressed: true });
+  expect(inflateWebSocketMessage(message.payload)).toEqual(second);
+
+  raw.write(frame(T.DATA, F.END_STREAM, 1, wsClientFrame(8, Buffer.from([0x03, 0xe8]))));
+  await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && (f.flags & F.END_STREAM) !== 0);
+  raw.close();
+});
+
+test("RFC 8441 rejects malformed WebSocket framing on only that stream", async () => {
+  const raw = await RawH2.connect(fx.port, secure);
+  raw.headers(1, websocketHeaders(), F.END_HEADERS);
+  expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1)).payload)).toBe(200);
+
+  // Client-to-server frames must be masked. A protocol failure is expressed
+  // as a WebSocket close frame, not a connection-level GOAWAY.
+  raw.write(frame(T.DATA, 0, 1, Buffer.from([0x81, 0x01, 0x78])));
+  const close = await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && f.payload[0] === 0x88);
+  expect(wsServerFrame(close.payload).payload.readUInt16BE(0)).toBe(1002);
+  await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && (f.flags & F.END_STREAM) !== 0);
+  raw.write(frame(T.DATA, F.END_STREAM, 1));
+
+  raw.headers(3, baseHeaders("/hello"));
+  expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 3)).payload)).toBe(200);
+  expect((await raw.body(3)).toString()).toBe("hello");
+  expect(raw.frames.some(f => f.type === T.GOAWAY)).toBe(false);
+  raw.close();
+});
+
+const withFirstByte = (input: Buffer, transform: (byte: number) => number) => {
+  const output = Buffer.from(input);
+  output[0] = transform(output[0]);
+  return output;
+};
+
+for (const [name, malformedFrame] of [
+  ["RSV1 without a negotiated extension", wsClientFrame(1, "x", true, true)],
+  ["RSV2", withFirstByte(wsClientFrame(1, "x"), byte => byte | 0x20)],
+  ["RSV3 on a control frame", withFirstByte(wsClientFrame(9, "x"), byte => byte | 0x10)],
+  ["reserved data opcode", wsClientFrame(3, "x")],
+  ["reserved control opcode", wsClientFrame(11, "x")],
+  ["fragmented control frame", wsClientFrame(9, "x", false)],
+  ["oversized control frame", wsClientFrame(9, Buffer.alloc(126))],
+  ["continuation without an open fragmented message", wsClientFrame(0, "x")],
+  [
+    "new text frame during a fragmented message",
+    Buffer.concat([wsClientFrame(1, "first", false), wsClientFrame(1, "second")]),
+  ],
+  [
+    "new binary frame during a fragmented text message",
+    Buffer.concat([wsClientFrame(1, "first", false), wsClientFrame(2, "second")]),
+  ],
+] as const) {
+  test(`RFC 6455 protocol error (${name}) closes only the tunnel stream`, async () => {
+    const raw = await RawH2.connect(fx.port, secure);
+    raw.headers(1, websocketHeaders(), F.END_HEADERS);
+    expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1)).payload)).toBe(200);
+
+    raw.write(frame(T.DATA, 0, 1, malformedFrame));
+    const close = await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && f.payload[0] === 0x88);
+    expect(wsServerFrame(close.payload).payload.readUInt16BE(0)).toBe(1002);
+    await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && (f.flags & F.END_STREAM) !== 0);
+
+    raw.headers(3, baseHeaders("/hello"));
+    expect((await raw.body(3)).toString()).toBe("hello");
+    expect(raw.frames.some(f => f.type === T.GOAWAY)).toBe(false);
+    raw.close();
+  });
+}
+
+for (const [name, malformedFrame] of [
+  ["invalid text payload", wsClientFrame(1, Buffer.from([0xc3, 0x28]))],
+  ["invalid close reason", wsClientFrame(8, Buffer.from([0x03, 0xe8, 0xc3, 0x28]))],
+] as const) {
+  test(`RFC 6455 invalid UTF-8 (${name}) returns close code 1007`, async () => {
+    const raw = await RawH2.connect(fx.port, secure);
+    raw.headers(1, websocketHeaders(), F.END_HEADERS);
+    expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1)).payload)).toBe(200);
+
+    raw.write(frame(T.DATA, 0, 1, malformedFrame));
+    const close = await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && f.payload[0] === 0x88);
+    expect(wsServerFrame(close.payload).payload.readUInt16BE(0)).toBe(1007);
+    raw.close();
+  });
+}
+
+for (const [name, malformedFrame] of [
+  ["126 marker for a payload of 125 bytes", wsClientFrameWithLengthEncoding(1, "x", 126, 125)],
+  ["127 marker for a payload of 65535 bytes", wsClientFrameWithLengthEncoding(1, "x", 127, 65_535)],
+  [
+    "127 marker with the 64-bit high bit set",
+    wsClientFrameWithLengthEncoding(1, Buffer.alloc(0), 127, 0x8000000000000000n),
+  ],
+] as const) {
+  test(`RFC 6455 rejects non-canonical or out-of-range payload length (${name})`, async () => {
+    const raw = await RawH2.connect(fx.port, secure);
+    raw.headers(1, websocketHeaders(), F.END_HEADERS);
+    expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1)).payload)).toBe(200);
+
+    raw.write(frame(T.DATA, 0, 1, malformedFrame));
+    const close = await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && f.payload[0] === 0x88);
+    expect(wsServerFrame(close.payload).payload.readUInt16BE(0)).toBe(1002);
+    await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && (f.flags & F.END_STREAM) !== 0);
+
+    // A frame-level WebSocket error retires only the tunnel stream.  The
+    // connection remains available for a fresh HTTP/2 request.
+    expect(raw.frames.some(f => f.type === T.GOAWAY)).toBe(false);
+    raw.headers(3, baseHeaders("/hello"));
+    expect((await raw.body(3)).toString()).toBe("hello");
+    raw.close();
+  });
+}
+
+test("client RST_STREAM retires only an open WebSocket tunnel", async () => {
+  const raw = await RawH2.connect(fx.port, secure);
+  raw.headers(1, websocketHeaders(), F.END_HEADERS);
+  expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1)).payload)).toBe(200);
+
+  // CANCEL is the peer-side stream reset; no WebSocket close frame is
+  // required because the stream has already been reset at the HTTP/2 layer.
+  raw.write(frame(T.RST_STREAM, 0, 1, u32(8)));
+  await barrier(raw, "wsreset");
+
+  raw.headers(3, baseHeaders("/hello"));
+  const sibling = await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 3);
+  expect(decodeStatus(sibling.payload)).toBe(200);
+  expect((await raw.body(3)).toString()).toBe("hello");
+  expect(raw.frames.some(f => f.type === T.GOAWAY)).toBe(false);
+  raw.close();
 });
 
 // Heavier transfers: kept out of the concurrent group so they are not timing-sensitive to sibling load.

@@ -4121,14 +4121,22 @@ impl<'a> HTTPClient<'a> {
 
     /// Decodes what has arrived under the consumer's budget. Returns whether to report bytes.
     fn process_received_body(&mut self, is_final_chunk: bool) -> crate::Result<bool> {
-        let max_output = self.decompress_output_cap();
-        // Nothing is decoded for a paused consumer (a tunnelled socket keeps reading anyway).
-        if max_output != usize::MAX
-            && self.state.encoding.is_compressed()
-            && self.signals.is_receive_paused()
-        {
-            self.state.flags.decompress_output_pending = true;
-            return Ok(false);
+        let mut max_output = self.decompress_output_cap();
+        if max_output != usize::MAX && self.state.encoding.is_compressed() {
+            // Nothing is decoded for a paused consumer (a tunnelled socket keeps reading anyway).
+            if self.signals.is_receive_paused() {
+                self.state.flags.decompress_output_pending = true;
+                return Ok(false);
+            }
+            // A body that one libdeflate call can inflate waits whole for its consumer.
+            if is_final_chunk && self.state.wants_exact_size_inflate() {
+                if self.signals.hold_for_consumer() {
+                    self.state.flags.decompress_output_pending = true;
+                    return Ok(false);
+                }
+                // A consumer attached after the cap was read.
+                max_output = self.decompress_output_cap();
+            }
         }
         // `process_body_buffer` takes `&mut self.state`, so the bytes move out first.
         let buffer = core::mem::take(&mut self.state.get_body_buffer().list);
@@ -4704,11 +4712,11 @@ impl<'a> HTTPClient<'a> {
             || self.signals.body_receive_mode.is_some();
         if is_done || is_streaming || content_length.is_none() {
             let is_final_chunk = is_done;
+            // A body that arrived whole keeps the libdeflate fast path: it may be held.
+            if !is_final_chunk {
+                self.state.flags.is_libdeflate_fast_path_disabled = true;
+            }
             let processed = self.process_received_body(is_final_chunk)?;
-
-            // We can only use the libdeflate fast path when we are not streaming
-            // If we ever call processBodyBuffer again, it cannot go through the fast path.
-            self.state.flags.is_libdeflate_fast_path_disabled = true;
 
             let total_received = self.state.total_body_received;
             self.report_progress(total_received);

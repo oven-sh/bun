@@ -856,6 +856,13 @@ pub mod ssl_wrapper {
             if self.is_shutdown() {
                 return us_bun_verify_error_t::default();
             }
+            self.get_handshake_verify_error()
+        }
+
+        /// The verify result of the first handshake. It does not look at the shutdown flags: a
+        /// shutdown that runs mid-handshake sends nothing but still sets `sent_ssl_shutdown`, and
+        /// that must not turn a failed certificate check into a pass.
+        fn get_handshake_verify_error(&self) -> us_bun_verify_error_t {
             let Some(ssl) = self.ssl.get() else {
                 return us_bun_verify_error_t::default();
             };
@@ -916,7 +923,7 @@ pub mod ssl_wrapper {
                 self.flags.set_fatal_error(true);
                 self.flags
                     .set_handshake_state(HandshakeState::HandshakeCompleted);
-                let verify = self.get_verify_error();
+                let verify = self.get_handshake_verify_error();
                 self.trigger_handshake_callback(false, verify);
                 self.trigger_close_callback();
                 return false;
@@ -945,7 +952,7 @@ pub mod ssl_wrapper {
 
                     self.flags
                         .set_handshake_state(HandshakeState::HandshakeCompleted);
-                    let verify = self.get_verify_error();
+                    let verify = self.get_handshake_verify_error();
                     self.trigger_handshake_callback(false, verify);
 
                     if self.flags.fatal_error() {
@@ -962,7 +969,7 @@ pub mod ssl_wrapper {
             // handshake completed
             self.flags
                 .set_handshake_state(HandshakeState::HandshakeCompleted);
-            let verify = self.get_verify_error();
+            let verify = self.get_handshake_verify_error();
             self.trigger_handshake_callback(true, verify);
 
             true

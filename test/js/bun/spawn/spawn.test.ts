@@ -17,7 +17,7 @@ import {
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
-import { closeSync, fstatSync, openSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readFileSync, readSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "path";
 
 let tmp: string;
@@ -1516,6 +1516,64 @@ it.skipIf(isWindows)("leaves a Bun.file(fd) stdout open when stdin stream setup 
   expect(exitCode).toBe(0);
 });
 
+// The child opens a path at the slot for "ignore", for "inherit" of a slot that
+// is closed in the parent (both /dev/null), and for Bun.file(path). open() returns
+// the lowest free fd, so with the slot free it returns the slot itself, and the
+// open + dup2 + close sequence closed it again.
+describe.if(isLinux)("a stdio slot that is closed in the parent", () => {
+  // In a fresh bun: closes `fd`, spawns a child with `stdio`, and reports what the
+  // child has at `fd`. The child is not bun, because bun reopens closed stdio as
+  // /dev/null at startup.
+  async function childTarget(fd: number, stdio: string) {
+    const fixture = `
+      import { closeSync, readlinkSync } from "node:fs";
+      closeSync(${fd});
+      const child = Bun.spawn({ cmd: ["sleep", "1000"], stdio: ${stdio} });
+      let target;
+      try {
+        target = readlinkSync("/proc/" + child.pid + "/fd/${fd}");
+      } catch (e) {
+        target = e.code;
+      }
+      child.kill();
+      await child.exited;
+      // Print to a slot that is still open.
+      (${fd} === 1 ? console.error : console.log)("target: " + target);
+    `;
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Match the line: a sanitizer build can add its own warnings to stderr.
+    const target = (fd === 1 ? stderr : stdout).match(/^target: (.*)$/m)?.[1];
+    return { target: target ?? stdout + stderr, exitCode };
+  }
+
+  describe.each([0, 1, 2])("fd %d", fd => {
+    it.concurrent.each(["ignore", "inherit", "Bun.file"])("with %s is open in the child", async mode => {
+      // No "pipe": its socketpair would take the free slot before the spawn.
+      const stdio = [`"inherit"`, `"inherit"`, `"inherit"`];
+      let expected = "/dev/null";
+      if (mode === "Bun.file") {
+        expected = join(realpathSync(tmp), `closed-slot-${fd}.txt`);
+        writeFileSync(expected, "");
+        stdio[fd] = `Bun.file(${JSON.stringify(expected)})`;
+      } else {
+        stdio[fd] = JSON.stringify(mode);
+      }
+      expect(await childTarget(fd, `[${stdio.join(", ")}]`)).toEqual({ target: expected, exitCode: 0 });
+    });
+  });
+
+  // The child's end of the stdin socketpair takes the free fd 1 in the parent. The
+  // child closes it after the dup2 onto fd 0, so fd 1 is free when it opens /dev/null.
+  it.concurrent("fd 1 with ignore next to a pipe is open in the child", async () => {
+    expect(await childTarget(1, `["pipe", "ignore", "inherit"]`)).toEqual({ target: "/dev/null", exitCode: 0 });
+  });
+});
+
 // Bun.file(fd).stream() (like the shell's stdio and cwd handles) works on a
 // dup() of the descriptor. On Windows that duplicate used to be created
 // inheritable, and libuv spawns with bInheritHandles=TRUE, so every child
@@ -1999,4 +2057,314 @@ describe.skipIf(!isPosix)("stdio source fds that are also slot numbers", () => {
       expect(result.exitCode).toBe(0);
     },
   );
+});
+
+// A descriptor gets the lowest free number, which is 0, 1 or 2 once user code has closed one of
+// them. bun never closes its own descriptor at such a number, and a child that inherits the slot
+// gets that descriptor as its stdio. So a socketpair, memfd, pidfd or eventfd that bun creates
+// (a "pipe" slot, a Blob stdin, the exit watcher) must not take one.
+describe.skipIf(!isPosix)("a spawn while fd 0, 1 or 2 is closed", () => {
+  const prelude = `
+    const fs = require("node:fs");
+    // What this process has at the number.
+    const at = fd => {
+      try {
+        fs.fstatSync(fd);
+      } catch (e) {
+        return e.code === "EBADF" ? "closed" : e.code;
+      }
+      try {
+        return fs.readlinkSync("/proc/self/fd/" + fd);
+      } catch {
+        return "open";
+      }
+    };
+    const report = (fd, value) => fs.writeSync(fd, "REPORT " + JSON.stringify(value) + "\\n");
+    // A stdio slot given as a number makes the child dup2 it: no descriptor is created for it.
+    const nul = fs.openSync("/dev/null", "r+");
+  `;
+
+  // The script closes some of its own fds 0-2, so it passes its result to `report(fd, value)`
+  // with a `fd` that is still open.
+  async function run(script: string) {
+    const { stdout, stderr, exitCode } = await runInFreshProcess(prelude + script);
+    // Match the line: a sanitizer build can add its own warnings to stderr.
+    const line = (stdout + "\n" + stderr).match(/^REPORT (.*)$/m)?.[1];
+    return { report: line ? JSON.parse(line) : { stdout, stderr }, exitCode };
+  }
+
+  it.concurrent.each([0, 1, 2])('"pipe" at every slot leaves the closed fd %d closed', async fd => {
+    // The first socketpair is for stdin, and the child's end of it is the lower number.
+    const result = await run(`
+      fs.closeSync(${fd});
+      const proc = Bun.spawn({ cmd: ["cat"], stdio: ["pipe", "pipe", "pipe"] });
+      const during = at(${fd});
+      proc.stdin.write("hi");
+      await proc.stdin.end();
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      report(${fd === 2 ? 1 : 2}, { during, stdout, stderr, exitCode, after: at(${fd}) });
+    `);
+    expect(result).toEqual({
+      report: { during: "closed", stdout: "hi", stderr: "", exitCode: 0, after: "closed" },
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("the parent's end of a stdout pipe does not take the closed fd 2", async () => {
+    // Without a stdin pipe, the first socketpair is for stdout, and the parent's end of it is the lower number.
+    const result = await run(`
+      fs.closeSync(2);
+      const proc = Bun.spawn({ cmd: ["sh", "-c", "echo out; echo err >&2"], stdio: [nul, "pipe", "pipe"] });
+      const during = at(2);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      report(1, { during, stdout, stderr, exitCode, after: at(2) });
+    `);
+    expect(result).toEqual({
+      report: { during: "closed", stdout: "out\n", stderr: "err\n", exitCode: 0, after: "closed" },
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent('"pipe" at an extra slot does not take the closed fd 1', async () => {
+    const result = await run(`
+      fs.closeSync(1);
+      const proc = Bun.spawn({ cmd: ["sh", "-c", "echo hi >&3"], stdio: [nul, nul, nul, "pipe"] });
+      const extra = proc.stdio[3];
+      const during = at(1);
+      const exitCode = await proc.exited;
+      const buf = Buffer.alloc(16);
+      const data = buf.toString("utf8", 0, fs.readSync(extra, buf));
+      fs.closeSync(extra);
+      report(2, { extraIsAboveStdio: extra > 2, during, data, exitCode, after: at(1) });
+    `);
+    expect(result).toEqual({
+      report: { extraIsAboveStdio: true, during: "closed", data: "hi\n", exitCode: 0, after: "closed" },
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("the ipc channel does not take the closed fd 1", async () => {
+    const result = await run(`
+      fs.closeSync(1);
+      const { promise, resolve } = Promise.withResolvers();
+      const proc = Bun.spawn({
+        // The child stays alive until the parent has its message.
+        cmd: [process.execPath, "-e", "process.send('hello'); process.on('message', () => process.exit(0));"],
+        stdio: [nul, nul, "inherit"],
+        ipc: resolve,
+      });
+      const during = at(1);
+      const message = await promise;
+      proc.send("bye");
+      const exitCode = await proc.exited;
+      report(2, { during, message, exitCode, after: at(1) });
+    `);
+    expect(result).toEqual({
+      report: { during: "closed", message: "hello", exitCode: 0, after: "closed" },
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("the descriptor that watches for the child's exit does not take the closed fd 1", async () => {
+    // No slot creates a descriptor. On Linux the first one is the pidfd, or the eventfd of the
+    // waiter thread when BUN_FEATURE_FLAG_FORCE_WAITER_THREAD runs this file again.
+    const result = await run(`
+      fs.closeSync(1);
+      const proc = Bun.spawn({ cmd: ["true"], stdio: [nul, nul, nul] });
+      const during = at(1);
+      const exitCode = await proc.exited;
+      report(2, { during, exitCode, after: at(1) });
+    `);
+    expect(result).toEqual({ report: { during: "closed", exitCode: 0, after: "closed" }, exitCode: 0 });
+  });
+
+  it.concurrent("a stdout pipe reaches EOF when fds 0 and 1 are closed", async () => {
+    // Both ends of the stdout socketpair took the closed numbers. The child's end stayed open in
+    // the parent, so the parent's end never saw EOF.
+    const result = await run(`
+      fs.closeSync(0);
+      fs.closeSync(1);
+      const proc = Bun.spawn({ cmd: ["sh", "-c", "echo out"], stdio: [nul, "pipe", nul] });
+      const during = [at(0), at(1)];
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      report(2, { during, stdout, exitCode, after: [at(0), at(1)] });
+    `);
+    expect(result).toEqual({
+      report: { during: ["closed", "closed"], stdout: "out\n", exitCode: 0, after: ["closed", "closed"] },
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("a failed exec is still reported when fds 0 and 1 are closed", async () => {
+    // With uid, macOS spawns through fork() and a pipe reports a failed exec. The write end took
+    // fd 1, and the child's file action for slot 1 replaced it: the spawn looked like a success.
+    const result = await run(`
+      fs.closeSync(0);
+      fs.closeSync(1);
+      const outcomes = [];
+      for (const stdout of [nul, "pipe"]) {
+        try {
+          const proc = Bun.spawn({ cmd: ["/nonexistent/program"], uid: process.getuid(), stdio: [nul, stdout, nul] });
+          outcomes.push("spawned, exit " + (await proc.exited));
+        } catch (e) {
+          outcomes.push("threw " + e.code);
+        }
+      }
+      report(2, { outcomes });
+    `);
+    expect(result).toEqual({ report: { outcomes: ["threw ENOENT", "threw ENOENT"] }, exitCode: 0 });
+  });
+
+  it.concurrent("a child's stdout does not overwrite a large Blob made while fd 1 was closed", async () => {
+    // On Linux a Blob of 8 MiB or more lives in a memfd, and the Blob maps it.
+    const result = await run(`
+      fs.closeSync(1);
+      const blob = new Blob([Buffer.alloc(9 * 1024 * 1024, "a")]);
+      const afterBlob = at(1);
+      const proc = Bun.spawn({ cmd: ["sh", "-c", "echo OVERWRITE"], stdio: [nul, "inherit", "inherit"] });
+      const exitCode = await proc.exited;
+      report(2, { afterBlob, exitCode, blob: await blob.slice(0, 9).text() });
+    `);
+    expect(result).toEqual({ report: { afterBlob: "closed", exitCode: 0, blob: "aaaaaaaaa" }, exitCode: 0 });
+  });
+
+  // The closed number now stays free, so the child opens /dev/null on the slot itself at every spawn.
+  it.concurrent.skipIf(!isLinux)("each child that ignores or inherits the closed fd 1 gets /dev/null", async () => {
+    const result = await run(`
+      fs.closeSync(1);
+      const targets = [];
+      for (const stdout of ["ignore", "ignore", "inherit", "inherit"]) {
+        // Not bun: bun reopens a closed stdio fd as /dev/null when it starts.
+        const child = Bun.spawn({ cmd: ["sleep", "1000"], stdio: [nul, stdout, nul] });
+        try {
+          targets.push(fs.readlinkSync("/proc/" + child.pid + "/fd/1"));
+        } catch (e) {
+          targets.push(e.code);
+        }
+        child.kill();
+        await child.exited;
+      }
+      report(2, { targets, after: at(1) });
+    `);
+    expect(result).toEqual({
+      report: { targets: ["/dev/null", "/dev/null", "/dev/null", "/dev/null"], after: "closed" },
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent.skipIf(!isLinux)("a stdin memfd that is moved off fd 1 keeps its close-on-exec state", async () => {
+    // /proc/self/fdinfo shows FD_CLOEXEC of the parent's memfd as O_CLOEXEC in "flags".
+    const stdinMemfd = (closeFirst: boolean) =>
+      run(`
+        ${closeFirst ? "fs.closeSync(1);" : ""}
+        const proc = Bun.spawn({ cmd: ["cat"], stdin: new Blob(["hi"]), stdout: "pipe", stderr: "pipe" });
+        const memfd = { aboveStdio: "no memfd", cloexec: "no memfd" };
+        for (let fd = 0; fd < 64; fd++) {
+          let link = "";
+          try {
+            link = fs.readlinkSync("/proc/self/fd/" + fd);
+          } catch {}
+          if (!link.startsWith("/memfd:spawn_stdio_stdin")) continue;
+          const flags = fs.readFileSync("/proc/self/fdinfo/" + fd, "utf8").match(/^flags:\\s*([0-7]+)/m)[1];
+          memfd.aboveStdio = fd > 2;
+          memfd.cloexec = (parseInt(flags, 8) & 0o2000000) !== 0;
+        }
+        await proc.exited;
+        report(2, memfd);
+      `);
+    const [moved, inPlace] = await Promise.all([stdinMemfd(true), stdinMemfd(false)]);
+    expect(inPlace).toEqual({ report: { aboveStdio: true, cloexec: expect.any(Boolean) }, exitCode: 0 });
+    expect(moved).toEqual(inPlace);
+  });
+
+  it.concurrent.skipIf(!isLinux)(
+    "at the descriptor limit a spawn still works when only the closed fd 1 is free",
+    async () => {
+      // No number at 3 or above is free, so the pidfd (or the waiter thread's eventfd) cannot move.
+      // It stays at fd 1. A move that fails instead would kill the child or stop the process.
+      const fixture = `
+        ${prelude}
+        const held = [];
+        for (;;) {
+          try {
+            held.push(fs.openSync("/dev/null", "r"));
+          } catch {
+            break;
+          }
+        }
+        fs.closeSync(1);
+        let outcome;
+        try {
+          const proc = Bun.spawn({ cmd: ["true"], stdio: [nul, nul, nul] });
+          outcome = "exit " + (await proc.exited);
+        } catch (e) {
+          outcome = "threw " + e.code;
+        }
+        // LeakSanitizer opens /proc files when the process exits, and aborts when it cannot.
+        for (const fd of held) fs.closeSync(fd);
+        report(2, { atTheLimit: held.length > 0, outcome });
+      `;
+      await using proc = spawn({
+        cmd: ["sh", "-c", 'ulimit -n 64 && exec "$@"', "sh", bunExe(), "-e", fixture],
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const line = (stdout + "\n" + stderr).match(/^REPORT (.*)$/m)?.[1];
+      expect({ report: line ? JSON.parse(line) : { stdout, stderr }, exitCode }).toEqual({
+        report: { atTheLimit: true, outcome: "exit 0" },
+        exitCode: 0,
+      });
+    },
+  );
+
+  // On Linux a Blob, string or buffer stdin travels in a memfd. It is created before the socketpairs.
+  describe.each(["spawn", "spawnSync"])("a Blob stdin with Bun.%s", method => {
+    // The first spawnSync of a process creates its event loop in usockets, and those descriptors
+    // still take the lowest free number (#43844). Create the loop before the fd is closed.
+    const setup = method === "spawnSync" ? `Bun.spawnSync({ cmd: ["true"], stdio: [nul, nul, nul] });` : "";
+    // spawnSync returns buffers and the exit code. Bun.spawn returns streams and a promise.
+    const collect =
+      method === "spawnSync"
+        ? `[proc.stdout?.toString(), proc.stderr?.toString(), proc.exitCode]`
+        : `await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited])`;
+
+    it.concurrent("leaves the closed fd 1 closed", async () => {
+      const result = await run(`
+        ${setup}
+        fs.closeSync(1);
+        const proc = Bun.${method}({ cmd: ["cat"], stdin: new Blob(["hi"]), stdout: "pipe", stderr: "pipe" });
+        const during = at(1);
+        const [stdout, stderr, exitCode] = ${collect};
+        report(2, { during, stdout, stderr, exitCode, after: at(1) });
+      `);
+      expect(result).toEqual({
+        report: { during: "closed", stdout: "hi", stderr: "", exitCode: 0, after: "closed" },
+        exitCode: 0,
+      });
+    });
+
+    it.concurrent("a bun child that inherits the closed fd 1 sees /dev/null, not the stdin memfd", async () => {
+      // The child reports its own stdio to fd 2.
+      const child = `
+        const fs = require("node:fs");
+        const devNull = fs.statSync("/dev/null").rdev;
+        const stdout = fs.fstatSync(1);
+        const stdoutIsDevNull = stdout.isCharacterDevice() && stdout.rdev === devNull;
+        fs.writeSync(2, "REPORT " + JSON.stringify({ stdin: fs.readFileSync(0, "utf8"), stdoutIsDevNull }) + "\\n");
+      `;
+      const result = await run(`
+        ${setup}
+        fs.closeSync(1);
+        const proc = Bun.${method}({
+          cmd: [process.execPath, "-e", ${JSON.stringify(child)}],
+          stdin: new Blob(["hi"]),
+          stdout: "inherit",
+          stderr: "inherit",
+        });
+        process.exitCode = ${method === "spawnSync" ? "proc.exitCode" : "await proc.exited"};
+      `);
+      expect(result).toEqual({ report: { stdin: "hi", stdoutIsDevNull: true }, exitCode: 0 });
+    });
+  });
 });

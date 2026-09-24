@@ -285,7 +285,8 @@ pub mod options {
         #[strum(serialize = "bytecode-string-table")]
         BytecodeStringTable,
         /// `--compile --bytecode` with a payload order file: the one payload holding every chunk's bytecode
-        /// (`bytecode_order::LinkedPayload`). Each chunk's `Bytecode` file is then just its cache-entry offset in it.
+        /// (`bytecode_order::LinkedPayload`). Each chunk's `Bytecode` file then has no bytes, and says where its cache entry is
+        /// in it (`OutputFile::bytecode_entry_offset`).
         #[strum(serialize = "bytecode-payload")]
         BytecodePayload,
         /// The string table every chunk's `ModuleInfo` body indexes (`ModuleInfoStringTable::serialize`).

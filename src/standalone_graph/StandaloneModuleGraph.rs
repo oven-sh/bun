@@ -1583,8 +1583,8 @@ pub(crate) fn to_bytes(
         .count();
     let mut shared_bytecode: Option<(Vec<u8>, StringPointer, StringPointer, StringPointer)> = None;
     // Built with a payload order file: all modules' bytecode is one payload (`JSC::BytecodeLinkEncoder`), written
-    // right after the shared bytecode so that its hot front extends the startup run; each module's `Bytecode` file is
-    // its cache-entry offset in it.
+    // right after the shared bytecode so that its hot front extends the startup run; each module's `Bytecode` file says
+    // where its cache entry is in it (`bytecode_entry_offset`).
     let linked_payload: Option<(&[u8], [u32; bun_bundler::bytecode_order::REGION_COUNT])> =
         output_files
             .iter()
@@ -1652,17 +1652,15 @@ pub(crate) fn to_bytes(
                 //   RW PT_LOAD (see exe_format/elf.rs) at a page-aligned address, also
                 //   preceded by the same 8-byte length header, so the same arithmetic
                 //   applies.
-                let bytecode = output_files[output_file.bytecode_index as usize]
-                    .value
-                    .as_slice();
+                let bytecode = &output_files[output_file.bytecode_index as usize];
                 if linked_payload.is_some() {
                     // The cache-entry offset for now; made a range of the payload once that is placed (below).
                     break 'brk StringPointer {
-                        offset: u32::from_le_bytes(bytecode.try_into().expect("an entry offset")),
+                        offset: bytecode.bytecode_entry_offset,
                         length: 1,
                     };
                 }
-                break 'brk append_bytecode_aligned(&mut string_builder, bytecode);
+                break 'brk append_bytecode_aligned(&mut string_builder, bytecode.value.as_slice());
             } else {
                 break 'brk StringPointer::default();
             }
@@ -3273,7 +3271,7 @@ fn append_shared_bytecode(
         let pointer = if linked {
             // The cache-entry offset for now; `to_bytes` makes it a range of the payload once that is placed.
             StringPointer {
-                offset: u32::from_le_bytes(bytes[..].try_into().expect("an entry offset")),
+                offset: output_file.bytecode_entry_offset,
                 length: 0,
             }
         } else {

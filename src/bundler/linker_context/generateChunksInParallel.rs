@@ -1118,10 +1118,10 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             ))
                         };
 
-                        // With a payload order file the file holds the chunk's cache-entry offset in the link's one
-                        // payload, filled in once that is encoded (below).
+                        // With a payload order file the chunk's code is in the link's one payload, and the file says
+                        // where (`bytecode_entry_offset`) once that is encoded (below).
                         let bytecode = if bytecode_order.is_some() {
-                            Some(Box::<[u8]>::from(0u32.to_le_bytes()))
+                            Some(Box::default())
                         } else {
                             crate::bundle_v2::dispatch::generate_cached_bytecode(
                                 c.options.output_format,
@@ -1566,12 +1566,10 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 // `encoded` holds positions in the output file list (`insert_for_sourcemap_or_bytecode`), which `result`
                 // still is: a chunk's own file comes first, at the chunk's index, its `Bytecode` file after all of those.
                 for (&bytecode_file, entry_offset) in encoded.iter().zip(entry_offsets) {
-                    let file = result
+                    result
                         .get_mut(bytecode_file as usize)
-                        .expect("a Bytecode output file of this link");
-                    file.value = options::OutputFileValue::Buffer {
-                        bytes: Box::from(entry_offset.to_le_bytes()),
-                    };
+                        .expect("a Bytecode output file of this link")
+                        .bytecode_entry_offset = entry_offset;
                 }
                 linked_bytecode_payload =
                     Some(crate::bytecode_order::payload_file(payload, region_ends));
@@ -1787,8 +1785,8 @@ fn append_internal_module_bytecode(
     c: &mut LinkerContext,
     output_files: &mut Vec<options::OutputFile>,
     external_strings: Option<core::ptr::NonNull<crate::bundle_v2::dispatch::EncoderStringTable>>,
-    // With an order file the internal modules are more modules of the link's one payload, and their output files
-    // cache-entry offsets like the chunks'.
+    // With an order file the internal modules are more modules of the link's one payload, and their output files say
+    // where in it, like the chunks'.
     mut linked_bytecode: Option<&mut LinkedBytecode>,
     (wanted, builtins): (Vec<u32>, bun_exe_format::builtins::Builtins<'_>),
 ) {
@@ -1828,7 +1826,7 @@ fn append_internal_module_bytecode(
                         );
                     }
                     linked.output_files.push(output_files.len() as u32);
-                    Box::<[u8]>::from(0u32.to_le_bytes())
+                    Box::default()
                 })
         } else {
             match target_section {

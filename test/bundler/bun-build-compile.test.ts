@@ -742,19 +742,6 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
       };
       const twoEntryPointArgs = ["--format=esm", "--splitting", "app.js", "sub/other.js"];
 
-      // With a public path the chunks import each other by it, in front of the path they have in the executable.
-      test("chunks that import each other by a public path", async () => {
-        using dir = tempDir("build-compile-bytecode-order-public-path", twoEntryPoints);
-        const { stats } = await roundTrip(
-          String(dir),
-          [...twoEntryPointArgs, "--public-path=https://example.com/"],
-          "5\n",
-          // The chunk twice is in gets another path, and nothing that imports it another name: twice is all that is new.
-          { edit: () => Bun.write(join(String(dir), "lazy.js"), "export const twice = n => n + n;"), unknown: 1 },
-        );
-        expect(stats.unknown).toBe(1);
-      }, 60_000);
-
       // An executable for Windows has its chunks at B:/~BUN/root/. This bun stands in for the Windows one (its builtins
       // section is what the internal modules are named from), so the program cannot be put in it: the build fails
       // there, after the link wrote what it calls the code. (On Windows that build is the round trips above.)

@@ -526,7 +526,7 @@ impl HeldBody {
             return Ok(true);
         }
         let input = &self.input[self.consumed..];
-        log!("Decompressing {} bytes\n", input.len());
+        log!("Decompressing {} bytes of a held body\n", input.len());
         self.consumed +=
             self.decompressor
                 .decompress_chunk(self.encoding, input, out, max_output, true)?;

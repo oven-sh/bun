@@ -1035,6 +1035,44 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
     });
   });
 
+  // A pass over a held body is a work-pool job, and it logs "... of a held body". A rest that
+  // is short is not worth one: the HTTP thread decodes it with the last of the body.
+  test.skipIf(!isDebug).each([
+    ["a short rest ends on the HTTP thread", MARK + 32 * 1024, false],
+    ["a long rest goes to its consumer", 4 * MARK, true],
+  ])("%s", async (_, size, held) => {
+    const body = brotliCompressSync(Buffer.alloc(size, "alpha beta gamma delta lorem ipsum "));
+    const reply = Buffer.concat([
+      Buffer.from(`HTTP/1.1 200 OK\r\nContent-Encoding: br\r\nContent-Length: ${body.length}\r\n\r\n`),
+      body,
+    ]);
+    const srv = createTcpServer(socket => {
+      socket.on("error", () => {});
+      socket.on("data", () => socket.write(reply));
+    });
+    await using server = await listening(srv);
+    const script = /* js */ `
+      const res = await fetch(${JSON.stringify(`http://127.0.0.1:${server.port}/`)});
+      let total = 0;
+      for await (const chunk of res.body) total += chunk.byteLength;
+      console.log("RESULT", total);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...clientEnv, BUN_DEBUG_HTTPInternalState: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Output.scoped writes to whichever stream it chose at init; scan both.
+    const output = stdout + stderr;
+    expect({
+      result: output.match(/RESULT .*/g),
+      held: /Decompressing \d+ bytes of a held body/.test(output),
+    }).toEqual({ result: [`RESULT ${size}`], held });
+    expect(exitCode).toBe(0);
+  });
+
   // A gzip body that arrives whole, and whose trailer says it inflates to between 512 KB and
   // 32 MB, is worth one exact-size libdeflate call instead of zlib passes. A reader's budget rules
   // that call out, and such a body is usually here before anyone has said how the Response is

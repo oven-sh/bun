@@ -4119,12 +4119,21 @@ impl<'a> HTTPClient<'a> {
     /// Output budget of one decode pass. None for the last of a body that has no `HeldBody` taker.
     #[inline]
     fn decompress_output_cap(&self, is_final_chunk: bool) -> usize {
-        if self.decodes_on_demand() && (self.flags.takes_held_body || !is_final_chunk) {
-            signals::BODY_HIGH_WATER_MARK
+        if !self.decodes_on_demand() {
+            return usize::MAX;
+        }
+        if !is_final_chunk {
+            return signals::BODY_HIGH_WATER_MARK;
+        }
+        if self.flags.takes_held_body {
+            signals::BODY_HIGH_WATER_MARK + Self::HELD_BODY_MIN
         } else {
             usize::MAX
         }
     }
+
+    /// A rest that decodes to less than this ends on the HTTP thread: it is not worth a work-pool job.
+    const HELD_BODY_MIN: usize = 64 * 1024;
 
     /// Decodes what has arrived under the consumer's budget. Returns whether to report bytes.
     fn process_received_body(&mut self, is_final_chunk: bool) -> crate::Result<bool> {
@@ -4136,19 +4145,22 @@ impl<'a> HTTPClient<'a> {
                 return Ok(false);
             }
             if max_output != usize::MAX {
-                // Nothing is decoded for a paused consumer (a tunnelled socket keeps reading anyway).
-                if self.signals.is_receive_paused() {
-                    self.state.flags.decompress_output_pending = true;
-                    return Ok(false);
-                }
-                // A body that one libdeflate call can inflate goes whole to its consumer.
+                let paused = self.signals.is_receive_paused();
                 if is_final_chunk && self.state.wants_exact_size_inflate() {
-                    if self.signals.is_body_unclaimed() {
+                    // A body that one libdeflate call can inflate goes whole to its consumer.
+                    if paused || self.signals.is_body_unclaimed() {
                         self.state.flags.decompress_output_pending = true;
                         return Ok(false);
                     }
                     // A consumer attached after the cap was read.
                     max_output = self.decompress_output_cap(is_final_chunk);
+                } else if paused {
+                    // Nothing is decoded for a paused consumer (a tunnelled socket keeps reading anyway).
+                    if !is_final_chunk {
+                        self.state.flags.decompress_output_pending = true;
+                        return Ok(false);
+                    }
+                    max_output = Self::HELD_BODY_MIN;
                 }
             }
         }

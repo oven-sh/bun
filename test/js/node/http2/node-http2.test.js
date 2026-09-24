@@ -5759,6 +5759,15 @@ describe("Http2Session.setLocalWindowSize()", () => {
   const WINDOW = 1 << 24;
   const DEFAULT_WINDOW = http2.getDefaultSettings().initialWindowSize;
 
+  // Resolves on `event`, and rejects when the session fails or closes first.
+  function ready(session, event) {
+    return new Promise((resolve, reject) => {
+      session.once(event, resolve);
+      session.once("error", reject);
+      session.once("close", () => reject(new Error(`the session closed before '${event}'`)));
+    });
+  }
+
   // One GET over a fresh client. Reports session.state right after `prepare` and again from
   // inside the 'end' handler, where the engine is still in the middle of a read batch.
   async function download(bodySize, prepare, { idleEngine = false } = {}) {
@@ -5768,7 +5777,7 @@ describe("Http2Session.setLocalWindowSize()", () => {
     try {
       const { promise, resolve, reject } = Promise.withResolvers();
       client.on("error", reject);
-      await new Promise(r => client.once(idleEngine ? "remoteSettings" : "connect", r));
+      await ready(client, idleEngine ? "remoteSettings" : "connect");
       // One turn after 'remoteSettings' the engine exists and no read holds it.
       if (idleEngine) await new Promise(r => setImmediate(r));
       prepare?.(client);
@@ -5955,7 +5964,7 @@ describe("Http2Session.setLocalWindowSize()", () => {
       const client = http2.connect("http://localhost", { createConnection: () => transport });
       client.on("error", err => (result.error = err.code));
       client.on("close", () => resolve(result));
-      await new Promise(r => client.once("connect", r));
+      await ready(client, "connect");
       await new Promise(r => setImmediate(r));
       let open = 2;
       // A backslash has no short Huffman code, so each one is one byte of the HEADERS frame.
@@ -6030,8 +6039,11 @@ describe("Http2Session.setLocalWindowSize()", () => {
     const client = http2.connect("http://localhost", { createConnection: () => transport });
     try {
       const { promise, resolve, reject } = Promise.withResolvers();
-      other.on("error", reject);
-      client.on("error", reject);
+      for (const fail of [reject, sawRequest.reject]) {
+        other.on("error", fail);
+        client.on("error", fail);
+        client.on("close", () => fail(new Error("the session closed early")));
+      }
       const req = client.request({ ":path": "/" });
       req.on("error", reject);
       let received = 0;

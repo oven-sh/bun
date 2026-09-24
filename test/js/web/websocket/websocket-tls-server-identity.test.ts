@@ -4,6 +4,7 @@ import { bunEnv, bunExe, nodeExe, tls as tlsCerts } from "harness";
 import { createHash, X509Certificate } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import tls from "node:tls";
+import { WebSocket as WsPackageWebSocket } from "ws";
 import { clientEvents, startRecordingProxy } from "./proxy-test-utils";
 
 // NO_PROXY applies to explicit proxies too. An ambient
@@ -636,6 +637,28 @@ describe.concurrent("WebSocket tls.checkServerIdentity", () => {
     expect(await openSession(ws)).toEqual(opened);
     expect(calls).toEqual(["localhost"]);
     expect(proxy.requests).toHaveLength(1);
+  });
+
+  // The `ws` package passes its `tls` object to the native client as it is.
+  test("applies through the ws package, with tls.serverName", async () => {
+    using server = startSniServer();
+    const calls: string[] = [];
+    const ws = new WsPackageWebSocket(`wss://127.0.0.1:${await server.port}/`, {
+      tls: {
+        ca: tlsCerts.cert,
+        serverName: "localhost",
+        checkServerIdentity(hostname: string) {
+          calls.push(hostname);
+          return new Error("PIN-REJECT");
+        },
+      },
+    });
+    const outcome = await new Promise<string>(resolve => {
+      ws.on("open", () => resolve("open"));
+      ws.on("error", () => resolve("error"));
+    });
+    expect({ outcome, calls, sni: server.sni }).toEqual({ outcome: "error", calls: ["localhost"], sni: ["localhost"] });
+    expect(await server.receivedInTotal()).toBe("");
   });
 });
 

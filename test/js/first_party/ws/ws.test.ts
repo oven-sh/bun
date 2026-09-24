@@ -3,7 +3,7 @@ import { spawn } from "bun";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import crypto from "crypto";
 import { EventEmitter, once } from "events";
-import { bunEnv, bunExe, isDebug, tls as tlsCerts } from "harness";
+import { bunEnv, bunExe, isDebug } from "harness";
 import { createServer, request } from "http";
 import { AddressInfo, connect } from "net";
 import path from "node:path";
@@ -1561,37 +1561,6 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
       "server.handleUpgrade() was called more than once with the same socket, possibly due to a misconfiguration",
     );
     expect(connections).toHaveLength(1);
-  });
-});
-
-describe("tls option", () => {
-  // The object goes to the native client as it is, so its callback and its server name apply.
-  it("passes tls.serverName and tls.checkServerIdentity to the connection", async () => {
-    using server = Bun.serve({
-      port: 0,
-      tls: tlsCerts,
-      fetch(req, server) {
-        if (server.upgrade(req)) return;
-        return new Response(null, { status: 400 });
-      },
-      websocket: { message() {} },
-    });
-    const calls: string[] = [];
-    const ws = new WebSocket(`wss://127.0.0.1:${server.port}`, {
-      tls: {
-        ca: tlsCerts.cert,
-        serverName: "localhost",
-        checkServerIdentity(hostname: string) {
-          calls.push(hostname);
-          return new Error("PIN-REJECT");
-        },
-      },
-    });
-    const outcome = await new Promise<string>(resolve => {
-      ws.on("open", () => resolve("open"));
-      ws.on("error", () => resolve("error"));
-    });
-    expect({ outcome, calls }).toEqual({ outcome: "error", calls: ["localhost"] });
   });
 });
 

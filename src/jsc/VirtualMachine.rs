@@ -7258,8 +7258,8 @@ impl VirtualMachine {
         // A `BuildMessage` keeps its file, line and excerpt in the value, not in the message line.
         let is_build_message = thrown.js_type() == jsc::JSType::DOMWrapper
             && thrown.as_class_ref::<crate::BuildMessage>().is_some();
-        // `instanceof Error` (util.inherits, a DOMException, a ResolveMessage): name and message say it all.
-        if thrown.has_error_prototype() && !is_build_message {
+        // Not shown: `instanceof Error` (util.inherits, DOMException, ResolveMessage), or a chain too long to tell.
+        if thrown.has_error_prototype() != Some(false) && !is_build_message {
             return None;
         }
         Some(thrown)

@@ -141,15 +141,24 @@ switch (entryPoint) {
   case "queueMicrotask": queueMicrotask(thrower); break;
 }
 `;
-  const files = { "fixture.js": fixture, "syntax-error.js": "const ok = 1;\nconst broken = ;\n" };
+  const files = {
+    "fixture.js": fixture,
+    "syntax-error.js": "const ok = 1;\nconst broken = ;\n",
+    "proxy-chain.js": `let value = { why: "details the user needs" };
+for (let i = 0; i < 1000; i++) value = new Proxy(value, {});
+setTimeout(function thrower() {
+  throw value;
+}, 1);
+`,
+  };
 
   // Debug builds show builtin frames unless told otherwise.
   const env = { BUN_JSC_showPrivateScriptsInStackTraces: "0" };
 
   // The report without the columns (a property of the transpiled module, not of the printer), the frames
   // below the throwing function (they differ per entry point) and the trailer that names the build.
-  async function report(dir: string, entryPoint: string, kind: string) {
-    const { stdout, stderr, exitCode } = await bunRun([join(dir, "fixture.js"), entryPoint, kind], env);
+  async function report(dir: string, entryPoint: string, kind: string, file = "fixture.js") {
+    const { stdout, stderr, exitCode } = await bunRun([join(dir, file), entryPoint, kind], env);
     const output = stderr
       .replaceAll("\\", "/")
       .replaceAll(dir.replaceAll("\\", "/"), "<dir>")
@@ -261,6 +270,21 @@ switch (entryPoint) {
             at thrower (<dir>/fixture.js:20:<col>)"
     `);
     expect([proxyOfError.exitCode, proxyOfObject.exitCode]).toEqual([1, 1]);
+  });
+
+  test.concurrent("a Proxy chain too long to classify is not shown", async () => {
+    using dir = tempDir("thrown-object", files);
+    const { output, exitCode } = await report(String(dir), "setTimeout", "", "proxy-chain.js");
+    expect(output).toMatchInlineSnapshot(`
+      "1 | let value = { why: "details the user needs" };
+      2 | for (let i = 0; i < 1000; i++) value = new Proxy(value, {});
+      3 | setTimeout(function thrower() {
+      4 |   throw value;
+      ^
+      error
+            at thrower (<dir>/proxy-chain.js:4:<col>)"
+    `);
+    expect(exitCode).toBe(1);
   });
 
   test.concurrent("a string, an Error, a ResolveMessage and a DOMException are still printed once", async () => {

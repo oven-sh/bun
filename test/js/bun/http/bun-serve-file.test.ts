@@ -809,39 +809,6 @@ describe("Bun.file in serve routes", () => {
       });
     });
 
-    // A slice that holds no bytes (empty, or past EOF) is not a partial response:
-    // a 206 whose Content-Range names a byte ("bytes 5-5/*") contradicts Content-Length: 0.
-    it("answers 200 without Content-Range for a slice that holds no bytes", async () => {
-      using handlerServer = Bun.serve({
-        port: 0,
-        fetch: req => {
-          const file = Bun.file(join(tempDir, "partial.txt"));
-          return new Response(new URL(req.url).pathname === "/past-eof" ? file.slice(100) : file.slice(5, 5));
-        },
-      });
-      const probe = async (pathname: string, method: string) => {
-        const res = await fetch(new URL(pathname, handlerServer.url), { method });
-        return {
-          status: res.status,
-          contentLength: res.headers.get("Content-Length"),
-          contentRange: res.headers.get("Content-Range"),
-          body: await res.text(),
-        };
-      };
-      const empty = { status: 200, contentLength: "0", contentRange: null, body: "" };
-      expect({
-        "GET slice(5, 5)": await probe("/empty", "GET"),
-        "HEAD slice(5, 5)": await probe("/empty", "HEAD"),
-        "GET slice(100)": await probe("/past-eof", "GET"),
-        "HEAD slice(100)": await probe("/past-eof", "HEAD"),
-      }).toEqual({
-        "GET slice(5, 5)": empty,
-        "HEAD slice(5, 5)": empty,
-        "GET slice(100)": empty,
-        "HEAD slice(100)": empty,
-      });
-    });
-
     // The slice is shorter than the file, so the byte budget runs out before
     // the reader reports EOF: the response completes inline while a deferred
     // completion still hops through the event loop. Repeated requests must

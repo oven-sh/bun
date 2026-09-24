@@ -394,11 +394,8 @@ function endNT(socket, callback, self) {
     callback();
     return;
   }
-  // The transport still holds the shutdown (a wrapped Duplex whose _write has
-  // not completed the close_notify). The drain that reports it taken runs the
-  // callback, like Node's JSStreamSocket waits for stream.end(cb) before it
-  // finishes the shutdown request. Unlike a parked write, a close completes
-  // it with no error: Node's afterShutdown ignores the status.
+  // A wrapped Duplex still holds the close_notify: the drain completes the
+  // callback, a close completes it with no error (Node's afterShutdown).
   self[kshutdownCallback] = callback;
 }
 function completeShutdown(self, socket) {
@@ -431,8 +428,7 @@ function destroyNT(self, err) {
 // Node's wrap 'close' -> destroy(): https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L739-L741
 function onUpgradedClose(self, connection) {
   if (self[kupgraded] !== connection) return;
-  // A shutdown the transport never completed ends here, with no error, before
-  // the destroy: node's doClose cancels it and afterShutdown ignores that.
+  // Before the destroy, so _final still finishes (Node: doClose -> ECANCELED, ignored).
   completeShutdown(self, null);
   // The stream-level engine reads its transport with no backpressure, so the
   // transport can close after the peer's EOF with plaintext still unread.

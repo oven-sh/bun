@@ -44,13 +44,9 @@ pub(crate) struct UpgradedDuplex {
     pub on_end_callback: Cell<JSValue>,
     pub on_writable_callback: Cell<JSValue>,
     pub on_close_callback: Cell<JSValue>,
-    /// The callback handed to every `duplex.write(chunk, cb)` and the trailing
-    /// `duplex.end(null, cb)`. One function per socket, rooted in the
-    /// wrapper's `duplexOnWriteDone` slot.
+    /// Passed as `cb` to every `duplex.write(chunk, cb)` / `duplex.end(null, cb)`.
     pub on_write_done_callback: Cell<JSValue>,
-    /// Transport writes (and the end) whose callback has not run yet. The
-    /// socket's own write and end callbacks wait for this to reach zero,
-    /// which is when node's JSStreamSocket completes its write request.
+    /// Transport writes whose `cb` has not run yet. Zero means the Duplex took everything.
     pub in_flight: Cell<u32>,
     pub event_loop_timer: JsCell<EventLoopTimer>,
     pub current_timeout: Cell<u32>,
@@ -280,12 +276,10 @@ impl UpgradedDuplex {
         payload.ensure_still_alive();
 
         let done = self.write_done_handler(&global);
-        // Counted before the call: a Duplex whose `_write` completes
-        // synchronously still runs the callback on a later tick, but one
-        // that reports an error can run it inside the call.
+        // Before the call: an erroring Duplex can run `done` inside it.
         self.in_flight.set(self.in_flight.get() + 1);
         if let Err(err) = write_or_end.call(&global, duplex, &[payload, done]) {
-            // Thrown before the stream took the chunk, so no callback comes.
+            // A throw means the stream never took the chunk: no callback comes.
             self.in_flight.set(self.in_flight.get().saturating_sub(1));
             (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
         }
@@ -302,9 +296,7 @@ impl UpgradedDuplex {
         )
     }
 
-    /// The Duplex has accepted every byte handed to it: nothing is waiting on
-    /// a write callback. An fd transport is always idle; only a JS stream can
-    /// hold a chunk without completing it.
+    /// No `duplex.write()` callback is outstanding.
     #[uws_callback(export = "UpgradedDuplex__transport_idle", no_catch)]
     pub(crate) fn transport_idle(&self) -> bool {
         self.in_flight.get() == 0
@@ -811,17 +803,11 @@ fn on_writable(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>
     Ok(JSValue::UNDEFINED)
 }
 
-/// The Duplex completed one `write(chunk, cb)` or its `end(null, cb)`. The
-/// last completion is the drain a parked write or end callback waits for.
-///
-/// An error fails the socket with `write EPIPE`, as node's JSStreamSocket
-/// `done()` fails the TLS write request. The Writable runs this callback
-/// before its own `errorOrDestroy`, so the dispatch goes through a
-/// nextTick (this same function, called with the socket wrapper as its
-/// argument): a synchronous dispatch destroys the stream from under it and
-/// swallows the stream's own 'error'. Once close_notify went out, the chunks
-/// still in flight belong to the shutdown, whose status node ignores
-/// (`afterShutdown`), so their error only counts as a completion.
+/// `cb` of one `duplex.write()` / `duplex.end()`; the last one is the drain.
+/// An error becomes `write EPIPE` on the next tick, via this function called
+/// again with the socket wrapper as `err`: the Writable runs `cb` before its
+/// own `errorOrDestroy`, so a synchronous dispatch swallows the stream's 'error'.
+/// After close_notify the status is ignored (node's `afterShutdown`).
 #[bun_jsc::host_fn]
 fn on_write_done(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     bun_output::scoped_log!(UpgradedDuplex, "onWriteDone");

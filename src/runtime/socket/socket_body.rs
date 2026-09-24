@@ -2632,10 +2632,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         )
     }
 
-    /// A write or end is complete for JS only once the transport accepted
-    /// every byte: `false` parks the callback in node:net until the drain
-    /// that `UpgradedDuplex::on_write_done` fires. Only a TLS socket can run
-    /// over a JS Duplex, so a plain socket never asks.
+    /// `false` parks the node:net callback until `UpgradedDuplex::on_write_done` drains.
     #[inline]
     fn flushed_to_transport(&self) -> bool {
         !SSL || self.socket.get().transport_idle()
@@ -3199,9 +3196,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             this.socket.get().shutdown();
         }
 
-        // `true` when the transport took the shutdown (node's handle.shutdown
-        // returning 1: done now). `false` means a drain completes it, the
-        // same contract as a `$write` that returns false.
+        // `false`: a drain completes it, like a `$write` that returns false.
         Ok(JSValue::from(this.flushed_to_transport()))
     }
 

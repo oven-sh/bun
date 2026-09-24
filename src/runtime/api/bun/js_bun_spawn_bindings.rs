@@ -1755,7 +1755,10 @@ fn spawn_maybe_sync(
         #[cfg(not(windows))] // Windows adopts the pipe at create and start() cannot fail there.
         subprocess.on_close_io(Subprocess::StdioKind::Stdin);
         let _ = subprocess.try_kill(subprocess.kill_signal);
-        return Err(cx.global().throw_value(err.to_js(cx.global())));
+        // A failed watch ends the spawn in the arm below.
+        if watch_err.is_none() {
+            return Err(cx.global().throw_value(err.to_js(cx.global())));
+        }
     }
     if let Some(err) = watch_err {
         // JS never gets this Subprocess: drop its callbacks, then deliver the exit before the throw to release it.

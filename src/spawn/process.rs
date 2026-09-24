@@ -186,12 +186,6 @@ impl ProcessHandle {
         self.process_mut().watch_or_reap()
     }
 
-    /// See [`Process::on_exit`]; runs the exit handler (same rule as
-    /// [`watch_or_reap`](Self::watch_or_reap)).
-    pub fn on_exit(&self, status: Status, rusage: &Rusage) {
-        self.process_mut().on_exit(status, rusage)
-    }
-
     /// See [`Process::on_watch_failed`]; it runs the exit handler.
     pub fn on_watch_failed(&self, err: bun_sys::Error) {
         self.process_mut().on_watch_failed(err)
@@ -412,22 +406,22 @@ impl Process {
 
     /// `Ok(true)`: the exit handler ran. `Err`: it never will, see [`on_watch_failed`](Self::on_watch_failed).
     pub fn watch_or_reap(&mut self) -> bun_sys::Result<bool> {
-        self.watch_or_reap_impl::<true>()
+        self.watch_or_reap_with(true)
     }
 
     /// For spawnSync, which blocks in `wait(true)` on `Err`: an unwatchable child is left running.
     pub fn watch_or_reap_leave_running(&mut self) -> bun_sys::Result<bool> {
-        self.watch_or_reap_impl::<false>()
+        self.watch_or_reap_with(false)
     }
 
-    fn watch_or_reap_impl<const KILL_UNWATCHABLE: bool>(&mut self) -> bun_sys::Result<bool> {
+    fn watch_or_reap_with(&mut self, kill_unwatchable: bool) -> bun_sys::Result<bool> {
         if self.has_exited() {
             let zeroed = rusage_zeroed();
             self.on_exit(self.status.clone(), &zeroed);
             return Ok(true);
         }
 
-        match self.watch_impl::<KILL_UNWATCHABLE>() {
+        match self.watch_with(kill_unwatchable) {
             Err(err) => {
                 #[cfg(unix)]
                 if err.get_errno() == bun_sys::E::ESRCH {
@@ -466,10 +460,14 @@ impl Process {
 
     /// On Linux an `Err` other than `ESRCH` describes a killed and reaped child (kqueue: it can still run).
     pub fn watch(&mut self) -> bun_sys::Result<()> {
-        self.watch_impl::<true>()
+        self.watch_with(true)
     }
 
-    fn watch_impl<const KILL_UNWATCHABLE: bool>(&mut self) -> bun_sys::Result<()> {
+    #[cfg_attr(
+        not(any(target_os = "linux", target_os = "android")),
+        allow(unused_variables)
+    )]
+    fn watch_with(&mut self, kill_unwatchable: bool) -> bun_sys::Result<()> {
         #[cfg(windows)]
         {
             if let Poller::Uv(p) = &mut self.poller {
@@ -539,7 +537,7 @@ impl Process {
                     unsafe { (*poll).disable_keeping_process_alive(ctx) };
                     // Linux only: on XNU a pty session leader is not reapable until this thread drains the pty master.
                     #[cfg(any(target_os = "linux", target_os = "android"))]
-                    if KILL_UNWATCHABLE && err.get_errno() != bun_sys::E::ESRCH {
+                    if kill_unwatchable && err.get_errno() != bun_sys::E::ESRCH {
                         return Err(self.kill_and_reap_unwatchable(err));
                     }
                     Err(err)

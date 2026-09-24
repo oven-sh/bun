@@ -314,6 +314,17 @@ try {
         },
       });
       break;
+    case "spawn-buffer":
+      Bun.spawn({
+        cmd: ["sleep", "100"],
+        stdin: Buffer.from("data"),
+        stdout: "ignore",
+        stderr: "ignore",
+        onExit() {
+          result = "onExit ran";
+        },
+      });
+      break;
     case "spawn-many": {
       let thrown = 0;
       for (let i = 0; i < 100; i++) {
@@ -369,7 +380,7 @@ try {
   error = { code: e.code, message: e.message, syscall: e.syscall };
 }
 const report = { error, result, children: children() };
-if (["spawn-ignore", "spawn-pipe", "spawn-many", "child-process", "fork"].includes(kind)) {
+if (["spawn-ignore", "spawn-pipe", "spawn-buffer", "spawn-many", "child-process", "fork"].includes(kind)) {
   const deadline = performance.now() + 2000;
   while ((openFds() > fdBaseline || wrappers() > wrapperBaseline) && performance.now() < deadline) {
     Bun.gc(true);
@@ -510,16 +521,25 @@ describe.skipIf(!isLinux || !cc)("a Bun.Terminal whose writer fails to re-arm it
 // reaped. Now the child is killed and reaped on the spot and the spawn fails
 // with the registration error.
 describe.skipIf(!isLinux || !cc)("a child whose exit watch cannot be registered", () => {
-  const watch = (kind: string, mode = "pidfd-add") =>
+  const watch = (kind: string, mode = "pidfd-add", env: Record<string, string> = {}) =>
     runFixture(
       kind,
-      { FAIL_EPOLL_CTL: mode, FAIL_EPOLL_CTL_WHEN_EXISTS: join(String(dir), `armed-${kind}-${mode}`) },
+      { ...env, FAIL_EPOLL_CTL: mode, FAIL_EPOLL_CTL_WHEN_EXISTS: join(String(dir), `armed-${kind}-${mode}`) },
       "watch-fixture.js",
     );
   const ENOSPC = { code: "ENOSPC", message: "ENOSPC: no space left on device, epoll_ctl", syscall: "epoll_ctl" };
 
   test.concurrent.each(["spawn-ignore", "spawn-pipe"])("Bun.spawn (%s) throws and leaves no child", async kind => {
     expect(await watch(kind)).toEqual({
+      report: { error: ENOSPC, children: 0, leakedFds: 0, leakedWrappers: 0 },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The pipe writer of a buffer stdin (see above for the memfd flag) cannot register either.
+  test.concurrent("Bun.spawn whose stdin writer fails too runs no callback", async () => {
+    expect(await watch("spawn-buffer", "every-add", { BUN_FEATURE_FLAG_DISABLE_MEMFD: "1" })).toEqual({
       report: { error: ENOSPC, children: 0, leakedFds: 0, leakedWrappers: 0 },
       stderr: "",
       exitCode: 0,

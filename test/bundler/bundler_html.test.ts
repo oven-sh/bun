@@ -373,6 +373,7 @@ describe("bundler", () => {
     <img src="./%80.png">
     <img src="./s&#xD800;s.png">
     <img src="./caf&#128;.png">
+    <img src="./favicon.ico&#63;v=1">
     <img src="./h%23ash.png">
     <img src="./100%25.png">
     <img src="./dir%2Fphoto.png">
@@ -397,6 +398,7 @@ describe("bundler", () => {
         `Could not resolve: "./%80.png"`,
         `Could not resolve: "./s&#xD800;s.png"`,
         `Could not resolve: "./caf&#128;.png"`,
+        `Could not resolve: "./favicon.ico&#63;v=1"`,
         `Could not resolve: "./h%23ash.png"`,
         `Could not resolve: "./100%25.png"`,
         `Could not resolve: "./dir%2Fphoto.png"`,

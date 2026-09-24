@@ -107,16 +107,16 @@ fn char_ref(text: &[u8]) -> Option<(char, usize)> {
     Some((c, end + 1))
 }
 
-/// Index of the first of `delimiters` in an attribute value, written as itself or as a character reference. The `#` inside `&#38;` is not one.
+/// Index of the first of `delimiters` in an attribute value that is not part of a character reference, like the `#` of `&#38;`.
 pub(crate) fn index_of_delimiter(value: &[u8], delimiters: &[u8]) -> Option<usize> {
     let mut at = 0;
     while let Some(next) = strings::index_of_any(&value[at..], b"?#&") {
         at += next;
-        let (c, len) = char_ref(&value[at..]).unwrap_or_else(|| (char::from(value[at]), 1));
-        if c.is_ascii() && strings::contains_char(delimiters, c as u8) {
-            return Some(at);
+        match char_ref(&value[at..]) {
+            Some((_, len)) => at += len,
+            None if strings::contains_char(delimiters, value[at]) => return Some(at),
+            None => at += 1,
         }
-        at += len;
     }
     None
 }

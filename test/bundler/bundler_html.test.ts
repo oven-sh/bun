@@ -301,6 +301,107 @@ describe("bundler", () => {
     },
   });
 
+  // The emitted file that a rewritten src/href reaches: the attribute text as the
+  // HTML parser reads it, then the path as a static file server decodes it.
+  const servedFile = (api: { readFile(file: string): string }, attribute: string) =>
+    api.readFile("out" + decodeURIComponent(new URL(attribute.replaceAll("&amp;", "&"), "http://localhost/").pathname));
+
+  // A src/href value is HTML text that spells a URL. Its character references
+  // and the percent escapes of its path are decoded before the file is resolved.
+  itBundled("html/url-decoding", {
+    outdir: "out/",
+    files: {
+      "/index.html": `<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./a&amp;b.css">
+    <script src="./my%20script.js?v=1"></script>
+    <link rel="icon" href="./ic%C3%B6n.png">
+  </head>
+  <body>
+    <img src="./sprite&#x26;2.svg?v=3#home">
+    <img src="./my%20photo.jpg?w=100&amp;h=50">
+    <img src="./my%20photo.jpg?raw=1&x=2">
+    <img srcset="./ic%C3%B6n.png?a=1&amp;b=2 1x, ./sprite&amp;2.svg 2x">
+  </body>
+</html>`,
+      "/a&b.css": "body { color: red }",
+      "/my script.js": "console.log('my script')",
+      "/icön.png": "icon",
+      "/sprite&2.svg": "<svg></svg>",
+      "/my photo.jpg": "photo",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      const attributes = [...html.matchAll(/(?:src|href|srcset)="([^"]*)"/g)].map(m => m[1]);
+      // The page's own stylesheet and script are put back at the end of <head>.
+      const [icon, css, js, sprite, photo, rawPhoto, srcset] = attributes;
+      expect(servedFile(api, css)).toContain("color: red");
+      expect(servedFile(api, js)).toContain("my script");
+      expect(servedFile(api, icon)).toBe("icon");
+      expect(servedFile(api, sprite)).toBe("<svg></svg>");
+      expect(sprite).toEndWith("?v=3#home");
+      expect(servedFile(api, photo)).toBe("photo");
+      // The query is decoded with the rest of the value, so its "&" is written back as "&amp;".
+      expect(photo).toEndWith("?w=100&amp;h=50");
+      expect(rawPhoto).toEndWith("?raw=1&amp;x=2");
+      const candidates = srcset.split(", ").map(candidate => candidate.split(" "));
+      expect(candidates.map(([url, descriptor]) => [servedFile(api, url), descriptor])).toEqual([
+        ["icon", "1x"],
+        ["<svg></svg>", "2x"],
+      ]);
+      expect(candidates[0][0]).toEndWith("?a=1&amp;b=2");
+    },
+  });
+
+  // A path the decoder cannot turn into a file name is resolved as written, so
+  // the build fails with the text of the page: a malformed escape, bytes that
+  // are not UTF-8, a name that reads as a scheme, and an escape for a byte that
+  // the output URL cannot carry as itself. Each file below exists under its
+  // decoded name.
+  itBundled("html/url-decoding-keeps-unsafe-path-as-written", {
+    outdir: "out/",
+    files: {
+      "/index.html": `<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="icon" href="%PUBLIC_URL%/favicon.ico">
+  </head>
+  <body>
+    <img src="./caf%E9.png">
+    <img src="./%80.png">
+    <img src="./s&#xD800;s.png">
+    <img src="./h%23ash.png">
+    <img src="./100%25.png">
+    <img src="./dir%2Fphoto.png">
+    <img src="data%3Aphoto.png">
+    <img srcset="./my%20photo.png 2x">
+  </body>
+</html>`,
+      "/favicon.ico": "icon",
+      "/h#ash.png": "hash",
+      "/100%.png": "percent",
+      "/dir/photo.png": "slash",
+      "/my photo.png": "space",
+      ...(isWindows ? {} : { "/data:photo.png": "colon" }),
+    },
+    entryPoints: ["/index.html"],
+    bundleErrors: {
+      "/index.html": [
+        `Could not resolve: "%PUBLIC_URL%/favicon.ico"`,
+        `Could not resolve: "./caf%E9.png"`,
+        `Could not resolve: "./%80.png"`,
+        `Could not resolve: "./s\uFFFDs.png"`,
+        `Could not resolve: "./h%23ash.png"`,
+        `Could not resolve: "./100%25.png"`,
+        `Could not resolve: "./dir%2Fphoto.png"`,
+        `Could not resolve: "data%3Aphoto.png"`,
+        `Could not resolve: "./my%20photo.png"`,
+      ],
+    },
+  });
+
   // Test external assets preservation
   itBundled("html/external-assets", {
     outdir: "out/",

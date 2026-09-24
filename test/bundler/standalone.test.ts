@@ -352,6 +352,27 @@ body { color: blue; }`,
     expect(html).toContain('console.log("with image")');
   });
 
+  test("finds the #fragment of an inlined asset in the decoded URL", async () => {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg"><symbol id="icon"/></svg>`;
+    using dir = tempDir("compile-browser-decoded-fragment", {
+      // "&#38;" is "&". Its "#" belongs to the query, it does not start the fragment.
+      "index.html": `<!DOCTYPE html><html><body><img src="./my%20sprite.svg?a=1&#38;b=2#icon"></body></html>`,
+      "my sprite.svg": svg,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/index.html`],
+      compile: true,
+      target: "browser",
+    });
+
+    expect(result.success).toBe(true);
+    const html = await result.outputs[0].text();
+    expect(html.match(/<img src="([^"]*)"/)?.[1]).toBe(
+      "data:image/svg+xml;base64," + Buffer.from(svg).toString("base64") + "#icon",
+    );
+  });
+
   test("keeps #fragments on inlined assets and inlines every srcset candidate", async () => {
     const png = Buffer.from("89504e470d0a1a0a78", "hex");
     const svg = `<svg xmlns="http://www.w3.org/2000/svg"><symbol id="icon" viewBox="0 0 1 1"><path d="M0 0h1v1z"/></symbol></svg>`;

@@ -633,6 +633,8 @@ impl Stdio {
                             *self = Stdio::Path(path.clone());
                             return Ok(());
                         }
+                        // Any other slot refuses a pinned file below, as it refuses bytes.
+                        None if i != 0 => {}
                         None => {
                             let webcore::blob::Any::Blob(file_blob) = &blob else {
                                 unreachable!("only `Any::Blob` has a store")

@@ -87,7 +87,7 @@ pub(crate) fn sync_read_source(
     match file.source() {
         store::FileSource::Lazy(pathlike) => Ok((pathlike.clone(), VerifiedRead(None))),
         store::FileSource::Pinned(pinned) => {
-            let (fd, _) = pinned.open_verified(bun_sys::O::RDONLY)?;
+            let (fd, _) = pinned.open_verified(bun_sys::O::RDONLY | bun_sys::O::NOCTTY)?;
             Ok((
                 PathOrFileDescriptor::Fd(fd),
                 VerifiedRead(Some((pinned, fd))),

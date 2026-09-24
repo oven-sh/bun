@@ -498,6 +498,11 @@ describe.concurrent("fs.openAsBlob pins the file", () => {
     expect(() => blob.writer()).toThrow(refused);
     // @ts-expect-error
     expect(() => blob.unlink()).toThrow(refused);
+    for (const slot of ["stdout", "stderr"] as const) {
+      expect(() => Bun.spawn({ cmd: [bunExe(), "--version"], env: bunEnv, [slot]: blob })).toThrow(
+        "Blobs are immutable, and cannot be used for stdout/stderr",
+      );
+    }
     expect(readFileSync(file, "utf8")).toBe("hello");
   });
 

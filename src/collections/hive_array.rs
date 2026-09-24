@@ -799,12 +799,17 @@ impl<T, const CAP: usize> Drop for HiveRefHandle<T, CAP> {
 
 #[cfg(doctest)]
 #[doc = "
+```
+use bun_collections::hive_array::HiveBitSet;
+const _: HiveBitSet<2048> = HiveBitSet::init_empty();
+```
+
 ```compile_fail,E0080
 use bun_collections::hive_array::HiveBitSet;
-const _: HiveBitSet<{ usize::MAX }> = HiveBitSet::init_empty();
+const _: HiveBitSet<2049> = HiveBitSet::init_empty();
 ```
 "]
-mod oversize_capacity_fails_to_compile {}
+mod capacity_guard {}
 
 #[cfg(test)]
 mod tests {

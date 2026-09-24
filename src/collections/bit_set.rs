@@ -109,8 +109,8 @@ fn set_range_value_masks(masks: &mut [usize], range: Range, value: bool) {
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct IntegerBitSet<const SIZE: usize> {
-    /// The bit mask, as a single integer
-    pub mask: usize,
+    /// The bit mask, as a single integer. Private so that every value comes from `from_mask`.
+    mask: usize,
 }
 
 impl<const SIZE: usize> IntegerBitSet<SIZE> {
@@ -294,7 +294,7 @@ pub struct ArrayBitSet<
 > {
     /// The bit masks, ordered with lower indices first.
     /// Padding bits at the end are undefined.
-    pub(crate) masks: [usize; NUM_MASKS],
+    masks: [usize; NUM_MASKS],
 }
 
 impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS> {
@@ -1416,6 +1416,15 @@ pub struct Range {
 
 #[cfg(doctest)]
 #[doc = "
+```
+use bun_collections::IntegerBitSet;
+use bun_collections::bit_set::ArrayBitSet;
+const _: IntegerBitSet<64> = IntegerBitSet::init_empty();
+const _: IntegerBitSet<64> = IntegerBitSet::init_full();
+const _: ArrayBitSet<64, 1> = ArrayBitSet::init_empty();
+const _: ArrayBitSet<65, 2> = ArrayBitSet::init_empty();
+```
+
 ```compile_fail,E0080
 const _: bun_collections::IntegerBitSet<65> = bun_collections::IntegerBitSet::init_empty();
 ```
@@ -1428,5 +1437,14 @@ const _: bun_collections::IntegerBitSet<65> = bun_collections::IntegerBitSet::in
 use bun_collections::bit_set::ArrayBitSet;
 const _: ArrayBitSet<65, 1> = ArrayBitSet::init_empty();
 ```
+
+```compile_fail,E0080
+use bun_collections::bit_set::ArrayBitSet;
+const _: ArrayBitSet<64, 2> = ArrayBitSet::init_empty();
+```
+
+```compile_fail,E0451
+let _ = bun_collections::IntegerBitSet::<3> { mask: 0 };
+```
 "]
-mod size_guards_fail_to_compile {}
+mod size_guards {}

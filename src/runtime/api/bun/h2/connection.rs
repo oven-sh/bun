@@ -201,8 +201,7 @@ pub(crate) trait Sink {
     /// counter moves, while the connection is mutably borrowed — the embedder must only
     /// store the values.
     fn on_frame_counters(&self, _received: u64, _sent: u64) {}
-    /// The connection-level receive window moved (node's session.state window fields). Same
-    /// contract as `on_frame_counters`: only store the values.
+    /// The connection-level receive window moved. Same contract as `on_frame_counters`.
     fn on_recv_window(&self, _size: i64, _consumed: i64) {}
     /// Transition shim while the outbound path still flows through the embedder's legacy encoder:
     /// returns true if `stream_id` was initiated locally (HEADERS already sent by the embedder), so

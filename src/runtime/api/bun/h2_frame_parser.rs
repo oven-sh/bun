@@ -4557,15 +4557,10 @@ impl H2FrameParser {
         let window_size_value: u32 = window_size.to_u32();
         let old_window_size = this.window_size.get();
         this.window_size.set(window_size_value as u64);
-        // Only the connection window moves: SETTINGS_INITIAL_WINDOW_SIZE changes through a SETTINGS
-        // frame.
+        // Only the connection window moves. SETTINGS_INITIAL_WINDOW_SIZE needs a SETTINGS frame.
         if window_size_value as u64 > old_window_size {
             let increment: u32 = (window_size_value as u64 - old_window_size) as u32;
-            // Keep the rewrite engine's receive window in sync: we are about to advertise a
-            // larger window, so the engine must accept that much DATA without tripping its
-            // overflow check. try_borrow: setLocalWindowSize can be called from JS inside a
-            // dispatch (rewrite_read holds the engine borrow there); deferring the sync to the
-            // pending delta keeps that path panic-free.
+            // try_borrow: JS can call this inside a dispatch, where rewrite_read holds the borrow.
             match this.engine.try_borrow_mut() {
                 Ok(mut guard) => match guard.as_mut() {
                     Some(engine) => engine.grow_recv_window(this, increment as i64),
@@ -4583,8 +4578,7 @@ impl H2FrameParser {
                         .set(this.pending_recv_window_growth.get() + increment as i64);
                 }
             }
-            // Last: a JS transport can re-enter read() inside this write, and DATA sent against
-            // this WINDOW_UPDATE must find the engine window already grown.
+            // Last: a JS transport can re-enter read() inside this write with DATA for this credit.
             this.send_window_update(0, UInt31WithReserved::init(increment, false));
         }
         Ok(JSValue::UNDEFINED)
@@ -4620,8 +4614,7 @@ impl H2FrameParser {
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let result = JSValue::create_empty_object(global_object, 9);
-        // localWindowSize and effectiveRecvDataLength as nghttp2 reports them. Growth still
-        // queued for the engine is already on the wire.
+        // As nghttp2 reports them. Growth still queued for the engine is already on the wire.
         let advertised = this.recv_window_size.get() + this.pending_recv_window_growth.get();
         let consumed = this.recv_window_consumed.get().max(0);
         result.put(

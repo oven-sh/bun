@@ -258,42 +258,37 @@ describe("Bun.spawn maxMemory", () => {
     expect(under.exitedDueToMaxMemory).toBe(false);
   });
 
-  test.concurrent("a descendant whose parent exited is still counted and killed", async () => {
-    // root -> middle -> hog. The hog allocates only after the middle process is gone, so it has been reparented by then.
-    const hogSrc = `process.stdin.on("close", () => { ${hogFor(3)} }).resume();`;
-    const middleSrc = `
-      const h = Bun.spawn({ cmd: [process.execPath, "-e", ${JSON.stringify(hogSrc)}], stdio: ["pipe", "ignore", "ignore"] });
-      console.log(h.pid);
-      process.stdin.on("close", () => process.exit(0)).resume();
-    `;
-    const rootSrc = `
-      const m = Bun.spawn({ cmd: [process.execPath, "-e", ${JSON.stringify(middleSrc)}], stdio: ["pipe", "inherit", "ignore"] });
-      process.stdin.on("data", () => m.stdin.end()).resume();
-      setInterval(() => {}, 1000);
-    `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", rootSrc],
-      env: bunEnv,
-      stdio: ["pipe", "pipe", "inherit"],
-      maxMemory: limitFor(3),
-      killSignal: "SIGKILL",
-    });
-    let output = "";
-    for await (const chunk of proc.stdout) {
-      output += Buffer.from(chunk).toString();
-      if (output.includes("\n")) break;
-    }
-    const hogPid = parseInt(output, 10);
-    expect(hogPid).toBeGreaterThan(0);
-    // This walk records the hog as a member while its parent is still alive.
-    expect(proc.memoryUsage().current).toBeGreaterThan(0);
+  // On Windows a child dies with its parent through libuv's kill-on-close job, so a descendant is never reparented there.
+  (isWindows ? test.skip : test.concurrent)(
+    "a descendant whose parent exited is still counted and killed",
+    async () => {
+      // root sh -> middle sh -> hog. The hog gets the middle pid and allocates only when that sh is no longer its parent.
+      const hogSrc = `const middle = Number(process.argv.at(-1)); const timer = setInterval(() => { if (process.ppid !== middle) { clearInterval(timer); ${hogFor(1)} } }, 5);`;
+      const middle = `"$0" -e "$1" $$ >/dev/null 2>&1 & echo $!; read _`;
+      await using proc = Bun.spawn({
+        cmd: ["sh", "-c", `sh -c '${middle}' "$0" "$1"; exec sleep 100000`, bunExe(), hogSrc],
+        env: bunEnv,
+        stdio: ["pipe", "pipe", "inherit"],
+        maxMemory: limitFor(1),
+        killSignal: "SIGKILL",
+      });
+      let output = "";
+      for await (const chunk of proc.stdout) {
+        output += Buffer.from(chunk).toString();
+        if (output.includes("\n")) break;
+      }
+      const hogPid = parseInt(output, 10);
+      expect(hogPid).toBeGreaterThan(0);
+      // This walk records the hog as a member while its parent is still alive.
+      expect(proc.memoryUsage().current).toBeGreaterThan(0);
 
-    proc.stdin.write("go");
-    await proc.stdin.flush();
-    await proc.exited;
-    expect(proc.exitedDueToMaxMemory).toBe(true);
-    await gone(hogPid);
-  });
+      proc.stdin.write("\n");
+      await proc.stdin.flush();
+      await proc.exited;
+      expect(proc.exitedDueToMaxMemory).toBe(true);
+      await gone(hogPid);
+    },
+  );
 });
 
 describe("node:child_process maxMemory", () => {

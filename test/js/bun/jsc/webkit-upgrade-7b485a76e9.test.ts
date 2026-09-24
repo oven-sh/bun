@@ -121,6 +121,7 @@ describe("WebKit 7b485a76e9 upgrade", () => {
 
     const shared = new SharedArrayBuffer(8, { maxByteLength: 16 });
     expect(() => shared.grow(1e20)).toThrow(RangeError);
+    expect(() => shared.grow(2 ** 53)).toThrow(RangeError);
     expect(() => shared.grow(-1)).toThrow(RangeError);
     shared.grow(16);
     expect(shared.byteLength).toBe(16);

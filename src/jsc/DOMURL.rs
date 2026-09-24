@@ -8,8 +8,8 @@ bun_opaque::opaque_ffi! {
     pub struct DOMURL;
 }
 
-// `DOMURL`/`VM` are opaque `UnsafeCell`-backed ZST handles; `ZigString`/`c_int`
-// out-params are plain `#[repr(C)]` PODs whose `&mut` is exclusive for the
+// `DOMURL`/`VM` are opaque `UnsafeCell`-backed ZST handles; the `c_int`
+// out-param is a plain `#[repr(C)]` POD whose `&mut` is exclusive for the
 // call → `safe fn`.
 unsafe extern "C" {
     safe fn WebCore__DOMURL__cast_(value: JSValue, vm: &VM) -> *mut DOMURL;

@@ -13,6 +13,7 @@ export type ServiceName =
   | "mysql_plain"
   | "mysql_native_password"
   | "mysql_tls"
+  | "mariadb_plain"
   | "redis_plain"
   | "redis_unified"
   | "minio"
@@ -50,6 +51,7 @@ const serviceMeta: Record<ServiceName, { ports: number[]; tls?: ServiceInfo["tls
   },
   mysql_plain: { ports: [3306] },
   mysql_native_password: { ports: [3306] },
+  mariadb_plain: { ports: [3306] },
   mysql_tls: {
     ports: [3306],
     tls: {
@@ -299,7 +301,7 @@ class DockerComposeHelper {
   }
 
   // Ask the shard's coordinator (test/docker/coordinator.ts, spawned by
-  // scripts/runner.node.mjs) to start the service, and wait for its ready
+  // scripts/runner.node.ts) to start the service, and wait for its ready
   // message with the port mapping. The coordinator owns every `compose up`
   // for the shard, so concurrent processes can't race duplicate invocations
   // into the daemon. Resolves null when no coordinator is configured or the

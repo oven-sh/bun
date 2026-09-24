@@ -1,13 +1,13 @@
 import { file, spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 
 const xml2js = require("xml2js");
 
 describe("junit reporter", () => {
   it.each([false, true])("should generate valid junit xml for passing tests %s", async withCIEnvironmentVariables => {
-    const tmpDir = tempDirWithFiles("junit", {
+    await using tmpDir = tempDir("junit", {
       "package.json": "{}",
       "passing.test.js": `
         describe("root describe", () => {
@@ -151,7 +151,7 @@ describe("junit reporter", () => {
   });
 
   it("more scenarios", async () => {
-    const tmpDir = tempDirWithFiles("junit-comprehensive", {
+    await using tmpDir = tempDir("junit-comprehensive", {
       "package.json": "{}",
       "comprehensive.test.js": `
         import { test, expect, describe } from "bun:test";
@@ -317,7 +317,7 @@ describe("junit reporter", () => {
   });
 
   it("should report only the final result for a retried test", async () => {
-    const tmpDir = tempDirWithFiles("junit-retry", {
+    await using tmpDir = tempDir("junit-retry", {
       "package.json": "{}",
       "flaky.test.js": `
         import { test, expect } from "bun:test";
@@ -390,7 +390,7 @@ describe("junit reporter", () => {
   });
 
   it("produces well-formed XML when test names contain control characters", async () => {
-    const tmpDir = tempDirWithFiles("junit-ctrl", {
+    await using tmpDir = tempDir("junit-ctrl", {
       "package.json": "{}",
       "ctrl.test.js":
         'import { test } from "bun:test";\n' +
@@ -430,7 +430,7 @@ describe("junit reporter", () => {
   });
 
   it("escapes the classname attribute exactly once", async () => {
-    const tmpDir = tempDirWithFiles("junit-escape", {
+    await using tmpDir = tempDir("junit-escape", {
       "package.json": "{}",
       "escape.test.js": `
         import { describe, test } from "bun:test";
@@ -472,7 +472,7 @@ describe("junit reporter", () => {
   });
 
   it("keeps the test body's error in <failure> when afterEach also throws", async () => {
-    const tmpDir = tempDirWithFiles("junit-aftereach", {
+    await using tmpDir = tempDir("junit-aftereach", {
       "package.json": "{}",
       "after.test.js": `
         import { test, afterEach } from "bun:test";
@@ -504,7 +504,7 @@ describe("junit reporter", () => {
   });
 
   it("includes the error type, message and stack in <failure>", async () => {
-    const tmpDir = tempDirWithFiles("junit-failure", {
+    await using tmpDir = tempDir("junit-failure", {
       "package.json": "{}",
       "fail.test.js": `
         import { test, expect } from "bun:test";
@@ -553,6 +553,60 @@ describe("junit reporter", () => {
     // the ESC byte, so a leak would surface as bare CSI residue.
     expect(xmlContent).not.toMatch(/\[[\d;]*[A-HJKSTfm]/);
     expect(exitCode).toBe(1);
+  });
+
+  it("prints a stack frame whose source is not a file path as-is in <failure>", async () => {
+    // Longer than a path buffer on every platform (98302 bytes on Windows).
+    const padding = 100_000;
+    const dataUrlModule = 'export default function fromDataUrl() { throw new Error("boom"); }//';
+    const dataUrl = "data:text/javascript;base64," + btoa(dataUrlModule + Buffer.alloc(padding, "x").toString());
+    const longPath = "/" + Buffer.alloc(padding, "y").toString();
+
+    await using tmpDir = tempDir("junit-source-url", {
+      "package.json": "{}",
+      "source-url.test.js": `
+        import { test } from "bun:test";
+        const thrower = (name, sourceURL) =>
+          (0, eval)("(function " + name + "() { throw new Error('boom'); })\\n//# sourceURL=" + sourceURL);
+        test("data url", async function dataUrlTest() {
+          const source = ${JSON.stringify(dataUrlModule)} + Buffer.alloc(${padding}, "x").toString();
+          const m = await import("data:text/javascript;base64," + btoa(source));
+          m.default();
+        });
+        test("sourceURL that is not a path", () => {
+          thrower("fromSourceUrl", "webpack://app/./src/x.ts")();
+        });
+        test("sourceURL longer than a path", () => {
+          thrower("fromLongPath", "/" + Buffer.alloc(${padding}, "y").toString())();
+        });
+        test("sourceURL that is a path", () => {
+          thrower("fromPath", import.meta.dir.replaceAll("\\\\", "/") + "/virtual/../generated.js")();
+        });
+      `,
+    });
+
+    const junitPath = join(tmpDir, "junit.xml");
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
+      cwd: tmpDir,
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(exitCode).toBe(1);
+
+    const xmlContent = await file(junitPath).text();
+    const result = await new Promise((resolve, reject) => {
+      xml2js.parseString(xmlContent, { strict: true }, (err, r) => (err ? reject(err) : resolve(r)));
+    });
+    const [dataUrlCase, sourceUrlCase, longPathCase, pathCase] = result.testsuites.testsuite[0].testcase;
+
+    expect(dataUrlCase.failure[0]._).toContain(`at fromDataUrl (${dataUrl}:1:`);
+    // The frame in the test file itself is still relative to the cwd.
+    expect(dataUrlCase.failure[0]._).toContain("at dataUrlTest (source-url.test.js:");
+    expect(sourceUrlCase.failure[0]._).toContain("at fromSourceUrl (webpack://app/./src/x.ts:1:");
+    expect(longPathCase.failure[0]._).toContain(`at fromLongPath (${longPath}:1:`);
+    expect(pathCase.failure[0]._).toContain("at fromPath (generated.js:1:");
   });
 });
 

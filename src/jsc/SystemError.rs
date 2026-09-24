@@ -1,7 +1,7 @@
 use core::ffi::c_int;
 use core::fmt;
 
-use bun_core::{OwnedString, String};
+use bun_core::String;
 
 use crate::{JSGlobalObject, JSPromise, JSValue};
 
@@ -10,28 +10,28 @@ use crate::{JSGlobalObject, JSPromise, JSValue};
 pub struct SystemError {
     pub errno: c_int,
     /// label for errno
-    pub code: OwnedString,
+    pub code: bun_core::String,
     /// it is illegal to have an empty message
-    pub message: OwnedString,
-    pub path: OwnedString,
-    pub syscall: OwnedString,
-    pub hostname: OwnedString,
+    pub message: bun_core::String,
+    pub path: bun_core::String,
+    pub syscall: bun_core::String,
+    pub hostname: bun_core::String,
     /// MinInt = no file descriptor
     pub fd: c_int,
-    pub dest: OwnedString,
+    pub dest: bun_core::String,
 }
 
 impl Default for SystemError {
     fn default() -> Self {
         Self {
             errno: 0,
-            code: OwnedString::default(),
-            message: OwnedString::default(),
-            path: OwnedString::default(),
-            syscall: OwnedString::default(),
-            hostname: OwnedString::default(),
+            code: bun_core::String::default(),
+            message: bun_core::String::default(),
+            path: bun_core::String::default(),
+            syscall: bun_core::String::default(),
+            hostname: bun_core::String::default(),
             fd: c_int::MIN,
-            dest: OwnedString::default(),
+            dest: bun_core::String::default(),
         }
     }
 }
@@ -64,14 +64,15 @@ impl From<bun_sys::SystemError> for SystemError {
     }
 }
 
-/// `core::result::Result` alias in Phase F so callers get `?` for free.
-pub type Maybe<R> = core::result::Result<R, SystemError>;
-
 // SAFETY (safe fn): `SystemError` is `#[repr(C)]` and read-only on the C++ side;
 // `JSGlobalObject` is an opaque `UnsafeCell`-backed handle, so `&JSGlobalObject`
 // is ABI-identical to a non-null `JSGlobalObject*` with write provenance.
 unsafe extern "C" {
     safe fn SystemError__toErrorInstance(this: &SystemError, global: &JSGlobalObject) -> JSValue;
+    safe fn SystemError__toTypeErrorInstance(
+        this: &SystemError,
+        global: &JSGlobalObject,
+    ) -> JSValue;
     safe fn SystemError__toErrorInstanceWithInfoObject(
         this: &SystemError,
         global: &JSGlobalObject,
@@ -79,16 +80,16 @@ unsafe extern "C" {
 }
 
 impl SystemError {
-    #[inline]
-    pub fn get_errno(&self) -> bun_sys::E {
-        bun_sys::e_from_negated(self.errno)
-    }
-
     /// Converts to a JS `Error`, consuming `self`. C++ only borrows the string
     /// fields; `Drop` releases them when `self` goes out of scope. `.clone()`
     /// first when two `Error`s are genuinely wanted.
     pub fn to_error_instance(self, global: &JSGlobalObject) -> JSValue {
         SystemError__toErrorInstance(&self, global)
+    }
+
+    /// `to_error_instance` but as a JS `TypeError` (keeps `.code`/`.path`/...).
+    pub fn to_type_error_instance(self, global: &JSGlobalObject) -> JSValue {
+        SystemError__toTypeErrorInstance(&self, global)
     }
 
     /// Like `to_error_instance` but populates the error's stack trace with async
@@ -139,17 +140,17 @@ impl SystemError {
 pub fn verify_error_to_js(
     err: &bun_uws::us_bun_verify_error_t,
     global: &JSGlobalObject,
-) -> crate::JsResult<JSValue> {
+) -> JSValue {
     let code: &[u8] = err.code_bytes();
     let reason: &[u8] = err.reason_bytes();
 
     let fallback = SystemError {
-        code: String::clone_utf8(code).into(),
-        message: String::clone_utf8(reason).into(),
+        code: String::clone_utf8(code),
+        message: String::clone_utf8(reason),
         ..Default::default()
     };
 
-    Ok(fallback.to_error_instance(global))
+    fallback.to_error_instance(global)
 }
 
 impl fmt::Display for SystemError {

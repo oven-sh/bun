@@ -108,7 +108,7 @@ function recordError(i: number, e: unknown) {
   }
 }
 
-const rss = () => process.memoryUsage.rss();
+const rss = process.memoryUsage.rss;
 
 async function one(i: number): Promise<void> {
   const path = mode === "redirect" ? "/start" : `/${i}`;

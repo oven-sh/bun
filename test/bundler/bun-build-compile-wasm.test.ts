@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, tempDirWithFiles } from "harness";
+import { bunEnv, tempDir } from "harness";
 import { join } from "path";
 
 describe("Bun.build compile with wasm", () => {
@@ -7,7 +7,7 @@ describe("Bun.build compile with wasm", () => {
     // This test ensures that embedded wasm modules compile and run correctly
     // The regression was that the module prefix wasn't being set correctly
 
-    const dir = tempDirWithFiles("build-compile-wasm", {
+    await using dir = tempDir("build-compile-wasm", {
       "app.js": `
         // Import a wasm module and properly instantiate it
         import wasmPath from "./test.wasm";

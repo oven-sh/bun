@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 
 test("issue #17327: extra bracket in error message with colors enabled", async () => {
-  const dir = tempDirWithFiles("17327", {
+  await using dir = tempDir("17327", {
     "test.ts": `
 const result = {success:false};
 const err = new Error(\`error: \${JSON.stringify(
@@ -59,7 +59,7 @@ throw err;
 });
 
 test("issue #17327: template literal syntax highlighting edge cases", async () => {
-  const dir = tempDirWithFiles("17327-edge", {
+  await using dir = tempDir("17327-edge", {
     "nested.ts": `
 const obj = {nested: {deep: true}};
 throw new Error(\`Complex: \${JSON.stringify(obj)}\`);

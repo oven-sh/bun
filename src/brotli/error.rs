@@ -6,12 +6,11 @@ pub enum Error {
     BrotliFailedToCreateInstance,
     #[error("BrotliDecompressionError")]
     BrotliDecompressionError,
+    /// The output, or the decoder state the stream's window size dictates, could not be allocated.
+    #[error("OutOfMemory")]
+    OutOfMemory,
     #[error("ShortRead")]
     ShortRead,
-    #[error("BrotliCompressionError")]
-    BrotliCompressionError,
-    #[error(transparent)]
-    Core(#[from] bun_core::Error),
 }
 
 impl Error {
@@ -21,9 +20,8 @@ impl Error {
             Self::BrotliFailedToLoad => "BrotliFailedToLoad",
             Self::BrotliFailedToCreateInstance => "BrotliFailedToCreateInstance",
             Self::BrotliDecompressionError => "BrotliDecompressionError",
+            Self::OutOfMemory => "OutOfMemory",
             Self::ShortRead => "ShortRead",
-            Self::BrotliCompressionError => "BrotliCompressionError",
-            Self::Core(e) => e.name(),
         }
     }
 }

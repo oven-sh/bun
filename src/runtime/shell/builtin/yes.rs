@@ -5,26 +5,24 @@ use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::states::cmd::Exec;
 use crate::shell::yield_::Yield;
 
-use bun_event_loop::ConcurrentTask::AutoDeinit;
 use bun_event_loop::{EventLoopTask, TaskTag, Taskable, task_tag};
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub enum State {
+pub(crate) enum State {
     #[default]
     Idle,
     WaitingWriteErr,
     WaitingIo,
     Err,
-    Done,
 }
 
 #[derive(Default)]
-pub struct Yes {
-    pub state: State,
+pub(crate) struct Yes {
+    pub(crate) state: State,
     /// One repetition of the output (`"y\n"` or joined argv + `'\n'`), tiled
     /// out to ~BUFSIZ.
-    pub buffer: Vec<u8>,
-    pub buffer_used: usize,
+    pub(crate) buffer: Vec<u8>,
+    pub(crate) buffer_used: usize,
     /// Populated in `start()`.
     pub task: Option<YesTask>,
 }
@@ -147,7 +145,7 @@ impl Yes {
         stdout.enqueue(child, &yes.buffer[..yes.buffer_used], safeguard)
     }
 
-    pub(crate) fn write_failing_error(
+    fn write_failing_error(
         interp: &Interpreter,
         cmd: NodeId,
         buf: &[u8],
@@ -191,16 +189,23 @@ impl Yes {
 /// Re-queues `yes` onto the event loop after a burst of no-IO writes so we
 /// don't block the main thread forever.
 #[repr(C)]
-pub struct YesTask {
+pub(crate) struct YesTask {
     /// Back-ref to the owning [`Interpreter`].
-    pub interp: *mut Interpreter,
-    pub cmd: NodeId,
-    pub evtloop: EventLoopHandle,
-    pub concurrent_task: EventLoopTask,
+    pub(crate) interp: *mut Interpreter,
+    pub(crate) cmd: NodeId,
+    pub(crate) evtloop: EventLoopHandle,
+    pub(crate) concurrent_task: EventLoopTask,
 }
 
 impl Taskable for YesTask {
     const TAG: TaskTag = task_tag::ShellYesTask;
+    /// Lives inside the builtin's `Box<Yes>` (freed with the interpreter) and
+    /// took nothing for the bounce; nothing to do.
+    unsafe fn release_unrun(_: *mut Self) {}
+    /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 
 impl YesTask {
@@ -208,20 +213,16 @@ impl YesTask {
     /// `this` must point to a live `YesTask` whose storage is stable until the
     /// enqueued task fires (it lives inside `Box<Yes>` in the interpreter
     /// arena).
-    pub(crate) unsafe fn enqueue(this: *mut Self) {
+    unsafe fn enqueue(this: *mut Self) {
         // SAFETY: caller contract — `this` is live and stable; `evtloop` /
         // `concurrent_task` were initialised together by `Yes::start` so the
         // Js/Mini discriminants agree. `owner`/`mini` are live event-loop
         // backrefs (single-threaded shell).
         unsafe {
             match (*this).evtloop {
+                // Next loop iteration, after I/O has had a turn.
                 EventLoopHandle::Js { owner } => {
-                    owner.tick();
-                    let ct = core::ptr::NonNull::from(match &mut (*this).concurrent_task {
-                        EventLoopTask::Js(ct) => ct.from(this, AutoDeinit::ManualDeinit),
-                        EventLoopTask::Mini(_) => unreachable!(),
-                    });
-                    owner.enqueue_task_concurrent(ct);
+                    owner.enqueue_task_after_yield(bun_jsc::Task::init(this));
                 }
                 EventLoopHandle::Mini(mut mini) => {
                     (*mini.loop_).tick();

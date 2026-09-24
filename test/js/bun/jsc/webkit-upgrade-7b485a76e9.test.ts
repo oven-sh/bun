@@ -167,6 +167,31 @@ describe("WebKit 7b485a76e9 upgrade", () => {
     expect(offsetFrames("\nthrow new Error('second line')")).toEqual([12, 16]);
   });
 
+  test("an error from a class field initializer is reported where the constructor starts (c76c52f5b1)", () => {
+    // The constructor calls the initializer before its first statement. With offsets only, upstream
+    // reports that call where the constructor ends.
+    const source = [
+      "const config = null;",
+      "class Client {",
+      "  endpoint = config.url;", //   line 3: throws
+      "  constructor(retries) {", //   line 4: the frame of the constructor, at the parenthesis
+      "    this.retries = retries;",
+      "    this.ready = true;", //     line 6: the last statement
+      "  }",
+      "}",
+      "new Client(3);",
+    ].join("\n");
+    let stack = "";
+    try {
+      new vm.Script(source, { filename: "fields.js" }).runInNewContext();
+    } catch (e) {
+      stack = (e as Error).stack!;
+    }
+    // A debug build also shows the frame of the initializer, so look for the constructor by name.
+    const frame = /at new Client \(fields\.js:(\d+):(\d+)\)/.exec(stack);
+    expect(frame?.slice(1).map(Number)).toEqual([4, 14]);
+  });
+
   test("Reflect.construct call sites keep the semantics of the function (7b485a76e9)", () => {
     class Base {
       target: unknown;

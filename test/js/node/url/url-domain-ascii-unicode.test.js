@@ -101,24 +101,8 @@ describe("url.domainToUnicode", () => {
   }
 });
 
-// hasValidPunycodeHost still rejects these hosts, so domainToUnicode returns "" where Node v26.10.0 returns the value
-// in the tables below. The list goes away with that check (whatwg/url#914).
-const knownRejectDeviations = new Set([
-  "xn--xn--zca-hia.xn--mgbh0fb",
-  "xn--nxa.xn--",
-  "xn--nxa.xn--abc-",
-  "xn--nxa-",
-  "xn--1ug.xn--nxa",
-  "xn--nxa.xn--1ug",
-  "xn--a.b",
-  "xn--nxa.xn--abc.xn--nxa",
-  "xn--nxa.xn--fffd.xn--nxa",
-  "xn--nxa.xn--%41.xn--nxa",
-  "xn--nxa_.xn--nxa",
-]);
-
 // Node keeps a label that fails UTS #46 as it is (ada::idna::to_unicode). ICU appends U+FFFD to it. Values are from
-// Node v26.10.0. The ASCII fast path of hasValidPunycodeHost lacks the rule these labels break, so they get here.
+// Node v26.10.0.
 describe("url.domainToUnicode with an xn-- label that fails UTS #46", () => {
   test.each([
     // The label decodes to "xn--zca£". UTS #46 4.1 criterion 4: a decoded label must not begin with "xn--".
@@ -130,8 +114,38 @@ describe("url.domainToUnicode with an xn-- label that fails UTS #46", () => {
     ["xn--zca.xn--xn--zca-hia", "ß.xn--xn--zca-hia"],
     ["xn--xn--zca-hia.xn--maana-pta.xn--ls8h", "xn--xn--zca-hia.mañana.💩"],
     ["xn--xn--zca-hia.xn--mgbh0fb", "xn--xn--zca-hia.مثال"],
+    ["xn--xn--zca-7pj", "xn--xn--zca-7pj"], // decodes to "xn--zcaا"
+    // Older rules.
+    ["xn--a", "xn--a"], // decodes to U+0080 (disallowed)
+    ["xn--1ug.com", "xn--1ug.com"], // ZWJ alone (CONTEXTJ)
+    ["xn--u-ccb.com", "xn--u-ccb.com"], // leading combining mark
+    ["xn--zn7c.com", "xn--zn7c.com"], // decodes to U+FFFD
+    ["xn--", "xn--"],
+    ["xn--maana-pta.xn--a.com", "mañana.xn--a.com"],
   ])("%s", (input, expected) => {
-    expect(url.domainToUnicode(input)).toBe(knownRejectDeviations.has(input) ? "" : expected);
+    expect(url.domainToUnicode(input)).toBe(expected);
+  });
+});
+
+// https://github.com/whatwg/url/pull/914: an ASCII domain passes through the host parser, lowercased, even when an
+// xn-- label fails Unicode ToASCII. Expected values are from Node v26.10.0.
+describe("url.domainToASCII with an xn-- label that fails UTS #46", () => {
+  test.each([
+    ["xn--a", "xn--a"],
+    ["XN--A.Com", "xn--a.com"],
+    ["xn--1ug.example", "xn--1ug.example"],
+    ["xn--xn--zca-hia", "xn--xn--zca-hia"],
+    ["xn--8i7caa.famitei.net", "xn--8i7caa.famitei.net"],
+    ["%78n--a", "xn--a"],
+    ["xn--zca.xn--a", "xn--zca.xn--a"],
+    // Unicode ToASCII still runs for a non-ASCII domain, and the host parser still applies its other rules.
+    ["\u00e9.xn--a", ""],
+    ["\u00e9.%78n--a", ""],
+    ["xn--a.1", ""],
+    ["xn--a b", ""],
+    ["\u00e9.xn--ls8h", "xn--9ca.xn--ls8h"],
+  ])("%s", (input, expected) => {
+    expect(url.domainToASCII(input)).toBe(expected);
   });
 });
 
@@ -183,6 +197,6 @@ describe("url.domainToUnicode with many xn-- labels", () => {
     ["xn--nxa.xn--nxa/path", "β.β"],
     ["xn--nxa.xn--nxa?query", "β.β"],
   ])("matches Node: %j", (input, expected) => {
-    expect(url.domainToUnicode(input)).toBe(knownRejectDeviations.has(input) ? "" : expected);
+    expect(url.domainToUnicode(input)).toBe(expected);
   });
 });

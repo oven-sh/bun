@@ -25,18 +25,9 @@
 
 #include "URLDecomposition.h"
 
-#include "NodeURLHelpers.h"
 #include <wtf/text/StringToIntegerConversion.h>
 
 namespace WebCore {
-
-// Like the URL constructor (DOMURL.cpp), reject special-scheme hosts whose
-// xn-- labels fail UTS #46; the WHATWG setters fail silently, so refuse the
-// commit instead of throwing.
-static bool hasAcceptableHost(const WTF::URL& url)
-{
-    return Bun::hasValidPunycodeHost(url.host()) || !url.hasSpecialScheme();
-}
 
 String URLDecomposition::origin() const
 {
@@ -145,7 +136,7 @@ void URLDecomposition::setHost(StringView value)
                 fullURL.setHostAndPort(value.left(separator + 1 + portLength));
         }
     }
-    if (fullURL.isValid() && hasAcceptableHost(fullURL))
+    if (fullURL.isValid())
         setFullURL(fullURL);
 }
 
@@ -162,7 +153,7 @@ void URLDecomposition::setHostname(StringView host)
     if (fullURL.hasOpaquePath())
         return;
     fullURL.setHost(host);
-    if (fullURL.isValid() && hasAcceptableHost(fullURL))
+    if (fullURL.isValid())
         setFullURL(fullURL);
 }
 

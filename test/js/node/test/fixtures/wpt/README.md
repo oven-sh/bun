@@ -6,6 +6,6 @@ Node.js test suite in `test/js/node/test`.
 
 Last update:
 
-- url/resources: https://github.com/web-platform-tests/wpt/tree/9504a83e01/url/resources
+- url/resources: https://github.com/web-platform-tests/wpt/tree/c48d58747e/url/resources
 
 [Web Platform Tests]: https://github.com/web-platform-tests/wpt

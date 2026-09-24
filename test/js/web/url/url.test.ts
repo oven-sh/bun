@@ -140,64 +140,172 @@ describe("url", () => {
     expect(hn.hostname).toBe("xn--s5a.com");
   });
 
-  it("rejects invalid punycode labels however they are spelled in the input (like Node)", () => {
-    for (const input of [
-      "https://xn--a.com/",
-      "https://XN--a.com/",
-      "https://x%6E--a.com/",
-      "https://x\tn--a.com/",
-      "https://xn-\n-a/",
-      "https://xn-\r-a/",
-      "  https://xn--a/",
-      "https:xn--a/",
-      "https:\\\\u:p@xn--a\\p",
+  // https://github.com/whatwg/url/pull/914: an ASCII domain is the result of the domain parser, lowercased, even when
+  // an xn-- label fails Unicode ToASCII. Expected values are from Node v26.10.0 (ada 4.0.0).
+  it("accepts an ASCII host whose xn-- label fails ToASCII, however the input spells it", () => {
+    for (const [input, href] of [
+      ["https://xn--a.com/", "https://xn--a.com/"],
+      ["https://XN--a.com/", "https://xn--a.com/"],
+      ["https://x%6E--a.com/", "https://xn--a.com/"],
+      ["https://x\tn--a.com/", "https://xn--a.com/"],
+      ["https://xn-\n-a/", "https://xn--a/"],
+      ["https://xn-\r-a/", "https://xn--a/"],
+      ["  https://xn--a/", "https://xn--a/"],
+      ["https:xn--a/", "https://xn--a/"],
+      ["https:\\\\u:p@xn--a\\p", "https://u:p@xn--a/p"],
+      ["file://xn--a/p", "file://xn--a/p"],
+      ["ws://xn--a/", "ws://xn--a/"],
+      ["https://xn--8i7caa.famitei.net/sekou/all", "https://xn--8i7caa.famitei.net/sekou/all"],
     ]) {
-      expect(() => new URL(input)).toThrow(TypeError);
-      expect(URL.canParse(input)).toBe(false);
-      expect(URL.parse(input)).toBe(null);
+      expect([input, new URL(input).href, URL.canParse(input), URL.parse(input)?.href]).toEqual([
+        input,
+        href,
+        true,
+        href,
+      ]);
     }
-    for (const [input, base] of [
-      ["/p", "https://x%6E--a.com/"],
-      ["//xn--a/p", "https://example.com/"],
-      ["xn--a", "https://example.com/"],
+    for (const [input, base, href] of [
+      ["/p", "https://x%6E--a.com/", "https://xn--a.com/p"],
+      ["//xn--a/p", "https://example.com/", "https://xn--a/p"],
+      ["rel", "https://xn--a.example/", "https://xn--a.example/rel"],
+      // A relative path never supplies a host.
+      ["xn--a", "https://example.com/", "https://example.com/xn--a"],
     ]) {
-      if (input === "xn--a") {
-        // A relative path never supplies a host.
-        expect(new URL(input, base).href).toBe("https://example.com/xn--a");
-        continue;
-      }
-      expect(() => new URL(input, base)).toThrow(TypeError);
-      expect(URL.canParse(input, base)).toBe(false);
-      expect(URL.parse(input, base)).toBe(null);
+      expect([input, new URL(input, base).href, URL.canParse(input, base), URL.parse(input, base)?.href]).toEqual([
+        input,
+        href,
+        true,
+        href,
+      ]);
     }
     expect(new URL("https://xn--ls8h.com/?q=%E3%81#xn--a").href).toBe("https://xn--ls8h.com/?q=%E3%81#xn--a");
     expect(new URL("https://\u{1F4A9}.com/p%20q?xn--a").hostname).toBe("xn--ls8h.com");
     expect(new URL("https://\u{1F4A9}.com/xn--a/%41").pathname).toBe("/xn--a/%41");
   });
 
-  it("judges literal punycode labels like Node (fast path and ICU path)", () => {
-    // [input, canParse] — expectations match Node 26 / ICU UTS #46 (CheckBidi, CheckJoiners, non-transitional).
-    const cases: [string, boolean][] = [
-      ["https://xn--ls8h.com/", true], // valid emoji label
-      ["https://XN--LS8H.com/", true], // case-insensitive prefix and digits
-      ["https://foo.xn--nxasmq6b/", true], // Greek
-      ["https://xn--mgbh0fb.xn--kgbechtv/", true], // RTL labels (BiDi rule, ICU path)
-      ["https://ab--cd.com/", true], // hyphens at 3-4 in a non-ACE label are allowed
-      ["https://xn--53h.example/", true], // single non-ASCII code point
-      ["https://xn--a.com/", false], // decodes to U+0080 (disallowed)
-      ["https://xn--/", false], // empty ACE label
-      ["https://xn---.com/", false], // fails Punycode decoding
-      ["https://xn--ascii-.com/", false], // alternate encoding of an ASCII label
-      ["https://xn--1ug.com/", false], // ZWJ alone (CONTEXTJ)
-      ["https://xn--u-ccb.com/", false], // leading combining mark
-      ["https://xn--0.com/", false], // truncated delta
-      ["https://xn--9999999999999999999999999b/", false], // overflow
-      ["https://xn--a-b.com/", false], // "a" + U+0080-ish: disallowed after decoding
+  it("still rejects a non-ASCII host with a bad xn-- label, forbidden code points and bad IPv4 endings", () => {
+    for (const input of [
+      "https://\u00e9.xn--a.com/", // Unicode ToASCII runs for a non-ASCII domain, and it fails
+      "https://\u00e9.x%6E--a.com/",
+      "https://%C3%A9.xn--a.com/",
+      "https://\u00e9.xn--1ug.com/",
+      "https://xn--a.1/", // ends in a number, so it must be an IPv4 address
+      "https://xn--a b/",
+      "https://xn--a%00/",
+      "https://xn--a^b/",
+    ]) {
+      expect(() => new URL(input)).toThrow(TypeError);
+      expect([input, URL.canParse(input), URL.parse(input)]).toEqual([input, false, null]);
+    }
+    for (const [input, base] of [
+      ["rel", "https://\u00e9.xn--a.example/"],
+      ["//\u00e9.xn--a/p", "https://example.com/"],
+    ]) {
+      expect(() => new URL(input, base)).toThrow(TypeError);
+      expect([input, URL.canParse(input, base), URL.parse(input, base)]).toEqual([input, false, null]);
+    }
+    expect(new URL("https://\u00e9.xn--ls8h.com/").href).toBe("https://xn--9ca.xn--ls8h.com/");
+    // A non-special scheme has an opaque host: no IDNA at all.
+    expect(new URL("foo://\u00e9.xn--a/").href).toBe("foo://%C3%A9.xn--a/");
+  });
+
+  it("the host, hostname and href setters accept the same ASCII hosts as the constructor", () => {
+    // [value, href after hostname=, after host=, after href = "https://" + value + "/q" (null: it throws)]
+    for (const [value, viaHostname, viaHost, viaHref] of [
+      ["xn--a.com", "https://xn--a.com:444/p", "https://xn--a.com:444/p", "https://xn--a.com/q"],
+      ["XN--A.com", "https://xn--a.com:444/p", "https://xn--a.com:444/p", "https://xn--a.com/q"],
+      ["xn--1ug.com", "https://xn--1ug.com:444/p", "https://xn--1ug.com:444/p", "https://xn--1ug.com/q"],
+      ["x%6E--a.com", "https://xn--a.com:444/p", "https://xn--a.com:444/p", "https://xn--a.com/q"],
+      ["xn--a.com:8080", "https://example.com:444/p", "https://xn--a.com:8080/p", "https://xn--a.com:8080/q"],
+      [
+        "\u00e9.xn--ls8h.com",
+        "https://xn--9ca.xn--ls8h.com:444/p",
+        "https://xn--9ca.xn--ls8h.com:444/p",
+        "https://xn--9ca.xn--ls8h.com/q",
+      ],
+      ["\u00e9.xn--a.com", "https://example.com:444/p", "https://example.com:444/p", null],
+      ["xn--a b", "https://example.com:444/p", "https://example.com:444/p", null],
+    ] as const) {
+      const viaHostnameURL = new URL("https://example.com:444/p");
+      viaHostnameURL.hostname = value;
+      const viaHostURL = new URL("https://example.com:444/p");
+      viaHostURL.host = value;
+      const viaHrefURL = new URL("https://example.com:444/p");
+      let hrefResult: string | null = null;
+      try {
+        viaHrefURL.href = "https://" + value + "/q";
+        hrefResult = viaHrefURL.href;
+      } catch (e: any) {
+        expect(e.code).toBe("ERR_INVALID_URL");
+      }
+      expect([value, viaHostnameURL.href, viaHostURL.href, hrefResult]).toEqual([value, viaHostname, viaHost, viaHref]);
+    }
+  });
+
+  it("Request, Response.redirect, blob: origins, fetch and WebSocket take the same hosts as new URL", async () => {
+    expect([
+      URL.canParse("https://xn--a.com/p"),
+      new Request("https://XN--a.com/p").url,
+      Response.redirect("https://xn--a.com/r").headers.get("location"),
+      new URL("blob:https://xn--a.com/x").origin,
+    ]).toEqual([true, "https://xn--a.com/p", "https://xn--a.com/r", "https://xn--a.com"]);
+    expect(() => new Request("https://\u00e9.xn--a.com/")).toThrow(TypeError);
+    expect(new URL("blob:https://\u00e9.xn--a.com/x").origin).toBe("null");
+
+    // A proxy keeps the test off the network. Its request lines show that fetch and WebSocket took the host.
+    const requestLines: string[] = [];
+    const { promise: sawBoth, resolve } = Promise.withResolvers<void>();
+    using proxy = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        data(socket, chunk) {
+          requestLines.push(chunk.toString().split("\r\n")[0]);
+          socket.end();
+          if (requestLines.length === 2) resolve();
+        },
+      },
+    });
+    const proxyURL = `http://127.0.0.1:${proxy.port}`;
+    await fetch("http://xn--a.com/x", { proxy: proxyURL }).catch(() => {});
+    const ws = new WebSocket("ws://xn--a.com/", { proxy: proxyURL } as any);
+    ws.onerror = () => {};
+    await sawBoth;
+    ws.close();
+    expect(requestLines.sort()).toEqual(["CONNECT xn--a.com:80 HTTP/1.1", "GET http://xn--a.com/x HTTP/1.1"]);
+  });
+
+  it("parses literal punycode labels like Node", () => {
+    // [input, href (null: it does not parse)]. Expected values are from Node v26.10.0.
+    const cases: [string, string | null][] = [
+      ["https://xn--ls8h.com/", "https://xn--ls8h.com/"], // valid emoji label
+      ["https://XN--LS8H.com/", "https://xn--ls8h.com/"], // case-insensitive prefix and digits
+      ["https://foo.xn--nxasmq6b/", "https://foo.xn--nxasmq6b/"], // Greek
+      ["https://xn--mgbh0fb.xn--kgbechtv/", "https://xn--mgbh0fb.xn--kgbechtv/"], // RTL labels
+      ["https://ab--cd.com/", "https://ab--cd.com/"], // hyphens at 3-4 in a non-ACE label
+      ["https://xn--53h.example/", "https://xn--53h.example/"], // single non-ASCII code point
+      // These labels fail Unicode ToASCII. The host is ASCII, so it passes through.
+      ["https://xn--a.com/", "https://xn--a.com/"], // decodes to U+0080 (disallowed)
+      ["https://xn--/", "https://xn--/"], // empty ACE label
+      ["https://xn---.com/", "https://xn---.com/"], // fails Punycode decoding
+      ["https://xn--ascii-.com/", "https://xn--ascii-.com/"], // alternate encoding of an ASCII label
+      ["https://xn--1ug.com/", "https://xn--1ug.com/"], // ZWJ alone (CONTEXTJ)
+      ["https://xn--u-ccb.com/", "https://xn--u-ccb.com/"], // leading combining mark
+      ["https://xn--0.com/", "https://xn--0.com/"], // truncated delta
+      ["https://xn--9999999999999999999999999b/", "https://xn--9999999999999999999999999b/"], // overflow
+      ["https://xn--a-b.com/", "https://xn--a-b.com/"], // disallowed after decoding
+      ["https://xn--xn--zca-hia.com/", "https://xn--xn--zca-hia.com/"], // decodes to "xn--zca£"
+      // The same labels beside a non-ASCII label: Unicode ToASCII runs and fails.
+      ["https://\u00e9.xn--a.com/", null],
+      ["https://\u00e9.xn--/", null],
+      ["https://\u00e9.xn--1ug.com/", null],
+      ["https://\u00e9.xn--ls8h.com/", "https://xn--9ca.xn--ls8h.com/"],
     ];
-    for (const [input, ok] of cases) {
-      expect([input, URL.canParse(input)]).toEqual([input, ok]);
-      expect([input, URL.parse(input)?.href ?? null]).toEqual([input, ok ? input.toLowerCase() : null]);
-      if (ok) expect(new URL(input).href).toBe(input.toLowerCase());
+    // ICU fails this label from 76 on (Unicode 15.1). macOS 14 has an older system ICU.
+    if (parseInt(process.versions.icu) >= 76) cases.push(["https://\u00e9.xn--xn--zca-hia.com/", null]);
+    for (const [input, href] of cases) {
+      expect([input, URL.canParse(input), URL.parse(input)?.href ?? null]).toEqual([input, href !== null, href]);
+      if (href !== null) expect(new URL(input).href).toBe(href);
       else expect(() => new URL(input)).toThrow(TypeError);
     }
   });
@@ -214,7 +322,8 @@ describe("url", () => {
       expect(URL.parse("#f", b)!.href).toBe("http://b.example:8080/x/y/#f");
       expect(() => new URL("rel", "not a url")).toThrow(TypeError);
       expect(() => new URL("rel", "not a url")).toThrow(TypeError);
-      expect(URL.canParse("rel", "https://xn--a.example/")).toBe(false);
+      expect(URL.canParse("rel", "https://\u00e9.xn--a.example/")).toBe(false);
+      expect(URL.canParse("rel", "https://xn--a.example/")).toBe(true);
       expect(URL.parse("rel", "")).toBe(null);
       expect(new URL("rel", a + "\u00e9/").href).toBe("https://a.example/dir/page%C3%A9/rel");
       expect(new URL("rel", "HTTPS://A.example/dir/page").href).toBe("https://a.example/dir/rel");

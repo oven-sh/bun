@@ -279,8 +279,9 @@ async function serverEndMidHandshake(rejectUnauthorized, afterHandshakeTimeout =
   });
   client.on("secureConnect", () => client.write("privileged-command"));
   client.on("error", () => {});
-  // The server reports first in every expected outcome. This only ends the test when the server reported nothing.
+  // Ends the test when the server reported nothing.
   client.on("close", () => {
+    if (events.length > 0) return;
     events.push("client close");
     resolve();
   });
@@ -370,8 +371,9 @@ async function badRecordBehindFinished(from, rejectUnauthorized) {
     events.push(`error ${err.code}`);
     resolve();
   });
-  // The observed peer reports first in every expected outcome. This only ends the test when it reported nothing.
+  // Ends the test when the observed peer reported nothing.
   client.on("close", () => {
+    if (events.length > 0) return;
     events.push("client close");
     resolve();
   });

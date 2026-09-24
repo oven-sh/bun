@@ -3134,26 +3134,38 @@ uint8_t GlobalObject::drainMicrotasks()
     if (!vm.entryScope)
         m_asyncContextData.get()->putInternalField(vm, 0, m_moduleGraphs ? Bun::moduleGraphAsyncContextAtEventLoop(this) : jsUndefined());
 
-    if (auto nextTickQueue = this->m_nextTickQueue.get()) {
-        nextTickQueue->drain(vm, this);
-        if (auto* exception = scope.exception()) {
-            if (vm.isTerminationException(exception)) {
-                Bun__VM__takeTerminationOutsideScript(this);
-                return 1;
-            }
-            (void)scope.tryClearException();
-            this->reportUncaughtExceptionAtEventLoop(this, exception);
-            return 0;
-        }
-    }
-    vm.drainMicrotasks();
-    if (auto* exception = scope.exception()) {
+    // The result of the checkpoint when an exception ends it.
+    auto endedByException = [&]() -> std::optional<uint8_t> {
+        auto* exception = scope.exception();
+        if (!exception)
+            return std::nullopt;
         if (vm.isTerminationException(exception)) {
             Bun__VM__takeTerminationOutsideScript(this);
             return 1;
         }
         (void)scope.tryClearException();
         this->reportUncaughtExceptionAtEventLoop(this, exception);
+        return 0;
+    };
+
+    // Scheduled ticks run first, and processTicksAndRejections runs the microtasks after them.
+    auto* nextTickQueue = this->m_nextTickQueue.get();
+    if (nextTickQueue && !nextTickQueue->isEmpty()) {
+        nextTickQueue->drain(vm, this);
+        if (auto result = endedByException())
+            return *result;
+    }
+
+    vm.drainMicrotasks();
+    if (auto result = endedByException())
+        return *result;
+
+    // A microtask can schedule a tick, and it can create the queue.
+    nextTickQueue = this->m_nextTickQueue.get();
+    if (nextTickQueue && !nextTickQueue->isEmpty()) {
+        nextTickQueue->drain(vm, this);
+        if (auto result = endedByException())
+            return *result;
     }
 
     return 0;

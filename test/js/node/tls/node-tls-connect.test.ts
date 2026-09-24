@@ -11,6 +11,8 @@ import tls, { checkServerIdentity, connect as tlsConnect, TLSSocket } from "tls"
 
 import type { AddressInfo } from "net";
 import { Duplex } from "node:stream";
+import { pathToFileURL } from "node:url";
+import { report as closeReport } from "./tls-client-close-fixture.mjs";
 
 const symbolConnectOptions = Symbol.for("::buntlsconnectoptions::");
 
@@ -2487,6 +2489,60 @@ describe.each([
       log: ["end secureConnecting=true", "finish"],
       clientSawFin: true,
     });
+  });
+});
+
+// Runs report(mode, version) of a fixture module in node, for every row at
+// once, and resolves with the reports in the order of the rows.
+async function reportsFromNode(fixture: string, rows: (readonly [version: string, mode: string])[]) {
+  const script = `
+    import { report } from ${JSON.stringify(pathToFileURL(join(import.meta.dir, fixture)).href)};
+    const rows = ${JSON.stringify(rows)};
+    console.log(JSON.stringify(await Promise.all(rows.map(([version, mode]) => report(mode, version)))));
+    process.exit(0);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [nodeExe()!, "--input-type=module", "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const reports = JSON.parse(stdout);
+  expect(exitCode).toBe(0);
+  return reports;
+}
+
+// node issues the shutdown inside end() (_final in lib/net.js), so a destroy()
+// in the same tick comes after the close_notify. With the shutdown a tick
+// later, the destroy() wins and the peer gets a bare FIN.
+// The last test runs the same rows in node, so the reports are pinned to it.
+describe("how a TLS client's way of closing reaches the server", () => {
+  const delivered = (data: string, alerts: number, client = ["close:false"]) => ({
+    client,
+    server: { event: "secureConnection", peerCN: "agent3", data, error: null },
+    sentAfterClientHello: true,
+    alerts,
+  });
+
+  const rows = [
+    ["TLSv1.3", "end() then destroy()", delivered("", 1)],
+    ["TLSv1.3", "end() then destroy() after the handshake", delivered("", 1)],
+    ["TLSv1.2", "end() then destroy()", delivered("", 1)],
+    ["TLSv1.2", "end() then destroy() after the handshake", delivered("", 1)],
+  ] as const;
+
+  it.each(rows)("%s %s", async (version, mode, expected) => {
+    expect(await closeReport(mode, version)).toEqual(expected);
+  });
+
+  it.skipIf(!nodeExe())("node gives the same reports", async () => {
+    const reports = await reportsFromNode(
+      "tls-client-close-fixture.mjs",
+      rows.map(([version, mode]) => [version, mode]),
+    );
+    expect(reports).toEqual(rows.map(([, , expected]) => expected));
   });
 });
 

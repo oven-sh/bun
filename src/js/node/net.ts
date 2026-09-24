@@ -286,6 +286,7 @@ const kSetNoDelay = Symbol("kSetNoDelay");
 const kSetTOS = Symbol("kSetTOS");
 const kSetKeepAlive = Symbol("kSetKeepAlive");
 const kSyncWriteFd = Symbol("kSyncWriteFd");
+const kShutdownQueued = Symbol("kShutdownQueued");
 const kSetKeepAliveInitialDelay = Symbol("kSetKeepAliveInitialDelay");
 const kConnectOptions = Symbol("connect-options");
 const kAttach = Symbol("kAttach");
@@ -385,12 +386,13 @@ function writeErrnoException(negErrno) {
   }
   return er;
 }
-function endNT(socket, callback, err) {
+function endNT(self, socket, callback) {
   // Node's _final half-closes the writable side (sends FIN) and leaves the
   // readable side open; the Duplex's allowHalfOpen drives the eventual destroy.
   // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/net.js#L500
+  self[kShutdownQueued] = false;
   socket.shutdown();
-  callback(err);
+  callback();
 }
 function emitCloseNT(self, hasError) {
   self.emit("close", hasError);
@@ -2398,6 +2400,11 @@ Socket.prototype._destroy = function _destroy(err, callback) {
     this[kBytesWritten] = this._handle.bytesWritten;
 
     const currentHandle = this._handle;
+    // node issues the shutdown inside end(), so a destroy() in the same tick comes after it: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L536-L558
+    if (this[kShutdownQueued]) {
+      this[kShutdownQueued] = false;
+      currentHandle.shutdown();
+    }
     if (this.resetAndClosing) {
       this.resetAndClosing = false;
       // resetAndDestroy() must send an RST (not a graceful FIN) so the peer sees
@@ -2458,7 +2465,8 @@ Socket.prototype._final = function _final(callback) {
   if (!socket) return callback();
 
   // emit FIN allowHalfOpen only allow the readable side to close first
-  process.nextTick(endNT, socket, callback);
+  this[kShutdownQueued] = true;
+  process.nextTick(endNT, this, socket, callback);
 };
 
 Object.defineProperty(Socket.prototype, "localAddress", {

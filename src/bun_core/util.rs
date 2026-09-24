@@ -2659,22 +2659,18 @@ fn os_entropy(bytes: &mut [u8]) {
                 )
             };
             if rc < 0 {
-                let err = crate::ffi::errno();
-                if err == libc::EINTR {
+                if crate::ffi::errno() == libc::EINTR {
                     continue;
                 }
                 // ENOSYS: Linux older than 3.17. EPERM: a seccomp filter.
-                if err == libc::ENOSYS || err == libc::EPERM {
-                    use std::io::Read;
-                    let rest = &mut bytes[filled..];
-                    if let Err(io_err) =
-                        std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(rest))
-                    {
-                        panic!("getrandom failed (errno {err}), /dev/urandom failed ({io_err})");
-                    }
-                    return;
+                use std::io::Read;
+                let rest = &mut bytes[filled..];
+                let urandom =
+                    std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(rest));
+                if urandom.is_err() {
+                    weak_entropy(rest);
                 }
-                panic!("getrandom failed: errno {err}");
+                return;
             }
             filled += rc as usize;
         }
@@ -2704,6 +2700,20 @@ fn os_entropy(bytes: &mut [u8]) {
                 panic!("RtlGenRandom failed");
             }
         }
+    }
+}
+
+/// For a host with no OS entropy source. It is enough for the non-cryptographic `fast_random()`.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[cold]
+fn weak_entropy(bytes: &mut [u8]) {
+    let on_stack = 0u8;
+    let seed = (time::nano_timestamp() as u64)
+        ^ (crate::thread_id::current() as u64).rotate_left(32)
+        ^ (core::ptr::from_ref(&on_stack) as usize as u64);
+    let mut prng = rand::DefaultPrng::init(seed);
+    for chunk in bytes.chunks_mut(8) {
+        chunk.copy_from_slice(&prng.next_u64().to_ne_bytes()[..chunk.len()]);
     }
 }
 

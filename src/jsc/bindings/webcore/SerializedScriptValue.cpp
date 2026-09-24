@@ -3389,11 +3389,6 @@ private:
             return JSValue();
         }
 
-        if (buffer.size() == 0) {
-            auto* cert_obj = Bun::JSX509Certificate::create(m_lexicalGlobalObject->vm(), defaultGlobalObject(m_globalObject)->m_JSX509CertificateClassStructure.get(m_globalObject));
-            addTerminalToObjectPool(cert_obj);
-            return cert_obj;
-        }
         ncrypto::ClearErrorOnReturn clear_error_on_return;
         X509* ptr = nullptr;
         const uint8_t* data = buffer.begin();

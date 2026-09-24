@@ -92,10 +92,6 @@ public:
 
     static JSX509Certificate* create(
         JSC::VM& vm,
-        JSC::Structure* structure);
-
-    static JSX509Certificate* create(
-        JSC::VM& vm,
         JSC::Structure* structure,
         JSC::JSGlobalObject* globalObject,
         std::span<const uint8_t> data);
@@ -136,15 +132,18 @@ public:
     static JSString* computeSubjectAltName(ncrypto::X509View view, JSGlobalObject*);
     static JSObject* computePublicKey(ncrypto::X509View view, JSGlobalObject*);
 
+    // Convert the certificate to PEM format
+    String toPEMString() const;
+
+private:
     JSX509Certificate(JSC::VM& vm, JSC::Structure* structure)
         : Base(vm, structure)
     {
     }
 
-    // Convert the certificate to PEM format
-    String toPEMString() const;
+    // Leaves m_x509 null, so only the overloads that take a certificate are public.
+    static JSX509Certificate* create(JSC::VM& vm, JSC::Structure* structure);
 
-private:
     uint16_t m_extraMemorySizeForGC = 0;
 };
 

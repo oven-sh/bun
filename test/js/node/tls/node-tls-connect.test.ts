@@ -2690,7 +2690,10 @@ describe("new tls.TLSSocket(socket) on the client side", () => {
   ])("unlike node, an untrusted certificate destroys the wrap with the verify error (%s)", async (_name, options) => {
     const server = await echoServer(COMMON_CERT_);
     try {
-      const socket = new TLSSocket(await connectedRawSocket(server), options);
+      const raw = await connectedRawSocket(server);
+      // The default must not depend on the environment of the test process.
+      using _ = rejectUnauthorizedScope(true);
+      const socket = new TLSSocket(raw, options);
       const events: string[] = [];
       socket.on("secure", () => events.push("secure"));
       // Installed by the constructor ahead of any user listener, so a wrap
@@ -2874,7 +2877,7 @@ describe("new tls.TLSSocket(socket) on the client side", () => {
   describe.concurrent.each([
     ["bun", false, clientWrap.shutdown, clientWrap.mysql, clientWrap.peerCloses, clientWrap.session, bunExe()],
     ["node", !nodeExe(), onNode("shutdown"), onNode("mysql"), onNode("peer-closes"), onNode("session"), nodeExe()],
-  ] as const)("under %s", (_runtime, skip, shutdown, mysql, peerCloses, session, exe) => {
+  ] as const)("under %s", (runtime, skip, shutdown, mysql, peerCloses, session, exe) => {
     // Each cell calls the method and then destroy(): end() alone leaves a wrap open, on node too.
     it.skipIf(skip)(
       "end(), end(cb), destroySoon() and destroy() do not throw, and destroy() closes the wrap",
@@ -2917,8 +2920,9 @@ describe("new tls.TLSSocket(socket) on the client side", () => {
     // As a script under bun too: BoringSSL aborts the process when a session is set after the handshake started.
     it.skipIf(skip)("setSession() after the handshake started has no effect", async () => {
       expect(await asScript(exe!, "late-set-session")).toEqual({
-        "new TLSSocket(socket), then setSession() and _start()": "secure",
-        "tls.connect({ socket }), then setSession()": "secureConnect",
+        // Node starts the handshake of a wrap in _start(), so there the session is in time.
+        "new TLSSocket(socket), then setSession() and _start()": { event: "secure", reused: runtime === "node" },
+        "tls.connect({ socket }), then setSession()": { event: "secureConnect", reused: false },
         "setSession() after 'secureConnect', isSessionReused()": false,
       });
     });

@@ -331,8 +331,8 @@ export async function session() {
 
 // setSession() after the handshake started. Node accepts the call, with no effect on that
 // handshake. BoringSSL aborts the process for it, so the test runs this one as a script.
-// Node starts the handshake of a wrap in _start(), so only node resumes in the first shape:
-// the report has the event and not isSessionReused().
+// Node starts the handshake of a wrap in _start(), so in the first shape the session is in
+// time on node, and only there.
 export async function lateSetSession() {
   const { server, port, session, connected } = await serverWithSession();
   const options = { rejectUnauthorized: false };
@@ -342,7 +342,7 @@ export async function lateSetSession() {
       socket.setSession(session);
       start?.(socket);
       await done;
-      return event;
+      return { event, reused: socket.isSessionReused() };
     } finally {
       socket.destroy();
     }

@@ -2060,7 +2060,7 @@ describe("a body made from an S3 file", () => {
         const match = range && /^bytes=(\d+)-(\d*)$/.exec(range);
         if (!match) return new Response(bytes);
         const start = Number(match[1]);
-        const end = match[2] === "" ? bytes.length - 1 : Number(match[2]);
+        const end = match[2] === "" ? bytes.length - 1 : Math.min(Number(match[2]), bytes.length - 1);
         return new Response(bytes.subarray(start, end + 1), {
           status: 206,
           headers: { "Content-Range": `bytes ${start}-${end}/${bytes.length}` },
@@ -2133,7 +2133,8 @@ describe("a body made from an S3 file", () => {
         using endpoint = s3Endpoint();
         const inspected = async () => {
           const subject = await make(endpoint.file());
-          Bun.inspect(subject);
+          // The size in the header is unknown, so it prints as 0.
+          expect(Bun.inspect(subject)).toStartWith(`${name} (0 KB) {`);
           return subject;
         };
         const blob = await (await inspected()).blob();

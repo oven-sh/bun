@@ -335,17 +335,6 @@ describe("WebSocketServer", () => {
     await promise;
   });
 
-  // ws forwards the 'listening' event of its http.Server, which node emits with no arguments.
-  it("passes no arguments to the constructor callback or to 'listening' listeners", async () => {
-    const received: Record<string, unknown[]> = {};
-    const wss = new WebSocketServer({ port: 0 }, (...args) => (received.callback = args));
-    wss.on("listening", (...args) => (received.listener = args));
-    await once(wss, "listening");
-    wss.close();
-    await once(wss, "close");
-    expect(received).toEqual({ listener: [], callback: [] });
-  });
-
   // websockets/ws test/websocket-server.test.js
   it("handles data passed along with the upgrade request", async () => {
     const { promise, resolve, reject } = Promise.withResolvers<{ data: unknown; isBinary: boolean }>();

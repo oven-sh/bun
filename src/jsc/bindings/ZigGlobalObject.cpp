@@ -1196,7 +1196,7 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* 
         // 'rejectionHandled'. Check every in-flight tail (handlers can re-enter
         // handleRejectedPromises(), so there may be more than one).
         for (auto* inflight = globalObj->m_rejectedPromisesBeingProcessed; inflight; inflight = inflight->outer) {
-            if (inflight->tailContains(promise))
+            if (inflight->tailContains(globalObj, promise))
                 return;
         }
         // The promise rejection has already been notified, now we need to queue it for the rejectionHandled event

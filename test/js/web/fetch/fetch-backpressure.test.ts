@@ -1278,9 +1278,10 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
         });
         await using server = await listening(srv);
         const script = /* js */ `
+        const url = ${JSON.stringify(`http://127.0.0.1:${server.port}/`)};
         // Its own frame, so that nothing on the caller's still refers to the response afterwards.
         async function abandon() {
-          if ((await fetch(${JSON.stringify(`http://127.0.0.1:${server.port}/`)})).status !== 200) throw new Error("status");
+          if ((await fetch(url)).status !== 200) throw new Error("status");
         }
         for (let i = 0; i < ${N}; i++) await abandon();
         let done = false;
@@ -1292,6 +1293,8 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
           Bun.gc(true);
           await new Promise(resolve => setImmediate(resolve));
         }
+        // A body that is read logs its pass, so the scan below is known to see one.
+        await (await fetch(url)).bytes();
         process.exit(0);
       `;
         await using proc = Bun.spawn({
@@ -1302,19 +1305,25 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
           stderr: "pipe",
         });
         let freed = 0;
+        let passesWhileHeld = -1;
         const passes: string[] = [];
         // Output.scoped writes to whichever stream it chose at init; scan both.
         const scan = async (stream: ReadableStream<Uint8Array>) => {
           for await (const line of forEachLine(stream)) {
             if (/Decompressing \d+ bytes/.test(line)) passes.push(line);
             if (/\[FetchTasklet\] deinit/i.test(line) && ++freed === N) {
+              passesWhileHeld = passes.length;
               proc.stdin.write("done\n");
               proc.stdin.end();
             }
           }
         };
         await Promise.all([scan(proc.stdout), scan(proc.stderr)]);
-        expect({ freed, passes }).toEqual({ freed: N, passes: [] });
+        expect({ freed: Math.min(freed, N), passesWhileHeld, passesOnceRead: passes.length }).toEqual({
+          freed: N,
+          passesWhileHeld: 0,
+          passesOnceRead: 1,
+        });
         expect(await proc.exited).toBe(0);
       },
     );

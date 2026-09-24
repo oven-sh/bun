@@ -819,6 +819,8 @@ impl PostgresSQLQuery {
                 bun_io::AllocatorType::Js,
             ))
         });
+        // advance() below can reject this request with nothing sent, so no reply releases the ref.
+        scopeguard::defer! { connection.update_poll_ref(); }
 
         this.this_value.with_mut(|r| r.upgrade(global_object));
 
@@ -830,8 +832,6 @@ impl PostgresSQLQuery {
             // For unnamed prepared statements with params, we skip writeQuery+Sync
             // in the enqueue path and let advance() handle it atomically.
             connection.advance_and_flush();
-            // advance() can reject this request with nothing sent, so no reply releases the ref taken above.
-            connection.update_poll_ref();
         }
         Ok(JSValue::UNDEFINED)
     }

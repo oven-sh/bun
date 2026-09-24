@@ -432,7 +432,7 @@ class PostgresAdapter
     const net = require("node:net");
 
     // net.connect returns before the handshake, so the timeout covers it too.
-    const socket = net.connect(path ? { path } : { host: hostname, port });
+    const socket = net.connect(path ? { path } : { host: hostname, port: Number(port) });
     socket.setTimeout(CANCEL_REQUEST_TIMEOUT_MS);
     socket.on("timeout", () => socket.destroy());
     // Best effort: a cancel that never arrives leaves the query running.

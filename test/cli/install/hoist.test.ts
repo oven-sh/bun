@@ -42,11 +42,15 @@ type Linker = "hoisted" | "isolated";
 
 // The child is killed if it does not exit, so a layout that stops terminating fails here instead
 // of leaving an install running after the test.
+//
+// CI exports one BUN_INSTALL_CACHE_DIR per test file, which overrides the per-directory cache in
+// bunfig.toml. These cases run concurrently and install the same packages, and on Windows installs
+// racing on one cache fail with "Failed to install 1 package", so each directory gets its own.
 async function run(cwd: string, ...cmd: string[]) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...cmd],
     cwd,
-    env: bunEnv,
+    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
     stdout: "pipe",
     stderr: "pipe",
     timeout: 10_000,

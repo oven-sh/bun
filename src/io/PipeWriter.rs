@@ -67,17 +67,21 @@ pub trait PosixPipeWriter {
     fn try_write(&self, force_sync: bool, buf: &[u8]) -> WriteResult {
         // PERF: try_write_with_write_fn is not monomorphized per FileType —
         // profile if hot.
-        let ft = if !force_sync {
-            self.get_file_type()
-        } else {
-            FileType::File
-        };
+        let ft = self.get_file_type();
+        // Linux: RWF_NOWAIT is a free per-call nonblocking write, so a pipe stays async even after a spawn cleared O_NONBLOCK on it.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        if matches!(ft, FileType::Pipe | FileType::NonblockingPipe)
+            && sys::linux::RWFFlagSupport::is_maybe_supported()
+        {
+            return self.try_write_with_write_fn(buf, sys::write_nonblocking);
+        }
         match ft {
-            FileType::NonblockingPipe | FileType::File => {
-                self.try_write_with_write_fn(buf, sys::write)
-            }
-            FileType::Pipe => self.try_write_with_write_fn(buf, write_to_blocking_pipe),
+            // send(MSG_DONTWAIT | MSG_NBIO) is nonblocking per call on every Unix, whatever the fd's flags.
             FileType::Socket => self.try_write_with_write_fn(buf, write_to_socket),
+            FileType::Pipe if !force_sync => {
+                self.try_write_with_write_fn(buf, write_to_blocking_pipe)
+            }
+            _ => self.try_write_with_write_fn(buf, sys::write),
         }
     }
 

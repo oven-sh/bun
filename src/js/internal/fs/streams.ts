@@ -559,6 +559,14 @@ function writevAll(chunks, size, pos, cb, retries = 0) {
   });
 }
 
+// Like Writable's afterWrite: no 'drain' once the stream is ending or destroyed.
+function emitDrain(stream: FSStream) {
+  const state = stream._writableState;
+  if (state === undefined || !(state.ending || state.destroyed)) {
+    stream.emit("drain");
+  }
+}
+
 function _write(data, encoding, cb) {
   const fileSink = this[kWriteStreamFastPath];
 
@@ -567,7 +575,7 @@ function _write(data, encoding, cb) {
     if ($isPromise(maybePromise)) {
       maybePromise
         .then(() => {
-          this.emit("drain"); // Emit drain event
+          emitDrain(this);
           cb(null);
         })
         .catch(cb);
@@ -613,7 +621,7 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
       maybePromise.then(
         () => {
           if (cb) cb(null);
-          this.emit("drain");
+          emitDrain(this);
         },
         err => {
           if (cb) cb(err);
@@ -680,7 +688,7 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
       // mistaken for a write failure.
       maybePromise.then(
         () => {
-          this.emit("drain"); // Emit drain event
+          emitDrain(this);
           cb(null);
         },
         err => {
@@ -723,7 +731,7 @@ writeStreamPrototype._writev = function (data, cb) {
     if ($isPromise(maybePromise)) {
       maybePromise
         .then(() => {
-          this.emit("drain");
+          emitDrain(this);
           cb(null);
         })
         .catch(cb);

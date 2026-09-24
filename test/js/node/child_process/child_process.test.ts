@@ -404,26 +404,33 @@ describe("spawn()", () => {
       ],
       { env: bunEnv, stdio: ["pipe", "pipe", "pipe", "ipc"] },
     );
-    const stdout = new Promise<string>(resolve => {
-      let out = "";
-      child.stdout!.on("data", d => (out += d));
-      child.stdout!.on("end", () => resolve(out));
-    });
+    const collect = (stream: NodeJS.ReadableStream) =>
+      new Promise<string>(resolve => {
+        let out = "";
+        stream.on("data", d => (out += d));
+        stream.on("end", () => resolve(out));
+      });
+    const stdout = collect(child.stdout!);
+    const stderr = collect(child.stderr!);
     const exited = new Promise<number | null>(resolve => child.on("exit", resolve));
 
+    // Node emits no 'drain' once end() has been called.
     const order: string[] = [];
     const chunk = Buffer.alloc(256 * 1024, 1);
     for (let i = 0; i < 3; i++) child.stdin!.write(chunk);
     child.stdin!.write(chunk, () => order.push("write"));
+    child.stdin!.on("drain", () => order.push("drain"));
     child.stdin!.on("finish", () => order.push("finish"));
-    const { promise: ended, resolve: onEnd } = Promise.withResolvers<void>();
+    const { promise: ended, resolve: onEnd, reject } = Promise.withResolvers<void>();
     child.stdin!.end(() => {
       order.push("end");
       onEnd();
     });
+    child.on("exit", code => reject(new Error(`child exited with ${code} before end(cb) ran`)));
     child.send("go");
 
     await ended;
+    expect(await stderr).toBe("");
     expect(await stdout).toBe(String(4 * chunk.length));
     expect(order).toEqual(["write", "end", "finish"]);
     expect(await exited).toBe(0);

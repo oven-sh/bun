@@ -2820,6 +2820,10 @@ pub mod bv2_impl {
                     [import_record.importer_source_index as usize]
                     .as_mut_slice()[import_record.import_record_index as usize];
                 record.source_index = source_index;
+                record.flags.set(
+                    bun_ast::ImportRecordFlags::RESOLVED_WITHOUT_URL_SUFFIX,
+                    resolve_result.flags.removed_url_suffix(),
+                );
             }
         }
 
@@ -4689,6 +4693,18 @@ pub mod bv2_impl {
         BundleV2::on_resolve(unsafe { &mut *resolve }, unsafe { &mut *this });
     }
 
+    /// Whether the path an onResolve plugin returned still ends with `suffix`, the
+    /// `?query#fragment` of the URL it resolved. A `/` in the URL matches a native separator.
+    fn path_ends_with_url_suffix(path: &[u8], suffix: &[u8]) -> bool {
+        let Some(start) = path.len().checked_sub(suffix.len()) else {
+            return false;
+        };
+        path[start..]
+            .iter()
+            .zip(suffix)
+            .all(|(&p, &s)| p == s || (s == b'/' && bun_core::path_sep::is_sep_native(p)))
+    }
+
     impl<'a> BundleV2<'a> {
         pub(crate) fn on_load(load: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
             if load.deferred_in.take() == Some(this.graph.defer_epoch) {
@@ -5015,6 +5031,13 @@ pub mod bv2_impl {
                 }
                 jsc_api::JSBundler::ResolveValue::Success(result) => {
                     let mut out_source_index: Option<Index> = None;
+                    // An onResolve result has no `suffix` field (esbuild's has one), so a plugin
+                    // cannot say what it removed. A path that still ends with the suffix kept it.
+                    let specifier: &[u8] = &resolve.import_record.specifier;
+                    let resolved_without_url_suffix = resolve.import_record.kind.is_from_css()
+                        && ImportRecord::url_suffix_start(specifier).is_some_and(|i| {
+                            !path_ends_with_url_suffix(&result.path, &specifier[i..])
+                        });
                     // SAFETY: `result.{path,namespace}` are `Box<[u8]>`. Each arm below
                     // either moves both boxes into `this.free_list` before it stores
                     // `path` (`!found_existing`, external import), or drops them and
@@ -5217,6 +5240,10 @@ pub mod bv2_impl {
                                     .as_mut_slice()
                                     [resolve.import_record.import_record_index as usize];
                                 import_record.source_index = source_index;
+                                import_record.flags.set(
+                                    bun_ast::ImportRecordFlags::RESOLVED_WITHOUT_URL_SUFFIX,
+                                    resolved_without_url_suffix,
+                                );
                                 this.schedule_barrel_imports_after_plugin_resolve(
                                     resolve.import_record.importer_source_index,
                                 );
@@ -6770,6 +6797,11 @@ pub mod bv2_impl {
                 if last_error.is_some() {
                     continue;
                 }
+
+                import_record.flags.set(
+                    bun_ast::ImportRecordFlags::RESOLVED_WITHOUT_URL_SUFFIX,
+                    resolve_result.flags.removed_url_suffix(),
+                );
 
                 // borrowck — `Result.path()` returns `Option<&mut Path>`, which
                 // would lock the whole struct while the loop body still needs to

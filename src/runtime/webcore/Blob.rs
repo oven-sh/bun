@@ -3486,16 +3486,28 @@ fn push_file_part(
         global.throw_value(err.to_js(global))
     };
 
+    let not_a_file = || {
+        global.throw_invalid_arguments(format_args!(
+            "Blob parts backed by a pipe, socket or device cannot be read synchronously; await .bytes() or .arrayBuffer() first"
+        ))
+    };
+    let is_file_or_dir = |mode| bun_sys::S::ISREG(mode) || bun_sys::S::ISDIR(mode);
+
     let (fd, _close_on_drop) = match &file.pathlike {
         PathOrFileDescriptor::Fd(fd) => (*fd, None),
         PathOrFileDescriptor::Path(path) => {
             let mut path_buf = bun_paths::path_buffer_pool::get();
-            // O_NONBLOCK: open(2) of a FIFO that has no writer would block the JS thread.
+            let path = path.slice_z(&mut path_buf);
+            // open(2) of a FIFO wakes the writer that waits for a reader, so refuse it unopened.
+            if bun_sys::stat(path).is_ok_and(|stat| !is_file_or_dir(stat.st_mode as _)) {
+                return Err(not_a_file());
+            }
+            // O_NONBLOCK: if the path is a FIFO by now, open(2) must not block the JS thread.
             let flags = bun_sys::O::RDONLY
                 | bun_sys::O::NONBLOCK
                 | bun_sys::O::CLOEXEC
                 | bun_sys::O::NOCTTY;
-            match bun_sys::File::open(path.slice_z(&mut path_buf), flags, 0) {
+            match bun_sys::File::open(path, flags, 0) {
                 Ok(opened) => (opened.handle(), Some(opened)),
                 Err(err) => return Err(throw(err)),
             }
@@ -3512,9 +3524,7 @@ fn push_file_part(
         )));
     }
     if !bun_sys::S::ISREG(stat.st_mode as _) {
-        return Err(global.throw_invalid_arguments(format_args!(
-            "Blob parts backed by a pipe, socket or device cannot be read synchronously; await .bytes() or .arrayBuffer() first"
-        )));
+        return Err(not_a_file());
     }
 
     let offset = blob.offset.get();

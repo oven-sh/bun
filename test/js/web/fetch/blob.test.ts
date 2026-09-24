@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, isWindows, tempDir } from "harness";
 import { mkfifo } from "mkfifo";
 import type { BlobOptions } from "node:buffer";
 import type { BinaryLike } from "node:crypto";
@@ -829,9 +829,14 @@ test.each([
 });
 
 describe("new Blob([...]) with a file-backed Blob part", () => {
-  async function check(blob: Blob, expected: string) {
-    const text = await blob.text();
-    expect({ size: blob.size, text }).toEqual({ size: expected.length, text: expected });
+  async function check(blob: Blob, expected: string | Uint8Array) {
+    if (typeof expected === "string") {
+      const text = await blob.text();
+      expect({ size: blob.size, text }).toEqual({ size: Buffer.byteLength(expected), text: expected });
+    } else {
+      const bytes = await blob.bytes();
+      expect({ size: blob.size, bytes }).toEqual({ size: expected.byteLength, bytes: expected });
+    }
   }
 
   test("contributes the file's bytes alongside other parts", async () => {
@@ -857,6 +862,54 @@ describe("new Blob([...]) with a file-backed Blob part", () => {
     await check(new Blob(["<", structuredClone(file), ">"]), "<ABCDEFGHIJ>");
     // Response.blob() over a Bun.file still has a file store
     await check(new Blob(["<", await new Response(file).blob(), ">"]), "<ABCDEFGHIJ>");
+  });
+
+  test("keeps every byte of the file", async () => {
+    const all = Uint8Array.from({ length: 256 }, (_, i) => i);
+    using dir = tempDir("blob-file-part-bytes", { "all.bin": Buffer.from(all), "utf8.txt": "héllo wörld ✓" });
+    const bin = Bun.file(path.join(String(dir), "all.bin"));
+    await check(new Blob([bin, bin.slice(250), new Uint8Array([7])]), Uint8Array.of(...all, ...all.subarray(250), 7));
+    await check(new Blob(["é", Bun.file(path.join(String(dir), "utf8.txt")), "✓"]), "éhéllo wörld ✓✓");
+  });
+
+  // Two parts are made for each case: a read must not change what the other part gives.
+  test("a part gives the bytes that the same part gives when it is read alone", async () => {
+    using dir = tempDir("blob-file-part-alone", { "f.bin": "0123456789ABCDEFGHIJ" });
+    const p = path.join(String(dir), "f.bin");
+    const sized = () => {
+      const file = Bun.file(p);
+      void file.size;
+      return file;
+    };
+    const windows: [number?, number?][] = [
+      [],
+      [0],
+      [5],
+      [0, 5],
+      [5, 5],
+      [10, 5],
+      [0, 20],
+      [0, 1000],
+      [19],
+      [20],
+      [25, 30],
+    ];
+    const changes = {
+      "unchanged": () => {},
+      "grown": () => fs.appendFileSync(p, "zzzzz"),
+      "shrunk": () => fs.truncateSync(p, 8),
+    };
+    for (const make of [() => Bun.file(p), sized]) {
+      for (const window of windows) {
+        for (const [change, apply] of Object.entries(changes)) {
+          fs.writeFileSync(p, "0123456789ABCDEFGHIJ");
+          const [alone, part] = [make().slice(...window), make().slice(...window)];
+          apply();
+          const label = `${make === sized ? "sized " : ""}slice(${window}), file ${change}`;
+          expect({ label, bytes: await new Blob(["", part]).bytes() }).toEqual({ label, bytes: await alone.bytes() });
+        }
+      }
+    }
   });
 
   test("fd-backed BunFile part", async () => {
@@ -892,14 +945,30 @@ describe("new Blob([...]) with a file-backed Blob part", () => {
   test("throws when the file cannot be read", () => {
     using dir = tempDir("blob-file-part-missing", {});
     const p = path.join(String(dir), "does-not-exist");
-    expect(() => new Blob(["x", Bun.file(p)])).toThrow(expect.objectContaining({ code: "ENOENT" }));
+    const missing = expect.objectContaining({ code: "ENOENT", syscall: "open", path: p });
+    expect(() => new Blob(["x", Bun.file(p)])).toThrow(missing);
     // still throws after `.size` was accessed (which resolves to 0 for a
     // nonexistent path)
     const observed = Bun.file(p);
     void observed.size;
-    expect(() => new Blob(["x", observed])).toThrow(expect.objectContaining({ code: "ENOENT" }));
+    expect(() => new Blob(["x", observed])).toThrow(missing);
+    // a slice with no bytes still names a file that must exist
+    expect(() => new Blob(["x", Bun.file(p).slice(3, 3)])).toThrow(missing);
     // a directory
-    expect(() => new Blob(["x", Bun.file(String(dir))])).toThrow(expect.objectContaining({ code: "EISDIR" }));
+    const directory = expect.objectContaining({ code: "EISDIR", path: String(dir) });
+    expect(() => new Blob(["x", Bun.file(String(dir))])).toThrow(directory);
+  });
+
+  test("throws for an S3 part", () => {
+    const client = new Bun.S3Client({
+      accessKeyId: "id",
+      secretAccessKey: "secret",
+      bucket: "bucket",
+      endpoint: "http://127.0.0.1:1",
+    });
+    expect(() => new Blob(["x", client.file("key")])).toThrow(
+      "Blob parts backed by S3 cannot be read synchronously; await .bytes() or .arrayBuffer() first",
+    );
   });
 
   test.skipIf(isWindows || process.getuid?.() === 0)("throws when the file is not readable", () => {
@@ -915,6 +984,10 @@ describe("new Blob([...]) with a file-backed Blob part", () => {
     using dir = tempDir("blob-fifo-part", {});
     const fifo = path.join(String(dir), "fifo");
     if (!isWindows) mkfifo(fifo);
+    // The writer waits in open(2) until a reader opens the FIFO.
+    await using writer = isWindows
+      ? null
+      : Bun.spawn({ cmd: ["sh", "-c", `printf 'from the writer' > "$1"`, "sh", fifo], stderr: "inherit" });
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -929,6 +1002,8 @@ describe("new Blob([...]) with a file-backed Blob part", () => {
               console.log(name, e.message);
             }
           }
+          // The constructor did not open the FIFO, so the writer still waits and the async read gets its bytes.
+          if (parts.fifo) console.log("fifo, read async:", await parts.fifo.text());
         `,
       ],
       env: { ...bunEnv, FIFO_PATH: isWindows ? "" : fifo },
@@ -940,7 +1015,40 @@ describe("new Blob([...]) with a file-backed Blob part", () => {
     const message =
       "Blob parts backed by a pipe, socket or device cannot be read synchronously; await .bytes() or .arrayBuffer() first";
     expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
-      stdout: isWindows ? [`stdin ${message}`] : [`stdin ${message}`, `fifo ${message}`],
+      stdout: isWindows
+        ? [`stdin ${message}`]
+        : [`stdin ${message}`, `fifo ${message}`, "fifo, read async: from the writer"],
+      stderr: "",
+      exitCode: 0,
+    });
+    if (writer) expect(await writer.exited).toBe(0);
+  });
+
+  // procfs gives a stat size of 0 for a file that has bytes, so the read must go on to the end of the file.
+  test.skipIf(!isLinux)("reads a file whose stat size is 0 to its end", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("fs");
+          const environ = fs.readFileSync("/proc/self/environ");
+          const blob = new Blob(["<", Bun.file("/proc/self/environ"), ">"]);
+          console.log(JSON.stringify({
+            statSize: fs.statSync("/proc/self/environ").size,
+            moreThanOneChunk: environ.length > 8192,
+            size: blob.size - environ.length,
+            sameBytes: Buffer.from(await blob.bytes()).equals(Buffer.concat([Buffer.from("<"), environ, Buffer.from(">")])),
+          }));
+        `,
+      ],
+      env: { ...bunEnv, BLOB_PART_PADDING: Buffer.alloc(20_000, "x").toString() },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+      stdout: { statSize: 0, moreThanOneChunk: true, size: 2, sameBytes: true },
       stderr: "",
       exitCode: 0,
     });

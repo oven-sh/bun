@@ -30,6 +30,8 @@ enum Identity {
 struct Member {
     pid: PidT,
     identity: u64,
+    /// False until `kill` reached it, so a later sample can signal a process that was new or could not be read.
+    signalled: bool,
 }
 
 pub struct Watch {
@@ -100,20 +102,21 @@ impl Watch {
         os::finish(self);
     }
 
-    /// The tree's memory right now, as exact as this platform allows.
+    /// The tree's memory right now. This runs on the JS thread, so it uses only the cheap per-process numbers.
     pub fn sample_now(&self) -> u64 {
-        self.sample(true)
+        self.sample()
     }
 
-    fn sample(&self, precise: bool) -> u64 {
+    fn sample(&self) -> u64 {
         // A tick that could not be measured changes nothing: it must not kill, and it must not end the watch.
-        let Some(usage) = self.measure(precise) else {
+        let Some(usage) = self.measure() else {
             return self.last.load(Ordering::Acquire);
         };
         self.last.store(usage, Ordering::Release);
         self.peak.fetch_max(usage, Ordering::AcqRel);
-        if usage > self.limit {
-            self.kill_once();
+        // After the first kill, later samples signal any member that is new or was missed.
+        if usage > self.limit || self.exceeded() {
+            self.kill();
         }
         usage
     }
@@ -129,20 +132,20 @@ impl Watch {
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    fn measure(&self, precise: bool) -> Option<u64> {
+    fn measure(&self) -> Option<u64> {
         if !self.root_is_alive()? {
             self.done.store(true, Ordering::Release);
             return None;
         }
         if let Some(cgroup) = &self.cgroup {
             if cgroup.exceeded() {
-                self.kill_once();
+                self.kill();
             }
             return Some(cgroup.usage());
         }
         let estimate = self.walk();
-        // The cheap sum counts a shared page once per process, so it can only be too high.
-        if precise || estimate > self.limit {
+        // The cheap sum counts a shared page once per process, so it can only be too high. Confirm before a kill.
+        if estimate > self.limit && !self.exceeded() {
             if let Some(exact) = self.exact() {
                 return Some(exact);
             }
@@ -151,7 +154,7 @@ impl Watch {
     }
 
     #[cfg(target_os = "macos")]
-    fn measure(&self, _precise: bool) -> Option<u64> {
+    fn measure(&self) -> Option<u64> {
         if !self.root_is_alive()? {
             self.done.store(true, Ordering::Release);
             return None;
@@ -160,7 +163,7 @@ impl Watch {
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
-    fn measure(&self, _precise: bool) -> Option<u64> {
+    fn measure(&self) -> Option<u64> {
         Some(os::tree_usage(self))
     }
 
@@ -191,6 +194,7 @@ impl Watch {
                         Identity::Unknown => unreadable.push(Member {
                             pid: m.pid,
                             identity: m.identity,
+                            signalled: m.signalled,
                         }),
                         _ => {}
                     }
@@ -200,15 +204,19 @@ impl Watch {
         let mut total = 0u64;
         let mut next: Vec<Member> = Vec::with_capacity(order.len() + unreadable.len());
         for pid in order {
-            let identity = match members.iter().find(|m| m.pid == pid) {
-                Some(m) => m.identity,
+            let (identity, signalled) = match members.iter().find(|m| m.pid == pid) {
+                Some(m) => (m.identity, m.signalled),
                 None => match os::identity(pid) {
-                    Identity::Is(start) => start,
+                    Identity::Is(start) => (start, false),
                     _ => continue,
                 },
             };
             total += walker.footprint(pid);
-            next.push(Member { pid, identity });
+            next.push(Member {
+                pid,
+                identity,
+                signalled,
+            });
         }
         next.append(&mut unreadable);
         *members = next;
@@ -231,10 +239,12 @@ impl Watch {
         )
     }
 
-    fn kill_once(&self) {
-        if self.done.load(Ordering::Acquire) || self.exceeded.swap(true, Ordering::AcqRel) {
+    /// Safe to call on every sample: each member is signalled one time, and a member that was missed is tried again.
+    fn kill(&self) {
+        if self.done.load(Ordering::Acquire) {
             return;
         }
+        self.exceeded.store(true, Ordering::Release);
         #[cfg(any(target_os = "linux", target_os = "android"))]
         if let Some(cgroup) = &self.cgroup {
             cgroup.kill_all();
@@ -246,11 +256,20 @@ impl Watch {
     /// Children first, so a shell cannot see its child die and start a replacement before its own signal arrives.
     #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
     fn kill_tree(&self) {
-        for m in self.members.lock().iter().rev() {
-            if os::identity(m.pid) == Identity::Is(m.identity) {
-                // SAFETY: kill(2) has no memory-safety preconditions.
-                unsafe { libc::kill(m.pid, self.signal as core::ffi::c_int) };
+        for m in self
+            .members
+            .lock()
+            .iter_mut()
+            .rev()
+            .filter(|m| !m.signalled)
+        {
+            if os::identity(m.pid) != Identity::Is(m.identity) {
+                continue;
             }
+            // SAFETY: kill(2) has no memory-safety preconditions.
+            let sent = unsafe { libc::kill(m.pid, self.signal as core::ffi::c_int) } == 0;
+            m.signalled =
+                sent || std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
         }
     }
 
@@ -324,11 +343,14 @@ fn run() {
         let started = Instant::now();
         let mut min_headroom = u64::MAX;
         for e in &snapshot {
-            if e.done.load(Ordering::Acquire) || e.exceeded() {
+            if e.done.load(Ordering::Acquire) {
                 continue;
             }
-            let usage = e.sample(false);
-            min_headroom = min_headroom.min(e.limit.saturating_sub(usage));
+            let usage = e.sample();
+            // A tree that is already being killed needs a retry now and then, not the 1 ms rate.
+            if !e.exceeded() {
+                min_headroom = min_headroom.min(e.limit.saturating_sub(usage));
+            }
         }
         snapshot.clear();
         #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -423,7 +445,7 @@ pub fn watch(opts: &mut WatchOptions) -> Arc<Watch> {
         notified: AtomicBool::new(false),
     });
     // A child can allocate a lot before the thread's first tick; sample once synchronously.
-    entry.sample(false);
+    entry.sample();
 
     #[cfg(windows)]
     if os::arm_kernel_limit(&entry) {
@@ -502,9 +524,16 @@ pub mod cgroup {
         !PENDING_RMDIR.lock().is_empty()
     }
 
+    /// Only a cgroup that still holds processes can be removed later. A directory that is gone, or not ours, never can.
+    fn is_busy(err: &bun_sys::Error) -> bool {
+        matches!(err.get_errno(), bun_sys::E::EBUSY | bun_sys::E::ENOTEMPTY)
+    }
+
     /// A cgroup cannot be removed until its killed processes are gone, so the sampler thread retries.
     pub(super) fn retry_pending_rmdir() {
-        PENDING_RMDIR.lock().retain(|path| rmdir(path).is_err());
+        PENDING_RMDIR
+            .lock()
+            .retain(|path| rmdir(path).is_err_and(|err| is_busy(&err)));
     }
 
     /// Only places inside our own cgroup: a sibling would leave our systemd unit or container and escape its limits.
@@ -637,7 +666,7 @@ pub mod cgroup {
 
     impl Drop for Cgroup {
         fn drop(&mut self) {
-            if rmdir(&self.path).is_err() {
+            if rmdir(&self.path).is_err_and(|err| is_busy(&err)) {
                 // The sampler checks this list under `ENTRIES` before it sleeps, so the push must be under it too.
                 let entries = super::ENTRIES.lock();
                 PENDING_RMDIR.lock().push(core::mem::take(&mut self.path));
@@ -940,12 +969,11 @@ mod os {
     pub(super) fn exact_footprint(pid: PidT, walker: &mut Walker) -> u64 {
         let mut buf = Vec::with_capacity(1024);
         match read_small(&format!("/proc/{pid}/smaps_rollup"), &mut buf) {
-            Ok(()) => {
-                sum_kb(&buf, &[b"Pss_Anon", b"Pss_Shmem"])
-                    .or_else(|| sum_kb(&buf, &[b"Pss"]))
-                    .unwrap_or(0)
-                    * 1024
-            }
+            // Linux 4.14 to 5.4 has only the total `Pss`, which counts file pages, so use the cheap number there.
+            Ok(()) => match sum_kb(&buf, &[b"Pss_Anon", b"Pss_Shmem"]) {
+                Some(kb) => kb * 1024,
+                None => walker.footprint(pid),
+            },
             Err(err) if is_gone(&err) => 0,
             Err(_) => walker.footprint(pid),
         }
@@ -957,11 +985,7 @@ mod os {
         let mut kids = Vec::new();
         let mut total = 0u64;
         while let Some(pid) = stack.pop() {
-            total += if has_exact_footprint() {
-                exact_footprint(pid, &mut walker)
-            } else {
-                walker.footprint(pid)
-            };
+            total += walker.footprint(pid);
             kids.clear();
             walker.children(pid, &mut kids);
             stack.extend_from_slice(&kids);
@@ -1111,7 +1135,7 @@ mod os {
                 continue;
             };
             match message {
-                windows::JOB_OBJECT_MSG_NOTIFICATION_LIMIT => watch.kill_once(),
+                windows::JOB_OBJECT_MSG_NOTIFICATION_LIMIT => watch.kill(),
                 // The tree is gone. This releases a watch whose Subprocess object went away before the child did.
                 windows::JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO => {
                     watch.done.store(true, Ordering::Release);
@@ -1148,12 +1172,13 @@ mod os {
     }
 
     pub(super) fn kill_tree(w: &Watch) {
-        if !w.job.is_null() {
-            // SAFETY: `job` is a live job handle.
-            unsafe { windows::TerminateJobObject(w.job, 1) };
-        } else if !w.process.is_null() {
-            // SAFETY: `process` is a live handle that this Watch owns.
-            unsafe { windows::TerminateProcess(w.process, 1) };
+        // SAFETY: `job` is a live job handle.
+        if !w.job.is_null() && unsafe { windows::TerminateJobObject(w.job, 1) } != 0 {
+            return;
+        }
+        if !w.process.is_null() {
+            // SAFETY: `process` is a live handle that this Watch owns. There is no further fallback if this fails too.
+            let _ = unsafe { windows::TerminateProcess(w.process, 1) };
         }
     }
 }

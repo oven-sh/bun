@@ -286,7 +286,7 @@ const proc = Bun.spawn(["bun", "run", "build"]);
 const { current, peak } = proc.memoryUsage(); // bytes, for the whole process tree
 ```
 
-`current` is `0` after the process exits. `peak` is the highest value Bun has sampled. On Windows without `maxMemory`, only the process itself is counted.
+`memoryUsage()` is cheap, so you can call it often. On Linux it adds up `RssAnon + RssShmem` for each process, so a page that several processes share is counted one time for each of them. Before Bun kills a tree, it confirms the total with the exact proportional numbers. `current` is `0` after the process exits. `peak` is the highest value Bun has sampled. On Windows without `maxMemory`, only the process itself is counted.
 
 ## Inter-process communication (IPC)
 

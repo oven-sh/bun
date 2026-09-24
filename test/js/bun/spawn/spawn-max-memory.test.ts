@@ -290,6 +290,41 @@ describe("Bun.spawn maxMemory", () => {
       await gone(hogPid);
     },
   );
+  // A Windows job and a Linux cgroup stop every process at once, so only the sampler can miss a late process.
+  (isWindows ? test.skip : test.concurrent)("a process that starts after the kill is signalled too", async () => {
+    // Both processes exit when their stdin closes, so nothing outlives a failed run.
+    const lateChild = `process.stdin.on("close", () => process.exit(0)).resume();`;
+    const rootSrc = `
+      process.stdin.on("close", () => process.exit(0)).resume();
+      process.on("SIGTERM", () => {
+        const late = Bun.spawn({ cmd: [process.execPath, "-e", ${JSON.stringify(lateChild)}], stdio: ["pipe", "ignore", "ignore"] });
+        console.log(late.pid);
+      });
+      ${hogFor(2)}
+    `;
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "-e", rootSrc],
+      env: bunEnv,
+      stdio: ["pipe", "pipe", "inherit"],
+      maxMemory: limitFor(2),
+      killSignal: "SIGTERM",
+    });
+    try {
+      if (subprocessInternals.memoryLimitRoute(proc) !== "sampler") return;
+      let output = "";
+      for await (const chunk of proc.stdout) {
+        output += Buffer.from(chunk).toString();
+        if (output.includes("\n")) break;
+      }
+      const latePid = parseInt(output, 10);
+      expect(latePid).toBeGreaterThan(0);
+      // The root ignores SIGTERM and stays alive. The late child does not, so it dies only if a later sample signals it.
+      await gone(latePid);
+    } finally {
+      proc.kill("SIGKILL");
+      await proc.exited;
+    }
+  });
 });
 
 describe("node:child_process maxMemory", () => {

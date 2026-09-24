@@ -202,13 +202,22 @@ for (const maxVersion of ["TLSv1.2", "TLSv1.3"]) {
 // The server side of the same shape. A server that asks for a client certificate calls end() on its socket while the
 // handshake runs. The proxy holds the client's Certificate..Finished flight until the server's FIN arrived, so the
 // handshake completes on a socket that is already shut down. The client's certificate is not trusted.
-// Returns the ordered events of the server.
-async function serverEndMidHandshake(rejectUnauthorized) {
+// With `afterHandshakeTimeout` the end() comes from the server's 'tlsClientError' listener, once the handshake
+// timeout was reported. Returns the ordered events of the server.
+async function serverEndMidHandshake(rejectUnauthorized, afterHandshakeTimeout = false) {
   const events = [];
   const { promise, resolve } = Promise.withResolvers();
   let serverSocket;
   const server = tls.createServer(
-    { key, cert, requestCert: true, rejectUnauthorized, minVersion: "TLSv1.3", maxVersion: "TLSv1.3" },
+    {
+      key,
+      cert,
+      requestCert: true,
+      rejectUnauthorized,
+      minVersion: "TLSv1.3",
+      maxVersion: "TLSv1.3",
+      ...(afterHandshakeTimeout && { handshakeTimeout: 50 }),
+    },
     socket => {
       events.push(`secureConnection authorized=${socket.authorized} authError=${socket.authorizationError}`);
       socket.on("error", () => {});
@@ -223,9 +232,14 @@ async function serverEndMidHandshake(rejectUnauthorized) {
     serverSocket = socket;
     socket.on("error", () => {});
   });
-  server.on("tlsClientError", err => {
+  server.on("tlsClientError", (err, socket) => {
     events.push(`tlsClientError ${err.code}`);
-    resolve();
+    if (err.code !== "ERR_TLS_HANDSHAKE_TIMEOUT") return resolve();
+    socket.on("close", () => {
+      events.push("close");
+      resolve();
+    });
+    socket.end();
   });
 
   const { port, close } = await behindProxy(
@@ -238,7 +252,7 @@ async function serverEndMidHandshake(rejectUnauthorized) {
         // The first record is the ClientHello. Every later one belongs to the flight the verdict comes from.
         if (++records === 1 || serverEnded) return void upstream.write(record);
         held.push(record);
-        if (held.length === 1) serverSocket.end();
+        if (held.length === 1 && !afterHandshakeTimeout) serverSocket.end();
       });
       upstream.on("data", chunk => downstream.write(chunk));
       upstream.on("end", () => {
@@ -283,6 +297,13 @@ test("a server that end()s while the handshake runs does not accept an untrusted
   const events = await serverEndMidHandshake(true);
   assert.ok(events.length > 0, "the server reported nothing");
   assert.ok(!events.some(event => event.startsWith("secureConnection") || event.startsWith("data")), events.join(", "));
+});
+
+test("a server that end()s after a handshake timeout does not accept an untrusted client certificate", async () => {
+  assert.deepStrictEqual(await serverEndMidHandshake(true, true), [
+    "tlsClientError ERR_TLS_HANDSHAKE_TIMEOUT",
+    "close",
+  ]);
 });
 
 // No end() anywhere. The peer sends one record that cannot be decrypted right behind its Finished message, in the

@@ -384,9 +384,7 @@ pub mod ssl_wrapper {
         HandshakeRenegotiationPending = 2,
     }
 
-    /// What a handshake dispatch reports. `trigger_handshake_callback` derives
-    /// `success` and the verify result from it, so a call site cannot report a
-    /// finished handshake with a verify result of its own.
+    /// What `trigger_handshake_callback` reports.
     #[derive(Clone, Copy)]
     enum HandshakeOutcome {
         /// A handshake or a renegotiation finished.
@@ -929,8 +927,7 @@ pub mod ssl_wrapper {
                 HandshakeOutcome::InlineRejected | HandshakeOutcome::HandshakeError => {
                     (false, self.verify_error())
                 }
-                // After a shutdown the owner closed this side. node:tls reads a failure
-                // with no error there as its own close, not as a verdict on the peer.
+                // node:tls reads a failure with no error after end() as its own close.
                 HandshakeOutcome::Aborted if self.is_shutdown() => {
                     (false, us_bun_verify_error_t::default())
                 }
@@ -970,9 +967,7 @@ pub mod ssl_wrapper {
             (handlers.on_close)(handlers.ctx);
         }
 
-        /// The SSL's X509 verdict. It does not look at the shutdown flags: a shutdown that runs
-        /// mid-handshake sends nothing but still sets `sent_ssl_shutdown`, and that must not
-        /// turn a failed certificate check into a pass.
+        /// The SSL's X509 verdict. Shutdown state does not change it.
         fn verify_error(&self) -> us_bun_verify_error_t {
             let Some(ssl) = self.ssl.get() else {
                 return us_bun_verify_error_t::default();

@@ -1182,8 +1182,11 @@ const ServerHandlers = {
           // no tlsClientError - Node's onServerSocketSecure never emits it
           // there and test-tls-sni-option asserts mustNotCall on it for the
           // authorized=false cases.
-          self[kerrorEmitted] = true;
-          server?.emit("tlsClientError", verifyError, self);
+          // Node reports a connection once: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1234-L1240
+          if (!self[kerrorEmitted]) {
+            self[kerrorEmitted] = true;
+            server?.emit("tlsClientError", verifyError, self);
+          }
           // A rejected peer is torn down with the verification error, so
           // 'close' reports hadError === true. The internal 'error' listener
           // installed by the TLSSocket constructor (node's _init) keeps this

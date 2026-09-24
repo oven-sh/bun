@@ -1900,9 +1900,7 @@ static void ssl_trigger_handshake(struct us_socket_t *s, int success) {
   if (!success && ssl_dispatch_parked_reason(s)) {
     return;
   }
-  /* A finished handshake always reports the SSL's X509 verdict. Closed,
-   * half-closed and fatal state (a FIN sent during the handshake, a bad record
-   * right behind the peer's Finished) only zero the result of a failed one. */
+  /* A finished handshake reports the SSL's X509 verdict in every socket state. */
   struct us_bun_verify_error_t verify_error =
       success && s->ssl ? us_ssl_socket_verify_error_from_ssl(s_ssl(s))
                         : us_internal_ssl_verify_error(s);

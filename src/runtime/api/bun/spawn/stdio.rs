@@ -585,11 +585,13 @@ impl Stdio {
     pub(crate) fn extract_blob(
         &mut self,
         global: &JSGlobalObject,
-        blob: webcore::blob::Any,
+        mut blob: webcore::blob::Any,
         i: i32,
     ) -> JsResult<()> {
         let fd = FdStdio::from_int(i).map(FdStdio::fd);
 
+        // The child cannot compare a pinned file, so it gets the bytes of one verified read.
+        let mut pinned_bytes: Option<Vec<u8>> = None;
         if blob.needs_to_read_file() {
             if let Some(store) = blob.store() {
                 if let StoreData::File(ref file) = store.data {
@@ -631,10 +633,26 @@ impl Stdio {
                             *self = Stdio::Path(path.clone());
                             return Ok(());
                         }
-                        None => return Err(ToSpawnOptsError::PinnedFile.throw_js(global)),
+                        None => {
+                            let webcore::blob::Any::Blob(file_blob) = &blob else {
+                                unreachable!("only `Any::Blob` has a store")
+                            };
+                            let (offset, size) = (file_blob.offset.get(), file_blob.size.get());
+                            match webcore::blob::read_file_sync(file, offset, size) {
+                                Ok(bytes) => pinned_bytes = Some(bytes),
+                                Err(_) => {
+                                    let err = webcore::blob::not_readable_error(global);
+                                    return Err(global.throw_value(err));
+                                }
+                            }
+                        }
                     }
                 }
             }
+        }
+        if let Some(bytes) = pinned_bytes {
+            blob.detach();
+            blob = webcore::blob::Any::from_owned_slice(bytes);
         }
 
         if i == 1 || i == 2 {

@@ -1100,14 +1100,6 @@ pub mod store {
             }
         }
 
-        /// [`Self::path_for_display`] for a caller that opens the path: `None` for a pinned file.
-        pub fn path_for_open(&self) -> Option<&[u8]> {
-            match &self.data {
-                Data::File(file) if file.pinned().is_some() => None,
-                _ => self.path_for_display(),
-            }
-        }
-
         pub fn memory_cost(&self) -> usize {
             if self.has_one_ref() {
                 core::mem::size_of::<Self>()

@@ -80,6 +80,69 @@ pub(crate) fn not_readable_error(global: &JSGlobalObject) -> JSValue {
         .to_dom_exception_instance(global, bun_jsc::DOMExceptionCode::NotReadableError)
 }
 
+/// What a synchronous `NodeFS` read of `file` reads from. A pinned file: its verified descriptor.
+pub(crate) fn sync_read_source(
+    file: &store::File,
+) -> bun_sys::Result<(PathOrFileDescriptor<'static>, VerifiedRead<'_>)> {
+    match file.source() {
+        store::FileSource::Lazy(pathlike) => Ok((pathlike.clone(), VerifiedRead(None))),
+        store::FileSource::Pinned(pinned) => {
+            let (fd, _) = pinned.open_verified(bun_sys::O::RDONLY)?;
+            Ok((
+                PathOrFileDescriptor::Fd(fd),
+                VerifiedRead(Some((pinned, fd))),
+            ))
+        }
+    }
+}
+
+/// The window `offset..offset + size` of `file`, read on this thread through [`sync_read_source`].
+pub(crate) fn read_file_sync(
+    file: &store::File,
+    offset: SizeType,
+    size: SizeType,
+) -> bun_sys::Result<Vec<u8>> {
+    let (path, read) = sync_read_source(file)?;
+    let mut args = crate::node::fs::args::ReadFile::default();
+    args.encoding = crate::node::types::Encoding::Buffer;
+    args.path = path;
+    args.offset = offset;
+    args.max_size = Some(size);
+    let mut result =
+        crate::node::fs::NodeFS::default().read_file(&args, crate::node::fs::Flavor::Sync)?;
+    let bytes = result.slice().to_vec();
+    if let crate::node::types::StringOrBuffer::Buffer(buf) = &mut result {
+        buf.destroy();
+    }
+    read.finish()?;
+    Ok(bytes)
+}
+
+/// The open descriptor of a pinned file, for the length of one [`sync_read_source`] read.
+pub(crate) struct VerifiedRead<'a>(Option<(&'a store::PinnedFile, Fd)>);
+
+impl VerifiedRead<'_> {
+    pub(crate) fn is_pinned(&self) -> bool {
+        self.0.is_some()
+    }
+
+    /// node compares a pinned file again after it has read it.
+    pub(crate) fn finish(self) -> bun_sys::Result<()> {
+        match self.0 {
+            Some((pinned, fd)) => pinned.recheck(fd),
+            None => Ok(()),
+        }
+    }
+}
+
+impl Drop for VerifiedRead<'_> {
+    fn drop(&mut self) {
+        if let Some((_, fd)) = self.0 {
+            bun_sys::FdExt::close(fd);
+        }
+    }
+}
+
 /// Result delivered to `ReadBytesHandler::on_read_bytes`.
 pub(crate) enum ReadBytesResult {
     /// global-allocator-owned by the callback.
@@ -3701,23 +3764,13 @@ impl FormDataContext<'_> {
                             // we need to make this async and use download/downloadSlice
                         }
                         store::Data::File(file) => {
-                            // A pinned file is read through its verified descriptor, never by path.
-                            let (path, pinned) = match file.source() {
-                                store::FileSource::Lazy(pathlike) => (pathlike.clone(), None),
-                                store::FileSource::Pinned(pinned) => {
-                                    match pinned.open_verified(bun_sys::O::RDONLY) {
-                                        Ok((fd, _)) => {
-                                            (PathOrFileDescriptor::Fd(fd), Some((pinned, fd)))
-                                        }
-                                        Err(_) => {
-                                            self.failed = true;
-                                            let _ = global_this
-                                                .throw_value(not_readable_error(global_this));
-                                            return;
-                                        }
-                                    }
-                                }
+                            // Only the verified open of a pinned file can fail here.
+                            let Ok((path, read)) = sync_read_source(file) else {
+                                self.failed = true;
+                                let _ = global_this.throw_value(not_readable_error(global_this));
+                                return;
                             };
+                            let is_pinned = read.is_pinned();
                             // TODO: make this async + lazy
                             // Use a fresh stack
                             // `NodeFS` (it is stateless aside from a path scratch
@@ -3731,22 +3784,18 @@ impl FormDataContext<'_> {
                             rf_args.max_size = Some(blob.size.get());
                             let mut res =
                                 node_fs.read_file(&rf_args, crate::node::fs::Flavor::Sync);
-                            if let Some((pinned, fd)) = pinned {
-                                // node compares the file again after it has read it.
-                                if res.is_ok()
-                                    && let Err(err) = pinned.recheck(fd)
+                            if let Err(err) = read.finish()
+                                && res.is_ok()
+                            {
+                                if let Ok(crate::node::types::StringOrBuffer::Buffer(buf)) =
+                                    &mut res
                                 {
-                                    if let Ok(crate::node::types::StringOrBuffer::Buffer(buf)) =
-                                        &mut res
-                                    {
-                                        buf.destroy();
-                                    }
-                                    res = Err(err);
+                                    buf.destroy();
                                 }
-                                bun_sys::FdExt::close(fd);
+                                res = Err(err);
                             }
                             match res {
-                                Err(_) if pinned.is_some() => {
+                                Err(_) if is_pinned => {
                                     self.failed = true;
                                     let _ =
                                         global_this.throw_value(not_readable_error(global_this));

@@ -247,15 +247,30 @@ impl FileRoute {
             resp.timeout(server.config().idle_timeout);
         }
         let store = route.blob.store().unwrap().clone();
-        let Some(path) = store.path_for_open() else {
+        let open_flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NONBLOCK;
+        // A pinned file is opened by its store, which hands back the `fstat` it compared.
+        let pinned = match &store.data {
+            StoreData::File(file) => file.pinned(),
+            _ => None,
+        };
+        let verified = match pinned.map(|pinned| pinned.open_verified(open_flags)) {
+            Some(Ok(opened)) => Some(opened),
+            Some(Err(_)) => {
+                req.set_yield(true);
+                route.on_response_complete(resp);
+                return;
+            }
+            None => None,
+        };
+        let Some(path) = store.path_for_display() else {
             req.set_yield(true);
             route.on_response_complete(resp);
             return;
         };
 
-        let open_flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NONBLOCK;
-
-        let fd_result: bun_sys::Result<Fd> = {
+        let fd_result: bun_sys::Result<Fd> = if let Some((fd, _)) = verified {
+            Ok(fd)
+        } else {
             #[cfg(windows)]
             {
                 let mut path_buffer = bun_paths::path_buffer_pool::get();
@@ -272,6 +287,7 @@ impl FileRoute {
                 bun_sys::open_a(path, open_flags, 0)
             }
         };
+        let verified_stat = verified.map(|(_, stat)| stat);
 
         let Ok(fd) = fd_result else {
             req.set_yield(true);
@@ -284,7 +300,7 @@ impl FileRoute {
         // early returns — is `Serve::Done`, so neither the fd nor the route ref
         // (or the server's pending_requests counter) can leak regardless of
         // which branch ran.
-        match route.serve(fd, path, &mut req, resp, method) {
+        match route.serve(fd, verified_stat, path, &mut req, resp, method) {
             Serve::Done => {
                 #[cfg(windows)]
                 Closer::close(fd, bun_sys::windows::libuv::Loop::get());
@@ -318,13 +334,14 @@ impl FileRoute {
     fn serve(
         &self,
         fd: Fd,
+        verified_stat: Option<bun_sys::Stat>,
         path: &[u8],
         req: &mut AnyRequest,
         resp: AnyResponse,
         method: Method,
     ) -> Serve {
         let (can_serve_file, offset, size, file_type, pollable) = 'brk: {
-            let stat = match bun_sys::fstat(fd) {
+            let stat = match verified_stat.map_or_else(|| bun_sys::fstat(fd), Ok) {
                 Ok(s) => s,
                 // file_type is never read because can_serve_file == false
                 Err(_) => break 'brk (false, 0, 0, FileType::File, false),

@@ -2,9 +2,9 @@
 
 use crate::node::fs as node_fs;
 use crate::node::types::PathLikeExt as _;
+use crate::webcore::blob::{self, MAX_SIZE, SizeType, Store, store};
 #[cfg(not(windows))]
-use crate::webcore::blob::{self, MkdirpTarget, Retry};
-use crate::webcore::blob::{MAX_SIZE, SizeType, Store, store};
+use crate::webcore::blob::{MkdirpTarget, Retry};
 #[cfg(windows)]
 use crate::webcore::node_types::PathOrFileDescriptor;
 #[cfg(windows)]
@@ -54,6 +54,8 @@ pub(crate) struct CopyFile {
     pub(crate) source_fd: Fd,
 
     pub(crate) system_error: Option<SystemError>,
+    /// The pinned source failed its verified open: the copy rejects with `NotReadableError`.
+    pub(crate) source_not_readable: bool,
 
     pub(crate) read_len: SizeType,
 
@@ -122,6 +124,7 @@ impl CopyFile {
             destination_fd: Fd::INVALID,
             source_fd: Fd::INVALID,
             system_error: None,
+            source_not_readable: false,
             read_len: 0,
         };
         let promise = jsc::JSPromiseStrong::init(cx.global());
@@ -136,6 +139,10 @@ impl CopyFile {
         promise: &mut JSPromise,
         global_this: &JSGlobalObject,
     ) -> jsc::JsResult<()> {
+        if self.source_not_readable {
+            drop(self.store.take());
+            return promise.reject(global_this, Ok(blob::not_readable_error(global_this)));
+        }
         let mut system_error: SystemError = self.system_error.take().unwrap_or_default();
         if system_error.path.is_empty() {
             if let Some(path) = self.source_file_store.display_path() {
@@ -225,11 +232,23 @@ impl CopyFile {
         // open source file first
         // if it fails, we don't want the extra destination file hanging out
         if matches!(WHICH, IOWhich::Both | IOWhich::Source) {
-            let Some(source) = self.source_file_store.lazy_path() else {
-                return Err(refuse_open(&mut self.system_error, &self.source_file_store));
+            // A pinned source is verified here, before the destination is opened and truncated.
+            let opened = match self.source_file_store.pinned() {
+                Some(pinned) => {
+                    let opened = pinned.open_verified(OPEN_SOURCE_FLAGS).map(|(fd, _)| fd);
+                    self.source_not_readable = opened.is_err();
+                    opened
+                }
+                None => match self.source_file_store.lazy_path() {
+                    Some(source) => {
+                        bun_sys::open(source.slice_z(&mut path_buf1), OPEN_SOURCE_FLAGS, 0)
+                    }
+                    None => {
+                        return Err(refuse_open(&mut self.system_error, &self.source_file_store));
+                    }
+                },
             };
-            let source = source.slice_z(&mut path_buf1);
-            self.source_fd = match bun_sys::open(source, OPEN_SOURCE_FLAGS, 0) {
+            self.source_fd = match opened {
                 bun_sys::Result::Ok(result) => {
                     match result.make_lib_uv_owned_for_syscall(
                         bun_sys::Tag::open,
@@ -1387,8 +1406,16 @@ impl<'a> CopyFileWindows<'a> {
         must_close: &mut bool,
         is_reading: bool,
     ) -> bun_sys::Result<Fd> {
-        let Some(pathlike) = file.lazy_pathlike() else {
-            return bun_sys::Result::Err(file.pinned_refusal(bun_sys::Tag::open));
+        let pathlike = match file.source() {
+            store::FileSource::Lazy(pathlike) => pathlike,
+            store::FileSource::Pinned(pinned) if is_reading => {
+                let (fd, _) = pinned.open_verified(bun_sys::O::RDONLY)?;
+                *must_close = true;
+                return bun_sys::Result::Ok(fd);
+            }
+            store::FileSource::Pinned(_) => {
+                return bun_sys::Result::Err(file.pinned_refusal(bun_sys::Tag::open));
+            }
         };
         if let PathOrFileDescriptor::Path(path) = pathlike {
             let fd = match bun_sys::openat_windows_a(
@@ -1425,7 +1452,37 @@ impl<'a> CopyFileWindows<'a> {
         }
     }
 
+    /// `false`: the copy failed and `self` is gone.
+    fn prepare_source(&mut self) -> bool {
+        // Already open when `mkdirp` retries the copy of a pinned source.
+        if self.read_write_loop.source_fd != Fd::INVALID {
+            return true;
+        }
+        let source = self.source_file_store.data.as_file();
+        let is_pinned = source.pinned().is_some();
+        match Self::prepare_pathlike(source, &mut self.read_write_loop.must_close_source_fd, true) {
+            bun_sys::Result::Ok(fd) => {
+                self.read_write_loop.source_fd = fd;
+                true
+            }
+            bun_sys::Result::Err(_) if is_pinned => {
+                self.reject(|global_this, _| Ok(blob::not_readable_error(global_this)));
+                false
+            }
+            bun_sys::Result::Err(err) => {
+                self.throw(err);
+                false
+            }
+        }
+    }
+
     fn prepare_read_write_loop(&mut self) {
+        // A pinned source is verified before the destination is opened and truncated.
+        let source_first = self.source_file_store.data.as_file().pinned().is_some();
+        if source_first && !self.prepare_source() {
+            return;
+        }
+
         // Open the destination first, so that if we need to call
         // mkdirp(), we don't spend extra time opening the file handle for
         // the source.
@@ -1446,17 +1503,9 @@ impl<'a> CopyFileWindows<'a> {
             }
         };
 
-        self.read_write_loop.source_fd = match Self::prepare_pathlike(
-            self.source_file_store.data.as_file(),
-            &mut self.read_write_loop.must_close_source_fd,
-            true,
-        ) {
-            bun_sys::Result::Ok(fd) => fd,
-            bun_sys::Result::Err(err) => {
-                self.throw(err);
-                return;
-            }
-        };
+        if !source_first && !self.prepare_source() {
+            return;
+        }
 
         match self.read_write_loop_start() {
             bun_sys::Result::Err(err) => {
@@ -1543,9 +1592,9 @@ impl<'a> CopyFileWindows<'a> {
         };
         let old_path: &bun_core::ZStr = 'brk: {
             match source_file_store.lazy_pathlike() {
+                // `uv_fs_copyfile` takes a path: a pinned source goes through its verified descriptor.
                 None => {
-                    let err = source_file_store.pinned_refusal(bun_sys::Tag::open);
-                    self.throw(err);
+                    self.prepare_read_write_loop();
                     return;
                 }
                 Some(PathOrFileDescriptor::Path(path)) => {
@@ -1620,13 +1669,20 @@ impl<'a> CopyFileWindows<'a> {
     }
 
     pub(crate) fn throw(&mut self, err: bun_sys::Error) {
+        self.reject(move |global_this, promise| err.to_js_with_async_stack(global_this, promise));
+    }
+
+    fn reject(
+        &mut self,
+        to_js: impl FnOnce(&jsc::JSGlobalObject, &mut JSPromise) -> jsc::JsResult<JSValue>,
+    ) {
         let _context = jsc::virtual_machine::VirtualMachine::get().enter_context(self.context);
         let global_this = self.event_loop.global_ref();
         // `swap()` returns a `&mut JSPromise` into a GC-owned cell (not into
         // `self`), but its lifetime is elided to `&mut self`. Decay to a raw pointer so
         // borrowck doesn't tie it to `self` across `destroy` below.
         let promise = JSPromise::opaque_mut(self.promise.swap());
-        let err_instance = err.to_js_with_async_stack(global_this, promise);
+        let err_instance = to_js(global_this, promise);
 
         // SAFETY: VM-owned event loop is valid for the process lifetime; `enter_scope`
         // calls enter() now and exit() on drop.

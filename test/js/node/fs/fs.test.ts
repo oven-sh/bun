@@ -13,6 +13,7 @@ import {
   isWindows,
   tempDir,
   tempDirWithFiles,
+  tls,
   tmpdirSync,
 } from "harness";
 import fs, {
@@ -369,6 +370,96 @@ describe.concurrent("fs.openAsBlob pins the file", () => {
         message: "Invalid state: File-backed Blobs are not cloneable",
       }),
     );
+  });
+
+  it.each([
+    ["below", 5],
+    ["above", 100_000],
+  ])("Bun.serve sends an unchanged file %s the sendfile threshold, and fails a changed one", async (_name, size) => {
+    const { dir, file, blob } = await pinned(Buffer.alloc(size, "a"));
+    using _ = dir;
+    await using server = Bun.serve({
+      port: 0,
+      development: false,
+      routes: { "/route": new Response(blob) },
+      fetch: req => (new URL(req.url).pathname === "/handler" ? new Response(blob) : new Response("no route")),
+      error: err => new Response(err.name, { status: 500 }),
+    });
+    for (const path of ["/handler", "/route"]) {
+      const res = await fetch(new URL(path, server.url));
+      expect({ path, status: res.status, length: (await res.bytes()).length }).toEqual({
+        path,
+        status: 200,
+        length: size,
+      });
+    }
+    writeFileSync(file, Buffer.alloc(size + 1, "b"));
+    const handler = await fetch(new URL("/handler", server.url));
+    expect({ status: handler.status, body: await handler.text() }).toEqual({ status: 500, body: "NotReadableError" });
+    // A file route that cannot open its file yields to the next handler.
+    const route = await fetch(new URL("/route", server.url));
+    expect(await route.text()).toBe("no route");
+  });
+
+  it("Bun.write copies an unchanged file, and keeps the destination when the source changed", async () => {
+    const { dir, file, blob } = await pinned(Buffer.alloc(100_000, "a"));
+    using _ = dir;
+    const destination = join(String(dir), "copy.bin");
+    expect(await Bun.write(destination, blob)).toBe(100_000);
+    expect(await Bun.file(destination).bytes()).toEqual(new Uint8Array(100_000).fill(97));
+
+    writeFileSync(file, "swapped!");
+    await expect(Bun.write(destination, blob)).rejects.toEqual(notReadable);
+    expect(statSync(destination).size).toBe(100_000);
+  });
+
+  it("TLS options read a key through the pin", async () => {
+    using dir = tempDir("open-as-blob-tls", { "key.pem": tls.key, "cert.pem": tls.cert });
+    const keyFile = join(String(dir), "key.pem");
+    const options = async () => ({
+      key: await openAsBlob(keyFile),
+      cert: await openAsBlob(join(String(dir), "cert.pem")),
+    });
+    {
+      await using server = Bun.serve({ port: 0, tls: await options(), fetch: () => new Response("ok") });
+      const res = await fetch(server.url, { tls: { rejectUnauthorized: false } });
+      expect(await res.text()).toBe("ok");
+    }
+    const stale = await options();
+    fs.appendFileSync(keyFile, "\n");
+    expect(() => Bun.serve({ port: 0, tls: stale, fetch: () => new Response("ok") })).toThrow(notReadable);
+  });
+
+  it("Bun.spawn reads stdin through the pin", async () => {
+    const { dir, file, blob } = await pinned();
+    using _ = dir;
+    const echo = () =>
+      Bun.spawn({
+        cmd: [bunExe(), "-e", "process.stdout.write(await Bun.stdin.text())"],
+        env: bunEnv,
+        stdin: blob,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+    {
+      await using proc = echo();
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect({ stdout, exitCode }).toEqual({ stdout: "hello", exitCode: 0 });
+    }
+    writeFileSync(file, "swapped!");
+    expect(echo).toThrow(notReadable);
+  });
+
+  it("does not write to the pinned file", async () => {
+    const { dir, file, blob } = await pinned();
+    using _ = dir;
+    const refused = expect.objectContaining({ code: "EPERM" });
+    expect(() => Bun.write(blob, "x")).toThrow(refused);
+    // @ts-expect-error BunFile members are not on node's Blob
+    expect(() => blob.writer()).toThrow(refused);
+    // @ts-expect-error
+    expect(() => blob.unlink()).toThrow(refused);
+    expect(readFileSync(file, "utf8")).toBe("hello");
   });
 
   it("sends no Content-Type for an empty type", async () => {

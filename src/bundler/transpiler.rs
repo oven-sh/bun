@@ -1405,7 +1405,7 @@ impl<'a> Transpiler<'a> {
         // (`Drop` is a no-op).
         let mut source_backing: resolver::cache::Contents = resolver::cache::Contents::Empty;
 
-        let source: &'a bun_ast::Source = arena.alloc('brk: {
+        let mut source: &'a bun_ast::Source = arena.alloc('brk: {
             if let Some(virtual_source) = this_parse.virtual_source {
                 break 'brk virtual_source.clone();
             }
@@ -1711,9 +1711,13 @@ impl<'a> Transpiler<'a> {
                 // the real `parse` lives on `crate::cache::JavaScript`. Both
                 // are stateless unit structs, so calling the bundler-crate one
                 // directly is equivalent.
-                let parsed = match crate::cache::JavaScript::init()
-                    .parse(arena, opts, define, log, source)
-                {
+                let parsed = match crate::cache::JavaScript::init().parse(
+                    arena,
+                    opts,
+                    define,
+                    log,
+                    &mut source,
+                ) {
                     Ok(Some(r)) => r,
                     Ok(None) | Err(_) => return None,
                 };
@@ -1808,6 +1812,9 @@ impl<'a> Transpiler<'a> {
                         empty: false,
                         source_contents_backing: source_backing,
                     },
+                    js_ast::Result::NotUtf8(_) => {
+                        unreachable!("`cache::JavaScript::parse` parses the decoded text itself")
+                    }
                 });
             }
             // TODO: use lazy export AST

@@ -222,6 +222,10 @@ pub struct Lexer<'a> {
     pub(crate) preserve_all_comments_before: bool,
     pub(crate) is_legacy_octal_literal: bool,
     pub(crate) is_log_disabled: bool,
+    /// Set by the multibyte decoder for bytes that are not UTF-8. A `LexerSnapshot` rewind keeps it.
+    pub(crate) saw_ill_formed_utf8: bool,
+    /// `features.stop_on_ill_formed_utf8`, copied by `Parser::init`.
+    pub(crate) stop_on_ill_formed_utf8: bool,
     pub(crate) comments_to_preserve_before: Vec<js_ast::G::Comment>,
     pub(crate) code_point: CodePoint,
     pub(crate) identifier: &'a [u8],
@@ -931,7 +935,20 @@ impl<'a> Lexer<'a> {
             return first as CodePoint;
         }
 
-        strings::lexer_step::next_codepoint_multibyte(contents, &mut self.current, first)
+        self.next_codepoint_multibyte(contents, first)
+    }
+
+    /// Out of line so the ASCII path inlines into every `step()` site; `#[cold]` keeps LTO from merging it back.
+    #[cold]
+    #[inline(never)]
+    fn next_codepoint_multibyte(&mut self, contents: &[u8], first: u8) -> CodePoint {
+        // PERF: `&mut self`, not a fifth argument for the flag: that changed the register allocation of all of `next()`.
+        strings::lexer_step::next_codepoint_multibyte(
+            contents,
+            &mut self.current,
+            first,
+            &mut self.saw_ill_formed_utf8,
+        )
     }
 
     /// PERF: `contents` threaded by value — see [`Self::next_codepoint_with`].
@@ -952,6 +969,20 @@ impl<'a> Lexer<'a> {
     pub fn step(&mut self) {
         let contents: &[u8] = self.contents;
         self.step_with(contents);
+    }
+
+    /// The parse is about to restart on decoded text (`Result::NotUtf8`); what was lexed does not count.
+    #[inline]
+    pub(crate) fn must_restart_decoded(&self) -> bool {
+        self.saw_ill_formed_utf8 && self.stop_on_ill_formed_utf8
+    }
+
+    /// `next()` for the token that primes the parser.
+    pub(crate) fn next_first(&mut self) -> Result<(), Error> {
+        match self.next() {
+            Err(_) if self.must_restart_decoded() => Ok(()),
+            result => result,
+        }
     }
 
     #[inline]
@@ -2152,12 +2183,7 @@ impl<'a> Lexer<'a> {
                 PragmaArg::scan(self.start + offset_for_errors, b"jsx", chunk, allow_newline)
             {
                 self.jsx_pragma._jsx = span;
-                return "jsx".len()
-                    + if span.range.len > 0 {
-                        usize::try_from(span.range.len).expect("int cast")
-                    } else {
-                        0
-                    };
+                return PragmaArg::skip_len(chunk, b"jsx", &span);
             }
         } else if strings::has_prefix_with_word_boundary(chunk, b"jsxFrag") {
             if let Some(span) = PragmaArg::scan(
@@ -2167,12 +2193,7 @@ impl<'a> Lexer<'a> {
                 allow_newline,
             ) {
                 self.jsx_pragma._jsx_frag = span;
-                return "jsxFrag".len()
-                    + if span.range.len > 0 {
-                        usize::try_from(span.range.len).expect("int cast")
-                    } else {
-                        0
-                    };
+                return PragmaArg::skip_len(chunk, b"jsxFrag", &span);
             }
         } else if strings::has_prefix_with_word_boundary(chunk, b"jsxRuntime") {
             if let Some(span) = PragmaArg::scan(
@@ -2182,12 +2203,7 @@ impl<'a> Lexer<'a> {
                 allow_newline,
             ) {
                 self.jsx_pragma._jsx_runtime = span;
-                return "jsxRuntime".len()
-                    + if span.range.len > 0 {
-                        usize::try_from(span.range.len).expect("int cast")
-                    } else {
-                        0
-                    };
+                return PragmaArg::skip_len(chunk, b"jsxRuntime", &span);
             }
         } else if strings::has_prefix_with_word_boundary(chunk, b"jsxImportSource") {
             if let Some(span) = PragmaArg::scan(
@@ -2197,12 +2213,7 @@ impl<'a> Lexer<'a> {
                 allow_newline,
             ) {
                 self.jsx_pragma._jsx_import_source = span;
-                return "jsxImportSource".len()
-                    + if span.range.len > 0 {
-                        usize::try_from(span.range.len).expect("int cast")
-                    } else {
-                        0
-                    };
+                return PragmaArg::skip_len(chunk, b"jsxImportSource", &span);
             }
         } else if chunk.len() > " sourceMappingURL=".len()
             && chunk.starts_with(b" sourceMappingURL=")
@@ -2253,6 +2264,8 @@ impl<'a> Lexer<'a> {
             preserve_all_comments_before: false,
             is_legacy_octal_literal: false,
             is_log_disabled: false,
+            saw_ill_formed_utf8: false,
+            stop_on_ill_formed_utf8: false,
             comments_to_preserve_before: Vec::new(),
             code_point: -1,
             identifier: b"",
@@ -3505,6 +3518,12 @@ impl PragmaArg {
 
         // Return total length consumed from the start of the chunk
         PREFIX as usize + url_len // Correct total length
+    }
+
+    /// Pragma bytes `scan_single_line_comment` may jump over: ASCII only, `step` decodes the rest.
+    pub(crate) fn skip_len(chunk: &[u8], pragma: &[u8], span: &js_ast::Span) -> usize {
+        let len = pragma.len() + usize::try_from(span.range.len).unwrap_or(0);
+        strings::first_non_ascii(&chunk[..len.min(chunk.len())]).map_or(len, |i| i as usize)
     }
 
     pub(crate) fn scan(

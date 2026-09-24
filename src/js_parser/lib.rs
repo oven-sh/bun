@@ -229,6 +229,8 @@ pub enum Result<'a> {
     AlreadyBundled(AlreadyBundled),
     Cached,
     Ast(Box<Ast<'a>>),
+    /// `features.stop_on_ill_formed_utf8` only: nothing was parsed, the options come back.
+    NotUtf8(Box<ParserOptions<'a>>),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

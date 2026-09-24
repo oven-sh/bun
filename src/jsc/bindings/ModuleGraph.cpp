@@ -55,8 +55,12 @@ static JSModuleGraph* moduleGraphOfOverlay(VM& vm, JSScope* scope)
 static ModuleGraphState& moduleGraphState(Zig::GlobalObject* globalObject)
 {
     auto& state = globalObject->m_moduleGraphs;
-    if (!state)
+    if (!state) {
         state = makeUnique<ModuleGraphState>(globalObject->vm());
+        // Whose an unhandled rejection is is the graph of the async context it is reported in
+        // (moduleGraphRejecting()), also when what rejects the promise is a job that runs no script.
+        globalObject->vm().reportUnhandledRejectionsInAsyncContext();
+    }
     return *state;
 }
 

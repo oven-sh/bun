@@ -1503,6 +1503,55 @@ describe("Bun.ModuleGraph — uncaughtException and unhandledRejection", () => {
     ]);
   });
 
+  test("a rejection is the graph's also when what rejects the promise is a job that runs no script", async () => {
+    const dir = fixture({
+      "forms.mjs": `
+        const rejecting = message => (async () => { throw new Error(message); })();
+        export const forms = {
+          "then() whose handler returns a promise that rejects": m => { Promise.resolve().then(() => Promise.reject(new Error(m))); },
+          "then() whose handler is an async function that throws": m => { Promise.resolve().then(async () => { throw new Error(m); }); },
+          "catch() whose handler is an async function that throws": m => { Promise.reject(1).catch(async () => { throw new Error(m); }); },
+          "finally() whose handler is an async function that throws": m => { Promise.resolve().finally(async () => { throw new Error(m); }); },
+          "new Promise resolved with a promise that rejects": m => { new Promise(resolve => resolve(rejecting(m))); },
+          "async function that returns a promise that rejects": m => { (async () => rejecting(m))(); },
+          "then() with no handler for the rejection": m => { new Promise((_, reject) => setTimeout(() => reject(new Error(m)), 1)).then(() => {}); },
+          "Promise.all()": m => { Promise.all([rejecting(m)]); },
+          "Promise.race()": m => { Promise.race([Promise.resolve().then(async () => { throw new Error(m); })]); },
+          "Promise.any()": m => { Promise.any([rejecting(m)]).catch(error => { throw error.errors[0]; }); },
+        };
+      `,
+      "host.mjs": `
+        const heard = [];
+        process.on("unhandledRejection", reason => heard.push("process: " + reason.message));
+        const graphOf = name => new Bun.ModuleGraph({ unhandledRejection: reason => heard.push(name + ": " + reason.message) });
+        const graphs = { a: graphOf("a"), b: graphOf("b") };
+        const expected = [];
+        for (const [name, graph] of Object.entries(graphs)) {
+          const { forms } = await graph.import(import.meta.dir + "/forms.mjs");
+          for (const [form, run] of Object.entries(forms)) {
+            // The host calls into the graph, and the jobs run after it has left.
+            graph.run(run, form);
+            expected.push(name + ": " + form);
+          }
+        }
+        const { forms } = await import(import.meta.dir + "/forms.mjs");
+        for (const [form, run] of Object.entries(forms)) {
+          run(form);
+          expected.push("process: " + form);
+        }
+        (function wait() {
+          if (heard.length < expected.length) return setImmediate(wait);
+          console.log(JSON.stringify({ heard: heard.sort(), expected: expected.sort() }));
+          process.exit(0);
+        })();
+      `,
+    });
+    const { stdout, exitCode } = await runBun([join(dir, "host.mjs")]);
+    const { heard, expected } = JSON.parse(stdout);
+    expect(heard).toEqual(expected);
+    expect(exitCode).toBe(0);
+  });
+
   test("an error goes to the nearest graph that has a handler for it, from the graph to the ones that made it", async () => {
     const dir = fixture(files);
     const told: Told[] = [];

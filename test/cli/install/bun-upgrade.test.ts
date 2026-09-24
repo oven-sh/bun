@@ -302,32 +302,35 @@ it("completes against a locally-served release with the system temp dir held ope
 });
 
 // On Windows the fake release holds the real bun.exe, which does not report the served version.
-it.skipIf(isWindows)("moves the new executable out of the staging directory and leaves no executable there", async () => {
-  const version = "9.9.9";
-  const cwd = tmpdirSync();
-  const execPath = join(cwd, basename(bunExe()));
-  const zipPath = join(cwd, "release.zip");
-  await Promise.all([copyFile(bunExe(), execPath), writeFakeReleaseZip(zipPath, version)]);
-  using stagingRoot = tempDir("bun-upgrade-staging-exe", {});
+it.skipIf(isWindows)(
+  "moves the new executable out of the staging directory and leaves no executable there",
+  async () => {
+    const version = "9.9.9";
+    const cwd = tmpdirSync();
+    const execPath = join(cwd, basename(bunExe()));
+    const zipPath = join(cwd, "release.zip");
+    await Promise.all([copyFile(bunExe(), execPath), writeFakeReleaseZip(zipPath, version)]);
+    using stagingRoot = tempDir("bun-upgrade-staging-exe", {});
 
-  using server = startReleaseServer({ tagName: `bun-v${version}`, zipPath });
+    using server = startReleaseServer({ tagName: `bun-v${version}`, zipPath });
 
-  await using proc = Bun.spawn({
-    cmd: [execPath, "upgrade", "--stable"],
-    cwd,
-    stdout: null,
-    stdin: "pipe",
-    stderr: "pipe",
-    env: { ...server.env, BUN_TMPDIR: String(stagingRoot) },
-  });
+    await using proc = Bun.spawn({
+      cmd: [execPath, "upgrade", "--stable"],
+      cwd,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env: { ...server.env, BUN_TMPDIR: String(stagingRoot) },
+    });
 
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toContain("Upgraded.");
-  expect(await Bun.file(execPath).text()).toStartWith("#!/bin/sh");
-  expect(existsSync(join(String(stagingRoot), version, releaseFolderName(), "bun"))).toBe(false);
-  expect(exitCode).toBe(0);
-});
+    expect(stderr).toContain("Upgraded.");
+    expect(await Bun.file(execPath).text()).toStartWith("#!/bin/sh");
+    expect(existsSync(join(String(stagingRoot), version, releaseFolderName(), "bun"))).toBe(false);
+    expect(exitCode).toBe(0);
+  },
+);
 
 it("recreates the staging directory in the temp dir instead of reusing a pre-existing one", async () => {
   const tagName = "bun-v9.9.9";

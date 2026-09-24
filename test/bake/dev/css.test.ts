@@ -1,7 +1,7 @@
 // CSS tests concern bundling bugs with CSS files
 import { expect } from "bun:test";
 import assert from "node:assert";
-import { devTest, emptyHtmlFile, imageFixtures } from "../bake-harness";
+import { devTest, emptyHtmlFile, imageFixtures, minimalFramework } from "../bake-harness";
 
 devTest("css file with syntax error does not kill old styles", {
   files: {
@@ -644,6 +644,194 @@ devTest("css import before create", {
     assert(backgroundImage);
     await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun);
     await dev.fetch("/").expect.toContain("HELLO");
+  },
+});
+// The resolver has rules that only apply to a CSS import kind: it removes a
+// ?query or #fragment, and it tries "./other" only as "./other.css". The retry
+// for a missing file uses the import kind that the bundler used.
+const retriedWithCssKind: {
+  name: string;
+  /** The stylesheet that index.html links. */
+  stylesheet?: string;
+  css: string;
+  error: string;
+  create: [file: string, contents: string];
+  /** A file that a JS import of the same specifier resolves to. */
+  decoy?: [file: string, contents: string];
+  plugin?: boolean;
+  /** Text in the stylesheet that the server sends. The test client drops `@layer` and hashes class names. */
+  served?: string[];
+}[] = [
+  {
+    name: "url with query",
+    css: `body { background-image: url(./bun.png?v=2); }`,
+    error: 'styles.css:1:26: error: Could not resolve: "./bun.png?v=2"',
+    create: ["bun.png", imageFixtures.bun],
+  },
+  {
+    name: "url with fragment",
+    css: `body { background-image: url(./bun.png#icon); }`,
+    error: 'styles.css:1:26: error: Could not resolve: "./bun.png#icon"',
+    create: ["bun.png", imageFixtures.bun],
+  },
+  {
+    name: "bare url with empty query and fragment",
+    css: `body { background-image: url(bun.png?#iefix); }`,
+    error: 'styles.css:1:26: error: Could not resolve: "bun.png?#iefix". Maybe you need to "bun install"?',
+    create: ["bun.png", imageFixtures.bun],
+  },
+  {
+    name: "url with query after a plugin declines it",
+    css: `body { background-image: url(./bun.png?v=2); }`,
+    error: 'styles.css:1:26: error: Could not resolve: "./bun.png?v=2"',
+    create: ["bun.png", imageFixtures.bun],
+    plugin: true,
+  },
+  {
+    name: "@import with query and fragment",
+    css: `@import "./other.css?v=3#c";`,
+    error: 'styles.css:1:1: error: Could not resolve: "./other.css?v=3#c"',
+    create: ["other.css", `body { color: red; }`],
+  },
+  {
+    name: "@import with fragment",
+    css: `@import "./other.css#frag";`,
+    error: 'styles.css:1:1: error: Could not resolve: "./other.css#frag"',
+    create: ["other.css", `body { color: red; }`],
+  },
+  {
+    name: "conditional @import with query",
+    css: `@import "./other.css?v=2" layer(base);`,
+    error: 'styles.css:1:1: error: Could not resolve: "./other.css?v=2"',
+    create: ["other.css", `body { color: red; }`],
+    served: ["@layer base", "color: red"],
+  },
+  {
+    name: "@import without extension",
+    css: `@import "./other";`,
+    error: 'styles.css:1:1: error: Could not resolve: "./other"',
+    create: ["other.css", `body { color: red; }`],
+    decoy: ["other.ts", `export {};`],
+  },
+  {
+    name: "composes with query",
+    stylesheet: "styles.module.css",
+    css: `.a { composes: b from "./other.module.css?v=2"; }`,
+    error: 'styles.module.css:1:22: error: Could not resolve: "./other.module.css?v=2"',
+    create: ["other.module.css", `.b { color: red; }`],
+    served: ["color: red"],
+  },
+  {
+    name: "bare composes with query",
+    stylesheet: "styles.module.css",
+    css: `.a { composes: b from "other.module.css?v=2"; }`,
+    error: 'styles.module.css:1:22: error: Could not resolve: "other.module.css?v=2". Maybe you need to "bun install"?',
+    create: ["other.module.css", `.b { color: red; }`],
+    served: ["color: red"],
+  },
+];
+for (const { name, stylesheet = "styles.css", css, error, create, decoy, plugin, served } of retriedWithCssKind) {
+  devTest(`css ${name} before create`, {
+    files: {
+      "index.html": emptyHtmlFile({
+        styles: [stylesheet],
+        body: `
+          <div>HELLO</div>
+        `,
+      }),
+      [stylesheet]: css,
+      ...(decoy && { [decoy[0]]: decoy[1] }),
+      ...(plugin && {
+        "bunfig.toml": `
+          [serve.static]
+          plugins = ["./decline-plugin.ts"]
+        `,
+        "decline-plugin.ts": `
+          export default {
+            name: "decline-plugin",
+            setup(build) {
+              build.onResolve({ filter: /bun\\.png/ }, () => undefined);
+            },
+          };
+        `,
+      }),
+    },
+    async test(dev) {
+      await using c = await dev.client("/", { errors: [error] });
+      // A change in the watched directory that does not create the file sends nothing.
+      await c.expectNoWebSocketActivity(async () => {
+        await dev.write("unrelated.txt", "x", { errors: null });
+        await dev.delete("unrelated.txt", { errors: null });
+      });
+      await c.expectReload(async () => {
+        await dev.write(create[0], create[1]);
+      });
+      if (served) {
+        const href = (await (await dev.fetch("/")).text()).match(/href="(\/_bun\/asset\/[^"]+\.css)"/)?.[1];
+        assert(href);
+        const text = await (await dev.fetch(href)).text();
+        for (const expected of served) expect(text).toContain(expected);
+      } else if (create[0] === "bun.png") {
+        const backgroundImage = await c.style("body").backgroundImage;
+        assert(backgroundImage);
+        // The printed url() keeps a fragment. The page does not send it when it loads the image.
+        await dev.fetch(extractCssUrl(backgroundImage).replace(/#.*$/, "")).expectFile(imageFixtures.bun);
+      } else {
+        await c.style("body").color.expect.toBe("red");
+      }
+      await dev.fetch("/").expect.toContain("HELLO");
+    },
+  });
+}
+devTest("css retry does not rebuild on an unrelated change", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["query-only.css", "builtin.css", "styles.css"],
+      body: `
+        <div>HELLO</div>
+      `,
+    }),
+    // "./" resolves to this file, so "./?v=2" without its query would resolve.
+    "index.css": `/* index */`,
+    "query-only.css": `body { background-image: url(?v=2); }`,
+    // The resolver of the server resolves "bun". The retry must ask for "./bun".
+    "builtin.css": `div { background-image: url(bun); }`,
+    "styles.css": `p { background-image: url(./bun.png?v=2); }`,
+  },
+  async test(dev) {
+    const queryOnly = 'query-only.css:1:26: error: Could not resolve: "?v=2". Maybe you need to "bun install"?';
+    const builtin = 'builtin.css:1:25: error: Browser build cannot url() Bun builtin: "bun"';
+    const missing = 'styles.css:1:23: error: Could not resolve: "./bun.png?v=2"';
+    await using c = await dev.client("/", { errors: [builtin, queryOnly, missing] });
+    await c.expectNoWebSocketActivity(async () => {
+      await dev.write("unrelated.txt", "x", { errors: null });
+      await dev.delete("unrelated.txt", { errors: null });
+    });
+    await dev.write("bun.png", imageFixtures.bun, { errors: [builtin, queryOnly] });
+  },
+});
+devTest("framework route stylesheet url with query before create", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      import "../one.css";
+      export default (req, meta) => Response.json(meta.styles);
+    `,
+    "one.css": `.one { color: red; }`,
+  },
+  async test(dev) {
+    const before: string[] = await dev.fetch("/").json();
+    expect(before).toHaveLength(1);
+    expect((await dev.fetch(before[0])).status).toBe(200);
+
+    await dev.write("one.css", `.one { background-image: url(./bun.png?v=2); }`, { errors: null });
+    await dev.write("bun.png", imageFixtures.bun, { errors: null });
+
+    const after: string[] = await dev.fetch("/").json();
+    expect(after).toHaveLength(1);
+    const stylesheet = await dev.fetch(after[0]);
+    expect(await stylesheet.text()).toContain("background-image");
+    expect(stylesheet.status).toBe(200);
   },
 });
 devTest("css import before create project relative", {

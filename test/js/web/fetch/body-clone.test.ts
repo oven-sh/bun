@@ -1167,14 +1167,14 @@ describe("clone() of a body over an unread native stream keeps the Blob behind i
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { stdout: stdout.trim(), stderr, exitCode };
   }
-  const bothBodiesReadStdin = { stdout: `["hello world","hello world"]`, stderr: "", exitCode: 0 };
+  const bothBodiesSeeWholeInput = { stdout: `["hello world","hello world"]`, stderr: "", exitCode: 0 };
 
   test("a body over Bun.stdin.stream() is still teed", async () => {
-    expect(await cloneInChild("Bun.stdin.stream()")).toEqual(bothBodiesReadStdin);
+    expect(await cloneInChild("Bun.stdin.stream()")).toEqual(bothBodiesSeeWholeInput);
   });
 
   test("a body over Bun.stdin itself is teed, not duped", async () => {
-    expect(await cloneInChild("Bun.stdin")).toEqual(bothBodiesReadStdin);
+    expect(await cloneInChild("Bun.stdin")).toEqual(bothBodiesSeeWholeInput);
   });
 
   // The same store kind reached by path: stat says it is not a regular file.
@@ -1187,7 +1187,7 @@ describe("clone() of a body over an unread native stream keeps the Blob behind i
       stderr: "inherit",
     });
     expect(await cloneInChild("Bun.file(process.argv.at(-1)).stream()", { args: [fifo], feedStdin: false })).toEqual(
-      bothBodiesReadStdin,
+      bothBodiesSeeWholeInput,
     );
     expect(await writer.exited).toBe(0);
   });

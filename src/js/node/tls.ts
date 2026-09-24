@@ -850,6 +850,10 @@ function TLSSocket(socket?, options?) {
     if (isServer) {
       this[Symbol.for("::bunUpgradeServerTLS::")](socket, this[buntls](null, null));
     } else {
+      // The rule of tls.connect(): an untrusted certificate is rejected unless the caller passes `false`.
+      this._rejectUnauthorized = ObjectPrototypeHasOwnProperty.$call(options, "rejectUnauthorized")
+        ? options.rejectUnauthorized !== false
+        : rejectUnauthorizedDefault();
       this[kUpgradeClientTLS](socket, options.servername);
       // http2-wrapper reads `new TLSSocket(new PassThrough())._handle._parentWrap.constructor` as its JSStreamSocket.
       const handle = this._handle;

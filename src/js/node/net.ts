@@ -571,13 +571,14 @@ function onClientHandshake(self, socket, success, verifyError) {
     reportError(err);
   }
 }
-// A constructor wrap gets node's _finishInit only: no hostname check, no 'secureConnect', `authorized` stays false.
+// Unlike node, a wrap rejects a bad certificate: node leaves that check to the app, and a forgotten check accepts anything.
 function finishStandaloneWrap(self, verifyError) {
-  // Unlike node, rejectUnauthorized is enforced. The error reaches '_tlsError', so 'secure' must not report it again.
   if (verifyError && self._rejectUnauthorized) {
+    // The error reaches '_tlsError', so 'secure' must not report it again.
     self.destroy(verifyError);
     return;
   }
+  // The rest is node's _finishInit: no hostname check, no 'secureConnect', and `authorized` stays false.
   self.secureConnecting = false;
   self.emit(kSecureConnectDone);
   const pendingSession = self[kpendingSession];

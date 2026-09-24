@@ -2,7 +2,7 @@ import { heapStats } from "bun:jsc";
 import { afterEach, describe, expect, it } from "bun:test";
 import { once } from "events";
 import { readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, tls as COMMON_CERT_, isASAN, nodeExe, tempDir } from "harness";
+import { bunEnv, bunExe, tls as COMMON_CERT_, isASAN, nodeExe, rejectUnauthorizedScope, tempDir } from "harness";
 import https from "https";
 import net from "net";
 import { join } from "path";
@@ -2632,7 +2632,7 @@ describe("new tls.TLSSocket(socket) on the client side", () => {
     return raw;
   }
 
-  it("a write right after the wrap goes out over TLS", async () => {
+  it("with rejectUnauthorized: false, 'secure' fires for an untrusted certificate and a write goes out over TLS", async () => {
     const server = await echoServer(COMMON_CERT_);
     try {
       const raw = await connectedRawSocket(server);
@@ -2683,22 +2683,40 @@ describe("new tls.TLSSocket(socket) on the client side", () => {
     }
   });
 
-  it("rejectUnauthorized refuses an untrusted server once, without a 'secure' event", async () => {
+  // Node never rejects on a wrap: the app must read ssl.verifyError(), and an app that forgets accepts anything.
+  it.each([
+    ["default options", undefined],
+    ["rejectUnauthorized: true", { rejectUnauthorized: true }],
+  ])("unlike node, an untrusted certificate destroys the wrap with the verify error (%s)", async (_name, options) => {
     const server = await echoServer(COMMON_CERT_);
     try {
-      const raw = await connectedRawSocket(server);
-      const socket = new TLSSocket(raw, { rejectUnauthorized: true });
+      const socket = new TLSSocket(await connectedRawSocket(server), options);
       const events: string[] = [];
       socket.on("secure", () => events.push("secure"));
       // Installed by the constructor ahead of any user listener, so a wrap
       // whose owner listens to nothing is not an uncaught exception.
       socket.on("_tlsError", (err: NodeJS.ErrnoException) => events.push(`_tlsError ${err.code}`));
       socket.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}`));
-      await closed(socket);
-      expect({ events, authorizationError: socket.authorizationError }).toEqual({
+      // 'secure' ends the wait too, so a wrap that accepts the certificate fails here and does not time out.
+      await new Promise(resolve => socket.once("close", resolve).once("secure", resolve));
+      expect({ events, authorized: socket.authorized, authorizationError: socket.authorizationError }).toEqual({
         events: ["_tlsError DEPTH_ZERO_SELF_SIGNED_CERT", "error DEPTH_ZERO_SELF_SIGNED_CERT"],
+        authorized: false,
         authorizationError: null,
       });
+    } finally {
+      server.close();
+    }
+  });
+
+  it("NODE_TLS_REJECT_UNAUTHORIZED=0 turns the default off, as for tls.connect()", async () => {
+    const server = await echoServer(COMMON_CERT_);
+    try {
+      const raw = await connectedRawSocket(server);
+      using _ = rejectUnauthorizedScope(false);
+      const socket = new TLSSocket(raw);
+      await once(socket, "secure");
+      expect((socket as any).ssl.verifyError().code).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
     } finally {
       server.close();
     }

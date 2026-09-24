@@ -225,10 +225,12 @@ pub struct CertCheckResumeMessage {
     pub(crate) async_http_id: u32,
 }
 
+pub(crate) const LIBDEFLATE_SHARED_BUFFER_LEN: usize = 512 * 1024;
+
 pub struct LibdeflateState {
     pub(crate) decompressor: Option<bun_libdeflate_sys::libdeflate::OwnedDecompressor>,
     pub(crate) compressor: Option<bun_libdeflate_sys::libdeflate::OwnedCompressor>,
-    pub(crate) shared_buffer: [u8; 512 * 1024],
+    pub(crate) shared_buffer: [u8; LIBDEFLATE_SHARED_BUFFER_LEN],
 }
 
 // SAFETY: `Option<Owned{De,}Compressor>` is `#[repr(transparent)]` over

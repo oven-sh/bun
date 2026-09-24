@@ -103,23 +103,25 @@ pub(crate) fn download(
     )
 }
 
-/// The `Range:` header value for `size` bytes from `offset`, if not the whole object.
-fn range_header(offset: usize, size: Option<usize>) -> Option<Vec<u8>> {
-    if let Some(size_) = size {
-        let mut end = offset + size_;
-        if size_ > 0 {
-            end -= 1;
-        }
-        let mut v = Vec::new();
-        write!(&mut v, "bytes={}-{}", offset, end).expect("infallible: in-memory write");
-        return Some(v);
-    }
-    if offset == 0 {
-        return None;
-    }
+/// The `Range:` header of a read. It is inclusive at both ends, so no value asks for zero bytes.
+enum RangeHeader {
+    /// No header: the whole object.
+    Whole,
+    Bytes(Vec<u8>),
+    /// No request: the read is empty.
+    Empty,
+}
+
+fn range_header(offset: usize, size: Option<usize>) -> RangeHeader {
     let mut v = Vec::new();
-    write!(&mut v, "bytes={}-", offset).expect("infallible: in-memory write");
-    Some(v)
+    match size {
+        Some(0) => return RangeHeader::Empty,
+        Some(size_) => write!(&mut v, "bytes={}-{}", offset, offset + size_ - 1),
+        None if offset == 0 => return RangeHeader::Whole,
+        None => write!(&mut v, "bytes={}-", offset),
+    }
+    .expect("infallible: in-memory write");
+    RangeHeader::Bytes(v)
 }
 
 pub(crate) fn download_slice(
@@ -132,6 +134,18 @@ pub(crate) fn download_slice(
     callback_context: *mut c_void,
     request_payer: bool,
 ) -> JsResult<()> {
+    let range = match range_header(offset, size) {
+        RangeHeader::Whole => None,
+        RangeHeader::Bytes(range) => Some(range.into_boxed_slice()),
+        RangeHeader::Empty => {
+            return callback(
+                S3DownloadResult::Success(s3_simple_request::S3DownloadSuccess {
+                    body: MutableString::default(),
+                }),
+                callback_context,
+            );
+        }
+    };
     s3_simple_request::execute_simple_s3_request(
         this,
         context,
@@ -139,7 +153,7 @@ pub(crate) fn download_slice(
             path,
             method: bun_http::Method::GET,
             body: b"",
-            range: range_header(offset, size).map(Vec::into_boxed_slice),
+            range,
             request_payer,
             ..Default::default()
         },
@@ -1124,8 +1138,7 @@ fn download_stream(
     this: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,
     path: &[u8],
-    offset: usize,
-    size: Option<usize>,
+    range: Option<Vec<u8>>,
     request_payer: bool,
     callback: fn(
         chunk: &MutableString,
@@ -1144,8 +1157,6 @@ fn download_stream(
         );
         return core::ptr::null_mut();
     }
-    let range = range_header(offset, size);
-
     let result = match this.sign_request::<false>(
         &bun_s3_signing::SignOptions {
             path,
@@ -1457,6 +1468,12 @@ pub(crate) fn readable_stream(
     request_payer: bool,
     cx: &bun_jsc::JsThread<'_>,
 ) -> JsResult<JSValue> {
+    let range = match range_header(offset, size) {
+        RangeHeader::Whole => None,
+        RangeHeader::Bytes(range) => Some(range),
+        RangeHeader::Empty => return ReadableStream::empty(cx.global()),
+    };
+
     // SAFETY (JSC_BORROW): `global_this` outlives the wrapper (it owns the JS heap that
     // owns the readable stream which keeps the wrapper reachable via the producer handle);
     // store as `'static` for the heap-allocated wrapper.
@@ -1497,8 +1514,7 @@ pub(crate) fn readable_stream(
         this,
         cx.context(),
         path,
-        offset,
-        size,
+        range,
         request_payer,
         S3DownloadStreamWrapper::opaque_callback,
         wrapper.cast::<c_void>(),

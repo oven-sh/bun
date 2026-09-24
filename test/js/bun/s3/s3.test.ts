@@ -2273,3 +2273,73 @@ describe("s3 file size stays unknown", () => {
     ]);
   });
 });
+
+// A Range header is inclusive at both ends, so it cannot ask for zero bytes:
+// `bytes=5-5` is one byte. An empty slice reads nothing and asks for nothing.
+describe("s3 empty slice", () => {
+  const payload = Buffer.alloc(100, "0123456789").toString();
+
+  for (const [start, end] of [
+    [0, 0],
+    [5, 5],
+  ]) {
+    it(`slice(${start}, ${end}) reads no bytes and makes no request`, async () => {
+      using endpoint = s3LocalEndpoint(payload);
+      using dir = tempDir("s3-empty-slice", {});
+      const uploads: string[] = [];
+      await using sink = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          uploads.push(await req.text());
+          return new Response("ok");
+        },
+      });
+      const slice = () => endpoint.file().slice(start, end);
+      const request = () => new Request(sink.url, { method: "POST", body: slice() });
+      const destination = path.join(String(dir), "out.txt");
+
+      expect({
+        size: slice().size,
+        text: await slice().text(),
+        bytes: (await slice().bytes()).length,
+        arrayBuffer: (await slice().arrayBuffer()).byteLength,
+        json: await slice()
+          .json()
+          .then(
+            () => "resolved",
+            error => error.name,
+          ),
+        stream: await Bun.readableStreamToText(slice().stream()),
+        requestBody: await Bun.readableStreamToText(request().body!),
+        requestText: await request().text(),
+        fetchUpload: await (await fetch(request())).text(),
+        written: [await Bun.write(destination, slice()), await Bun.file(destination).text()],
+        uploads,
+        ranges: endpoint.ranges,
+      }).toEqual({
+        size: 0,
+        text: "",
+        bytes: 0,
+        arrayBuffer: 0,
+        json: "SyntaxError",
+        stream: "",
+        requestBody: "",
+        requestText: "",
+        fetchUpload: "ok",
+        written: [0, ""],
+        uploads: [""],
+        ranges: [],
+      });
+    });
+  }
+
+  it("a window of one byte is still a Range request", async () => {
+    using endpoint = s3LocalEndpoint(payload);
+    expect({
+      text: await endpoint.file().slice(7, 8).text(),
+      stream: await Bun.readableStreamToText(endpoint.file().slice(7, 8).stream()),
+      whole: await endpoint.file().text(),
+      ranges: endpoint.ranges,
+    }).toEqual({ text: "7", stream: "7", whole: payload, ranges: ["bytes=7-7", "bytes=7-7", null] });
+  });
+});

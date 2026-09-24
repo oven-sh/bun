@@ -6599,6 +6599,87 @@ describe("Http2Session.setLocalWindowSize() with a smaller window", () => {
       server.close();
     }
   });
+  // https://github.com/oven-sh/bun/issues/43893. The call is made inside a frame callback, so the
+  // session is busy. The response overflows the cork, so the WINDOW_UPDATE reaches a synchronous
+  // transport inside that callback, and the peer answers at once with DATA for its new credit.
+  // That read waits until the batch ends, and the engine must know the new window by then.
+  it("accepts DATA that answers a setLocalWindowSize() call made inside a frame callback", async () => {
+    const BODY = 100000; // more than the old connection window, less than the new one
+    class Side extends Duplex {
+      other = null;
+      _read() {}
+      _write(chunk, encoding, callback) {
+        callback();
+        this.other.push(chunk);
+      }
+    }
+    const peer = new Side();
+    const serverSide = new Side();
+    peer.other = serverSide;
+    serverSide.other = peer;
+
+    const { promise, resolve, reject } = Promise.withResolvers();
+    // Stream windows of 1 MiB: only the connection window limits the peer.
+    const server = http2.createServer({ settings: { initialWindowSize: 1 << 20 } });
+    server.on("session", session => session.on("error", reject));
+    server.on("stream", stream => {
+      let received = 0;
+      stream.on("error", reject);
+      stream.on("data", chunk => (received += chunk.length));
+      stream.on("end", () => resolve({ received }));
+      stream.session.setLocalWindowSize(1 << 20);
+      stream.respond({ ":status": 200 });
+      stream.write(Buffer.alloc(20000, "r"));
+    });
+
+    const frame = (type, flags, streamId, payload = Buffer.alloc(0)) =>
+      Buffer.concat([new http2utils.Frame(payload.length, type, flags, streamId).data, payload]);
+    // :method POST, :scheme http, :path /, :authority localhost
+    const requestHeaders = Buffer.concat([Buffer.from([0x83, 0x86, 0x84, 0x41, 0x09]), Buffer.from("localhost")]);
+    let buffered = Buffer.alloc(0);
+    let sentHeaders = false;
+    let sawWindowUpdate = false;
+    let sawResponse = false;
+    let sentBody = false;
+    peer.on("data", chunk => {
+      buffered = Buffer.concat([buffered, chunk]);
+      while (buffered.length >= 9) {
+        const length = buffered.readUIntBE(0, 3);
+        if (buffered.length < 9 + length) return;
+        const type = buffered[3];
+        const isAck = (buffered[4] & 1) !== 0;
+        const streamId = buffered.readUInt32BE(5) & 0x7fffffff;
+        buffered = buffered.subarray(9 + length);
+        if (type === 4 && !isAck) peer.write(frame(4, 1, 0));
+        if (type === 4 && isAck && !sentHeaders) {
+          sentHeaders = true;
+          // Outside the server's read, so the request starts a read of its own.
+          setImmediate(() => peer.write(frame(1, 0x4, 1, requestHeaders)));
+        }
+        if (type === 8 && streamId === 0) sawWindowUpdate = true;
+        if (type === 1) sawResponse = true;
+        if (sentBody || !sawWindowUpdate || !sawResponse) continue;
+        sentBody = true;
+        const frames = [];
+        for (let offset = 0; offset < BODY; offset += 16384) {
+          const size = Math.min(16384, BODY - offset);
+          frames.push(frame(0, offset + size === BODY ? 1 : 0, 1, Buffer.alloc(size, "a")));
+        }
+        peer.write(Buffer.concat(frames));
+      }
+    });
+
+    try {
+      server.emit("connection", serverSide);
+      peer.write(http2utils.kClientMagic);
+      peer.write(frame(4, 0, 0));
+      expect(await promise).toEqual({ received: BODY });
+    } finally {
+      peer.destroy();
+      serverSide.destroy();
+      server.close();
+    }
+  });
 });
 
 // The outbound cork buffer is thread-local across every Http2Session. Interleaving

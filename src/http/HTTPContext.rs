@@ -1387,9 +1387,8 @@ impl<const SSL: bool> Handler<SSL> {
                         // Peer chain + hostname verified: let the session sink
                         // flush its pending TLS 1.2 ticket (parked before this
                         // dispatch) and cache later TLS 1.3 tickets directly.
-                        // SAFETY: `ssl` is the live handle for this socket on the
-                        // HTTP thread.
                         if let Some(raw) = socket.socket.get() {
+                            // SAFETY: `raw` is this live socket, on the HTTP thread.
                             unsafe { crate::session_cache::arm(raw) };
                         }
                     }

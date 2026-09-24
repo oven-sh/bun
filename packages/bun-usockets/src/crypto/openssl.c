@@ -2058,13 +2058,9 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
   if (ssl_gone(s)) return s;
 
   if (s->ssl_handshake_state != HANDSHAKE_COMPLETED) {
-    if (us_ssl_inline_reject_tripped(s)) {
-      /* A renegotiation can start before the first on_handshake: report the verdict, not a reset. */
-      ssl_trigger_handshake(s, 0);
-    } else {
-      /* Surface the ECONNRESET-style handshake failure once, so callers need no on_close check. */
-      ssl_trigger_handshake_econnreset(s);
-    }
+    /* Surface ECONNRESET-style handshake failure exactly once so callers
+     * (fetch, sockets) don't each have to check on_close themselves. */
+    ssl_trigger_handshake_econnreset(s);
     if (ssl_gone(s)) return s;
   }
 

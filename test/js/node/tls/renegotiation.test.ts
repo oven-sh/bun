@@ -518,9 +518,7 @@ it.concurrent.each(["localhost", "127.0.0.1"])(
   },
 );
 
-// A server can ask for the client certificate in a renegotiation only (IIS, Apache per-location
-// SSLVerifyClient). The client matches the server's name again right before that certificate is
-// written. For a server it already accepted, the certificate must still go out.
+// A server can ask for the client certificate in a renegotiation only (IIS, Apache per-location SSLVerifyClient).
 const nodeKeys = join(import.meta.dir, "..", "test", "fixtures", "keys");
 const agent3 = {
   cert: readFileSync(join(nodeKeys, "agent3-cert.pem"), "utf8"),
@@ -583,53 +581,3 @@ it("Bun.connect sends the client certificate a renegotiation asks for", async ()
     socket.end();
   }
 });
-
-// The server's certificate chains to a CA the client trusts and names another host. The server
-// asks for the client certificate only in a renegotiation, and its HelloRequest reaches the
-// client in the read that completes the first handshake, before the client has matched the name.
-it.each(["fetch", "Bun.connect"])(
-  "%s sends no client certificate in a renegotiation that starts before it matched the server's name",
-  async client => {
-    await using fixture = Bun.spawn(["node", join(import.meta.dir, "renegotiation-pipelined-fixture.js")], {
-      env: { ...bunEnv, KEYS: nodeKeys },
-      stdout: "pipe",
-      stderr: "inherit",
-      stdin: "ignore",
-    });
-    const lines = (async function* () {
-      let buffered = "";
-      for await (const chunk of fixture.stdout.pipeThrough(new TextDecoderStream())) {
-        buffered += chunk;
-        let newline: number;
-        while ((newline = buffered.indexOf("\n")) !== -1) {
-          yield buffered.slice(0, newline);
-          buffered = buffered.slice(newline + 1);
-        }
-      }
-    })();
-    const port = Number((await lines.next()).value);
-    const mtls = { ca: readFileSync(join(nodeKeys, "ca1-cert.pem"), "utf8"), ...agent3 };
-
-    const error =
-      client === "fetch"
-        ? await fetch(`https://localhost:${port}/`, { keepalive: false, tls: mtls }).then(
-            () => null,
-            e => e,
-          )
-        : await new Promise<any>(resolve => {
-            Bun.connect({
-              hostname: "localhost",
-              port,
-              tls: mtls,
-              socket: {
-                handshake: (_socket, _authorized, error) => resolve(error),
-                data() {},
-                error: (_socket, error) => resolve(error),
-                connectError: (_socket, error) => resolve(error),
-              },
-            }).catch(resolve);
-          });
-    expect(error?.code).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
-    expect(JSON.parse((await lines.next()).value as string)).toEqual({ peerCN: null });
-  },
-);

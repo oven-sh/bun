@@ -4,6 +4,7 @@ import { readFileSync } from "fs";
 import { bunEnv, bunExe, isIPv6, tls } from "harness";
 import type { IncomingMessage } from "http";
 import { join } from "path";
+import { startRecordingProxy } from "../../web/websocket/proxy-test-utils";
 let url: URL;
 let process: Subprocess<"ignore", "pipe", "ignore"> | null = null;
 beforeAll(async () => {
@@ -514,5 +515,121 @@ it.concurrent.each(["localhost", "127.0.0.1"])(
       changeCertificate: true,
     });
     expect(result).toEqual({ client: ["open", "close 1006"], server: "client sent alert 47" });
+  },
+);
+
+// A server can ask for the client certificate in a renegotiation only (IIS, Apache per-location
+// SSLVerifyClient). The client matches the server's name again right before that certificate is
+// written. For a server it already accepted, the certificate must still go out.
+const nodeKeys = join(import.meta.dir, "..", "test", "fixtures", "keys");
+const agent3 = {
+  cert: readFileSync(join(nodeKeys, "agent3-cert.pem"), "utf8"),
+  key: readFileSync(join(nodeKeys, "agent3-key.pem"), "utf8"),
+};
+
+it("fetch sends the client certificate a renegotiation asks for", async () => {
+  const res = await fetch(url, { keepalive: false, tls: { ca: tls.cert, ...agent3 } });
+  expect({ body: await res.text(), peerCN: res.headers.get("x-peer-cn") }).toEqual({
+    body: "Hello World",
+    peerCN: "agent3",
+  });
+});
+
+it("fetch through a CONNECT proxy sends the client certificate a renegotiation asks for", async () => {
+  // An ambient NO_PROXY applies to an explicit `proxy` option too and would send this request direct.
+  const noProxyKeys = ["NO_PROXY", "no_proxy"];
+  const saved = noProxyKeys.map(key => [key, Bun.env[key]] as const);
+  for (const key of noProxyKeys) Bun.env[key] = "";
+  try {
+    using proxy = await startRecordingProxy();
+    const res = await fetch(url, {
+      keepalive: false,
+      tls: { ca: tls.cert, ...agent3 },
+      proxy: `http://127.0.0.1:${proxy.port}`,
+    });
+    expect({ body: await res.text(), peerCN: res.headers.get("x-peer-cn") }).toEqual({
+      body: "Hello World",
+      peerCN: "agent3",
+    });
+    expect(proxy.requests.map(r => r.requestLine)).toEqual([`CONNECT localhost:${url.port} HTTP/1.1`]);
+  } finally {
+    for (const [key, value] of saved) {
+      if (value === undefined) delete Bun.env[key];
+      else Bun.env[key] = value;
+    }
+  }
+});
+
+it("Bun.connect sends the client certificate a renegotiation asks for", async () => {
+  const response = Promise.withResolvers<string>();
+  let received = "";
+  const socket = await Bun.connect({
+    hostname: url.hostname,
+    port: Number(url.port),
+    tls: { ca: tls.cert, ...agent3 },
+    socket: {
+      open: socket => void socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"),
+      data(_socket, chunk) {
+        received += chunk.toString();
+        if (received.includes("0\r\n\r\n")) response.resolve(received);
+      },
+      error: (_socket, error) => response.reject(error),
+      close: () => response.reject(new Error("closed before the response: " + received)),
+    },
+  });
+  try {
+    expect(await response.promise).toContain("X-Peer-CN: agent3\r\n");
+  } finally {
+    socket.end();
+  }
+});
+
+// The server's certificate chains to a CA the client trusts and names another host. The server
+// asks for the client certificate only in a renegotiation, and its HelloRequest reaches the
+// client in the read that completes the first handshake, before the client has matched the name.
+it.each(["fetch", "Bun.connect"])(
+  "%s sends no client certificate in a renegotiation that starts before it matched the server's name",
+  async client => {
+    await using fixture = Bun.spawn(["node", join(import.meta.dir, "renegotiation-pipelined-fixture.js")], {
+      env: { ...bunEnv, KEYS: nodeKeys },
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    const lines = (async function* () {
+      let buffered = "";
+      for await (const chunk of fixture.stdout.pipeThrough(new TextDecoderStream())) {
+        buffered += chunk;
+        let newline: number;
+        while ((newline = buffered.indexOf("\n")) !== -1) {
+          yield buffered.slice(0, newline);
+          buffered = buffered.slice(newline + 1);
+        }
+      }
+    })();
+    const port = Number((await lines.next()).value);
+    const mtls = { ca: readFileSync(join(nodeKeys, "ca1-cert.pem"), "utf8"), ...agent3 };
+
+    const error =
+      client === "fetch"
+        ? await fetch(`https://localhost:${port}/`, { keepalive: false, tls: mtls }).then(
+            () => null,
+            e => e,
+          )
+        : await new Promise<any>(resolve => {
+            Bun.connect({
+              hostname: "localhost",
+              port,
+              tls: mtls,
+              socket: {
+                handshake: (_socket, _authorized, error) => resolve(error),
+                data() {},
+                error: (_socket, error) => resolve(error),
+                connectError: (_socket, error) => resolve(error),
+              },
+            }).catch(resolve);
+          });
+    expect(error?.code).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
+    expect(JSON.parse((await lines.next()).value as string)).toEqual({ peerCN: null });
   },
 );

@@ -816,6 +816,19 @@ pub fn check_server_identity(ssl_ptr: &mut boring::SSL, hostname: &[u8]) -> bool
         .is_some_and(|x509| check_x509_server_identity(x509, hostname))
 }
 
+/// Node.js's `ERR_TLS_CERT_ALTNAME_INVALID` message for the peer's leaf certificate and `hostname`.
+pub fn server_identity_mismatch_message(ssl_ptr: &mut boring::SSL, hostname: &[u8]) -> String {
+    let mut message = String::from("Hostname/IP does not match certificate's altnames: ");
+    // Infallible: the writer is a `String`.
+    let _ = write_server_identity_mismatch_reason(ssl_ptr, hostname, &mut message);
+    message
+}
+
+/// [`check_server_identity`] for the check inside the handshake: `None` or an empty `host` is no check there.
+pub fn server_identity_ok(ssl: &mut boring::SSL, host: Option<&[u8]>) -> bool {
+    host.is_none_or(|host| host.is_empty() || check_server_identity(ssl, host))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{NameBytes, is_safe_alt_name};

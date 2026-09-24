@@ -214,6 +214,14 @@ impl WindowsNamedPipeContext {
         }
     }
 
+    fn server_identity(this: *mut Self, ssl: &mut bun_boringssl_sys::SSL) -> bool {
+        // SAFETY: see `on_open`.
+        match unsafe { (*this).socket } {
+            SocketType::Tls(s) => s.server_identity_ok(ssl),
+            _ => true,
+        }
+    }
+
     fn on_keylog(this: *mut Self, line: &[u8]) {
         // SAFETY: see `on_open`.
         if let SocketType::Tls(s) = unsafe { (*this).socket } {
@@ -384,6 +392,7 @@ impl WindowsNamedPipeContext {
             on_close: |p| Self::on_close(p.cast::<Self>()),
             on_session: |p, d| Self::on_session(p.cast::<Self>(), d),
             on_keylog: |p, d| Self::on_keylog(p.cast::<Self>(), d),
+            server_identity: |p, ssl| Self::server_identity(p.cast::<Self>(), ssl),
         };
         #[cfg(not(windows))]
         {

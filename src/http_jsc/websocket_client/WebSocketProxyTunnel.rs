@@ -189,6 +189,7 @@ impl WebSocketProxyTunnel {
                 // SSL off the parked session/keylog queues entirely.
                 on_session: None,
                 on_keylog: None,
+                server_identity: Some(Self::server_identity),
             },
         )
         .map_err(|_| crate::Error::InvalidOptions)?;
@@ -241,6 +242,14 @@ impl WebSocketProxyTunnel {
     }
 
     /// SSLWrapper callback: Called before TLS handshake starts
+    fn server_identity(this: ThisPtr<Self>, ssl: &mut bun_boringssl::c::SSL) -> bool {
+        let hostname = this
+            .sni_hostname
+            .as_deref()
+            .filter(|_| this.reject_unauthorized);
+        bun_boringssl::server_identity_ok(ssl, hostname)
+    }
+
     fn on_open(this: ThisPtr<Self>) {
         let _guard = RefPtr::from_this(this);
         bun_core::scoped_log!(WebSocketProxyTunnel, "onOpen");

@@ -1317,6 +1317,13 @@ impl<const SSL: bool> Drop for HTTPContext<SSL> {
 pub struct Handler<const SSL: bool>;
 
 impl<const SSL: bool> Handler<SSL> {
+    /// `us_dispatch_server_identity`: only a client that is in its handshake has a name to match.
+    pub fn server_identity_ok(ptr: *mut c_void, ssl: &mut bun_boringssl_sys::SSL) -> bool {
+        HTTPContext::<SSL>::get_tagged(ptr)
+            .client_mut()
+            .is_none_or(|client| client.server_identity_ok(ssl))
+    }
+
     pub fn on_open(ptr: *mut c_void, socket: HTTPSocket<SSL>) {
         let active = HTTPContext::<SSL>::get_tagged(ptr);
         if let Some(client) = active.client_mut() {
@@ -1382,7 +1389,9 @@ impl<const SSL: bool> Handler<SSL> {
                         // dispatch) and cache later TLS 1.3 tickets directly.
                         // SAFETY: `ssl` is the live handle for this socket on the
                         // HTTP thread.
-                        unsafe { crate::session_cache::arm(ssl) };
+                        if let Some(raw) = socket.socket.get() {
+                            unsafe { crate::session_cache::arm(raw) };
+                        }
                     }
                 }
 

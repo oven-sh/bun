@@ -193,7 +193,10 @@ impl ReadableStream {
     }
 
     /// Lift the whole payload out of an unread stream. On success the stream is spent (closed, disturbed, locked).
-    pub(crate) fn to_any_blob(&mut self, global_this: &JSGlobalObject) -> Option<webcore::blob::Any> {
+    pub(crate) fn to_any_blob(
+        &mut self,
+        global_this: &JSGlobalObject,
+    ) -> Option<webcore::blob::Any> {
         if self.is_disturbed(global_this) || self.is_locked(global_this) {
             return None;
         }

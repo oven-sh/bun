@@ -255,11 +255,7 @@ impl Binding {
         Self::run_readdir(global, frame, AsyncArm::Callback)
     }
 
-    fn run_readdir(
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-        arm: AsyncArm,
-    ) -> JsResult<JSValue> {
+    fn run_readdir(global: &JSGlobalObject, frame: &CallFrame, arm: AsyncArm) -> JsResult<JSValue> {
         let (callback, arguments) = split_callback(global, frame, arm)?;
         let rd_args = match parse_async_args::<args::Readdir<'static>>(global, arguments)? {
             ParsedAsyncArgs::Args(args) => args,

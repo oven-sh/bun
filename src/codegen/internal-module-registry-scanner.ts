@@ -90,7 +90,6 @@ export function createInternalModuleRegistry(basedir: string) {
     nativeModuleIds,
     nativeModuleEnums,
     nativeModuleEnumToId,
-    internalRegistry,
     moduleList,
     nativeStartIndex,
   } as const;

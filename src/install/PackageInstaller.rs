@@ -22,7 +22,7 @@ use crate::lifecycle_script_runner::LifecycleScriptSubprocess;
 // which are the same types re-exported through `crate::lockfile`.
 use crate::lockfile::Lockfile;
 use crate::lockfile_real::package::{
-    self as Package, PackageColumns, scripts::Scripts as PackageScripts,
+    self as Package, PackageColumns, scripts::Gypfile, scripts::Scripts as PackageScripts,
 };
 use crate::lockfile_real::{self as lockfile, Tree};
 use crate::network_task::ForTarballError;
@@ -1167,10 +1167,10 @@ impl<'a> PackageInstaller<'a> {
         debug_assert!(resolution_tag != resolution::Tag::Workspace);
         debug_assert!(package_id != 0);
         let mut count: usize = 0;
-        let scripts = 'brk: {
+        let (scripts, gypfile) = 'brk: {
             let scripts = self.lockfile().packages.items_scripts()[package_id as usize];
             if scripts.filled {
-                break 'brk scripts;
+                break 'brk (scripts, Gypfile::Unread);
             }
 
             let mut temp = PackageScripts::default();
@@ -1179,21 +1179,23 @@ impl<'a> PackageInstaller<'a> {
             // `defer temp_lockfile.deinit()` — Lockfile impls Drop.
             let mut string_builder = temp_lockfile.string_builder();
             let log = self.manager().log_mut();
-            if let Err(err) = temp.fill_from_package_json(&mut string_builder, log, folder_path) {
-                if log_level != Options::LogLevel::Silent {
-                    Output::err_generic(
-                        "failed to fill lifecycle scripts for <b>{}<r>: {}",
-                        (bstr::BStr::new(alias), err.name()),
-                    );
-                }
+            match temp.fill_from_package_json(&mut string_builder, log, folder_path) {
+                Ok(gypfile) => break 'brk (temp, gypfile),
+                Err(err) => {
+                    if log_level != Options::LogLevel::Silent {
+                        Output::err_generic(
+                            "failed to fill lifecycle scripts for <b>{}<r>: {}",
+                            (bstr::BStr::new(alias), err.name()),
+                        );
+                    }
 
-                if self.manager().options.enable.fail_early() {
-                    Global::crash();
-                }
+                    if self.manager().options.enable.fail_early() {
+                        Global::crash();
+                    }
 
-                return 0;
+                    return 0;
+                }
             }
-            break 'brk temp;
         };
 
         debug_assert!(scripts.filled);
@@ -1212,7 +1214,7 @@ impl<'a> PackageInstaller<'a> {
             }
         }
 
-        count += scripts.wants_default_node_gyp(folder_path.slice()) as usize;
+        count += scripts.wants_default_node_gyp(folder_path.slice(), gypfile) as usize;
 
         count
     }

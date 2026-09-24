@@ -41,6 +41,7 @@ pub mod scripts;
 pub mod workspace_map;
 
 pub use meta::Meta;
+use scripts::Gypfile;
 pub use scripts::Scripts;
 pub use workspace_map as WorkspaceMap;
 
@@ -2755,7 +2756,9 @@ impl Package<u64> {
         // Root packages (the void resolver) keep has_install_script unset.
         if !resolver.is_void() {
             let has_scripts = self.scripts.has_any()
-                || self.scripts.wants_default_node_gyp(source.path.name().dir);
+                || self
+                    .scripts
+                    .wants_default_node_gyp(source.path.name().dir, Gypfile::from_json(json));
             self.meta.set_has_install_script(has_scripts);
         }
 

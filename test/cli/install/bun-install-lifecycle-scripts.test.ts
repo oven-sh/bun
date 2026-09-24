@@ -1954,6 +1954,273 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       });
     }
 
+    // Local mock node-gyp: `node-gyp rebuild` writes build.node into its cwd.
+    async function writeMockNodeGyp(packageDir: string) {
+      await mkdir(join(packageDir, "node-gyp-pkg"), { recursive: true });
+      await Promise.all([
+        writeFile(
+          join(packageDir, "node-gyp-pkg", "package.json"),
+          JSON.stringify({
+            name: "node-gyp",
+            version: "1.0.0",
+            bin: { "node-gyp": "./node-gyp.js" },
+          }),
+        ),
+        writeFile(
+          join(packageDir, "node-gyp-pkg", "node-gyp.js"),
+          `#!/usr/bin/env node\nrequire("fs").writeFileSync("build.node", "built");\n`,
+        ),
+      ]);
+    }
+
+    test("`gypfile: false` skips the auto node-gyp script in the package root", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
+      await writeMockNodeGyp(packageDir);
+      await writeFile(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          gypfile: false,
+          dependencies: {
+            "node-gyp": "file:./node-gyp-pkg",
+          },
+          scripts: {
+            postinstall: `${bunExe()} -e "require('fs').writeFileSync('postinstall.txt', 'ran')"`,
+          },
+        }),
+      );
+      await writeFile(join(packageDir, "binding.gyp"), "");
+
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env: testEnv,
+      });
+
+      const err = await stderr.text();
+      const out = await stdout.text();
+      expect(err).not.toContain("error:");
+      expect(out).toContain("1 package installed");
+      expect({
+        "build.node": await exists(join(packageDir, "build.node")),
+        "postinstall": await exists(join(packageDir, "postinstall.txt")),
+      }).toEqual({
+        "build.node": false,
+        "postinstall": true,
+      });
+      expect(await exited).toBe(0);
+    });
+
+    test("`gypfile: false` skips the auto node-gyp script for a trusted dependency", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
+      await writeMockNodeGyp(packageDir);
+      await mkdir(join(packageDir, "dep"), { recursive: true });
+      await Promise.all([
+        writeFile(
+          join(packageDir, "dep", "package.json"),
+          JSON.stringify({
+            name: "dep",
+            version: "1.0.0",
+            gypfile: false,
+            scripts: {
+              postinstall: `${bunExe()} -e "require('fs').writeFileSync('postinstall.txt', 'ran')"`,
+            },
+          }),
+        ),
+        writeFile(join(packageDir, "dep", "binding.gyp"), ""),
+        writeFile(
+          packageJson,
+          JSON.stringify({
+            name: "foo",
+            version: "1.0.0",
+            dependencies: {
+              "dep": "file:./dep",
+              "node-gyp": "file:./node-gyp-pkg",
+            },
+            trustedDependencies: ["dep"],
+          }),
+        ),
+      ]);
+
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env: testEnv,
+      });
+
+      const err = await stderr.text();
+      const out = await stdout.text();
+      expect(err).not.toContain("error:");
+      expect(out).toContain("2 packages installed");
+      expect({
+        "build.node": await exists(join(packageDir, "node_modules", "dep", "build.node")),
+        "postinstall": await exists(join(packageDir, "node_modules", "dep", "postinstall.txt")),
+      }).toEqual({
+        "build.node": false,
+        "postinstall": true,
+      });
+      expect(await exited).toBe(0);
+    });
+
+    test("`gypfile: false` with no scripts is not counted as a blocked script", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
+      await mkdir(join(packageDir, "dep"), { recursive: true });
+      await Promise.all([
+        writeFile(
+          join(packageDir, "dep", "package.json"),
+          JSON.stringify({ name: "dep", version: "1.0.0", gypfile: false }),
+        ),
+        writeFile(join(packageDir, "dep", "binding.gyp"), ""),
+        writeFile(
+          packageJson,
+          JSON.stringify({
+            name: "foo",
+            version: "1.0.0",
+            dependencies: {
+              "dep": "file:./dep",
+            },
+          }),
+        ),
+      ]);
+
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env: testEnv,
+      });
+
+      const err = await stderr.text();
+      const out = await stdout.text();
+      expect(err).not.toContain("error:");
+      expect(out).toContain("1 package installed");
+      expect(out).not.toContain("Blocked");
+      expect(await exited).toBe(0);
+
+      const untrusted = spawn({
+        cmd: [bunExe(), "pm", "untrusted"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env: testEnv,
+      });
+      const untrustedOut = await untrusted.stdout.text();
+      expect(untrustedOut).not.toContain("node-gyp rebuild");
+      expect(await untrusted.exited).toBe(0);
+    });
+
+    // `gypfile-false@1.0.0` from the registry: binding.gyp, `gypfile: false`, a
+    // postinstall, and a dependency on the mock `node-gyp` whose `rebuild`
+    // writes build.node. Registry packages reach the enqueue and blocked-count
+    // paths with scripts that are not yet read from package.json.
+    test("`gypfile: false` skips the auto node-gyp script for a trusted registry package", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
+      await writeFile(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          dependencies: {
+            "gypfile-false": "1.0.0",
+          },
+          trustedDependencies: ["gypfile-false"],
+        }),
+      );
+
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env: testEnv,
+      });
+
+      const err = await stderr.text();
+      const out = await stdout.text();
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("error:");
+      expect(out).toContain("2 packages installed");
+      expect({
+        "build.node": await exists(join(packageDir, "node_modules", "gypfile-false", "build.node")),
+        "postinstall": await exists(join(packageDir, "node_modules", "gypfile-false", "postinstall.txt")),
+      }).toEqual({
+        "build.node": false,
+        "postinstall": true,
+      });
+      expect(await exited).toBe(0);
+    });
+
+    test("`gypfile: false` is not counted as a blocked script for an untrusted registry package", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
+      await writeFile(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          dependencies: {
+            "gypfile-false": "1.0.0",
+          },
+        }),
+      );
+
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env: testEnv,
+      });
+
+      const err = await stderr.text();
+      const out = await stdout.text();
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("error:");
+      expect(out).toContain("2 packages installed");
+      // the postinstall only, not the default node-gyp script
+      expect(out).toContain("Blocked 1 postinstall");
+      expect(await exited).toBe(0);
+
+      const untrusted = spawn({
+        cmd: [bunExe(), "pm", "untrusted"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env: testEnv,
+      });
+      const untrustedOut = await untrusted.stdout.text();
+      expect(untrustedOut).toContain("[postinstall]");
+      expect(untrustedOut).not.toContain("node-gyp rebuild");
+      expect(await untrusted.exited).toBe(0);
+    });
+
     test("git dependencies also run `preprepare`, `prepare`, and `postprepare` scripts", async () => {
       using ctx = await setupTest();
       const { packageDir, packageJson, env } = ctx;

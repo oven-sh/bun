@@ -450,34 +450,32 @@ impl Process {
         self.on_exit(Status::Err(err), &rusage_zeroed());
     }
 
-    /// The exit watch of a running child cannot be registered (`ENOMEM`, or
-    /// `ENOSPC` at `fs.epoll.max_user_watches`), so nothing would report its
-    /// exit: kill and reap it. Returns `ESRCH` for a child that was reaped
-    /// before the watch was tried, `err` otherwise.
+    /// Nothing would report the exit of a running child whose exit watch
+    /// cannot be registered (`ENOMEM`, `ENOSPC` at `fs.epoll.max_user_watches`):
+    /// kill and reap it. `ESRCH` stands for a child reaped before the watch.
     ///
-    /// Linux only: on XNU a pty session leader is not reapable until this
+    /// Linux only: on XNU a pty session leader cannot be reaped until this
     /// thread drains the pty master, so the blocking `wait4` could deadlock.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     #[cold]
     #[inline(never)]
     fn kill_and_reap_unwatchable(&mut self, err: bun_sys::Error) -> bun_sys::Error {
-        let already_reaped = self.has_exited();
-        if !already_reaped {
-            let _ = self.kill(libc::SIGKILL as u8);
-            let reaped = posix_spawn::wait4(self.pid, 0, None);
-            self.status =
-                Status::from(self.pid, &reaped).unwrap_or_else(|| Status::Err(err.clone()));
-        }
-        self.close();
-        if already_reaped {
+        if self.has_exited() {
+            self.close();
             return bun_sys::Error::from_code(bun_sys::E::ESRCH, err.syscall);
         }
+        // A child that cannot be signalled stays as the caller found it: `wait4` would block for its whole life.
+        if self.kill(libc::SIGKILL as u8).is_err() {
+            return err;
+        }
+        let reaped = posix_spawn::wait4(self.pid, 0, None);
+        self.status = Status::from(self.pid, &reaped).unwrap_or_else(|| Status::Err(err.clone()));
+        self.close();
         err
     }
 
-    /// On Linux an `Err` other than `ESRCH` means the child has been killed
-    /// and reaped (`kill_and_reap_unwatchable`): it never describes a live
-    /// child. With kqueue the child can still be running.
+    /// On Linux an `Err` other than `ESRCH` describes a child that has been
+    /// killed and reaped, never a live one. With kqueue it can still run.
     pub fn watch(&mut self) -> bun_sys::Result<()> {
         self.watch_impl::<true>()
     }

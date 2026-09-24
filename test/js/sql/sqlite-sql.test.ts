@@ -1013,6 +1013,19 @@ describe("Query Execution", () => {
     expect(await settle(transaction)).toEqual({ code: "ERR_SQLITE_CONNECTION_CLOSED", message: "Connection closed" });
     expect(await db`SELECT count(*) AS n FROM cancel_then_close`).toEqual([{ n: 0 }]);
   });
+
+  test("a query that tx.close() cancels before it runs rejects when awaited", async () => {
+    await using db = new SQL(":memory:");
+    let lazy: Promise<unknown> | undefined;
+    await settle(
+      db.begin(async tx => {
+        lazy = tx`SELECT 1 AS x`; // created, not awaited: close() cancels it
+        await tx.close();
+      }),
+    );
+
+    expect(await settle(lazy!)).toEqual({ code: "ERR_SQLITE_QUERY_CANCELLED", message: "Query cancelled" });
+  });
 });
 
 // Bun's bundled SQLite allows 250000 parameters. A system libsqlite3 (macOS) can stop at 32766.

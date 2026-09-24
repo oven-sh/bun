@@ -413,7 +413,7 @@ describe.concurrent("fs.openAsBlob pins the file", () => {
     expect(statSync(destination).size).toBe(100_000);
   });
 
-  // A FIFO holds 1 MiB back, so the copy cannot end before this test drains it.
+  // The FIFO is smaller than the file, so the copy cannot end before this test drains it.
   it.skipIf(isWindows)("Bun.write rejects when the source changes during the copy", async () => {
     const size = 1024 * 1024;
     const { dir, file, blob } = await pinned(Buffer.alloc(size, "a"));
@@ -424,22 +424,26 @@ describe.concurrent("fs.openAsBlob pins the file", () => {
     const writeEnd = openSync(fifo, "w");
     try {
       const write = Bun.write(Bun.file(writeEnd), blob);
+      let settled = false;
+      const settle = () => void (settled = true);
+      write.then(settle, settle);
       const chunk = Buffer.alloc(65536);
-      const deadline = performance.now() + 10_000;
       let drained = 0;
-      const drain = (until: number) => {
-        while (drained < until && performance.now() < deadline) {
+      const drain = async (until: number) => {
+        while (drained < until) {
           try {
             drained += readSync(readEnd, chunk, 0, Math.min(chunk.length, until - drained));
           } catch (err: any) {
-            // EAGAIN: the copy has not filled the FIFO again yet.
             if (err.code !== "EAGAIN") throw err;
+            // The FIFO is empty. A copy that is over does not fill it again.
+            if (settled) return;
+            await new Promise(resolve => setImmediate(resolve));
           }
         }
       };
-      drain(1);
+      await drain(1);
       fs.appendFileSync(file, "b");
-      drain(size);
+      await drain(size);
       expect(drained).toBe(size);
       await expect(write).rejects.toEqual(notReadable);
     } finally {

@@ -161,6 +161,7 @@ export async function startProxy(server: net.Server): Promise<number> {
  */
 export async function startRecordingProxy(options: ConnectProxyOptions = {}) {
   const requests: ConnectRequest[] = [];
+  const sni: (string | null)[] = [];
   let connections = 0;
   const proxy = createConnectProxy({
     ...options,
@@ -172,10 +173,15 @@ export async function startRecordingProxy(options: ConnectProxyOptions = {}) {
   proxy.on("connection", () => {
     connections++;
   });
+  proxy.on("secureConnection", (socket: tls.TLSSocket) => {
+    sni.push(socket.servername || null);
+  });
   const port = await startProxy(proxy);
   return {
     port,
     requests,
+    /** With `tls: true`, the SNI of every handshake the proxy completed. `null` when the client sent none. */
+    sni,
     get connections() {
       return connections;
     },

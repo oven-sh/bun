@@ -1,3 +1,4 @@
+import { heapStats } from "bun:jsc";
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, nodeExe, tls as tlsCerts } from "harness";
 import { createHash, X509Certificate } from "node:crypto";
@@ -20,12 +21,14 @@ afterAll(() => {
 
 // A TLS server that records the SNI of every handshake and answers one
 // WebSocket upgrade per connection. The harness certificate has CN=server-bun
-// and SAN DNS:localhost, IP:127.0.0.1, IP:::1.
-function startSniServer({ requestCert = false } = {}) {
+// and SAN DNS:localhost, IP:127.0.0.1, IP:::1. With `hold`, a handshake that
+// sends SNI stops at the ClientHello until `hold` resolves.
+function startSniServer({ requestCert = false, hold }: { requestCert?: boolean; hold?: Promise<void> } = {}) {
   const sni: (string | null)[] = [];
   const clientCertificates: (string | undefined)[] = [];
   let applicationData = "";
   const connectionEnded = Promise.withResolvers<void>();
+  const clientHello = Promise.withResolvers<void>();
   const server = tls.createServer(
     {
       key: tlsCerts.key,
@@ -35,7 +38,10 @@ function startSniServer({ requestCert = false } = {}) {
       rejectUnauthorized: false,
       SNICallback(servername, cb) {
         sni.push(servername);
-        cb(null, tls.createSecureContext({ key: tlsCerts.key, cert: tlsCerts.cert }));
+        clientHello.resolve();
+        const resume = () => cb(null, tls.createSecureContext({ key: tlsCerts.key, cert: tlsCerts.cert }));
+        if (hold) hold.then(resume);
+        else resume();
       },
     },
     socket => {
@@ -80,6 +86,8 @@ function startSniServer({ requestCert = false } = {}) {
     port: promise,
     sni,
     clientCertificates,
+    // The server has the ClientHello of a handshake that sends SNI.
+    clientHello: clientHello.promise,
     // What the client has sent over TLS so far.
     get received() {
       return applicationData;
@@ -192,6 +200,23 @@ describe.concurrent("WebSocket tls.serverName", () => {
     });
     expect(await openSession(ws)).toEqual(opened);
     expect(server.sni).toEqual(["localhost"]);
+    expect(proxy.requests).toHaveLength(1);
+  });
+
+  // The proxy is dialed by IP address, so its handshake has no SNI and its certificate is
+  // checked against 127.0.0.1. `serverName` is for the handshake with the target.
+  test.each([
+    ["a name the certificate has", "localhost", undefined],
+    ["a name that only the callback accepts", "target.test", () => undefined],
+  ] as const)("names the target and not an HTTPS proxy: %s", async (_label, serverName, checkServerIdentity) => {
+    using server = startSniServer();
+    using proxy = await startRecordingProxy({ tls: true });
+    const ws = new WebSocket(`wss://127.0.0.1:${await server.port}/`, {
+      proxy: `https://127.0.0.1:${proxy.port}`,
+      tls: { ca: tlsCerts.cert, serverName, checkServerIdentity },
+    });
+    expect(await openSession(ws)).toEqual(opened);
+    expect({ proxy: proxy.sni, target: server.sni }).toEqual({ proxy: [null], target: [serverName] });
     expect(proxy.requests).toHaveLength(1);
   });
 });
@@ -611,5 +636,67 @@ describe.concurrent("WebSocket tls.checkServerIdentity", () => {
     expect(await openSession(ws)).toEqual(opened);
     expect(calls).toEqual(["localhost"]);
     expect(proxy.requests).toHaveLength(1);
+  });
+});
+
+// Not concurrent: these count every live WebSocket in the process, or force a full GC.
+describe("WebSocket tls.checkServerIdentity lifetime", () => {
+  test("survives a GC before the handshake ends when only the WebSocket refers to it", async () => {
+    const release = Promise.withResolvers<void>();
+    using server = startSniServer({ hold: release.promise });
+    const url = `wss://127.0.0.1:${await server.port}/`;
+    const calls: string[] = [];
+    // Nothing in this scope refers to the callback or to the tls object. The built-in check
+    // rejects evil.test, so the connection opens only if the callback is still there to run.
+    const ws = (() =>
+      new WebSocket(url, {
+        tls: {
+          ca: tlsCerts.cert,
+          serverName: "evil.test",
+          checkServerIdentity: (hostname: string) => void calls.push(hostname),
+        },
+      }))();
+    const session = openSession(ws);
+    // A connection that ends before its ClientHello fails the assertion below and does not hang here.
+    await Promise.race([server.clientHello, session]);
+    Bun.gc(true);
+    release.resolve();
+    expect(await session).toEqual(opened);
+    expect(calls).toEqual(["evil.test"]);
+  });
+
+  test("does not keep a closed WebSocket alive when the callback captures it", async () => {
+    using server = startSniServer();
+    const url = `wss://localhost:${await server.port}/`;
+    const liveWebSockets = () => {
+      Bun.gc(true);
+      return heapStats().objectTypeCounts.WebSocket || 0;
+    };
+    const before = liveWebSockets();
+    const total = 16;
+    let checks = 0;
+    await Promise.all(
+      Array.from({ length: total }, async () => {
+        // The cycle: the WebSocket holds the callback, and the callback holds the WebSocket.
+        const ws: WebSocket = new WebSocket(url, {
+          tls: {
+            ca: tlsCerts.cert,
+            checkServerIdentity() {
+              if (ws.readyState === WebSocket.CONNECTING) checks++;
+              return undefined;
+            },
+          },
+        });
+        expect(await openSession(ws)).toEqual(opened);
+      }),
+    );
+    expect(checks).toBe(total);
+    // The WebSocket drops its pending activity in a task after the close event.
+    let leaked = liveWebSockets() - before;
+    for (let i = 0; i < 10 && leaked > 2; i++) {
+      await new Promise(resolve => setImmediate(resolve));
+      leaked = liveWebSockets() - before;
+    }
+    expect(leaked).toBeLessThanOrEqual(2);
   });
 });

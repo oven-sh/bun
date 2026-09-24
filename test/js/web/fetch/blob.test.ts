@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
+import { mkfifo } from "mkfifo";
 import type { BlobOptions } from "node:buffer";
 import type { BinaryLike } from "node:crypto";
 import fs from "node:fs";
@@ -897,5 +898,51 @@ describe("new Blob([...]) with a file-backed Blob part", () => {
     const observed = Bun.file(p);
     void observed.size;
     expect(() => new Blob(["x", observed])).toThrow(expect.objectContaining({ code: "ENOENT" }));
+    // a directory
+    expect(() => new Blob(["x", Bun.file(String(dir))])).toThrow(expect.objectContaining({ code: "EISDIR" }));
+  });
+
+  test.skipIf(isWindows || process.getuid?.() === 0)("throws when the file is not readable", () => {
+    using dir = tempDir("blob-file-part-eacces", { "secret.bin": "secret" });
+    const p = path.join(String(dir), "secret.bin");
+    fs.chmodSync(p, 0o000);
+    expect(() => new Blob(["x", Bun.file(p)])).toThrow(expect.objectContaining({ code: "EACCES" }));
+  });
+
+  // The constructor reads on the JS thread, so it must never wait for a writer.
+  // A child process runs it: a blocked constructor would also block this file's timeout.
+  test("a FIFO or pipe part throws instead of blocking", async () => {
+    using dir = tempDir("blob-fifo-part", {});
+    const fifo = path.join(String(dir), "fifo");
+    if (!isWindows) mkfifo(fifo);
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const parts = { stdin: Bun.stdin };
+          if (process.env.FIFO_PATH) parts.fifo = Bun.file(process.env.FIFO_PATH);
+          for (const [name, part] of Object.entries(parts)) {
+            try {
+              console.log(name, "built a Blob of", new Blob(["x", part]).size, "bytes");
+            } catch (e) {
+              console.log(name, e.message);
+            }
+          }
+        `,
+      ],
+      env: { ...bunEnv, FIFO_PATH: isWindows ? "" : fifo },
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const message =
+      "Blob parts backed by a pipe, socket or device cannot be read synchronously; await .bytes() or .arrayBuffer() first";
+    expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+      stdout: isWindows ? [`stdin ${message}`] : [`stdin ${message}`, `fifo ${message}`],
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });

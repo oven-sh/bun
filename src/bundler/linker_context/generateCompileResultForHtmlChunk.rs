@@ -169,11 +169,8 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
             return UrlAction::Keep;
         }
 
-        if optional
-            && import_record
-                .flags
-                .contains(ImportRecordFlags::WAS_UNRESOLVED)
-        {
+        // An onLoad plugin can make a module of an image (`.svg` as a component): an optional URL keeps its element.
+        if optional && (loader.is_javascript_like() || loader.is_css()) {
             return UrlAction::Keep;
         }
 
@@ -429,6 +426,11 @@ fn generate_compile_result_for_html_chunk_impl<'a>(
 
     HTMLProcessor::<HTMLLoader, true>::run(&mut html_loader, contents)
         .unwrap_or_else(|_| panic!("unexpected error from HTMLProcessor.run"));
+    debug_assert_eq!(
+        html_loader.current_import_record_index as usize,
+        records.len(),
+        "the scan pass made an import record for a URL that the rewrite pass did not visit"
+    );
 
     // There are some cases where invalid HTML will make it so </head> is
     // never emitted, even if the literal text DOES appear. These cases are

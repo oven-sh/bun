@@ -402,29 +402,59 @@ body { color: blue; }`,
 
   test("inlines every local URL attribute and drops local preloads", async () => {
     const png = Buffer.from("89504e470d0a1a0a78", "hex");
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg"><symbol id="icon" viewBox="0 0 1 1"><path d="M0 0h1v1z"/></symbol></svg>`;
+    const other = Buffer.from("89504e470d0a1a0a79", "hex");
+    const pngData = "data:image/png;base64," + png.toString("base64");
+    // [element, the URL values it has in the output]. An element with no values is removed.
+    const rows: [string, ...string[]][] = [
+      // A preload of a file that is now inline, or of a local script, points at nothing.
+      [`<link rel="preload" as="image" href="./i.png" imagesrcset="./h1.png 1x, ./h2.png 2x" imagesizes="100vw">`],
+      [`<link imagesizes="100vw" imagesrcset="./h1.png 1x, ./h2.png 2x" as="image" rel="preload">`],
+      [`<link rel="modulepreload" href="./app.js" integrity="sha384-AAAA">`],
+      [`<link href="./app.js" rel="modulepreload">`],
+      [`<link rel="preload" as="script" href="./app.js">`],
+      // The element is removed, and the URLs after it still get their own file.
+      [`<link rel="modulepreload icon" href="./other.png">`],
+      // Not local, so nothing is inline for it.
+      [`<link rel="modulepreload" href="https://cdn.example.com/x.js">`, "https://cdn.example.com/x.js"],
+      [`<link rel="preload" as="script" href="//cdn.example.com/y.js">`, "//cdn.example.com/y.js"],
+      [`<link rel="modulepreload" href="data:text/javascript,export{}">`, "data:text/javascript,export{}"],
+      [`<link rel="modulepreload" href="{{ asset }}">`, "{{ asset }}"],
+      [`<link rel="modulepreload" href="#">`, "#"],
+      [`<link rel="preload" as="fetch" href="/api/bootstrap.json" crossorigin>`, "/api/bootstrap.json"],
+      [
+        `<link rel="preload" as="font" href="https://cdn.example.com/font.woff2" crossorigin>`,
+        "https://cdn.example.com/font.woff2",
+      ],
+      [`<link rel="prefetch" href="./about.html">`, "./about.html"], // for a later navigation, not for this page
+      [`<link rel="shortcut icon" href="./i.png">`, pngData],
+      [`<link rel="apple-touch-startup-image" href="./st.png">`, pngData],
+      // A crawler reads og:image and takes an http(s) URL only, so a data: URL is of no use there.
+      [`<meta property="og:image" content="./og.png">`, "./og.png"],
+      [`<meta property="og:image:width" content="1200">`, "1200"],
+      [`<meta name="twitter:image" content="./og.png">`, "./og.png"],
+      [`<meta name="msapplication-config" content="none">`, "none"],
+      [`<video poster="./i.png"></video>`, pngData],
+      [`<input type="image" src="./i.png">`, pngData],
+      [`<svg><image href="./i.png"/><image xlink:href="./i.png"/></svg>`, pngData, pngData],
+      [`<svg><symbol id="local"></symbol><use href="#local"></use></svg>`, "#local"],
+      // Not followed: see "What is not inlined" in docs/bundler/standalone-html.mdx.
+      [`<video><track src="./subs.vtt" kind="subtitles" srclang="en" default></video>`, "./subs.vtt"],
+      [`<object data="./doc.pdf" type="application/pdf"><embed src="./doc.pdf"></object>`, "./doc.pdf", "./doc.pdf"],
+      [`<svg><use href="./sprite.svg#icon"></use></svg>`, "./sprite.svg#icon"],
+      [`<a href="./doc.pdf">pdf</a>`, "./doc.pdf"],
+    ];
+    const inHead = ([element]: [string, ...string[]]) => /^<(link|meta)\b/.test(element);
     using dir = tempDir("compile-browser-url-attrs", {
       "index.html": `<!DOCTYPE html><html><head>
-<link rel="preload" as="image" href="./i.png" imagesrcset="./h1.png 1x, ./h2.png 2x" imagesizes="100vw">
-<link rel="preload" as="image" imagesrcset="./h1.png 1x, ./h2.png 2x" imagesizes="100vw">
-<link rel="modulepreload" href="./app.js" integrity="sha384-AAAA">
-<link rel="preload" as="script" href="./app.js">
-<link rel="preload" as="fetch" href="/api/bootstrap.json" crossorigin>
-<link rel="preload" as="font" href="https://cdn.example.com/font.woff2" crossorigin>
-<link rel="prefetch" href="./about.html">
-<link rel="shortcut icon" href="./i.png">
-<link rel="apple-touch-startup-image" href="./st.png">
-<meta property="og:image" content="./og.png">
-<meta property="og:image:width" content="1200">
-<meta name="twitter:image" content="./og.png">
-<meta name="msapplication-config" content="none">
+${rows
+  .filter(inHead)
+  .map(([element]) => element)
+  .join("\n")}
 <script type="module" src="./app.js"></script></head><body>
-<video poster="./i.png"><track src="./subs.vtt" kind="subtitles" srclang="en" default></video>
-<object data="./doc.pdf" type="application/pdf"><embed src="./doc.pdf"></object>
-<input type="image" src="./i.png">
-<svg><use href="./sprite.svg#icon"></use><use xlink:href="./sprite.svg#icon"></use><image href="./i.png"/></svg>
-<svg><symbol id="local"></symbol><use href="#local"></use></svg>
-<a href="./doc.pdf">pdf</a>
+${rows
+  .filter(row => !inHead(row))
+  .map(([element]) => element)
+  .join("\n")}
 </body></html>`,
       "app.js": `console.log("app");`,
       "i.png": png,
@@ -432,9 +462,7 @@ body { color: blue; }`,
       "h2.png": png,
       "st.png": png,
       "og.png": png,
-      "sprite.svg": svg,
-      "subs.vtt": "WEBVTT\n\n",
-      "doc.pdf": "%PDF-1.4\n",
+      "other.png": other,
     });
 
     const result = await Bun.build({
@@ -448,43 +476,20 @@ body { color: blue; }`,
     expect(result.outputs.length).toBe(1);
     const html = await result.outputs[0].text();
 
-    const pngData = "data:image/png;base64," + png.toString("base64");
-    const pdfData = "data:application/pdf;base64," + Buffer.from("%PDF-1.4\n").toString("base64");
-    const urls = [...html.matchAll(/ (?:src|href|xlink:href|content|data|poster)="([^"]*)"/g)].map(m => m[1]);
-    expect(urls).toEqual([
-      // A preload of an inlined file or of a local script is gone: what it points at is inline.
-      "/api/bootstrap.json", // fetched at runtime, so nothing was inlined for it
-      "https://cdn.example.com/font.woff2",
-      "./about.html", // prefetch is for a later navigation, not for this page
-      pngData, // shortcut icon
-      pngData, // apple-touch-startup-image
-      pngData, // og:image
-      "1200",
-      pngData, // twitter:image
-      "none", // msapplication-config: not a URL, and no warning for it
-      pngData, // poster
-      expect.stringMatching(/^data:text\/vtt[^"]*;base64,/), // track
-      pdfData, // object
-      pdfData, // embed
-      pngData, // input
-      // Browsers do not load a data: URL from <use>, so it stays as written.
-      "./sprite.svg#icon", // use href
-      "./sprite.svg#icon", // use xlink:href
-      pngData, // image href
-      "#local",
-      "./doc.pdf", // <a href> is navigation
-    ]);
-    expect(html).not.toContain("modulepreload");
-    expect(html).not.toContain("imagesrcset");
+    const urls = [...html.matchAll(/ (?:src|href|xlink:href|content|data|poster|imagesrcset)="([^"]*)"/g)].map(
+      m => m[1],
+    );
+    expect(urls).toEqual([...rows.filter(inHead), ...rows.filter(row => !inHead(row))].flatMap(([, ...urls]) => urls));
+    expect(html).not.toContain(other.toString("base64"));
     expect(html).toContain('console.log("app")');
   });
 
   test("an optional asset that is not on disk stays as written, with a warning", async () => {
     using dir = tempDir("compile-browser-optional-asset", {
       "index.html": `<!DOCTYPE html><html><head>
-<meta property="og:image" content="/served-elsewhere/og.png">
-<meta name="twitter:image" content="{{ og_image }}">
-</head><body><video><track src="./missing.vtt"></video></body></html>`,
+<link rel="shortcut icon" href="/served-elsewhere/favicon.ico">
+<link rel="mask-icon" href="{{ mask_icon }}">
+</head><body><input type="image" src="./missing.png"></body></html>`,
     });
 
     const result = await Bun.build({
@@ -495,14 +500,14 @@ body { color: blue; }`,
 
     expect(result.success).toBe(true);
     expect(result.logs.map(log => [log.level, log.message])).toEqual([
-      // A rooted URL is looked up from the project root. "{{ og_image }}" is a template placeholder: no lookup.
-      ["warn", expect.stringMatching(/^Could not resolve: ".*served-elsewhere.og\.png"\. The URL stays as written\.$/)],
-      ["warn", `Could not resolve: "./missing.vtt". The URL stays as written.`],
+      // "{{ mask_icon }}" is a template placeholder: it names no file, so there is nothing to warn about.
+      ["warn", `Could not resolve: "/served-elsewhere/favicon.ico". The URL stays as written.`],
+      ["warn", `Could not resolve: "./missing.png". The URL stays as written.`],
     ]);
     const html = await result.outputs[0].text();
-    expect(html).toContain(`content="/served-elsewhere/og.png"`);
-    expect(html).toContain(`content="{{ og_image }}"`);
-    expect(html).toContain(`<track src="./missing.vtt">`);
+    expect(html).toContain(`href="/served-elsewhere/favicon.ico"`);
+    expect(html).toContain(`href="{{ mask_icon }}"`);
+    expect(html).toContain(`<input type="image" src="./missing.png">`);
   });
 
   test("handles CSS url() references", async () => {

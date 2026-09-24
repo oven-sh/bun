@@ -455,18 +455,17 @@ await Bun.build({
 Bun automatically handles all common web assets:
 
 - **Scripts** (`<script src>`) are run through Bun's JavaScript/TypeScript/JSX bundler
-- **Stylesheets** (`<link rel="stylesheet">`, `<link rel="preload" as="style">`) are run through Bun's CSS parser & bundler
-- **Images** (`<img src>`, `<img srcset>`, `<picture><source srcset>`, `<video poster>`, `<input type="image" src>`, SVG `<image href>` and `<use href>`) are copied and hashed. Each candidate in a `srcset` is rewritten on its own and keeps its descriptor.
-- **Media** (`<video src>`, `<audio src>`, `<source src>`, `<track src>`) are copied and hashed
-- **Embedded documents** (`<object data>`, `<embed src>`) are copied and hashed, unless they point at another HTML page
-- **`<link href>`** with `rel="icon"` (also `shortcut icon`, `apple-touch-icon`, `apple-touch-startup-image`, `mask-icon`), `rel="manifest"`, or `rel="preload"` with `as="font|image|audio|video"` (and its `imagesrcset`) is copied and hashed
-- **Social images** in `<meta property="og:image|og:audio|og:video" content>` and `<meta name="twitter:image|msapplication-TileImage" content>` are copied and hashed
+- **Stylesheets** (`<link rel="stylesheet">`) are run through Bun's CSS parser & bundler
+- **Images** (`<img>`, `<picture>`, `<video poster>`, `<input type="image">`, SVG `<image>`) are copied and hashed. Each candidate in a `srcset` is rewritten on its own and keeps its descriptor.
+- **Media** (`<video>`, `<audio>`, `<source>`) are copied and hashed
+- **Icons, manifests and preloads**: Bun copies and hashes the file of a `<link>` with `rel="icon"`, `rel="shortcut icon"`, `rel="apple-touch-icon"`, `rel="mask-icon"` or `rel="manifest"`. Bun does the same for `<link rel="preload">` with `as="font"`, `as="image"`, `as="audio"` or `as="video"`, and for each candidate of its `imagesrcset`.
+- **Social images**: Bun copies and hashes the file in `<meta property="og:image" content>` and `<meta name="twitter:image" content>`
 
-A `?query` or `#fragment` on the URL is kept on the rewritten path, so `<use href="./icons.svg#menu">` becomes `<use href="./icons-a1b2c3.svg#menu">`. URLs with a scheme (`https://...`, `data:...`), protocol-relative URLs (`//cdn.example.com/...`) and same-document references (`#id`) are left as-is.
+A `?query` or `#fragment` on the URL is kept on the rewritten path, so `<img src="./icons.svg#menu">` becomes `<img src="./icons-a1b2c3.svg#menu">`. URLs with a scheme (`https://...`, `data:...`), protocol-relative URLs (`//cdn.example.com/...`) and same-document references (`#id`) are left as-is.
 
-A script, a stylesheet, an `<img>`, `<video>`, `<audio>` or `<source>` URL, or an icon, manifest or preload `<link>` that does not resolve to a file is a build error. For the other attributes above (`<track>`, `<object>`, `<embed>`, `<input>`, SVG, `imagesrcset`, the other icon `rel` values, `<meta>`), the file can live somewhere else: Bun leaves the URL as written and prints a warning.
+Bun fails the build when a script, a stylesheet, an `<img>`, `<video>`, `<audio>` or `<source>` URL, an icon, a manifest or a preload names a file that does not exist. These URLs are optional: `<input type="image">`, SVG `<image>`, `imagesrcset`, the `<meta>` images, and every icon `rel` other than `icon` and `apple-touch-icon`. For an optional URL, Bun looks for the file on disk. If the file is not there, Bun leaves the URL as written and `bun build` prints a warning.
 
-Not processed: `<iframe src>`, `<a href>` and other references from one HTML page to another, inline `style="..."` attributes and `<style>` blocks, `import` specifiers inside inline `<script>` blocks, and anything inside `<noscript>`.
+Bun leaves these references as written: `<iframe src>`, `<a href>`, `<object data>`, `<embed src>`, `<track src>`, SVG `<use href>`, `url()` in a `style="..."` attribute or a `<style>` block, `import` specifiers in an inline `<script>` block, and everything inside `<noscript>`.
 
 Bun resolves all paths relative to your HTML file, so you can organize your project however you want.
 

@@ -896,7 +896,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         debug_assert!(!ctx.loaders[index.get() as usize].is_css());
 
         let records_len = ctx.import_records[index.get() as usize].len();
-        let is_html = ctx.loaders[index.get() as usize] == bun_ast::Loader::Html;
         for i in 0..records_len {
             // Note: snapshot the three fields we need so the shared borrow
             // on `ctx.import_records` ends before `process_edge_attachment`
@@ -909,12 +908,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     ir.path.key_for_incremental_graph(),
                 )
             };
-            // `<object data="/other.html">` links to that route: not an edge, although its path is a key in this graph.
-            if is_html
-                && flags.contains(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS)
-            {
-                continue;
-            }
             let _ = self.process_edge_attachment(
                 ctx,
                 quick_lookup,

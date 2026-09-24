@@ -126,26 +126,22 @@ devTest("srcset candidates and #fragments on asset URLs", {
     await dev.fetch(logo).expect.toBe("C SHARP");
   },
 });
-devTest("svg <use href>, links between pages, optional assets that are not on disk", {
+devTest("imagesrcset, svg <image href>, optional assets that are not on disk", {
   files: {
     "index.html": `
       <!DOCTYPE html><html><head>
       <meta property="og:image" content="/served-elsewhere/og.png">
+      <meta name="twitter:image" content="./a.png">
       <link rel="preload" as="image" imagesrcset="./a.png 1x, ./b.png 2x">
       </head><body>
-      <svg><use href="./sprite.svg#icon"></use><use href="#local"></use></svg>
-      <object data="./other.html"></object>
-      <video><track src="./missing.vtt"></video>
+      <svg><image href="./sprite.svg"/></svg>
+      <input type="image" src="./missing.png">
       </body></html>
     `,
     "a.png": "A",
     "b.png": "B",
     "sprite.svg": `<svg xmlns="http://www.w3.org/2000/svg"><symbol id="icon"/></svg>`,
-    // Only linked to from index.html, never a route: it must not be bundled,
-    // so its missing script is not an error.
-    "other.html": `<!DOCTYPE html><script src="./does-not-exist.js"></script>`,
   },
-  htmlFiles: ["index.html"],
   async test(dev) {
     const html = await dev.fetch("/").text();
     const [, a, b] = html.match(
@@ -153,39 +149,11 @@ devTest("svg <use href>, links between pages, optional assets that are not on di
     )!;
     await dev.fetch(a).expect.toBe("A");
     await dev.fetch(b).expect.toBe("B");
-    const [, sprite] = html.match(/<use href="(\/_bun\/asset\/[0-9a-f]+\.svg)#icon">/)!;
+    expect(html).toInclude(`<meta name="twitter:image" content="${a}">`);
+    const [, sprite] = html.match(/<image href="(\/_bun\/asset\/[0-9a-f]+\.svg)"/)!;
     await dev.fetch(sprite).expect.toInclude(`<symbol id="icon"/>`);
-    expect(html).toInclude(`<use href="#local">`);
-    expect(html).toInclude(`<object data="./other.html">`);
     expect(html).toInclude(`content="/served-elsewhere/og.png"`);
-    expect(html).toInclude(`<track src="./missing.vtt">`);
-  },
-});
-devTest("a link to another route does not pull in that route's files", {
-  files: {
-    "a.html": `
-      <!DOCTYPE html><html><head></head><body>
-      <object data="/b.html"></object>
-      <script type="module" src="/a.ts"></script>
-      </body></html>
-    `,
-    "a.ts": `console.log("a");`,
-    "b.html": `
-      <!DOCTYPE html><html><head><link rel="stylesheet" href="/b.css"></head><body>
-      <script type="module" src="/b.ts"></script>
-      </body></html>
-    `,
-    "b.css": `body { color: red }`,
-    "b.ts": `console.log("b");`,
-  },
-  async test(dev) {
-    // Bundle /b first: b.html is then in the graph under the path that "/b.html" maps to.
-    expect(await dev.fetch("/b").text()).toInclude(`rel="stylesheet"`);
-    const a = await dev.fetch("/a").text();
-    expect(a).toInclude(`<object data="/b.html">`);
-    expect(a).not.toInclude(`rel="stylesheet"`);
-    await using c = await dev.client("/a");
-    await c.expectMessage("a");
+    expect(html).toInclude(`<input type="image" src="./missing.png">`);
   },
 });
 devTest("image import in JS", {

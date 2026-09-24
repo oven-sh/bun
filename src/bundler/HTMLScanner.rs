@@ -83,18 +83,26 @@ pub(crate) fn url_suffix(url: &[u8]) -> &[u8] {
     }
 }
 
-/// Whether `url` goes to the resolver: not `#icon` or `?page=2`, nor an optional `mailto:`-like URL or `{{ template }}`.
-fn is_followed(url: &[u8], optional: bool) -> bool {
-    let has_scheme = || {
-        url.iter()
-            .position(|&c| !(c.is_ascii_alphanumeric() || matches!(c, b'+' | b'-' | b'.')))
-            .is_some_and(|len| len >= 2 && url[len] == b':' && url[0].is_ascii_alphabetic())
-    };
-    !url.is_empty()
-        && !matches!(url[0], b'#' | b'?')
-        && !(optional
-            && !is_external_url(url)
-            && (has_scheme() || strings::index_of_any(url, b"{}<>").is_some()))
+/// Whether `url` can name a local file: not `#icon` or `?page=2`, no scheme (`mailto:`, `data:`), no `//host`, no `{{ template }}`.
+fn is_local(url: &[u8]) -> bool {
+    let has_scheme = url
+        .iter()
+        .position(|&c| !(c.is_ascii_alphanumeric() || matches!(c, b'+' | b'-' | b'.')))
+        .is_some_and(|len| len >= 2 && url[len] == b':' && url[0].is_ascii_alphabetic());
+    !matches!(url.first(), None | Some(b'#' | b'?'))
+        && !has_scheme
+        && !url.starts_with(b"//")
+        && strings::index_of_any(url, b"{}<>").is_none()
+}
+
+/// Whether `url` goes to `on_url`. A script always does, as before: `#app` can be a package.json import.
+fn is_followed(url: &[u8], kind: ImportKind, optional: bool) -> bool {
+    match url.first() {
+        None => false,
+        Some(_) if kind == ImportKind::Stmt => true,
+        Some(b'#' | b'?') => false,
+        Some(_) => !optional || is_local(url),
+    }
 }
 
 const HTML_WHITESPACE: &[u8] = b" \t\n\r\x0c";
@@ -143,12 +151,74 @@ impl Iterator for SrcsetUrls<'_> {
 }
 
 impl<'a> HTMLScanner<'a> {
+    /// The file that an optional `url` names, as written and then without its `?query#fragment`: relative to the page or, with a leading `/`, to the project root.
+    fn file_on_disk(&self, url: &[u8]) -> Option<Vec<u8>> {
+        let (dir, rooted) = match url {
+            [b'/', ..] => (fs::FileSystem::instance().top_level_dir, 1),
+            _ => (
+                resolve_path::dirname::<platform::Auto>(self.source.path.text()),
+                0,
+            ),
+        };
+        let without_suffix = url.len() - url_suffix(url).len();
+        let mut buf = bun_paths::path_buffer_pool::get();
+        [url.len(), without_suffix]
+            .into_iter()
+            .take(if without_suffix == url.len() { 1 } else { 2 })
+            .find_map(|end| {
+                // A URL of any length: a path that does not fit in the buffer names no file.
+                let mut file = resolve_path::join_abs_string_buf_checked::<platform::Auto>(
+                    dir,
+                    &mut buf.0[..],
+                    &[&url[rooted..end]],
+                )?
+                .to_vec();
+                file.push(0);
+                let path = bun_core::ZStr::from_buf(&file, file.len() - 1);
+                // Not the module resolver: `content="/og?title=..."` or `content="logo"` must not fail a build or find a package.
+                matches!(
+                    sys::exists_at_type(sys::Fd::cwd(), path),
+                    Ok(sys::ExistsAtType::File)
+                )
+                .then(|| {
+                    file.pop();
+                    file
+                })
+            })
+    }
+
     fn create_import_record(
         &mut self,
         url: &[u8],
         kind: ImportKind,
         optional: bool,
     ) -> Result<(), Error> {
+        if optional {
+            let file = self.file_on_disk(url);
+            if file.is_none() {
+                self.log.add_warning_fmt(
+                    Some(self.source),
+                    Loc::EMPTY,
+                    format_args!(
+                        "Could not resolve: \"{}\". The URL stays as written.",
+                        bstr::BStr::new(url)
+                    ),
+                );
+            }
+            self.push_import_record(
+                file.as_deref().unwrap_or(url),
+                kind,
+                // Flagged like an external URL, so that nothing resolves the record or binds it to a module.
+                if file.is_none() {
+                    ImportRecordFlags::IS_UNUSED
+                        | ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS
+                } else {
+                    ImportRecordFlags::default()
+                },
+            );
+            return Ok(());
+        }
+
         // The resolver retries without `?query#fragment` for assets and stylesheets only; a bundled script has no use for its `?v=3`.
         let input_path = match strings::index_of_char_usize(url, b'?') {
             Some(query) if kind == ImportKind::Stmt && !is_external_url(url) => &url[..query],
@@ -192,9 +262,13 @@ impl<'a> HTMLScanner<'a> {
             input_path
         };
 
-        let owned: &'static [u8] =
-            Box::leak(AstAlloc::vec_from_slice(path_to_use).into_boxed_slice());
-        let record = ImportRecord {
+        self.push_import_record(path_to_use, kind, ImportRecordFlags::default());
+        Ok(())
+    }
+
+    fn push_import_record(&mut self, path: &[u8], kind: ImportKind, flags: ImportRecordFlags) {
+        let owned: &'static [u8] = Box::leak(AstAlloc::vec_from_slice(path).into_boxed_slice());
+        self.import_records.push(ImportRecord {
             path: FsPath::init(owned),
             kind,
             range: Range::NONE,
@@ -202,16 +276,8 @@ impl<'a> HTMLScanner<'a> {
             loader: None,
             source_index: AstIndex::default(),
             original_path: b"",
-            // Not found: `resolve_import_records` warns and leaves the URL as written.
-            flags: if optional {
-                ImportRecordFlags::HANDLES_IMPORT_ERRORS
-            } else {
-                ImportRecordFlags::default()
-            },
-        };
-
-        self.import_records.push(record);
-        Ok(())
+            flags,
+        });
     }
 
     fn on_write_html(&mut self, bytes: &[u8]) {
@@ -248,7 +314,7 @@ pub(crate) enum UrlAction<'a> {
 pub(crate) trait HTMLProcessorHandler {
     /// Once per URL (per `srcset` candidate), in document order: one import record made or consumed per call.
     fn on_url(&mut self, url: &[u8], kind: ImportKind, optional: bool) -> UrlAction<'_>;
-    /// Standalone HTML has every local file inline: a `<link rel="preload">` of one is dropped, and `<use>`, which cannot load a `data:` URL, keeps its URL.
+    /// Standalone HTML has every local file inline as a `data:` URL: a `<link rel="preload">` of one is dropped, and a `<meta>` image keeps its URL.
     fn is_standalone_html(&self) -> bool {
         false
     }
@@ -290,10 +356,8 @@ enum UrlAttr {
     Script,
     /// A file that has to exist: not found is a build error.
     Asset,
-    /// A file that may live elsewhere (`og:image`, `<object data>`): not found stays as written, with a warning.
+    /// A file that may live elsewhere (`<input type="image" src>`): the URL of one that is not on disk stays as written, with a warning.
     OptionalAsset,
-    /// `OptionalAsset` that browsers do not load from a `data:` URL.
-    SvgUse,
     /// Decided by `rel`, `as` and `type`.
     LinkHref,
     /// Decided by `property` and `name`.
@@ -325,20 +389,13 @@ const URL_ELEMENTS: &[(&str, &[(&str, UrlAttr)])] = &[
         "source",
         &[("src", UrlAttr::Asset), ("srcset", UrlAttr::Asset)],
     ),
-    ("track[src]", &[("src", UrlAttr::OptionalAsset)]),
-    ("embed[src]", &[("src", UrlAttr::OptionalAsset)]),
     ("input[src]", &[("src", UrlAttr::OptionalAsset)]),
-    ("object[data]", &[("data", UrlAttr::OptionalAsset)]),
     (
         "image",
         &[
             ("href", UrlAttr::OptionalAsset),
             ("xlink:href", UrlAttr::OptionalAsset),
         ],
-    ),
-    (
-        "use",
-        &[("href", UrlAttr::SvgUse), ("xlink:href", UrlAttr::SvgUse)],
     ),
 ];
 
@@ -352,6 +409,7 @@ struct UrlContext {
     name: Option<String>,
 }
 
+/// How a selector compares a `rel` or `type` value in HTML: without case. An `as` value is compared as written.
 fn is(value: &Option<String>, expected: &str) -> bool {
     value
         .as_deref()
@@ -373,7 +431,8 @@ impl UrlContext {
 
     /// A preload of a script. No import record is made for it.
     fn is_script_preload(&self) -> bool {
-        self.rel_has("modulepreload") || (self.rel_has("preload") && is(&self.as_, "script"))
+        self.rel_has("modulepreload")
+            || (self.rel_has("preload") && self.as_.as_deref() == Some("script"))
     }
 }
 
@@ -385,20 +444,19 @@ impl UrlAttr {
         Some(match self {
             UrlAttr::Script => (ImportKind::Stmt, REQUIRED),
             UrlAttr::Asset => (ImportKind::Url, REQUIRED),
-            UrlAttr::OptionalAsset | UrlAttr::SvgUse => (ImportKind::Url, OPTIONAL),
+            UrlAttr::OptionalAsset => (ImportKind::Url, OPTIONAL),
             UrlAttr::LinkHref => {
                 let font = c.type_.as_deref().is_some_and(|t| {
                     t.get(..5)
                         .is_some_and(|prefix| prefix.eq_ignore_ascii_case("font/"))
                 });
-                if is(&c.rel, "stylesheet") || is(&c.as_, "style") {
+                let as_ = c.as_.as_deref().unwrap_or_default();
+                if is(&c.rel, "stylesheet") || as_ == "style" {
                     (ImportKind::At, REQUIRED)
-                } else if is(&c.as_, "worker") {
+                } else if as_ == "worker" {
                     (ImportKind::Stmt, REQUIRED)
                 } else if font
-                    || ["font", "image", "video", "audio"]
-                        .iter()
-                        .any(|as_| is(&c.as_, as_))
+                    || ["font", "image", "video", "audio"].contains(&as_)
                     || ["manifest", "icon", "apple-touch-icon"]
                         .iter()
                         .any(|rel| is(&c.rel, rel))
@@ -499,7 +557,7 @@ fn rewrite_srcset<T: HTMLProcessorHandler>(
     let mut remove = false;
     // No early exit: every candidate reaches `on_url` so both passes stay in step.
     for url in (SrcsetUrls { value, pos: 0 }) {
-        if !is_followed(&value[url.clone()], optional) {
+        if !is_followed(&value[url.clone()], kind, optional) {
             continue;
         }
         match this.on_url(&value[url.clone()], kind, optional) {
@@ -568,8 +626,7 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
                         && context.is_script_preload()
                         && found[0].is_some_and(|href| {
                             let href = element.attributes()[href].value();
-                            let href = strings::trim(href.as_bytes(), HTML_WHITESPACE);
-                            is_followed(href, true) && !is_external_url(href)
+                            is_local(strings::trim(href.as_bytes(), HTML_WHITESPACE))
                         });
                     for (&(attr, url_attr), index) in attrs.iter().zip(found) {
                         let (Some(index), Some(kind)) = (index, url_attr.kind(&context)) else {
@@ -582,7 +639,7 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
                             rewrite_srcset(unsafe { &mut *this_ptr }, value.as_bytes(), kind)
                         } else {
                             match strings::trim(value.as_bytes(), HTML_WHITESPACE) {
-                                url if !is_followed(url, kind.1) => UrlAction::Keep,
+                                url if !is_followed(url, kind.0, kind.1) => UrlAction::Keep,
                                 // SAFETY: as for `is_standalone_html` above.
                                 url => unsafe { (*this_ptr).on_url(url, kind.0, kind.1) },
                             }
@@ -593,8 +650,9 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
                             UrlAction::Replace(_) if standalone && context.is_preload() => {
                                 remove = true
                             }
+                            // An `og:image` is read by a crawler, which takes an http(s) URL only.
                             UrlAction::Replace(_)
-                                if standalone && matches!(url_attr, UrlAttr::SvgUse) => {}
+                                if standalone && matches!(url_attr, UrlAttr::MetaContent) => {}
                             UrlAction::Replace(new_value) => {
                                 set_attribute(element, attr, &new_value)
                             }

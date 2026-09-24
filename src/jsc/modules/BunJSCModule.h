@@ -473,6 +473,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler,
         auto path = directoryValue.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         if (!path.isEmpty()) {
+            StringPrintStream pathOut;
             auto pathCString = toCString(String(path));
             if (!Bun__mkdirp(globalObject, pathCString.span().data())) {
                 throwVMError(

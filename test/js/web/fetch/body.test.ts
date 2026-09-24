@@ -1,6 +1,6 @@
 import { file, spawn, version, type Socket } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, exampleSite, tempDir } from "harness";
+import { bunEnv, bunExe, exampleSite, isLinux, tempDir } from "harness";
 import net from "net";
 import { join } from "node:path";
 import { isDisturbed, isErrored, isReadable, Readable } from "node:stream";
@@ -350,6 +350,20 @@ for (const { body, fn } of bodyTypes) {
           const subject = fn(Bun.file(`${dir}/data.txt`).slice(3, 8));
           expect(subject.body).toBeInstanceOf(ReadableStream);
           expect([Buffer.from(await subject.bytes()).toString(), subject.bodyUsed]).toEqual(["defgh", true]);
+        });
+      });
+
+      // A procfs file is a regular file whose st_size is 0. The body getter stats the
+      // file, and that cached stat must not turn a later read of the Bun.file() into "".
+      describe.skipIf(!isLinux)("made from a procfs Bun.file()", () => {
+        const path = "/proc/version";
+
+        test("the body getter does not make a later text() on the same Bun.file() empty", async () => {
+          const expected = await Bun.file(path).text();
+          expect(expected).not.toBe("");
+          const file = Bun.file(path);
+          expect(fn(file).body).toBeInstanceOf(ReadableStream);
+          expect(await file.text()).toBe(expected);
         });
       });
     });

@@ -133,7 +133,7 @@ macro_rules! us_dispatch_shims {
         /// buffer must be valid for the duration of the call).
         #[unsafe(no_mangle)]
         #[allow(clippy::unused_unit)]
-        pub unsafe extern "C" fn $name($recv: *mut $Recv $(, $a: $t)*) -> $ret {
+        pub(crate) unsafe extern "C" fn $name($recv: *mut $Recv $(, $a: $t)*) -> $ret {
             match $lookup($recv).$field {
                 Some(f) => {
                     // SAFETY: `f` is the vtable callback for this socket kind; loop.c
@@ -196,8 +196,6 @@ unsafe extern "C" fn us_dispatch_ssl_raw_tap(
     let tls: bun_ptr::ThisPtr<TLSSocket> =
         s_ref.ext::<Option<bun_ptr::ThisPtr<TLSSocket>>>().unwrap();
     if let Some(raw) = tls.twin.get().as_ref() {
-        // `twin` is `IntrusiveRc<Self>` (intrusive ref-counted heap pointer);
-        // grab the raw `*mut` without consuming the ref so the +1 stays put.
         let raw: *mut TLSSocket = raw.as_ptr();
         // A negative length from the C side means there is nothing to deliver;
         // never panic across the `extern "C"` boundary.

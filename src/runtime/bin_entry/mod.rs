@@ -52,6 +52,17 @@ static ALLOC: bun_alloc::Mimalloc = bun_alloc::Mimalloc;
 #[global_allocator]
 static ALLOC: std::alloc::System = std::alloc::System;
 
+/// `alloc` calls this empty function before every allocation. rustc defines it only in the allocator shim it
+/// generates when rustc itself links the final artifact (`allocator_shim_contents`, rustc_codegen_ssa), as a
+/// tripwire against linking Rust libraries any other way (library/alloc/src/alloc.rs: "Make sure we don't
+/// accidentally allow omitting the allocator shim in stable code until it is actually stabilized"). This build
+/// links the rlibs itself, so it is defined here. Everything else a shim would hold already exists: the
+/// allocator symbols come from `#[global_allocator]` above, the allocation error handler from std.
+///
+/// A toolchain that renames the function (`_v2` → `_v3`) fails the link with an undefined symbol naming the new one.
+#[rustc_std_internal_symbol]
+fn __rust_no_alloc_shim_is_unstable_v2() {}
+
 /// ASAN runtime options override. Lives in the binary crate so it is a direct
 /// link input — the ASAN runtime weak-defines this symbol, and an rlib/archive
 /// member that only provides it would never be extracted, so the override in
@@ -187,6 +198,9 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     //    wires stdout/stderr `Source`s.
     output::stdio::init();
     let _flush = output::flush_guard();
+    // After stdio::init (fd 0 is open even if we were exec'd with it closed), before any thread.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pregrow_fd_table();
 
     // 5. Per-thread stack-limit cache for the JS recursion guard.
     StackCheck::configure_thread();
@@ -196,6 +210,17 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     crate::cli::Cli::start();
     // `Global::exit` is `-> !`; it coerces to the `c_int` return type.
     Global::exit(0)
+}
+
+/// Linux's `expand_fdtable()` waits for an RCU grace period (tens of ms on a
+/// many-core machine) each time the fd table doubles past 64 once a second
+/// thread exists. Single-threaded it is a memcpy and the table never shrinks,
+/// so grow it to 1024 now. Fails with EINVAL (and does nothing) past RLIMIT_NOFILE.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn pregrow_fd_table() {
+    if let Ok(fd) = bun_sys::dup_at_least(bun_sys::Fd::stdin(), 1023) {
+        let _ = bun_sys::close(fd);
+    }
 }
 
 /// Point the bundled C/C++ dependencies that have an allocator hook at

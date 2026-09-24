@@ -11,24 +11,23 @@ use bun_alloc::{AllocError, Arena, ArenaVec};
 use bun_collections::array_hash_map::ArrayHashContext;
 use bun_collections::{ArrayHashMap, BoundedArray, StringArrayHashMap};
 use bun_core::Output;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc, Strong, StrongOptional,
 };
-use bun_paths::{self as paths, MAX_PATH_BYTES, PathBuffer};
+use bun_paths::{self as paths, MAX_PATH_BYTES};
 use bun_resolver::{DirInfo, Resolver};
-
-use bun_wyhash;
 
 use crate::bake::dev_server::route_bundle::IndexOptional as RouteBundleIndexOptional;
 
 /// Metadata for route files is specified out of line, either in DevServer where
 /// it is an IncrementalGraph(.server).FileIndex or the production build context
 /// where it is an entrypoint index.
-pub enum OpaqueFileIdMarker {}
-pub type OpaqueFileId = bun_core::GenericIndex<u32, OpaqueFileIdMarker>;
-pub type OpaqueFileIdOptional = Option<OpaqueFileId>;
+pub(crate) enum OpaqueFileIdMarker {}
+pub(crate) type OpaqueFileId = bun_core::GenericIndex<u32, OpaqueFileIdMarker>;
+pub(crate) type OpaqueFileIdOptional = Option<OpaqueFileId>;
 
-pub struct FrameworkRouter {
+pub(crate) struct FrameworkRouter {
     /// Absolute path to root directory of the router.
     pub(crate) root: Box<[u8]>,
     pub(crate) types: Box<[Type]>,
@@ -126,11 +125,11 @@ impl FileKind {
     }
 }
 
-pub enum RouteMarker {}
-pub type RouteIndex = bun_core::GenericIndex<u32, RouteMarker>;
+pub(crate) enum RouteMarker {}
+pub(crate) type RouteIndex = bun_core::GenericIndex<u32, RouteMarker>;
 
 /// Native code for `FrameworkFileSystemRouterType`
-pub struct Type {
+pub(crate) struct Type {
     pub(crate) abs_root: Box<[u8]>,
     pub(crate) ignore_underscores: bool,
     pub(crate) ignore_dirs: Box<[Box<[u8]>]>,
@@ -170,8 +169,8 @@ impl Type {
     }
 }
 
-pub enum TypeMarker {}
-pub type TypeIndex = bun_core::GenericIndex<u8, TypeMarker>;
+pub(crate) enum TypeMarker {}
+pub(crate) type TypeIndex = bun_core::GenericIndex<u8, TypeMarker>;
 
 impl FrameworkRouter {
     pub(crate) fn init_empty(
@@ -490,7 +489,7 @@ impl<'a> Iterator for StaticPatternIterator<'a> {
 /// A part of a URL pattern
 #[derive(Copy, Clone, bun_core::EnumTag)]
 #[enum_tag(existing = PartTag)]
-pub enum Part<'a> {
+pub(crate) enum Part<'a> {
     /// Does not contain slashes. One per slash.
     Text(&'a [u8]),
     Param(&'a [u8]),
@@ -612,10 +611,12 @@ pub enum ParsedPatternKind {
     Extra,
 }
 
-pub enum Style {
+pub(crate) enum Style {
     NextjsPages,
     NextjsAppUi,
     NextjsAppRoutes,
+    // The `Strong` is the GC root of the user's style function; nothing reads it back.
+    #[allow(dead_code)]
     JavascriptDefined(Strong),
 }
 
@@ -647,7 +648,7 @@ bun_core::comptime_string_map! {
 const STYLE_ERROR_MESSAGE: &str = "'style' must be either \"nextjs-pages\", \"nextjs-app-ui\", \"nextjs-app-routes\", or a function.";
 
 impl Style {
-    pub fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<Style> {
+    pub(crate) fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<Style> {
         if value.is_string() {
             let bun_string = value.to_bun_string(global)?;
             let utf8 = bun_string.to_utf8();
@@ -1203,7 +1204,7 @@ impl<'a> Part<'a> {
 
 /// An enforced upper bound of 64 unique patterns allows routing to use no heap allocation
 #[derive(Default)]
-pub struct MatchedParams {
+pub(crate) struct MatchedParams {
     pub(crate) params: BoundedArray<MatchedParamEntry, { MatchedParams::MAX_COUNT }>,
 }
 
@@ -1220,7 +1221,7 @@ impl MatchedParams {
 
     /// Convert the matched params to a JavaScript object
     /// Returns null if there are no params
-    pub fn to_js(&self, global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn to_js(&self, global: &JSGlobalObject) -> JSValue {
         let params_array = self.params.const_slice();
 
         if params_array.is_empty() {
@@ -1311,7 +1312,7 @@ const TINY_LOG_CAP: usize = 512
 
 /// Non-allocating single message log, specialized for the messages from the route pattern parsers.
 /// DevServer uses this to special-case the printing of these messages to highlight the offending part of the filename
-pub struct TinyLog {
+pub(crate) struct TinyLog {
     pub(crate) msg: BoundedArray<u8, TINY_LOG_CAP>,
     pub(crate) cursor_at: u32,
     pub(crate) cursor_len: u32,
@@ -1338,7 +1339,7 @@ impl TinyLog {
         PatternParseError::InvalidRoutePattern
     }
 
-    pub fn write(&mut self, args: fmt::Arguments<'_>) {
+    pub(crate) fn write(&mut self, args: fmt::Arguments<'_>) {
         use std::io::Write as _;
         // Note: BoundedArray exposes no `buffer_mut()`; format into a stack
         // scratch buffer (same capacity) and copy into the BoundedArray.
@@ -1430,7 +1431,7 @@ fn writer_splat_bytes_all(
 }
 
 /// Interface for connecting FrameworkRouter to another codebase
-pub trait InsertionHandler {
+pub(crate) trait InsertionHandler {
     fn get_file_id_for_router(
         &mut self,
         abs_path: &[u8],
@@ -1580,7 +1581,7 @@ impl FrameworkRouter {
                             }
                         }
 
-                        let mut rel_path_buf = PathBuffer::uninit();
+                        let mut rel_path_buf = bun_paths::path_buffer_pool::get();
                         let full_rel_path_len = {
                             let full_rel_path = paths::resolve_path::relative_normalized_buf::<
                                 paths::platform::Auto,
@@ -1742,7 +1743,7 @@ impl FrameworkRouter {
 /// production usage. It uses a slower but easier to use pattern for object
 /// creation. A production-grade JS api would be able to re-use objects.
 #[bun_jsc::JsClass(name = "FrameworkFileSystemRouter")]
-pub struct JSFrameworkRouter {
+pub(crate) struct JSFrameworkRouter {
     pub(crate) files: Vec<bun_core::String>,
     pub(crate) router: FrameworkRouter,
     pub(crate) stored_parse_errors: Vec<StoredParseError>,
@@ -1785,8 +1786,8 @@ impl JSFrameworkRouter {
             )));
         }
 
-        let root: bun_core::zig_string::Slice = match opts.get(global, "root")? {
-            Some(v) if !v.is_undefined_or_null() => v.to_slice(global)?,
+        let root: bun_core::Utf8Bytes = match opts.get(global, "root")? {
+            Some(v) if !v.is_undefined_or_null() => v.to_utf8(global)?,
             _ => return Err(global.throw_invalid_arguments(format_args!("Missing options.root"))),
         };
 
@@ -1856,8 +1857,8 @@ impl JSFrameworkRouter {
                     )))
                 })?;
             return Err(global.throw_value(global.create_aggregate_error_with_array(
-                &bun_core::String::static_("Errors scanning routes"),
                 arr,
+                format_args!("Errors scanning routes"),
             )?));
         }
 
@@ -1865,9 +1866,13 @@ impl JSFrameworkRouter {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn r#match(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn r#match(
+        &self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let path_value = callframe.arguments_as_array::<1>()[0];
-        let path = path_value.to_slice(global)?;
+        let path = path_value.to_utf8(global)?;
 
         let mut params_out = MatchedParams {
             params: BoundedArray::default(),
@@ -1885,10 +1890,7 @@ impl JSFrameworkRouter {
                         params_obj.put(
                             global,
                             param.key.slice(),
-                            bun_jsc::bun_string_jsc::create_utf8_for_js(
-                                global,
-                                param.value.slice(),
-                            )?,
+                            bun_string_jsc::create_utf8_for_js(global, param.value.slice())?,
                         );
                     }
                     params_obj
@@ -1978,11 +1980,6 @@ impl JSFrameworkRouter {
         Ok(obj)
     }
 
-    pub fn finalize(self: Box<Self>) {
-        drop(self);
-        // files, router, stored_parse_errors freed by Drop.
-    }
-
     pub(crate) fn parse_route_pattern(
         global: &JSGlobalObject,
         frame: &CallFrame,
@@ -1995,7 +1992,7 @@ impl JSFrameworkRouter {
         }
 
         let [style_js, filepath_js] = frame.arguments_as_array::<2>();
-        let filepath = filepath_js.to_slice(global)?;
+        let filepath = filepath_js.to_utf8(global)?;
         let style = Style::from_js(style_js, global)?;
         // errdefer style.deinit() — Drop handles this
 
@@ -2041,7 +2038,7 @@ impl JSFrameworkRouter {
         let mut rendered: Vec<u8> = Vec::new();
         part.to_string_for_internal_use(&mut ByteFmtWriter::new(&mut rendered))
             .expect("ByteFmtWriter is infallible");
-        bun_jsc::bun_string_jsc::create_utf8_for_js(global, &rendered)
+        bun_string_jsc::create_utf8_for_js(global, &rendered)
     }
 
     pub(crate) fn file_id_to_js(

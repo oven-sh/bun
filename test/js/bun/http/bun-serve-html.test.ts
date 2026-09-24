@@ -198,6 +198,8 @@ console.log("How...dashing?");
     }
     const sourceMap = await (await fetch(new URL(sourceMapURL, "http://" + hostname + ":" + port))).json();
     sourceMap.sourcesContent = sourceMap.sourcesContent.map(a => a.trim());
+    expect(sourceMap.debugId).toMatch(/^[0-9A-F]{32}$/);
+    sourceMap.debugId = "<debug-id>";
     expect(JSON.stringify(sourceMap, null, 2)).toMatchInlineSnapshot(`
       "{
         "version": 3,
@@ -210,7 +212,7 @@ console.log("How...dashing?");
           "import './script.js';\\n      // Additional dashboard-specific code could go here\\n      console.log(\\"How...dashing?\\")"
         ],
         "mappings": ";AACM,IAAI,QAAQ;AACZ,IAAM,SAAS,SAAS,eAAe,SAAS;AAChD,OAAO,iBAAiB,SAAS,MAAM;AAAA,EACrC;AAAA,EACA,OAAO,cAAc,aAAa;AAAA,CACnC;;;ACHD,QAAQ,IAAI,gBAAgB;",
-        "debugId": "DEEF3F05D4E944CA64756E2164756E21",
+        "debugId": "<debug-id>",
         "names": []
       }"
     `);
@@ -222,7 +224,7 @@ console.log("How...dashing?");
   "content-length": "316",
   "content-type": "text/javascript;charset=utf-8",
   "date": "<date>",
-  "etag": ""0f2405c506dd6bd3"",
+  "etag": ""f862dbeedf9b72bc"",
   "sourcemap": "/chunk-HASH.js.map",
 }
 `);
@@ -1093,6 +1095,30 @@ test.concurrent("server.reload() while an html route's first bundle is still in 
     stdout: JSON.stringify({ first: 200, second: 200, sameRouteBundle: true }),
     exitCode: 0,
   });
+});
+
+// process.chdir() leaves the cached top-level directory with a trailing slash,
+// which the dev server then used as its root. Reporting a bundle failure
+// relativizes the failing file against that root and hit a debug assertion
+// (abort, exit code 134). Release builds compile the assertion out and produce
+// the same relative path either way, so this only fails on a debug build.
+test.concurrent("dev server started after process.chdir() reports bundle failures", async () => {
+  using dir = tempDir("bun-serve-html-chdir", {
+    "app/index.html": `<!DOCTYPE html><html><head></head><body><script type="module" src="./app.ts"></script></body></html>`,
+    "app/app.ts": `import { nope } from "./does-not-exist";\nconsole.log(nope);`,
+    "serve.ts": /*ts*/ `
+      import html from "./app/index.html";
+      process.chdir(import.meta.dir + "/app");
+      const server = Bun.serve({ port: 0, development: true, routes: { "/": html } });
+      const res = await fetch(server.url);
+      console.log(JSON.stringify({ status: res.status }));
+      server.stop(true);
+    `,
+  });
+  const { stdout, stderr, exitCode } = await runServeFixture(dir);
+  expect(stderr).toContain(`Could not resolve: "./does-not-exist"`);
+  expect(stdout, stderr).toBe(JSON.stringify({ status: 500 }));
+  expect(exitCode).toBe(0);
 });
 
 test("wildcard static routes", async () => {

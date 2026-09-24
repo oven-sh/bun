@@ -10,7 +10,7 @@ use bun_wyhash::Wyhash;
 
 use bun_http_types::Method as http_method;
 use bun_url::URL;
-pub use http_method::{Method, Optional as MethodOptional};
+pub(crate) use http_method::{Method, Optional as MethodOptional};
 
 use super::server_body::ServerInitContext;
 use super::web_socket_server_context::WebSocketServerContext;
@@ -18,11 +18,11 @@ use super::{AnyRoute, AnyServer};
 use crate::server::jsc::{JSGlobalObject, JSPropertyIterator, JSValue, JsResult, Strong};
 use bun_core::fmt as bun_fmt;
 
-pub use crate::socket::ssl_config::SSLConfig;
+pub(crate) use crate::socket::ssl_config::SSLConfig;
 use crate::socket::ssl_config::SSLConfigFromJs;
 use bun_collections::index_sort;
 
-pub struct ServerConfig {
+pub(crate) struct ServerConfig {
     pub(crate) address: Address,
     pub(crate) idle_timeout: u8, // TODO: should we match websocket default idleTimeout of 120?
     pub(crate) has_idle_timeout: bool,
@@ -63,6 +63,7 @@ pub struct ServerConfig {
     pub(crate) allow_hot: bool,
     pub(crate) ipv6_only: bool,
     pub(crate) http3: bool,
+    pub(crate) http2: bool,
     pub(crate) http1: bool,
 
     pub(crate) had_routes_object: bool,
@@ -97,6 +98,7 @@ impl Default for ServerConfig {
             allow_hot: true,
             ipv6_only: false,
             http3: false,
+            http2: false,
             http1: true,
             had_routes_object: false,
             static_routes: Vec::new(),
@@ -107,7 +109,7 @@ impl Default for ServerConfig {
     }
 }
 
-pub enum Address {
+pub(crate) enum Address {
     Tcp {
         port: u16,
         hostname: Option<ZBox>,
@@ -128,7 +130,7 @@ impl Default for Address {
 // ZBox frees on Drop; resetting is `*self = Address::default()`.
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum DevelopmentOption {
+pub(crate) enum DevelopmentOption {
     Development,
     Production,
     DevelopmentWithoutHmr,
@@ -166,12 +168,12 @@ impl ServerConfig {
 }
 
 // We need to be able to apply the route to multiple Apps even when there is only one RouteList.
-pub struct RouteDeclaration {
+pub(crate) struct RouteDeclaration {
     pub path: ZBox,
     pub method: RouteMethod,
 }
 
-pub enum RouteMethod {
+pub(crate) enum RouteMethod {
     Any,
     Specific(Method),
 }
@@ -197,7 +199,7 @@ impl Default for RouteDeclaration {
 }
 
 // TODO: rename to StaticRoute.Entry
-pub struct StaticRouteEntry {
+pub(crate) struct StaticRouteEntry {
     pub path: Box<[u8]>,
     pub(crate) route: AnyRoute,
     pub method: MethodOptional,
@@ -206,13 +208,6 @@ pub struct StaticRouteEntry {
 impl StaticRouteEntry {
     fn memory_cost(&self) -> usize {
         self.path.len() + self.route.memory_cost()
-    }
-}
-
-impl Drop for StaticRouteEntry {
-    fn drop(&mut self) {
-        // path: Box<[u8]> drops automatically
-        self.route.deref_();
     }
 }
 
@@ -295,6 +290,7 @@ impl ServerConfig {
             allow_hot: self.allow_hot,
             ipv6_only: self.ipv6_only,
             http3: self.http3,
+            http2: self.http2,
             http1: self.http1,
             had_routes_object: self.had_routes_object,
             static_routes: core::mem::take(&mut self.static_routes),
@@ -362,9 +358,43 @@ fn serves_head(method: &http_method::Optional) -> bool {
     }
 }
 
-pub(crate) fn apply_static_route_h3<T: StaticRouteLike>(
+/// The route-registration surface shared by `uws::h2::App` and
+/// `uws::h3::App`; both hand the handler type-erased `AnyRequest`/`AnyResponse`.
+pub(crate) trait MuxApp {
+    fn method_this<U: 'static, H>(&mut self, m: Method, p: &[u8], h: H, this: ThisPtr<U>)
+    where
+        H: Fn(ThisPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static;
+    fn any_this<U: 'static, H>(&mut self, p: &[u8], h: H, this: ThisPtr<U>)
+    where
+        H: Fn(ThisPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static;
+}
+
+macro_rules! impl_mux_app {
+    ($app:ty) => {
+        impl MuxApp for $app {
+            #[inline]
+            fn method_this<U: 'static, H>(&mut self, m: Method, p: &[u8], h: H, this: ThisPtr<U>)
+            where
+                H: Fn(ThisPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static,
+            {
+                <$app>::method_this(self, m, p, h, this)
+            }
+            #[inline]
+            fn any_this<U: 'static, H>(&mut self, p: &[u8], h: H, this: ThisPtr<U>)
+            where
+                H: Fn(ThisPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static,
+            {
+                <$app>::any_this(self, p, h, this)
+            }
+        }
+    };
+}
+impl_mux_app!(uws::h2::App);
+impl_mux_app!(uws::h3::App);
+
+pub(crate) fn apply_static_route_mux<T: StaticRouteLike, A: MuxApp>(
     server: AnyServer,
-    app: &mut uws::h3::App,
+    app: &mut A,
     entry: ThisPtr<T>,
     path: &[u8],
     method: http_method::Optional,
@@ -386,7 +416,7 @@ pub(crate) fn apply_static_route_h3<T: StaticRouteLike>(
     }
 }
 
-/// Per-route trait that `apply_static_route{,_h3}` monomorphizes over
+/// Per-route trait that `apply_static_route{,_mux}` monomorphizes over
 /// (`StaticRoute`/`FileRoute`/`DirectoryRoute`/`HTMLBundle.Route`). The route
 /// is the uWS route userdata; the route table holds a ref on it for as long as
 /// it is registered.
@@ -576,7 +606,7 @@ fn convert_file_system_router_type(
 }
 
 impl ServerConfig {
-    pub fn from_js(
+    pub(crate) fn from_js(
         global: &JSGlobalObject,
         arguments: &mut bun_jsc::call_frame::ArgumentsSlice,
         opts: FromJSOptions,
@@ -937,7 +967,7 @@ impl ServerConfig {
 
                     let mut user_options = crate::bake::UserOptions {
                         arena,
-                        allocations: core::mem::replace(
+                        _allocations: core::mem::replace(
                             &mut init_ctx.js_string_allocations,
                             crate::bake::StringRefList::EMPTY,
                         ),
@@ -1056,11 +1086,10 @@ impl ServerConfig {
         }
 
         if let Some(base_uri) = arg.get_truthy(global, "baseURI")? {
-            let sliced = base_uri.to_slice(global)?;
+            let utf8 = base_uri.to_utf8(global)?;
 
-            if !sliced.slice().is_empty() {
-                // sliced drops at scope end
-                args.base_uri = Box::<[u8]>::from(sliced.slice());
+            if !utf8.slice().is_empty() {
+                args.base_uri = Box::<[u8]>::from(utf8.slice());
             }
         }
 
@@ -1100,7 +1129,7 @@ impl ServerConfig {
             if id.is_undefined_or_null() {
                 args.allow_hot = false;
             } else {
-                let id_str = id.to_slice(global)?;
+                let id_str = id.to_utf8(global)?;
                 if !id_str.slice().is_empty() {
                     args.id = Box::<[u8]>::from(id_str.slice());
                 } else {
@@ -1143,6 +1172,10 @@ impl ServerConfig {
 
         if let Some(v) = arg.get(global, "http3")? {
             args.http3 = v.to_boolean();
+        }
+
+        if let Some(v) = arg.get(global, "http2")? {
+            args.http2 = v.to_boolean();
         }
 
         if let Some(v) = arg.get(global, "http1")? {
@@ -1253,18 +1286,17 @@ impl ServerConfig {
             }
         }
 
-        if args.http3 {
-            if args.ssl_config.is_none() {
-                return Err(
-                    global.throw_invalid_arguments(format_args!("HTTP/3 requires 'tls' to be set"))
-                );
-            }
-        } else if !args.http1 {
+        if args.http3 && args.ssl_config.is_none() {
+            return Err(
+                global.throw_invalid_arguments(format_args!("HTTP/3 requires 'tls' to be set"))
+            );
+        }
+        if !args.http1 && !args.http2 && !args.http3 {
             return Err(global.throw_invalid_arguments(format_args!(
-                "Cannot disable http1 without enabling http3"
+                "Cannot disable http1 without enabling http2 or http3"
             )));
         }
-        if !args.http1 && matches!(args.address, Address::Unix(_)) {
+        if !args.http1 && !args.http2 && matches!(args.address, Address::Unix(_)) {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Cannot disable http1 with a unix socket — HTTP/3 over AF_UNIX is not supported",
             )));
@@ -1441,7 +1473,7 @@ impl ServerConfig {
 }
 
 #[derive(Clone, Copy)]
-pub struct FromJSOptions {
+pub(crate) struct FromJSOptions {
     pub(crate) allow_bake_config: bool,
     pub(crate) is_fetch_required: bool,
     /// What the running server keeps answering with when a `reload()` config
@@ -1454,7 +1486,7 @@ pub struct FromJSOptions {
     pub(crate) previous_routes: bool,
 }
 
-pub struct UserRouteBuilder {
+pub(crate) struct UserRouteBuilder {
     pub(crate) route: RouteDeclaration,
     pub callback: Strong, // jsc.Strong.Optional
 }

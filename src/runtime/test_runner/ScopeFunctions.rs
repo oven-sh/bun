@@ -55,7 +55,7 @@ pub enum Mode {
 // form fresh `&ScopeFunctions` to the same wrapper; aliased `&Self` is sound,
 // aliased `&mut Self` would not be.
 #[bun_jsc::JsClass(no_constructor)]
-pub struct ScopeFunctions {
+pub(crate) struct ScopeFunctions {
     pub(crate) mode: Mode,
     pub(crate) cfg: BaseScopeCfg,
     /// typically `.zero`. not Strong.Optional because codegen visits the C++ `m_each`
@@ -326,7 +326,7 @@ impl ScopeFunctions {
             if debugger.test_reporter_agent.is_enabled() {
                 debugger.test_reporter_agent.next_test_id += 1;
                 let id = debugger.test_reporter_agent.next_test_id;
-                let name = BunString::init(description.unwrap_or(b"(unnamed)"));
+                let name = BunString::from_bytes(description.unwrap_or(b"(unnamed)"));
                 let parent: &DescribeScope = bun_test.collection.active_scope();
                 let parent_id = if parent.base.test_id_for_debugger != 0 {
                     parent.base.test_id_for_debugger
@@ -490,33 +490,33 @@ fn error_in_ci(global: &JSGlobalObject, signature: &[u8]) -> JsResult<()> {
     Ok(())
 }
 
-pub struct ParseArgumentsResult {
+pub(crate) struct ParseArgumentsResult {
     pub(crate) description: Option<Vec<u8>>,
     pub callback: Option<JSValue>,
     pub(crate) options: ParseArgumentsOptions,
 }
 
 #[derive(Default, Clone, Copy)]
-pub struct ParseArgumentsOptions {
+pub(crate) struct ParseArgumentsOptions {
     pub(crate) timeout: u32,
     pub(crate) retry: Option<u32>,
     pub(crate) repeats: u32,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum CallbackMode {
+pub(crate) enum CallbackMode {
     Require,
     Allow,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum FunctionKind {
+pub(crate) enum FunctionKind {
     TestOrDescribe,
     Hook,
 }
 
 #[derive(Copy, Clone)]
-pub struct ParseArgumentsCfg {
+pub(crate) struct ParseArgumentsCfg {
     pub callback: CallbackMode,
     pub(crate) kind: FunctionKind,
 }
@@ -549,7 +549,7 @@ fn get_description(
     }
 
     if description.is_number() || description.is_string() {
-        let slice = description.to_slice(global)?;
+        let slice = description.to_utf8(global)?;
         return Ok(slice.into_vec());
     }
 
@@ -720,7 +720,7 @@ pub(crate) fn parse_arguments(
 // `ScopeFunctionsPrototype__each{Set,Get}CachedValue` shims, which write/read the
 // `JSC::WriteBarrier<Unknown> m_each` slot on the JSCell wrapper so the GC visits
 // the `.each(arr)` argument between construction and the trailing `("name", cb)` call.
-pub mod js {
+pub(crate) mod js {
     bun_jsc::codegen_cached_accessors!("ScopeFunctions"; each);
 }
 
@@ -745,11 +745,9 @@ impl fmt::Display for ScopeFunctions {
     }
 }
 
-impl ScopeFunctions {
-    /// `.classes.ts` `finalize: true` — runs on mutator thread during lazy sweep.
-    pub fn finalize(self: Box<Self>) {
+impl Drop for ScopeFunctions {
+    fn drop(&mut self) {
         let _g = group_log::begin();
-        drop(self);
     }
 }
 

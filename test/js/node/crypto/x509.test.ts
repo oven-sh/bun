@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { X509Certificate } from "node:crypto";
+import { X509Certificate, createPrivateKey, createPublicKey, generateKeyPairSync } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { rootCertificates } from "node:tls";
 
 // Self-signed, valid until 2126. Subject CN=wildcard-san.example.com,
 // subjectAltName: DNS:*.wildcard.example.com, DNS:exact.example.com
@@ -181,5 +182,75 @@ vKS1+tUUY19gsw==
     expect(legacy.subject).toEqual({});
     expect(legacy.issuer).toEqual({});
     expect(cert.checkIssued(cert)).toBe(true);
+  });
+});
+
+// Certificate, CRL and public-key PEM bodies are base64-coded by simdutf rather
+// than BoringSSL's constant-time codec (private keys keep the latter). The bytes
+// accepted and produced must match what EVP_DecodeUpdate/EVP_EncodeUpdate did.
+describe("PEM base64 for public objects", () => {
+  // 812 bytes: the base64 ends in one '=' and the last line is 60 columns.
+  const der = new X509Certificate(wildcardSanCertPem).raw;
+  const b64 = der.toString("base64");
+  const pem64 = (label: string, buf: Buffer) =>
+    `-----BEGIN ${label}-----\n` +
+    buf
+      .toString("base64")
+      .replace(/(.{64})/g, "$1\n")
+      .replace(/\n?$/, "\n") +
+    `-----END ${label}-----\n`;
+  const canonical = pem64("CERTIFICATE", der);
+
+  test("X509Certificate#toString() is 64-column PEM with a terminated last line", () => {
+    expect(der.length % 3).toBe(2);
+    expect(canonical).toEndWith("=\n-----END CERTIFICATE-----\n");
+    expect(new X509Certificate(wildcardSanCertPem).toString()).toBe(canonical);
+    expect(new X509Certificate(der).toString()).toBe(canonical);
+  });
+
+  test("a body that is an exact multiple of 64 columns ends with exactly one newline", () => {
+    const certs = rootCertificates.map(p => new X509Certificate(p));
+    const exact = certs.find(c => c.raw.length % 48 === 0);
+    expect(exact).toBeDefined();
+    expect(exact!.toString()).toBe(pem64("CERTIFICATE", exact!.raw));
+    // And every other residue too.
+    for (const c of certs) expect(c.toString()).toBe(pem64("CERTIFICATE", c.raw));
+  });
+
+  test.each([
+    ["CRLF line endings", canonical.replaceAll("\n", "\r\n")],
+    ["no line breaks in the body", "-----BEGIN CERTIFICATE-----\n" + b64 + "\n-----END CERTIFICATE-----\n"],
+    [
+      "spaces and tabs inside the body",
+      "-----BEGIN CERTIFICATE-----\n" + b64.replace(/(.{10})/g, "$1 \t") + "\n-----END CERTIFICATE-----\n",
+    ],
+    [
+      "whitespace between data and padding",
+      "-----BEGIN CERTIFICATE-----\n" + b64.replace(/=$/, "\n =") + "\n-----END CERTIFICATE-----\n",
+    ],
+  ])("decodes with %s", (_, pem) => {
+    expect(new X509Certificate(pem).raw.equals(der)).toBe(true);
+  });
+
+  test.each([
+    ["missing padding", "-----BEGIN CERTIFICATE-----\n" + b64.replace(/=$/, "") + "\n-----END CERTIFICATE-----\n"],
+    ["excess padding", "-----BEGIN CERTIFICATE-----\n" + b64 + "=\n-----END CERTIFICATE-----\n"],
+    ["an invalid character", canonical.replace(/^(.{40})./m, "$1*")],
+    ["data after padding", "-----BEGIN CERTIFICATE-----\n" + b64 + "AAAA\n-----END CERTIFICATE-----\n"],
+    ["an empty body", "-----BEGIN CERTIFICATE-----\n-----END CERTIFICATE-----\n"],
+  ])("rejects a body with %s", (_, pem) => {
+    expect(() => new X509Certificate(pem)).toThrow(expect.objectContaining({ code: "ERR_CRYPTO_INVALID_STATE" }));
+  });
+
+  test("PUBLIC KEY PEM round-trips, and PRIVATE KEY PEM (constant-time path) is unaffected", () => {
+    const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const spkiDer = publicKey.export({ type: "spki", format: "der" });
+    const spkiPem = publicKey.export({ type: "spki", format: "pem" }) as string;
+    expect(spkiPem).toBe(pem64("PUBLIC KEY", spkiDer));
+    expect(createPublicKey(spkiPem).export({ type: "spki", format: "der" }).equals(spkiDer)).toBe(true);
+    const pkcs8Der = privateKey.export({ type: "pkcs8", format: "der" });
+    const pkcs8Pem = privateKey.export({ type: "pkcs8", format: "pem" }) as string;
+    expect(pkcs8Pem).toBe(pem64("PRIVATE KEY", pkcs8Der));
+    expect(createPrivateKey(pkcs8Pem).export({ type: "pkcs8", format: "der" }).equals(pkcs8Der)).toBe(true);
   });
 });

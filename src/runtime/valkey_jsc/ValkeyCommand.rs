@@ -3,8 +3,6 @@ use bun_valkey::valkey_protocol as protocol;
 
 use super::protocol_jsc::{ToJSOptions, resp_value_to_js_with_options};
 
-type Slice = bun_core::ZigStringSlice;
-
 // Note: callers in `js_valkey_functions.rs` construct
 // `Vec<crate::node::types::BlobOrStringOrBuffer>` directly, so `Args::Args` must accept
 // that exact type. The upstream `bun_jsc::Node::BlobOrStringOrBuffer` re-export is a
@@ -15,15 +13,15 @@ type BlobOrStringOrBuffer = crate::node::types::BlobOrStringOrBuffer;
 // Note: `Command` is a transient view struct; fields
 // borrow caller-owned data for the duration of serialization.
 #[derive(Copy, Clone)]
-pub struct Command<'a> {
+pub(crate) struct Command<'a> {
     pub(crate) command: &'a [u8],
     pub args: Args<'a>,
     pub(crate) meta: Meta,
 }
 
 #[derive(Copy, Clone)]
-pub enum Args<'a> {
-    Slices(&'a [Slice]),
+pub(crate) enum Args<'a> {
+    Slices(&'a [bun_core::Utf8Bytes<'a>]),
     Args(&'a [BlobOrStringOrBuffer]),
     Raw(&'a [&'a [u8]]),
 }
@@ -39,7 +37,7 @@ impl<'a> Args<'a> {
 }
 
 impl<'a> Command<'a> {
-    pub fn write(&self, writer: &mut impl bun_io::Write) -> Result<(), crate::Error> {
+    pub(crate) fn write(&self, writer: &mut impl bun_io::Write) -> Result<(), crate::Error> {
         // Serialize as RESP array format directly
         write!(writer, "*{}\r\n", 1 + self.args.len())?;
         write!(writer, "${}\r\n", self.command.len())?;
@@ -88,7 +86,7 @@ impl<'a> Command<'a> {
 }
 
 /// Command stored in offline queue when disconnected
-pub struct Entry {
+pub(crate) struct Entry {
     pub(crate) serialized_data: Box<[u8]>, // Pre-serialized RESP protocol bytes
     pub(crate) meta: Meta,
     pub(crate) promise: Promise,
@@ -96,7 +94,7 @@ pub struct Entry {
 
 // Inherent associated
 // types are unstable on stable Rust, so expose as a sibling module alias instead.
-pub mod entry {
+pub(crate) mod entry {
     pub(crate) type Queue = std::collections::VecDeque<super::Entry>;
 }
 
@@ -182,7 +180,7 @@ fn is_subscription_command(name: &[u8]) -> bool {
 }
 
 /// Promise for a Valkey command
-pub struct Promise {
+pub(crate) struct Promise {
     pub(crate) meta: Meta,
     pub(crate) promise: jsc::JSPromiseStrong,
 }
@@ -224,13 +222,13 @@ impl Promise {
 }
 
 // Command+Promise pair for tracking which command corresponds to which promise
-pub struct PromisePair {
+pub(crate) struct PromisePair {
     pub(crate) meta: Meta,
     pub(crate) promise: Promise,
 }
 
 // See `entry` note above.
-pub mod promise_pair {
+pub(crate) mod promise_pair {
     pub(crate) type Queue = std::collections::VecDeque<super::PromisePair>;
 }
 

@@ -129,6 +129,9 @@ struct addrinfo_result {
  * switch on s->kind decides whether to direct-call into Rust/C++ or fall back
  * to the vtable. Signatures track the vtable entries (us_dispatch_handshake
  * drops the trailing custom_data — dispatch always passes NULL). */
+#ifdef __cplusplus
+extern "C" {
+#endif
 extern struct us_socket_t *us_dispatch_open(us_socket_r s, int is_client, char *ip, int ip_length);
 extern struct us_socket_t *us_dispatch_data(us_socket_r s, char *data, int length);
 extern struct us_socket_t *us_dispatch_fd(us_socket_r s, int fd);
@@ -143,6 +146,9 @@ extern void us_dispatch_handshake(us_socket_r s, int success, struct us_bun_veri
 extern void us_dispatch_session(us_socket_r s, const unsigned char *data, int length);
 extern void us_dispatch_keylog(us_socket_r s, const unsigned char *data, int length);
 extern struct us_socket_t *us_dispatch_ssl_raw_tap(us_socket_r s, char *data, int length);
+#ifdef __cplusplus
+}
+#endif
 
 extern int Bun__addrinfo_get(struct us_loop_t* loop, const char* host, uint16_t port,  struct addrinfo_request** ptr);
 /* Fills *out when host is a numeric address (incl. inet_aton shorthand and %zone); 0 when it is a name. */
@@ -180,10 +186,10 @@ void us_internal_group_maybe_unlink(struct us_socket_group_t *group);
  * SSL path calls _raw once it's actually time to drop the fd. */
 struct us_socket_t *us_internal_socket_close_raw(us_socket_r s, int code, void *reason);
 struct us_socket_t *us_internal_ssl_close(us_socket_r s, int code, void *reason);
-void us_internal_loop_data_init(struct us_loop_t *loop,
-                                void (*wakeup_cb)(us_loop_r loop),
-                                void (*pre_cb)(us_loop_r loop),
-                                void (*post_cb)(us_loop_r loop));
+int us_internal_loop_data_init(struct us_loop_t *loop,
+                               void (*wakeup_cb)(us_loop_r loop),
+                               void (*pre_cb)(us_loop_r loop),
+                               void (*post_cb)(us_loop_r loop));
 void us_internal_loop_data_free(us_loop_r loop);
 void us_internal_loop_pre(us_loop_r loop);
 void us_internal_loop_post(us_loop_r loop);
@@ -291,6 +297,10 @@ struct us_socket_t {
    * hang off SSL ex_data, allocated on first use only. */
   unsigned char ssl_handshake_state : 2;
   unsigned char ssl_write_wants_read : 1;
+  /* us_internal_ssl_write refused application data because the handshake was
+   * not finished. ssl_write_wants_read cannot tell: every pending handshake
+   * sets it. */
+  unsigned char ssl_write_parked : 1;
   unsigned char ssl_read_wants_write : 1;
   unsigned char ssl_fatal_error : 1;
   unsigned char ssl_is_server : 1;
@@ -434,15 +444,6 @@ struct us_internal_callback_t {
 
 #endif
 
-#if __cplusplus
-extern "C" {
-#endif
-int us_internal_raw_root_certs(struct us_cert_string_t **out);
-
-#if __cplusplus
-}
-#endif
-
 /* Listen sockets are sockets, with their own embedded group for the listener
  * itself (for the accept-readable poll) plus the accepted-socket parameters
  * stamped on every accept(). The accepted sockets are linked into whatever
@@ -478,11 +479,15 @@ struct us_listen_socket_t {
 void us_internal_socket_group_link_connecting_socket(us_socket_group_r group, struct us_connecting_socket_t *c);
 void us_internal_socket_group_unlink_connecting_socket(us_socket_group_r group, struct us_connecting_socket_t *c);
 
-int us_raw_root_certs(struct us_cert_string_t **out);
 
 /* Save/restore the per-loop BIO routing state around in-handshake JS
- * callbacks (SNI / ALPN). Defined in crypto/openssl.c. */
-void us_internal_ssl_loop_state_save(void *ssl, void **out5);
-void us_internal_ssl_loop_state_restore(void **saved5);
+ * callbacks (SNI / ALPN). Defined in crypto/openssl.c. The snapshot is an
+ * opaque void*[US_SSL_LOOP_STATE_SLOTS] the caller provides; Rust callers
+ * size their array from us_internal_ssl_loop_state_slots() in a debug
+ * assertion so growth cannot silently corrupt a caller's stack. */
+#define US_SSL_LOOP_STATE_SLOTS 6
+int us_internal_ssl_loop_state_slots(void);
+void us_internal_ssl_loop_state_save(void *ssl, void **out);
+void us_internal_ssl_loop_state_restore(void **saved);
 
 #endif // INTERNAL_H

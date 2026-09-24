@@ -10,6 +10,7 @@ use core::mem;
 
 use bun_cares_sys::c_ares as ares;
 use bun_core::{String as BunString, ZStr, strings};
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsError, JsResult, StringJsc};
 use bun_ptr::JsCell;
 
@@ -19,7 +20,7 @@ use bun_ptr::JsCell;
 // by `address()`) is `JsCell`-wrapped. `_addr` is read-only after
 // construction and stays bare.
 #[bun_jsc::JsClass]
-pub struct SocketAddress {
+pub(crate) struct SocketAddress {
     // NOTE: not C.sockaddr_storage b/c it's _huge_. we need >= 28 bytes for sockaddr_in6,
     // but sockaddr_storage is 128 bytes.
     /// @internal
@@ -40,7 +41,7 @@ impl SocketAddress {
     }
 }
 
-pub struct Options {
+pub(crate) struct Options {
     pub(crate) family: AF,
     /// When `None`, default is determined by address family.
     /// - `127.0.0.1` for IPv4
@@ -64,7 +65,7 @@ impl Default for Options {
 
 impl Options {
     /// NOTE: assumes options object has been normalized and validated by JS code.
-    pub fn from_js(global: &JSGlobalObject, obj: JSValue) -> JsResult<Options> {
+    pub(crate) fn from_js(global: &JSGlobalObject, obj: JSValue) -> JsResult<Options> {
         if !obj.is_object() {
             return Err(global.throw_invalid_argument_type_value(b"options", b"object", obj));
         }
@@ -246,7 +247,7 @@ impl SocketAddress {
             }
             SocketAddress {
                 _addr: sockaddr { sin6 },
-                _presentation: JsCell::new(BunString::dead()),
+                _presentation: JsCell::new(BunString::DEAD),
             }
         } else {
             let mut sin = inet::sockaddr_in {
@@ -260,7 +261,7 @@ impl SocketAddress {
             }
             SocketAddress {
                 _addr: sockaddr { sin },
-                _presentation: JsCell::new(BunString::dead()),
+                _presentation: JsCell::new(BunString::DEAD),
             }
         };
 
@@ -304,7 +305,7 @@ impl SocketAddress {
         if options_obj.is_undefined() {
             return Ok(SocketAddress::new(SocketAddress {
                 _addr: sockaddr::LOOPBACK_V4,
-                _presentation: JsCell::new(BunString::empty()),
+                _presentation: JsCell::new(BunString::EMPTY),
                 // ._presentation = WellKnownAddress::loopback_v4(),
             }));
         }
@@ -320,7 +321,7 @@ impl SocketAddress {
         {
             return Ok(SocketAddress::new(SocketAddress {
                 _addr: sockaddr::ANY_V6,
-                _presentation: JsCell::new(BunString::empty()),
+                _presentation: JsCell::new(BunString::EMPTY),
                 // ._presentation = WellKnownAddress::any_v6(),
             }));
         }
@@ -366,7 +367,7 @@ impl SocketAddress {
     }
 
     pub(crate) fn init_js(global: &JSGlobalObject, options: Options) -> JsResult<SocketAddress> {
-        let mut presentation: BunString = BunString::empty();
+        let mut presentation: BunString = BunString::EMPTY;
 
         // We need a zero-terminated cstring for `ares_inet_pton`, which forces us to
         // copy the string.
@@ -461,7 +462,7 @@ impl SocketAddress {
         // TODO: make sure casting doesn't swap byte order on us.
         SocketAddress {
             _addr: sockaddr::v4(port_.to_be(), u32::from_ne_bytes(addr)),
-            _presentation: JsCell::new(BunString::dead()),
+            _presentation: JsCell::new(BunString::DEAD),
         }
     }
 
@@ -478,22 +479,13 @@ impl SocketAddress {
     ) -> SocketAddress {
         SocketAddress {
             _addr: sockaddr::v6(port_.to_be(), addr, flowinfo, scope_id),
-            _presentation: JsCell::new(BunString::dead()),
+            _presentation: JsCell::new(BunString::DEAD),
         }
     }
 }
 
 // =============================================================================
 // ================================ DESTRUCTORS ================================
-// =============================================================================
-
-impl SocketAddress {
-    pub fn finalize(self: Box<Self>) {
-        bun_jsc::mark_binding!();
-        drop(self);
-    }
-}
-
 // =============================================================================
 
 impl SocketAddress {
@@ -538,7 +530,7 @@ impl SocketAddress {
 
         Ok(JSSocketAddressDTO__create(
             global_object,
-            bun_jsc::bun_string_jsc::create_utf8_for_js(global_object, addr_)?,
+            bun_string_jsc::create_utf8_for_js(global_object, addr_)?,
             port_,
             is_ipv6,
         ))
@@ -752,7 +744,7 @@ fn pton_noerr(af: c_int, addr: &[u8], dst: *mut c_void) -> bool {
 
 #[repr(u16)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum AF {
+pub(crate) enum AF {
     INET = inet::AF_INET as u16,
     INET6 = inet::AF_INET6 as u16,
 }
@@ -790,10 +782,10 @@ impl AF {
             } else {
                 // not full ignore-case since that would require converting
                 // utf16 -> latin1 and the allocation isn't worth it.
-                if fam_str.eql_comptime("ipv4") || fam_str.eql_comptime("IPv4") {
+                if fam_str.eq_ascii(b"ipv4") || fam_str.eq_ascii(b"IPv4") {
                     return Ok(AF::INET);
                 }
-                if fam_str.eql_comptime("ipv6") || fam_str.eql_comptime("IPv6") {
+                if fam_str.eq_ascii(b"ipv6") || fam_str.eq_ascii(b"IPv6") {
                     return Ok(AF::INET6);
                 }
                 Err(global.throw_invalid_argument_property_value(
@@ -837,7 +829,7 @@ impl AF {
 #[allow(non_camel_case_types)]
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub union sockaddr {
+pub(crate) union sockaddr {
     pub(crate) sin: inet::sockaddr_in,
     pub(crate) sin6: inet::sockaddr_in6,
 }
@@ -1011,7 +1003,7 @@ const _: () = {
 
 /// Fills `out` with `host`:`port` when `host` is numeric (inet_aton shorthand and `%zone` included) and returns 1, or 0 when it is a name — the one parse behind uSockets' connect paths, so a literal never reaches the resolver; `host` must be NUL-terminated and `out` writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__parseIpAddress(
+pub(crate) unsafe extern "C" fn Bun__parseIpAddress(
     host: *const core::ffi::c_char,
     port: u16,
     out: *mut bun_sys::posix::sockaddr_storage,
@@ -1060,7 +1052,7 @@ fn scope_index(zone: &[u8]) -> u32 {
 }
 
 #[cfg(windows)]
-pub mod inet {
+pub(crate) mod inet {
     #![allow(non_camel_case_types)]
     use bun_sys::windows::ws2_32 as ws2;
     // Note: `bun_windows_sys::ws2_32` does not currently surface
@@ -1068,21 +1060,21 @@ pub mod inet {
     // `ws2ipdef.h` / `ws2def.h` values locally so the Windows build
     // resolves without widening the leaf crate.
     /// `ws2ipdef.h`: `INET6_ADDRSTRLEN == 65` on Windows (vs 46 on POSIX).
-    pub use bun_sys::posix::INET6_ADDRSTRLEN;
+    pub(crate) use bun_sys::posix::INET6_ADDRSTRLEN;
     pub(crate) const IN6ADDR_ANY_INIT: [u8; 16] = [0; 16];
-    pub use bun_sys::net::{in_port_t, sa_family_t, sockaddr_in, sockaddr_in6};
-    pub use ws2::AF_INET;
-    pub use ws2::AF_INET6;
+    pub(crate) use bun_sys::net::{in_port_t, sa_family_t, sockaddr_in, sockaddr_in6};
+    pub(crate) use ws2::AF_INET;
+    pub(crate) use ws2::AF_INET6;
     pub(crate) type socklen_t = super::ares::ares_socklen_t;
 }
 
 #[cfg(not(windows))]
-pub mod inet {
+pub(crate) mod inet {
     #![allow(non_camel_case_types)]
-    pub use bun_sys::posix::INET6_ADDRSTRLEN;
+    pub(crate) use bun_sys::posix::INET6_ADDRSTRLEN;
     // Make sure this is in line with IN6ADDR_ANY_INIT in `netinet/in.h` on all platforms.
     pub(crate) const IN6ADDR_ANY_INIT: [u8; 16] = [0; 16];
-    pub use bun_sys::net::{in_port_t, sa_family_t, sockaddr_in, sockaddr_in6};
-    pub use bun_sys::posix::AF::{INET as AF_INET, INET6 as AF_INET6};
+    pub(crate) use bun_sys::net::{in_port_t, sa_family_t, sockaddr_in, sockaddr_in6};
+    pub(crate) use bun_sys::posix::AF::{INET as AF_INET, INET6 as AF_INET6};
     pub(crate) type socklen_t = super::ares::ares_socklen_t;
 }

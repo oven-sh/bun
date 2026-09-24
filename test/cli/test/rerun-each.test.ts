@@ -203,3 +203,29 @@ test("toMatchSnapshot() counter is reset between per-test retry / repeats", asyn
   expect(combined).toMatch(/0 fail/);
   expect(exitCode).toBe(0);
 });
+
+test("--rerun-each re-evaluates a file whose path is not ASCII", async () => {
+  using dir = tempDir("test-rerun-each-dír-ñ", {
+    "counter.test.ts": `
+      import { test, expect } from "bun:test";
+      globalThis.testRunCounter = (globalThis.testRunCounter ?? 0) + 1;
+      test("evaluated", () => {
+        console.log(\`Run #\${globalThis.testRunCounter}\`);
+        expect(true).toBe(true);
+      });
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "counter.test.ts", "--rerun-each=3"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.match(/Run #\d/g)).toEqual(["Run #1", "Run #2", "Run #3"]);
+  expect(stdout + stderr).toMatch(/3 pass/);
+  expect(exitCode).toBe(0);
+});

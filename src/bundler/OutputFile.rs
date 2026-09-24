@@ -6,7 +6,6 @@ use crate::options::Loader;
 use crate::Error;
 use crate::options::{OutputKind, Side};
 use bun_core::String as BunString;
-use bun_paths::PathBuffer;
 use bun_paths::fs;
 use bun_paths::resolve_path::{self, platform};
 use bun_sys::Fd;
@@ -19,7 +18,7 @@ pub struct OutputFile {
     pub value: Value,
     pub size: usize,
     pub size_without_sourcemap: usize,
-    pub hash: u64,
+    pub hash: bun_core::fmt::ContentHash,
     pub is_executable: bool,
     pub source_map_index: u32,
     pub bytecode_index: u32,
@@ -37,6 +36,12 @@ pub struct OutputFile {
     /// Position of this chunk in the order the runtime is expected to load it
     /// (see `chunk_load_order`); `u32::MAX` for anything that is not a chunk.
     pub load_order: u32,
+    /// The chunk is in the entry point's static import closure, i.e. it loads
+    /// before the first `import()`.
+    pub loads_at_startup: bool,
+    /// This chunk's module index in the `OutputKind::PrelinkedModuleGraph` blob (see
+    /// `prelinked_module_graph::build`); `u32::MAX` when it is not an ES module of that graph.
+    pub prelinked_module_index: u32,
 }
 
 impl OutputFile {
@@ -50,7 +55,7 @@ impl OutputFile {
             value: Value::Noop,
             size: 0,
             size_without_sourcemap: 0,
-            hash: 0,
+            hash: bun_core::fmt::ContentHash::short(0),
             is_executable: false,
             source_map_index: u32::MAX,
             bytecode_index: u32::MAX,
@@ -63,6 +68,8 @@ impl OutputFile {
             source_index: IndexOptional::NONE,
             bake_extra: BakeExtra::default(),
             load_order: u32::MAX,
+            loads_at_startup: false,
+            prelinked_module_index: u32::MAX,
         }
     }
 }
@@ -159,7 +166,7 @@ pub enum OptionsData {
 pub struct Options {
     pub(crate) loader: Loader,
     pub(crate) input_loader: Loader,
-    pub(crate) hash: Option<u64>,
+    pub(crate) hash: Option<bun_core::fmt::ContentHash>,
     pub(crate) source_map_index: Option<u32>,
     pub(crate) bytecode_index: Option<u32>,
     pub(crate) module_info_index: Option<u32>,
@@ -196,7 +203,7 @@ impl OutputFile {
             source_index: options.source_index,
             size,
             size_without_sourcemap: options.display_size as usize,
-            hash: options.hash.unwrap_or(0),
+            hash: options.hash.unwrap_or(bun_core::fmt::ContentHash::short(0)),
             output_kind: options.output_kind,
             bytecode_index: options.bytecode_index.unwrap_or(u32::MAX),
             module_info_index: options.module_info_index.unwrap_or(u32::MAX),
@@ -211,6 +218,8 @@ impl OutputFile {
             referenced_css_chunks: options.referenced_css_chunks,
             bake_extra: options.bake_extra,
             load_order: u32::MAX,
+            loads_at_startup: false,
+            prelinked_module_index: u32::MAX,
         }
     }
 
@@ -227,7 +236,7 @@ impl OutputFile {
                     bun_sys::Dir::borrow(&root_dir).make_path(parent)?;
                 }
 
-                let mut path_buf = PathBuffer::uninit();
+                let mut path_buf = bun_paths::path_buffer_pool::get();
                 let _ = bun_sys::write_file_with_path_buffer(
                     &mut path_buf,
                     &bun_sys::WriteFileArgs {
@@ -247,14 +256,14 @@ impl OutputFile {
     }
 
     pub(crate) fn copy_to(&self, rel_path: &[u8], dir: Fd) -> Result<(), Error> {
-        let mut out_buf = PathBuffer::uninit();
+        let mut out_buf = bun_paths::path_buffer_pool::get();
         let fd_out = bun_sys::openat(
             dir,
             resolve_path::z(rel_path, &mut out_buf),
             bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
             0o644,
         )?;
-        let mut in_buf = PathBuffer::uninit();
+        let mut in_buf = bun_paths::path_buffer_pool::get();
         let fd_in = bun_sys::openat(
             Fd::cwd(),
             resolve_path::z(self.src_path.text, &mut in_buf),

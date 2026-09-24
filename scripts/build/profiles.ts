@@ -13,11 +13,11 @@
  *
  *   debug              → Debug build, prebuilt WebKit (the default)
  *   debug-local        → Debug build, local WebKit (you cloned vendor/WebKit/)
- *   release            → Release build, prebuilt WebKit, no LTO
+ *   release            → Release build, prebuilt WebKit (LTO, as CI ships)
  *   release-local      → Release build, local WebKit
  *   release-assertions → Release + runtime assertions enabled
  *   release-asan       → Release + address sanitizer
- *   ci-*               → CI-specific modes (cpp-only/link-only/full)
+ *   ci-build           → what CI runs: the full build, linked from an object archive
  *
  * If you don't specify a profile, `debug` is used.
  */
@@ -126,32 +126,14 @@ export const profiles = {
     webkit: "prebuilt",
   },
 
-  /** Release build for local testing. No LTO (that's CI-only). */
+  /**
+   * Release build: the codegen CI ships (ThinLTO across bun, the `-lto`
+   * WebKit prebuilt's bitcode and Rust; no PGO or symbol ordering — those are
+   * CI post-steps). `--lto=off` trades that for fast relinks while iterating.
+   */
   release: {
     buildType: "Release",
     webkit: "prebuilt",
-    lto: false,
-  },
-
-  /**
-   * Bench-till-green profile. Mirrors the codegen the CI release build
-   * actually ships (`ci-release` resolves `lto: true` for ci+release+linux),
-   * so PORT-vs-SYS comparisons measure what we'd actually ship — no PGO, no
-   * symbol ordering, no special-case linker layout. lto=true selects the
-   * `-lto` WebKit prebuilt (LLVM bitcode, re-codegen'd `-fno-pic` under
-   * `-flto=thin -fwhole-program-vtables`) so cross-TU inlining runs; without
-   * it the non-LTO WebKit .a lands ~555 KB of C++ vtables in `.data.rel.ro`,
-   * keeps `.eh_frame` (+962 KB), and outlines JSC slow-paths — the bench then
-   * reports a ~6-8% time / ~1 MB RSS "regression" that is pure binary layout.
-   */
-  btg: {
-    buildType: "Release",
-    webkit: "prebuilt",
-    lto: true,
-    // Pin the build dir so `--profile=btg` alone lands here and can never
-    // be confused with `--profile=release --build-dir=build/btg` (which
-    // would persist lto:false and silently de-LTO the bench binary).
-    buildDir: "build/btg",
   },
 
   /** Release with local WebKit. */
@@ -171,7 +153,6 @@ export const profiles = {
     webkit: "prebuilt",
     assertions: true,
     logs: true,
-    lto: false,
   },
 
   /**
@@ -187,52 +168,7 @@ export const profiles = {
     assertions: true,
   },
 
-  /** CI: compile C++ to libbun.a only (parallelized with the cargo build). */
-  "ci-cpp-only": {
-    buildType: "Release",
-    mode: "cpp-only",
-    ci: true,
-    buildkite: true,
-    webkit: "prebuilt",
-  },
-
-  /**
-   * CI: compile libbun_runtime.a only. Target platform via --os/--arch
-   * overrides (cargo `--target <triple>`). Superseded in CI by
-   * `ci-rust-and-link`; kept for ad-hoc rust-only builds.
-   */
-  "ci-rust-only": {
-    buildType: "Release",
-    mode: "rust-only",
-    ci: true,
-    buildkite: true,
-    webkit: "prebuilt",
-  },
-
-  /** CI: link prebuilt objects downloaded from sibling BuildKite jobs. */
-  "ci-link-only": {
-    buildType: "Release",
-    mode: "link-only",
-    ci: true,
-    buildkite: true,
-    webkit: "prebuilt",
-  },
-
-  /**
-   * CI: cargo build + link on one machine. Polls the sibling build-cpp step
-   * for its archive/dep-lib artifacts, then links and packages. Saves an
-   * agent spawn vs rust-only → link-only. Resolves the full toolchain (link
-   * needs ld/strip/rc), unlike rust-only.
-   */
-  "ci-rust-and-link": {
-    buildType: "Release",
-    mode: "rust-and-link",
-    ci: true,
-    buildkite: true,
-    webkit: "prebuilt",
-  },
-
-  /** CI: deps + C++ + cargo + link on one agent; libbun-*.a, libbun_runtime.a and dep libs are uploaded as artifacts. */
+  /** CI: deps + C++ + Rust + link on one agent; libbun-*.a and the dep libs are uploaded as artifacts. */
   "ci-build": {
     buildType: "Release",
     mode: "archive-link",
@@ -240,21 +176,23 @@ export const profiles = {
     buildkite: true,
     webkit: "prebuilt",
   },
-
-  /** CI full build with LTO. */
-  "ci-release": {
-    buildType: "Release",
-    ci: true,
-    buildkite: true,
-    webkit: "prebuilt",
-    // lto default resolves to ON (ci + release + linux + !asan + !assertions)
-  },
 } as const satisfies Record<string, PartialConfig>;
 
 /**
  * Look up a profile by name.
  */
+/** Profiles that were removed, with what replaces them — a build dir configured under one says so on its next regen. */
+const retiredProfiles: Record<string, string> = {
+  btg: "--profile=release (LTO is on by default now)",
+  "ci-release": "--profile=release --ci=on --buildkite=on (LTO is on by default now)",
+};
+
 export function getProfile(name: string): PartialConfig {
+  if (name in retiredProfiles) {
+    throw new BuildError(`Profile "${name}" no longer exists; use ${retiredProfiles[name]}`, {
+      hint: "Re-run the build script with the new flags for this build dir (that rewrites its configure.json), or remove the build dir",
+    });
+  }
   if (name in profiles) {
     // The const assertion means values are readonly; spread into mutable PartialConfig.
     return { ...profiles[name as ProfileName] };

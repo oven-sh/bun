@@ -6,11 +6,14 @@ use core::fmt;
 use std::io::Write as _;
 
 use bun_alloc::Arena as Bump;
+use bun_core::EncodedSlice;
 use bun_core::String as BunString;
 #[cfg(windows)]
 use bun_core::ZStr;
 use bun_core::strings;
+use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::StringJsc as _;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     self as jsc, CallFrame, JSArrayIterator, JSGlobalObject, JSValue, JsResult,
     MarkedArgumentBuffer,
@@ -20,15 +23,15 @@ use bun_sys::{self as sys, SystemError};
 
 // ───────────────────────────── re-exports ─────────────────────────────
 
-pub use super::interpreter as interpret;
-pub use super::subproc; // declared once in `shell/mod.rs`
+pub(crate) use super::interpreter as interpret;
+pub(crate) use super::subproc; // declared once in `shell/mod.rs`
 
 // ─── lexer / parser / AST (moved down to bun_shell_parser) ──────────────────
 // The encoding-agnostic lex/parse/AST surface lives in the lower-tier
 // `bun_shell_parser` crate so `Interpreter::parse` can compile without the
 // (still-draft) JSC bridge below. This file keeps the JSC-coupled half
 // (ShellErr, GlobalJS/Mini, shell_cmd_from_js, ShellSrcBuilder, TestingAPIs).
-pub use bun_shell_parser::parse::{
+pub(crate) use bun_shell_parser::parse::{
     IfClauseTok, LEX_JS_OBJREF_PREFIX, LEX_JS_REF_TERMINATOR, LEX_JS_STRING_PREFIX, LexerAscii,
     LexerUnicode, ParseError, Parser, Token, ast, is_if_clause_keyword_bunstr, needs_escape_bunstr,
     needs_escape_utf8_ascii_latin1,
@@ -46,7 +49,6 @@ pub(crate) const WINDOWS_DEV_NULL: &ZStr = bun_core::zstr!("NUL");
 pub enum ShellErr {
     Sys(SystemError),
     Custom(Box<[u8]>),
-    Todo(Box<[u8]>),
 }
 
 impl ShellErr {
@@ -68,10 +70,8 @@ impl ShellErr {
                 global.throw_value(err)
             }
             ShellErr::Custom(custom) => {
-                let err_value = BunString::clone_utf8(&custom).to_error_instance(global);
-                global.throw_value(err_value)
+                global.throw_value(EncodedSlice::utf8(&custom).to_error_instance(global))
             }
-            ShellErr::Todo(todo) => global.throw_todo(&todo),
         }
     }
 
@@ -91,12 +91,6 @@ impl ShellErr {
                     bstr::BStr::new(&*custom)
                 );
             }
-            ShellErr::Todo(todo) => {
-                bun_core::pretty_errorln!(
-                    "<r><red>error<r>: Failed due to error: <b>TODO: {}<r>",
-                    bstr::BStr::new(&*todo)
-                );
-            }
         }
         bun_core::Global::exit(1)
     }
@@ -107,26 +101,23 @@ impl fmt::Display for ShellErr {
         match self {
             ShellErr::Sys(e) => write!(f, "bun: {}: {}", e.message, e.path),
             ShellErr::Custom(msg) => write!(f, "bun: {}", bstr::BStr::new(msg)),
-            ShellErr::Todo(msg) => write!(f, "bun: TODO: {}", bstr::BStr::new(msg)),
         }
     }
 }
 
 // ───────────────────────────── Test ─────────────────────────────
 
-pub mod test {
+pub(crate) mod test {
     use super::*;
 
-    pub enum TestToken<'a> {
+    pub(crate) enum TestToken<'a> {
         Pipe,
         DoublePipe,
         Ampersand,
         DoubleAmpersand,
         Redirect(ast::RedirectFlags),
-        Dollar,
         Asterisk,
         DoubleAsterisk,
-        Eq,
         Semicolon,
         Newline,
         BraceBegin,
@@ -167,10 +158,8 @@ pub mod test {
                 Token::Ampersand => TestToken::Ampersand,
                 Token::DoubleAmpersand => TestToken::DoubleAmpersand,
                 Token::Redirect(r) => TestToken::Redirect(r),
-                Token::Dollar => TestToken::Dollar,
                 Token::Asterisk => TestToken::Asterisk,
                 Token::DoubleAsterisk => TestToken::DoubleAsterisk,
-                Token::Eq => TestToken::Eq,
                 Token::Semicolon => TestToken::Semicolon,
                 Token::Newline => TestToken::Newline,
                 Token::BraceBegin => TestToken::BraceBegin,
@@ -210,10 +199,8 @@ pub mod test {
                     write_redirect_flags(w, *r)?;
                     w.write_char('}')
                 }
-                T::Dollar => unit!("Dollar"),
                 T::Asterisk => unit!("Asterisk"),
                 T::DoubleAsterisk => unit!("DoubleAsterisk"),
-                T::Eq => unit!("Eq"),
                 T::Semicolon => unit!("Semicolon"),
                 T::Newline => unit!("Newline"),
                 T::BraceBegin => unit!("BraceBegin"),
@@ -466,7 +453,7 @@ pub(crate) fn handle_template_value(
                     depth + 1,
                 )?;
                 if i < last {
-                    let str = BunString::static_(b" ");
+                    let str = BunString::static_(" ");
                     let mut b = ShellSrcBuilder::init(global, out_script, jsstrings);
                     if !b.append_bun_str::<false>(str)? {
                         return Err(global
@@ -531,7 +518,7 @@ pub(crate) fn handle_template_value(
 
 // ───────────────────────────── ShellSrcBuilder ─────────────────────────────
 
-pub struct ShellSrcBuilder<'a> {
+pub(crate) struct ShellSrcBuilder<'a> {
     pub global_this: &'a JSGlobalObject,
     pub(crate) outbuf: &'a mut Vec<u8>,
     pub(crate) jsstrs_to_escape: &'a mut Vec<BunString>,
@@ -692,7 +679,7 @@ impl<'a> ShellSrcBuilder<'a> {
 // ───────────────────────────── TestingAPIs ─────────────────────────────
 
 /// Used in JS tests, see `internal-for-testing.ts` and shell tests.
-pub mod testing_apis {
+pub(crate) mod testing_apis {
     use super::*;
 
     #[bun_jsc::host_fn]
@@ -889,9 +876,9 @@ pub mod testing_apis {
             "{}",
             bun_shell_parser::json_fmt::script_json_fmt(&script_ast)
         );
-        bun_jsc::bun_string_jsc::create_utf8_for_js(global, str.as_bytes())
+        bun_string_jsc::create_utf8_for_js(global, str.as_bytes())
     }
 }
 // `generated_js2native.rs` snake-cases `TestingAPIs` as `testing_ap_is`
 // (the codegen splits on capitalisation runs).
-pub use testing_apis as testing_ap_is;
+pub(crate) use testing_apis as testing_ap_is;

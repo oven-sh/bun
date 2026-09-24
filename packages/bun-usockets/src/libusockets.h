@@ -186,12 +186,6 @@ struct us_udp_packet_buffer_t;
 struct ssl_ctx_st;
 struct ssl_st;
 
-
-struct us_cert_string_t {
-    const char* str;
-    size_t len;
-};
-
 /* Public interface for UDP sockets */
 
 /* Peeks data and length of UDP payload */
@@ -207,9 +201,6 @@ int us_udp_socket_bound_port(struct us_udp_socket_t *s);
 
 /* Peeks peer addr (sockaddr) of received packet */
 char *us_udp_packet_buffer_peer(struct us_udp_packet_buffer_t *buf, int index);
-
-/* Peeks ECN of received packet */
-// int us_udp_packet_buffer_ecn(struct us_udp_packet_buffer_t *buf, int index);
 
 /* Receives a set of packets into specified packet buffer */
 int us_udp_socket_receive(struct us_udp_socket_t *s, struct us_udp_packet_buffer_t *buf);
@@ -386,6 +377,11 @@ struct us_socket_t *us_socket_tls_feed(us_socket_r s, const char *data, int leng
 /* Send ClientHello after adopt_tls. Separate so the caller can repoint the
  * ext slot before any dispatch can fire. */
 void us_socket_start_tls_handshake(us_socket_r s) nonnull_fn_decl;
+/* Client TLS socket whose rejectUnauthorized policy is on: refuse a bad chain
+ * during the handshake, so the client's own Certificate flight never reaches a
+ * server that fails verification. Must run before the handshake is driven
+ * (on_open, or between adopt_tls and start_tls_handshake). No-op otherwise. */
+void us_socket_set_inline_reject(us_socket_r s) nonnull_fn_decl;
 
 /* ── Listen ───────────────────────────────────────────────────────────────
  * The listener owns: an embedded group for accepted sockets, the SSL_CTX
@@ -556,6 +552,11 @@ struct ssl_ctx_st *us_ssl_ctx_from_options(
  * (uWS App.h) that don't pull in BoringSSL headers. */
 void us_internal_ssl_ctx_up_ref(struct ssl_ctx_st *ssl_ctx);
 void us_internal_ssl_ctx_unref(struct ssl_ctx_st *ssl_ctx);
+/* Install an ALPN selector that prefers "h2", then "http/1.1" (when
+ * allow_http1). Used by uWS when an App has an HTTP/2 context attached. */
+void us_ssl_ctx_enable_http2_alpn(struct ssl_ctx_st *ssl_ctx, int allow_http1);
+/* 1 iff the completed handshake on `s` negotiated ALPN "h2". */
+int us_socket_alpn_is_h2(us_socket_r s);
 long us_ssl_ctx_live_count(void);
 /* Appends the certificates in the PEM `content` to `ctx`'s trust store;
  * returns 0 when nothing could be added. */
@@ -568,6 +569,13 @@ int us_ssl_ctx_add_ca_cert(struct ssl_ctx_st *ctx, const char *content);
 void us_ssl_enable_pending_events(struct ssl_st *ssl);
 int us_ssl_pop_pending_session(struct ssl_st *ssl, unsigned char *out, int out_cap);
 int us_ssl_pop_pending_keylog(struct ssl_st *ssl, unsigned char *out, int out_cap);
+/* The same owners as clients whose rejectUnauthorized policy is on.
+ * set_inline_reject installs the verify recorder before the handshake starts.
+ * tripped() is read after each SSL_do_handshake of the initial handshake: 1
+ * means the server's chain failed, so the owner drops its queued output (the
+ * flight that carries the client certificate) and fails the handshake. */
+void us_internal_ssl_set_inline_reject(struct ssl_st *ssl);
+int us_internal_ssl_inline_reject_tripped(struct ssl_st *ssl);
 /* The resumable session most recently delivered via the new-session callback,
  * or NULL if none. Borrowed; valid until the next NewSessionTicket or SSL_free. */
 struct ssl_session_st *us_ssl_get_new_session(struct ssl_st *ssl);
@@ -678,6 +686,19 @@ void us_socket_shutdown(us_socket_r s) nonnull_fn_decl;
 void us_socket_shutdown_read(us_socket_r s) nonnull_fn_decl;
 int us_socket_is_shut_down(us_socket_r s) nonnull_fn_decl;
 int us_socket_is_closed(us_socket_r s) nonnull_fn_decl;
+
+/* Return codes of us_socket_queued_input. */
+#define LIBUS_QUEUED_INPUT_NONE 0  /* a read would block: nothing is queued */
+#define LIBUS_QUEUED_INPUT_DATA 1  /* at least one byte is readable */
+#define LIBUS_QUEUED_INPUT_EOF 2   /* the peer sent a FIN */
+#define LIBUS_QUEUED_INPUT_ERROR 3 /* the read side failed, e.g. a reset */
+/* What the read side of the socket holds right now, without a trip through
+ * the event loop. The peek consumes nothing, so the poll still reports the
+ * same input later and the normal read path still handles it. Callers that
+ * own a socket between loop iterations use this to tell an idle connection
+ * from one the peer has already written to or closed. */
+int us_socket_queued_input(us_socket_r s) nonnull_fn_decl;
+
 int us_socket_is_ssl_handshake_finished(us_socket_r s) nonnull_fn_decl;
 int us_socket_ssl_handshake_callback_has_fired(us_socket_r s) nonnull_fn_decl;
 /* TLS ciphertext bytes already sealed for this socket and reported as
@@ -712,7 +733,8 @@ struct us_socket_t *us_socket_pair(us_socket_group_r group, unsigned char kind, 
 struct us_socket_t *us_socket_from_fd(us_socket_group_r group, unsigned char kind, struct ssl_ctx_st *ssl_ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int options, int ipc)
     __attribute__((nonnull(1)));  /* ssl_ctx nullable */
 struct us_socket_t *us_socket_open(struct us_socket_t *s, int is_client, char *ip, int ip_length);
-int us_raw_root_certs(struct us_cert_string_t **out);
+/* The bundled Mozilla root certificates, DER-encoded, in static memory. Returns the count. */
+size_t us_bundled_root_certs_der(const uint8_t *const **out_certs, const size_t **out_lens);
 unsigned int us_get_remote_address_info(char *buf, us_socket_r s, const char **dest, int *port, int *is_ipv6);
 unsigned int us_get_local_address_info(char *buf, us_socket_r s, const char **dest, int *port, int *is_ipv6);
 int us_socket_get_error(us_socket_r s);

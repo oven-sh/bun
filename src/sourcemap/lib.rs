@@ -372,7 +372,7 @@ impl SourceProvider for SourceProviderMap {
 /// default-`None` optional capabilities so each provider only overrides what
 /// it actually has.
 pub trait SourceProvider {
-    /// `Bun::toStringView`: a ZigString view into the provider's source.
+    /// `Bun::toStringView`: a `StringView` into the provider's source.
     fn get_source_slice(&self) -> bun_core::StringView<'_>;
     fn to_source_content_ptr(&self) -> SourceContentPtr;
 
@@ -431,7 +431,7 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
         if load_hint != SourceMapLoadHint::IsExternalMap {
             'try_inline: {
                 let source = provider.get_source_slice();
-                debug_assert!(source.tag() == bun_core::Tag::ZigString);
+                debug_assert!(source.tag() == bun_core::Tag::EncodedSlice);
 
                 let maybe_found_url = if source.is_8bit() {
                     find_source_mapping_url_u8(source.latin1())
@@ -874,7 +874,9 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
 
     // the allocator given to the JS parser is not respected for all parts
     // of the parse, so we need to remember to reset the ast store on entry
-    // and on every exit path.
+    // and on every exit path. A source map may be parsed lazily from a thread that never ran the parser (a stack trace
+    // remapped from a collector thread's end phase), so make sure this thread has the stores at all.
+    bun_ast::initialize_store();
     let _store_scope = DataStoreScope::new();
     bun_core::scoped_log!(SourceMapLog, "parse (JSON, {} bytes)", source.len());
     let parsed = match bun_parsers::json::ParsedJson::parse_json(&json_src, &mut log) {
@@ -1114,16 +1116,16 @@ pub fn append_source_map_chunk<'a>(
 }
 
 /// Always returns UTF-8.
-fn find_source_mapping_url_u8(source: &[u8]) -> Option<bun_core::zig_string::Slice> {
+fn find_source_mapping_url_u8(source: &[u8]) -> Option<bun_core::Utf8Bytes<'_>> {
     const NEEDLE: &[u8] = b"\n//# sourceMappingURL=";
     let found = bun_core::strings::last_index_of(source, NEEDLE)?;
     let start = found + NEEDLE.len();
     let end = bun_core::strings::index_of_char_pos(source, b'\n', start).unwrap_or(source.len());
     let url = bun_core::strings::trim_right(&source[start..end], b" \r");
-    Some(bun_core::zig_string::Slice::from_utf8_never_free(url))
+    Some(bun_core::Utf8Bytes::Borrowed(url))
 }
 
-fn find_source_mapping_url_u16(source: &[u16]) -> Option<bun_core::zig_string::Slice> {
+fn find_source_mapping_url_u16(source: &[u16]) -> Option<bun_core::Utf8Bytes<'static>> {
     let needle: &[u16] = bun_core::w!("\n//# sourceMappingURL=");
     let found = bun_core::strings::last_index_of_t(source, needle)?;
     let start = found + needle.len();
@@ -1138,7 +1140,7 @@ fn find_source_mapping_url_u16(source: &[u16]) -> Option<bun_core::zig_string::S
             break;
         }
     }
-    Some(bun_core::zig_string::Slice::init_owned(
+    Some(bun_core::Utf8Bytes::Owned(
         bun_core::strings::to_utf8_alloc(url),
     ))
 }

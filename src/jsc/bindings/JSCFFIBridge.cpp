@@ -23,7 +23,7 @@ static_assert(static_cast<uint8_t>(JSC::FFI::Type::BufferLength) == 21, "FFI::Ty
 
 extern "C" JSC::EncodedJSValue Bun__CreateJSCFFIFunction(
     Zig::GlobalObject* globalObject,
-    const ZigString* symbolName,
+    const EncodedSlice* symbolName,
     const uint8_t* argTypes,
     unsigned argCount,
     uint8_t returnType,

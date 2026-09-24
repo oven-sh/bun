@@ -3,6 +3,8 @@ use core::ffi::c_void;
 use core::mem;
 use core::ptr::NonNull;
 
+use bun_core::Utf8Bytes;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{ComptimeStringMapExt as _, JsCell};
 use bun_uws::{self as uws, AnyWebSocket, WebSocketBehavior};
 use bun_uws_sys::web_socket::{WebSocketHandler, WebSocketUpgradeServer, Wrap};
@@ -11,7 +13,7 @@ use bun_uws_sys::{Opcode, SendStatus};
 use crate::server::WebSocketServerHandler;
 use crate::server::jsc::{
     self, AbortSignal, ArrayBuffer, CallFrame, CommonAbortReason, JSGlobalObject, JSType, JSValue,
-    JsError, JsRef, JsResult, ZigStringSlice,
+    JsError, JsRef, JsResult,
 };
 use crate::server::web_socket_server_context::HandlerFlags;
 use crate::webcore::{Blob, BlobExt};
@@ -53,7 +55,7 @@ bun_core::comptime_string_map! {
 // mutability (`Cell` for `Copy` flags/signal, `JsCell` for the non-`Copy`
 // `JsRef`) carries the writes.
 #[bun_jsc::JsClass]
-pub struct ServerWebSocket {
+pub(crate) struct ServerWebSocket {
     handler: bun_ptr::BackRef<WebSocketServerHandler>,
     this_value: JsCell<JsRef>,
     flags: Cell<Flags>,
@@ -67,7 +69,7 @@ pub struct ServerWebSocket {
 // ssl:1, closed:1, <unused>:1, binary_type:4, packed_websocket_ptr:57
 #[repr(transparent)]
 #[derive(Copy, Clone, Default)]
-pub struct Flags(u64);
+pub(crate) struct Flags(u64);
 
 impl Flags {
     const SSL_BIT: u64 = 1 << 0;
@@ -90,7 +92,7 @@ impl Flags {
         }
     }
     #[inline]
-    pub fn closed(self) -> bool {
+    pub(crate) fn closed(self) -> bool {
         self.0 & Self::CLOSED_BIT != 0
     }
     #[inline]
@@ -145,7 +147,7 @@ impl Flags {
 // `js::data_{get,set}_cached` are emitted by `.classes.ts` codegen
 // (`generate-classes.ts` → `${T}__data{Get,Set}Cached`).
 #[allow(non_snake_case)]
-pub mod js {
+pub(crate) mod js {
     // Emits `{data,server}_{get,set}_cached`. Getter maps `JSValue::ZERO` → `None`;
     // setter forwards through the JSC `WriteBarrier<Unknown>` slot.
     ::bun_jsc::codegen_cached_accessors!("ServerWebSocket"; data, server);
@@ -247,6 +249,13 @@ impl ServerWebSocket {
     #[inline]
     fn handler(&self) -> &WebSocketServerHandler {
         self.handler.get()
+    }
+
+    /// A websocket event is dispatched inside the context of the script that gave the handlers:
+    /// what a handler throws, and what the socket reports with no `error` handler, is that context's.
+    #[inline]
+    fn enter_handlers_context(&self) -> bun_jsc::virtual_machine::ContextScope<'_> {
+        self.handler().vm().enter_context(self.handler().context)
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -507,7 +516,7 @@ impl ServerWebSocket {
         let _loop_guard = vm.enter_event_loop_scope();
 
         let data = match opcode {
-            Opcode::Text => jsc::bun_string_jsc::create_utf8_for_js(global_object, message),
+            Opcode::Text => bun_string_jsc::create_utf8_for_js(global_object, message),
             Opcode::Binary => self.binary_to_js(global_object, message),
             _ => unreachable!(),
         };
@@ -682,7 +691,7 @@ impl ServerWebSocket {
     /// `&self` for the same noalias-reentry reason as `on_open` (R-2).
     /// Re-entrant `ws.close()` from the close handler routes through the same
     /// `Cell<Flags>` / `JsCell<JsRef>`, so no `noalias` view is invalidated.
-    pub fn on_close(&self, _ws: AnyWebSocket, code: i32, message: &[u8]) -> JsResult<()> {
+    pub(crate) fn on_close(&self, _ws: AnyWebSocket, code: i32, message: &[u8]) -> JsResult<()> {
         bun_output::scoped_log!(WebSocketServer, "onClose");
         // TODO: Can this called inside finalize?
         let handler = self.handler();
@@ -760,7 +769,7 @@ impl ServerWebSocket {
                 }
             }
 
-            let message_js = match jsc::bun_string_jsc::create_utf8_for_js(global_object, message) {
+            let message_js = match bun_string_jsc::create_utf8_for_js(global_object, message) {
                 Ok(v) => v,
                 Err(e) => {
                     let err = global_object.take_error(e);
@@ -815,7 +824,7 @@ impl ServerWebSocket {
     // and requires `fn finalize(self: Box<Self>)`; clippy::boxed_local is a
     // false positive on that contract.
     #[allow(clippy::boxed_local)]
-    pub fn finalize(self: Box<Self>) {
+    pub(crate) fn finalize(self: Box<Self>) {
         bun_output::scoped_log!(WebSocketServer, "finalize");
         self.this_value.with_mut(|v| v.finalize());
         if let Some(signal) = self.signal.take() {
@@ -1314,7 +1323,7 @@ impl ServerWebSocket {
     // `passThis: true` — wrapper emitted by generated_classes.rs.
     // R-2: `&self` — `websocket().end()` synchronously dispatches `on_close`
     // on this same `m_ctx`; a `&mut self` here would alias.
-    pub fn close(
+    pub(crate) fn close(
         &self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
@@ -1343,14 +1352,14 @@ impl ServerWebSocket {
             break 'brk args[0].coerce_to_i32(global_this)?;
         };
 
-        let message_value: ZigStringSlice = 'brk: {
+        let message_value: Utf8Bytes = 'brk: {
             if args[1].is_undefined() {
-                break 'brk ZigStringSlice::empty();
+                break 'brk Utf8Bytes::EMPTY;
             }
-            break 'brk args[1].to_slice(global_this)?;
+            break 'brk args[1].to_utf8(global_this)?;
         };
 
-        // `to_slice` can run user `toString()`, which may re-entrantly
+        // `to_utf8` can run user `toString()`, which may re-entrantly
         // `ws.close()` and already decrement the count; re-check the guard.
         if self.is_closed() {
             return Ok(JSValue::UNDEFINED);
@@ -1532,7 +1541,7 @@ impl ServerWebSocket {
             _ => return Ok(JSValue::UNDEFINED),
         };
         let text = bun_core::fmt::format_ip(&address, &mut text_buf).expect("unreachable");
-        bun_jsc::bun_string_jsc::create_utf8_for_js(global_this, text)
+        bun_string_jsc::create_utf8_for_js(global_this, text)
     }
 }
 
@@ -1546,32 +1555,44 @@ impl WebSocketHandler for ServerWebSocket {
     #[inline(always)]
     unsafe fn on_open(this: *mut Self, ws: AnyWebSocket) {
         // SAFETY: per trait contract — `this` is the live user-data slot.
-        crate::dispatch::fold(unsafe { &*this }.on_open(ws));
+        let this = unsafe { &*this };
+        let _context = this.enter_handlers_context();
+        crate::dispatch::fold(this.on_open(ws));
     }
     #[inline(always)]
     unsafe fn on_message(this: *mut Self, ws: AnyWebSocket, message: &[u8], opcode: Opcode) {
         // SAFETY: per trait contract.
-        crate::dispatch::fold(unsafe { &*this }.on_message(ws, message, opcode));
+        let this = unsafe { &*this };
+        let _context = this.enter_handlers_context();
+        crate::dispatch::fold(this.on_message(ws, message, opcode));
     }
     #[inline(always)]
     unsafe fn on_drain(this: *mut Self, ws: AnyWebSocket) {
         // SAFETY: per trait contract.
-        crate::dispatch::fold(unsafe { &*this }.on_drain(ws));
+        let this = unsafe { &*this };
+        let _context = this.enter_handlers_context();
+        crate::dispatch::fold(this.on_drain(ws));
     }
     #[inline(always)]
     unsafe fn on_ping(this: *mut Self, ws: AnyWebSocket, message: &[u8]) {
         // SAFETY: per trait contract.
-        crate::dispatch::fold(unsafe { &*this }.on_ping(ws, message));
+        let this = unsafe { &*this };
+        let _context = this.enter_handlers_context();
+        crate::dispatch::fold(this.on_ping(ws, message));
     }
     #[inline(always)]
     unsafe fn on_pong(this: *mut Self, ws: AnyWebSocket, message: &[u8]) {
         // SAFETY: per trait contract.
-        crate::dispatch::fold(unsafe { &*this }.on_pong(ws, message));
+        let this = unsafe { &*this };
+        let _context = this.enter_handlers_context();
+        crate::dispatch::fold(this.on_pong(ws, message));
     }
     #[inline(always)]
     unsafe fn on_close(this: *mut Self, ws: AnyWebSocket, code: i32, message: &[u8]) {
         // SAFETY: per trait contract.
-        crate::dispatch::fold(unsafe { &*this }.on_close(ws, code, message));
+        let this = unsafe { &*this };
+        let _context = this.enter_handlers_context();
+        crate::dispatch::fold(this.on_close(ws, code, message));
     }
 }
 

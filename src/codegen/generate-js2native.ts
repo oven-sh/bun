@@ -48,6 +48,7 @@ const rustIdentifierPaths: Record<string, string> = {
   "ipc.rs": "runtime/ipc_host.rs",
   "Counters.rs": "jsc/Counters.rs",
   "FrameworkRouter.rs": "runtime/bake/FrameworkRouter.rs",
+  "JSBundler.rs": "runtime/api/JSBundler.rs",
   "Listener.rs": "runtime/socket/Listener.rs",
   "MarkdownObject.rs": "runtime/api/MarkdownObject.rs",
   "SecureContext.rs": "runtime/api/bun/SecureContext.rs",
@@ -90,6 +91,7 @@ const rustIdentifierPaths: Record<string, string> = {
   "runtime/timer/Timer.rs": "runtime/timer/Timer.rs",
   "runtime/webcore/ByteStream.rs": "runtime/webcore/ByteStream.rs",
   "runtime/webcore/FileSink.rs": "runtime/webcore/FileSink.rs",
+  "runtime/webcore/fetch.rs": "runtime/webcore/fetch.rs",
   "shell.rs": "runtime/shell/shell.rs",
   "sourcemap/InternalSourceMap.rs": "sourcemap/InternalSourceMap.rs",
   "string/immutable/unicode.rs": "bun_core/string/immutable/unicode.rs",
@@ -299,6 +301,9 @@ export function getJS2NativeRust() {
     "JS2Rust___src_runtime_dns_jsc_dns_rs__Resolver_getRuntimeDefaultResultOrderOption",
     "JS2Rust___src_runtime_dns_jsc_dns_rs__Resolver_newResolver",
     "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_seedCacheForTesting",
+    "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_isLocalhostNameForTesting",
+    "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_isAllLoopbackOfOneFamilyForTesting",
+    "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_getaddrinfoErrorForTesting",
   ]);
 
   const srcRoot = path.resolve(import.meta.dir, "..");
@@ -399,11 +404,13 @@ export function getJS2NativeRust() {
 
 export function getJS2NativeDTS() {
   return [
-    "declare type NativeFilenameCPP = " +
+    "declare type NativeBasenameCPP = " +
       sourceFiles
         .filter(x => x.endsWith("cpp"))
         .map(x => JSON.stringify(basename(x)))
         .join("|"),
+    // resolveNativeFileId matches any path suffix of a source file, e.g. "streams/BunStreamConsumers.cpp".
+    "declare type NativeFilenameCPP = NativeBasenameCPP | `${string}/${NativeBasenameCPP}`",
     "declare type NativeFilenameRust = " +
       Object.keys(rustIdentifierPaths)
         .map(x => JSON.stringify(x))

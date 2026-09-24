@@ -306,9 +306,9 @@ it.skipIf(isWindows)(
   "moves the new executable out of the staging directory and leaves no executable there",
   async () => {
     const version = "9.9.9";
-    const cwd = tmpdirSync();
-    const execPath = join(cwd, basename(bunExe()));
-    const zipPath = join(cwd, "release.zip");
+    using cwd = tempDir("bun-upgrade-exe", {});
+    const execPath = join(String(cwd), basename(bunExe()));
+    const zipPath = join(String(cwd), "release.zip");
     await Promise.all([copyFile(bunExe(), execPath), writeFakeReleaseZip(zipPath, version)]);
     using stagingRoot = tempDir("bun-upgrade-staging-exe", {});
 
@@ -316,7 +316,7 @@ it.skipIf(isWindows)(
 
     await using proc = Bun.spawn({
       cmd: [execPath, "upgrade", "--stable"],
-      cwd,
+      cwd: String(cwd),
       stdout: null,
       stdin: "pipe",
       stderr: "pipe",

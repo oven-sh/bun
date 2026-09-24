@@ -1843,9 +1843,7 @@ impl PostgresSQLConnection {
         }
     }
 
-    /// Reject `req` after its messages failed to encode. `new_statement` is the
-    /// statement whose first Parse was among them: an error that is not a JS
-    /// exception fails it for every later query too.
+    /// Reject `req`. A non-JS error also fails `new_statement`, first parsed in the failed write.
     fn reject_failed_write(
         &self,
         req: &PostgresSQLQuery,

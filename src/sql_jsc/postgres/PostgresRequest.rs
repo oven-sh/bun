@@ -454,8 +454,7 @@ pub(crate) enum EncodeRequest<'a> {
 }
 
 impl PostgresSQLConnection {
-    /// The only caller of the batch writers above: every Bind of this
-    /// connection is encoded through here.
+    /// The only caller of the batch writers above.
     pub(crate) fn encode_request(
         &self,
         global: &JSGlobalObject,

@@ -39,14 +39,15 @@
 #include <wtf/text/WTFString.h>
 #include "JavaScriptCore/WasmModule.h"
 
-#if ENABLE(WEBASSEMBLY)
 namespace JSC {
+class JSObject;
+class VM;
+#if ENABLE(WEBASSEMBLY)
 namespace Wasm {
 class Module;
-class MemoryHandle;
-}
 }
 #endif
+}
 
 namespace WebCore {
 
@@ -81,7 +82,6 @@ enum class FastPath : uint8_t {
 
 class MessagePort;
 class CloneSerializer;
-class FragmentedSharedBuffer;
 enum class SerializationReturnCode;
 
 enum class SerializationErrorMode { NonThrowing,
@@ -99,6 +99,10 @@ using ArrayBufferContentsArray = Vector<JSC::ArrayBufferContents>;
 using WasmModuleArray = Vector<RefPtr<JSC::Wasm::Module>>;
 using WasmMemoryHandleArray = Vector<RefPtr<JSC::SharedArrayBufferContents>>;
 #endif
+
+// worker_threads.markAsUncloneable() / markAsUntransferable(): create() rejects a tagged object.
+void markAsUncloneable(JSC::VM&, JSC::JSObject&);
+void markAsUntransferable(JSC::VM&, JSC::JSObject&);
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(SerializedScriptValue);
 class SerializedScriptValue : public ThreadSafeRefCounted<SerializedScriptValue> {

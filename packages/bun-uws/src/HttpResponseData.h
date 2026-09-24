@@ -21,7 +21,6 @@
 
 #include "HttpParser.h"
 #include "AsyncSocketData.h"
-#include "ProxyParser.h"
 #include "HttpContext.h"
 
 #include "MoveOnlyFunction.h"
@@ -151,13 +150,22 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
          * shutdown sweep; the shouldCloseConnection() gates act on it once the
          * in-flight work completes. */
         HTTP_CLOSE_WHEN_IDLE = 1 << 17,
+        /* Bun.serve handed this request to user JavaScript. The response is sent
+         * when it completes, also on the socket onData is parsing: JavaScript
+         * that runs after it (microtasks, the request body callback) can block,
+         * reset the connection or end the process. */
+        HTTP_SEND_WHEN_COMPLETE = 1 << 18,
+        /* node:http: the peer sent its FIN first (HTTP_NODE_RECEIVED_FIN only covers a
+         * deferred close). onSocketClosed reports it so the JS socket emits 'end'. */
+        HTTP_NODE_PEER_ENDED = 1 << 19,
 
         /* Bits that describe the connection rather than the response in flight.
          * There is one HttpResponseData per socket, reused by every request on a
          * keep-alive connection, so starting a new response clears the rest of the
          * word (resetResponseState) - these have to survive that. */
         HTTP_CONNECTION_SCOPED = HTTP_NODE_PARSING_STOPPED | HTTP_NODE_READS_PAUSED
-            | HTTP_NODE_TUNNEL_AFTER_BODY | HTTP_NODE_RECEIVED_FIN | HTTP_CLOSE_WHEN_IDLE,
+            | HTTP_NODE_TUNNEL_AFTER_BODY | HTTP_NODE_RECEIVED_FIN | HTTP_CLOSE_WHEN_IDLE
+            | HTTP_NODE_PEER_ENDED,
     };
 
     /* Begin a new response on this connection. Clearing the word in one go is
@@ -208,6 +216,11 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     /* The parser writes this through a bool& (getHeaders / consumePostPadded),
      * so it cannot live in `state`. */
     bool isConnectRequest = false;
+    /* Cleartext HTTP/2 preface sniffing: bytes of "PRI * HTTP/2.0..." matched
+     * and held back so far (0-3) while the first read(s) were too short to
+     * decide; PROTOCOL_DECIDED once this connection is known to be HTTP/1. */
+    static constexpr unsigned char PROTOCOL_DECIDED = 255;
+    unsigned char h2PrefaceMatched = 0;
 
     /* Chunk-extension bytes consumed on the current chunk-size line, reset per
      * chunk (llhttp's on_chunk_header); capped at MAX_CHUNK_EXTENSION_SIZE for
@@ -228,10 +241,6 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
             || ((state & HTTP_NODE_RECEIVED_FIN) && nodeHttpQueuedPipelinedCount == 0)
             || ((state & HTTP_CLOSE_WHEN_IDLE) && this->isIdle);
     }
-
-#ifdef UWS_WITH_PROXY
-    ProxyParser proxyParser;
-#endif
 };
 
 /* Per-connection state that only node:http compat servers need.
@@ -267,6 +276,8 @@ struct HttpResponseData<SSL, true> : HttpResponseData<SSL, false> {
      * as a nullable pointer (see HttpParser::consumePostPadded). */
     std::string nodeHttpRequestTrailers;
     bool headersCompleted = false;
+    /* Timeout sweep already reported this message; reset when it completes. */
+    bool requestTimeoutReported = false;
 };
 
 /* Readable name for the IsNodeHttp=true specialization (used by the node:http

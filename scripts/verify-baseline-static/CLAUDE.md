@@ -31,8 +31,9 @@ check — together they catch most things; neither alone is bulletproof.
 **In scope but may miss:**
 
 - x64 linear-sweep may desync on data-in-`.text` and skip real instructions
-  that follow. Variable-length x86 encoding makes perfect code/data
-  separation undecidable (`README.md:53-59`). aarch64 is more reliable
+  that follow, up to the next symbol start (where the decoder resyncs).
+  Variable-length x86 encoding makes perfect code/data separation
+  undecidable (`README.md:53-62`). aarch64 is more reliable
   (fixed-width words, `$d` mapping symbols mark data), but a missing mapping
   symbol can still hide a hit.
 - Instructions deliberately ignored (TZCNT/XGETBV on x64, hint-space PAC/BTI
@@ -43,7 +44,7 @@ check — together they catch most things; neither alone is bulletproof.
 
 - Data bytes in `.text` that happen to form a valid post-baseline encoding.
   Rare on ELF (LLVM puts tables in `.rodata`), common on Windows PE (MSVC
-  inlines jump tables). See `README.md:61-74`.
+  inlines jump tables). See `README.md:64-77`.
 
 When in doubt, the emulator is ground truth: `qemu -cpu Nehalem` and hit the
 code path. SIGILL = real bug. No SIGILL = either gated or a data-in-text
@@ -51,7 +52,7 @@ false positive.
 
 ## Which builds run this
 
-See `needsBaselineVerification()` in `.buildkite/ci.mjs`:
+See `needsBaselineVerification()` in `.buildkite/ci.ts`:
 
 | Target                                                         | Allowlist file              |
 | -------------------------------------------------------------- | --------------------------- |
@@ -156,7 +157,7 @@ table, an HWCAP test. Known patterns:
 | Dependency                            | Gate                                                        | Where                                      |
 | ------------------------------------- | ----------------------------------------------------------- | ------------------------------------------ |
 | simdutf                               | `set_best()` — CPUID first call, cached atomic ptr          | `vendor/` or WebKit's bundled copy         |
-| Highway (Bun)                         | `HWY_DYNAMIC_DISPATCH` → `hwy::SupportedTargets()`          | `src/jsc/bindings/highway_strings.cpp`     |
+| Highway (Bun)                         | `BUN_HWY_DISPATCH` → `hwy::SupportedTargets()`              | `src/jsc/bindings/highway_dispatch.h`      |
 | BoringSSL                             | `OPENSSL_ia32cap_P` global, set at init                     | `vendor/boringssl/crypto/cpu_intel.c`      |
 | zstd                                  | `ZSTD_cpuid()`                                              | `vendor/zstd/lib/common/cpu.h`             |
 | libdeflate                            | `libdeflate_init_x86_cpu_features()` / `HWCAP_ASIMDDP`      | `vendor/libdeflate/lib/x86/cpu_features.c` |

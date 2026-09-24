@@ -7,6 +7,7 @@ use bstr::BStr;
 use bun_alloc::AllocError;
 use bun_collections::{ArrayHashMap, MultiArrayList};
 use bun_semver::String as SemverString;
+use bun_wyhash::Wyhash;
 
 use crate::lockfile::{Lockfile, package};
 use crate::{Dependency, DependencyID, INVALID_DEPENDENCY_ID, PackageID, Resolution};
@@ -319,22 +320,6 @@ pub mod entry {
         }
     }
 
-    impl Default for Entry {
-        fn default() -> Self {
-            Self {
-                node_id: super::node::Id::INVALID,
-                dependencies: Dependencies::EMPTY,
-                parents: Vec::new(),
-                // `Step::LinkPackage as u32 == 0`.
-                step: core::sync::atomic::AtomicU32::new(0),
-                hoisted: false,
-                peer_hash: PeerHash::NONE,
-                entry_hash: 0,
-                scripts: core::cell::Cell::new(None),
-            }
-        }
-    }
-
     #[repr(transparent)]
     #[derive(Copy, Clone, PartialEq, Eq, Hash)]
     pub struct PeerHash(u64);
@@ -351,7 +336,53 @@ pub mod entry {
         }
     }
 
+    /// Bounds the entry name so the lifecycle-script cwd fits Windows' MAX_PATH; 80 keeps versions and `github+owner+repo+<sha>` verbatim.
+    const MAX_RESOLUTION_LEN: usize = 80;
+    /// Longer resolutions become `<leading bytes>+<16 hex wyhash of the whole text>`, `MAX_RESOLUTION_LEN` bytes at most.
+    const CUT_RESOLUTION_LEN: usize = MAX_RESOLUTION_LEN - "+".len() - 16;
+
+    /// The first `MAX_RESOLUTION_LEN` bytes written, plus the length and hash of all of them.
+    struct ResolutionSink {
+        buf: [u8; MAX_RESOLUTION_LEN],
+        len: usize,
+        hasher: Wyhash,
+    }
+
+    impl fmt::Write for ResolutionSink {
+        fn write_str(&mut self, s: &str) -> fmt::Result {
+            let bytes = s.as_bytes();
+            if let Some(room) = self.buf.get_mut(self.len..) {
+                let n = bytes.len().min(room.len());
+                room[..n].copy_from_slice(&bytes[..n]);
+            }
+            self.len += bytes.len();
+            self.hasher.update(bytes);
+            Ok(())
+        }
+    }
+
+    fn write_resolution(f: &mut fmt::Formatter<'_>, resolution: fmt::Arguments<'_>) -> fmt::Result {
+        let mut sink = ResolutionSink {
+            buf: [0; MAX_RESOLUTION_LEN],
+            len: 0,
+            hasher: Wyhash::init(0),
+        };
+        fmt::write(&mut sink, resolution)?;
+
+        if sink.len <= MAX_RESOLUTION_LEN {
+            return f.write_str(bun_core::str_utf8(&sink.buf[..sink.len]).ok_or(fmt::Error)?);
+        }
+
+        let mut cut = CUT_RESOLUTION_LEN;
+        while !bun_core::strings::is_on_char_boundary(&sink.buf, cut) {
+            cut -= 1;
+        }
+        f.write_str(bun_core::str_utf8(&sink.buf[..cut]).ok_or(fmt::Error)?)?;
+        write!(f, "+{:016x}", sink.hasher.final_())
+    }
+
     /// `name@version` (or `name@file+path` / `name@root`) without the `+peerhash` suffix.
+    /// The resolution part is bounded by [`MAX_RESOLUTION_LEN`].
     pub struct StoreKeyFormatter<'a> {
         name: SemverString,
         resolution: &'a Resolution,
@@ -380,20 +411,15 @@ pub mod entry {
                 }
                 crate::resolution::Tag::Folder => {
                     let folder = *pkg_res.folder();
-                    write!(
+                    write!(f, "{}@", pkg_name.fmt_store_path(string_buf))?;
+                    write_resolution(
                         f,
-                        "{}@file+{}",
-                        pkg_name.fmt_store_path(string_buf),
-                        folder.fmt_store_path(string_buf),
+                        format_args!("file+{}", folder.fmt_store_path(string_buf)),
                     )
                 }
                 _ => {
-                    write!(
-                        f,
-                        "{}@{}",
-                        pkg_name.fmt_store_path(string_buf),
-                        pkg_res.fmt_store_path(string_buf),
-                    )
+                    write!(f, "{}@", pkg_name.fmt_store_path(string_buf))?;
+                    write_resolution(f, format_args!("{}", pkg_res.fmt_store_path(string_buf)))
                 }
             }
         }
@@ -491,7 +517,6 @@ pub mod entry {
         let entry_parents = store.entries.items_parents();
 
         let mut parents: ArrayHashMap<Id, ()> = ArrayHashMap::default();
-        // defer parents.deinit(bun.default_allocator);
 
         for &parent_id in entry_parents[entry_id.get() as usize].as_slice() {
             if parent_id == Id::INVALID {

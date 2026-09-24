@@ -16,11 +16,6 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(InspectorHTTPServerAgent);
 // Rust bindings implementation
 extern "C" {
 void Bun__HTTPServerAgent__setEnabled(Inspector::InspectorHTTPServerAgent* agent);
-
-// void Bun__HTTPServerAgentStartListening(Inspector::InspectorHTTPServerAgent* agent, int serverId);
-// void Bun__HTTPServerAgentStopListening(Inspector::InspectorHTTPServerAgent* agent, int serverId);
-// void Bun__HTTPServerAgentGetRequestBody(Inspector::InspectorHTTPServerAgent* agent, int requestId, int serverId);
-// void Bun__HTTPServerAgentGetResponseBody(Inspector::InspectorHTTPServerAgent* agent, int requestId, int serverId);
 }
 
 InspectorHTTPServerAgent::InspectorHTTPServerAgent(JSC::JSGlobalObject& globalObject)
@@ -44,7 +39,7 @@ void InspectorHTTPServerAgent::didCreateFrontendAndBackend()
 
 void InspectorHTTPServerAgent::willDestroyFrontendAndBackend(DisconnectReason)
 {
-    disable();
+    (void)disable();
 }
 
 Protocol::ErrorStringOr<void> InspectorHTTPServerAgent::enable()
@@ -64,43 +59,6 @@ Protocol::ErrorStringOr<void> InspectorHTTPServerAgent::disable()
 
     m_enabled = false;
     Bun__HTTPServerAgent__setEnabled(nullptr);
-    return {};
-}
-
-Protocol::ErrorStringOr<void> InspectorHTTPServerAgent::startListening(int serverId)
-{
-    if (!m_enabled)
-        return {};
-
-    return {};
-}
-
-Protocol::ErrorStringOr<void> InspectorHTTPServerAgent::stopListening(int serverId)
-{
-    if (!m_enabled)
-        return {};
-
-    // TODO:
-    // Bun__HTTPServerAgentStopListening(this, serverId);
-    return {};
-}
-
-Protocol::ErrorStringOr<void> InspectorHTTPServerAgent::getRequestBody(int requestId, int serverId)
-{
-    if (!m_enabled)
-        return {};
-
-    // TODO:
-    // Bun__HTTPServerAgentGetRequestBody(this, requestId, serverId);
-    return {};
-}
-
-Protocol::ErrorStringOr<void> InspectorHTTPServerAgent::getResponseBody(int requestId, int serverId)
-{
-    if (!m_enabled)
-        return {};
-    // TODO:
-    // Bun__HTTPServerAgentGetResponseBody(this, requestId, serverId);
     return {};
 }
 

@@ -6,7 +6,7 @@
 
 use crate::shell::interpreter::{NodeId, ShellExecEnv};
 
-pub struct Base {
+pub(crate) struct Base {
     /// Index of the parent node in `Interpreter::nodes`, or
     /// `NodeId::INTERPRETER` if the parent is the interpreter itself.
     pub(crate) parent: NodeId,
@@ -18,19 +18,22 @@ pub struct Base {
     // this node's slot (shared across multiple children) and is freed by the
     // owning node, not by Drop on Base.
     pub shell: *mut ShellExecEnv,
+    /// This node, or the part of it that decides its status, was killed by a
+    /// Ctrl+C the interpreter left to it. See `Interpreter::propagate_interrupt`.
+    pub(crate) interrupted: bool,
 }
 
 impl Base {
     pub(crate) fn new(parent: NodeId, shell: *mut ShellExecEnv) -> Self {
-        Self { parent, shell }
+        Self {
+            parent,
+            shell,
+            interrupted: false,
+        }
     }
 
-    /// No-op kept for call-site parity.
     #[inline]
-    pub(crate) fn end_scope(&mut self) {}
-
-    #[inline]
-    pub fn shell(&self) -> &ShellExecEnv {
+    pub(crate) fn shell(&self) -> &ShellExecEnv {
         // SAFETY: `shell` is set in `new()` from a live env owned either by
         // the interpreter (root) or by an ancestor node that outlives this
         // node's slot (deinit order is child→parent).

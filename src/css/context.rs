@@ -20,7 +20,6 @@ pub struct SupportsEntry {
 pub enum DeclarationContext {
     None,
     StyleRule,
-    Keyframes,
     StyleAttribute,
 }
 

@@ -1,10 +1,26 @@
+import type { ChildProcess } from "node:child_process";
+
 const EventEmitter = require("node:events");
+
+export interface ClusterWorker extends InstanceType<typeof EventEmitter> {
+  exitedAfterDisconnect: boolean | undefined;
+  state: string;
+  id: number;
+  process?: ChildProcess | NodeJS.Process;
+  kill(signo?: string): void;
+  send(message: unknown, ...args: unknown[]): boolean;
+  isDead(): boolean;
+  isConnected(): boolean;
+  disconnect(): this;
+  destroy(signo?: string): void;
+  _disconnect?(primaryInitiated?: boolean): void;
+}
 
 const ObjectFreeze = Object.freeze;
 
 const kEmptyObject = ObjectFreeze(Object.create(null));
 
-function Worker(options) {
+function Worker(options): void {
   if (!(this instanceof Worker)) return new Worker(options);
 
   EventEmitter.$apply(this, []);

@@ -26,10 +26,29 @@
 "use strict";
 
 const { URL, URLSearchParams, URLPattern } = globalThis;
-const [domainToASCII, domainToUnicode, idnaToASCII] = $cpp("NodeURL.cpp", "Bun::createNodeURLBinding");
-const { urlToHttpOptions } = require("internal/url");
+const { domainToASCII, domainToUnicode, idnaToASCII, urlToHttpOptions } = require("internal/url");
 const { validateString, validateObject } = require("internal/validators");
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
+
+interface Url {
+  protocol: string | null;
+  slashes: boolean | null;
+  auth: string | null;
+  host: string | null;
+  port: string | null;
+  hostname: string | null;
+  hash: string | null;
+  search: string | null;
+  query: string | Record<string, string | string[]> | null;
+  pathname: string | null;
+  path: string | null;
+  href: string | null;
+  parse(url: string, parseQueryString?: boolean, slashesDenoteHost?: boolean): this;
+  format(): string;
+  resolve(relative: string | URL | Url): string;
+  resolveObject(relative: string | Url): Url;
+  parseHost(): void;
+}
 
 function Url() {
   this.protocol = null;
@@ -45,7 +64,7 @@ function Url() {
   this.path = null;
   this.href = null;
 }
-Url.prototype = {};
+Url.prototype = {} as Url;
 
 // Reference: RFC 3986, RFC 1808, RFC 2396
 
@@ -106,7 +125,7 @@ const { isInsideNodeModules } = require("internal/shared");
 let urlParseWarned = false;
 
 function urlParse(
-  url: string | URL | typeof Url, // really has unknown type but intellisense is nice
+  url: string | URL | Url, // really has unknown type but intellisense is nice
   parseQueryString?: boolean,
   slashesDenoteHost?: boolean,
 ) {
@@ -127,12 +146,7 @@ function urlParse(
   if ($isObject(url) && url instanceof Url) return url;
 
   var u = new Url();
-  try {
-    u.parse(url, parseQueryString, slashesDenoteHost);
-  } catch (e) {
-    $putByIdDirect(e, "input", url);
-    throw e;
-  }
+  u.parse(url, parseQueryString, slashesDenoteHost);
   return u;
 }
 
@@ -176,7 +190,8 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
           break;
         case Char.HASH:
           hasHash = true;
-        // Fall through
+          split = true;
+          break;
         case Char.QUESTION_MARK:
           split = true;
           break;
@@ -476,8 +491,14 @@ const noEscapeAuth = new Int8Array([
   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 0, // 0x70 - 0x7F
 ]);
 
-const hexTable = new Array(256);
-for (let i = 0; i < 256; ++i) hexTable[i] = "%" + ((i < 16 ? "0" : "") + i.toString(16)).toUpperCase();
+let hexTable: string[] | undefined;
+function getHexTable() {
+  if (hexTable === undefined) {
+    hexTable = new Array(256);
+    for (let i = 0; i < 256; ++i) hexTable[i] = "%" + ((i < 16 ? "0" : "") + i.toString(16)).toUpperCase();
+  }
+  return hexTable;
+}
 
 // Port of node's internal/querystring encodeStr, used for auth encoding.
 function encodeStr(str: string, noEscapeTable: Int8Array, hexTable: string[]) {
@@ -572,7 +593,7 @@ function getHostname(self, rest, hostname: string, url) {
 }
 
 // format a parsed object into a url string
-declare function urlFormat(urlObject: string | URL | Url, options?: object): string;
+function urlFormat(urlObject: string | URL | Url, options?: object): string;
 function urlFormat(urlObject: unknown, options?: unknown) {
   /*
    * ensure it's an object, and not a string url.
@@ -660,7 +681,7 @@ function formatWhatwgURL(url: URL, fragment: boolean, unicode: boolean, search: 
 Url.prototype.format = function format() {
   var auth: string = this.auth || "";
   if (auth) {
-    auth = encodeStr(auth, noEscapeAuth, hexTable);
+    auth = encodeStr(auth, noEscapeAuth, getHexTable());
     auth += "@";
   }
 
@@ -743,7 +764,7 @@ function urlResolveObject(source, relative) {
 
 Url.prototype.resolveObject = function resolveObject(relative) {
   if (typeof relative === "string") {
-    var rel = new Url();
+    var rel: Url = new Url();
     rel.parse(relative, false, true);
     relative = rel;
   }
@@ -817,7 +838,7 @@ Url.prototype.resolveObject = function resolveObject(relative) {
       !hostlessProtocol[relativeProtocol]
     ) {
       let relPath = (relative.pathname || "").split("/");
-      while (relPath.length && !(relative.host = relPath.shift())) {}
+      while (relPath.length && !(relative.host = relPath.shift()!)) {}
       relative.host ||= "";
       relative.hostname ||= "";
       if (relPath[0] !== "") relPath.unshift("");
@@ -1057,7 +1078,7 @@ Url.prototype.resolveObject = function resolveObject(relative) {
 
 Url.prototype.parseHost = function parseHost() {
   var host = this.host;
-  var port = portPattern.exec(host);
+  var port: RegExpExecArray | string | null = portPattern.exec(host);
   if (port) {
     port = port[0];
     if (port !== ":") {
@@ -1067,30 +1088,6 @@ Url.prototype.parseHost = function parseHost() {
   }
   if (host) this.hostname = host;
 };
-
-// function fileURLToPath(...args) {
-//   // Since we use WTF::URL::fileSystemPath directly in Bun.fileURLToPath, we don't get invalid windows
-//   // path checking. We patch this in to `node:url` for compatibility. Note that
-//   // this behavior is missing from WATWG URL.
-//   if (process.platform === "win32") {
-//     var url: string;
-//     if ($isObject(args[0]) && args[0] instanceof Url) {
-//       url = (args[0] as { href: string }).href;
-//     } else if (typeof args[0] === "string") {
-//       url = args[0];
-//     } else {
-//       throw $ERR_INVALID_ARG_TYPE("url", ["string", "URL"], args[0]);
-//     }
-
-//     for (var i = 0; i < url.length; i++) {
-//       if (url.charCodeAt(i) === Char.PERCENT && (i + 1) < url.length) {
-//         switch (url.charCodeAt(i + 1)) {
-//         break;
-//       }
-//     }
-//   }
-//   return Bun.fileURLToPath.$call(args);
-// }
 
 /**
  * Add new characters as needed from
@@ -1131,7 +1128,6 @@ const enum Char {
   ZERO_WIDTH_NOBREAK_SPACE = 65279, //
 }
 
-const path = require("node:path");
 const isWindows = process.platform === "win32";
 
 // Mirrors the pre-encode table in node's src/node_url.cc EncodePathChars();
@@ -1188,6 +1184,7 @@ function createFileURL(filepath: string, windows: boolean, hostname?: string) {
 
 function pathToFileURL(filepath: string, options?: { windows?: boolean } | null) {
   validateString(filepath, "path");
+  const path = require("node:path");
   const windows = options?.windows ?? isWindows;
   const isUNC = windows && filepath.startsWith("\\\\");
   let resolved = isUNC ? filepath : windows ? path.win32.resolve(filepath) : path.posix.resolve(filepath);
@@ -1341,7 +1338,7 @@ function fileURLToPathBuffer(path: unknown, options?: { windows?: boolean }): Bu
   }
   const url = path as URL;
   if (url.protocol !== "file:") {
-    throw $ERR_INVALID_URL_SCHEME("The URL must be of scheme file");
+    throw $ERR_INVALID_URL_SCHEME("file");
   }
   if (windows ?? process.platform === "win32") {
     let pathname = url.pathname.replaceAll("/", "\\");

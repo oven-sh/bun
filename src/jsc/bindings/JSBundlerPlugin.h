@@ -8,8 +8,9 @@
 #include "napi_external.h"
 #include <JavaScriptCore/Yarr.h>
 #include "WriteBarrierList.h"
+#include <wtf/HashMap.h>
 
-typedef void (*JSBundlerPluginAddErrorCallback)(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
+typedef void (*JSBundlerPluginAddErrorCallback)(void*, void*, JSC::EncodedJSValue, uint8_t);
 typedef void (*JSBundlerPluginOnLoadAsyncCallback)(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
 typedef void (*JSBundlerPluginOnResolveAsyncCallback)(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);
 typedef void (*JSBundlerPluginNativeOnBeforeParseCallback)(const OnBeforeParseArguments*, OnBeforeParseResult*);
@@ -119,7 +120,31 @@ public:
 
 public:
     bool anyMatchesCrossThread(JSC::VM&, BunString* namespaceStr, BunString* path, bool isOnLoad);
-    void tombstone() { tombstoned = true; }
+
+    // The onResolve / onLoad requests this plugin chain currently holds (handed over by the bundle thread,
+    // not yet answered). A request has exactly one answer, produced on this (the JS) thread: by the plugin
+    // (onResolveAsync / onLoadAsync / addError — whichever comes first; anything later for the same request
+    // is dropped), or, once the VM that runs the plugins is shutting down, by tombstone(). JS thread only.
+    enum class RequestKind : uint8_t { Resolve = 0,
+        Load = 1 };
+    void holdRequest(RequestKind kind, void* context) { held.add(context, kind); }
+    bool holdsRequest(RequestKind kind, void* context) const
+    {
+        auto it = held.find(context);
+        return it != held.end() && it->value == kind;
+    }
+    // The request was still held (and no longer is): the caller produces its answer.
+    std::optional<RequestKind> takeRequest(void* context) { return held.takeOptional(context); }
+    bool takeRequest(RequestKind kind, void* context)
+    {
+        if (!holdsRequest(kind, context))
+            return false;
+        held.remove(context);
+        return true;
+    }
+    // From here the plugin object answers nothing itself: what it still holds is answered as cancelled now,
+    // and whatever its JS side delivers later is dropped.
+    void tombstone();
 
     BundlerPlugin(void* config, BunPluginTarget target, JSBundlerPluginAddErrorCallback addError, JSBundlerPluginOnLoadAsyncCallback onLoadAsync, JSBundlerPluginOnResolveAsyncCallback onResolveAsync)
         : addError(addError)
@@ -145,6 +170,9 @@ public:
     JSBundlerPluginOnResolveAsyncCallback onResolveAsync;
     void* config { nullptr };
     bool tombstoned { false };
+
+private:
+    WTF::HashMap<void*, RequestKind> held;
 };
 
 } // namespace Zig

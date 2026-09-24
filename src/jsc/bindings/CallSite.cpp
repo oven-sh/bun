@@ -20,7 +20,23 @@ namespace Zig {
 
 const JSC::ClassInfo CallSite::s_info = { "CallSite"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(CallSite) };
 
-void CallSite::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSCStackFrame& stackFrame, bool encounteredStrictFrame)
+static JSC::JSFunction* calleeFunction(JSC::JSCell* callee)
+{
+    return callee ? dynamicDowncast<JSC::JSFunction>(callee) : nullptr;
+}
+
+static bool isUserFunction(JSC::JSCell* callee)
+{
+    auto* function = calleeFunction(callee);
+    if (!function || function->isHostFunction() || function->isBuiltinFunction()) {
+        return false;
+    }
+
+    // A generator or async body function takes JSC-internal arguments: a call from JS corrupts memory.
+    return !JSC::isGeneratorOrAsyncFunctionBodyParseMode(function->jsExecutable()->parseMode());
+}
+
+void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encounteredStrictFrame)
 {
     Base::finishCreation(vm);
 
@@ -32,6 +48,7 @@ void CallSite::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSCStac
      * Thus, if we've already encountered a strict frame, we'll treat our frame as strict too. */
 
     bool isStrictFrame = encounteredStrictFrame;
+    JSC::JSCell* callee = stackFrame.callee();
     JSC::CodeBlock* codeBlock = stackFrame.codeBlock();
     if (!isStrictFrame) {
         if (codeBlock) {
@@ -39,21 +56,23 @@ void CallSite::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSCStac
         }
     }
 
-    // Initialize "this" and "function" (and set the "IsStrict" flag if needed)
-    JSC::CallFrame* callFrame = stackFrame.callFrame();
+    // JSC::StackFrame has no receiver, so getThis() is always undefined.
+    m_thisValue.set(vm, this, JSC::jsUndefined());
     if (isStrictFrame) {
-        m_thisValue.set(vm, this, JSC::jsUndefined());
-        m_function.set(vm, this, JSC::jsUndefined());
         m_flags |= static_cast<unsigned int>(Flags::IsStrict);
+    }
+    // Hiding a callee must not set IsStrict: that cascades to the callers, and JSC shows host frames that V8 omits.
+    if (isStrictFrame || !isUserFunction(callee)) {
+        m_function.set(vm, this, JSC::jsUndefined());
     } else {
-        if (callFrame && callFrame->thisValue()) {
-            // We know that we're not in strict mode
-            m_thisValue.set(vm, this, callFrame->thisValue().toThis(globalObject, JSC::ECMAMode::sloppy()));
-        } else {
-            m_thisValue.set(vm, this, JSC::jsUndefined());
+        m_function.set(vm, this, callee);
+    }
+    // isToplevel() needs the real callee: m_function is undefined when the callee is hidden.
+    if (!isStrictFrame) {
+        auto* function = calleeFunction(callee);
+        if (function && !function->isHostFunction()) {
+            m_flags |= static_cast<unsigned int>(Flags::IsSloppyFunctionCall);
         }
-
-        m_function.set(vm, this, stackFrame.callee());
     }
 
     m_functionName.set(vm, this, stackFrame.functionName());
@@ -107,17 +126,21 @@ JSValue createNativeFrameForTesting(Zig::GlobalObject* globalObject)
 
 void CallSite::formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::StringBuilder& sb)
 {
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue thisValue = jsUndefined();
     if (m_thisValue) {
         thisValue = m_thisValue.get();
     }
 
     JSString* myFunctionName = functionName().toStringOrNull(globalObject);
+    RETURN_IF_EXCEPTION(scope, );
     JSString* mySourceURL = sourceURL().toStringOrNull(globalObject);
+    RETURN_IF_EXCEPTION(scope, );
 
     String functionName;
     if (myFunctionName && myFunctionName->length() > 0) {
         functionName = myFunctionName->getString(globalObject);
+        RETURN_IF_EXCEPTION(scope, );
     } else if (m_flags & (static_cast<unsigned int>(Flags::IsFunction) | static_cast<unsigned int>(Flags::IsEval))) {
         functionName = "<anonymous>"_s;
     }
@@ -163,6 +186,7 @@ void CallSite::formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WT
             sb.append("unknown"_s);
         } else {
             sb.append(mySourceURL->getString(globalObject));
+            RETURN_IF_EXCEPTION(scope, );
         }
 
         if (line && column) {

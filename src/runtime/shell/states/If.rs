@@ -6,7 +6,7 @@ use crate::shell::states::base::Base;
 use crate::shell::states::stmt::Stmt;
 use crate::shell::yield_::Yield;
 
-pub struct If {
+pub(crate) struct If {
     pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::If>,
     pub(crate) io: IO,
@@ -47,7 +47,7 @@ impl Exec {
     }
 }
 
-pub enum ExecBranch {
+pub(crate) enum ExecBranch {
     Cond,
     Then,
     Elif { idx: u32 },
@@ -185,6 +185,10 @@ impl If {
         exit_code: ExitCode,
     ) -> Yield {
         interp.deinit_node(child);
+        if interp.interrupted(this) {
+            let parent = interp.as_if(this).base.parent;
+            return interp.child_done(parent, this, exit_code);
+        }
         let me = interp.as_if_mut(this);
         let IfState::Exec(exec) = &mut me.state else {
             panic!(
@@ -195,9 +199,8 @@ impl If {
         Yield::Next(this)
     }
 
-    pub(crate) fn deinit(interp: &Interpreter, this: NodeId) {
+    pub(crate) fn deinit(_interp: &Interpreter, this: NodeId) {
         log!("If {} deinit", this);
-        interp.as_if_mut(this).base.end_scope();
     }
 }
 

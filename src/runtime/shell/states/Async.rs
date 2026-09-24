@@ -9,7 +9,7 @@ use crate::shell::states::r#if::If;
 use crate::shell::states::pipeline::Pipeline;
 use crate::shell::yield_::Yield;
 
-pub struct Async {
+pub(crate) struct Async {
     pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::Expr>,
     pub(crate) io: IO,
@@ -184,7 +184,6 @@ impl Async {
             drop(unsafe { bun_core::heap::take(me.task) });
             me.task = core::ptr::null_mut();
         }
-        me.base.end_scope();
     }
 
     pub(crate) fn run_from_main_thread(interp: &Interpreter, this: NodeId) {
@@ -208,6 +207,10 @@ impl bun_event_loop::Taskable for crate::shell::dispatch_tasks::ShellAsyncTask {
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract — the box `Async::init` made; nothing else frees an unrun one.
         drop(unsafe { bun_core::heap::take(this) });
+    }
+    /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 

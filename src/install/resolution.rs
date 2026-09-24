@@ -551,7 +551,7 @@ impl<'a, SemverInt: VersionInt> fmt::Display for StorePathFormatter<'a, SemverIn
                 write!(
                     writer,
                     "{}",
-                    res.remote_tarball().fmt_store_path(string_buf)
+                    fmt_store_url(res.remote_tarball().slice(string_buf))
                 )
             }
             Tag::Folder => write!(writer, "{}", res.folder().fmt_store_path(string_buf)),
@@ -574,6 +574,53 @@ impl<'a, SemverInt: VersionInt> fmt::Display for StorePathFormatter<'a, SemverIn
             }
             _ => Ok(()),
         }
+    }
+}
+
+/// Store path of a tarball or repository URL. The store path becomes a
+/// directory name (realpaths, stack traces, `bun pm` output), so the userinfo
+/// and the query string, which is where credentials go, are left out of it;
+/// when either was present, the hash of the complete URL takes their place so
+/// that URLs differing only in those parts still get separate entries:
+/// `https://user:token@host/pkg.tgz?token=x` becomes
+/// `https+++host+pkg.tgz+<16 hex>`. A URL without either part is spelled out
+/// unchanged.
+pub(crate) struct StoreURLFormatter<'a> {
+    url: &'a [u8],
+}
+
+pub(crate) fn fmt_store_url(url: &[u8]) -> StoreURLFormatter<'_> {
+    StoreURLFormatter { url }
+}
+
+impl fmt::Display for StoreURLFormatter<'_> {
+    fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let url = self.url;
+
+        // RFC 3986: the authority follows `scheme://` (or, for an scp-like
+        // `user@host:path`, starts the string) and ends at the first `/`, `?`
+        // or `#`; the userinfo is everything in it up to the last `@`.
+        let authority_start = match strings::index_of_char_usize(url, b':') {
+            Some(colon) if url[colon + 1..].starts_with(b"//") => colon + b"://".len(),
+            _ => 0,
+        };
+        let authority_end = strings::index_of_any(&url[authority_start..], b"/?#")
+            .map_or(url.len(), |i| authority_start + i);
+        let host_start = strings::last_index_of_char(&url[authority_start..authority_end], b'@')
+            .map_or(authority_start, |at| authority_start + at + 1);
+        let query_start = strings::index_of_char_usize(&url[host_start..], b'?')
+            .map_or(url.len(), |i| host_start + i);
+
+        write!(
+            writer,
+            "{}{}",
+            semver::string::fmt_store_path(&url[..authority_start]),
+            semver::string::fmt_store_path(&url[host_start..query_start]),
+        )?;
+        if host_start != authority_start || query_start != url.len() {
+            write!(writer, "+{:016x}", bun_wyhash::hash(url))?;
+        }
+        Ok(())
     }
 }
 
@@ -916,13 +963,6 @@ fn value_init<SemverInt: VersionInt>(field: TaggedValue<SemverInt>) -> Value<Sem
 #[derive(Clone, Copy, PartialEq, Eq, Debug, core::marker::ConstParamTy)]
 pub struct Tag(pub u8);
 
-impl Default for Tag {
-    #[inline]
-    fn default() -> Self {
-        Tag::Uninitialized
-    }
-}
-
 #[allow(non_upper_case_globals)]
 impl Tag {
     pub(crate) const Uninitialized: Tag = Tag(0);
@@ -965,6 +1005,13 @@ impl Tag {
 impl Tag {
     pub(crate) fn is_git(self) -> bool {
         self == Tag::Git || self == Tag::Github
+    }
+
+    /// The root, a workspace, or a `file:` folder package: a package.json on
+    /// disk rather than content fetched from a registry, git host, or tarball.
+    /// These get `local_package_features`.
+    pub(crate) fn is_local_package(self) -> bool {
+        self == Tag::Root || self == Tag::Workspace || self == Tag::Folder
     }
 
     pub(crate) fn can_enqueue_install_task(self) -> bool {

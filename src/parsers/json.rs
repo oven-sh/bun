@@ -35,12 +35,6 @@ impl JSONOptions {
     };
 }
 
-impl Default for JSONOptions {
-    fn default() -> Self {
-        Self::DEFAULT
-    }
-}
-
 const JSON_OPTS: JSONOptions = JSONOptions::DEFAULT;
 
 const DOTENV_JSON_OPTS: JSONOptions = JSONOptions {

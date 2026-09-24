@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { readFileSync, realpathSync } from "fs";
-import { bunEnv, bunExe, tls as cert1, isDebug } from "harness";
+import { bunEnv, bunExe, tls as cert1, isDebug, isWindows } from "harness";
 import https from "https";
 import net, { AddressInfo } from "net";
 import { createTest } from "node-harness";
@@ -647,6 +647,20 @@ it("tls.rootCertificates should exists", () => {
   expect(rootCertificates).toBeInstanceOf(Array);
   expect(rootCertificates.length).toBeGreaterThan(0);
   expect(typeof rootCertificates[0]).toBe("string");
+});
+
+// https://github.com/oven-sh/bun/issues/40917
+it("createServer registers the callback as a regular 'secureConnection' listener", () => {
+  const cb = () => {};
+  const withOptions = createServer(COMMON_CERT, cb);
+  expect(withOptions.listenerCount("secureConnection")).toBe(1);
+  expect(withOptions.listeners("secureConnection")).toContain(cb);
+  withOptions.close();
+
+  const withoutOptions = createServer(cb);
+  expect(withoutOptions.listenerCount("secureConnection")).toBe(1);
+  expect(withoutOptions.listeners("secureConnection")).toContain(cb);
+  withoutOptions.close();
 });
 
 it("connectionListener should emit the right amount of times, and with alpnProtocol available", async () => {
@@ -2456,4 +2470,300 @@ describe("deferred spill-close", () => {
       server.close();
     }
   });
+});
+
+describe.each(["tls", "net"])("%s server socket whose peer resets the connection behind unread data", transport => {
+  // The peer sends data while the accepted socket is paused, then resets the
+  // connection (RST) instead of ending it. Node reports that as a read
+  // error and never emits 'end'. allowHalfOpen keeps the accepted socket open
+  // after an 'end', so a reset misreported as an orderly end strands it.
+  async function acceptPausedSocketAndFill() {
+    const accepted = Promise.withResolvers<net.Socket>();
+    const onConnection = (socket: net.Socket) => {
+      socket.pause();
+      accepted.resolve(socket);
+    };
+    const server =
+      transport === "tls"
+        ? createServer({ ...COMMON_CERT, allowHalfOpen: true }, onConnection)
+        : net.createServer({ allowHalfOpen: true }, onConnection);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+
+    const peerReady = Promise.withResolvers<void>();
+    const peer = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: (server.address() as AddressInfo).port,
+      tls: transport === "tls" ? { ca: COMMON_CERT.cert } : undefined,
+      socket: {
+        open() {
+          if (transport !== "tls") peerReady.resolve();
+        },
+        handshake(_peer, success, verifyError) {
+          if (success) peerReady.resolve();
+          else peerReady.reject(verifyError ?? new Error("handshake failed"));
+        },
+        data() {},
+        close() {},
+        error(_peer, error) {
+          peerReady.reject(error);
+        },
+        connectError(_peer, error) {
+          peerReady.reject(error);
+        },
+      },
+    });
+    const socket = await accepted.promise;
+    await peerReady.promise;
+
+    const events: string[] = [];
+    let bytes = 0;
+    // Settles on 'close', or on the 'end' that must not happen, so a failure does
+    // not wait for the test timeout on a socket left half-open.
+    const settled = Promise.withResolvers<void>();
+    socket.on("data", chunk => (bytes += chunk.length));
+    socket.on("end", () => {
+      events.push("end");
+      settled.resolve();
+    });
+    socket.on("error", error => events.push(`error ${(error as NodeJS.ErrnoException).code}`));
+    socket.on("close", hadError => {
+      events.push(`close hadError=${hadError}`);
+      settled.resolve();
+    });
+    // Paused again: the 'data' listener above switched the stream to flowing.
+    socket.pause();
+
+    const t = {
+      socket,
+      peer,
+      events,
+      bytesRead: () => bytes,
+      settled: settled.promise,
+      [Symbol.dispose]() {
+        socket.destroy();
+        server.close();
+      },
+    };
+    // One chunk that fits: it is queued ahead of the reset and the receive window
+    // stays open. macOS drops an RST that arrives at a zero window, so filling
+    // the buffers would strand the socket there.
+    const chunk = Buffer.alloc(64 * 1024, "r");
+    const written = peer.write(chunk);
+    if (written !== chunk.length) {
+      t[Symbol.dispose]();
+      throw new Error(`short write: ${written} of ${chunk.length}`);
+    }
+    return t;
+  }
+
+  it("reports the reset that arrives while the socket is paused as ECONNRESET, not 'end'", async () => {
+    using t = await acceptPausedSocketAndFill();
+    t.peer.terminate();
+    await t.settled;
+    expect(t.events).toEqual(["error ECONNRESET", "close hadError=true"]);
+    // The data queued ahead of the reset was read off the socket before it closed
+    // (kept in the paused stream's buffer), not discarded with the fd. Windows
+    // discards the receive queue on a reset.
+    if (!isWindows) expect(t.socket.bytesRead).toBe(64 * 1024);
+  });
+
+  it("delivers the data queued ahead of the reset and then reports ECONNRESET, not 'end'", async () => {
+    using t = await acceptPausedSocketAndFill();
+    // Both happen before the event loop runs again, so the socket's next read
+    // event carries the queued data and the reset together: the read loop drains
+    // the data and then gets the error from recv().
+    t.socket.resume();
+    t.peer.terminate();
+    await t.settled;
+    expect(t.events).toEqual(["error ECONNRESET", "close hadError=true"]);
+    // Windows discards the receive queue on a reset. Linux and macOS keep it, and
+    // like node, the data is delivered before the error.
+    if (!isWindows) expect(t.bytesRead()).toBeGreaterThan(0);
+  });
+});
+
+describe.each(["tls", "net"])("%s server socket that unpipe() paused after it end()ed", transport => {
+  // A front server pipes each accepted socket to an upstream connection and back.
+  // The upstream replies and closes: inner.pipe(sock) end()s sock, and the cleanup
+  // of sock.pipe(inner) unpipes sock, which pauses it with nothing left to resume
+  // it. The peer then closes. Node delivers 'end' and 'close' to the paused
+  // socket, so the connection count drops and server.close() calls back.
+  it("still emits 'end' and 'close' when the peer closes, and server.close() completes", async () => {
+    const upstream = net.createServer(s => s.on("data", () => s.end("reply")));
+    await once(upstream.listen(0, "127.0.0.1"), "listening");
+    const serverEvents: string[] = [];
+    const serverSocketClosed = Promise.withResolvers<void>();
+    const onConnection = (sock: net.Socket) => {
+      const inner = net.connect((upstream.address() as AddressInfo).port, "127.0.0.1", () => {
+        sock.pipe(inner);
+        inner.pipe(sock);
+      });
+      inner.on("close", () => serverEvents.push(`upstream closed, paused=${sock.isPaused()}`));
+      sock.on("end", () => serverEvents.push("end"));
+      sock.on("close", hadError => {
+        serverEvents.push(`close hadError=${hadError}`);
+        serverSocketClosed.resolve();
+      });
+      sock.on("error", serverSocketClosed.reject);
+    };
+    const front = transport === "tls" ? createServer(COMMON_CERT, onConnection) : net.createServer(onConnection);
+    await once(front.listen(0, "127.0.0.1"), "listening");
+    const frontClosed = Promise.withResolvers<void>();
+    const upstreamClosed = Promise.withResolvers<void>();
+    try {
+      const port = (front.address() as AddressInfo).port;
+      const clientEvents: string[] = [];
+      const clientClosed = Promise.withResolvers<void>();
+      const onConnect = () => client.write("hi");
+      const client: net.Socket =
+        transport === "tls"
+          ? connect({ port, host: "127.0.0.1", rejectUnauthorized: false }, onConnect)
+          : net.connect({ port, host: "127.0.0.1" }, onConnect);
+      client.setEncoding("utf8");
+      client.on("data", chunk => clientEvents.push(`data ${chunk}`));
+      client.on("end", () => clientEvents.push("end"));
+      client.on("close", () => {
+        clientEvents.push("close");
+        clientClosed.resolve();
+      });
+      client.on("error", clientClosed.reject);
+      await Promise.all([clientClosed.promise, serverSocketClosed.promise]);
+      expect({ clientEvents, serverEvents }).toEqual({
+        clientEvents: ["data reply", "end", "close"],
+        serverEvents: ["upstream closed, paused=true", "end", "close hadError=false"],
+      });
+    } finally {
+      front.close(err => (err ? frontClosed.reject(err) : frontClosed.resolve()));
+      upstream.close(err => (err ? upstreamClosed.reject(err) : upstreamClosed.resolve()));
+    }
+    // Both connections are gone, so both servers call back.
+    await Promise.all([frontClosed.promise, upstreamClosed.promise]);
+  });
+});
+
+describe("pauseOnConnect", () => {
+  it("hands out the accepted socket paused after the handshake and reads nothing until resume()", async () => {
+    const server = createServer({ ...COMMON_CERT, pauseOnConnect: true });
+    const accepted = Promise.withResolvers<TLSSocket>();
+    server.on("secureConnection", accepted.resolve);
+    server.on("tlsClientError", accepted.reject);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    // A second connection is the barrier: its bytes reach this process after the
+    // client's "hello" reached the paused socket's receive buffer.
+    const probe = net.createServer();
+    const probed = Promise.withResolvers<void>();
+    probe.on("connection", socket => socket.once("data", () => probed.resolve()));
+    await once(probe.listen(0, "127.0.0.1"), "listening");
+    const client = connect({
+      port: (server.address() as AddressInfo).port,
+      host: "127.0.0.1",
+      rejectUnauthorized: false,
+    });
+    const clientSecure = once(client, "secureConnect");
+    try {
+      const socket = await accepted.promise;
+      expect(socket.isPaused()).toBe(true);
+      await clientSecure;
+      await new Promise<void>((resolve, reject) => client.write("hello", err => (err ? reject(err) : resolve())));
+      const probeClient = net.connect((probe.address() as AddressInfo).port, "127.0.0.1", () => probeClient.end("x"));
+      await probed.promise;
+      // Node's TLSWrap reads ahead here (bytesRead would be 5). Ours stops reading once the
+      // handshake completed, so bytes sent after it stay in the kernel (app data that shares
+      // a segment with the client's Finished is still decrypted and buffered).
+      expect({ paused: socket.isPaused(), bytesRead: socket.bytesRead }).toEqual({ paused: true, bytesRead: 0 });
+      const received = once(socket, "data");
+      socket.resume();
+      const [chunk] = await received;
+      expect(String(chunk)).toBe("hello");
+      const clientClosed = once(client, "close");
+      socket.end();
+      client.end();
+      await clientClosed;
+    } finally {
+      server.close();
+      probe.close();
+    }
+  });
+});
+
+it("an accepted socket emits 'close' when a write is the first to see the peer's reset", async () => {
+  // A send() that fails with the reset consumes the socket error, so the loop then sees a
+  // plain hangup and the native close carries no error. With the rest of the write still
+  // waiting for a drain, the socket emitted 'end' and nothing else: no write callback, no
+  // 'error', no 'close', and the server counted it forever.
+  //
+  // The server is a child process so that it can stop polling: it reports the accepted
+  // socket, then blocks on stdin until this process has reset the connection.
+  //
+  // A socket that never closes gives no event to wait for, so a second connection asks.
+  // Its handshake takes several turns of the server's loop, and the reset socket closes in
+  // the first of them or not at all. The server reports when the second connection arrives.
+  const serverScript = `
+    const tls = require("node:tls");
+    const fs = require("node:fs");
+    const events = [];
+    let accepted;
+    const server = tls.createServer(${JSON.stringify(COMMON_CERT)}, socket => {
+      if (accepted) {
+        server.getConnections((err, connections) => {
+          console.log(JSON.stringify({ events, connections }));
+          // Also the first socket, so that this process exits when it never closed.
+          accepted.destroy();
+          socket.destroy();
+          server.close();
+        });
+        return;
+      }
+      accepted = socket;
+      socket.on("error", () => events.push("error"));
+      socket.on("close", hadError => events.push("close:" + hadError));
+      socket.resume();
+      fs.writeSync(1, "accepted\\n");
+      fs.readSync(0, Buffer.alloc(1));
+      // More than the TLS layer takes once the wire rejects a record, so the rest is parked.
+      socket.write(Buffer.alloc(1 << 20));
+      fs.writeSync(1, "wrote\\n");
+    });
+    server.listen(0, "127.0.0.1", () => fs.writeSync(1, "port=" + server.address().port + "\\n"));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", serverScript],
+    env: bunEnv,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  // Drain stderr while stdout is scanned, so a child that logs a lot cannot block on it.
+  const stderrText = proc.stderr.text();
+  let stdout = "";
+  let raw: net.Socket | undefined;
+  let probe: net.Socket | undefined;
+  let reset = false;
+  for await (const chunk of proc.stdout) {
+    stdout += Buffer.from(chunk).toString();
+    const port = /port=(\d+)/.exec(stdout);
+    if (port && !raw) {
+      raw = net.connect(Number(port[1]), "127.0.0.1");
+      raw.on("error", () => {});
+      connect({ socket: raw, rejectUnauthorized: false }).on("error", () => {});
+    }
+    if (raw && !reset && stdout.includes("accepted\n")) {
+      reset = true;
+      raw.resetAndDestroy();
+      proc.stdin.write("x");
+      proc.stdin.flush();
+    }
+    if (port && !probe && stdout.includes("wrote\n")) {
+      probe = connect({ port: Number(port[1]), host: "127.0.0.1", rejectUnauthorized: false });
+      probe.on("error", () => {});
+    }
+  }
+  const [stderr, exitCode] = await Promise.all([stderrText, proc.exited]);
+  probe?.destroy();
+  expect(stderr).toBe("");
+  const lines = stdout.trim().split("\n");
+  // The one connection left is the second one.
+  expect(JSON.parse(lines[lines.length - 1])).toEqual({ events: ["error", "close:true"], connections: 1 });
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(0);
 });

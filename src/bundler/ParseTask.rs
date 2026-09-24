@@ -116,8 +116,7 @@ pub struct ParseTask {
     pub(crate) package_version: ast::StoreStr,
     pub(crate) package_name: ast::StoreStr,
     pub(crate) is_entry_point: bool,
-    /// `Some` once the bundle thread answered `ResultValue::NeedsConstCallValues`:
-    /// the task runs a second time and is visited with these values.
+    /// Set for the second run of a task that returned `ResultValue::NeedsConstCallValues`.
     pub(crate) const_call_seeds: Option<Vec<bun_js_parser::ConstCallSeed<'static>>>,
 }
 
@@ -828,15 +827,11 @@ pub mod parse_worker {
     // getAST
     // ───────────────────────────────────────────────────────────────────────────
 
-    // `transpiler`/`resolver` are raw `*mut`. The caller may pass
-    // `resolver = &transpiler.resolver`, so
-    // the two may point into the same allocation. Taking `&mut Transpiler` +
-    // `&mut Resolver` would be aliased-`&mut` UB. We instead reborrow only the
-    // disjoint `(*transpiler).options` field, never the whole struct.
-    #[allow(clippy::too_many_arguments)]
     /// `get_ast` for the JavaScript and TypeScript loaders.
-    // The large variant is the common one, and the value is returned once per parse.
-    #[allow(clippy::large_enum_variant)]
+    #[allow(
+        clippy::large_enum_variant,
+        reason = "the large variant is the common one"
+    )]
     enum JsAst {
         Parsed(JSAst<'static>, bun_ast::ast_result::ConstCallValues),
         /// See `bun_js_parser::Result::NeedsConstCallValues`.
@@ -854,19 +849,12 @@ pub mod parse_worker {
         // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler`; only its
         // `options` field is reborrowed here.
         let topts = unsafe { &(*transpiler).options };
-        // `ParserOptions` is not `Clone` (holds `&'a mut MacroContext`).
-        // The empty-AST fallback needs the same options; since `opts`
-        // moves into `.parse()`,
-        // snapshot a faithful field-by-field copy via
-        // `Options::clone_for_lazy_export` (co-located with the struct so
-        // field drift is a hard error) before the move.
+        // `opts` moves into `parse`, so the empty-AST fallback copies it first.
         let fallback_opts = opts.clone_for_lazy_export();
         let module_type = opts.module_type;
         let ast = if let Some(res) =
             (crate::cache::JavaScript {}).parse(bump, opts, &topts.define, log, source)?
         {
-            // `Cached`/`AlreadyBundled` are runtime-loader
-            // states that never reach the bundler's `getAST`, so unwrap.
             match res {
                 bun_js_parser::Result::Ast(mut ast) => {
                     let const_call_values = core::mem::take(&mut ast.const_call_values);
@@ -887,6 +875,12 @@ pub mod parse_worker {
         Ok(JsAst::Parsed(ast, Default::default()))
     }
 
+    // `transpiler`/`resolver` are raw `*mut`. The caller may pass
+    // `resolver = &transpiler.resolver`, so
+    // the two may point into the same allocation. Taking `&mut Transpiler` +
+    // `&mut Resolver` would be aliased-`&mut` UB. We instead reborrow only the
+    // disjoint `(*transpiler).options` field, never the whole struct.
+    #[allow(clippy::too_many_arguments)]
     fn get_ast(
         log: &mut Log,
         transpiler: *mut Transpiler,
@@ -2357,8 +2351,10 @@ pub mod parse_worker {
     // ───────────────────────────────────────────────────────────────────────────
 
     /// What one run of a `ParseTask` produced.
-    // As for `JsAst`.
-    #[allow(clippy::large_enum_variant)]
+    #[allow(
+        clippy::large_enum_variant,
+        reason = "the large variant is the common one"
+    )]
     enum Parsed {
         Success(Success),
         NeedsConstCallValues(NeedsConstCallValues),

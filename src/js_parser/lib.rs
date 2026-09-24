@@ -231,9 +231,7 @@ pub enum Result<'a> {
     AlreadyBundled(AlreadyBundled),
     Cached,
     Ast(Box<Ast<'a>>),
-    /// Bundler only. The parse stopped before the visit pass: a branch condition
-    /// calls these imports, and the call may fold once the bundler knows what it
-    /// returns. Parse again with `Options::const_call_seeds` set.
+    /// Bundler only: the parse stopped before the visit pass to ask what these imports return.
     NeedsConstCallValues(Box<[ConstCallImport<'a>]>),
 }
 

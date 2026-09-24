@@ -1,17 +1,4 @@
-//! Cross-file half of constant-call folding (`bun_js_parser::visit::const_call`).
-//!
-//! The visit pass folds `isDev()` to a literal only when it already knows what
-//! the call returns. For an import that is not known until the imported file is
-//! parsed, and a file is normally parsed before its imports are even resolved.
-//! So a file whose branch condition calls an import stops after its parse pass
-//! (`ResultValue::NeedsConstCallValues`). The bundle thread resolves just those
-//! imports, waits for the files they name, and schedules the same `ParseTask`
-//! again with the values it found. That second run is the only one that visits
-//! the file, so a dead branch never creates a `require()` or `import()` record.
-//!
-//! A stopped file holds one `Graph::pending_items` unit until its second run
-//! completes. An import this module cannot evaluate is left alone: the call
-//! stays a call.
+//! Gets what an imported constant function returns before its importer is visited (`bun_js_parser::visit::const_call`).
 
 use crate::Graph::InputFileFlags;
 use crate::bundle_v2::BundleV2;
@@ -79,9 +66,7 @@ impl State {
     }
 }
 
-/// Tarjan's algorithm, without recursion. `edges[node]` lists the nodes that
-/// `node` points to. Returns a component id for each node: two nodes share an
-/// id when each can reach the other.
+/// Tarjan's algorithm: a component id for each node, equal for nodes that reach each other.
 fn strongly_connected_components(edges: &[Vec<usize>]) -> Vec<usize> {
     const UNVISITED: usize = usize::MAX;
     let mut order = vec![UNVISITED; edges.len()];
@@ -198,14 +183,7 @@ impl<'a> BundleV2<'a> {
         }
     }
 
-    /// `is_done`: every unit left belongs to a stopped file, so no file they
-    /// wait for can finish by itself. A wait is given up when the awaited file
-    /// is not stopped (a plugin deferred its load until the graph is idle), or
-    /// when it waits for this file in turn (an import cycle). The rest keep
-    /// waiting: a file that only imports from a cycle still gets its values.
-    ///
-    /// Which files are stopped here, and what each waits for, does not depend
-    /// on the order in which the files were parsed. So the output does not.
+    /// When only stopped files are pending, gives up the waits that cannot end: a cycle, a deferred load.
     pub(crate) fn release_stopped_files_if_idle(&mut self) -> bool {
         let stopped = self.graph.const_calls.stopped_count();
         if stopped == 0 || self.graph.pending_items != stopped {
@@ -264,9 +242,7 @@ impl<'a> BundleV2<'a> {
         true
     }
 
-    /// Resolves the imports a stopped file asked about, through the same path
-    /// as every other import record. The file's second run resolves all of its
-    /// records again, so nothing here may be reported or dispatched twice.
+    /// Resolves the imports a stopped file asked about. Its second run resolves and reports them again.
     fn resolve_const_call_imports(
         &mut self,
         needs: &parse_task::NeedsConstCallValues,
@@ -294,8 +270,7 @@ impl<'a> BundleV2<'a> {
             };
             // An `onResolve` plugin answers later, with this record's real index.
             let matches_plugin = self.matches_on_resolve_plugin(import.specifier);
-            // `./page.html` and `./data.json` export no function, and resolving an
-            // HTML import creates its manifest module.
+            // Only a JavaScript file exports a function, and resolving an HTML import has side effects.
             let names_other_loader = Fs::Path::init(import.specifier)
                 .loader(&self.transpiler.options.loaders)
                 .is_some_and(|loader| !loader.is_javascript_like());
@@ -318,8 +293,7 @@ impl<'a> BundleV2<'a> {
             target: needs.target,
             only_records: None,
         });
-        // The second run resolves the record the file keeps, and reports a failure
-        // for it. A warning is logged once, when the resolver first reads a file.
+        // The second run reports the errors again. A warning is logged only once, so it stays.
         {
             let log = self.transpiler.log_mut();
             let mut kept = msgs_before;
@@ -333,8 +307,7 @@ impl<'a> BundleV2<'a> {
             log.errors = errors_before;
         }
 
-        // Only a JavaScript file can export a function. Any other new file is
-        // left for the second run, which also records it on the importer.
+        // A new file of another loader is left for the second run, which records it on the importer.
         let loaders = &self.transpiler.options.loaders;
         resolved.resolve_queue.retain(|_, task| {
             // SAFETY: arena-allocated by `resolve_import_records` and not scheduled yet.
@@ -370,8 +343,7 @@ impl<'a> BundleV2<'a> {
         (targets, scheduled)
     }
 
-    /// Moves every request of `importer` as far as the finished files allow,
-    /// then schedules the second run if none is left waiting.
+    /// Moves each request of `importer` as far as finished files allow, then schedules it if none waits.
     fn advance_stopped_file(&mut self, importer: IndexInt) {
         let Some(mut stopped) = self.graph.const_calls.stopped.remove(&importer) else {
             return;
@@ -461,8 +433,7 @@ impl<'a> BundleV2<'a> {
         };
         let record = &self.graph.ast.items_import_records()[index].as_slice()
             [import.import_record_index as usize];
-        // Whether such a record is resolved by now depends on the order in which
-        // other files finished or a plugin answered. The output must not.
+        // Whether such a record is resolved yet depends on timing. The output must not.
         if self.graph.input_files.items_flags()[index].contains(InputFileFlags::IS_BARREL)
             || self.matches_on_resolve_plugin(record.original_path)
         {

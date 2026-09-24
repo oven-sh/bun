@@ -1,23 +1,5 @@
 #![warn(unused_must_use)]
-//! Calls that fold to a literal during the visit pass.
-//!
-//! A function whose visited body returns the same primitive on every path
-//! (`function isDev() { return false }`, an empty body, `if` chains over tests
-//! the parser already knows) is recorded as `Ref -> value`. `P::e_call` then
-//! replaces a plain call of it with the value, so branch folding and dead-code
-//! elimination see a literal, the same as for `--define` and `feature()`.
-//!
-//! Only the bundler enables this. A fold is sound only while nothing rebinds
-//! the function. An assignment or a direct `eval` can appear after a call was
-//! already folded, so `_parse` parses the file once more without the functions
-//! in [`ConstCalls::unsound`].
-//!
-//! Across files the value has to be known before the importer is visited. The
-//! parse pass notes each import that a branch condition calls
-//! ([`ConstCalls::guard_imports`]). `_parse` then stops before the visit pass
-//! and returns those imports. The bundler parses the imported files first and
-//! runs the parse again with a [`ConstCallSeed`] for each call it could
-//! evaluate (`bun_bundler::const_call_inlining`).
+//! Folds a call of a function that always returns the same primitive, during the visit pass.
 
 use crate::p::P;
 use crate::scan::scan_side_effects::SideEffects;
@@ -34,8 +16,7 @@ bun_core::declare_scope!(const_call, hidden);
 /// A function body with more statements than this is never a candidate.
 const MAX_BODY_STMTS: usize = 4;
 const MAX_BODY_DEPTH: u32 = 4;
-/// A longer string is data, not a flag: a copy at every call grows the output
-/// (three.js returns its shader sources from functions like this).
+/// A longer string at every call grows the output (three.js returns shader sources this way).
 const MAX_STRING_LEN: usize = 64;
 
 pub(crate) struct Fact {
@@ -65,8 +46,7 @@ pub struct ConstCallRetry<'a> {
     pub(crate) disable: bool,
 }
 
-/// An import that a branch condition calls. `import_record_index` and `alias`
-/// come back in the [`ConstCallSeed`], so the second parse finds the same item.
+/// An import that a branch condition calls. The bundler answers with a [`ConstCallSeed`].
 pub struct ConstCallImport<'a> {
     pub import_record_index: u32,
     /// The name of the export in the imported file.
@@ -143,8 +123,7 @@ fn body_is_candidate(stmts: &[Stmt], depth: u32) -> bool {
     })
 }
 
-/// A module-scope function declaration worth visiting before the statements
-/// that call it. The check is on the unvisited body, so it only looks at shape.
+/// A top-level function declaration whose unvisited body has the shape of a constant function.
 pub(crate) fn is_previsit_candidate(stmt: &Stmt) -> bool {
     let StmtData::SFunction(data) = stmt.data else {
         return false;
@@ -371,9 +350,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 
-    /// Parse pass: `test` decides a branch. `deep` also looks at both sides of
-    /// `&&`, `||`, `??` and `,`. Each of those operators checks its own left side, so
-    /// a caller that is one of them passes `false` and a chain is walked once.
+    /// Parse pass: notes the imports `test` calls. `deep` also looks under `&&`, `||`, `??` and `,`.
     #[inline]
     pub(crate) fn note_const_call_guard(&mut self, test: &Expr, deep: bool) {
         // An import statement below its first use is legal, and such a use is not seen here.
@@ -440,8 +417,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// After the parse pass: the imports whose value the bundler must look up
-    /// before this file is visited. `None` when the file can be visited now.
+    /// The imports the bundler must look up before this file is visited, if any.
     pub(crate) fn const_call_imports(&self, stmts: &[Stmt]) -> Option<Vec<ConstCallImport<'a>>> {
         if !self.const_calls_enabled || self.options.const_call_seeds.is_some() {
             return None;
@@ -468,8 +444,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             {
                 continue;
             }
-            // The bundler waits for this file anyway, so every item of the
-            // statement is asked about: a call outside a condition folds too.
+            // The bundler waits for this file anyway, so it is asked about every item of the statement.
             let aliases = import
                 .default_name
                 .map(|_| &b"default"[..])
@@ -533,9 +508,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `to_ast`: what importers may fold. A function declaration is initialized
-    /// before any module runs, so a call from an import cycle sees it too. A
-    /// `const` is not.
+    /// What importers may fold: only function declarations, which exist before any module runs.
     pub(crate) fn const_call_exports(&self) -> js_ast::ast_result::ConstCallValues {
         let mut exports = js_ast::ast_result::ConstCallValues::default();
         let Some(calls) = self.const_calls.as_ref() else {

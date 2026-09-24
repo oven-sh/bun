@@ -95,8 +95,7 @@ pub struct Ast<'a> {
     pub target: Target,
     // const_values: ConstValuesMap,
     pub ts_enums: TsEnumsMap,
-    /// Module-scope function declarations whose every call evaluates to this
-    /// primitive (`js_parser/visit/const_call.rs`). Only populated when bundling.
+    /// Top-level functions whose every call returns this primitive (`js_parser/visit/const_call.rs`).
     pub const_call_values: ConstCallValues,
 
     /// Not to be confused with `commonjs_named_exports`

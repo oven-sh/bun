@@ -161,8 +161,7 @@ pub struct Options<'a> {
     /// Set by `_parse` for its second attempt, after a folded call turned out to be unsound.
     pub const_call_retry: Option<crate::visit::const_call::ConstCallRetry<'a>>,
 
-    /// `Some` for the run after `Result::NeedsConstCallValues`: what the bundler
-    /// found for the imports that run asked about. That run does not ask again.
+    /// Set for the run after `Result::NeedsConstCallValues`: the values the bundler found.
     pub const_call_seeds: Option<&'a [crate::visit::const_call::ConstCallSeed<'a>]>,
 }
 
@@ -854,8 +853,7 @@ fn is_const_local_prefix_stmt(stmt: &Stmt) -> bool {
     }
 }
 
-/// The scopes the parse pass pushed for the top-level statement at `loc`. `scopes` is
-/// in source order and starts at or before that statement.
+/// The scopes the parse pass pushed for the top-level statement at `loc`, from `scopes` in source order.
 fn scopes_of_top_level_stmt<'a>(
     scopes: &'a [crate::ScopeOrder<'a>],
     loc: bun_ast::Loc,
@@ -1029,8 +1027,7 @@ impl<'a> Parser<'a> {
         }
 
         p.enable_const_calls();
-        // Nothing that runs in the visit pass has happened: no macro call, no
-        // `require()` or `import()` record, no symbol use.
+        // Nothing of the visit pass has run: no macro call, no import record, no symbol use.
         if let Some(imports) = p.const_call_imports(stmts) {
             return Ok(ParseAttempt::Done(crate::Result::NeedsConstCallValues(
                 imports.into_boxed_slice(),
@@ -1186,11 +1183,7 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            // A function declaration is callable before the statements above it run, so
-            // the ones that may fold to a value (`visit/const_call.rs`) are visited before
-            // the statements that can call them. The const local prefix comes first: such
-            // a body can read it. A CommonJS file keeps the source order: the visit of
-            // `exports.name` depends on it.
+            // Functions that may fold (`visit/const_call.rs`) are visited before the statements that call them.
             struct PrevisitedFn<'a> {
                 stmt_i: usize,
                 scope_count: usize,

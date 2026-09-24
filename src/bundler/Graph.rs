@@ -152,9 +152,7 @@ bitflags::bitflags! {
     pub struct InputFileFlags: u8 {
         /// Set when a barrel-eligible file has `export * from` this file.
         const IS_EXPORT_STAR_TARGET = 1 << 1;
-        /// Every named export is a re-export, and the package allows it:
-        /// `apply_barrel_optimization` can defer this file's import records.
-        /// Which of them it defers depends on the order the importers finish.
+        /// A pure re-export file whose import records `apply_barrel_optimization` can defer.
         const IS_BARREL = 1 << 2;
     }
 }

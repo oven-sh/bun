@@ -1187,22 +1187,9 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* 
         globalObj->m_aboutToBeNotifiedRejectedPromises.append(obj->vm(), globalObj, promise, Bun::moduleGraphRejecting(globalObj));
         break;
     case JSPromiseRejectionOperation::Handle:
-        bool removed = globalObj->m_aboutToBeNotifiedRejectedPromises.remove(globalObj, promise);
-        if (removed) break;
-        // handleRejectedPromises() drains the list into a local buffer before
-        // running any handler. A handler may .catch() a later still-queued
-        // promise; that promise is no longer in m_aboutToBeNotifiedRejectedPromises
-        // but has not yet had 'unhandledRejection' fired, so it must not get
-        // 'rejectionHandled'. Check every in-flight tail (handlers can re-enter
-        // handleRejectedPromises(), so there may be more than one).
-        for (auto* inflight = globalObj->m_rejectedPromisesBeingProcessed; inflight; inflight = inflight->outer) {
-            for (size_t i = inflight->index, n = inflight->buffer->size(); i < n; ++i) {
-                if (inflight->buffer->at(i).asCell() == promise)
-                    return;
-            }
-        }
-        // The promise rejection has already been notified, now we need to queue it for the rejectionHandled event
-        Bun__handleHandledPromise(globalObj, promise);
+        // Reported as unhandled before it got this handler: queue the rejectionHandled event.
+        if (globalObj->m_aboutToBeNotifiedRejectedPromises.didHandle(globalObj, promise))
+            Bun__handleHandledPromise(globalObj, promise);
         break;
     }
 }
@@ -3366,44 +3353,6 @@ RefPtr<Performance> GlobalObject::performance()
 
 extern "C" void Bun__handleRejectedPromise(Zig::GlobalObject* JSGlobalObject, JSC::JSPromise* promise, JSC::EncodedJSValue rejectionOwner);
 
-void GlobalObject::RejectedPromiseQueue::append(JSC::VM& vm, JSC::JSCell* owner, JSC::JSPromise* promise, JSC::JSObject* rejectionOwner)
-{
-    WTF::Locker locker { owner->cellLock() };
-    m_entries.append({});
-    m_entries.last().promise.set(vm, owner, promise);
-    m_entries.last().rejectionOwner.set(vm, owner, rejectionOwner ? JSValue(rejectionOwner) : jsNull());
-}
-
-bool GlobalObject::RejectedPromiseQueue::remove(JSC::JSCell* owner, JSC::JSPromise* promise)
-{
-    WTF::Locker locker { owner->cellLock() };
-    return m_entries.removeFirstMatching([&](Entry& entry) { return entry.promise.get() == promise; });
-}
-
-void GlobalObject::RejectedPromiseQueue::drainTo(JSC::JSCell* owner, JSC::MarkedArgumentBuffer& promises, JSC::MarkedArgumentBuffer& rejectionOwners)
-{
-    WTF::Locker locker { owner->cellLock() };
-    promises.ensureCapacity(promises.size() + m_entries.size());
-    rejectionOwners.ensureCapacity(rejectionOwners.size() + m_entries.size());
-    for (Entry& entry : m_entries) {
-        if (entry.promise.get().isCell()) {
-            promises.append(entry.promise.get());
-            rejectionOwners.append(entry.rejectionOwner.get());
-        }
-    }
-    m_entries.clear();
-}
-
-template<typename Visitor>
-void GlobalObject::RejectedPromiseQueue::visit(JSC::JSCell* owner, Visitor& visitor)
-{
-    WTF::Locker locker { owner->cellLock() };
-    for (auto& entry : m_entries) {
-        visitor.append(entry.promise);
-        visitor.append(entry.rejectionOwner);
-    }
-}
-
 void GlobalObject::handleRejectedPromises()
 {
     if (m_aboutToBeNotifiedRejectedPromises.isEmpty()) [[likely]]
@@ -3419,17 +3368,12 @@ void GlobalObject::handleRejectedPromises()
         JSC::MarkedArgumentBuffer rejectionOwners;
         m_aboutToBeNotifiedRejectedPromises.drainTo(this, promises, rejectionOwners);
         RELEASE_ASSERT(!promises.hasOverflowed() && !rejectionOwners.hasOverflowed());
-        // Expose the not-yet-processed tail so promiseRejectionTracker(Handle)
-        // can tell "still pending" apart from "already notified". Linked as a
-        // stack so a re-entrant handleRejectedPromises() (a handler that ticks
-        // the event loop) restores the outer frame instead of nulling it.
-        InFlightRejections inflight { &promises, 0, m_rejectedPromisesBeingProcessed };
-        WTF::SetForScope inflightScope(m_rejectedPromisesBeingProcessed, &inflight);
         for (size_t i = 0, size = promises.size(); i < size; ++i) {
             auto* promise = static_cast<JSC::JSPromise*>(promises.at(i).asCell());
             if (promise->isHandled())
                 continue;
-            inflight.index = i + 1;
+            // From here on a handler on this promise is late: promiseRejectionTracker(Handle) owes it 'rejectionHandled'.
+            m_aboutToBeNotifiedRejectedPromises.markReported(this, promise);
 
             Bun__handleRejectedPromise(this, promise, JSValue::encode(rejectionOwners.at(i)));
             if (auto ex = scope.exception()) {

@@ -5831,22 +5831,36 @@ fn resolve_file_stat(store: &RefPtr<Store>) {
     }
 }
 
+/// Whether `store` is a file descriptor. Its offset, and for a pipe its bytes,
+/// are shared, so a second Blob over it never reads the same bytes.
+pub(crate) fn store_is_fd(store: &RefPtr<Store>) -> bool {
+    matches!(&store.data, store::Data::File(file) if file.pathlike.is_fd())
+}
+
 /// Whether a second Blob over `store` reads the same bytes from the start.
-/// Memory and S3 do. A path does when it names a regular file (each read
-/// opens it again); it is stat'd here if that is not yet known. A file
-/// descriptor never does: its offset, and for a pipe its bytes, are shared.
+/// Memory and S3 do, a file descriptor never does ([`store_is_fd`]). A path
+/// does when it names a regular file (each read opens it again), and when it
+/// cannot be stat'd: both readers then fail the same way.
+///
+/// `clone()` asks this before it turns an unread file stream back into its
+/// Blob. The stat made here is not cached. The store is shared with the other
+/// body and with the user's `Bun.file()`, whose reads, `size`, `lastModified`
+/// and `exists()` all answer from a cached stat.
 pub(crate) fn store_reads_repeatably(store: &RefPtr<Store>) -> bool {
-    match Store::data_mut(store).tag() {
-        store::DataTag::Bytes | store::DataTag::S3 => true,
-        store::DataTag::File => {
-            if let PathOrFileDescriptor::Fd(_) = Store::data_mut(store).as_file().pathlike {
-                return false;
-            }
-            if Store::data_mut(store).as_file().seekable.is_none() {
-                resolve_file_stat(store);
-            }
-            Store::data_mut(store).as_file().seekable != Some(false)
-        }
+    let store::Data::File(file) = &store.data else {
+        return true;
+    };
+    let PathOrFileDescriptor::Path(path) = &file.pathlike else {
+        return false;
+    };
+    // Set by `resolve_file_stat` to "is a regular file".
+    if let Some(is_regular_file) = file.seekable {
+        return is_regular_file;
+    }
+    let mut buffer = bun_paths::path_buffer_pool::get();
+    match bun_sys::stat(path.slice_z(&mut buffer)) {
+        bun_sys::Result::Ok(stat) => bun_sys::S::ISREG(stat.st_mode as _),
+        _ => true,
     }
 }
 

@@ -97,11 +97,15 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
       cmd: [bunExe(), "-e", script],
       env: { ...bunEnv, DATABASE_URL: url() },
       stdout: "pipe",
-      stderr: "inherit",
+      stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout).toBe("boom from toString\n");
-    expect(exitCode).toBe(0);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // stderr is here so that a failure shows it. A sanitizer build can write to it.
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "boom from toString\n",
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
   });
 
   test("a query dispatched from inside a conversion that then fails never gets another query's row", async () => {

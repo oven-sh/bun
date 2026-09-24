@@ -996,6 +996,23 @@ describe("Query Execution", () => {
     expect(await settle(transaction)).toEqual({ code: "ERR_SQLITE_QUERY_CANCELLED", message: "Query cancelled" });
     expect(await db`SELECT count(*) AS n FROM cancel_in_transaction`).toEqual([{ n: 0 }]);
   });
+
+  test("a query cancelled before it runs leaves its transaction scope when it rejects", async () => {
+    await using db = new SQL(":memory:");
+    await db`CREATE TABLE cancel_then_close (id INTEGER)`;
+    const transaction = db.begin(async tx => {
+      await tx`INSERT INTO cancel_then_close VALUES (1)`;
+      const query = tx`SELECT 1 AS x`;
+      query.cancel();
+      await settle(query);
+      // close({ timeout }) waits on every query that is still in the scope. A rejected
+      // query that stays there ends that wait at once, and close() then skips the ROLLBACK.
+      await tx.close({ timeout: 1 });
+    });
+
+    expect(await settle(transaction)).toEqual({ code: "ERR_SQLITE_CONNECTION_CLOSED", message: "Connection closed" });
+    expect(await db`SELECT count(*) AS n FROM cancel_then_close`).toEqual([{ n: 0 }]);
+  });
 });
 
 // Bun's bundled SQLite allows 250000 parameters. A system libsqlite3 (macOS) can stop at 32766.

@@ -2639,7 +2639,7 @@ pub fn is_writable(fd: Fd) -> Pollable {
 }
 
 // ── os_entropy ────────────────────────────────────────────────────────────
-// Raw OS entropy source: the `getrandom` crate on Linux, getentropy on Darwin/BSD,
+// Raw OS entropy source: getrandom(2) on Linux, getentropy on Darwin/BSD,
 // RtlGenRandom on Windows. bun_core sits below boringssl_sys in the crate
 // graph so it cannot reach `RAND_bytes`; this is used only to seed
 // `fast_random()`'s thread-local PRNG once per thread. Every other caller
@@ -2648,14 +2648,35 @@ pub fn is_writable(fd: Fd) -> Pollable {
 fn os_entropy(bytes: &mut [u8]) {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        // Under seccomp the crate never falls back: glibc 2.41+ answers its probe from the vDSO.
-        if let Err(err) = getrandom::fill(bytes) {
-            use std::io::Read;
-            if let Err(io_err) =
-                std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(bytes))
-            {
-                panic!("getrandom failed ({err}), /dev/urandom failed ({io_err})");
+        let mut filled = 0usize;
+        while filled < bytes.len() {
+            // SAFETY: writes at most len-filled bytes into the slice.
+            let rc = unsafe {
+                libc::getrandom(
+                    bytes.as_mut_ptr().add(filled).cast(),
+                    bytes.len() - filled,
+                    0,
+                )
+            };
+            if rc < 0 {
+                let err = crate::ffi::errno();
+                if err == libc::EINTR {
+                    continue;
+                }
+                // ENOSYS: Linux older than 3.17. EPERM: a seccomp filter.
+                if err == libc::ENOSYS || err == libc::EPERM {
+                    use std::io::Read;
+                    let rest = &mut bytes[filled..];
+                    if let Err(io_err) =
+                        std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(rest))
+                    {
+                        panic!("getrandom failed (errno {err}), /dev/urandom failed ({io_err})");
+                    }
+                    return;
+                }
+                panic!("getrandom failed: errno {err}");
             }
+            filled += rc as usize;
         }
     }
     #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd"))]

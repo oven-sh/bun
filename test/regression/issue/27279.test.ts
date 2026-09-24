@@ -15,17 +15,13 @@ import { join } from "node:path";
 //
 // This test installs a seccomp filter that makes getrandom(2) fail with ENOSYS,
 // which is what such a kernel answers, and runs those entry points under it.
-//
-// A filter is not a full copy of an old kernel: glibc 2.41+ answers a
-// zero-length getrandom() from the vDSO with no syscall. The getrandom crate
-// probes with that call. So on glibc the crate fails under the filter and
-// `os_entropy` reads /dev/urandom itself. On musl the crate takes its own
-// fallback.
-describe.skipIf(!isLinux)("getrandom(2) answers ENOSYS", () => {
-  const ENOSYS = 38;
+// A seccomp policy that does not know getrandom(2) answers EPERM. BoringSSL
+// aborts on that errno, so only `bun build` has an EPERM case.
+describe.skipIf(!isLinux)("getrandom(2) is not available", () => {
+  const errnos = { ENOSYS: 38, EPERM: 1 };
 
-  // usage: block <cmd> [args...]
-  // exit 77: the environment refuses the filter (skip). exit 78: the filter is
+  // usage: block <errno> <cmd> [args...]
+  // exit 77: the environment refuses the filter. exit 78: the filter is
   // installed but getrandom still works, so the run would prove nothing.
   const helperSrc = `
 #define _GNU_SOURCE
@@ -35,6 +31,7 @@ describe.skipIf(!isLinux)("getrandom(2) answers ENOSYS", () => {
 #include <linux/seccomp.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <sys/prctl.h>
 #include <sys/syscall.h>
 #include <unistd.h>
@@ -48,8 +45,9 @@ describe.skipIf(!isLinux)("getrandom(2) answers ENOSYS", () => {
 #endif
 
 int main(int argc, char **argv) {
-  if (argc < 2) return 2;
+  if (argc < 3) return 2;
   if (MY_AUDIT_ARCH == 0) return 77;
+  unsigned int err = (unsigned int)atoi(argv[1]);
 
   struct sock_filter filter[] = {
     BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, arch)),
@@ -57,7 +55,7 @@ int main(int argc, char **argv) {
     BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
     BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, nr)),
     BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_getrandom, 0, 1),
-    BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | (${ENOSYS} & SECCOMP_RET_DATA)),
+    BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | (err & SECCOMP_RET_DATA)),
     BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
   };
   struct sock_fprog prog = {
@@ -75,12 +73,12 @@ int main(int argc, char **argv) {
   }
 
   unsigned char probe;
-  if (syscall(__NR_getrandom, &probe, 1, 0) != -1 || errno != ${ENOSYS}) {
+  if (syscall(__NR_getrandom, &probe, 1, 0) != -1 || errno != (int)err) {
     fprintf(stderr, "getrandom is not blocked\\n");
     return 78;
   }
 
-  execvp(argv[1], &argv[1]);
+  execvp(argv[2], &argv[2]);
   perror("execvp");
   return 127;
 }
@@ -111,44 +109,50 @@ int main(int argc, char **argv) {
 
   // describe.skipIf still runs this callback on the other platforms.
   const helperBin = isLinux ? tryBuild() : null;
+  // One run of the helper tells if this environment accepts the filter (exit 77 if not).
+  const canFilter = helperBin != null && spawnSync(helperBin, [String(errnos.ENOSYS), "true"]).status === 0;
 
-  // Runs `bun ...args` in `cwd` with getrandom(2) blocked. Returns null if the
-  // environment refuses the seccomp filter (skip).
-  async function runWithoutGetrandom(cwd: string, args: string[], env: Record<string, string> = {}) {
+  // Runs `bun ...args` in `cwd` with getrandom(2) answering `errno`.
+  async function runWithoutGetrandom(errno: number, cwd: string, args: string[], env: Record<string, string> = {}) {
     await using proc = Bun.spawn({
-      cmd: [helperBin!, bunExe(), ...args],
+      cmd: [helperBin!, String(errno), bunExe(), ...args],
       env: { ...bunEnv, ...env },
       cwd,
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    if (exitCode === 77) return null;
-    // 78: the filter does not block getrandom. 127: execvp failed.
-    if (exitCode === 78 || exitCode === 127) {
+    // 77: the filter was refused. 78: it does not block getrandom. 127: execvp failed.
+    if (exitCode === 77 || exitCode === 78 || exitCode === 127) {
       throw new Error(`seccomp helper exited with code ${exitCode}:\n${stderr}`);
     }
     return { stdout, stderr, exitCode };
   }
 
+  type Output = { stdout: string; stderr: string; exitCode: number };
+  const bunBuild = {
+    name: "bun build",
+    args: ["build", "./index.ts", "--outdir", "./out"],
+    check: async (out: Output, dir: string) => {
+      // The exit code goes first here: a build that failed wrote no file to read.
+      expect(out.exitCode, out.stderr).toBe(0);
+      expect(await Bun.file(join(dir, "out", "index.js")).text()).toContain("from-index");
+    },
+  };
+
   const cases: Array<{
     name: string;
+    errno: keyof typeof errnos;
     args: string[];
     files?: Record<string, string>;
     env?: (dir: string) => Record<string, string>;
-    check: (out: { stdout: string; stderr: string; exitCode: number }, dir: string) => Promise<void> | void;
+    check: (out: Output, dir: string) => Promise<void> | void;
   }> = [
-    {
-      name: "bun build",
-      args: ["build", "./index.ts", "--outdir", "./out"],
-      check: async (out, dir) => {
-        // The exit code goes first here: a build that failed wrote no file to read.
-        expect(out.exitCode, out.stderr).toBe(0);
-        expect(await Bun.file(join(dir, "out", "index.js")).text()).toContain("from-index");
-      },
-    },
+    { ...bunBuild, errno: "ENOSYS" },
+    { ...bunBuild, errno: "EPERM" },
     {
       name: "Bun.build()",
+      errno: "ENOSYS",
       args: [
         "-e",
         `const result = await Bun.build({ entrypoints: ["./index.ts"] });
@@ -161,6 +165,7 @@ int main(int argc, char **argv) {
     },
     {
       name: "bun test --randomize",
+      errno: "ENOSYS",
       args: ["test", "--randomize", "./seed.test.ts"],
       check: out => {
         expect(out.stderr).toContain("--seed=");
@@ -170,6 +175,7 @@ int main(int argc, char **argv) {
     },
     {
       name: "bun install",
+      errno: "ENOSYS",
       args: ["install"],
       files: {
         "package.json": JSON.stringify({
@@ -192,25 +198,18 @@ int main(int argc, char **argv) {
   ];
 
   for (const c of cases) {
-    test.concurrent(`${c.name} falls back to /dev/urandom`, async () => {
-      if (helperBin == null) {
-        console.warn(`SKIP ${c.name}: cc or seccomp headers not available`);
-        return;
-      }
+    // Skipped where the host has no cc or kernel headers, or refuses the seccomp filter.
+    test
+      .skipIf(!canFilter)
+      .concurrent(`${c.name} reads /dev/urandom when getrandom(2) answers ${c.errno}`, async () => {
+        using dir = tempDir("getrandom-enosys", {
+          "index.ts": `console.log("from-index");`,
+          "seed.test.ts": `import { test, expect } from "bun:test"; test("runs", () => { expect(1).toBe(1); });`,
+          ...c.files,
+        });
 
-      using dir = tempDir("getrandom-enosys", {
-        "index.ts": `console.log("from-index");`,
-        "seed.test.ts": `import { test, expect } from "bun:test"; test("runs", () => { expect(1).toBe(1); });`,
-        ...c.files,
+        const out = await runWithoutGetrandom(errnos[c.errno], String(dir), c.args, c.env?.(String(dir)));
+        await c.check(out, String(dir));
       });
-
-      const out = await runWithoutGetrandom(String(dir), c.args, c.env?.(String(dir)));
-      if (out == null) {
-        console.warn(`SKIP ${c.name}: seccomp not permitted in this environment`);
-        return;
-      }
-
-      await c.check(out, String(dir));
-    });
   }
 });

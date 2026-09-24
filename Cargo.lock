@@ -392,7 +392,6 @@ dependencies = [
  "bun_wyhash",
  "bytemuck",
  "const_format",
- "getrandom",
  "itoa",
  "libc",
  "strum",

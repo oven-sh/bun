@@ -16,6 +16,9 @@ const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 // SPAWN_FAULT_RECV_AT=N  the Nth recv() on each AF_UNIX socket fails with EIO (1-based).
 // SPAWN_FAULT_SEND_AT=N  the Nth send() on each AF_UNIX socket fails with ENOBUFS.
 // SPAWN_FAULT_REPORT=path  the failing recv() writes how many bytes that socket received before it to this file.
+// With SPAWN_FAULT_RECV_AT, two more settings shape the reads before the failing one:
+// SPAWN_FAULT_RECV_EAGAIN_AT=N  the Nth recv() reads nothing and fails with EAGAIN.
+// SPAWN_FAULT_RECV_CAP=N  every recv() returns at most N bytes, as when the reader outpaces the writer.
 const SHIM_C = /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
@@ -37,6 +40,8 @@ static int (*real_close)(int);
 static long (*real_syscall)(long, long, long, long, long, long, long);
 static int fail_recv_at = -1;
 static int fail_send_at = -1;
+static int eagain_recv_at = -1;
+static long recv_cap = -1;
 static unsigned int recv_count[MAX_FD];
 static unsigned int send_count[MAX_FD];
 static unsigned long recv_bytes[MAX_FD];
@@ -50,6 +55,14 @@ static void init_modes(void) {
   if (fail_send_at < 0) {
     s = getenv("SPAWN_FAULT_SEND_AT");
     fail_send_at = s ? atoi(s) : 0;
+  }
+  if (eagain_recv_at < 0) {
+    s = getenv("SPAWN_FAULT_RECV_EAGAIN_AT");
+    eagain_recv_at = s ? atoi(s) : 0;
+  }
+  if (recv_cap < 0) {
+    s = getenv("SPAWN_FAULT_RECV_CAP");
+    recv_cap = s ? atol(s) : 0;
   }
 }
 
@@ -78,6 +91,11 @@ ssize_t recv(int fd, void *buf, size_t len, int flags) {
       errno = EIO;
       return -1;
     }
+    if (eagain_recv_at > 0 && recv_count[fd] == (unsigned)eagain_recv_at) {
+      errno = EAGAIN;
+      return -1;
+    }
+    if (recv_cap > 0 && len > (size_t)recv_cap) len = (size_t)recv_cap;
     ssize_t n = real_recv(fd, buf, len, flags);
     if (n > 0) recv_bytes[fd] += (unsigned long)n;
     return n;
@@ -177,6 +195,22 @@ const exitCode = await p.exited;
 console.log(JSON.stringify({ code, truncated: got < 8000000, exited: typeof exitCode === "number" }));
 `;
 
+// Bun.spawn stdout: every byte the parent read before the error reaches the consumer, and none read after it.
+const STDOUT_STREAM_BYTES_FIXTURE = /* js */ `
+import { readFileSync } from "node:fs";
+const p = Bun.spawn(${JSON.stringify(WRITER_CMD)}, { stdout: "pipe", stderr: "inherit" });
+let got = 0;
+let code = null;
+try {
+  for await (const chunk of p.stdout) got += chunk.length;
+} catch (e) {
+  code = e.code;
+}
+await p.exited;
+const received = Number(readFileSync(process.env.SPAWN_FAULT_REPORT, "utf8"));
+console.log(JSON.stringify({ code, receivedSome: received > 0, lost: received - got }));
+`;
+
 // Bun.spawn stdout consumed as a whole: text() rejects instead of hanging.
 const STDOUT_TEXT_FIXTURE = /* js */ `
 const p = Bun.spawn(${JSON.stringify(WRITER_CMD)}, { stdout: "pipe", stderr: "inherit" });
@@ -270,6 +304,7 @@ beforeAll(async () => {
     "shim.c": SHIM_C,
     "stdin-stream.mjs": STDIN_STREAM_FIXTURE,
     "stdout-stream.mjs": STDOUT_STREAM_FIXTURE,
+    "stdout-stream-bytes.mjs": STDOUT_STREAM_BYTES_FIXTURE,
     "stdout-text.mjs": STDOUT_TEXT_FIXTURE,
     "stdout-write.mjs": STDOUT_WRITE_FIXTURE,
     "child-process.mjs": CHILD_PROCESS_FIXTURE,
@@ -300,6 +335,8 @@ async function runWithFault(fixture: string, fault: Record<string, string>) {
     SPAWN_FAULT_RECV_AT: undefined,
     SPAWN_FAULT_SEND_AT: undefined,
     SPAWN_FAULT_REPORT: undefined,
+    SPAWN_FAULT_RECV_EAGAIN_AT: undefined,
+    SPAWN_FAULT_RECV_CAP: undefined,
     ...fault,
   };
   await using proc = Bun.spawn({
@@ -392,6 +429,33 @@ describe.skipIf(!isLinux || !cc)("subprocess stdio syscall errors", () => {
       parsed: { receivedSome: true, lost: 0, events: ["stdout.error:EIO", "stdout.close", "close"] },
       stderr: "",
       exitCode: 0,
+    });
+  });
+
+  // One wakeup can receive bytes and then fail. The reader delivers the bytes, then the error, and the consumer pulls
+  // again from inside that delivery. That pull must not read the socket past the error: with a failure that does not
+  // repeat, the error would come after bytes read later, or never if those reads reach EOF first.
+  // The shim caps each recv() at 4 KiB and fails #2 with EAGAIN, so a pull is parked when one wakeup's #3 and #4 return
+  // bytes and its #5 fails.
+  describe("stdout read error after bytes in the same poll-driven read", () => {
+    const fault = { SPAWN_FAULT_RECV_CAP: "4096", SPAWN_FAULT_RECV_EAGAIN_AT: "2", SPAWN_FAULT_RECV_AT: "5" };
+
+    test.concurrent("Bun.spawn: the stream yields the bytes read before the error, then rejects", async () => {
+      const report = join(String(dir), "recv-report-same-read-stream.txt");
+      expect(await runWithFault("stdout-stream-bytes.mjs", { ...fault, SPAWN_FAULT_REPORT: report })).toEqual({
+        parsed: { code: "EIO", receivedSome: true, lost: 0 },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent("node:child_process: stdout emits the bytes read before the error, then 'error'", async () => {
+      const report = join(String(dir), "recv-report-same-read-child-process.txt");
+      expect(await runWithFault("child-process-bytes.mjs", { ...fault, SPAWN_FAULT_REPORT: report })).toEqual({
+        parsed: { receivedSome: true, lost: 0, events: ["stdout.error:EIO", "stdout.close", "close"] },
+        stderr: "",
+        exitCode: 0,
+      });
     });
   });
 

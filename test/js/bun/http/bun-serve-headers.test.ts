@@ -142,6 +142,46 @@ describe("response header values are isomorphic-encoded on the wire", () => {
   });
 });
 
+// RFC 9110 §6.6.1: an origin server with a clock MUST send Date. A response
+// with no body (HEAD, 204) ends its headers on a separate path that skipped it.
+describe("Date header on responses without a body", () => {
+  async function rawHead(port: number, request: string) {
+    const socket = net.connect(port, "127.0.0.1");
+    try {
+      socket.on("error", () => {});
+      await once(socket, "connect");
+      socket.write(request);
+      let raw = "";
+      await new Promise<void>(resolve => {
+        socket.on("data", chunk => (raw += chunk.toString("latin1")));
+        socket.on("close", resolve);
+      });
+      return raw.split("\r\n\r\n")[0].split("\r\n");
+    } finally {
+      socket.destroy();
+    }
+  }
+
+  test("HEAD from the fetch handler, a 204, and a static route HEAD", async () => {
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      idleTimeout: 0,
+      routes: { "/static": new Response("bye") },
+      fetch(req) {
+        return new Response(req.method === "HEAD" ? "bye" : null, { status: req.method === "HEAD" ? 200 : 204 });
+      },
+    });
+    for (const request of ["HEAD /", "GET /", "HEAD /static"]) {
+      const head = await rawHead(server.port, `${request} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
+      expect({ request, date: head.filter(l => /^date:/i.test(l)) }).toEqual({
+        request,
+        date: [expect.stringMatching(/^date: \w{3}, \d\d \w{3} \d{4} \d\d:\d\d:\d\d GMT$/i)],
+      });
+    }
+  });
+});
+
 // RFC 9112 §9.6: a server that sends "Connection: close" MUST close the
 // connection after that response. Bun was emitting the header but leaving the
 // socket in the keep-alive pool, servicing further requests on the "closed"

@@ -483,7 +483,8 @@ impl PostgresSQLQuery {
         let this_value = callframe.this();
         let binding_value = js::binding_get_cached(this_value).unwrap_or_default();
         let query_str = this.query.to_utf8();
-        let writer = connection.writer();
+        // Dispatched from inside another request's parameter conversion: only enqueue.
+        let encoding = connection.is_encoding.get();
         // The queue entry's ref: keeps the query alive until the server
         // answers; dropped on every error return below.
         let queued = this.ref_guard();
@@ -527,9 +528,11 @@ impl PostgresSQLQuery {
             // Query is simple and it's the only owner of the statement
             this.statement.set(Some(stmt));
 
-            let can_execute = !connection.has_query_running();
+            let can_execute = !encoding && !connection.has_query_running();
             if can_execute {
-                if let Err(err) = PostgresRequest::execute_query(query_str.slice(), writer) {
+                if let Err(err) =
+                    PostgresRequest::execute_query(query_str.slice(), connection.writer())
+                {
                     this.release_statement();
                     return Err(throw_write_error(b"failed to execute query", err));
                 }
@@ -596,6 +599,8 @@ impl PostgresSQLQuery {
 
         let has_params = signature.fields.len() > 0;
         let mut did_write = false;
+        // Requests that this request's parameter conversion queued. They go behind it.
+        let mut queued_by_conversion: usize = 0;
         'enqueue: {
             // Note: `connection_entry_value` is a *mut into connection.statements value slot;
             // holding a `&mut` across other &mut connection borrows below trips borrowck, so
@@ -633,7 +638,8 @@ impl PostgresSQLQuery {
                             // request has already emitted its bytes; otherwise this
                             // Bind+Execute would overtake an earlier unwritten
                             // request on the wire while reply attribution stays FIFO.
-                            if (!connection.has_query_running() || connection.can_pipeline())
+                            if !encoding
+                                && (!connection.has_query_running() || connection.can_pipeline())
                                 && connection.pending_requests.get() == 0
                             {
                                 this.update_flags(|f| f.binary = !stmt.fields.is_empty());
@@ -649,11 +655,20 @@ impl PostgresSQLQuery {
                                     },
                                 ) {
                                     this.release_statement();
-                                    return Err(throw_write_error(
-                                        b"failed to bind and execute query",
-                                        err,
-                                    ));
+                                    // Nothing else dispatches what the conversion queued.
+                                    let thrown = global_object.try_take_exception();
+                                    if connection.pending_requests.get() > 0 {
+                                        connection.advance_and_flush();
+                                    }
+                                    return Err(match thrown {
+                                        Some(thrown) => global_object.throw_value(thrown),
+                                        None => throw_write_error(
+                                            b"failed to bind and execute query",
+                                            err,
+                                        ),
+                                    });
                                 }
+                                queued_by_conversion = connection.pending_requests.get() as usize;
                                 {
                                     let mut f = connection.flags.get();
                                     f.set(ConnectionFlags::IS_READY_FOR_QUERY, false);
@@ -692,7 +707,7 @@ impl PostgresSQLQuery {
                 };
                 connection_entry_value = Some(entry_value_ptr);
             }
-            let can_execute = !connection.has_query_running();
+            let can_execute = !encoding && !connection.has_query_running();
 
             if can_execute {
                 // If it does not have params, we can write and execute immediately in one go
@@ -733,6 +748,7 @@ impl PostgresSQLQuery {
                     // for ParameterDescription before sending Bind+Execute in advance().
                     bun_core::scoped_log!(Postgres, "writeQuery");
 
+                    let writer = connection.writer();
                     if let Err(err) = PostgresRequest::write_query(
                         query_str.slice(),
                         &signature.prepared_statement_name,
@@ -810,7 +826,11 @@ impl PostgresSQLQuery {
             }
         }
 
-        connection.requests.with_mut(|q| q.push_back(queued));
+        // Replies go to the head of the queue, so wire order has to equal queue order.
+        connection.requests.with_mut(|q| {
+            let at = q.len().saturating_sub(queued_by_conversion);
+            q.insert(at, queued)
+        });
         if this.status.get() == Status::Pending {
             connection.note_request_pending();
         }

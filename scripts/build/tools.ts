@@ -92,8 +92,6 @@ export interface ToolSpec {
   pathsOnly?: boolean;
   /** Version constraint, e.g. `">=23.1.0 <24.0.0"`. */
   version?: string;
-  /** How to get the version. `"--version"` (default) or `"version"` (go/zig style). */
-  versionArg?: string;
   /** If true, throws BuildError when not found. */
   required: boolean;
   /** Extra hint text for the error message. */
@@ -321,7 +319,7 @@ export function findTool(spec: ToolSpec): FoundTool | undefined {
   const searchPaths = spec.pathsOnly
     ? [...(spec.paths ?? [])]
     : [...(spec.paths ?? []), ...(process.env.PATH ?? "").split(delimiter).filter(p => p.length > 0)];
-  const versionArg = spec.versionArg ?? "--version";
+  const versionArg = "--version";
   const rejections: Rejection[] = [];
 
   for (const name of spec.names) {

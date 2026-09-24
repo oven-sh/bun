@@ -5789,6 +5789,7 @@ describe("Http2Session.setLocalWindowSize()", () => {
       const stateAfterPrepare = windowState(client.state);
       const req = client.request({ ":path": "/" });
       req.on("error", reject);
+      for (const emitter of [client, req]) emitter.on("close", () => reject(new Error("closed before 'end'")));
       let received = 0;
       req.on("data", chunk => (received += chunk.length));
       req.on("end", () => resolve(windowState(client.state)));
@@ -5826,6 +5827,7 @@ describe("Http2Session.setLocalWindowSize()", () => {
       const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
       try {
         client.on("error", reject);
+        client.on("close", () => reject(new Error("the client closed before the server got the body")));
         const req = client.request({ ":path": "/", ":method": "POST" });
         req.on("error", reject);
         req.end(Buffer.alloc(PAYLOAD, "x"));
@@ -6039,13 +6041,13 @@ describe("Http2Session.setLocalWindowSize()", () => {
     const client = http2.connect("http://localhost", { createConnection: () => transport });
     try {
       const { promise, resolve, reject } = Promise.withResolvers();
-      for (const fail of [reject, sawRequest.reject]) {
-        other.on("error", fail);
-        client.on("error", fail);
-        client.on("close", () => fail(new Error("the session closed early")));
-      }
       const req = client.request({ ":path": "/" });
-      req.on("error", reject);
+      for (const emitter of [other, client, req]) {
+        for (const fail of [reject, sawRequest.reject]) {
+          emitter.on("error", fail);
+          emitter.on("close", () => fail(new Error("closed before the WINDOW_UPDATE write")));
+        }
+      }
       let received = 0;
       req.on("data", chunk => (received += chunk.length));
       await sawRequest.promise;

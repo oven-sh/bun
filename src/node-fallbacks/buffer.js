@@ -772,7 +772,7 @@ function bidirectionalIndexOf(buffer, val, byteOffset, end, encoding, dir) {
     val = val & 0xff; // Search for a byte value [0-255]
   } else {
     if (valIsString) {
-      if (encoding !== undefined && encoding !== "" && (typeof encoding !== "string" || !Buffer.isEncoding(encoding))) {
+      if (encoding !== undefined && (typeof encoding !== "string" || !Buffer.isEncoding(encoding))) {
         throw unknownEncodingError(encoding);
       }
       val = Buffer.from(val, encoding);

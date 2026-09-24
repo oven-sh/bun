@@ -139,7 +139,8 @@ describe("WebKit 7b485a76e9 upgrade", () => {
     ].join("\n");
     let stack = "";
     try {
-      new vm.Script(source, { filename: "positions.js" }).runInThisContext();
+      // A new context, so that `outer` and `inner` do not stay in this realm's global scope.
+      new vm.Script(source, { filename: "positions.js" }).runInNewContext();
     } catch (e) {
       stack = (e as Error).stack!;
     }

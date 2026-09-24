@@ -482,10 +482,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler,
                 return {};
             }
 
-            // The option stores the pointer, and the profiler reads it when the process exits.
-            static NeverDestroyed<UTF8CString> samplingProfilerPath;
-            samplingProfilerPath.get() = WTF::move(pathCString);
-            Options::samplingProfilerPath() = samplingProfilerPath->data();
+            Options::samplingProfilerPath() = pathCString.data();
             samplingProfiler.registerForReportAtExit();
         }
     }

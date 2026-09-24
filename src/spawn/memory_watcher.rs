@@ -605,10 +605,12 @@ pub mod cgroup {
                 } else {
                     write(&path, "memory.memsw.limit_in_bytes", limit.as_bytes())
                 };
-                // Before Linux 4.13 a v1 cgroup does not report its OOM kills, so Bun could not see or finish the kernel's kill.
+                // A v1 cgroup must report its OOM kills (Linux 4.13) and must not inherit a disabled OOM killer, which freezes the tree at the limit.
                 let reports_kills = v2
-                    || read(&path, "memory.oom_control")
-                        .is_some_and(|b| field(&b, b"oom_kill").is_some());
+                    || read(&path, "memory.oom_control").is_some_and(|b| {
+                        field(&b, b"oom_kill").is_some()
+                            && field(&b, b"oom_kill_disable").unwrap_or(0) == 0
+                    });
                 if limited.is_err() || !reports_kills || (swap_capped.is_err() && has_swap()) {
                     let _ = rmdir(&path);
                     continue;
@@ -668,19 +670,28 @@ pub mod cgroup {
                 else {
                     return false;
                 };
-                return field(&events, b"oom_group_kill").unwrap_or(0) > 0
-                    || (field(&events, b"oom").unwrap_or(0) > 0
-                        && field(&events, b"oom_kill").unwrap_or(0) > 0);
+                // `oom` rises only when this cgroup's own limit could not be met. `oom_group_kill` also rises for a host or parent OOM.
+                return field(&events, b"oom").unwrap_or(0) > 0
+                    && field(&events, b"oom_kill").unwrap_or(0) > 0;
             }
             if let Some(events) = &self.oom_events {
                 let mut count = [0u8; 8];
-                if events.read(&mut count).is_ok_and(|n| n == 8) && u64::from_ne_bytes(count) > 0 {
+                let fired =
+                    events.read(&mut count).is_ok_and(|n| n == 8) && u64::from_ne_bytes(count) > 0;
+                // The event also fires when a parent cgroup runs out of memory, so this cgroup must have reached its own limit too.
+                if fired && self.reached_own_limit() {
                     self.own_oom.store(true, Ordering::Release);
                 }
             }
             self.own_oom.load(Ordering::Acquire)
                 && read(&self.path, "memory.oom_control")
                     .is_some_and(|b| field(&b, b"oom_kill").unwrap_or(0) > 0)
+        }
+
+        fn reached_own_limit(&self) -> bool {
+            let peak = read(&self.path, "memory.max_usage_in_bytes").map(|b| number(&b));
+            let limit = read(&self.path, "memory.limit_in_bytes").map(|b| number(&b));
+            matches!((peak, limit), (Some(peak), Some(limit)) if limit > 0 && peak >= limit)
         }
 
         pub(super) fn kill_all(&self) {

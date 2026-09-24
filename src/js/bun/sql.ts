@@ -523,7 +523,8 @@ const SQL = function SQL(
       return Promise.$resolve(undefined);
     };
     reserved_sql.release = () => {
-      if (state.connectionState & ReservedConnectionState.released) {
+      // closed but not released: close() is closing the socket (TLS defers it), and the close handler returns the slot
+      if (state.connectionState & (ReservedConnectionState.released | ReservedConnectionState.closed)) {
         return Promise.$resolve(undefined);
       }
       // just release the connection back to the pool

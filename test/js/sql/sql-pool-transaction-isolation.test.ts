@@ -5,10 +5,13 @@
 // Wire bytes come from ./wire-frames.ts.
 import { SQL } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tls as tlsCert } from "harness";
 import type net from "node:net";
+import tls from "node:tls";
 import {
   listeningServer,
+  MYSQL_CLIENT_SSL,
+  MYSQL_DEFAULT_CAPABILITIES,
   mysqlAckSessionSetup,
   mysqlErrPacket,
   mysqlHandshakeV10,
@@ -18,97 +21,140 @@ import {
   pgCommandComplete,
   pgErrorResponse,
   pgReadyForQuery,
+  pgSSLResponse,
 } from "./wire-frames";
 
 type Received = { conn: number; sql: string };
-// `onReceived` runs after each statement is recorded.
-type MockServer = (received: Received[], onReceived?: () => void) => Promise<{ port: number; server: net.Server }>;
+// `onReceived` runs after each statement is recorded. `secure` makes the server accept the
+// client's TLS request and speak the protocol over TLS from there on.
+type MockOptions = { onReceived?: () => void; secure?: boolean };
+type MockServer = (received: Received[], options?: MockOptions) => Promise<{ port: number; server: net.Server }>;
+
+function secureSocket(rawSocket: net.Socket): net.Socket {
+  rawSocket.pause();
+  const socket = new tls.TLSSocket(rawSocket, { isServer: true, ...tlsCert });
+  socket.on("error", () => {});
+  return socket;
+}
 
 // Both mocks answer every statement at once, except for these markers in the query text:
 //   KILL destroys the socket without answering,
 //   FAIL answers with an error,
 //   HOLD never answers.
-const pgMockServer: MockServer = (received, onReceived) => {
+const pgMockServer: MockServer = (received, { onReceived, secure } = {}) => {
   let nextConn = 0;
-  return listeningServer(socket => {
+  return listeningServer(rawSocket => {
     const connId = nextConn++;
-    let buffered = Buffer.alloc(0);
-    let startup = true;
-    socket.on("data", (chunk: Buffer) => {
-      buffered = Buffer.concat([buffered, chunk]);
-      if (startup) {
-        if (buffered.length < 4) return;
-        const len = buffered.readInt32BE(0);
-        if (buffered.length < len) return;
-        buffered = buffered.subarray(len);
-        startup = false;
-        socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
-      }
-      while (buffered.length >= 5) {
-        const type = String.fromCharCode(buffered[0]);
-        const len = buffered.readInt32BE(1);
-        if (buffered.length < 1 + len) return;
-        const body = buffered.subarray(5, 1 + len);
-        buffered = buffered.subarray(1 + len);
-        if (type !== "Q") continue;
-        const sql = body.subarray(0, body.indexOf(0)).toString("utf8");
-        received.push({ conn: connId, sql });
-        onReceived?.();
-        if (sql.includes("KILL")) {
-          socket.destroy();
-          return;
-        }
-        if (sql.includes("HOLD")) continue;
-        if (sql.includes("FAIL")) {
-          socket.write(
-            Buffer.concat([pgErrorResponse({ S: "ERROR", C: "XX000", M: "mock failure" }), pgReadyForQuery()]),
-          );
-          continue;
-        }
-        socket.write(Buffer.concat([pgCommandComplete("SELECT 0"), pgReadyForQuery()]));
-      }
-    });
-    socket.on("error", () => {});
-  });
-};
+    rawSocket.on("error", () => {});
+    if (secure) {
+      // SSLRequest. The client sends nothing more until it has the answer.
+      rawSocket.once("data", () => {
+        rawSocket.write(pgSSLResponse("S"));
+        serve(secureSocket(rawSocket));
+      });
+    } else {
+      serve(rawSocket);
+    }
 
-const mysqlMockServer: MockServer = (received, onReceived) => {
-  const COM_QUIT = 0x01;
-  const COM_QUERY = 0x03;
-  let nextConn = 0;
-  return listeningServer(socket => {
-    const connId = nextConn++;
-    let buffered = Buffer.alloc(0);
-    let authed = false;
-    socket.write(mysqlHandshakeV10());
-    socket.on("data", (chunk: Buffer) => {
-      buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
-        if (!authed) {
-          authed = true;
-          socket.write(mysqlOkPacket(seq + 1));
-          return;
+    function serve(socket: net.Socket) {
+      let buffered = Buffer.alloc(0);
+      let startup = true;
+      socket.on("data", (chunk: Buffer) => {
+        buffered = Buffer.concat([buffered, chunk]);
+        if (startup) {
+          if (buffered.length < 4) return;
+          const len = buffered.readInt32BE(0);
+          if (buffered.length < len) return;
+          buffered = buffered.subarray(len);
+          startup = false;
+          socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
         }
-        if (mysqlAckSessionSetup(socket, payload)) return;
-        if (payload[0] === COM_QUERY) {
-          const sql = payload.subarray(1).toString("utf8");
+        while (buffered.length >= 5) {
+          const type = String.fromCharCode(buffered[0]);
+          const len = buffered.readInt32BE(1);
+          if (buffered.length < 1 + len) return;
+          const body = buffered.subarray(5, 1 + len);
+          buffered = buffered.subarray(1 + len);
+          if (type !== "Q") continue;
+          const sql = body.subarray(0, body.indexOf(0)).toString("utf8");
           received.push({ conn: connId, sql });
           onReceived?.();
           if (sql.includes("KILL")) {
             socket.destroy();
             return;
           }
-          if (sql.includes("HOLD")) return;
+          if (sql.includes("HOLD")) continue;
           if (sql.includes("FAIL")) {
-            socket.write(mysqlErrPacket(1, 1105, "HY000", "mock failure"));
-            return;
+            socket.write(
+              Buffer.concat([pgErrorResponse({ S: "ERROR", C: "XX000", M: "mock failure" }), pgReadyForQuery()]),
+            );
+            continue;
           }
-          socket.write(mysqlOkPacket(1));
-        } else if (payload[0] === COM_QUIT) {
-          socket.end();
+          socket.write(Buffer.concat([pgCommandComplete("SELECT 0"), pgReadyForQuery()]));
         }
       });
-    });
-    socket.on("error", () => {});
+    }
+  });
+};
+
+const mysqlMockServer: MockServer = (received, { onReceived, secure } = {}) => {
+  const COM_QUIT = 0x01;
+  const COM_QUERY = 0x03;
+  let nextConn = 0;
+  return listeningServer(rawSocket => {
+    const connId = nextConn++;
+    rawSocket.on("error", () => {});
+    rawSocket.write(mysqlHandshakeV10({ capabilities: MYSQL_DEFAULT_CAPABILITIES | (secure ? MYSQL_CLIENT_SSL : 0) }));
+    if (secure) {
+      // One plaintext packet, the SSLRequest. The client starts its ClientHello right after
+      // it, so bytes past the packet are TLS records and go back for the TLS socket to read.
+      let plain = Buffer.alloc(0);
+      const onPlainData = (chunk: Buffer) => {
+        plain = Buffer.concat([plain, chunk]);
+        if (plain.length < 4) return;
+        const end = 4 + plain.readUIntLE(0, 3);
+        if (plain.length < end) return;
+        rawSocket.removeListener("data", onPlainData);
+        rawSocket.pause();
+        if (plain.length > end) rawSocket.unshift(plain.subarray(end));
+        serve(secureSocket(rawSocket));
+      };
+      rawSocket.on("data", onPlainData);
+    } else {
+      serve(rawSocket);
+    }
+
+    function serve(socket: net.Socket) {
+      let buffered = Buffer.alloc(0);
+      let authed = false;
+      socket.on("data", (chunk: Buffer) => {
+        buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
+          if (!authed) {
+            authed = true;
+            socket.write(mysqlOkPacket(seq + 1));
+            return;
+          }
+          if (mysqlAckSessionSetup(socket, payload)) return;
+          if (payload[0] === COM_QUERY) {
+            const sql = payload.subarray(1).toString("utf8");
+            received.push({ conn: connId, sql });
+            onReceived?.();
+            if (sql.includes("KILL")) {
+              socket.destroy();
+              return;
+            }
+            if (sql.includes("HOLD")) return;
+            if (sql.includes("FAIL")) {
+              socket.write(mysqlErrPacket(1, 1105, "HY000", "mock failure"));
+              return;
+            }
+            socket.write(mysqlOkPacket(1));
+          } else if (payload[0] === COM_QUIT) {
+            socket.end();
+          }
+        });
+      });
+    }
   });
 };
 
@@ -397,13 +443,15 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand, connec
     firstClose: Promise<void>;
     [Symbol.asyncDispose](): Promise<void>;
   };
-  async function closeTestPool(onReceived?: () => void): Promise<CloseTestPool> {
+  async function closeTestPool(mock: MockOptions = {}, max = 1): Promise<CloseTestPool> {
     const received: Received[] = [];
-    const { port, server } = await mockServer(received, onReceived);
+    const { port, server } = await mockServer(received, mock);
     const firstClose = Promise.withResolvers<void>();
     let closes = 0;
     const sql = new SQL({
       ...options(port),
+      max,
+      tls: mock.secure ? { rejectUnauthorized: false } : false,
       onclose: () => {
         closes++;
         firstClose.resolve();
@@ -541,7 +589,7 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand, connec
   // bun:test fails this test if close()'s own wait reports it as unhandled as well.
   test("reserved.close({ timeout }) closes the connection under a query that outlives the timeout", async () => {
     const held = Promise.withResolvers<void>();
-    await using pool = await closeTestPool(() => held.resolve());
+    await using pool = await closeTestPool({ onReceived: () => held.resolve() });
     const reserved = await pool.sql.reserve();
     const neverAnswered = reserved.unsafe("SELECT 'HOLD'").then(
       () => null,
@@ -563,10 +611,10 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand, connec
     const reserved = await pool.sql.reserve();
     const dropped = reserved.unsafe("SELECT 'KILL'").then(
       () => null,
-      e => e,
+      e => e.code,
     );
     const closed = reserved.close({ timeout: 60 });
-    expect(await dropped).toBeInstanceOf(Error);
+    expect(await dropped).toBe(connectionClosedCode);
     await closed;
     await expectSlotReturned(pool);
     expect(pool.received).toEqual([{ conn: 0, sql: "SELECT 'KILL'" }, ...afterTransaction(1)]);
@@ -599,6 +647,42 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand, connec
         { conn: 0, sql: "COMMIT" },
         ...afterTransaction(0),
       ]);
+    },
+  );
+
+  // Over TLS the socket does not close inside close(): the close handler, which returns the
+  // slot, runs only after the peer has answered the close_notify. A release() in between,
+  // which is what `await using` does, must not put the closing connection back into the pool.
+  // The pool spreads two queries over every connection it holds ready, so one of them would
+  // land on it and fail.
+  test.each([
+    {
+      call: "close()",
+      close: async (reserved: Bun.ReservedSQL) => {
+        await reserved.unsafe("SELECT 'done'");
+        await reserved.close();
+      },
+    },
+    {
+      call: "close({ timeout })",
+      close: async (reserved: Bun.ReservedSQL) => {
+        const inFlight = reserved.unsafe("SELECT 'in flight'").execute();
+        const closed = reserved.close({ timeout: 60 });
+        await inFlight;
+        await closed;
+      },
+    },
+  ])(
+    "reserved.release() after $call leaves a TLS connection that is still closing to its close handler",
+    async ({ close }) => {
+      await using pool = await closeTestPool({ secure: true }, 2);
+      const reserved = await pool.sql.reserve();
+      await close(reserved);
+      reserved.release();
+      const results = await Promise.allSettled([pool.sql.unsafe("SELECT 'a'"), pool.sql.unsafe("SELECT 'b'")]);
+      expect(results.map(result => result.status)).toEqual(["fulfilled", "fulfilled"]);
+      await pool.firstClose;
+      await pool.sql.close();
     },
   );
 

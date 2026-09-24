@@ -124,14 +124,15 @@ describe("returning a Response with an already-used body", () => {
   );
 
   // The second input leaves a Content-Length on the used Response: it must not frame a HEAD 200.
+  const leftoverContentLength = { headers: { "Content-Length": "24" } };
   it.each([
-    ["GET", undefined],
-    ["HEAD", undefined],
-    ["GET", { headers: { "Content-Length": "24" } }],
-    ["HEAD", { headers: { "Content-Length": "24" } }],
+    ["GET", "no headers", undefined],
+    ["HEAD", "no headers", undefined],
+    ["GET", "a leftover Content-Length", leftoverContentLength],
+    ["HEAD", "a leftover Content-Length", leftoverContentLength],
   ] as const)(
-    "returning a Response whose body was consumed before returning calls the error handler (%s, init %j)",
-    async (method, init) => {
+    "returning a Response whose body was consumed before returning calls the error handler (%s, %s)",
+    async (method, _label, init) => {
       const errors: unknown[] = [];
       await using server = serve({
         port: 0,

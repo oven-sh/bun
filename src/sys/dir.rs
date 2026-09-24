@@ -142,9 +142,7 @@ impl Dir {
         'process_stack: while let Some(top) = stack.last_mut() {
             while let Some(entry) = top.iter.next()? {
                 let mut treat_as_dir = matches!(entry.kind, EntryKind::Directory);
-                // EPERM from unlink can also mean "cannot delete" (a mapped exe
-                // on Windows, a `uchg` file on macOS). ENOTDIR from the
-                // directory open then returns it instead of retrying unlink.
+                // Set on EPERM, returned on ENOTDIR: the entry is a file that cannot be deleted.
                 let mut unlink_err: Option<Error> = None;
                 'handle_entry: loop {
                     if treat_as_dir {
@@ -268,8 +266,7 @@ impl Dir {
                     E::ENOENT => return Ok(None),
                     // Linux: EISDIR. POSIX: EPERM when target is a directory.
                     E::EISDIR => {}
-                    // EPERM can also mean "cannot delete". Keep the error so
-                    // that ENOTDIR below returns it instead of retrying unlink.
+                    // Returned on ENOTDIR: the path is a file that cannot be deleted.
                     E::EPERM => unlink_err = Some(e),
                     _ => return Err(e),
                 },

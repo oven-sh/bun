@@ -458,7 +458,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
 
   // JSC caps an ArrayBuffer at 2 ** 32 bytes and V8 at 2 ** 53 - 1. The fixtures pass address space that
   // is reserved and never committed, so the lengths cost no memory.
-  describe("external buffer length limit", () => {
+  describe("buffer length limit", () => {
     const apis = [
       "napi_create_external_arraybuffer",
       "napi_create_external_buffer",
@@ -490,6 +490,8 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         "napi_create_external_arraybuffer(data): status=9 pending=true error=Error code=ERR_BUFFER_TOO_LARGE",
         "napi_create_external_buffer(NULL): status=9 pending=true error=Error code=ERR_BUFFER_TOO_LARGE",
         "napi_create_external_arraybuffer(NULL): status=9 pending=true error=Error code=ERR_BUFFER_TOO_LARGE",
+        "napi_create_buffer: status=9 pending=true error=Error code=ERR_BUFFER_TOO_LARGE",
+        "napi_create_buffer_copy: status=9 pending=true error=Error code=ERR_BUFFER_TOO_LARGE",
         "napi_create_external_buffer(result=NULL): status=1 pending=false",
         "with an exception pending: napi_create_external_buffer status=10 napi_create_external_arraybuffer status=10",
       ]);

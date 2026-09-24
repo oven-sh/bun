@@ -4235,6 +4235,12 @@ test_buffer_too_large_parity(const Napi::CallbackInfo &info) {
   report("napi_create_external_arraybuffer(NULL)",
          napi_create_external_arraybuffer(env, nullptr, too_large, nullptr,
                                           nullptr, &result));
+  void *allocated = nullptr;
+  report("napi_create_buffer",
+         napi_create_buffer(env, too_large, &allocated, &result));
+  report("napi_create_buffer_copy",
+         napi_create_buffer_copy(env, too_large, &never_read, &allocated,
+                                 &result));
   // A NULL result and an exception that is already pending both win over the
   // length.
   report("napi_create_external_buffer(result=NULL)",

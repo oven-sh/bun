@@ -2334,7 +2334,10 @@ extern "C" napi_status napi_create_buffer(napi_env env, size_t length,
     RefPtr<ArrayBuffer> arrayBuffer = ArrayBuffer::tryCreateUninitialized(length, 1);
     if (!arrayBuffer) {
         // Node leaves a pending exception for a failed allocation.
-        JSC::throwOutOfMemoryError(globalObject, scope);
+        if (length > MAX_ARRAY_BUFFER_SIZE)
+            throwBufferTooLarge(env);
+        else
+            JSC::throwOutOfMemoryError(globalObject, scope);
         RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_generic_failure));
     }
 
@@ -2369,7 +2372,10 @@ extern "C" napi_status napi_create_buffer_copy(napi_env env, size_t length,
     RefPtr<ArrayBuffer> arrayBuffer = ArrayBuffer::tryCreateUninitialized(length, 1);
     if (!arrayBuffer) {
         // Node leaves a pending exception for a failed allocation.
-        JSC::throwOutOfMemoryError(globalObject, scope);
+        if (length > MAX_ARRAY_BUFFER_SIZE)
+            throwBufferTooLarge(env);
+        else
+            JSC::throwOutOfMemoryError(globalObject, scope);
         RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_generic_failure));
     }
     if (length > 0) {

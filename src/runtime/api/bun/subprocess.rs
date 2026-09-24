@@ -366,6 +366,7 @@ impl Subprocess<'_> {
         this.create_resource_usage_object(global_object)
     }
 
+    #[bun_jsc::host_fn(method)]
     pub(crate) fn memory_usage(
         this: &Self,
         global_object: &JSGlobalObject,

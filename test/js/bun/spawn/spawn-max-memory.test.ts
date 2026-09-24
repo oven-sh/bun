@@ -267,7 +267,8 @@ describe("Bun.spawn maxMemory", () => {
       const middle = `"$0" -e "$1" $$ >/dev/null 2>&1 & echo $!; read _`;
       await using proc = Bun.spawn({
         cmd: ["sh", "-c", `sh -c '${middle}' "$0" "$1"; exec sleep 100000`, bunExe(), hogSrc],
-        env: bunEnv,
+        // The ASAN CI lanes set BUN_FEATURE_FLAG_NO_ORPHANS, which kills the hog the moment its parent sh exits.
+        env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
         stdio: ["pipe", "pipe", "inherit"],
         maxMemory: limitFor(1),
         killSignal: "SIGKILL",

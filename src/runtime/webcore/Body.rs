@@ -371,7 +371,6 @@ impl PendingValue {
     }
 
     /// [`Self::to_any_blob`] for `clone()`, going through the wrapper's cached `.body` when there is one.
-    /// A Blob it returns has passed [`blob::store_reads_repeatably`], so the caller does not ask again.
     fn take_blob_from_unread_stream(
         &mut self,
         global: &JSGlobalObject,
@@ -1562,13 +1561,9 @@ impl Value {
         // its type) instead of pumping the bytes through a JS tee. The owner
         // must then drop its cached `.body` (`sync_body_stream_caches`).
         // Anything else is teed.
-        let mut reads_repeatably = false;
         if let Value::Locked(locked) = self {
             match locked.take_blob_from_unread_stream(cx.global(), readable.as_deref().copied()) {
-                Some(blob) => {
-                    *self = Value::from(blob);
-                    reads_repeatably = true;
-                }
+                Some(blob) => *self = Value::from(blob),
                 None => return self.tee(cx, readable),
             }
         }
@@ -1581,13 +1576,22 @@ impl Value {
         }
 
         if let Value::Blob(b) = self {
-            if !reads_repeatably
-                && b.store()
-                    .is_some_and(|store| !blob::store_reads_repeatably(store))
-            {
+            // No filesystem I/O to answer this: a `Bun.file(path)` body is
+            // duped without a syscall.
+            if b.store().is_some_and(blob::store_known_read_once) {
                 // A pipe or other fd yields its bytes once: read it as one
-                // stream and tee that.
-                self.to_readable_stream(cx)?;
+                // stream and tee that. The stream takes the Blob's window as
+                // it is. `to_readable_stream` would resolve the size first: an
+                // fstat whose result lands on the store this body shares with
+                // the user's `Bun.file(fd)`.
+                let stream = {
+                    let blob = scopeguard::guard(self.use_(), |mut b| b.deinit());
+                    ReadableStream::from_blob_copy_ref(cx, &blob, 0)?
+                };
+                *self = Value::from_readable_stream_without_lock_check(
+                    ReadableStream::from_js_direct(stream).unwrap(),
+                    cx.global(),
+                );
                 return self.tee(cx, None);
             }
             return Ok(Value::Blob(b.dupe_with_content_type(false)));

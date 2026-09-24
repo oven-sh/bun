@@ -5831,32 +5831,61 @@ fn resolve_file_stat(store: &RefPtr<Store>) {
     }
 }
 
-/// Whether a second Blob over `store` reads the same bytes from the start.
-/// Memory and S3 do. A file descriptor never does: its offset, and for a pipe
-/// its bytes, are shared. A path does (each read opens it again) unless it
-/// names a FIFO or a character device, whose bytes are gone once read. A path
-/// that cannot be stat'd or read (missing, a directory) counts as repeatable:
-/// both readers fail the same way.
+/// A FIFO or a character device yields its bytes once, so two Blobs over one
+/// would compete for them.
+fn mode_reads_once(mode: bun_sys::Mode) -> bool {
+    bun_sys::S::ISFIFO(mode) || bun_sys::S::ISCHR(mode)
+}
+
+/// Whether `store` is already known to yield its bytes once. A file descriptor
+/// does: its offset, and for a pipe its bytes, are shared. A path does when a
+/// stat cached earlier (`size`, `lastModified`, `exists()`) says so.
 ///
-/// The `stat` made here is not cached on the store. The read paths trust a
-/// cached size, and procfs reports `st_size == 0` for files that have content.
-pub(crate) fn store_reads_repeatably(store: &RefPtr<Store>) -> bool {
-    let mode = match &store.data {
-        store::Data::Bytes(_) | store::Data::S3(_) => return true,
+/// `clone()` asks this for a Blob body. It must never touch the filesystem,
+/// so cloning a `Bun.file(path)` body costs no syscall.
+pub(crate) fn store_known_read_once(store: &RefPtr<Store>) -> bool {
+    match &store.data {
+        store::Data::Bytes(_) | store::Data::S3(_) => false,
         store::Data::File(file) => match &file.pathlike {
-            PathOrFileDescriptor::Fd(_) => return false,
+            PathOrFileDescriptor::Fd(_) => true,
             // If seekable was set, then so was mode.
-            PathOrFileDescriptor::Path(_) if file.seekable.is_some() => file.mode,
-            PathOrFileDescriptor::Path(path) => {
-                let mut buffer = bun_paths::path_buffer_pool::get();
-                match bun_sys::stat(path.slice_z(&mut buffer)) {
-                    bun_sys::Result::Ok(stat) => stat.st_mode as bun_sys::Mode,
-                    _ => return true,
-                }
-            }
+            PathOrFileDescriptor::Path(_) => file.seekable.is_some() && mode_reads_once(file.mode),
         },
+    }
+}
+
+/// Whether a second Blob over `store` reads the same bytes from the start.
+/// `clone()` asks this before it turns an unread file stream back into its
+/// Blob. A path that no one has stat'd yet is stat'd here. One that cannot be
+/// stat'd or read (missing, a directory) counts as repeatable: both readers
+/// fail the same way.
+///
+/// The stat is not cached on the store. The store is shared with the other
+/// body and with the user's `Bun.file()`, and their reads trust a cached size
+/// (procfs reports `st_size == 0` for files that have content).
+pub(crate) fn store_reads_repeatably(store: &RefPtr<Store>) -> bool {
+    if store_known_read_once(store) {
+        return false;
+    }
+    let store::Data::File(file) = &store.data else {
+        return true;
     };
-    !(bun_sys::S::ISFIFO(mode) || bun_sys::S::ISCHR(mode))
+    let PathOrFileDescriptor::Path(path) = &file.pathlike else {
+        return true;
+    };
+    if file.seekable.is_some() {
+        return true;
+    }
+    // libuv's path stat reports no FIFO, and a character device only for NUL,
+    // which reads empty either way.
+    if cfg!(windows) {
+        return true;
+    }
+    let mut buffer = bun_paths::path_buffer_pool::get();
+    match bun_sys::stat(path.slice_z(&mut buffer)) {
+        bun_sys::Result::Ok(stat) => !mode_reads_once(stat.st_mode as bun_sys::Mode),
+        _ => true,
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

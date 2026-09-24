@@ -69,6 +69,8 @@ function canCreateMemoryCgroup(): boolean {
     }
     try {
       writeFileSync(join(dir, v2 ? "memory.max" : "memory.limit_in_bytes"), String(1024 * MB));
+      // Before Linux 4.13 a v1 cgroup does not report its OOM kills, and Bun does not use such a cgroup.
+      if (!v2 && !/^oom_kill /m.test(readFileSync(join(dir, "memory.oom_control"), "utf8"))) continue;
       try {
         writeFileSync(join(dir, v2 ? "memory.swap.max" : "memory.memsw.limit_in_bytes"), v2 ? "0" : String(1024 * MB));
       } catch {
@@ -85,6 +87,9 @@ function canCreateMemoryCgroup(): boolean {
   return false;
 }
 
+// On such a host Bun must pick the cgroup route, and the tests that need the sampler must skip.
+const hasMemoryCgroup = canCreateMemoryCgroup();
+
 describe("Bun.spawn maxMemory", () => {
   test("the kernel enforces the limit where it can", async () => {
     const idle = [bunExe(), "-e", "setInterval(() => {}, 1000)"];
@@ -94,7 +99,7 @@ describe("Bun.spawn maxMemory", () => {
       stdio: ["ignore", "ignore", "ignore"],
       maxMemory: 1024 * MB,
     });
-    const expected = isWindows ? "job" : isMacOS ? "sampler" : canCreateMemoryCgroup() ? "cgroup" : "sampler";
+    const expected = isWindows ? "job" : isMacOS ? "sampler" : hasMemoryCgroup ? "cgroup" : "sampler";
     expect(subprocessInternals.memoryLimitRoute(limited)).toBe(expected);
 
     await using unlimited = Bun.spawn({ cmd: idle, env: bunEnv, stdio: ["ignore", "ignore", "ignore"] });
@@ -291,10 +296,12 @@ describe("Bun.spawn maxMemory", () => {
     },
   );
   // A Windows job and a Linux cgroup stop every process at once, so only the sampler can miss a late process.
-  (isWindows ? test.skip : test.concurrent)("a process that starts after the kill is signalled too", async () => {
-    // Both processes exit when their stdin closes, so nothing outlives a failed run.
-    const lateChild = `process.stdin.on("close", () => process.exit(0)).resume();`;
-    const rootSrc = `
+  (isWindows || hasMemoryCgroup ? test.skip : test.concurrent)(
+    "a process that starts after the kill is signalled too",
+    async () => {
+      // Both processes exit when their stdin closes, so nothing outlives a failed run.
+      const lateChild = `process.stdin.on("close", () => process.exit(0)).resume();`;
+      const rootSrc = `
       process.stdin.on("close", () => process.exit(0)).resume();
       process.on("SIGTERM", () => {
         const late = Bun.spawn({ cmd: [process.execPath, "-e", ${JSON.stringify(lateChild)}], stdio: ["pipe", "ignore", "ignore"] });
@@ -302,29 +309,30 @@ describe("Bun.spawn maxMemory", () => {
       });
       ${hogFor(2)}
     `;
-    const proc = Bun.spawn({
-      cmd: [bunExe(), "-e", rootSrc],
-      env: bunEnv,
-      stdio: ["pipe", "pipe", "inherit"],
-      maxMemory: limitFor(2),
-      killSignal: "SIGTERM",
-    });
-    try {
-      if (subprocessInternals.memoryLimitRoute(proc) !== "sampler") return;
-      let output = "";
-      for await (const chunk of proc.stdout) {
-        output += Buffer.from(chunk).toString();
-        if (output.includes("\n")) break;
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "-e", rootSrc],
+        env: bunEnv,
+        stdio: ["pipe", "pipe", "inherit"],
+        maxMemory: limitFor(2),
+        killSignal: "SIGTERM",
+      });
+      try {
+        expect(subprocessInternals.memoryLimitRoute(proc)).toBe("sampler");
+        let output = "";
+        for await (const chunk of proc.stdout) {
+          output += Buffer.from(chunk).toString();
+          if (output.includes("\n")) break;
+        }
+        const latePid = parseInt(output, 10);
+        expect(latePid).toBeGreaterThan(0);
+        // The root ignores SIGTERM and stays alive. The late child does not, so it dies only if a later sample signals it.
+        await gone(latePid);
+      } finally {
+        proc.kill("SIGKILL");
+        await proc.exited;
       }
-      const latePid = parseInt(output, 10);
-      expect(latePid).toBeGreaterThan(0);
-      // The root ignores SIGTERM and stays alive. The late child does not, so it dies only if a later sample signals it.
-      await gone(latePid);
-    } finally {
-      proc.kill("SIGKILL");
-      await proc.exited;
-    }
-  });
+    },
+  );
 });
 
 describe("node:child_process maxMemory", () => {

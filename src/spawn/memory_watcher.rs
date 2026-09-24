@@ -582,7 +582,11 @@ pub mod cgroup {
                 } else {
                     write(&path, "memory.memsw.limit_in_bytes", limit.as_bytes())
                 };
-                if limited.is_err() || (swap_capped.is_err() && has_swap()) {
+                // Before Linux 4.13 a v1 cgroup does not report its OOM kills, so Bun could not see or finish the kernel's kill.
+                let reports_kills = v2
+                    || read(&path, "memory.oom_control")
+                        .is_some_and(|b| field(&b, b"oom_kill").is_some());
+                if limited.is_err() || !reports_kills || (swap_capped.is_err() && has_swap()) {
                     let _ = rmdir(&path);
                     continue;
                 }

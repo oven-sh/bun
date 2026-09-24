@@ -35,7 +35,7 @@
  * each completion. This is the mechanism behind wepoll, mio, c-ares and
  * libuv's uv_poll_t. */
 
-extern void Bun__JSC_onBeforeWait(void *_Nonnull jsc_vm);
+extern void Bun__JSC_onBeforeWait(void *_Nonnull jsc_vm, int *_Nullable released_heap_access);
 /* Closes what Bun still has open on `loop`: pipes, consoles, files, pipe
  * connects and process exit waits. Each cancels its operations. */
 extern void Bun__closeAllForLoop(struct us_loop_t *_Nonnull loop);
@@ -1283,7 +1283,7 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec *timeout
     timeout_ns = us_internal_clamp_to_sweep(loop, timeout_ns);
 
     if (timeout_ns != 0 && !loop->ready_ops_head && !held_packets && loop->data.jsc_vm)
-        Bun__JSC_onBeforeWait(loop->data.jsc_vm);
+        Bun__JSC_onBeforeWait(loop->data.jsc_vm, NULL);
 
     /* After the finalizers above, which stop polls: the flush frees them.
      * Before the hand-off below for the same reason. */

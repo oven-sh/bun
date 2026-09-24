@@ -11,7 +11,7 @@ import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isWindows, tempDir, 
 import { mkfifo } from "mkfifo";
 import { closeSync, createReadStream, openSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { PassThrough, Readable, Writable, finished, pipeline } from "node:stream";
+import { Duplex, PassThrough, Readable, Writable, finished, pipeline } from "node:stream";
 import {
   consumers as directConsumers,
   expected as directExpected,
@@ -2200,6 +2200,37 @@ it("ReadableStream rejects pending reads when the lock is released", async () =>
   expect((await reader.read()).value).toBe("456");
 });
 
+// A locked stream fails these with a TypeError (WHATWG) that carries Node's
+// ERR_INVALID_STATE code and message (node compatibility).
+const invalidState = message => expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_STATE", message });
+
+it("a locked ReadableStream fails cancel, pipeTo, pipeThrough, tee and getReader with ERR_INVALID_STATE", async () => {
+  const stream = new ReadableStream();
+  stream.getReader();
+
+  await expect(stream.cancel()).rejects.toThrow(invalidState("Invalid state: ReadableStream is locked"));
+  await expect(stream.pipeTo(new WritableStream())).rejects.toThrow(
+    invalidState("Invalid state: The ReadableStream is locked"),
+  );
+  expect(() => stream.pipeThrough(new TransformStream())).toThrow(
+    invalidState("Invalid state: The ReadableStream is locked"),
+  );
+  expect(() => stream.tee()).toThrow(invalidState("Invalid state: ReadableStream is locked"));
+  expect(() => stream.getReader()).toThrow(invalidState("Invalid state: ReadableStream is locked"));
+});
+
+it("pipeTo and pipeThrough into a locked WritableStream fail with ERR_INVALID_STATE", async () => {
+  const destination = new WritableStream();
+  destination.getWriter();
+
+  await expect(new ReadableStream().pipeTo(destination)).rejects.toThrow(
+    invalidState("Invalid state: The WritableStream is locked"),
+  );
+  expect(() => new ReadableStream().pipeThrough({ readable: new ReadableStream(), writable: destination })).toThrow(
+    invalidState("Invalid state: The WritableStream is locked"),
+  );
+});
+
 it("new Response(stream).arrayBuffer() (bytes)", async () => {
   var queue = [Buffer.from("abdefgh")];
   var stream = new ReadableStream({
@@ -4366,6 +4397,127 @@ describe("direct stream edge cases", () => {
       expect(out).toEqual({ queueMicrotask: "ab", nextTick: "ab", setImmediate: "ab", setTimeout0: "ab" });
     });
 
+    // A consumer that tears down when reader.closed settles (Duplex.fromWeb, Node's adapters) drops a chunk
+    // whose read() settles after it.
+    test.each([
+      [
+        "flushed inside pull(), close(error) after an await",
+        async c => {
+          c.write("a");
+          await c.flush();
+          c.close(new Error("source failed"));
+        },
+        "closed: source failed",
+      ],
+      [
+        "flushed after an await, close(error) in the same tick",
+        async c => {
+          await later();
+          c.write("a");
+          c.flush();
+          c.close(new Error("source failed"));
+        },
+        "closed: source failed",
+      ],
+      [
+        "flushed inside pull(), error() after an await",
+        async c => {
+          c.write("a");
+          await c.flush();
+          c.error(new Error("source failed"));
+        },
+        "closed: source failed",
+      ],
+      [
+        "flushed inside pull(), then pull() rejects",
+        async c => {
+          c.write("a");
+          await c.flush();
+          throw new Error("source failed");
+        },
+        "closed: source failed",
+      ],
+      [
+        "flushed after an await, close() in the same tick",
+        async c => {
+          await later();
+          c.write("a");
+          c.flush();
+          c.close();
+        },
+        "closed",
+      ],
+      [
+        "end() hands its final chunk to the pending read",
+        async c => {
+          await later();
+          c.write("a");
+          c.end();
+        },
+        "closed",
+      ],
+    ])("a read() that received a chunk is observed before reader.closed settles: %s", async (_, pull, closed) => {
+      const log = [];
+      const reader = direct(tally(), pull).getReader();
+      reader.closed.then(
+        () => log.push("closed"),
+        e => log.push("closed: " + e.message),
+      );
+      await reader.read().then(r => log.push("read: " + txt(r.value)));
+      await later();
+      expect(log).toEqual(["read: a", closed]);
+    });
+
+    describe("overlapping read()s are observed in the order they were issued", () => {
+      const observe = async (reader, log = []) => {
+        const show = r => (r.done ? "done" : txt(r.value));
+        await Promise.all([1, 2].map(i => reader.read().then(r => log.push(`read ${i}: ` + show(r)))));
+        await later();
+        return log;
+      };
+
+      // Read 2 waits in the reader's read requests until the flush for read 1 makes it the pending read.
+      test("each receives a chunk, then close(error)", async () => {
+        const t = tally();
+        const reader = direct(t, async c => {
+          await later();
+          for (const part of ["a", "b"]) {
+            c.write(part);
+            c.flush();
+          }
+          c.close(new Error("source failed"));
+        }).getReader();
+        const log = [];
+        reader.closed.catch(e => log.push("closed: " + e.message));
+        expect({ log: await observe(reader, log), pulls: t.pulls }).toEqual({
+          log: ["read 1: a", "read 2: b", "closed: source failed"],
+          pulls: 1,
+        });
+      });
+
+      test("a sync pull() writes and closes: read 2 finds the stream closed", async () => {
+        const reader = direct(tally(), c => {
+          c.write("a");
+          c.close();
+        }).getReader();
+        expect(await observe(reader)).toEqual(["read 1: a", "read 2: done"]);
+      });
+
+      test("end() with nobody reading keeps the final chunk for read 1", async () => {
+        let controller;
+        const reader = direct(tally(), async c => {
+          controller = c;
+          c.write("first");
+          await c.flush();
+          await new Promise(() => {});
+        }).getReader();
+        expect(txt((await reader.read()).value)).toBe("first");
+        controller.write("a");
+        controller.end();
+        expect(await observe(reader)).toEqual(["read 1: a", "read 2: done"]);
+      });
+    });
+
     test("a pull() that rejects after close() ran is not an unhandled rejection and does not fail the consumer", async () => {
       await using proc = Bun.spawn({
         cmd: [
@@ -4855,6 +5007,23 @@ describe("direct stream edge cases", () => {
         err: "source failed",
         pulls: 1,
       });
+    });
+
+    test("Duplex.fromWeb(direct): close(error) after a flushed chunk emits 'data' with it, then 'error'", async () => {
+      const t = tally();
+      const readable = direct(t, async c => {
+        c.write("a");
+        await c.flush();
+        c.close(new Error("source failed"));
+      });
+      const duplex = Duplex.fromWeb({ readable, writable: new WritableStream() });
+      const events = [];
+      duplex.on("data", d => events.push("data:" + txt(d)));
+      duplex.on("end", () => events.push("end"));
+      duplex.on("error", e => events.push("error:" + e.message));
+      // 'close' follows 'error' and a clean 'end' alike, so a missing 'error' fails the assertion.
+      await new Promise(resolve => duplex.on("close", resolve));
+      expect({ events, pulls: t.pulls }).toEqual({ events: ["data:a", "error:source failed"], pulls: 1 });
     });
 
     test("Readable.fromWeb(direct).destroy(err) cancels the source once", async () => {

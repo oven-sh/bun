@@ -180,7 +180,7 @@ impl PathWatcherManager {
 // PathWatcher
 // ────────────────────────────────────────────────────────────────────────────────
 
-pub struct PathWatcher {
+pub(crate) struct PathWatcher {
     manager: Option<&'static PathWatcherManager>,
 
     /// Canonical absolute path (realpath of the user-supplied path). Owned.
@@ -1195,7 +1195,7 @@ use bun_watcher::inotify_watcher::Event as InotifyEvent;
 /// FSEvents is used for both files and directories (same as libuv).
 #[cfg(target_os = "macos")]
 #[derive(Default)]
-pub struct Darwin {
+pub(crate) struct Darwin {
     // No manager-level state — FSEvents has its own process-global loop.
 }
 

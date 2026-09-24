@@ -4,7 +4,7 @@ use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
 #[derive(Default)]
-pub struct Echo {
+pub(crate) struct Echo {
     state: State,
 }
 

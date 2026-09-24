@@ -8,7 +8,6 @@ use crate::webcore::blob::ClosingState;
 use crate::webcore::blob::store::{Data, File as FileStore};
 use crate::webcore::blob::{Blob, FileCloser, FileOpener, MAX_SIZE, SizeType, Store};
 use crate::webcore::node_types::PathOrFileDescriptor;
-use bun_core;
 use bun_core::String as BunString;
 use bun_io as io;
 #[cfg(not(windows))]
@@ -33,7 +32,7 @@ macro_rules! bloblog {
 
 /// `F` provides the callback that converts the read bytes to a JSValue.
 /// Modelled as a trait so each instantiation monomorphizes.
-pub trait ReadFileToJs {
+pub(crate) trait ReadFileToJs {
     /// `by` carries the caller's allocation provenance unchanged:
     /// `Lifetime::Temporary` ⇒ a `Box::<[u8]>::into_raw` the callee MUST take
     /// ownership of (every `to_*_with_bytes::<Temporary>` arm reclaims it);
@@ -41,7 +40,7 @@ pub trait ReadFileToJs {
     fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], lifetime: Lifetime) -> JsResult<JSValue>;
 }
 
-pub struct NewReadFileHandler<'a, F: ReadFileToJs> {
+pub(crate) struct NewReadFileHandler<'a, F: ReadFileToJs> {
     pub(crate) context: Blob,
     pub(crate) promise: JSPromiseStrong,
     pub global_this: &'a JSGlobalObject,
@@ -62,7 +61,7 @@ impl<'a, F: ReadFileToJs> NewReadFileHandler<'a, F> {
 /// A typed receiver for a file read's bytes. [`ReadFileCompletionFns::of`] erases it to the
 /// `(ctx, run, cancel)` a `ReadFile` job carries as its JS side: the
 /// shims call `C::run` / `C::cancel` directly and `ctx` is the raw `*mut C`, no extra heap wrapper.
-pub trait ReadFileCompletion {
+pub(crate) trait ReadFileCompletion {
     /// # Safety
     /// `ctx` must be a heap-allocated `Self` whose ownership is transferred to
     /// this call (it is reclaimed via `bun_core::heap::take`).
@@ -135,7 +134,7 @@ type ReadFileOnCancelCallback = fn(ctx: *mut c_void);
 /// What a `ReadFile` does with the bytes (or the lack of them): `run` on completion,
 /// `cancel` if it is dropped before completing. Exactly one of the two is invoked, once, on the JS
 /// thread — the ctx typically owns a promise and a Blob, so this is the job's JS side.
-pub struct ReadFileCompletionFns {
+pub(crate) struct ReadFileCompletionFns {
     pub(crate) ctx: *mut c_void,
     pub(crate) run: ReadFileOnReadFileCallback,
     pub(crate) cancel: ReadFileOnCancelCallback,
@@ -175,7 +174,7 @@ impl Drop for ReadFileCompletionFns {
 // the JS thread, as a Job's `Js` side.
 unsafe impl bun_jsc::job::JsAffine for ReadFileCompletionFns {}
 
-pub struct ReadFileRead {
+pub(crate) struct ReadFileRead {
     /// Always a `Box::<[u8]>::into_raw` from the producer's read buffer
     /// (`Vec::into_boxed_slice()` so layout is exactly `(ptr, len)`). Every
     /// consumer reclaims via `heap::take` — there is no borrow case left
@@ -192,13 +191,13 @@ pub struct ReadFileRead {
 // Constructed/matched in Blob.rs and Body.rs;
 // boxing the Err arm would change the cross-file callback ABI for no real win.
 #[allow(clippy::large_enum_variant)]
-pub enum ReadFileResultType {
+pub(crate) enum ReadFileResultType {
     Result(ReadFileRead),
     Err(SystemError),
 }
 
 /// The completion token a `ReadFile` keeps across its async I/O.
-pub type ReadFileTask = bun_jsc::Completion<ReadFile>;
+pub(crate) type ReadFileTask = bun_jsc::Completion<ReadFile>;
 
 // SAFETY: file store / byte store / blob store ref (atomic), the read buffer and io-loop
 // registration state — nothing thread-affine. What the bytes are delivered to lives in the job's
@@ -254,7 +253,7 @@ impl ReadFile {
 // ReadFile
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct ReadFile {
+pub(crate) struct ReadFile {
     pub(crate) file_store: FileStore,
     pub(crate) store: Option<RefPtr<Store>>,
     pub offset: SizeType,
@@ -359,7 +358,7 @@ impl ReadFile {
     #[cfg(not(windows))]
     pub(crate) const IO_TAG: io::Tag = io::Tag::ReadFile;
 
-    pub fn on_ready(&mut self) {
+    pub(crate) fn on_ready(&mut self) {
         bloblog!("ReadFile.onReady");
         #[cfg(not(windows))]
         if !self.io_parking.fire() {

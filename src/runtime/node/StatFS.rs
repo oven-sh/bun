@@ -5,7 +5,7 @@ use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 macro_rules! define_statfs_type {
     ($name:ident, big = $big:expr) => {
         #[allow(non_snake_case)]
-        pub struct $name {
+        pub(crate) struct $name {
             // Common fields between Linux and macOS
             pub _fstype: i64,
             pub _bsize: i64,
@@ -18,7 +18,7 @@ macro_rules! define_statfs_type {
         }
 
         impl $name {
-            pub fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+            pub(crate) fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
                 self.statfs_to_js(global)
             }
 
@@ -52,7 +52,7 @@ macro_rules! define_statfs_type {
                 ))
             }
 
-            pub fn init(statfs_: &bun_sys::StatFS) -> Self {
+            pub(crate) fn init(statfs_: &bun_sys::StatFS) -> Self {
                 #[cfg(any(
                     target_os = "linux",
                     target_os = "android",
@@ -125,7 +125,7 @@ define_statfs_type!(StatFSSmall, big = false);
 define_statfs_type!(StatFSBig, big = true);
 
 /// Union between `Stats` and `BigIntStats` where the type can be decided at runtime
-pub enum StatFS {
+pub(crate) enum StatFS {
     Big(StatFSBig),
     Small(StatFSSmall),
 }

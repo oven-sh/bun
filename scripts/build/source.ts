@@ -535,7 +535,7 @@ export interface ResolvedDep {
    * Absolute paths to .o/.obj files for link(). Populated by `direct` deps
    * when `cfg.archiveDeps` is off (the default) — the dep's sources are
    * compiled in our graph and the resulting objects go straight into bun's
-   * link line / cpp-only archive instead of an intermediate `.a`.
+   * link line (or CI's object archive) instead of an intermediate `.a`.
    */
   objects: string[];
   /** Absolute include paths for -I flags. */
@@ -572,9 +572,7 @@ export interface ResolvedDep {
 export function registerDepRules(n: Ninja, cfg: Config): void {
   // Shell quoting: tool/script paths may contain spaces (e.g. cargo
   // in "C:\Program Files\Rust\..."). quote() passes through safe paths
-  // unchanged so there's no cost on the common case. Host shell syntax
-  // (dep rules don't run in rust-only cross-compile, so host == target,
-  // but use host.os for consistency with other modules).
+  // unchanged so there's no cost on the common case. Host shell syntax.
   const hostWin = cfg.host.os === "windows";
   const q = (p: string) => quote(p, hostWin);
   const cmake = q(cfg.cmake);
@@ -979,70 +977,6 @@ export function resolveDep(
 }
 
 /**
- * Compute the lib paths a dep produces WITHOUT emitting ninja rules.
- *
- * Used by link-only mode: artifacts (the .a/.lib files) are downloaded
- * from cpp-only's buildkite upload into the SAME paths this returns.
- * Ninja sees them as source files (no build rule) — errors cleanly if
- * download failed.
- *
- * Must stay in sync with the path computation inside emitNestedCmake /
- * emitCargo / emitPrebuilt — that's the contract between cpp-only
- * (producer) and link-only (consumer). If those emit-side paths change,
- * change this too.
- */
-export function computeDepLibs(cfg: Config, dep: Dependency): string[] {
-  if (dep.enabled && !dep.enabled(cfg)) {
-    return [];
-  }
-
-  const source = dep.source(cfg);
-  const buildSpec = dep.build(cfg);
-  const provides = dep.provides(cfg);
-
-  // Prebuilt: provides.libs are paths relative to destDir.
-  if (source.kind === "prebuilt") {
-    const destDir = source.destDir ?? depSourceDir(cfg, dep.name);
-    return provides.libs.map(lib => resolve(destDir, lib));
-  }
-
-  // nested-cmake: provides.libs are bare names (prefix/suffix added) or
-  // paths with "." (used as-is), relative to buildDir/libSubdir.
-  // preBuild outputs (ICU) are absolute paths already — appended.
-  if (buildSpec.kind === "nested-cmake") {
-    const buildDir = depBuildDir(cfg, dep.name);
-    const libDir = buildSpec.libSubdir ? resolve(buildDir, buildSpec.libSubdir) : buildDir;
-    const libs = provides.libs.map(lib =>
-      lib.includes(".") ? resolve(libDir, lib) : resolve(libDir, `${cfg.libPrefix}${lib}${cfg.libSuffix}`),
-    );
-    if (buildSpec.preBuild !== undefined) {
-      libs.push(...buildSpec.preBuild.outputs);
-    }
-    return libs;
-  }
-
-  // cargo: single lib in targetDir/<triple?>/<profile>/.
-  if (buildSpec.kind === "cargo") {
-    const targetDir = depBuildDir(cfg, dep.name);
-    const profile = cfg.release ? "release" : "debug";
-    const outSubdir = buildSpec.rustTarget ? join(buildSpec.rustTarget, profile) : profile;
-    return [resolve(targetDir, outSubdir, `${cfg.libPrefix}${buildSpec.libName}${cfg.libSuffix}`)];
-  }
-
-  // direct: single lib<name>.a when archiveDeps; otherwise the dep's .o
-  // files are folded into libbun.a in cpp-only and there's no separate
-  // artifact for link-only to fetch.
-  if (buildSpec.kind === "direct") {
-    if (!cfg.archiveDeps) return [];
-    const buildDir = depBuildDir(cfg, dep.name);
-    return [resolve(buildDir, `${cfg.libPrefix}${dep.name}${cfg.libSuffix}`)];
-  }
-
-  // none: no libs (header-only or directly-compiled sources).
-  return [];
-}
-
-/**
  * Emit a ninja fetch rule. Returns absolute path to the .ref stamp.
  *
  * The .ref stamp contains the "source identity": hash(commit + patch contents).
@@ -1260,9 +1194,7 @@ function emitNestedCmake(
     args.push(`-DCMAKE_C_COMPILER_LAUNCHER=${slash(cfg.ccache)}`);
     args.push(`-DCMAKE_CXX_COMPILER_LAUNCHER=${slash(cfg.ccache)}`);
   }
-  // Both may be undefined in rust-only cross-compile (no xcode on the linux
-  // CI box); that's fine — the cmake rules are emitted but never pulled.
-  // If pulled without an SDK, cmake fails with its own clear error.
+  // Both may be undefined; if the rules are pulled without an SDK, cmake fails with its own clear error.
   if (cfg.darwin && cfg.osxDeploymentTarget !== undefined && cfg.osxSysroot !== undefined) {
     args.push(`-DCMAKE_OSX_DEPLOYMENT_TARGET=${cfg.osxDeploymentTarget}`);
     args.push(`-DCMAKE_OSX_SYSROOT=${cfg.osxSysroot}`);

@@ -10,13 +10,13 @@ use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
 #[derive(Default)]
-pub struct Cat {
+pub(crate) struct Cat {
     pub(crate) state: CatState,
 }
 
 /// Where the inputs and the chunks written for them stand.
 #[derive(Default)]
-pub struct Progress {
+pub(crate) struct Progress {
     /// The current input is over: its reader reported EOF or an error, or it
     /// could not be opened.
     in_done: bool,
@@ -40,7 +40,7 @@ impl Progress {
 }
 
 #[derive(Default)]
-pub enum CatState {
+pub(crate) enum CatState {
     #[default]
     Idle,
     ExecStdin(Progress),
@@ -333,7 +333,7 @@ impl Cat {
 }
 
 #[derive(Clone, Copy, Default)]
-pub struct Opts {}
+pub(crate) struct Opts {}
 
 impl FlagParser for Opts {
     fn parse_long(&mut self, _flag: &[u8]) -> Option<ParseFlagResult> {

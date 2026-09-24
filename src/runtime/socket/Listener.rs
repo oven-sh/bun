@@ -67,7 +67,7 @@ use crate::generated_classes::js_Listener;
 // shim still emits `this: &mut Listener` — `&mut T` auto-derefs to `&T`
 // so the impls below compile against either.
 #[bun_jsc::JsClass(no_constructor)]
-pub struct Listener {
+pub(crate) struct Listener {
     pub(crate) handlers: Rc<Handlers>,
     pub(crate) listener: Cell<ListenerType>,
 
@@ -102,7 +102,7 @@ bun_jsc::impl_abort_handle_owner!(Listener, abort_handle, |this, _cause| {
 });
 
 #[derive(Clone, Copy, Default)]
-pub enum ListenerType {
+pub(crate) enum ListenerType {
     Uws(*mut uws_sys::ListenSocket),
     /// Raw heap pointer (not `Box`) to a `WindowsNamedPipeListeningContext`.
     /// The context's address is the pipe server's callback context for as
@@ -131,7 +131,7 @@ impl Listener {
 }
 
 #[derive(Clone)]
-pub enum UnixOrHost {
+pub(crate) enum UnixOrHost {
     Unix(Box<[u8]>),
     Host { host: Box<[u8]>, port: u16 },
     Fd(Fd),
@@ -897,7 +897,7 @@ impl Listener {
         this.secure_ctx.set(None);
     }
 
-    pub fn finalize(self: Box<Self>) {
+    pub(crate) fn finalize(self: Box<Self>) {
         log!("finalize");
         let listener = self.listener.replace(ListenerType::None);
         self.abort_handle.leave();
@@ -1007,7 +1007,11 @@ impl Listener {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn ref_(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn ref_(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         let this_value = frame.this();
         if matches!(this.listener.get(), ListenerType::None) {
             return Ok(JSValue::UNDEFINED);
@@ -1740,7 +1744,7 @@ fn normalize_pipe_name<'a>(pipe_name: &[u8], buffer: &'a mut [u8]) -> Option<&'a
 }
 
 #[cfg(windows)]
-pub struct WindowsNamedPipeListeningContext {
+pub(crate) struct WindowsNamedPipeListeningContext {
     /// `None` only until `listen` has the context's address to give it.
     server: Option<bun_io::windows::PipeServer>,
     /// BACKREF: the parent `Listener` owns this context and frees it

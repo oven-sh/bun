@@ -18,14 +18,14 @@ use crate::shell::yield_::Yield;
 /// A listener: the node id of the owning Cmd plus a tag saying which builtin
 /// impl to dispatch the `on_read_chunk`/`on_reader_done` callback to.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct ChildPtr {
+pub(crate) struct ChildPtr {
     pub node: NodeId,
     pub(crate) tag: ReaderTag,
 }
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum ReaderTag {
+pub(crate) enum ReaderTag {
     Cat,
 }
 
@@ -69,7 +69,7 @@ struct State {
     interp: bun_ptr::ParentRef<Interpreter>,
 }
 
-pub struct IOReader {
+pub(crate) struct IOReader {
     /// Split out of `State` so `state()`'s `&mut State` never overlaps the
     /// `&mut ReaderImpl` the read-loop caller holds while invoking vtable
     /// callbacks (see `BufferedReaderParent` aliasing contract). Both cells

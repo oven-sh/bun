@@ -28,9 +28,9 @@ type ByteListPoolNode = bun_collections::pool::Node<Vec<u8>>;
 // NetworkSink stores a borrowed `*MultiPartUpload`. Now that `webcore::s3` is
 // wired, alias the module to the real type so `bun_s3::MultiPartUpload` resolves
 // for callers that still spell it that way.
-pub mod bun_s3 {
-    pub use crate::webcore::s3::MultiPartUpload;
-    pub use crate::webcore::s3::multipart::UploadBackpressure;
+pub(crate) mod bun_s3 {
+    pub(crate) use crate::webcore::s3::MultiPartUpload;
+    pub(crate) use crate::webcore::s3::multipart::UploadBackpressure;
 }
 
 /// `Blob.SizeType` is `u64` (see `webcore::blob::SizeType`).
@@ -50,9 +50,9 @@ fn high_water_mark_from_js(value: JSValue, min: BlobSizeType) -> BlobSizeType {
 }
 
 // Compat: `webcore::SinkHandle` and Body refer to `streams::Result` / `streams::result::StreamError`.
-pub use StreamResult as Result;
-pub mod result {
-    pub use super::{StreamError, Writable};
+pub(crate) use StreamResult as Result;
+pub(crate) mod result {
+    pub(crate) use super::{StreamError, Writable};
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -60,7 +60,7 @@ pub mod result {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Options payload for the `Start::FileSink` variant.
-pub type FileSinkOptions = crate::webcore::file_sink::Options;
+pub(crate) type FileSinkOptions = crate::webcore::file_sink::Options;
 
 pub enum Start {
     Empty,
@@ -78,7 +78,7 @@ pub enum Start {
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, core::marker::ConstParamTy)]
-pub enum StartTag {
+pub(crate) enum StartTag {
     ArrayBufferSink,
     FileSink,
     HTTPSResponseSink,
@@ -384,7 +384,7 @@ impl Default for WritablePending {
 // `WritablePending` / `WritableFuture` only own the JSPromiseStrong field —
 // JSPromiseStrong implements Drop, so no explicit Drop impl is needed here.
 
-pub enum WritableFuture {
+pub(crate) enum WritableFuture {
     None,
     Promise {
         strong: JSPromiseStrong,
@@ -594,7 +594,7 @@ impl bun_event_loop::Taskable for Pending {
     }
 }
 
-pub enum PendingFuture {
+pub(crate) enum PendingFuture {
     Promise {
         // JSC_BORROW: raw `*mut JSPromise`, GC-rooted via protect/unprotect (protected when
         // stored, unprotected when the future is fulfilled or deinitialized).
@@ -607,7 +607,7 @@ pub enum PendingFuture {
     Handler(PendingHandler),
 }
 
-pub struct PendingHandler {
+pub(crate) struct PendingHandler {
     pub ctx: *mut c_void,
     pub(crate) handler: PendingHandlerFn,
 }
@@ -616,7 +616,7 @@ type PendingHandlerFn = fn(ctx: *mut c_void, result: StreamResult);
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum PendingState {
+pub(crate) enum PendingState {
     None,
     Pending,
     Used,
@@ -1162,7 +1162,7 @@ pub(crate) enum HTTPServerWritableState {
 /// `HTTPSResponseSink`) wraps this; the response itself is dispatched at
 /// runtime through `uws::AnyResponse`, so one instantiation serves HTTP/1.1,
 /// HTTP/2 and HTTP/3 alike.
-pub struct HTTPServerWritable<const SSL: bool> {
+pub(crate) struct HTTPServerWritable<const SSL: bool> {
     pub(crate) res: Option<uws::AnyResponse>,
     pub(crate) buffer: Vec<u8>,
     pub(crate) pooled_buffer: Option<NonNull<ByteListPoolNode>>,
@@ -1244,7 +1244,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
     /// registration / pending-flush creation) and the VM-owned global outlives
     /// this sink (JSC_BORROW). Never `None` once initialized.
     #[inline]
-    pub fn global_this(&self) -> &JSGlobalObject {
+    pub(crate) fn global_this(&self) -> &JSGlobalObject {
         self.global_this
             .as_ref()
             .expect("HTTPServerWritable.global_this used before init")
@@ -1269,7 +1269,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
 
 /// Per-monomorphization JSSink wrapper alias. Mirrors
 /// `pub const JSSink = Sink.JSSink(@This(), name)`.
-pub type HTTPServerWritableJSSink<const SSL: bool> =
+pub(crate) type HTTPServerWritableJSSink<const SSL: bool> =
     crate::webcore::sink::JSSink<HTTPServerWritable<SSL>>;
 
 // `HTTPServerWritable` is exposed to JS via `Sink.JSSink(@This(), name)` where
@@ -1766,7 +1766,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         bun_sys::Result::Ok(self.park_pending_flush(cx.global()))
     }
 
-    pub fn flush(&mut self) -> bun_sys::Result<()> {
+    pub(crate) fn flush(&mut self) -> bun_sys::Result<()> {
         bun_core::scoped_log!(HTTPServerWritableLog, "flush()");
         self.unregister_auto_flusher();
 
@@ -1782,7 +1782,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         bun_sys::Result::Ok(())
     }
 
-    pub fn write(&mut self, data: &StreamResult) -> Writable {
+    pub(crate) fn write(&mut self, data: &StreamResult) -> Writable {
         if self.is_done() || self.requested_end {
             return Writable::Owned(0);
         }
@@ -2108,7 +2108,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
 
     /// This can be called _many_ times for the same instance
     /// so it must zero out state instead of make it
-    pub fn finalize(&mut self) {
+    pub(crate) fn finalize(&mut self) {
         bun_core::scoped_log!(HTTPServerWritableLog, "finalize()");
         if !self.is_done() {
             self.unregister_auto_flusher();
@@ -2250,14 +2250,14 @@ impl<const SSL: bool> crate::webcore::sink::JsSinkType for HTTPServerWritable<SS
     }
 }
 
-pub type HTTPSResponseSink = HTTPServerWritable<true>;
-pub type HTTPResponseSink = HTTPServerWritable<false>;
+pub(crate) type HTTPSResponseSink = HTTPServerWritable<true>;
+pub(crate) type HTTPResponseSink = HTTPServerWritable<false>;
 
 // ──────────────────────────────────────────────────────────────────────────
 // NetworkSink
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct NetworkSink {
+pub(crate) struct NetworkSink {
     /// The sink's ref on the upload, released in `detach_writable`.
     pub task: Option<RefPtr<bun_s3::MultiPartUpload>>,
     pub(crate) source: SourceHandle,
@@ -2309,7 +2309,7 @@ impl NetworkSink {
     /// Invariant: `global_this` is set at construction and the VM-owned global
     /// outlives this sink (JSC_BORROW). Never `None` once set.
     #[inline]
-    pub fn global_this(&self) -> &JSGlobalObject {
+    pub(crate) fn global_this(&self) -> &JSGlobalObject {
         self.global_this
             .as_ref()
             .expect("NetworkSink.global_this used before init")
@@ -2326,13 +2326,6 @@ impl NetworkSink {
         Box::new(init)
     }
 
-    pub fn path(&self) -> Option<&[u8]> {
-        if let Some(task) = self.task_ref() {
-            return Some(&task.path);
-        }
-        None
-    }
-
     pub(crate) fn start(&mut self, _stream_start: &Start) -> bun_sys::Result<()> {
         if self.ended {
             return bun_sys::Result::Ok(());
@@ -2342,7 +2335,7 @@ impl NetworkSink {
         bun_sys::Result::Ok(())
     }
 
-    pub fn finalize(&mut self) {
+    pub(crate) fn finalize(&mut self) {
         self.detach_writable();
     }
 
@@ -2366,6 +2359,18 @@ impl NetworkSink {
 
     fn detach_writable(&mut self) {
         self.task = None;
+    }
+
+    /// The `writer()` wrapper was collected before `end()`: nothing can finish the upload, so fail it.
+    fn abort_on_collect(&mut self) {
+        if self.ended || self.writer_holders.get() == 0 {
+            return;
+        }
+        self.ended = true;
+        self.done = true;
+        if let Some(task) = self.task_ref() {
+            task.fail_writer_collected();
+        }
     }
 
     /// The S3 upload drained: settle the flush/write promises (terminal, like
@@ -2402,7 +2407,7 @@ impl NetworkSink {
         source.ready(None, None);
     }
 
-    pub fn flush(&mut self) -> bun_sys::Result<()> {
+    pub(crate) fn flush(&mut self) -> bun_sys::Result<()> {
         bun_sys::Result::Ok(())
     }
 
@@ -2454,7 +2459,7 @@ impl NetworkSink {
         Writable::Pending(core::ptr::from_mut(&mut self.pending))
     }
 
-    pub fn write(&mut self, data: &StreamResult) -> Writable {
+    pub(crate) fn write(&mut self, data: &StreamResult) -> Writable {
         if self.ended {
             return Writable::Owned(0);
         }
@@ -2658,7 +2663,7 @@ impl NetworkSink {
         bun_sys::Result::Ok(JSValue::js_number(0.0))
     }
 
-    pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {
+    pub(crate) fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {
         NetworkSinkJSSink::create_object(global_this, self, 0)
     }
 
@@ -2686,6 +2691,7 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
     unsafe fn finalize(this: *mut Self) {
         // SAFETY: trait contract — `this` is live and not used after this call.
         unsafe {
+            (*this).abort_on_collect();
             (*this).finalize();
             Self::release_writer_holder(this);
         }
@@ -2716,7 +2722,7 @@ pub(crate) type NetworkSinkJSSink = crate::webcore::sink::JSSink<NetworkSink>;
 // No caller pattern-matches on the variant — they only read `.tag()` or forward to the
 // promise.
 
-pub struct BufferAction {
+pub(crate) struct BufferAction {
     tag: BufferActionTag,
     promise: JSPromiseStrong,
     /// The context whose script asked (as `PendingFuture::Promise`).
@@ -2766,7 +2772,7 @@ impl BufferAction {
         crate::dispatch::fold(settled);
     }
 
-    pub fn value(&self) -> JSValue {
+    pub(crate) fn value(&self) -> JSValue {
         self.promise.value()
     }
 

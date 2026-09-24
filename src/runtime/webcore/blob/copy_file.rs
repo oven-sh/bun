@@ -17,7 +17,7 @@ use core::marker::ConstParamTy;
 // CopyFile (blocking off-thread)
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct CopyFile {
+pub(crate) struct CopyFile {
     pub(crate) destination_file_store: store::File,
     pub(crate) source_file_store: store::File,
     // `RefPtr<Store>` is the thread-safe refcounted handle;
@@ -1089,7 +1089,7 @@ fn copy_by_path(
     };
     if max_length != MAX_SIZE && copied > max_length {
         let _ = node_fs::NodeFS::default().truncate(
-            &node_fs::Arguments::Truncate {
+            &node_fs::args::Truncate {
                 path: destination.pathlike.clone(),
                 len: max_length as u64,
                 flags: 0,
@@ -1182,12 +1182,14 @@ const OPEN_DESTINATION_FLAGS: i32 =
 const OPEN_SOURCE_FLAGS: i32 = bun_sys::O::CLOEXEC | bun_sys::O::RDONLY;
 
 #[derive(ConstParamTy, PartialEq, Eq, Clone, Copy)]
-pub enum TryWith {
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub(crate) enum TryWith {
     Sendfile,
     CopyFileRange,
     Splice,
 }
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
 impl TryWith {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) const fn tag(self) -> bun_sys::Tag {
@@ -1204,7 +1206,7 @@ impl TryWith {
 // ───────────────────────────────────────────────────────────────────────────
 
 #[derive(ConstParamTy, PartialEq, Eq, Clone, Copy)]
-pub enum IOWhich {
+pub(crate) enum IOWhich {
     Source,
     Destination,
     Both,

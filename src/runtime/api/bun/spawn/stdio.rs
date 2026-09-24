@@ -22,7 +22,7 @@ bun_output::define_scoped_log!(log, SYS, visible);
 
 /// Payload of `Stdio::Capture`.
 #[derive(Clone, Copy)]
-pub struct Capture {
+pub(crate) struct Capture {
     // BACKREF: raw pointer to a capture buffer owned by the shell interpreter.
     // The shell keeps the buffer alive for the lifetime
     // of the spawned process; this struct never frees it.
@@ -32,7 +32,7 @@ pub struct Capture {
 
 /// Payload of `Stdio::Dup2`.
 #[derive(Clone, Copy)]
-pub struct Dup2 {
+pub(crate) struct Dup2 {
     pub out: StdioKind,
     pub(crate) to: StdioKind,
 }
@@ -40,7 +40,7 @@ pub struct Dup2 {
 // Constructed/matched in many other files (subprocess, shell); boxing `Blob`
 // would ripple through all of them.
 #[allow(clippy::large_enum_variant)]
-pub enum Stdio {
+pub(crate) enum Stdio {
     Inherit,
     Capture(Capture),
     Ignore,
@@ -48,6 +48,7 @@ pub enum Stdio {
     Dup2(Dup2),
     Path(PathLike<'static>),
     Blob(webcore::blob::Any),
+    #[cfg_attr(not(any(target_os = "linux", target_os = "android")), allow(dead_code))]
     Memfd(Fd),
     Pipe,
     /// Like `Pipe` at indices >= 3, but the parent end of the socketpair (a
@@ -273,7 +274,7 @@ impl Stdio {
         )
     }
 
-    pub fn borrows_caller_fd(&self) -> bool {
+    pub(crate) fn borrows_caller_fd(&self) -> bool {
         matches!(self, Self::Fd(_))
     }
 
@@ -621,7 +622,7 @@ impl Stdio {
 
 impl Stdio {
     /// Move the memfd out (ownership passes to the caller); `self` becomes `Ignore`.
-    pub fn take_memfd(&mut self) -> Option<Fd> {
+    pub(crate) fn take_memfd(&mut self) -> Option<Fd> {
         let Stdio::Memfd(fd) = *self else { return None };
         // Don't run Drop on the old value: it would close `fd`.
         let _ = core::mem::ManuallyDrop::new(core::mem::replace(self, Stdio::Ignore));

@@ -315,12 +315,12 @@ extern "C" fn on_data(
     this_value.ensure_still_alive();
 }
 
-pub struct ConnectConfig {
+pub(crate) struct ConnectConfig {
     port: u16,
     address: BunString,
 }
 
-pub struct UDPSocketConfig {
+pub(crate) struct UDPSocketConfig {
     pub(crate) hostname: BunString,
     connect: Option<ConnectConfig>,
     pub(crate) port: u16,
@@ -515,7 +515,7 @@ struct ConnectInfo {
 /// `address` / `remoteAddress` (cleared on connect to invalidate the JS-side
 /// memo). All resolve to the C++ `UDPSocketPrototype__${prop}{Get,Set}CachedValue`
 /// shims via [`bun_jsc::codegen_cached_accessors!`].
-pub mod js {
+pub(crate) mod js {
     bun_jsc::codegen_cached_accessors!(
         "UDPSocket";
         on_data, on_drain, on_error,
@@ -529,7 +529,7 @@ pub mod js {
 // `sharedThis: true` regen lands — `&mut T` auto-derefs to `&T` so the impls
 // below compile against either.
 #[bun_jsc::JsClass(no_construct, no_constructor)]
-pub struct UDPSocket {
+pub(crate) struct UDPSocket {
     pub(crate) config: JsCell<UDPSocketConfig>,
 
     pub(crate) socket: Cell<Option<*mut uws::udp::Socket>>,
@@ -1685,7 +1685,11 @@ impl UDPSocket {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn ref_(this: &Self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn ref_(
+        this: &Self,
+        global_this: &JSGlobalObject,
+        _: &CallFrame,
+    ) -> JsResult<JSValue> {
         let _ = global_this;
         if !this.closed.get() {
             this.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
@@ -1717,7 +1721,7 @@ impl UDPSocket {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn close(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn close(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         Self::close_socket(this);
         Ok(JSValue::UNDEFINED)
     }
@@ -1865,7 +1869,7 @@ impl UDPSocket {
         })
     }
 
-    pub fn finalize(self: Box<Self>) {
+    pub(crate) fn finalize(self: Box<Self>) {
         bun_output::scoped_log!(UdpSocket, "Finalize {:p}", &raw const *self);
         self.this_value.with_mut(|r| r.finalize());
         // `deinit` frees the allocation itself (`heap::take`); hand ownership

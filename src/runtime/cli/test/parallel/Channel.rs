@@ -41,7 +41,7 @@ use super::frame;
 
 /// The owner implements [`bun_core::IntrusiveField<Channel<Self>>`]
 /// (via `bun_core::intrusive_field!`) plus the two callbacks below.
-pub trait ChannelOwner: bun_core::IntrusiveField<Channel<Self>> {
+pub(crate) trait ChannelOwner: bun_core::IntrusiveField<Channel<Self>> {
     fn on_channel_frame(&mut self, kind: frame::Kind, rd: &mut frame::Reader<'_>);
     fn on_channel_done(&mut self);
 }
@@ -51,7 +51,7 @@ pub trait ChannelOwner: bun_core::IntrusiveField<Channel<Self>> {
 // `impl ChannelOwner` is in scope. Method impls that recover the owner via
 // `IntrusiveField::OFFSET` keep the bound. (Rust also forbids a stricter bound
 // on `Drop` than on the struct, so Drop/Default below are unbounded too.)
-pub struct Channel<Owner> {
+pub(crate) struct Channel<Owner> {
     /// Incoming bytes that don't yet form a complete frame.
     pub(crate) r#in: JsCell<Vec<u8>>,
     /// Outgoing bytes the kernel didn't accept yet.
@@ -71,9 +71,9 @@ pub struct Channel<Owner> {
 }
 
 #[cfg(windows)]
-pub type Backend = WindowsBackend;
+pub(crate) type Backend = WindowsBackend;
 #[cfg(not(windows))]
-pub type Backend = PosixBackend;
+pub(crate) type Backend = PosixBackend;
 
 impl<Owner> Default for Channel<Owner> {
     fn default() -> Self {
@@ -104,10 +104,10 @@ impl<Owner: ChannelOwner> Channel<Owner> {
 // -- POSIX (usockets) --------------------------------------------------------
 
 #[cfg(not(windows))]
-pub type Socket = uws::NewSocketHandler<false>;
+pub(crate) type Socket = uws::NewSocketHandler<false>;
 
 #[cfg(not(windows))]
-pub struct PosixBackend {
+pub(crate) struct PosixBackend {
     pub(crate) socket: Cell<Socket>,
     /// Bytes at the front of `out` already written to the kernel;
     /// front-draining per partial write instead is quadratic in backlog size.
@@ -153,7 +153,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
 
 #[cfg(windows)]
 #[derive(Default)]
-pub struct WindowsBackend {
+pub(crate) struct WindowsBackend {
     pub(crate) pipe: JsCell<Option<Pipe>>,
     /// A write is with the pipe; `out` collects what follows it.
     writing: Cell<bool>,
@@ -350,7 +350,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
 
     /// Best-effort drain of any buffered writes.
     #[cfg(not(windows))]
-    pub fn flush(&self) {
+    pub(crate) fn flush(&self) {
         while !self.done.get() {
             let mut pending = self.out.replace(Vec::new());
             let mut head = self.backend.out_head.get();

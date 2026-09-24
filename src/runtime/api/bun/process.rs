@@ -6,8 +6,9 @@
 //!
 //! This file re-exports them as `crate::api::bun_process::*`.
 
-pub use bun_spawn::process::sync;
-pub use bun_spawn::process::*;
+pub(crate) use bun_spawn::process::sync;
+pub(crate) use bun_spawn::process::*;
 
-pub use bun_spawn::process::event_loop_handle_to_ctx;
-pub use bun_spawn::process::spawn_sys;
+pub(crate) use bun_spawn::process::event_loop_handle_to_ctx;
+#[cfg(not(windows))]
+pub(crate) use bun_spawn::process::spawn_sys;

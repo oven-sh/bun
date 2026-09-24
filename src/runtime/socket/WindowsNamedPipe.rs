@@ -55,11 +55,11 @@ pub(crate) enum EndOfWrite {
     Idle,
 }
 
-pub type CertError = crate::socket::upgraded_duplex::CertError;
+pub(crate) type CertError = crate::socket::upgraded_duplex::CertError;
 
 type WrapperType = SSLWrapper<*mut WindowsNamedPipe>;
 
-pub struct WindowsNamedPipe {
+pub(crate) struct WindowsNamedPipe {
     pub(crate) wrapper: JsCell<Option<WrapperType>>,
     pub(crate) deferred_writer_close: Cell<bool>,
     pub(crate) root: Cell<*mut WindowsNamedPipe>,
@@ -72,6 +72,7 @@ pub struct WindowsNamedPipe {
     pub(crate) vm: &'static VirtualMachine,
     /// Typed enum mirror of `vm.event_loop()` for the io-layer FilePoll vtable
     /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
+    #[cfg_attr(windows, allow(dead_code))]
     pub event_loop_handle: bun_jsc::EventLoopHandle,
 
     /// Owns the open pipe (`writer.source`); reads go through it too.
@@ -123,7 +124,7 @@ impl Flags {
     }
 }
 
-pub struct Handlers {
+pub(crate) struct Handlers {
     pub ctx: *mut c_void,
     pub(crate) ref_ctx: fn(*mut c_void),
     pub(crate) deref_ctx: fn(*mut c_void),
@@ -543,7 +544,7 @@ impl WindowsNamedPipe {
     }
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__resume_stream")]
-    pub fn resume_stream(&self) -> bool {
+    pub(crate) fn resume_stream(&self) -> bool {
         let resumed = matches!(self.read_start(), Some(Ok(())));
         self.arm_end_of_write_timer();
         resumed
@@ -552,13 +553,13 @@ impl WindowsNamedPipe {
     /// A read the kernel already has is left to finish; what it produces is
     /// delivered after `resume_stream`.
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__pause_stream")]
-    pub fn pause_stream(&self) -> bool {
+    pub(crate) fn pause_stream(&self) -> bool {
         self.cancel_end_of_write_timer();
         self.with_pipe(Pipe::read_stop).is_some()
     }
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__flush")]
-    pub fn flush(&self) {
+    pub(crate) fn flush(&self) {
         let _ = self.with_wrapper(|w| {
             let _ = w.flush();
         });
@@ -614,7 +615,7 @@ impl WindowsNamedPipe {
         (self.handlers.ref_ctx)(self.handlers.ctx);
     }
 
-    pub fn deref(&self) {
+    pub(crate) fn deref(&self) {
         (self.handlers.deref_ctx)(self.handlers.ctx);
     }
 
@@ -807,7 +808,7 @@ impl WindowsNamedPipe {
     }
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__encode_and_write")]
-    pub fn encode_and_write(&self, data: &[u8]) -> i32 {
+    pub(crate) fn encode_and_write(&self, data: &[u8]) -> i32 {
         bun_output::scoped_log!(WindowsNamedPipe, "encodeAndWrite (len: {})", data.len());
         if let Some(r) = self.with_wrapper(|w| w.write_data(data)) {
             return i32::try_from(r.unwrap_or(0)).expect("int cast");
@@ -817,7 +818,7 @@ impl WindowsNamedPipe {
     }
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__raw_write")]
-    pub fn raw_write(&self, encoded_data: &[u8]) -> i32 {
+    pub(crate) fn raw_write(&self, encoded_data: &[u8]) -> i32 {
         self.internal_write(encoded_data);
         i32::try_from(encoded_data.len()).expect("int cast")
     }
@@ -825,7 +826,7 @@ impl WindowsNamedPipe {
     /// A connect still in flight is abandoned and fails the way a cancelled
     /// one does; its callback will not run.
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__close")]
-    pub fn close(&self) {
+    pub(crate) fn close(&self) {
         if self.connect_req.replace(None).is_some() {
             self.on_connect_error(bun_sys::Error::from_code(
                 bun_sys::E::ECANCELED,
@@ -841,7 +842,7 @@ impl WindowsNamedPipe {
     }
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__shutdown")]
-    pub fn shutdown(&self) {
+    pub(crate) fn shutdown(&self) {
         let handled = self.with_wrapper(|w| {
             let _ = w.shutdown(false);
         });
@@ -857,7 +858,7 @@ impl WindowsNamedPipe {
     }
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__shutdown_read")]
-    pub fn shutdown_read(&self) {
+    pub(crate) fn shutdown_read(&self) {
         if let Some(wrapper) = self.wrapper_ref() {
             wrapper.shutdown_read();
         } else {
@@ -866,7 +867,7 @@ impl WindowsNamedPipe {
     }
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__is_shutdown", no_catch)]
-    pub fn is_shutdown(&self) -> bool {
+    pub(crate) fn is_shutdown(&self) -> bool {
         if let Some(wrapper) = self.wrapper_ref() {
             return wrapper.is_shutdown();
         }
@@ -877,7 +878,7 @@ impl WindowsNamedPipe {
     }
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__is_closed", no_catch)]
-    pub fn is_closed(&self) -> bool {
+    pub(crate) fn is_closed(&self) -> bool {
         if let Some(wrapper) = self.wrapper_ref() {
             return wrapper.is_closed();
         }
@@ -885,7 +886,7 @@ impl WindowsNamedPipe {
     }
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__is_established", no_catch)]
-    pub fn is_established(&self) -> bool {
+    pub(crate) fn is_established(&self) -> bool {
         !self.is_closed()
     }
 
@@ -896,7 +897,7 @@ impl WindowsNamedPipe {
     }
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__ssl_error", no_catch)]
-    pub fn ssl_error(&self) -> us_bun_verify_error_t {
+    pub(crate) fn ssl_error(&self) -> us_bun_verify_error_t {
         self.ssl_error.get().as_verify_error()
     }
 
@@ -913,7 +914,7 @@ impl WindowsNamedPipe {
     }
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__set_timeout")]
-    pub fn set_timeout(&self, seconds: c_uint) {
+    pub(crate) fn set_timeout(&self, seconds: c_uint) {
         bun_output::scoped_log!(WindowsNamedPipe, "setTimeout({})", seconds);
         self.set_timeout_in_milliseconds(seconds * 1000);
     }

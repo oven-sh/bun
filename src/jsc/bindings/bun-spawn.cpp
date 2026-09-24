@@ -242,6 +242,19 @@ extern "C" ssize_t posix_spawn_bun(
     if (pipe(errpipe) == -1) {
         return errno;
     }
+    // With fd 0, 1 or 2 closed, the write end can get the number a file action targets, and that action would replace it in the child.
+    int highestTarget = STDERR_FILENO;
+    for (size_t i = 0; i < request->actions.len; i++) {
+        const bun_spawn_request_file_action_t& action = request->actions.ptr[i];
+        highestTarget = std::max(highestTarget, action.type == FileActionType::Dup2 ? action.fds[1] : action.fds[0]);
+    }
+    if (errpipe[1] <= highestTarget) {
+        int above = fcntl(errpipe[1], F_DUPFD_CLOEXEC, highestTarget + 1);
+        if (above != -1) {
+            close(errpipe[1]);
+            errpipe[1] = above;
+        }
+    }
     // Set cloexec on write end so it closes on successful exec
     fcntl(errpipe[1], F_SETFD, FD_CLOEXEC);
 #endif
@@ -383,24 +396,24 @@ extern "C" ssize_t posix_spawn_bun(
                 break;
             }
             case FileActionType::Open: {
-                int opened = -1;
-                opened = open(action.path, action.flags, action.mode);
+                int opened = open(action.path, action.flags, action.mode);
 
                 if (opened == -1) {
                     return childFailed();
                 }
 
-                if (opened != -1) {
+                // open() lands on the target itself when that slot is free.
+                if (opened != action.fds[0]) {
                     if (dup2(opened, action.fds[0]) == -1) {
                         close(opened);
                         return childFailed();
                     }
-                    current_max_fd = std::max(current_max_fd, action.fds[0]);
                     if (close(opened)) {
                         return childFailed();
                     }
                 }
 
+                current_max_fd = std::max(current_max_fd, action.fds[0]);
                 break;
             }
             default: {

@@ -326,7 +326,6 @@ async function syncExportList(file: string, line: (name: string) => string) {
 
 await syncExportList("symbols.def", name => `  ${name}`);
 await syncExportList("symbols.txt", name => `_${name}`);
-await syncExportList("symbols.dyn", name => `    _${name};`);
 await syncExportList("linker.lds", name => `  ${name};`);
 await syncExportList("linker-freebsd.lds", name => `  ${name};`);
 

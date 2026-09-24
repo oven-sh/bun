@@ -64,13 +64,13 @@ extern "system" fn on_console_ctrl(ctrl_type: win::DWORD) -> win::BOOL {
 /// added at the first `process.on("SIGINT")` would come before every routine
 /// registered earlier, such as the one `vm`'s `breakOnSigint` installs.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__installWindowsSignalHandler() {
+pub(crate) extern "C" fn Bun__installWindowsSignalHandler() {
     let _ = win::SetConsoleCtrlHandler(Some(on_console_ctrl), win::TRUE);
 }
 
 /// First `process.on(<signal>)` listener for `signum` on the main thread.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__watchWindowsSignal(signum: c_int) {
+pub(crate) extern "C" fn Bun__watchWindowsSignal(signum: c_int) {
     match signum {
         SIGINT | SIGBREAK | SIGHUP => {
             WATCHED.fetch_or(1 << signum, Ordering::Release);
@@ -82,7 +82,7 @@ pub extern "C" fn Bun__watchWindowsSignal(signum: c_int) {
 
 /// Last listener for `signum` removed.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__unwatchWindowsSignal(signum: c_int) {
+pub(crate) extern "C" fn Bun__unwatchWindowsSignal(signum: c_int) {
     match signum {
         SIGINT | SIGBREAK | SIGHUP => {
             WATCHED.fetch_and(!(1 << signum), Ordering::Release);

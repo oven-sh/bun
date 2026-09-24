@@ -896,7 +896,6 @@ fn attempt_security_scan_with_retry(
         process: None,
         ipc_reader: BufferedReader::init::<SecurityScanSubprocess>(),
         ipc_data: Vec::new(),
-        stderr_data: Vec::new(),
         has_received_ipc: false,
         exit_status: None,
         remaining_fds: 0,
@@ -941,7 +940,6 @@ pub struct SecurityScanSubprocess<'a> {
     process: Option<ProcessHandle>,
     ipc_reader: BufferedReader,
     ipc_data: Vec<u8>,
-    stderr_data: Vec<u8>,
     has_received_ipc: bool,
     exit_status: Option<Status>,
     remaining_fds: i8,
@@ -1001,7 +999,6 @@ bun_io::impl_buffered_reader_parent! {
 impl<'a> SecurityScanSubprocess<'a> {
     pub(crate) fn spawn(&mut self) -> Result<(), Error> {
         self.ipc_data = Vec::new();
-        self.stderr_data = Vec::new();
         let parent: *mut Self = self;
         self.ipc_reader.set_parent(parent.cast());
 
@@ -1387,7 +1384,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         _original_cwd: &[u8],         // Reserved for future use
         is_retry: bool,
     ) -> Result<ScanAttemptResult, Error> {
-        // `defer { ipc_data.deinit(); stderr_data.deinit(); }` — Vec fields drop with self.
+        // `defer { ipc_data.deinit(); }`: Vec fields drop with self.
 
         let Some(status) = self.exit_status.clone() else {
             Output::err_generic(

@@ -340,5 +340,5 @@ export const symbols = [
   "uv_wtf8_to_utf16",
 ];
 
-/** Every uv_* name bun exports: src/symbols.def, src/symbols.txt, src/symbols.dyn, src/linker.lds, src/linker-freebsd.lds. */
+/** Every uv_* name bun exports: src/symbols.def, src/symbols.txt, src/linker.lds, src/linker-freebsd.lds. */
 export const exported = [...symbols, ...polyfills].sort();

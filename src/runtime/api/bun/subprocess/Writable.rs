@@ -12,10 +12,11 @@ use crate::webcore::streams::SourceHandle;
 
 use super::{Flags, StaticPipeWriter, Subprocess, js};
 
-pub enum Writable<'a> {
+pub(crate) enum Writable<'a> {
     Pipe(RefPtr<FileSink>),
     Fd(Fd),
     Buffer(RefPtr<StaticPipeWriter<'a>>),
+    #[cfg_attr(windows, allow(dead_code))]
     Memfd(Fd),
     Inherit,
     Ignore,
@@ -94,7 +95,7 @@ impl<'a> Writable<'a> {
     //
     // Parent comes via `SourceHandle::Subprocess` (the whole `*mut Subprocess`), not `&mut self`
     // on the `stdin` field; accesses are disjoint so `&Subprocess` suffices.
-    pub fn on_close(process: &Subprocess<'a>, _: Option<bun_sys::Error>) {
+    pub(crate) fn on_close(process: &Subprocess<'a>, _: Option<bun_sys::Error>) {
         if let Some(this_jsvalue) = process.this_value.get().try_get() {
             if let Some(existing_value) = js::stdin_get_cached(this_jsvalue) {
                 file_sink::JSSink::set_destroy_callback(existing_value, 0);
@@ -235,7 +236,7 @@ impl<'a> Writable<'a> {
         }
     }
 
-    pub fn to_js(subprocess: &Subprocess<'a>, global_this: &JSGlobalObject) -> JSValue {
+    pub(crate) fn to_js(subprocess: &Subprocess<'a>, global_this: &JSGlobalObject) -> JSValue {
         // Take only the parent and project `stdin` here so no two `&mut`
         // overlap at any point.
         match subprocess.stdin.replace(Writable::Ignore) {
@@ -319,7 +320,7 @@ impl<'a> Writable<'a> {
 
     // Note: see `on_close` — the caller passes the parent; deriving it from
     // `&mut self` on `Writable` would be out-of-provenance.
-    pub fn finalize(subprocess: &Subprocess<'a>) {
+    pub(crate) fn finalize(subprocess: &Subprocess<'a>) {
         if let Some(this_jsvalue) = subprocess.this_value.get().try_get() {
             if let Some(existing_value) = js::stdin_get_cached(this_jsvalue) {
                 file_sink::JSSink::set_destroy_callback(existing_value, 0);
@@ -351,7 +352,7 @@ impl<'a> Writable<'a> {
         }
     }
 
-    pub fn close(&mut self) {
+    pub(crate) fn close(&mut self) {
         match self {
             Writable::Pipe(pipe) => {
                 let _ = pipe.end(None);

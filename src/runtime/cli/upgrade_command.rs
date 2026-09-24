@@ -54,7 +54,7 @@ fn argv_contains(target: &[u8]) -> bool {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct Version {
+pub(crate) struct Version {
     pub(crate) zip_url: Box<[u8]>,
     pub(crate) tag: Box<[u8]>,
     pub(crate) size: u32,
@@ -62,7 +62,7 @@ pub struct Version {
 }
 
 impl Version {
-    pub fn name(&self) -> Option<Vec<u8>> {
+    pub(crate) fn name(&self) -> Option<Vec<u8>> {
         if self.tag.len() <= b"bun-v".len() || !self.tag.starts_with(b"bun-v") {
             if &*self.tag == b"canary" {
                 use crate::cli as Cli;

@@ -1,6 +1,6 @@
 use bun_jsc::{JSGlobalObject, JSType as JsType, JSValue, JsResult};
 
-pub type TimeLike = bun_sys::TimeLike;
+pub(crate) type TimeLike = bun_sys::TimeLike;
 
 #[cfg(not(windows))]
 const NS_PER_S: f64 = bun_core::time::NS_PER_S as f64;
@@ -17,7 +17,10 @@ const NS_PER_MS: f64 = bun_core::time::NS_PER_MS as f64;
 // A `Date` or a string goes to libuv as the number it converts to, and there a
 // NaN is `UV_FS_UTIME_OMIT` and an infinity is `UV_FS_UTIME_NOW`:
 // https://github.com/libuv/libuv/blob/v1.52.1/include/uv.h#L1601-L1602
-pub fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResult<Option<TimeLike>> {
+pub(crate) fn from_js(
+    global_object: &JSGlobalObject,
+    value: JSValue,
+) -> JsResult<Option<TimeLike>> {
     // Number is most common case
     if value.is_number() {
         let seconds = value.as_number();

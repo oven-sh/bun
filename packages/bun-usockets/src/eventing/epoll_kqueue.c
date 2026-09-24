@@ -430,7 +430,8 @@ static const struct timespec *us_internal_clamp_to_sweep(struct us_loop_t *loop,
     return storage;
 }
 
-extern void Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm);
+extern void Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm, int * _Nullable released_heap_access);
+extern void Bun__JSC_acquireHeapAccessAfterWait(void * _Nonnull jsc_vm);
 
 void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout, uint64_t now_ns) {
     if (loop->num_polls == 0)
@@ -461,8 +462,9 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 
     const unsigned int had_wakeups = __atomic_exchange_n(&loop->pending_wakeups, 0, __ATOMIC_ACQUIRE);
     const int will_idle_inside_event_loop = had_wakeups == 0 && (!timeout || (timeout->tv_nsec != 0 || timeout->tv_sec != 0));
+    int released_heap_access = 0;
     if (will_idle_inside_event_loop && loop->data.jsc_vm)
-        Bun__JSC_onBeforeWait(loop->data.jsc_vm);
+        Bun__JSC_onBeforeWait(loop->data.jsc_vm, &released_heap_access);
 
     /* The scavenger sweeps our heaps while we are in the kernel. Must come after
      * Bun__JSC_onBeforeWait, which allocates: nothing may touch our heaps until the matching
@@ -491,9 +493,14 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
         timeout);
 #endif
 
+    /* Anything that stops a poll from here on scrubs this batch (us_internal_loop_update_pending_ready_polls). */
+    loop->current_ready_poll = 0;
     /* Before anything can allocate again. */
     if (handed_off)
         mi_on_thread_idle_end();
+    /* Before anything touches the JS heap again (this may run a finished collection's epilogue, i.e. destructors). */
+    if (released_heap_access)
+        Bun__JSC_acquireHeapAccessAfterWait(loop->data.jsc_vm);
 
     us_internal_dispatch_ready_polls(loop);
     us_internal_drain_ready_polls(loop);

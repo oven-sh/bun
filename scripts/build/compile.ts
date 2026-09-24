@@ -452,7 +452,7 @@ export interface LinkOpts {
   flags: string[];
   /**
    * Files the link reads that aren't in $in — symbol lists (symbols.def,
-   * symbols.txt, symbols.dyn), linker scripts (linker.lds), manifests.
+   * symbols.txt, the ELF export list), linker scripts (linker.lds), manifests.
    * Editing these should trigger relink (cmake's LINK_DEPENDS equivalent).
    */
   implicitInputs?: string[];
@@ -488,8 +488,7 @@ export function link(n: Ninja, cfg: Config, out: string, objects: string[], opts
     ...(opts.implicitInputs ?? []),
   ];
   // lld-link writes the exe's import library under obj/ (flags.ts /IMPLIB)
-  // and does not create the directory; link-only and rust-and-link compile
-  // no objects, so nothing else would have made it.
+  // and does not create the directory.
   if (cfg.windows) node.orderOnlyInputs = [objectDirStamp(cfg)];
   if (opts.validations !== undefined && opts.validations.length > 0) node.validations = opts.validations;
   n.build(node);
@@ -563,18 +562,18 @@ function objectPath(cfg: Config, src: string): string {
  * Stamp file for the obj/ directory. Object files depend on this order-only
  * so the dir exists before compilation runs.
  */
-function objectDirStamp(cfg: Config): string {
+function objectDirStamp(cfg: Pick<Config, "buildDir">): string {
   return resolve(cfg.buildDir, "obj", ".dir");
 }
 
-function pchDirStamp(cfg: Config): string {
+function pchDirStamp(cfg: Pick<Config, "buildDir">): string {
   return resolve(cfg.buildDir, "pch", ".dir");
 }
 
 /**
  * Register directory stamp rules. Call once.
  */
-export function registerDirStamps(n: Ninja, cfg: Config): void {
+export function registerDirStamps(n: Ninja, cfg: Pick<Config, "host" | "buildDir">): void {
   const objDir = dirname(objectDirStamp(cfg));
   const pchDir = dirname(pchDirStamp(cfg));
 

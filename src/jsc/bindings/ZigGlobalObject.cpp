@@ -330,8 +330,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             // it off in Bun while upstream stabilises it.
             // BUN_JSC_useWasmMemory64=1 re-enables it for opt-in testing.
             JSC::Options::useWasmMemory64() = false;
-            // Node.js defaults to 10. The Error constructor of every realm takes its
-            // initial stackTraceLimit from this option.
+            // Node.js defaults Error.stackTraceLimit to 10.
             JSC::Options::defaultErrorStackTraceLimit() = DEFAULT_ERROR_STACK_TRACE_LIMIT;
 #if OS(WINDOWS)
             // oven-sh/WebKit#553 starts the MarkedBlock warm-up helper thread from

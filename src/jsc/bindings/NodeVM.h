@@ -39,8 +39,7 @@ inline NodeVMOptionNames& optionNames(JSC::VM& vm) { return WebCore::clientData(
 const WTF::URL& sourceOriginURL(JSC::VM&, const String& filename);
 // Lowers offset if needed so that offset + 1 + sourceLength fits in an int, JSC's position type.
 OrdinalNumber clampOffsetForSource(OrdinalNumber offset, unsigned sourceLength);
-// The start position of a SourceProvider for these offsets. JSC adds the start position to every line
-// and column it derives, as unsigned numbers, so a negative offset starts the provider at zero.
+// JSC adds a provider's start position to derived lines and columns as unsigned numbers, so this clamps at zero.
 TextPosition providerStartPosition(OrdinalNumber lineOffset, OrdinalNumber columnOffset);
 // `codeGenerationKey`: optionNames(vm).codeGeneration(vm) or optionNames(vm).contextCodeGeneration(vm).
 void getNodeVMContextOptions(JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSValue optionsArg, NodeVMContextOptions& outOptions, const JSC::Identifier& codeGenerationKey, JSValue* importer);

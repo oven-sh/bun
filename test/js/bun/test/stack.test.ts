@@ -129,6 +129,8 @@ function thrower() {
   if (kind === "build") require("./syntax-error.js");
   if (kind === "inherits") throw new OldStyleError("made the old way");
   if (kind === "domexception") throw new DOMException("a DOMException", "AbortError");
+  if (kind === "proxy-error") throw new Proxy(new Error("behind a Proxy"), {});
+  if (kind === "proxy-object") throw new Proxy({ why: "details the user needs" }, {});
   if (kind === "getter") throw { get $$typeof() { throw 1; } };
   throw Object.assign(new String("hostile"), { toString() { throw 1; }, [Symbol.toPrimitive]() { throw 1; } });
 }
@@ -228,6 +230,39 @@ switch (entryPoint) {
     `);
   });
 
+  test.concurrent("a Proxy of an Error gets no object dump, a Proxy of an object is shown", async () => {
+    using dir = tempDir("thrown-object", files);
+    const [proxyOfError, proxyOfObject] = await Promise.all(
+      ["proxy-error", "proxy-object"].map(kind => report(String(dir), "setTimeout", kind)),
+    );
+    expect(proxyOfError.output).toMatchInlineSnapshot(`
+      "14 |   if (kind === "error") throw new Error("an error");
+      15 |   if (kind === "resolve") require("./does-not-exist");
+      16 |   if (kind === "build") require("./syntax-error.js");
+      17 |   if (kind === "inherits") throw new OldStyleError("made the old way");
+      18 |   if (kind === "domexception") throw new DOMException("a DOMException", "AbortError");
+      19 |   if (kind === "proxy-error") throw new Proxy(new Error("behind a Proxy"), {});
+      ^
+      error: behind a Proxy
+            at thrower (<dir>/fixture.js:19:<col>)"
+    `);
+    expect(proxyOfObject.output).toMatchInlineSnapshot(`
+      "15 |   if (kind === "resolve") require("./does-not-exist");
+      16 |   if (kind === "build") require("./syntax-error.js");
+      17 |   if (kind === "inherits") throw new OldStyleError("made the old way");
+      18 |   if (kind === "domexception") throw new DOMException("a DOMException", "AbortError");
+      19 |   if (kind === "proxy-error") throw new Proxy(new Error("behind a Proxy"), {});
+      20 |   if (kind === "proxy-object") throw new Proxy({ why: "details the user needs" }, {});
+      ^
+      error
+      {
+        why: "details the user needs",
+      }
+            at thrower (<dir>/fixture.js:20:<col>)"
+    `);
+    expect([proxyOfError.exitCode, proxyOfObject.exitCode]).toEqual([1, 1]);
+  });
+
   test.concurrent("a string, an Error, a ResolveMessage and a DOMException are still printed once", async () => {
     using dir = tempDir("thrown-object", files);
     const [string, error, resolve, domException] = await Promise.all(
@@ -286,15 +321,15 @@ switch (entryPoint) {
     using dir = tempDir("thrown-object", files);
     const { stdout, output, exitCode } = await report(String(dir), "nextTick", "getter");
     expect(output).toMatchInlineSnapshot(`
-      "14 |   if (kind === "error") throw new Error("an error");
-      15 |   if (kind === "resolve") require("./does-not-exist");
-      16 |   if (kind === "build") require("./syntax-error.js");
+      "16 |   if (kind === "build") require("./syntax-error.js");
       17 |   if (kind === "inherits") throw new OldStyleError("made the old way");
       18 |   if (kind === "domexception") throw new DOMException("a DOMException", "AbortError");
-      19 |   if (kind === "getter") throw { get $$typeof() { throw 1; } };
+      19 |   if (kind === "proxy-error") throw new Proxy(new Error("behind a Proxy"), {});
+      20 |   if (kind === "proxy-object") throw new Proxy({ why: "details the user needs" }, {});
+      21 |   if (kind === "getter") throw { get $$typeof() { throw 1; } };
       ^
       error
-            at thrower (<dir>/fixture.js:19:<col>)"
+            at thrower (<dir>/fixture.js:21:<col>)"
     `);
     expect(framesOf(output)).toEqual([throwerFrameAt("get $$typeof()")]);
     expect({ stdout, exitCode }).toEqual({ stdout: "the next tick ran", exitCode: 1 });
@@ -304,16 +339,16 @@ switch (entryPoint) {
     using dir = tempDir("thrown-object", files);
     const { stdout, output, exitCode } = await report(String(dir), "nextTick", "hostile");
     expect(output).toMatchInlineSnapshot(`
-      "15 |   if (kind === "resolve") require("./does-not-exist");
-      16 |   if (kind === "build") require("./syntax-error.js");
-      17 |   if (kind === "inherits") throw new OldStyleError("made the old way");
+      "17 |   if (kind === "inherits") throw new OldStyleError("made the old way");
       18 |   if (kind === "domexception") throw new DOMException("a DOMException", "AbortError");
-      19 |   if (kind === "getter") throw { get $$typeof() { throw 1; } };
-      20 |   throw Object.assign(new String("hostile"), { toString() { throw 1; }, [Symbol.toPrimitive]() { throw 1; } });
+      19 |   if (kind === "proxy-error") throw new Proxy(new Error("behind a Proxy"), {});
+      20 |   if (kind === "proxy-object") throw new Proxy({ why: "details the user needs" }, {});
+      21 |   if (kind === "getter") throw { get $$typeof() { throw 1; } };
+      22 |   throw Object.assign(new String("hostile"), { toString() { throw 1; }, [Symbol.toPrimitive]() { throw 1; } });
       ^
       error
 
-            at thrower (<dir>/fixture.js:20:<col>)"
+            at thrower (<dir>/fixture.js:22:<col>)"
     `);
     expect(framesOf(output)).toEqual([throwerFrameAt('new String("hostile")')]);
     expect({ stdout, exitCode }).toEqual({ stdout: "the next tick ran", exitCode: 1 });

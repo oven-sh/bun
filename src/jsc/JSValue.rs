@@ -363,7 +363,7 @@ impl JSValue {
     pub fn is_error(self) -> bool {
         self.is_cell() && self.js_type() == JSType::ErrorInstance
     }
-    /// Whether an `Error.prototype` (of any realm) is in the prototype chain. Runs no script, unlike `instanceof`.
+    /// Whether an `Error.prototype` of any realm is in the prototype chain, Proxy targets included. Runs no script.
     #[inline]
     pub fn has_error_prototype(self) -> bool {
         self.is_cell() && JSC__JSValue__hasErrorPrototype(self)

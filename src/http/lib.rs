@@ -4116,7 +4116,7 @@ impl<'a> HTTPClient<'a> {
         self.flags.protocol == Protocol::Http1_1 && self.signals.is_demand_driven()
     }
 
-    /// Output budget of one decode pass. None for the last of a body that has no `HeldBody` taker.
+    /// Output budget of one decode pass. The last pass has `HELD_BODY_MIN` more, or no budget without a `HeldBody` taker.
     #[inline]
     fn decompress_output_cap(&self, is_final_chunk: bool) -> usize {
         if !self.decodes_on_demand() {

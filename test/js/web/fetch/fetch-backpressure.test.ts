@@ -1189,7 +1189,7 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
       expect(await consume(res)).toBe(digest);
     });
 
-    // A tunnelled socket is never paused. The consumer's resume reaches the client all the same.
+    // The same through a tunnel: the Response has the body, so the consumer needs no socket.
     test.each([
       ["res.bytes()", `[await (await fetch(url, opts)).bytes()]`],
       ["a streaming reader", `await Array.fromAsync((await fetch(url, opts)).body)`],
@@ -1233,9 +1233,7 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
       expect(await consume(res)).toBe(digest);
     });
 
-    // A tunnelled socket is never paused, so the close reaches the client while it still holds
-    // the body. `server.closed` settles once the client has closed its side, which is after it
-    // handled the end of the body. Only then does the consumer attach.
+    // `server.closed` settles once the client has closed its side. Only then does the consumer attach.
     test.each([
       ["res.bytes()", `[await res.bytes()]`],
       ["a streaming reader", `await Array.fromAsync(res.body)`],

@@ -104,7 +104,6 @@ describe("url.domainToUnicode", () => {
 // hasValidPunycodeHost still rejects these hosts, so domainToUnicode returns "" where Node v26.10.0 returns the value
 // in the tables below. The list goes away with that check (whatwg/url#914).
 const knownRejectDeviations = new Set([
-  "xn--xn--zca-hia.xn--mgbh0fb",
   "xn--nxa.xn--",
   "xn--nxa.xn--abc-",
   "xn--nxa-",
@@ -116,29 +115,26 @@ const knownRejectDeviations = new Set([
   "xn--nxa.xn--%41.xn--nxa",
   "xn--nxa_.xn--nxa",
 ]);
+// A right-to-left label sends the host to ICU's check, which rejects a decoded "xn--" prefix from ICU 76 on.
+if (parseInt(process.versions.icu) >= 76) knownRejectDeviations.add("xn--xn--zca-hia.xn--mgbh0fb");
 
 // Node keeps a label that fails UTS #46 as it is (ada::idna::to_unicode). ICU appends U+FFFD to it. Values are from
-// Node v26.10.0. ICU applies the rule these labels break (Unicode 15.1) from 76 on; macOS 14 has an older system ICU.
-// The ASCII fast path of hasValidPunycodeHost lacks that rule, so these hosts reach the conversion.
-describe.skipIf(parseInt(process.versions.icu) < 76)(
-  "url.domainToUnicode with an xn-- label that fails UTS #46",
-  () => {
-    test.each([
-      // The label decodes to "xn--zca£". UTS #46 4.1 criterion 4: a decoded label must not begin with "xn--".
-      ["xn--xn--zca-hia", "xn--xn--zca-hia"],
-      ["xn--xn---epa", "xn--xn---epa"],
-      ["XN--XN--ZCA-HIA.Example", "xn--xn--zca-hia.example"],
-      // The valid labels still decode.
-      ["a.xn--xn--ab-gva.b", "a.xn--xn--ab-gva.b"],
-      ["xn--zca.xn--xn--zca-hia", "ß.xn--xn--zca-hia"],
-      ["xn--xn--zca-hia.xn--maana-pta.xn--ls8h", "xn--xn--zca-hia.mañana.💩"],
-      // A right-to-left label sends the host to the ICU check, which has the rule.
-      ["xn--xn--zca-hia.xn--mgbh0fb", "xn--xn--zca-hia.مثال"],
-    ])("%s", (input, expected) => {
-      expect(url.domainToUnicode(input)).toBe(knownRejectDeviations.has(input) ? "" : expected);
-    });
-  },
-);
+// Node v26.10.0. The ASCII fast path of hasValidPunycodeHost lacks the rule these labels break, so they get here.
+describe("url.domainToUnicode with an xn-- label that fails UTS #46", () => {
+  test.each([
+    // The label decodes to "xn--zca£". UTS #46 4.1 criterion 4: a decoded label must not begin with "xn--".
+    ["xn--xn--zca-hia", "xn--xn--zca-hia"],
+    ["xn--xn---epa", "xn--xn---epa"],
+    ["XN--XN--ZCA-HIA.Example", "xn--xn--zca-hia.example"],
+    // The valid labels still decode.
+    ["a.xn--xn--ab-gva.b", "a.xn--xn--ab-gva.b"],
+    ["xn--zca.xn--xn--zca-hia", "ß.xn--xn--zca-hia"],
+    ["xn--xn--zca-hia.xn--maana-pta.xn--ls8h", "xn--xn--zca-hia.mañana.💩"],
+    ["xn--xn--zca-hia.xn--mgbh0fb", "xn--xn--zca-hia.مثال"],
+  ])("%s", (input, expected) => {
+    expect(url.domainToUnicode(input)).toBe(knownRejectDeviations.has(input) ? "" : expected);
+  });
+});
 
 describe("url.domainToUnicode with many xn-- labels", () => {
   // The whole-name ICU conversion moves the rest of the name for each decoded label. That takes more than 9 s for

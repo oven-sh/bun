@@ -81,6 +81,11 @@ static String icuToUnicode(const String& input)
     return runUIDNA(uidna_nameToUnicode, input, info);
 }
 
+static bool hasACEPrefix(std::span<const char16_t> label)
+{
+    return label.size() >= 4 && label[0] == 'x' && label[1] == 'n' && label[2] == '-' && label[3] == '-';
+}
+
 // Per-label ToUnicode of a parsed host: uidna_nameToUnicode moves the rest of the name for each decoded label.
 static String icuParsedHostToUnicode(const String& host)
 {
@@ -102,13 +107,13 @@ static String icuParsedHostToUnicode(const String& host)
             labelEnd++;
         auto label = span.subspan(labelStart, labelEnd - labelStart);
 
-        if (label.size() >= 4 && label[0] == 'x' && label[1] == 'n' && label[2] == '-' && label[3] == '-') {
+        if (hasACEPrefix(label)) {
             UIDNAInfo info = UIDNA_INFO_INITIALIZER;
             auto unicode = runUIDNA(uidna_labelToUnicode, label, buffer, info);
             if (!unicode)
                 return {};
-            // ICU marks a label that fails UTS #46 with U+FFFD. ada::idna::to_unicode keeps the label as it is.
-            result.append(hasIDNAError(info) ? label : *unicode);
+            // ada::idna::to_unicode keeps a label that fails UTS #46. ICU before 76 accepts a decoded "xn--" prefix.
+            result.append(hasIDNAError(info) || hasACEPrefix(*unicode) ? label : *unicode);
         } else {
             result.append(label);
         }

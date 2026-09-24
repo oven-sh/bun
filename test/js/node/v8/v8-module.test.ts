@@ -102,6 +102,140 @@ describe("v8.getHeapStatistics", () => {
     expect(rssDeltaMB, `RSS grew by ${rssDeltaMB.toFixed(2)} MB over 1000 iterations`).toBeLessThan(rssLimit);
   });
 
+  // As in Node, used_heap_size and process.memoryUsage().heapUsed are one number. A walk of the
+  // heap at call time reports 0 before the first collection and counts a new ArrayBuffer at once.
+  test("used_heap_size equals process.memoryUsage().heapUsed and does not exceed the heap size", async () => {
+    const script = /* js */ `
+      const { Worker } = require("node:worker_threads");
+
+      // A collection that finishes between two reads moves the number, and so does a new heap block
+      // before the first collection. Read heapUsed on both sides and retry until it held still.
+      function read() {
+        const { getHeapStatistics, getHeapSpaceStatistics } = require("node:v8");
+        for (let attempt = 0; attempt < 1000; attempt++) {
+          const heapUsed = process.memoryUsage().heapUsed;
+          const { used_heap_size, total_allocated_bytes } = getHeapStatistics();
+          const { space_used_size, space_size } = getHeapSpaceStatistics().find(space => space.space_name === "old_space");
+          if (process.memoryUsage().heapUsed === heapUsed)
+            return { heapUsed, used_heap_size, total_allocated_bytes, space_used_size, space_size };
+        }
+        throw new Error("process.memoryUsage().heapUsed changed on every attempt");
+      }
+
+      const beforeFirstCollection = read();
+      Bun.gc(true);
+      const afterFullCollection = read();
+      const buffers = [];
+      for (let i = 0; i < 32; i++) buffers.push(new ArrayBuffer(1024 * 1024));
+      const afterArrayBuffers = read();
+
+      const worker = new Worker("require('node:worker_threads').parentPort.postMessage((" + read + ")());", { eval: true });
+      const inFreshWorker = await new Promise((resolve, reject) => {
+        worker.once("message", resolve);
+        worker.once("error", reject);
+        worker.once("exit", code => reject(new Error("the worker exited with code " + code + " before it answered")));
+      });
+      await worker.terminate();
+
+      process.stdout.write(JSON.stringify({
+        points: { beforeFirstCollection, afterFullCollection, afterArrayBuffers, inFreshWorker },
+        buffers: buffers.length,
+      }));
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    const { points, buffers } = JSON.parse(stdout) as {
+      points: Record<string, Record<string, number>>;
+      buffers: number;
+    };
+    expect(buffers).toBe(32);
+    expect(Object.keys(points)).toEqual([
+      "beforeFirstCollection",
+      "afterFullCollection",
+      "afterArrayBuffers",
+      "inFreshWorker",
+    ]);
+    for (const [point, stats] of Object.entries(points)) {
+      expect(stats.heapUsed, point).toBeGreaterThan(0);
+      expect({ point, used_heap_size: stats.used_heap_size, space_used_size: stats.space_used_size }).toEqual({
+        point,
+        used_heap_size: stats.heapUsed,
+        space_used_size: stats.heapUsed,
+      });
+      expect(stats.total_allocated_bytes, point).toBeGreaterThanOrEqual(stats.used_heap_size);
+      expect(stats.space_size, point).toBeGreaterThanOrEqual(stats.space_used_size);
+    }
+    expect(exitCode).toBe(0);
+  });
+
+  // https://github.com/oven-sh/bun/issues/42200
+  // The cost of a call must not follow the size of the heap. A walk of the heap blocks costs
+  // 15 to 50 times more with the arrays than without them.
+  test("costs the same with an empty heap and with 8000 retained arrays", async () => {
+    const script = /* js */ `
+      const { getHeapStatistics, getHeapSpaceStatistics } = require("node:v8");
+
+      // The median ignores a collection that pauses one of the samples.
+      function medianMicroseconds(fn) {
+        const times = [];
+        for (let sample = 0; sample < 100; sample++) {
+          const start = performance.now();
+          for (let i = 0; i < 5; i++) fn();
+          times.push(performance.now() - start);
+        }
+        return (times.sort((a, b) => a - b)[times.length >> 1] * 1000) / 5;
+      }
+
+      // The lowest of three medians ignores a window in which the machine was busy.
+      function measure() {
+        Bun.gc(true);
+        for (let i = 0; i < 50; i++) {
+          getHeapStatistics();
+          getHeapSpaceStatistics();
+        }
+        const lowest = { getHeapStatistics: Infinity, getHeapSpaceStatistics: Infinity };
+        for (let round = 0; round < 3; round++) {
+          lowest.getHeapStatistics = Math.min(lowest.getHeapStatistics, medianMicroseconds(getHeapStatistics));
+          lowest.getHeapSpaceStatistics = Math.min(lowest.getHeapSpaceStatistics, medianMicroseconds(getHeapSpaceStatistics));
+        }
+        return lowest;
+      }
+
+      const empty = measure();
+      const retained = [];
+      for (let i = 0; i < 8000; i++) retained.push(new Array(1000).fill(i));
+      const large = measure();
+      process.stdout.write(JSON.stringify({ empty, large, retained: retained.length }));
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    type Medians = { getHeapStatistics: number; getHeapSpaceStatistics: number };
+    const { empty, large, retained } = JSON.parse(stdout) as { empty: Medians; large: Medians; retained: number };
+    expect(retained).toBe(8000);
+    for (const fn of ["getHeapStatistics", "getHeapSpaceStatistics"] as const) {
+      expect(large[fn] / empty[fn], `${fn}(): ${JSON.stringify({ empty, large })}`).toBeLessThan(5);
+    }
+    expect(exitCode).toBe(0);
+  });
+
   test("does not run a replaced Array.prototype[Symbol.iterator]", async () => {
     const script = /* js */ `
       const { getHeapStatistics, getHeapSpaceStatistics } = require("node:v8");

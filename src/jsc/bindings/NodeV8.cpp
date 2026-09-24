@@ -21,7 +21,7 @@ namespace Bun {
 
 using namespace JSC;
 
-// Returns: [heapSize, heapCapacity, extraMemorySize, globalObjectCount, peakRSS]
+// Returns: [heapUsed, heapCapacity, extraMemorySize, globalObjectCount, peakRSS]
 JSC_DEFINE_HOST_FUNCTION(functionGetHeapStatisticsArray, (JSGlobalObject * globalObject, CallFrame*))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -37,11 +37,19 @@ JSC_DEFINE_HOST_FUNCTION(functionGetHeapStatisticsArray, (JSGlobalObject * globa
 
     JSArray* result = constructEmptyArray(globalObject, nullptr, 5);
     RETURN_IF_EXCEPTION(scope, {});
-    result->putDirectIndex(globalObject, 0, jsNumber(heap.size()));
+
+    // Read the heap after the allocation above, which can run a collection: the three numbers describe one state.
+    // heap.size() walks every block. This is what process.memoryUsage().heapUsed reports, as in Node.
+    const size_t heapUsed = heapUsage(vm).used;
+    // capacity() is live and can be below a size that dates from the last collection. Used is never more than size.
+    const size_t heapCapacity = std::max(heap.capacity(), heapUsed);
+    const size_t extraMemorySize = heap.extraMemorySize();
+
+    result->putDirectIndex(globalObject, 0, jsNumber(heapUsed));
     RETURN_IF_EXCEPTION(scope, {});
-    result->putDirectIndex(globalObject, 1, jsNumber(heap.capacity()));
+    result->putDirectIndex(globalObject, 1, jsNumber(heapCapacity));
     RETURN_IF_EXCEPTION(scope, {});
-    result->putDirectIndex(globalObject, 2, jsNumber(heap.extraMemorySize()));
+    result->putDirectIndex(globalObject, 2, jsNumber(extraMemorySize));
     RETURN_IF_EXCEPTION(scope, {});
     result->putDirectIndex(globalObject, 3, jsNumber(globalObjectCount));
     RETURN_IF_EXCEPTION(scope, {});

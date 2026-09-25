@@ -2639,10 +2639,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         )
     }
 
-    /// `false` parks the node:net callback until `UpgradedDuplex::on_write_done` drains.
+    /// `false` parks the node:net callback until the transport drains. A BYPASS_TLS
+    /// twin writes raw bytes and never gets a drain, so it reports like TCP.
     #[inline]
     fn flushed_to_transport(&self) -> bool {
-        !SSL || self.socket.get().transport_idle()
+        !SSL || self.flags.get().contains(Flags::BYPASS_TLS) || self.socket.get().transport_idle()
     }
 
     #[bun_jsc::host_fn(method)]
@@ -3045,7 +3046,6 @@ impl<const SSL: bool> NewSocket<SSL> {
             // just mimic the side-effect dont actually write empty non-TLS data onto the socket, we just wanna to have same behavior of node.js
             if !self.flags.get().contains(Flags::HANDSHAKE_COMPLETE)
                 || self.buffered_data_for_node_net.get().len() > 0
-                || !self.flushed_to_transport()
             {
                 return false;
             }

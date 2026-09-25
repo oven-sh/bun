@@ -186,8 +186,9 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
     const port = (server.address() as import("node:net").AddressInfo).port;
+    let socket: Awaited<ReturnType<typeof Bun.connect>> | undefined;
     try {
-      const socket = await Bun.connect({
+      socket = await Bun.connect({
         hostname: "127.0.0.1",
         port,
         tls: { ca: certs.cert },
@@ -198,14 +199,19 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
             socket.write(Buffer.alloc(payloadLen, 98));
             socket.end();
           },
+          error(_, err) {
+            ended.reject(err);
+          },
+          close() {
+            ended.reject(new Error("closed before the peer saw end"));
+          },
         },
       });
       await ended.promise;
-      fault.clear();
-      socket.terminate();
       expect(received).toBe(payloadLen);
     } finally {
       fault.clear();
+      socket?.terminate();
       server.close();
     }
   });

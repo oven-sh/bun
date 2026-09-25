@@ -10,11 +10,11 @@
 //   promise a handler of that name is given;
 // - a handler runs in the context its graph was made in.
 //
-//   bun scrambler.mjs      env: SEED=1 CHAINS=600 DEPTH=6 DEADLINE=20000 (ms to wait for every chain to end)
+//   bun scrambler.mjs      env: SEED=1 CHAINS=600 DEPTH=6 DEADLINE=4000 (ms to wait for every chain to end)
 const SEED = Number(process.env.SEED ?? 1);
 const CHAINS = Number(process.env.CHAINS ?? 600);
 const DEPTH = Number(process.env.DEPTH ?? 6);
-const DEADLINE = Number(process.env.DEADLINE ?? 20_000);
+const DEADLINE = Number(process.env.DEADLINE ?? 4_000);
 
 // mulberry32
 let seed = SEED >>> 0;

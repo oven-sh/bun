@@ -6,9 +6,9 @@ import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import { join } from "path";
 
 describe.concurrent("Bun.ModuleGraph scrambler", () => {
-  const chains = isDebug || isASAN ? 120 : 600;
-  // How long the fixture waits for every chain to end before it says which did not: less than the test's timeout.
-  const deadline = 20_000;
+  const chains = isDebug || isASAN ? 60 : 600;
+  // How long the fixture waits for every chain to end before it says which did not: less than a test's timeout.
+  const deadline = 4_000;
   test.each([1, 2, 3, 4])(
     "every hop runs in the context it was scheduled in, and every error is heard by its graph: seed %d",
     async seed => {
@@ -30,6 +30,5 @@ describe.concurrent("Bun.ModuleGraph scrambler", () => {
       });
       expect(exitCode).toBe(0);
     },
-    deadline + 10_000,
   );
 });

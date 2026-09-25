@@ -919,9 +919,10 @@ async function createPooledConnectionHandle<ConnectionHandle>(
       !!allowPublicKeyRetrieval,
     );
   } catch (e) {
-    // defer so the callback never runs while the adapter is still filling
-    // this.connections (it scans that array)
-    process.nextTick(closeNT, onClose, e);
+    // The slot closes on a later turn of the event loop. The adapter can still be filling
+    // this.connections (the close scans that array), and an onclose that dials again must
+    // not keep timers and I/O from running.
+    setImmediate(closeNT, onClose, e);
     return null;
   }
 }

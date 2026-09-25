@@ -20,6 +20,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { tls as harnessTls, isWindows, tempDir } from "harness";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
+import https from "node:https";
 import net from "node:net";
 import { join } from "node:path";
 import { Duplex } from "node:stream";
@@ -159,7 +160,9 @@ const httpOk = (socket: tls.TLSSocket) =>
   socket.on("data", () => socket.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"));
 
 // The handshake is all this test needs: drop the connection once it is done.
-const dropAfterHandshake = (socket: tls.TLSSocket) => socket.destroy();
+// Not inside 'secure': a TLS 1.2 server has not sent its Finished there yet,
+// and a destroy() in that callback turns the client down.
+const dropAfterHandshake = (socket: tls.TLSSocket) => setImmediate(() => socket.destroy());
 
 // Postgres: answer the 8-byte SSLRequest with "S", then TLS starts.
 const postgresPrelude = (socket: net.Socket) =>
@@ -905,6 +908,50 @@ describe.each(["TLSv1.3", "TLSv1.2"] as const)(
     });
   },
 );
+
+// node:tls decides the name in JS, in the handshake callback. Under TLS 1.3
+// the client's final flight, with its certificate, is still held at that
+// point, and the destroy() of the refusal drops it. Under TLS 1.2 the
+// certificate leaves before the server's Finished, in node too.
+// node-tls-connect.test.ts runs every route in node as well.
+describe("TLSv1.3: a node:tls client sends no client certificate to a server whose certificate names another host", () => {
+  const maxVersion = "TLSv1.3";
+
+  test("tls.connect", async () => {
+    await using srv = await mtlsServer({ identity: otherHost, maxVersion });
+    const err = await tlsOutcome(tls.connect({ host: "localhost", port: srv.port, ...otherHostMtls }));
+    expect(err?.code).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
+    await srv.seen.closed;
+    expect(srv.seen.peerCN).toBeNull();
+    expect(srv.seen.clientTlsBytes).toBe(srv.seen.clientHelloBytes);
+  });
+
+  test("tls.connect with a checkServerIdentity function that returns an Error", async () => {
+    await using srv = await mtlsServer({ identity: otherHost, maxVersion });
+    const checkServerIdentity = () => Object.assign(new Error("not the pinned key"), { code: "ERR_PINNED_KEY" });
+    const err = await tlsOutcome(
+      tls.connect({ host: "localhost", port: srv.port, servername: "agent1", ...otherHostMtls, checkServerIdentity }),
+    );
+    expect(err?.code).toBe("ERR_PINNED_KEY");
+    await srv.seen.closed;
+    expect(srv.seen.peerCN).toBeNull();
+    expect(srv.seen.clientTlsBytes).toBe(srv.seen.clientHelloBytes);
+  });
+
+  test("https.request", async () => {
+    await using srv = await mtlsServer({ identity: otherHost, onSecure: httpOk, maxVersion });
+    const err = await new Promise<any>(resolve =>
+      https
+        .request({ host: "localhost", port: srv.port, agent: false, ...otherHostMtls }, () => resolve(null))
+        .on("error", resolve)
+        .end(),
+    );
+    expect(err?.code).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
+    await srv.seen.closed;
+    expect(srv.seen.peerCN).toBeNull();
+    expect(srv.seen.clientTlsBytes).toBe(srv.seen.clientHelloBytes);
+  });
+});
 
 // The inline reject is installed only when the client's policy rejects a bad
 // chain. A client that accepts one must still complete the handshake, and

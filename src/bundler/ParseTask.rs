@@ -190,10 +190,35 @@ pub(crate) struct NeedsConstCallValues {
     pub(crate) task: *mut ParseTask,
     /// The slices point into the source text and the worker arena, which the task keeps alive.
     pub(crate) imports: Vec<bun_js_parser::ConstCallImport<'static>>,
-    /// How many messages the task logged before it parsed. A second run does not load the source again.
-    pub(crate) source_msgs: usize,
+    /// The log before the task parsed. A second run does not load the source again.
+    pub(crate) source_mark: LogMark,
     /// Those messages, when the result has no log of its own.
     pub(crate) source_log: Log,
+}
+
+/// The length of a log at one point of a task.
+#[derive(Clone, Copy)]
+pub(crate) struct LogMark {
+    msgs: usize,
+    errors: u32,
+    warnings: u32,
+}
+
+impl LogMark {
+    pub(crate) fn of(log: &Log) -> Self {
+        Self {
+            msgs: log.msgs.len(),
+            errors: log.errors,
+            warnings: log.warnings,
+        }
+    }
+
+    /// Drops what `log` got after the mark.
+    pub(crate) fn rewind(self, log: &mut Log) {
+        log.msgs.truncate(self.msgs);
+        log.errors = self.errors;
+        log.warnings = self.warnings;
+    }
 }
 
 pub(crate) struct ConstCallSecondRun {
@@ -2758,7 +2783,7 @@ pub mod parse_worker {
         // A task that runs again must start as this run did.
         let jsx_parse_from_resolver = task.jsx.parse;
         let side_effects_from_resolver = task.side_effects;
-        let source_msgs = log.msgs.len();
+        let source_mark = LogMark::of(log);
         task.jsx.parse = loader.is_jsx();
 
         let mut unique_key_for_additional_file = FileLoaderHash {
@@ -2784,7 +2809,7 @@ pub mod parse_worker {
                                 loader,
                                 task: core::ptr::null_mut(),
                                 imports,
-                                source_msgs,
+                                source_mark,
                                 source_log: Log::init(),
                             })
                         });
@@ -2796,8 +2821,7 @@ pub mod parse_worker {
                             }
                             (None, Some(mut needs)) => {
                                 task.jsx.parse = jsx_parse_from_resolver;
-                                log.msgs.truncate(source_msgs);
-                                log.errors = 0;
+                                source_mark.rewind(log);
                                 needs.source_log = core::mem::take(log);
                                 return Ok(Parsed::NeedsConstCallValues(needs));
                             }

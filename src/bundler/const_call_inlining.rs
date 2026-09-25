@@ -557,8 +557,7 @@ impl<'a> BundleV2<'a> {
             if external.function.is_some() {
                 self.finalizers.push(external);
             }
-            success.log.msgs.truncate(needs.source_msgs);
-            success.log.errors = 0;
+            needs.source_mark.rewind(&mut success.log);
             needs.source_log = core::mem::take(&mut success.log);
         }
         // SAFETY: as above.

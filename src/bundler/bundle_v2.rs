@@ -2453,21 +2453,23 @@ pub mod bv2_impl {
                 );
             }
 
-            if self.graph.pending_items == 0 {
-                let this: *mut Self = self;
-                // reshaped for borrowck — `&self.graph` and
-                // `self` go to the same call. Take a raw ptr so the two `&mut` don't
-                // overlap from rustc's view.
-                // SAFETY: `drain_deferred_tasks` only touches `self.graph.deferred_*`
-                // fields and the `BundleV2` callback surface; no aliasing UB.
-                if unsafe { (*this).graph.drain_deferred_tasks(&mut *this) } {
+            // A held file that goes on without a second run finishes here, so the count can reach zero.
+            while self.graph.pending_items != 0 {
+                if !self.release_held_files_if_idle() {
                     return false;
                 }
-                return true;
             }
 
-            self.release_held_files_if_idle();
-            false
+            let this: *mut Self = self;
+            // reshaped for borrowck — `&self.graph` and
+            // `self` go to the same call. Take a raw ptr so the two `&mut` don't
+            // overlap from rustc's view.
+            // SAFETY: `drain_deferred_tasks` only touches `self.graph.deferred_*`
+            // fields and the `BundleV2` callback surface; no aliasing UB.
+            if unsafe { (*this).graph.drain_deferred_tasks(&mut *this) } {
+                return false;
+            }
+            true
         }
 
         pub(crate) fn wait_for_parse(&mut self) {

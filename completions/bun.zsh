@@ -1186,7 +1186,7 @@ _bun_remove_param_package_completion() {
                             in_deps = 0
                             break
                         }
-                        if (match($0, /^"([^"\]+)"[[:space:]]*:[[:space:]]*"([^"\]|\.)*"/)) {
+                        if (match($0, /^"([^"\\]+)"[[:space:]]*:[[:space:]]*"([^"\\]|\\.)*"/)) {
                             key = substr($0, RSTART, RLENGTH)
                             sub(/^"/, "", key)
                             sub(/"[[:space:]]*:.*$/, "", key)
@@ -1210,7 +1210,7 @@ _bun_remove_param_package_completion() {
                                 in_deps = 0
                                 break
                             }
-                            if (match($0, /^"([^"\]+)"[[:space:]]*:[[:space:]]*"([^"\]|\.)*"/)) {
+                            if (match($0, /^"([^"\\]+)"[[:space:]]*:[[:space:]]*"([^"\\]|\\.)*"/)) {
                                 key = substr($0, RSTART, RLENGTH)
                                 sub(/^"/, "", key)
                                 sub(/"[[:space:]]*:.*$/, "", key)

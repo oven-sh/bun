@@ -25,10 +25,10 @@ import { join } from "node:path";
 import { Duplex } from "node:stream";
 import tls from "node:tls";
 import {
+  listeningServer,
   MYSQL_CLIENT_LONG_PASSWORD,
   MYSQL_CLIENT_SSL,
   MYSQL_DEFAULT_CAPABILITIES,
-  listeningServer,
   mysqlHandshakeV10,
   pgSSLResponse,
 } from "../../sql/wire-frames";

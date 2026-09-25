@@ -1420,6 +1420,14 @@ describe("permissive autolinks and emphasis delimiters", () => {
     ).toBe("<p><b>Note:</b> contact <b>[support@example.com]</b> today.</p><p>Second paragraph.</p>");
   });
 
+  test("react() returns every paragraph", () => {
+    const input = "**https://example.com/path/to/page**\n\nSecond paragraph.";
+    expect(renderToString(Markdown.react(input, undefined, { ...opts, reactVersion: 18 }))).toBe(
+      '<p><strong><a href="https://example.com/path/to/page">https://example.com/path/to/page</a></strong></p>' +
+        "<p>Second paragraph.</p>",
+    );
+  });
+
   test("every mix of delimiters around and in a link renders balanced tags", () => {
     const links = ["a@b.co", "http://a.bc/d", "http://a.bc/d*e", "www.a.bc/_d_/~e"];
     const tails = ["", "x", "_x", " x*"];

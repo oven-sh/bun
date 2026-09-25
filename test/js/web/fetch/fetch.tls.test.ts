@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
 import tls from "node:tls";
+import { inherits } from "node:util";
 
 type TLSOptions = {
   cert: string;
@@ -689,6 +690,205 @@ describe.concurrent("fetch-tls", () => {
       } catch (e: any) {
         expect(e.message).toBe("CustomError");
       }
+    });
+  });
+
+  const invalidReturnValue = (received: string) => ({
+    name: "TypeError",
+    code: "ERR_INVALID_RETURN_VALUE",
+    message: `Expected undefined or an Error to be returned from the "tls.checkServerIdentity" function but got ${received}.`,
+  });
+  const settled = (response: Promise<Response>) =>
+    response.then(
+      async res => ({ body: await res.text() }),
+      e => ({ name: e?.name, code: e?.code, message: e?.message }),
+    );
+
+  // Node fails the connection for every truthy return value, not only for an
+  // Error (onConnectSecure in lib/internal/tls/wrap.js). An `async` callback
+  // returns a Promise, so it approves nothing.
+  it("checkServerIdentity approves the certificate only with a falsy return value", async () => {
+    const served: string[] = [];
+    using server = Bun.serve({
+      port: 0,
+      tls: CERT_LOCALHOST_IP,
+      fetch(req) {
+        served.push(decodeURIComponent(new URL(req.url).pathname.slice(1)));
+        return new Response("Hello World");
+      },
+    });
+    const request = (label: string, tlsOptions: object) =>
+      settled(
+        fetch(`https://localhost:${server.port}/${encodeURIComponent(label)}`, {
+          keepalive: false,
+          tls: { ca: validTls.cert, ...tlsOptions },
+        }),
+      );
+    const verdicts: Record<string, () => unknown> = {
+      "undefined": () => undefined,
+      "null": () => null,
+      "false": () => false,
+      "0": () => 0,
+      "empty string": () => "",
+      "Error": () => new Error("pin mismatch"),
+      "thrown Error": () => {
+        throw new Error("thrown");
+      },
+      "true": () => true,
+      "1": () => 1,
+      "string": () => "pin mismatch",
+      "async, resolves to undefined": async () => undefined,
+      "async, resolves to an Error": async () => new Error("pin mismatch"),
+    };
+    const outcomes: Record<string, unknown> = {};
+    await Promise.all(
+      Object.entries(verdicts).map(async ([label, checkServerIdentity]) => {
+        outcomes[label] = await request(label, { checkServerIdentity });
+      }),
+    );
+    const approved = { body: "Hello World" };
+    expect(outcomes).toEqual({
+      "undefined": approved,
+      "null": approved,
+      "false": approved,
+      "0": approved,
+      "empty string": approved,
+      "Error": { name: "Error", code: undefined, message: "pin mismatch" },
+      "thrown Error": { name: "Error", code: undefined, message: "thrown" },
+      "true": invalidReturnValue("type boolean (true)"),
+      "1": invalidReturnValue("type number (1)"),
+      "string": invalidReturnValue("type string ('pin mismatch')"),
+      "async, resolves to undefined": invalidReturnValue("an instance of Promise"),
+      "async, resolves to an Error": invalidReturnValue("an instance of Promise"),
+    });
+    // A request never reaches a server whose certificate was not approved.
+    expect(served.sort()).toEqual(["0", "empty string", "false", "null", "undefined"]);
+
+    // With `rejectUnauthorized: false` the callback runs and what it returns is ignored.
+    const ignored = await request("ignored", { rejectUnauthorized: false, checkServerIdentity: () => true });
+    expect(ignored).toEqual(approved);
+  });
+
+  // Node fails the connection with the value the callback returned. An Error
+  // need not be an ErrorInstance cell, so every object is handed back as it is.
+  it("fetch() rejects with the object that checkServerIdentity returns", async () => {
+    await createServer(CERT_LOCALHOST_IP, async port => {
+      function LegacyError(this: { message: string }, message: string) {
+        this.message = message;
+      }
+      inherits(LegacyError, Error);
+      const reasons: Record<string, object> = {
+        "Error": new Error("pin mismatch"),
+        "DOMException": new DOMException("pin mismatch", "SecurityError"),
+        "util.inherits() error": new (LegacyError as any)("pin mismatch"),
+        "plain object": { message: "pin mismatch" },
+      };
+      const sameObject: Record<string, boolean> = {};
+      for (const [label, reason] of Object.entries(reasons)) {
+        const rejection = await fetch(`https://localhost:${port}`, {
+          keepalive: false,
+          tls: { ca: validTls.cert, checkServerIdentity: () => reason } as any,
+        }).then(
+          () => "resolved",
+          e => e,
+        );
+        sameObject[label] = rejection === reason;
+      }
+      expect(sameObject).toEqual({
+        "Error": true,
+        "DOMException": true,
+        "util.inherits() error": true,
+        "plain object": true,
+      });
+    });
+  });
+
+  it("a session's checkServerIdentity approves the certificate only with a falsy return value", async () => {
+    await createServer(CERT_LOCALHOST_IP, async port => {
+      const outcomes: Record<string, unknown> = {};
+      const verdicts: Record<string, () => unknown> = {
+        "undefined": () => undefined,
+        "true": () => true,
+        "async": async () => undefined,
+      };
+      for (const [label, checkServerIdentity] of Object.entries(verdicts)) {
+        using session = new Bun.FetchSession({ tls: { ca: validTls.cert, checkServerIdentity } as any });
+        outcomes[label] = await settled(fetch(`https://localhost:${port}`, { session }));
+      }
+      expect(outcomes).toEqual({
+        "undefined": { body: "Hello World" },
+        "true": invalidReturnValue("type boolean (true)"),
+        "async": invalidReturnValue("an instance of Promise"),
+      });
+    });
+  });
+
+  // A function given here replaces Bun's own hostname check, so one that
+  // approves by mistake turns hostname verification off.
+  it("an async checkServerIdentity does not turn hostname verification off", async () => {
+    // This certificate names only DNS:localhost, and the request dials 127.0.0.1.
+    await createServer(CERT_LOCALHOST_ONLY, async port => {
+      const outcome = (checkServerIdentity?: unknown) =>
+        settled(
+          fetch(`https://127.0.0.1:${port}`, {
+            keepalive: false,
+            tls: { ca: CERT_LOCALHOST_ONLY.cert, checkServerIdentity } as any,
+          }),
+        );
+      expect({
+        none: await outcome(),
+        sync: await outcome((hostname: string, cert: tls.PeerCertificate) => tls.checkServerIdentity(hostname, cert)),
+        async: await outcome(async (hostname: string, cert: tls.PeerCertificate) =>
+          tls.checkServerIdentity(hostname, cert),
+        ),
+      }).toEqual({
+        none: {
+          name: "TypeError",
+          code: "ERR_TLS_CERT_ALTNAME_INVALID",
+          message: expect.stringContaining("ERR_TLS_CERT_ALTNAME_INVALID"),
+        },
+        sync: {
+          name: "Error",
+          code: "ERR_TLS_CERT_ALTNAME_INVALID",
+          message: "Hostname/IP does not match certificate's altnames: IP: 127.0.0.1 is not in the cert's list: ",
+        },
+        async: invalidReturnValue("an instance of Promise"),
+      });
+    });
+  });
+
+  // The Bun.FetchSession constructor has the same rule (fetch-session.test.ts).
+  it("fetch() rejects a tls.checkServerIdentity that is not a function", async () => {
+    await createServer(CERT_LOCALHOST_IP, async port => {
+      const outcome = (checkServerIdentity: unknown) =>
+        fetch(`https://localhost:${port}`, {
+          keepalive: false,
+          tls: { ca: validTls.cert, checkServerIdentity } as any,
+        }).then(
+          res => res.text(),
+          e => `${e.code}: ${e.message}`,
+        );
+      const invalid = (received: string) =>
+        `ERR_INVALID_ARG_TYPE: The "tls.checkServerIdentity" property must be of type function. Received ${received}`;
+      expect({
+        string: await outcome("yes"),
+        true: await outcome(true),
+        false: await outcome(false),
+        number: await outcome(1),
+        object: await outcome({}),
+        null: await outcome(null),
+        undefined: await outcome(undefined),
+        function: await outcome(() => undefined),
+      }).toEqual({
+        string: invalid("string"),
+        true: invalid("boolean"),
+        false: invalid("boolean"),
+        number: invalid("number"),
+        object: invalid("object"),
+        null: "Hello World",
+        undefined: "Hello World",
+        function: "Hello World",
+      });
     });
   });
 

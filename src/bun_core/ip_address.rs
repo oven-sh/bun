@@ -42,7 +42,6 @@ pub fn is_ipv6_address(input: &[u8]) -> bool {
 }
 
 /// A dotted quad or an IPv6 address and nothing else, the same on every platform. This is `core::net`'s parser and not `ares_inet_pton`, which is `inet_net_pton` underneath: it also takes `10` (as 10.0.0.0), `127.1` (as 127.1.0.0), `0x7f000001`, zero-padded octets, a trailing `/bits`, and stops at a NUL.
-// Not worth a copy of the parser at each call site: a caller asks once per connection.
 #[inline(never)]
 pub fn parse_strict(input: &[u8]) -> Option<IpAddr> {
     // The longest literal is "ffff:ffff:ffff:ffff:ffff:ffff:255.255.255.255", so a longer host is never scanned.

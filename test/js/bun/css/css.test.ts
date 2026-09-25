@@ -2231,6 +2231,81 @@ describe("css tests", () => {
     }
   });
 
+  describe("numbers with a magnitude below 1", () => {
+    // The printer drops the zero in front of the decimal point (-0.5 -> -.5). Negative values
+    // that dtoa prints in exponent form (-0.0000001 -> -1e-7) or rounds up to -1 have no such
+    // zero; they used to come out with a second minus sign (--1e-7, --1), which is not a number.
+    describe("<number>", () => {
+      minify_test(".foo{opacity:-0.0000001}", ".foo{opacity:-1e-7}");
+      minify_test(".foo{opacity:-0.9999999}", ".foo{opacity:-1}");
+      minify_test(".foo{opacity:-0.5}", ".foo{opacity:-.5}");
+      minify_test(".foo{opacity:-0.05}", ".foo{opacity:-.05}");
+      minify_test(".foo{opacity:0.0000001}", ".foo{opacity:1e-7}");
+      minify_test(".foo{opacity:0.9999999}", ".foo{opacity:1}");
+      minify_test(".foo{opacity:0.5}", ".foo{opacity:.5}");
+      minify_test(".foo{line-height:-0.0000001}", ".foo{line-height:-1e-7}");
+      minify_test(".foo{flex-grow:-0.0000001}", ".foo{flex-grow:-1e-7}");
+      minify_test(".foo{aspect-ratio:-0.0000001/-0.9999999}", ".foo{aspect-ratio:-1e-7/-1}");
+      minify_test(".foo{transition-duration:-0.0000001s}", ".foo{transition-duration:-1e-7s}");
+      minify_test(":root{--x:-0.0000001}", ":root{--x:-1e-7}");
+      minify_test(":root{--x:-0.9999999}", ":root{--x:-1}");
+      minify_test(":root{--x:-0.5}", ":root{--x:-.5}");
+      minify_test(".foo{color:color(srgb 0 -0.000000192523 1)}", ".foo{color:color(srgb 0 -1.92523e-7 1)}");
+      minify_test(".foo{color:lab(50% -0.00000005 0)}", ".foo{color:lab(50% -5e-8 0)}");
+      minify_test(".foo{color:oklab(50% -0.00000005 0)}", ".foo{color:oklab(50% -5e-8 0)}");
+      minify_test(
+        ".foo{transform:translate(-0.0000001px,-0.9999999px)scale(-0.0000001,-0.9999999)}",
+        ".foo{transform:translate(-1e-7px,-1px)scale(-1e-7,-1)}",
+      );
+    });
+
+    describe("<dimension>", () => {
+      minify_test(".foo{margin:-0.0000001px}", ".foo{margin:-1e-7px}");
+      minify_test(".foo{margin:-0.9999999px}", ".foo{margin:-1px}");
+      minify_test(".foo{margin:-0.5px}", ".foo{margin:-.5px}");
+      minify_test(".foo{margin:0.0000001px}", ".foo{margin:1e-7px}");
+      minify_test(".foo{margin:0.5px}", ".foo{margin:.5px}");
+      minify_test(".foo{width:calc(1px * -0.0000001)}", ".foo{width:-1e-7px}");
+      minify_test(".foo{rotate:-0.0000001deg}", ".foo{rotate:-1e-7deg}");
+      minify_test(":root{--x:-0.0000001px}", ":root{--x:-1e-7px}");
+      minify_test(":root{--x:-0.9999999px}", ":root{--x:-1px}");
+      minify_test(":root{--x:-0.5px}", ":root{--x:-.5px}");
+    });
+
+    describe("<percentage>", () => {
+      minify_test(".foo{width:-0.0000005%}", ".foo{width:-5e-7%}");
+      minify_test(".foo{width:-0.9999999%}", ".foo{width:-1%}");
+      minify_test(".foo{width:-0.5%}", ".foo{width:-.5%}");
+      minify_test(".foo{width:0.0000005%}", ".foo{width:5e-7%}");
+      minify_test(".foo{width:0.5%}", ".foo{width:.5%}");
+    });
+
+    cssTest(
+      `
+        .foo {
+          opacity: -0.0000001;
+          width: -0.0000005%;
+          margin: -0.9999999px;
+        }
+      `,
+      indoc`
+        .foo {
+          opacity: -1e-7;
+          width: -5e-7%;
+          margin: -1px;
+        }
+      `,
+    );
+
+    // Color space conversions leave components like this behind on their own: the green
+    // channel of display-p3 blue in sRGB is an f32 rounding residual. (The blue channel goes
+    // through powf and is not pinned here.)
+    minify_test(
+      ".foo{color:color(from color(display-p3 0 0 1) srgb r g 1)}",
+      ".foo{color:color(srgb 0 -1.92523e-7 1)}",
+    );
+  });
+
   describe("padding", () => {
     cssTest(
       `

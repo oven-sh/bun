@@ -789,6 +789,37 @@ describe("backpressure", () => {
       },
     );
 
+    // The response owns the socket until its body is out, so a socket timeout
+    // in that time goes to the response's 'timeout' listener. The listener
+    // keeps the connection, and the reader still gets the whole body.
+    it("a timeout while the body waits for the reader goes to the response's 'timeout' listener", async () => {
+      const events: string[] = [];
+      let backlog = false;
+      const handled = Promise.withResolvers<void>();
+      const timedOut = Promise.withResolvers<void>();
+      await using server = createServer(false, (req, res) => {
+        res.setTimeout(1, () => {
+          if (events.length === 0) events.push("timeout");
+          timedOut.resolve();
+        });
+        res.on("finish", () => events.push("finish"));
+        backlog = writeBody(res);
+        handled.resolve();
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      using client = pausedClient(
+        (server.address() as AddressInfo).port,
+        "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+      );
+      await Promise.race([handled.promise, client.done]);
+      // The client has not read anything yet, so the write has stalled and the timeout is due.
+      if (backlog) await Promise.race([timedOut.promise, client.done]);
+      client.resume();
+      const { bytes } = await client.done;
+      expect(bytes.length - bytes.indexOf("\r\n\r\n") - 4).toBe(BODY);
+      expect(events).toEqual(backlog ? ["timeout", "finish"] : ["finish"]);
+    });
+
     it("the unwritten part of the body keeps the process alive", async () => {
       // The child has nothing but the in-flight body left to do once its
       // handler has run and unref'd the server.

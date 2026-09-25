@@ -34,7 +34,11 @@ export interface RustLayout {
   readonly rust: string;
   readonly size: number;
   readonly align: number;
-  readonly fields: readonly { readonly cpp: string; readonly rust: string; readonly offset: number }[];
+  readonly fields: readonly {
+    readonly cpp: string;
+    readonly rust: string;
+    readonly offset: number;
+  }[];
 }
 
 export abstract class Type {
@@ -107,13 +111,21 @@ export function alignUp(offset: number, align: number): number {
 }
 
 /** The layout of C++ `ExternVariant`: a union of the arms, then a `u8` tag. */
-export function variantLayout(arms: readonly RustType[]): { size: number; align: number; tag: number } {
+export function variantLayout(arms: readonly RustType[]): {
+  size: number;
+  align: number;
+  tag: number;
+} {
   const align = Math.max(...arms.map(arm => arm.align));
   const tag = alignUp(Math.max(...arms.map(arm => arm.size)), align);
   return { size: alignUp(tag + 1, align), align, tag };
 }
 
-export function structLayout(members: readonly RustType[]): { size: number; align: number; offsets: number[] } {
+export function structLayout(members: readonly RustType[]): {
+  size: number;
+  align: number;
+  offsets: number[];
+} {
   const align = Math.max(1, ...members.map(member => member.align));
   let end = 0;
   const offsets = members.map(member => {

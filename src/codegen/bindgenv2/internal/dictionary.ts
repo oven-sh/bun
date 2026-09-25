@@ -91,11 +91,18 @@ export function dictionary(
         rust: `Extern${name}`,
         size,
         align,
-        fields: fullMembers.map((m, i) => ({ cpp: m.internalName, rust: snakeCase(m.internalName), offset: offsets[i] })),
+        fields: fullMembers.map((m, i) => ({
+          cpp: m.internalName,
+          rust: snakeCase(m.internalName),
+          offset: offsets[i],
+        })),
       };
     }
     get rustSource() {
-      const members = fullMembers.map(m => ({ name: snakeCase(m.internalName), rust: m.type.rust }));
+      const members = fullMembers.map(m => ({
+        name: snakeCase(m.internalName),
+        rust: m.type.rust,
+      }));
       const conversion = !generateConversionFunction
         ? ""
         : `

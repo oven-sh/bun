@@ -18,7 +18,11 @@ export const String = new (class extends Type {
       member: "GenString",
       fromExtern: e => `adopt_string(${e})`,
       arm: { type: "GenVal<GenString>", fromExtern: e => `GenVal(adopt_string(${e}))` },
-      optional: { ...pointer, member: "GenOpt<GenString>", fromExtern: e => `adopt_opt_string(${e})` },
+      optional: {
+        ...pointer,
+        member: "GenOpt<GenString>",
+        fromExtern: e => `adopt_opt_string(${e})`,
+      },
     };
   }
   toCpp(value: string): string {

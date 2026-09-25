@@ -122,7 +122,8 @@ export function union(
     get rustSource() {
       const arms = Object.entries(namedAlternatives).map(([key, alt], tag) => {
         const rust = alt.rust;
-        const payload: RustArm | null = rust.arm === undefined ? { type: rust.member, fromExtern: rust.fromExtern } : rust.arm;
+        const payload: RustArm | null =
+          rust.arm === undefined ? { type: rust.member, fromExtern: rust.fromExtern } : rust.arm;
         return { variant: pascalCase(key), extern: rust.extern, payload, tag };
       });
       const released = arms.filter(arm => arm.payload?.release);
@@ -130,7 +131,9 @@ export function union(
         pub enum ${name} {
           ${joinIndented(
             10,
-            arms.map(arm => (arm.payload ? `${arm.variant}(${arm.payload.type}),` : `${arm.variant},`)),
+            arms.map(arm =>
+              arm.payload ? `${arm.variant}(${arm.payload.type}),` : `${arm.variant},`,
+            ),
           )}
         }
 
@@ -158,7 +161,9 @@ export function union(
                 ${joinIndented(
                   16,
                   arms.map(arm => {
-                    const value = arm.payload ? `(${arm.payload.fromExtern(`ext.data._${arm.tag}`)})` : "";
+                    const value = arm.payload
+                      ? `(${arm.payload.fromExtern(`ext.data._${arm.tag}`)})`
+                      : "";
                     return `${arm.tag} => Self::${arm.variant}${value},`;
                   }),
                 )}

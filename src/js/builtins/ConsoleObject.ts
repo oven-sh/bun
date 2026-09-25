@@ -13,7 +13,7 @@ export function asyncIterator(this: Console) {
   var value_len: number;
   var pendingChunk: Uint8Array | undefined;
   // The reader of the iterator that owns stdin.
-  var activeReader: ReadableStreamDefaultReader | undefined;
+  var activeReader: ReturnType<typeof stream.getReader> | undefined;
 
   async function* ConsoleAsyncIterator() {
     // After a `--hot` reload, the iterator that holds stdin can belong to a generation that was replaced. It is
@@ -86,7 +86,11 @@ export function asyncIterator(this: Console) {
 
         if (done) {
           if (pendingChunk) {
-            yield decoder.decode(pendingChunk);
+            // Cleared first: the iterator that takes over reads the end of stdin too, and must not yield this line again.
+            const rest = pendingChunk;
+            pendingChunk = undefined;
+            yield decoder.decode(rest);
+            if (reader !== activeReader) await $newPromise();
           }
           return;
         }

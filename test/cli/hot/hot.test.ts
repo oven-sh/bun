@@ -1006,6 +1006,64 @@ describe.concurrent("stdin across a reload", () => {
   );
 
   it(
+    "a replaced generation that got the last line of stdin does not end its loop",
+    async () => {
+      // stdin ends on a line with no newline. Generation 1 is in its loop body with that line when the save lands.
+      const first =
+        start(1) +
+        `(async () => {
+           try {
+             for await (const line of console) {
+               console.log("generation 1 got", line);
+               await new Promise(resolve => (globalThis.resumeGeneration1 = resolve));
+               console.log("generation 1 resumed");
+             }
+             console.log("generation 1 done");
+           } catch (e) {
+             console.log("generation 1 error", e.message);
+           }
+         })();`;
+      // Generation 2 reads the end of stdin, lets generation 1 continue, and waits one turn of the event loop.
+      // A save can reload twice, so this loop starts once.
+      const second =
+        start(2) +
+        `if (!globalThis.loop2) {
+           globalThis.loop2 = true;
+           (async () => {
+             try {
+               for await (const line of console) console.log("generation 2 got", line);
+               console.log("generation 2 saw the end of stdin");
+               globalThis.resumeGeneration1();
+               await new Promise(resolve => setImmediate(resolve));
+               console.log("generation 2 checked");
+             } catch (e) {
+               console.log("generation 2 error", e.message);
+             }
+           })();
+         }`;
+      using dir = tempDir("hot-stdin-end", { "entry.ts": first });
+      const hot = runHot(String(dir));
+      await using _ = hot.proc;
+
+      await hot.line("generation 1 start");
+      hot.send("tail");
+      hot.proc.stdin.end();
+      await hot.line("generation 1 got tail");
+
+      await hot.save(second, "generation 2 start");
+      await hot.line("generation 2 checked");
+
+      expect(hot.events()).toEqual([
+        "generation 1 got tail",
+        "generation 2 saw the end of stdin",
+        "generation 1 resumed",
+        "generation 2 checked",
+      ]);
+    },
+    timeout,
+  );
+
+  it(
     "a loop that the script keeps on globalThis stays the reader",
     async () => {
       const kept = (generation: number) => `

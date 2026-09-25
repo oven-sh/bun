@@ -577,7 +577,7 @@ impl FileReader {
         }
     }
 
-    /// The `fd` of a started pinned file is not the reader's. The reader closes its own.
+    /// Runs at every end of the stream: the `fd` of a started pinned file is not the reader's.
     #[inline(never)]
     fn close_pinned(&self) {
         if self.pinned().is_some() {
@@ -591,6 +591,14 @@ impl FileReader {
     /// A pinned file ends on a pull of its own, so one more `check_pinned` runs first, as in node.
     fn may_end_with_bytes(&self) -> bool {
         self.pinned().is_none()
+    }
+
+    /// The reader has yet to close a pinned file: its consumer sees the end after the close.
+    fn ends_on_reader_done(&self) -> bool {
+        self.waiting_for_on_reader_done.get()
+            && self.fd.get() != Fd::INVALID
+            && self.reader().get_fd() != Fd::INVALID
+            && self.pinned().is_some()
     }
 
     /// What a consumer sees for `err`: node's `NotReadableError` for a pinned file.
@@ -627,6 +635,7 @@ impl FileReader {
     fn detach_sink(&self, err: Option<&streams::StreamError>) {
         self.sink_paused.set(false);
         if self.sink.replace(SinkHandle::None).is_some() {
+            self.close_pinned();
             self.parent_const().end_locked_stream(err);
         }
     }
@@ -647,8 +656,15 @@ impl FileReader {
             return;
         }
         let reader_done = self.reader_finished();
+        let pin_error = match reader_done {
+            true => self.check_pinned().err(),
+            false => None,
+        };
+        if reader_done {
+            self.close_pinned();
+        }
         let buffered = self.drain();
-        if !buffered.is_empty() {
+        if pin_error.is_none() && !buffered.is_empty() {
             let chunk = if reader_done {
                 streams::Result::OwnedAndDone(buffered)
             } else {
@@ -678,6 +694,7 @@ impl FileReader {
             let err = self
                 .read_error
                 .replace(None)
+                .or(pin_error)
                 .map(|err| self.stream_error(err));
             self.detach_sink(err.as_ref());
             sink.end(err);
@@ -804,6 +821,9 @@ impl FileReader {
     }
 
     fn write_chunk_to_sink(&self, sink: SinkHandle, chunk: &[u8], has_more: bool) -> bool {
+        if !has_more {
+            self.close_pinned();
+        }
         if !chunk.is_empty() {
             let chunk = bun_ptr::RawSlice::new(chunk);
             let wrote = sink.write(&if has_more {
@@ -849,10 +869,12 @@ impl FileReader {
             .and_then(|view| view.as_array_buffer(&global))
             .unwrap_or_default();
         let pending_buf = pending_array_buffer.slice_mut();
+        let mut ended = false;
         let ret = if chunk.is_empty() {
             let buffered = self.buffered.replace(Vec::new());
             let ends = self.may_end_with_bytes();
             let result = if buffered.is_empty() {
+                ended = true;
                 streams::Result::Done
             } else if pending_buf.len() >= buffered.len() {
                 pending_buf[..buffered.len()].copy_from_slice(&buffered);
@@ -904,6 +926,9 @@ impl FileReader {
         // A re-entrant cancel() inside `run()` reaches on_reader_done, which drops the across-read ref and lets a GC free this box while the io caller still holds `&mut` into it.
         // SAFETY: see `parent()`.
         let _pin = unsafe { SourcePin::new(self.parent()) };
+        if ended {
+            self.close_pinned();
+        }
         self.pending.with_mut(|p| p.run());
         // Re-entrant cancel or a nested pull that read to EOF closed the reader; tell the io caller to stop so it does not re-read the captured fd.
         ret && !self.done.get() && !self.reader().is_done()
@@ -957,11 +982,13 @@ impl FileReader {
         }
 
         // A stored error also ends a reader that never started (`from_bytes_then_error`).
-        if self.reader().is_done() || self.read_error.get().is_some() {
+        if self.read_error.get().is_some()
+            || (self.reader().is_done() && !self.ends_on_reader_done())
+        {
             return self.end_of_reader();
         }
 
-        if !self.reader().has_pending_read() && self.flowing.get() {
+        if !self.reader().is_done() && !self.reader().has_pending_read() && self.flowing.get() {
             // A consumer is pulling again: undo the highwater pause from `on_read_chunk`.
             self.reader().unpause();
             // SAFETY: the reader cell is live for `self`'s lifetime; `read_into` is the raw re-entrancy-safe entry (EOF/error dispatch runs user JS).
@@ -1005,7 +1032,7 @@ impl FileReader {
         self.pending_value.with_mut(|p| p.set(&global, array));
         self.pending_view.set(buffer);
         #[cfg(windows)]
-        if self.flowing.get() {
+        if self.flowing.get() && !self.reader().is_done() {
             self.reader().unpause();
         }
 
@@ -1063,7 +1090,8 @@ impl FileReader {
         } else {
             self.consume_reader_buffer();
             if self.pending.get().state == streams::PendingState::Pending {
-                if !self.buffered.get().is_empty() {
+                let ended = self.buffered.get().is_empty();
+                if !ended {
                     let buffered = Vec::<u8>::move_from_list(self.buffered.replace(Vec::new()));
                     let result = if self.may_end_with_bytes() {
                         streams::Result::OwnedAndDone(buffered)
@@ -1079,6 +1107,9 @@ impl FileReader {
                     self.pending.with_mut(|p| p.result = result);
                 }
                 self.buffered.set(Vec::new());
+                if ended {
+                    self.close_pinned();
+                }
                 self.pending.with_mut(|p| p.run());
             }
             // Don't handle buffered data here - it will be returned on the next onPull
@@ -1121,6 +1152,7 @@ impl FileReader {
 
     /// Hands `err` to whoever reads: the sink, the parked pull, or the next pull.
     fn deliver_error(&self, err: sys::Error) {
+        self.close_pinned();
         let sink = *self.sink.get();
         if sink.is_some() {
             let err = self.stream_error(err);
@@ -1139,7 +1171,6 @@ impl FileReader {
 
     /// An errored stream is never cancelled, so release the poll and the fd here.
     fn close_after_error(&self) {
-        self.close_pinned();
         if self.done.get() {
             return;
         }

@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir, tls } from "harness";
 import { mkfifo } from "mkfifo";
 import fs, {
   closeSync,
@@ -8,6 +8,7 @@ import fs, {
   existsSync,
   openAsBlob,
   openSync,
+  readdirSync,
   readFileSync,
   readSync,
   statSync,
@@ -16,15 +17,41 @@ import fs, {
 } from "node:fs";
 import { join } from "node:path";
 
+async function pinned(contents: string | Uint8Array = "hello", options?: { type?: string }) {
+  const dir = tempDir("open-as-blob", { "a.txt": contents });
+  const file = join(String(dir), "a.txt");
+  return { dir, file, blob: await openAsBlob(file, options) };
+}
+
+// Resolves when nothing has `file` open. Bun closes some descriptors on another thread, so this waits for them.
+async function closed(file: string) {
+  for (; ; await new Promise(resolve => setImmediate(resolve))) {
+    if (isWindows) {
+      // Windows does not rename over a file that is open.
+      try {
+        writeFileSync(file + ".other", "other");
+        return fs.renameSync(file + ".other", file);
+      } catch (err: any) {
+        if (err.code !== "EPERM") throw err;
+      }
+      continue;
+    }
+    const { dev, ino } = statSync(file);
+    const isOpen = readdirSync(isLinux ? "/proc/self/fd" : "/dev/fd").some(fd => {
+      try {
+        const stat = fs.fstatSync(Number(fd));
+        return stat.dev === dev && stat.ino === ino;
+      } catch {
+        return false;
+      }
+    });
+    if (!isOpen) return;
+  }
+}
+
 // Every change below changes the size or the mtime. node cannot see any other change either.
 describe.concurrent("fs.openAsBlob pins the file", () => {
   const notReadable = expect.objectContaining({ name: "NotReadableError", message: "The blob could not be read" });
-
-  async function pinned(contents: string | Uint8Array = "hello", options?: { type?: string }) {
-    const dir = tempDir("open-as-blob", { "a.txt": contents });
-    const file = join(String(dir), "a.txt");
-    return { dir, file, blob: await openAsBlob(file, options) };
-  }
 
   it("reads an unchanged file, more than once", async () => {
     const { dir, file, blob } = await pinned();
@@ -118,15 +145,18 @@ describe.concurrent("fs.openAsBlob pins the file", () => {
     // 300000 bytes reach the consumer as more than one chunk.
     const { dir, file, blob } = await pinned(Buffer.alloc(300_000, "a"));
     using _ = dir;
+    const stream = blob.stream();
     let chunks = 0;
     const read = async () => {
-      for await (const _chunk of blob.stream()) {
+      for await (const _chunk of stream) {
         chunks++;
         writeFileSync(file, "swapped!");
       }
     };
     await expect(read()).rejects.toEqual(notReadable);
     expect(chunks).toBeGreaterThan(0);
+    await closed(file);
+    expect(stream).toBeInstanceOf(ReadableStream);
   });
 
   // node compares the file that it opened. A new file at the path is not that file.
@@ -469,7 +499,7 @@ describe.concurrent("fs.openAsBlob pins the file", () => {
     await expect(new Bun.Image(blob).metadata()).rejects.toEqual(notReadable);
   });
 
-  it("takes a file descriptor as before", async () => {
+  it("takes a file descriptor and an s3:// path as before", async () => {
     const { dir, file } = await pinned();
     using _ = dir;
     const fd = openSync(file, "r");
@@ -479,6 +509,10 @@ describe.concurrent("fs.openAsBlob pins the file", () => {
     } finally {
       closeSync(fd);
     }
+    // What `Bun.file("s3://...")` returns: nothing on this machine to pin.
+    expect(await openAsBlob("s3://bucket/key")).toBeInstanceOf(Bun.file("s3://bucket/key").constructor);
+    // @ts-expect-error S3File members are not on node's Blob
+    expect((await openAsBlob("s3://bucket/key")).presign).toBeFunction();
   });
 
   it("sends no Content-Type for an empty type", async () => {
@@ -488,5 +522,52 @@ describe.concurrent("fs.openAsBlob pins the file", () => {
     expect(await (await fetch(server.url, { method: "POST", body: blob })).text()).toBe("null");
     const typed = await openAsBlob(file, { type: "text/x-pinned" });
     expect(await (await fetch(server.url, { method: "POST", body: typed })).text()).toBe("text/x-pinned");
+  });
+});
+
+// One at a time: `expect().rejects` of a concurrent test runs the event loop inside itself.
+describe("a stream of an fs.openAsBlob file", () => {
+  it.each([
+    [
+      "a reader drains",
+      async (stream: ReadableStream<Uint8Array>) => {
+        let length = 0;
+        for await (const chunk of stream) length += chunk.length;
+        return length;
+      },
+    ],
+    ["a Response reads", async (stream: ReadableStream<Uint8Array>) => (await new Response(stream).bytes()).length],
+    [
+      "a fetch sends",
+      async (stream: ReadableStream<Uint8Array>) => {
+        await using server = Bun.serve({
+          port: 0,
+          fetch: async req => new Response(String((await req.bytes()).length)),
+        });
+        return Number(await (await fetch(server.url, { method: "POST", body: stream })).text());
+      },
+    ],
+    [
+      "an HTMLRewriter reads",
+      async (stream: ReadableStream<Uint8Array>) =>
+        (await new HTMLRewriter().transform(new Response(stream)).bytes()).length,
+    ],
+    [
+      "a reader cancels",
+      async (stream: ReadableStream<Uint8Array>) => {
+        const reader = stream.getReader();
+        await reader.read();
+        await reader.cancel();
+        return 300_000;
+      },
+    ],
+  ])("closes the file when %s it", async (_name, consume) => {
+    const { dir, file, blob } = await pinned(Buffer.alloc(300_000, "a"));
+    using _ = dir;
+    // This test holds the stream, so the garbage collector cannot be what closes the file.
+    const stream = blob.stream();
+    expect(await consume(stream)).toBe(300_000);
+    await closed(file);
+    expect(stream).toBeInstanceOf(ReadableStream);
   });
 });

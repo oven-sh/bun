@@ -247,8 +247,13 @@ function socketHandshake(
 }
 
 // ---------------------------------------------------------------------------
-// Close-cleanup handler
+// Raw socket error forwarding and close cleanup
 // ---------------------------------------------------------------------------
+
+// Node reports a wrapped socket's errors on the TLS socket over it: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L977
+function onRawSocketError(this: TLSProxySocket, err: Error) {
+  if (!this.destroyed) this.destroy(err);
+}
 
 // onTlsClose: when the TLS socket closes (e.g. H2 session destroyed), clean up
 // the raw socket listeners to prevent memory leaks and stale callback references.
@@ -368,8 +373,10 @@ function upgradeRawSocketToH2(
       data: {},
     });
   } catch (e) {
-    rawSocket.destroy(e as Error);
-    tlsSocket.destroy(e as Error);
+    // Same surface as tls.Server's own 'connection' listener when the credentials fail to build.
+    rawSocket.destroy();
+    tlsSocket.destroy();
+    server.emit("error", e);
     return true;
   }
 
@@ -386,6 +393,7 @@ function upgradeRawSocketToH2(
   rawSocket.on("end", events[1]);
   rawSocket.on("drain", events[2]);
   rawSocket.on("close", events[3]);
+  rawSocket.on("error", onRawSocketError.bind(tlsSocket));
 
   // When the TLS socket closes (e.g. H2 session destroyed), clean up the raw socket
   // listeners to prevent memory leaks and stale callback references.

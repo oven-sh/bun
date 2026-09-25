@@ -233,8 +233,7 @@ pub(crate) mod prompt {
     fn call(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let arguments = frame.arguments();
         let output = Output::writer();
-        // `prompt(optional DOMString message = "", optional DOMString default = "")`:
-        // an omitted or `undefined` argument is the default.
+        // WebIDL optional DOMString arguments: omitted or `undefined` means the default "".
         let message = match arguments.first() {
             Some(value) if !value.is_undefined() => Some(value.to_utf8(global)?),
             _ => None,

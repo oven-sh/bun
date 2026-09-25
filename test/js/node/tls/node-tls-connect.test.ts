@@ -2764,6 +2764,17 @@ describe.each([
     });
   });
 
+  // A handshake that our own FIN ended is no reason to close a client that rejects unauthorized peers.
+  it.skipIf(!exe)("end() leaves a client that rejects unauthorized peers open for the peer's close", async () => {
+    expect(await run("end-strict")).toEqual({
+      log: ["connect secureConnecting=true", "finish"],
+      peerSawFin: true,
+      writableFinished: true,
+      readyState: "readOnly",
+      destroyed: false,
+    });
+  });
+
   it.skipIf(!exe)("destroySoon() closes the socket", async () => {
     expect(await run("destroySoon")).toEqual({
       log: ["connect secureConnecting=true", "finish", "close"],

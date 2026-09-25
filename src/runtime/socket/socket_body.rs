@@ -1841,6 +1841,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         // failure flavor).
         let reject_unauthorized = flags.contains(Flags::REJECT_UNAUTHORIZED)
             && (verify_failed
+                // A failed handshake verified nothing, whatever its error says. node:tls tears
+                // its own sockets down: after end() one stays open until the peer closes.
+                || (SSL && success == 0 && !flags.contains(Flags::DEFERS_SERVER_IDENTITY))
                 || (hostname_mismatch && !flags.contains(Flags::DEFERS_SERVER_IDENTITY)));
         // A handshake that failed outright (success == 0 with no policy
         // verdict: protocol error, peer alert, EOF mid-handshake) never has a
@@ -2403,7 +2406,8 @@ impl<const SSL: bool> NewSocket<SSL> {
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
 
-        if this.socket.get().is_detached() {
+        let socket = this.socket.get();
+        if socket.is_detached() {
             // The verdict must survive the forced close.
             return Ok(this
                 .stored_verify_error_to_js(global)
@@ -2412,10 +2416,13 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // this error can change if called in different stages of hanshake
         // is very usefull to have this feature depending on the user workflow
-        let ssl_error = this.socket.get().get_verify_error();
+        let ssl_error = socket.get_verify_error();
         // `on_handshake` stores the name verdict, with its full message, for the in-handshake check too.
+        // On a shut-down socket its report comes first as well: the reason a handshake failed
+        // (EPROTO) is not the verdict of a certificate that never came.
         if ssl_error.error_no == 0
             || ssl_error.error_no == uws::us_bun_verify_error_t::HOSTNAME_MISMATCH
+            || socket.is_shutdown()
         {
             if let Some(stored) = this.stored_verify_error_to_js(global) {
                 return Ok(stored);

@@ -983,10 +983,10 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                 None,
                                                 bun_ast::Loc::EMPTY,
                                                 "No version matching \"{}\" found for specifier \"{}\"<r> <d>(blocked by minimum-release-age: {} seconds)<r>",
-                                                bstr::BStr::new(this.lockfile.str(&name)),
                                                 bstr::BStr::new(
                                                     this.lockfile.str(&version.literal)
                                                 ),
+                                                bstr::BStr::new(this.lockfile.str(&name)),
                                                 age_gate_ms / MS_PER_S,
                                             );
                                         }

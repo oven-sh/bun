@@ -4019,20 +4019,34 @@ CREATE TABLE ${table_name} (
       }
     });
     test("reserve connection", async () => {
-      const sql = postgres({ ...options, max: 1 });
-      const reserved = await sql.reserve();
+      await using sql = postgres({ ...options, max: 1 });
 
-      setTimeout(() => reserved.release(), 510);
+      const resolved: number[] = [];
+      const track = (query: Promise<{ x: number }[]>) =>
+        query.then(([{ x }]) => {
+          resolved.push(x);
+        });
 
-      const xs = await Promise.all([
-        reserved`select 1 as x`.then(([{ x }]) => ({ time: Date.now(), x })),
-        sql`select 2 as x`.then(([{ x }]) => ({ time: Date.now(), x })),
-        reserved`select 3 as x`.then(([{ x }]) => ({ time: Date.now(), x })),
-      ]);
+      let pooled: Promise<void>;
+      {
+        // released however this block exits: closing the pool above waits for outstanding
+        // reservations, so a leaked one would report any failure in here as a timeout
+        await using reserved = await sql.reserve();
 
-      if (xs[1].time - xs[2].time < 500) throw new Error("Wrong time");
+        const first = track(reserved`select 1 as x`);
+        // max is 1 and that connection is reserved, so this cannot run until the block releases it
+        pooled = track(sql`select 2 as x`);
+        const third = track(reserved`select 3 as x`);
+        await Promise.all([first, third]);
 
-      expect(xs.map(x => x.x).join("")).toBe("123");
+        // one more round trip: a connection handed back to the pool when 1 or 3 finished would
+        // have run the pooled query by now, and 2 would show up here ahead of 4
+        await track(reserved`select 4 as x`);
+        expect(resolved).toEqual([1, 3, 4]);
+      }
+
+      await pooled;
+      expect(resolved).toEqual([1, 3, 4, 2]);
     });
 
     test("keeps process alive when it should", async () => {

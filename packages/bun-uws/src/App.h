@@ -18,6 +18,7 @@
 // clang-format off
 
 
+#include <algorithm>
 #include <string>
 #include <charconv>
 #include <string_view>
@@ -389,6 +390,17 @@ public:
         /* close_all() walks head_listen_sockets first, so listeners are closed
          * here without us holding raw pointers to them across loop ticks. */
         us_socket_group_close_all(httpContext->getSocketGroup());
+        /* onClose cannot write: flush queued publishes and corked frames first. */
+        if (topicTree) {
+            topicTree->drain();
+        }
+        LoopData *loopData = (LoopData *) us_loop_ext((us_loop_t *) Loop::get());
+        for (int slot = 0; slot < 2; slot++) {
+            auto *corked = (us_socket_t *) loopData->getCorkSlot(slot)->socket;
+            if (corked && std::find(webSocketGroups.begin(), webSocketGroups.end(), us_socket_group(corked)) != webSocketGroups.end()) {
+                ((AsyncSocket<SSL> *) corked)->uncork();
+            }
+        }
         for (us_socket_group_t *g : webSocketGroups) {
             us_socket_group_close_all(g);
         }

@@ -81,9 +81,16 @@ impl AnyWebSocket {
         ws.memory_cost(ssl)
     }
 
+    /// Writes out queued publishes and the cork buffer, then closes.
     pub fn close(self) {
         let (ssl, ws) = self.split();
-        c::uws_ws_close(ssl, ws)
+        c::uws_ws_close(ssl, ws, true)
+    }
+
+    /// Drops queued publishes and the cork buffer, which can still hold the 101.
+    pub fn close_without_flush(self) {
+        let (ssl, ws) = self.split();
+        c::uws_ws_close(ssl, ws, false)
     }
 
     pub fn send(self, message: &[u8], opcode: Opcode, compress: bool, fin: bool) -> SendStatus {
@@ -525,7 +532,7 @@ pub mod c {
             behavior: *const WebSocketBehavior,
         );
         pub(crate) safe fn uws_ws_get_user_data(ssl: i32, ws: &mut RawWebSocket) -> *mut c_void;
-        pub(crate) safe fn uws_ws_close(ssl: i32, ws: &mut RawWebSocket);
+        pub(crate) safe fn uws_ws_close(ssl: i32, ws: &mut RawWebSocket, flush: bool);
         pub(crate) fn uws_ws_send_with_options(
             ssl: i32,
             ws: *mut RawWebSocket,

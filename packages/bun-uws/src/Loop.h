@@ -159,6 +159,11 @@ public:
         return (LoopData *) us_loop_ext(loop);
     }
 
+    /* The pre handler's work, for a caller that will not tick again. */
+    void flushPendingWrites() {
+        preCb((us_loop_t *) this);
+    }
+
     void addPostHandler(void *key, MoveOnlyFunction<void(Loop *)> &&handler) {
         LoopData *loopData = (LoopData *) us_loop_ext((us_loop_t *) this);
 

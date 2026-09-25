@@ -474,7 +474,7 @@ impl ServerWebSocket {
                 // https://github.com/oven-sh/bun/issues/1480
                 // (`close()` re-enters `on_close`, which skips its own
                 // accounting because the closed flag is already set.)
-                self.websocket().close();
+                self.websocket().close_without_flush();
                 closed_here = true;
                 this_value.unprotect();
             }

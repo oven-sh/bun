@@ -63,8 +63,9 @@ public:
     using Super::getNativeHandle;
 
     /* WebSocket close cannot be an alias to AsyncSocket::close since
-     * we need to check first if it was shut down by remote peer */
-    us_socket_t *close() {
+     * we need to check first if it was shut down by remote peer.
+     * flush = false also drops a 101 that is still corked (open handler threw). */
+    us_socket_t *close(bool flush = true) {
         if (us_socket_is_closed((us_socket_t *) this)) {
             return nullptr;
         }
@@ -73,7 +74,23 @@ public:
             return nullptr;
         }
 
+        if (flush) {
+            flushBeforeForcedClose();
+        }
         return us_socket_close((us_socket_t *) this, 0, nullptr);
+    }
+
+    /* onClose runs after the fd is gone, so queued publishes and corked
+     * frames have to be written before us_socket_close. */
+    void flushBeforeForcedClose() {
+        if (us_socket_is_closed((us_socket_t *) this)) {
+            return;
+        }
+        WebSocketData *webSocketData = (WebSocketData *) Super::getAsyncSocketData();
+        if (webSocketData->subscriber) {
+            getContextData()->topicTree->drain(webSocketData->subscriber);
+        }
+        Super::uncork();
     }
 
     enum SendStatus : int {

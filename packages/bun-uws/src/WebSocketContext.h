@@ -74,6 +74,8 @@ private:
     }
 
     static void forceClose(WebSocketState<isServer> */*wState*/, void *s, std::string_view reason = {}) {
+        /* An earlier frame in this read may have sent or published already. */
+        ((WebSocket<SSL, isServer, USERDATA> *) s)->flushBeforeForcedClose();
         us_socket_close((us_socket_t *) s, (int) reason.length(), (void *) reason.data());
     }
 

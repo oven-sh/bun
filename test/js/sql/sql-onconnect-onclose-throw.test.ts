@@ -707,12 +707,12 @@ for (const [adapter, scheme, refusedCode] of [
 
 // A connection that cannot be created (here the password function throws) closes the slot
 // with no socket event. An onclose that always goes back to the pool then dials again at once.
-// The close comes on a later turn of the event loop, so timers and I/O run between the dials.
+// Each close comes on a later turn of the event loop, so timers and I/O run between the dials.
 for (const adapter of ["postgres", "mysql"] as const) {
   test.concurrent.each(["awaited", "execute", "connect"] as const)(
     `${adapter}: an onclose that always makes a pool call (%s) lets the event loop run when no connection can be created`,
     async entry => {
-      const stopped = Promise.withResolvers<void>();
+      const firstCallSettled = Promise.withResolvers<string>();
       let oncloses = 0;
       let immediateRanAfter: number | undefined;
       const sql = new SQL({
@@ -726,28 +726,27 @@ for (const adapter of ["postgres", "mysql"] as const) {
           throw new Error("no password");
         },
         onclose() {
-          // stops when the event loop had its turn, or at the cap when it never gets one
-          if (++oncloses === 100 || immediateRanAfter !== undefined) return stopped.resolve();
+          // goes back to the pool until the event loop had its turn, or up to the cap when it never gets one
+          if (++oncloses === 100 || immediateRanAfter !== undefined) return;
+          // has to run before the close of the dial that this onclose starts
+          if (oncloses === 1) setImmediate(() => (immediateRanAfter = oncloses));
           const call =
             entry === "connect"
               ? sql.connect()
               : entry === "execute"
                 ? sql.unsafe("select 1").execute()
                 : sql.unsafe("select 1");
-          rejectionCode(call);
+          const settled = rejectionCode(call);
+          if (oncloses === 1) firstCallSettled.resolve(settled);
         },
-      });
-      setImmediate(() => {
-        immediateRanAfter = oncloses;
-        stopped.resolve();
       });
       try {
         await rejectionCode(sql.unsafe("select 1"));
-        await stopped.promise;
+        await firstCallSettled.promise;
       } finally {
         await sql.close();
       }
-      expect({ immediateRanAfter, oncloses }).toEqual({ immediateRanAfter: 0, oncloses: 1 });
+      expect({ immediateRanAfter, oncloses }).toEqual({ immediateRanAfter: 1, oncloses: 2 });
     },
   );
 }

@@ -1137,6 +1137,12 @@ impl EventLoop {
         self.vm_ref().as_mut().auto_tick();
     }
 
+    /// [`auto_tick`](Self::auto_tick) without the unhandled-rejection pass at its end: the caller runs it.
+    #[inline]
+    fn auto_tick_leaving_rejections(&mut self) {
+        self.vm_ref().as_mut().auto_tick_judging(false);
+    }
+
     /// `eventLoop().autoTickActive()` — like [`auto_tick`](Self::auto_tick) but
     /// only sleeps in the uSockets loop while it has active handles.
     /// Dispatches through
@@ -1160,6 +1166,8 @@ impl EventLoop {
         if promise.status() != PromiseStatus::Pending {
             return Ok(());
         }
+        // Script that blocks here handles what the settling turn rejected when it resumes, as after an `await`.
+        let beneath_script = jsc_vm.is_entered();
         while promise.status() == PromiseStatus::Pending {
             if jsc_vm.execution_forbidden()
                 || !self.vm_ref().script_allowed()
@@ -1167,9 +1175,22 @@ impl EventLoop {
             {
                 return Err(jsc::Stopped);
             }
-            self.tick();
+            if !beneath_script {
+                self.tick();
+                if promise.status() == PromiseStatus::Pending {
+                    self.auto_tick();
+                }
+                continue;
+            }
+            self.tick_leaving_rejections();
+            if promise.status() != PromiseStatus::Pending {
+                break;
+            }
+            self.global_ref()
+                .handle_rejected_promises()
+                .map_err(|_| jsc::Stopped)?;
             if promise.status() == PromiseStatus::Pending {
-                self.auto_tick();
+                self.auto_tick_leaving_rejections();
             }
         }
         Ok(())

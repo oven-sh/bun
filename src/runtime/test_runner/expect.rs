@@ -471,6 +471,16 @@ impl Expect {
         }
     }
 
+    /// Blocks until `promise` settles. The matcher consumes its outcome. An outer `toThrow()` does not take what is thrown meanwhile.
+    fn wait_for_promise(global_this: &JSGlobalObject, promise: bun_jsc::AnyPromise) -> JsResult<()> {
+        promise.set_handled(global_this.vm());
+        let vm = global_this.bun_vm().as_mut();
+        let capture = vm.uncaught_error_to_capture.take();
+        let waited = vm.wait_for_promise(promise);
+        vm.uncaught_error_to_capture = capture;
+        waited.map_err(|stopped| stopped.throw(global_this))
+    }
+
     /// Processes the async flags (resolves/rejects), waiting for the async value if needed.
     /// If no flags, returns the original value
     /// If either flag is set, waits for the result, and returns either it as a JSValue, or null if the expectation failed (in which case if silent is false, also throws a js exception)
@@ -487,14 +497,7 @@ impl Expect {
             resolution @ (Promise::Resolves | Promise::Rejects) => {
                 if let Some(promise) = value.as_any_promise() {
                     let vm = global_this.vm();
-                    promise.set_handled(vm);
-
-                    // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
-            global_this
-                .bun_vm()
-                .as_mut()
-                .wait_for_promise(promise)
-                .map_err(|stopped| stopped.throw(global_this))?;
+                    Self::wait_for_promise(global_this, promise)?;
 
                     let new_value = promise.result(vm);
                     match promise.status() {
@@ -849,29 +852,25 @@ impl Expect {
 
         let mut return_value: JSValue = JSValue::ZERO;
 
-        // Drain existing unhandled rejections
-        let _ = vm.global().handle_rejected_promises();
-
-        let scope = vm.unhandled_rejection_scope();
-        let prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
-        vm.unhandled_pending_rejection_to_capture = Some(&raw mut return_value);
-        vm.on_unhandled_rejection = VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value;
+        let outer_capture = vm.uncaught_error_to_capture.replace(&raw mut return_value);
         return_value_from_function = match value.call(global_this, JSValue::UNDEFINED, &[]) {
             Ok(v) => v,
-            Err(err) => global_this.take_exception(err),
+            Err(err) => {
+                let thrown = global_this.take_exception(err);
+                if let Some(promise) = thrown.to_error().and_then(JSValue::as_any_promise) {
+                    promise.set_handled(global_this.vm());
+                }
+                thrown
+            }
         };
-        vm.unhandled_pending_rejection_to_capture = prev_unhandled_pending_rejection_to_capture;
-
-        let _ = vm.global().handle_rejected_promises();
+        vm.uncaught_error_to_capture = outer_capture;
 
         if return_value.is_empty() {
             return_value = return_value_from_function;
         }
 
         if let Some(promise) = return_value.as_any_promise() {
-            let waited = vm.wait_for_promise(promise);
-            scope.apply(vm);
-            waited.map_err(|stopped| stopped.throw(global_this))?;
+            Self::wait_for_promise(global_this, promise)?;
             match promise.unwrap(global_this.vm(), js_promise::UnwrapMode::MarkHandled) {
                 js_promise::Unwrapped::Fulfilled(_) => {
                     return Ok((None, return_value_from_function));
@@ -889,8 +888,6 @@ impl Expect {
                 existing.set_handled(global_this.vm());
             }
         }
-
-        scope.apply(vm);
 
         Ok((
             return_value.to_error().or_else(|| return_value_from_function.to_error()),
@@ -1440,14 +1437,7 @@ impl Expect {
         // support for async matcher results
         if let Some(promise) = result.as_any_promise() {
             let vm = global_this.vm();
-            promise.set_handled(vm);
-
-            // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
-            global_this
-                .bun_vm()
-                .as_mut()
-                .wait_for_promise(promise)
-                .map_err(|stopped| stopped.throw(global_this))?;
+            Self::wait_for_promise(global_this, promise)?;
 
             result = promise.result(vm);
             result.ensure_still_alive();

@@ -110,6 +110,12 @@ This is called when the event loop is active and needs to wait for I/O:
 └─────────────────────────────────────┘
 ```
 
+### Nested waits (`EventLoop::wait_for_promise`)
+
+Some native code blocks its caller until a promise settles (`expect(p).resolves` in `bun:test`, an async plugin `setup()` in `Bun.build()`, macros, the entry point load). It runs `tick()` and `autoTick()` from inside the JavaScript that called it.
+
+A wait that script made (`VM::is_entered()`) decides when rejected promises are handled. Its turns skip that step. The wait runs it after `tick()`, and only while the promise is still pending. So the turn that settles the promise returns to the script with nothing reported, and the script can attach its handlers first, as the code after an `await` can. A wait at loop level (the entry point load) keeps the step in every turn.
+
 ## Task Draining Algorithm
 
 ### For Regular Tasks (`Task.rs:97-512`)

@@ -178,7 +178,8 @@ pub struct VirtualMachine {
     /// counter stays at zero).
     pub pending_unref_counter: core::sync::atomic::AtomicI32,
     pub preload: Vec<Box<[u8]>>,
-    pub unhandled_pending_rejection_to_capture: Option<*mut JSValue>,
+    /// Where `expect(fn).toThrow()` takes an error that `fn` reports as uncaught and does not throw.
+    pub uncaught_error_to_capture: Option<*mut JSValue>,
     /// LAYERING: the real type is `bun_runtime`'s
     /// `html_rewriter::RewriterPipe` (a forward dep), stored type-erased.
     ///
@@ -617,20 +618,6 @@ pub enum GCLevel {
     None = 0,
     Mild = 1,
     Aggressive = 2,
-}
-
-pub struct UnhandledRejectionScope {
-    pub ctx: Option<*mut c_void>,
-    pub(crate) on_unhandled_rejection: OnUnhandledRejection,
-    pub(crate) count: usize,
-}
-
-impl UnhandledRejectionScope {
-    pub fn apply(&self, vm: &mut VirtualMachine) {
-        vm.on_unhandled_rejection = self.on_unhandled_rejection;
-        vm.on_unhandled_rejection_ctx = self.ctx;
-        vm.unhandled_error_counter = self.count;
-    }
 }
 
 /// Thread-local VM holder. Wired to the
@@ -1788,25 +1775,25 @@ impl VirtualMachine {
         self.event_loop_mut().wakeup();
     }
 
-    pub fn on_quiet_unhandled_rejection_handler_capture_value(
+    pub fn on_quiet_unhandled_rejection_handler(
         this: &mut VirtualMachine,
         _: &JSGlobalObject,
-        value: JSValue,
+        _: JSValue,
     ) {
         this.unhandled_error_counter += 1;
-        value.ensure_still_alive();
-        if let Some(ptr) = this.unhandled_pending_rejection_to_capture {
-            // SAFETY: caller passed &mut stack_var (see LIFETIMES.tsv)
-            unsafe { *ptr = value };
-        }
     }
 
-    pub fn unhandled_rejection_scope(&self) -> UnhandledRejectionScope {
-        UnhandledRejectionScope {
-            on_unhandled_rejection: self.on_unhandled_rejection,
-            ctx: self.on_unhandled_rejection_ctx,
-            count: self.unhandled_error_counter,
+    fn captured_by_to_throw(&mut self, err: JSValue, is_rejection: bool) -> bool {
+        let Some(slot) = self.uncaught_error_to_capture else {
+            return false;
+        };
+        if is_rejection {
+            return false;
         }
+        err.ensure_still_alive();
+        // SAFETY: `slot` is a local of the `toThrow()` call that is on the stack.
+        unsafe { *slot = err };
+        true
     }
 
     pub(crate) fn handled_promise(&self, global_object: &JSGlobalObject, promise: JSValue) -> bool {
@@ -2111,8 +2098,10 @@ impl VirtualMachine {
         }
 
         if isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
-            self.unhandled_error_counter += 1;
-            (self.on_unhandled_rejection)(self, global_object, err);
+            if !self.captured_by_to_throw(err, is_rejection) {
+                self.unhandled_error_counter += 1;
+                (self.on_unhandled_rejection)(self, global_object, err);
+            }
             return true;
         }
 
@@ -2125,7 +2114,9 @@ impl VirtualMachine {
                 // normal path; process_exit() RETURNS on a worker, so the
                 // main-thread process_exit(7)+panic below would crash.
                 self.exit_handler.exit_code = 1;
-                (self.on_unhandled_rejection)(self, global_object, err);
+                if !self.captured_by_to_throw(err, is_rejection) {
+                    (self.on_unhandled_rejection)(self, global_object, err);
+                }
                 return false;
             }
             self.run_error_handler(err, None);
@@ -2155,6 +2146,11 @@ impl VirtualMachine {
                 // SAFETY: see above.
                 unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };
                 panic!("made it past process.exit()");
+            }
+            if self.captured_by_to_throw(err, is_rejection) {
+                self.exit_handler.exit_code = 1;
+                self.is_handling_uncaught_exception = false;
+                return false;
             }
             // TODO maybe we want a separate code path for uncaught exceptions
             self.unhandled_error_counter += 1;

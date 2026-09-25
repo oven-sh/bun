@@ -342,6 +342,207 @@ test("a rejection that a test leaves is reported against that test", async () =>
   expect(exitCode).toBe(1);
 });
 
+// `.resolves`, `.rejects`, `toThrow()` on a function that returns a promise, an async custom
+// matcher and `Bun.build()` with an async plugin `setup()` block their caller and run the event
+// loop until the promise settles.
+describe.concurrent("a wait that blocks its caller until a promise settles", () => {
+  test("a matcher leaves the rejections of the turn that settles the promise to the test", async () => {
+    await using proc = spawn({
+      cmd: [bunExe(), "test", join(import.meta.dir, "rejections-during-matcher-wait.fixture.ts")],
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(errorsPerTest(stderr)).toEqual([
+      "(pass) toThrow(): siblings rejecting during the first wait are checked by the next ones",
+      "(pass) .rejects: siblings rejecting during the first wait are checked by the next ones",
+      "(pass) .resolves: rejections during the wait can be handled after it",
+      "(pass) custom async matcher: rejections during the wait can be handled after it",
+      "(pass) toThrow(): a rejection from before the call can still be handled after it",
+      "(fail) toThrow(): a rejection left unhandled during the wait fails the test  <-  UNHANDLED_DURING_TOTHROW_WAIT",
+      "(fail) toThrow(): a rejection left unhandled in an earlier turn of the wait fails the test  <-  UNHANDLED_IN_AN_EARLIER_TURN_OF_THE_TOTHROW_WAIT",
+      "(fail) toThrow(): a rejection left unhandled by a reaction as the wait ends fails the test  <-  UNHANDLED_BY_A_REACTION_AS_THE_TOTHROW_WAIT_ENDS",
+      "(fail) toThrow(): a rejection left unhandled by the function itself fails the test  <-  UNHANDLED_FROM_THE_FUNCTION",
+      "(fail) toThrow(): an exception thrown by a callback during the wait fails the test  <-  THROWN_DURING_TOTHROW_WAIT",
+      "(fail) toThrow(): a rejection reported while the function waits is not what the function threw  <-  UNHANDLED_WHILE_THE_FUNCTION_WAITS",
+      "(fail) toThrow(): an exception thrown by a callback while the function waits is not what the function threw  <-  THROWN_WHILE_THE_FUNCTION_WAITS",
+      "(fail) .rejects: a rejection left unhandled during the wait fails the test  <-  UNHANDLED_DURING_REJECTS_WAIT",
+      "(fail) resumed by an event loop task: a rejection left during a wait is its own  <-  UNHANDLED_DURING_WAIT_AFTER_TASK_RESUME",
+      "(pass) the test after those passes",
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("a matcher does not report what the test that continues beneath it handles", async () => {
+    using dir = tempDir("matcher-wait-concurrent", {
+      "group.test.ts": /* ts */ `
+        import { expect, test } from "bun:test";
+
+        const gate = Promise.withResolvers<string>();
+        const sibling = Promise.withResolvers<never>();
+        const finishB = Promise.withResolvers<void>();
+
+        // One callback rejects the sibling, releases the wait of A and lets B finish. The task
+        // that advances the runner for B runs in a turn of the wait of A.
+        test.concurrent("A", async () => {
+          await new Promise(resolve => setTimeout(resolve, 1));
+          setTimeout(() => {
+            sibling.reject(new Error("HANDLED_BY_A_ON_ITS_NEXT_LINE"));
+            gate.resolve("done");
+            finishB.resolve();
+          }, 1);
+          expect(gate.promise.then(value => value)).resolves.toBe("done");
+          sibling.promise.catch(() => {});
+        });
+
+        test.concurrent("B", async () => {
+          await finishB.promise;
+        });
+      `,
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "test", "group.test.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(errorsPerTest(stderr).sort()).toEqual(["(pass) A", "(pass) B"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a matcher reports what rejects in an earlier turn while it still waits", async () => {
+    using dir = tempDir("matcher-wait-never-ends", {
+      "never.test.ts": /* ts */ `
+        import { expect, test } from "bun:test";
+
+        test("the wait does not end", () => {
+          setImmediate(() => {
+            Promise.reject(new Error("REJECTED_WHILE_THE_WAIT_GOES_ON"));
+          });
+          expect(new Promise(() => {})).resolves.toBe(1);
+        });
+      `,
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "test", "never.test.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const decoder = new TextDecoder();
+    let stderr = "";
+    for await (const chunk of proc.stderr) {
+      stderr += decoder.decode(chunk, { stream: true });
+      if (stderr.includes("error: REJECTED_WHILE_THE_WAIT_GOES_ON")) break;
+    }
+    proc.kill();
+    expect(stderr).toContain("error: REJECTED_WHILE_THE_WAIT_GOES_ON");
+  });
+
+  test("a matcher returns when the onError of a Bun.ModuleGraph settles the promise", async () => {
+    using dir = tempDir("matcher-wait-module-graph", {
+      "graph.test.ts": /* ts */ `
+        import { expect, test } from "bun:test";
+
+        test("the graph's rejection settles the promise", () => {
+          const told = Promise.withResolvers<string>();
+          const graph = new Bun.ModuleGraph({ onError: (error, kind) => told.resolve(kind) });
+          graph.run(() => {
+            Promise.reject(new Error("REJECTED_IN_THE_GRAPH"));
+          });
+          expect(told.promise).resolves.toBe("unhandledRejection");
+        });
+      `,
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "test", "graph.test.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(errorsPerTest(stderr)).toEqual(["(pass) the graph's rejection settles the promise"]);
+    expect(exitCode).toBe(0);
+  });
+
+  const scripts = {
+    "entry.ts": "export default 1;\n",
+    // Promises that reject together are each checked by the next matcher.
+    "siblings.ts": /* ts */ `
+      import { expect } from "bun:test";
+      const error = new Error("together");
+      const rejected = Array.from({ length: 3 }, () => Promise.withResolvers<never>());
+      setImmediate(() => {
+        for (const { reject } of rejected) reject(error);
+      });
+      for (const { promise } of rejected) expect(promise).rejects.toBe(error);
+      console.log("returned");
+    `,
+    // toThrow() does not hide what rejects while it waits.
+    "unrelated.ts": /* ts */ `
+      import { expect } from "bun:test";
+      const subject = Promise.withResolvers<never>();
+      setImmediate(() => {
+        Promise.reject(new Error("UNRELATED_TO_THE_SUBJECT"));
+        setImmediate(() => subject.reject(new Error("subject")));
+      });
+      expect(() => subject.promise).toThrow("subject");
+      console.log("returned");
+    `,
+    // What handles the rejection can be what settles the promise.
+    "listener.ts": /* ts */ `
+      import { expect } from "bun:test";
+      const released = Promise.withResolvers<string>();
+      process.on("unhandledRejection", () => released.resolve("done"));
+      Promise.reject(new Error("nothing handles this"));
+      expect(released.promise).resolves.toBe("done");
+      console.log("returned");
+    `,
+    // The turn that settles setup() rejects a promise that the caller of Bun.build() handles next.
+    "build.ts": /* ts */ `
+      const sibling = Promise.withResolvers<never>();
+      const ready = Promise.withResolvers<void>();
+      setImmediate(() => {
+        ready.resolve();
+        sibling.reject(new Error("HANDLED_ON_THE_NEXT_LINE"));
+      });
+      const building = Bun.build({
+        entrypoints: [import.meta.dir + "/entry.ts"],
+        plugins: [{ name: "async setup", setup: () => ready.promise }],
+      });
+      sibling.promise.catch(() => {});
+      console.log("built: " + (await building).success);
+    `,
+  };
+
+  test.each([
+    ["siblings.ts", { stdout: "returned\n", errors: [], exitCode: 0 }],
+    ["unrelated.ts", { stdout: "returned\n", errors: ["error: UNRELATED_TO_THE_SUBJECT"], exitCode: 1 }],
+    ["listener.ts", { stdout: "returned\n", errors: [], exitCode: 0 }],
+    ["build.ts", { stdout: "built: true\n", errors: [], exitCode: 0 }],
+  ])("in a script: %s", async (file, expected) => {
+    using dir = tempDir("matcher-wait-script", scripts);
+    await using proc = spawn({
+      cmd: [bunExe(), file],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const errors = stderr.split(/\r?\n/).filter(line => line.startsWith("error: "));
+    expect({ stdout, errors, exitCode }).toEqual(expected);
+  });
+});
+
 it("should return non-zero exit code for invalid syntax", async () => {
   const test_dir = tmpdirSync();
   try {

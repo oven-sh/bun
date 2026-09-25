@@ -350,6 +350,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 p.lexer.token,
                                 T::TOpenBracket
                                     | T::TNumericLiteral
+                                    | T::TBigIntegerLiteral
                                     | T::TStringLiteral
                                     | T::TPrivateIdentifier
                             )

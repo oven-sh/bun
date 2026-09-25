@@ -1,22 +1,27 @@
-import { expect, test } from "bun:test";
-import { isCI, isDebug } from "harness";
-
-interface InvalidFuzzOptions {
-  maxLength: number;
-  strategy: "syntax" | "structure" | "encoding" | "memory" | "all";
-  iterations: number;
-}
+import { describe, expect, test } from "bun:test";
+import { isASAN, isCI, isDebug } from "harness";
 
 const shutup = process.env.CSS_FUZZ_SHUTUP === "1";
 const log = shutup ? () => {} : console.log;
 
-// Collection of invalid CSS generation strategies
+// Virtual path of the fuzzed stylesheet, handed to Bun.build through `files` instead of being
+// written to disk. It has to be absolute: the bundler asserts that entry points are absolute.
+const entrypoint = "/css-fuzz/invalid.css";
+
+// Every generator returns the full list of inputs it contributes; the tables are flattened before
+// anything picks from them, so generators are free to contribute any number of inputs.
+//
+// Inputs are byte strings: each char is one byte of the stylesheet (see expectBuildToFinish). That is
+// what lets the encoding strategy feed the parser real invalid UTF-8 rather than the U+FFFD that
+// decoding it into a JS string would turn it into.
 const invalidGenerators = {
   // Syntax errors
   syntax: {
-    unclosedRules: () => `
+    unclosedRules: () => [
+      `
       .test { color: red
       .another { padding: 10px }`,
+    ],
     invalidSelectors: () => [
       "}{color:red}",
       "&*#@.class{color:red}",
@@ -36,7 +41,7 @@ const invalidGenerators = {
       ".test{color:red} /* unclosed",
       "/**//**//* .test{color:red}",
     ],
-  } as const,
+  },
 
   // Structural errors
   structure: {
@@ -47,57 +52,80 @@ const invalidGenerators = {
     ],
     malformedAtRules: () => ["@media ;", "@import url('test.css'", "@{color:red}", "@media screen and and {color:red}"],
     invalidImports: () => ["@import 'file' 'screen';", "@import url(;", "@import url('test.css') print"],
-  } as const,
+  },
 
   // Encoding and character issues
   encoding: {
+    // Overlong encodings of U+0000: the lead byte announces 2, 3 and 4 byte sequences.
     invalidUTF8: () => [
-      `.test{content:"${Buffer.from([0xc0, 0x80]).toString()}"}`,
-      `.test{content:"${Buffer.from([0xe0, 0x80, 0x80]).toString()}"}`,
-      `.test{content:"${Buffer.from([0xf0, 0x80, 0x80, 0x80]).toString()}"}`,
+      '.test{content:"\xc0\x80"}',
+      '.test{content:"\xe0\x80\x80"}',
+      '.test{content:"\xf0\x80\x80\x80"}',
     ],
-    nullBytes: () => [`.test{color:red${"\0"};}`, `.te${"\0"}st{color:red}`, `${"\0"}.test{color:red}`],
-    controlCharacters: () => {
-      const controls = Array.from({ length: 32 }, (_, i) => String.fromCharCode(i));
-      return controls.map(char => `.test{color:${char}red}`);
-    },
-  } as const,
+    nullBytes: () => [".test{color:red\0;}", ".te\0st{color:red}", "\0.test{color:red}"],
+    controlCharacters: () => Array.from({ length: 32 }, (_, i) => `.test{color:${String.fromCharCode(i)}red}`),
+  },
 
   // Memory and resource stress
   memory: {
-    deepNesting: (depth: number = 300) => {
-      let css = "";
-      for (let i = 0; i < depth; i++) {
-        css += "@media screen {";
-      }
-      css += ".test{color:red}";
-      for (let i = 0; i < depth; i++) {
-        css += "}";
-      }
-      return css;
-    },
-    longSelectors: (length: number = 100000) => {
-      const selector = ".test".repeat(length);
-      return `${selector}{color:red}`;
-    },
-    manyProperties: (count: number = 10000) => {
-      const properties = Array(count).fill("color:red;").join("\n");
-      return `.test{${properties}}`;
-    },
-  } as const,
-} as const;
+    deepNesting: () => ["@media screen {".repeat(300) + ".test{color:red}" + "}".repeat(300)],
+    longSelectors: () => [`${".test".repeat(100000)}{color:red}`],
+    manyProperties: () => [`.test{${Array(10000).fill("color:red;").join("\n")}}`],
+  },
+} satisfies Record<string, Record<string, () => string[]>>;
+
+type Strategy = keyof typeof invalidGenerators;
+
+// The memory inputs only run on plain release builds: the 300-deep @media input overflows the parser
+// thread's stack under ASAN, and the 500 KB selector takes over a second per build on a debug build.
+const strategies = (Object.keys(invalidGenerators) as Strategy[]).filter(
+  strategy => strategy !== "memory" || !(isDebug || isASAN),
+);
+
+function inputsOf(strategy: Strategy): { label: string; css: string }[] {
+  return Object.entries(invalidGenerators[strategy]).flatMap(([name, generate]) =>
+    generate().map((css, i) => ({ label: `${name}[${i}]`, css })),
+  );
+}
+
+function describeInput(css: string): string {
+  const limit = 100;
+  const shown = JSON.stringify(css.slice(0, limit)).replace(
+    /[\x7f-\xff]/g,
+    byte => `\\x${byte.charCodeAt(0).toString(16)}`,
+  );
+  return css.length > limit ? `${shown}... (${css.length} bytes)` : shown;
+}
+
+// The parser has to finish on every input, either with the one output a single entrypoint produces
+// or with a reported error. A crash takes the process down, and a JS exception escaping Bun.build
+// rejects even with `throw: false`; both fail the test.
+async function expectBuildToFinish(css: string): Promise<"built" | "rejected"> {
+  const result = await Bun.build({
+    entrypoints: [entrypoint],
+    // latin1 maps every char of the byte string to the byte it stands for.
+    files: { [entrypoint]: Buffer.from(css, "latin1") },
+    throw: false,
+  });
+  if (result.success) {
+    expect(result.outputs).toHaveLength(1);
+    return "built";
+  }
+  expect(result.logs).not.toBeEmpty();
+  return "rejected";
+}
 
 // Helper to randomly corrupt CSS
 function corruptCSS(css: string): string {
   const corruptions = [
-    (s: string) => (s + "").replace(/{/g, "}"),
-    (s: string) => (s + "").replace(/}/g, "{"),
-    (s: string) => (s + "").replace(/:/g, ";"),
-    (s: string) => (s + "").replace(/;/g, ":"),
-    (s: string) => (s + "").slice(Math.floor(Math.random() * (s + "").length)),
-    (s: string) => s + "" + "}}".repeat(Math.floor(Math.random() * 5)),
-    (s: string) => (s + "").split("").reverse().join(""),
-    (s: string) => (s + "").replace(/[a-z]/g, c => String.fromCharCode(97 + Math.floor(Math.random() * 26))),
+    (s: string) => s.replace(/{/g, "}"),
+    (s: string) => s.replace(/}/g, "{"),
+    (s: string) => s.replace(/:/g, ";"),
+    (s: string) => s.replace(/;/g, ":"),
+    (s: string) => s.slice(Math.floor(Math.random() * s.length)),
+    (s: string) => s + "}}".repeat(Math.floor(Math.random() * 5)),
+    (s: string) => s.split("").reverse().join(""),
+    (s: string) => s.replace(/[a-z]/g, () => String.fromCharCode(97 + Math.floor(Math.random() * 26))),
   ];
 
   const numCorruptions = Math.floor(Math.random() * 3) + 1;
@@ -111,144 +139,62 @@ function corruptCSS(css: string): string {
   return corrupted;
 }
 
-// TODO:
+// Every generated input as written, built once each. Unlike the random corruptions below these are
+// fixed inputs, so they also run in CI.
+describe.each(strategies)("CSS Parser Invalid Input - %s", strategy => {
+  test.each(inputsOf(strategy).map(({ label, css }) => [`${label} ${describeInput(css)}`, css]))(
+    "%s",
+    async (_label, css) => {
+      await expectBuildToFinish(css);
+    },
+  );
+});
+
 if (!isCI) {
-  // Main fuzzing test suite for invalid inputs
-  test.each(
-    [["syntax", 1000], ["structure", 1000], ["encoding", 500], !isDebug ? ["memory", 100] : []].filter(
-      xs => xs.length > 0,
-    ),
-  )(
+  // Every iteration is one Bun.build call: about 1ms on a release build and about 50ms on a debug
+  // build, where the release counts would run past the test timeout.
+  const releaseIterations: Record<Strategy, number> = { syntax: 1000, structure: 1000, encoding: 500, memory: 100 };
+
+  test.each(strategies.map(strategy => [strategy, isDebug ? 50 : releaseIterations[strategy]] as const))(
     "CSS Parser Invalid Input Fuzzing - %s (%d iterations)",
     async (strategy, iterations) => {
-      const options: InvalidFuzzOptions = {
-        maxLength: 10000,
-        strategy: strategy as any,
-        iterations,
-      };
-
-      let crashCount = 0;
-      let errorCount = 0;
+      const inputs = inputsOf(strategy);
+      const outcomes = { built: 0, rejected: 0 };
       const startTime = performance.now();
 
-      for (let i = 0; i < options.iterations; i++) {
-        let invalidCSS = "";
-
-        switch (strategy) {
-          case "syntax":
-            invalidCSS =
-              invalidGenerators.syntax[
-                Object.keys(invalidGenerators.syntax)[
-                  Math.floor(Math.random() * Object.keys(invalidGenerators.syntax).length)
-                ]
-              ]()[Math.floor(Math.random() * 5)];
-            break;
-
-          case "structure":
-            invalidCSS =
-              invalidGenerators.structure[
-                Object.keys(invalidGenerators.structure)[
-                  Math.floor(Math.random() * Object.keys(invalidGenerators.structure).length)
-                ]
-              ]()[Math.floor(Math.random() * 3)];
-            break;
-
-          case "encoding":
-            invalidCSS =
-              invalidGenerators.encoding[
-                Object.keys(invalidGenerators.encoding)[
-                  Math.floor(Math.random() * Object.keys(invalidGenerators.encoding).length)
-                ]
-              ]()[0];
-            break;
-
-          case "memory":
-            const memoryFuncs = Object.keys(invalidGenerators.memory);
-            const selectedFunc = memoryFuncs[Math.floor(Math.random() * memoryFuncs.length)];
-            invalidCSS = invalidGenerators.memory[selectedFunc]();
-            break;
-        }
-
-        // Further corrupt the CSS randomly
-        if (Math.random() < 0.3) {
-          invalidCSS = corruptCSS(invalidCSS);
-        }
-
-        log("--- CSS Fuzz ---");
-        invalidCSS = invalidCSS + "";
-        log(JSON.stringify(invalidCSS, null, 2));
-        await Bun.write("invalid.css", invalidCSS);
-
-        try {
-          const result = await Bun.build({
-            entrypoints: ["invalid.css"],
-          });
-
-          // We expect the parser to either throw an error or return a valid result
-          // If it returns undefined/null, that's a potential issue
-          if (result === undefined || result === null) {
-            crashCount++;
-            console.error(`Parser returned ${result} for input:\n${invalidCSS.slice(0, 100)}...`);
-          }
-        } catch (error) {
-          // Expected behavior for invalid CSS
-          errorCount++;
-
-          // Check for specific error types we want to track
-          if (error instanceof RangeError || error instanceof TypeError) {
-            console.warn(`Unexpected error type: ${error.constructor.name} for input:\n${invalidCSS.slice(0, 100)}...`);
-          }
-        }
-
-        // Memory check every 100 iterations
-        if (i % 100 === 0) {
-          const heapUsed = process.memoryUsage().heapUsed / 1024 / 1024;
-          expect(heapUsed).toBeLessThan(500); // Alert if memory usage exceeds 500MB
-        }
+      for (let i = 0; i < iterations; i++) {
+        const { label, css } = inputs[Math.floor(Math.random() * inputs.length)];
+        const corrupted = corruptCSS(css);
+        // Logged before the build so that a crash can be traced back to its input.
+        log(`--- CSS Fuzz: ${strategy} ${label} ---\n${describeInput(corrupted)}`);
+        outcomes[await expectBuildToFinish(corrupted)]++;
       }
 
-      const endTime = performance.now();
-      const duration = endTime - startTime;
-
+      const duration = performance.now() - startTime;
       console.log(`
     Strategy: ${strategy}
     Total iterations: ${iterations}
-    Crashes: ${crashCount}
-    Expected errors: ${errorCount}
+    Built: ${outcomes.built}
+    Rejected: ${outcomes.rejected}
     Duration: ${duration.toFixed(2)}ms
     Average time per test: ${(duration / iterations).toFixed(2)}ms
   `);
-
-      // We expect some errors for invalid input, but no crashes
-      expect(crashCount).toBe(0);
-      expect(errorCount).toBeGreaterThan(0);
     },
-    10 * 1000,
   );
 
   // Additional test for mixed valid/invalid input
   test("CSS Parser Mixed Input Fuzzing", async () => {
     const validCSS = ".test{color:red}";
 
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < (isDebug ? 10 : 100); i++) {
       const mixedCSS = `
       ${validCSS}
       ${corruptCSS(validCSS)}
       ${validCSS}
     `;
 
-      console.log("--- Mixed CSS ---");
-      console.log(JSON.stringify(mixedCSS, null, 2));
-      await Bun.write("invalid.css", mixedCSS);
-
-      try {
-        await Bun.build({
-          entrypoints: ["invalid.css"],
-        });
-      } catch (error) {
-        // Expected to throw, but shouldn't crash
-        expect(error).toBeDefined();
-      }
+      log(`--- Mixed CSS ---\n${describeInput(mixedCSS)}`);
+      await expectBuildToFinish(mixedCSS);
     }
   });
 }

@@ -11,16 +11,22 @@ const { minifyTest } = cssInternals;
 // tracking instead of panicking.
 
 test("`@supports` condition containing a literal newline prints without panicking", () => {
-  // Unknown variant: a parenthesised condition the parser stores verbatim.
-  const unknown = "@supports (color: lab(0%\n 0 \r\n0)) {.x{color:red}}";
-  const unknownMin = "@supports (color: lab(0%\n 0 \r\n0)){.x{color:red}}";
+  // Declaration variant: a parenthesised `property: value`; the value is a raw input slice.
+  const declaration = "@supports (color: lab(0%\n 0 \r\n0)) {.x{color:red}}";
+  const declarationMin = "@supports (color:lab(0%\n 0 \r\n0)){.x{color:red}}";
+  expect(minifyTest(declaration, "")).toBe(declarationMin);
+  expect(minifyTest(declarationMin, "")).toBe(declarationMin);
+
+  // Unknown variant: parenthesised content that is not a declaration is stored verbatim.
+  const unknown = "@supports (color\n red \r\n0) {.x{color:red}}";
+  const unknownMin = "@supports (color\n red \r\n0){.x{color:red}}";
   expect(minifyTest(unknown, "")).toBe(unknownMin);
   expect(minifyTest(unknownMin, "")).toBe(unknownMin);
 
   // Selector variant: `selector(...)` body is a raw input slice.
   expect(minifyTest("@supports selector(a\n b) {.x{color:red}}", "")).toBe("@supports selector(a\n b){.x{color:red}}");
 
-  // Declaration variant via `@import ... supports(...)`: the value is a raw input slice.
+  // Declaration variant via `@import ... supports(...)`.
   expect(minifyTest("@import url(x.css) supports(color: lab(0%\n 0 0));", "")).toBe(
     '@import "x.css" supports(color:lab(0%\n 0 0));',
   );
@@ -52,7 +58,7 @@ test("fuzzer-minimized input: `@supports` condition with `\\n` and `\\r\\n`", as
 
   expect({ stdout: stdout.trim(), exitCode }).toEqual({
     stdout: JSON.stringify(
-      ".foo{--custom:#b32323!important}@supports (color: lab(0%\n 0 \r\n0)){.foo{--custom:lab(40% 56.6 39)!important}}",
+      ".foo{--custom:#b32323!important}@supports (color:lab(0%\n 0 \r\n0)){.foo{--custom:lab(40% 56.6 39)!important}}",
     ),
     exitCode: 0,
   });

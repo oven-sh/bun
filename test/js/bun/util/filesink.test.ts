@@ -1032,14 +1032,27 @@ describe("FileSink on a pipe stays alive until end() has drained the buffer", ()
   // lanes set, the fixture kills its descendants when it exits.
   it.concurrent("Bun.spawn stdin pipe with an unref'd child", async () => {
     const flag = join(tmpdirSync(), "ended");
-    // Polls for the flag with a deadline so that it cannot outlive a parent
-    // that died before writing it.
+    // Polls for the flag. Nothing kills this child with the fixture, so it
+    // stops by itself when the fixture is gone and the flag is still missing.
+    // It looks for the flag again after that check, because a fixture that
+    // wrote the flag and exited at once still needs the count. The deadline
+    // covers a reused pid.
     const reader = `
       const fs = require("fs");
+      const [, flag, fixture] = process.argv;
+      const fixtureIsGone = () => {
+        try {
+          process.kill(Number(fixture), 0);
+          return false;
+        } catch (e) {
+          return e.code === "ESRCH";
+        }
+      };
       const deadline = Date.now() + 60_000;
-      while (!fs.existsSync(process.argv[1])) {
-        if (Date.now() > deadline) {
-          console.error("gave up waiting for " + process.argv[1]);
+      while (!fs.existsSync(flag)) {
+        const gone = fixtureIsGone() && !fs.existsSync(flag);
+        if (gone || Date.now() > deadline) {
+          console.error((gone ? "the fixture died before it wrote " : "gave up waiting for ") + flag);
           process.exit(3);
         }
         Bun.sleepSync(1);
@@ -1052,7 +1065,7 @@ describe("FileSink on a pipe stays alive until end() has drained the buffer", ()
         "-e",
         `
           const child = Bun.spawn(
-            [process.execPath, "-e", ${JSON.stringify(reader)}, ${JSON.stringify(flag)}],
+            [process.execPath, "-e", ${JSON.stringify(reader)}, ${JSON.stringify(flag)}, String(process.pid)],
             { stdin: "pipe", stdout: "inherit", stderr: "inherit", detached: true },
           );
           try {

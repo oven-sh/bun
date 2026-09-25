@@ -27,7 +27,7 @@ const IS_SET: u32 = 2;
 
 impl ResetEvent {
     /// Const-init in the unset state.
-    pub(crate) const fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             state: AtomicU32::new(UNSET),
         }
@@ -36,7 +36,7 @@ impl ResetEvent {
     /// Returns whether [`set`](Self::set) has been called. Memory accesses
     /// before `set()` happen-before this returning `true`.
     #[inline]
-    pub(crate) fn is_set(&self) -> bool {
+    pub fn is_set(&self) -> bool {
         // Acquire barrier ensures memory accesses before set() happen before we return true.
         self.state.load(Ordering::Acquire) == IS_SET
     }
@@ -48,6 +48,11 @@ impl ResetEvent {
             Ok(()) => {}
             Err(TimeoutError::Timeout) => unreachable!(), // no timeout provided so we shouldn't have timed-out
         }
+    }
+
+    /// Like [`wait`](Self::wait), but gives up after `timeout_ns`.
+    pub fn timed_wait(&self, timeout_ns: u64) -> Result<(), TimeoutError> {
+        self.wait_inner(Some(timeout_ns))
     }
 
     #[inline]

@@ -619,12 +619,22 @@ impl<'a> ShellSrcBuilder<'a> {
     }
 
     fn outbuf_ends_with_var_ref(&self) -> bool {
-        match self
-            .outbuf
+        let mut buf: &[u8] = self.outbuf;
+        // The lexer continues a variable name across `\<LF>` and `\<CR><LF>`.
+        loop {
+            if let Some(rest) = buf.strip_suffix(b"\\\n") {
+                buf = rest;
+            } else if let Some(rest) = buf.strip_suffix(b"\\\r\n") {
+                buf = rest;
+            } else {
+                break;
+            }
+        }
+        match buf
             .iter()
             .rposition(|b| !(b.is_ascii_alphanumeric() || *b == b'_'))
         {
-            Some(i) => self.outbuf[i] == b'$',
+            Some(i) => buf[i] == b'$',
             None => false,
         }
     }

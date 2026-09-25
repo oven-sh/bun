@@ -882,6 +882,8 @@ impl<'bump> Parser<'bump> {
                 }
             };
 
+            // POSIX grammar: `and_or AND_IF linebreak pipeline`.
+            self.skip_newlines();
             let right = self.parse_pipeline()?;
 
             let binary = self.allocate(ast::Binary { op, left, right });
@@ -906,6 +908,8 @@ impl<'bump> Parser<'bump> {
             pipeline_items.push(item);
 
             while self.r#match(TokenTag::Pipe) {
+                // POSIX grammar: `pipe_sequence '|' linebreak command`.
+                self.skip_newlines();
                 expr = self.parse_compound_cmd()?;
                 let item = match expr.as_pipeline_item() {
                     Some(i) => i,
@@ -2524,16 +2528,13 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             {
                                 break 'escaped;
                             }
-                            let whitespace_preceding = if let Some(prev) = self.chars.prev {
-                                ShellCharIter::<ENCODING>::is_whitespace(prev)
-                            } else {
-                                true
-                            };
-                            if !whitespace_preceding {
+                            // A comment starts only where a new token starts (POSIX 2.3 rule 9).
+                            if !self.at_token_start() {
                                 break 'escaped;
                             }
-                            self.break_word(AddDelimiter::AfterText)?;
-                            self.eat_comment();
+                            if self.eat_comment() {
+                                self.tokens.push(Token::Newline);
+                            }
                             fell_through = true;
                         }
                         c if c == u32::from(b';') => {
@@ -2557,6 +2558,22 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             self.break_word(AddDelimiter::AfterWord)?;
                             self.tokens.push(Token::Newline);
                             fell_through = true;
+                        }
+                        // CRLF normalization; `\r` stays literal inside quotes (bash/dash).
+                        c if c == u32::from(b'\r') => {
+                            const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b'\r' as usize));
+                            if self.chars.state == CharState::Single
+                                || self.chars.state == CharState::Double
+                            {
+                                break 'escaped;
+                            }
+                            if let Some(next) = self.peek() {
+                                if !next.escaped && next.char == u32::from(b'\n') {
+                                    fell_through = true;
+                                    break 'escaped;
+                                }
+                            }
+                            break 'escaped;
                         }
                         // glob asterisks
                         c if c == u32::from(b'*') => {
@@ -2858,8 +2875,9 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             fell_through = true;
                         }
                         // 3. Word breakers
-                        c if c == u32::from(b' ') => {
+                        c if c == u32::from(b' ') || c == u32::from(b'\t') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b' ' as usize));
+                            const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b'\t' as usize));
                             if self.chars.state == CharState::Normal {
                                 self.break_word(AddDelimiter::AfterWord)?;
                                 fell_through = true;
@@ -2876,13 +2894,23 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 // `fell_through` marks cases that should re-enter the loop;
                 // cases that break 'escaped fall through to appendCharToStrPool below.
             }
-            // Treat newline preceded by backslash as whitespace
+            // `\<newline>` is removed before tokenizing (POSIX 2.2.1): no word break.
             else if char == u32::from(b'\n') {
                 debug_assert!(input.escaped);
-                if self.chars.state != CharState::Double {
-                    self.break_word(AddDelimiter::AfterWord)?;
-                }
                 continue;
+            }
+            // A bare `\<CR>` in double quotes is literal `\` + CR (POSIX): restore the backslash read_char() consumed.
+            else if char == u32::from(b'\r') {
+                debug_assert!(input.escaped);
+                if let Some(next) = self.peek() {
+                    if !next.escaped && next.char == u32::from(b'\n') {
+                        let _ = self.eat();
+                        continue;
+                    }
+                }
+                if self.chars.state == CharState::Double {
+                    self.append_char_to_str_pool(u32::from(b'\\'))?;
+                }
             }
 
             self.append_char_to_str_pool(char)?;
@@ -3002,6 +3030,35 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         }
         self.word_start = self.j;
         Ok(())
+    }
+
+    /// True at the start of input and right after a word separator or an operator: where a `#` starts a comment.
+    fn at_token_start(&self) -> bool {
+        if self.j != self.word_start {
+            return false;
+        }
+        if let Some(prev) = self.chars.prev {
+            if !prev.escaped && ShellCharIter::<ENCODING>::is_whitespace(prev) {
+                return true;
+            }
+        }
+        let Some(last) = self.tokens.last() else {
+            return true;
+        };
+        matches!(
+            last.tag(),
+            TokenTag::Delimit
+                | TokenTag::Semicolon
+                | TokenTag::Newline
+                | TokenTag::Pipe
+                | TokenTag::DoublePipe
+                | TokenTag::Ampersand
+                | TokenTag::DoubleAmpersand
+                | TokenTag::OpenParen
+                | TokenTag::CloseParen
+                | TokenTag::CmdSubstBegin
+                | TokenTag::CmdSubstQuoted
+        )
     }
 
     fn eat_simple_redirect(&mut self, dir: RedirectDirection) -> ast::RedirectFlags {
@@ -3402,6 +3459,27 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             let char = result.char;
             let escaped = result.escaped;
 
+            // `\<newline>` is removed before tokenizing (POSIX 2.2.1): the name continues on the next line.
+            if escaped && (char == u32::from(b'\n') || char == u32::from(b'\r')) {
+                let snap = self.make_snapshot();
+                let _ = self.eat();
+                if char == u32::from(b'\n') {
+                    continue;
+                }
+                if let Some(next) = self.peek() {
+                    if !next.escaped && next.char == u32::from(b'\n') {
+                        let _ = self.eat();
+                        continue;
+                    }
+                }
+                self.backtrack(&snap);
+                return Ok(TextRange { start, end: self.j });
+            }
+            // Any other escaped char ends the name: `$HOME\foo` is `${HOME}foo`.
+            if escaped {
+                return Ok(TextRange { start, end: self.j });
+            }
+
             if i == 0 {
                 match char {
                     c if c == u32::from(b'=') => {
@@ -3469,15 +3547,21 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         self.chars.peek()
     }
 
-    fn eat_comment(&mut self) {
-        while let Some(peeked) = self.eat() {
-            if peeked.escaped {
-                continue;
+    /// Returns true when the comment ended at a newline (not EOF); the caller emits the `Newline` token it consumed.
+    fn eat_comment(&mut self) -> bool {
+        let in_backtick = self.in_subshell == Some(SubShellKind::Backtick);
+        while let Some(peeked) = self.peek() {
+            // The first unescaped backtick closes the substitution (POSIX 2.6.3).
+            if in_backtick && !peeked.escaped && peeked.char == u32::from(b'`') {
+                return false;
             }
+            let _ = self.eat();
+            // A backslash does not continue a comment (bash, dash).
             if peeked.char == u32::from(b'\n') {
-                break;
+                return true;
             }
         }
+        false
     }
 }
 
@@ -3750,12 +3834,13 @@ impl<'a, const ENCODING: StringEncoding> ShellCharIter<'a, ENCODING> {
                     Src::Unicode(u) => u.index_next().map(|v| v.char),
                 }?;
                 match peeked {
-                    // Backslash only applies to these characters
+                    // Backslash only applies to these characters (`\r` for CRLF line-continuation).
                     c if c == u32::from(b'$')
                         || c == u32::from(b'`')
                         || c == u32::from(b'"')
                         || c == u32::from(b'\\')
                         || c == u32::from(b'\n')
+                        || c == u32::from(b'\r')
                         || c == u32::from(b'#') =>
                     {
                         char = peeked;

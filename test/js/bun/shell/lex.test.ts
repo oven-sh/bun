@@ -739,17 +739,11 @@ describe("lex shell", () => {
       ],
     ],
     [
-      "escaped newline after a variable",
+      // `\<newline>` is removed before tokenizing (POSIX 2.2.1), so the
+      // variable name continues on the next line: bash reads `$FOOls`.
+      "escaped newline inside a variable name joins the name",
       "echo $FOO\\\nls",
-      [
-        { Text: "echo" },
-        { Delimit: {} },
-        { Var: "FOO" },
-        { Delimit: {} },
-        { Text: "ls" },
-        { Delimit: {} },
-        { Eof: {} },
-      ],
+      [{ Text: "echo" }, { Delimit: {} }, { Var: "FOOls" }, { Eof: {} }],
     ],
     [
       "operator after a variable",
@@ -819,6 +813,278 @@ describe("lex shell", () => {
     ],
   ])("delimit: %s", (_name, source, expected) => {
     expect(JSON.parse(lex({ raw: [source] }))).toEqual(expected);
+  });
+
+  // Line endings: CRLF is one newline, a lone CR is text, `\<EOL>` is a
+  // continuation, a tab breaks words, and a comment does not eat the newline.
+  test.each([
+    [
+      "CRLF is a single newline",
+      "echo a\r\necho b\r\n",
+      [
+        { Text: "echo" },
+        { Delimit: {} },
+        { Text: "a" },
+        { Delimit: {} },
+        { Newline: {} },
+        { Text: "echo" },
+        { Delimit: {} },
+        { Text: "b" },
+        { Delimit: {} },
+        { Newline: {} },
+        { Eof: {} },
+      ],
+    ],
+    [
+      "lone CR stays in the word",
+      "echo a\rb",
+      [{ Text: "echo" }, { Delimit: {} }, { Text: "a\rb" }, { Delimit: {} }, { Eof: {} }],
+    ],
+    [
+      "CR inside quotes stays literal",
+      "echo 'a\r\nb' \"c\r\nd\"",
+      [
+        { Text: "echo" },
+        { Delimit: {} },
+        { SingleQuotedText: "a\r\nb" },
+        { Delimit: {} },
+        { DoubleQuotedText: "c\r\nd" },
+        { Eof: {} },
+      ],
+    ],
+    [
+      "backslash CRLF is a continuation",
+      "echo a \\\r\nb",
+      [{ Text: "echo" }, { Delimit: {} }, { Text: "a" }, { Delimit: {} }, { Text: "b" }, { Delimit: {} }, { Eof: {} }],
+    ],
+    [
+      "backslash CRLF inside a word joins it",
+      "echo a\\\r\nb",
+      [{ Text: "echo" }, { Delimit: {} }, { Text: "ab" }, { Delimit: {} }, { Eof: {} }],
+    ],
+    [
+      "backslash CRLF inside double quotes is removed",
+      'echo "a \\\r\nb"',
+      [{ Text: "echo" }, { Delimit: {} }, { DoubleQuotedText: "a b" }, { Eof: {} }],
+    ],
+    [
+      "backslash CRLF inside single quotes is literal",
+      "echo 'a \\\r\nb'",
+      [{ Text: "echo" }, { Delimit: {} }, { SingleQuotedText: "a \\\r\nb" }, { Eof: {} }],
+    ],
+    [
+      "backslash CRLF inside a variable name joins the name",
+      'echo $FOO\\\r\nls "$\\\r\nFOO" $1\\\r\n2',
+      [
+        { Text: "echo" },
+        { Delimit: {} },
+        { Var: "FOOls" },
+        { Delimit: {} },
+        { Var: "FOO" },
+        { Delimit: {} },
+        { VarArgv: 1 },
+        { Text: "2" },
+        { Delimit: {} },
+        { Eof: {} },
+      ],
+    ],
+    [
+      "backslash CR not followed by LF ends a variable name",
+      "echo $FOO\\\rls",
+      [{ Text: "echo" }, { Delimit: {} }, { Var: "FOO" }, { Text: "\rls" }, { Delimit: {} }, { Eof: {} }],
+    ],
+    [
+      "tab breaks words",
+      "echo\ta\tb",
+      [{ Text: "echo" }, { Delimit: {} }, { Text: "a" }, { Delimit: {} }, { Text: "b" }, { Delimit: {} }, { Eof: {} }],
+    ],
+    [
+      "trailing comment ends the line (LF)",
+      "echo a # c\necho b",
+      [
+        { Text: "echo" },
+        { Delimit: {} },
+        { Text: "a" },
+        { Delimit: {} },
+        { Newline: {} },
+        { Text: "echo" },
+        { Delimit: {} },
+        { Text: "b" },
+        { Delimit: {} },
+        { Eof: {} },
+      ],
+    ],
+    [
+      "trailing comment ends the line (CRLF)",
+      "echo a # c\r\necho b\r\n",
+      [
+        { Text: "echo" },
+        { Delimit: {} },
+        { Text: "a" },
+        { Delimit: {} },
+        { Newline: {} },
+        { Text: "echo" },
+        { Delimit: {} },
+        { Text: "b" },
+        { Delimit: {} },
+        { Newline: {} },
+        { Eof: {} },
+      ],
+    ],
+    [
+      "comment at end of input adds no newline",
+      "echo a # c",
+      [{ Text: "echo" }, { Delimit: {} }, { Text: "a" }, { Delimit: {} }, { Eof: {} }],
+    ],
+    [
+      "a backslash does not continue a comment",
+      "echo a # c \\\necho b",
+      [
+        { Text: "echo" },
+        { Delimit: {} },
+        { Text: "a" },
+        { Delimit: {} },
+        { Newline: {} },
+        { Text: "echo" },
+        { Delimit: {} },
+        { Text: "b" },
+        { Delimit: {} },
+        { Eof: {} },
+      ],
+    ],
+    [
+      "an escaped identifier char ends a variable name",
+      "echo $HOME\\foo $\\x",
+      [
+        { Text: "echo" },
+        { Delimit: {} },
+        { Var: "HOME" },
+        { Text: "foo" },
+        { Delimit: {} },
+        { Text: "$" },
+        { Text: "x" },
+        { Delimit: {} },
+        { Eof: {} },
+      ],
+    ],
+  ])("line endings: %s", (_name, source, expected) => {
+    expect(JSON.parse(lex({ raw: [source] }))).toEqual(expected);
+  });
+
+  // A `#` starts a comment only where a new token starts (POSIX 2.3 rule 9):
+  // after an operator it is a comment, glued to a word it is literal.
+  test.each([
+    [
+      "comment directly after a semicolon",
+      "echo a;# note\necho b",
+      [
+        { Text: "echo" },
+        { Delimit: {} },
+        { Text: "a" },
+        { Delimit: {} },
+        { Semicolon: {} },
+        { Newline: {} },
+        { Text: "echo" },
+        { Delimit: {} },
+        { Text: "b" },
+        { Delimit: {} },
+        { Eof: {} },
+      ],
+    ],
+    [
+      "comment directly after a pipe",
+      "echo a|# c\ncat",
+      [
+        { Text: "echo" },
+        { Delimit: {} },
+        { Text: "a" },
+        { Delimit: {} },
+        { Pipe: {} },
+        { Newline: {} },
+        { Text: "cat" },
+        { Delimit: {} },
+        { Eof: {} },
+      ],
+    ],
+    [
+      "hash after a closing quote is literal",
+      'echo "a"#b',
+      [{ Text: "echo" }, { Delimit: {} }, { DoubleQuotedText: "a" }, { Text: "#b" }, { Delimit: {} }, { Eof: {} }],
+    ],
+    [
+      "hash after a backslash-newline inside a word is literal",
+      "echo a\\\n#b",
+      [{ Text: "echo" }, { Delimit: {} }, { Text: "a#b" }, { Delimit: {} }, { Eof: {} }],
+    ],
+    [
+      "hash after a variable is literal",
+      "echo $FOO#b",
+      [{ Text: "echo" }, { Delimit: {} }, { Var: "FOO" }, { Text: "#b" }, { Delimit: {} }, { Eof: {} }],
+    ],
+    [
+      "hash after a double asterisk is literal",
+      "echo **#b",
+      [{ Text: "echo" }, { Delimit: {} }, { DoubleAsterisk: {} }, { Text: "#b" }, { Delimit: {} }, { Eof: {} }],
+    ],
+    [
+      "hash after a double asterisk and a space is a comment",
+      "echo ** #b",
+      [{ Text: "echo" }, { Delimit: {} }, { DoubleAsterisk: {} }, { Eof: {} }],
+    ],
+    [
+      "comment inside backticks ends at the closing backtick",
+      "echo `echo hi # note`",
+      [
+        { Text: "echo" },
+        { Delimit: {} },
+        { CmdSubstBegin: {} },
+        { Text: "echo" },
+        { Delimit: {} },
+        { Text: "hi" },
+        { Delimit: {} },
+        { CmdSubstEnd: {} },
+        { Eof: {} },
+      ],
+    ],
+  ])("comments: %s", (_name, source, expected) => {
+    expect(JSON.parse(lex({ raw: [source] }))).toEqual(expected);
+  });
+
+  // bash: `FOO=x FOOls=y; echo $FOO\<LF>ls` prints `y`.
+  test("Bun.$ backslash-newline inside a variable name", async () => {
+    const { stdout, exitCode } = await $`${{ raw: "FOO=x\nFOOls=y\necho $FOO\\\nls $FOO\\\r\nls\r\n" }}`.quiet();
+    expect(stdout.toString()).toBe("y y\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // An interpolated value is its own word even when `\<newline>` separates it
+  // from `$FOO`: `$FOO${x}` and `$FOO\<LF>${x}` both expand FOO, not FOObar.
+  test("Bun.$ interpolation after a backslash-newline does not extend the variable name", async () => {
+    const x = "bar";
+    const lf = await $`${{ raw: "FOO=a; FOObar=b; echo [$FOO" }}${x}] [${{ raw: "$FOO\\\n" }}${x}]`.quiet();
+    expect(lf.stdout.toString()).toBe("[abar] [abar]\n");
+    const crlf = await $`${{ raw: "FOO=a; FOObar=b; echo [$FOO\\\r\n" }}${x}]`.quiet();
+    expect(crlf.stdout.toString()).toBe("[abar]\n");
+  });
+
+  // bash: `echo a;# note` then `echo b` on the next line prints `a` and `b`.
+  test("Bun.$ comment directly after an operator", async () => {
+    const { stdout, exitCode } = await $`${{ raw: "echo a;# note\necho b|# c\ncat\n(echo d)#e\n" }}`.quiet();
+    expect(stdout.toString()).toBe("a\nb\nd\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // bash: the first unescaped backtick closes the substitution, even inside a comment.
+  test("Bun.$ comment inside backticks", async () => {
+    const { stdout, exitCode } = await $`${{ raw: "echo `echo hi # note`\necho `echo x # c\necho y`\n" }}`.quiet();
+    expect(stdout.toString()).toBe("hi\nx y\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("Bun.$ template with CRLF and a trailing comment", async () => {
+    const { stdout, exitCode } = await $`${{ raw: "echo one # c\r\necho two\r\n" }}`.quiet();
+    expect(stdout.toString()).toBe("one\ntwo\n");
+    expect(exitCode).toBe(0);
   });
 
   describe("errors", async () => {

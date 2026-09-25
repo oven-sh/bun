@@ -5,6 +5,7 @@ import https from "https";
 import net, { AddressInfo } from "net";
 import { createTest } from "node-harness";
 import { once } from "node:events";
+import { Duplex } from "node:stream";
 import { tmpdir } from "os";
 import { join } from "path";
 import type { PeerCertificate } from "tls";
@@ -2031,6 +2032,160 @@ it("destroys a server wrap whose socket was destroyed before the deferred upgrad
     conn?.destroy();
     rawServer.close();
   }
+});
+
+// A failed server-side handshake destroys the socket with the error, so after
+// 'error' (tlsClientError on a tls.Server) node emits 'close' reporting hadError:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L480-L488
+// That destroy defers closing the handle to a microtask. Whenever the failure is
+// dispatched with JS already on the stack, the native close callback follows it
+// before that microtask runs: the stream-level TLS engine (a wrapped connection
+// with unflushed writes, or a generic Duplex) is fed from a 'data' listener, and
+// an asynchronous SNICallback rejection resumes the handshake from the user's
+// callback. The deferred teardown used to find the handle already detached and
+// never emitted 'close'. A failure dispatched straight from the event loop (the
+// fd-adopting wrap fed bad bytes) never had the problem and pins that ordering.
+describe("server-side handshake failure emits 'close'", () => {
+  // Accepts one plain connection, hands it to `wrap` (which must write a plain
+  // banner so the peer knows the wrap is in place), lets `peer` drive the
+  // client once that banner arrives, and resolves with the wrap's 'error' /
+  // 'close' events once 'close' has fired.
+  async function failHandshake(
+    wrap: (conn: net.Socket) => TLSSocket,
+    peer: (client: net.Socket) => void,
+  ): Promise<string[]> {
+    const events: string[] = [];
+    const closed = Promise.withResolvers<string[]>();
+    let conn: net.Socket | undefined;
+    const rawServer = net.createServer(socket => {
+      conn = socket;
+      // Only the wrap's lifecycle is under test; the plain connection's own
+      // fate after the peer goes away is not.
+      conn.on("error", () => {});
+      const wrapped = wrap(conn);
+      wrapped.on("error", () => events.push("error"));
+      wrapped.on("close", hadError => {
+        events.push(`close:${hadError}`);
+        closed.resolve(events);
+      });
+    });
+    let client: net.Socket | undefined;
+    try {
+      const listening = Promise.withResolvers<void>();
+      rawServer.once("listening", listening.resolve);
+      rawServer.once("error", listening.reject);
+      rawServer.listen(0, "127.0.0.1");
+      await listening.promise;
+      client = net.connect((rawServer.address() as AddressInfo).port, "127.0.0.1");
+      client.on("error", () => {});
+      client.once("data", () => peer(client!));
+      return await closed.promise;
+    } finally {
+      client?.destroy();
+      conn?.destroy();
+      rawServer.close();
+    }
+  }
+
+  const serverOptions = (extra: tls.TlsOptions = {}) => ({ isServer: true, ...COMMON_CERT, ...extra });
+
+  const adoptingWrap = (conn: net.Socket, extra?: tls.TlsOptions) => {
+    conn.write("220 banner\r\n");
+    return new TLSSocket(conn, serverOptions(extra));
+  };
+
+  const unflushedWriteWrap = (conn: net.Socket) => {
+    conn.cork();
+    conn.write("220 banner\r\n");
+    const wrapped = new TLSSocket(conn, serverOptions());
+    conn.uncork();
+    return wrapped;
+  };
+
+  const duplexWrap = (conn: net.Socket) => {
+    conn.write("220 banner\r\n");
+    const transport = new Duplex({
+      read() {},
+      write(chunk, encoding, callback) {
+        conn.write(chunk, encoding, callback);
+      },
+      final(callback) {
+        conn.end(callback);
+      },
+    });
+    conn.on("data", chunk => transport.push(chunk));
+    conn.on("end", () => transport.push(null));
+    return new TLSSocket(transport, serverOptions());
+  };
+
+  const sendPlaintext = (client: net.Socket) => {
+    client.write("this is not a ClientHello\r\n");
+  };
+
+  // Rejects from a later turn, so the handshake is suspended and then resumed
+  // (and failed) from inside this callback rather than from the event loop.
+  const rejectingSNI: tls.TlsOptions = {
+    SNICallback: (_servername, cb) => {
+      setImmediate(cb, new Error("unknown servername"));
+    },
+  };
+
+  const startTLSClient = (client: net.Socket) => {
+    connect({ socket: client, servername: "rejected.example.com", rejectUnauthorized: false }).on("error", () => {});
+  };
+
+  it("emits 'error' then 'close' with hadError when the wrap adopted the connection's fd", async () => {
+    expect(await failHandshake(adoptingWrap, sendPlaintext)).toEqual(["error", "close:true"]);
+  });
+
+  it("emits 'error' then 'close' with hadError when the connection had unflushed writes", async () => {
+    expect(await failHandshake(unflushedWriteWrap, sendPlaintext)).toEqual(["error", "close:true"]);
+  });
+
+  it("emits 'error' then 'close' with hadError when wrapping a generic Duplex", async () => {
+    expect(await failHandshake(duplexWrap, sendPlaintext)).toEqual(["error", "close:true"]);
+  });
+
+  it("emits 'close' when the peer disconnects mid-handshake and the connection had unflushed writes", async () => {
+    const events = await failHandshake(unflushedWriteWrap, client => client.destroy());
+    // Both wrap flavors currently report the disconnect through 'error' (node
+    // ends the wrap without one); either way 'close' must follow, and its
+    // hadError flag must agree with whether an 'error' was emitted.
+    expect(events.at(-1)).toBe(`close:${events.includes("error")}`);
+  });
+
+  it("emits 'error' then 'close' with hadError when an asynchronous SNICallback rejects an fd-adopting wrap", async () => {
+    const events = await failHandshake(conn => adoptingWrap(conn, rejectingSNI), startTLSClient);
+    expect(events).toEqual(["error", "close:true"]);
+  });
+
+  it("tls.Server emits 'close' with hadError on the socket it reported through tlsClientError when an asynchronous SNICallback rejects", async () => {
+    const server = createServer({ ...COMMON_CERT, ...rejectingSNI });
+    const closed = Promise.withResolvers<{ message: string; hadError: boolean }>();
+    server.on("tlsClientError", (err, socket) => {
+      socket.on("close", hadError => closed.resolve({ message: err.message, hadError }));
+    });
+    server.on("secureConnection", () => closed.reject(new Error("secureConnection must not fire")));
+    let client: TLSSocket | undefined;
+    try {
+      const listening = Promise.withResolvers<void>();
+      server.once("listening", listening.resolve);
+      server.once("error", listening.reject);
+      server.listen(0, "127.0.0.1");
+      await listening.promise;
+      client = connect({
+        port: (server.address() as AddressInfo).port,
+        host: "127.0.0.1",
+        servername: "rejected.example.com",
+        rejectUnauthorized: false,
+      });
+      client.on("error", () => {});
+      expect(await closed.promise).toEqual({ message: "unknown servername", hadError: true });
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
 });
 
 it("exposes the server-side peer verification result via socket.ssl.verifyError()", async () => {

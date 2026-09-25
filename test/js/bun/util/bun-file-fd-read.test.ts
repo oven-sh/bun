@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { closeSync, openSync } from "fs";
+import { appendFileSync, closeSync, openSync } from "fs";
 import { isWindows, tempDir } from "harness";
 import { join } from "path";
 
@@ -48,5 +48,23 @@ describe.skipIf(isWindows)("Bun.file(fd) read", () => {
 
     expect(await withFd(path, fd => Bun.file(fd).text())).toBe("");
     expect((await withFd(path, fd => Bun.file(fd).arrayBuffer())).byteLength).toBe(0);
+  });
+
+  // A stat of the handle does not limit a later read of the same handle.
+  test.each([
+    [".size", (f: Bun.BunFile) => void f.size],
+    ["exists()", (f: Bun.BunFile) => f.exists()],
+    [".lastModified", (f: Bun.BunFile) => void f.lastModified],
+  ])("%s, then the file grows: text() returns all of it", async (_name, stat) => {
+    using dir = tempDir("bun-file-fd-read", { "fd-grow.txt": "0123456789" });
+    const path = join(String(dir), "fd-grow.txt");
+
+    const text = await withFd(path, async fd => {
+      const file = Bun.file(fd);
+      await stat(file);
+      appendFileSync(path, "abcdefghij");
+      return file.text();
+    });
+    expect(text).toBe("0123456789abcdefghij");
   });
 });

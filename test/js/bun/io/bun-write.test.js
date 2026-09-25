@@ -1554,3 +1554,96 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     expect(exitCode).toBe(0);
   });
 });
+
+// `.size`, exists() and structuredClone() stat the destination. That stat is
+// not a limit on the copy: only a slice() of the destination is (#4930).
+(isWindows ? describe : describe.concurrent)("a stat of the destination does not limit a file-to-file copy", () => {
+  const content = "0123456789";
+  const setup = (name, existing) => {
+    const dir = tempDir(name, { "src.txt": content, ...(existing === undefined ? {} : { "dest.txt": existing }) });
+    return { dir, src: Bun.file(join(String(dir), "src.txt")), dest: join(String(dir), "dest.txt") };
+  };
+  const onDisk = p => fs.readFileSync(p, "utf8");
+  const triggers = [
+    [".size", f => void f.size],
+    ["exists()", f => f.exists()],
+    ["structuredClone()", f => void structuredClone(f)],
+  ];
+
+  it.each(triggers)("%s on a destination that does not exist yet", async (_name, touch) => {
+    const { dir, src, dest } = setup("bun-write-dest-missing", undefined);
+    using _ = dir;
+    const out = Bun.file(dest);
+    await touch(out);
+    expect([await Bun.write(out, src), onDisk(dest)]).toEqual([10, content]);
+  });
+
+  it.each(triggers)("%s on a shorter destination", async (_name, touch) => {
+    const { dir, src, dest } = setup("bun-write-dest-shorter", "abc");
+    using _ = dir;
+    const out = Bun.file(dest);
+    await touch(out);
+    expect([await Bun.write(out, src), onDisk(dest)]).toEqual([10, content]);
+  });
+
+  it.skipIf(isWindows)(".size on a shorter destination that is a file descriptor", async () => {
+    const { dir, src, dest } = setup("bun-write-dest-fd", "abc");
+    using _ = dir;
+    const fd = fs.openSync(dest, "r+");
+    try {
+      const out = Bun.file(fd);
+      expect(out.size).toBe(3);
+      expect([await Bun.write(out, src), onDisk(dest)]).toEqual([10, content]);
+    } finally {
+      fs.closeSync(fd);
+    }
+  });
+
+  it("blob.write(file) after exists()", async () => {
+    const { dir, src, dest } = setup("bun-write-dest-method", undefined);
+    using _ = dir;
+    const out = Bun.file(dest);
+    expect(await out.exists()).toBe(false);
+    expect([await out.write(src), onDisk(dest)]).toEqual([10, content]);
+  });
+
+  it("a Response source after exists()", async () => {
+    const { dir, src, dest } = setup("bun-write-dest-response", undefined);
+    using _ = dir;
+    const out = Bun.file(dest);
+    expect(await out.exists()).toBe(false);
+    expect([await Bun.write(out, new Response(src)), onDisk(dest)]).toEqual([10, content]);
+  });
+
+  it("a slice() of the destination that is longer than the source", async () => {
+    const { dir, src, dest } = setup("bun-write-dest-slice-long", "abc");
+    using _ = dir;
+    const out = Bun.file(dest);
+    expect(out.size).toBe(3);
+    expect([await Bun.write(out.slice(0, 100), src), onDisk(dest)]).toEqual([10, content]);
+  });
+
+  it("a slice() of the destination is still the limit", async () => {
+    const { dir, src, dest } = setup("bun-write-dest-slice", "abc");
+    using _ = dir;
+    const out = Bun.file(dest);
+    expect(out.size).toBe(3);
+    expect([await Bun.write(out.slice(0, 4), src), onDisk(dest)]).toEqual([4, "0123"]);
+  });
+
+  it("text() returns what write() wrote, on one handle (#23902)", async () => {
+    const { dir, dest } = setup("bun-write-then-text", undefined);
+    using _ = dir;
+    const file = Bun.file(dest);
+    expect(await file.exists()).toBe(false);
+    const seen = [];
+    const written = [];
+    for (let i = 1; i <= 8; i++) {
+      const data = Buffer.alloc(i * 4, "asdf").toString();
+      await file.write(data);
+      written.push(data);
+      seen.push(await file.text());
+    }
+    expect(seen).toEqual(written);
+  });
+});

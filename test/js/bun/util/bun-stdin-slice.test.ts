@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { join } from "node:path";
 
 // Reading a sliced non-regular file blob (like stdin from a pipe) with a size
 // close to Blob.max_size used to overflow when computing the initial read
@@ -39,6 +40,27 @@ test.skipIf(isWindows)("Bun.stdin.slice(0, N).text() caps reads at N bytes", asy
 
   expect(stdout).toBe("012");
   expect(exitCode).toBe(0);
+});
+
+// A stat of stdin is not where the input ends.
+test.skipIf(isWindows)("Bun.stdin.text() returns a file on stdin as it is now, after Bun.stdin.size", async () => {
+  using dir = tempDir("bun-stdin-size", { "in.txt": "0123456789" });
+  const input = join(String(dir), "in.txt");
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `void Bun.stdin.size;
+       require("node:fs").appendFileSync(process.env.INPUT, "abcdefghij");
+       process.stdout.write(await Bun.stdin.text());`,
+    ],
+    env: { ...bunEnv, INPUT: input },
+    stdin: Bun.file(input),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "0123456789abcdefghij", stderr: "", exitCode: 0 });
 });
 
 // Streaming a slice of a pipe is the POSIX path where the chunk that ends the

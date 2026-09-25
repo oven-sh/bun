@@ -695,7 +695,7 @@ describe("file-backed slice bounds are respected when streaming and serving", ()
     expect(await new Response(s).text()).toBe("56789");
     const clone = structuredClone(s);
     expect(await clone.text()).toBe("56789");
-    // Serializing resolves the original's size, clamping the window to EOF.
+    // structuredClone() stats the file. After a stat, `.size` of a window stops at the end of the file.
     expect(s.size).toBe(5);
   });
 

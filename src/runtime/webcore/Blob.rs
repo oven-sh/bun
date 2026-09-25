@@ -747,9 +747,8 @@ impl BlobExt for Blob {
                 writer.write_int_le::<u32>(stored_name.len() as u32)?;
                 writer.write_all(stored_name)?;
             } else {
-                // Version 4: a file-backed slice's window end. Written before
-                // resolve_size() so an unresolved blob stays MAX_SIZE (unknown)
-                // on the wire and the receiver stats it locally, like v3.
+                // Version 4: the window end of a file-backed slice. An unsliced blob writes
+                // `MAX_SIZE` (unknown), and the receiver stats the file, like v3.
                 writer.write_int_le::<u64>(self.size.get())?;
                 self.resolve_size();
                 store.serialize(writer)?;
@@ -1840,6 +1839,8 @@ impl BlobExt for Blob {
         let mut relative_start: i64 = 0;
         // If the optional end parameter is not used, let relativeEnd be size.
         let mut relative_end: i64 = i64::try_from(self.size.get()).expect("int cast");
+        // Set by an index from the end. The window then closes at this length.
+        let mut length: Option<i64> = None;
 
         // Mutate the fixed-3 args array in place to shift the string arg into [2].
         if args[0].is_string() {
@@ -1856,9 +1857,8 @@ impl BlobExt for Blob {
             if start_.is_number() {
                 let start = start_.to_int64();
                 if start < 0 {
-                    relative_start = (start
-                        .wrapping_add(i64::try_from(self.size.get()).expect("int cast")))
-                    .max(0);
+                    let length = *length.get_or_insert_with(|| end_relative_length(self));
+                    relative_start = start.wrapping_add(length).max(0);
                 } else {
                     relative_start = start.min(i64::try_from(self.size.get()).expect("int cast"));
                 }
@@ -1869,13 +1869,16 @@ impl BlobExt for Blob {
             if end_.is_number() {
                 let end = end_.to_int64();
                 if end < 0 {
-                    relative_end = (end
-                        .wrapping_add(i64::try_from(self.size.get()).expect("int cast")))
-                    .max(0);
+                    let length = *length.get_or_insert_with(|| end_relative_length(self));
+                    relative_end = end.wrapping_add(length).max(0);
                 } else {
                     relative_end = end.min(i64::try_from(self.size.get()).expect("int cast"));
                 }
             }
+        }
+        if let Some(length) = length {
+            relative_start = relative_start.min(length);
+            relative_end = relative_end.min(length);
         }
 
         let mut content_type = BlobContentType::default();
@@ -2002,9 +2005,14 @@ impl BlobExt for Blob {
     }
 
     fn get_size_for_bindings(&self) -> u64 {
-        if self.size.get() == MAX_SIZE {
-            self.resolve_size();
-        }
+        let size = if self.needs_to_read_file() {
+            file_view_size(self)
+        } else {
+            if self.size.get() == MAX_SIZE {
+                self.resolve_size();
+            }
+            self.size.get()
+        };
 
         // If the file doesn't exist or is not seekable
         // signal that the size is unknown.
@@ -2016,11 +2024,11 @@ impl BlobExt for Blob {
             }
         }
 
-        if self.size.get() == MAX_SIZE {
+        if size == MAX_SIZE {
             return u64::MAX;
         }
 
-        self.size.get()
+        size
     }
     fn get_stat(&self, global_this: &JSGlobalObject, callback: &CallFrame) -> JsResult<JSValue> {
         // TODO: make this async for files
@@ -2074,30 +2082,34 @@ impl BlobExt for Blob {
     }
 
     fn get_size(&self, _: &JSGlobalObject) -> JSValue {
-        if self.size.get() == MAX_SIZE {
+        let mut size = self.size.get();
+        if self.needs_to_read_file() {
+            size = file_view_size(self);
+            // A pipe or FIFO keeps `MAX_SIZE`: its length is not known.
+            if size == MAX_SIZE {
+                return JSValue::js_number(f64::INFINITY);
+            }
+        } else if size == MAX_SIZE {
             if self.is_s3() {
                 return JSValue::js_number(f64::NAN);
             }
             self.resolve_size();
-            if self.size.get() == MAX_SIZE && self.store.get().is_some() {
+            size = self.size.get();
+            if size == MAX_SIZE && self.store.get().is_some() {
                 return JSValue::js_number(f64::INFINITY);
-            } else if self.size.get() == 0 && self.store.get().is_some() {
-                if let store::Data::File(file) =
-                    &self.store().expect("infallible: store present").data
-                {
-                    if !file.seekable.unwrap_or(true) && file.max_size == MAX_SIZE {
-                        return JSValue::js_number(f64::INFINITY);
-                    }
-                }
             }
         }
-        JSValue::js_number(self.size.get() as f64)
+        JSValue::js_number(size as f64)
     }
 
+    /// A file view keeps its window: the `st_size` of a file is a hint, never a byte budget (#4930).
     fn resolve_size(&self) {
+        // Still stats a file store: readers and `exists()` use what it caches.
         let (offset, size) = self.resolved_size();
-        self.offset.set(offset);
-        self.size.set(size);
+        if !self.needs_to_read_file() {
+            self.offset.set(offset);
+            self.size.set(size);
+        }
     }
 
     /// The `(offset, size)` of this view against its store, without touching
@@ -3887,7 +3899,7 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
     // make shared_view() slice past the end of the backing store (OOB heap read).
     blob.offset.set(offset as SizeType); // intentional truncate
     if let Some(size) = file_size {
-        // resolve_size() clamps this to the actual file size on first use.
+        // A window past EOF is fine: readers stop at EOF.
         if size != MAX_SIZE {
             blob.size.set(size as SizeType);
         }
@@ -5750,6 +5762,35 @@ fn window_size(current: SizeType, available: SizeType) -> SizeType {
     } else {
         current.min(available)
     }
+}
+
+fn is_statted_file(blob: &Blob) -> bool {
+    blob.store
+        .get()
+        .as_ref()
+        .is_some_and(|store| match Store::data_mut(store).tag() {
+            store::DataTag::File => Store::data_mut(store).as_file().is_statted(),
+            _ => false,
+        })
+}
+
+/// The size of a file view, which caches no `stat` size. A window asks its store only after a `stat`, so `slice()` runs none.
+fn file_view_size(blob: &Blob) -> SizeType {
+    if blob.size.get() == MAX_SIZE || is_statted_file(blob) {
+        blob.resolved_size().1
+    } else {
+        blob.size.get()
+    }
+}
+
+/// The length that a negative `slice()` index counts back from: the file's after a `stat`, else the view's own.
+fn end_relative_length(blob: &Blob) -> i64 {
+    let length = if is_statted_file(blob) {
+        blob.resolved_size().1
+    } else {
+        blob.size.get()
+    };
+    i64::try_from(length).expect("int cast")
 }
 
 /// resolve file stat like size, last_modified

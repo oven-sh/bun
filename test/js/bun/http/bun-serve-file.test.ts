@@ -1,8 +1,8 @@
-import type { Server } from "bun";
+import type { BunFile, Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
 import { mkfifo } from "mkfifo";
-import { closeSync, openSync, unlinkSync, writeSync } from "node:fs";
+import { appendFileSync, closeSync, openSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
 const LARGE_SIZE = 1024 * 1024 * 8;
@@ -1301,6 +1301,43 @@ test("file routes frame a slice that reaches or starts past EOF by the bytes the
     "slice(5, 5)": { blob: exactly(""), stream: exactly("") },
     "slice(100)": { blob: exactly(""), stream: exactly("") },
     "whole file": { blob: exactly("0123456789ABCDEF"), stream: exactly("0123456789ABCDEF") },
+  });
+});
+
+describe.concurrent("a reused Bun.file() handle after the file changes", () => {
+  const stats = [
+    [".size", (handle: BunFile) => handle.size],
+    ["await exists()", (handle: BunFile) => handle.exists()],
+    [".lastModified", (handle: BunFile) => handle.lastModified],
+  ] as const;
+  const changes = [
+    ["grows", "1234", (path: string) => appendFileSync(path, "5678"), "12345678"],
+    ["shrinks", "12345678", (path: string) => writeFileSync(path, "12"), "12"],
+  ] as const;
+
+  describe.each(stats)("%s before the change", (_stat, stat) => {
+    it.each(changes)("the file %s", async (_change, before, change, after) => {
+      using dir = tempDir("serve-reused-handle", { "file.txt": before });
+      const path = join(String(dir), "file.txt");
+      const handle = Bun.file(path);
+      await stat(handle);
+      change(path);
+      await using server = Bun.serve({ port: 0, fetch: () => new Response(handle) });
+
+      const get = async (headers: Record<string, string> = {}) => {
+        const response = await fetch(server.url, { headers });
+        return {
+          status: response.status,
+          contentLength: response.headers.get("content-length"),
+          contentRange: response.headers.get("content-range"),
+          body: await response.text(),
+        };
+      };
+      expect({ whole: await get(), range: await get({ Range: "bytes=0-1" }) }).toEqual({
+        whole: { status: 200, contentLength: String(after.length), contentRange: null, body: after },
+        range: { status: 206, contentLength: "2", contentRange: `bytes 0-1/${after.length}`, body: after.slice(0, 2) },
+      });
+    });
   });
 });
 

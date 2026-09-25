@@ -221,6 +221,20 @@ pub(crate) enum ReadFileResultType {
 /// The completion token a `ReadFile` keeps across its async I/O.
 pub(crate) type ReadFileTask = bun_jsc::Completion<ReadFile>;
 
+/// The read of a store that was statted before stops at the size from its own `fstat`: no `read()` to find EOF.
+fn stop_at_own_size(
+    file_store: &FileStore,
+    max_length: SizeType,
+    size: SizeType,
+    offset: SizeType,
+) -> SizeType {
+    if file_store.is_statted() {
+        max_length.min(size.saturating_sub(offset))
+    } else {
+        max_length
+    }
+}
+
 // SAFETY: file store / byte store / blob store ref (atomic), the read buffer and io-loop
 // registration state — nothing thread-affine. What the bytes are delivered to lives in the job's
 // JS side (`ReadFileCompletionFns`), never here.
@@ -726,6 +740,12 @@ impl ReadFile {
             SizeType::try_from((stat.st_size as i64).max(0).min(MAX_SIZE as i64)).unwrap();
 
         if stat.st_size > 0 && !self.could_block {
+            self.max_length = stop_at_own_size(
+                &self.file_store,
+                self.max_length,
+                self.total_size,
+                self.offset,
+            );
             self.size = self.total_size.min(self.max_length);
             // read up to 4k at a time if
             // they didn't explicitly set a size and we're reading from something that's not a regular file
@@ -847,12 +867,8 @@ impl ReadFile {
                         // SAFETY: read() wrote `read_amount` initialized bytes into spare capacity.
                         unsafe { bun_core::vec::commit_spare(&mut buffer, read_amount) };
                     }
-                    // - If they DID set a max length, we should stop
-                    //   reading after that.
-                    //
-                    // - If they DID NOT set a max_length, then it will
-                    //   be Blob.max_size which is an impossibly large
-                    //   amount to read.
+                    // `max_length` is the end of a `slice()` window, or the `fstat` size
+                    // of this read (`stop_at_own_size`), or `MAX_SIZE`.
                     if !self.read_eof && buffer.len() >= self.max_length as usize {
                         break;
                     }
@@ -1243,6 +1259,12 @@ impl<'a> ReadFileUV<'a> {
         log!("is_regular_file: {}", this.is_regular_file);
 
         if stat.size() > 0 && this.is_regular_file {
+            this.max_length = stop_at_own_size(
+                &this.file_store,
+                this.max_length,
+                this.total_size,
+                this.offset,
+            );
             this.size = this.total_size.min(this.max_length);
         } else if stat.size() == 0 && !this.is_regular_file {
             // read up to 4k at a time if they didn't explicitly set a size and

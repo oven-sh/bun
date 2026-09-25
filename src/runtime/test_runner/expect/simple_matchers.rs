@@ -14,7 +14,6 @@ crate::unary_predicate_matcher!(to_be_date, "toBeDate", |v| v.is_date());
 crate::unary_predicate_matcher!(to_be_defined, "toBeDefined", |v| !v.is_undefined());
 crate::unary_predicate_matcher!(to_be_false, "toBeFalse", |v| v.is_boolean()
     && !v.to_boolean());
-crate::unary_predicate_matcher!(to_be_falsy, "toBeFalsy", |v| !v.to_boolean());
 crate::unary_predicate_matcher!(to_be_function, "toBeFunction", |v| v.is_callable());
 crate::unary_predicate_matcher!(to_be_integer, "toBeInteger", |v| v.is_any_int());
 // codegen snake-cases `toBeNaN` → `to_be_na_n`
@@ -26,7 +25,6 @@ crate::unary_predicate_matcher!(to_be_number, "toBeNumber", |v| v.is_number());
 crate::unary_predicate_matcher!(to_be_string, "toBeString", |v| v.is_string());
 crate::unary_predicate_matcher!(to_be_symbol, "toBeSymbol", |v| v.is_symbol());
 crate::unary_predicate_matcher!(to_be_true, "toBeTrue", |v| v.is_boolean() && v.to_boolean());
-crate::unary_predicate_matcher!(to_be_truthy, "toBeTruthy", |v| v.to_boolean());
 crate::unary_predicate_matcher!(to_be_undefined, "toBeUndefined", |v| v.is_undefined());
 
 crate::unary_predicate_matcher!(to_be_finite, "toBeFinite", |v| v.is_number() && {
@@ -41,6 +39,22 @@ crate::unary_predicate_matcher!(to_be_positive, "toBePositive", |v| v.is_number(
     let n = v.as_number();
     n.round() > 0.0 && !n.is_infinite() && !n.is_nan()
 });
+
+impl Expect {
+    #[bun_jsc::host_fn(method)]
+    pub fn to_be_falsy(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        self.run_boolean_matcher_predicate(global, frame, "toBeFalsy", |value| {
+            !value.to_boolean()
+        })
+    }
+
+    #[bun_jsc::host_fn(method)]
+    pub fn to_be_truthy(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        self.run_boolean_matcher_predicate(global, frame, "toBeTruthy", |value| {
+            value.to_boolean()
+        })
+    }
+}
 
 // ── numeric ordering: toBe{Greater,Less}Than[OrEqual] ──────────────────────
 impl Expect {

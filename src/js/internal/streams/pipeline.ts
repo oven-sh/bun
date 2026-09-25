@@ -123,7 +123,7 @@ async function pumpToNode(iterable, writable, finish, { end }) {
 
     finish();
   } catch (err) {
-    finish(error !== err ? aggregateTwoErrors(error, err) : err);
+    finish(error !== err ? aggregateTwoErrors(error, err as Error) : err);
   } finally {
     cleanup();
     writable.off("drain", resume);
@@ -328,7 +328,7 @@ function pipelineImpl(streams, callback, opts?) {
           finishCount++;
           pumpToNode(ret, pt, finish, { end });
         } else if (isReadableStream(ret) || isTransformStream(ret)) {
-          const toRead = ret.readable || ret;
+          const toRead = (ret as TransformStream).readable || ret;
           finishCount++;
           pumpToNode(toRead, pt, finish, { end });
         } else {
@@ -351,7 +351,7 @@ function pipelineImpl(streams, callback, opts?) {
           lastStreamCleanup.push(cleanup);
         }
       } else if (isTransformStream(ret) || isReadableStream(ret)) {
-        const toRead = ret.readable || ret;
+        const toRead = (ret as TransformStream).readable || ret;
         finishCount++;
         pumpToNode(toRead, stream, finish, { end });
       } else if (isIterable(ret)) {

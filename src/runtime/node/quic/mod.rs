@@ -1,14 +1,14 @@
 //! Native implementation of `node:quic` (reference: node/src/quic/*, v26.3.0).
 
-pub mod endpoint;
+pub(crate) mod endpoint;
 pub(crate) mod ffi;
-pub mod session;
-pub mod stream;
-pub mod tls;
+pub(crate) mod session;
+pub(crate) mod stream;
+pub(crate) mod tls;
 
-pub use endpoint::QuicEndpoint;
-pub use session::QuicSession;
-pub use stream::QuicStream;
+pub(crate) use endpoint::QuicEndpoint;
+pub(crate) use session::QuicSession;
+pub(crate) use stream::QuicStream;
 
 /// Monotonic nanoseconds, mirroring Node's use of `uv_hrtime()` for the
 /// `*_AT` stats slots.

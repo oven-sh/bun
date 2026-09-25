@@ -246,6 +246,25 @@ export function pgReadFrontendMessages(buffered: Buffer, onMessage: (type: numbe
   return buffered;
 }
 
+// PostgreSQL FE/BE protocol §55.7 Bind (frontend) body: String(portal) String(statement) Int16(nformats) Int16[nformats]
+//   Int16(nparams) per param: Int32(byteLen | -1) Byte[len], then the result-column format codes (not read here)
+/** The parameter values of a frontend Bind message body, for a mock that answers with what was bound. */
+export function pgBindParameters(body: Buffer): (Buffer | null)[] {
+  let o = body.indexOf(0) + 1; // portal name
+  o = body.indexOf(0, o) + 1; // statement name
+  o += 2 + 2 * body.readUInt16BE(o); // parameter format codes
+  const params: (Buffer | null)[] = [];
+  const count = body.readUInt16BE(o);
+  o += 2;
+  for (let i = 0; i < count; i++) {
+    const len = body.readInt32BE(o);
+    o += 4;
+    params.push(len < 0 ? null : body.subarray(o, o + len));
+    if (len > 0) o += len;
+  }
+  return params;
+}
+
 // PostgreSQL FE/BE protocol §55.7 DataRow: Byte1('D') Int32(len) Int16(ncols) per col: Int32(byteLen | -1) Byte[len]
 export function pgDataRow(cols: (Buffer | null)[]): Buffer {
   const parts: Buffer[] = [Buffer.alloc(2)];
@@ -272,18 +291,30 @@ export async function pgMinimalReadyServer(): Promise<{ port: number; server: ne
   });
 }
 
+/** In a `pgMockServer` reply: the mock keeps back every later frame of that connection until `release()`. */
+export const pgHold = Symbol("pgHold");
+
 /**
  * Postgres mock that answers the StartupMessage with AuthenticationOk +
  * ReadyForQuery and then hands every complete frontend message (type as a
  * one-char string, e.g. "P", "B", "E", "S", "Q", "X") to `respond`; whatever it
  * returns is written back in order after the whole chunk has been parsed.
+ * A reply can stop part-way with `pgHold`; `release()` sends what was kept back.
  */
 export async function pgMockServer(
-  respond: (type: string, body: Buffer, socket: net.Socket) => Buffer | Buffer[] | void,
-): Promise<{ port: number; server: net.Server }> {
-  return listeningServer(socket => {
+  respond: (type: string, body: Buffer, socket: net.Socket) => Buffer | (Buffer | typeof pgHold)[] | void,
+): Promise<{ port: number; server: net.Server; release(): void }> {
+  const releases = new Set<() => void>();
+  const { port, server } = await listeningServer(socket => {
     let buffered = Buffer.alloc(0);
     let startup = true;
+    let held: Buffer[] | undefined;
+    const release = () => {
+      if (held?.length) socket.write(Buffer.concat(held));
+      held = undefined;
+    };
+    releases.add(release);
+    socket.on("close", () => releases.delete(release));
     socket.on("data", chunk => {
       buffered = Buffer.concat([buffered, chunk]);
       const out: Buffer[] = [];
@@ -295,12 +326,17 @@ export async function pgMockServer(
       }
       buffered = pgReadFrontendMessages(buffered, (type, body) => {
         const reply = respond(String.fromCharCode(type), body, socket);
-        if (reply) out.push(...(Array.isArray(reply) ? reply : [reply]));
+        if (!reply) return;
+        for (const frame of Array.isArray(reply) ? reply : [reply]) {
+          if (frame === pgHold) held ??= [];
+          else (held ?? out).push(frame);
+        }
       });
       if (out.length) socket.write(Buffer.concat(out));
     });
     socket.on("error", () => {});
   });
+  return { port, server, release: () => releases.forEach(release => release()) };
 }
 
 // ---------------------------------------------------------------------------

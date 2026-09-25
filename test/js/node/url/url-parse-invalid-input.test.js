@@ -1,4 +1,5 @@
-import { describe, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import assert from "node:assert";
 import url from "node:url";
 
@@ -117,5 +118,51 @@ describe("url.parse", () => {
         url.parse(badURL);
       });
     }
+  });
+
+  test("rethrows a primitive thrown while describing the argument", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import url from "node:url";
+        for (const thrown of ["nope", 1, null, undefined, Symbol.for("nope")]) {
+          const arg = { get constructor() { throw thrown; } };
+          for (const fn of [() => url.parse(arg), () => url.resolve(arg, "/a"), () => url.resolve("/a", arg)]) {
+            try {
+              fn();
+              console.log("did not throw");
+            } catch (e) {
+              console.log(e === thrown ? "rethrown" : "wrong value", String(thrown));
+            }
+          }
+        }
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe(
+      ["nope", "1", "null", "undefined", "Symbol(nope)"].flatMap(v => Array(3).fill(`rethrown ${v}\n`)).join(""),
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  test("only ERR_INVALID_URL carries the input", () => {
+    assert.throws(
+      () => url.parse(1),
+      e => e.code === "ERR_INVALID_ARG_TYPE" && !("input" in e),
+    );
+    assert.throws(
+      () => url.parse("http://%E0%A4%A@fail"),
+      e => e instanceof URIError && !("input" in e),
+    );
+    assert.throws(() => url.parse("http://[127.0.0.1\x00c8763]:8000/"), {
+      code: "ERR_INVALID_URL",
+      input: "http://[127.0.0.1\x00c8763]:8000/",
+    });
   });
 });

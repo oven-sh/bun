@@ -11,13 +11,13 @@ use crate::shell::yield_::Yield;
 use core::ptr::NonNull;
 
 #[derive(Default)]
-pub struct Mkdir {
+pub(crate) struct Mkdir {
     pub(crate) opts: Opts,
     pub(crate) state: State,
 }
 
 #[derive(Default)]
-pub enum State {
+pub(crate) enum State {
     #[default]
     Idle,
     Exec(Exec),
@@ -25,7 +25,7 @@ pub enum State {
     Done,
 }
 
-pub struct Exec {
+pub(crate) struct Exec {
     pub(crate) started: bool,
     pub(crate) tasks_count: usize,
     pub(crate) tasks_done: usize,
@@ -107,7 +107,7 @@ impl Mkdir {
                     NextAction::Schedule(exec.args_start)
                 }
             }
-            State::WaitingWriteErr => return Yield::failed(),
+            State::WaitingWriteErr => return Yield::suspended(),
             State::Done => return Builtin::done(interp, cmd, 0),
         };
         match action {
@@ -381,6 +381,10 @@ impl bun_event_loop::Taskable for ShellMkdirTask {
             drop(bun_core::heap::take(this));
         }
     }
+    /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 
 /// Collects each created directory into
@@ -429,7 +433,7 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellMkdirTask {
 }
 
 #[derive(Default, Clone, Copy)]
-pub struct Opts {
+pub(crate) struct Opts {
     /// `-p`, `--parents` — no error if existing, make parent directories as
     /// needed, with their file modes unaffected by any -m option.
     pub(crate) parents: bool,

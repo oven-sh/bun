@@ -89,9 +89,9 @@ pub struct Chunk {
 
     pub compile_results_for_chunk: CompileResultSlots,
 
-    /// Pre-built JSON fragment for this chunk's metafile output entry.
-    /// Generated during parallel chunk generation, joined at the end.
-    pub(crate) metafile_chunk_json: Box<[u8]>,
+    /// Byte length of the output emitted for this chunk: what `code()` returned plus
+    /// the source map comment. The metafile reports it as `outputs[..].bytes`.
+    pub(crate) final_output_size: usize,
 
     /// Pack boolean flags to reduce padding overhead.
     /// Previously 3 separate bool fields caused ~21 bytes of padding waste.
@@ -192,15 +192,6 @@ impl CompileResultSlots {
     }
 }
 
-impl core::ops::Index<usize> for CompileResultSlots {
-    type Output = CompileResult;
-    #[inline]
-    fn index(&self, i: usize) -> &CompileResult {
-        // SAFETY: reads happen only after the pool join; no concurrent writer.
-        unsafe { &*self.0[i].get() }
-    }
-}
-
 impl Default for Chunk {
     fn default() -> Self {
         Chunk {
@@ -219,7 +210,7 @@ impl Default for Chunk {
             renamer: bun_renamer::ChunkRenamer::default(),
             nested_scopes_to_rename: Vec::new(),
             compile_results_for_chunk: CompileResultSlots::default(),
-            metafile_chunk_json: Box::default(),
+            final_output_size: 0,
             flags: Flags::default(),
         }
     }
@@ -605,20 +596,6 @@ impl IntermediateOutput {
         dest[dst..][..remaining.len()].copy_from_slice(remaining);
         dst += remaining.len();
         dst
-    }
-
-    pub(crate) fn get_size(&self) -> usize {
-        match self {
-            IntermediateOutput::Pieces(pieces) => {
-                let mut total: usize = 0;
-                for piece in pieces.slice() {
-                    total += piece.data.len();
-                }
-                total
-            }
-            IntermediateOutput::Joiner(joiner) => joiner.len,
-            IntermediateOutput::Empty => 0,
-        }
     }
 
     #[allow(clippy::too_many_arguments)]

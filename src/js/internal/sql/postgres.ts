@@ -1,6 +1,10 @@
 import type { PostgresErrorOptions } from "internal/sql/errors";
 import type { Query } from "./query";
-import type { ArrayType, DatabaseAdapter, SQLArrayParameter, SQLCommand, SQLResultArray, SSLMode } from "./shared";
+import type { ArrayType, DatabaseAdapter, SQLCommand, SSLMode } from "./shared";
+
+type SQLArrayParameter = import("./shared").SQLArrayParameter;
+type SQLResultArray<T> = import("./shared").SQLResultArray<T>;
+
 const {
   SQLResultArray,
   SQLArrayParameter,
@@ -240,7 +244,7 @@ function serializeArray(values: any[], type: ArrayType) {
   return `{${values.map(arrayValueSerializer.bind(this, type, isPostgresNumericType(type), isPostgresJsonType(type))).join(delimiter)}}`;
 }
 
-function wrapPostgresError(error: Error | PostgresErrorOptions) {
+function wrapPostgresError(error: Error | (PostgresErrorOptions & { message: string })) {
   if (Error.isError(error)) {
     return error;
   }
@@ -291,7 +295,7 @@ initPostgres(
 
   function onRejectPostgresQuery(
     query: Query<any, any>,
-    reject: Error | PostgresErrorOptions,
+    reject: Error | (PostgresErrorOptions & { message: string }),
     queries: Query<any, any>[],
   ) {
     reject = wrapPostgresError(reject);
@@ -312,7 +316,7 @@ export interface PostgresDotZig {
   init: (
     onResolveQuery: (
       query: Query<any, any>,
-      result: SQLResultArray,
+      result: SQLResultArray<unknown>,
       commandTag: string,
       count: number,
       queries: any,
@@ -340,7 +344,7 @@ export interface PostgresDotZig {
   createQuery: (
     sql: string,
     values: unknown[],
-    pendingValue: SQLResultArray,
+    pendingValue: SQLResultArray<unknown>,
     columns: string[] | undefined,
     bigint: boolean,
     simple: boolean,
@@ -352,8 +356,8 @@ class PooledPostgresConnection extends BasePooledConnection<$ZigGeneratedClasses
     this.connection = await createPooledConnectionHandle(
       createPostgresConnection,
       this.connectionInfo,
-      this.handleConnected.bind(this),
-      this.handleClose.bind(this),
+      this.nativeCallback(this.handleConnected),
+      this.nativeCallback(this.handleClose),
     );
   }
 
@@ -614,6 +618,8 @@ class Channel {
 
 // A throwing callback is reported as uncaught; it must not skip the callbacks
 // after it, reject listen(), or look like a failed LISTEN to #sweep.
+function invoke(callback: () => void): void;
+function invoke<T>(callback: (arg: T) => void, arg: T): void;
 function invoke<T>(callback: (arg?: T) => void, arg?: T) {
   try {
     callback(arg);
@@ -770,39 +776,45 @@ class ListenConnection {
     const { promise, resolve, reject } = Promise.withResolvers<ListenHandle>();
     let live: ListenHandle | null = null;
 
-    createPooledConnectionHandle(
-      createPostgresConnection,
-      { ...adapter.connectionInfo, idleTimeout: 0, maxLifetime: 0 },
-      (err, conn) => {
-        this.#handshake = null;
-        if (err) return reject(wrapPostgresError(err));
-        if (adapter.closed) {
-          conn.close();
-          return reject(adapter.connectionClosedError());
-        }
-        live = this.#conn = conn;
-        this.#backoffMs = RECONNECT_MIN_MS;
-        conn.onnotification = this.#onNotification;
-        conn.ref();
-        resolve(conn);
-        this.#clearSweep();
-        this.#sweep();
-      },
-      err => {
-        if (live === null) {
-          this.#handshake = null;
-          return reject(wrapPostgresError(err ?? adapter.connectionClosedError()));
-        }
-        if (this.#conn !== live) return;
-        this.#conn = null;
-        for (const entry of this.#channels.values()) entry.ready = null;
-        this.#scheduleSweep();
-      },
-    ).then(handle => {
-      if (handle === null || live !== null) return;
-      if (adapter.closed) handle.close();
-      else this.#handshake = handle;
-    });
+    adapter
+      .runAsOwner(
+        () =>
+          createPooledConnectionHandle(
+            createPostgresConnection,
+            { ...adapter.connectionInfo, idleTimeout: 0, maxLifetime: 0 },
+            adapter.ownerCallback((err, conn) => {
+              this.#handshake = null;
+              if (err) return reject(wrapPostgresError(err));
+              if (adapter.closed) {
+                conn.close();
+                return reject(adapter.connectionClosedError());
+              }
+              live = this.#conn = conn;
+              this.#backoffMs = RECONNECT_MIN_MS;
+              conn.onnotification = this.#onNotification;
+              conn.ref();
+              resolve(conn);
+              this.#clearSweep();
+              this.#sweep();
+            }),
+            adapter.ownerCallback(err => {
+              if (live === null) {
+                this.#handshake = null;
+                return reject(wrapPostgresError(err ?? adapter.connectionClosedError()));
+              }
+              if (this.#conn !== live) return;
+              this.#conn = null;
+              for (const entry of this.#channels.values()) entry.ready = null;
+              this.#scheduleSweep();
+            }),
+          ),
+        undefined,
+      )
+      .then(handle => {
+        if (handle === null || live !== null) return;
+        if (adapter.closed) handle.close();
+        else this.#handshake = handle;
+      });
 
     return promise;
   }

@@ -23,7 +23,7 @@ use bun_standalone_graph::StandaloneModuleGraph;
 // with the CLI build path; live in `bun_bundler_jsc::options_jsc`.
 use bun_bundler_jsc::options_jsc::{compile_target_from_js, compile_target_from_slice};
 
-pub mod js_bundler {
+pub(crate) mod js_bundler {
     use super::*;
     use bun_core::Utf8Bytes;
 
@@ -46,7 +46,7 @@ pub mod js_bundler {
     /// `get`/`contains`/`resolve` live in `bun_bundler::bundle_v2` so the
     /// bundler thread can read it without depending on `bun_runtime`. Only
     /// the JS-aware `from_js` constructor lives here.
-    pub use bun_bundler::bundle_v2::api::JSBundler::FileMap;
+    pub(crate) use bun_bundler::bundle_v2::api::JSBundler::FileMap;
 
     /// Parse the `files` option from JavaScript.
     /// Expected format: `Record<string, string | Blob | File | TypedArray | ArrayBuffer>`.
@@ -104,7 +104,7 @@ pub mod js_bundler {
         Ok(this)
     }
 
-    pub struct Config {
+    pub(crate) struct Config {
         pub(crate) target: Target,
         pub(crate) entry_points: StringSet,
         pub(crate) react_fast_refresh: bool,
@@ -146,6 +146,8 @@ pub mod js_bundler {
         pub(crate) css_chunking: bool,
         /// `minChunkSize`: see `BundleOptions::min_chunk_size`.
         pub(crate) min_chunk_size: Option<u64>,
+        /// `foldChunksForTesting`, read only where `bun:internal-for-testing` resolves: see `BundleOptions::fold_chunks`.
+        pub(crate) fold_chunks: bool,
         pub(crate) module_preload: bool,
         pub(crate) drop: StringSet,
         pub(crate) features: StringSet,
@@ -212,6 +214,7 @@ pub mod js_bundler {
                 metafile_markdown_path: OwnedString::default(),
                 css_chunking: false,
                 min_chunk_size: None,
+                fold_chunks: true,
                 module_preload: true,
                 drop: StringSet::default(),
                 features: StringSet::default(),
@@ -226,7 +229,7 @@ pub mod js_bundler {
         }
     }
 
-    pub struct CompileOptions {
+    pub(crate) struct CompileOptions {
         pub(crate) compile_target: CompileTarget,
         pub(crate) exec_argv: OwnedString,
         pub(crate) executable_path: OwnedString,
@@ -245,6 +248,8 @@ pub mod js_bundler {
         pub(crate) autoload_package_json: bool,
         /// `compile.jitPolicy`: the tier-up threshold scale the executable starts with (1 = normal JIT policy).
         pub(crate) jit_policy: f32,
+        /// `compile.bytecodeOrder`: payload order files, most important first.
+        pub(crate) bytecode_order: Vec<Box<[u8]>>,
     }
 
     impl Default for CompileOptions {
@@ -267,6 +272,7 @@ pub mod js_bundler {
                 autoload_tsconfig: false,
                 autoload_package_json: false,
                 jit_policy: 1.0,
+                bytecode_order: Vec::new(),
             }
         }
     }
@@ -443,6 +449,38 @@ pub mod js_bundler {
                 this.autoload_package_json = autoload_package_json;
             }
 
+            // `false` is "no order file", as in `compile: { bytecodeOrder: haveProfile && path }`.
+            if let Some(bytecode_order) = object.get(global_this, "bytecodeOrder")?
+                && !bytecode_order.is_undefined_or_null()
+                && bytecode_order != JSValue::FALSE
+            {
+                let mut push = |path: JSValue| -> JsResult<()> {
+                    if !path.is_string() {
+                        return Err(global_this.throw_invalid_property_type_value(
+                            b"compile.bytecodeOrder",
+                            b"string or array of strings",
+                            path,
+                        ));
+                    }
+                    let slice = path.to_utf8(global_this)?;
+                    if slice.slice().is_empty() {
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "compile.bytecodeOrder must not contain an empty path"
+                        )));
+                    }
+                    this.bytecode_order.push(Box::from(slice.slice()));
+                    Ok(())
+                };
+                if bytecode_order.js_type().is_array() {
+                    let mut iter = bytecode_order.array_iterator(global_this)?;
+                    while let Some(path) = iter.next()? {
+                        push(path)?;
+                    }
+                } else {
+                    push(bytecode_order)?;
+                }
+            }
+
             if let Some(jit_policy) = object.get(global_this, "jitPolicy")? {
                 if !jit_policy.is_undefined() {
                     if !jit_policy.is_number() {
@@ -472,7 +510,7 @@ pub mod js_bundler {
     }
 
     impl Config {
-        pub fn from_js(
+        pub(crate) fn from_js(
             global_this: &JSGlobalObject,
             config: JSValue,
             plugins: &mut Option<*mut Plugin>,
@@ -848,6 +886,12 @@ pub mod js_bundler {
             }
             if let Some(module_preload) = config.get_boolean_loose(global_this, "modulePreload")? {
                 this.module_preload = module_preload;
+            }
+            if bun_jsc::module_loader::is_allowed_to_use_internal_testing_apis()
+                && let Some(fold_chunks) =
+                    config.get_boolean_loose(global_this, "foldChunksForTesting")?
+            {
+                this.fold_chunks = fold_chunks;
             }
 
             if let Some(min_chunk_size) =
@@ -1338,6 +1382,17 @@ pub mod js_bundler {
                 return Err(global_this.throw_invalid_arguments(format_args!("ESM bytecode requires compile: true. Use format: 'cjs' for bytecode without compile.")));
             }
 
+            if !this.bytecode
+                && this
+                    .compile
+                    .as_ref()
+                    .is_some_and(|compile| !compile.bytecode_order.is_empty())
+            {
+                return Err(global_this.throw_invalid_arguments(format_args!(
+                    "compile.bytecodeOrder requires bytecode: true"
+                )));
+            }
+
             // Validate standalone HTML mode: compile + browser target + all HTML entrypoints
             if this.compile.is_some() && this.target == Target::Browser {
                 let has_all_html = 'brk: {
@@ -1374,7 +1429,7 @@ pub mod js_bundler {
     /// Output path templates for entry points, chunks, and assets. Each
     /// `PathTemplate.data` is owned (`Box<[u8]>`), so no separate backing
     /// string per template is needed.
-    pub struct Names {
+    pub(crate) struct Names {
         pub(crate) entry_point: options::PathTemplate,
         pub(crate) chunk: options::PathTemplate,
         pub(crate) asset: options::PathTemplate,
@@ -1391,14 +1446,18 @@ pub mod js_bundler {
     }
 
     #[derive(Default)]
-    pub struct Minify {
+    pub(crate) struct Minify {
         pub(crate) whitespace: bool,
         pub(crate) identifiers: bool,
         pub(crate) syntax: bool,
         pub(crate) keep_names: bool,
     }
 
-    fn build(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<JSValue> {
+    fn build(
+        global_this: &JSGlobalObject,
+        context: jsc::ContextId,
+        arguments: &[JSValue],
+    ) -> JsResult<JSValue> {
         if arguments.is_empty() || !arguments[0].is_object() {
             return Err(global_this.throw_invalid_arguments(format_args!(
                 "Expected a config object to be passed to Bun.build"
@@ -1432,6 +1491,7 @@ pub mod js_bundler {
             config,
             plugins.and_then(core::ptr::NonNull::new),
             global_this,
+            context,
         );
         completion.promise = jsc::JSPromiseStrong::init(global_this);
         let promise = completion.promise.value();
@@ -1445,7 +1505,11 @@ pub mod js_bundler {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        build(global_this, callframe.arguments())
+        build(
+            global_this,
+            global_this.bun_vm().context_of_caller(callframe).id(),
+            callframe.arguments(),
+        )
     }
 
     // NOTE: `Resolve`/`Load`/`MiniImportRecord`/etc. are owned by
@@ -1455,8 +1519,8 @@ pub mod js_bundler {
     // `bun_event_loop` types and the `Plugin` opaque, neither of which is a T6
     // dependency. Only the JSC-aware bits (`on_defer`, `JSBundlerPlugin__*`
     // C-ABI exports) live here.
-    pub use bun_bundler::bundle_v2::api::JSBundler::{
-        Load, LoadSuccess, LoadValue, Resolve, ResolveSuccess, ResolveValue,
+    pub(crate) use bun_bundler::bundle_v2::api::JSBundler::{
+        Load, LoadDeferred, LoadSuccess, LoadValue, Resolve, ResolveSuccess, ResolveValue,
     };
 
     /// `&mut BundleV2` for the live backref stored on `Resolve`/`Load`.
@@ -1570,9 +1634,8 @@ pub mod js_bundler {
                     .expect("BundleV2.linker.loop must be set before plugins run");
                 match &mut *any_loop.as_ptr() {
                     bun_event_loop::AnyEventLoop::Js { .. } => {
-                        let ct = ConcurrentTask::from_callback(
-                            std::ptr::from_mut::<Load>(self),
-                            on_notify_defer_js,
+                        let ct = ConcurrentTask::create_from(
+                            std::ptr::from_mut::<Load>(self).cast::<LoadDeferred>(),
                         );
                         let poster = (*ctx.as_mut_ptr())
                             .js_poster
@@ -1595,14 +1658,6 @@ pub mod js_bundler {
                 Ok(bv2_plugin(self.bv2).append_defer_promise())
             }
         }
-    }
-
-    fn on_notify_defer_js(load: *mut Load) -> bun_event_loop::JsResult<()> {
-        // SAFETY: task contract — `load` is the live request `on_defer` posted; this runs on the loop
-        // that runs the bundle (bake: the plugins' own), so it is the bundle thread here.
-        let load = unsafe { &mut *load };
-        BundleV2::on_notify_defer(load, bv2_mut(load.bv2));
-        Ok(())
     }
 
     fn on_notify_defer_mini_wrap(load: *mut Load, ctx: *mut BundleV2<'static>) {
@@ -1666,7 +1721,7 @@ pub mod js_bundler {
     /// Opaque FFI handle for the C++ `JSBundlerPlugin`. The opaque type and
     /// `has_any_matches` (the one method `bun_bundler` needs) live in the
     /// lower-tier crate; JSC-aware methods are added here via `PluginJscExt`.
-    pub use bun_bundler::bundle_v2::api::JSBundler::Plugin;
+    pub(crate) use bun_bundler::bundle_v2::api::JSBundler::Plugin;
 
     // `Plugin` is an `opaque_ffi!` handle (`repr(C)` + `UnsafeCell` marker), so
     // `&mut Plugin`/`&Plugin` are ABI-identical to non-null pointers and the
@@ -1709,7 +1764,7 @@ pub mod js_bundler {
     /// JSC-aware methods on the C++ `JSBundlerPlugin` opaque. The opaque type
     /// itself is owned by `bun_bundler` (lower tier, no JSC dep), so these are
     /// added as an extension trait rather than an inherent `impl`.
-    pub trait PluginJscExt {
+    pub(crate) trait PluginJscExt {
         fn create(global: &JSGlobalObject, target: jsc::BunPluginTarget) -> *mut Plugin;
         fn run_on_end_callbacks(
             &mut self,
@@ -1935,16 +1990,29 @@ pub mod js_bundler {
     }
 }
 
-pub use js_bundler as JSBundler;
+pub(crate) use js_bundler as JSBundler;
+
+/// `bun:internal-for-testing`: bundler `Worker`s (one per pool thread a build ran on) not yet torn down.
+#[bun_jsc::host_fn]
+pub(crate) fn js_worker_live_count(
+    _global: &JSGlobalObject,
+    _callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    use core::sync::atomic::Ordering;
+    Ok(JSValue::js_number(
+        bun_bundler::thread_pool::WORKER_LIVE_COUNT.load(Ordering::SeqCst) as f64,
+    ))
+}
+
 /// `jsc.API.JSBundler.Plugin` — re-exported for `crate::bake` (`SplitBundlerOptions.plugin`).
-pub use js_bundler::Plugin;
+pub(crate) use js_bundler::Plugin;
 pub(crate) use js_bundler::PluginJscExt;
 
 /// Full `.classes.ts` payload — wraps a `webcore::Blob` plus
 /// `loader/path/hash/output_kind`. `.sourcemap` lives on the JS wrapper
 /// (`m_sourcemap` WriteBarrier from `cache: true`), not here.
 #[bun_jsc::JsClass(no_constructor)]
-pub struct BuildArtifact {
+pub(crate) struct BuildArtifact {
     pub(crate) blob: Blob,
     pub(crate) loader: bun_ast::Loader,
     pub path: Box<[u8]>,
@@ -1955,7 +2023,7 @@ pub struct BuildArtifact {
 /// `BuildArtifact.kind` — what role an output file plays. Single canonical
 /// definition lives in `bun_bundler::options` (it backs
 /// `OutputFile.output_kind`).
-pub use bun_bundler::options::OutputKind;
+pub(crate) use bun_bundler::options::OutputKind;
 
 /// `JSValue::as(Blob)` BuildArtifact fallback — declared
 /// `extern "Rust"` in `bun_jsc::webcore_types`; link-time resolved.

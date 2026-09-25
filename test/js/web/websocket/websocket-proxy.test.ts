@@ -2,6 +2,10 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as harness from "harness";
 import { tls as tlsCerts } from "harness";
 import type { HttpsProxyAgent as HttpsProxyAgentType } from "https-proxy-agent";
+import { createHash } from "node:crypto";
+import { once } from "node:events";
+import type { AddressInfo } from "node:net";
+import tls from "node:tls";
 import {
   type ClientEvent,
   clientEvents,
@@ -549,6 +553,139 @@ describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
       ws.terminate();
       spinProxy.close();
     }
+  });
+
+  // A server that closes does not wait for the echo of its Close frame. It sends
+  // the frame and ends the TLS session behind it (ws.close() in Bun.serve does),
+  // so the frame and the close_notify alert usually reach the client in one
+  // read. The tunnel's TLS engine used to answer the close_notify with its own
+  // before it handed over the bytes decrypted ahead of it. The echo of the
+  // Close frame then had no TLS session left to go out on, and the client
+  // reported 1006 "Failed to write" instead of the server's close code.
+  describe("server close with the TLS close_notify behind the Close frame", () => {
+    const serverClose: ClientEvent[] = ["m1", "m2", { code: 4001, reason: "bye", wasClean: true }];
+
+    // "direct" is the reference: the same server without a proxy.
+    test.each(["direct", "http", "https"])("Bun.serve origin that calls ws.close() (%s)", async route => {
+      using origin = Bun.serve({
+        port: 0,
+        tls: { key: tlsCerts.key, cert: tlsCerts.cert },
+        fetch(req, server) {
+          if (server.upgrade(req)) return;
+          return new Response("Expected WebSocket", { status: 400 });
+        },
+        websocket: {
+          message(ws) {
+            ws.send("m1");
+            ws.send("m2");
+            ws.close(4001, "bye");
+          },
+        },
+      });
+      using recorded = await startRecordingProxy({ tls: route === "https" });
+      const ws = new WebSocket(`wss://127.0.0.1:${origin.port}`, {
+        ...(route === "direct" ? {} : { proxy: `${route}://127.0.0.1:${recorded.port}` }),
+        tls: { rejectUnauthorized: false },
+      });
+      ws.addEventListener("open", () => ws.send("go"));
+      expect({ events: await clientEvents(ws), requests: recorded.requests }).toEqual({
+        events: serverClose,
+        requests: route === "direct" ? [] : [connectRequest(origin.port)],
+      });
+    });
+
+    // The case above leaves it to the network whether both TLS records reach
+    // the client in one read. This one pins it.
+    test.each(["http", "https"])("Close frame and close_notify in one read (%s proxy)", async scheme => {
+      const frame = (opcode: number, payload: string | Uint8Array) => {
+        const body = Buffer.from(payload);
+        return Buffer.concat([Buffer.from([0x80 | opcode, body.length]), body]);
+      };
+      const closePayload = Buffer.concat([Buffer.from([4001 >> 8, 4001 & 0xff]), Buffer.from("bye")]);
+
+      // Completes the upgrade by hand. Whatever the client sends next is its
+      // "go": answer with two messages and a Close frame, and end the TLS
+      // session in the same call.
+      await using origin = tls.createServer({ key: tlsCerts.key, cert: tlsCerts.cert }, socket => {
+        let request = "";
+        let upgraded = false;
+        socket.on("error", () => {});
+        socket.on("data", chunk => {
+          if (upgraded) {
+            if (!socket.writableEnded) {
+              socket.end(Buffer.concat([frame(0x1, "m1"), frame(0x1, "m2"), frame(0x8, closePayload)]));
+            }
+            return;
+          }
+          request += chunk.toString("latin1");
+          if (!request.includes("\r\n\r\n")) return;
+          upgraded = true;
+          const key = /^sec-websocket-key: (.*)\r$/im.exec(request)![1];
+          const accept = createHash("sha1")
+            .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+            .digest("base64");
+          socket.write(
+            "HTTP/1.1 101 Switching Protocols\r\n" +
+              "Upgrade: websocket\r\n" +
+              "Connection: Upgrade\r\n" +
+              `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
+          );
+        });
+      });
+      origin.listen(0, "127.0.0.1");
+      await once(origin, "listening");
+      const originPort = (origin.address() as AddressInfo).port;
+
+      // The complete TLS records in `bytes`, and the bytes left over behind them.
+      const tlsRecords = (bytes: Buffer) => {
+        let complete = 0;
+        let offset = 0;
+        while (offset + 5 <= bytes.length) {
+          const next = offset + 5 + bytes.readUInt16BE(offset + 3);
+          if (next > bytes.length) break;
+          offset = next;
+          complete++;
+        }
+        return { complete, trailing: bytes.length - offset };
+      };
+      // Armed once the client is open. From then on the server sends exactly
+      // two TLS records: the frames, then the close_notify alert. Hold them
+      // until both are complete and forward them in one write, so the client
+      // decrypts them in one read.
+      let armed = false;
+      let held: Buffer | null = null;
+      const forwardedOnceArmed: ReturnType<typeof tlsRecords>[] = [];
+      using recorded = await startRecordingProxy({
+        tls: scheme === "https",
+        onTargetData(chunk, forward) {
+          let bytes = chunk;
+          if (held !== null) {
+            held = Buffer.concat([held, chunk]);
+            if (tlsRecords(held).complete < 2) return;
+            bytes = held;
+            held = null;
+          }
+          if (armed) forwardedOnceArmed.push(tlsRecords(bytes));
+          forward(bytes);
+        },
+      });
+
+      const ws = new WebSocket(`wss://127.0.0.1:${originPort}`, {
+        proxy: `${scheme}://127.0.0.1:${recorded.port}`,
+        tls: { rejectUnauthorized: false },
+      });
+      ws.addEventListener("open", () => {
+        armed = true;
+        held = Buffer.alloc(0);
+        ws.send("go");
+      });
+      expect({ events: await clientEvents(ws), requests: recorded.requests, forwardedOnceArmed }).toEqual({
+        events: serverClose,
+        requests: [connectRequest(originPort)],
+        // One write to the client carried the record with the frames and the alert.
+        forwardedOnceArmed: [{ complete: 2, trailing: 0 }],
+      });
+    });
   });
 });
 

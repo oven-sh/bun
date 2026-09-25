@@ -1,12 +1,12 @@
 [toolchain]
-channel = "nightly-2026-07-20"
+channel = "nightly-2026-09-15"
 # rust-src is needed for -Zbuild-std (Tier 3 targets like
 # aarch64-unknown-freebsd have no prebuilt std). miri is for
 # `bun run rust:miri`. targets ensures the
 # Tier 2 cross-targets' prebuilt std is installed for THIS toolchain
-# (bootstrap.sh / Dockerfile install only for the *default* toolchain at
-# image-build time, so a `channel` bump here would otherwise leave the
-# pinned nightly without them). Note: rustup ignores this whole file when
+# (CI's images install this same channel with these components and
+# targets, from scripts/build/ci-images/spec.ts; a source lint keeps
+# the two files in step). Note: rustup ignores this whole file when
 # RUSTUP_TOOLCHAIN is set in the env (which CI does to pin across worktree
 # symlinks) — the ninja `rust_build_cross` rule's `rustup target add`
 # self-heals that path. Keep this list as a fallback for direct
@@ -17,7 +17,10 @@ channel = "nightly-2026-07-20"
 # comes with the toolchain install regardless; they're listed here so a dev
 # running `bun run rust:check-all` or `cargo check --target` from any host
 # still gets prebuilt std for every Tier 1/2 triple.
-components = ["rust-src", "rustfmt", "clippy", "miri"]
+# llvm-tools: rustc's llvm-nm/llvm-objdump, which the build's link-input
+# symbol scan uses while rustc's LLVM is newer than clang's (its bitcode is
+# unreadable by the older tools).
+components = ["rust-src", "rustfmt", "clippy", "miri", "llvm-tools"]
 targets = [
   "aarch64-unknown-linux-gnu",
   "x86_64-unknown-linux-gnu",

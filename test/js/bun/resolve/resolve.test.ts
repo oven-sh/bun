@@ -1941,4 +1941,23 @@ describe.concurrent("dot specifiers resolve to the directory index, not a siblin
     expect(stdout).toBe("index\n");
     expect(exitCode).toBe(0);
   });
+
+  it('".." segments that reach the filesystem root are a resolve error in a browser build', async () => {
+    // More ".." segments than any temp directory is deep, so the specifier names the root on every platform.
+    const specifier = Buffer.alloc(64 * 3, "../").toString() + "..";
+    using dir = tempDir("resolve-dotdot-root", {
+      "run.ts": `import ${JSON.stringify(specifier)};`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "run.ts", "--target=browser"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(`error: Could not resolve: ${JSON.stringify(specifier)}`);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
 });

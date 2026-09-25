@@ -11,6 +11,7 @@
 #include "JSBufferEncodingType.h"
 #include <JavaScriptCore/JSArrayBufferView.h>
 #include "BunClientData.h"
+#include "ObjectBindings.h"
 #include "wtf/text/ASCIILiteral.h"
 #include "wtf/text/StringImpl.h"
 #include "wtf/unicode/CharacterNames.h"
@@ -613,12 +614,9 @@ JSC::EncodedJSValue JSStringDecoderConstructor::call(JSC::JSGlobalObject* lexica
         auto clientData = WebCore::clientData(vm);
         JSObject* thisObject = asObject(thisValue);
 
-        // Like the assignments in Node's constructor, `this` gets to reject a property (frozen, Proxy, WebAssembly GC reference).
-        PropertyDescriptor encodingDescriptor(convertEnumerationToJS<BufferEncodingType>(*lexicalGlobalObject, encoding), JSC::PropertyAttribute::DontEnum | 0);
-        thisObject->methodTable()->defineOwnProperty(thisObject, lexicalGlobalObject, clientData->builtinNames().encodingPublicName(), encodingDescriptor, true);
+        Bun::defineOwnDataProperty(lexicalGlobalObject, thisObject, clientData->builtinNames().encodingPublicName(), convertEnumerationToJS<BufferEncodingType>(*lexicalGlobalObject, encoding), JSC::PropertyAttribute::DontEnum | 0);
         RETURN_IF_EXCEPTION(throwScope, {});
-        PropertyDescriptor decoderDescriptor(jsObject, JSC::PropertyAttribute::DontEnum | 0);
-        thisObject->methodTable()->defineOwnProperty(thisObject, lexicalGlobalObject, clientData->builtinNames().decodePrivateName(), decoderDescriptor, true);
+        Bun::defineOwnDataProperty(lexicalGlobalObject, thisObject, clientData->builtinNames().decodePrivateName(), jsObject, JSC::PropertyAttribute::DontEnum | 0);
         RETURN_IF_EXCEPTION(throwScope, {});
         return JSC::JSValue::encode(thisObject);
     }

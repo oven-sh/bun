@@ -33,6 +33,19 @@ ALWAYS_INLINE JSC::JSValue getIfPropertyExistsPrototypePollutionMitigation(JSC::
  */
 JSC::JSValue getOwnPropertyIfExists(JSC::JSGlobalObject* globalObject, JSC::JSObject* object, const JSC::PropertyName& name);
 
+// [[DefineOwnProperty]] of a data property that is not an index, and a throw when `object` rejects it. A plain object takes the direct store.
+ALWAYS_INLINE bool defineOwnDataProperty(JSC::JSGlobalObject* globalObject, JSC::JSObject* object, JSC::PropertyName propertyName, JSC::JSValue value, unsigned attributes)
+{
+    auto& vm = JSC::getVM(globalObject);
+    JSC::Structure* structure = object->structure();
+    if (object->type() == JSC::FinalObjectType && structure->isStructureExtensible() && !JSC::isValidOffset(structure->get(vm, propertyName))) [[likely]] {
+        object->putDirect(vm, propertyName, value, attributes);
+        return true;
+    }
+    JSC::PropertyDescriptor descriptor(value, attributes);
+    return object->methodTable()->defineOwnProperty(object, globalObject, propertyName, descriptor, true);
+}
+
 // Whether `getIteratorResult` runs `get(value)` on a result whose `done` is true. IteratorStepValue never does.
 enum class IteratorDoneValue : uint8_t {
     Read,

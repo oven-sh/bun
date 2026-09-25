@@ -313,6 +313,21 @@ describe("StringDecoder called without new", () => {
   // used to write its two properties onto an explicit receiver directly, which skipped the
   // receiver's own [[DefineOwnProperty]]: a frozen object gained a property, a Proxy saw no trap,
   // and a WebAssembly GC reference aborted the process.
+  // A plain extensible receiver takes a direct store, every other receiver its own [[DefineOwnProperty]].
+  it("every kind of extensible receiver gets the same encoding property and a working decoder", () => {
+    const receivers = [{}, Object.create(null), { encoding: "own" }, [], function () {}, new Date(0), new Map()];
+    for (const receiver of receivers) {
+      expect(RealStringDecoder.call(receiver, "latin1")).toBe(receiver);
+      expect(Object.getOwnPropertyDescriptor(receiver, "encoding")).toEqual({
+        value: "latin1",
+        writable: true,
+        enumerable: false,
+        configurable: true,
+      });
+      expect(RealStringDecoder.prototype.write.call(receiver, Buffer.from([0xe9]))).toBe("é");
+    }
+  });
+
   it("a receiver that is not extensible rejects the decoder state", () => {
     for (const lock of [Object.freeze, Object.seal, Object.preventExtensions]) {
       const receiver = lock({});

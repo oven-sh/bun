@@ -1308,7 +1308,7 @@ describe("native EventEmitter with a receiver that is not an emitter", () => {
   });
 
   // In a subprocess because this aborted the process.
-  test("a WebAssembly GC reference as the receiver throws a TypeError from the methods that assign", async () => {
+  test.concurrent("a WebAssembly GC reference as the receiver throws from the methods that assign", async () => {
     const src = `
       // (module (type $s (struct (field (mut i32))))
       //   (func (export "mk") (result (ref null $s)) struct.new_default $s))
@@ -1363,17 +1363,24 @@ describe("native EventEmitter with a receiver that is not an emitter", () => {
     expect(exitCode).toBe(0);
   });
 
-  // In a subprocess because a collected emitter is a use after free. A method that only reads runs
-  // on an emitter that nothing else references, and the event name conversion can run user code.
-  test("the emitter of a reading method survives a collection during the call", async () => {
+  test("removeListener checks the listener when there is no emitter", () => {
+    expect(() => nativeProto.removeListener.call({}, "x", 5)).toThrow(TypeError);
+  });
+
+  // In a subprocess because a collected emitter is a use after free. `this._events` is the only
+  // reference to the emitter, and the event name conversion runs user code that can delete it.
+  test.concurrent("the emitter survives when the call deletes this._events and collects", async () => {
     const src = `
       let wrong = 0;
       for (let i = 0; i < 20; i++) {
+        const receiver = {};
+        process.on.call(receiver, "x", () => {});
         const keep = [];
-        const count = process.listenerCount.call({}, {
+        const count = process.listenerCount.call(receiver, {
           toString() {
+            delete receiver._events;
             Bun.gc(true);
-            // Emitters with listeners, to take the memory of a collected one.
+            // Emitters with two listeners, to take the memory of a collected one.
             for (let j = 0; j < 50; j++) {
               const other = {};
               process.on.call(other, "x", () => {});
@@ -1383,13 +1390,14 @@ describe("native EventEmitter with a receiver that is not an emitter", () => {
             return "x";
           },
         });
-        if (count !== 0) wrong++;
+        if (count !== 1) wrong++;
       }
       console.log(wrong);
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", src],
-      env: bunEnv,
+      // Malloc=1: the emitter comes from the system allocator, so a sanitizer build reports the read.
+      env: { ...bunEnv, Malloc: "1" },
       stdout: "pipe",
       stderr: "pipe",
     });

@@ -7,11 +7,12 @@ namespace WebCore {
 
 // For a `this` that is not a JSEventEmitter and has none in `this._events`:
 enum class DefineEvents : bool {
-    No, // run on a new emitter and leave `this` alone (the methods that only read `this._events` in Node)
-    Yes, // store the new emitter as `this._events` (the methods that assign to `this` in Node)
+    No, // the method gets nullptr and leaves `this` alone (the methods that only read `this._events` in Node)
+    Yes, // the method gets a new emitter, stored as `this._events` (the methods that assign to `this` in Node)
 };
 
-JSEventEmitter* jsEventEmitterCastFast(VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSValue thisValue, DefineEvents);
+// The emitter of a `this` that is not a JSEventEmitter: the one in `this._events`, else as DefineEvents says.
+JSEventEmitter* jsEventEmitterCastFast(VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* thisObject, DefineEvents);
 
 template<>
 class IDLOperation<JSEventEmitter> {
@@ -26,15 +27,18 @@ public:
         auto throwScope = DECLARE_THROW_SCOPE(vm);
 
         auto thisValue = callFrame.thisValue().toThis(&lexicalGlobalObject, JSC::ECMAMode::strict());
-        auto* thisObject = jsEventEmitterCastFast(vm, &lexicalGlobalObject, thisValue, defineEvents);
-        RETURN_IF_EXCEPTION(throwScope, {});
-        if (!thisObject) [[unlikely]] {
-            return throwThisTypeError(lexicalGlobalObject, throwScope, "EventEmitter", operationName);
+        auto* emitter = dynamicDowncast<JSEventEmitter>(thisValue);
+        if (!emitter) [[unlikely]] {
+            if (!thisValue.isObject())
+                return throwThisTypeError(lexicalGlobalObject, throwScope, "EventEmitter", operationName);
+            emitter = jsEventEmitterCastFast(vm, &lexicalGlobalObject, asObject(thisValue), defineEvents);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            ASSERT(emitter || defineEvents == DefineEvents::No);
         }
 
-        // `operation` runs user code (toString of the event name), and nothing else references a DefineEvents::No emitter.
-        JSC::EnsureStillAliveScope keepEmitterAlive(thisObject);
-        RELEASE_AND_RETURN(throwScope, (operation(&lexicalGlobalObject, &callFrame, thisObject)));
+        // `this._events` can be the only reference to the emitter, and user code in `operation` can delete it.
+        JSC::EnsureStillAliveScope keepEmitterAlive(emitter);
+        RELEASE_AND_RETURN(throwScope, (operation(&lexicalGlobalObject, &callFrame, emitter)));
     }
 };
 

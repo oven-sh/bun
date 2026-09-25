@@ -3133,6 +3133,9 @@ JSC_DEFINE_CUSTOM_GETTER(processPpid, (JSC::JSGlobalObject * globalObject, JSC::
 #endif
 }
 
+// The setter that processObjectTable names for `ppid`. With none, JSC stores an assigned value as it does for a data property.
+static constexpr std::nullptr_t setProcessPpid = nullptr;
+
 static JSValue constructArgv0(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
@@ -5040,6 +5043,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   openStdin                        Process_functionOpenStdin                           Function 0
   pid                              constructPid                                        PropertyCallback
   platform                         constructPlatform                                   PropertyCallback
+  ppid                             processPpid                                         CustomValue
   reallyExit                       Process_functionReallyExit                          Function 1
   ref                              Process_ref                                         Function 1
   release                          constructProcessReleaseObject                       PropertyCallback
@@ -5113,8 +5117,6 @@ void Process::finishCreation(JSC::VM& vm)
 
     putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("process"_s)), 0);
     putDirect(vm, Identifier::fromString(vm, "_exiting"_s), jsBoolean(false), 0);
-    // Not in the table above: a row there needs a setter. CustomValue with no setter is Node's shape, a writable data property whose value is live.
-    putDirectCustomAccessor(vm, Identifier::fromString(vm, "ppid"_s), CustomGetterSetter::create(vm, processPpid, nullptr), PropertyAttribute::CustomValue | 0);
 
     // No-op stubs Node only has on the main thread; a worker_threads Worker's process lacks them.
     if (!WebCore::clientData(vm)->isNodeWorkerVM()) {

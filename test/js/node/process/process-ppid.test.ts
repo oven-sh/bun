@@ -48,9 +48,40 @@ describe("process.ppid is a data property", () => {
     expect(Reflect.set(process, "ppid", 7, refusing)).toBe(false);
   });
 
-  // In a subprocess because the first part aborted the process and the second part replaces process.ppid.
-  test("a WebAssembly GC reference as the receiver is left alone, and process keeps an assigned value", async () => {
+  // In a subprocess because it seals or freezes process. The setter replaced the property of a
+  // sealed or frozen process with a configurable one, so process was not sealed or frozen after it.
+  test.concurrent.each([
+    ["seal", { ppid: "assigned", isSealed: true, isFrozen: false }],
+    ["freeze", { ppid: "number", isSealed: true, isFrozen: true }],
+  ])("process stays as Object.%s left it after an assignment", async (lock, expected) => {
     const src = `
+      Object.${lock}(process);
+      try {
+        process.ppid = "assigned";
+      } catch {}
+      console.log(JSON.stringify({
+        ppid: process.ppid === "assigned" ? "assigned" : typeof process.ppid,
+        isSealed: Object.isSealed(process),
+        isFrozen: Object.isFrozen(process),
+      }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(expected);
+    expect(exitCode).toBe(0);
+  });
+
+  // In a subprocess because the first part aborted the process and the second part replaces process.ppid.
+  test.concurrent(
+    "a WebAssembly GC reference as the receiver is left alone, and process keeps an assigned value",
+    async () => {
+      const src = `
       // (module (type $s (struct (field (mut i32))))
       //   (func (export "mk") (result (ref null $s)) struct.new_default $s))
       const bytes = new Uint8Array([
@@ -66,15 +97,16 @@ describe("process.ppid is a data property", () => {
       process.ppid = "assigned";
       console.log(JSON.stringify(Object.getOwnPropertyDescriptor(process, "ppid")));
     `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", src],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout.split("\n")).toEqual(["false", JSON.stringify(dataProperty("assigned")), ""]);
-    expect(exitCode).toBe(0);
-  });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.split("\n")).toEqual(["false", JSON.stringify(dataProperty("assigned")), ""]);
+      expect(exitCode).toBe(0);
+    },
+  );
 });

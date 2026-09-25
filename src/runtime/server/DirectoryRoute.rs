@@ -12,7 +12,9 @@ use bun_resolver::fs::StatHash;
 use bun_sys::{self, Fd, File};
 use bun_uws::{AnyRequest, AnyResponse};
 
-use crate::server::file_response_stream::{StartOptions as FileResponseStreamOptions, StreamOwner};
+use crate::server::file_response_stream::{
+    StartOptions as FileResponseStreamOptions, StreamOwner, UnsizedBody,
+};
 use crate::server::file_route::{status_for_preconditions, write_any_status, write_content_range};
 use crate::server::jsc::{JSGlobalObject, JsResult};
 use crate::server::{AnyServer, FileResponseStream, HTTPStatusText, RangeRequest};
@@ -155,14 +157,33 @@ impl DirectoryRoute {
         };
 
         let size: u64 = u64::try_from(stat.st_size.max(0)).expect("int cast");
+        let mut unsized_body: Option<UnsizedBody> = None;
+        if size == 0 {
+            match UnsizedBody::probe(file.handle(), (0, u64::MAX), false) {
+                Ok(body) => unsized_body = body,
+                Err(_) => {
+                    write_miss(&mut req, resp);
+                    return;
+                }
+            }
+        }
 
-        let (last_modified_ms, lm_buf, lm_len) = this.stat_cache_lookup(rel, &stat);
+        // The size and the mtime of such a file say nothing about its content.
+        let (last_modified_ms, lm_buf, lm_len) = if unsized_body.is_some() {
+            (0, [0u8; 32], 0)
+        } else {
+            this.stat_cache_lookup(rel, &stat)
+        };
         let last_modified = (lm_len > 0).then(|| &lm_buf[..lm_len]);
 
         let mut etag_buf = [0u8; 40];
-        let etag = format_weak_etag(&mut etag_buf, size, last_modified_ms);
+        let etag = if unsized_body.is_none() {
+            Some(format_weak_etag(&mut etag_buf, size, last_modified_ms))
+        } else {
+            None
+        };
 
-        let range = if method == Method::GET || method == Method::HEAD {
+        let range = if (method == Method::GET || method == Method::HEAD) && unsized_body.is_none() {
             RangeRequest::from_request(&req, size)
         } else {
             RangeRequest::Result::None
@@ -172,10 +193,19 @@ impl DirectoryRoute {
             &req,
             method,
             200,
-            Some(etag),
+            etag,
             (last_modified_ms > 0).then_some(last_modified_ms),
             range,
         );
+        if let Some(body) = &mut unsized_body
+            && method != Method::HEAD
+            && status_code != 412
+            && !HTTPStatusText::is_null_body(status_code)
+            && body.fill(file.handle()).is_err()
+        {
+            write_miss(&mut req, resp);
+            return;
+        }
 
         req.set_yield(false);
         write_any_status(resp, status_code);
@@ -193,7 +223,9 @@ impl DirectoryRoute {
         if let Some(lm) = last_modified {
             resp.write_header(b"last-modified", lm);
         }
-        resp.write_header(b"etag", etag);
+        if let Some(etag) = etag {
+            resp.write_header(b"etag", etag);
+        }
         if !matches!(resp, AnyResponse::H3(_)) {
             if let Some(srv) = this.server.get() {
                 if let Some(alt) = srv.h3_alt_svc() {
@@ -221,18 +253,31 @@ impl DirectoryRoute {
                 return;
             }
             RangeRequest::Result::None => {
-                resp.write_header(b"accept-ranges", b"bytes");
+                if unsized_body.is_none() {
+                    resp.write_header(b"accept-ranges", b"bytes");
+                }
                 (0, size)
             }
         };
+        let body_len = match &unsized_body {
+            Some(body) => body.whole_len(),
+            None => Some(body_len),
+        };
 
-        if !resp.state().has_written_content_length_header() {
-            resp.write_header_int(b"content-length", body_len);
+        if let Some(len) = body_len
+            && !resp.state().has_written_content_length_header()
+        {
+            resp.write_header_int(b"content-length", len);
             resp.mark_wrote_content_length_header();
         }
 
         if method == Method::HEAD {
             resp.end_without_body(resp.should_close_connection());
+            return;
+        }
+
+        if body_len == Some(0) {
+            resp.end(b"", resp.should_close_connection());
             return;
         }
 
@@ -243,6 +288,16 @@ impl DirectoryRoute {
             size
         );
 
+        let (offset, limit) = match unsized_body {
+            Some(body) => {
+                let Some(rest) = body.send(resp) else {
+                    return;
+                };
+                (rest.offset, Some(rest.limit))
+            }
+            None => (body_offset, None),
+        };
+
         let server = this.server.get().unwrap();
         FileResponseStream::start(FileResponseStreamOptions {
             fd: file.into_raw(),
@@ -251,8 +306,9 @@ impl DirectoryRoute {
             vm: bun_ptr::BackRef::new(server.vm()),
             file_type: FileType::File,
             pollable: false,
-            offset: body_offset,
-            length: Some(body_len),
+            offset,
+            length: body_len,
+            limit,
             idle_timeout: server.config().idle_timeout,
             owner: StreamOwner::DirectoryRoute(guard.into_route()),
         });

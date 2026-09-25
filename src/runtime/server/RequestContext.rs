@@ -275,6 +275,7 @@ mod NativePromiseContext {
     }
 }
 use crate::node::types::PathLikeExt as _;
+use crate::server::file_response_stream::UnsizedBody;
 use crate::server::jsc::CallFrame;
 use crate::server::{AnyRequestContext, FileResponseStream, HTTPStatusText, file_response_stream};
 use crate::webcore::blob::BlobExt as _;
@@ -1803,15 +1804,7 @@ where
                 if auto_close {
                     fd.close();
                 }
-                // Attach the path for the Path arm and the fd for the Fd arm.
-                let js_err = match &file.pathlike {
-                    crate::webcore::node_types::PathOrFileDescriptor::Path(p) => {
-                        err.with_path(p.slice()).to_js(global_this)
-                    }
-                    crate::webcore::node_types::PathOrFileDescriptor::Fd(pathlike_fd) => {
-                        err.with_fd(*pathlike_fd).to_js(global_this)
-                    }
-                };
+                let js_err = file_error_to_js(&err, &file.pathlike, global_this);
                 return self.run_error_handler(js_err);
             }
         };
@@ -1855,6 +1848,21 @@ where
             _ => unreachable!(),
         };
         let stat_size: BlobSizeType = BlobSizeType::try_from(stat.st_size.max(0)).unwrap();
+        if is_regular && stat_size == 0 && original_size > 0 {
+            let window = (blob_offset as u64, original_size as u64);
+            let sends_body = self.method.has_body();
+            match UnsizedBody::read(fd, window, sends_body, auto_close) {
+                Ok(None) => {}
+                Ok(Some(body)) => return self.send_unsized_file(fd, auto_close, body),
+                Err(err) => {
+                    if auto_close {
+                        fd.close();
+                    }
+                    let js_err = file_error_to_js(&err, &file.pathlike, global_this);
+                    return self.run_error_handler(js_err);
+                }
+            }
+        }
         if let AnyBlob::Blob(b) = blob_ref {
             b.size.set(if is_regular {
                 stat_size
@@ -1970,6 +1978,25 @@ where
             return;
         }
 
+        self.stream_file(FileBody {
+            fd,
+            auto_close,
+            file_type,
+            pollable,
+            offset: sendfile.offset as u64,
+            length: if is_regular {
+                Some(sendfile.remain as u64)
+            } else {
+                None
+            },
+            limit: None,
+        });
+    }
+
+    /// Hands the body to a `FileResponseStream`, after the head is written.
+    #[inline(always)]
+    fn stream_file(&self, body: FileBody) {
+        let resp = self.resp.get().expect("infallible: resp bound");
         // FileResponseStream registers its own onAborted/onWritable with itself
         // as userData; any later setAbortHandler()/onWritable() from this
         // RequestContext would replace them and FileResponseStream would never
@@ -1985,18 +2012,15 @@ where
 
         let server = self.server();
         FileResponseStream::start(file_response_stream::StartOptions {
-            fd,
-            auto_close,
+            fd: body.fd,
+            auto_close: body.auto_close,
             resp,
             vm: bun_ptr::BackRef::new(server.vm()),
-            file_type,
-            pollable,
-            offset: sendfile.offset as u64,
-            length: if is_regular {
-                Some(sendfile.remain as u64)
-            } else {
-                None
-            },
+            file_type: body.file_type,
+            pollable: body.pollable,
+            offset: body.offset,
+            length: body.length,
+            limit: body.limit,
             idle_timeout: server.config().idle_timeout,
             owner: file_response_stream::StreamOwner::Ctx {
                 ctx: self.as_ctx_ptr().cast::<c_void>(),
@@ -2005,6 +2029,57 @@ where
                 on_error: Self::on_file_stream_error,
             },
         });
+    }
+
+    /// Answers with a regular file whose `st_size` is 0 and whose first read found bytes: no Range, and `Content-Length` only when the reads reached the end of the body.
+    #[cold]
+    #[inline(never)]
+    fn send_unsized_file(&self, fd: bun_sys::Fd, auto_close: bool, body: UnsizedBody) {
+        let resp = self.resp.get().expect("infallible: resp bound");
+        let length = body.whole_len();
+        if let (AnyBlob::Blob(blob), Some(length)) = (self.blob.get(), length) {
+            blob.size.set(length as BlobSizeType);
+        }
+        self.flags.set_needs_content_length(length.is_some());
+
+        if self.method.has_body() && length.is_none() {
+            resp.run_corked_with_type(Self::render_metadata_corked, self.as_ctx_ptr());
+            let rest = body.write_start(resp);
+            return self.stream_file(FileBody {
+                fd,
+                auto_close,
+                file_type: bun_io::FileType::File,
+                pollable: false,
+                offset: rest.offset,
+                length: None,
+                limit: Some(rest.limit),
+            });
+        }
+
+        if auto_close {
+            fd.close();
+        }
+        let mut send = (self, &body);
+        resp.run_corked_with_type(
+            |send: *mut (&Self, &UnsizedBody)| {
+                // SAFETY: `send` is a stack local threaded through the synchronous cork call.
+                let (this, body) = unsafe { *send };
+                this.render_metadata();
+                let close = this.should_close_connection();
+                if this.method.has_body() {
+                    return this.end(body.bytes(), close);
+                }
+                if body.whole_len().is_some() {
+                    return this.end(b"", close);
+                }
+                // `end` would add `Content-Length: 0`.
+                if let Some(resp) = this.resp.get() {
+                    resp.write_mark();
+                }
+                this.end_without_body(close);
+            },
+            &raw mut send,
+        );
     }
 
     fn do_render_with_body_locked(this: NonNull<c_void>, value: &mut Body::Value) {
@@ -4614,6 +4689,18 @@ pub(crate) struct SendfileContext {
     pub(crate) total: BlobSizeType,
 }
 
+/// The open file `stream_file` hands to a `FileResponseStream`.
+#[derive(Clone, Copy)]
+struct FileBody {
+    fd: bun_sys::Fd,
+    auto_close: bool,
+    file_type: bun_io::FileType,
+    pollable: bool,
+    offset: u64,
+    length: Option<u64>,
+    limit: Option<u64>,
+}
+
 // All flags are bool (with two debug-conditional ones). We keep all bits in
 // every build and just gate the `is_web_browser_navigation` / `has_finalized`
 // accessors on the const params.
@@ -4747,6 +4834,19 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
         let mut bits = self.0.get();
         bits.set(FlagsBits::HAS_FINALIZED, v);
         self.0.set(bits);
+    }
+}
+
+/// The error of a syscall on the file that `pathlike` names, with the path or the descriptor attached.
+fn file_error_to_js(
+    err: &bun_sys::Error,
+    pathlike: &crate::webcore::node_types::PathOrFileDescriptor,
+    global_this: &JSGlobalObject,
+) -> JSValue {
+    use crate::webcore::node_types::PathOrFileDescriptor;
+    match pathlike {
+        PathOrFileDescriptor::Path(path) => err.with_path(path.slice()).to_js(global_this),
+        PathOrFileDescriptor::Fd(fd) => err.with_fd(*fd).to_js(global_this),
     }
 }
 

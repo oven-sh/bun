@@ -106,9 +106,10 @@ pub(crate) struct StartOptions {
     pub pollable: bool,
     /// Byte offset into the file to begin reading from.
     pub offset: u64,
-    /// Maximum bytes to send; `None` reads to EOF. For regular files this
-    /// should be `stat.size - offset` (after Range/slice clamping).
+    /// The length the caller framed with `Content-Length` (for a regular file, `stat.size - offset` after Range/slice clamping); `None` when it framed none and the body runs to EOF.
     pub length: Option<u64>,
+    /// Read cap of a `length: None` body: what is left of a slice window.
+    pub limit: Option<u64>,
     pub idle_timeout: u8,
     pub owner: StreamOwner,
 }
@@ -235,7 +236,7 @@ impl FileResponseStream {
                 reader.flags.insert(ReaderFlags::SOCKET);
             }
             // The reader reports the end of the body as EOF, so `on_read_chunk` ends the response there like at a real EOF.
-            reader.set_limit(opts.length.map(|len| len as usize));
+            reader.set_limit(opts.length.or(opts.limit).map(|len| len as usize));
             reader.set_parent(this.cast::<c_void>());
         });
 
@@ -652,6 +653,157 @@ impl Drop for FileResponseStream {
             #[cfg(not(windows))]
             Closer::close(self.fd.get(), ());
         }
+    }
+}
+
+/// The first bytes of a regular file whose `st_size` is 0, read before the response is framed: procfs and cgroupfs files report 0 and have content, so only the reads give a length, and the `stat` gives no Range and no validator.
+pub(crate) struct UnsizedBody {
+    buf: UnsizedBuf,
+    len: usize,
+    /// A read returned 0 or the window is used up.
+    whole: bool,
+    /// `pread` at `offset`; otherwise `read` from the file position, which moves.
+    pread: bool,
+    offset: u64,
+    window: u64,
+}
+
+enum UnsizedBuf {
+    Scratch(bun_io::PipeReadScratchGuard<'static>),
+    /// A read further up the stack holds the scratch.
+    Heap(Box<[u8]>),
+}
+
+impl core::ops::Deref for UnsizedBuf {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        match self {
+            UnsizedBuf::Scratch(scratch) => scratch,
+            UnsizedBuf::Heap(heap) => heap,
+        }
+    }
+}
+
+impl core::ops::DerefMut for UnsizedBuf {
+    fn deref_mut(&mut self) -> &mut [u8] {
+        match self {
+            UnsizedBuf::Scratch(scratch) => scratch,
+            UnsizedBuf::Heap(heap) => heap,
+        }
+    }
+}
+
+/// Where the rest of a body is, after `UnsizedBody` sent its start.
+pub(crate) struct UnsizedRest {
+    pub offset: u64,
+    pub limit: u64,
+}
+
+impl UnsizedBody {
+    /// No file on Windows hides its size, and not every handle that reaches `probe` is open for synchronous reads there.
+    pub(crate) const SUPPORTED: bool = cfg!(not(windows));
+
+    /// `probe`, then `fill` when the response sends a body; when it sends none, the file position of a descriptor the caller does not own stays.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn read(
+        fd: Fd,
+        window: (u64, u64),
+        sends_body: bool,
+        own_fd: bool,
+    ) -> sys::Result<Option<UnsizedBody>> {
+        let mut body = Self::probe(fd, window, !own_fd && !sends_body)?;
+        if sends_body && let Some(body) = &mut body {
+            body.fill(fd)?;
+        }
+        Ok(body)
+    }
+
+    /// One read of at most `window` bytes at `offset`; `None` when the file is empty. `keep_position` reads with `pread`.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn probe(
+        fd: Fd,
+        (offset, window): (u64, u64),
+        keep_position: bool,
+    ) -> sys::Result<Option<UnsizedBody>> {
+        if !Self::SUPPORTED {
+            return Ok(None);
+        }
+        debug_assert!(window > 0);
+        let vm = VirtualMachine::get();
+        let ctx = EventLoopHandle::init(vm.event_loop().cast::<()>()).as_event_loop_ctx();
+        let buf = match ctx.claim_pipe_read_scratch() {
+            Some(scratch) => UnsizedBuf::Scratch(scratch),
+            None => UnsizedBuf::Heap(
+                vec![0; bun_io::pipe_read_scratch::PIPE_READ_BUFFER_SIZE].into_boxed_slice(),
+            ),
+        };
+        let mut body = UnsizedBody {
+            buf,
+            len: 0,
+            whole: false,
+            pread: offset > 0 || keep_position,
+            offset,
+            window,
+        };
+        body.read_once(fd)?;
+        Ok((body.len > 0).then_some(body))
+    }
+
+    /// Reads until EOF, the end of the window, or a full buffer.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn fill(&mut self, fd: Fd) -> sys::Result<()> {
+        while !self.whole && self.len < self.buf.len() {
+            self.read_once(fd)?;
+        }
+        Ok(())
+    }
+
+    fn read_once(&mut self, fd: Fd) -> sys::Result<()> {
+        let len = self.len;
+        let end = (self.buf.len() as u64).min(self.window) as usize;
+        let dst = &mut self.buf[len..end];
+        let n = if self.pread {
+            let at = i64::try_from(self.offset + len as u64).expect("int cast");
+            sys::pread(fd, dst, at)?
+        } else {
+            sys::read(fd, dst)?
+        };
+        self.len += n;
+        self.whole = n == 0 || self.len as u64 == self.window;
+        Ok(())
+    }
+
+    pub(crate) fn bytes(&self) -> &[u8] {
+        &self.buf[..self.len]
+    }
+
+    /// The length of the body, once the reads reached its end.
+    pub(crate) fn whole_len(&self) -> Option<u64> {
+        self.whole.then_some(self.len as u64)
+    }
+
+    /// Writes what was read as the start of a body that runs to EOF; a `FileResponseStream` continues at the returned place.
+    pub(crate) fn write_start(self, resp: AnyResponse) -> UnsizedRest {
+        debug_assert!(!self.whole);
+        // The reader meets the backpressure at its own first write and waits there.
+        let _ = resp.write(self.bytes());
+        let len = self.len as u64;
+        UnsizedRest {
+            offset: if self.pread { self.offset + len } else { 0 },
+            limit: self.window - len,
+        }
+    }
+
+    /// Ends the response with the body when the reads reached its end; otherwise as `write_start`.
+    pub(crate) fn send(self, resp: AnyResponse) -> Option<UnsizedRest> {
+        if self.whole {
+            resp.end(self.bytes(), resp.should_close_connection());
+            return None;
+        }
+        Some(self.write_start(resp))
     }
 }
 

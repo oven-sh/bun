@@ -490,14 +490,15 @@ pub mod api {
                 }
             }
 
-            /// [`server_name`](Self::server_name) as bytes; empty when unset.
+            /// [`server_name`](Self::server_name) as the name a certificate carries: an IPv6 literal without its brackets. Empty when unset.
             pub(crate) fn server_name_bytes(&self) -> &[u8] {
                 let server_name = self.server_name();
                 if server_name.is_null() {
                     return b"";
                 }
                 // SAFETY: NUL-terminated C string that the boxed SSLConfig owns.
-                unsafe { core::ffi::CStr::from_ptr(server_name) }.to_bytes()
+                let name = unsafe { core::ffi::CStr::from_ptr(server_name) }.to_bytes();
+                bun_core::ip_address::strip_ipv6_brackets(name)
             }
 
             /// `SSLConfig.reject_unauthorized` — non-zero rejects on verify error.
@@ -508,6 +509,20 @@ pub mod api {
                     // SAFETY: live boxed SSLConfig.
                     Some(p) => unsafe { (hooks().ssl_config_reject_unauthorized)(p.as_ptr()) },
                 }
+            }
+
+            /// `server_name` as SNI. `None` when unset or an IP literal, bracketed or not (RFC 6066 section 3).
+            pub(crate) fn sni(&self) -> Option<&core::ffi::CStr> {
+                let server_name = self.server_name();
+                if server_name.is_null() {
+                    return None;
+                }
+                // SAFETY: NUL-terminated C string owned by the boxed SSLConfig
+                // for `self`'s lifetime.
+                let name = unsafe { bun_core::ffi::cstr(server_name) };
+                let bare = bun_core::ip_address::strip_ipv6_brackets(name.to_bytes());
+                let bracketed = bare.len() != name.to_bytes().len();
+                (!bracketed && !bun_core::ip_address::is_ip_address(bare)).then_some(name)
             }
 
             /// `SSLConfig.fromJS(vm, global, value)` — VM is accepted but

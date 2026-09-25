@@ -425,6 +425,12 @@ function onUpgradedClose(self, connection) {
 function destroyWhenUpgradedCloses(self, connection) {
   connection.once("close", (self[kOnUpgradedClose] = onUpgradedClose.bind(null, self, connection)));
 }
+// Node's wrap 'error' -> _emitTLSError. Not for a net.Socket: a listener there makes its close synthesize ECONNRESET.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L65
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L977
+function forwardUpgradedError(self, connection) {
+  if (!(connection instanceof Socket)) connection.on("error", err => self._emitTLSError(err));
+}
 // The wrapped socket reports nothing and closes with the TLS socket: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L676-L688
 function closeWithTLSSocket(self, raw) {
   const tlsSocket = raw[kAdoptedTLSRaw];
@@ -2216,6 +2222,7 @@ Socket.prototype.connect = function connect(...args) {
           connection.on("end", events[1]);
           connection.on("drain", events[2]);
           connection.on("close", events[3]);
+          forwardUpgradedError(this, connection);
           this._handle = result;
         } else {
           // upgradeTLS requires an established socket; a socket that is still
@@ -2269,6 +2276,7 @@ Socket.prototype.connect = function connect(...args) {
                 connection.on("end", events[1]);
                 connection.on("drain", events[2]);
                 connection.on("close", events[3]);
+                forwardUpgradedError(this, connection);
                 this._handle = result;
               } else {
                 this[kupgraded] = connection;
@@ -2578,6 +2586,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
     connection.on("end", events[1]);
     connection.on("drain", events[2]);
     connection.on("close", events[3]);
+    forwardUpgradedError(this, connection);
     this[kupgraded] = connection;
     this._handle = result;
     return;
@@ -2608,6 +2617,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
       connection.on("end", events[1]);
       connection.on("drain", events[2]);
       connection.on("close", events[3]);
+      forwardUpgradedError(this, connection);
       this._handle = result;
       this.emit(kUpgradeAttached);
       return;

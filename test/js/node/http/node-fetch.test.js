@@ -1,6 +1,6 @@
 import * as vercelFetch from "@vercel/fetch";
 import * as iso from "isomorphic-fetch";
-import fetch2, { fetch, Headers, Request, Response } from "node-fetch";
+import fetch2, { AbortError, fetch, FetchError, Headers, Request, Response } from "node-fetch";
 import { once } from "node:events";
 import http from "node:http";
 import * as stream from "stream";
@@ -415,6 +415,30 @@ test("node-fetch fetch() rejects for a Writable request body", async () => {
 test("node-fetch json() resolves null for a body that is the JSON text null", async () => {
   using server = Bun.serve({ port: 0, fetch: () => new Response("null") });
   expect(await (await fetch2(server.url)).json()).toBeNull();
+});
+
+test("node-fetch FetchError and AbortError match node-fetch's error classes", () => {
+  const error = new FetchError("request to http://example.test/ failed", "system", {
+    code: "ECONNRESET",
+    syscall: "read",
+  });
+  expect(error).toBeInstanceOf(Error);
+  expect(error.name).toBe("FetchError");
+  expect(String(error)).toBe("FetchError: request to http://example.test/ failed");
+  expect(Object.prototype.toString.call(error)).toBe("[object FetchError]");
+  expect(error.type).toBe("system");
+  expect(error.code).toBe("ECONNRESET");
+  expect(error.errno).toBe("ECONNRESET");
+  expect(error.erroredSysCall).toBe("read");
+
+  const plain = new FetchError("invalid json", "invalid-json");
+  expect(plain.name).toBe("FetchError");
+  expect("code" in plain).toBe(false);
+
+  const aborted = new AbortError("The operation was aborted.");
+  expect(aborted).toBeInstanceOf(Error);
+  expect(aborted.name).toBe("AbortError");
+  expect(aborted.type).toBe("aborted");
 });
 
 test("node-fetch request body streams properly", async () => {

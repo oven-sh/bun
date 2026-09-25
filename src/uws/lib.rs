@@ -167,8 +167,8 @@ pub mod ssl_wrapper {
             SSL_get_rbio, SSL_get_shutdown, SSL_get_verify_result, SSL_get_wbio,
             SSL_is_init_finished, SSL_new, SSL_pending, SSL_read, SSL_renegotiate,
             SSL_set_accept_state, SSL_set_bio, SSL_set_connect_state, SSL_set_renegotiate_mode,
-            SSL_set_verify, SSL_set0_verify_cert_store, SSL_shutdown, SSL_write, X509_STORE,
-            X509_STORE_CTX, ssl_renegotiate_explicit, ssl_renegotiate_never,
+            SSL_set_session_id_context, SSL_set_verify, SSL_set0_verify_cert_store, SSL_shutdown,
+            SSL_write, X509_STORE, X509_STORE_CTX, ssl_renegotiate_explicit, ssl_renegotiate_never,
         };
     }
 
@@ -471,6 +471,8 @@ pub mod ssl_wrapper {
                         boring_sys::ssl_renegotiate_explicit,
                     );
                     boring_sys::SSL_set_connect_state(ssl.as_ptr());
+                    // A client keeps no session id context (see `us_internal_ssl_attach`).
+                    boring_sys::SSL_set_session_id_context(ssl.as_ptr(), core::ptr::null(), 0);
                     // Mirror `us_internal_ssl_attach`: a SecureContext is
                     // mode-neutral, so a `tls.connect()` without
                     // `ca`/`requestCert` hands us a CTX with VERIFY_NONE and

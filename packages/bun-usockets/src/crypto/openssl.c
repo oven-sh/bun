@@ -1655,6 +1655,11 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
     SSL_set_renegotiate_mode(ssl, ssl_renegotiate_explicit);
     SSL_set_connect_state(ssl);
     if (sni) SSL_set_tlsext_host_name(ssl, sni);
+    /* The CTX's session id context partitions a server's sessions by context
+     * configuration (create_ssl_context_with_digest). A client fails its
+     * handshake when a resumed session's id differs from its own, so clients
+     * keep none: a `session` stays usable under any client options. */
+    SSL_set_session_id_context(ssl, NULL, 0);
     /* The CTX is mode-neutral and may have verify_mode == NONE (no
      * ca/requestCert in options). Clients must always run verification so
      * verify_error is populated for the JS rejectUnauthorized check — but
@@ -2955,7 +2960,15 @@ void us_ssl_ctx_set_sni_policy(SSL_CTX *ctx, int request_cert, int reject_unauth
  * per-serverName entry's requestCert/rejectUnauthorized are added on top of
  * it (the connection's inherited requirement is kept). A context without a
  * recorded policy (node:tls SecureContext, whose policy is server-level)
- * leaves the connection's verify mode untouched. */
+ * leaves the connection's verify mode untouched.
+ *
+ * SSL_set_SSL_CTX also copies the context's session id context, which for
+ * contexts built in Rust is the digest of their options
+ * (create_ssl_context_with_digest). BoringSSL checks it after this switch, so
+ * a session issued under other options is not resumed and the client is
+ * authenticated again, against this context's CA. That refusal is deliberate
+ * (RFC 6066 section 3; openssl/ssl.h: "partition session caches between SNI
+ * hosts") and must not be relaxed for parity with another runtime. */
 static void us_ssl_apply_selected_ctx(SSL *ssl, SSL_CTX *ctx) {
   SSL_set_SSL_CTX(ssl, ctx);
   if (us_ctx_sni_policy_ex_idx < 0) return;

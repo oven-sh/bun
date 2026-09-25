@@ -427,7 +427,8 @@ impl Listener {
 
         if let Some(ssl_cfg) = ssl_cfg_taken.as_ref() {
             let mut create_err = uws::create_bun_socket_error_t::none;
-            match ssl_cfg.as_usockets().create_ssl_context(&mut create_err) {
+            let ctx_opts = ssl_cfg.as_usockets();
+            match ctx_opts.create_ssl_context_with_digest(&ctx_opts.digest(), &mut create_err) {
                 Some(ctx) => this_ref.secure_ctx.set(Some(ctx)),
                 None => {
                     return Err(cx.global().throw_value(
@@ -1897,7 +1898,7 @@ impl WindowsNamedPipeListeningContext {
             let ctx_opts = ssl_options.as_usockets();
             let mut err = uws::create_bun_socket_error_t::none;
             // Create SSL context using uSockets to match behavior of node.js
-            match ctx_opts.create_ssl_context(&mut err) {
+            match ctx_opts.create_ssl_context_with_digest(&ctx_opts.digest(), &mut err) {
                 // SAFETY: `this` was just allocated above; scoped field write.
                 Some(ctx) => unsafe {
                     (*this).ctx = Some(ctx);

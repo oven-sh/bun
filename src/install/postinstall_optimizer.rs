@@ -102,15 +102,24 @@ impl PostinstallOptimizer {
                 continue;
             }
             let meta: &Meta = &metas[resolution as usize];
-            if meta.arch == npm::Architecture::ALL || meta.os == npm::OperatingSystem::ALL {
-                continue;
-            }
-            if meta.arch.is_match(target_cpu) && meta.os.is_match(target_os) {
+            if Self::is_native_binlink_replacement(meta.arch, meta.os, target_cpu, target_os) {
                 return Some(resolution);
             }
         }
 
         None
+    }
+
+    pub(crate) fn is_native_binlink_replacement(
+        arch: npm::Architecture,
+        os: npm::OperatingSystem,
+        target_cpu: npm::Architecture,
+        target_os: npm::OperatingSystem,
+    ) -> bool {
+        arch != npm::Architecture::ALL
+            && os != npm::OperatingSystem::ALL
+            && arch.is_match(target_cpu)
+            && os.is_match(target_os)
     }
 }
 

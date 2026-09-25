@@ -2142,8 +2142,7 @@ impl BlobExt for Blob {
                 }
                 self.size.set(0);
             }
-            // An S3 object's size is unknown until it is downloaded, and a
-            // slice's window is final: there is nothing to resolve.
+            // An S3 object has no size before the download: there is nothing to resolve.
             store::DataTag::S3 => {}
         }
     }

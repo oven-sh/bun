@@ -38,17 +38,16 @@ pub(crate) const CLIENT_PREFIX: &str = "/_bun/client";
 // blocks and `container_of` submodules name a single type. Re-export so
 // `crate::bake::dev_server::DevServer` (the public path used by `server/`,
 // `dispatch.rs`, …) resolves to that one struct.
-pub use super::dev_server_body::{
-    CacheEntry, CurrentBundle, DeferredPromise, DeferredRequest, DevServer, EntryPointList,
-    HTMLRouter, Magic, NextBundle, Options, PluginState, RouteIndexAndRecurseFlag, TestingBatch,
-    TestingBatchEvents, deferred_request, entry_point_list,
+pub(crate) use super::dev_server_body::{
+    DevServer, EntryPointList, Magic, Options, RouteIndexAndRecurseFlag, TestingBatchEvents,
+    deferred_request,
 };
 
 /// `DevServer.FileKind` — kept in lockstep with `bun_bundler::bake_types::CacheKind`
 /// (the vtable boundary maps between them via an exhaustive match).
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum FileKind {
+pub(crate) enum FileKind {
     Unknown = 0,
     Js = 1,
     Asset = 2,
@@ -57,13 +56,13 @@ pub enum FileKind {
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum ChunkKind {
+pub(crate) enum ChunkKind {
     InitialResponse = 0,
     HmrChunk = 1,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum TraceImportGoal {
+pub(crate) enum TraceImportGoal {
     FindCss,
     FindClientModules,
     FindErrors,
@@ -74,7 +73,7 @@ pub enum TraceImportGoal {
 /// `InspectorBunFrontendDevServerAgent__notifyConsoleLog`.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum ConsoleLogKind {
+pub(crate) enum ConsoleLogKind {
     Log = b'l',
     Err = b'e',
 }
@@ -84,11 +83,10 @@ pub enum ConsoleLogKind {
 /// (`generated.ts`).
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum MessageId {
+pub(crate) enum MessageId {
     Version = b'V',
     HotUpdate = b'u',
     Errors = b'e',
-    Visualizer = b'v',
     MemoryVisualizer = b'M',
     SetUrlResponse = b'n',
     TestingWatchSynchronization = b'r',
@@ -105,7 +103,7 @@ impl MessageId {
 /// (`generated.ts`).
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum IncomingMessageId {
+pub(crate) enum IncomingMessageId {
     Init = b'i',
     Subscribe = b's',
     SetUrl = b'n',
@@ -118,7 +116,7 @@ pub enum IncomingMessageId {
 /// match the client.
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum HmrTopic {
+pub(crate) enum HmrTopic {
     HotUpdate = b'h',
     Errors = b'e',
     BrowserError = b'E',
@@ -182,12 +180,12 @@ impl HmrTopic {
 // ──────────────────────────────────────────────────────────────────────────
 // EventLoopTimer
 // ──────────────────────────────────────────────────────────────────────────
-pub use bun_event_loop::EventLoopTimer::{EventLoopTimer, Tag as TimerTag};
+pub(crate) use bun_event_loop::EventLoopTimer::{EventLoopTimer, Tag as TimerTag};
 
 // ──────────────────────────────────────────────────────────────────────────
 // IncrementalResult / GraphTraceState
 // ──────────────────────────────────────────────────────────────────────────
-pub struct IncrementalResult {
+pub(crate) struct IncrementalResult {
     pub(crate) framework_routes_affected: Vec<RouteIndexAndRecurseFlag>,
     pub(crate) html_routes_soft_affected: Vec<route_bundle::Index>,
     pub(crate) html_routes_hard_affected: Vec<route_bundle::Index>,
@@ -214,7 +212,7 @@ impl IncrementalResult {
     /// Clears each list retaining capacity, asserts `failures_removed` was
     /// already drained, and intentionally leaves `had_adjusted_edges`
     /// untouched.
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.framework_routes_affected.clear();
         self.html_routes_soft_affected.clear();
         self.html_routes_hard_affected.clear();
@@ -228,7 +226,7 @@ impl IncrementalResult {
     }
 }
 
-pub struct GraphTraceState {
+pub(crate) struct GraphTraceState {
     pub(crate) client_bits: DynamicBitSet,
     pub(crate) server_bits: DynamicBitSet,
 }
@@ -247,10 +245,7 @@ impl GraphTraceState {
     }
 
     pub(crate) fn resize(&mut self, side: Side, new_size: usize) -> Result<(), crate::Error> {
-        let b = match side {
-            Side::Client => &mut self.client_bits,
-            Side::Server => &mut self.server_bits,
-        };
+        let b = self.bits(side);
         if b.unmanaged.bit_length < new_size {
             b.resize(new_size, false)?;
         }
@@ -269,37 +264,25 @@ impl GraphTraceState {
 
 pub(crate) use super::dev_server_body::init;
 
-pub mod assets;
-pub mod incremental_graph;
-pub mod inspector_agent;
+pub(crate) mod assets;
+pub(crate) mod incremental_graph;
+pub(crate) mod inspector_agent;
 mod lifecycle;
-pub mod packed_map;
-pub mod route_bundle;
-pub mod serialized_failure;
-pub mod source_map_store;
+pub(crate) mod packed_map;
+pub(crate) mod route_bundle;
+pub(crate) mod serialized_failure;
+pub(crate) mod source_map_store;
 
-pub use assets::Assets;
-pub use incremental_graph::IncrementalGraph;
-pub use route_bundle::RouteBundle;
-pub use serialized_failure::SerializedFailure;
-pub use source_map_store::SourceMapStore;
+pub(crate) use serialized_failure::SerializedFailure;
 
 /// Local response trait — the response type is a generic bound.
 /// Method shapes mirror `bun_uws_sys::Response<SSL>` so the `R`-generic
 /// bodies type-check. `bun_uws` exposes no equivalent trait; if it ever
 /// grows one, this can be replaced by it.
-pub trait ResponseLike {
+pub(crate) trait ResponseLike {
     fn write_status(&mut self, status: &[u8]);
     fn end(&mut self, data: &[u8], close_connection: bool);
     fn as_any_response(&mut self) -> bun_uws::AnyResponse;
-    fn upgrade<D>(
-        &mut self,
-        data: D,
-        sec_web_socket_key: &[u8],
-        sec_web_socket_protocol: &[u8],
-        sec_web_socket_extensions: &[u8],
-        ctx: &mut bun_uws::WebSocketUpgradeContext,
-    );
 }
 
 // `AnyResponse` already type-erases SSL/TCP/H3 — it satisfies `resp: anytype`
@@ -316,28 +299,11 @@ impl ResponseLike for bun_uws::AnyResponse {
     fn as_any_response(&mut self) -> bun_uws::AnyResponse {
         *self
     }
-    fn upgrade<D>(
-        &mut self,
-        data: D,
-        sec_web_socket_key: &[u8],
-        sec_web_socket_protocol: &[u8],
-        sec_web_socket_extensions: &[u8],
-        ctx: &mut bun_uws::WebSocketUpgradeContext,
-    ) {
-        let boxed = bun_core::heap::into_raw(Box::new(data));
-        let _ = (*self).upgrade(
-            boxed,
-            sec_web_socket_key,
-            sec_web_socket_protocol,
-            sec_web_socket_extensions,
-            Some(ctx),
-        );
-    }
 }
 
 /// `DevServer.HmrSocket` — per-WebSocket state. Method bodies (open/close/
 /// message handlers) live in [`hmr_socket`].
-pub struct HmrSocket {
+pub(crate) struct HmrSocket {
     /// BACKREF: owned by `dev.active_websocket_connections`; destroyed via
     /// `remove` + `heap::take` in `on_close`.
     pub(crate) dev: bun_ptr::BackRef<DevServer, bun_ptr::Mut>,
@@ -368,7 +334,7 @@ impl HmrSocket {
 // the cache line on x86_64/aarch64 (Bun's tier-1 targets) and absorbs Intel
 // adjacent-line prefetch.
 #[repr(align(128))]
-pub struct HotReloadEvent {
+pub(crate) struct HotReloadEvent {
     /// BACKREF (LIFETIMES.tsv): element of `WatcherAtomics.events: [3]`.
     /// Nulled by `Drop for DevServer` when an event is still queued; `run`
     /// checks for null before dereferencing.
@@ -402,6 +368,10 @@ impl bun_event_loop::Taskable for HotReloadEvent {
                 bun_core::heap::destroy((*this).atomics);
             }
         }
+    }
+    /// The dev server is the realm's.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 
@@ -572,7 +542,7 @@ impl HotReloadEvent {
         }
     }
 
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         #[cfg(debug_assertions)]
         self.debug_mutex.unlock();
         self.files.clear_retaining_capacity();
@@ -708,7 +678,7 @@ impl HotReloadEvent {
 
         match &mut dev_ref.testing_batch_events {
             TestingBatchEvents::Disabled => {}
-            TestingBatchEvents::Enabled(ev) => {
+            TestingBatchEvents::Enabled(ev) | TestingBatchEvents::ReleaseAfterBundle(ev) => {
                 bun_core::handle_oom(ev.append(&entry_points));
                 dev_ref.publish(
                     HmrTopic::TestingWatchSynchronization,
@@ -728,7 +698,7 @@ impl HotReloadEvent {
 
 /// `DevServer.WatcherAtomics` — three pre-allocated `HotReloadEvent`s
 /// rotated between the watcher thread and the main thread.
-pub struct WatcherAtomics {
+pub(crate) struct WatcherAtomics {
     pub(crate) events: [HotReloadEvent; 3],
     /// Atomically encodes a `NextEvent`: values 0..3 are an index into
     /// `events`, plus the `WAITING`/`DONE` sentinels.
@@ -753,7 +723,7 @@ pub struct WatcherAtomics {
 /// Rust enums cannot hold unlisted discriminants.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub struct NextEvent(pub(crate) u8);
+pub(crate) struct NextEvent(pub(crate) u8);
 
 impl NextEvent {
     /// An event is running, and no next event is pending.
@@ -875,7 +845,7 @@ impl WatcherAtomics {
             {
                 debug_assert!(
                     (*this).dbg_watcher_event.is_none(),
-                    "must call `watcherReleaseEvent` before calling `watcherAcquireEvent` again",
+                    "must call `watcher_release_and_submit_event` before calling `watcher_acquire_event` again",
                 );
                 (*this).dbg_watcher_event = Some(ev);
             }
@@ -924,12 +894,14 @@ impl WatcherAtomics {
             #[cfg(debug_assertions)]
             {
                 let Some(dbg_event) = (*this).dbg_watcher_event else {
-                    panic!("must call `watcherAcquireEvent` before `watcherReleaseAndSubmitEvent`");
+                    panic!(
+                        "must call `watcher_acquire_event` before `watcher_release_and_submit_event`"
+                    );
                 };
                 debug_assert!(
                     dbg_event == ev,
-                    "watcherReleaseAndSubmitEvent: event is not from last \
-                     `watcherAcquireEvent` call (expected {:p}, got {:p})",
+                    "watcher_release_and_submit_event: event is not from last \
+                     `watcher_acquire_event` call (expected {:p}, got {:p})",
                     dbg_event,
                     ev,
                 );
@@ -996,7 +968,7 @@ impl WatcherAtomics {
                     let old_index: u8 = old_next.0;
                     debug_assert!(
                         (*this).pending_event == Some(old_index),
-                        "watcherReleaseAndSubmitEvent: expected `pending_event` to be {}; got {:?}",
+                        "watcher_release_and_submit_event: expected `pending_event` to be {}; got {:?}",
                         old_index,
                         (*this).pending_event,
                     );
@@ -1021,30 +993,19 @@ impl WatcherAtomics {
 /// now-unneeded watcher; it stays until the directory changes or the file
 /// is evicted from the incremental graph.
 #[derive(Default)]
-pub struct DirectoryWatchStore {
+pub(crate) struct DirectoryWatchStore {
     pub(crate) watches: StringArrayHashMap<directory_watch_store::Entry>,
     pub(crate) dependencies: Vec<directory_watch_store::Dep>,
     /// Dependencies cannot be re-ordered. This list tracks what indexes are free.
     pub(crate) dependencies_free_list: Vec<u32>,
 }
-impl DirectoryWatchStore {
-    /// Intrusive backref: recover `*mut DevServer`.
-    /// Returns a raw ptr (not `&mut DevServer`) because `&mut self` is live;
-    /// callers must scope their borrow of fields disjoint from
-    /// `directory_watchers` to avoid aliasing UB.
-    #[inline]
-    fn owner(&mut self) -> *mut DevServer {
-        // SAFETY: `DirectoryWatchStore` is only ever the `directory_watchers`
-        // field of a heap-allocated `DevServer` (never moved post-init).
-        unsafe {
-            bun_core::from_field_ptr!(
-                DevServer,
-                directory_watchers,
-                std::ptr::from_mut::<Self>(self)
-            )
-        }
-    }
+// SAFETY: `DirectoryWatchStore` is only ever the `directory_watchers` field of
+// a heap-allocated `DevServer` (never moved post-init). Raw ptr (not `&mut
+// DevServer`) because `&mut self` is live; callers scope their borrows to
+// fields disjoint from `directory_watchers`.
+bun_core::impl_field_parent! { DirectoryWatchStore => DevServer.directory_watchers; fn mut owner; }
 
+impl DirectoryWatchStore {
     /// Safe sibling-projection: borrow the owning [`DevServer`]'s
     /// `bun_watcher` while holding `&mut self`. The two fields are disjoint,
     /// so the returned `&mut Watcher` does not alias `self`.
@@ -1102,10 +1063,10 @@ impl DirectoryWatchStore {
         }
     }
 }
-pub mod directory_watch_store {
+pub(crate) mod directory_watch_store {
     /// `DirectoryWatchStore.Entry` — per-watched-directory state.
     #[derive(Copy, Clone)]
-    pub struct Entry {
+    pub(crate) struct Entry {
         /// The directory handle the watch is placed on.
         pub(crate) dir: bun_sys::Fd,
         pub(crate) dir_fd_owned: bool,
@@ -1125,7 +1086,7 @@ pub mod directory_watch_store {
         }
     }
     /// `DirectoryWatchStore.Dep` — one resolution-failure to retry on dir change.
-    pub struct Dep {
+    pub(crate) struct Dep {
         pub(crate) next: Option<u32>,
         /// The file used. BORROWED slice into `IncrementalGraph.bundled_files`
         /// key storage; compared by *pointer identity*. The graph calls

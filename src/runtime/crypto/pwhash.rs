@@ -1,8 +1,8 @@
 //! Password hashing for `Bun.password` (argon2 / bcrypt). Neither algorithm is
 //! provided by BoringSSL, so this module implements the API surface that
 //! `PasswordObject` consumes (`str_hash` / `str_verify` / `Params` / `Mode` /
-//! `Encoding`) and routes to the pure-Rust `rust-argon2` and `bcrypt` crates
-//! from crates.io.
+//! `Encoding`) and routes to the pure-Rust `rust-argon2` (vendored, patched to
+//! verify legacy `m < 8` hashes) and `bcrypt` crates.
 //!
 //!   * argon2: PHC string format only (`str_hash` rejects `.crypt`), 32-byte
 //!     random salt, 32-byte tag, version 0x13.
@@ -27,14 +27,14 @@ fn phc_ascii_str(s: &[u8]) -> Result<&str, Error> {
 
 /// Output string encoding.
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum Encoding {
+pub(crate) enum Encoding {
     /// PHC string format (`$argon2id$v=19$...`).
     Phc,
     /// Traditional crypt(3) format (`$2b$...`).
     Crypt,
 }
 
-pub mod argon2 {
+pub(crate) mod argon2 {
     use super::{Encoding, Error};
     use bun_core::strings;
 
@@ -51,7 +51,7 @@ pub mod argon2 {
 
     /// Argon2 variant.
     #[derive(Copy, Clone, Eq, PartialEq)]
-    pub enum Mode {
+    pub(crate) enum Mode {
         Argon2d,
         Argon2i,
         Argon2id,
@@ -69,7 +69,7 @@ pub mod argon2 {
 
     /// Argon2 parameters — only the fields Bun touches.
     #[derive(Copy, Clone)]
-    pub struct Params {
+    pub(crate) struct Params {
         /// Time cost (iterations).
         pub(crate) t: u32,
         /// Memory cost in KiB.
@@ -258,7 +258,7 @@ pub mod argon2 {
     }
 }
 
-pub mod bcrypt {
+pub(crate) mod bcrypt {
     use super::{Encoding, Error};
     use bun_core::strings;
 
@@ -271,7 +271,7 @@ pub mod bcrypt {
 
     /// bcrypt parameters.
     #[derive(Copy, Clone)]
-    pub struct Params {
+    pub(crate) struct Params {
         /// log2 rounds (clamped 4..=31 by caller).
         pub(crate) rounds_log: u8,
         pub(crate) silently_truncate_password: bool,

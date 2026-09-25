@@ -1,0 +1,190 @@
+name: Rust lints
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "src/**/*.rs"
+      - "src/**/Cargo.toml"
+      - "src/**/*.classes.ts"
+      - "src/codegen/**"
+      - "scripts/build/**"
+      - "scripts/build.ts"
+      - "scripts/rust-miri.ts"
+      - "scripts/rust-mordant.ts"
+      - "package.json"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "clippy.toml"
+      - "mordant.toml"
+      - "mordant-baseline.toml"
+      - "rust-toolchain.toml"
+      - ".github/workflows/rust-lints.yml"
+      - ".github/actions/rust-lint-setup/**"
+      - ".github/actions/setup-bun/**"
+      - ".github/rust-matcher.json"
+  merge_group:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BUN_VERSION: "1.4.2"
+  LLVM_VERSION_MAJOR: "23"
+  # Pin the toolchain explicitly so rustup ignores rust-toolchain.toml's
+  # `targets` list (11 cross triples ≈ 450 MB of prebuilt std we don't need
+  # to lint the host). Keep in sync with `channel` in rust-toolchain.toml.
+  RUSTUP_TOOLCHAIN: nightly-2026-09-15
+
+jobs:
+  clippy:
+    name: cargo clippy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/rust-lint-setup
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+          llvm-version: ${{ env.LLVM_VERSION_MAJOR }}
+          toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
+          components: clippy
+          ninja-targets: codegen clone-lolhtml clone-rust-argon2
+
+      - name: cargo clippy
+        env:
+          BUN_CODEGEN_DIR: ${{ github.workspace }}/build/debug/codegen
+        run: bun run rust:clippy
+
+      - name: cargo check --all-targets
+        # Clippy above covers the default targets only (lib and bin). This
+        # type-checks what it skips (`#[cfg(test)]` code, `tests/`, `benches/`)
+        # so that code keeps compiling: the miri job builds a few crates'
+        # tests, nothing builds the rest.
+        env:
+          BUN_CODEGEN_DIR: ${{ github.workspace }}/build/debug/codegen
+        run: cargo check --workspace --all-targets --keep-going
+
+  miri:
+    name: cargo miri test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/rust-lint-setup
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+          llvm-version: ${{ env.LLVM_VERSION_MAJOR }}
+          toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
+          components: miri rust-src
+
+      - name: cargo miri test
+        env:
+          BUN_CODEGEN_DIR: ${{ github.workspace }}/build/debug/codegen
+        run: bun run rust:miri
+
+  lolhtml:
+    # The vendored lol-html is a fork (oven-sh/lol-html, `bun` branch) carrying
+    # content-handler suspension, and its own test suite is the only thing that
+    # guards the fork's invariants: nothing in the Bun test suite reaches, for
+    # example, the parser's suspension bookkeeping or `Arena::compact()`.
+    name: lol-html cargo test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/rust-lint-setup
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+          llvm-version: ${{ env.LLVM_VERSION_MAJOR }}
+          toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
+
+      - name: cargo test
+        # `lol_html` is a path dependency, not a workspace member (it carries
+        # dev-dependencies the Bun workspace does not), so run it in place.
+        working-directory: vendor/lolhtml
+        run: cargo test
+
+  mordant:
+    name: mordant
+    runs-on: ubuntu-latest
+    if: github.event_name != 'merge_group'
+    # Advisory while the pack is new: shows up on the PR, does not block it.
+    continue-on-error: true
+    env:
+      # The pinned commit of https://github.com/scarletindustries/mordant.
+      # Bumping it is a PR of its own, where whatever the new revision finds
+      # gets fixed or added to mordant-baseline.toml.
+      MORDANT_REV: 193abdabb975d33e63607ef9da8f3c79dd33ae9f
+      # The nightly in mordant's rust-toolchain file at MORDANT_REV. mordant is
+      # built with it and links its rustc, so it is also the compiler that
+      # checks this workspace while the lints run, and it must still be able
+      # to compile it. Bump it with MORDANT_REV, not with rust-toolchain.toml.
+      MORDANT_TOOLCHAIN: nightly-2026-09-01
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/rust-lint-setup
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+          llvm-version: ${{ env.LLVM_VERSION_MAJOR }}
+          toolchain: ${{ env.MORDANT_TOOLCHAIN }}
+          # What building against rustc's own crates (`rustc_private`) needs.
+          components: rustc-dev llvm-tools-preview
+          ninja-targets: codegen clone-lolhtml clone-rust-argon2
+
+      - name: Restore the mordant binaries
+        # cargo-mordant and mordant-driver are a pure function of the pinned
+        # revision and the nightly they link. What remains uncached is
+        # checking bun itself.
+        id: mordant-bin
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/bin/cargo-mordant
+            ~/.cargo/bin/mordant-driver
+          key: mordant-bin-${{ runner.os }}-${{ env.MORDANT_TOOLCHAIN }}-${{ env.MORDANT_REV }}
+
+      - name: Build the mordant binaries
+        if: steps.mordant-bin.outputs.cache-hit != 'true'
+        run: cargo +"$MORDANT_TOOLCHAIN" install --locked --git https://github.com/scarletindustries/mordant --rev "$MORDANT_REV"
+
+      - name: Save the mordant binaries
+        # Here, and not in the post step of actions/cache, which a failed job
+        # skips: a pull request with a finding over the baseline would build
+        # mordant again on every push.
+        if: steps.mordant-bin.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/bin/cargo-mordant
+            ~/.cargo/bin/mordant-driver
+          key: ${{ steps.mordant-bin.outputs.cache-primary-key }}
+
+      - name: mordant
+        # scripts/rust-mordant.ts names the targets (Linux, Windows and macOS
+        # in one run) and installs their std, so that the job and `bun run
+        # rust:mordant` cannot drift apart. `cargo mordant` exits with 101 when
+        # any crate has more findings than mordant-baseline.toml allows.
+        run: bun scripts/rust-mordant.ts

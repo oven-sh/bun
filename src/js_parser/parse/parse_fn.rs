@@ -5,7 +5,7 @@ use crate::js_lexer;
 use crate::js_lexer::T;
 use crate::p::P;
 use crate::parser::{
-    ARGUMENTS_STR as arguments_str, AwaitOrYield, FnOrArrowDataParse, FunctionKind, LexicalDecl,
+    ARGUMENTS_STR as arguments_str, AwaitOrYield, FnOrArrowDataParse, LexicalDecl,
     ParseStatementOptions, TypeParameterFlag,
 };
 use bun_ast as js_ast;
@@ -166,9 +166,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         opts: FnOrArrowDataParse,
     ) -> Result<G::Fn, Error> {
         let p = self;
-        // if data.allowAwait and data.allowYield {
-        //     p.markSyntaxFeature(compat.AsyncGenerator, data.asyncRange)
-        // }
 
         let mut initial_flags = Flags::FunctionSet::empty();
         if opts.allow_await == AwaitOrYield::AllowExpr {
@@ -479,7 +476,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )?;
         p.fn_or_arrow_data_parse.has_argument_decorators = false;
 
-        p.validate_function_name(&func, FunctionKind::Expr);
+        p.validate_function_name(&func);
         p.pop_scope();
 
         Ok(p.new_expr(E::Function { func }, loc))
@@ -568,6 +565,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             });
         }
 
+        if let Some(starts) = &mut p.starts_for_parse_only {
+            starts
+                .arrow_expression_bodies
+                .insert(arrow_loc.start, p.lexer.loc().start);
+        }
         let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::FunctionBody, arrow_loc)?;
         // `pop_scope` is called explicitly before each return below.
 

@@ -7,9 +7,10 @@ use bstr::BStr;
 use bun_alloc::AllocError;
 use bun_collections::{ArrayHashMap, MultiArrayList};
 use bun_semver::String as SemverString;
+use bun_wyhash::Wyhash;
 
 use crate::lockfile::{Lockfile, package};
-use crate::{Dependency, DependencyID, INVALID_DEPENDENCY_ID, PackageID};
+use crate::{Dependency, DependencyID, INVALID_DEPENDENCY_ID, PackageID, Resolution};
 
 pub use super::installer::Installer;
 
@@ -95,6 +96,13 @@ impl<T> NewId<T> {
 
 impl Drop for Store {
     fn drop(&mut self) {
+        use entry::EntryColumns as _;
+        for slot in self.entries.items_scripts() {
+            if let Some(list) = slot.take() {
+                // SAFETY: the installer returned only after every task finished, so nothing else references the list boxed in Installer's RunPreinstall step.
+                unsafe { bun_core::heap::destroy(list) };
+            }
+        }
         self.entries.drop_elements();
         self.nodes.drop_elements();
     }
@@ -312,22 +320,6 @@ pub mod entry {
         }
     }
 
-    impl Default for Entry {
-        fn default() -> Self {
-            Self {
-                node_id: super::node::Id::INVALID,
-                dependencies: Dependencies::EMPTY,
-                parents: Vec::new(),
-                // `Step::LinkPackage as u32 == 0`.
-                step: core::sync::atomic::AtomicU32::new(0),
-                hoisted: false,
-                peer_hash: PeerHash::NONE,
-                entry_hash: 0,
-                scripts: core::cell::Cell::new(None),
-            }
-        }
-    }
-
     #[repr(transparent)]
     #[derive(Copy, Clone, PartialEq, Eq, Hash)]
     pub struct PeerHash(u64);
@@ -344,6 +336,107 @@ pub mod entry {
         }
     }
 
+    /// Bounds the entry name so the lifecycle-script cwd fits Windows' MAX_PATH; 80 keeps versions and `github+owner+repo+<sha>` verbatim.
+    const MAX_RESOLUTION_LEN: usize = 80;
+    /// Longer resolutions become `<leading bytes>+<16 hex wyhash of the whole text>`, `MAX_RESOLUTION_LEN` bytes at most.
+    const CUT_RESOLUTION_LEN: usize = MAX_RESOLUTION_LEN - "+".len() - 16;
+
+    /// The first `MAX_RESOLUTION_LEN` bytes written, plus the length and hash of all of them.
+    struct ResolutionSink {
+        buf: [u8; MAX_RESOLUTION_LEN],
+        len: usize,
+        hasher: Wyhash,
+    }
+
+    impl fmt::Write for ResolutionSink {
+        fn write_str(&mut self, s: &str) -> fmt::Result {
+            let bytes = s.as_bytes();
+            if let Some(room) = self.buf.get_mut(self.len..) {
+                let n = bytes.len().min(room.len());
+                room[..n].copy_from_slice(&bytes[..n]);
+            }
+            self.len += bytes.len();
+            self.hasher.update(bytes);
+            Ok(())
+        }
+    }
+
+    fn write_resolution(f: &mut fmt::Formatter<'_>, resolution: fmt::Arguments<'_>) -> fmt::Result {
+        let mut sink = ResolutionSink {
+            buf: [0; MAX_RESOLUTION_LEN],
+            len: 0,
+            hasher: Wyhash::init(0),
+        };
+        fmt::write(&mut sink, resolution)?;
+
+        if sink.len <= MAX_RESOLUTION_LEN {
+            return f.write_str(bun_core::str_utf8(&sink.buf[..sink.len]).ok_or(fmt::Error)?);
+        }
+
+        let mut cut = CUT_RESOLUTION_LEN;
+        while !bun_core::strings::is_on_char_boundary(&sink.buf, cut) {
+            cut -= 1;
+        }
+        f.write_str(bun_core::str_utf8(&sink.buf[..cut]).ok_or(fmt::Error)?)?;
+        write!(f, "+{:016x}", sink.hasher.final_())
+    }
+
+    /// `name@version` (or `name@file+path` / `name@root`) without the `+peerhash` suffix.
+    /// The resolution part is bounded by [`MAX_RESOLUTION_LEN`].
+    pub struct StoreKeyFormatter<'a> {
+        name: SemverString,
+        resolution: &'a Resolution,
+        string_buf: &'a [u8],
+    }
+
+    impl<'a> fmt::Display for StoreKeyFormatter<'a> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            let string_buf = self.string_buf;
+            let pkg_name = self.name;
+            let pkg_res = self.resolution;
+
+            match pkg_res.tag {
+                crate::resolution::Tag::Root => {
+                    if pkg_name.is_empty() {
+                        write!(
+                            f,
+                            "{}",
+                            BStr::new(bun_paths::basename(
+                                crate::bun_fs::FileSystem::instance().top_level_dir()
+                            ))
+                        )
+                    } else {
+                        write!(f, "{}@root", pkg_name.fmt_store_path(string_buf))
+                    }
+                }
+                crate::resolution::Tag::Folder => {
+                    let folder = *pkg_res.folder();
+                    write!(f, "{}@", pkg_name.fmt_store_path(string_buf))?;
+                    write_resolution(
+                        f,
+                        format_args!("file+{}", folder.fmt_store_path(string_buf)),
+                    )
+                }
+                _ => {
+                    write!(f, "{}@", pkg_name.fmt_store_path(string_buf))?;
+                    write_resolution(f, format_args!("{}", pkg_res.fmt_store_path(string_buf)))
+                }
+            }
+        }
+    }
+
+    pub fn fmt_store_key<'a>(
+        name: SemverString,
+        resolution: &'a Resolution,
+        string_buf: &'a [u8],
+    ) -> StoreKeyFormatter<'a> {
+        StoreKeyFormatter {
+            name,
+            resolution,
+            string_buf,
+        }
+    }
+
     pub struct StorePathFormatter<'a> {
         pub(crate) entry_id: Id,
         pub(crate) store: &'a Store,
@@ -355,57 +448,21 @@ pub mod entry {
             use super::node::NodeColumns as _;
             let store = self.store;
             let entries = store.entries.slice();
-            // derive(MultiArrayElement)-generated SliceExt accessors: `.items_peer_hash()`, `.items_node_id()`.
-            let entry_peer_hashes = entries.items_peer_hash();
-            let entry_node_ids = entries.items_node_id();
 
-            let peer_hash = entry_peer_hashes[self.entry_id.get() as usize];
-            let node_id = entry_node_ids[self.entry_id.get() as usize];
+            let peer_hash = entries.items_peer_hash()[self.entry_id.get() as usize];
+            let node_id = entries.items_node_id()[self.entry_id.get() as usize];
             let pkg_id = store.nodes.items_pkg_id()[node_id.get() as usize];
 
-            let string_buf = self.lockfile.buffers.string_bytes.as_slice();
-
             let pkgs = self.lockfile.packages.slice();
-            let pkg_names = pkgs.items_name();
-            let pkg_resolutions = pkgs.items_resolution();
-
-            let pkg_name = pkg_names[pkg_id as usize];
-            let pkg_res = &pkg_resolutions[pkg_id as usize];
-
-            match pkg_res.tag {
-                crate::resolution::Tag::Root => {
-                    if pkg_name.is_empty() {
-                        write!(
-                            f,
-                            "{}",
-                            BStr::new(bun_paths::basename(
-                                crate::bun_fs::FileSystem::instance().top_level_dir()
-                            ))
-                        )?;
-                    } else {
-                        write!(f, "{}@root", pkg_name.fmt_store_path(string_buf))?;
-                    }
-                }
-                crate::resolution::Tag::Folder => {
-                    // SAFETY: tag was matched as Folder; reads the union field
-                    // corresponding to that tag.
-                    let folder = *pkg_res.folder();
-                    write!(
-                        f,
-                        "{}@file+{}",
-                        pkg_name.fmt_store_path(string_buf),
-                        folder.fmt_store_path(string_buf),
-                    )?;
-                }
-                _ => {
-                    write!(
-                        f,
-                        "{}@{}",
-                        pkg_name.fmt_store_path(string_buf),
-                        pkg_res.fmt_store_path(string_buf),
-                    )?;
-                }
-            }
+            write!(
+                f,
+                "{}",
+                fmt_store_key(
+                    pkgs.items_name()[pkg_id as usize],
+                    &pkgs.items_resolution()[pkg_id as usize],
+                    self.lockfile.buffers.string_bytes.as_slice(),
+                )
+            )?;
 
             if peer_hash != PeerHash::NONE {
                 write!(f, "+{:016x}", peer_hash.cast())?;
@@ -460,7 +517,6 @@ pub mod entry {
         let entry_parents = store.entries.items_parents();
 
         let mut parents: ArrayHashMap<Id, ()> = ArrayHashMap::default();
-        // defer parents.deinit(bun.default_allocator);
 
         for &parent_id in entry_parents[entry_id.get() as usize].as_slice() {
             if parent_id == Id::INVALID {
@@ -544,8 +600,8 @@ pub mod entry {
     }
 }
 
-pub use entry::Entry;
 pub(crate) use entry::EntryColumns;
+pub use entry::{Entry, StoreKeyFormatter, fmt_store_key};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Node

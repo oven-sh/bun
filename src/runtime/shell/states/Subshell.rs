@@ -6,7 +6,7 @@ use crate::shell::states::base::Base;
 use crate::shell::states::script::Script;
 use crate::shell::yield_::Yield;
 
-pub struct Subshell {
+pub(crate) struct Subshell {
     pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::Subshell>,
     pub(crate) io: IO,
@@ -128,6 +128,5 @@ impl Subshell {
             ShellExecEnv::deinit_impl(me.base.shell);
             me.base.shell = core::ptr::null_mut();
         }
-        me.base.end_scope();
     }
 }

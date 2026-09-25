@@ -30,7 +30,6 @@ namespace WebCore {
 class JSBroadcastChannel : public JSEventTarget {
 public:
     using Base = JSEventTarget;
-    using DOMWrapped = BroadcastChannel;
     static JSBroadcastChannel* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<BroadcastChannel>&& impl)
     {
         JSBroadcastChannel* ptr = new (NotNull, JSC::allocateCell<JSBroadcastChannel>(globalObject->vm())) JSBroadcastChannel(structure, *globalObject, WTF::move(impl));
@@ -46,7 +45,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
     }
 
     static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
@@ -79,11 +78,6 @@ inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, BroadcastChannel*)
 {
     static NeverDestroyed<JSBroadcastChannelOwner> owner;
     return &owner.get();
-}
-
-inline void* wrapperKey(BroadcastChannel* wrappableObject)
-{
-    return wrappableObject;
 }
 
 JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, BroadcastChannel&);

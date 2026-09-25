@@ -91,7 +91,6 @@ const noUnify: readonly string[] = [
   "src/jsc/bindings/webcrypto/CryptoAlgorithmAES_KW.cpp",
   "src/jsc/bindings/webcrypto/CryptoAlgorithmECDSA.cpp",
   "src/jsc/bindings/webcrypto/CryptoAlgorithmHMAC.cpp",
-  "src/jsc/bindings/webcrypto/CryptoAlgorithmRSAES_PKCS1_v1_5.cpp",
   "src/jsc/bindings/webcrypto/CryptoAlgorithmRSASSA_PKCS1_v1_5.cpp",
   "src/jsc/bindings/webcrypto/CryptoAlgorithmRSA_OAEP.cpp",
   "src/jsc/bindings/webcrypto/CryptoAlgorithmRSA_PSS.cpp",
@@ -168,7 +167,7 @@ const noUnifyDirs: readonly string[] = [
  * How many .cpp files per bundle. WebKit defaults to 8.
  *
  * Release (incl. release-asan): 32. Measured 701s vs 866s @ 16 vs 1532s @ 8
- * release cpp-only — frontend parsing dominates, so more dedup wins. ~70 TUs
+ * release, C/C++ objects only — frontend parsing dominates, so more dedup wins. ~70 TUs
  * still keeps CI's 16–32 cores saturated.
  *
  * Debug: 8. Local iteration cares about incremental blast radius — editing

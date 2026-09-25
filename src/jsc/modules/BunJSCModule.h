@@ -13,6 +13,7 @@
 #include <JavaScriptCore/APICast.h>
 #include <JavaScriptCore/AggregateError.h>
 #include <JavaScriptCore/BytecodeIndex.h>
+#include <JavaScriptCore/CachedBytecode.h>
 #include <JavaScriptCore/CallFrameInlines.h>
 #include <JavaScriptCore/ClassInfo.h>
 #include <JavaScriptCore/CodeBlock.h>
@@ -88,6 +89,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger,
     if (hostValue.isString()) {
 
         auto str = hostValue.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
         hostCString = toCString(str);
         if (!str.isEmpty())
             host = hostCString.span().data();
@@ -99,7 +101,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger,
 
     uint16_t port = defaultPort;
     if (portValue.isNumber()) {
-        auto port_int = portValue.toUInt32(globalObject);
+        auto port_int = JSC::toUInt32(portValue.asNumber());
         if (!(port_int > 0 && port_int < 65536)) {
             throwVMError(
                 globalObject, scope,
@@ -372,10 +374,12 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
 #endif
 #endif
 
+    auto scope = DECLARE_THROW_SCOPE(vm);
     mi_collect(false);
     if (char* json = mi_stats_get_json(0, nullptr)) {
         JSValue parsed = JSONParse(globalObject, String::fromUTF8(json));
         mi_free(json);
+        RETURN_IF_EXCEPTION(scope, {});
         object->putDirect(vm, Identifier::fromString(vm, "mimalloc"_s),
             parsed.isEmpty() ? jsNull() : parsed);
     }
@@ -384,8 +388,14 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
     JSValue arg0 = callFrame->argument(0);
     if (arg0.isObject()) {
         JSValue dump = arg0.getObject()->get(globalObject, Identifier::fromString(vm, "dump"_s));
+        RETURN_IF_EXCEPTION(scope, {});
         if (dump.toBoolean(globalObject)) {
-            const bool includeBlocks = dump.isString() && dump.toWTFString(globalObject) == "blocks"_s;
+            bool includeBlocks = false;
+            if (dump.isString()) {
+                auto dumpString = dump.toWTFString(globalObject);
+                RETURN_IF_EXCEPTION(scope, {});
+                includeBlocks = dumpString == "blocks"_s;
+            }
 #if BUN_DEBUG
             const bool hashAddresses = false;
 #else
@@ -394,6 +404,7 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
             if (char* json = mi_heap_dump_json(includeBlocks, hashAddresses)) {
                 JSValue parsed = JSONParse(globalObject, String::fromUTF8(json));
                 mi_free(json);
+                RETURN_IF_EXCEPTION(scope, {});
                 object->putDirect(vm, Identifier::fromString(vm, "mimallocDump"_s),
                     parsed.isEmpty() ? jsNull() : parsed);
             }
@@ -420,8 +431,9 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateMemoryFootprint,
     mi_process_info(&elapsed_msecs, &user_msecs, &system_msecs, &current_rss,
         &peak_rss, &current_commit, &peak_commit, &page_faults);
 
-    // mi_process_info produces incorrect rss size on linux.
+    // Match process.memoryUsage().rss and resourceUsage().maxRSS: mi_process_info reads resident_size on macOS.
     Bun::getRSS(&current_rss);
+    Bun::getPeakRSS(&peak_rss);
 
     VM& vm = globalObject->vm();
     JSC::JSObject* object = JSC::constructEmptyObject(
@@ -460,6 +472,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler,
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (directoryValue.isString()) {
         auto path = directoryValue.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
         if (!path.isEmpty()) {
             StringPrintStream pathOut;
             auto pathCString = toCString(String(path));
@@ -475,7 +488,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler,
         }
     }
     if (sampleValue.isNumber()) {
-        unsigned sampleInterval = sampleValue.toUInt32(globalObject);
+        unsigned sampleInterval = JSC::toUInt32(sampleValue.asNumber());
         samplingProfiler.setTimingInterval(
             Seconds::fromMicroseconds(sampleInterval));
     }
@@ -628,8 +641,6 @@ JSC_DEFINE_HOST_FUNCTION(functionReoptimizationRetryCount,
     return JSValue::encode(jsNumber(block->reoptimizationRetryCounter()));
 }
 
-extern "C" void Bun__drainMicrotasks();
-
 JSC_DECLARE_HOST_FUNCTION(functionDrainMicrotasks);
 JSC_DEFINE_HOST_FUNCTION(functionDrainMicrotasks,
     (JSGlobalObject * globalObject, CallFrame*))
@@ -638,7 +649,8 @@ JSC_DEFINE_HOST_FUNCTION(functionDrainMicrotasks,
     auto scope = DECLARE_THROW_SCOPE(vm);
     vm.drainMicrotasks();
     RETURN_IF_EXCEPTION(scope, {});
-    Bun__drainMicrotasks();
+    // Not EventLoop::tick(): it runs queued tasks beneath the caller.
+    defaultGlobalObject()->drainMicrotasks();
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
@@ -699,10 +711,8 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
         return JSValue::encode(JSValue {});
     }
 
-    JSC::JSFunction* function = uncheckedDowncast<JSC::JSFunction>(callbackValue);
-
     if (sampleValue.isNumber()) {
-        unsigned sampleInterval = sampleValue.toUInt32(globalObject);
+        unsigned sampleInterval = JSC::toUInt32(sampleValue.asNumber());
         samplingProfiler.setTimingInterval(Seconds::fromMicroseconds(sampleInterval));
     } else {
         // Reset to default interval (1000 microseconds) to ensure each profile()
@@ -734,9 +744,9 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
         RETURN_IF_EXCEPTION(throwScope, {});
 
         JSObject* result = constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
-        result->putDirect(vm, Identifier::fromString(vm, "functions"_s), jsString(vm, topFunctions.toString()));
-        result->putDirect(vm, Identifier::fromString(vm, "bytecodes"_s), jsString(vm, byteCodes.toString()));
-        result->putDirect(vm, Identifier::fromString(vm, "stackTraces"_s), stackTraces);
+        Bun::putDirectNamed(vm, result, "functions"_s, jsString(vm, topFunctions.toString()));
+        Bun::putDirectNamed(vm, result, "bytecodes"_s, jsString(vm, byteCodes.toString()));
+        Bun::putDirectNamed(vm, result, "stackTraces"_s, stackTraces);
 
         return result;
     };
@@ -751,13 +761,13 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
         return {};
     };
 
-    JSC::CallData callData = JSC::getCallData(function);
+    JSC::CallData callData = JSC::getCallData(callbackValue);
 
     samplingProfiler.noticeCurrentThreadAsJSCExecutionThread();
     samplingProfiler.start();
-    JSValue returnValue = JSC::profiledCall(globalObject, ProfilingReason::API, function, callData, JSC::jsUndefined(), args);
+    JSValue returnValue = JSC::profiledCall(globalObject, ProfilingReason::API, callbackValue, callData, JSC::jsUndefined(), args);
 
-    if (returnValue.isEmpty() || throwScope.exception()) {
+    if (throwScope.exception() || returnValue.isEmpty()) {
         return JSValue::encode(reportFailure(vm));
     }
 
@@ -816,7 +826,7 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshotForDebugging,
     }
     scope.releaseAssertNoException();
 
-    return JSValue::encode(JSONParse(globalObject, WTF::move(jsonString)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSONParse(globalObject, WTF::move(jsonString))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionSerialize,
@@ -894,7 +904,7 @@ JSC_DEFINE_HOST_FUNCTION(functionDeserialize, (JSGlobalObject * globalObject, Ca
 }
 
 extern "C" JSC::EncodedJSValue ByteRangeMapping__findExecutedLines(
-    JSC::JSGlobalObject*, BunString sourceURL, BasicBlockRange* ranges,
+    JSC::JSGlobalObject*, const BunString* sourceURL, BasicBlockRange* ranges,
     size_t len, size_t functionOffset, bool ignoreSourceMap);
 
 JSC_DEFINE_HOST_FUNCTION(functionCodeCoverageForFile,
@@ -919,8 +929,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCodeCoverageForFile,
         sourceID, vm);
 
     if (basicBlocks.isEmpty()) {
-        return JSC::JSValue::encode(
-            JSC::constructEmptyArray(globalObject, nullptr, 0));
+        RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::constructEmptyArray(globalObject, nullptr, 0)));
     }
 
     size_t functionStartOffset = basicBlocks.size();
@@ -940,8 +949,9 @@ JSC_DEFINE_HOST_FUNCTION(functionCodeCoverageForFile,
         basicBlocks.append(range);
     }
 
+    BunString fileNameBunString = Bun::toString(fileName);
     return ByteRangeMapping__findExecutedLines(
-        globalObject, Bun::toString(fileName), basicBlocks.begin(),
+        globalObject, &fileNameBunString, basicBlocks.begin(),
         basicBlocks.size(), functionStartOffset, ignoreSourceMap);
 }
 
@@ -958,66 +968,47 @@ JSC_DEFINE_HOST_FUNCTION(functionEstimateDirectMemoryUsageOf, (JSGlobalObject * 
     return JSValue::encode(jsNumber(0));
 }
 
-#if USE(BMALLOC_MEMORY_FOOTPRINT_API)
-
-#include <bmalloc/bmalloc.h>
-
-JSC_DEFINE_HOST_FUNCTION(functionPercentAvailableMemoryInUse, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    return JSValue::encode(jsDoubleNumber(bmalloc::api::percentAvailableMemoryInUse()));
-}
-
-#else
-
 JSC_DEFINE_HOST_FUNCTION(functionPercentAvailableMemoryInUse, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     return JSValue::encode(jsNull());
 }
 
-#endif
+// null unless this executable's bytecode was laid out by an order file (`bun build --compile --bytecode-order`).
+JSC_DEFINE_HOST_FUNCTION(functionBytecodeOrderStats, (JSGlobalObject * globalObject, CallFrame*))
+{
+    VM& vm = globalObject->vm();
+    auto* payloads = vm.persistentBytecodePayloadsIfExists();
+    auto* statistics = payloads ? payloads->linkedPayloadStatistics() : nullptr;
+    if (!statistics)
+        return JSValue::encode(jsNull());
 
-// clang-format off
-/* Source for BunJSCModuleTable.lut.h
-@begin BunJSCModuleTable
-    callerSourceOrigin                  functionCallerSourceOrigin                  Function    0
-    jscDescribe                         functionDescribe                            Function    0
-    jscDescribeArray                    functionDescribeArray                       Function    0
-    drainMicrotasks                     functionDrainMicrotasks                     Function    0
-    edenGC                              functionEdenGC                              Function    0
-    fullGC                              functionFullGC                              Function    0
-    gcAndSweep                          functionGCAndSweep                          Function    0
-    getRandomSeed                       functionGetRandomSeed                       Function    0
-    heapSize                            functionHeapSize                            Function    0
-    heapStats                           functionMemoryUsageStatistics               Function    0
-    startSamplingProfiler               functionStartSamplingProfiler               Function    0
-    samplingProfilerStackTraces         functionSamplingProfilerStackTraces         Function    0
-    noInline                            functionNeverInlineFunction                 Function    0
-    isRope                              functionIsRope                              Function    0
-    memoryUsage                         functionCreateMemoryFootprint               Function    0
-    noFTL                               functionNoFTL                               Function    0
-    noOSRExitFuzzing                    functionNoOSRExitFuzzing                    Function    0
-    numberOfDFGCompiles                 functionNumberOfDFGCompiles                 Function    0
-    optimizeNextInvocation              functionOptimizeNextInvocation              Function    0
-    releaseWeakRefs                     functionReleaseWeakRefs                     Function    0
-    reoptimizationRetryCount            functionReoptimizationRetryCount            Function    0
-    setRandomSeed                       functionSetRandomSeed                       Function    0
-    startRemoteDebugger                 functionStartRemoteDebugger                 Function    0
-    totalCompileTime                    functionTotalCompileTime                    Function    0
-    getProtectedObjects                 functionGetProtectedObjects                 Function    0
-    generateHeapSnapshotForDebugging    functionGenerateHeapSnapshotForDebugging    Function    0
-    profile                             functionRunProfiler                         Function    0
-    setTimeZone                         functionSetTimeZone                         Function    0
-    serialize                           functionSerialize                           Function    0
-    deserialize                         functionDeserialize                         Function    0
-    estimateShallowMemoryUsageOf        functionEstimateDirectMemoryUsageOf         Function    1
-    percentAvailableMemoryInUse         functionPercentAvailableMemoryInUse         Function    0
-@end
-*/
+    JSObject* regions = constructEmptyObject(globalObject);
+    static constexpr ASCIILiteral regionNames[] = { "moduleHeads"_s, "hot"_s, "unknown"_s, "lateModuleHeads"_s, "cold"_s, "expressionInfo"_s };
+    static_assert(std::size(regionNames) == JSC::BytecodeLinkRegions::Count);
+    uint32_t start = 0;
+    for (unsigned i = 0; i < JSC::BytecodeLinkRegions::Count; ++i) {
+        uint32_t end = std::max(start, statistics->regionEnds[i]);
+        regions->putDirect(vm, Identifier::fromString(vm, regionNames[i]), jsNumber(end - start));
+        start = end;
+    }
+
+    JSObject* result = constructEmptyObject(globalObject);
+    result->putDirect(vm, Identifier::fromString(vm, "hot"_s), jsNumber(statistics->hot.count));
+    result->putDirect(vm, Identifier::fromString(vm, "unknown"_s), jsNumber(statistics->unknown.count));
+    result->putDirect(vm, Identifier::fromString(vm, "cold"_s), jsNumber(statistics->cold.count));
+    result->putDirect(vm, Identifier::fromString(vm, "hotBytes"_s), jsNumber(statistics->hot.bytes));
+    result->putDirect(vm, Identifier::fromString(vm, "unknownBytes"_s), jsNumber(statistics->unknown.bytes));
+    result->putDirect(vm, Identifier::fromString(vm, "coldBytes"_s), jsNumber(statistics->cold.bytes));
+    result->putDirect(vm, Identifier::fromString(vm, "regions"_s), regions);
+    return JSValue::encode(result);
+}
 
 namespace Zig {
 DEFINE_NATIVE_MODULE(BunJSC)
 {
-    INIT_NATIVE_MODULE(BunJSC, 36);
+    INIT_NATIVE_MODULE(BunJSC, 37);
+
+    putNativeFn(Identifier::fromString(vm, "bytecodeOrderStats"_s), functionBytecodeOrderStats);
 
     putNativeFn(Identifier::fromString(vm, "callerSourceOrigin"_s), functionCallerSourceOrigin);
     putNativeFn(Identifier::fromString(vm, "jscDescribe"_s), functionDescribe);
@@ -1046,7 +1037,7 @@ DEFINE_NATIVE_MODULE(BunJSC)
     putNativeFn(Identifier::fromString(vm, "getProtectedObjects"_s), functionGetProtectedObjects);
     putNativeFn(Identifier::fromString(vm, "generateHeapSnapshotForDebugging"_s), functionGenerateHeapSnapshotForDebugging);
     putNativeFn(Identifier::fromString(vm, "profile"_s), functionRunProfiler);
-    putNativeFn(Identifier::fromString(vm, "codeCoverageForFile"_s),  functionCodeCoverageForFile);
+    putNativeFn(Identifier::fromString(vm, "codeCoverageForFile"_s), functionCodeCoverageForFile);
     putNativeFn(Identifier::fromString(vm, "setTimeZone"_s), functionSetTimeZone);
     putNativeFn(Identifier::fromString(vm, "serialize"_s), functionSerialize);
     putNativeFn(Identifier::fromString(vm, "deserialize"_s), functionDeserialize);

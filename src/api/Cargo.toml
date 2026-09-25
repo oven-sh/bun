@@ -12,4 +12,3 @@ workspace = true
 [dependencies]
 bun_alloc.workspace = true
 bun_options_types.workspace = true
-bun_url.workspace = true

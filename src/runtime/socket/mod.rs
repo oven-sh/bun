@@ -10,35 +10,40 @@
 mod socket_body;
 
 #[path = "SocketAddress.rs"]
-pub mod socket_address;
+pub(crate) mod socket_address;
 
 #[path = "Handlers.rs"]
-pub mod handlers;
+pub(crate) mod handlers;
 
 #[path = "JSSocketHandlers.rs"]
-pub mod js_socket_handlers;
+pub(crate) mod js_socket_handlers;
 
 #[path = "Listener.rs"]
-pub mod listener;
+pub(crate) mod listener;
 
 #[path = "UpgradedDuplex.rs"]
-pub mod upgraded_duplex;
+pub(crate) mod upgraded_duplex;
 
 #[cfg(windows)]
 #[path = "WindowsNamedPipe.rs"]
-pub mod windows_named_pipe;
+pub(crate) mod windows_named_pipe;
 
 #[cfg(windows)]
 #[path = "WindowsNamedPipeContext.rs"]
-pub mod windows_named_pipe_context;
+pub(crate) mod windows_named_pipe_context;
+
+mod bundled_root_certs;
+mod cert_files;
+#[cfg(all(unix, not(target_vendor = "apple")))]
+mod system_certs;
 
 /// Re-export of the canonical `bun_uws::ssl_wrapper` plus the runtime-tier
 /// `init(&SSLConfig, ..)` constructor that the lower tier can't see (it would
 /// need to name `crate::server::server_config::SSLConfig`). The body is the
 /// same `as_usockets() → init_from_options()` round-trip the old local copy
 /// did; the duplicate module file is gone.
-pub mod ssl_wrapper {
-    pub use bun_uws::ssl_wrapper::*;
+pub(crate) mod ssl_wrapper {
+    pub(crate) use bun_uws::ssl_wrapper::*;
 
     /// Thin wrapper over `SSLWrapper::init_from_options` so callers in this
     /// tier can keep passing `&SSLConfig` directly.
@@ -57,36 +62,38 @@ pub mod ssl_wrapper {
 // there for type-check parity.
 
 #[path = "udp_socket.rs"]
-pub mod udp_socket_draft;
+pub(crate) mod udp_socket_draft;
 
 #[path = "uws_dispatch.rs"]
-pub mod uws_dispatch;
+pub(crate) mod uws_dispatch;
 
 #[path = "uws_handlers.rs"]
-pub mod uws_handlers;
+pub(crate) mod uws_handlers;
 
 #[path = "uws_jsc.rs"]
-pub mod uws_jsc;
+pub(crate) mod uws_jsc;
 
 #[path = "SSLConfig.rs"]
-pub mod ssl_config;
-pub use ssl_config::{SSLConfig, SSLConfigFromJs, resolve_reject_unauthorized, tls_true_defaults};
+pub(crate) mod ssl_config;
+pub(crate) use ssl_config::{
+    SSLConfig, SSLConfigFromJs, resolve_reject_unauthorized, tls_true_defaults,
+};
 
 // ─── canonical type surface ──────────────────────────────────────────────────
 // These were previously stub-defined inline here; now that the real
 // submodules compile, re-export instead so
 // `socket_body`/`tls_socket_functions`/`uws_handlers` all agree on one type.
 
-pub use handlers::{Handlers, SocketConfig};
-pub use listener::Listener;
-pub use socket_address::SocketAddress;
+pub(crate) use handlers::{Handlers, SocketConfig};
+pub(crate) use listener::Listener;
+pub(crate) use socket_address::SocketAddress;
 pub(crate) use socket_body::DuplexUpgradeContext;
-pub use socket_body::{
+pub(crate) use socket_body::{
     Flags as SocketFlags, NativeCallbacks, NewSocket, SocketMode, TCPSocket, TLSSocket,
 };
 
 #[cfg(windows)]
-pub use windows_named_pipe_context::WindowsNamedPipeContext;
+pub(crate) use windows_named_pipe_context::WindowsNamedPipeContext;
 
 /// LAYERING: `udp_socket.rs` is the canonical body. It is mounted as
 /// `udp_socket_draft` above (legacy name retained for existing callers); the
@@ -94,15 +101,15 @@ pub use windows_named_pipe_context::WindowsNamedPipeContext;
 /// `generated_classes.rs` (`crate::socket::udp_socket::UDPSocket`) and
 /// `generated_js2native.rs` (`crate::socket::udp_socket::udp_socket::js_connect`)
 /// resolve against the real struct, not an opaque placeholder.
-pub mod udp_socket {
+pub(crate) mod udp_socket {
     /// `generated_js2native.rs` lowers `$rust(udp_socket.rs, UDPSocket.jsConnect)`
     /// to `crate::socket::udp_socket::udp_socket::js_connect`. The inner
     /// `udp_socket` segment is the snake-cased struct name; aliasing the type
     /// lets the associated-fn path resolve directly.
-    pub use super::udp_socket_draft::UDPSocket as udp_socket;
-    pub use super::udp_socket_draft::*;
+    pub(crate) use super::udp_socket_draft::UDPSocket as udp_socket;
+    pub(crate) use super::udp_socket_draft::*;
 }
-pub use udp_socket::UDPSocket;
+pub(crate) use udp_socket::UDPSocket;
 
 /// Codegen path alias.
 ///
@@ -111,8 +118,8 @@ pub use udp_socket::UDPSocket;
 /// the file stem). The Rust port placed the bodies in `socket_body.rs` to keep
 /// `mod.rs` as the wiring layer, so re-export the js2native entry points under
 /// the name the generator expects rather than special-casing the generator.
-pub mod socket {
-    pub use super::socket_body::{
+pub(crate) mod socket {
+    pub(crate) use super::socket_body::{
         js_create_socket_pair, js_get_buffered_amount, js_is_named_pipe_socket,
         js_set_socket_options, js_upgrade_duplex_to_tls, js_upgrade_tls_deferred, testing_ap_is,
     };
@@ -128,16 +135,26 @@ impl<const SSL: bool> uws_handlers::RawSocketEvents<SSL> for NewSocket<SSL> {
     const HAS_ON_OPEN: bool = true;
 
     #[inline]
-    fn on_open(this: bun_ptr::ThisPtr<Self>, s: bun_uws::NewSocketHandler<SSL>) {
-        NewSocket::on_open(this, s);
+    fn on_open(
+        this: bun_ptr::ThisPtr<Self>,
+        s: bun_uws::NewSocketHandler<SSL>,
+    ) -> bun_jsc::JsResult<()> {
+        NewSocket::on_open(this, s)
     }
     #[inline]
-    fn on_data(this: bun_ptr::ThisPtr<Self>, s: bun_uws::NewSocketHandler<SSL>, data: &[u8]) {
-        NewSocket::on_data(this, s, data);
+    fn on_data(
+        this: bun_ptr::ThisPtr<Self>,
+        s: bun_uws::NewSocketHandler<SSL>,
+        data: &[u8],
+    ) -> bun_jsc::JsResult<()> {
+        NewSocket::on_data(this, s, data)
     }
     #[inline]
-    fn on_writable(this: bun_ptr::ThisPtr<Self>, s: bun_uws::NewSocketHandler<SSL>) {
-        NewSocket::on_writable(this, s);
+    fn on_writable(
+        this: bun_ptr::ThisPtr<Self>,
+        s: bun_uws::NewSocketHandler<SSL>,
+    ) -> bun_jsc::JsResult<()> {
+        NewSocket::on_writable(this, s)
     }
     #[inline]
     fn on_close(
@@ -145,29 +162,35 @@ impl<const SSL: bool> uws_handlers::RawSocketEvents<SSL> for NewSocket<SSL> {
         s: bun_uws::NewSocketHandler<SSL>,
         code: i32,
         reason: *mut core::ffi::c_void,
-    ) {
+    ) -> bun_jsc::JsResult<()> {
         NewSocket::on_close(
             this,
             s,
             code,
             if reason.is_null() { None } else { Some(reason) },
-        );
+        )
     }
     #[inline]
-    fn on_timeout(this: bun_ptr::ThisPtr<Self>, s: bun_uws::NewSocketHandler<SSL>) {
-        NewSocket::on_timeout(this, s);
+    fn on_timeout(
+        this: bun_ptr::ThisPtr<Self>,
+        s: bun_uws::NewSocketHandler<SSL>,
+    ) -> bun_jsc::JsResult<()> {
+        NewSocket::on_timeout(this, s)
     }
     #[inline]
-    fn on_end(this: bun_ptr::ThisPtr<Self>, s: bun_uws::NewSocketHandler<SSL>) {
-        NewSocket::on_end(this, s);
+    fn on_end(
+        this: bun_ptr::ThisPtr<Self>,
+        s: bun_uws::NewSocketHandler<SSL>,
+    ) -> bun_jsc::JsResult<()> {
+        NewSocket::on_end(this, s)
     }
     #[inline]
     fn on_connect_error(
         this: bun_ptr::ThisPtr<Self>,
         s: bun_uws::NewSocketHandler<SSL>,
         code: i32,
-    ) {
-        NewSocket::on_connect_error(this, s, code);
+    ) -> bun_jsc::JsResult<()> {
+        NewSocket::on_connect_error(this, s, code)
     }
     #[inline]
     fn on_handshake(
@@ -175,7 +198,7 @@ impl<const SSL: bool> uws_handlers::RawSocketEvents<SSL> for NewSocket<SSL> {
         s: bun_uws::NewSocketHandler<SSL>,
         ok: i32,
         err: bun_uws_sys::us_bun_verify_error_t,
-    ) {
-        NewSocket::on_handshake(this, s, ok, err);
+    ) -> bun_jsc::JsResult<()> {
+        NewSocket::on_handshake(this, s, ok, err)
     }
 }

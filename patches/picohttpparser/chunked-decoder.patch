@@ -1,0 +1,55 @@
+--- a/picohttpparser.c
++++ b/picohttpparser.c
+@@ -561,10 +561,9 @@ ssize_t phr_decode_chunked(struct phr_chunked_decoder *decoder, char *buf, size_
+                         ret = -1;
+                         goto Exit;
+                     }
+-                    /* the only characters that may appear after the chunk size are BWS, semicolon, or CRLF */
++                    /* the only characters that may appear after the chunk size are semicolon or CRLF. bun: upstream also
++                     * accepts BWS here; llhttp (Node) rejects it, so fetch does too. */
+                     switch (buf[src]) {
+-                    case ' ':
+-                    case '\011':
+                     case ';':
+                     case '\012':
+                     case '\015':
+@@ -688,12 +687,8 @@ Exit:
+     if (dst != src)
+         memmove(buf + dst, buf + src, bufsz - src);
+     *_bufsz = dst;
+-    /* if incomplete but the overhead of the chunked encoding is >=100KB and >80%, signal an error */
+-    if (ret == -2) {
+-        decoder->_total_overhead += bufsz - dst;
+-        if (decoder->_total_overhead >= 100 * 1024 && decoder->_total_read - decoder->_total_overhead < decoder->_total_read / 4)
+-            ret = -1;
+-    }
++    /* bun: upstream fails the decode here once chunk framing exceeds 100KB and 75% of the bytes read. That protects a
++     * server from a client; fetch is the client, and a response streamed as ~20k one-byte chunks is legitimate. */
+     return ret;
+ }
+ 
+@@ -702,6 +697,12 @@ int phr_decode_chunked_is_in_data(struct phr_chunked_decoder *decoder)
+     return decoder->_state == CHUNKED_IN_CHUNK_DATA;
+ }
+ 
++/* bun: true once the terminal zero-size chunk has been read, i.e. the body is complete and only trailers remain */
++int phr_decode_chunked_is_in_trailers(const struct phr_chunked_decoder *decoder)
++{
++    return decoder->_state == CHUNKED_IN_TRAILERS_LINE_HEAD || decoder->_state == CHUNKED_IN_TRAILERS_LINE_MIDDLE;
++}
++
+ #undef CHECK_EOF
+ #undef EXPECT_CHAR
+ #undef ADVANCE_TOKEN
+--- a/picohttpparser.h
++++ b/picohttpparser.h
+@@ -89,6 +89,9 @@ ssize_t phr_decode_chunked(struct phr_chunked_decoder *decoder, char *buf, size_
+ /* returns if the chunked decoder is in middle of chunked data */
+ int phr_decode_chunked_is_in_data(struct phr_chunked_decoder *decoder);
+ 
++/* bun: returns if the chunked decoder has read the last chunk and is in the trailers */
++int phr_decode_chunked_is_in_trailers(const struct phr_chunked_decoder *decoder);
++
+ #ifdef __cplusplus
+ }
+ #endif

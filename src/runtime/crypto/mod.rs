@@ -3,36 +3,36 @@ use crate::jsc::{JSGlobalObject, JSValue};
 // ─── submodules ───────────────────────────────────────────────────────────
 
 #[path = "pwhash.rs"]
-pub mod pwhash;
+pub(crate) mod pwhash;
 
 #[path = "PasswordObject.rs"]
-pub mod password_object;
+pub(crate) mod password_object;
 
 #[path = "CryptoHasher.rs"]
-pub mod crypto_hasher;
+pub(crate) mod crypto_hasher;
 #[path = "EVP.rs"]
-pub mod evp;
+pub(crate) mod evp;
 #[path = "HMAC.rs"]
-pub mod hmac;
+pub(crate) mod hmac;
 
 #[path = "PBKDF2.rs"]
-pub mod pbkdf2;
+pub(crate) mod pbkdf2;
 
 #[path = "boringssl_jsc.rs"]
-pub mod boringssl_jsc;
+pub(crate) mod boringssl_jsc;
 
 pub(crate) fn create_crypto_error(global_this: &JSGlobalObject, err_code: u32) -> JSValue {
     boringssl_jsc::err_to_js(global_this, err_code)
 }
 
-pub use crypto_hasher::CryptoHasher;
-pub use crypto_hasher::MD4;
-pub use crypto_hasher::MD5;
-pub use crypto_hasher::SHA1;
-pub use crypto_hasher::SHA224;
-pub use crypto_hasher::SHA256;
-pub use crypto_hasher::SHA384;
-pub use crypto_hasher::SHA512;
-pub use crypto_hasher::SHA512_256;
+pub(crate) use crypto_hasher::CryptoHasher;
+pub(crate) use crypto_hasher::MD4;
+pub(crate) use crypto_hasher::MD5;
+pub(crate) use crypto_hasher::SHA1;
+pub(crate) use crypto_hasher::SHA224;
+pub(crate) use crypto_hasher::SHA256;
+pub(crate) use crypto_hasher::SHA384;
+pub(crate) use crypto_hasher::SHA512;
+pub(crate) use crypto_hasher::SHA512_256;
 
-pub use hmac::HMAC;
+pub(crate) use hmac::HMAC;

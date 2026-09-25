@@ -1,12 +1,14 @@
 use crate::node::{PathLike, PathOrBlob};
-use crate::webcore::blob::store::{S3Ext as _, StoreExt as _, StoreRef};
+use crate::webcore::blob::store::{S3Ext as _, Store, StoreExt as _};
 use crate::webcore::blob::{self, Blob, BlobExt};
 use crate::webcore::s3::client as s3;
 use crate::webcore::s3::client::error_jsc::s3_error_to_js_with_async_stack;
 use crate::webcore::s3_client::S3CredentialsExt as _;
 use bun_core::strings;
 use bun_http::Method;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass as _, JsError, JsResult};
+use bun_ptr::RefPtr;
 
 // Local front for `bun_core::pretty_fmt!` that accepts a runtime / const-
 // generic bool. The proc-macro only matches `true`/`false` literals, so
@@ -141,6 +143,7 @@ fn resolve_s3_blob(
             if matches!(path, crate::node::PathOrFileDescriptor::Fd(_)) {
                 return Err(global.throw_invalid_arguments(format_args!("{error_message}")));
             }
+            // The clone owns a copy of a buffer's bytes; `path` unpins at scope exit.
             let blob = construct_s3_file_internal_store(global, path.path().clone(), options)?;
             Ok((Box::new(blob), options))
         }
@@ -170,11 +173,15 @@ pub(crate) fn unlink(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult
     let path_or_blob = parse_s3_path_or_blob(global, &mut args, error_message)?;
     let (blob, options) = resolve_s3_blob(global, &mut args, path_or_blob, error_message)?;
     let store = blob.store.get().as_ref().unwrap();
-    store.data.as_s3().unlink(store, global, options)
+    store
+        .data
+        .as_s3()
+        .unlink(store, &global.js_thread_of_caller(callframe), options)
 }
 
 #[bun_jsc::host_fn]
-pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    let cx = global.js_thread_of_caller(callframe);
     // SAFETY: bun_vm() returns the live VM raw ptr.
     let mut args =
         bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), callframe.arguments());
@@ -195,7 +202,7 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
     // `write_file_internal` takes `&mut PathOrBlob`; rewrap the resolved blob.
     let mut blob_internal = PathOrBlob::Blob(blob);
     blob::write_file_internal(
-        global,
+        &cx,
         &mut blob_internal,
         data,
         blob::WriteFileOptions {
@@ -217,7 +224,7 @@ pub(crate) fn size(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
         PathOrBlob::Blob(blob) => return Ok(blob.get_size(global)),
         path => resolve_s3_blob(global, &mut args, path, error_message)?.0,
     };
-    S3BlobStatTask::size(global, &mut blob)
+    S3BlobStatTask::size(&global.js_thread_of_caller(callframe), &mut blob)
 }
 
 #[bun_jsc::host_fn]
@@ -231,12 +238,12 @@ pub(crate) fn exists(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult
         PathOrBlob::Blob(blob) => return blob.get_exists(global, callframe),
         path => resolve_s3_blob(global, &mut args, path, error_message)?.0,
     };
-    S3BlobStatTask::exists(global, &blob)
+    S3BlobStatTask::exists(&global.js_thread_of_caller(callframe), &blob)
 }
 
 fn construct_s3_file_internal_store(
     global: &JSGlobalObject,
-    path: PathLike,
+    path: PathLike<'static>,
     options: Option<JSValue>,
 ) -> JsResult<Blob> {
     // get credentials from env — `Transpiler::env_mut` is the safe accessor
@@ -255,7 +262,7 @@ fn construct_s3_file_internal_store(
 /// if the credentials have changed, we need to clone it, if not we can just ref/deref it
 pub(crate) fn construct_s3_file_with_s3_credentials_and_options(
     global: &JSGlobalObject,
-    path: PathLike,
+    path: PathLike<'static>,
     options: Option<JSValue>,
     default_credentials: &s3::S3Credentials,
     default_options: s3::MultiPartUploadOptions,
@@ -276,11 +283,6 @@ pub(crate) fn construct_s3_file_with_s3_credentials_and_options(
     let credentials = if aws_options.changed_credentials {
         std::mem::take(&mut aws_options.credentials)
     } else {
-        // The `Store::S3` field is `Rc<S3Credentials>` (separate rc
-        // layer), so we can't share the existing intrusive allocation —
-        // deep-clone the value instead and let `init_s3` `Rc::new` it.
-        // PERF: profile if hot once Store.rs migrates
-        // `Rc<S3Credentials>` → `IntrusiveRc`.
         default_credentials.clone()
     };
     let store = blob::Store::init_s3(path, None, credentials).expect("oom");
@@ -289,7 +291,7 @@ pub(crate) fn construct_s3_file_with_s3_credentials_and_options(
 
 pub(crate) fn construct_s3_file_with_s3_credentials(
     global: &JSGlobalObject,
-    path: PathLike,
+    path: PathLike<'static>,
     options: Option<JSValue>,
     existing_credentials: &s3::S3Credentials,
 ) -> JsResult<Blob> {
@@ -312,22 +314,22 @@ pub(crate) fn construct_s3_file_with_s3_credentials(
 /// Unlike the write path, a non-string or invalid `type` is ignored here.
 fn finish_s3_blob(
     global: &JSGlobalObject,
-    mut store: Box<blob::Store>,
+    store: RefPtr<Store>,
     aws_options: &s3::S3CredentialsWithOptions,
     options: Option<JSValue>,
 ) -> JsResult<Blob> {
-    // store cleanup on early return is handled by Drop
-    store.data.as_s3_mut().options = aws_options.options;
-    store.data.as_s3_mut().acl = aws_options.acl;
-    store.data.as_s3_mut().storage_class = aws_options.storage_class;
-    store.data.as_s3_mut().request_payer = aws_options.request_payer;
+    let s3 = Store::data_mut(&store).as_s3_mut();
+    s3.options = aws_options.options;
+    s3.acl = aws_options.acl;
+    s3.storage_class = aws_options.storage_class;
+    s3.request_payer = aws_options.request_payer;
 
     let blob = Blob::init_with_store(store, global);
     if let Some(opts) = options {
         if opts.is_object() {
             if let Some(file_type) = opts.get_truthy(global, "type")? {
                 if file_type.is_string() {
-                    let str = file_type.to_slice(global)?;
+                    let str = file_type.to_utf8(global)?;
                     let slice = str.slice();
                     if blob::is_valid_blob_type(slice) {
                         blob.content_type_was_set.set(true);
@@ -346,7 +348,7 @@ fn finish_s3_blob(
 
 fn construct_s3_file_internal(
     global: &JSGlobalObject,
-    path: PathLike,
+    path: PathLike<'static>,
     options: Option<JSValue>,
 ) -> JsResult<*mut Blob> {
     Ok(Blob::new(construct_s3_file_internal_store(
@@ -359,7 +361,7 @@ pub(crate) struct S3BlobStatTask {
     // LIFETIMES.tsv: JSC_BORROW (&JSGlobalObject). `BackRef` so the heap task
     // can outlive the constructing frame while reads stay safe.
     global: bun_ptr::BackRef<JSGlobalObject>,
-    store: StoreRef,
+    store: RefPtr<Store>,
 }
 
 impl S3BlobStatTask {
@@ -370,7 +372,7 @@ impl S3BlobStatTask {
     fn on_s3_exists_resolved(
         result: s3::S3StatResult,
         this: *mut core::ffi::c_void,
-    ) -> Result<(), bun_jsc::JsTerminated> {
+    ) -> JsResult<()> {
         // SAFETY: `this` was allocated via heap::alloc in `exists`; reconstructing here replaces `defer this.deinit()`
         let mut this = unsafe { bun_core::heap::take(this.cast::<S3BlobStatTask>()) };
         // Copy the BackRef out so `this` is not borrowed across `&mut this.promise`.
@@ -401,10 +403,7 @@ impl S3BlobStatTask {
         Ok(())
     }
 
-    fn on_s3_size_resolved(
-        result: s3::S3StatResult,
-        this: *mut core::ffi::c_void,
-    ) -> Result<(), bun_jsc::JsTerminated> {
+    fn on_s3_size_resolved(result: s3::S3StatResult, this: *mut core::ffi::c_void) -> JsResult<()> {
         // SAFETY: `this` was allocated via heap::alloc in `size`; reconstructing here replaces `defer this.deinit()`
         let mut this = unsafe { bun_core::heap::take(this.cast::<S3BlobStatTask>()) };
         // Copy the BackRef out so `this` is not borrowed across `&mut this.promise`.
@@ -429,10 +428,7 @@ impl S3BlobStatTask {
         Ok(())
     }
 
-    fn on_s3_stat_resolved(
-        result: s3::S3StatResult,
-        this: *mut core::ffi::c_void,
-    ) -> Result<(), bun_jsc::JsTerminated> {
+    fn on_s3_stat_resolved(result: s3::S3StatResult, this: *mut core::ffi::c_void) -> JsResult<()> {
         // SAFETY: `this` was allocated via heap::alloc in `stat`; reconstructing here replaces `defer this.deinit()`
         let mut this = unsafe { bun_core::heap::take(this.cast::<S3BlobStatTask>()) };
         // Copy the BackRef out so `this` is not borrowed across `&mut this.promise`.
@@ -467,11 +463,11 @@ impl S3BlobStatTask {
         Ok(())
     }
 
-    pub(crate) fn exists(global: &JSGlobalObject, blob: &Blob) -> JsResult<JSValue> {
+    pub(crate) fn exists(cx: &bun_jsc::JsThread<'_>, blob: &Blob) -> JsResult<JSValue> {
         let this = S3BlobStatTask::new(S3BlobStatTask {
-            promise: bun_jsc::JSPromiseStrong::init(global),
+            promise: bun_jsc::JSPromiseStrong::init(cx.global()),
             store: blob.store.get().as_ref().unwrap().clone(),
-            global: bun_ptr::BackRef::new(global),
+            global: bun_ptr::BackRef::new(cx.global()),
         });
         // SAFETY: `this` is a freshly leaked Box; sole pointer until handed to the s3
         // callback below. Scoped shared access.
@@ -479,26 +475,22 @@ impl S3BlobStatTask {
         let s3_store = blob.store.get().as_ref().unwrap().data.as_s3();
         let credentials = s3_store.get_credentials();
         let path = s3_store.path();
-        // `Transpiler::env_mut` is the safe accessor for the process-singleton
-        // dotenv loader (set during init).
-        let env = global.bun_vm().as_mut().transpiler.env_mut();
-
         s3::stat(
             credentials,
+            cx.context(),
             path,
             S3BlobStatTask::on_s3_exists_resolved,
             this.cast::<core::ffi::c_void>(),
-            env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
             s3_store.request_payer,
         )?;
         Ok(promise)
     }
 
-    pub(crate) fn stat(global: &JSGlobalObject, blob: &Blob) -> JsResult<JSValue> {
+    pub(crate) fn stat(cx: &bun_jsc::JsThread<'_>, blob: &Blob) -> JsResult<JSValue> {
         let this = S3BlobStatTask::new(S3BlobStatTask {
-            promise: bun_jsc::JSPromiseStrong::init(global),
+            promise: bun_jsc::JSPromiseStrong::init(cx.global()),
             store: blob.store.get().as_ref().unwrap().clone(),
-            global: bun_ptr::BackRef::new(global),
+            global: bun_ptr::BackRef::new(cx.global()),
         });
         // SAFETY: `this` is a freshly leaked Box; sole pointer until handed to the s3
         // callback below. Scoped shared access.
@@ -506,26 +498,22 @@ impl S3BlobStatTask {
         let s3_store = blob.store.get().as_ref().unwrap().data.as_s3();
         let credentials = s3_store.get_credentials();
         let path = s3_store.path();
-        // `Transpiler::env_mut` is the safe accessor for the process-singleton
-        // dotenv loader (set during init).
-        let env = global.bun_vm().as_mut().transpiler.env_mut();
-
         s3::stat(
             credentials,
+            cx.context(),
             path,
             S3BlobStatTask::on_s3_stat_resolved,
             this.cast::<core::ffi::c_void>(),
-            env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
             s3_store.request_payer,
         )?;
         Ok(promise)
     }
 
-    pub(crate) fn size(global: &JSGlobalObject, blob: &mut Blob) -> JsResult<JSValue> {
+    pub(crate) fn size(cx: &bun_jsc::JsThread<'_>, blob: &mut Blob) -> JsResult<JSValue> {
         let this = S3BlobStatTask::new(S3BlobStatTask {
-            promise: bun_jsc::JSPromiseStrong::init(global),
+            promise: bun_jsc::JSPromiseStrong::init(cx.global()),
             store: blob.store.get().as_ref().unwrap().clone(),
-            global: bun_ptr::BackRef::new(global),
+            global: bun_ptr::BackRef::new(cx.global()),
         });
         // SAFETY: `this` is a freshly leaked Box; sole pointer until handed to the s3
         // callback below. Scoped shared access.
@@ -533,16 +521,12 @@ impl S3BlobStatTask {
         let s3_store = blob.store.get().as_ref().unwrap().data.as_s3();
         let credentials = s3_store.get_credentials();
         let path = s3_store.path();
-        // `Transpiler::env_mut` is the safe accessor for the process-singleton
-        // dotenv loader (set during init).
-        let env = global.bun_vm().as_mut().transpiler.env_mut();
-
         s3::stat(
             credentials,
+            cx.context(),
             path,
             S3BlobStatTask::on_s3_size_resolved,
             this.cast::<core::ffi::c_void>(),
-            env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
             s3_store.request_payer,
         )?;
         Ok(promise)
@@ -617,8 +601,6 @@ pub(crate) fn get_presign_url_from(
             acl: credentials_with_options.acl,
             storage_class: credentials_with_options.storage_class,
             request_payer: credentials_with_options.request_payer,
-            // SAFETY: these `*const [u8]` borrow into sibling `_*_slice` fields on
-            // `credentials_with_options`, which lives for the duration of this call.
             content_disposition: credentials_with_options.content_disposition.as_deref(),
             content_type: credentials_with_options.content_type.as_deref(),
             content_hash: None,
@@ -632,7 +614,7 @@ pub(crate) fn get_presign_url_from(
         Err(sign_err) => return Err(s3::throw_sign_error(sign_err.into(), global)),
     };
     // `Blob.global_this` is the JSGlobalObject the blob was created with; live for VM lifetime.
-    bun_jsc::bun_string_jsc::create_utf8_for_js(
+    bun_string_jsc::create_utf8_for_js(
         this.global_this().expect("Blob.global_this set"),
         &result.url,
     )
@@ -668,7 +650,7 @@ fn get_bucket_name(this: &Blob) -> Option<&[u8]> {
 // so the proc-macro shim is not used here — the raw ABI shim is hand-wired.
 fn get_bucket(this: &Blob, global: &JSGlobalObject) -> JsResult<JSValue> {
     if let Some(name) = get_bucket_name(this) {
-        return bun_jsc::bun_string_jsc::create_utf8_for_js(global, name);
+        return bun_string_jsc::create_utf8_for_js(global, name);
     }
     Ok(JSValue::UNDEFINED)
 }
@@ -684,9 +666,9 @@ fn get_presign_url(
 pub(crate) fn get_stat(
     this: &Blob,
     global: &JSGlobalObject,
-    _callframe: &CallFrame,
+    callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    S3BlobStatTask::stat(global, this)
+    S3BlobStatTask::stat(&global.js_thread_of_caller(callframe), this)
 }
 
 #[bun_jsc::host_fn]
@@ -698,12 +680,12 @@ pub(crate) fn stat(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
     let error_message = "Expected a S3 or path to get size";
     let path_or_blob = parse_s3_path_or_blob(global, &mut args, error_message)?;
     let (blob, _options) = resolve_s3_blob(global, &mut args, path_or_blob, error_message)?;
-    S3BlobStatTask::stat(global, &blob)
+    S3BlobStatTask::stat(&global.js_thread_of_caller(callframe), &blob)
 }
 
 pub(crate) fn construct_internal_js(
     global: &JSGlobalObject,
-    path: PathLike,
+    path: PathLike<'static>,
     options: Option<JSValue>,
 ) -> JsResult<JSValue> {
     let blob = construct_s3_file_internal(global, path, options)?;

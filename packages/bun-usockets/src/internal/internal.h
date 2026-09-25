@@ -75,13 +75,20 @@ extern void __attribute__((__noreturn__)) Bun__panic(const char *message, size_t
  * allocations this library has no way to fail gracefully from. */
 extern void __attribute__((__noreturn__)) Bun__outOfMemory(void);
 
+/* The error code a loop-driven close carries (recv()'s error, SO_ERROR, or
+ * the fallback where those report nothing) is in LIBUS_ERR's numbering: errno
+ * on POSIX, a WSA code on Windows, which on_close maps (socket_body.rs). The
+ * fallback has to be in that numbering too: the CRT's ECONNRESET is a
+ * different number on Windows (108) and is misread as another errno there. */
 #ifdef _WIN32
 #define IS_EINTR(rc) (rc == SOCKET_ERROR && WSAGetLastError() == WSAEINTR)
 #define LIBUS_ERR WSAGetLastError()
+#define LIBUS_ECONNRESET WSAECONNRESET
 #else
 #include <errno.h>
 #define IS_EINTR(rc) (rc == -1 && errno == EINTR)
 #define LIBUS_ERR errno
+#define LIBUS_ECONNRESET ECONNRESET
 #endif
 #include <stdbool.h>
 /* Poll type and what it polls for */
@@ -122,6 +129,9 @@ struct addrinfo_result {
  * switch on s->kind decides whether to direct-call into Rust/C++ or fall back
  * to the vtable. Signatures track the vtable entries (us_dispatch_handshake
  * drops the trailing custom_data — dispatch always passes NULL). */
+#ifdef __cplusplus
+extern "C" {
+#endif
 extern struct us_socket_t *us_dispatch_open(us_socket_r s, int is_client, char *ip, int ip_length);
 extern struct us_socket_t *us_dispatch_data(us_socket_r s, char *data, int length);
 extern struct us_socket_t *us_dispatch_fd(us_socket_r s, int fd);
@@ -135,7 +145,16 @@ extern struct us_connecting_socket_t *us_dispatch_connecting_error(struct us_con
 extern void us_dispatch_handshake(us_socket_r s, int success, struct us_bun_verify_error_t err);
 extern void us_dispatch_session(us_socket_r s, const unsigned char *data, int length);
 extern void us_dispatch_keylog(us_socket_r s, const unsigned char *data, int length);
+struct ssl_session_st;
+/* Runs inside SSL_read/SSL_do_handshake: must not run JS. Returns 1 to get us_dispatch_session later. */
+extern int us_dispatch_new_session(us_socket_r s, struct ssl_session_st *session);
+/* Returns a US_IDENTITY_* verdict on the name of the server's certificate. Must not run JS. */
+extern int us_dispatch_server_identity(us_socket_r s, struct ssl_st *ssl);
+extern struct ssl_ctx_st *us_dispatch_socket_server_name(us_socket_r s, const char *hostname, int *abort_handshake);
 extern struct us_socket_t *us_dispatch_ssl_raw_tap(us_socket_r s, char *data, int length);
+#ifdef __cplusplus
+}
+#endif
 
 extern int Bun__addrinfo_get(struct us_loop_t* loop, const char* host, uint16_t port,  struct addrinfo_request** ptr);
 /* Fills *out when host is a numeric address (incl. inet_aton shorthand and %zone); 0 when it is a name. */
@@ -173,10 +192,10 @@ void us_internal_group_maybe_unlink(struct us_socket_group_t *group);
  * SSL path calls _raw once it's actually time to drop the fd. */
 struct us_socket_t *us_internal_socket_close_raw(us_socket_r s, int code, void *reason);
 struct us_socket_t *us_internal_ssl_close(us_socket_r s, int code, void *reason);
-void us_internal_loop_data_init(struct us_loop_t *loop,
-                                void (*wakeup_cb)(us_loop_r loop),
-                                void (*pre_cb)(us_loop_r loop),
-                                void (*post_cb)(us_loop_r loop));
+int us_internal_loop_data_init(struct us_loop_t *loop,
+                               void (*wakeup_cb)(us_loop_r loop),
+                               void (*pre_cb)(us_loop_r loop),
+                               void (*post_cb)(us_loop_r loop));
 void us_internal_loop_data_free(us_loop_r loop);
 void us_internal_loop_pre(us_loop_r loop);
 void us_internal_loop_post(us_loop_r loop);
@@ -222,6 +241,7 @@ void us_internal_ssl_attach(us_socket_r s, struct ssl_ctx_st *ssl_ctx, int is_cl
 /* SSL_free(s->ssl); s->ssl = NULL. Idempotent. */
 void us_internal_ssl_detach(us_socket_r s);
 void us_internal_ssl_socket_relocated(us_loop_r loop, us_socket_r old_s, us_socket_r new_s);
+void us_internal_ssl_socket_left_group(us_socket_r s);
 
 /* TLS-layer event hooks. loop.c calls these instead of us_dispatch_* when
  * s->ssl != NULL; they decrypt/encrypt and re-dispatch the plaintext. */
@@ -240,9 +260,7 @@ int us_internal_ssl_write(us_socket_r s, const char *data, int length);
 unsigned int us_internal_ssl_spill_pending(us_socket_r s);
 void *us_internal_ssl_get_native_handle(us_socket_r s);
 struct us_bun_verify_error_t us_internal_ssl_verify_error(us_socket_r s);
-void *us_internal_ssl_sni_userdata(us_socket_r s);
 const char *us_internal_ssl_sni_servername(us_socket_r s);
-void us_internal_ssl_handshake_abort(us_socket_r s);
 /* SSL_CTX_free(ls->ssl_ctx) + sni_free(ls->sni). Called from us_listen_socket_close. */
 void us_internal_listen_socket_ssl_free(struct us_listen_socket_t *ls);
 /* Opaque SSL_CTX_up_ref/SSL_CTX_free so context.c needn't include OpenSSL. */
@@ -250,13 +268,6 @@ void us_internal_ssl_ctx_up_ref(struct ssl_ctx_st *ssl_ctx);
 void us_internal_ssl_ctx_unref(struct ssl_ctx_st *ssl_ctx);
 /* TCP-level FIN, bypassing the SSL layer (used by ssl_on_end). */
 void us_internal_socket_raw_shutdown(us_socket_r s);
-
-#ifdef LIBUS_USE_KQUEUE
-/* Arm an EV_CLEAR read filter on a socket with no readable interest so the
- * peer's FIN/RST still reaches the dispatcher (kqueue's stand-in for epoll's
- * implicit EPOLLHUP/EPOLLERR). See the definition in epoll_kqueue.c. */
-void us_internal_kqueue_socket_arm_read_sentinel(us_socket_r s);
-#endif
 
 int us_internal_handle_dns_results(us_loop_r loop);
 
@@ -289,10 +300,13 @@ struct us_socket_t {
   unsigned char kind;
   /* SSL state. These 6 bits live in the pad-to-pointer gap before `group`, so
    * they cost nothing on epoll/kqueue (poll=4 + 4×u8 + 1 byte bits = 9, padded
-   * to 16 anyway for the pointer). Per-socket reneg counters and SNI userdata
-   * hang off SSL ex_data, allocated on first use only. */
+   * to 16 anyway for the pointer). */
   unsigned char ssl_handshake_state : 2;
   unsigned char ssl_write_wants_read : 1;
+  /* us_internal_ssl_write refused application data because the handshake was
+   * not finished. ssl_write_wants_read cannot tell: every pending handshake
+   * sets it. */
+  unsigned char ssl_write_parked : 1;
   unsigned char ssl_read_wants_write : 1;
   unsigned char ssl_fatal_error : 1;
   unsigned char ssl_is_server : 1;
@@ -318,21 +332,29 @@ struct us_socket_t {
    * the driver's epilogue via ssl_pending_detach. */
   unsigned char ssl_in_use : 1;
   unsigned char ssl_pending_detach : 1;
+  /* Client with rejectUnauthorized on: a failed chain fails the handshake before the Certificate flight. */
+  unsigned char ssl_inline_reject : 1;
+  /* The verify callback saw an error in this handshake. */
+  unsigned char ssl_verify_failed : 1;
+  /* The owner checked the server's name inside this handshake. */
+  unsigned char ssl_identity_checked : 1;
+  /* US_SNI_*: an async SNICallback has the handshake suspended. */
+  unsigned char ssl_sni_pending : 2;
+  /* Server-side socket adopted into TLS with its own SNICallback. */
+  unsigned char ssl_sni_resolver : 1;
+  /* This socket has entries in the loop's ssl_pending_events. */
+  unsigned char ssl_has_pending_events : 1;
   /* Peer FIN was dispatched as on_end on a half-open socket; readable interest is never re-added and on_end never re-fires. */
   unsigned char read_eof : 1;
   /* The close code passed to the deferred close (e.g. a reset requested from
    * inside a handshake callback must still RST, not FIN, when it is finally
    * performed). */
-  unsigned char ssl_pending_close_code;
+  unsigned char ssl_pending_close_code : 2;
   /* Consecutive send() failures with an errno that is neither
    * would-block/transient nor a known peer-gone error (see
    * us_socket_write_check_error). Reset by any send that makes progress.
    * Lives in the pad-to-pointer gap before `group`, so it costs nothing. */
-  /* 7 bits fit the 32-cap retry counter; the spare bit marks a paused
-   * socket whose peer FIN was deferred behind buffered data (libuv path -
-   * the sweep escalates via SO_ERROR when the peer later resets). */
-  unsigned char unclassified_send_failures : 7;
-  unsigned char fin_deferred : 1;
+  unsigned char unclassified_send_failures;
 
   struct us_socket_group_t *group;
   /* NULL for plain TCP. Direct BoringSSL `SSL*`; set by us_internal_ssl_attach
@@ -440,15 +462,6 @@ struct us_internal_callback_t {
 
 #endif
 
-#if __cplusplus
-extern "C" {
-#endif
-int us_internal_raw_root_certs(struct us_cert_string_t **out);
-
-#if __cplusplus
-}
-#endif
-
 /* Listen sockets are sockets, with their own embedded group for the listener
  * itself (for the accept-readable poll) plus the accepted-socket parameters
  * stamped on every accept(). The accepted sockets are linked into whatever
@@ -477,16 +490,22 @@ struct us_listen_socket_t {
   unsigned char accept_kind;
   /* Set when TCP_DEFER_ACCEPT/SO_ACCEPTFILTER was successfully applied. */
   unsigned char deferred_accept;
+  /* LIBUS_SOCKET_OPEN_PAUSED: accepted sockets start without read interest. */
+  unsigned char accept_paused;
 };
 
 void us_internal_socket_group_link_connecting_socket(us_socket_group_r group, struct us_connecting_socket_t *c);
 void us_internal_socket_group_unlink_connecting_socket(us_socket_group_r group, struct us_connecting_socket_t *c);
 
-int us_raw_root_certs(struct us_cert_string_t **out);
 
 /* Save/restore the per-loop BIO routing state around in-handshake JS
- * callbacks (SNI / ALPN). Defined in crypto/openssl.c. */
-void us_internal_ssl_loop_state_save(void *ssl, void **out5);
-void us_internal_ssl_loop_state_restore(void **saved5);
+ * callbacks (SNI / ALPN). Defined in crypto/openssl.c. The snapshot is an
+ * opaque void*[US_SSL_LOOP_STATE_SLOTS] the caller provides; Rust callers
+ * size their array from us_internal_ssl_loop_state_slots() in a debug
+ * assertion so growth cannot silently corrupt a caller's stack. */
+#define US_SSL_LOOP_STATE_SLOTS 6
+int us_internal_ssl_loop_state_slots(void);
+void us_internal_ssl_loop_state_save(void *ssl, void **out);
+void us_internal_ssl_loop_state_restore(void **saved);
 
 #endif // INTERNAL_H

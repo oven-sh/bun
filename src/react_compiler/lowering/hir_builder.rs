@@ -12,6 +12,7 @@ use crate::diagnostics::CompilerError;
 use crate::diagnostics::CompilerErrorDetail;
 use crate::diagnostics::ErrorCategory;
 use crate::diagnostics::Position;
+use crate::hir::cfg_utils::mark_instruction_ids;
 use crate::hir::environment::Environment;
 use crate::hir::visitors::each_terminal_successor;
 use crate::hir::visitors::terminal_fallthrough;
@@ -1246,18 +1247,6 @@ fn remove_unnecessary_try_catch(hir: &mut HIR) {
                 fallthrough.preds.shift_remove(&handler_id);
             }
         }
-    }
-}
-
-fn mark_instruction_ids(hir: &mut HIR, instructions: &mut [Instruction]) {
-    let mut order: u32 = 0;
-    for block in hir.blocks.values_mut() {
-        for &instr_id in &block.instructions {
-            order += 1;
-            instructions[instr_id.0 as usize].id = EvaluationOrder(order);
-        }
-        order += 1;
-        block.terminal.set_evaluation_order(EvaluationOrder(order));
     }
 }
 

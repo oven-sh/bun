@@ -16,6 +16,8 @@ class SourceProvider;
 #include <JavaScriptCore/SourceProvider.h>
 #include <JavaScriptCore/Structure.h>
 
+struct bun_ModuleInfoDeserialized;
+
 namespace Zig {
 
 class GlobalObject;
@@ -42,18 +44,24 @@ public:
         return m_cachedBytecode.copyRef();
     };
 
-    ResolvedSource m_resolvedSource;
+    // Taken from the ResolvedSource at create(); freed in the destructor (or
+    // earlier by BunAnalyzeTranspiledModule once consumed).
+    bun_ModuleInfoDeserialized* m_moduleInfo { nullptr };
+    uint32_t m_tag { 0 };
+    bool m_alreadyBundled { false };
 
 private:
-    SourceProvider(void* bunVM, ResolvedSource resolvedSource, Ref<WTF::StringImpl>&& sourceImpl,
+    SourceProvider(void* bunVM, ResolvedSource& resolvedSource, Ref<WTF::StringImpl>&& sourceImpl,
         JSC::SourceTaintedOrigin taintedness,
         const SourceOrigin& sourceOrigin, WTF::String&& sourceURL,
         const TextPosition& startPosition, JSC::SourceProviderSourceType sourceType)
         : Base(sourceOrigin, WTF::move(sourceURL), String(), taintedness, startPosition, sourceType)
+        , m_moduleInfo(std::exchange(resolvedSource.module_info, nullptr))
+        , m_tag(resolvedSource.tag)
+        , m_alreadyBundled(resolvedSource.already_bundled)
         , m_bunVM(bunVM)
-        , m_source(sourceImpl)
+        , m_source(WTF::move(sourceImpl))
     {
-        m_resolvedSource = resolvedSource;
     }
 
     // Stored directly (not via the creating global) so the destructor stays
@@ -65,3 +73,34 @@ private:
 };
 
 } // namespace Zig
+
+namespace Bun {
+
+// Bytecode that is a section of the executable: not owned, and there for the life of the process. `entryOffset` is where
+// the module's cache entry starts in `bytes` when they are the one payload of a link.
+inline Ref<JSC::CachedBytecode> embeddedBytecode(std::span<uint8_t> bytes, uint32_t entryOffset)
+{
+    Ref<JSC::CachedBytecode> bytecode = JSC::CachedBytecode::create(bytes, nullptr, {});
+    bytecode->setPayloadIsPersistent();
+    bytecode->setEntryOffset(entryOffset);
+    return bytecode;
+}
+
+// bun_bundler::bytecode_order::CodeNamesRef. `functions` is sorted by (start, kind), each once; none for a text without names.
+struct BytecodeOrderNamesRef {
+    uint64_t module;
+    const JSC::BytecodeOrderNames::Function* functions;
+    size_t functionCount;
+
+    JSC::BytecodeOrderNames view() const
+    {
+        static_assert(sizeof(JSC::BytecodeOrderNames::Function) == 16 && offsetof(JSC::BytecodeOrderNames::Function, key) == 0 && offsetof(JSC::OrderFunctionKey, kind) == 4 && offsetof(JSC::BytecodeOrderNames::Function, name) == 8, "FunctionIdentity");
+        static_assert(!static_cast<uint8_t>(JSC::OrderFunctionKind::Function) && static_cast<uint8_t>(JSC::OrderFunctionKind::InnerBody) == 1 && static_cast<uint8_t>(JSC::OrderFunctionKind::ClassFields) == 2 && static_cast<uint8_t>(JSC::OrderFunctionKind::DefaultConstructor) == 3, "FunctionKind");
+        std::span span { functions, functionCount };
+        ASSERT(std::ranges::is_sorted(span, {}, &JSC::BytecodeOrderNames::Function::key));
+        ASSERT(std::ranges::adjacent_find(span, {}, &JSC::BytecodeOrderNames::Function::key) == span.end());
+        return { module, span };
+    }
+};
+
+} // namespace Bun

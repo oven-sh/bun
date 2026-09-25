@@ -22,7 +22,6 @@
 
 #include "DOMURL.h"
 #include "JSDOMWrapper.h"
-#include <wtf/NeverDestroyed.h>
 
 namespace WebCore {
 
@@ -45,11 +44,15 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(0b11101110), StructureFlags), info(), JSC::NonArray);
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(0b11101110), StructureFlags), info(), JSC::NonArray);
     }
 
     static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
     mutable JSC::WriteBarrier<JSC::Unknown> m_searchParams;
+    // The last JSString handed out for href/toString/toJSON, or the constructor's argument when the URL was already
+    // canonical (the parsed string is then that very StringImpl), so those never allocate a second string.
+    mutable JSC::WriteBarrier<JSC::JSString> m_href;
+    JSC::JSString* href(JSC::JSGlobalObject&) const;
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
@@ -68,24 +71,6 @@ protected:
 
     void finishCreation(JSC::VM&);
 };
-
-class JSDOMURLOwner final : public JSC::WeakHandleOwner {
-public:
-    ~JSDOMURLOwner() final;
-    bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, JSC::AbstractSlotVisitor&, ASCIILiteral*) final;
-    void finalize(JSC::Handle<JSC::Unknown>, void* context) final;
-};
-
-inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, DOMURL*)
-{
-    static NeverDestroyed<JSDOMURLOwner> owner;
-    return &owner.get();
-}
-
-inline void* wrapperKey(DOMURL* wrappableObject)
-{
-    return wrappableObject;
-}
 
 WEBCORE_EXPORT JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, DOMURL&);
 inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, DOMURL* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }

@@ -79,13 +79,6 @@ impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for Option<T> {
     }
 }
 
-impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for &'bump T {
-    #[inline]
-    fn deep_clone(&self, bump: &'bump Arena) -> Self {
-        bump.alloc((**self).deep_clone(bump))
-    }
-}
-
 impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for &'bump [T] {
     fn deep_clone(&self, bump: &'bump Arena) -> Self {
         // PERF: element-wise deep_clone — profile if hot
@@ -189,11 +182,6 @@ pub trait CssEql {
 /// Re-exported here so `use crate::generics::CssEql;` brings both trait and
 /// derive into scope (same-name idiom, cf. `Clone`).
 pub use bun_css_derive::CssEql;
-
-#[inline]
-pub fn implement_eql<T: CssEql>(this: &T, other: &T) -> bool {
-    this.eql(other)
-}
 
 #[inline]
 pub(crate) fn eql<T: CssEql>(lhs: &T, rhs: &T) -> bool {
@@ -303,7 +291,6 @@ macro_rules! css_eql_partialeq {
         }
     )+};
 }
-pub use css_eql_partialeq;
 
 impl CssEql for [u8] {
     #[inline]
@@ -316,19 +303,6 @@ impl CssEql for str {
     #[inline]
     fn eql(&self, other: &Self) -> bool {
         bun_core::strings::eql(self.as_bytes(), other.as_bytes())
-    }
-}
-
-impl<T: CssEql, const N: usize> CssEql for [T; N] {
-    #[inline]
-    fn eql(&self, other: &Self) -> bool {
-        // Element-wise eql (length is `N` on both sides by type).
-        for (a, b) in self.iter().zip(other.iter()) {
-            if !a.eql(b) {
-                return false;
-            }
-        }
-        true
     }
 }
 
@@ -459,17 +433,17 @@ mod inherent_bridge {
     bridge_deep_clone_copy!(UAEnvironmentVariable);
 
     // `Direction` is re-exported from `properties::text` — bridged below as `TextDirection`.
-    use crate::selectors::parser::{ViewTransitionPartName, WebKitScrollbarPseudoElement};
+    use crate::selectors::parser::{ViewTransitionPartSelector, WebKitScrollbarPseudoElement};
     impl CssEql for WebKitScrollbarPseudoElement {
         #[inline]
         fn eql(&self, other: &Self) -> bool {
             WebKitScrollbarPseudoElement::eql(*self, *other)
         }
     }
-    bridge_eql!(ViewTransitionPartName);
+    bridge_eql!(ViewTransitionPartSelector);
     // CssHash for WebKitScrollbarPseudoElement — via #[derive(CssHash)] on the enum.
-    bridge_hash!(ViewTransitionPartName);
-    bridge_deep_clone_copy!(WebKitScrollbarPseudoElement, ViewTransitionPartName);
+    bridge_hash!(ViewTransitionPartSelector);
+    bridge_deep_clone_copy!(WebKitScrollbarPseudoElement, ViewTransitionPartSelector);
 
     // ───────────────────────────────────────────────────────────────────────
     // Property value-type bridges — `Property::deep_clone`/`eql` dispatch via
@@ -896,21 +870,10 @@ pub fn implement_hash<T: CssHash>(this: &T, hasher: &mut Wyhash) {
     this.hash(hasher)
 }
 
-fn hash_array_list<V: CssHash>(this: &ArrayList<'_, V>, hasher: &mut Wyhash) {
-    for item in this.iter() {
-        item.hash(hasher);
-    }
-}
-
 fn hash_baby_list<V: CssHash>(this: &Vec<V>, hasher: &mut Wyhash) {
     for item in this.slice_const() {
         item.hash(hasher);
     }
-}
-
-impl CssHash for () {
-    #[inline]
-    fn hash(&self, _hasher: &mut Wyhash) {}
 }
 
 impl<T: CssHash> CssHash for Option<T> {
@@ -937,27 +900,6 @@ impl<T: CssHash> CssHash for [T] {
         for item in self {
             item.hash(hasher);
         }
-    }
-}
-
-impl<T: CssHash, const N: usize> CssHash for [T; N] {
-    fn hash(&self, hasher: &mut Wyhash) {
-        // Feed the raw bytes
-        // of the `usize` length into the hasher. `bun_core::write_any_to_hasher` exists
-        // but is `H: Hasher`-generic and routes through `Hasher::write`, which
-        // for `Wyhash11` calls `update` — so inlining the `usize` byte-feed
-        // here is byte-identical and avoids the trait hop.
-        hasher.update(&self.len().to_ne_bytes());
-        for item in self {
-            item.hash(hasher);
-        }
-    }
-}
-
-impl<'bump, T: CssHash> CssHash for ArrayList<'bump, T> {
-    #[inline]
-    fn hash(&self, hasher: &mut Wyhash) {
-        hash_array_list(self, hasher)
     }
 }
 
@@ -1022,15 +964,6 @@ impl CssHash for VendorPrefix {
     #[inline]
     fn hash(&self, hasher: &mut Wyhash) {
         hasher.update(&[self.as_bits()]);
-    }
-}
-
-impl CssHash for bun_ast::Loc {
-    #[inline]
-    fn hash(&self, hasher: &mut Wyhash) {
-        // Providing a structural hash here lets `#[derive(CssHash)]` types
-        // include a `loc` field without `#[css(skip)]` if they want.
-        hasher.update(&self.start.to_ne_bytes());
     }
 }
 
@@ -1125,13 +1058,6 @@ impl<T: IsCompatible> IsCompatible for [T] {
     }
 }
 
-impl<T: IsCompatible, const N: usize> IsCompatible for [T; N] {
-    #[inline]
-    fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
-        self.as_slice().is_compatible(browsers)
-    }
-}
-
 impl<T: IsCompatible> IsCompatible for Vec<T> {
     #[inline]
     fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
@@ -1203,11 +1129,6 @@ pub fn parse_with_options<T: ParseWithOptions>(
     options: &ParserOptions,
 ) -> CssResult<T> {
     T::parse_with_options(input, options)
-}
-
-#[inline]
-pub fn parse<T: Parse>(input: &mut Parser) -> CssResult<T> {
-    T::parse(input)
 }
 
 // ── container / primitive Parse impls ────────────────────────────────────────
@@ -1362,13 +1283,6 @@ impl<T: ToCss> ToCss for Option<T> {
     }
 }
 
-impl<'bump, T: ToCss> ToCss for ArrayList<'bump, T> {
-    #[inline]
-    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        css::to_css::from_list(self.as_slice(), dest)
-    }
-}
-
 impl<T: ToCss> ToCss for Vec<T> {
     #[inline]
     fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
@@ -1407,24 +1321,6 @@ impl ToCss for CSSInteger {
     #[inline]
     fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         CSSIntegerFns::to_css(*self, dest)
-    }
-}
-impl ToCss for CustomIdent {
-    #[inline]
-    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        CustomIdentFns::to_css(self, dest)
-    }
-}
-impl ToCss for DashedIdent {
-    #[inline]
-    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        DashedIdentFns::to_css(self, dest)
-    }
-}
-impl ToCss for Ident {
-    #[inline]
-    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        IdentFns::to_css(self, dest)
     }
 }
 

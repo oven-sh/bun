@@ -246,6 +246,25 @@ export function pgReadFrontendMessages(buffered: Buffer, onMessage: (type: numbe
   return buffered;
 }
 
+// PostgreSQL FE/BE protocol §55.7 Bind (frontend) body: String(portal) String(statement) Int16(nformats) Int16[nformats]
+//   Int16(nparams) per param: Int32(byteLen | -1) Byte[len], then the result-column format codes (not read here)
+/** The parameter values of a frontend Bind message body, for a mock that answers with what was bound. */
+export function pgBindParameters(body: Buffer): (Buffer | null)[] {
+  let o = body.indexOf(0) + 1; // portal name
+  o = body.indexOf(0, o) + 1; // statement name
+  o += 2 + 2 * body.readUInt16BE(o); // parameter format codes
+  const params: (Buffer | null)[] = [];
+  const count = body.readUInt16BE(o);
+  o += 2;
+  for (let i = 0; i < count; i++) {
+    const len = body.readInt32BE(o);
+    o += 4;
+    params.push(len < 0 ? null : body.subarray(o, o + len));
+    if (len > 0) o += len;
+  }
+  return params;
+}
+
 // PostgreSQL FE/BE protocol §55.7 DataRow: Byte1('D') Int32(len) Int16(ncols) per col: Int32(byteLen | -1) Byte[len]
 export function pgDataRow(cols: (Buffer | null)[]): Buffer {
   const parts: Buffer[] = [Buffer.alloc(2)];
@@ -270,6 +289,54 @@ export async function pgMinimalReadyServer(): Promise<{ port: number; server: ne
       socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
     });
   });
+}
+
+/** In a `pgMockServer` reply: the mock keeps back every later frame of that connection until `release()`. */
+export const pgHold = Symbol("pgHold");
+
+/**
+ * Postgres mock that answers the StartupMessage with AuthenticationOk +
+ * ReadyForQuery and then hands every complete frontend message (type as a
+ * one-char string, e.g. "P", "B", "E", "S", "Q", "X") to `respond`; whatever it
+ * returns is written back in order after the whole chunk has been parsed.
+ * A reply can stop part-way with `pgHold`; `release()` sends what was kept back.
+ */
+export async function pgMockServer(
+  respond: (type: string, body: Buffer, socket: net.Socket) => Buffer | (Buffer | typeof pgHold)[] | void,
+): Promise<{ port: number; server: net.Server; release(): void }> {
+  const releases = new Set<() => void>();
+  const { port, server } = await listeningServer(socket => {
+    let buffered = Buffer.alloc(0);
+    let startup = true;
+    let held: Buffer[] | undefined;
+    const release = () => {
+      if (held?.length) socket.write(Buffer.concat(held));
+      held = undefined;
+    };
+    releases.add(release);
+    socket.on("close", () => releases.delete(release));
+    socket.on("data", chunk => {
+      buffered = Buffer.concat([buffered, chunk]);
+      const out: Buffer[] = [];
+      if (startup) {
+        if (buffered.length < 4 || buffered.length < buffered.readInt32BE(0)) return;
+        buffered = buffered.subarray(buffered.readInt32BE(0));
+        startup = false;
+        out.push(pgAuthenticationOk(), pgReadyForQuery());
+      }
+      buffered = pgReadFrontendMessages(buffered, (type, body) => {
+        const reply = respond(String.fromCharCode(type), body, socket);
+        if (!reply) return;
+        for (const frame of Array.isArray(reply) ? reply : [reply]) {
+          if (frame === pgHold) held ??= [];
+          else (held ?? out).push(frame);
+        }
+      });
+      if (out.length) socket.write(Buffer.concat(out));
+    });
+    socket.on("error", () => {});
+  });
+  return { port, server, release: () => releases.forEach(release => release()) };
 }
 
 // ---------------------------------------------------------------------------
@@ -354,6 +421,31 @@ export function mysqlHandshakeV10(
 // The header is 0x00, except for the CLIENT_DEPRECATE_EOF result-set terminator, which is an OK packet with a 0xFE header.
 export function mysqlOkPacket(seq: number, header: 0x00 | 0xfe = 0x00): Buffer {
   return mysqlRawPacket(seq, Buffer.from([header, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00]));
+}
+
+// MySQL ERR_Packet — page_protocol_basic_err_packet.html:
+//   Int<1>(0xff) Int<2>(error_code) '#' String<5>(sql_state) String<EOF>(message)
+export function mysqlErrPacket(seq: number, code: number, sqlState: string, message: string): Buffer {
+  const codeBuf = Buffer.alloc(2);
+  codeBuf.writeUInt16LE(code);
+  return mysqlRawPacket(
+    seq,
+    Buffer.concat([Buffer.from([0xff]), codeBuf, Buffer.from("#"), Buffer.from(sqlState), Buffer.from(message)]),
+  );
+}
+
+// The driver sends `SET time_zone = '+00:00'` as a COM_QUERY on every new
+// connection right after authentication (session setup, MySQLConnection.rs)
+// and waits for its OK before it reports itself connected. A mock server must
+// acknowledge it or the client never reaches Connected. Call this first in the
+// post-auth dispatcher; it answers OK and returns true when `payload` is that
+// query.
+export function mysqlAckSessionSetup(socket: { write(data: Buffer): unknown }, payload: Buffer): boolean {
+  if (payload[0] !== 0x03 /* COM_QUERY */ || payload.subarray(1).toString("utf8") !== "SET time_zone = '+00:00'") {
+    return false;
+  }
+  socket.write(mysqlOkPacket(1));
+  return true;
 }
 
 // MySQL Protocol::AuthMoreData — page_protocol_connection_phase_packets_protocol_auth_more_data.html:

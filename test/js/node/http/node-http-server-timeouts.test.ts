@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { once } from "node:events";
 import http from "node:http";
 import net from "node:net";
+import { pipeline, Writable } from "node:stream";
 
 // Each test opens a raw TCP socket against a server whose timeout knob is a
 // few hundred ms and waits for the server to close the connection. A small
@@ -154,6 +155,75 @@ describe("node:http server timeout enforcement", () => {
     }
   });
 
+  test("emits 'clientError' once per stalled request when the listener keeps the socket open", async () => {
+    const server = http.createServer({ connectionsCheckingInterval: 50 }, (req, res) => res.end("ok"));
+    server.headersTimeout = 200;
+    server.requestTimeout = 800;
+    const codes: unknown[] = [];
+    const fires = new Map<unknown, number>();
+    // Log-only listener: records the error but does NOT destroy the socket.
+    server.on("clientError", (err: any, socket) => {
+      codes.push(err.code);
+      fires.set(socket, (fires.get(socket) ?? 0) + 1);
+    });
+    const port = await listen(server);
+    const clients: net.Socket[] = [];
+    const stall = async () => {
+      const c = net.connect(port, "127.0.0.1");
+      clients.push(c);
+      c.on("error", () => {});
+      c.setNoDelay(true);
+      await once(c, "connect");
+      c.write("GET / HTTP/1.1\r\nHost: a\r\n");
+      return c;
+    };
+    const nextDistinctSocket = () => {
+      const before = fires.size;
+      const { promise, resolve } = Promise.withResolvers<void>();
+      const onFire = () => {
+        if (fires.size > before) {
+          server.removeListener("clientError", onFire);
+          resolve();
+        }
+      };
+      server.on("clientError", onFire);
+      return promise;
+    };
+    try {
+      // Three stalled sockets, one headersTimeout apart; the first also trickles
+      // more header bytes after its timeout (slowloris).
+      const first = await stall();
+      await nextDistinctSocket();
+      first.write("X-Slow: v\r\n");
+      await stall();
+      await nextDistinctSocket();
+      first.write("X-Slow: v\r\n");
+      await stall();
+      await nextDistinctSocket();
+      expect({ codes, fires: [...fires.values()] }).toEqual({
+        codes: ["ERR_HTTP_REQUEST_TIMEOUT", "ERR_HTTP_REQUEST_TIMEOUT", "ERR_HTTP_REQUEST_TIMEOUT"],
+        fires: [1, 1, 1],
+      });
+
+      // Completing the message re-arms: a second stalled request on the same
+      // keep-alive socket gets its own timeout.
+      let response = "";
+      first.on("data", d => (response += d.toString("latin1")));
+      first.write("\r\n");
+      while (!response.includes("\r\n\r\nok")) await once(first, "data");
+      first.write("GET / HTTP/1.1\r\nHost: a\r\n");
+      await once(server, "clientError");
+      expect({ codes, fires: [...fires.values()] }).toEqual({
+        codes: Array(4).fill("ERR_HTTP_REQUEST_TIMEOUT"),
+        fires: [2, 1, 1],
+      });
+    } finally {
+      for (const c of clients) c.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
   test("headersTimeout answers 408 when there is no 'clientError' listener", async () => {
     const server = http.createServer({ connectionsCheckingInterval: 50 }, (req, res) => res.end("ok"));
     server.headersTimeout = 200;
@@ -213,6 +283,141 @@ describe("node:http server timeout enforcement", () => {
         ok: true,
       });
     } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
+  // A POST whose body stalls is pipelined behind a GET that is never answered,
+  // so the GET's response still owns the socket when the inactivity timeout
+  // fires. Like Node's socketOnTimeout (`parser.incoming`), the request that is
+  // still being received sees 'timeout', not the one that owns the response.
+  const pipelinedStalledPost =
+    "GET /a HTTP/1.1\r\nHost: a\r\n\r\n" + "POST /b HTTP/1.1\r\nHost: a\r\nContent-Length: 100\r\n\r\n0123456789";
+
+  test("a pipelined request that is still being received gets 'timeout' and can keep the socket", async () => {
+    const events: string[] = [];
+    const { promise: timedOut, resolve: onTimedOut } = Promise.withResolvers<void>();
+    const server = http.createServer(req => {
+      if (req.url !== "/b") return;
+      req.setTimeout(200, () => events.push(`POST /b 'timeout' complete=${req.complete}`));
+      // Runs after the server's own socket 'timeout' listener, which is the
+      // one that destroys the socket when nothing handled the timeout.
+      req.socket.on("timeout", () => {
+        events.push(`socket destroyed=${req.socket.destroyed}`);
+        onTimedOut();
+      });
+    });
+    const port = await listen(server);
+    const client = net.connect(port, "127.0.0.1");
+    try {
+      client.on("error", () => {});
+      client.on("connect", () => client.write(pipelinedStalledPost));
+      await timedOut;
+      expect(events).toEqual(["POST /b 'timeout' complete=false", "socket destroyed=false"]);
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
+  test("with pipelining, 'timeout' goes to the incoming request, the response that owns the socket, then the server", async () => {
+    const events: string[] = [];
+    const { promise: timedOut, resolve: onTimedOut } = Promise.withResolvers<void>();
+    const server = http.createServer((req, res) => {
+      const name = `${req.method} ${req.url}`;
+      req.on("timeout", () => events.push(`req ${name} complete=${req.complete}`));
+      res.on("timeout", () => events.push(`res ${name}`));
+      if (req.url === "/b") req.socket.setTimeout(200);
+    });
+    server.on("timeout", socket => {
+      events.push(`server destroyed=${socket.destroyed}`);
+      onTimedOut();
+    });
+    const port = await listen(server);
+    const client = net.connect(port, "127.0.0.1");
+    try {
+      client.on("error", () => {});
+      client.on("connect", () => client.write(pipelinedStalledPost));
+      await timedOut;
+      expect(events).toEqual(["req POST /b complete=false", "res GET /a", "server destroyed=false"]);
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
+  test("a pipelined request that stream.pipeline() destroyed does not keep the idle keep-alive socket open", async () => {
+    // POST /b is pipelined behind GET /a. Its destination fails, so pipeline()
+    // destroys the request and leaves the connection open for the 500. Both
+    // responses go out, the client finishes the upload and idles. The destroyed
+    // request never completes in JS. Its response has finished, so its
+    // 'timeout' listener must not veto the keep-alive timeout.
+    const events: string[] = [];
+    const { promise: settled, resolve: onSettled } = Promise.withResolvers<void>();
+    let resA: http.ServerResponse | undefined;
+    const server = http.createServer((req, res) => {
+      if (req.url === "/a") {
+        resA = res;
+        return;
+      }
+      req.setTimeout(30_000, () => {
+        events.push(`req 'timeout' destroyed=${req.destroyed}`);
+        onSettled();
+      });
+      const failing = new Writable({
+        write(chunk, encoding, callback) {
+          callback(new Error("disk full"));
+        },
+      });
+      pipeline(req, failing, () => {
+        res.statusCode = 500;
+        res.end("failed");
+        resA!.end("a");
+      });
+    });
+    server.keepAliveTimeout = 200;
+    server.keepAliveTimeoutBuffer = 0;
+    const port = await listen(server);
+    const client = net.connect(port, "127.0.0.1");
+    try {
+      const body = Buffer.alloc(100, "a").toString();
+      let received = "";
+      let sentRest = false;
+      client.on("error", () => {});
+      client.on("connect", () => {
+        client.write(
+          "GET /a HTTP/1.1\r\nHost: a\r\n\r\n" +
+            "POST /b HTTP/1.1\r\nHost: a\r\nContent-Length: 100\r\n\r\n" +
+            body.slice(0, 10),
+        );
+      });
+      client.on("data", chunk => {
+        received += chunk.toString("latin1");
+        // "failed" ends the second response: the client now finishes its upload and idles.
+        if (!sentRest && received.endsWith("failed")) {
+          sentRest = true;
+          client.write(body.slice(10));
+        }
+      });
+      client.on("close", () => {
+        events.push("closed by the server");
+        onSettled();
+      });
+      await settled;
+      expect({
+        responses: received.match(/HTTP\/1\.1 \d+ [^\r]*/g),
+        keepAlive: received.match(/^connection: keep-alive\r$/gim)?.length,
+        events,
+      }).toEqual({
+        responses: ["HTTP/1.1 200 OK", "HTTP/1.1 500 Internal Server Error"],
+        keepAlive: 2,
+        events: ["closed by the server"],
+      });
+    } finally {
+      client.destroy();
       server.closeAllConnections();
       server.close();
     }

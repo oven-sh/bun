@@ -5,21 +5,17 @@ use core::sync::atomic::AtomicU8;
 use core::sync::atomic::Ordering;
 
 use crate::Error;
-use bun_core::ZigString;
 use bun_io as io;
 #[cfg(not(windows))]
 use bun_io::IntrusiveIoRequest as _;
-use bun_jsc::ZigStringJsc as _;
 use bun_jsc::node_path::PathOrFileDescriptor;
-use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, JsTerminated, SystemError};
+use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, SystemError};
 use bun_sys::{self as sys, Fd};
 use bun_threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask};
 
-use crate::webcore::blob::{
-    self, Blob, FileOpener, MkdirpTarget, Retry, SizeType, mkdir_if_not_exists,
-};
+use crate::webcore::blob::{self, Blob, FileOpener, SizeType};
 #[cfg(not(windows))]
-use crate::webcore::blob::{ClosingState, FileCloser};
+use crate::webcore::blob::{ClosingState, FileCloser, MkdirpTarget, Retry, mkdir_if_not_exists};
 use crate::webcore::body;
 
 bun_output::declare_scope!(WriteFile, hidden);
@@ -28,16 +24,26 @@ bun_output::declare_scope!(WriteFile, hidden);
 // as a plain Rust enum: it only ever travels through the Rust fn-pointer
 // callbacks below (`WriteFileOnWriteFileCallback`), never across FFI, so the
 // layout is unconstrained.
-pub enum WriteFileResultType {
+/// One `write()` attempt on the pool thread.
+#[cfg(not(windows))]
+pub(crate) enum WriteStep {
+    Wrote(usize),
+    /// A pipe/socket is full: park on the io loop.
+    WouldBlock,
+    /// `errno`/`system_error` are set.
+    Failed,
+}
+
+pub(crate) enum WriteFileResultType {
     Result(SizeType),
     Err(Box<SystemError>),
 }
 
-pub type WriteFileOnWriteFileCallback =
-    fn(ctx: *mut c_void, count: WriteFileResultType) -> Result<(), JsTerminated>;
+pub(crate) type WriteFileOnWriteFileCallback =
+    fn(ctx: *mut c_void, count: WriteFileResultType) -> jsc::JsResult<()>;
 
 /// The completion token a `WriteFile` keeps across its async I/O.
-pub type WriteFileTask = bun_jsc::Completion<WriteFile>;
+pub(crate) type WriteFileTask = bun_jsc::Completion<WriteFile>;
 
 // SAFETY: the two blobs are native values holding store refs (atomic counts);
 // io-loop registration state and an opaque completion ctx that only the
@@ -45,32 +51,50 @@ pub type WriteFileTask = bun_jsc::Completion<WriteFile>;
 unsafe impl Send for WriteFile {}
 
 impl bun_jsc::JobContext for WriteFile {
+    const CANCELLABLE: bool = cfg!(not(windows));
     type OffThread = Self;
-    /// The completion is delivered through `on_complete_callback(ctx, ..)`.
-    type Js = ();
-    fn run(
-        this: &mut Self,
-        _vm: &bun_jsc::vm_handle::Borrow,
-        done: bun_jsc::Completion<Self>,
-    ) -> Option<bun_jsc::Completion<Self>> {
+    /// Whom the write is reported to. (Dropped with the job when that is released unrun: the
+    /// promise then stays pending.)
+    type Js = Box<WriteFilePromise>;
+    fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         // Starts the write; finishes from the io loop via the token.
         this.run(done);
         None
     }
-    fn then(this: Self, _: (), cx: &bun_jsc::JsThread<'_>) -> jsc::JsResult<()> {
-        Ok(WriteFile::then(this, cx.global())?)
+    fn then(
+        this: Self,
+        promise: Box<WriteFilePromise>,
+        _: &bun_jsc::JsThread<'_>,
+    ) -> jsc::JsResult<()> {
+        WriteFile::then(this, promise)
+    }
+    /// As `ReadFile`: a write parked on a full pipe nobody drains is the one
+    /// state this job can be stuck in.
+    #[cfg(not(windows))]
+    unsafe fn cancel(this: *mut Self) {
+        // SAFETY: fn contract; see `ReadFile::cancel`.
+        unsafe {
+            if (*this).io_parking.cancel() {
+                io::IoRequestLoop::schedule(&mut (*this).io_request);
+            }
+        }
     }
 }
 
 impl WriteFile {
     /// JS thread: hand a prepared `WriteFile` to the work pool (the job is
     /// its one heap allocation).
-    pub fn schedule(this: WriteFile, global: &JSGlobalObject) {
-        bun_jsc::Job::<WriteFile>::schedule(&global.js_thread(), this, ());
+    #[cfg(not(windows))]
+    pub(crate) fn schedule(
+        this: WriteFile,
+        promise: Box<WriteFilePromise>,
+        cx: &bun_jsc::JsThread<'_>,
+    ) {
+        bun_jsc::Job::<WriteFile>::schedule(cx, this, promise);
     }
 }
 
-pub struct WriteFile {
+pub(crate) struct WriteFile {
     pub(crate) file_blob: Blob,
     #[cfg(not(windows))]
     pub(crate) bytes_blob: Blob,
@@ -83,15 +107,16 @@ pub struct WriteFile {
     pub(crate) io_task: Option<WriteFileTask>,
     pub(crate) io_poll: io::Poll,
     pub(crate) io_request: io::Request,
+    #[cfg(not(windows))]
+    pub(crate) io_parking: super::IoParking,
     pub(crate) state: AtomicU8, // ClosingState
 
-    pub(crate) on_complete_ctx: *mut c_void,
-    pub(crate) on_complete_callback: WriteFileOnWriteFileCallback,
     pub(crate) total_written: usize,
 
     #[cfg(not(windows))]
     pub(crate) could_block: bool,
     pub(crate) close_after_io: bool,
+    #[cfg(not(windows))]
     pub(crate) mkdirp_if_not_exists: bool,
 }
 
@@ -118,7 +143,7 @@ impl FileOpener for WriteFile {
     fn set_system_error(&mut self, e: SystemError) {
         self.system_error = Some(e);
     }
-    fn pathlike(&self) -> &PathOrFileDescriptor {
+    fn pathlike(&self) -> &PathOrFileDescriptor<'static> {
         &self
             .file_blob
             .store
@@ -129,6 +154,7 @@ impl FileOpener for WriteFile {
             .as_file()
             .pathlike
     }
+    #[cfg(not(windows))]
     fn try_mkdirp(
         &mut self,
         err: bun_sys::Error,
@@ -155,6 +181,7 @@ impl FileOpener for WriteFile {
     }
 }
 
+#[cfg(not(windows))]
 impl MkdirpTarget for WriteFile {
     fn mkdirp_if_not_exists(&self) -> bool {
         self.mkdirp_if_not_exists
@@ -179,8 +206,12 @@ impl WriteFile {
     #[cfg(not(windows))]
     pub(crate) const IO_TAG: io::Tag = io::Tag::WriteFile;
 
-    pub fn on_ready(&mut self) {
+    pub(crate) fn on_ready(&mut self) {
         bun_output::scoped_log!(WriteFile, "WriteFile.onReady()");
+        #[cfg(not(windows))]
+        if !self.io_parking.fire() {
+            return;
+        }
         self.task = WorkPoolTask {
             node: Default::default(),
             callback: Self::do_write_loop_task,
@@ -192,6 +223,10 @@ impl WriteFile {
         bun_output::scoped_log!(WriteFile, "WriteFile.onIOError()");
         // SAFETY: ctx was set to `self as *mut WriteFile` in `on_request_writable`.
         let this = unsafe { bun_ptr::callback_ctx::<WriteFile>(this.cast()) };
+        #[cfg(not(windows))]
+        if !this.io_parking.fire() {
+            return;
+        }
         this.errno = Some(bun_errno::from_errno(err.errno as i32).into());
         this.system_error = Some(err.to_system_error().into());
         this.task = WorkPoolTask {
@@ -207,6 +242,12 @@ impl WriteFile {
         request.scheduled = false;
         // SAFETY: `request` points to WriteFile.io_request (intrusive); recover parent.
         let this = unsafe { WriteFile::from_io_request(std::ptr::from_mut(request)) };
+        // SAFETY: `this` is the live parent (see above); io thread owns it while parked.
+        if !unsafe { (*this).io_parking.arm() } {
+            // SAFETY: as above.
+            unsafe { (*this).fail_cancelled() };
+            return <Self as crate::webcore::blob::FileCloser>::schedule_close(request);
+        }
         // SAFETY: `request` points to WriteFile.io_request (intrusive), so `this` is the
         // live parent; `fd` copy and the `io_poll` field borrow are the only borrows formed.
         let (fd, poll) = unsafe { ((*this).opened_fd, &mut (*this).io_poll) };
@@ -219,22 +260,34 @@ impl WriteFile {
         })
     }
 
+    /// See `ReadFile::fail_cancelled`.
+    #[cfg(not(windows))]
+    fn fail_cancelled(&mut self) {
+        let err = sys::Error::from_code(sys::E::ECANCELED, sys::Tag::write);
+        self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
+        self.system_error = Some(err.to_system_error().into());
+        self.state
+            .store(ClosingState::Closing as u8, Ordering::SeqCst);
+    }
+
+    /// See `ReadFile::wait_for_readable`: the caller returns without touching
+    /// `self` again.
     #[cfg(not(windows))]
     pub(crate) fn wait_for_writable(&mut self) {
+        if !self.io_parking.park() {
+            self.fail_cancelled();
+            return self.on_finish();
+        }
         self.close_after_io = true;
         self.io_request
             .store_callback_seq_cst(Self::on_request_writable);
-        if !self.io_request.scheduled {
-            io::IoRequestLoop::schedule(&mut self.io_request);
-        }
+        io::IoRequestLoop::schedule(&mut self.io_request);
     }
 
     #[cfg(not(windows))]
-    pub(crate) fn create_with_ctx(
+    pub(crate) fn create(
         file_blob: Blob,
         bytes_blob: Blob,
-        on_write_file_context: *mut c_void,
-        on_complete_callback: WriteFileOnWriteFileCallback,
         mkdirp_if_not_exists: bool,
     ) -> Result<WriteFile, Error> {
         let write_file = WriteFile {
@@ -250,44 +303,21 @@ impl WriteFile {
             io_task: None,
             io_poll: io::Poll::default(),
             io_request: io::Request::new(Self::on_request_writable),
+            #[cfg(not(windows))]
+            io_parking: super::IoParking::new(),
             state: AtomicU8::new(ClosingState::Running as u8),
-            on_complete_ctx: on_write_file_context,
-            on_complete_callback,
             total_written: 0,
             could_block: false,
             close_after_io: false,
             mkdirp_if_not_exists,
         };
-        // No explicit store ref bump: the caller passes a `+1` Blob (via
-        // `borrowed_view()`'s `StoreRef::clone`) and dropping the `WriteFile`
-        // in `then` runs `StoreRef::drop`, so the ref/deref pair is RAII.
         Ok(write_file)
-    }
-
-    #[cfg(not(windows))]
-    pub(crate) fn create<C>(
-        file_blob: Blob,
-        bytes_blob: Blob,
-        context: *mut C,
-        callback: WriteFileOnWriteFileCallback,
-        mkdirp_if_not_exists: bool,
-    ) -> Result<WriteFile, Error> {
-        // The caller supplies a
-        // `*mut c_void`-typed callback directly (see `WriteFilePromise::run`),
-        // so this is just a `.cast()` on `context`.
-        WriteFile::create_with_ctx(
-            file_blob,
-            bytes_blob,
-            context.cast::<c_void>(),
-            callback,
-            mkdirp_if_not_exists,
-        )
     }
 
     // reshaped for borrowck — take (off, len) here and re-derive the slice
     // internally so callers don't hold a borrow of self across the &mut self call.
     #[cfg(not(windows))]
-    pub(crate) fn do_write(&mut self, off: usize, len: usize, wrote: &mut usize) -> bool {
+    pub(crate) fn do_write(&mut self, off: usize, len: usize) -> WriteStep {
         let fd = self.opened_fd;
         debug_assert!(fd != Fd::INVALID);
 
@@ -296,49 +326,30 @@ impl WriteFile {
         //
         // On macOS, it is an error to use pwrite() on a
         // non-seekable file.
-        let result: bun_sys::Result<usize> =
-            sys::write(fd, &self.bytes_blob.shared_view()[off..off + len]);
-
         loop {
-            match &result {
-                bun_sys::Result::Ok(res) => {
-                    *wrote = *res;
-                    self.total_written += *res;
+            match sys::write(fd, &self.bytes_blob.shared_view()[off..off + len]) {
+                Ok(wrote) => {
+                    self.total_written += wrote;
+                    return WriteStep::Wrote(wrote);
                 }
-                bun_sys::Result::Err(err) => {
-                    if err.get_errno() == io::RETRY {
-                        if !self.could_block {
-                            // regular files cannot use epoll.
-                            // this is fine on kqueue, but not on epoll.
-                            continue;
-                        }
-                        self.wait_for_writable();
-                        return false;
-                    } else {
-                        self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
-                        self.system_error = Some(err.to_system_error().into());
-                        return false;
-                    }
+                // regular files cannot use epoll.
+                // this is fine on kqueue, but not on epoll.
+                Err(err) if err.get_errno() == io::RETRY && !self.could_block => continue,
+                Err(err) if err.get_errno() == io::RETRY => return WriteStep::WouldBlock,
+                Err(err) => {
+                    self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
+                    self.system_error = Some(err.to_system_error().into());
+                    return WriteStep::Failed;
                 }
             }
-            break;
         }
-
-        true
     }
 
-    pub(crate) fn then(mut this: WriteFile, _global: &JSGlobalObject) -> Result<(), JsTerminated> {
-        let cb = this.on_complete_callback;
-        let cb_ctx = this.on_complete_ctx;
+    pub(crate) fn then(mut this: WriteFile, promise: Box<WriteFilePromise>) -> jsc::JsResult<()> {
+        let cb: WriteFileOnWriteFileCallback = WriteFilePromise::run;
+        let cb_ctx = bun_core::heap::into_raw(promise).cast::<c_void>();
         let system_error = this.system_error.take();
         let total_written = this.total_written;
-        // Cleanup is RAII: dropping the `Box` runs `WriteFile`'s field-drop
-        // glue, which drops `bytes_blob.store`/`file_blob.store: Option<
-        // StoreRef>` → `Store::deref()` — exactly one deref each.
-        // (An earlier explicit `detach()` here was a no-op; the
-        // bun-write-leak.test.ts failure was the ASAN debug build's ~320 MB
-        // baseline RSS exceeding the fixture's 256 MB absolute threshold,
-        // not an unbalanced ref.)
         drop(this);
 
         if let Some(err) = system_error {
@@ -433,19 +444,6 @@ impl WriteFile {
         // We have never supported offset in Bun.write().
         // and properly adding support means we need to also support it
         // with splice, sendfile, and the other cases.
-        //
-        // if (this.file_blob.offset > 0) {
-        //     // if we start at an offset in the file
-        //     // example code:
-        //     //
-        //     //    Bun.write(Bun.file("/tmp/lol.txt").slice(10), "hello world");
-        //     //
-        //     // it should write "hello world" to /tmp/lol.txt starting at offset 10
-        //     switch (bun.sys.setFileOffset(fd, this.file_blob.offset)) {
-        //         // we ignore errors because it should continue to work even if its a pipe
-        //         .err, .result => {},
-        //     }
-        // }
 
         if self.could_block && bun_core::is_writable(fd) == bun_core::Pollable::NotReady {
             self.wait_for_writable();
@@ -476,9 +474,8 @@ impl WriteFile {
         // SAFETY: only reached via `WorkPoolTask::callback` with `task` = `&mut self.task`
         // (intrusive) registered in `on_writable`/`init`; recover parent.
         let this = unsafe { WriteFile::from_task_ptr(task) };
-        // On macOS, we use one-shot mode, so we don't need to unregister.
-        #[cfg(target_os = "macos")]
-        {
+        // On kqueue platforms we use one-shot mode, so we don't need to unregister.
+        if bun_core::Environment::IS_KQUEUE {
             // SAFETY: `this` is the live parent (see above); scoped access.
             unsafe { (*this).close_after_io = false };
         }
@@ -508,18 +505,11 @@ impl WriteFile {
             let remain_len = remain_full.len() - off;
 
             if remain_len > 0 && self.errno.is_none() {
-                let mut wrote: usize = 0;
-                let continue_writing = self.do_write(off, remain_len, &mut wrote);
-                if !continue_writing {
-                    // Stop writing, we errored
-                    if self.errno.is_some() {
-                        self.on_finish();
-                        return;
-                    }
-
-                    // Stop writing, we need to wait for it to become writable.
-                    return;
-                }
+                let wrote = match self.do_write(off, remain_len) {
+                    WriteStep::Wrote(n) => n,
+                    WriteStep::WouldBlock => return self.wait_for_writable(),
+                    WriteStep::Failed => return self.on_finish(),
+                };
 
                 // Do not immediately attempt to write again if it's not a regular file.
                 if self.could_block
@@ -554,7 +544,9 @@ impl WriteFile {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[cfg(windows)]
-pub(crate) use self::windows_impl::{WriteFileWindows, WriteFileWindowsError};
+pub(crate) use self::windows_impl::{
+    WriteFileWindows, WriteFileWindowsError, WriteFileWindowsMkdirp,
+};
 
 #[cfg(windows)]
 mod windows_impl {
@@ -562,9 +554,9 @@ mod windows_impl {
     use core::ptr::null_mut;
 
     use bun_io::{self as aio, IntrusiveUvFs as _, KeepAlive};
-    // `bun_jsc::EventLoop`/`ManagedTask` are *modules* (namespace
-    // re-exports); the structs live one level deeper.
-    use bun_jsc::{ConcurrentTask, ManagedTask::ManagedTask, event_loop::EventLoop};
+    // `bun_jsc::EventLoop` is a *module* (namespace re-export); the struct
+    // lives one level deeper.
+    use bun_jsc::{ConcurrentTask, event_loop::EventLoop};
     use bun_sys::ReturnCodeExt as _;
     use bun_sys::windows::libuv as uv;
 
@@ -574,6 +566,8 @@ mod windows_impl {
         pub(crate) bytes_blob: Blob,
         pub(crate) on_complete_callback: WriteFileOnWriteFileCallback,
         pub(crate) on_complete_ctx: *mut c_void,
+        /// The context of the script that asked for the write.
+        pub(crate) context: bun_jsc::ContextId,
         pub(crate) mkdirp_if_not_exists: bool,
         pub(crate) uv_bufs: [uv::uv_buf_t; 1],
 
@@ -581,8 +575,6 @@ mod windows_impl {
         pub(crate) err: Option<sys::Error>,
         pub(crate) total_written: usize,
         pub(crate) event_loop: *mut EventLoop,
-        /// How the mkdirp pool completion gets back to the VM.
-        pub(crate) loop_handle: bun_jsc::LoopHandle,
         pub poll_ref: KeepAlive,
 
         pub(crate) owned_fd: bool,
@@ -590,23 +582,43 @@ mod windows_impl {
 
     bun_io::intrusive_uv_fs!(WriteFileWindows, io_request);
 
-    #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-    pub enum WriteFileWindowsError {
+    #[derive(thiserror::Error, Debug)]
+    pub(crate) enum WriteFileWindowsError {
         #[error("WriteFileWindowsDeinitialized")]
         WriteFileWindowsDeinitialized,
-        #[error("JSTerminated")]
-        JSTerminated,
+        /// Delivering the result entered JS (settled the promise) and an exception is pending.
+        #[error("JSError")]
+        Js(jsc::JsError),
     }
 
-    impl From<JsTerminated> for WriteFileWindowsError {
-        fn from(_: JsTerminated) -> Self {
-            WriteFileWindowsError::JSTerminated
+    impl From<jsc::JsError> for WriteFileWindowsError {
+        fn from(err: jsc::JsError) -> Self {
+            WriteFileWindowsError::Js(err)
         }
     }
 
-    impl PartialEq<crate::Error> for WriteFileWindowsError {
-        fn eq(&self, other: &crate::Error) -> bool {
-            <&'static str>::from(self) == other.name()
+    /// `mkdirp` finished on the work pool: the hop back to the JS thread. Same pointer as the
+    /// write, its own tag.
+    #[repr(transparent)]
+    pub(crate) struct WriteFileWindowsMkdirp(WriteFileWindows);
+
+    impl bun_event_loop::Taskable for WriteFileWindowsMkdirp {
+        const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::WriteFileWindowsMkdirp;
+        /// Frees nothing: the write is not this task's.
+        unsafe fn release_unrun(_: *mut Self) {}
+        /// Enters no context.
+        unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+            bun_event_loop::ContextId::NONE
+        }
+    }
+
+    impl WriteFileWindowsMkdirp {
+        /// # Safety
+        /// `this` is the live `WriteFileWindows` `on_mkdirp_complete_concurrent` posted;
+        /// `on_mkdirp_complete` may free it.
+        pub(crate) unsafe fn run(this: *mut Self) {
+            // SAFETY: fn contract.
+            unsafe { WriteFileWindows::on_mkdirp_complete(this.cast::<WriteFileWindows>()) };
         }
     }
 
@@ -615,6 +627,7 @@ mod windows_impl {
             file_blob: Blob,
             bytes_blob: Blob,
             event_loop: *mut EventLoop,
+            script_context: &bun_jsc::ScriptExecutionContext,
             on_write_file_context: *mut c_void,
             on_complete_callback: WriteFileOnWriteFileCallback,
             mkdirp_if_not_exists: bool,
@@ -634,13 +647,13 @@ mod windows_impl {
                 bytes_blob,
                 on_complete_ctx: on_write_file_context,
                 on_complete_callback,
+                context: script_context.id(),
                 mkdirp_if_not_exists: mkdirp,
                 io_request: bun_core::ffi::zeroed::<uv::fs_t>(),
                 uv_bufs: [uv::uv_buf_t {
                     base: null_mut(),
                     len: 0,
                 }],
-                loop_handle: bun_jsc::virtual_machine::VirtualMachine::get().loop_handle(),
                 event_loop,
                 fd: -1,
                 err: None,
@@ -649,10 +662,6 @@ mod windows_impl {
                 owned_fd: false,
             });
             // SAFETY: just allocated, sole owner until returned.
-            // No explicit store ref bumps — the caller passes `+1` Blobs via
-            // `borrowed_view()` and `deinit` releases them via
-            // `heap::take → StoreRef::drop`.
-            //
             // `open`/`do_write_loop` may free `*write_file` on the `Err` path,
             // so we operate through the raw `write_file` pointer rather than
             // holding a `&mut` across those calls (Stacked Borrows: a `&mut`
@@ -783,22 +792,10 @@ mod windows_impl {
             };
 
             // libuv always returns 0 when a callback is specified
-            if let Some(err) = rc.err_enum_e() {
-                debug_assert!(err != sys::E::NOENT);
-
-                let path = path.into();
+            if let Some(err) = rc.to_error(sys::Tag::open) {
+                debug_assert!(err.get_errno() != sys::E::NOENT);
                 // SAFETY: caller contract — `this` is live; `throw` consumes it.
-                return Err(unsafe {
-                    Self::throw(
-                        this,
-                        sys::Error {
-                            errno: err as _,
-                            path,
-                            syscall: sys::Tag::open,
-                            ..Default::default()
-                        },
-                    )
-                });
+                return Err(unsafe { Self::throw(this, err.with_path(path)) });
             } else {
                 // SAFETY: caller contract — `this` is live on the Ok path.
                 unsafe { (*this).owned_fd = true };
@@ -839,7 +836,7 @@ mod windows_impl {
                 rc
             );
 
-            if let Some(err) = rc.err_enum_e() {
+            if let Some(err) = rc.errno() {
                 // SAFETY: `this` is live.
                 if err == sys::E::NOENT && unsafe { (*this).mkdirp_if_not_exists } {
                     // cleanup the request so we can reuse it later.
@@ -878,7 +875,7 @@ mod windows_impl {
                     )
                 } {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
-                    WriteFileWindowsError::JSTerminated => {} // TODO: properly propagate exception upwards
+                    WriteFileWindowsError::Js(err) => crate::dispatch::fold(Err(err)),
                 }
                 return;
             }
@@ -891,7 +888,7 @@ mod windows_impl {
             if let Err(e) = unsafe { Self::do_write_loop(this, (*this).loop_()) } {
                 match e {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
-                    WriteFileWindowsError::JSTerminated => {} // TODO: properly propagate exception upwards
+                    WriteFileWindowsError::Js(err) => crate::dispatch::fold(Err(err)),
                 }
             }
         }
@@ -924,7 +921,8 @@ mod windows_impl {
                 path: bun_core::dirname(path)
                     // this shouldn't happen
                     .unwrap_or(path) as *const [u8],
-                ..Default::default()
+                ticket: bun_jsc::virtual_machine::VirtualMachine::get().ticket(),
+                task: Default::default(),
             });
         }
 
@@ -940,7 +938,7 @@ mod windows_impl {
                 // SAFETY: caller contract — `this` is live; `throw` consumes it.
                 match unsafe { Self::throw(this, err_) } {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
-                    WriteFileWindowsError::JSTerminated => {} // TODO: properly propagate exception upwards
+                    WriteFileWindowsError::Js(err) => crate::dispatch::fold(Err(err)),
                 }
                 return;
             }
@@ -949,24 +947,16 @@ mod windows_impl {
             if let Err(e) = unsafe { Self::open(this) } {
                 match e {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
-                    WriteFileWindowsError::JSTerminated => {} // TODO: properly propagate exception upwards
+                    WriteFileWindowsError::Js(err) => crate::dispatch::fold(Err(err)),
                 }
             }
         }
 
-        /// `ManagedTask`-shaped trampoline for [`on_mkdirp_complete`]: takes
-        /// `*mut Self` and returns the event-loop `JsResult<()>` (always `Ok`;
-        /// the inner body already swallows `JSTerminated`).
-        fn on_mkdirp_complete_task(this: *mut WriteFileWindows) -> bun_event_loop::JsResult<()> {
-            // SAFETY: `this` is the live Box-allocated `WriteFileWindows` whose
-            // pointer was stashed in `on_mkdirp_complete_concurrent` below;
-            // the JS thread is the sole accessor at this point. `*this` may be
-            // freed inside; not accessed afterward.
-            unsafe { Self::on_mkdirp_complete(this) };
-            Ok(())
-        }
-
-        fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Result<()>) {
+        fn on_mkdirp_complete_concurrent(
+            ctx: *mut (),
+            err_: bun_sys::Result<()>,
+            ticket: &bun_jsc::Ticket,
+        ) {
             // SAFETY: `ctx` is the `*mut Self` stored in `AsyncMkdirp.completion_ctx`
             // by `mkdirp` above; sole owner on this concurrent path.
             let this = unsafe { bun_ptr::callback_ctx::<WriteFileWindows>(ctx.cast()) };
@@ -976,17 +966,9 @@ mod windows_impl {
                 bun_sys::Result::Err(e) => Some(e),
                 bun_sys::Result::Ok(()) => None,
             };
-            let ct = ConcurrentTask::create(ManagedTask::new::<WriteFileWindows>(
-                this,
-                Self::on_mkdirp_complete_task,
+            ticket.post(ConcurrentTask::create_from(
+                std::ptr::from_mut(this).cast::<WriteFileWindowsMkdirp>(),
             ));
-            if let bun_jsc::vm_handle::Posted::Refused(ct) = this.loop_handle.post_task(ct) {
-                // VM torn down: nobody will settle the promise. Free the hop (the
-                // ConcurrentTask owns the boxed ManagedTask); the operation's
-                // buffers/fd go with the process's teardown of its owner.
-                // SAFETY: refused ⇒ we own the task box.
-                unsafe { bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct) };
-            }
         }
 
         extern "C" fn on_write_complete(req: *mut uv::fs_t) {
@@ -1002,20 +984,11 @@ mod windows_impl {
             ));
             // SAFETY: `this` is live (libuv invokes us with the req we registered).
             let rc = unsafe { (*this).io_request.result };
-            if let Some(err) = rc.errno() {
+            if let Some(err) = rc.to_error(sys::Tag::write) {
                 // SAFETY: `this` is live; `throw` consumes it.
-                match unsafe {
-                    Self::throw(
-                        this,
-                        sys::Error {
-                            errno: err,
-                            syscall: sys::Tag::write,
-                            ..Default::default()
-                        },
-                    )
-                } {
+                match unsafe { Self::throw(this, err) } {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
-                    WriteFileWindowsError::JSTerminated => {} // TODO: properly propagate exception upwards
+                    WriteFileWindowsError::Js(err) => crate::dispatch::fold(Err(err)),
                 }
                 return;
             }
@@ -1026,7 +999,7 @@ mod windows_impl {
             if let Err(e) = unsafe { Self::do_write_loop(this, (*this).loop_()) } {
                 match e {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
-                    WriteFileWindowsError::JSTerminated => {} // TODO: properly propagate exception upwards
+                    WriteFileWindowsError::Js(err) => crate::dispatch::fold(Err(err)),
                 }
             }
         }
@@ -1051,7 +1024,14 @@ mod windows_impl {
         pub(crate) unsafe fn run_from_js_thread(this: *mut Self) -> WriteFileWindowsError {
             // SAFETY: caller contract — `this` is live; copy out everything we
             // need before `deinit` frees the allocation.
-            let (cb, cb_ctx) = unsafe { ((*this).on_complete_callback, (*this).on_complete_ctx) };
+            let (cb, cb_ctx, context) = unsafe {
+                (
+                    (*this).on_complete_callback,
+                    (*this).on_complete_ctx,
+                    (*this).context,
+                )
+            };
+            let _context = bun_jsc::virtual_machine::VirtualMachine::get().enter_context(context);
 
             // SAFETY: caller contract — `this` is live.
             if let Some(err) = unsafe { (*this).to_system_error() } {
@@ -1156,18 +1136,9 @@ mod windows_impl {
                 return Ok(());
             }
 
-            if let Some(err) = rc.errno() {
+            if let Some(err) = rc.to_error(sys::Tag::write) {
                 // SAFETY: caller contract — `this` is live; consumed here.
-                return Err(unsafe {
-                    Self::throw(
-                        this,
-                        sys::Error {
-                            errno: err as _,
-                            syscall: sys::Tag::write,
-                            ..Default::default()
-                        },
-                    )
-                });
+                return Err(unsafe { Self::throw(this, err) });
             }
 
             if rc.int() != 0 {
@@ -1199,8 +1170,6 @@ mod windows_impl {
                 if fd > 0 && (*this).owned_fd {
                     aio::Closer::close(Fd::from_uv(fd), (*this).io_request.loop_);
                 }
-                // The store derefs happen via `StoreRef::drop` when the Box is
-                // reclaimed below (paired with the RAII note in `create_with_ctx`).
                 (*this).poll_ref.disable();
                 // (*this).io_request is a valid uv_fs_t embedded in this struct; uv_fs_req_cleanup
                 // is safe on a zeroed or previously-used req.
@@ -1212,6 +1181,7 @@ mod windows_impl {
 
         pub(crate) fn create<C>(
             event_loop: *mut EventLoop,
+            script_context: &bun_jsc::ScriptExecutionContext,
             file_blob: Blob,
             bytes_blob: Blob,
             context: *mut C,
@@ -1224,6 +1194,7 @@ mod windows_impl {
                 file_blob,
                 bytes_blob,
                 event_loop,
+                script_context,
                 context.cast::<c_void>(),
                 callback,
                 mkdirp_if_not_exists,
@@ -1234,16 +1205,17 @@ mod windows_impl {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct WriteFilePromise {
+pub(crate) struct WriteFilePromise {
     pub(crate) promise: jsc::JSPromiseStrong,
     pub global_this: *const JSGlobalObject,
 }
 
+// SAFETY: a promise handle and the global it was made in: used and dropped on that global's
+// JS thread only (a job's `Js` half).
+unsafe impl bun_jsc::job::JsAffine for WriteFilePromise {}
+
 impl WriteFilePromise {
-    pub(crate) fn run(
-        handler: *mut c_void,
-        count: WriteFileResultType,
-    ) -> Result<(), JsTerminated> {
+    pub(crate) fn run(handler: *mut c_void, count: WriteFileResultType) -> jsc::JsResult<()> {
         let handler = handler.cast::<Self>();
         // SAFETY: handler is the Box-allocated WriteFilePromise created in
         // Blob.rs (`heap::into_raw(Box::new(WriteFilePromise { .. }))`); consumed here.
@@ -1282,8 +1254,10 @@ impl WriteFilePromise {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct WriteFileWaitFromLockedValueTask {
+pub(crate) struct WriteFileWaitFromLockedValueTask {
     pub(crate) file_blob: Blob,
+    /// The context of the script that asked for the write.
+    pub(crate) context: bun_jsc::ContextId,
     /// JSC_BORROW: process-lifetime global; `BackRef` so the deref is safe and
     /// (being `Copy`) detaches from `&self` for use across `&mut self` and
     /// past `heap::take(this)`.
@@ -1306,10 +1280,11 @@ impl WriteFileWaitFromLockedValueTask {
     pub(crate) fn then(
         mut this: Box<WriteFileWaitFromLockedValueTask>,
         value: &mut body::Value,
-    ) -> Result<(), JsTerminated> {
+    ) -> jsc::JsResult<()> {
         let promise: *mut JSPromise = std::ptr::from_mut(this.promise.get());
         let global_ref = this.global_this;
         let global_this = global_ref.get();
+        let context = global_this.bun_vm().context_of(this.context);
         let mut file_blob = core::mem::take(&mut this.file_blob);
         match value {
             body::Value::Error(err_ref) => {
@@ -1327,8 +1302,9 @@ impl WriteFileWaitFromLockedValueTask {
                 unsafe {
                     (*promise).reject(
                         global_this,
-                        Ok(ZigString::init(b"Body was used after it was consumed")
-                            .to_error_instance(global_this)),
+                        Ok(global_this.create_error_instance(format_args!(
+                            "Body was used after it was consumed"
+                        ))),
                     )?;
                 }
             }
@@ -1340,7 +1316,7 @@ impl WriteFileWaitFromLockedValueTask {
                 let mut blob = value.use_();
                 // TODO: this should be one promise not two!
                 let new_promise = match blob::write_file_with_source_destination(
-                    global_this,
+                    &global_this.js_thread(context),
                     &mut blob,
                     &mut file_blob,
                     &blob::WriteFileOptions {

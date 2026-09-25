@@ -1,11 +1,14 @@
 import axios from "axios";
 import type { Server } from "bun";
+import { proxyInternals } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, isASAN, isIPv6, isWindows, tls as tlsCert } from "harness";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { once } from "node:events";
+import http from "node:http";
 import net from "node:net";
 import tls from "node:tls";
+import { createAdversarialProxy, deadPort, proxyFreeEnv } from "./proxy-stress-helpers";
 async function createProxyServer(is_tls: boolean) {
   const serverArgs = [];
   if (is_tls) {
@@ -579,14 +582,18 @@ describe.each([
     const port = (server.address() as net.AddressInfo).port;
     try {
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", `console.log((await fetch("https://example.invalid/")).status);`],
+        cmd: [
+          bunExe(),
+          "-e",
+          `console.log(await fetch("https://example.invalid/").then(r => "resolved " + r.status, e => e.code + " " + e.status));`,
+        ],
         env: { ...noProxyEnv, https_proxy: `http://${userinfo}@127.0.0.1:${port}` },
         stdout: "pipe",
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
-      expect(stdout.trim()).toBe("407");
+      expect(stdout.trim()).toBe("ERR_PROXY_TUNNEL 407");
       expect(capturedAuths).toEqual([expected]);
       expect(exitCode).toBe(0);
     } finally {
@@ -747,6 +754,53 @@ test("axios with https-proxy-agent", async () => {
   expect(httpProxyServer.log).toEqual([`CONNECT localhost:${httpsServer.port}`]);
 });
 
+// For a refused CONNECT, https-proxy-agent hands node:http a detached
+// `new net.Socket({ writable: false })` and replays the proxy's reply into it.
+// node:http only parses from a socket that is not writable and never writes the
+// request to it, so the caller sees the proxy's status. With `writable` forced
+// to true the request was written to the handle-less socket and failed with
+// ERR_SOCKET_CLOSED instead.
+test("https-proxy-agent reports a refused CONNECT as the proxy's response, like node", async () => {
+  const proxy = net.createServer(socket => {
+    socket.on("error", () => {});
+    socket.once("data", () => {
+      socket.end(
+        'HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="test"\r\nContent-Length: 0\r\n\r\n',
+      );
+    });
+  });
+  await once(proxy.listen(0, "127.0.0.1"), "listening");
+  const agent = new HttpsProxyAgent(`http://127.0.0.1:${(proxy.address() as net.AddressInfo).port}`);
+  try {
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    const ended = Promise.withResolvers<void>();
+    let sawResponse = false;
+    const req = http.request({ host: "example.test", port: 80, path: "/", agent }, res => {
+      sawResponse = true;
+      events.push(`response ${res.statusCode} ${res.headers["proxy-authenticate"]}`);
+      res.on("error", ended.reject);
+      res.on("end", () => {
+        events.push("res end");
+        ended.resolve();
+      });
+      res.resume();
+    });
+    req.on("error", err => events.push(`req error ${(err as NodeJS.ErrnoException).code}`));
+    req.on("close", () => {
+      closed.resolve();
+      // A request that died without a response has nothing left to end.
+      if (!sawResponse) ended.resolve();
+    });
+    req.end();
+    await Promise.all([closed.promise, ended.promise]);
+    expect(events).toEqual(['response 407 Basic realm="test"', "res end"]);
+  } finally {
+    agent.destroy();
+    proxy.close();
+  }
+});
+
 test("HTTPS proxy tunnel keep-alive reuses CONNECT across sequential requests", async () => {
   httpProxyServer.log.length = 0;
 
@@ -779,6 +833,45 @@ test("HTTPS proxy tunnel keep-alive does not share tunnel across different targe
 
   const connects = httpProxyServer.log.filter(l => l.startsWith("CONNECT"));
   expect(connects.sort()).toEqual([`CONNECT localhost:${serverA.port}`, `CONNECT localhost:${serverB.port}`].sort());
+});
+
+// The TLS handshake inside a CONNECT tunnel is keyed to the URL host like a
+// direct connection: the ClientHello SNI and the certificate verification use
+// the URL host, and a caller-supplied Host header only travels as an HTTP
+// field on the tunneled request.
+test("HTTPS proxy tunnel keeps a caller-supplied Host header out of SNI and certificate verification", async () => {
+  const seen: { sni: string | null; host: string | undefined }[] = [];
+  const target = tls.createServer(
+    {
+      ...tlsCert,
+      SNICallback(servername, cb) {
+        if (servername !== "localhost") return cb(new Error(`unexpected SNI ${servername}`));
+        cb(null, tls.createSecureContext(tlsCert));
+      },
+    },
+    socket => {
+      socket.once("data", data => {
+        const host = /^host:\s*(.*)\r\n/im.exec(data.toString())?.[1];
+        seen.push({ sni: socket.servername || null, host });
+        socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+      });
+    },
+  );
+  target.listen(0);
+  await once(target, "listening");
+  try {
+    const port = (target.address() as net.AddressInfo).port;
+    const res = await fetch(`https://localhost:${port}/`, {
+      proxy: httpProxyServer.url,
+      keepalive: false,
+      headers: { Host: "other.example" },
+      tls: { ca: tlsCert.cert },
+    });
+    expect(`${res.status} ${await res.text()}`).toBe("200 ok");
+    expect(seen).toEqual([{ sni: "localhost", host: "other.example" }]);
+  } finally {
+    target.close();
+  }
 });
 
 test("HTTPS proxy tunnel keep-alive does not share tunnel across different credentials", async () => {
@@ -855,6 +948,43 @@ test("HTTPS target through proxy with passing checkServerIdentity round-trips", 
   expect(response.status).toBe(200);
   expect(await response.text()).toBe("tunneled body");
   expect(verified).toEqual(["localhost"]);
+});
+
+test("HTTPS target through proxy reuses the tunnel across a session's checkServerIdentity requests", async () => {
+  using target = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("ok") });
+  httpProxyServer.log.length = 0;
+  const verified: string[] = [];
+  using session = new Bun.FetchSession({
+    proxy: httpProxyServer.url,
+    tls: {
+      ca: tlsCert.cert,
+      checkServerIdentity(hostname: string) {
+        verified.push(hostname);
+        return undefined;
+      },
+    },
+  });
+  const connects = () => httpProxyServer.log.filter(l => l.startsWith("CONNECT")).length;
+
+  for (let i = 0; i < 3; i++) {
+    expect(await fetch(target.url, { session }).then(r => r.text())).toBe("ok");
+  }
+  expect(verified).toEqual(["localhost"]);
+  expect(connects()).toBe(1);
+
+  // A per-request callback is a closure nothing can compare: it neither takes
+  // the session's approved tunnel nor leaves one behind.
+  for (let i = 0; i < 2; i++) {
+    const own = await fetch(target.url, {
+      proxy: httpProxyServer.url,
+      tls: { ca: tlsCert.cert, checkServerIdentity: (hostname: string) => void verified.push(`own ${hostname}`) },
+    });
+    expect(await own.text()).toBe("ok");
+  }
+  expect(connects()).toBe(3);
+  expect(await fetch(target.url, { session }).then(r => r.text())).toBe("ok");
+  expect(connects()).toBe(3);
+  expect(verified).toEqual(["localhost", "own localhost", "own localhost"]);
 });
 
 test("HTTPS target through proxy with rejecting checkServerIdentity transmits nothing to the target", async () => {
@@ -994,10 +1124,10 @@ test("HTTPS origin close-delimited body via HTTP proxy does not ECONNRESET", asy
   }
 });
 
-// Use-after-free in the proxy tunnel close path: when the final response
-// bytes and the TLS close_notify arrive in one TCP batch, SSLWrapper's
-// handle_reading sets sent_ssl_shutdown before flushing the decrypted bytes.
-// The data callback completes the response, and the done path's
+// Use-after-free in the proxy tunnel close path: the final response bytes and
+// the TLS close_notify arrive in one TCP batch, so the data callback completes
+// the response while SSLWrapper's handle_reading is still on the stack. Back
+// then handle_reading had already set sent_ssl_shutdown, and the done path's
 // ProxyTunnel.shutdown() hit SSLWrapper.shutdown()'s already-shut-down early
 // return without marking the wrapper closed_notified, so after the client was
 // freed handle_reading still fired on_close into the stale handlers.ctx.
@@ -1973,6 +2103,703 @@ describe.concurrent("NO_PROXY with explicit proxy option", () => {
   });
 });
 
+// A CONNECT proxy that answers `reply` and then relays bytes to `target`.
+async function tunnelingProxy(target: number, reply = "HTTP/1.1 200 Connection established\r\n\r\n") {
+  const connects: string[] = [];
+  const sockets = new Set<net.Socket>();
+  const server = net.createServer(client => {
+    sockets.add(client);
+    client.on("close", () => sockets.delete(client));
+    client.on("error", () => {});
+    let head = "";
+    const onData = (chunk: Buffer) => {
+      head += chunk.toString("latin1");
+      if (!head.includes("\r\n\r\n")) return;
+      client.off("data", onData);
+      connects.push(head.split("\r\n")[0]);
+      const upstream = net.connect(target, "127.0.0.1", () => {
+        client.write(reply);
+        client.pipe(upstream);
+        upstream.pipe(client);
+      });
+      upstream.on("error", () => client.destroy());
+      client.on("close", () => upstream.destroy());
+    };
+    client.on("data", onData);
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  return {
+    connects,
+    url: `http://127.0.0.1:${(server.address() as net.AddressInfo).port}`,
+    [Symbol.dispose]() {
+      for (const socket of sockets) socket.destroy();
+      server.close();
+    },
+  };
+}
+
+describe.concurrent("a CONNECT tunnel", () => {
+  test.each([
+    "HTTP/1.1 204 No Content\r\n\r\n",
+    "HTTP/1.0 200 OK\r\n\r\n",
+    "HTTP/1.1 299 Whatever\r\nX-Note: fine\r\n\r\n",
+    // None of these describe the tunneled response.
+    "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Encoding: gzip\r\nContent-Length: 10\r\nTransfer-Encoding: chunked\r\n\r\n",
+  ])("is established by any 2xx reply, whatever its header fields: %j", async reply => {
+    using origin = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("through") });
+    using proxy = await tunnelingProxy(origin.port, reply);
+    using session = new Bun.FetchSession({ proxy: proxy.url, tls: { ca: tlsCert.cert } });
+    for (let i = 0; i < 2; i++) {
+      const response = await fetch(`https://localhost:${origin.port}/`, { session });
+      expect(await response.text()).toBe("through");
+    }
+    // ...and the tunnel is kept alive like any other.
+    expect(proxy.connects).toEqual([`CONNECT localhost:${origin.port} HTTP/1.1`]);
+  });
+
+  test("refused by an https proxy rejects the same way, with Headers on the error", async () => {
+    await using proxy = await createAdversarialProxy({
+      tls: true,
+      connectStatus: 403,
+      connectReplyHeaders: { "X-Reason": "policy" },
+    });
+    const error = await fetch("https://origin.invalid/", {
+      proxy: proxy.url,
+      tls: { ca: tlsCert.cert },
+      keepalive: false,
+    }).catch(e => e);
+    expect({
+      name: error.name,
+      code: error.code,
+      status: error.status,
+      statusText: error.statusText,
+      headers: error.headers instanceof Headers && error.headers.get("x-reason"),
+    }).toEqual({ name: "Error", code: "ERR_PROXY_TUNNEL", status: 403, statusText: "Forbidden", headers: "policy" });
+  });
+
+  test("is pooled per fetch session", async () => {
+    using origin = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("through") });
+    await using proxy = await createAdversarialProxy();
+    using one = new Bun.FetchSession({ proxy: proxy.url, tls: { ca: tlsCert.cert } });
+    using other = new Bun.FetchSession({ proxy: proxy.url, tls: { ca: tlsCert.cert } });
+    const text = (session: Bun.FetchSession) =>
+      fetch(`https://localhost:${origin.port}/`, { session }).then(r => r.text());
+    expect([await text(one), await text(one)]).toEqual(["through", "through"]);
+    expect(proxy.connectCount()).toBe(1);
+    expect(await text(other)).toBe("through");
+    expect(proxy.connectCount()).toBe(2);
+    expect(await text(one)).toBe("through");
+    expect(proxy.connectCount()).toBe(2);
+  });
+});
+
+describe("proxy resolution", () => {
+  const { noProxyMatches, proxyFor, parseURL } = proxyInternals;
+
+  test("NO_PROXY matching", () => {
+    // [NO_PROXY, hostname, port, exempt]
+    const cases: [list: string, hostname: string, port: number, exempt: boolean][] = [
+      // nothing listed
+      ["", "example.test", 80, false],
+      [" ", "example.test", 80, false],
+      [",", "example.test", 80, false],
+      [", ,\t,", "example.test", 80, false],
+      // the wildcard, alone or among others
+      ["*", "example.test", 80, true],
+      ["*", "127.0.0.1", 80, true],
+      ["*", "[::1]", 80, true],
+      ["a.test,*", "example.test", 80, true],
+      ["a.test * b.test", "example.test", 80, true],
+      ["*.*", "example.test", 80, false],
+      ["**", "example.test", 80, false],
+      // separators: commas and any whitespace
+      ["a.test,example.test", "example.test", 80, true],
+      ["a.test, example.test", "example.test", 80, true],
+      ["a.test example.test", "example.test", 80, true],
+      ["a.test\texample.test", "example.test", 80, true],
+      ["a.test\nexample.test\r\n", "example.test", 80, true],
+      ["a.test,,  ,example.test", "example.test", 80, true],
+      ["a.test;example.test", "example.test", 80, false],
+      ["a.test|example.test", "example.test", 80, false],
+      // a domain names itself and its subdomains, on a label boundary
+      ["example.test", "example.test", 80, true],
+      ["example.test", "api.example.test", 80, true],
+      ["example.test", "deep.api.example.test", 80, true],
+      ["example.test", "notexample.test", 80, false],
+      ["example.test", "example.test.evil.test", 80, false],
+      ["example.test", "test", 80, false],
+      ["api.example.test", "example.test", 80, false],
+      ["test", "example.test", 80, true],
+      ["e.test", "example.test", 80, false],
+      // leading dot and `*.` say the same
+      [".example.test", "example.test", 80, true],
+      [".example.test", "api.example.test", 80, true],
+      [".example.test", "notexample.test", 80, false],
+      ["*.example.test", "example.test", 80, true],
+      ["*.example.test", "api.example.test", 80, true],
+      ["*.example.test", "notexample.test", 80, false],
+      ["*example.test", "api.example.test", 80, false],
+      ["api.*.test", "api.example.test", 80, false],
+      [".", "example.test", 80, false],
+      ["*.", "example.test", 80, false],
+      // case and trailing dots, on either side
+      ["EXAMPLE.TEST", "example.test", 80, true],
+      ["example.test", "EXAMPLE.Test", 80, true],
+      ["example.test.", "example.test", 80, true],
+      ["example.test", "example.test.", 80, true],
+      ["example.test.", "api.example.test.", 80, true],
+      ["example.test..", "example.test", 80, false],
+      // ports: an entry with one only exempts that port
+      ["example.test:8080", "example.test", 8080, true],
+      ["example.test:8080", "example.test", 80, false],
+      ["example.test:8080", "api.example.test", 8080, true],
+      ["example.test:80", "example.test", 80, true],
+      ["example.test:0", "example.test", 0, true],
+      ["example.test:", "example.test", 80, false],
+      ["example.test:http", "example.test", 80, false],
+      ["example.test:65536", "example.test", 80, false],
+      ["example.test:-1", "example.test", 80, false],
+      // digits only
+      ["example.test:+80", "example.test", 80, false],
+      ["example.test:8_0", "example.test", 80, false],
+      ["example.test: 80", "example.test", 80, false],
+      ["*.example.test:443", "api.example.test", 443, true],
+      ["*.example.test:443", "api.example.test", 8443, false],
+      ["example.test", "example.test", 8080, true],
+      // IPv4: an address matches itself only, never as a suffix
+      ["127.0.0.1", "127.0.0.1", 80, true],
+      ["127.0.0.1", "127.0.0.2", 80, false],
+      ["0.0.1", "127.0.0.1", 80, false],
+      ["0.1", "127.0.0.1", 80, false],
+      ["1", "127.0.0.1", 80, false],
+      [".0.0.1", "127.0.0.1", 80, false],
+      ["*.0.0.1", "127.0.0.1", 80, false],
+      ["127.0.0.1:8080", "127.0.0.1", 8080, true],
+      ["127.0.0.1:8080", "127.0.0.1", 80, false],
+      // the resolver's short and numeric forms are not addresses here: a URL's
+      // host arrives normalized to the dotted quad
+      ["127.1", "127.0.0.1", 80, false],
+      ["2130706433", "127.0.0.1", 80, false],
+      ["0x7f.0.0.1", "127.0.0.1", 80, false],
+      ["0177.0.0.1", "127.0.0.1", 80, false],
+      ["127.0.0.1", "127.1", 80, false],
+      ["127.0.0.01", "127.0.0.1", 80, false],
+      // ...nor are the other forms c-ares's inet_pton lets through
+      ["0127.0.0.1", "127.0.0.1", 80, false],
+      ["0x7f000001", "127.0.0.1", 80, false],
+      ["10", "10.0.0.0", 80, false],
+      ["127.1", "127.1.0.0", 80, false],
+      ["127.0.0.1", "127.0.0.1/8", 80, false],
+      ["::1", "::1/128", 80, false],
+      ["fd00::", "fd00::1/8", 80, false],
+      // a domain entry never exempts an address, nor the other way round
+      ["example.test", "127.0.0.1", 80, false],
+      ["127.0.0.1", "example.test", 80, false],
+      ["127.0.0.1", "127.0.0.1.example.test", 80, false],
+      // IPv6, bracketed or bare, in any spelling
+      ["::1", "[::1]", 80, true],
+      ["::1", "::1", 80, true],
+      ["[::1]", "[::1]", 80, true],
+      ["[::1]", "::1", 80, true],
+      ["0:0:0:0:0:0:0:1", "[::1]", 80, true],
+      ["::0001", "[::1]", 80, true],
+      ["::2", "[::1]", 80, false],
+      ["fe80::1", "[FE80::1]", 80, true],
+      ["[::1]:8080", "[::1]", 8080, true],
+      ["[::1]:8080", "[::1]", 80, false],
+      ["[::1]:", "[::1]", 80, false],
+      ["[::1", "[::1]", 80, false],
+      ["::1]", "[::1]", 80, false],
+      // `::ffff:a.b.c.d` is a.b.c.d
+      ["::ffff:127.0.0.1", "127.0.0.1", 80, true],
+      ["127.0.0.1", "[::ffff:127.0.0.1]", 80, true],
+      ["::ffff:7f00:1", "127.0.0.1", 80, true],
+      ["::ffff:127.0.0.2", "127.0.0.1", 80, false],
+      // CIDR blocks
+      ["127.0.0.0/8", "127.0.0.1", 80, true],
+      ["127.0.0.0/8", "127.255.255.255", 80, true],
+      ["127.0.0.0/8", "128.0.0.1", 80, false],
+      ["10.0.0.0/8", "127.0.0.1", 80, false],
+      ["127.0.0.1/32", "127.0.0.1", 80, true],
+      ["127.0.0.1/32", "127.0.0.2", 80, false],
+      ["127.0.0.0/31", "127.0.0.1", 80, true],
+      ["127.0.0.0/31", "127.0.0.2", 80, false],
+      ["127.0.0.128/25", "127.0.0.1", 80, false],
+      ["127.0.0.128/25", "127.0.0.200", 80, true],
+      ["192.168.0.0/16", "192.168.255.1", 80, true],
+      ["192.168.0.0/16", "192.169.0.1", 80, false],
+      ["172.16.0.0/12", "172.31.255.255", 80, true],
+      ["172.16.0.0/12", "172.32.0.0", 80, false],
+      ["0.0.0.0/0", "8.8.8.8", 80, true],
+      ["127.0.0.99/8", "127.0.0.1", 80, true],
+      ["127.0.0.0/33", "127.0.0.1", 80, false],
+      ["127.0.0.0/-1", "127.0.0.1", 80, false],
+      ["127.0.0.0/", "127.0.0.1", 80, false],
+      ["127.0.0.0/8/8", "127.0.0.1", 80, false],
+      ["127.0.0.0/+8", "127.0.0.1", 80, false],
+      ["127.0.0.0/0_8", "127.0.0.1", 80, false],
+      ["/8", "127.0.0.1", 80, false],
+      ["example.test/8", "example.test", 80, false],
+      ["127.0.0.0/8", "example.test", 80, false],
+      ["::/127", "[::1]", 80, true],
+      ["::/128", "[::1]", 80, false],
+      ["::1/128", "[::1]", 80, true],
+      ["fd00::/8", "[fd12:3456::1]", 80, true],
+      ["fd00::/8", "[fe80::1]", 80, false],
+      ["fe80::/10", "[febf::1]", 80, true],
+      ["fe80::/10", "[fec0::1]", 80, false],
+      ["::/0", "[2001:db8::1]", 80, true],
+      ["[fd00::]/8", "[fd00::1]", 80, true],
+      ["fd00::/129", "[fd00::1]", 80, false],
+      // a v4 block does not cover a v6 host, except through the mapped form
+      ["::/0", "127.0.0.1", 80, false],
+      ["0.0.0.0/0", "[::1]", 80, false],
+      ["::ffff:127.0.0.0/104", "127.0.0.1", 80, true],
+      ["::ffff:10.0.0.0/104", "127.0.0.1", 80, false],
+      ["::ffff:127.0.0.0/95", "127.0.0.1", 80, false],
+      ["127.0.0.0/8", "[::ffff:127.0.0.1]", 80, true],
+      // an empty hostname is never exempt
+      ["*", "", 80, false],
+      ["example.test", ".", 80, false],
+    ];
+    expect(cases.map(([list, hostname, port]) => [list, hostname, port, noProxyMatches(list, hostname, port)])).toEqual(
+      cases,
+    );
+  });
+
+  test("which proxy the environment selects", () => {
+    const P = "http://proxy.test:3128";
+    const Q = "http://other.test:3128";
+    // [environment, url, proxy]
+    const cases: [env: Record<string, string>, url: string, proxy: string | null][] = [
+      [{}, "http://example.test/", null],
+      // by scheme
+      [{ HTTP_PROXY: P }, "http://example.test/", P],
+      [{ HTTP_PROXY: P }, "https://example.test/", null],
+      [{ HTTPS_PROXY: P }, "https://example.test/", P],
+      [{ HTTPS_PROXY: P }, "http://example.test/", null],
+      [{ HTTP_PROXY: P, HTTPS_PROXY: Q }, "http://example.test/", P],
+      [{ HTTP_PROXY: P, HTTPS_PROXY: Q }, "https://example.test/", Q],
+      // an https proxy for an http URL is still the HTTP_PROXY one
+      [{ HTTP_PROXY: "https://proxy.test" }, "http://example.test/", "https://proxy.test"],
+      // lowercase names work, and win when the platform tells the two apart
+      [{ http_proxy: P }, "http://example.test/", P],
+      [{ https_proxy: P }, "https://example.test/", P],
+      ...(isWindows ? [] : ([[{ http_proxy: P, HTTP_PROXY: Q }, "http://example.test/", P]] as typeof cases)),
+      // empty or quoted-empty values are unset
+      [{ HTTP_PROXY: "" }, "http://example.test/", null],
+      [{ HTTP_PROXY: '""' }, "http://example.test/", null],
+      [{ HTTP_PROXY: "''" }, "http://example.test/", null],
+      ...(isWindows ? [] : ([[{ http_proxy: "", HTTP_PROXY: P }, "http://example.test/", P]] as typeof cases)),
+      // ALL_PROXY fills in for a missing scheme-specific variable
+      [{ ALL_PROXY: P }, "http://example.test/", P],
+      [{ ALL_PROXY: P }, "https://example.test/", P],
+      [{ all_proxy: P }, "https://example.test/", P],
+      [{ ALL_PROXY: P, HTTP_PROXY: Q }, "http://example.test/", Q],
+      [{ ALL_PROXY: P, HTTP_PROXY: Q }, "https://example.test/", P],
+      [{ ALL_PROXY: P, HTTP_PROXY: "" }, "http://example.test/", P],
+      // a value with no scheme is an HTTP proxy, for ALL_PROXY as for HTTP_PROXY
+      [{ ALL_PROXY: "proxy.test:3128" }, "http://example.test/", "proxy.test:3128"],
+      [{ ALL_PROXY: "proxy.test:3128" }, "https://example.test/", "proxy.test:3128"],
+      [{ HTTP_PROXY: "proxy.test:3128" }, "http://example.test/", "proxy.test:3128"],
+      // ...unless it names a proxy the client cannot speak to
+      [{ ALL_PROXY: "socks5://proxy.test:1080" }, "http://example.test/", null],
+      [{ ALL_PROXY: "socks5h://proxy.test:1080" }, "https://example.test/", null],
+      [{ ALL_PROXY: "socks4://proxy.test:1080", HTTP_PROXY: P }, "http://example.test/", P],
+      // NO_PROXY exempts a host from whichever variable applied
+      [{ HTTP_PROXY: P, NO_PROXY: "example.test" }, "http://example.test/", null],
+      [{ HTTP_PROXY: P, NO_PROXY: "example.test" }, "http://other.test/", P],
+      [{ HTTPS_PROXY: P, NO_PROXY: "*.example.test" }, "https://api.example.test/", null],
+      [{ ALL_PROXY: P, NO_PROXY: "example.test" }, "http://example.test/", null],
+      [{ HTTP_PROXY: P, no_proxy: "example.test" }, "http://example.test/", null],
+      [{ HTTP_PROXY: P, NO_PROXY: "*" }, "http://example.test/", null],
+      [{ HTTP_PROXY: P, NO_PROXY: "" }, "http://example.test/", P],
+      [{ HTTP_PROXY: P, NO_PROXY: '""' }, "http://example.test/", P],
+      // one list: no_proxy, and NO_PROXY only when that is unset or empty (curl, node, undici)
+      ...(isWindows
+        ? []
+        : ([
+            [{ HTTP_PROXY: P, no_proxy: "lower.test", NO_PROXY: "upper.test" }, "http://lower.test/", null],
+            [{ HTTP_PROXY: P, no_proxy: "lower.test", NO_PROXY: "upper.test" }, "http://upper.test/", P],
+            [{ HTTP_PROXY: P, no_proxy: "lower.test", NO_PROXY: "*" }, "http://other.test/", P],
+            [{ HTTP_PROXY: P, no_proxy: "", NO_PROXY: "upper.test" }, "http://upper.test/", null],
+          ] as typeof cases)),
+      // the port NO_PROXY compares is the one the URL implies
+      [{ HTTP_PROXY: P, NO_PROXY: "example.test:80" }, "http://example.test/", null],
+      [{ HTTP_PROXY: P, NO_PROXY: "example.test:80" }, "http://example.test:8080/", P],
+      [{ HTTPS_PROXY: P, NO_PROXY: "example.test:443" }, "https://example.test/", null],
+      [{ HTTPS_PROXY: P, NO_PROXY: "example.test:80" }, "https://example.test/", P],
+      [{ HTTP_PROXY: P, NO_PROXY: "example.test:8080" }, "http://example.test:8080/path?q#h", null],
+      // IP literals in the URL
+      [{ HTTP_PROXY: P, NO_PROXY: "127.0.0.0/8" }, "http://127.0.0.1:3000/", null],
+      [{ HTTP_PROXY: P, NO_PROXY: "::1" }, "http://[::1]:3000/", null],
+      [{ HTTP_PROXY: P, NO_PROXY: "[::1]:3000" }, "http://[::1]:3000/", null],
+      [{ HTTP_PROXY: P, NO_PROXY: "[::1]:3001" }, "http://[::1]:3000/", P],
+      [{ HTTP_PROXY: P, NO_PROXY: "localhost" }, "http://127.0.0.1/", P],
+      // userinfo in the URL is not part of the host
+      [{ HTTP_PROXY: P, NO_PROXY: "example.test" }, "http://user:pass@example.test/", null],
+      [{ HTTP_PROXY: P, NO_PROXY: "user" }, "http://user@example.test/", P],
+    ];
+    expect(cases.map(([env, url]) => [env, url, proxyFor(env, url)])).toEqual(cases);
+  });
+
+  test("userinfo, host and port of a URL", () => {
+    // [href, username, password, hostname, port]
+    const cases: [href: string, username: string, password: string, hostname: string, port: string][] = [
+      ["http://example.test/", "", "", "example.test", ""],
+      ["http://example.test:8080/", "", "", "example.test", "8080"],
+      ["http://user:pass@example.test/", "user", "pass", "example.test", ""],
+      ["http://user:pass@example.test:8080/p", "user", "pass", "example.test", "8080"],
+      ["http://user@example.test/", "user", "", "example.test", ""],
+      ["http://user@example.test:8080/", "user", "", "example.test", "8080"],
+      ["http://user:@example.test/", "user", "", "example.test", ""],
+      ["http://:pass@example.test/", "", "pass", "example.test", ""],
+      ["http://@example.test/", "", "", "example.test", ""],
+      // the last `@` of the authority ends the userinfo, the first `:` splits it
+      ["http://user:p@ss@example.test/", "user", "p@ss", "example.test", ""],
+      ["http://us:er:pa:ss@example.test/", "us", "er:pa:ss", "example.test", ""],
+      ["http://user:p%40ss@example.test/", "user", "p%40ss", "example.test", ""],
+      // an `@` past the authority is not userinfo
+      ["http://example.test/@", "", "", "example.test", ""],
+      ["http://example.test/a@b:c", "", "", "example.test", ""],
+      ["http://example.test?q=a@b", "", "", "example.test", ""],
+      ["http://example.test/#a@b", "", "", "example.test", ""],
+      ["http://example.test:8080/user@other.test:9090", "", "", "example.test", "8080"],
+      ["http://user:pass@example.test/path@other.test", "user", "pass", "example.test", ""],
+      // A `\` ends the authority of http, https, ws, wss, ftp and file, as it does for `new URL()`:
+      // an `@` after it is not userinfo, and the host and the port end there too.
+      [String.raw`http://user:pass@example.test\x@other.test/`, "user", "pass", "example.test", ""],
+      [String.raw`http://a:b@c\@d/`, "a", "b", "c", ""],
+      [String.raw`http://example.test\@other.test/`, "", "", "example.test", ""],
+      [String.raw`HTTPS://user:pass@example.test\@other.test/`, "user", "pass", "example.test", ""],
+      [String.raw`ws://user:pass@example.test\@other.test/`, "user", "pass", "example.test", ""],
+      [String.raw`wss://user:pass@example.test\@other.test/`, "user", "pass", "example.test", ""],
+      [String.raw`ftp://user:pass@example.test\@other.test/`, "user", "pass", "example.test", ""],
+      [String.raw`file://example.test\@other.test/`, "", "", "example.test", ""],
+      [String.raw`http://example.test\\@other.test/`, "", "", "example.test", ""],
+      [String.raw`http://example.test\@[::1]:8080/`, "", "", "example.test", ""],
+      [String.raw`http://u:p@[::1]:80\@other.test:8080/sub`, "u", "p", "[::1]", "80"],
+      [String.raw`http://u:p@example.test:8080\@other.test:9090/`, "u", "p", "example.test", "8080"],
+      // `new URL()` drops a tab before it parses. This keeps it, so the name resolves to nothing.
+      [`http://example.test\t\\@other.test/`, "", "", "example.test\t", ""],
+      // A `#` ends the authority too, with or without a `/` in front of it.
+      ["http://u:p@example.test:8080#@other.test/", "u", "p", "example.test", "8080"],
+      // In any other scheme a `\` is part of the userinfo, again as for `new URL()`.
+      [
+        String.raw`socks5://user:pass@example.test\x@other.test/`,
+        "user",
+        String.raw`pass@example.test\x`,
+        "other.test",
+        "",
+      ],
+      // The scheme ends at the first `:` and holds only the bytes RFC 3986 allows, so the `://` of
+      // a later one starts no authority. `new URL()` reads `other.test` as the host of these two,
+      // and the name this reads is one no user can have written down.
+      ["http:other.test://example.test/", "", "", "http", "other.test:"],
+      [String.raw`http:\other.test://example.test/`, "", "", "http", String.raw`\other.test:`],
+      ["1http://example.test/", "", "", "1http", ""],
+      ["git+ssh://user@example.test/repo.git", "user", "", "example.test", ""],
+      // IPv6 hosts keep their brackets in `hostname`
+      ["http://[::1]:3000/", "", "", "[::1]", "3000"],
+      ["http://user:pass@[::1]:3000/", "user", "pass", "[::1]", "3000"],
+      ["http://user@[fe80::1]/", "user", "", "[fe80::1]", ""],
+      ["https://user:pass@example.test", "user", "pass", "example.test", ""],
+    ];
+    expect(
+      cases.map(([href]) => {
+        const { username, password, hostname, port } = parseURL(href);
+        return [href, username, password, hostname, port];
+      }),
+    ).toEqual(cases);
+  });
+});
+
+describe.concurrent("proxy environment", () => {
+  // Each case runs in a subprocess that owns its proxy environment. The proxy
+  // answers every request itself with "proxy", whatever the host, so only a
+  // host that is expected to be reached directly has to resolve: `localhost`,
+  // 127.0.0.1 and [::1], where an origin answers "origin".
+  async function run(env: (deadProxy: string) => Record<string, string | undefined>, body: string) {
+    using origin = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("origin") });
+    using origin6 = isIPv6() ? Bun.serve({ port: 0, hostname: "::1", fetch: () => new Response("origin") }) : undefined;
+    using proxy = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("proxy") });
+    using dead = await deadPort();
+    const deadProxy = `http://127.0.0.1:${dead.port}`;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const PROXY = "http://127.0.0.1:${proxy.port}";
+        const DEAD_PROXY = "${deadProxy}";
+        const ORIGIN_PORT = ${origin.port};
+        // Without IPv6 only proxied requests name [::1], and those dial nothing.
+        const ORIGIN6_PORT = ${origin6?.port ?? origin.port};
+        const HAS_IPV6 = ${origin6 !== undefined};
+        const via = host =>
+          fetch("http://" + host + ":" + (host.startsWith("[") ? ORIGIN6_PORT : ORIGIN_PORT) + "/", { keepalive: false }).then(
+            r => r.text(),
+            e => e.code,
+          );
+        ${body}
+        `,
+      ],
+      env: { ...bunEnv, ...proxyFreeEnv, ...env(deadProxy) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const parsed = JSON.parse(stdout);
+    expect(exitCode).toBe(0);
+    return parsed;
+  }
+
+  test("NO_PROXY grammar", async () => {
+    // The full grammar is in "proxy resolution" above; this is the path from
+    // the variable to a connection.
+    type Case = [noProxy: string, host: string, expected: "proxy" | "origin"];
+    const ipv6: Case[] = [
+      ["::1", "[::1]", "origin"],
+      ["[::1]", "[::1]", "origin"],
+      ["0:0:0:0:0:0:0:1", "[::1]", "origin"],
+      ["::/127", "[::1]", "origin"],
+    ];
+    const cases: Case[] = [
+      // separators
+      ["a.test localhost", "localhost", "origin"],
+      ["a.test\tlocalhost\n", "localhost", "origin"],
+      ["a.test, localhost", "localhost", "origin"],
+      ["a.test;localhost", "localhost", "proxy"],
+      // domains
+      ["*.localhost", "localhost", "origin"],
+      [".localhost", "localhost", "origin"],
+      ["LOCALHOST.", "localhost", "origin"],
+      ["ocalhost", "localhost", "proxy"],
+      ["*.other.test", "api.example.test", "proxy"],
+      ["example.test", "notexample.test", "proxy"],
+      ["*", "localhost", "origin"],
+      ["", "localhost", "proxy"],
+      // an IP literal only matches an address or a block, never a suffix
+      ["0.0.1", "127.0.0.1", "proxy"],
+      ["127.0.0.1", "127.0.0.1", "origin"],
+      ["127.0.0.2", "127.0.0.1", "proxy"],
+      ["::2", "[::1]", "proxy"],
+      // CIDR
+      ["127.0.0.0/8", "127.0.0.1", "origin"],
+      ["10.0.0.0/8", "127.0.0.1", "proxy"],
+      ["127.0.0.128/25", "127.0.0.1", "proxy"],
+      ["fd00::/8", "[::1]", "proxy"],
+      ["127.0.0.0/33", "127.0.0.1", "proxy"],
+      ["127.0.0.0/8", "localhost", "proxy"],
+      ...(isIPv6() ? ipv6 : []),
+    ];
+    const results = await run(
+      () => ({ HTTP_PROXY: "placeholder" }),
+      `
+      process.env.HTTP_PROXY = PROXY;
+      const out = [];
+      for (const [noProxy, host] of ${JSON.stringify(cases.map(([noProxy, host]) => [noProxy, host]))}) {
+        process.env.NO_PROXY = noProxy;
+        out.push(await via(host));
+      }
+      console.log(JSON.stringify(out));
+      `,
+    );
+    expect(cases.map(([noProxy, host], i) => [noProxy, host, results[i]])).toEqual(cases);
+  });
+
+  test("a NO_PROXY entry with a port matches that port only", async () => {
+    const results = await run(
+      () => ({}),
+      `
+      process.env.HTTP_PROXY = PROXY;
+      const out = [];
+      for (const [noProxy, host] of [
+        ["localhost:" + ORIGIN_PORT, "localhost"],
+        ["localhost:1", "localhost"],
+        ["127.0.0.1:" + ORIGIN_PORT, "127.0.0.1"],
+        ["127.0.0.1:1", "127.0.0.1"],
+        ["[::1]:1", "[::1]"],
+        ...(HAS_IPV6 ? [["[::1]:" + ORIGIN6_PORT, "[::1]"]] : []),
+      ]) {
+        process.env.NO_PROXY = noProxy;
+        out.push(await via(host));
+      }
+      console.log(JSON.stringify(out));
+      `,
+    );
+    expect(results).toEqual(["origin", "proxy", "origin", "proxy", "proxy", ...(isIPv6() ? ["origin"] : [])]);
+  });
+
+  // On Windows the two names are one variable.
+  test.skipIf(isWindows)("no_proxy is the list, and NO_PROXY only when it is unset or empty", async () => {
+    const results = await run(
+      () => ({ no_proxy: "localhost", NO_PROXY: "*" }),
+      `
+      process.env.HTTP_PROXY = PROXY;
+      const out = [await via("localhost"), await via("127.0.0.1")];
+      process.env.no_proxy = "";
+      out.push(await via("127.0.0.1"));
+      delete process.env.no_proxy;
+      out.push(await via("127.0.0.1"));
+      console.log(JSON.stringify(out));
+      `,
+    );
+    // A stale NO_PROXY does not widen what no_proxy exempts.
+    expect(results).toEqual(["origin", "proxy", "origin", "origin"]);
+  });
+
+  test("ALL_PROXY is the fallback for an http(s) proxy, and a socks one is left alone", async () => {
+    const results = await run(
+      () => ({}),
+      `
+      const out = {};
+      process.env.ALL_PROXY = PROXY;
+      out.allProxy = await via("localhost");
+      process.env.ALL_PROXY = "socks5://127.0.0.1:1";
+      out.socks = await via("localhost");
+      // In this order: on Windows both names are one variable.
+      delete process.env.ALL_PROXY;
+      process.env.all_proxy = PROXY;
+      out.lowercase = await via("localhost");
+      process.env.HTTP_PROXY = DEAD_PROXY;
+      out.schemeSpecificWins = await via("localhost");
+      console.log(JSON.stringify(out));
+      `,
+    );
+    expect(results).toEqual({
+      allProxy: "proxy",
+      socks: "origin",
+      lowercase: "proxy",
+      schemeSpecificWins: "ECONNREFUSED",
+    });
+  });
+
+  test("Bun.s3 resolves the environment proxy like fetch: by scheme, unless NO_PROXY exempts the endpoint", async () => {
+    const results = await run(
+      () => ({}),
+      `
+      const s3 = new Bun.S3Client({
+        accessKeyId: "test",
+        secretAccessKey: "test",
+        bucket: "bucket",
+        endpoint: "http://127.0.0.1:" + ORIGIN_PORT,
+      });
+      const read = () => s3.file("key").text();
+      const out = {};
+      process.env.HTTPS_PROXY = PROXY;
+      out.otherScheme = await read();
+      process.env.HTTP_PROXY = PROXY;
+      out.proxied = await read();
+      process.env.NO_PROXY = "127.0.0.1";
+      out.exempt = await read();
+      console.log(JSON.stringify(out));
+      `,
+    );
+    expect(results).toEqual({ otherScheme: "origin", proxied: "proxy", exempt: "origin" });
+  });
+
+  test("fetch('s3://…') takes the environment proxy, and proxy: false leaves it", async () => {
+    const results = await run(
+      () => ({}),
+      `
+      const s3 = { accessKeyId: "test", secretAccessKey: "test", endpoint: "http://127.0.0.1:" + ORIGIN_PORT };
+      const read = init => fetch("s3://bucket/key", { s3, ...init }).then(r => r.text(), e => e.code);
+      process.env.HTTP_PROXY = PROXY;
+      console.log(JSON.stringify([await read({}), await read({ proxy: false })]));
+      `,
+    );
+    expect(results).toEqual(["proxy", "origin"]);
+  });
+
+  test("fetch('s3://…') reaches a proxy whose variable holds a domain login", async () => {
+    // S3 keeps the proxy as a string and parses it again, so it needs the same reading as fetch().
+    const results = await run(
+      () => ({}),
+      `
+      const s3 = { accessKeyId: "test", secretAccessKey: "test", endpoint: "http://127.0.0.1:" + ORIGIN_PORT };
+      process.env.HTTP_PROXY = PROXY.replace("http://", "http://DOMAIN" + String.fromCharCode(92) + "user:pass@");
+      console.log(JSON.stringify([await fetch("s3://bucket/key", { s3 }).then(r => r.text(), e => e.code)]));
+      `,
+    );
+    expect(results).toEqual(["proxy"]);
+  });
+
+  test("a worker starts from the proxy environment its parent has at that moment", async () => {
+    const results = await run(
+      () => ({}),
+      `
+      const { Worker } = require("node:worker_threads");
+      const inWorker = () =>
+        new Promise((resolve, reject) => {
+          const worker = new Worker(
+            'const { parentPort, workerData } = require("node:worker_threads");' +
+              'fetch(workerData, { keepalive: false }).then(r => r.text(), e => e.code).then(v => parentPort.postMessage(v));',
+            { eval: true, workerData: "http://localhost:" + ORIGIN_PORT + "/" },
+          );
+          worker.once("message", resolve);
+          worker.once("error", reject);
+        });
+      process.env.ALL_PROXY = PROXY;
+      const out = [await inWorker()];
+      delete Bun.env.ALL_PROXY;
+      out.push(await inWorker(), await via("localhost"));
+      console.log(JSON.stringify(out));
+      `,
+    );
+    expect(results).toEqual(["proxy", "origin", "origin"]);
+    // Two worker boots in a subprocess: seconds on a debug or ASAN build.
+  }, 30_000);
+
+  test("assigning and deleting process.env proxy variables takes effect on the next fetch", async () => {
+    const script = `
+      const out = [];
+      out.push(await via("localhost"));
+      // A variable that was never set is not a property.
+      out.push("ALL_PROXY" in process.env);
+      // An object inheriting from process.env keeps its writes to itself.
+      const child = Object.create(process.env);
+      child.HTTP_PROXY = PROXY;
+      out.push(Object.hasOwn(child, "HTTP_PROXY"), await via("localhost"));
+      process.env.HTTP_PROXY = PROXY;
+      out.push(await via("localhost"));
+      delete process.env.HTTP_PROXY;
+      out.push(await via("localhost"), String(process.env.HTTP_PROXY), "HTTP_PROXY" in process.env, "HTTP_PROXY" in { ...process.env });
+      process.env.HTTP_PROXY = PROXY;
+      out.push(await via("localhost"), "HTTP_PROXY" in process.env, "HTTP_PROXY" in { ...process.env });
+      process.env.NO_PROXY = "localhost";
+      out.push(await via("localhost"));
+      delete process.env.NO_PROXY;
+      out.push(await via("localhost"));
+      console.log(JSON.stringify(out));
+    `;
+    // `atStartup` is what the environment the process started with leads to.
+    const expected = (atStartup: string) => [
+      atStartup,
+      false,
+      true,
+      atStartup,
+      "proxy",
+      "origin",
+      "undefined",
+      false,
+      false,
+      "proxy",
+      true,
+      true,
+      "origin",
+      "proxy",
+    ];
+    // Unset at startup, and set at startup to something the script replaces.
+    expect(await run(() => ({}), script)).toEqual(expected("origin"));
+    expect(await run(deadProxy => ({ HTTP_PROXY: deadProxy, NO_PROXY: "other.test" }), script)).toEqual(
+      expected("ECONNREFUSED"),
+    );
+  });
+});
+
 describe("http_proxy/NO_PROXY re-evaluated per redirect hop", () => {
   // curl and Node's undici EnvHttpProxyAgent both re-run the proxy/no_proxy
   // decision against the post-redirect URL. Previously Bun resolved it once
@@ -2129,6 +2956,23 @@ describe("http_proxy/NO_PROXY re-evaluated per redirect hop", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("a domain login in http_proxy reaches the proxy as written", async () => {
+    // `http://DOMAIN\user:pass@host:port` is how a Windows domain account is spelled in a proxy
+    // variable, and curl reads the `\` as an ordinary userinfo byte. Only this parser reads the
+    // variable, and it names the host that is dialed, so there is no second reading to agree with.
+    const { stdout, stderr, exitCode, proxyLog, proxyAuth } = await runFetch(
+      { http_proxy: String.raw`http://DOMAIN\user:pass@127.0.0.1:${proxy.port}` },
+      `http://127.0.0.1:${originA.port}/final`,
+    );
+    expect({ stdout, proxyLog, proxyAuth }).toEqual({
+      stdout: "FINAL-PROXY",
+      proxyLog: [`GET http://127.0.0.1:${originA.port}/final HTTP/1.1`],
+      proxyAuth: [`Basic ${btoa(String.raw`DOMAIN\user:pass`)}`],
+    });
+    if (exitCode !== 0) console.error("stderr:", stderr);
+    expect(exitCode).toBe(0);
+  });
+
   test("http->https redirect drops http_proxy when https_proxy is unset", async () => {
     // ProxySettings::resolve() picks by scheme: hop 2 (https) must not inherit
     // the http_proxy hop 1 used.
@@ -2164,12 +3008,12 @@ describe("http_proxy/NO_PROXY re-evaluated per redirect hop", () => {
   });
 });
 
-test("non-200 CONNECT response from proxy is surfaced and its Location header is not followed", async () => {
+test("non-2xx CONNECT response from proxy rejects and its Location header is not followed", async () => {
   // RFC 9110 §9.3.6: a non-2xx response to CONNECT means the tunnel was not
-  // established. The proxy's response must be returned to the caller, but a
-  // Location header on it must never be followed — otherwise the original
-  // method, body, and custom headers would be re-sent to whatever plaintext
-  // origin the proxy names.
+  // established. The proxy's response is not the https origin's, so the fetch
+  // rejects with it attached, and a Location header on it must never be
+  // followed — otherwise the original method, body, and custom headers would
+  // be re-sent to whatever plaintext origin the proxy names.
 
   // Records anything that reaches the address named in the proxy's Location
   // header. Nothing should ever arrive here.
@@ -2209,20 +3053,35 @@ test("non-200 CONNECT response from proxy is surfaced and its Location header is
   const proxyPort = (proxy.address() as net.AddressInfo).port;
 
   try {
-    const response = await fetch(httpsServer.url, {
+    const error = await fetch(httpsServer.url, {
       method: "POST",
       body: "secret request body",
       headers: { "X-Api-Key": "super-secret" },
       proxy: `http://localhost:${proxyPort}`,
       keepalive: false,
       tls: { ca: tlsCert.cert, rejectUnauthorized: false },
-    });
+    }).then(
+      response => ({ resolved: response.status }),
+      e => e,
+    );
 
     // The request did go through the proxy as a CONNECT...
     expect(sawConnect.length).toBe(1);
     expect(sawConnect[0]!.startsWith("CONNECT ")).toBe(true);
-    // ...the proxy's refusal is surfaced to the caller as-is...
-    expect(response.status).toBe(307);
+    // ...the proxy's refusal rejects, with the proxy's head on the error...
+    expect({
+      code: error.code,
+      message: error.message,
+      status: error.status,
+      statusText: error.statusText,
+      location: error.headers?.get("location"),
+    }).toEqual({
+      code: "ERR_PROXY_TUNNEL",
+      message: "Proxy refused to open a tunnel: 307 Temporary Redirect",
+      status: 307,
+      statusText: "Temporary Redirect",
+      location: `${redirectTarget.url.origin}/`,
+    });
     // ...and the Location header on the failed CONNECT is never followed:
     // the body and the X-Api-Key header must not reach the plaintext server
     // it points at.
@@ -2231,6 +3090,79 @@ test("non-200 CONNECT response from proxy is surfaced and its Location header is
     for (const s of proxySockets) s.destroy();
     proxy.close();
     await once(proxy, "close");
+  }
+});
+
+test("a proxy's own reply to CONNECT never resolves as the https origin's response", async () => {
+  // Nothing authenticated these bytes as coming from the origin: a 4xx with a
+  // body rejects, and a forged 2xx with a body is treated as the start of the
+  // tunnel, where it fails the TLS handshake.
+  const replies = [
+    'HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="corp"\r\nContent-Type: application/json\r\nContent-Length: 15\r\n\r\n{"forged":true}',
+    'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\n\r\n{"forged":true}',
+    'HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: 15\r\n\r\n{"forged":true}',
+    // Not a tunnel, and not an upgrade anyone asked for.
+    "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
+  ];
+  const outcomes = [];
+  for (const reply of replies) {
+    const connects: string[] = [];
+    const proxy = net.createServer(socket => {
+      socket.on("error", () => {});
+      socket.once("data", data => {
+        connects.push(data.toString().split(" ")[0]);
+        socket.end(reply);
+      });
+    });
+    await once(proxy.listen(0, "127.0.0.1"), "listening");
+    try {
+      outcomes.push({
+        ...(await fetch("https://origin.invalid/secret", {
+          proxy: `http://127.0.0.1:${(proxy.address() as net.AddressInfo).port}`,
+          keepalive: false,
+        }).then(
+          async response => ({ resolved: response.status, body: await response.text() }),
+          e => ({ code: e.code, status: e.status, authenticate: e.headers?.get("proxy-authenticate") }),
+        )),
+        connects,
+      });
+    } finally {
+      proxy.close();
+    }
+  }
+  expect(outcomes).toEqual([
+    { code: "ERR_PROXY_TUNNEL", status: 407, authenticate: 'Basic realm="corp"', connects: ["CONNECT"] },
+    // The JSON is not a TLS ServerHello: the handshake inside the "tunnel" fails.
+    { code: "EPROTO", status: undefined, authenticate: undefined, connects: ["CONNECT"] },
+    { code: "EPROTO", status: undefined, authenticate: undefined, connects: ["CONNECT"] },
+    { code: "ERR_PROXY_TUNNEL", status: 101, authenticate: null, connects: ["CONNECT"] },
+  ]);
+});
+
+test("invalid TLS options are reported the same through a proxy as directly", async () => {
+  // Says the tunnel is up; the TLS options are what fails next.
+  const proxy = net.createServer(socket => {
+    socket.on("error", () => {});
+    socket.once("data", () => socket.write("HTTP/1.1 200 Connection Established\r\n\r\n"));
+  });
+  await once(proxy.listen(0, "127.0.0.1"), "listening");
+  using dead = await deadPort();
+  const tls = { ca: "not a pem" };
+  const code = (url: string, init: BunFetchRequestInit) =>
+    fetch(url, init).then(
+      r => r.status,
+      e => e.code,
+    );
+  try {
+    expect([
+      await code("https://origin.invalid/", {
+        proxy: `http://127.0.0.1:${(proxy.address() as net.AddressInfo).port}`,
+        tls,
+      }),
+      await code(`https://127.0.0.1:${dead.port}/`, { tls }),
+    ]).toEqual(["FailedToOpenSocket", "FailedToOpenSocket"]);
+  } finally {
+    proxy.close();
   }
 });
 

@@ -27,12 +27,13 @@ pub enum RedisError {
     InvalidVerbatimString,
     JSError,
     OutOfMemory,
-    JSTerminated,
     UnsupportedProtocol,
     ConnectionTimeout,
     IdleTimeout,
     NestingDepthExceeded,
     LineTooLong,
+    /// The server answered with a `-` or `!` error reply.
+    ServerError,
 }
 
 bun_core::impl_tag_error!(RedisError);
@@ -89,6 +90,7 @@ impl RESPType {
 pub enum RESPValue {
     // RESP2 types
     SimpleString(Box<[u8]>),
+    /// A `-` simple error or a `!` blob error reply, holding the server's message.
     Error(Box<[u8]>),
     Integer(i64),
     BulkString(Option<Box<[u8]>>),
@@ -98,7 +100,6 @@ pub enum RESPValue {
     Null,
     Double(f64),
     Boolean(bool),
-    BlobError(Box<[u8]>),
     VerbatimString(VerbatimString),
     Map(Vec<MapEntry>),
     Set(Vec<RESPValue>),
@@ -135,7 +136,6 @@ impl fmt::Display for RESPValue {
             RESPValue::Null => writer.write_str("(nil)"),
             RESPValue::Double(d) => write!(writer, "{}", d),
             RESPValue::Boolean(b) => write!(writer, "{}", b),
-            RESPValue::BlobError(str) => write!(writer, "Error: {}", BStr::new(str)),
             RESPValue::VerbatimString(verbatim) => {
                 write!(
                     writer,
@@ -399,7 +399,8 @@ impl<'a> ValkeyReader<'a> {
                 }
                 let len = self.read_integer()?;
                 if len < 0 {
-                    return Ok(RESPValue::Array(Vec::new()));
+                    // RESP2 null array.
+                    return Ok(RESPValue::Null);
                 }
                 let len = usize::try_from(len).expect("int cast");
                 let mut array =
@@ -415,7 +416,9 @@ impl<'a> ValkeyReader<'a> {
 
             // RESP3 types
             RESPType::Null => {
-                let _ = self.read_until_crlf()?; // Read and discard CRLF
+                if !self.read_until_crlf()?.is_empty() {
+                    return Err(RedisError::InvalidNull);
+                }
                 Ok(RESPValue::Null)
             }
             RESPType::Double => {
@@ -442,7 +445,7 @@ impl<'a> ValkeyReader<'a> {
                     return Err(RedisError::InvalidBlobError);
                 }
                 let owned = Box::<[u8]>::from(str);
-                Ok(RESPValue::BlobError(owned))
+                Ok(RESPValue::Error(owned))
             }
             RESPType::VerbatimString => Ok(RESPValue::VerbatimString(self.read_verbatim_string()?)),
             RESPType::Map => {
@@ -529,7 +532,6 @@ impl<'a> ValkeyReader<'a> {
 
                 // First element is the push type
                 let push_type = self.read_value_with_depth(depth + 1)?;
-                // defer push_type.deinit() — drops at scope end
                 let push_type_str: &[u8] = match &push_type {
                     RESPValue::SimpleString(str) => str,
                     RESPValue::BulkString(maybe_str) => {
@@ -669,11 +671,16 @@ impl ReplyScanner {
             RESPType::SimpleString
             | RESPType::Error
             | RESPType::Integer
-            | RESPType::Null
             | RESPType::Double
             | RESPType::Boolean
             | RESPType::BigNumber => {
                 let _ = reader.read_until_crlf()?;
+                Ok(None)
+            }
+            RESPType::Null => {
+                if !reader.read_until_crlf()?.is_empty() {
+                    return Err(RedisError::InvalidNull);
+                }
                 Ok(None)
             }
             RESPType::BulkString | RESPType::BlobError | RESPType::VerbatimString => {

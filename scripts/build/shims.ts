@@ -1,5 +1,5 @@
 /**
- * Platform shims — small dylibs/objects linked into the bun executable to
+ * Platform shims — small host tools/objects used at link time to
  * work around toolchain or OS bugs.
  *
  * Each shim is a ninja build edge (source → output), so ninja handles
@@ -17,6 +17,7 @@ import type { Config } from "./config.ts";
 import { DARWIN_STACK_SIZE } from "./flags.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote } from "./shell.ts";
+import { toolIdentityFile } from "./tools.ts";
 
 export interface ShimLinkOpts {
   /** Extra ldflags to append to the link() call. */
@@ -25,14 +26,12 @@ export interface ShimLinkOpts {
   implicitInputs: string[];
 }
 
-const ASAN_DYLD_SHIM = "asan-dyld-shim.dylib";
-
 /**
  * macOS-from-Linux cross links need a post-link fixup pass over every
  * Mach-O executable they produce (the linked bun-profile/bun-debug AND the
  * stripped bun):
  *
- *   - ld64.lld parses `-stack_size` but doesn't implement it (LLVM 21 prints
+ *   - ld64.lld parses `-stack_size` but doesn't implement it (LLVM 23 still prints
  *     "not yet implemented"), so LC_MAIN.stacksize stays 0 → the 8 MB
  *     default instead of the 18 MB JSC needs. Tracked in workarounds.ts
  *     ("darwin-cross-stack-size").
@@ -120,22 +119,6 @@ export function elfDebugCompressPostlinkCommand(cfg: Config): string {
 }
 
 /**
- * macOS-from-Linux cross links resolve compiler-rt builtins from the SDK's
- * libSystem reexport (libcompiler_rt.tbd), which covers the generic builtins
- * (__divti3 …) but NOT the x86 `__builtin_cpu_supports` support globals
- * (___cpu_model / ___cpu_indicator_init / ___cpu_features2) — on native
- * builds those come from Apple clang's static libclang_rt.osx.a, which the
- * Linux LLVM toolchain doesn't ship. Compile compiler-rt's own cpu_model
- * sources (vendored under shims/cpu_model/, Apache-2.0 WITH LLVM-exception)
- * into the link so the cross binary behaves exactly like the native one.
- * Tracked in workarounds.ts ("darwin-cross-cpu-model") so it self-obsoletes
- * if the SDK ever exports these symbols.
- */
-function needsDarwinCpuModelShim(cfg: Config): boolean {
-  return cfg.darwin && cfg.crossTarget !== undefined && cfg.x64 && cfg.osxSysroot !== undefined;
-}
-
-/**
  * musl + rust-lld: Alpine ships the libc CRT objects (Scrt1.o, crti.o,
  * crtn.o) with ELFCOMPRESS_ZLIB debug sections, but rust-lang/llvm-project
  * builds lld without LLVM_ENABLE_ZLIB so rust-lld errors at input-section
@@ -160,26 +143,6 @@ const MUSL_CRT_OBJECTS = ["Scrt1.o", "crt1.o", "crti.o", "crtn.o"];
 export function registerShimRules(n: Ninja, cfg: Config): void {
   const q = (p: string) => quote(p, false);
 
-  if (cfg.darwin && cfg.asan) {
-    // -install_name @rpath/<name> so dyld resolves it next to the
-    // executable via the -rpath @executable_path we add at link time.
-    // __DATA,__interpose only works from dylibs (not object files linked
-    // into the main binary), hence -dynamiclib.
-    n.rule("shim_dylib", {
-      command: `${q(cfg.cc)} -dynamiclib -O2 -install_name @rpath/$name -o $out $in`,
-      description: "shim $name",
-    });
-  }
-
-  if (needsDarwinCpuModelShim(cfg)) {
-    // Plain object compiled for the cross target; $flags carries
-    // --target/-isysroot/-mmacosx-version-min from emitShims().
-    n.rule("shim_cc", {
-      command: `${q(cfg.cc)} $flags -O2 -c $in -o $out`,
-      description: "shim $out",
-    });
-  }
-
   if (needsMachoPostlink(cfg)) {
     // Host tool — compiled for the BUILD machine (no --target/-isysroot),
     // since it runs as part of the link/strip commands on this host.
@@ -203,8 +166,7 @@ export function registerShimRules(n: Ninja, cfg: Config): void {
 }
 
 /**
- * Emit shim build edges and return link flags. Call once per link site
- * (emitBun, emitLinkOnly) before the link() call.
+ * Emit shim build edges and return link flags. Call before the link() call (emitBun).
  *
  * See scripts/build/workarounds.ts for the self-obsoleting check on each.
  */
@@ -221,44 +183,9 @@ export function emitShims(n: Ninja, cfg: Config): ShimLinkOpts {
       outputs: [machoPostlinkToolPath(cfg)],
       rule: "host_tool_cc",
       inputs: [resolve(cfg.cwd, "scripts", "build", "shims", "macho-postlink.c")],
+      implicitInputs: [toolIdentityFile(cfg, "cc")],
     });
     implicitInputs.push(...machoPostlinkImplicitInputs(cfg));
-  }
-
-  if (needsDarwinCpuModelShim(cfg)) {
-    const src = resolve(cfg.cwd, "scripts", "build", "shims", "cpu_model", "x86.c");
-    const header = resolve(cfg.cwd, "scripts", "build", "shims", "cpu_model", "cpu_model.h");
-    const out = resolve(cfg.buildDir, "cpu_model_x86.o");
-    n.build({
-      outputs: [out],
-      rule: "shim_cc",
-      inputs: [src],
-      implicitInputs: [header],
-      vars: {
-        flags: [
-          `--target=${cfg.crossTarget!}`,
-          "-isysroot",
-          cfg.osxSysroot!,
-          `-mmacosx-version-min=${cfg.osxDeploymentTarget!}`,
-        ].join(" "),
-      },
-    });
-    ldflags.push(out);
-    implicitInputs.push(out);
-  }
-
-  if (cfg.darwin && cfg.asan) {
-    // macOS 26.4 ASAN dyld deadlock — see shims/asan-dyld-shim.c.
-    const src = resolve(cfg.cwd, "scripts", "build", "shims", "asan-dyld-shim.c");
-    const out = resolve(cfg.buildDir, ASAN_DYLD_SHIM);
-    n.build({
-      outputs: [out],
-      rule: "shim_dylib",
-      inputs: [src],
-      vars: { name: ASAN_DYLD_SHIM },
-    });
-    ldflags.push(out, "-Wl,-rpath,@executable_path");
-    implicitInputs.push(out);
   }
 
   if (needsMuslCrtDecompress(cfg)) {

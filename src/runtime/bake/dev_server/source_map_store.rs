@@ -11,16 +11,17 @@ use bun_core::string_joiner::StringJoiner;
 use bun_core::{Timespec, TimespecMockMode};
 use bun_sourcemap::{self as source_map, SourceMapState};
 
-use crate::bake::dev_server_body::map_log;
 use crate::bake::{self, Side};
 use crate::timer::EventLoopTimerState;
 
 use super::{ChunkKind, DevServer, EventLoopTimer, Magic, TimerTag, packed_map};
 
+bun_output::define_scoped_log!(map_log, crate::bake::dev_server_body::SourceMapStore);
+
 /// See `SourceId` for what the content of u64 is.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Default)]
-pub struct Key(pub(crate) u64);
+pub(crate) struct Key(pub(crate) u64);
 impl Key {
     #[inline]
     pub(crate) const fn init(v: u64) -> Self {
@@ -62,7 +63,7 @@ const WEAK_REF_ENTRY_MAX: usize = 16;
 /// `SourceMapStore.Entry` is the information + refcount holder to
 /// construct the actual JSON file associated with a bundle/hot update.
 #[derive(Default)]
-pub struct Entry {
+pub(crate) struct Entry {
     /// Sum of:
     /// - How many active sockets have code that could reference this source map?
     /// - For route bundle client scripts, +1 until invalidation.
@@ -340,7 +341,7 @@ impl Entry {
 }
 
 #[derive(Debug)]
-pub enum EncodeSourceMapPathError {
+pub(crate) enum EncodeSourceMapPathError {
     OutOfMemory,
     IncompleteUTF8,
 }
@@ -354,7 +355,7 @@ impl From<bun_core::PercentEncodeError> for EncodeSourceMapPathError {
 }
 
 #[derive(Copy, Clone)]
-pub struct WeakRef {
+pub(crate) struct WeakRef {
     /// This encoding only supports route bundle scripts, which do not
     /// utilize the bottom 32 bits of their keys. This is because the bottom
     /// 32 bits are used for the index of the route bundle. While those bits
@@ -397,7 +398,7 @@ pub(crate) enum PutOrIncrementRefCount<'a> {
 /// Action for `SourceMapStore::remove_or_upgrade_weak_ref`.
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum RemoveOrUpgradeMode {
+pub(crate) enum RemoveOrUpgradeMode {
     /// Remove the weak ref entirely
     Remove = 0,
     /// Convert the weak ref into a strong ref
@@ -413,7 +414,7 @@ pub(crate) struct GetResult<'a> {
     pub(crate) file_paths: &'a [Box<[u8]>],
     pub(crate) entry_files: &'a [packed_map::Shared],
 }
-pub struct SourceMapStore {
+pub(crate) struct SourceMapStore {
     pub(crate) entries: ArrayHashMap<Key, Entry>,
     /// When a HTML bundle is loaded, it places a "weak reference" to the
     /// script's source map. This reference is held until either:
@@ -682,14 +683,11 @@ impl SourceMapStore {
             0, // unused
             Default::default(),
         ) {
-            source_map::ParseResult::Fail(fail) => {
-                bun_core::debug_warn!(
-                    "Failed to re-parse source map: {}",
-                    bstr::BStr::new(fail.msg)
-                );
+            Err(fail) => {
+                bun_core::debug_warn!("Failed to re-parse source map: {}", fail.err.message());
                 None
             }
-            source_map::ParseResult::Success(mut psm) => Some(GetResult {
+            Ok(mut psm) => Some(GetResult {
                 mappings: core::mem::take(&mut psm.mappings),
                 file_paths: &entry.paths,
                 entry_files: &entry.files,

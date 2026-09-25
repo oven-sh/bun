@@ -34,6 +34,9 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellman, (JSC::JSGlobalObject * globalOb
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    JSC::Structure* structure = structureForNewTarget(globalObject, callFrame->newTarget(), &Zig::GlobalObject::m_JSDiffieHellmanClassStructure);
+    RETURN_IF_EXCEPTION(scope, {});
+
     JSValue sizeOrKey = callFrame->argument(0);
 
     if (!sizeOrKey.isNumber() && !sizeOrKey.isString() && !isArrayBufferOrView(sizeOrKey)) {
@@ -71,10 +74,13 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellman, (JSC::JSGlobalObject * globalOb
         }
     }
 
+    // Used when generatorValue is a number. Read through the validator: asInt32() is not
+    // valid for an integral number the JSValue holds as a double.
+    int32_t generatorNumber = 2;
     if (generatorValue.pureToBoolean() == TriState::False) {
         generatorValue = jsNumber(2);
     } else if (generatorValue.isNumber()) {
-        Bun::V::validateInt32(scope, globalObject, generatorValue, "generator"_s, jsUndefined(), jsUndefined());
+        Bun::V::validateInt32(scope, globalObject, generatorValue, "generator"_s, jsUndefined(), jsUndefined(), &generatorNumber);
         RETURN_IF_EXCEPTION(scope, {});
     } else if (!generatorValue.isString() && !isArrayBufferOrView(generatorValue)) {
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "generator"_s, "number, string, ArrayBuffer, Buffer, TypedArray, or DataView"_s, generatorValue);
@@ -99,10 +105,7 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellman, (JSC::JSGlobalObject * globalOb
             return {};
         }
 
-        int32_t generator = 0;
-        V::validateInt32(scope, globalObject, generatorValue, "generator"_s, jsUndefined(), jsUndefined(), &generator);
-        RETURN_IF_EXCEPTION(scope, {});
-
+        int32_t generator = generatorNumber;
         if (generator < 2) {
             ERR_put_error(ERR_LIB_DH, 0, DH_R_BAD_GENERATOR, __FILE__, __LINE__);
             throwCryptoError(globalObject, scope, ERR_get_error(), "Invalid generator"_s);
@@ -135,7 +138,7 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellman, (JSC::JSGlobalObject * globalOb
         ncrypto::BignumPointer bn_g;
 
         if (generatorValue.isNumber()) {
-            int32_t generator = generatorValue.asInt32();
+            int32_t generator = generatorNumber;
             if (generator < 2) {
                 ERR_put_error(ERR_LIB_DH, 0, DH_R_BAD_GENERATOR, __FILE__, __LINE__);
                 throwCryptoError(globalObject, scope, ERR_get_error(), "Invalid generator"_s);
@@ -185,10 +188,6 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellman, (JSC::JSGlobalObject * globalOb
     if (checkResult == ncrypto::DHPointer::CheckResult::CHECK_FAILED) {
         return Bun::ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "Checking DH parameters failed"_s);
     }
-
-    // Get the appropriate structure and create the DiffieHellman object
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    JSC::Structure* structure = zigGlobalObject->m_JSDiffieHellmanClassStructure.get(zigGlobalObject);
 
     return JSC::JSValue::encode(JSDiffieHellman::create(vm, structure, globalObject, WTF::move(dh), static_cast<int>(checkResult)));
 }

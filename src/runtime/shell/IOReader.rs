@@ -19,14 +19,14 @@ use crate::shell::yield_::Yield;
 /// — the node id of the owning Cmd plus a tag saying which builtin impl to
 /// dispatch the `on_read_chunk`/`on_reader_done` callback to.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct ChildPtr {
+pub(crate) struct ChildPtr {
     pub node: NodeId,
     pub(crate) tag: ReaderTag,
 }
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum ReaderTag {
+pub(crate) enum ReaderTag {
     Cat,
 }
 
@@ -60,7 +60,7 @@ struct State {
     interp: Option<bun_ptr::ParentRef<Interpreter>>,
 }
 
-pub struct IOReader {
+pub(crate) struct IOReader {
     /// Split out of `State` so `state()`'s `&mut State` never overlaps the
     /// `&mut ReaderImpl` the read-loop caller holds while invoking vtable
     /// callbacks (see `BufferedReaderParent` aliasing contract). Both cells
@@ -231,7 +231,6 @@ impl IOReader {
             s.is_reading = true;
             if let Err(e) = self.reader().start_with_current_pipe() {
                 self.on_reader_error(&e);
-                return Yield::failed();
             }
             Yield::suspended()
         }
@@ -365,7 +364,7 @@ impl IOReader {
 bun_io::impl_buffered_reader_parent! {
     ShellIoReader for IOReader;
     has_on_read_chunk = true;
-    on_read_chunk   = |this, chunk, has_more| (*this).on_read_chunk_cb(chunk, has_more);
+    on_read_chunk   = |this, chunk, has_more| (*this).on_read_chunk_cb(&chunk, has_more);
     on_reader_done  = |this| (*this).on_reader_done_cb();
     on_reader_error = |this, err| (*this).on_reader_error(&err);
     loop_           = |this| (*this).io_evtloop().native_loop();

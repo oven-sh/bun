@@ -1,12 +1,15 @@
 import { hasRawAny, isAny } from "./any.ts";
 import {
   addIndent,
-  type CodeStyle,
   dedent,
   headersForTypes,
   joinIndented,
   NamedType,
   reindent,
+  type RustLayout,
+  type RustType,
+  snakeCase,
+  structLayout,
   toASCIILiteral,
   toQuotedLiteral,
   Type,
@@ -70,11 +73,79 @@ export function dictionary(
     get idlType() {
       return `::Bun::Bindgen::Generated::IDL${name}`;
     }
-    get bindgenType() {
-      return `bindgen_generated.internal.${name}`;
+    get rust(): RustType {
+      const { size, align } = structLayout(fullMembers.map(m => m.type.rust));
+      return {
+        extern: `Extern${name}`,
+        size,
+        align,
+        member: name,
+        fromExtern: e => `${name}::from_extern(${e})`,
+        arm: { type: `Box<${name}>`, fromExtern: e => `Box::new(${name}::from_extern(${e}))` },
+      };
     }
-    zigType(style?: CodeStyle) {
-      return `bindgen_generated.${name}`;
+    get rustLayout(): RustLayout {
+      const { size, align, offsets } = structLayout(fullMembers.map(m => m.type.rust));
+      return {
+        cpp: `::Bun::Bindgen::Generated::Extern${name}`,
+        rust: `Extern${name}`,
+        size,
+        align,
+        fields: fullMembers.map((m, i) => ({ cpp: m.internalName, rust: snakeCase(m.internalName), offset: offsets[i] })),
+      };
+    }
+    get rustSource() {
+      const members = fullMembers.map(m => ({ name: snakeCase(m.internalName), rust: m.type.rust }));
+      const conversion = !generateConversionFunction
+        ? ""
+        : `
+
+          pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Self> {
+            let mut ext = MaybeUninit::<Extern${name}>::uninit();
+            crate::call_false_is_throw(global, || bindgenConvertJSTo${name}(global, value, &mut ext))?;
+            // SAFETY: C++ filled \`ext\` because it returned true.
+            Ok(Self::from_extern(unsafe { ext.assume_init() }))
+          }`;
+      const declaration = !generateConversionFunction
+        ? ""
+        : `
+
+        // SAFETY: C++ reads \`global\` and \`value\`, and writes all of \`result\` when it returns true.
+        unsafe extern "C" {
+          safe fn bindgenConvertJSTo${name}(
+            global: &JSGlobalObject,
+            value: JSValue,
+            result: &mut MaybeUninit<Extern${name}>,
+          ) -> bool;
+        }`;
+      return reindent(`
+        pub struct ${name} {
+          ${joinIndented(
+            10,
+            members.map(m => `pub ${m.name}: ${m.rust.member},`),
+          )}
+        }
+
+        #[repr(C)]
+        #[derive(Clone, Copy)]
+        struct Extern${name} {
+          ${joinIndented(
+            10,
+            members.map(m => `${m.name}: ${m.rust.extern},`),
+          )}
+        }${declaration}
+
+        impl ${name} {
+          fn from_extern(ext: Extern${name}) -> Self {
+            Self {
+              ${joinIndented(
+                14,
+                members.map(m => `${m.name}: ${m.rust.fromExtern(`ext.${m.name}`)},`),
+              )}
+            }
+          }${conversion}
+        }
+      `);
     }
     get dependencies() {
       return fullMembers.map(m => m.type);

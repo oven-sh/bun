@@ -890,6 +890,50 @@ describe("`bun audit` with a secret in the registry URL", () => {
   });
 });
 
+// `bun audit` builds its header from the same credentials as `bun install`: a
+// `.npmrc` line on the registry's key, `_auth` sent as written.
+describe("`bun audit` with a credential from a .npmrc line", () => {
+  const cases: Array<[line: string, header: string]> = [
+    [":_authToken=npm_audit_token", "Bearer npm_audit_token"],
+    [":_auth=!!opaque-blob!!", "Basic !!opaque-blob!!"],
+  ];
+
+  test.each(cases)("%s reaches the bulk advisory endpoint as %s", async (line, header) => {
+    const seen: Array<string | null> = [];
+    using registry = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        seen.push(req.headers.get("authorization"));
+        return Response.json({});
+      },
+    });
+    const host = `127.0.0.1:${registry.port}`;
+    const dependencies = { "a-dep": "1.0.4" };
+    using dir = tempDir("audit-npmrc-line-", {
+      "package.json": JSON.stringify({ name: "app", dependencies }),
+      "bun.lock": JSON.stringify({
+        lockfileVersion: 1,
+        workspaces: { "": { name: "app", dependencies } },
+        packages: { "a-dep": ["a-dep@1.0.4", "", {}, ""] },
+      }),
+      ".npmrc": `registry=http://${host}/\n//${host}/${line}\n`,
+      "home/.gitkeep": "",
+    });
+    const home = join(String(dir), "home");
+    await using proc = spawn({
+      cmd: [bunExe(), "audit"],
+      cwd: String(dir),
+      env: { ...bunEnv, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: home },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(seen).toEqual([header]);
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+  });
+});
+
 describe("`bun audit --prod`", () => {
   // pnpm#13605: an optional peer that only a devDependency brought in is not a production dependency.
   test.concurrent("bun audit --prod skips a dev-only optional peer of a production package", async () => {

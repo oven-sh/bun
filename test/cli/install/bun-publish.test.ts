@@ -510,6 +510,47 @@ test("can publish a package then install it", async () => {
   await runBunInstall(env, packageDir);
   expect(await exists(join(packageDir, "node_modules", "publish-pkg-1", "package.json"))).toBeTrue();
 });
+
+describe("can publish with only _auth from .npmrc", () => {
+  // npm forwards whatever `_auth` holds as `Basic <value>`, decodable or not.
+  const cases: Array<[name: string, blob: string]> = [
+    ["decodable base64", Buffer.from("alice:s3cret").toString("base64")],
+    ["opaque non-base64", "!!not-base64!!"],
+  ];
+
+  test.each(cases)("%s reaches the registry verbatim", async (_name, blob) => {
+    const requests: Array<{ method: string; path: string; auth: string | null }> = [];
+    using mockRegistry = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        const pathname = new URL(req.url).pathname;
+        requests.push({ method: req.method, path: pathname, auth: req.headers.get("authorization") });
+        if (req.method === "PUT" && pathname === "/npmrc-auth-pkg") return new Response("OK", { status: 200 });
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    const host = `127.0.0.1:${mockRegistry.port}`;
+    using dir = tempDir("publish-npmrc-auth", {
+      "package.json": JSON.stringify({ name: "npmrc-auth-pkg", version: "1.0.0" }),
+      ".npmrc": `registry=http://${host}/\n//${host}/:_auth=${blob}\n`,
+      // An empty home so the developer's own `.npmrc`/global bunfig can't leak in.
+      "home/.gitkeep": "",
+    });
+    const home = join(String(dir), "home");
+
+    const { out, err, exitCode } = await publish(
+      { ...env, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: home },
+      String(dir),
+    );
+    expect(err).not.toContain("error:");
+    expect(out).toContain("+ npmrc-auth-pkg@1.0.0");
+    expect(requests).toEqual([{ method: "PUT", path: "/npmrc-auth-pkg", auth: `Basic ${blob}` }]);
+    expect(exitCode).toBe(0);
+  });
+});
+
 test("can publish from a tarball", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
   const bunfig = await registry.authBunfig("tarball");

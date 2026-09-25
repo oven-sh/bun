@@ -1379,6 +1379,7 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
     let Api::BunInstall {
         default_registry,
         scoped,
+        url_auth,
         lockfile_path,
         save_lockfile_path,
         cache_directory,
@@ -1427,6 +1428,8 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
             }
         }
     }
+
+    install.url_auth.extend(url_auth);
 
     macro_rules! overlay {
         ($($field:ident),* $(,)?) => {
@@ -1486,6 +1489,10 @@ pub fn init(
     cli: CommandLineArguments,
     subcommand: Subcommand,
 ) -> Result<(&'static mut PackageManager, Box<[u8]>), Error> {
+    // `.npmrc` is read below, before `Options::load` applies the log level.
+    if cli.log_level.is_silent() {
+        bun_ast::DEFAULT_LOG_LEVEL.store(bun_ast::Level::Err);
+    }
     if cli.global {
         // Non-consuming peek: `ctx.install` is
         // `Option<Box<BunInstall>>` borrowed via `&mut ContextData`; reborrow with
@@ -1919,7 +1926,7 @@ pub fn init(
 
     {
         // npmrc < bunfig < CLI
-        let mut bunfig_install = ctx
+        let bunfig_install = ctx
             .install
             .take()
             .map_or_else(Api::BunInstall::default, |b| *b);
@@ -1948,18 +1955,18 @@ pub fn init(
             }
         }
 
-        let registry_auth = if global_len > 0 {
+        if global_len > 0 {
             ini::load_npmrc_config(
                 &mut install,
+                &bunfig_install,
                 env,
                 true,
                 &[ZStr::from_buf(&buf[..], global_len), &*npmrc_local],
-            )
+            );
         } else {
-            ini::load_npmrc_config(&mut install, env, true, &[&*npmrc_local])
-        };
+            ini::load_npmrc_config(&mut install, &bunfig_install, env, true, &[&*npmrc_local]);
+        }
 
-        ini::apply_registry_auth(&mut bunfig_install, &registry_auth);
         overlay_bunfig_install(&mut install, bunfig_install);
         ctx.install = Some(Box::new(install));
     }

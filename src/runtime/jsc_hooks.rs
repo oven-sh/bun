@@ -793,42 +793,16 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         let _protected = JSValue::from_cell(promise).protected();
 
         // ── wait ────────────────────────────────────────────────────────
-        // HMR `pending_internal_promise` swap loop; non-watcher path uses
-        // `wait_for_promise` directly.
-        {
-            // SAFETY: per fn contract.
-            if unsafe { &*vm }.is_watcher_enabled() {
-                // pending_internal_promise can change if hot module reloading is
-                // enabled.
-                // SAFETY: `el` is the live per-thread event loop.
-                let el = unsafe { &*vm }.event_loop();
-                loop {
-                    // SAFETY: `pending_internal_promise` was set just above (or
-                    // swapped by HMR to another live cell); `status()` is a
-                    // read-only FFI call on a live JSC heap cell.
-                    let pip = unsafe { &*vm }.pending_internal_promise.unwrap_or(promise);
-                    // SAFETY: `pip` is a live JSC heap cell (set just above or
-                    // the protected `promise` fallback).
-                    if unsafe { &*pip }.status() != PromiseStatus::Pending {
-                        break;
-                    }
-                    // SAFETY: `el` is the live per-thread event loop.
-                    unsafe { (*el).tick() };
-                    // SAFETY: per fn contract — `vm` is the live per-thread VM.
-                    let pip = unsafe { &*vm }.pending_internal_promise.unwrap_or(promise);
-                    // SAFETY: `pip` is a live JSC heap cell (see above).
-                    if unsafe { &*pip }.status() == PromiseStatus::Pending {
-                        // SAFETY: per fn contract — short-lived `&mut *vm` for the
-                        // dispatched `auto_tick` hook (same shape as the
-                        // non-watcher `wait_for_promise` arm).
-                        unsafe { (*vm).auto_tick_waiting_on(Some(AnyPromise::Internal(pip))) };
-                    }
-                }
-            } else {
-                // SAFETY: per fn contract — short-lived `&mut *vm`; `promise` is a
-                // live protected JSC heap cell.
-                let _ = unsafe { (*vm).wait_for_promise(AnyPromise::Internal(promise)) };
-            }
+        // SAFETY: per fn contract.
+        if unsafe { &*vm }.is_watcher_enabled() {
+            // pending_internal_promise can change if hot module reloading is
+            // enabled.
+            // SAFETY: per fn contract — short-lived `&mut *vm`.
+            let _ = unsafe { (*vm).wait_for_pending_internal_promise() };
+        } else {
+            // SAFETY: per fn contract — short-lived `&mut *vm`; `promise` is a
+            // live protected JSC heap cell.
+            let _ = unsafe { (*vm).wait_for_promise(AnyPromise::Internal(promise)) };
         }
 
         // SAFETY: `promise` is a live (still-protected) JSC heap cell.

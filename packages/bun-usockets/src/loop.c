@@ -881,7 +881,11 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     return;
                 }
                 if (us_socket_is_shut_down(s)) {
-                    /* We got FIN back after sending it */
+                    /* We got FIN back after sending it. For a TLS client whose handshake is
+                     * still pending this FIN is its end: report it, like the branch below. */
+                    if (s->ssl && !s->ssl_is_server && !us_internal_ssl_handshake_callback_has_fired(s)) {
+                        s = us_internal_ssl_on_end(s);
+                    }
                     s = us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
                     return;
                 }

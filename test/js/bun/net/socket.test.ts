@@ -3948,11 +3948,15 @@ Reo=
       }
     }
 
-    it("a rejecting client closes when its handshake fails with no error", async () => {
+    it("a rejecting client closes when the peer ends a handshake that shutdown() left pending", async () => {
       const events: string[] = [];
       const closed = Promise.withResolvers<void>();
-      // Never answers, and keeps the connection open after the client's FIN.
-      const peer = net.createServer({ allowHalfOpen: true }, socket => socket.on("error", () => {}));
+      // Never answers the ClientHello, and ends its side when the client's FIN arrived.
+      const peer = net.createServer({ allowHalfOpen: true }, socket => {
+        socket.on("error", () => {});
+        socket.on("data", data => events.push(`the peer got a record of type ${data[0]}`));
+        socket.on("end", () => socket.end());
+      });
       await once(peer.listen(0, "127.0.0.1"), "listening");
       try {
         using _client = await Bun.connect({
@@ -3960,12 +3964,13 @@ Reo=
           port: (peer.address() as net.AddressInfo).port,
           tls: true,
           socket: {
-            // Before the ClientHello, so the handshake never starts.
+            // Before the first step of the handshake. The ClientHello still leaves before the FIN, and the FIN does
+            // not end the handshake: the peer does.
             open(socket) {
               socket.shutdown();
             },
             handshake(_socket, success, authorizationError) {
-              events.push(`handshake success=${success} error=${authorizationError?.message ?? null}`);
+              events.push(`handshake success=${success} error=${authorizationError?.code ?? null}`);
             },
             data() {},
             close() {
@@ -3979,10 +3984,51 @@ Reo=
           },
         });
         await closed.promise;
-        expect(events).toEqual(["handshake success=false error=null", "close"]);
+        expect(events).toEqual([
+          "the peer got a record of type 22",
+          "handshake success=false error=ECONNRESET",
+          "close",
+        ]);
       } finally {
         peer.close();
       }
+    });
+
+    it("a socket upgraded to TLS that shutdown()s in open still reads the check of the server certificate", async () => {
+      const events: string[] = [];
+      const closed = Promise.withResolvers<void>();
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: { key: ROGUE_KEY, cert: ROGUE_CRT },
+        socket: { open() {}, handshake() {}, data() {}, close() {}, error() {} },
+      });
+      using raw = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        socket: { open() {}, data() {}, close() {}, error() {} },
+      });
+      raw.upgradeTLS({
+        tls: { rejectUnauthorized: false },
+        socket: {
+          // Before the first step of the handshake, as in the test above.
+          open(socket) {
+            socket.shutdown();
+          },
+          handshake(socket, success, authorizationError) {
+            events.push(`handshake success=${success} error=${authorizationError?.code ?? null}`);
+            socket.close();
+          },
+          data() {},
+          close() {
+            events.push("close");
+            closed.resolve();
+          },
+          error() {},
+        },
+      });
+      await closed.promise;
+      expect(events).toEqual(["handshake success=true error=UNABLE_TO_VERIFY_LEAF_SIGNATURE", "close"]);
     });
 
     // The SSL has no certificate to judge when the peer never sent one. That

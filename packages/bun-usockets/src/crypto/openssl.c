@@ -519,6 +519,20 @@ void us_internal_ssl_loop_state_restore(void **saved) {
   d->ssl_write_batching = (int)(uintptr_t)saved[5];
 }
 
+/* Sends sealed records to the wire. After this side's FIN nothing can leave
+ * any more, so the records are dropped and reported as sent: SSL goes on, and a
+ * handshake still completes on what the peer sends. Parked in the spill slot
+ * they would never drain, and a close waits for that slot. Node's stream write
+ * behind the BIO fails the same way after DoShutdown:
+ * https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1203-L1213 */
+static int ssl_raw_write(struct us_socket_t *s, const char *data, int length) {
+  int written = us_socket_raw_write(s, data, length);
+  if (written < length && us_internal_poll_type(&s->p) == POLL_TYPE_SOCKET_SHUT_DOWN) {
+    return length;
+  }
+  return written;
+}
+
 static int BIO_s_custom_write(BIO *bio, const char *data, int length) {
   struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)BIO_get_data(bio);
 
@@ -582,7 +596,7 @@ static int BIO_s_custom_write(BIO *bio, const char *data, int length) {
     BIO_clear_retry_flags(bio);
     return length;
   }
-  int written = us_socket_raw_write(loop_ssl_data->ssl_socket, data, length);
+  int written = ssl_raw_write(loop_ssl_data->ssl_socket, data, length);
 
   BIO_clear_retry_flags(bio);
   if (!written) {
@@ -608,7 +622,7 @@ static int ssl_flush_write_batch(struct loop_ssl_data *loop_ssl_data, struct us_
   }
   loop_ssl_data->ssl_write_batch_len = 0;
   loop_ssl_data->ssl_write_batch_owner = NULL;
-  int written = us_socket_raw_write(s, loop_ssl_data->ssl_write_batch, (int)len);
+  int written = ssl_raw_write(s, loop_ssl_data->ssl_write_batch, (int)len);
   if (written < 0) written = 0;
   if ((unsigned int)written < len) {
     unsigned int remainder = len - (unsigned int)written;
@@ -2073,7 +2087,7 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
     return us_internal_socket_close_raw(s, code, reason);
   }
   ssl_set_loop_data(s);
-  ssl_update_handshake(s, 1);
+  ssl_update_handshake(s, s->ssl_is_server);
   if (ssl_gone(s)) return s;
 
   if (s->ssl_handshake_state != HANDSHAKE_COMPLETED) {
@@ -2110,10 +2124,27 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
 }
 #define ssl_close us_internal_ssl_close
 
-/* `fin_ends_handshake` is 0 only from the writable event, which the read path
+/* One SSL_do_handshake call. Returns 0 when a callback run from inside it
+ * destroyed this socket: the deferred close has run and the SSL is gone. */
+static int ssl_handshake_step(struct us_socket_t *s, int *result) {
+  unsigned char ssl_was_in_use = s->ssl_in_use;
+  s->ssl_in_use = 1;
+  *result = SSL_do_handshake(s_ssl(s));
+  s->ssl_in_use = ssl_was_in_use;
+  if (!ssl_was_in_use && s->ssl_pending_detach) {
+    s->ssl_pending_detach = 0;
+    us_socket_close(s, s->ssl_pending_close_code, NULL);
+    return 0;
+  }
+  return 1;
+}
+
+/* `fin_ends_handshake` is 0 from the writable event, which the read path
  * re-enters while a handshake is in progress: the socket keeps reading after
  * our FIN or close_notify, and the peer's next flight can still complete that
- * handshake. For every other caller a half-closed socket's handshake is over. */
+ * handshake. It is 0 for a client as well: its ClientHello leaves before its
+ * FIN (us_internal_ssl_shutdown), so its handshake is under way. A server that
+ * is half-closed at any other call cannot answer any more. */
 static void ssl_update_handshake(struct us_socket_t *s, int fin_ends_handshake) {
   /* The OpenSSL error queue is per-thread and another socket's failure (a
    * server and a client commonly share this thread) may have left entries on
@@ -2140,17 +2171,8 @@ static void ssl_update_handshake(struct us_socket_t *s, int fin_ends_handshake) 
     return;
   }
 
-  unsigned char ssl_was_in_use = s->ssl_in_use;
-  s->ssl_in_use = 1;
-  int result = SSL_do_handshake(s_ssl(s));
-  s->ssl_in_use = ssl_was_in_use;
-  if (!ssl_was_in_use && s->ssl_pending_detach) {
-    /* A callback run from inside the handshake destroyed this socket; perform
-     * the deferred close now and do not touch the SSL again. */
-    s->ssl_pending_detach = 0;
-    us_socket_close(s, s->ssl_pending_close_code, NULL);
-    return;
-  }
+  int result;
+  if (!ssl_handshake_step(s, &result)) return;
 
   if (SSL_get_shutdown(s_ssl(s)) & SSL_RECEIVED_SHUTDOWN) {
     ssl_close(s, 0, NULL);
@@ -2209,7 +2231,7 @@ struct us_socket_t *us_internal_ssl_on_open(struct us_socket_t *s, int is_client
   if (!result || ssl_gone(result)) return result;
   /* Kick the handshake immediately — some peers stall waiting for ClientHello. */
   ssl_set_loop_data(result);
-  ssl_update_handshake(result, 1);
+  ssl_update_handshake(result, result->ssl_is_server);
   return result;
 }
 
@@ -2828,6 +2850,19 @@ void us_internal_ssl_shutdown(struct us_socket_t *s) {
   loop_ssl_data->ssl_read_input_length = 0;
   loop_ssl_data->ssl_socket = s;
 
+  /* The flight that is due leaves before the FIN: a client that ends before
+   * the first step of its handshake still sends the ClientHello, so the
+   * server can answer. Node's DoShutdown flushes the BIO before it shuts the
+   * stream down. BoringSSL keeps a failure of this step and the next
+   * handshake update reports it. on_open has not run for a SEMI_SOCKET, so
+   * its SNI/ALPN are not on the SSL yet. */
+  if (s->ssl_handshake_state == HANDSHAKE_PENDING && SSL_in_init(s_ssl(s)) && !s->ssl_in_use &&
+      (us_internal_poll_type(&s->p) & POLL_TYPE_KIND_MASK) != POLL_TYPE_SEMI_SOCKET) {
+    int result;
+    if (!ssl_handshake_step(s, &result)) return;
+    ERR_clear_error();
+  }
+
   int ret = SSL_shutdown(s_ssl(s));
 
   if (SSL_in_init(s_ssl(s)) || SSL_get_quiet_shutdown(s_ssl(s))) {
@@ -2933,7 +2968,7 @@ struct us_socket_t *us_socket_adopt_tls(struct us_socket_t *s,
 void us_socket_start_tls_handshake(struct us_socket_t *s) {
   if (!s->ssl || us_socket_is_closed(s)) return;
   ssl_set_loop_data(s);
-  ssl_update_handshake(s, 1);
+  ssl_update_handshake(s, s->ssl_is_server);
 }
 
 /* ── SNI on listen sockets ───────────────────────────────────────────────── */

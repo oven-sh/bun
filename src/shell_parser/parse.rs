@@ -2528,15 +2528,10 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             {
                                 break 'escaped;
                             }
-                            let whitespace_preceding = if let Some(prev) = self.chars.prev {
-                                ShellCharIter::<ENCODING>::is_whitespace(prev)
-                            } else {
-                                true
-                            };
-                            if !whitespace_preceding {
+                            // A comment starts only where a new token starts (POSIX 2.3 rule 9).
+                            if self.j != self.word_start || self.last_token_is_word_part() {
                                 break 'escaped;
                             }
-                            self.break_word(AddDelimiter::AfterText)?;
                             if self.eat_comment() {
                                 self.tokens.push(Token::Newline);
                             }
@@ -2997,44 +2992,49 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             if add_delimiter != AddDelimiter::No {
                 self.tokens.push(Token::Delimit);
             }
-        } else if add_delimiter == AddDelimiter::AfterWord
-            && !self.tokens.is_empty()
-            && match self.tokens[self.tokens.len() - 1].tag() {
-                TokenTag::Var
-                | TokenTag::VarArgv
-                | TokenTag::Text
-                | TokenTag::SingleQuotedText
-                | TokenTag::DoubleQuotedText
-                | TokenTag::BraceBegin
-                | TokenTag::Comma
-                | TokenTag::BraceEnd
-                | TokenTag::CmdSubstEnd
-                | TokenTag::Asterisk => true,
-
-                TokenTag::Pipe
-                | TokenTag::DoublePipe
-                | TokenTag::Ampersand
-                | TokenTag::DoubleAmpersand
-                | TokenTag::Redirect
-                | TokenTag::DoubleAsterisk
-                | TokenTag::Semicolon
-                | TokenTag::Newline
-                | TokenTag::CmdSubstBegin
-                | TokenTag::CmdSubstQuoted
-                | TokenTag::OpenParen
-                | TokenTag::CloseParen
-                | TokenTag::JSObjRef
-                | TokenTag::DoubleBracketOpen
-                | TokenTag::DoubleBracketClose
-                | TokenTag::Delimit
-                | TokenTag::Eof => false,
-            }
-        {
+        } else if add_delimiter == AddDelimiter::AfterWord && self.last_token_is_word_part() {
             self.tokens.push(Token::Delimit);
             self.delimit_quote = false;
         }
         self.word_start = self.j;
         Ok(())
+    }
+
+    /// True when the last token is part of a word that the next char can extend.
+    fn last_token_is_word_part(&self) -> bool {
+        let Some(last) = self.tokens.last() else {
+            return false;
+        };
+        match last.tag() {
+            TokenTag::Var
+            | TokenTag::VarArgv
+            | TokenTag::Text
+            | TokenTag::SingleQuotedText
+            | TokenTag::DoubleQuotedText
+            | TokenTag::BraceBegin
+            | TokenTag::Comma
+            | TokenTag::BraceEnd
+            | TokenTag::CmdSubstEnd
+            | TokenTag::Asterisk => true,
+
+            TokenTag::Pipe
+            | TokenTag::DoublePipe
+            | TokenTag::Ampersand
+            | TokenTag::DoubleAmpersand
+            | TokenTag::Redirect
+            | TokenTag::DoubleAsterisk
+            | TokenTag::Semicolon
+            | TokenTag::Newline
+            | TokenTag::CmdSubstBegin
+            | TokenTag::CmdSubstQuoted
+            | TokenTag::OpenParen
+            | TokenTag::CloseParen
+            | TokenTag::JSObjRef
+            | TokenTag::DoubleBracketOpen
+            | TokenTag::DoubleBracketClose
+            | TokenTag::Delimit
+            | TokenTag::Eof => false,
+        }
     }
 
     fn eat_simple_redirect(&mut self, dir: RedirectDirection) -> ast::RedirectFlags {
@@ -3710,10 +3710,6 @@ pub struct ShellCharIter<'a, const ENCODING: StringEncoding> {
 }
 
 impl<'a, const ENCODING: StringEncoding> ShellCharIter<'a, ENCODING> {
-    pub(crate) fn is_whitespace(char: InputChar) -> bool {
-        matches!(char.char, c if c == u32::from(b'\t') || c == u32::from(b'\r') || c == u32::from(b'\n') || c == u32::from(b' '))
-    }
-
     pub(crate) fn init(bytes: &'a [u8]) -> Self {
         let src = if ENCODING == StringEncoding::Ascii {
             Src::Ascii(SrcAscii::init(bytes))

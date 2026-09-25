@@ -971,6 +971,60 @@ describe("lex shell", () => {
     expect(JSON.parse(lex({ raw: [source] }))).toEqual(expected);
   });
 
+  // A `#` starts a comment only where a new token starts (POSIX 2.3 rule 9):
+  // after an operator it is a comment, glued to a word it is literal.
+  test.each([
+    [
+      "comment directly after a semicolon",
+      "echo a;# note\necho b",
+      [
+        { Text: "echo" },
+        { Delimit: {} },
+        { Text: "a" },
+        { Delimit: {} },
+        { Semicolon: {} },
+        { Newline: {} },
+        { Text: "echo" },
+        { Delimit: {} },
+        { Text: "b" },
+        { Delimit: {} },
+        { Eof: {} },
+      ],
+    ],
+    [
+      "comment directly after a pipe",
+      "echo a|# c\ncat",
+      [
+        { Text: "echo" },
+        { Delimit: {} },
+        { Text: "a" },
+        { Delimit: {} },
+        { Pipe: {} },
+        { Newline: {} },
+        { Text: "cat" },
+        { Delimit: {} },
+        { Eof: {} },
+      ],
+    ],
+    [
+      "hash after a closing quote is literal",
+      'echo "a"#b',
+      [{ Text: "echo" }, { Delimit: {} }, { DoubleQuotedText: "a" }, { Text: "#b" }, { Delimit: {} }, { Eof: {} }],
+    ],
+    [
+      "hash after a backslash-newline inside a word is literal",
+      "echo a\\\n#b",
+      [{ Text: "echo" }, { Delimit: {} }, { Text: "a#b" }, { Delimit: {} }, { Eof: {} }],
+    ],
+    [
+      "hash after a variable is literal",
+      "echo $FOO#b",
+      [{ Text: "echo" }, { Delimit: {} }, { Var: "FOO" }, { Text: "#b" }, { Delimit: {} }, { Eof: {} }],
+    ],
+  ])("comments: %s", (_name, source, expected) => {
+    expect(JSON.parse(lex({ raw: [source] }))).toEqual(expected);
+  });
+
   // bash: `FOO=x FOOls=y; echo $FOO\<LF>ls` prints `y`.
   test("Bun.$ backslash-newline inside a variable name", async () => {
     const { stdout, exitCode } = await $`${{ raw: "FOO=x\nFOOls=y\necho $FOO\\\nls $FOO\\\r\nls\r\n" }}`.quiet();
@@ -986,6 +1040,13 @@ describe("lex shell", () => {
     expect(lf.stdout.toString()).toBe("[abar] [abar]\n");
     const crlf = await $`${{ raw: "FOO=a; FOObar=b; echo [$FOO\\\r\n" }}${x}]`.quiet();
     expect(crlf.stdout.toString()).toBe("[abar]\n");
+  });
+
+  // bash: `echo a;# note` then `echo b` on the next line prints `a` and `b`.
+  test("Bun.$ comment directly after an operator", async () => {
+    const { stdout, exitCode } = await $`${{ raw: "echo a;# note\necho b|# c\ncat\n(echo d)#e\n" }}`.quiet();
+    expect(stdout.toString()).toBe("a\nb\nd\n");
+    expect(exitCode).toBe(0);
   });
 
   test("Bun.$ template with CRLF and a trailing comment", async () => {

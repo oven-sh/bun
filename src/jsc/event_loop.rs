@@ -69,7 +69,7 @@ pub struct EventLoop {
     /// timers have had a turn — rather than in the current drain, which runs
     /// until the queue is empty (a task that re-posts itself there never lets
     /// the loop poll). Promoted into `tasks` by `auto_tick`, like immediates.
-    pub yield_tasks: Vec<Task>,
+    pub(crate) yield_tasks: Vec<Task>,
 
     pub concurrent_tasks: ConcurrentQueue,
     /// Set only on Bun.spawnSync's isolated loop: how other threads reach *this*
@@ -998,6 +998,23 @@ impl EventLoop {
         true
     }
 
+    /// The poll of a driver that does not use `auto_tick`. With a yielded task to promote, it does not wait.
+    pub fn promote_and_poll(&mut self, timeout: bun_core::Timespec) {
+        let promoted = self.promote_yield_tasks();
+        // libuv's `tick_with_timeout` ignores its argument.
+        #[cfg(windows)]
+        if promoted {
+            self.wakeup();
+        }
+        let timeout = if promoted {
+            bun_core::Timespec { sec: 0, nsec: 0 }
+        } else {
+            timeout
+        };
+        // SAFETY: usockets_loop() returns a live uws loop for the VM lifetime; borrow scoped to this call.
+        unsafe { (*self.usockets_loop()).tick_with_timeout(Some(&timeout), uws::NOW_NS_UNKNOWN) };
+    }
+
     /// `tickImmediateTasks` — swaps the two
     /// immediate queues, drains the now-current batch, then recycles the
     /// drained Vec as the next-tick buffer.
@@ -1317,14 +1334,7 @@ impl EventLoop {
         // `tick()` below can start work (e.g. a --hot reload) whose only wake
         // source is a cross-thread `wakeup()`; bound the park, same as the GC
         // timerfd used to. libuv's `tick_with_timeout` ignores the argument.
-        // SAFETY: as above — the tick runs loop callbacks that reach the loop
-        // themselves, so the exclusive borrow is scoped to this call only.
-        unsafe {
-            (*loop_ptr).tick_with_timeout(
-                Some(&bun_core::Timespec { sec: 1, nsec: 0 }),
-                uws::NOW_NS_UNKNOWN,
-            )
-        };
+        self.promote_and_poll(bun_core::Timespec { sec: 1, nsec: 0 });
 
         self.vm_ref().as_mut().on_after_event_loop();
         self.tick_concurrent();

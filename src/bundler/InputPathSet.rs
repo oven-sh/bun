@@ -256,6 +256,33 @@ impl RealPath {
             _ => Self::Same,
         }
     }
+
+    /// A directory that does not exist, with its nearest existing ancestor symlink-resolved, when that differs.
+    fn of_missing(dir: &[u8]) -> Option<Box<[u8]>> {
+        let mut ancestor = dir;
+        loop {
+            let parent =
+                bun_paths::dirname(ancestor).filter(|parent| parent.len() < ancestor.len())?;
+            ancestor = parent;
+            match Self::of(ancestor) {
+                Self::Missing => {}
+                Self::Same => return None,
+                Self::Other(real) => {
+                    let mut buf = bun_paths::path_buffer_pool::get();
+                    let rest = bun_paths::string_paths::without_leading_path_separator(
+                        &dir[ancestor.len()..],
+                    );
+                    return Some(Box::from(
+                        resolve_path::join_abs_string_buf::<platform::Auto>(
+                            &real,
+                            &mut buf.0,
+                            &[rest],
+                        ),
+                    ));
+                }
+            }
+        }
+    }
 }
 
 /// The absolute directory that output files are written under.
@@ -279,13 +306,18 @@ pub fn resolve_output_root(root_path: &[u8]) -> OutputRoot {
     );
     let real = RealPath::of(abs);
     let missing = matches!(real, RealPath::Missing);
+    let real = match real {
+        RealPath::Other(real) => Some(real),
+        RealPath::Missing => RealPath::of_missing(abs),
+        RealPath::Same => None,
+    };
     match real {
-        RealPath::Other(real) => OutputRoot {
+        Some(real) => OutputRoot {
             real,
             unresolved: Some(Box::from(abs)),
             missing,
         },
-        RealPath::Missing | RealPath::Same => OutputRoot {
+        None => OutputRoot {
             real: Box::from(abs),
             unresolved: None,
             missing,

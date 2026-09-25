@@ -848,8 +848,6 @@ impl PostgresSQLQuery {
         Ok(JSValue::UNDEFINED)
     }
 
-    /// Returns the CancelRequest packet to deliver on a second connection, or
-    /// `undefined` when there is nothing for the server to stop.
     pub fn do_cancel(
         this: &Self,
         global_object: &JSGlobalObject,
@@ -871,7 +869,7 @@ impl PostgresSQLQuery {
         // A CancelRequest names the backend process, not a statement, so it only
         // ever stops the FIFO head. Anything else is settled locally.
         if status == Status::Pending {
-            // Nothing on the wire yet: a Fail entry is discarded, never written.
+            // No Bind, Execute or Query of it is written, and a Fail entry never writes one.
             let err = postgres_error_to_js(
                 global_object,
                 Some(b"Query cancelled"),
@@ -893,15 +891,7 @@ impl PostgresSQLQuery {
             return Ok(JSValue::UNDEFINED);
         }
 
-        // Copy out before the JS-heap allocation below can re-enter.
-        let (process_id, packet) = {
-            let key = connection.backend_key_data.get();
-            (key.process_id, key.cancel_request())
-        };
-        // No BackendKeyData was ever received, so the server cannot be asked.
-        if process_id == 0 {
-            return Ok(JSValue::UNDEFINED);
-        }
-        crate::jsc::JSUint8Array::from_bytes_copy(global_object, &packet)
+        connection.send_cancel_request();
+        Ok(JSValue::UNDEFINED)
     }
 }

@@ -28,7 +28,7 @@ use core::ptr::NonNull;
 
 pub use bun_jsc::{
     CallFrame, ErrorBuilder, ErrorCode, ExternColumnIdentifier, GlobalRef, JSArrayIterator,
-    JSGlobalObject, JSObject, JSType, JSUint8Array, JSValue, JsCell, JsError, JsRef, JsResult,
+    JSGlobalObject, JSObject, JSType, JSValue, JsCell, JsError, JsRef, JsResult,
     MarkedArgumentBuffer, StringJsc, Strong, StrongOptional, bun_string_jsc,
 };
 
@@ -238,6 +238,8 @@ pub struct SqlRuntimeHooks {
     pub ssl_config_from_js: unsafe fn(&JSGlobalObject, JSValue) -> *mut c_void,
     /// Drop a boxed `SSLConfig` returned by `ssl_config_from_js`.
     pub ssl_config_free: unsafe fn(*mut c_void),
+    /// Copy a boxed `SSLConfig` (caller frees via `ssl_config_free`).
+    pub ssl_config_clone: unsafe fn(*const c_void) -> *mut c_void,
     /// `SSLConfig::asUSocketsForClientVerification`.
     pub ssl_config_as_usockets_client:
         unsafe fn(*const c_void) -> bun_uws::us_bun_socket_context_options_t,
@@ -474,6 +476,15 @@ pub mod api {
                     // yet freed (Option::take guarantees single drop).
                     unsafe { (hooks().ssl_config_free)(p.as_ptr()) }
                 }
+            }
+        }
+
+        impl Clone for SSLConfig {
+            fn clone(&self) -> Self {
+                Self(self.0.and_then(|p| {
+                    // SAFETY: `p` is a live boxed SSLConfig; the hook returns a fresh box.
+                    NonNull::new(unsafe { (hooks().ssl_config_clone)(p.as_ptr()) })
+                }))
             }
         }
 

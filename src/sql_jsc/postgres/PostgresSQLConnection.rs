@@ -52,6 +52,9 @@ pub use bun_sql::postgres::TLSStatus as TlsStatus;
 
 type Socket = uws::AnySocket;
 
+/// From dial to hang-up, for the connection that delivers a CancelRequest.
+const CANCEL_REQUEST_TIMEOUT_MS: i32 = 5_000;
+
 bun_core::define_scoped_log!(debug, Postgres, visible);
 
 const MAX_PIPELINE_SIZE: usize = u16::MAX as usize; // about 64KB per connection
@@ -606,9 +609,18 @@ impl PostgresSQLConnection {
         );
     }
 
+    fn is_cancel_request(&self) -> bool {
+        self.flags
+            .get()
+            .contains(ConnectionFlags::IS_CANCEL_REQUEST)
+    }
+
     fn start(&self) {
         self.setup_max_lifetime_timer_if_necessary();
-        self.reset_connection_timeout();
+        // A cancel connection has one time budget, from dial to hang-up.
+        if !self.is_cancel_request() {
+            self.reset_connection_timeout();
+        }
         self.send_startup_message();
 
         self.drain_internal();
@@ -841,6 +853,13 @@ impl PostgresSQLConnection {
         }
         debug!("sendStartupMessage");
         self.status.set(Status::SentStartupMessage);
+        if self.is_cancel_request() {
+            let packet = self.backend_key_data.get().cancel_request();
+            if let Err(err) = self.writer().write(&packet) {
+                self.fail(b"Failed to write cancel request", err);
+            }
+            return;
+        }
         let msg = protocol::StartupMessage {
             user: Data::Temporary(self.user),
             database: Data::Temporary(self.database),
@@ -988,6 +1007,11 @@ impl PostgresSQLConnection {
 
     pub(crate) fn on_data(&self, data: &[u8]) {
         let _guard = self.ref_guard();
+        if self.is_cancel_request() && self.status.get() == Status::SentStartupMessage {
+            // A server answers a CancelRequest by hanging up, so this is no server to talk to.
+            self.fail(b"Connection closed", AnyPostgresError::ConnectionClosed);
+            return;
+        }
         self.update_flags(|f| f.insert(ConnectionFlags::IS_PROCESSING_DATA));
 
         if self.status.get() == Status::Connected {
@@ -1197,6 +1221,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
             use_unnamed_prepared_statements: arguments[14].as_boolean(),
             on_connect: arguments[9],
             on_close: arguments[10],
+            cancel: None,
         },
     )
 }
@@ -1222,6 +1247,8 @@ pub(crate) struct ConnectParams<'a> {
     pub use_unnamed_prepared_statements: bool,
     pub on_connect: JSValue,
     pub on_close: JSValue,
+    /// Set for a connection that only delivers a CancelRequest for this backend.
+    pub cancel: Option<protocol::BackendKeyData>,
 }
 
 impl PostgresSQLConnection {
@@ -1249,7 +1276,14 @@ impl PostgresSQLConnection {
             use_unnamed_prepared_statements,
             on_connect,
             on_close,
+            cancel,
         } = params;
+        let mut flags = ConnectionFlags::empty();
+        flags.set(
+            ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS,
+            use_unnamed_prepared_statements,
+        );
+        flags.set(ConnectionFlags::IS_CANCEL_REQUEST, cancel.is_some());
 
         let ptr: *mut PostgresSQLConnection =
             bun_core::heap::into_raw(Box::new(PostgresSQLConnection {
@@ -1276,7 +1310,7 @@ impl PostgresSQLConnection {
                 pending_activity_count: AtomicU32::new(0),
                 js_value: JsCell::new(crate::jsc::JsRef::empty()),
                 backend_parameters: JsCell::new(StringMap::init(true)),
-                backend_key_data: JsCell::new(protocol::BackendKeyData::default()),
+                backend_key_data: JsCell::new(cancel.unwrap_or_default()),
                 database,
                 user: username,
                 password,
@@ -1294,11 +1328,7 @@ impl PostgresSQLConnection {
                 ssl_mode,
                 idle_timeout_interval_ms: u32::try_from(idle_timeout).expect("int cast"),
                 connection_timeout_ms: u32::try_from(connection_timeout).expect("int cast"),
-                flags: Cell::new(if use_unnamed_prepared_statements {
-                    ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS
-                } else {
-                    ConnectionFlags::empty()
-                }),
+                flags: Cell::new(flags),
                 timer: JsCell::new(EventLoopTimer::init_paused(
                     EventLoopTimerTag::PostgresSQLConnectionTimeout,
                 )),
@@ -1363,7 +1393,9 @@ impl PostgresSQLConnection {
         this.js_value.set(crate::jsc::JsRef::init_weak(js_value));
         js::onconnect_set_cached(js_value, global_object, on_connect);
         js::onclose_set_cached(js_value, global_object, on_close);
-        bun_analytics::features::postgres_connections.fetch_add(1, Ordering::Relaxed);
+        if !this.is_cancel_request() {
+            bun_analytics::features::postgres_connections.fetch_add(1, Ordering::Relaxed);
+        }
         Ok(js_value)
     }
 }
@@ -1582,7 +1614,12 @@ impl PostgresSQLConnection {
             // event loop need to be alive to close the socket
             self.poll_ref.with_mut(|r| r.ref_(self.vm_ctx()));
             // will unref on socket close
-            self.socket.get().close(uws::CloseKind::Normal);
+            self.socket.get().close(if self.is_cancel_request() {
+                // Not `Normal`: on TLS that waits for the peer's close_notify.
+                uws::CloseKind::Failure
+            } else {
+                uws::CloseKind::Normal
+            });
         }
 
         // cleanup requests
@@ -1617,6 +1654,98 @@ impl PostgresSQLConnection {
             .get()
             .front()
             .is_some_and(|f| core::ptr::eq(f.as_ptr(), request))
+    }
+
+    /// Asks the server, from a second connection, to cancel what the backend of this
+    /// session runs. That connection goes where this one went, to the same peer address
+    /// or unix socket, and is encrypted when this one is.
+    pub(crate) fn send_cancel_request(&self) {
+        let key = self.backend_key_data.get();
+        // No BackendKeyData was ever received, so the server cannot be asked.
+        if key.process_id == 0 {
+            return;
+        }
+        let socket = self.socket.get();
+        let uws::InternalSocket::Connected(raw) = *socket.socket() else {
+            return;
+        };
+
+        let mut hostname = [0u8; 46];
+        let mut hostname_len = 0;
+        let mut port = 0;
+        if self.path.slice().is_empty() {
+            let mut address = [0u8; 16];
+            let (peer, peer_port) = match socket {
+                Socket::SocketTcp(tcp) => (tcp.remote_address(&mut address), tcp.remote_port()),
+                Socket::SocketTls(tls) => (tls.remote_address(&mut address), tls.remote_port()),
+            };
+            let (Some(peer), Some(peer_port)) = (peer, peer_port) else {
+                return;
+            };
+            let ip: std::net::IpAddr = match *peer {
+                [a, b, c, d] => std::net::Ipv4Addr::new(a, b, c, d).into(),
+                _ => match <[u8; 16]>::try_from(peer) {
+                    Ok(v6) => std::net::Ipv6Addr::from(v6).into(),
+                    Err(_) => return,
+                },
+            };
+            use std::io::Write as _;
+            let mut unwritten = &mut hostname[..];
+            if write!(unwritten, "{ip}").is_err() {
+                return;
+            }
+            let unwritten = unwritten.len();
+            hostname_len = hostname.len() - unwritten;
+            port = i32::from(peer_port);
+        }
+
+        let mut builder = bun_core::StringBuilder::default();
+        builder.cap += self.path.slice().len() + 1;
+        let _ = builder.allocate();
+        let path = bun_ptr::RawSlice::new(builder.append(self.path.slice()));
+        let options_buf = builder.move_to_slice();
+
+        // SAFETY: `raw` is the live connected socket of this session, in a group of its context.
+        let group = unsafe {
+            bun_jsc::rare_data::SocketGroups::of((*raw).group())
+                .postgres_group::<false>(self.vm_mut().uws_loop())
+        };
+        let opened = Self::open(
+            self.global(),
+            group,
+            ConnectParams {
+                hostname: &hostname[..hostname_len],
+                port,
+                options_buf,
+                user: bun_ptr::RawSlice::EMPTY,
+                password: bun_ptr::RawSlice::EMPTY,
+                database: bun_ptr::RawSlice::EMPTY,
+                options: bun_ptr::RawSlice::EMPTY,
+                path,
+                secure: self.secure.clone(),
+                tls_config: self.tls_config.clone(),
+                // Encrypted exactly when this session is, whatever `prefer` would allow.
+                ssl_mode: match (self.tls_status.get(), self.ssl_mode) {
+                    (TLSStatus::SslOk, SSLMode::Prefer) => SSLMode::Require,
+                    (TLSStatus::SslOk, mode) => mode,
+                    _ => SSLMode::Disable,
+                },
+                idle_timeout: 0,
+                connection_timeout: CANCEL_REQUEST_TIMEOUT_MS,
+                max_lifetime: 0,
+                use_unnamed_prepared_statements: false,
+                on_connect: JSValue::ZERO,
+                on_close: JSValue::ZERO,
+                cancel: Some(protocol::BackendKeyData {
+                    process_id: key.process_id,
+                    secret_key: key.secret_key,
+                }),
+            },
+        );
+        // Best effort: a cancel that cannot be dialed leaves the query running.
+        if opened.is_err() {
+            let _ = self.global().try_take_exception();
+        }
     }
 
     /// Pop the FIFO head if it is still `request` (re-entrant JS may already

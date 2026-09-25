@@ -15,8 +15,7 @@ const PublicPromise = Promise;
 
 export interface BaseQueryHandle<Connection> {
   done?(): void;
-  /** Returns bytes the adapter must deliver out-of-band, or undefined. */
-  cancel?(): Uint8Array | undefined;
+  cancel?(): void;
   setMode(mode: SQLQueryResultMode): void;
   run(connection: Connection, query: Query<any, any>): void | Promise<void>;
 }
@@ -218,10 +217,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
       const handle = this.#getQueryHandle();
 
       if (handle) {
-        const cancelRequest = handle.cancel?.();
-        if (cancelRequest) {
-          this[_adapter].sendCancelRequest?.(cancelRequest);
-        }
+        handle.cancel?.();
       }
     }
 

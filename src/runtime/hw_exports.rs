@@ -257,6 +257,11 @@ mod sql_hooks {
         // `ssl_config_from_js`; sql_jsc's `SSLConfig::drop` guards null/double.
         drop(unsafe { bun_core::heap::take(this.cast::<crate::socket::SSLConfig>()) });
     }
+    unsafe fn ssl_config_clone(this: *const c_void) -> *mut c_void {
+        // SAFETY: `this` is a live boxed `SSLConfig` from `ssl_config_from_js`.
+        let config = unsafe { &*this.cast::<crate::socket::SSLConfig>() }.clone();
+        bun_core::heap::into_raw(Box::new(config)).cast::<c_void>()
+    }
     unsafe fn ssl_config_as_usockets_client(
         this: *const c_void,
     ) -> bun_uws::us_bun_socket_context_options_t {
@@ -298,6 +303,7 @@ mod sql_hooks {
         ssl_ctx_get_or_create,
         ssl_config_from_js,
         ssl_config_free,
+        ssl_config_clone,
         ssl_config_as_usockets_client,
         ssl_config_server_name,
         ssl_config_reject_unauthorized,

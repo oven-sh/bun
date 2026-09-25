@@ -10,6 +10,8 @@ bitflags! {
         const HAS_BACKPRESSURE                = 1 << 4;
         /// `ref()` was called; `on_data` must not unref the idle connection.
         const KEEP_ALIVE_REQUESTED            = 1 << 5;
+        /// Postgres: exists only to deliver a CancelRequest in place of the StartupMessage.
+        const IS_CANCEL_REQUEST               = 1 << 6;
     }
 }
 

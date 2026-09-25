@@ -2266,9 +2266,6 @@ export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> {
   connectionClosedError(): Error;
   queryCancelledError(): Error;
   invalidTransactionStateError(message: string): Error;
-
-  /** Deliver the bytes `QueryHandle.cancel()` returned on a separate connection. */
-  sendCancelRequest?(request: Uint8Array): void;
 }
 
 export default {

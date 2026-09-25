@@ -926,9 +926,7 @@ TLSSocket.prototype._final = function _final(callback) {
   if (this.secureConnecting && this[kPreHandshakeWrite]) {
     return this.once(kSecureConnectDone, NetSocket.prototype._final.bind(this, callback));
   }
-  // A client's handshake takes its first step when the native open callback returns, and 'connect' is emitted
-  // inside that callback. The FIN waits for that step, so the ClientHello leaves first. node queues the ClientHello
-  // from its own 'connect' listener, which runs before a user's:
+  // The ClientHello leaves when the native open callback returns. A nextTick still runs inside that callback.
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1110-L1129
   if (this.secureConnecting && !this.isServer) {
     return void setImmediate(finalAfterFirstFlight, this, callback);

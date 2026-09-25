@@ -150,6 +150,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Substitute user-specified defines
                 *e =
                     p.value_for_define(expr.loc, in_.assign_target, is_delete_target, &define.data);
+                p.build_time_values = p.build_time_values.wrapping_add(1);
                 return;
             }
         }
@@ -273,6 +274,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     {
                         p.ignore_usage(e_.ref_);
                         *e = newvalue;
+                        // `undefined` and `NaN` are in the table of pure globals, not in this one.
+                        if defines.identifiers.contains_key(name) {
+                            p.build_time_values = p.build_time_values.wrapping_add(1);
+                        }
                         return;
                     }
 
@@ -1343,6 +1348,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 is_delete_target,
                                 &define.data,
                             );
+                            p.build_time_values = p.build_time_values.wrapping_add(1);
                             return;
                         }
 
@@ -2164,6 +2170,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.bundler_feature_flag_ref.is_valid() {
             if let Some(result) = Self::maybe_replace_bundler_feature_call(p, &mut *e_, expr.loc) {
                 *e = result;
+                p.build_time_values = p.build_time_values.wrapping_add(1);
                 return;
             }
         }

@@ -13,9 +13,9 @@ use bun_collections::{HashMap, VecExt as _};
 
 bun_core::declare_scope!(const_call, hidden);
 
-/// A function body with more statements than this is never a candidate.
-const MAX_BODY_STMTS: usize = 4;
-const MAX_BODY_DEPTH: u32 = 4;
+/// The statements of a body that are stepped over before the check gives up.
+const MAX_STEPS: u32 = 16;
+const MAX_GUARD_DEPTH: u32 = 16;
 /// A longer string at every call grows the output (three.js returns shader sources this way).
 const MAX_STRING_LEN: usize = 64;
 
@@ -30,7 +30,7 @@ pub(crate) struct Fact {
 pub(crate) struct ConstCalls {
     values: HashMap<Ref, Fact>,
     /// Import items that a branch condition calls with no argument or with literals only.
-    guard_imports: Vec<Ref>,
+    guard_imports: HashMap<Ref, ()>,
     /// Function declarations that share their binding with a `var`.
     merged_with_var: Vec<Ref>,
     /// Name locs of folded functions that something rebinds.
@@ -53,6 +53,12 @@ pub struct ConstCallImport<'a> {
     pub alias: &'a [u8],
     pub specifier: &'a [u8],
     pub range: bun_ast::Range,
+}
+
+pub struct ConstCallStop<'a> {
+    pub imports: Vec<ConstCallImport<'a>>,
+    /// The file as visited without the values. `None` when that visit failed.
+    pub ast: Option<bun_ast::Ast<'a>>,
 }
 
 /// The value every call of an import evaluates to.
@@ -78,14 +84,36 @@ enum Flow {
 
 fn is_const_call_value(data: &ExprData) -> bool {
     match data {
-        ExprData::ENumber(_)
-        | ExprData::EBoolean(_)
-        | ExprData::EBranchBoolean(_)
-        | ExprData::ENull(_)
-        | ExprData::EUndefined(_) => true,
+        ExprData::ENumber(_) => true,
         ExprData::EString(str) => str.next.is_none() && str.data.len() <= MAX_STRING_LEN,
-        _ => false,
+        _ => folds_anywhere(data),
     }
+}
+
+/// A string or a number can be a specifier, so it folds only in the condition of `if` or `?:`.
+fn folds_anywhere(data: &ExprData) -> bool {
+    matches!(
+        data,
+        ExprData::EBoolean(_)
+            | ExprData::EBranchBoolean(_)
+            | ExprData::ENull(_)
+            | ExprData::EUndefined(_)
+    )
+}
+
+/// What is known before the parse pass. `P::enable_const_calls` adds the rest.
+pub(crate) fn const_calls_allowed(options: &crate::parse::parse_entry::Options<'_>) -> bool {
+    options.bundle
+        // Without tree shaking the graph is only scanned (`bun test --changed`).
+        && options.tree_shaking
+        && options.features.dead_code_elimination
+        && !options.features.hot_module_reloading
+        && !options.features.react_fast_refresh
+        // A folded hook call changes which functions the compiler memoizes.
+        && !options.features.react_compiler.is_enabled()
+        && !options.const_call_retry.is_some_and(|retry| retry.disable)
+        && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_CONST_CALL_FOLDING::get()
+            .unwrap_or(false)
 }
 
 fn is_plain_function(flags: flags::FunctionSet) -> bool {
@@ -103,48 +131,12 @@ fn args_are_inert(args: &[G::Arg]) -> bool {
         .all(|arg| matches!(arg.binding.data, BData::BIdentifier(_)) && arg.default.is_none())
 }
 
-/// The statement kinds a body that folds to one value can have, before the visit pass.
-fn body_is_candidate(stmts: &[Stmt], depth: u32) -> bool {
-    if stmts.len() > MAX_BODY_STMTS || depth > MAX_BODY_DEPTH {
-        return false;
-    }
-    stmts.iter().all(|stmt| match stmt.data {
-        StmtData::SReturn(_) | StmtData::SEmpty(_) | StmtData::SComment(_) => true,
-        StmtData::SDirective(directive) => is_inert_directive(&directive),
-        StmtData::SBlock(block) => body_is_candidate(block.stmts.slice(), depth + 1),
-        StmtData::SIf(if_) => {
-            body_is_candidate(core::slice::from_ref(&if_.yes), depth + 1)
-                && if_
-                    .no
-                    .as_ref()
-                    .is_none_or(|no| body_is_candidate(core::slice::from_ref(no), depth + 1))
-        }
-        _ => false,
-    })
-}
-
-/// A top-level function declaration whose unvisited body has the shape of a constant function.
-pub(crate) fn is_previsit_candidate(stmt: &Stmt) -> bool {
-    let StmtData::SFunction(data) = stmt.data else {
-        return false;
-    };
-    let func = &data.func;
-    func.name.is_some()
-        && is_plain_function(func.flags)
-        && args_are_inert(func.args.slice())
-        && body_is_candidate(func.body.stmts.slice(), 0)
-}
-
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     /// Runs once, after the parse pass: macro imports are known by then.
     pub(crate) fn enable_const_calls(&mut self) {
-        self.const_calls_enabled = self.options.bundle
-            && self.options.features.dead_code_elimination
-            && !self.options.features.hot_module_reloading
-            && !self.options.features.react_fast_refresh
-            // The second parse would run each macro again.
-            && self.macro_.refs.is_empty()
-            && !self.options.const_call_retry.is_some_and(|retry| retry.disable);
+        // The second parse would run each macro again.
+        self.const_calls_enabled =
+            const_calls_allowed(&self.options) && self.macro_.refs.is_empty();
     }
 
     /// `function f() {}` declared where a `var f` also binds: `var f = x` rebinds it without an assignment expression.
@@ -158,11 +150,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    fn const_call_flow(&self, stmts: &[Stmt], depth: u32) -> Flow {
-        if stmts.len() > MAX_BODY_STMTS || depth > MAX_BODY_DEPTH {
-            return Flow::Unknown;
-        }
+    fn const_call_flow(&self, stmts: &[Stmt], steps: &mut u32) -> Flow {
         for stmt in stmts {
+            if *steps == 0 {
+                return Flow::Unknown;
+            }
+            *steps -= 1;
             let flow = match stmt.data {
                 StmtData::SEmpty(_) | StmtData::SComment(_) => Flow::FallsThrough,
                 StmtData::SDirective(directive) if is_inert_directive(&directive) => {
@@ -182,13 +175,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
                 },
-                StmtData::SBlock(block) => self.const_call_flow(block.stmts.slice(), depth + 1),
+                StmtData::SBlock(block) => self.const_call_flow(block.stmts.slice(), steps),
                 StmtData::SIf(if_) => match SideEffects::to_boolean(self, &if_.test.data) {
                     Some(known) if known.side_effects == SideEffects::NoSideEffects => {
                         if known.value {
-                            self.const_call_flow(core::slice::from_ref(&if_.yes), depth + 1)
+                            self.const_call_flow(core::slice::from_ref(&if_.yes), steps)
                         } else if let Some(no) = &if_.no {
-                            self.const_call_flow(core::slice::from_ref(no), depth + 1)
+                            self.const_call_flow(core::slice::from_ref(no), steps)
                         } else {
                             Flow::FallsThrough
                         }
@@ -210,7 +203,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !args_are_inert(args) {
             return None;
         }
-        match self.const_call_flow(body, 0) {
+        match self.const_call_flow(body, &mut { MAX_STEPS }) {
             Flow::Returns(value) => Some(value),
             Flow::FallsThrough => Some(Expr {
                 data: ExprData::EUndefined(E::Undefined {}),
@@ -220,11 +213,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    fn record_const_call(&mut self, ref_: Ref, name_loc: Loc, value: Expr) {
-        if self
-            .options
-            .const_call_retry
-            .is_some_and(|retry| retry.blocklist.contains(&name_loc))
+    fn record_const_call(&mut self, ref_: Ref, name_loc: Loc, value: Expr, build_time: bool) {
+        // By default only a function that reads a `--define` or `feature()` value folds.
+        if !(build_time || self.options.features.inlining)
+            || self
+                .options
+                .const_call_retry
+                .is_some_and(|retry| retry.blocklist.contains(&name_loc))
         {
             return;
         }
@@ -242,16 +237,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         );
     }
 
-    /// After `visit_func` of a function declaration that keeps its own binding.
-    pub(crate) fn note_const_call_function(&mut self, func: &G::Fn) {
+    /// A declaration in a block is a second binding in sloppy mode, and a `switch` body is entered at any `case`.
+    fn is_in_function_or_module_scope(&self) -> bool {
+        matches!(
+            self.current_scope().kind,
+            ScopeKind::Entry | ScopeKind::FunctionBody
+        )
+    }
+
+    /// After `visit_func` of a function declaration that keeps its own binding. `build_time`: the body read a build-time value.
+    pub(crate) fn note_const_call_function(&mut self, func: &G::Fn, build_time: bool) {
         let Some(name) = func.name else { return };
-        if !is_plain_function(func.flags)
-            // A function in a block is a second binding in sloppy mode.
-            || !matches!(
-                self.current_scope().kind,
-                ScopeKind::Entry | ScopeKind::FunctionBody
-            )
-        {
+        if !is_plain_function(func.flags) || !self.is_in_function_or_module_scope() {
             return;
         }
         let symbol = &self.symbols[name.ref_.inner_index() as usize];
@@ -264,13 +261,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some(value) =
             self.const_call_value(func.args.slice(), func.body.stmts.slice(), func.body.loc)
         {
-            self.record_const_call(name.ref_, name.loc, value);
+            self.record_const_call(name.ref_, name.loc, value, build_time);
         }
     }
 
     /// `const f = () => value` or `const f = function () { return value }` in the const local prefix, where no call can run before the declaration.
-    pub(crate) fn note_const_call_decl(&mut self, ref_: Ref, name_loc: Loc, value: &Expr) {
-        if self.enclosing_namespace_arg_ref.is_some() {
+    pub(crate) fn note_const_call_decl(
+        &mut self,
+        ref_: Ref,
+        name_loc: Loc,
+        value: &Expr,
+        build_time: bool,
+    ) {
+        if self.enclosing_namespace_arg_ref.is_some() || !self.is_in_function_or_module_scope() {
             return;
         }
         let folded = match value.data {
@@ -286,7 +289,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             _ => None,
         };
         if let Some(value) = folded {
-            self.record_const_call(ref_, name_loc, value);
+            self.record_const_call(ref_, name_loc, value, build_time);
         }
     }
 
@@ -303,8 +306,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ExprData::EImportIdentifier(id) => id.ref_,
             _ => return None,
         };
+        let in_branch_condition = self.in_branch_condition;
         let fact = self.const_calls.as_mut()?.values.get_mut(&target_ref)?;
+        if !in_branch_condition && !folds_anywhere(&fact.value.data) {
+            return None;
+        }
         fact.folds += 1;
+        self.build_time_values = self.build_time_values.wrapping_add(1);
+        let fact = self.const_calls.as_ref()?.values.get(&target_ref)?;
         let mut result = Expr {
             loc,
             data: fact.value.data,
@@ -360,7 +369,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     fn scan_const_call_guard(&mut self, expr: &Expr, deep: bool, depth: u32) {
-        if depth > MAX_BODY_DEPTH * 4 {
+        if depth > MAX_GUARD_DEPTH {
             return;
         }
         match expr.data {
@@ -411,9 +420,45 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             return;
         }
-        let calls = self.const_calls.get_or_insert_with(Default::default);
-        if !calls.guard_imports.contains(&import_ref) {
-            calls.guard_imports.push(import_ref);
+        self.const_calls
+            .get_or_insert_with(Default::default)
+            .guard_imports
+            .insert(import_ref, ());
+    }
+
+    /// Parse pass, after a top-level function declaration: `return isDev()` makes the function a wrapper of the import.
+    pub(crate) fn note_const_call_wrapper(&mut self, func: &G::Fn) {
+        if !self.const_call_prefilter
+            || self.is_import_item.is_empty()
+            || !is_plain_function(func.flags)
+            || !args_are_inert(func.args.slice())
+        {
+            return;
+        }
+        self.scan_const_call_returns(func.body.stmts.slice(), &mut { MAX_STEPS });
+    }
+
+    fn scan_const_call_returns(&mut self, stmts: &[Stmt], steps: &mut u32) {
+        for stmt in stmts {
+            if *steps == 0 {
+                return;
+            }
+            *steps -= 1;
+            match stmt.data {
+                StmtData::SReturn(ret) => {
+                    if let Some(value) = &ret.value {
+                        self.scan_const_call_guard(value, true, 0);
+                    }
+                }
+                StmtData::SBlock(block) => self.scan_const_call_returns(block.stmts.slice(), steps),
+                StmtData::SIf(if_) => {
+                    self.scan_const_call_returns(core::slice::from_ref(&if_.yes), steps);
+                    if let Some(no) = &if_.no {
+                        self.scan_const_call_returns(core::slice::from_ref(no), steps);
+                    }
+                }
+                _ => {}
+            }
         }
     }
 
@@ -432,15 +477,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 continue;
             };
             let record = &self.import_records.items()[import.import_record_index as usize];
-            // An attribute can change what the specifier loads.
-            if record.loader.is_some() || record.tag != js_ast::ImportRecordTag::None {
+            let specifier = record.path.text;
+            // An attribute can change what the specifier loads, and a builtin has no source.
+            if record.loader.is_some()
+                || record.tag != js_ast::ImportRecordTag::None
+                || specifier.starts_with(b"node:")
+                || specifier.starts_with(b"bun:")
+            {
                 continue;
             }
+            // `export default function` is not recorded, so a default import alone has no value to get.
             let items = import.items.slice();
-            if !import
-                .default_name
-                .is_some_and(|name| guards.contains(&name.ref_))
-                && !items.iter().any(|item| guards.contains(&item.name.ref_))
+            if !items
+                .iter()
+                .any(|item| guards.contains_key(&item.name.ref_))
             {
                 continue;
             }

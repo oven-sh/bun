@@ -840,34 +840,6 @@ enum ParseAttempt<'a> {
     RetryConstCalls(Box<(Options<'a>, crate::visit::const_call::ConstCallRetry<'a>)>),
 }
 
-/// A statement that leaves `Scope::is_after_const_local_prefix` unset at module scope.
-fn is_const_local_prefix_stmt(stmt: &Stmt) -> bool {
-    match &stmt.data {
-        js_ast::StmtData::SLocal(local) => local.kind == js_ast::s::Kind::KConst,
-        js_ast::StmtData::SDirective(_)
-        | js_ast::StmtData::SComment(_)
-        | js_ast::StmtData::SEmpty(_)
-        | js_ast::StmtData::STypeScript(_)
-        | js_ast::StmtData::SDebugger(_) => true,
-        _ => false,
-    }
-}
-
-/// The scopes the parse pass pushed for the top-level statement at `loc`, from `scopes` in source order.
-fn scopes_of_top_level_stmt<'a>(
-    scopes: &'a [crate::ScopeOrder<'a>],
-    loc: bun_ast::Loc,
-    stmts_after: &[Stmt],
-) -> &'a [crate::ScopeOrder<'a>] {
-    let start = scopes.partition_point(|order| order.loc.start < loc.start);
-    // A generated statement has no source position.
-    let end = match stmts_after.iter().find(|next| next.loc.start > loc.start) {
-        Some(next) => scopes.partition_point(|order| order.loc.start < next.loc.start),
-        None => scopes.len(),
-    };
-    &scopes[start..end]
-}
-
 impl<'a> Parser<'a> {
     fn _parse<const TS: bool>(self) -> Result<crate::Result<'a>, Error> {
         let (log, source, define, bump) = (self.log, self.source, self.define, self.bump);
@@ -1027,12 +999,7 @@ impl<'a> Parser<'a> {
         }
 
         p.enable_const_calls();
-        // Nothing of the visit pass has run: no macro call, no import record, no symbol use.
-        if let Some(imports) = p.const_call_imports(stmts) {
-            return Ok(ParseAttempt::Done(crate::Result::NeedsConstCallValues(
-                imports.into_boxed_slice(),
-            )));
-        }
+        let const_call_imports = p.const_call_imports(stmts);
         p.install_const_call_seeds(stmts);
 
         // A second guard dropped at end of `_parse` restores the previous action.
@@ -1183,57 +1150,8 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            // Functions that may fold (`visit/const_call.rs`) are visited before the statements that call them.
-            struct PrevisitedFn<'a> {
-                stmt_i: usize,
-                scope_count: usize,
-                parts: BumpVec<'a, js_ast::Part>,
-            }
-            let mut previsited_fns: BumpVec<PrevisitedFn<'a>> = BumpVec::new_in(arena);
-            let mut previsited_fn_i: usize = 0;
-            let mut previsit_pending =
-                p.const_calls_enabled && p.react_compiler.is_none() && p.has_es_module_syntax;
-
             // When tree shaking is enabled, each top-level statement is potentially a separate part.
-            for (stmt_i, stmt) in stmts.iter().enumerate() {
-                if previsit_pending && !is_const_local_prefix_stmt(stmt) {
-                    previsit_pending = false;
-                    for (fn_i, fn_stmt) in stmts.iter().enumerate().skip(stmt_i) {
-                        if !crate::visit::const_call::is_previsit_candidate(fn_stmt) {
-                            continue;
-                        }
-                        let old_scopes_in_order = p.scope_order_to_visit;
-                        let fn_scopes = scopes_of_top_level_stmt(
-                            old_scopes_in_order,
-                            fn_stmt.loc,
-                            &stmts[fn_i + 1..],
-                        );
-                        p.scope_order_to_visit = fn_scopes;
-                        let mut fn_parts = BumpVec::<js_ast::Part>::new_in(arena);
-                        let sliced = arena.alloc_slice_copy(&[*fn_stmt]);
-                        let res = p.append_part(&mut fn_parts, sliced);
-                        debug_assert!(res.is_err() || p.scope_order_to_visit.is_empty());
-                        p.scope_order_to_visit = old_scopes_in_order;
-                        res?;
-                        previsited_fns.push(PrevisitedFn {
-                            stmt_i: fn_i,
-                            scope_count: fn_scopes.len(),
-                            parts: fn_parts,
-                        });
-                    }
-                }
-                if previsited_fns
-                    .get(previsited_fn_i)
-                    .is_some_and(|previsited| previsited.stmt_i == stmt_i)
-                {
-                    let previsited = &mut previsited_fns[previsited_fn_i];
-                    previsited_fn_i += 1;
-                    for part in core::mem::replace(&mut previsited.parts, BumpVec::new_in(arena)) {
-                        parts.push(part);
-                    }
-                    p.scope_order_to_visit = &p.scope_order_to_visit[previsited.scope_count..];
-                    continue;
-                }
+            for stmt in stmts.iter() {
                 match &stmt.data {
                     js_ast::StmtData::SLocal(local) => {
                         if (local.decls.len_u32() as usize) > 1 {
@@ -1342,6 +1260,12 @@ impl<'a> Parser<'a> {
 
         // If there were errors while visiting, also halt here
         if p.log().errors > orig_error_count {
+            // The error can be in a branch that a value of an import makes dead.
+            if let Some(imports) = const_call_imports {
+                return Ok(ParseAttempt::Done(crate::Result::NeedsConstCallValues(
+                    Box::new(crate::ConstCallStop { imports, ast: None }),
+                )));
+            }
             return Err(crate::Error::SyntaxError);
         }
 
@@ -2677,7 +2601,13 @@ impl<'a> Parser<'a> {
             return Err(crate::Error::SyntaxError);
         }
 
-        Ok(ParseAttempt::Done(crate::Result::Ast(ast)))
+        Ok(ParseAttempt::Done(match const_call_imports {
+            Some(imports) => crate::Result::NeedsConstCallValues(Box::new(crate::ConstCallStop {
+                imports,
+                ast: Some(*ast),
+            })),
+            None => crate::Result::Ast(ast),
+        }))
     }
 
     // associated fn (was `&self` reading `self.lexer.source.contents`)

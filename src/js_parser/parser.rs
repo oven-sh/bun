@@ -709,6 +709,8 @@ pub struct VisitDeclOpts {
     pub(crate) was_anonymous_named_expr: bool,
     pub(crate) could_be_const_value: bool,
     pub(crate) could_be_macro: bool,
+    /// The initializer took a `--define` value, a `feature()` value or a folded call.
+    pub(crate) reads_build_time_value: bool,
 }
 
 #[derive(Clone, Copy)]

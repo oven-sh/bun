@@ -909,6 +909,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         let open_parens_loc = data.func.open_parens_loc;
         let this_expr_count_before = p.this_expr_count;
+        let build_time_values_before = p.build_time_values;
         data.func = p.visit_func(core::mem::take(&mut data.func), open_parens_loc, false);
         p.react_compiler_candidate_name = None;
 
@@ -929,7 +930,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 && (p.enclosing_namespace_arg_ref.is_some()
                     || p.options.features.server_components.wraps_exports()))
         {
-            p.note_const_call_function(&data.func);
+            p.note_const_call_function(&data.func, p.build_time_values != build_time_values_before);
         }
 
         // Handle exporting this function from a namespace

@@ -2466,7 +2466,7 @@ pub mod bv2_impl {
                 return true;
             }
 
-            self.release_stopped_files_if_idle();
+            self.release_held_files_if_idle();
             false
         }
 
@@ -7487,9 +7487,8 @@ pub mod bv2_impl {
             this: &mut BundleV2,
         ) {
             let _trace = crate::perf::trace("Bundler.onParseTaskComplete");
-            // Not a completion: the file holds its unit of `pending_items` until its second run ends.
-            if let parse_task::ResultValue::NeedsConstCallValues(needs) = &mut parse_result.value {
-                let scheduled = this.on_needs_const_call_values(needs);
+            // Not a completion yet: the file keeps its unit of `pending_items` while its result is held.
+            if let Some(scheduled) = this.hold_for_const_call_values(parse_result) {
                 this.graph.pending_items += u32::try_from(scheduled).expect("int cast");
                 return;
             }
@@ -7748,9 +7747,15 @@ pub mod bv2_impl {
                         result_source_index,
                         core::mem::replace(&mut result.ast, JSAst::empty_in(result_heap)),
                     );
+                    // A file with a directive is a reference to the other graph, not the code.
+                    let const_call_values = core::mem::take(&mut result.const_call_values);
                     this.on_file_finished_for_const_calls(
                         result_source_index as IndexInt,
-                        Some(core::mem::take(&mut result.const_call_values)),
+                        Some(if result.use_directive == crate::UseDirective::None {
+                            const_call_values
+                        } else {
+                            Default::default()
+                        }),
                     );
 
                     // Barrel optimization: eagerly record import requests and

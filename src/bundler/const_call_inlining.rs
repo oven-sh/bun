@@ -1,45 +1,59 @@
-//! Gets what an imported constant function returns before its importer is visited (`bun_js_parser::visit::const_call`).
+//! Gets what an imported constant function returns before its importer goes on the graph (`bun_js_parser::visit::const_call`).
 
 use crate::Graph::InputFileFlags;
 use crate::bundle_v2::BundleV2;
 use crate::bundle_v2::bv2_impl::ResolveImportRecordCtx;
 use crate::mal_prelude::*;
-use crate::parse_task::{self, ParseTask};
+use crate::options::Target;
+use crate::parse_task::{self, ConstCallSecondRun, NeedsConstCallValues};
 use crate::{Index, IndexInt};
 use bun_ast::ast_result::ConstCallValues;
 use bun_ast::{Expr, ImportKind, ImportRecord, ImportRecordFlags};
 use bun_collections::HashMap;
-use bun_js_parser::{ConstCallImport, ConstCallSeed};
+use bun_js_parser::ConstCallSeed;
 use bun_resolver::fs as Fs;
 use bun_resolver::fs::PathResolverExt as _;
 
 bun_core::declare_scope!(const_call, hidden);
 
 /// `export { x } from` chains longer than this are not followed.
-const MAX_HOPS: u32 = 8;
+pub(crate) const MAX_HOPS: u32 = 8;
 
 #[derive(Default)]
 pub(crate) struct State {
-    /// Files that are parsed but not visited, by source index.
-    stopped: HashMap<IndexInt, Stopped>,
-    /// File -> the stopped files that wait for it to finish.
+    /// Files whose result waits for a value, by source index.
+    held: HashMap<IndexInt, Held>,
+    /// File -> the held files that wait for it to finish.
     waiters: HashMap<IndexInt, Vec<IndexInt>>,
     /// `Success::const_call_values` of each file that has any.
     values: HashMap<IndexInt, ConstCallValues>,
-    /// Files that finished with no AST: a parse error, or an empty file.
-    finished_without_ast: Vec<IndexInt>,
+    /// Files that finished with an error, so they have no AST.
+    failed: Vec<IndexInt>,
+    /// Held files to look at again. A list, so that a long chain of files does not recurse.
+    ready: Vec<IndexInt>,
+    draining: bool,
 }
 
-struct Stopped {
-    task: *mut ParseTask,
+struct Held {
+    needs: Box<NeedsConstCallValues>,
+    /// The file as visited without the values. `None` when that visit failed.
+    visited: Option<Box<Visited>>,
     requests: Vec<Request>,
 }
 
+struct Visited {
+    success: parse_task::Success,
+    watcher_data: parse_task::WatcherData,
+    external: crate::cache::ExternalFreeFunction,
+}
+
 struct Request {
-    import: ConstCallImport<'static>,
+    import_record_index: u32,
+    alias: &'static [u8],
     state: RequestState,
 }
 
+#[derive(Clone, Copy)]
 enum RequestState {
     /// The export `alias` of file `source_index` decides it, once that file finishes.
     WaitingFor {
@@ -61,13 +75,13 @@ enum Lookup {
 
 impl State {
     #[inline]
-    pub(crate) fn stopped_count(&self) -> u32 {
-        self.stopped.len() as u32
+    pub(crate) fn held_count(&self) -> u32 {
+        self.held.len() as u32
     }
 }
 
 /// Tarjan's algorithm: a component id for each node, equal for nodes that reach each other.
-fn strongly_connected_components(edges: &[Vec<usize>]) -> Vec<usize> {
+pub(crate) fn strongly_connected_components(edges: &[Vec<usize>]) -> Vec<usize> {
     const UNVISITED: usize = usize::MAX;
     let mut order = vec![UNVISITED; edges.len()];
     let mut lowest = vec![0usize; edges.len()];
@@ -117,42 +131,78 @@ fn strongly_connected_components(edges: &[Vec<usize>]) -> Vec<usize> {
 }
 
 impl<'a> BundleV2<'a> {
-    /// `ResultValue::NeedsConstCallValues`. Returns the number of parse tasks it scheduled.
-    pub(crate) fn on_needs_const_call_values(
+    /// Takes a result whose conditions call imports out of `parse_result`. Returns the number of parse tasks it scheduled.
+    pub(crate) fn hold_for_const_call_values(
         &mut self,
-        needs: &mut parse_task::NeedsConstCallValues,
-    ) -> i32 {
-        let importer = needs.source_index.get();
-        let imports = core::mem::take(&mut needs.imports);
-        let (targets, scheduled) = self.resolve_const_call_imports(needs, &imports);
+        parse_result: &mut parse_task::Result,
+    ) -> Option<i32> {
+        let source_index = Index::init(parse_result.value.source_index());
+        let (needs, visited) = match &mut parse_result.value {
+            parse_task::ResultValue::NeedsConstCallValues(needs) => {
+                let empty = NeedsConstCallValues {
+                    imports: Vec::new(),
+                    source_log: bun_ast::Log::init(),
+                    ..**needs
+                };
+                (Box::new(core::mem::replace(&mut **needs, empty)), None)
+            }
+            parse_task::ResultValue::Success(success) => {
+                let needs = success.needs_const_call_values.take()?;
+                let held = parse_task::ResultValue::Empty { source_index };
+                let parse_task::ResultValue::Success(success) =
+                    core::mem::replace(&mut parse_result.value, held)
+                else {
+                    unreachable!()
+                };
+                let visited = Visited {
+                    success,
+                    watcher_data: core::mem::replace(
+                        &mut parse_result.watcher_data,
+                        parse_task::WatcherData::NONE,
+                    ),
+                    external: core::mem::take(&mut parse_result.external),
+                };
+                (needs, Some(Box::new(visited)))
+            }
+            _ => return None,
+        };
 
-        let mut requests = Vec::with_capacity(imports.len());
-        for (import, target) in imports.into_iter().zip(targets) {
-            let state = match target {
-                Some(source_index) => RequestState::WaitingFor {
-                    source_index,
-                    alias: import.alias,
-                    hops: 0,
+        let importer = source_index.get();
+        let (targets, scheduled) = self.resolve_const_call_imports(&needs);
+        let requests = needs
+            .imports
+            .iter()
+            .zip(targets)
+            .map(|(import, target)| Request {
+                import_record_index: import.import_record_index,
+                alias: import.alias,
+                state: match target {
+                    Some(source_index) => RequestState::WaitingFor {
+                        source_index,
+                        alias: import.alias,
+                        hops: 0,
+                    },
+                    None => RequestState::Unknown,
                 },
-                None => RequestState::Unknown,
-            };
-            requests.push(Request { import, state });
-        }
+            })
+            .collect();
         bun_core::scoped_log!(
             const_call,
-            "stopped {} for {} import(s)",
+            "held {} for {} import(s)",
             importer,
-            requests.len()
+            needs.imports.len()
         );
-        self.graph.const_calls.stopped.insert(
+        self.graph.const_calls.held.insert(
             importer,
-            Stopped {
-                task: needs.task,
+            Held {
+                needs,
+                visited,
                 requests,
             },
         );
-        self.advance_stopped_file(importer);
-        scheduled
+        self.graph.const_calls.ready.push(importer);
+        self.drain_ready_held_files();
+        Some(scheduled)
     }
 
     /// A file finished. `values` is `None` when it has no AST on the graph.
@@ -166,11 +216,7 @@ impl<'a> BundleV2<'a> {
                 self.graph.const_calls.values.insert(source_index, values);
             }
             Some(_) => {}
-            None => self
-                .graph
-                .const_calls
-                .finished_without_ast
-                .push(source_index),
+            None => self.graph.const_calls.failed.push(source_index),
         }
         if self.graph.const_calls.waiters.is_empty() {
             return;
@@ -178,26 +224,34 @@ impl<'a> BundleV2<'a> {
         let Some(importers) = self.graph.const_calls.waiters.remove(&source_index) else {
             return;
         };
-        for importer in importers {
-            self.advance_stopped_file(importer);
-        }
+        self.graph.const_calls.ready.extend(importers);
+        self.drain_ready_held_files();
     }
 
-    /// When only stopped files are pending, gives up the waits that cannot end: a cycle, a deferred load.
-    pub(crate) fn release_stopped_files_if_idle(&mut self) -> bool {
-        let stopped = self.graph.const_calls.stopped_count();
-        if stopped == 0 || self.graph.pending_items != stopped {
+    fn drain_ready_held_files(&mut self) {
+        if core::mem::replace(&mut self.graph.const_calls.draining, true) {
+            return;
+        }
+        while let Some(importer) = self.graph.const_calls.ready.pop() {
+            self.advance_held_file(importer);
+        }
+        self.graph.const_calls.draining = false;
+    }
+
+    /// When only held files are pending, gives up the waits that cannot end: a cycle, a deferred load.
+    pub(crate) fn release_held_files_if_idle(&mut self) -> bool {
+        let held = self.graph.const_calls.held_count();
+        if held == 0 || self.graph.pending_items != held {
             return false;
         }
-        let mut files: Vec<IndexInt> = self.graph.const_calls.stopped.keys().copied().collect();
+        let mut files: Vec<IndexInt> = self.graph.const_calls.held.keys().copied().collect();
         files.sort_unstable();
         let waits: Vec<Vec<usize>> = files
             .iter()
             .map(|file| {
-                let requests = self.graph.const_calls.stopped.get(file);
-                requests
-                    .into_iter()
-                    .flat_map(|stopped| &stopped.requests)
+                let held = self.graph.const_calls.held.get(file);
+                held.into_iter()
+                    .flat_map(|held| &held.requests)
                     .filter_map(|request| match request.state {
                         RequestState::WaitingFor { source_index, .. } => {
                             files.binary_search(&source_index).ok()
@@ -209,13 +263,12 @@ impl<'a> BundleV2<'a> {
             .collect();
         let cycle_of = strongly_connected_components(&waits);
 
-        let mut ready = Vec::new();
         for (i, file) in files.iter().enumerate() {
-            let Some(stopped) = self.graph.const_calls.stopped.get_mut(file) else {
+            let Some(held) = self.graph.const_calls.held.get_mut(file) else {
                 continue;
             };
             let mut waiting = false;
-            for request in &mut stopped.requests {
+            for request in &mut held.requests {
                 let RequestState::WaitingFor { source_index, .. } = request.state else {
                     continue;
                 };
@@ -225,115 +278,118 @@ impl<'a> BundleV2<'a> {
                 }
             }
             if !waiting {
-                ready.push(*file);
+                self.graph.const_calls.ready.push(*file);
             }
         }
         bun_core::scoped_log!(
             const_call,
-            "idle: {} of {} stopped file(s) run",
-            ready.len(),
+            "idle: {} of {} held file(s) go on",
+            self.graph.const_calls.ready.len(),
             files.len()
         );
         // The cycles form a graph without cycles, so at least one of them waits for no other.
-        debug_assert!(!ready.is_empty());
-        for file in ready {
-            self.schedule_second_run(file);
-        }
+        debug_assert!(!self.graph.const_calls.ready.is_empty());
+        self.drain_ready_held_files();
         true
     }
 
-    /// Resolves the imports a stopped file asked about. Its second run resolves and reports them again.
+    /// Whether `specifier` in a file at `importer_path` names one JavaScript file that nothing else can replace.
+    fn is_plain_javascript_import(
+        &mut self,
+        importer_path: &Fs::Path,
+        specifier: &[u8],
+        target: Target,
+    ) -> bool {
+        // An `onResolve` plugin answers later, and its answer does not depend on this file alone.
+        let matches_plugin = self
+            .plugins_ref()
+            .is_some_and(|plugins| plugins.has_any_matches(&Fs::Path::init(specifier), false));
+        if matches_plugin {
+            return false;
+        }
+        if let Some(file_map) = self.file_map {
+            if let Some(result) = file_map.resolve(self.arena(), importer_path.text, specifier) {
+                return self.is_javascript_path(&result.path_pair.primary);
+            }
+        }
+        let source_dir = importer_path.source_dir();
+        let resolved = self
+            .transpiler_for_target(target)
+            .resolver
+            .resolve_with_framework(source_dir, specifier, ImportKind::Stmt);
+        let Ok(result) = resolved else {
+            return false;
+        };
+        // A package with a second build can get its imports rewritten to that one (`scan_for_secondary_paths`).
+        !result.flags.is_external()
+            && result.path_pair.secondary.is_none()
+            && !result.path_pair.primary.is_disabled
+            && self.is_javascript_path(&result.path_pair.primary)
+    }
+
+    fn is_javascript_path(&self, path: &Fs::Path) -> bool {
+        path.loader(&self.transpiler.options.loaders)
+            .is_some_and(|loader| loader.is_javascript_like())
+    }
+
+    /// Resolves the imports a held file asked about. The file's own resolution does them again.
     fn resolve_const_call_imports(
         &mut self,
-        needs: &parse_task::NeedsConstCallValues,
-        imports: &[ConstCallImport<'static>],
+        needs: &NeedsConstCallValues,
     ) -> (Vec<Option<IndexInt>>, i32) {
         let importer = needs.source_index.get() as usize;
-        // One record per import statement: its items share `import_record_index`.
-        let mut record_of_import: Vec<usize> = Vec::with_capacity(imports.len());
-        let mut records: Vec<ImportRecord> = Vec::new();
-        for (i, import) in imports.iter().enumerate() {
-            if i > 0 && imports[i - 1].import_record_index == import.import_record_index {
-                record_of_import.push(records.len() - 1);
-                continue;
-            }
-            record_of_import.push(records.len());
-            let mut record = ImportRecord {
-                kind: ImportKind::Stmt,
-                range: import.range,
-                path: bun_paths::fs::Path::init(import.specifier),
-                tag: bun_ast::ImportRecordTag::None,
-                loader: None,
-                source_index: Index::INVALID,
-                original_path: b"",
-                flags: ImportRecordFlags::empty(),
-            };
-            // An `onResolve` plugin answers later, with this record's real index.
-            let matches_plugin = self.matches_on_resolve_plugin(import.specifier);
-            // Only a JavaScript file exports a function, and resolving an HTML import has side effects.
-            let names_other_loader = Fs::Path::init(import.specifier)
-                .loader(&self.transpiler.options.loaders)
-                .is_some_and(|loader| !loader.is_javascript_like());
-            if matches_plugin || names_other_loader {
-                record.flags.insert(ImportRecordFlags::IS_UNUSED);
-            }
-            records.push(record);
-        }
-
         // The placeholder `enqueue` stored: the path is all that resolution reads.
         let source = self.graph.input_files.items_source()[importer].clone();
-        let (msgs_before, errors_before) = {
-            let log = self.transpiler.log_mut();
-            (log.msgs.len(), log.errors)
-        };
-        let mut resolved = self.resolve_import_records(&mut ResolveImportRecordCtx {
+        // One record per import statement: its items share `import_record_index`.
+        let mut record_of_import: Vec<Option<usize>> = Vec::with_capacity(needs.imports.len());
+        let mut records: Vec<ImportRecord> = Vec::new();
+        let mut last: Option<(u32, Option<usize>)> = None;
+        for import in &needs.imports {
+            if let Some((index, record)) = last {
+                if index == import.import_record_index {
+                    record_of_import.push(record);
+                    continue;
+                }
+            }
+            let record =
+                if self.is_plain_javascript_import(&source.path, import.specifier, needs.target) {
+                    records.push(ImportRecord {
+                        kind: ImportKind::Stmt,
+                        range: import.range,
+                        path: bun_paths::fs::Path::init(import.specifier),
+                        tag: bun_ast::ImportRecordTag::None,
+                        loader: None,
+                        source_index: Index::INVALID,
+                        original_path: b"",
+                        flags: ImportRecordFlags::empty(),
+                    });
+                    Some(records.len() - 1)
+                } else {
+                    None
+                };
+            record_of_import.push(record);
+            last = Some((import.import_record_index, record));
+        }
+        if records.is_empty() {
+            return (vec![None; needs.imports.len()], 0);
+        }
+
+        let resolved = self.resolve_import_records(&mut ResolveImportRecordCtx {
             import_records: &mut records,
             source: &source,
             loader: needs.loader,
             target: needs.target,
             only_records: None,
         });
-        // The second run reports the errors again. A warning is logged only once, so it stays.
-        {
-            let log = self.transpiler.log_mut();
-            let mut kept = msgs_before;
-            for i in msgs_before..log.msgs.len() {
-                if log.msgs[i].kind != bun_ast::Kind::Err {
-                    log.msgs.swap(kept, i);
-                    kept += 1;
-                }
-            }
-            log.msgs.truncate(kept);
-            log.errors = errors_before;
-        }
-
-        // A new file of another loader is left for the second run, which records it on the importer.
-        let loaders = &self.transpiler.options.loaders;
-        resolved.resolve_queue.retain(|_, task| {
-            // SAFETY: arena-allocated by `resolve_import_records` and not scheduled yet.
-            let unscheduled = unsafe { &**task };
-            let is_javascript = unscheduled
-                .loader
-                .or_else(|| unscheduled.path.loader(loaders))
-                .is_some_and(|loader| loader.is_javascript_like());
-            if !is_javascript {
-                // SAFETY: as above. The queue forgets the slot, so it is not used again.
-                unsafe { core::ptr::drop_in_place(*task) };
-            }
-            is_javascript
-        });
-
         let scheduled =
             self.process_resolve_queue(&resolved.resolve_queue, needs.target, importer as IndexInt);
 
         let path_to_source_index = &self.graph.build_graphs[needs.target];
         let targets = record_of_import
             .iter()
-            .map(|&record| {
-                let record = &records[record];
-                if record.flags.contains(ImportRecordFlags::IS_UNUSED) {
-                    None
-                } else if record.source_index.is_valid() {
+            .map(|record| {
+                let record = &records[(*record)?];
+                if record.source_index.is_valid() {
                     Some(record.source_index.get())
                 } else {
                     path_to_source_index.get_path(&record.path)
@@ -343,20 +399,21 @@ impl<'a> BundleV2<'a> {
         (targets, scheduled)
     }
 
-    /// Moves each request of `importer` as far as finished files allow, then schedules it if none waits.
-    fn advance_stopped_file(&mut self, importer: IndexInt) {
-        let Some(mut stopped) = self.graph.const_calls.stopped.remove(&importer) else {
+    /// Moves each request of `importer` as far as finished files allow. When none waits, the file goes on.
+    fn advance_held_file(&mut self, importer: IndexInt) {
+        let Some(mut held) = self.graph.const_calls.held.remove(&importer) else {
             return;
         };
         let mut waiting = false;
-        for request in &mut stopped.requests {
+        for request in &mut held.requests {
             while let RequestState::WaitingFor {
                 source_index,
                 alias,
                 hops,
             } = request.state
             {
-                request.state = match self.lookup_const_call(source_index, alias) {
+                request.state = match self.lookup_const_call(source_index, alias, held.needs.target)
+                {
                     Lookup::Value(value) => RequestState::Known(value),
                     Lookup::Follow(next, next_alias) if hops < MAX_HOPS => {
                         RequestState::WaitingFor {
@@ -373,7 +430,8 @@ impl<'a> BundleV2<'a> {
                             .waiters
                             .entry(source_index)
                             .or_default();
-                        if !waiters.contains(&importer) {
+                        // One call of this function makes all the entries of one file, so they are adjacent.
+                        if waiters.last() != Some(&importer) {
                             waiters.push(importer);
                         }
                         waiting = true;
@@ -382,35 +440,43 @@ impl<'a> BundleV2<'a> {
                 };
             }
         }
-        self.graph.const_calls.stopped.insert(importer, stopped);
-        if !waiting {
-            self.schedule_second_run(importer);
+        if waiting {
+            self.graph.const_calls.held.insert(importer, held);
+        } else {
+            self.finish_held_file(held);
         }
     }
 
-    /// What calling export `alias` of `source_index` returns.
-    fn lookup_const_call(&self, source_index: IndexInt, alias: &[u8]) -> Lookup {
+    /// What calling export `alias` of `source_index` returns, for an importer in the graph of `target`.
+    fn lookup_const_call(
+        &mut self,
+        source_index: IndexInt,
+        alias: &'static [u8],
+        target: Target,
+    ) -> Lookup {
         let index = source_index as usize;
-        // Another build of the same package can replace this file (`scan_for_secondary_paths`).
-        if !self.graph.input_files.items_secondary_path()[index].is_empty() {
-            return Lookup::Unknown;
-        }
-        // `module.exports = require("./x")` alone: the file finished as a redirect.
-        if self.graph.ast.items_redirect_import_record_index()[index] != u32::MAX {
-            return Lookup::Unknown;
-        }
         // A finished file has at least the part the parser reserves for its wrapper.
         if self.graph.ast.items_parts()[index].len() == 0 {
-            return if self
-                .graph
-                .const_calls
-                .finished_without_ast
-                .contains(&source_index)
-            {
+            // `module.exports = require("./x")` alone finishes as a redirect with no part.
+            let redirect = self.graph.ast.items_redirect_import_record_index()[index];
+            if redirect != u32::MAX {
+                let record =
+                    &self.graph.ast.items_import_records()[index].as_slice()[redirect as usize];
+                return if record.source_index.is_valid() {
+                    Lookup::Follow(record.source_index.get(), alias)
+                } else {
+                    Lookup::Unknown
+                };
+            }
+            return if self.graph.const_calls.failed.contains(&source_index) {
                 Lookup::Unknown
             } else {
                 Lookup::NotFinished
             };
+        }
+        // A value of the client graph is not a value of the server graph.
+        if self.graph.ast.items_target()[index] != target {
+            return Lookup::Unknown;
         }
         let Some(export) = self.graph.ast.items_named_exports()[index].get(alias) else {
             return Lookup::Unknown;
@@ -433,34 +499,34 @@ impl<'a> BundleV2<'a> {
         };
         let record = &self.graph.ast.items_import_records()[index].as_slice()
             [import.import_record_index as usize];
-        // Whether such a record is resolved yet depends on timing. The output must not.
-        if self.graph.input_files.items_flags()[index].contains(InputFileFlags::IS_BARREL)
-            || self.matches_on_resolve_plugin(record.original_path)
+        let (kind, next, specifier) = (record.kind, record.source_index, record.original_path);
+        // Which records of a barrel are resolved yet depends on timing. The output must not.
+        if kind != ImportKind::Stmt
+            || !next.is_valid()
+            || self.graph.input_files.items_flags()[index].contains(InputFileFlags::IS_BARREL)
         {
             return Lookup::Unknown;
         }
-        if record.kind != ImportKind::Stmt || !record.source_index.is_valid() {
+        let path = self.graph.input_files.items_source()[index].path.clone();
+        if !self.is_plain_javascript_import(&path, specifier, target) {
             return Lookup::Unknown;
         }
-        Lookup::Follow(record.source_index.get(), next_alias.slice())
+        Lookup::Follow(next.get(), next_alias.slice())
     }
 
-    fn matches_on_resolve_plugin(&self, specifier: &[u8]) -> bool {
-        self.plugins_ref()
-            .is_some_and(|plugins| plugins.has_any_matches(&Fs::Path::init(specifier), false))
-    }
-
-    fn schedule_second_run(&mut self, importer: IndexInt) {
-        let Some(stopped) = self.graph.const_calls.stopped.remove(&importer) else {
-            return;
-        };
-        let seeds: Vec<ConstCallSeed<'static>> = stopped
-            .requests
+    /// Every request of the file is decided. With a value, the task runs again. Without one, the held result goes on the graph.
+    fn finish_held_file(&mut self, held: Held) {
+        let Held {
+            mut needs,
+            visited,
+            requests,
+        } = held;
+        let seeds: Vec<ConstCallSeed<'static>> = requests
             .into_iter()
             .filter_map(|request| match request.state {
                 RequestState::Known(value) => Some(ConstCallSeed {
-                    import_record_index: request.import.import_record_index,
-                    alias: request.import.alias,
+                    import_record_index: request.import_record_index,
+                    alias: request.alias,
                     value,
                 }),
                 RequestState::WaitingFor { .. } | RequestState::Unknown => None,
@@ -468,13 +534,40 @@ impl<'a> BundleV2<'a> {
             .collect();
         bun_core::scoped_log!(
             const_call,
-            "second run of {} with {} value(s)",
-            importer,
+            "{} has {} value(s)",
+            needs.source_index.get(),
             seeds.len()
         );
-        // SAFETY: the task is arena-owned, and no worker holds it: its first run
-        // ended before the bundle thread saw `NeedsConstCallValues`.
-        unsafe { (*stopped.task).const_call_seeds = Some(seeds) };
-        self.graph.pool().schedule(stopped.task);
+
+        let task = needs.task;
+        if let Some(visited) = visited {
+            let Visited {
+                mut success,
+                watcher_data,
+                external,
+            } = *visited;
+            if seeds.is_empty() {
+                // SAFETY: the task is arena-owned, and its worker let go of it when it posted the result.
+                let task = unsafe { &mut *task };
+                task.release_owned_fields();
+                parse_task::complete_held_result(self, task, success, watcher_data, external);
+                return;
+            }
+            // The second run reads the same source, so the buffer of a native plugin stays until the end.
+            if external.function.is_some() {
+                self.finalizers.push(external);
+            }
+            success.log.msgs.truncate(needs.source_msgs);
+            success.log.errors = 0;
+            needs.source_log = core::mem::take(&mut success.log);
+        }
+        // SAFETY: as above.
+        unsafe {
+            (*task).const_call_second_run = Some(Box::new(ConstCallSecondRun {
+                seeds,
+                source_log: core::mem::take(&mut needs.source_log),
+            }));
+        }
+        self.graph.pool().schedule(task);
     }
 }

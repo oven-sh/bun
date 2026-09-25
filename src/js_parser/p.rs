@@ -686,6 +686,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) const_calls_enabled: bool,
     /// Visiting the argument of `import()`, `require()` or `require.resolve()`.
     pub(crate) in_import_specifier: bool,
+    /// Counts the `--define` values, `feature()` calls and folded calls that the visit pass substituted.
+    pub(crate) build_time_values: u32,
     /// The parse pass looks for imports that a branch condition calls.
     pub(crate) const_call_prefilter: bool,
 
@@ -9728,13 +9730,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // literal below is the *only* write to `*out`). ───
         lexer.track_comments = opts.features.minify_identifiers;
         let track_scope_uses = opts.bundle && !opts.features.minify_identifiers;
-        // The subset of `enable_const_calls` that is known before the parse pass.
-        let const_call_prefilter = opts.bundle
-            && opts.features.dead_code_elimination
-            && !opts.features.hot_module_reloading
-            && !opts.features.react_fast_refresh
+        // Almost no file in a package gets a value, so only first-party files stop for one.
+        let const_call_prefilter = crate::visit::const_call::const_calls_allowed(&opts)
             && opts.const_call_seeds.is_none()
-            && !opts.const_call_retry.is_some_and(|retry| retry.disable);
+            && !source.path.is_node_module();
         lexer.track_react_suppressions = opts.features.react_compiler.is_enabled();
 
         if !TYPESCRIPT {
@@ -9933,6 +9932,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             const_calls: None,
             const_calls_enabled: false,
             in_import_specifier: false,
+            build_time_values: 0,
             const_call_prefilter,
             binary_expression_stack: BumpVec::new_in(arena),
             binary_expression_simplify_stack: BumpVec::new_in(arena),

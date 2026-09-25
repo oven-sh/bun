@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { EventEmitter, once } from "node:events";
 import { WebSocket } from "ws";
 
@@ -183,6 +184,18 @@ describe("ws.once() multiple calls", () => {
     expect({ seenByOnce, seenByOn }).toEqual({ seenByOnce: ["first"], seenByOn: ["first", "second"] });
   });
 
+  test("once('open') registered before on('open') does not duplicate the event", async () => {
+    const ws = new WebSocket(`ws://localhost:${port}`);
+    const calls: string[] = [];
+    ws.once("open", () => calls.push("once"));
+    ws.on("open", () => calls.push("on"));
+    // A native listener runs after the ones above, so 'close' follows every 'open' delivery.
+    ws.addEventListener("open", () => ws.close());
+    await once(ws, "close");
+
+    expect(calls).toEqual(["once", "on"]);
+  });
+
   test("once('error') consumes a native error without re-emitting it unhandled", async () => {
     const ws = new WebSocket(`ws://localhost:${port}`);
     let emits = 0;
@@ -241,5 +254,83 @@ describe("ws.once() multiple calls", () => {
     expect(messages).not.toContain("once:test2");
 
     ws.close();
+  });
+});
+
+// A second delivery of 'error' finds no listener left, so the emitter throws it as an uncaught exception.
+describe.concurrent("ws.once('error') on a refused connection", () => {
+  // Runs `register` in its own process and reports what that process saw by the time it exited.
+  async function refused(register: string) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { WebSocket } = require("ws");
+          const events = require("node:events");
+
+          const calls = [];
+          const uncaught = [];
+          process.on("uncaughtException", err => uncaught.push(err.message));
+          process.on("exit", () => console.log(JSON.stringify({ calls, uncaught })));
+
+          const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+          const url = "ws://127.0.0.1:" + listener.port;
+          listener.stop(true);
+
+          const ws = new WebSocket(url);
+          ${register}
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+
+  const delivered = (calls: string[]) => ({
+    stdout: JSON.stringify({ calls, uncaught: [] }),
+    stderr: "",
+    exitCode: 0,
+  });
+
+  test("once('error')", async () => {
+    expect(await refused(`ws.once("error", () => calls.push("once"));`)).toEqual(delivered(["once"]));
+  });
+
+  test("once('error') then on('error')", async () => {
+    const register = `
+      ws.once("error", () => calls.push("once"));
+      ws.on("error", () => calls.push("on"));
+    `;
+    expect(await refused(register)).toEqual(delivered(["once", "on"]));
+  });
+
+  test("two once('error')", async () => {
+    const register = `
+      ws.once("error", () => calls.push("first once"));
+      ws.once("error", () => calls.push("second once"));
+    `;
+    expect(await refused(register)).toEqual(delivered(["first once", "second once"]));
+  });
+
+  test("on('error') then once('error')", async () => {
+    const register = `
+      ws.on("error", () => calls.push("on"));
+      ws.once("error", () => calls.push("once"));
+    `;
+    expect(await refused(register)).toEqual(delivered(["on", "once"]));
+  });
+
+  test("events.once(ws, 'open')", async () => {
+    const register = `
+      events.once(ws, "open").then(
+        () => calls.push("resolved"),
+        () => calls.push("rejected"),
+      );
+    `;
+    expect(await refused(register)).toEqual(delivered(["rejected"]));
   });
 });

@@ -12,7 +12,7 @@ import { bunEnv, bunExe, gcTick, normalizeBunSnapshot } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
-import { Writable } from "node:stream";
+import { Duplex, Writable } from "node:stream";
 
 const PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "latin1");
 
@@ -1925,6 +1925,120 @@ describe("stream release after a queued END_STREAM", () => {
     } finally {
       client.close();
       server.close();
+    }
+  });
+});
+
+// nghttp2 answers a SETTINGS ACK that acknowledges nothing with a connection error
+// ("SETTINGS: unexpected ACK"), which node reports as ERR_HTTP2_ERROR "Protocol error".
+describe("SETTINGS ACK with no SETTINGS outstanding", () => {
+  const PING = encodeFrame(FrameType.PING, 0, 0, Buffer.alloc(8, 1));
+  const isPingAck = (f: Frame) => f.type === FrameType.PING && (f.flags & 0x1) !== 0;
+  const isFatal = (f: Frame) => f.type === FrameType.RST_STREAM || f.type === FrameType.GOAWAY;
+  const PROTOCOL_ERROR_SESSION = { code: "ERR_HTTP2_ERROR", message: "Protocol error" };
+
+  test("server", async () => {
+    let sessionError: any;
+    const server = http2.createServer();
+    server.on("sessionError", e => (sessionError = e));
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      // This one acknowledges the SETTINGS frame the server opened the connection with.
+      c.sendSettingsAck();
+      c.send(PING);
+      await c.waitFor(isPingAck);
+      expect(c.frames.filter(isFatal)).toEqual([]);
+      c.sendSettingsAck();
+      expect(goawayErrorCode(await c.waitForGoaway())).toBe(ErrorCode.PROTOCOL_ERROR);
+      await c.waitClosed();
+      expect({ code: sessionError?.code, message: sessionError?.message }).toEqual(PROTOCOL_ERROR_SESSION);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
+  test("client", async () => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    const sessionError = once(client, "error");
+    try {
+      await raw.waitFor(f => f.type === FrameType.SETTINGS);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      // This one acknowledges the SETTINGS frame the client opened the connection with.
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+      raw.socket!.write(PING);
+      await raw.waitFor(isPingAck);
+      expect(raw.frames.filter(isFatal)).toEqual([]);
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+      expect(goawayErrorCode(await raw.waitFor(f => f.type === FrameType.GOAWAY))).toBe(ErrorCode.PROTOCOL_ERROR);
+      const [err] = await sessionError;
+      expect({ code: err.code, message: err.message }).toEqual(PROTOCOL_ERROR_SESSION);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  test("client: SETTINGS sent from a frame listener are outstanding for the rest of that read", async () => {
+    // A JS transport whose peer acknowledges a SETTINGS frame from inside the write that delivers
+    // it, so the ACK is parsed by the read() that is still running the listener's frame batch.
+    const events: string[] = [];
+    const prefaceWritten = Promise.withResolvers<void>();
+    let written = Buffer.alloc(0);
+    let sawPreface = false;
+    let reading = false;
+    const transport = new Duplex({
+      read() {},
+      write(chunk: Buffer, _encoding, callback) {
+        written = Buffer.concat([written, chunk]);
+        if (!sawPreface && written.length >= PREFACE.length) {
+          written = written.subarray(PREFACE.length);
+          sawPreface = true;
+        }
+        while (sawPreface && written.length >= 9 && written.length >= 9 + written.readUIntBE(0, 3)) {
+          const isSettings = written[3] === FrameType.SETTINGS && (written[4] & 0x1) === 0;
+          written = written.subarray(9 + written.readUIntBE(0, 3));
+          if (!isSettings) continue;
+          // The first SETTINGS frame belongs to the connection preface; the read below acknowledges it.
+          if (reading) {
+            events.push("ACK sent during the read");
+            this.push(encodeFrame(FrameType.SETTINGS, 0x1, 0));
+          } else {
+            prefaceWritten.resolve();
+          }
+        }
+        callback();
+      },
+    });
+    const client = http2.connect("http://127.0.0.1:1", { createConnection: () => transport });
+    client.on("error", err => events.push(`error ${(err as any).code}`));
+    try {
+      // With the preface out and its write finished, a flush inside a read reaches write() at once.
+      await prefaceWritten.promise;
+      await new Promise(resolve => setImmediate(resolve));
+      client.on("localSettings", settings => events.push(`localSettings ${settings.initialWindowSize}`));
+      client.on("altsvc", () => client.settings({ initialWindowSize: 1000 }));
+      // One read: the peer's SETTINGS, its ACK of the preface SETTINGS, an ALTSVC whose listener
+      // sends new SETTINGS, and a WINDOW_UPDATE, which makes the client flush what it has queued.
+      reading = true;
+      transport.push(
+        Buffer.concat([
+          encodeFrame(FrameType.SETTINGS, 0, 0),
+          encodeFrame(FrameType.SETTINGS, 0x1, 0),
+          encodeFrame(0x0a, 0, 0, Buffer.concat([Buffer.from([0, 1]), Buffer.from('xh2=":1"')])),
+          encodeFrame(FrameType.WINDOW_UPDATE, 0, 0, Buffer.from([0, 0, 0, 1])),
+        ]),
+      );
+      reading = false;
+      await new Promise(resolve => setImmediate(resolve));
+      expect(events).toEqual(["localSettings 65535", "ACK sent during the read", "localSettings 1000"]);
+    } finally {
+      client.destroy();
     }
   });
 });

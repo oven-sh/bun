@@ -166,6 +166,9 @@ describe.concurrent("fetch() early rejections are reported when unhandled", () =
   const cases: [name: string, code: string, expectedStderr: string][] = [
     ["no arguments", `fetch()`, "fetch() expects a string but received no arguments"],
     ["blank url", `fetch("")`, "fetch() URL must not be a blank string"],
+    ["number url", `fetch(123)`, "fetch() URL is invalid"],
+    ["undefined url", `fetch(undefined)`, "fetch() URL is invalid"],
+    ["relative toString url", `fetch({ toString() { return "/some_path"; } })`, "fetch() URL is invalid"],
     ["invalid url", `fetch("not a url")`, "fetch() URL is invalid"],
     ["unsupported protocol", `fetch("gopher://example.com/")`, "protocol must be http:, https: or s3:"],
     // No host may be read behind the second scheme, and the request still has to be refused.

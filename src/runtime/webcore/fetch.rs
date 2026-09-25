@@ -274,7 +274,7 @@ fn bun_fetch_preconnect(
         return Err(global_object
             .err(
                 jsc::ErrorCode::INVALID_ARG_TYPE,
-                format_args!("fetch() URL must not be a blank string."),
+                format_args!("fetch() URL must have a hostname"),
             )
             .throw());
     }
@@ -312,10 +312,18 @@ impl StringOrURL {
         }
 
         let out = jsc::URL::href_from_js(value, global_this)?;
-        if out.tag() == BunStringTag::Dead {
-            return Ok(None);
+        if out.tag() != BunStringTag::Dead {
+            return Ok(Some(out));
         }
-        Ok(Some(out))
+        // RequestInit objects keep the url property path; other values stringify.
+        if value.is_object() {
+            if let Some(url_prop) = value.fast_get(global_this, jsc::BuiltinName::Url)? {
+                if !url_prop.is_undefined() {
+                    return Ok(None);
+                }
+            }
+        }
+        Ok(Some(BunString::from_js(value, global_this)?))
     }
 }
 
@@ -588,6 +596,17 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         url_type = URLType::File;
     } else if url.is_blob() {
         url_type = URLType::Blob;
+    }
+
+    if url_type == URLType::Remote
+        && (url.is_http() || url.is_https() || url.is_s3())
+        && url.hostname.is_empty()
+    {
+        let err = ctx.to_type_error(
+            jsc::ErrorCode::INVALID_URL,
+            format_args!("fetch() URL must have a hostname"),
+        );
+        return Ok(JSPromise::rejected_promise(global_this, err).to_js());
     }
 
     // **Start with the harmless ones.**

@@ -546,6 +546,65 @@ describe("mock()", () => {
       expect(keep()).toBe(mockName);
     });
   }
+  test("has a prototype object like a plain function", () => {
+    const fn = jest.fn();
+    expect(typeof fn.prototype).toBe("object");
+    expect(fn.prototype.constructor).toBe(fn);
+  });
+  test("new mockFn() returns the constructed instance and records it", () => {
+    const Klass = jest.fn(function (a) {
+      this.a = a;
+    });
+    const instance = new Klass(7);
+    expect(instance).toBeInstanceOf(Klass);
+    expect(instance.a).toBe(7);
+    expect(Klass.mock.instances).toEqual([instance]);
+    expect(Klass.mock.contexts).toEqual([instance]);
+    expect(Klass).toHaveBeenCalledWith(7);
+  });
+  test("new mockFn() honours an object returned by the implementation", () => {
+    const explicit = { built: true };
+    const Klass = jest.fn(() => explicit);
+    expect(new Klass()).toBe(explicit);
+
+    const primitive = jest.fn(() => 42);
+    const instance = new primitive();
+    expect(instance).toBeInstanceOf(primitive);
+    expect(primitive.mock.results[0]).toEqual({ type: "return", value: 42 });
+
+    const byValue = jest.fn().mockReturnValue("x");
+    expect(new byValue()).toBeInstanceOf(byValue);
+  });
+  test("new mockFn() uses mockFn.prototype, so methods defined there are visible", () => {
+    const Klass = jest.fn(function () {});
+    Klass.prototype.greet = () => "hi";
+    expect(new Klass().greet()).toBe("hi");
+  });
+  test("Reflect.construct(mockFn, [], NewTarget) uses NewTarget.prototype", () => {
+    const fn = jest.fn();
+    function NewTarget() {}
+    const instance = Reflect.construct(fn, [], NewTarget);
+    expect(Object.getPrototypeOf(instance)).toBe(NewTarget.prototype);
+    expect(instance).toBeInstanceOf(NewTarget);
+    expect(instance).not.toBeInstanceOf(fn);
+    expect(fn.mock.instances).toEqual([instance]);
+  });
+  test("a throwing implementation under new propagates and is recorded", () => {
+    const error = new Error("boom");
+    const Klass = jest.fn(() => {
+      throw error;
+    });
+    expect(() => new Klass()).toThrow(error);
+    expect(Klass.mock.results).toEqual([{ type: "throw", value: error }]);
+    expect(Klass.mock.instances).toHaveLength(1);
+  });
+  if (isBun) {
+    test("Reflect.construct on a spy for a missing property returns an object", () => {
+      const instance = Reflect.construct(spyOn({}, 9), []);
+      expect(typeof instance).toBe("object");
+      expect(instance).not.toBeNull();
+    });
+  }
   test("looks like a function", () => {
     const fn = jest.fn(function nameHere(a, b, c) {
       return [a, b, c];

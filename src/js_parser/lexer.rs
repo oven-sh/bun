@@ -240,6 +240,8 @@ pub struct Lexer<'a> {
     pub(crate) temp_buffer_u16: Vec<u16>,
     pub(crate) track_comments: bool,
     pub(crate) track_react_suppressions: bool,
+    /// `@name`, an intrinsic in the source of one of JavaScriptCore's builtins, is a name like any other.
+    pub(crate) jsc_builtin_syntax: bool,
     pub(crate) all_comments: Vec<Range>,
 }
 
@@ -1369,7 +1371,15 @@ impl<'a> Lexer<'a> {
                 }
                 0x40 => {
                     self.step_with(contents);
-                    self.token = T::TAt;
+                    if self.jsc_builtin_syntax && is_identifier_start(self.code_point) {
+                        while is_identifier_continue(self.code_point) {
+                            self.step_with(contents);
+                        }
+                        self.identifier = self.raw();
+                        self.token = T::TIdentifier;
+                    } else {
+                        self.token = T::TAt;
+                    }
                 }
                 0x7E => {
                     self.step_with(contents);
@@ -2271,6 +2281,7 @@ impl<'a> Lexer<'a> {
             temp_buffer_u16: Vec::new(),
             track_comments: false,
             track_react_suppressions: false,
+            jsc_builtin_syntax: false,
             all_comments: Vec::new(),
         }
     }

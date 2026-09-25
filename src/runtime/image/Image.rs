@@ -1106,11 +1106,8 @@ impl Image {
 }
 
 impl Image {
-    /// `Bun.write(dest, image)` and the other `write_file_internal` entry
-    /// points: encode in the pipeline's output format (the source format when
-    /// no format method was chained, as `new Response(image)` does) and write
-    /// to the destination `Blob` the caller already built. Resolves with the
-    /// bytes written.
+    /// `Bun.write(dest, image)`: encode in the pipeline's output format and
+    /// write to the destination `Blob` the caller built. Resolves with bytes written.
     pub(crate) fn write_to_blob(
         &self,
         cx: &bun_jsc::JsThread<'_>,
@@ -1528,31 +1525,25 @@ pub(crate) enum Deliver {
     /// Like `.base64` plus a `data:{mime};base64,` prefix — same encode
     /// path, the prefix is the only difference.
     DataUrl,
-    /// `.write(dest)` and `Bun.write(dest, image)` — `then()` hands the
-    /// encoded bytes to `Bun.write`'s implementation with this as the
-    /// destination. Anything `Bun.write` accepts (path string / BunFile / S3
-    /// / fd) works here unchanged.
+    /// `.write(dest)` and `Bun.write(dest, image)`: `then()` hands the encoded
+    /// bytes to `write_file_internal` with this destination and these options.
     WriteDest {
         dest: WriteDestination,
         options: WriteOptions,
     },
 }
 
-/// Where an encoded image is written. `Image.write(dest)` keeps the JS value
-/// and parses it after the encode, as `Bun.write` would. `Bun.write(dest,
-/// image)` has already parsed its destination into a file or S3 `Blob`.
+/// `Image.write(dest)` parses the JS value after the encode. `Bun.write(dest,
+/// image)` has already parsed it into a file or S3 `Blob`.
 pub(crate) enum WriteDestination {
     Js(Strong),
     Blob(Box<Blob>),
 }
-// SAFETY: `Strong` is JS-thread affine. The `Blob` arm is a file or S3 view
-// (`RefPtr<Store>` plus a thread-isolated path) that `write_file_internal`
-// built on this thread and that `then()` hands back to it; its `Drop` only
-// releases atomic refcounts.
+// SAFETY: a `Strong`, or a file/S3 `Blob` view built on this thread whose
+// `Drop` only releases atomic refcounts.
 unsafe impl bun_jsc::job::JsAffine for WriteDestination {}
 
-/// The `WriteFileOptions` of the `Bun.write` call, rooted across the encode
-/// job. `extra_options` is the caller's options object (S3 credentials).
+/// `WriteFileOptions` rooted across the encode job.
 #[derive(Default)]
 pub(crate) struct WriteOptions {
     mkdirp_if_not_exists: Option<bool>,

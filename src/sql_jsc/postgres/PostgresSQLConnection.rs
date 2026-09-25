@@ -1224,6 +1224,12 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
             cancel: None,
         },
     )
+    .map_err(|err| {
+        global_object.throw_error(
+            bun_jsc::CrateError::from(err),
+            "failed to connect to postgresql",
+        )
+    })
 }
 
 /// What `PostgresSQLConnection::open` builds a connection from.
@@ -1257,7 +1263,7 @@ impl PostgresSQLConnection {
         global_object: &JSGlobalObject,
         group: &mut bun_uws::SocketGroup,
         params: ConnectParams<'_>,
-    ) -> JsResult<JSValue> {
+    ) -> Result<JSValue, uws::ConnectError> {
         let ConnectParams {
             hostname,
             port,
@@ -1376,10 +1382,7 @@ impl PostgresSQLConnection {
                 Err(err) => {
                     // SAFETY: fresh allocation, sole ref.
                     drop(unsafe { bun_core::heap::take(ptr) });
-                    return Err(global_object.throw_error(
-                        bun_jsc::CrateError::from(err),
-                        "failed to connect to postgresql",
-                    ));
+                    return Err(err);
                 }
             }));
         }

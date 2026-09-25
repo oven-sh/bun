@@ -150,27 +150,35 @@ pub(crate) fn generate_code_for_lazy_export(
                     &mut self,
                     ast: &BundlerStyleSheet,
                     css_ref: CssRef,
-                    idx: IndexInt,
+                    definition_idx: IndexInt,
+                    composing_idx: IndexInt,
                     compose_loc: Loc,
                 ) {
                     let _ = self.arena;
-                    let syms: &SymbolList<'_> = &self.all_symbols[idx as usize];
+                    let syms: &SymbolList<'_> = &self.all_symbols[definition_idx as usize];
                     // `Symbol.original_name: StoreStr` — arena-owned for the link pass.
                     let name: &[u8] = syms[css_ref.inner_index() as usize].original_name.slice();
                     let loc = ast.local_scope.get(name).unwrap().loc;
 
-                    self.log.add_range_error_fmt_with_note(
-                        Some(&self.all_sources[idx as usize]),
+                    let notes: Box<[bun_ast::Data]> = Box::new([bun_ast::range_data(
+                        Some(&self.all_sources[definition_idx as usize]),
+                        bun_ast::Range {
+                            loc,
+                            ..Default::default()
+                        },
+                        bun_ast::alloc_print(format_args!(
+                            "The definition of {} is here.",
+                            bun_fmt::quote(name),
+                        )),
+                    )]);
+                    self.log.add_range_error_fmt_with_notes(
+                        Some(&self.all_sources[composing_idx as usize]),
                         bun_ast::Range { loc: compose_loc, ..Default::default() },
+                        notes,
                         format_args!(
                             "The composes property cannot be used with {}, because it is not a single class name.",
                             bun_fmt::quote(name),
                         ),
-                        format_args!(
-                            "The definition of {} is here.",
-                            bun_fmt::quote(name),
-                        ),
-                        bun_ast::Range { loc, ..Default::default() },
                     );
                 }
 
@@ -228,6 +236,7 @@ pub(crate) fn generate_code_for_lazy_export(
                                                     other_file,
                                                     other_name_ref,
                                                     import_record.source_index.get(),
+                                                    idx,
                                                     compose.loc,
                                                 );
                                             } else {
@@ -277,6 +286,7 @@ pub(crate) fn generate_code_for_lazy_export(
                                             self.warn_non_single_class_composes(
                                                 ast,
                                                 name_ref,
+                                                idx,
                                                 idx,
                                                 compose.loc,
                                             );

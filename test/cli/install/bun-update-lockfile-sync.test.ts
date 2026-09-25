@@ -919,7 +919,11 @@ describe.concurrent("$ref overrides", () => {
     );
     expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.0.0"]);
 
-    await writePkg(dir, member("pkg1", { dependencies: { "one-range-dep": "1.0.0", "dep-with-tags": "^1.0.0" } }), PKG1);
+    await writePkg(
+      dir,
+      member("pkg1", { dependencies: { "one-range-dep": "1.0.0", "dep-with-tags": "^1.0.0" } }),
+      PKG1,
+    );
     await reinstall(dir, member("pkg2", { dependencies: { "dep-with-tags": "^1.0.0" } }), PKG2);
     const { stderr } = await tryRun(dir, PKG1, "update", "dep-with-tags");
     expect(stderr).toContain('workspaces declare different versions of "dep-with-tags"');

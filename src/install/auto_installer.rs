@@ -333,8 +333,20 @@ impl hooks::AutoInstaller for PackageManager {
         Ok(&*out)
     }
 
-    fn get_preinstall_state(&self, package_id: PackageID) -> PreinstallState {
-        lifecycle::get_preinstall_state(self, package_id)
+    fn get_preinstall_state(&mut self, package_id: PackageID) -> PreinstallState {
+        match lifecycle::get_preinstall_state(self, package_id) {
+            // Resolved from the lockfile on disk, so nothing has looked at the
+            // cache for it yet.
+            PreinstallState::Unknown => {
+                let package = *self.lockfile.packages.get(package_id as usize);
+                lifecycle::determine_preinstall_state(self, &package, &mut None, &mut None)
+            }
+            state => state,
+        }
+    }
+
+    fn wait_for_pending_tasks(&mut self) -> Result<(), bun_core::Error> {
+        enqueue::wait_for_pending_tasks(self).map_err(Into::into)
     }
 
     fn enqueue_package_for_download(

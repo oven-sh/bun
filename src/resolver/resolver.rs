@@ -3045,13 +3045,23 @@ impl<'a> Resolver<'a> {
                     }
                 };
 
-                let dir_path_for_resolution = match manager!().path_for_resolution(
-                    resolved_package_id,
-                    &resolution,
-                    bufs!(path_in_global_disk_cache),
-                ) {
+                // A package resolved from the lockfile may not be in the cache
+                // yet. Install it and look again, the way a package resolved
+                // from the registry is installed before `enqueue_dependency_to_root`
+                // returns.
+                macro_rules! path_for_resolution {
+                    () => {
+                        manager!().path_for_resolution(
+                            resolved_package_id,
+                            &resolution,
+                            bufs!(path_in_global_disk_cache),
+                        )
+                    };
+                }
+                let dir_path_for_resolution = match path_for_resolution!() {
                     Ok(p) => p,
                     Err(err) => {
+                        let mut installed = false;
                         // if it's missing, we need to install it
                         if err == bun_core::Error::FileNotFound {
                             match manager!().get_preinstall_state(resolved_package_id) {
@@ -3085,7 +3095,6 @@ impl<'a> Resolver<'a> {
                                         }
                                         return MatchStatus::NotFound;
                                     }
-                                    let (cloned, string_buf) = esm.copy().expect("unreachable");
 
                                     if st == Install::PreinstallState::Extract {
                                         let dependency_id = manager!()
@@ -3114,25 +3123,32 @@ impl<'a> Resolver<'a> {
                                         }
                                     }
 
-                                    if let Some(d) = self.debug_logs.as_mut() {
-                                        d.decrease_indent();
+                                    if let Err(err) = manager!().wait_for_pending_tasks() {
+                                        if let Some(d) = self.debug_logs.as_mut() {
+                                            d.decrease_indent();
+                                        }
+                                        return MatchStatus::Failure(err.into());
                                     }
-                                    return MatchStatus::Pending(Box::new(PendingResolution {
-                                        esm: cloned,
-                                        dependency: dependency_version,
-                                        string_buf,
-                                        tag: PendingResolutionTag::Download,
-                                        ..Default::default()
-                                    }));
+                                    installed = true;
                                 }
                                 _ => {}
                             }
                         }
 
-                        if let Some(d) = self.debug_logs.as_mut() {
-                            d.decrease_indent();
+                        let retried = if installed {
+                            path_for_resolution!()
+                        } else {
+                            Err(err)
+                        };
+                        match retried {
+                            Ok(p) => p,
+                            Err(err) => {
+                                if let Some(d) = self.debug_logs.as_mut() {
+                                    d.decrease_indent();
+                                }
+                                return MatchStatus::Failure(err.into());
+                            }
                         }
-                        return MatchStatus::Failure(err.into());
                     }
                 };
 

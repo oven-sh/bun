@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync } from "fs";
+import { mkdirSync, rmSync } from "fs";
 import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
 import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
@@ -529,6 +529,43 @@ test("a package.json nested inside an installed package does not override the pa
   expect(stdout).toBe("inner@2.0.0\n");
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
+});
+
+// docs/runtime/auto-install.mdx: the version in bun.lock comes before the
+// range in package.json. The lockfile is written by `bun install` with the
+// package pinned to 1.0.1, then the pin is widened to a range that 1.1.0 also
+// satisfies. The cache is empty, so the locked package has to be downloaded.
+describe.concurrent("auto-install uses the version from the lockfile", () => {
+  test.each([
+    ["bun.lock", "require", `console.log(require("no-deps/package.json").version);\n`],
+    ["bun.lockb", "import", `import pkg from "no-deps/package.json";\nconsole.log(pkg.version);\n`],
+  ])("%s, %s", async (lockfile, _kind, index) => {
+    using registry = fixtureRegistry();
+    using dir = tempDir("autoinstall-lockfile", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { "no-deps": "1.0.1" } }),
+      "index.js": index,
+      "bunfig.toml": registry.bunfig + `saveTextLockfile = ${lockfile === "bun.lock"}\n`,
+    });
+    const cache = join(String(dir), ".bun-cache");
+
+    const install = await runWithCache(String(dir), cache, "install");
+    expect(install.exitCode).toBe(0);
+    expect(await Bun.file(join(String(dir), lockfile)).exists()).toBe(true);
+    rmSync(join(String(dir), "node_modules"), { recursive: true });
+    rmSync(cache, { recursive: true });
+    await Bun.write(
+      join(String(dir), "package.json"),
+      JSON.stringify({ name: "app", dependencies: { "no-deps": "^1.0.0" } }),
+    );
+    registry.requests.length = 0;
+
+    const { stdout, stderr, exitCode } = await runWithCache(String(dir), cache, "index.js");
+    expect(stdout).toBe("1.0.1\n");
+    expect(stderr).toBe("");
+    // The resolution comes from the lockfile, so only the tarball is fetched.
+    expect(registry.requests).toEqual(["/no-deps/-/no-deps-1.0.1.tgz"]);
+    expect(exitCode).toBe(0);
+  });
 });
 
 test("--install=fallback to install missing packages", async () => {

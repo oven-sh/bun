@@ -2677,13 +2677,14 @@ fn init_with_runtime_once(
     // an unbounded `&mut DirEntry`, so the local reborrow is for `'static` and the
     // original binding is dead). Read it back through `manager.root_dir`.
     // `.data` probes must hold `entries_mutex`.
-    let has_lockb = {
+    let has_lockfile = {
         let _entries_lock = FileSystem::instance().fs.entries_mutex.lock_guard();
-        manager.root_dir.has_comptime_query(b"bun.lockb")
+        manager.root_dir.has_comptime_query(b"bun.lock")
+            || manager.root_dir.has_comptime_query(b"bun.lockb")
     };
-    if has_lockb {
+    if has_lockfile {
         let mut lockfile = core::mem::replace(&mut manager.lockfile, Box::new(Lockfile::default()));
-        match lockfile.load_from_cwd::<true>(Some(&mut *manager), log) {
+        match lockfile.load_from_cwd::<false>(Some(&mut *manager), log) {
             lockfile::LoadResult::Ok(_) => {}
             _ => lockfile.init_empty(),
         }

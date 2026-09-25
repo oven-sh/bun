@@ -88,24 +88,18 @@ impl EventType {
 #[derive(Default)]
 pub(crate) struct JestPrettyFormat {}
 
-#[repr(u32)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) enum MessageLevel {
-    Error = 2,
-    Debug = 3,
-}
-
 #[derive(Copy, Clone, Default)]
 pub(crate) struct FormatOptions {
-    pub(crate) enable_colors: bool,
     pub(crate) add_newline: bool,
     pub flush: bool,
     pub(crate) quote_strings: bool,
+    /// Print a run of more than `MAX_EXPANDED_HOLE_RUN` array holes as one
+    /// `N x empty items` line. Off for snapshots, whose bytes are a file format.
+    pub(crate) collapse_hole_runs: bool,
 }
 
 impl JestPrettyFormat {
     pub(crate) fn format<W: bun_io::Write>(
-        level: MessageLevel,
         global: &JSGlobalObject,
         vals: &[JSValue],
         len: usize,
@@ -119,7 +113,7 @@ impl JestPrettyFormat {
         let result = {
             let mut bridge = AsFmt::new(&mut *writer);
             let mut adapted = bun_io::write::FmtAdapter::new(&mut bridge);
-            Self::format_adapted(level, global, vals, len, &mut adapted, options)
+            Self::format_adapted(global, vals, len, &mut adapted, options)
         };
         // `FmtAdapter::flush` can't reach `writer`; do the requested flush here.
         if flush {
@@ -129,7 +123,6 @@ impl JestPrettyFormat {
     }
 
     fn format_adapted(
-        level: MessageLevel,
         global: &JSGlobalObject,
         vals: &[JSValue],
         len: usize,
@@ -146,20 +139,11 @@ impl JestPrettyFormat {
         if len == 1 {
             fmt = Formatter::new(global);
             fmt.quote_strings = options.quote_strings;
+            fmt.collapse_hole_runs = options.collapse_hole_runs;
             let tag = Tag::get(vals[0], global)?;
 
             if tag.tag == Tag::String {
-                if options.enable_colors {
-                    if level == MessageLevel::Error {
-                        let _ = writer.write_all(pretty_fmt_const!(true, "<r><red>").as_bytes());
-                    }
-                    fmt.format::<W, true>(tag, writer, vals[0], global)?;
-                    if level == MessageLevel::Error {
-                        let _ = writer.write_all(pretty_fmt_const!(true, "<r>").as_bytes());
-                    }
-                } else {
-                    fmt.format::<W, false>(tag, writer, vals[0], global)?;
-                }
+                fmt.format::<W, false>(tag, writer, vals[0], global)?;
                 if options.add_newline {
                     let _ = writer.write_all(b"\n");
                 }
@@ -167,11 +151,7 @@ impl JestPrettyFormat {
                 // The flush must fire on `?` propagation too. Wrap the
                 // fallible body and flush before bubbling the result.
                 let result: JsResult<()> = (|| {
-                    if options.enable_colors {
-                        fmt.format::<W, true>(tag, writer, vals[0], global)?;
-                    } else {
-                        fmt.format::<W, false>(tag, writer, vals[0], global)?;
-                    }
+                    fmt.format::<W, false>(tag, writer, vals[0], global)?;
                     if options.add_newline {
                         let _ = writer.write_all(b"\n");
                     }
@@ -192,56 +172,29 @@ impl JestPrettyFormat {
         fmt = Formatter::new(global);
         fmt.remaining_values = &vals[..len][1..];
         fmt.quote_strings = options.quote_strings;
+        fmt.collapse_hole_runs = options.collapse_hole_runs;
 
         let result: JsResult<()> = (|| {
             let mut this_value: JSValue = vals[0];
             let mut tag: TagResult;
             let mut any = false;
-            if options.enable_colors {
-                if level == MessageLevel::Error {
-                    let _ = writer.write_all(pretty_fmt_const!(true, "<r><red>").as_bytes());
+            loop {
+                if any {
+                    let _ = writer.write_all(b" ");
                 }
-                loop {
-                    if any {
-                        let _ = writer.write_all(b" ");
-                    }
-                    any = true;
-
-                    tag = Tag::get(this_value, global)?;
-                    if tag.tag == Tag::String && !fmt.remaining_values.is_empty() {
-                        tag.tag = Tag::StringPossiblyFormatted;
-                    }
-
-                    fmt.format::<W, true>(tag, writer, this_value, global)?;
-                    if fmt.remaining_values.is_empty() {
-                        break;
-                    }
-
-                    this_value = fmt.remaining_values[0];
-                    fmt.remaining_values = &fmt.remaining_values[1..];
+                any = true;
+                tag = Tag::get(this_value, global)?;
+                if tag.tag == Tag::String && !fmt.remaining_values.is_empty() {
+                    tag.tag = Tag::StringPossiblyFormatted;
                 }
-                if level == MessageLevel::Error {
-                    let _ = writer.write_all(pretty_fmt_const!(true, "<r>").as_bytes());
-                }
-            } else {
-                loop {
-                    if any {
-                        let _ = writer.write_all(b" ");
-                    }
-                    any = true;
-                    tag = Tag::get(this_value, global)?;
-                    if tag.tag == Tag::String && !fmt.remaining_values.is_empty() {
-                        tag.tag = Tag::StringPossiblyFormatted;
-                    }
 
-                    fmt.format::<W, false>(tag, writer, this_value, global)?;
-                    if fmt.remaining_values.is_empty() {
-                        break;
-                    }
-
-                    this_value = fmt.remaining_values[0];
-                    fmt.remaining_values = &fmt.remaining_values[1..];
+                fmt.format::<W, false>(tag, writer, this_value, global)?;
+                if fmt.remaining_values.is_empty() {
+                    break;
                 }
+
+                this_value = fmt.remaining_values[0];
+                fmt.remaining_values = &fmt.remaining_values[1..];
             }
 
             if options.add_newline {
@@ -318,6 +271,7 @@ pub(crate) struct Formatter<'a> {
     pub(crate) failed: bool,
     pub(crate) estimated_line_length: usize,
     pub(crate) always_newline_scope: bool,
+    pub(crate) collapse_hole_runs: bool,
 }
 
 impl<'a> Formatter<'a> {
@@ -332,6 +286,7 @@ impl<'a> Formatter<'a> {
             failed: false,
             estimated_line_length: 0,
             always_newline_scope: false,
+            collapse_hole_runs: false,
         }
     }
 
@@ -406,21 +361,6 @@ pub(crate) enum Tag {
 }
 
 impl Tag {
-    pub(crate) fn is_primitive(self) -> bool {
-        matches!(
-            self,
-            Tag::String
-                | Tag::StringPossiblyFormatted
-                | Tag::Undefined
-                | Tag::Double
-                | Tag::Integer
-                | Tag::Null
-                | Tag::Boolean
-                | Tag::Symbol
-                | Tag::BigInt
-        )
-    }
-
     #[inline]
     pub(crate) const fn can_have_circular_references(self) -> bool {
         matches!(self, Tag::Array | Tag::Object | Tag::Map | Tag::Set)
@@ -1031,7 +971,125 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
     }
 }
 
+/// With `collapse_hole_runs`, a run of array holes longer than this prints as
+/// one `N x empty items` line. A shorter run keeps one `undefined` line per
+/// hole, so the work per run is bounded by this and not by the run's length.
+const MAX_EXPANDED_HOLE_RUN: u32 = 8;
+
+/// Where the array being printed stores its next element. The indices of the
+/// sparse map are copied and sorted once, when a long run of holes first
+/// reaches past the vector. Printing an element can run user code that
+/// changes the array. The copy then goes stale: an index stored after the
+/// copy was taken prints as part of a run of holes.
+#[derive(Default)]
+struct StoredIndices {
+    sparse: Option<Vec<u32>>,
+    pos: usize,
+}
+
+impl StoredIndices {
+    /// Smallest index in `from..len` that `array` stores, or `len`.
+    fn next(&mut self, array: JSValue, from: u32, len: u32) -> u32 {
+        if self.sparse.is_none() {
+            if let Some(index) = array.next_present_vector_index(from) {
+                return index.min(len);
+            }
+            // The vector holds nothing more, so only the sparse map can.
+            self.sparse = Some(array.sorted_sparse_indices(from, len));
+        }
+        let Some(sparse) = &self.sparse else { return len };
+        while sparse.get(self.pos).is_some_and(|&index| index < from) {
+            self.pos += 1;
+        }
+        sparse.get(self.pos).copied().unwrap_or(len)
+    }
+}
+
 impl<'a> Formatter<'a> {
+    /// Prints the run of array holes that starts at `start`. Returns the
+    /// index after the run and the element there, which is empty when the
+    /// run reaches `len`.
+    ///
+    /// A run of at most `MAX_EXPANDED_HOLE_RUN` holes prints one `undefined`
+    /// line per hole. A longer run prints one line, and its end comes from
+    /// the array's storage instead of a probe per index.
+    #[inline(never)]
+    fn print_hole_run<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer: &mut WrappedWriter<'_, W>,
+        array: JSValue,
+        start: u32,
+        len: u32,
+        stored: &mut StoredIndices,
+    ) -> JsResult<(u32, JSValue)> {
+        let mut element = JSValue::ZERO;
+        let mut i = start + 1;
+        while i < len && i - start <= MAX_EXPANDED_HOLE_RUN {
+            element = array.get_direct_index(self.global_this, i)?;
+            if !element.is_empty() {
+                break;
+            }
+            i += 1;
+        }
+        // Only a real JSArray has storage to ask. Anything else that was
+        // tagged as an array is probed index by index.
+        let has_storage = array.js_type().is_array();
+        while element.is_empty() && i < len {
+            if has_storage {
+                i = stored.next(array, i, len);
+                if i == len {
+                    break;
+                }
+            }
+            // A copied index can be gone by now. It is one more hole.
+            element = array.get_direct_index(self.global_this, i)?;
+            if element.is_empty() {
+                i += 1;
+            }
+        }
+
+        let run = i - start;
+        if run > MAX_EXPANDED_HOLE_RUN {
+            self.begin_array_item::<W, ENABLE_ANSI_COLORS>(writer, start);
+            writer.print(format_args!(
+                "{}{} x empty items{}",
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><d>"),
+                run,
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
+            ));
+            // What `run` lines of `undefined,` add, less this line's own comma.
+            // `Tag::Promise` breaks the line on this count, and both sides of a
+            // diff have to break it in the same place.
+            self.add_for_new_line((run as usize).saturating_mul(10) - 1);
+        } else {
+            for hole in start..i {
+                self.begin_array_item::<W, ENABLE_ANSI_COLORS>(writer, hole);
+                self.format::<W, ENABLE_ANSI_COLORS>(
+                    TagResult { tag: Tag::Undefined, ..Default::default() },
+                    writer.ctx,
+                    JSValue::UNDEFINED,
+                    self.global_this,
+                )?;
+            }
+        }
+        Ok((i, element))
+    }
+
+    /// The separator before the array item at `index`: the comma of the item
+    /// before it, then a new indented line.
+    #[inline]
+    fn begin_array_item<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer: &mut WrappedWriter<'_, W>,
+        index: u32,
+    ) {
+        if index > 0 {
+            self.print_comma::<W, ENABLE_ANSI_COLORS>(writer.ctx).expect("unreachable");
+        }
+        writer.write_all(b"\n");
+        self.write_indent(writer.ctx).expect("unreachable");
+    }
+
     pub(crate) fn print_as<W: bun_io::Write, const FORMAT: Tag, const ENABLE_ANSI_COLORS: bool>(
         &mut self,
         writer_: &mut W,
@@ -1397,7 +1455,6 @@ impl<'a> Formatter<'a> {
                         writer.write_all(b"\n");
                     }
 
-                    let mut was_good_time = self.always_newline_scope;
                     {
                         self.indent += 1;
 
@@ -1410,49 +1467,36 @@ impl<'a> Formatter<'a> {
                         // restored even when `Tag::get` / `format` throw. Wrap the fallible body in
                         // a closure and restore unconditionally afterward.
                         let inner: JsResult<()> = (|| {
-                            {
-                                let element = value.get_index(self.global_this, 0)?;
-                                let tag = Tag::get(element, self.global_this)?;
+                            self.reset_line();
+                            writer.write_all(b"[");
+                            self.add_for_new_line(1);
 
-                                was_good_time = was_good_time
-                                    || !tag.tag.is_primitive()
-                                    || self.good_time_for_a_new_line();
-
-                                self.reset_line();
-                                writer.write_all(b"[");
-                                writer.write_all(b"\n");
-                                self.write_indent(writer.ctx).expect("unreachable");
-                                self.add_for_new_line(1);
-
-                                self.format::<W, ENABLE_ANSI_COLORS>(
-                                    tag, writer.ctx, element, self.global_this,
-                                )?;
-
-                                if tag.cell.is_string_like() {
-                                    if ENABLE_ANSI_COLORS {
-                                        writer.write_all(
-                                            pretty_fmt_const!(true, "<r>").as_bytes(),
-                                        );
-                                    }
-                                }
-
-                                if len == 1 {
-                                    self.print_comma::<W, ENABLE_ANSI_COLORS>(writer.ctx)
-                                        .expect("unreachable");
-                                }
-                            }
-
-                            let mut i: u32 = 1;
+                            let mut stored = StoredIndices::default();
+                            let mut i: u32 = 0;
                             while i < len {
-                                self.print_comma::<W, ENABLE_ANSI_COLORS>(writer.ctx)
-                                    .expect("unreachable");
+                                let mut element = value.get_direct_index(self.global_this, i)?;
+                                if element.is_empty() {
+                                    if self.collapse_hole_runs {
+                                        (i, element) = self
+                                            .print_hole_run::<W, ENABLE_ANSI_COLORS>(
+                                                &mut writer,
+                                                value,
+                                                i,
+                                                len,
+                                                &mut stored,
+                                            )?;
+                                        if element.is_empty() {
+                                            break;
+                                        }
+                                    } else {
+                                        // A snapshot prints what `array[i]` reads for a hole:
+                                        // `undefined`, or what the prototype chain supplies.
+                                        element = value.get_index(self.global_this, i)?;
+                                    }
+                                }
 
-                                writer.write_all(b"\n");
-                                self.write_indent(writer.ctx).expect("unreachable");
-
-                                let element = value.get_index(self.global_this, i)?;
                                 let tag = Tag::get(element, self.global_this)?;
-
+                                self.begin_array_item::<W, ENABLE_ANSI_COLORS>(&mut writer, i);
                                 self.format::<W, ENABLE_ANSI_COLORS>(
                                     tag, writer.ctx, element, self.global_this,
                                 )?;
@@ -1463,14 +1507,11 @@ impl<'a> Formatter<'a> {
                                             pretty_fmt_const!(true, "<r>").as_bytes(),
                                         );
                                     }
-                                }
-
-                                if i == len - 1 {
-                                    self.print_comma::<W, ENABLE_ANSI_COLORS>(writer.ctx)
-                                        .expect("unreachable");
                                 }
                                 i += 1;
                             }
+                            self.print_comma::<W, ENABLE_ANSI_COLORS>(writer.ctx)
+                                .expect("unreachable");
                             Ok(())
                         })();
 

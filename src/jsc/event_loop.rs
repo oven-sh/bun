@@ -459,9 +459,7 @@ impl EventLoop {
         self.drain_microtasks_with_global(global, jsc_vm)
     }
 
-    /// Whether [`drain_microtasks`](Self::drain_microtasks) has anything to
-    /// do: a deferred task is registered, the VM is stopping, a termination is
-    /// pending, or a tick or a microtask is queued.
+    /// Whether [`drain_microtasks`](Self::drain_microtasks) would do anything.
     #[inline]
     pub fn has_checkpoint_work(&self) -> bool {
         !self.deferred_tasks.is_empty()
@@ -1129,17 +1127,9 @@ impl EventLoop {
     }
 
     /// [`auto_tick`](Self::auto_tick) for a caller blocked until `promise`
-    /// settles. A settled promise wakes nothing, and neither does a stop met
-    /// while script ran. So after the immediates this tick runs the microtask
-    /// checkpoint if it has work, and polls without parking once `promise` has
-    /// settled or the VM has stopped: the caller returns as soon as it does.
-    ///
-    /// The checkpoint has work there when the caller has the loop entered (it
-    /// is a callback, or runs in a microtask drain): the exits of the
-    /// immediates are then not outermost and checkpoint nothing, so their
-    /// microtasks and the flush of their buffered writes are still due. The
-    /// tail of the caller's `tick()` (an `unhandledRejection` handler) and an
-    /// immediate that throws leave microtasks too.
+    /// settles: runs the microtask checkpoint after the immediates and does
+    /// not park once `promise` has settled or the VM has stopped. See
+    /// "Nested waits" in `src/event_loop/README.md`.
     #[inline]
     pub fn auto_tick_waiting_on(&mut self, promise: jsc::AnyPromise) {
         self.vm_ref().as_mut().auto_tick_waiting_on(Some(promise));

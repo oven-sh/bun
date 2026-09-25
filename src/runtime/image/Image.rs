@@ -1107,12 +1107,12 @@ impl Image {
 
 impl Image {
     /// `Bun.write(dest, image)`: encode in the pipeline's output format and
-    /// write to the destination `Blob` the caller built. Resolves with bytes written.
-    pub(crate) fn write_to_blob(
+    /// write to the parsed destination. Resolves with bytes written.
+    pub(crate) fn write_to(
         &self,
         cx: &bun_jsc::JsThread<'_>,
         this_value: JSValue,
-        destination: Blob,
+        destination: PathOrBlob,
         options: &WriteFileOptions,
     ) -> JsResult<JSValue> {
         self.schedule(
@@ -1120,7 +1120,7 @@ impl Image {
             this_value,
             Kind::Encode(self.pipeline.get().output),
             Deliver::WriteDest {
-                dest: WriteDestination::Blob(Box::new(destination)),
+                dest: WriteDestination::Parsed(destination),
                 options: WriteOptions::root(cx.global(), options),
             },
         )
@@ -1534,13 +1534,13 @@ pub(crate) enum Deliver {
 }
 
 /// `Image.write(dest)` parses the JS value after the encode. `Bun.write(dest,
-/// image)` has already parsed it into a file or S3 `Blob`.
+/// image)` has already parsed it.
 pub(crate) enum WriteDestination {
     Js(Strong),
-    Blob(Box<Blob>),
+    Parsed(PathOrBlob),
 }
-// SAFETY: a `Strong`, or a file/S3 `Blob` view built on this thread whose
-// `Drop` only releases atomic refcounts.
+// SAFETY: a `Strong`, or an owned path / a `Blob` view whose `Drop` only
+// releases atomic refcounts.
 unsafe impl bun_jsc::job::JsAffine for WriteDestination {}
 
 /// `WriteFileOptions` rooted across the encode job.
@@ -1954,7 +1954,7 @@ impl PipelineTask {
                             Err(e) => return promise.reject(global, Err(e)),
                         };
                         let mut path_or_blob = match dest {
-                            WriteDestination::Blob(blob) => PathOrBlob::Blob(blob),
+                            WriteDestination::Parsed(path_or_blob) => path_or_blob,
                             WriteDestination::Js(dest_js) => {
                                 // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachine`
                                 // valid for the JS thread; `ArgumentsSlice::init` wants `&`.

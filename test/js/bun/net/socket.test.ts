@@ -3752,10 +3752,12 @@ Reo=
   });
 
   // Starts a relay in front of `port` that holds the server's flight until
-  // the client's FIN arrived, and never closes the connection by itself.
+  // the client's FIN arrived, and never closes a connection by itself.
   async function relayHoldingServerFlight(port: number) {
+    const relayed: net.Socket[] = [];
     const relay = net.createServer({ allowHalfOpen: true }, downstream => {
       const upstream = net.connect({ port, host: "127.0.0.1", allowHalfOpen: true });
+      relayed.push(downstream, upstream);
       const held: Buffer[] = [];
       let sawClientFin = false;
       downstream.on("data", data => upstream.write(data));
@@ -3770,7 +3772,13 @@ Reo=
       upstream.on("close", () => downstream.destroy());
     });
     await once(relay.listen(0, "127.0.0.1"), "listening");
-    return relay;
+    return {
+      port: (relay.address() as net.AddressInfo).port,
+      close() {
+        for (const socket of relayed) socket.destroy();
+        relay.close();
+      },
+    };
   }
 
   // A sent FIN says nothing about the peer's certificate, and the socket keeps
@@ -3804,29 +3812,11 @@ Reo=
           tls: trusted ? { key: SERVER_KEY, cert: SERVER_CRT } : { key: ROGUE_KEY, cert: ROGUE_CRT },
           socket: { open() {}, handshake() {}, data() {}, close() {}, error() {} },
         });
-        // Holds the server's flight until the client's FIN arrived.
-        const relayed: net.Socket[] = [];
-        const relay = net.createServer({ allowHalfOpen: true }, downstream => {
-          const upstream = net.connect({ port: server.port, host: "127.0.0.1", allowHalfOpen: true });
-          relayed.push(downstream, upstream);
-          const held: Buffer[] = [];
-          let sawClientFin = false;
-          downstream.on("data", data => upstream.write(data));
-          downstream.on("end", () => {
-            sawClientFin = true;
-            for (const data of held.splice(0)) downstream.write(data);
-          });
-          upstream.on("data", data => (sawClientFin ? downstream.write(data) : held.push(data)));
-          downstream.on("error", () => {});
-          upstream.on("error", () => {});
-          downstream.on("close", () => upstream.destroy());
-          upstream.on("close", () => downstream.destroy());
-        });
-        await once(relay.listen(0, "127.0.0.1"), "listening");
+        const relay = await relayHoldingServerFlight(server.port);
         try {
           using _client = await Bun.connect({
             hostname: "127.0.0.1",
-            port: (relay.address() as net.AddressInfo).port,
+            port: relay.port,
             tls: { ca: CA_CRT, serverName: "localhost", rejectUnauthorized: false },
             socket: {
               // The ClientHello leaves when `open` returns.
@@ -3865,7 +3855,6 @@ Reo=
                 },
           );
         } finally {
-          for (const socket of relayed) socket.destroy();
           relay.close();
         }
         await closed.promise;
@@ -3985,7 +3974,7 @@ Reo=
         const closed = Promise.withResolvers<void>();
         await Bun.connect({
           hostname: "127.0.0.1",
-          port: (relay.address() as net.AddressInfo).port,
+          port: relay.port,
           tls: { ca: CA_CRT, serverName: "localhost", rejectUnauthorized: false },
           socket: {
             open(socket) {
@@ -4055,7 +4044,10 @@ Reo=
           },
         });
         const raw = net.connect({ port: server.port, host: "127.0.0.1", allowHalfOpen: true });
-        raw.on("error", () => {});
+        raw.on("error", err => {
+          handshake.reject(err);
+          serverClosed.reject(err);
+        });
         const held: Buffer[] = [];
         let sawServerFin = false;
         let sentClientHello = false;
@@ -4268,7 +4260,7 @@ Reo=
       const handshake = Promise.withResolvers<string>();
       using _client = await Bun.connect({
         hostname: "127.0.0.1",
-        port: (relay.address() as net.AddressInfo).port,
+        port: relay.port,
         tls: { ca: CA_CRT, serverName: "localhost", rejectUnauthorized: false },
         socket: {
           open(socket) {

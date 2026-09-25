@@ -58,8 +58,7 @@ describe("bun test", () => {
     });
     expect(stderr).toContain(path);
   });
-  // This fails on macOS because /private/var symlinks to /var
-  test.todo("can provide an absolute file", () => {
+  test("can provide an absolute file", () => {
     const path = join("path", "to", "absolute.test.ts");
     const cwd = createTest(
       `
@@ -95,7 +94,7 @@ describe("bun test", () => {
     });
     expect(stderr).toContain(dir);
   });
-  test.todo("can provide an absolute directory", () => {
+  test("can provide an absolute directory", () => {
     const path = join("path", "to", "absolute.test.ts");
     const cwd = createTest(
       `

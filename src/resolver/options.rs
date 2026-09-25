@@ -167,6 +167,7 @@ pub struct Framework {
 pub struct BundleOptions {
     pub target: Target,
     pub packages: Packages,
+    /// User configuration only; each resolved file's tsconfig is merged over it.
     pub jsx: jsx::Pragma,
     pub extension_order: ExtensionOrder,
     pub conditions: Conditions,

@@ -7533,7 +7533,7 @@ fn is_error_like(global_object: &JSGlobalObject, reason: JSValue) -> JsResult<bo
 /// rejection itself throws (a hostile Proxy under isErrorLike, an OOM resolving a rope), that failure does not
 /// replace the thing being reported: the rejection is the user's bug, so it is reported as-is — unless what was
 /// thrown is a termination, which has to win.
-fn unhandled_rejection_as_uncaught_error(
+pub(crate) fn unhandled_rejection_as_uncaught_error(
     global_object: &JSGlobalObject,
     reason: JSValue,
 ) -> JSValue {

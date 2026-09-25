@@ -5437,7 +5437,10 @@ declare module "bun" {
      * `process.on("uncaughtException")` listener is. `origin` is
      * `"uncaughtException"`, or `"unhandledRejection"` for an unhandled
      * rejection of a graph that has no
-     * {@link ModuleGraphOptions.unhandledRejection | unhandledRejection}.
+     * {@link ModuleGraphOptions.unhandledRejection | unhandledRejection}. As
+     * in Node.js, `error` is then the reason if that is an error, and
+     * otherwise an error with the code `ERR_UNHANDLED_REJECTION` that names
+     * it.
      *
      * An error is the graph's when it happens in the graph's context, whoever
      * wrote the code that threw: the graph's modules and what they start, and

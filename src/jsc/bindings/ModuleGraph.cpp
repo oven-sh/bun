@@ -183,6 +183,8 @@ JSModuleGraph* moduleGraphRejecting(Zig::GlobalObject* globalObject)
 
 // ─── uncaughtException, unhandledRejection ───────────────────────────────────────────
 
+extern "C" EncodedJSValue Bun__unhandledRejectionAsUncaughtError(JSGlobalObject*, EncodedJSValue reason);
+
 // options.unhandledRejection(reason, promise), or options.uncaughtException(error, origin) with Node's
 // origins ("uncaughtException", "unhandledRejection"). `promise`: the rejected one, or empty.
 static bool deliverToHandler(Zig::GlobalObject* globalObject, JSModuleGraph* graph, GraphError kind, JSValue error, JSValue promise)
@@ -193,14 +195,23 @@ static bool deliverToHandler(Zig::GlobalObject* globalObject, JSModuleGraph* gra
     VM& vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     MarkedArgumentBuffer args;
-    args.append(error);
     JSObject* handler;
     if (kind == GraphError::UnhandledRejection && graph->unhandledRejectionHandler()) {
         handler = graph->unhandledRejectionHandler();
+        args.append(error);
         args.append(promise ? promise : jsUndefined());
+    } else if (kind == GraphError::UnhandledRejection) {
+        handler = graph->uncaughtExceptionHandler();
+        // As the process's uncaughtException is: a reason that is not an error is named by one.
+        JSValue asError = JSValue::decode(Bun__unhandledRejectionAsUncaughtError(globalObject, JSValue::encode(error)));
+        if (auto* exception = dynamicDowncast<JSC::Exception>(asError); exception && vm.isTerminationException(exception)) [[unlikely]]
+            return true;
+        args.append(asError);
+        args.append(jsNontrivialString(vm, "unhandledRejection"_s));
     } else {
         handler = graph->uncaughtExceptionHandler();
-        args.append(jsNontrivialString(vm, kind == GraphError::UnhandledRejection ? "unhandledRejection"_s : "uncaughtException"_s));
+        args.append(error);
+        args.append(jsNontrivialString(vm, "uncaughtException"_s));
     }
     // The handler is its maker's: it runs in the context the graph was made in (the host's, or the
     // enclosing graph's), so what it throws, rejects or starts is that context's.

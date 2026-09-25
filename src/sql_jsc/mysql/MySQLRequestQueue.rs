@@ -173,8 +173,7 @@ impl MySQLRequestQueue {
                     debug!("run failed");
                     // R-2: `on_error` takes `&self`.
                     conn_ref.on_error(Some(req.get()), err);
-                    // `on_error` completed the request before it ran any JS,
-                    // so the branch for a completed request retires it.
+                    // `on_error` completed the request: the branch above retires it.
                     continue;
                 }
                 if req.is_being_prepared() {

@@ -137,7 +137,8 @@ pub struct PostgresSQLConnection {
     // so `vm_mut()`'s `&mut *as_ptr()` is sound.
     pub(crate) vm: BackRef<VirtualMachine>,
     pub(crate) statements: JsCell<PreparedStatementsMap>,
-    pub(crate) prepared_statement_id: Cell<u64>,
+    // Private: an id names one statement. Reach via `take_prepared_statement_id()`.
+    prepared_statement_id: Cell<u64>,
     pub(crate) pending_activity_count: AtomicU32,
     // Self-wrapper back-ref (the JS object that owns this payload). Stored as a
     // weak `JsRef`, never a bare `JSValue` — this struct is heap-allocated and
@@ -1662,6 +1663,14 @@ impl PostgresSQLConnection {
         let n = self.pending_requests.get();
         debug_assert!(n > 0, "pending_requests underflow");
         self.pending_requests.set(n.wrapping_sub(1));
+    }
+
+    /// The id for the name of a new prepared statement. No two calls return the same id.
+    #[inline]
+    pub(crate) fn take_prepared_statement_id(&self) -> u64 {
+        let id = self.prepared_statement_id.get();
+        self.prepared_statement_id.set(id + 1);
+        id
     }
 
     pub(crate) fn can_pipeline(&self) -> bool {

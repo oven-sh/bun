@@ -451,6 +451,8 @@ bun pm pkg get scripts.build                      # nested property
 bun pm pkg set name="my-package"                  # simple property
 bun pm pkg set scripts.test="jest" version=2.0.0  # multiple properties
 bun pm pkg set private=true --json                # JSON values with --json flag
+bun pm pkg set 'keywords[]=cli'                   # append to an array (created if missing)
+bun pm pkg set 'contributors[0].name=Jane'        # update an array element
 
 # delete
 bun pm pkg delete description                     # single property

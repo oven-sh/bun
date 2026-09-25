@@ -770,31 +770,29 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     const connectionInfo = this.connectionInfo;
     const poolClosedSlotBeforeOnconnect =
       this.onFinish !== null && !(this.flags & PooledConnectionFlags.onConnectFired);
-    try {
-      // user code; a throw must not abort the pool bookkeeping below
-      if (!poolClosedSlotBeforeOnconnect && connectionInfo?.onclose) {
-        AsyncContextFrame.run(this.adapter.callbackAsyncContext, connectionInfo.onclose, connectionInfo, err);
-      }
-    } finally {
-      this.state = PooledConnectionState.closed;
-      this.storedError = err;
+    this.state = PooledConnectionState.closed;
+    this.storedError = err;
 
-      // remove from ready connections if its there
-      this.adapter.readyConnections.delete(this);
-      const queries = new Set(this.queries);
-      this.queries?.clear?.();
-      this.flags &= ~PooledConnectionFlags.reserved;
+    // remove from ready connections if its there
+    this.adapter.readyConnections.delete(this);
+    const queries = new Set(this.queries);
+    this.queries?.clear?.();
+    this.flags &= ~PooledConnectionFlags.reserved;
 
-      // notify all queries that the connection is closed
-      for (const onClose of queries) {
-        onClose(err);
-      }
-      const onFinish = this.onFinish;
-      if (onFinish) {
-        onFinish(err);
-      }
+    // notify all queries that the connection is closed
+    for (const onClose of queries) {
+      onClose(err);
+    }
+    const onFinish = this.onFinish;
+    if (onFinish) {
+      onFinish(err);
+    }
 
-      this.adapter.release(this, true);
+    this.adapter.release(this, true);
+
+    // user code runs last: it can re-enter the pool and redial this slot, so nothing may follow it
+    if (!poolClosedSlotBeforeOnconnect && connectionInfo?.onclose) {
+      AsyncContextFrame.run(this.adapter.callbackAsyncContext, connectionInfo.onclose, connectionInfo, err);
     }
   }
 
@@ -921,9 +919,8 @@ async function createPooledConnectionHandle<ConnectionHandle>(
       !!allowPublicKeyRetrieval,
     );
   } catch (e) {
-    // defer so the callback never runs while the adapter is still filling
-    // this.connections (it scans that array)
-    process.nextTick(closeNT, onClose, e);
+    // setImmediate: the pool can still be starting, and an onclose that dials again must not starve the event loop
+    setImmediate(closeNT, onClose, e);
     return null;
   }
 }

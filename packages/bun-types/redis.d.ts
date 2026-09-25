@@ -48,7 +48,10 @@ declare module "bun" {
            * chain is verified, and not at all with `rejectUnauthorized: false`.
            * @param hostname The name the certificate is expected to match
            * @param cert The server's certificate, with its issuers in `issuerCertificate`
-           * @returns `undefined` to accept the server. An `Error`, or any other truthy value, refuses it
+           * @returns An error if the server is unauthorized, otherwise undefined. Any
+           * other truthy value also fails the connection, and a `Promise` is one: the
+           * function cannot be `async`. Every falsy value approves the certificate, as
+           * in Node, so `false` does not reject it.
            */
           checkServerIdentity?: NonNullable<import("node:tls").ConnectionOptions["checkServerIdentity"]> | undefined;
         });

@@ -214,21 +214,29 @@ pub fn check_with_callback(
         callback.call(global, JSValue::UNDEFINED, &[js_hostname, js_cert])
     };
     let result = result.map_err(|e| global.take_exception(e))?;
-    if result.is_any_error() {
-        return Err(result);
+    verdict_of(global, result)
+}
+
+/// What a `tls.checkServerIdentity` function decided, from the value it returned. `Err` is the reason it refused the server.
+pub fn verdict_of(global: &JSGlobalObject, returned: JSValue) -> Result<(), JSValue> {
+    // > Returns <Error> object [...] on failure
+    // Any object counts: a DOMException or a util.inherits() error is not an ErrorInstance cell.
+    if returned.is_object() && returned.as_any_promise().is_none() {
+        return Err(returned);
     }
-    // Node refuses the peer for every truthy value: a Promise from an `async` callback must not accept it.
-    if result.to_boolean() {
-        let received = JSGlobalObject::determine_specific_type(global, result)
+    // Like Node, fail on any other truthy value, a Promise included: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1671-L1688
+    if returned.to_boolean() {
+        let received = JSGlobalObject::determine_specific_type(global, returned)
             .map_err(|e| global.take_exception(e))?;
         return Err(global
             .err(
                 ErrorCode::INVALID_RETURN_VALUE,
                 format_args!(
-                    "Expected undefined or an instance of Error to be returned from the \"tls.checkServerIdentity\" function but got {received}."
+                    "Expected undefined or an Error to be returned from the \"tls.checkServerIdentity\" function but got {received}."
                 ),
             )
             .to_js());
     }
+    // > On success, returns <undefined>
     Ok(())
 }

@@ -308,8 +308,16 @@ describe.each([
       expect({ name: err?.name, code: err?.code, message: err?.message }).toEqual({
         name: "TypeError",
         code: "ERR_INVALID_RETURN_VALUE",
-        message: `Expected undefined or an instance of Error to be returned from the "tls.checkServerIdentity" function but got ${received}.`,
+        message: `Expected undefined or an Error to be returned from the "tls.checkServerIdentity" function but got ${received}.`,
       });
+    });
+  });
+
+  test("an object that tls.checkServerIdentity returns is the reason the connection fails", async () => {
+    await withServer(localhost, async server => {
+      // Not an Error instance: the same rule as fetch() and node:tls.
+      const reason = { code: "PIN_MISMATCH" };
+      expect(await connect(server.url, { ca: localhost.ca, checkServerIdentity: (() => reason) as any })).toBe(reason);
     });
   });
 

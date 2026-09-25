@@ -431,7 +431,7 @@ describe("RedisClient tls.checkServerIdentity", () => {
       expect({ name: err?.name, code: err?.code, message: err?.message }).toEqual({
         name: "TypeError",
         code: "ERR_INVALID_RETURN_VALUE",
-        message: `Expected undefined or an instance of Error to be returned from the "tls.checkServerIdentity" function but got ${received}.`,
+        message: `Expected undefined or an Error to be returned from the "tls.checkServerIdentity" function but got ${received}.`,
       });
     });
   });

@@ -1249,28 +1249,7 @@ impl FetchTasklet {
             Err(e) => return Err(Some(global_object.take_exception(e))),
         };
 
-        // > Returns <Error> object [...] on failure
-        // Any object counts: a DOMException or a util.inherits() error is not an ErrorInstance cell.
-        if check_result.is_object() && check_result.as_any_promise().is_none() {
-            return Err(Some(check_result));
-        }
-        // Like Node, fail on any other truthy value, a Promise included: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1671-L1688
-        if check_result.to_boolean() {
-            let received = JSGlobalObject::determine_specific_type(&global_object, check_result)
-                .map_err(|e| Some(global_object.take_exception(e)))?;
-            return Err(Some(
-                global_object
-                    .err(
-                        jsc::ErrorCode::INVALID_RETURN_VALUE,
-                        format_args!(
-                            "Expected undefined or an Error to be returned from the \"tls.checkServerIdentity\" function but got {received}."
-                        ),
-                    )
-                    .to_js(),
-            ));
-        }
-        // > On success, returns <undefined>
-        Ok(())
+        jsc::tls_server_identity::verdict_of(&global_object, check_result).map_err(Some)
     }
 
     /// Fail the request for a rejected certificate. Returns whether it may proceed.

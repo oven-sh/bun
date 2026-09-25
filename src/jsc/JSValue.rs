@@ -2593,6 +2593,53 @@ impl JSValue {
             index => Some(index as u32),
         }
     }
+    /// The vector-storage half of `next_present_index`: the smallest index
+    /// `>= start` that the array's butterfly vector holds. Never reads the
+    /// sparse map, so asking once per run of holes stays linear in what the
+    /// array stores.
+    /// Asserts `self` is a `JSArray` (`Array` or `DerivedArray`).
+    pub fn next_present_vector_index(self, start: u32) -> Option<u32> {
+        debug_assert!(self.is_cell() && self.js_type().is_array());
+        unsafe extern "C" {
+            safe fn Bun__JSArray__nextPresentVectorIndex(this: JSValue, start: u32) -> u64;
+        }
+        match Bun__JSArray__nextPresentVectorIndex(self, start) {
+            u64::MAX => None,
+            index => Some(index as u32),
+        }
+    }
+    /// The indices in `start..end` that the array's sparse map holds,
+    /// ascending. The map is walked and sorted once, like JSC's
+    /// `getOwnIndexedPropertyNames`. The result is a copy: it stays valid, and
+    /// goes stale, when user code changes the array later.
+    /// Asserts `self` is a `JSArray` (`Array` or `DerivedArray`).
+    pub fn sorted_sparse_indices(self, start: u32, end: u32) -> Vec<u32> {
+        use bun_core::UnwrapOrOom as _;
+        debug_assert!(self.is_cell() && self.js_type().is_array());
+        unsafe extern "C" {
+            fn Bun__JSArray__copySortedSparseIndices(
+                this: JSValue,
+                start: u32,
+                end: u32,
+                out: *mut u32,
+                capacity: u32,
+            ) -> u32;
+        }
+        let mut out: Vec<u32> = Vec::new();
+        loop {
+            let capacity = u32::try_from(out.capacity()).unwrap_or(u32::MAX);
+            // SAFETY: `out` has room for `capacity` u32s and C++ writes at most that many.
+            let count = unsafe {
+                Bun__JSArray__copySortedSparseIndices(self, start, end, out.as_mut_ptr(), capacity)
+            };
+            if count <= capacity {
+                // SAFETY: C++ initialized the first `count <= capacity` elements.
+                unsafe { out.set_len(count as usize) };
+                return out;
+            }
+            out.try_reserve_exact(count as usize).unwrap_or_oom();
+        }
+    }
     /// `JSValue.getNameProperty` — the value's `.name` (function/class
     /// name). Empty for empty/`undefined`/`null`.
     pub fn get_name_property(self, global: &JSGlobalObject) -> JsResult<bun_core::String> {

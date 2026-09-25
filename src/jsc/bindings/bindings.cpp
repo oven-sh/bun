@@ -7103,22 +7103,16 @@ extern "C" bool Bun__JSArray__contiguousVectorIsStillValid(
     return reinterpret_cast<const JSC::EncodedJSValue*>(butterfly->contiguous().data()) == expected;
 }
 
-// Smallest own present index of a JSArray that is >= `start`, or UINT64_MAX
-// when every index from `start` to the end of the array is a hole. Mirrors the
-// butterfly walk in JSObject::getOwnIndexedPropertyNames so the caller can skip
-// a run of holes without probing each index of a huge sparse array.
-extern "C" uint64_t Bun__JSArray__nextPresentIndex(
-    JSC::EncodedJSValue encodedValue,
-    uint32_t start)
+static constexpr uint64_t noPresentIndex = std::numeric_limits<uint64_t>::max();
+
+// Smallest index >= `start` whose slot in the array's vector storage holds a
+// value, or noPresentIndex. Does not read an ArrayStorage array's sparse map.
+static uint64_t nextPresentVectorIndex(JSC::JSArray* array, uint32_t start)
 {
-    static constexpr uint64_t notFound = std::numeric_limits<uint64_t>::max();
-
-    JSC::JSArray* array = uncheckedDowncast<JSC::JSArray>(JSC::JSValue::decode(encodedValue).asCell());
-
     switch (array->indexingType()) {
     case ALL_BLANK_INDEXING_TYPES:
     case ALL_UNDECIDED_INDEXING_TYPES:
-        return notFound;
+        return noPresentIndex;
 
     case ALL_INT32_INDEXING_TYPES:
     case ALL_CONTIGUOUS_INDEXING_TYPES: {
@@ -7128,7 +7122,7 @@ extern "C" uint64_t Bun__JSArray__nextPresentIndex(
             if (butterfly->contiguous().at(array, i))
                 return i;
         }
-        return notFound;
+        return noPresentIndex;
     }
 
     case ALL_DOUBLE_INDEXING_TYPES: {
@@ -7142,7 +7136,7 @@ extern "C" uint64_t Bun__JSArray__nextPresentIndex(
             if (value == value)
                 return i;
         }
-        return notFound;
+        return noPresentIndex;
     }
 
     case ALL_ARRAY_STORAGE_INDEXING_TYPES: {
@@ -7152,21 +7146,87 @@ extern "C" uint64_t Bun__JSArray__nextPresentIndex(
             if (storage->m_vector[i])
                 return i;
         }
-
-        uint64_t result = notFound;
-        if (JSC::SparseArrayValueMap* map = storage->m_sparseMap.get()) {
-            for (const auto& entry : *map) {
-                if (entry.index() >= start && entry.index() < result)
-                    result = entry.index();
-            }
-        }
-        return result;
+        return noPresentIndex;
     }
 
     default:
         ASSERT_NOT_REACHED();
         return start;
     }
+}
+
+static JSC::SparseArrayValueMap* sparseMapOf(JSC::JSArray* array)
+{
+    if (!hasAnyArrayStorage(array->indexingType()))
+        return nullptr;
+    return array->butterfly()->arrayStorage()->m_sparseMap.get();
+}
+
+// Smallest own present index of a JSArray that is >= `start`, or UINT64_MAX
+// when every index from `start` to the end of the array is a hole. Mirrors the
+// butterfly walk in JSObject::getOwnIndexedPropertyNames so the caller can skip
+// a run of holes without probing each index of a huge sparse array.
+//
+// Walks the whole sparse map on every call. A caller that asks once per run of
+// holes with no bound on the runs uses Bun__JSArray__nextPresentVectorIndex and
+// Bun__JSArray__copySortedSparseIndices instead.
+extern "C" uint64_t Bun__JSArray__nextPresentIndex(
+    JSC::EncodedJSValue encodedValue,
+    uint32_t start)
+{
+    JSC::JSArray* array = uncheckedDowncast<JSC::JSArray>(JSC::JSValue::decode(encodedValue).asCell());
+
+    uint64_t result = nextPresentVectorIndex(array, start);
+    if (result != noPresentIndex)
+        return result;
+
+    if (JSC::SparseArrayValueMap* map = sparseMapOf(array)) {
+        for (const auto& entry : *map) {
+            if (entry.index() >= start && entry.index() < result)
+                result = entry.index();
+        }
+    }
+    return result;
+}
+
+// The vector-storage half of Bun__JSArray__nextPresentIndex.
+extern "C" uint64_t Bun__JSArray__nextPresentVectorIndex(
+    JSC::EncodedJSValue encodedValue,
+    uint32_t start)
+{
+    JSC::JSArray* array = uncheckedDowncast<JSC::JSArray>(JSC::JSValue::decode(encodedValue).asCell());
+    return nextPresentVectorIndex(array, start);
+}
+
+// Copies the indices in [start, end) that the array's sparse map holds into
+// `out`, ascending, the way JSObject::getOwnIndexedPropertyNames sorts them
+// once. Returns how many there are. When that is more than `capacity`, `out`
+// is incomplete and unsorted.
+extern "C" uint32_t Bun__JSArray__copySortedSparseIndices(
+    JSC::EncodedJSValue encodedValue,
+    uint32_t start,
+    uint32_t end,
+    uint32_t* out,
+    uint32_t capacity)
+{
+    JSC::JSArray* array = uncheckedDowncast<JSC::JSArray>(JSC::JSValue::decode(encodedValue).asCell());
+
+    JSC::SparseArrayValueMap* map = sparseMapOf(array);
+    if (!map)
+        return 0;
+
+    uint32_t count = 0;
+    for (const auto& entry : *map) {
+        uint32_t index = entry.index();
+        if (index < start || index >= end)
+            continue;
+        if (count < capacity)
+            out[count] = index;
+        ++count;
+    }
+    if (count <= capacity)
+        std::sort(out, out + count);
+    return count;
 }
 
 extern "C" void JSC__ArrayBuffer__ref(JSC::ArrayBuffer* self) { self->ref(); }

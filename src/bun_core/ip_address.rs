@@ -57,10 +57,19 @@ fn parse_zoned_ipv6(input: &[u8]) -> Option<(Ipv6Addr, &[u8])> {
 
 /// libuv's `uv_inet_pton` for either family, which Node.js reads an address with: `parse_strict`, or an IPv6 address up to the first `%`. The text is a C string there, so it ends at a NUL.
 pub fn parse_uv_inet_pton(input: &[u8]) -> Option<IpAddr> {
-    parse_strict(input).or_else(|| {
-        let text = crate::strings::split_once_char(input, 0).map_or(input, |(text, _)| text);
-        parse_strict(text).or_else(|| Some(IpAddr::V6(parse_zoned_ipv6(text)?.0)))
-    })
+    if let Some(ip) = parse_strict(input) {
+        return Some(ip);
+    }
+    let text = match crate::strings::split_once_char(input, 0) {
+        Some((text, _)) => {
+            if let Some(ip) = parse_strict(text) {
+                return Some(ip);
+            }
+            text
+        }
+        None => input,
+    };
+    Some(IpAddr::V6(parse_zoned_ipv6(text)?.0))
 }
 
 /// An IPv6 host with a zone id. Node.js's `net.isIP` takes the zone only when it is one or more of letters, digits, `-`, `.` and `:`.
@@ -73,7 +82,7 @@ pub fn parse_zoned_ipv6_host(host: &[u8]) -> Option<Ipv6Addr> {
     is_zone_id.then_some(address)
 }
 
-/// Whether Node.js's `net.isIP` takes `host`: `is_ip_address`, or `parse_zoned_ipv6_host`. A TLS client matches such a host on the IP SANs of the certificate and sends no SNI for it (RFC 6066).
+/// Whether Node.js's `net.isIP` takes `host`: `is_ip_address`, or `parse_zoned_ipv6_host`. The TLS name check matches such a host on the IP SANs of the certificate, and RFC 6066 takes no such host as SNI.
 pub fn is_ip_host(host: &[u8]) -> bool {
     is_ip_address(host) || parse_zoned_ipv6_host(host).is_some()
 }

@@ -534,7 +534,36 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub(crate) fn get_url_as_string(&self) -> Result<bun_core::String, bun_alloc::AllocError> {
         use bun_core::fmt::{URLFormatter, URLProto};
         use std::io::Write as _;
+        let mut adopted_host = [0u8; 64];
+        let adopted_unix_path: Vec<u8>;
         let fmt = match &self.config.address {
+            server_config::Address::Fd { unix: true, .. } => {
+                adopted_unix_path = self.adopted_unix_path();
+                match adopted_unix_path.as_slice() {
+                    [0, name @ ..] if !name.is_empty() => URLFormatter {
+                        proto: URLProto::Abstract,
+                        hostname: Some(name),
+                        port: None,
+                    },
+                    path => URLFormatter {
+                        proto: URLProto::Unix,
+                        hostname: (!path.is_empty()).then_some(path),
+                        port: None,
+                    },
+                }
+            }
+            server_config::Address::Fd { unix: false, .. } => URLFormatter {
+                proto: if SSL { URLProto::Https } else { URLProto::Http },
+                hostname: self.adopted_host(&mut adopted_host),
+                port: Some(
+                    self.listener
+                        // S012: `app::ListenSocket<SSL>` is a ZST opaque, so the deref is safe.
+                        .and_then(|listener| {
+                            bun_opaque::opaque_deref_mut(listener).get_local_port()
+                        })
+                        .unwrap_or(0),
+                ),
+            },
             server_config::Address::Unix(unix) => {
                 let unix = unix.as_bytes();
                 if unix.len() > 1 && unix[0] == 0 {
@@ -578,6 +607,62 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let mut buf = Vec::new();
         write!(&mut buf, "{}", fmt).map_err(|_| bun_alloc::AllocError)?;
         Ok(bun_core::String::clone_utf8(&buf))
+    }
+
+    /// The bound IP address as text. `None` for the wildcard address and for a socket with no IP address.
+    pub(crate) fn adopted_host<'a>(&self, text: &'a mut [u8; 64]) -> Option<&'a [u8]> {
+        use std::io::Write as _;
+        use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+        // S012: `app::ListenSocket<SSL>` is a ZST opaque, so the deref is safe.
+        let listener = bun_opaque::opaque_deref_mut(self.listener?);
+        let mut raw = [0u8; 16];
+        let ip: IpAddr = match listener.socket().local_address(&mut raw)? {
+            &[a, b, c, d] => Ipv4Addr::new(a, b, c, d).into(),
+            bytes => Ipv6Addr::from(<[u8; 16]>::try_from(bytes).ok()?).into(),
+        };
+        if ip.is_unspecified() {
+            return None;
+        }
+        let mut cursor = std::io::Cursor::new(&mut text[..]);
+        write!(cursor, "{ip}").ok()?;
+        let len = usize::try_from(cursor.position()).ok()?;
+        Some(&text[..len])
+    }
+
+    /// The bound path of an adopted unix socket. A leading NUL marks a Linux abstract socket.
+    pub(crate) fn adopted_unix_path(&self) -> Vec<u8> {
+        #[cfg(unix)]
+        {
+            let Some(listener) = self.listener else {
+                return Vec::new();
+            };
+            // S012: `app::ListenSocket<SSL>` is a ZST opaque, so the deref is safe.
+            let fd = bun_opaque::opaque_deref_mut(listener).socket().fd();
+            // SAFETY: `sockaddr_un` is plain C data; all-zero is a valid value.
+            let mut addr: libc::sockaddr_un = unsafe { bun_core::ffi::zeroed_unchecked() };
+            let mut len = core::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t;
+            // SAFETY: `addr` is valid for `len` bytes and both outlive the call.
+            let rc =
+                unsafe { libc::getsockname(fd.native(), (&raw mut addr).cast(), &raw mut len) };
+            if rc != 0 || c_int::from(addr.sun_family) != libc::AF_UNIX {
+                return Vec::new();
+            }
+            let path_len = (len as usize)
+                .saturating_sub(core::mem::offset_of!(libc::sockaddr_un, sun_path))
+                .min(addr.sun_path.len());
+            let mut path: Vec<u8> = addr.sun_path[..path_len].iter().map(|&c| c as u8).collect();
+            // An abstract name has no terminator. A path ends at the first NUL.
+            if path.first() != Some(&0) {
+                if let Some(end) = bun_core::strings::index_of_char_usize(&path, 0) {
+                    path.truncate(end);
+                }
+            }
+            path
+        }
+        #[cfg(not(unix))]
+        {
+            Vec::new()
+        }
     }
 
     /// Return the server's JS object, asserting that the weak ref is still
@@ -1759,7 +1844,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     let _ = bun_sys::unlink(path.as_zstr());
                 }
             }
-            server_config::Address::Tcp { .. } => {}
+            server_config::Address::Tcp { .. } | server_config::Address::Fd { .. } => {}
         }
 
         if !abrupt {
@@ -1998,6 +2083,56 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
     }
 
+    /// Listens on a descriptor that the caller bound. On failure the caller keeps the descriptor.
+    pub(crate) fn listen_fd(&mut self, app: *mut uws_sys::NewApp<SSL>, fd: i32) {
+        let global = self.global_this();
+        // Bun never closes descriptors 0 to 2, so a server on one of them owns a duplicate.
+        #[cfg(unix)]
+        let adopted = if fd <= 2 {
+            match bun_sys::dup_at_least(bun_sys::Fd::from_native(fd), 3) {
+                Ok(duplicate) => duplicate.native(),
+                Err(err) => {
+                    let err = jsc::SystemError::from(err.to_system_error());
+                    let _ = global.throw_value(err.to_error_instance(global));
+                    return;
+                }
+            }
+        } else {
+            fd
+        };
+        #[cfg(not(unix))]
+        let adopted = fd;
+
+        // SAFETY: `app` is the live uws handle that this server owns. The backlog is the one of `net.Server`.
+        match unsafe { (*app).listen_fd(adopted as uws_sys::LIBUS_SOCKET_DESCRIPTOR, 511, 0) } {
+            Ok(socket) => {
+                self.on_listen(Some(socket));
+                // S008: `app::ListenSocket<SSL>` is a ZST opaque, so the deref is safe.
+                let has_ip_address = bun_opaque::opaque_deref_mut(socket)
+                    .get_local_port()
+                    .is_some();
+                self.config.address.set_adopted_family(!has_ip_address);
+            }
+            Err(errno) => {
+                #[cfg(unix)]
+                if adopted != fd {
+                    bun_sys::FdExt::close(bun_sys::Fd::from_native(adopted));
+                }
+                let _ = global.throw_value(Self::listen_fd_error(global, fd, errno));
+            }
+        }
+    }
+
+    #[cold]
+    fn listen_fd_error(global: &JSGlobalObject, fd: i32, errno: c_int) -> JSValue {
+        jsc::SystemError::from(
+            bun_sys::Error::from_code_int(errno, bun_sys::Tag::listen)
+                .with_fd(bun_sys::Fd::from_uv(fd))
+                .to_system_error(),
+        )
+        .to_error_instance(global)
+    }
+
     /// Build the bind/listen failure as a `SystemError` (so JS sees
     /// `err.code`/`err.syscall`) and `globalThis.throwValue` it. The BoringSSL
     /// error-stack drain is still TODO; the EADDRINUSE/
@@ -2078,6 +2213,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     )
                     .to_error_instance(global),
                 }
+            }
+            // `listen_fd` reports its own failure, so no listen on a descriptor comes here.
+            server_config::Address::Fd { fd, .. } => {
+                Self::listen_fd_error(global, *fd, bun_sys::E::EINVAL as c_int)
             }
         };
 
@@ -2851,7 +2990,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
             }
             server_config::Address::Tcp { hostname: None, .. }
-            | server_config::Address::Unix(_) => {}
+            | server_config::Address::Unix(_)
+            | server_config::Address::Fd { .. } => {}
         }
 
         let app: *mut uws_sys::NewApp<SSL>;
@@ -3088,6 +3228,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         enum Addr {
             Tcp { port: u16, host: *const c_char },
             Unix { ptr: *const u8, len: usize },
+            Fd(i32),
         }
         let (addr, tcp, options) = {
             let cfg = &this_ref.get().config;
@@ -3111,11 +3252,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     ptr: unix.as_ptr().cast(),
                     len: unix.as_bytes().len(),
                 },
+                server_config::Address::Fd { fd, .. } => Addr::Fd(*fd),
             };
             (addr, cfg.http1 || cfg.http2, cfg.get_usockets_options())
         };
 
         match addr {
+            Addr::Fd(fd) => {
+                // SAFETY: `this` is the live boxed server from `init()`; no other borrow is live.
+                unsafe { (*this).listen_fd(app, fd) };
+            }
             Addr::Tcp { port, host } => {
                 // With `{port: 0, http3: true}` we bind TCP:0 (kernel picks N),
                 // then must bind UDP:N for QUIC so Alt-Svc works. UDP:N may

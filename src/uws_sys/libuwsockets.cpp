@@ -460,6 +460,16 @@ extern "C"
     }
   }
 
+  /* A descriptor that the caller already bound. Returns nullptr with the errno in *error. */
+  struct us_listen_socket_t *uws_app_listen_fd(int ssl, uws_app_t *app, LIBUS_SOCKET_DESCRIPTOR fd, int backlog, int options, int *error)
+  {
+    if (ssl)
+    {
+      return ((uWS::SSLApp *)app)->listen_fd(fd, backlog, options, error);
+    }
+    return ((uWS::App *)app)->listen_fd(fd, backlog, options, error);
+  }
+
   void uws_app_domain(int ssl, uws_app_t *app, const char *server_name)
   {
     if (ssl)

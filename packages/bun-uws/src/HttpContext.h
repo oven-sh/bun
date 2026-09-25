@@ -1163,6 +1163,12 @@ public:
         int error = 0;
         return unrefListenSocket(us_socket_group_listen_unix(&group, socketKind(), sslCtx, path, pathlen, options, socketExtSize(), &error));
     }
+
+    /* Listen on a descriptor that the caller already bound. On failure the caller keeps
+     * the descriptor and *error holds the errno. The descriptor can be a TCP socket. */
+    us_listen_socket_t *listen_fd(struct ssl_ctx_st *sslCtx, LIBUS_SOCKET_DESCRIPTOR fd, int backlog, int options, int *error) {
+        return unrefListenSocket(us_socket_group_listen_fd(&group, socketKind(), sslCtx, fd, backlog, tcpListenOptions(options), socketExtSize(), error));
+    }
 };
 
 }

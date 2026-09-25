@@ -625,20 +625,24 @@ describe("fs.watch", () => {
   // where every earlier event was delivered.
   async function eventsOfEachStep(root: string, options: fs.WatchOptions, steps: (() => void | Promise<void>)[]) {
     const events: string[] = [];
-    let sentinel: { name: string; resolve: () => void; reject: (err: unknown) => void } | undefined;
+    let sentinel: { name: string; resolve: () => void } | undefined;
+    const failed = Promise.withResolvers<never>();
+    // An error between two steps rejects the next wait.
+    failed.promise.catch(() => {});
     const watcher = fs.watch(root, options, (eventType, filename) => {
       events.push(`${eventType}:${filename}`);
       if (filename === sentinel?.name) sentinel.resolve();
     });
-    watcher.on("error", err => sentinel?.reject(err));
+    watcher.on("error", failed.reject);
+    watcher.on("close", () => failed.reject(new Error("the watcher closed")));
     try {
       const seen: string[][] = [];
       for (const [i, step] of steps.entries()) {
-        await step();
-        const { promise, resolve, reject } = Promise.withResolvers<void>();
-        sentinel = { name: `sentinel-${i}`, resolve, reject };
+        await Promise.race([step(), failed.promise]);
+        const { promise, resolve } = Promise.withResolvers<void>();
+        sentinel = { name: `sentinel-${i}`, resolve };
         fs.closeSync(fs.openSync(path.join(root, sentinel.name), "w"));
-        await promise;
+        await Promise.race([promise, failed.promise]);
         seen.push(events.splice(0).filter(event => !event.includes("sentinel-")));
       }
       return seen;

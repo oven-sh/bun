@@ -669,15 +669,6 @@ compile_error!("path_watcher: unsupported target");
 /// Linux: one inotify fd, one blocking reader thread, wd → {PathWatcher, subpath} map.
 /// Recursive watches are implemented by walking the tree at subscribe time and adding
 /// a wd per directory, then adding new subdirectories as they appear (IN_CREATE|IN_ISDIR).
-///
-/// What a recursive watch reports. Node's recursive watcher on Linux compares
-/// `stat()` results in JS and reports less (only `b` for `mv a b`), so these
-/// rules are not Node's:
-/// - an entry is reported under its path relative to the root;
-/// - a change to a subdirectory itself is reported once, by the wd of its parent;
-/// - each entry found in a new directory is reported as "rename". One created
-///   while the directory is walked can be reported twice;
-/// - a queue overflow is reported as `("change", null)`.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 #[derive(Default)]
 pub(crate) struct Linux {
@@ -1102,10 +1093,7 @@ impl Linux {
                         if ev.mask & (IN::ATTRIB | IN::MODIFY | IN::DELETE_SELF | IN::MOVE_SELF)
                             != 0
                         {
-                            // A change to the subdirectory itself. The wd of its
-                            // parent reports it under the name of the subdirectory.
-                            // The kernel sends no such twin for IN_UNMOUNT, or for
-                            // the root of a filesystem mounted inside the tree.
+                            // The wd of the parent reports it, under its name.
                             oi += 1;
                             continue;
                         }

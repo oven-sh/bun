@@ -569,6 +569,125 @@ describe.concurrent("native binlink altpath", () => {
   }
 });
 
+// A `file:` folder outside the project is installed as one symlink per file, so the
+// executable bit has to be set on the file behind the bin target. With a
+// nativeDependencies package that file belongs to whichever package the bin ends up
+// linked from: the platform package (installed from the cache) when the redirect
+// succeeds, the folder itself when the platform package has no bin file and the linker
+// retries without the redirect.
+//
+// POSIX-only: the Windows bin linker writes shims and never chmods anything.
+describe.concurrent.skipIf(isWindows)("symlink-installed nativeDependencies package", () => {
+  async function setup(local: {
+    name: string;
+    bin: Record<string, string>;
+    target: string;
+    files: Record<string, string>;
+  }) {
+    const { packageDir } = await verdaccio.createTestDir({
+      files: {
+        "app/package.json": JSON.stringify({
+          name: "test-app",
+          version: "1.0.0",
+          dependencies: { [local.name]: `file:../${local.name}` },
+          nativeDependencies: [local.name],
+        }),
+        [`${local.name}/package.json`]: JSON.stringify({
+          name: local.name,
+          version: "1.0.0",
+          bin: local.bin,
+          optionalDependencies: { [local.target]: "1.0.0" },
+        }),
+        ...Object.fromEntries(
+          Object.entries(local.files).map(([file, contents]) => [`${local.name}/${file}`, contents]),
+        ),
+      },
+    });
+    const appDir = join(packageDir, "app");
+    await verdaccio.writeBunfig(appDir, { linker: "hoisted" });
+    const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(appDir, ".bun-cache") };
+    env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(appDir, ".bun-tmp");
+
+    async function install(...args: string[]) {
+      await using proc = spawn({
+        cmd: [bunExe(), "install", ...args],
+        cwd: appDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    }
+
+    async function runBin(name: string) {
+      await using proc = spawn({
+        cmd: [join(appDir, "node_modules", ".bin", name)],
+        cwd: appDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { out: out.trim(), err, code };
+    }
+
+    return {
+      localDir: join(packageDir, local.name),
+      appDir,
+      binDir: join(appDir, "node_modules", ".bin"),
+      install,
+      runBin,
+    };
+  }
+
+  test("chmods the platform package's file in the cache when it is installed with --backend symlink", async () => {
+    const { localDir, appDir, binDir, install, runBin } = await setup({
+      name: "local-native-binlink",
+      bin: { "local-native-cmd": "bin/main.js" },
+      target: "test-native-binlink-target",
+      files: { "bin/main.js": `#!/usr/bin/env node\nconsole.log("FAIL: main package bin");\n` },
+    });
+
+    await install("--backend", "symlink");
+
+    // The bin is redirected into the platform package, whose files are symlinks into
+    // the cache; the cached `bin/main.js` is 0644 in the fixture tarball.
+    const cachedBin = readBinTarget(binDir, "local-native-cmd");
+    expect(cachedBin.startsWith(realpathSync(join(appDir, ".bun-cache")) + sep)).toBeTrue();
+    expect(cachedBin).toContain("test-native-binlink-target@1.0.0");
+    expect(cachedBin).toEndWith(join("bin", "main.js"));
+    expect(statSync(cachedBin).mode & 0o111).not.toBe(0);
+    // The folder's own bin was not linked, so it is left alone.
+    expect(statSync(join(localDir, "bin", "main.js")).mode & 0o111).toBe(0);
+
+    expect(await runBin("local-native-cmd")).toEqual({
+      out: "SUCCESS: Using platform-specific bin (test-native-binlink-target)",
+      err: "",
+      code: 0,
+    });
+  });
+
+  test("chmods the folder's own bin when the platform package has no bin file", async () => {
+    const { localDir, binDir, install, runBin } = await setup({
+      name: "local-native-fallback",
+      bin: { "local-fallback-cmd": "cli.js" },
+      target: "test-native-binlink-fallback-target",
+      files: { "cli.js": `#!/usr/bin/env node\nconsole.log("SUCCESS: Using main package bin");\n` },
+    });
+    const folderBin = join(localDir, "cli.js");
+    expect(statSync(folderBin).mode & 0o111).toBe(0);
+
+    await install();
+
+    expect(readBinTarget(binDir, "local-fallback-cmd")).toBe(realpathSync(folderBin));
+    expect(statSync(folderBin).mode & 0o111).not.toBe(0);
+    expect(await runBin("local-fallback-cmd")).toEqual({ out: "SUCCESS: Using main package bin", err: "", code: 0 });
+  });
+});
+
 // The bin linker must not create a `node_modules/.bin` entry (nor chmod or rewrite the
 // target) when a package's bin path resolves through an in-package symlink to a location
 // outside the package directory. Bins that resolve inside the package must still link,

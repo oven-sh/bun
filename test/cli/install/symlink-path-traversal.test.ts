@@ -868,6 +868,201 @@ it.skipIf(isWindows)(
   60000,
 );
 
+// The symlink install backend (used for `file:` folders outside the project and
+// for `--backend symlink`) fills node_modules/<pkg> with one symlink per file.
+// A symlink cannot carry the executable bit, so the bin linker has to set it on
+// the file behind the installer's own link (npm likewise chmods the file in a
+// `file:` folder), while still refusing to follow a symlink that the installer
+// did not create (the two tests above).
+async function runBun(cwd: string, args: string[], extraEnv: Record<string, string> = {}) {
+  await using proc = spawn({
+    cmd: [bunExe(), ...args],
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: { ...env, ...extraEnv },
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+const isOwnerExecutable = async (path: string) => ((await stat(path)).mode & 0o100) !== 0;
+
+it.skipIf(isWindows)("makes the files behind a symlink-installed file: dependency's bins executable", async () => {
+  using dir = tempDir("file-dep-bin-executable", {
+    "app/bunfig.toml": `[install]\nlinker = "hoisted"\n`,
+    "app/package.json": JSON.stringify({
+      name: "file-dep-bin-app",
+      version: "1.0.0",
+      dependencies: { "file-dep-with-bins": "file:../dep" },
+    }),
+    "dep/package.json": JSON.stringify({
+      name: "file-dep-with-bins",
+      version: "1.0.0",
+      bin: { "file-dep-cli": "cli.js", "file-dep-nested-cli": "bin/nested.js" },
+    }),
+    "dep/cli.js": `#!/usr/bin/env node\nconsole.log("cli");\n`,
+    "dep/bin/nested.js": `#!/usr/bin/env node\nconsole.log("nested");\n`,
+    "dep/lib.js": `module.exports = 1;\n`,
+  });
+  const appDir = join(String(dir), "app");
+  const depDir = join(String(dir), "dep");
+  const depFiles = ["cli.js", "bin/nested.js", "lib.js", "package.json"];
+  const executableDepFiles = async () =>
+    Object.fromEntries(await Promise.all(depFiles.map(async f => [f, await isOwnerExecutable(join(depDir, f))])));
+
+  expect(await executableDepFiles()).toEqual({
+    "cli.js": false,
+    "bin/nested.js": false,
+    "lib.js": false,
+    "package.json": false,
+  });
+
+  expect(await runBun(appDir, ["install"])).toMatchObject({ exitCode: 0 });
+
+  // The layout this is about: the package directory holds the installer's
+  // per-file symlinks, and node_modules/.bin points at them.
+  expect((await lstat(join(appDir, "node_modules", "file-dep-with-bins", "cli.js"))).isSymbolicLink()).toBe(true);
+  expect((await lstat(join(appDir, "node_modules", "file-dep-with-bins", "bin", "nested.js"))).isSymbolicLink()).toBe(
+    true,
+  );
+
+  // Only the bin targets become executable, in the folder itself.
+  expect(await executableDepFiles()).toEqual({
+    "cli.js": true,
+    "bin/nested.js": true,
+    "lib.js": false,
+    "package.json": false,
+  });
+
+  expect(await runBun(appDir, ["run", "file-dep-cli"])).toMatchObject({ stdout: "cli\n", exitCode: 0 });
+  expect(await runBun(appDir, ["run", "file-dep-nested-cli"])).toMatchObject({ stdout: "nested\n", exitCode: 0 });
+});
+
+it.skipIf(isWindows)("makes the cached file behind a --backend symlink bin executable", async () => {
+  // `createTarball` writes every file with mode 0644, so the extracted cache
+  // entry is not executable and the bin linker is what has to make it so.
+  const tarball = createTarball([
+    {
+      name: "package/package.json",
+      type: "file",
+      content: JSON.stringify({
+        name: "symlink-backend-pkg",
+        version: "1.0.0",
+        bin: { "symlink-backend-cli": "cli.js" },
+      }),
+    },
+    { name: "package/cli.js", type: "file", content: `#!/usr/bin/env node\nconsole.log("from the cache");\n` },
+  ]);
+  using dir = tempDir("symlink-backend-bin-executable", {
+    "bunfig.toml": `[install]\nlinker = "hoisted"\n`,
+    "package.json": JSON.stringify({
+      name: "symlink-backend-app",
+      version: "1.0.0",
+      dependencies: { "symlink-backend-pkg": "file:./symlink-backend-pkg-1.0.0.tgz" },
+    }),
+    "symlink-backend-pkg-1.0.0.tgz": Buffer.from(tarball),
+  });
+  const installDir = String(dir);
+  const cacheDir = join(installDir, ".bun-cache");
+
+  expect(
+    await runBun(installDir, ["install", "--backend", "symlink"], { BUN_INSTALL_CACHE_DIR: cacheDir }),
+  ).toMatchObject({ exitCode: 0 });
+
+  const installedCli = join(installDir, "node_modules", "symlink-backend-pkg", "cli.js");
+  const cachedCli = await readlink(installedCli);
+  expect(cachedCli.startsWith(`${await realpath(cacheDir)}/`)).toBe(true);
+  expect(await isOwnerExecutable(cachedCli)).toBe(true);
+
+  expect(await runBun(installDir, ["run", "symlink-backend-cli"])).toMatchObject({
+    stdout: "from the cache\n",
+    exitCode: 0,
+  });
+});
+
+it.skipIf(isWindows)(
+  "does not change permissions of files reached through bin target symlinks the installer did not create",
+  async () => {
+    // An npm package installed with `--backend symlink` is left alone by later
+    // installs as long as its package.json still reads back, while its bins are
+    // linked again every time. Swapping the installer's links for foreign ones
+    // in between therefore puts a symlink the installer did not write at a bin
+    // target of a package whose other files legitimately are installer links.
+    // Both links lead outside the cache the package was installed from, so
+    // neither destination may be chmodded.
+    // For registry packages the bin field is read from the registry manifest.
+    const manifest = {
+      name: "relinked-bin-pkg",
+      version: "1.0.0",
+      bin: { "relinked-abs": "abs.js", "relinked-rel": "rel.js" },
+    };
+    const tarball = createTarball([
+      { name: "package/package.json", type: "file", content: JSON.stringify(manifest) },
+      { name: "package/abs.js", type: "file", content: `#!/usr/bin/env node\n` },
+      { name: "package/rel.js", type: "file", content: `#!/usr/bin/env node\n` },
+    ]);
+    using registry = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const { pathname } = new URL(req.url);
+        if (pathname === "/relinked-bin-pkg") {
+          return Response.json({
+            name: manifest.name,
+            "dist-tags": { latest: manifest.version },
+            versions: {
+              [manifest.version]: {
+                ...manifest,
+                dist: { tarball: `http://localhost:${registry.port}/relinked-bin-pkg-1.0.0.tgz` },
+              },
+            },
+          });
+        }
+        if (pathname === "/relinked-bin-pkg-1.0.0.tgz") {
+          return new Response(tarball, { headers: { "Content-Type": "application/octet-stream" } });
+        }
+        return new Response("Not Found", { status: 404 });
+      },
+    });
+    using dir = tempDir("relinked-bin-target-test", {
+      "bunfig.toml": `[install]\nlinker = "hoisted"\nregistry = "http://localhost:${registry.port}/"\n`,
+      "package.json": JSON.stringify({
+        name: "relinked-bin-app",
+        version: "1.0.0",
+        dependencies: { "relinked-bin-pkg": "1.0.0" },
+      }),
+      "victim-abs.txt": "reached through an absolute symlink",
+      "victim-rel.txt": "reached through a relative symlink",
+    });
+    const installDir = String(dir);
+    const installEnv = { BUN_INSTALL_CACHE_DIR: join(installDir, ".bun-cache") };
+    const victimAbs = join(installDir, "victim-abs.txt");
+    const victimRel = join(installDir, "victim-rel.txt");
+    await chmod(victimAbs, 0o600);
+    await chmod(victimRel, 0o600);
+
+    expect(await runBun(installDir, ["install", "--backend", "symlink"], installEnv)).toMatchObject({ exitCode: 0 });
+
+    const pkgDir = join(installDir, "node_modules", "relinked-bin-pkg");
+    expect((await lstat(join(pkgDir, "package.json"))).isSymbolicLink()).toBe(true);
+    await rm(join(pkgDir, "abs.js"));
+    await rm(join(pkgDir, "rel.js"));
+    await symlink(victimAbs, join(pkgDir, "abs.js"));
+    await symlink(join("..", "..", "victim-rel.txt"), join(pkgDir, "rel.js"));
+    await rm(join(installDir, "node_modules", ".bin"), { recursive: true });
+
+    expect(await runBun(installDir, ["install", "--backend", "symlink"], installEnv)).toMatchObject({ exitCode: 0 });
+
+    // The bins were linked again, against the swapped-in symlinks.
+    expect((await readdir(join(installDir, "node_modules", ".bin"))).sort()).toEqual(["relinked-abs", "relinked-rel"]);
+    expect(await readlink(join(pkgDir, "abs.js"))).toBe(victimAbs);
+    expect(await readlink(join(pkgDir, "rel.js"))).toBe(join("..", "..", "victim-rel.txt"));
+
+    expect((await stat(victimAbs)).mode & 0o777).toBe(0o600);
+    expect((await stat(victimRel)).mode & 0o777).toBe(0o600);
+  },
+);
+
 it.skipIf(isWindows)(
   "skips a package bin entry whose name contains a NUL byte and links the remaining entries",
   async () => {

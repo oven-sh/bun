@@ -1,6 +1,7 @@
 import { serve } from "bun";
 import { describe, expect, test } from "bun:test";
-import { isWindows, tmpdirSync } from "../../../harness";
+import { join } from "node:path";
+import { isLinux, isWindows, tempDir, tmpdirSync } from "../../../harness";
 
 const defaultHostname = "localhost";
 
@@ -303,6 +304,68 @@ describe("Bun.serve unix socket", () => {
       },
     });
     server.stop();
+  });
+});
+
+describe("Bun.serve unix socket url", () => {
+  // https://github.com/oven-sh/bun/issues/40182
+  test("server.url parses for a path with a drive letter and backslashes", () => {
+    using dir = tempDir("unix-url-drive", {});
+    // On Windows the temp dir already starts with `C:\`. Elsewhere a relative
+    // socket file named `C:\test` puts the same bytes into the URL.
+    const cwd = process.cwd();
+    process.chdir(String(dir));
+    try {
+      const p = isWindows ? join(String(dir), "test.sock") : "C:\\test";
+      using server = serve({ unix: p, fetch: () => new Response("ok") });
+      const url = server.url;
+      expect(url).toBeInstanceOf(URL);
+      expect(url.protocol).toBe("unix:");
+      expect(decodeURIComponent(url.hostname)).toBe(p);
+    } finally {
+      process.chdir(cwd);
+    }
+  });
+
+  test.skipIf(isWindows)("server.url percent-encodes only what the URL parser cannot take", () => {
+    using dir = tempDir("unix-url-encode", { "sub dir": {} });
+    const cwd = process.cwd();
+    process.chdir(String(dir));
+    try {
+      // A relative path puts its first segment in the URL host slot, which
+      // forbids more bytes (`:`, `@`, `[`, `]`) than the path does.
+      const cases: [path: string, href: string][] = [
+        ["my app.sock", "unix://my%20app.sock"],
+        ["a#b?c.sock", "unix://a%23b%3Fc.sock"],
+        ["a:b@c.sock", "unix://a%3Ab%40c.sock"],
+        ["[weird name].sock", "unix://%5Bweird%20name%5D.sock"],
+        ["a%b.sock", "unix://a%25b.sock"],
+        ["a+b=c,d.sock", "unix://a+b=c,d.sock"],
+        ["sub dir/a:b@c.sock", "unix://sub%20dir/a:b@c.sock"],
+        [`${dir}/a b#c%d.sock`, `unix://${dir}/a%20b%23c%25d.sock`],
+        [`${dir}/a+b=c@d:e.sock`, `unix://${dir}/a+b=c@d:e.sock`],
+      ];
+      for (const [path, href] of cases) {
+        using server = serve({ unix: path, fetch: () => new Response("ok") });
+        const url = server.url;
+        expect({ path, href: url.href, decoded: decodeURIComponent(url.hostname + url.pathname) }).toEqual({
+          path,
+          href,
+          decoded: path,
+        });
+      }
+    } finally {
+      process.chdir(cwd);
+    }
+  });
+
+  test.skipIf(!isLinux)("server.url percent-encodes an abstract socket name", () => {
+    const suffix = Math.random().toString(36).slice(2);
+    const name = "bun url test/" + suffix;
+    using server = serve({ unix: "\0" + name, fetch: () => new Response("ok") });
+    const url = server.url;
+    expect(url.href).toBe("abstract://bun%20url%20test%2F" + suffix + "/");
+    expect(decodeURIComponent(url.hostname)).toBe(name);
   });
 });
 

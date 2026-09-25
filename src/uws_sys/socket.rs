@@ -582,6 +582,13 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         }
     }
 
+    /// Drop the handshake flight that usockets holds across the handshake callback.
+    pub fn release_held_flight(&self) {
+        if let InternalSocket::Connected(s) = self.socket {
+            sock(s).release_held_flight();
+        }
+    }
+
     /// The session an SSLWrapper-backed socket got last from the new-session callback, borrowed.
     pub fn wrapper_latest_session(&self) -> *mut bun_boringssl_sys::SSL_SESSION {
         match self.socket {

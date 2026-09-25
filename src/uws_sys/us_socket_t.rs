@@ -309,6 +309,11 @@ impl us_socket_t {
         c::us_socket_set_inline_reject(self);
     }
 
+    /// Drop the handshake flight that is held across the handshake callback.
+    pub fn release_held_flight(&mut self) {
+        c::us_socket_release_held_flight(self);
+    }
+
     /// Feed bytes that were already read off the wire (e.g. a ClientHello the
     /// plain-TCP layer consumed before the upgrade) through the same decrypt
     /// path as bytes arriving from the kernel.
@@ -598,6 +603,7 @@ mod c {
         ) -> *mut us_socket_t;
         pub(super) safe fn us_socket_start_tls_handshake(s: &mut us_socket_t);
         pub(super) safe fn us_socket_set_inline_reject(s: &mut us_socket_t);
+        pub(super) safe fn us_socket_release_held_flight(s: &mut us_socket_t);
     }
 }
 

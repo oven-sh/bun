@@ -1,7 +1,7 @@
 import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { once } from "events";
-import { writeFileSync } from "fs";
+import { readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tls as COMMON_CERT_, isASAN, nodeExe, tempDir } from "harness";
 import https from "https";
 import net from "net";
@@ -11,6 +11,9 @@ import tls, { checkServerIdentity, connect as tlsConnect, TLSSocket } from "tls"
 
 import type { AddressInfo } from "net";
 import { Duplex } from "node:stream";
+import { pathToFileURL } from "node:url";
+import { report as closeReport } from "./tls-client-close-fixture.mjs";
+import { report as refuseReport } from "./tls-server-refuse-fixture.mjs";
 
 const symbolConnectOptions = Symbol.for("::buntlsconnectoptions::");
 
@@ -2135,6 +2138,82 @@ it("ending a TLS 1.3 socket from its handshake callback still completes the serv
   await clientClosed.promise;
 });
 
+// The release of the held flight is node:net's. A socket of the Bun socket API
+// keeps its behaviour: whatever it calls in its handshake callback, its final
+// flight goes out and the server completes its handshake. A socket with no
+// handshake callback gets its open callback at that point.
+describe("a TLS 1.3 Bun.connect client that closes once its handshake is done", () => {
+  const keys = join(import.meta.dir, "..", "test", "fixtures", "keys");
+  const pem = (name: string) => readFileSync(join(keys, name), "utf8");
+  type Close = "end" | "shutdown" | "close";
+
+  async function run(callback: "handshake" | "open", method: Close) {
+    const serverSaw = Promise.withResolvers<string>();
+    await using listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: { key: pem("agent1-key.pem"), cert: pem("agent1-cert.pem"), requestCert: true, rejectUnauthorized: false },
+      socket: {
+        handshake(socket, success, error) {
+          const peerCN = (socket.getPeerCertificate() as tls.PeerCertificate)?.subject?.CN;
+          serverSaw.resolve(success ? `handshake:${peerCN}` : `fail:${(error as NodeJS.ErrnoException)?.code}`);
+        },
+        data() {},
+        error() {},
+        close() {},
+      },
+    });
+    const fromClient: Buffer[] = [];
+    const relay = net.createServer(downstream => {
+      const upstream = net.connect(listener.port, "127.0.0.1");
+      downstream.on("data", chunk => {
+        fromClient.push(chunk);
+        upstream.write(chunk);
+      });
+      upstream.on("data", chunk => downstream.write(chunk));
+      downstream.on("end", () => upstream.end());
+      upstream.on("end", () => downstream.end());
+      downstream.on("error", () => upstream.destroy());
+      upstream.on("error", () => downstream.destroy());
+    });
+    await once(relay.listen(0, "127.0.0.1"), "listening");
+    try {
+      const clientClosed = Promise.withResolvers<void>();
+      await Bun.connect({
+        hostname: "127.0.0.1",
+        port: (relay.address() as AddressInfo).port,
+        tls: {
+          ca: pem("ca1-cert.pem"),
+          serverName: "agent1",
+          key: pem("agent3-key.pem"),
+          cert: pem("agent3-cert.pem"),
+        },
+        socket: {
+          [callback]: (socket: { [method in Close]: () => void }) => void socket[method](),
+          data() {},
+          error() {},
+          close: () => clientClosed.resolve(),
+        },
+      });
+      const [server] = await Promise.all([serverSaw.promise, clientClosed.promise]);
+      const bytes = Buffer.concat(fromClient);
+      return { server, sentAfterClientHello: bytes.length > 5 + bytes.readUInt16BE(3) };
+    } finally {
+      relay.close();
+    }
+  }
+
+  it.each([
+    ["handshake", "close"],
+    ["open", "close"],
+    ["handshake", "end"],
+    ["handshake", "shutdown"],
+    ["open", "end"],
+  ] as const)("%s: %s() completes the server's handshake", async (callback, method) => {
+    expect(await run(callback, method)).toEqual({ server: "handshake:agent3", sentAfterClientHello: true });
+  });
+});
+
 // End-to-end shape of the issue: a Node TLS 1.3 server that rejects the
 // client's certificate does so AFTER the client saw 'secureConnect' (TLS 1.3
 // clients finish first), and destroys the raw socket with no close_notify.
@@ -2487,6 +2566,149 @@ describe.each([
       log: ["end secureConnecting=true", "finish"],
       clientSawFin: true,
     });
+  });
+});
+
+// Runs report(mode, version) of a fixture module in node, for every row at
+// once. Resolves with node's version and the reports in the order of the rows.
+async function reportsFromNode(fixture: string, rows: (readonly [version: string, mode: string])[]) {
+  const script = `
+    import { report } from ${JSON.stringify(pathToFileURL(join(import.meta.dir, fixture)).href)};
+    const rows = ${JSON.stringify(rows)};
+    const reports = await Promise.all(rows.map(([version, mode]) => report(mode, version)));
+    console.log(JSON.stringify({ reports }));
+    process.exit(0);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [nodeExe()!, "--input-type=module", "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { reports } = JSON.parse(stdout) as { reports: unknown[] };
+  expect(exitCode).toBe(0);
+  return { reports };
+}
+
+// A TLS 1.3 client, and a client that resumes a TLS 1.2 session, finishes its
+// handshake before it sends its final flight. The handshake callback runs in
+// between. A client that destroys the socket there turns the server down, so
+// that flight must not go out: under TLS 1.3 it carries the client
+// certificate, and it lets the server report a connection that the client
+// never used. node drops its pending output on destroy():
+// https://github.com/nodejs/node/blob/v26.10.0/src/crypto/crypto_tls.cc#L1409-L1433
+// The last test runs the same rows in node, so the reports are pinned to it.
+describe("how a TLS client's way of closing reaches the server", () => {
+  const delivered = (data: string, alerts: number, client = ["close:false"]) => ({
+    client,
+    server: { event: "secureConnection", peerCN: "agent3", data, error: null },
+    sentAfterClientHello: true,
+    alerts,
+  });
+  const turnedDown = (...client: string[]) => ({
+    client,
+    server: { event: "tlsClientError", code: "ECONNRESET" },
+    sentAfterClientHello: false,
+    alerts: 0,
+  });
+  const altnameInvalid = "error:ERR_TLS_CERT_ALTNAME_INVALID";
+
+  const rows = [
+    ["TLSv1.3", "checkServerIdentity", turnedDown(altnameInvalid, "close:true")],
+    ["TLSv1.3", "checkServerIdentity function", turnedDown("error:ERR_PINNED_KEY", "close:true")],
+    ["TLSv1.3", "a junk record behind the server's Finished", turnedDown(altnameInvalid, "close:true")],
+    ["TLSv1.3", "a close_notify behind the server's Finished", turnedDown(altnameInvalid, "close:true")],
+    ["TLSv1.3", "tls.connect({ socket })", turnedDown(altnameInvalid, "close:true")],
+    ["TLSv1.3", "tls.connect({ socket }) and a destroy() of that socket", turnedDown("close:false")],
+    ["TLSv1.3", "https.request", turnedDown(altnameInvalid)],
+    ["TLSv1.3", "http2.connect", turnedDown(altnameInvalid)],
+    ["TLSv1.3", "destroy()", turnedDown("close:false")],
+    ["TLSv1.3", "destroy(error)", turnedDown("error:ERR_REFUSED", "close:true")],
+    ["TLSv1.3", "destroy() from process.nextTick", turnedDown("close:false")],
+    ["TLSv1.3", "destroy() from queueMicrotask", turnedDown("close:false")],
+    ["TLSv1.3", "destroy() on a resumed session", turnedDown("reused:true", "close:false")],
+    ["TLSv1.2", "destroy() on a resumed session", turnedDown("reused:true", "close:false")],
+    [
+      "TLSv1.3",
+      "checkServerIdentity function that writes to another TLS socket",
+      turnedDown("error:ERR_PINNED_KEY", "close:true"),
+    ],
+
+    // A graceful close still sends the flight.
+    ["TLSv1.3", "end()", delivered("", 1)],
+    ["TLSv1.3", "end(data)", delivered("hello", 1)],
+    ["TLSv1.3", "destroySoon()", delivered("", 1)],
+
+    // A server that resumes a TLS 1.2 session can ask for a renegotiation right
+    // behind its Finished. The client reports the handshake and sends its own
+    // Finished before it answers with a new ClientHello.
+    [
+      "TLSv1.2",
+      "a HelloRequest behind the server's Finished",
+      {
+        client: ["reused:true", "ChangeCipherSpec", "Handshake", "Handshake", "close:false"],
+        server: { event: "tlsClientError", code: "ECONNRESET" },
+        sentAfterClientHello: true,
+        alerts: 0,
+      },
+    ],
+
+    // In a full TLS 1.2 handshake the client's flight leaves before the server's Finished.
+    ["TLSv1.2", "checkServerIdentity", delivered("", 0, [altnameInvalid, "close:true"])],
+    ["TLSv1.2", "destroy()", delivered("", 0)],
+  ] as const;
+
+  it.each(rows)("%s %s", async (version, mode, expected) => {
+    expect(await closeReport(mode, version)).toEqual(expected);
+  });
+
+  // node gives this verdict too. It also reports the junk record as an error of the socket.
+  it("TLSv1.3 a junk record behind the Finished does not change the verdict on the certificate", async () => {
+    const mode = "a junk record behind the Finished of a server that the client does not verify";
+    expect(await closeReport(mode, "TLSv1.3")).toEqual(
+      turnedDown("authorized:false", "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "close:false"),
+    );
+  });
+
+  it.skipIf(!nodeExe())("node gives the same reports", async () => {
+    const { reports } = await reportsFromNode(
+      "tls-client-close-fixture.mjs",
+      rows.map(([version, mode]) => [version, mode]),
+    );
+    expect(reports).toEqual(rows.map(([, , expected]) => expected));
+  });
+});
+
+// The same rule from the server's side. In a full TLS 1.2 handshake the
+// server's Finished is the last message, and the server's handshake callback
+// runs before it is sent. A server that destroys the socket there turns the
+// client down, so the Finished must not go out: the client then reports a
+// connection that the server never had. In TLS 1.3 the server has nothing left
+// to send at that point.
+describe("a server that turns the client down once its handshake is done", () => {
+  const turnedDown = { secureConnect: false, error: "ECONNRESET" };
+  const connected = { secureConnect: true, error: null };
+
+  const rows = [
+    ["TLSv1.2", "requestCert and rejectUnauthorized", { client: turnedDown, server: "tlsClientError" }],
+    ["TLSv1.2", "destroy() in 'secureConnection'", { client: turnedDown, server: "secureConnection" }],
+    ["TLSv1.2", "end() in 'secureConnection'", { client: connected, server: "secureConnection" }],
+    ["TLSv1.3", "requestCert and rejectUnauthorized", { client: connected, server: "tlsClientError" }],
+    ["TLSv1.3", "destroy() in 'secureConnection'", { client: connected, server: "secureConnection" }],
+  ] as const;
+
+  it.each(rows)("%s %s", async (version, mode, expected) => {
+    expect(await refuseReport(mode, version)).toEqual(expected);
+  });
+
+  it.skipIf(!nodeExe())("node gives the same reports", async () => {
+    const { reports } = await reportsFromNode(
+      "tls-server-refuse-fixture.mjs",
+      rows.map(([version, mode]) => [version, mode]),
+    );
+    expect(reports).toEqual(rows.map(([, , expected]) => expected));
   });
 });
 

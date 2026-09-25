@@ -542,17 +542,15 @@ static int BIO_s_custom_write(BIO *bio, const char *data, int length) {
     return length;
   }
 
-  if (loop_ssl_data->ssl_write_batching &&
-      loop_ssl_data->ssl_write_batch_len &&
-      loop_ssl_data->ssl_write_batch_owner != loop_ssl_data->ssl_socket) {
-    /* The batch holds another socket's records (a JS callback in this
-     * dispatch wrote to a second TLS socket on the same loop while the
-     * first socket's flight was held). Deliver them to their owner first so
-     * each socket's records stay in order. */
-    ssl_flush_write_batch(loop_ssl_data, loop_ssl_data->ssl_write_batch_owner);
-  }
+  /* The batch can hold another socket's records: a JS callback in this
+   * dispatch wrote to a second TLS socket on the same loop while the first
+   * socket's flight was held. That flight stays held, because its owner can
+   * still turn the peer down, and this socket's records are written through. */
+  int batch_is_foreign = loop_ssl_data->ssl_write_batch_len &&
+                         loop_ssl_data->ssl_write_batch_owner != loop_ssl_data->ssl_socket;
 
-  if (loop_ssl_data->ssl_write_batching && loop_ssl_data->ssl_spill_owner == NULL) {
+  if (loop_ssl_data->ssl_write_batching && !batch_is_foreign &&
+      loop_ssl_data->ssl_spill_owner == NULL) {
     /* Append the sealed record; the batch hits the kernel once, after
      * SSL_write returns. Reporting the full length keeps BoringSSL sealing
      * the next record instead of parking a partial one. Skipped while a
@@ -1128,6 +1126,19 @@ void us_socket_set_inline_reject(struct us_socket_t *s) {
   if (!s->ssl || s->ssl_is_server || s->ssl_handshake_state == HANDSHAKE_COMPLETED) return;
   s->ssl_inline_reject = 1;
   SSL_set_verify(s_ssl(s), SSL_VERIFY_PEER, us_inline_reject_verify_callback);
+}
+
+/* node:net destroy() inside the handshake callback turns the peer down. The
+ * flight that is held across that callback is dropped, and the session takes
+ * no more writes: the peer never gets our Finished. node drops its pending
+ * output there:
+ * https://github.com/nodejs/node/blob/v26.10.0/src/crypto/crypto_tls.cc#L1409-L1433 */
+void us_socket_release_held_flight(struct us_socket_t *s) {
+  if (!s->ssl || us_socket_is_closed(s)) return;
+  struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
+  if (!loop_ssl_data || !loop_ssl_data->ssl_write_batch_len || loop_ssl_data->ssl_write_batch_owner != s) return;
+  ssl_release_batch(s->group->loop, s);
+  s->ssl_fatal_error = 1;
 }
 
 /* Drop the strdup'd passphrase. Called as soon as private-key load completes
@@ -2353,6 +2364,27 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
   return s;
 }
 
+/* A read can finish the handshake and then leave the arms of
+ * us_internal_ssl_on_data that report it: a later record fails, or the peer
+ * asks to renegotiate. Report the handshake first, as those arms do. The owner
+ * may turn the peer down there. If it does not, the flight that was held for
+ * it goes out before anything else. Returns 0 when the socket is gone. */
+static int ssl_report_finished_handshake(struct us_socket_t *s, struct loop_ssl_data *loop_ssl_data) {
+  if (s->ssl_handshake_state != HANDSHAKE_PENDING || !SSL_is_init_finished(s_ssl(s))) return 1;
+  char *saved_input = loop_ssl_data->ssl_read_input;
+  unsigned int saved_length = loop_ssl_data->ssl_read_input_length;
+  unsigned int saved_offset = loop_ssl_data->ssl_read_input_offset;
+  ERR_clear_error();
+  ssl_trigger_handshake(s, 1);
+  if (ssl_gone(s)) return 0;
+  loop_ssl_data->ssl_read_input = saved_input;
+  loop_ssl_data->ssl_read_input_length = saved_length;
+  loop_ssl_data->ssl_read_input_offset = saved_offset;
+  loop_ssl_data->ssl_socket = s;
+  ssl_flush_write_batch(loop_ssl_data, s);
+  return 1;
+}
+
 struct us_socket_t *us_internal_ssl_on_data(struct us_socket_t *s, char *data, int length) {
   /* See ssl_update_handshake: start this socket's SSL processing with a clean
    * per-thread error queue so a captured reason cannot belong to another
@@ -2450,6 +2482,7 @@ restart:
       if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE &&
           err != SSL_ERROR_PENDING_CERTIFICATE) {
         if (err == SSL_ERROR_WANT_RENEGOTIATE) {
+          if (!ssl_report_finished_handshake(s, loop_ssl_data)) return NULL;
           if (ssl_renegotiate(s)) continue;
           if (ssl_gone(s)) return NULL;
           err = SSL_ERROR_SSL;
@@ -2502,6 +2535,7 @@ restart:
           return s;
         }
 
+        if (!ssl_report_finished_handshake(s, loop_ssl_data)) return NULL;
         if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
           ssl_park_fatal_reason(s);
         }

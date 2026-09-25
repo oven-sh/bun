@@ -262,6 +262,8 @@ const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
 const upgradeDuplexToTLS = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeDuplexToTLS", 2);
 // tls.connect({ socket }) upgrade: hostname policy stays with this JS layer.
 const upgradeTLSDeferred = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeTLSDeferred", 2);
+// destroy() in the handshake callback: drops the handshake flight that the native layer holds.
+const releaseHeldFlight = $newRustFunction("runtime/socket/socket.rs", "jsReleaseHeldFlight", 1);
 const isNamedPipeSocket = $newRustFunction("runtime/socket/socket.rs", "jsIsNamedPipeSocket", 1);
 const getBufferedAmount = $newRustFunction("runtime/socket/socket.rs", "jsGetBufferedAmount", 1);
 
@@ -2398,6 +2400,10 @@ Socket.prototype._destroy = function _destroy(err, callback) {
     this[kBytesWritten] = this._handle.bytesWritten;
 
     const currentHandle = this._handle;
+    // Ahead of every branch: two of them close the handle a loop turn later, when the flight has left.
+    if (typeof this[bunTlsSymbol] === "function" || currentHandle[kAdoptedTLSRaw]) {
+      releaseHeldFlight(currentHandle);
+    }
     if (this.resetAndClosing) {
       this.resetAndClosing = false;
       // resetAndDestroy() must send an RST (not a graceful FIN) so the peer sees

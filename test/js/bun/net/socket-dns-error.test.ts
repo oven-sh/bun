@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isIPv6, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, isIPv6, isWindows, tls as tlsCert } from "harness";
 
 // `Bun.connect` to a hostname that fails to resolve must surface the resolver
 // error (code `ENOTFOUND`, `syscall: "getaddrinfo"`, `hostname`), matching
@@ -88,6 +88,42 @@ test.skipIf(!isIPv6()).each(["::1/64", "::1/0", "2001:db8::1/0", "::ffff:127.1",
     });
   },
 );
+
+// An IPv4 host is an address when the resolver of the platform reads it as
+// one. getaddrinfo() reads the inet_aton shorthand, and the Windows resolver
+// reads a dotted quad only. ares_inet_pton read "127.1" as 127.1.0.0 there, and
+// it took a trailing "/bits".
+test.each([
+  ["127.0.0.1", "connected"],
+  ["127.1", isWindows ? "ENOTFOUND" : "connected"],
+  ["0x7f000001", isWindows ? "ENOTFOUND" : "connected"],
+  ["127.0.0.1/32", "ENOTFOUND"],
+  ["127.0.0.1/8", "ENOTFOUND"],
+])("Bun.connect to %j: %s", async (hostname, expected) => {
+  // On every address, so that a connection to 127.1.0.0 also arrives.
+  const dialed: string[] = [];
+  using listener = Bun.listen({
+    hostname: "0.0.0.0",
+    port: 0,
+    socket: {
+      open(socket) {
+        dialed.push(socket.localAddress);
+        socket.end();
+      },
+      data() {},
+    },
+  });
+  const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
+  const result = await Bun.connect({
+    hostname,
+    port: listener.port,
+    socket: { open() {}, data() {}, close: () => onClose() },
+  }).then(
+    () => closed.then(() => "connected"),
+    (e: any) => e.code,
+  );
+  expect({ result, dialed }).toEqual({ result: expected, dialed: expected === "connected" ? ["127.0.0.1"] : [] });
+});
 
 test("Bun.connect rejects the promise with the resolver error when connectError is not set", async () => {
   const error: Error = await Bun.connect({

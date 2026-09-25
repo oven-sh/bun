@@ -1,5 +1,6 @@
 // ESM tests are about various esm features in development mode.
 import { expect } from "bun:test";
+import { isWindows } from "harness";
 import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 const liveBindingTest = devTest("live bindings with `var`", {
@@ -566,10 +567,11 @@ devTest("html routes reject requests whose host header does not match the dev se
   },
 });
 
-// An IP address passes the check, because a rebound DNS name is never one.
-// ares_inet_pton also reads the shorthand below as an address. A URL parser
-// reads another address in it, or none, so no browser sends it.
-devTest("html routes reject a host header that is IP shorthand", {
+// A host that the resolver reads as a number passes the check, because DNS
+// cannot rebind it. Outside Windows that covers the IPv4 shorthand, which wget
+// and Python send as typed. ares_inet_pton also took an IPv6 text with "/bits"
+// or with a shortened IPv4 part, and no resolver reads those.
+devTest("html routes accept a numeric host header and reject one that no resolver reads", {
   files: {
     "index.html": emptyHtmlFile({
       scripts: ["index.ts"],
@@ -590,7 +592,7 @@ devTest("html routes reject a host header that is IP shorthand", {
         ),
       );
 
-    const literals = [
+    const numeric = [
       "127.0.0.1",
       "127.0.0.1:3000",
       "10.0.0.1",
@@ -600,20 +602,19 @@ devTest("html routes reject a host header that is IP shorthand", {
       // The longest text of an address, 45 bytes.
       "[ffff:ffff:ffff:ffff:ffff:ffff:255.255.255.255]:3000",
     ];
-    expect(await statuses(literals)).toEqual(Object.fromEntries(literals.map(host => [host, 200])));
+    expect(await statuses(numeric)).toEqual(Object.fromEntries(numeric.map(host => [host, 200])));
 
-    const shorthand = [
-      "127.1",
-      "127.1:3000",
-      "10",
-      "0x7f000001",
-      "127.000.000.001",
-      "1.2.3",
-      "08.1.1.1",
-      "1.2.3.4/8",
-      "[::ffff:127.1]",
+    const shorthand = ["127.1", "127.1:3000", "10", "0x7f000001", "127.000.000.001", "1.2.3"];
+    expect(await statuses(shorthand)).toEqual(Object.fromEntries(shorthand.map(host => [host, isWindows ? 403 : 200])));
+
+    // inet_aton stops at whitespace, and the check does not.
+    const unread = [
       "[::1/64]",
+      "[::1/128]:3000",
+      "[::ffff:127.1]",
+      "127.0.0.1 rebound-host.example",
+      "rebound-host.example",
     ];
-    expect(await statuses(shorthand)).toEqual(Object.fromEntries(shorthand.map(host => [host, 403])));
+    expect(await statuses(unread)).toEqual(Object.fromEntries(unread.map(host => [host, 403])));
   },
 });

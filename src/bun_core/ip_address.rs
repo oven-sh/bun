@@ -1,33 +1,23 @@
 //! IP-address parsing shared by URL/host handling and the DNS backends.
 
-use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+#[cfg(not(windows))]
+use core::net::Ipv4Addr;
+use core::net::{IpAddr, Ipv6Addr};
 
-/// The one place this module touches C: the IPv4 shorthand, which only the C parsers read. On Windows that is the vendored c-ares `inet_pton`, which is pure C with no preconditions — unlike ws2_32's, which fails with WSANOTINITIALISED whenever it runs before `WSAStartup()`, as URL/host parsing can.
+/// The one place this module touches C.
+#[cfg(not(windows))]
 mod sys {
     use core::ffi::{c_char, c_int, c_void};
 
     unsafe extern "C" {
-        #[cfg(windows)]
-        fn ares_inet_pton(af: c_int, src: *const c_char, dst: *mut c_void) -> c_int;
-        #[cfg(not(windows))]
         fn inet_aton(cp: *const c_char, addr: *mut c_void) -> c_int;
     }
 
-    /// BSD `inet_aton(3)`, which unlike `inet_pton` takes the shorthand forms (`127.1`, `0x7f000001`) that `getaddrinfo` accepts. Windows has no `inet_aton`: c-ares parses there. It is `inet_net_pton` underneath, so it takes the shorthand too, but reads `127.1` as 127.1.0.0.
+    /// BSD `inet_aton(3)`, which unlike `inet_pton` takes the shorthand forms (`127.1`, `0x7f000001`) that `getaddrinfo` accepts.
     pub(super) fn aton(src: &[u8], dst: &mut [u8; 4]) -> bool {
         debug_assert_eq!(src.last(), Some(&0));
-        #[cfg(windows)]
-        {
-            // A thin ws2def passthrough: bun_string sits below bun_sys, so `bun_sys::posix::AF` is out of reach.
-            const AF_INET: c_int = 2;
-            // SAFETY: `src` is NUL-terminated per the assert; `dst` is an `in_addr`.
-            unsafe { ares_inet_pton(AF_INET, src.as_ptr().cast(), dst.as_mut_ptr().cast()) > 0 }
-        }
-        #[cfg(not(windows))]
-        {
-            // SAFETY: `src` is NUL-terminated per the assert; `dst` is an `in_addr`.
-            unsafe { inet_aton(src.as_ptr().cast(), dst.as_mut_ptr().cast()) != 0 }
-        }
+        // SAFETY: `src` is NUL-terminated per the assert; `dst` is an `in_addr`.
+        unsafe { inet_aton(src.as_ptr().cast(), dst.as_mut_ptr().cast()) != 0 }
     }
 }
 
@@ -59,20 +49,27 @@ fn parse_strict_v6(input: &[u8]) -> Option<Ipv6Addr> {
     crate::fmt::parse_ascii::<Ipv6Addr>(input)
 }
 
-/// Parses what the platform resolver treats as a numeric host: dotted-quad, IPv6 (an optional `%zone` is stripped, not validated), and the `inet_aton` shorthand `getaddrinfo` accepts but `is_ip_address` rejects (`127.1`, `2130706433`, `0x7f000001`, `0177.0.0.1`).
+/// Parses what the platform resolver treats as a numeric host: dotted-quad, IPv6 (an optional `%zone` is stripped, not validated), and the `inet_aton` shorthand `getaddrinfo` accepts but `is_ip_address` rejects (`127.1`, `2130706433`, `0x7f000001`, `0177.0.0.1`). The Windows resolver reads no shorthand.
 pub fn to_ip_address(input: &[u8]) -> Option<IpAddr> {
     // A `%zone` suffix belongs to a numeric v6 host; resolving the zone is the caller's business.
     let head = crate::strings::index_of_char_usize(input, b'%').unwrap_or(input.len());
     if let Some(v6) = parse_strict_v6(&input[..head]) {
         return Some(IpAddr::V6(v6));
     }
-    let mut buf = [0u8; 512];
-    if input.is_empty() || input.len() >= buf.len() {
-        return None;
+    #[cfg(windows)]
+    {
+        parse_strict(input)
     }
-    buf[..input.len()].copy_from_slice(input);
-    let mut v4 = [0u8; 4];
-    sys::aton(&buf[..=input.len()], &mut v4).then(|| IpAddr::V4(Ipv4Addr::from(v4)))
+    #[cfg(not(windows))]
+    {
+        let mut buf = [0u8; 512];
+        if input.is_empty() || input.len() >= buf.len() {
+            return None;
+        }
+        buf[..input.len()].copy_from_slice(input);
+        let mut v4 = [0u8; 4];
+        sys::aton(&buf[..=input.len()], &mut v4).then(|| IpAddr::V4(Ipv4Addr::from(v4)))
+    }
 }
 
 /// A host as URLs and `host:port` strings write it keeps an IPv6 literal's

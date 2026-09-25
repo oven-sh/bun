@@ -2587,11 +2587,13 @@ describe.concurrent("proxy environment", () => {
 
   // The host of an https:// proxy from the environment reaches TLS as typed,
   // not through a URL parser. In IP shorthand it is a name: it goes out as
-  // SNI, and it is not the address in the certificate of the proxy.
+  // SNI, and it is not the address in the certificate of the proxy. The
+  // Windows resolver does not read the shorthand, so nothing is dialed there.
   test.each([
     ["127.0.0.1", "proxy", null],
-    ["0x7f000001", "ERR_TLS_CERT_ALTNAME_INVALID", "0x7f000001"],
-    ["127.000.000.001", "ERR_TLS_CERT_ALTNAME_INVALID", "127.000.000.001"],
+    ...["0x7f000001", "127.000.000.001"].map(
+      host => [host, isWindows ? "ENOTFOUND" : "ERR_TLS_CERT_ALTNAME_INVALID", isWindows ? null : host] as const,
+    ),
   ])("an https:// proxy at %j", async (host, result, sni) => {
     let name: string | null = null;
     const proxy = tls.createServer(

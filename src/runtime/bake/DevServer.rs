@@ -1383,7 +1383,9 @@ pub(crate) fn is_allowed_host_header(
     {
         return true;
     }
-    if bun_core::ip_address::is_ip_address(bun_core::ip_address::strip_ipv6_brackets(host)) {
+    // A host that the resolver reads as a number is never looked up, so DNS cannot rebind it.
+    let numeric = bun_core::ip_address::strip_ipv6_brackets(host);
+    if bun_core::ip_address::is_ip_address(numeric) || is_ipv4_shorthand(numeric) {
         return true;
     }
     if let Some(crate::server::server_config::Address::Tcp {
@@ -1393,6 +1395,16 @@ pub(crate) fn is_allowed_host_header(
         return strings::eql_case_insensitive_ascii(host, h.as_bytes(), true);
     }
     false
+}
+
+/// The `inet_aton` shorthand that `getaddrinfo` reads (`127.1`, `0x7f000001`), and nothing after it:
+/// `inet_aton` stops at whitespace, so `127.0.0.1 evil.test` would pass without the check of the bytes.
+fn is_ipv4_shorthand(host: &[u8]) -> bool {
+    host.first().is_some_and(u8::is_ascii_digit)
+        && host
+            .iter()
+            .all(|b| b.is_ascii_hexdigit() || matches!(b, b'.' | b'x' | b'X'))
+        && bun_core::ip_address::to_ip_address(host).is_some_and(|ip| ip.is_ipv4())
 }
 
 /// `host[":" port]` / `"[" v6 "]" [":" port]` → host (brackets retained for IPv6).

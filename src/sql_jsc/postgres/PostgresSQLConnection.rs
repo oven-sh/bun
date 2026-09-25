@@ -1179,14 +1179,16 @@ impl ConnectionStrings {
         path: &[u8],
     ) -> Self {
         let mut b = bun_core::StringBuilder::default();
-        b.cap += user.len() + password.len() + database.len() + options.len() + path.len() + 5;
+        for string in [user, password, database, options, path] {
+            b.count_z(string);
+        }
         let _ = b.allocate();
         // The buffer never moves again, so each slice can outlive the borrow of `b`.
-        let user = bun_ptr::RawSlice::new(b.append(user));
-        let password = bun_ptr::RawSlice::new(b.append(password));
-        let database = bun_ptr::RawSlice::new(b.append(database));
-        let options = bun_ptr::RawSlice::new(b.append(options));
-        let path = bun_ptr::RawSlice::new(b.append(path));
+        let user = bun_ptr::RawSlice::new(b.append_z(user).as_bytes());
+        let password = bun_ptr::RawSlice::new(b.append_z(password).as_bytes());
+        let database = bun_ptr::RawSlice::new(b.append_z(database).as_bytes());
+        let options = bun_ptr::RawSlice::new(b.append_z(options).as_bytes());
+        let path = bun_ptr::RawSlice::new(b.append_z(path).as_bytes());
         Self {
             buf: b.move_to_slice(),
             user,

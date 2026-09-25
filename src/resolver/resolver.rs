@@ -887,11 +887,8 @@ impl<'a> Resolver<'a> {
         //
         // - want to load the user's node_modules, which is what currently happens.
         //
-        // auto install, as of writing, is also quite buggy and untested, it always
-        // installs the latest version regardless of a user's package.json or specifier.
-        // in addition to being not fully stable, it is completely unexpected to invoke
-        // a package manager after bundling an executable. if enough people run into
-        // this, we could implement point 1
+        // it is completely unexpected to invoke a package manager after bundling
+        // an executable. if enough people run into this, we could implement point 1
         if self.standalone_module_graph.is_some() {
             return false;
         }
@@ -2902,11 +2899,16 @@ impl<'a> Resolver<'a> {
                 let mut dependency_behavior = Dependency::Behavior::PROD;
                 let mut string_buf: &[u8] = esm.version;
 
+                let package_json_for_dependencies =
+                    self.package_json_for_dependencies(dir_info, esm.name);
+
                 // const initial_pending_tasks = manager.pending_tasks;
                 let mut resolved_package_id: Install::PackageID = 'brk: {
                     // check if the package.json in the source directory was already added to the lockfile
                     // and try to look up the dependency from there
-                    if let Some(package_json) = dir_info.package_json_for_dependencies() {
+                    if let Some(package_json) = package_json_for_dependencies {
+                        // SAFETY: ARENA — interned for the life of the process.
+                        let package_json: &PackageJSON = unsafe { package_json.as_ref() };
                         let mut dependencies_list: &[Dependency::Dependency] = &[];
                         let resolve_from_lockfile =
                             package_json.package_manager_package_id != Install::INVALID_PACKAGE_ID;
@@ -3010,12 +3012,10 @@ impl<'a> Resolver<'a> {
 
                     // unsupported or not found dependency, we might need to install it to the cache
                     match self.enqueue_dependency_to_resolve(
-                        // Read the raw `NonNull` fields directly (NOT the
-                        // `&'static`-yielding accessors) so mut-provenance from
-                        // `intern_package_json` survives to the write inside.
-                        dir_info
-                            .package_json_for_dependencies
-                            .or(dir_info.package_json),
+                        // Raw `NonNull` (NOT the `&'static`-yielding accessor) so
+                        // mut-provenance from `intern_package_json` survives to the
+                        // write inside.
+                        package_json_for_dependencies.or(dir_info.package_json),
                         &esm,
                         dependency_behavior,
                         &mut resolved_package_id,
@@ -3489,6 +3489,42 @@ impl<'a> Resolver<'a> {
         )?;
         // SAFETY: `dir_info_ptr` is the BSSMap slot just filled by `dir_info_uncached`.
         Ok(Some(unsafe { DirInfoRef::from_raw(dir_info_ptr) }))
+    }
+
+    /// The `package.json` that says which version of `name` to install: the
+    /// nearest at or above `dir_info` that lists `name`. Inside a package
+    /// installed into the global cache, only the package root's dependencies
+    /// count, so that root wins over a nested `package.json` below it (#6988).
+    /// The map of each file is built here, after the package manager exists.
+    fn package_json_for_dependencies(
+        &mut self,
+        dir_info: DirInfoRef,
+        name: &[u8],
+    ) -> Option<core::ptr::NonNull<PackageJSON>> {
+        debug_assert!(self.package_manager.is_some());
+        let mut listed: Option<core::ptr::NonNull<PackageJSON>> = None;
+        let mut current = Some(dir_info);
+        while let Some(info) = current {
+            if let Some(mut package_json) = info.package_json {
+                // SAFETY: BACKREF — an interned arena slot (see
+                // `intern_package_json`) with mut-provenance; the resolver
+                // mutex serializes every writer, and no `&PackageJSON` from
+                // this slot is held across the call.
+                let pkg: &mut PackageJSON = unsafe { package_json.as_mut() };
+                pkg.load_dependencies(self, false);
+                // Package 0 is the project's own root, appended when the
+                // lockfile starts empty. Every other id is a cached package.
+                let id = pkg.package_manager_package_id;
+                if id != Install::INVALID_PACKAGE_ID && id != 0 {
+                    return Some(package_json);
+                }
+                if listed.is_none() && pkg.dependencies.contains(name) {
+                    listed = Some(package_json);
+                }
+            }
+            current = info.get_parent();
+        }
+        listed
     }
 
     fn enqueue_dependency_to_resolve(
@@ -4101,38 +4137,28 @@ impl<'a> Resolver<'a> {
         unsafe { (*BIN_FOLDERS.get()).assume_init_ref().const_slice() }
     }
 
-    pub(crate) fn parse_package_json<const ALLOW_DEPENDENCIES: bool>(
+    /// Parses a `package.json` without its dependency map; see
+    /// `package_json_for_dependencies`. `package_id` is the lockfile id of a
+    /// package read out of the global cache.
+    pub(crate) fn parse_package_json(
         &mut self,
         file: &[u8],
         dirname_fd: FD,
         package_id: Option<Install::PackageID>,
     ) -> crate::CrateResult<Option<core::ptr::NonNull<PackageJSON>>> {
         use crate::package_json::{IncludeDependencies, IncludeScripts};
-        // NOTE: `IncludeDependencies` is a
-        // const generic on `PackageJSON::parse`, `IncludeScripts` is runtime (it only
-        // gates one branch).
         let include_scripts = if self.care_about_scripts {
             IncludeScripts::IncludeScripts
         } else {
             IncludeScripts::IgnoreScripts
         };
-        let pkg = if ALLOW_DEPENDENCIES {
-            PackageJSON::parse::<{ IncludeDependencies::Local }>(
-                self,
-                file,
-                dirname_fd,
-                package_id,
-                include_scripts,
-            )
-        } else {
-            PackageJSON::parse::<{ IncludeDependencies::None }>(
-                self,
-                file,
-                dirname_fd,
-                package_id,
-                include_scripts,
-            )
-        };
+        let pkg = PackageJSON::parse::<{ IncludeDependencies::None }>(
+            self,
+            file,
+            dirname_fd,
+            package_id,
+            include_scripts,
+        );
         let Some(pkg) = pkg else { return Ok(None) };
 
         // NOTE: the DirInfo cache holds `&'static` refs. PORTING.md
@@ -6252,23 +6278,11 @@ impl<'a> Resolver<'a> {
                 if !parent_package_json.name.is_empty() || self.care_about_bin_folder {
                     info.enclosing_package_json = Some(parent_package_json);
                 }
-
-                if parent_package_json.dependencies.map.count() > 0
-                    || parent_package_json.package_manager_package_id != Install::INVALID_PACKAGE_ID
-                {
-                    // NOTE: store the raw `NonNull` field (not the
-                    // `&'static` accessor result) so mut-provenance flows
-                    // through to `enqueue_dependency_to_resolve`.
-                    info.package_json_for_dependencies = parent_.package_json;
-                }
             }
 
             info.enclosing_package_json = info
                 .enclosing_package_json
                 .or(parent_.enclosing_package_json);
-            info.package_json_for_dependencies = info
-                .package_json_for_dependencies
-                .or(parent_.package_json_for_dependencies);
 
             // Make sure "absRealPath" is the real path of the directory (resolving any symlinks)
             if !self.opts.preserve_symlinks {
@@ -6357,11 +6371,8 @@ impl<'a> Resolver<'a> {
                 // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
                 if unsafe { entry.kind(rfs_ptr, self.store_fd) } == Fs::file_system::EntryKind::File
                 {
-                    info.package_json = if self.use_package_manager()
-                        && !info.has_node_modules()
-                        && !info.is_node_modules()
-                    {
-                        self.parse_package_json::<true>(
+                    info.package_json = self
+                        .parse_package_json(
                             path,
                             if FeatureFlags::STORE_FILE_DESCRIPTORS {
                                 fd
@@ -6371,20 +6382,7 @@ impl<'a> Resolver<'a> {
                             package_id,
                         )
                         .ok()
-                        .flatten()
-                    } else {
-                        self.parse_package_json::<false>(
-                            path,
-                            if FeatureFlags::STORE_FILE_DESCRIPTORS {
-                                fd
-                            } else {
-                                FD::INVALID
-                            },
-                            None,
-                        )
-                        .ok()
-                        .flatten()
-                    };
+                        .flatten();
 
                     if let Some(pkg) = info.package_json() {
                         if pkg.browser_map.count() > 0 {
@@ -6394,15 +6392,6 @@ impl<'a> Resolver<'a> {
 
                         if !pkg.name.is_empty() || self.care_about_bin_folder {
                             info.enclosing_package_json = Some(pkg);
-                        }
-
-                        if pkg.dependencies.map.count() > 0
-                            || pkg.package_manager_package_id != Install::INVALID_PACKAGE_ID
-                        {
-                            // NOTE: store the raw `NonNull` field (not the
-                            // `&'static` accessor result) so mut-provenance flows
-                            // through to `enqueue_dependency_to_resolve`.
-                            info.package_json_for_dependencies = info.package_json;
                         }
 
                         if let Some(logs) = self.debug_logs.as_mut() {

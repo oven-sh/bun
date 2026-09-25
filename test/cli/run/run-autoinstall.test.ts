@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync } from "fs";
 import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
+import { createHash } from "node:crypto";
+import { gzipSync } from "node:zlib";
 import { join } from "path";
 import { pathToFileURL } from "url";
 
@@ -287,6 +289,246 @@ describe.concurrent("auto-install reads a package.json dependency version from t
     expect(stdout).toBe("a 5.0.0-alpha.150\nb MODULE_NOT_FOUND\n");
     expect(exitCode).toBe(0);
   });
+});
+
+const printNoDepsVersion = `console.log(require("no-deps/package.json").version);\n`;
+
+// docs/runtime/auto-install.mdx: a bare import installs the version range the
+// nearest package.json declares for it, and only `latest` when no package.json
+// lists the package. The no-deps fixture has 1.0.0, 1.0.1, 1.1.0 and 2.0.0.
+describe.concurrent("auto-install uses the version range from the nearest package.json", () => {
+  // The project's package.json is read while the entry point resolves, before
+  // the first bare import creates the package manager.
+  test.each(["index.js", "run index.js"])("bun %s from the project directory", async args => {
+    using registry = fixtureRegistry();
+    using dir = tempDir("autoinstall-range", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { "no-deps": "^1.0.0" } }),
+      "index.js": printNoDepsVersion,
+      "bunfig.toml": registry.bunfig,
+    });
+
+    const { stdout, stderr, exitCode } = await runWithCache(
+      String(dir),
+      join(String(dir), ".bun-cache"),
+      ...args.split(" "),
+    );
+    expect(stdout).toBe("1.1.0\n");
+    expect(stderr).toBe("");
+    expect(registry.requests).toEqual(["/no-deps", "/no-deps/-/no-deps-1.1.0.tgz"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("package.json in a directory below the cwd, without a name", async () => {
+    using registry = fixtureRegistry();
+    using dir = tempDir("autoinstall-range-nested", {
+      "bunfig.toml": registry.bunfig,
+      "app/package.json": JSON.stringify({ dependencies: { "no-deps": "~1.0.0" } }),
+      "app/index.js": printNoDepsVersion,
+    });
+
+    const { stdout, stderr, exitCode } = await runWithCache(
+      String(dir),
+      join(String(dir), ".bun-cache"),
+      "app/index.js",
+    );
+    expect(stdout).toBe("1.0.1\n");
+    expect(stderr).toBe("");
+    expect(registry.requests).toEqual(["/no-deps", "/no-deps/-/no-deps-1.0.1.tgz"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // sub/package.json is read before the first bare import, when it is the
+  // import of ./sub/index.js that triggers it.
+  test("package.json of a directory read before the first auto-install", async () => {
+    using registry = fixtureRegistry();
+    using dir = tempDir("autoinstall-range-order", {
+      "package.json": JSON.stringify({ name: "root" }),
+      "index.js": `require("./sub/index.js");\n`,
+      "sub/package.json": JSON.stringify({ name: "sub", dependencies: { "no-deps": "1.0.0" } }),
+      "sub/index.js": printNoDepsVersion,
+      "bunfig.toml": registry.bunfig,
+    });
+
+    const { stdout, stderr, exitCode } = await runWithCache(String(dir), join(String(dir), ".bun-cache"), "index.js");
+    expect(stdout).toBe("1.0.0\n");
+    expect(stderr).toBe("");
+    expect(registry.requests).toEqual(["/no-deps", "/no-deps/-/no-deps-1.0.0.tgz"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // The nearest package.json that lists the package wins, as for a package
+  // inside node_modules that declares its own.
+  test("an enclosing package.json with no dependencies is skipped", async () => {
+    using registry = fixtureRegistry();
+    using dir = tempDir("autoinstall-range-skip", {
+      "package.json": JSON.stringify({ name: "root", dependencies: { "no-deps": "1.0.1" } }),
+      "sub/package.json": JSON.stringify({ name: "sub" }),
+      "sub/index.js": printNoDepsVersion,
+      "bunfig.toml": registry.bunfig,
+    });
+
+    const { stdout, stderr, exitCode } = await runWithCache(
+      String(dir),
+      join(String(dir), ".bun-cache"),
+      "sub/index.js",
+    );
+    expect(stdout).toBe("1.0.1\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a nearer package.json that does not list the package is skipped", async () => {
+    using registry = fixtureRegistry();
+    using dir = tempDir("autoinstall-range-hoisted", {
+      "package.json": JSON.stringify({ name: "root", dependencies: { "no-deps": "1.0.1" } }),
+      "app/package.json": JSON.stringify({ name: "app", dependencies: { "left-pad": "1.0.0" } }),
+      "app/index.js": printNoDepsVersion,
+      "bunfig.toml": registry.bunfig,
+    });
+
+    const { stdout, stderr, exitCode } = await runWithCache(
+      String(dir),
+      join(String(dir), ".bun-cache"),
+      "app/index.js",
+    );
+    expect(stdout).toBe("1.0.1\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // With node_modules present, --install=fallback installs what is missing.
+  // The version comes from the project's package.json here too.
+  test("--install=fallback with a node_modules that lacks the package", async () => {
+    using registry = fixtureRegistry();
+    using dir = tempDir("autoinstall-range-fallback", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { "no-deps": "^1.0.0" } }),
+      "node_modules/.keep": "",
+      "index.js": printNoDepsVersion,
+      "bunfig.toml": registry.bunfig,
+    });
+
+    const { stdout, stderr, exitCode } = await runWithCache(
+      String(dir),
+      join(String(dir), ".bun-cache"),
+      "--install=fallback",
+      "index.js",
+    );
+    expect(stdout).toBe("1.1.0\n");
+    expect(stderr).toBe("");
+    expect(registry.requests).toEqual(["/no-deps", "/no-deps/-/no-deps-1.1.0.tgz"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a range nothing in the registry satisfies is an error, not latest", async () => {
+    using registry = fixtureRegistry();
+    using dir = tempDir("autoinstall-range-unsatisfiable", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { "no-deps": "^3.0.0" } }),
+      "index.js": printNoDepsVersion,
+      "bunfig.toml": registry.bunfig,
+    });
+
+    const { stdout, stderr, exitCode } = await runWithCache(String(dir), join(String(dir), ".bun-cache"), "index.js");
+    expect(stdout).toBe("");
+    expect(stderr).toContain("Cannot find module 'no-deps/package.json'");
+    expect(registry.requests).toEqual(["/no-deps"]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("a package the package.json does not list installs latest", async () => {
+    using registry = fixtureRegistry();
+    using dir = tempDir("autoinstall-range-unlisted", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { "left-pad": "^1.0.0" } }),
+      "index.js": printNoDepsVersion,
+      "bunfig.toml": registry.bunfig,
+    });
+
+    const { stdout, stderr, exitCode } = await runWithCache(String(dir), join(String(dir), ".bun-cache"), "index.js");
+    expect(stdout).toBe("2.0.0\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+});
+
+// A minimal gzipped npm tarball: one regular file per entry, under `package/`.
+function tarball(files: Record<string, string>) {
+  const octal = (n: number, width: number) => n.toString(8).padStart(width - 1, "0") + "\0";
+  const chunks: Buffer[] = [];
+  for (const [name, contents] of Object.entries(files)) {
+    const body = Buffer.from(contents);
+    const header = Buffer.alloc(512, 0);
+    header.write("package/" + name, 0, 100, "utf8");
+    header.write(octal(0o644, 8), 100);
+    header.write(octal(0, 8), 108);
+    header.write(octal(0, 8), 116);
+    header.write(octal(body.length, 12), 124);
+    header.write(octal(0, 12), 136);
+    header.fill(" ", 148, 156);
+    header.write("0", 156);
+    header.write("ustar\0", 257);
+    header.write("00", 263);
+    let sum = 0;
+    for (let i = 0; i < 512; i++) sum += header[i];
+    header.write(octal(sum, 8), 148);
+    chunks.push(header, body, Buffer.alloc((512 - (body.length % 512)) % 512, 0));
+  }
+  chunks.push(Buffer.alloc(1024, 0));
+  const tgz = gzipSync(Buffer.concat(chunks));
+  return { tgz, integrity: "sha512-" + createHash("sha512").update(tgz).digest("base64") };
+}
+
+// Inside an installed package only the package root's dependencies count.
+// `@hiveio/hive-js` ships `lib/auth/ecc/package.json` with `"bs58": "^3.0.0"`
+// while its root declares `^4.0.0`; a `require("bs58")` below the nested file
+// asked for a version that was never installed (#6988).
+test("a package.json nested inside an installed package does not override the package root", async () => {
+  const inner = tarball({
+    "package.json": JSON.stringify({ name: "inner", version: "2.0.0", main: "index.js" }),
+    "index.js": `module.exports = "inner@2.0.0";\n`,
+  });
+  const outer = tarball({
+    "package.json": JSON.stringify({
+      name: "outer",
+      version: "1.0.0",
+      main: "lib/sub/src/entry.js",
+      dependencies: { inner: "^2.0.0" },
+    }),
+    "lib/sub/package.json": JSON.stringify({ name: "sub", version: "1.0.0", dependencies: { inner: "^1.0.0" } }),
+    "lib/sub/src/entry.js": `module.exports = require("inner");\n`,
+  });
+  const manifest = (name: string, version: string, tgz: { integrity: string }, dependencies = {}) => ({
+    name,
+    "dist-tags": { latest: version },
+    versions: {
+      [version]: {
+        name,
+        version,
+        dependencies,
+        dist: { integrity: tgz.integrity, tarball: `http://127.0.0.1:${server.port}/${name}/-/${name}-${version}.tgz` },
+      },
+    },
+  });
+  await using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch(req) {
+      const { pathname } = new URL(req.url);
+      if (pathname === "/outer") return Response.json(manifest("outer", "1.0.0", outer, { inner: "^2.0.0" }));
+      if (pathname === "/inner") return Response.json(manifest("inner", "2.0.0", inner));
+      if (pathname === "/outer/-/outer-1.0.0.tgz") return new Response(outer.tgz);
+      if (pathname === "/inner/-/inner-2.0.0.tgz") return new Response(inner.tgz);
+      return new Response("not found", { status: 404 });
+    },
+  });
+
+  using dir = tempDir("autoinstall-nested-package-json", {
+    "index.js": `console.log(require("outer"));\n`,
+    "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${server.port}/"\n`,
+  });
+
+  const { stdout, stderr, exitCode } = await runWithCache(String(dir), join(String(dir), ".bun-cache"), "index.js");
+  expect(stdout).toBe("inner@2.0.0\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });
 
 test("--install=fallback to install missing packages", async () => {

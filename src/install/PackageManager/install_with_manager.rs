@@ -41,8 +41,8 @@ use bun_install_types::NodeLinker::NodeLinker;
 // to avoid one giant `impl PackageManager` block.
 use crate::package_manager_real::run_tasks::{RunTasksCallbacks, run_tasks};
 use crate::package_manager_real::{
-    UpdateRequest, enqueue_dependency_list, enqueue_dependency_with_main, enqueue_patch_task_pre,
-    save_lockfile, setup_global_dir, update_lockfile_if_needed,
+    NpmAliasMap, UpdateRequest, enqueue_dependency_list, enqueue_dependency_with_main,
+    enqueue_patch_task_pre, save_lockfile, setup_global_dir, update_lockfile_if_needed,
     update_name_and_name_hash_from_version_replacement, write_yarn_lock,
 };
 
@@ -602,7 +602,15 @@ pub fn install_with_manager(
     manager.log_mut().reset();
     super::add_catalog::refuse_declared_positionals(manager);
 
-    write_back_package_jsons(manager, log_level)?;
+    let wave_moved = write_back_package_jsons(manager, log_level)?;
+    if !wave_moved.is_empty() {
+        // The rows the wave added bound to the packages they found; the same redirects as after the first wave point them at the moved ones.
+        redirect_moved_edges(&mut manager.lockfile, &wave_moved);
+        direct_deps_before.redirect_dependents(&mut manager.lockfile);
+        transitive.redirect_dependents(&mut manager.lockfile);
+        redirect_moved_edges(&mut manager.lockfile, &named.moved);
+        named.moved.extend(wave_moved);
+    }
 
     // This operation doesn't perform any I/O, so it should be relatively cheap.
     // Both old and new lockfiles must stay live for the later
@@ -1488,11 +1496,11 @@ fn enqueue_transitive(
     transitive.enqueue_tracked(manager)
 }
 
-/// Writes the resolved versions into the edited package.json entries and bun.lock's declared columns. A `$name` override or a catalog entry re-derived from a rewritten literal can differ from the value the rows resolved under, so the rows that value no longer covers resolve once more before the clean.
+/// Writes the resolved versions into the edited package.json entries and bun.lock's declared columns. A `$name` override or a catalog entry re-derived from a rewritten literal can differ from the value the rows resolved under, so the rows that value no longer covers resolve once more before the clean. Returns those rows paired with the package they resolved to before, for `redirect_moved_edges` and the security scanner.
 fn write_back_package_jsons(
     manager: &mut PackageManager,
     log_level: Options::LogLevel,
-) -> crate::Result<()> {
+) -> crate::Result<Vec<(DependencyID, PackageID)>> {
     for request in &manager.update_requests {
         // prevent redundant errors
         if request.failed {
@@ -1501,20 +1509,26 @@ fn write_back_package_jsons(
     }
 
     if !super::package_json_write_back::edit_after_resolve(manager)? {
-        return Ok(());
+        return Ok(Vec::new());
     }
-    let rows = rows_outside_synced_maps(&manager.lockfile);
+    let rows = rows_outside_synced_maps(&manager.lockfile, &manager.known_npm_aliases);
     bun_output::scoped_log!(
         PackageManager,
         "package.json write-back copied the root overrides and catalogs; {} rows resolve again",
         rows.len()
     );
     if rows.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
-    for dependency_i in rows {
-        reenqueue_row(manager, dependency_i);
-    }
+    let moved: Vec<(DependencyID, PackageID)> = rows
+        .into_iter()
+        .map(|dependency_i| {
+            (
+                dependency_i as DependencyID,
+                reenqueue_row(manager, dependency_i),
+            )
+        })
+        .collect();
     manager.drain_dependency_list();
     if manager.pending_task_count() > 0 || manager.peer_dependencies.readable_length() > 0 {
         if log_level.show_progress() {
@@ -1525,59 +1539,87 @@ fn write_back_package_jsons(
             manager.end_progress_bar();
         }
     }
-    Ok(())
+    Ok(moved)
 }
 
-/// Resolved rows that an override or a catalog entry governs and whose package does not satisfy the value bun.lock now declares. Workspace, peer and bundled rows are left alone: an override never applies to a workspace edge, and peer and bundled rows follow their provider, like in `enqueue_named_updates`.
-fn rows_outside_synced_maps(lockfile: &Lockfile) -> Vec<usize> {
+/// Resolved rows of reached packages that an override or a catalog entry governs and whose package does not satisfy the value bun.lock now declares. Left alone, as in the resolver and in `enqueue_named_updates`: workspace edges, peer and bundled rows (they follow their provider through `redirect_moved_edges`), plain rows of a name that a known `npm:` alias redirects, and values of a kind that `satisfies_dependency_version` cannot compare (a dist-tag, a folder, a tarball).
+fn rows_outside_synced_maps(lockfile: &Lockfile, known_npm_aliases: &NpmAliasMap) -> Vec<usize> {
     let buf = lockfile.buffers.string_bytes.as_slice();
     let dependencies = lockfile.buffers.dependencies.as_slice();
     let resolutions = lockfile.buffers.resolutions.as_slice();
     let package_resolutions = lockfile.packages.items_resolution();
     let package_name_hashes = lockfile.packages.items_name_hash();
+    let dependency_lists = lockfile.packages.items_dependencies();
+    let reached = reachable::packages(lockfile, resolutions, reachable::Options::all(0));
 
     let mut rows = Vec::new();
-    for (dependency_i, dependency) in dependencies.iter().enumerate() {
-        let package_id = resolutions[dependency_i];
-        if package_id == invalid_package_id
-            || package_id as usize >= package_resolutions.len()
-            || dependency.behavior.is_workspace()
-            || dependency.behavior.is_peer()
-            || dependency.behavior.is_bundled()
-        {
+    for owner in 0..lockfile.packages.len() {
+        if !reached.is_set_allow_out_of_bound(owner, false) {
             continue;
         }
-        if dependency.version.tag != DependencyVersionTag::Catalog
-            && !lockfile.overrides.has_rule_for_name(dependency.name_hash)
-        {
-            continue;
-        }
-        let Some(version) =
-            crate::dedupe::effective_version(lockfile, dependency_i as DependencyID, dependency)
-        else {
-            continue;
-        };
-        let (_, name_hash) = update_name_and_name_hash_from_version_replacement(
-            lockfile,
-            dependency.name,
-            dependency.name_hash,
-            &version,
-        );
-        let resolution = &package_resolutions[package_id as usize];
-        let satisfied = resolution.satisfies_dependency_version(&version, buf, buf)
-            && (version.tag != DependencyVersionTag::Npm
-                || package_name_hashes[package_id as usize] == name_hash);
-        if !satisfied {
-            rows.push(dependency_i);
+        let slice = dependency_lists[owner];
+        for dependency_i in slice.begin() as usize..slice.end() as usize {
+            let dependency = &dependencies[dependency_i];
+            let package_id = resolutions[dependency_i];
+            if package_id == invalid_package_id
+                || package_id as usize >= package_resolutions.len()
+                || dependency.behavior.is_workspace()
+                || dependency.behavior.is_peer()
+                || dependency.behavior.is_bundled()
+            {
+                continue;
+            }
+            if dependency.version.tag == DependencyVersionTag::Npm
+                && !dependency.version.npm().is_alias
+                && known_npm_aliases.contains_key(&dependency.name_hash)
+            {
+                continue;
+            }
+            if dependency.version.tag != DependencyVersionTag::Catalog
+                && !lockfile.overrides.has_rule_for_name(dependency.name_hash)
+            {
+                continue;
+            }
+            let Some(version) = crate::dedupe::effective_version(
+                lockfile,
+                dependency_i as DependencyID,
+                dependency,
+            ) else {
+                continue;
+            };
+            if !matches!(
+                version.tag,
+                DependencyVersionTag::Npm
+                    | DependencyVersionTag::Git
+                    | DependencyVersionTag::Github
+            ) {
+                continue;
+            }
+            let (_, name_hash) = update_name_and_name_hash_from_version_replacement(
+                lockfile,
+                dependency.name,
+                dependency.name_hash,
+                &version,
+            );
+            let resolution = &package_resolutions[package_id as usize];
+            let satisfied = resolution.satisfies_dependency_version(&version, buf, buf)
+                && (version.tag != DependencyVersionTag::Npm
+                    || package_name_hashes[package_id as usize] == name_hash);
+            if !satisfied {
+                rows.push(dependency_i);
+            }
         }
     }
     rows
 }
 
-/// Drops the row's resolution and queues it to resolve again. `enqueue_dependency_with_main` can grow `buffers.dependencies`, so the row is copied out first.
-fn reenqueue_row(manager: &mut PackageManager, dependency_i: usize) {
+/// Drops the row's resolution and queues it to resolve again; returns the package it resolved to. `enqueue_dependency_with_main` can grow `buffers.dependencies`, so the row is copied out first.
+fn reenqueue_row(manager: &mut PackageManager, dependency_i: usize) -> PackageID {
     let dependency = manager.lockfile.buffers.dependencies[dependency_i].clone();
-    manager.lockfile.buffers.resolutions[dependency_i] = invalid_package_id;
+    let from = core::mem::replace(
+        &mut manager.lockfile.buffers.resolutions[dependency_i],
+        invalid_package_id,
+    );
     if let Err(err) = enqueue_dependency_with_main(
         manager,
         dependency_i as DependencyID,
@@ -1587,6 +1629,7 @@ fn reenqueue_row(manager: &mut PackageManager, dependency_i: usize) {
     ) {
         add_dependency_error(manager, &dependency, err);
     }
+    from
 }
 
 /// The differ's invalidation: every row (outside `pinned_rows`) named in `name_hashes` (sorted, deduped) and, when `catalogs_changed`, every `catalog:` row plus the rows whose override value is a catalog reference.

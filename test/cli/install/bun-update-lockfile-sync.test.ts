@@ -844,6 +844,22 @@ describe.concurrent("$ref overrides", () => {
     await expectInSync(dir, [""], { reinstall: true });
   });
 
+  test("a peer row follows the re-resolved package", async () => {
+    const overrides = { "no-deps": "$dep-with-tags" };
+    const deps = (tags: string) =>
+      root({ dependencies: { "one-range-dep": "1.0.0", "1-peer-dep-a": "1.0.0", "dep-with-tags": tags }, overrides });
+    const dir = await setup({ "package.json": deps("1.0.0") });
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.0.0"]);
+
+    await reinstall(dir, deps("^1.0.0"));
+    await run(dir, "update", "dep-with-tags");
+    const { packages } = await lock(dir);
+    expect(packages["no-deps"][0]).toBe("no-deps@1.1.0");
+    expect(packages["1-peer-dep-a/no-deps"]).toBeUndefined();
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.1.0"]);
+    await expectInSync(dir, [""], { reinstall: true });
+  });
+
   test("bun update <name> re-resolves an optional row whose $name override value changed", async () => {
     const overrides = { "no-deps": "$dep-with-tags" };
     const deps = (tags: string) =>

@@ -862,14 +862,6 @@ pub fn set_stream_iter_enabled(enabled: bool) {
     STREAM_ITER_ENABLED.store(enabled, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// Read by C++ (`createStreamIterEnabledFlag`, NodeModuleModule.cpp) so JS
-/// builtins can consult the write-once CLI bit instead of the user-mutable
-/// `process.execArgv`.
-#[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__streamIterEnabled() -> bool {
-    stream_iter_enabled()
-}
-
 /// True when `name` is a stream/iter specifier that must stay invisible
 /// because `--experimental-stream-iter` was not passed. Consulted by every
 /// reader of the alias tables (`Alias::get` and `ModuleLoader`'s raw-table

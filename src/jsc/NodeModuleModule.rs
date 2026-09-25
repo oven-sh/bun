@@ -237,3 +237,11 @@ extern "C" fn NodeModuleModule__onRequireExtensionModifyNonFunction(
         bun_core::out_of_memory();
     }
 }
+
+/// Read by C++ (`createStreamIterEnabledFlag`, NodeModuleModule.cpp) so JS
+/// builtins can consult the write-once CLI bit instead of the user-mutable
+/// `process.execArgv`.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__streamIterEnabled() -> bool {
+    bun_resolve_builtins::stream_iter_enabled()
+}

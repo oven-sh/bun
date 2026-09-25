@@ -68,23 +68,9 @@ unsafe extern "C" {
     safe fn Bun__wrapAbortError(global_object: &JSGlobalObject, cause: JSValue) -> JSValue;
 }
 
-/// Abort-callback monomorphization for `listen`. Implement on your context type.
-pub trait AbortListener {
-    fn on_abort(&mut self, reason: JSValue);
-}
-
 impl AbortSignal {
-    pub fn listen<C: AbortListener>(&self, ctx: *mut C) -> &AbortSignal {
-        extern "C" fn callback<C: AbortListener>(ptr: *mut c_void, reason: JSValue) {
-            // SAFETY: ptr was registered below as `*mut C`; C++ calls back on
-            // the same thread before `cleanNativeBindings` removes it.
-            let val = unsafe { bun_ptr::callback_ctx::<C>(ptr) };
-            C::on_abort(val, reason);
-        }
-        self.add_listener(ctx.cast::<c_void>(), callback::<C>)
-    }
-
-    pub fn add_listener(
+    /// For [`AbortHandle`](crate::AbortHandle), which removes `ctx` before it moves or drops.
+    pub(crate) fn add_listener(
         &self,
         ctx: *mut c_void,
         callback: unsafe extern "C" fn(*mut c_void, JSValue),
@@ -96,7 +82,7 @@ impl AbortSignal {
         self
     }
 
-    pub fn clean_native_bindings(&self, ctx: *mut c_void) {
+    pub(crate) fn clean_native_bindings(&self, ctx: *mut c_void) {
         WebCore__AbortSignal__cleanNativeBindings(self, ctx)
     }
 

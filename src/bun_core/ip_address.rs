@@ -68,7 +68,10 @@ pub fn to_ip_address(input: &[u8]) -> Option<IpAddr> {
         }
         buf[..input.len()].copy_from_slice(input);
         let mut v4 = [0u8; 4];
-        sys::aton(&buf[..=input.len()], &mut v4).then(|| IpAddr::V4(Ipv4Addr::from(v4)))
+        // `inet_aton` stops at whitespace or a NUL and reads what comes before.
+        (sys::aton(&buf[..=input.len()], &mut v4)
+            && crate::strings::index_of_any(input, b" \t\n\r\x0b\x0c\0").is_none())
+        .then(|| IpAddr::V4(Ipv4Addr::from(v4)))
     }
 }
 

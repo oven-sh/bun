@@ -89,16 +89,16 @@ test.skipIf(!isIPv6()).each(["::1/64", "::1/0", "2001:db8::1/0", "::ffff:127.1",
   },
 );
 
-// An IPv4 host is an address when the resolver of the platform reads it as
-// one. getaddrinfo() reads the inet_aton shorthand, and the Windows resolver
-// reads a dotted quad only. ares_inet_pton read "127.1" as 127.1.0.0 there, and
-// it took a trailing "/bits".
+// An IPv4 host is an address when the resolver of the platform reads all of
+// it as one. getaddrinfo() reads the inet_aton shorthand. inet_aton itself
+// stops at whitespace and reads what comes before. Each row here is decided
+// without a lookup: the Windows resolver reads no shorthand, so those rows are
+// in udp_socket.test.ts.
 test.each([
   ["127.0.0.1", "connected"],
-  ["127.1", isWindows ? "ENOTFOUND" : "connected"],
-  ["0x7f000001", isWindows ? "ENOTFOUND" : "connected"],
-  ["127.0.0.1/32", "ENOTFOUND"],
-  ["127.0.0.1/8", "ENOTFOUND"],
+  ...(isWindows ? [] : [["127.1", "connected"] as const, ["0x7f000001", "connected"] as const]),
+  ["127.0.0.1 db.allowed.example", "ENOTFOUND"],
+  ["127.0.0.1\n", "ENOTFOUND"],
 ])("Bun.connect to %j: %s", async (hostname, expected) => {
   // On every address, so that a connection to 127.1.0.0 also arrives.
   const dialed: string[] = [];

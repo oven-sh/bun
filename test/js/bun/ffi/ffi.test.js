@@ -1874,3 +1874,99 @@ describe.skipIf(!ABI_FIXTURE_PATH)("ABI conformance", () => {
     }
   });
 });
+
+describe("Symbol.dispose", () => {
+  // The native library prototype defines `@@dispose` as non-writable but configurable,
+  // so it is wrapped with defineProperty to observe the calls made by `using`.
+  function countDisposeCalls(proto) {
+    const original = proto[Symbol.dispose];
+    const counter = {
+      count: 0,
+      [Symbol.dispose]() {
+        Object.defineProperty(proto, Symbol.dispose, { value: original });
+      },
+    };
+    Object.defineProperty(proto, Symbol.dispose, {
+      value() {
+        counter.count++;
+        return original.call(this);
+      },
+    });
+    return counter;
+  }
+
+  it("JSCallback closes at the end of a `using` block", () => {
+    let callback;
+    {
+      using cb = new JSCallback(() => 42, { returns: "int32_t", args: [] });
+      callback = cb;
+      expect(typeof cb[Symbol.dispose]).toBe("function");
+      expect(cb.ptr > 0).toBe(true);
+    }
+    expect(callback.ptr).toBeNull();
+    // Disposing twice is a no-op, like close().
+    expect(callback[Symbol.dispose]()).toBeUndefined();
+  });
+
+  // CFunction.close() is a no-op (the function is GC-managed), so only the protocol is checked.
+  it("CFunction can be declared with `using`", () => {
+    const callback = new JSCallback(() => 42, { returns: "int32_t", args: [] });
+    try {
+      {
+        using fn = new CFunction({ ptr: callback.ptr, returns: "int32_t", args: [] });
+        expect(typeof fn[Symbol.dispose]).toBe("function");
+        expect(fn()).toBe(42);
+      }
+    } finally {
+      callback.close();
+    }
+  });
+
+  it.skipIf(!FFI_FIXTURE_PATH)("dlopen() library closes at the end of a `using` block", () => {
+    using probe = dlopen(FFI_FIXTURE_PATH, { returns_true: { args: [], returns: "bool" } });
+    using disposeCalls = countDisposeCalls(Object.getPrototypeOf(probe));
+    let library;
+    {
+      using lib = dlopen(FFI_FIXTURE_PATH, {
+        returns_true: { args: [], returns: "bool" },
+        add_int32_t: { args: ["i32", "i32"], returns: "i32" },
+      });
+      library = lib;
+      expect(typeof lib[Symbol.dispose]).toBe("function");
+      expect(lib.symbols.returns_true()).toBe(true);
+      expect(lib.symbols.add_int32_t(40, 2)).toBe(42);
+      expect(disposeCalls.count).toBe(0);
+    }
+    expect(disposeCalls.count).toBe(1);
+    // Disposing twice is a no-op, like close().
+    expect(library[Symbol.dispose]()).toBeUndefined();
+    expect(library.close()).toBeUndefined();
+  });
+
+  it.skipIf(!FFI_FIXTURE_PATH)("dlopen() library is still closed when the `using` block throws", () => {
+    using probe = dlopen(FFI_FIXTURE_PATH, { returns_true: { args: [], returns: "bool" } });
+    using disposeCalls = countDisposeCalls(Object.getPrototypeOf(probe));
+    expect(() => {
+      using lib = dlopen(FFI_FIXTURE_PATH, {
+        returns_true: { args: [], returns: "bool" },
+      });
+      throw new Error("boom");
+    }).toThrow("boom");
+    expect(disposeCalls.count).toBe(1);
+  });
+
+  it.skipIf(!FFI_FIXTURE_PATH)("linkSymbols() library closes at the end of a `using` block", () => {
+    using outer = dlopen(FFI_FIXTURE_PATH, {
+      add_int32_t: { args: ["i32", "i32"], returns: "i32" },
+    });
+    using disposeCalls = countDisposeCalls(Object.getPrototypeOf(outer));
+    {
+      using linked = linkSymbols({
+        sum: { ptr: outer.symbols.add_int32_t.ptr, args: ["i32", "i32"], returns: "i32" },
+      });
+      expect(typeof linked[Symbol.dispose]).toBe("function");
+      expect(linked.symbols.sum(40, 2)).toBe(42);
+    }
+    expect(disposeCalls.count).toBe(1);
+  });
+});

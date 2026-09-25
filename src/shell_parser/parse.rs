@@ -882,6 +882,8 @@ impl<'bump> Parser<'bump> {
                 }
             };
 
+            // POSIX grammar: `and_or AND_IF linebreak pipeline`.
+            self.skip_newlines();
             let right = self.parse_pipeline()?;
 
             let binary = self.allocate(ast::Binary { op, left, right });
@@ -906,6 +908,8 @@ impl<'bump> Parser<'bump> {
             pipeline_items.push(item);
 
             while self.r#match(TokenTag::Pipe) {
+                // POSIX grammar: `pipe_sequence '|' linebreak command`.
+                self.skip_newlines();
                 expr = self.parse_compound_cmd()?;
                 let item = match expr.as_pipeline_item() {
                     Some(i) => i,

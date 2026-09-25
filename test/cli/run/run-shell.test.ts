@@ -170,6 +170,26 @@ describe.concurrent("run-shell", () => {
     expect(exitCode).toBe(0);
   });
 
+  // A newline after `|`, `&&`, or `||` continues the command (POSIX grammar
+  // `linebreak`), with or without a trailing `# comment` before it.
+  test.each([
+    ["LF", "echo a | # c\ncat\necho b &&\necho c\nfalse || # d\necho e\n"],
+    ["CRLF", "echo a | # c\r\ncat\r\necho b &&\r\necho c\r\nfalse || # d\r\necho e\r\n"],
+  ])("newline after a pipe or and-or operator continues the command (%s)", async (_eol, script) => {
+    using dir = tempDir("bun-shell-op-newline", { "o.sh": script });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "o.sh")],
+      cwd: String(dir),
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stripAsanWarning(stderr)).toBe("");
+    expect(stdout).toBe("a\nb\nc\ne\n");
+    expect(exitCode).toBe(0);
+  });
+
   // https://github.com/oven-sh/bun/issues/29669
   test("CRLF with backslash line continuation inside double quotes", async () => {
     using dir = tempDir("bun-shell-crlf-dq", {

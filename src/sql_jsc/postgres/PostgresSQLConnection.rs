@@ -679,6 +679,24 @@ impl PostgresSQLConnection {
         self.js_value.with_mut(|r| r.finalize());
     }
 
+    /// Keep the process alive only while a connected connection has something in flight.
+    pub(crate) fn update_poll_ref(&self) {
+        if self.status.get() != Status::Connected {
+            return;
+        }
+        let idle = !self
+            .flags
+            .get()
+            .contains(ConnectionFlags::KEEP_ALIVE_REQUESTED)
+            && !self.has_query_running()
+            && self.write_buffer.get().remaining().is_empty();
+        if idle {
+            self.poll_ref.with_mut(|r| r.unref(self.vm_ctx()));
+        } else {
+            self.poll_ref.with_mut(|r| r.r#ref(self.vm_ctx()));
+        }
+    }
+
     pub(crate) fn flush_data_and_reset_timeout(&self) {
         self.reset_connection_timeout();
         // defer flushing, so if many queries are running in parallel in the same connection, we don't flush more than once
@@ -1050,20 +1068,7 @@ impl PostgresSQLConnection {
 
         event_loop.exit();
         // === defer block ===
-        if self.status.get() == Status::Connected
-            && !self
-                .flags
-                .get()
-                .contains(ConnectionFlags::KEEP_ALIVE_REQUESTED)
-            && !self.has_query_running()
-            && self.write_buffer.get().remaining().is_empty()
-        {
-            // Don't keep the process alive when there's nothing to do.
-            self.poll_ref.with_mut(|r| r.unref(self.vm_ctx()));
-        } else if self.status.get() == Status::Connected {
-            // Keep the process alive if there's something to do.
-            self.poll_ref.with_mut(|r| r.r#ref(self.vm_ctx()));
-        }
+        self.update_poll_ref();
         self.update_flags(|f| f.remove(ConnectionFlags::IS_PROCESSING_DATA));
 
         if self.status.get() == Status::Connected {

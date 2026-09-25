@@ -237,9 +237,7 @@ enum class Method : uint8_t {
     TargetCreateTarget,
     TargetAttachToTarget,
     PageEnable,
-    RuntimeEnable,
     // User-facing ops — responses settle (or errors reject) a slot.
-    TargetCloseTarget,
     PageNavigate,
     PageReload,
     // Chained from Page.loadEventFired: Runtime.evaluate("document.title")
@@ -256,7 +254,6 @@ enum class Method : uint8_t {
     InputDispatchMouseEvent,
     InputDispatchKeyEvent,
     InputInsertText,
-    InputDispatchScrollEvent,
     EmulationSetDeviceMetricsOverride,
     // Selector ops — two-phase. Runtime.evaluate runs the rAF-polled
     // actionability check page-side; response chains into the actual

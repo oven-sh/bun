@@ -30,7 +30,6 @@ namespace WebCore {
 class JSWebSocket : public JSEventTarget {
 public:
     using Base = JSEventTarget;
-    using DOMWrapped = WebSocket;
     static JSWebSocket* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<WebSocket>&& impl)
     {
         JSWebSocket* ptr = new (NotNull, JSC::allocateCell<JSWebSocket>(globalObject->vm())) JSWebSocket(structure, *globalObject, WTF::move(impl));

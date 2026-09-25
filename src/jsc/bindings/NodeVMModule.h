@@ -33,11 +33,6 @@ public:
         Errored
     };
 
-    enum class Type : uint8_t {
-        SourceText,
-        Synthetic,
-    };
-
     static NodeVMModule* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, ArgList args);
 
     const WTF::String& identifier() const { return m_identifier; }

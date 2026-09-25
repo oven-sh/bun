@@ -2893,8 +2893,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 // `fell_through` marks cases that should re-enter the loop;
                 // cases that break 'escaped fall through to appendCharToStrPool below.
             }
-            // `\<newline>` is removed before tokenizing (POSIX 2.2.1), so it joins
-            // `foo\<LF>bar` into one word rather than breaking it.
+            // `\<newline>` is removed before tokenizing (POSIX 2.2.1): no word break.
             else if char == u32::from(b'\n') {
                 debug_assert!(input.escaped);
                 continue;

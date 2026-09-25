@@ -868,8 +868,15 @@ _bun() {
         local -a scripts_list
         IFS=$'\n' scripts_list=($(SHELL=zsh bun getcompletes i))
         scripts="scripts:scripts:compadd -a scripts_list"
-        local -a files_list
-        IFS=$'\n' files_list=($(SHELL=zsh bun getcompletes j))
+        # Extensions bun can run, as bun itself reports them (".ts"); zsh wants
+        # them bare inside the alternation, so strip the leading dot.
+        local -a extensions
+        IFS=$'\n' extensions=($(SHELL=zsh bun getcompletes e))
+        extensions=(${extensions#.})
+        local files="files:file:_files"
+        if (( $#extensions )); then
+            files+=" -g '*.(${(j:|:)extensions})'"
+        fi
 
         main_commands=(
             'run\:"Run JavaScript with Bun, a package.json script, or a bin" '
@@ -894,7 +901,7 @@ _bun() {
             'help\:"Show all supported flags and commands" '
         )
         main_commands=($main_commands)
-        _alternative "$scripts" "args:command:(($main_commands))" "files:files:compadd -a files_list"
+        _alternative "$scripts" "args:command:(($main_commands))" "$files"
 
         ;;
     args)

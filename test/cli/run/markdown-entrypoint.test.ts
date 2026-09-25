@@ -401,4 +401,36 @@ describe("bun <file.md>", () => {
       expect(secondExit).toBe(0);
     },
   );
+
+  // Which extensions render is a loader question, so a bunfig `[loader]` entry
+  // answers it in both directions — including for an explicit path, which
+  // reaches the run path carrying no loader of its own.
+  test("follows a configured loader rather than the extension's default", async () => {
+    using dir = tempDir("md-entry-loader-", {
+      "bunfig.toml": ["[loader]", '".bagel" = "md"', '".md" = "text"'].join("\n"),
+      "doc.bagel": "# Heading\n",
+      "doc.md": "# Heading\n",
+    });
+    const run = async (entry: string) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), entry],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // Only read on the way to a failure, so the ASAN warnings that keep `runMd`
+      // from asserting stderr at all are harmless here: they appear alongside the
+      // real reason instead of on their own.
+      if (exitCode !== 0) expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      return stdout;
+    };
+
+    // rendered markdown underlines a heading
+    expect(await run("./doc.bagel")).toContain("===");
+    // mapped away from `md`, the same heading is not rendered
+    expect(await run("./doc.md")).not.toContain("===");
+  });
 });

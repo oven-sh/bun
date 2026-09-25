@@ -137,10 +137,19 @@ impl Loader {
         matches!(self, Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx)
     }
 
+    /// Whether `bun <file>` executes a file with this loader. `Md` renders the
+    /// file and exits; `Html` boots as an HTML entry point.
     pub fn can_be_run_by_bun(self) -> bool {
         matches!(
             self,
-            Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx | Loader::Wasm | Loader::Bunsh
+            Loader::Jsx
+                | Loader::Js
+                | Loader::Ts
+                | Loader::Tsx
+                | Loader::Wasm
+                | Loader::Bunsh
+                | Loader::Md
+                | Loader::Html
         )
     }
 

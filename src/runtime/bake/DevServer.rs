@@ -19,7 +19,7 @@ use bun_ast::Log;
 use bun_bundler::options_impl::TargetExt as _;
 use bun_collections::{ArrayHashMap, DynamicBitSet, HashMap, HiveArrayFallback, StringHashMap};
 use bun_core::{self as str, String as BunString, ZStr, strings};
-use bun_core::{Environment, Output};
+use bun_core::{Environment, Output, feature_flags};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
@@ -1070,10 +1070,7 @@ impl Drop for DevServer {
             debug_assert!(self.active_websocket_connections.is_empty());
         }
 
-        if self.memory_visualizer_timer.state == EventLoopTimerState::ACTIVE {
-            let timer_ptr: *mut EventLoopTimer = &raw mut self.memory_visualizer_timer;
-            self.timer_heap().remove(timer_ptr);
-        }
+        self.disarm_memory_visualizer_timer();
         self.graph_safety_lock.lock();
         // Hand ownership of the heap allocation to the watcher thread (which frees it in
         // `thread_main` once `running` flips false). Auto-dropping the `Box`
@@ -5526,10 +5523,38 @@ impl DevServer {
         crate::jsc_hooks::timer_all_mut()
     }
 
-    pub(crate) fn emit_memory_visualizer_message_timer(
-        _timer: &mut EventLoopTimer,
-        _: &bun_core::Timespec,
-    ) {
+    const MEMORY_VISUALIZER_TICK_MS: i64 = 1000;
+
+    pub(crate) fn arm_memory_visualizer_timer(&mut self) {
+        let next = bun_core::Timespec::ms_from_now(
+            bun_core::TimespecMockMode::ForceRealTime,
+            Self::MEMORY_VISUALIZER_TICK_MS,
+        );
+        let timer_ptr: *mut EventLoopTimer = &raw mut self.memory_visualizer_timer;
+        self.timer_heap().update(timer_ptr, &next);
+    }
+
+    pub(crate) fn disarm_memory_visualizer_timer(&mut self) {
+        if self.memory_visualizer_timer.state != EventLoopTimerState::ACTIVE {
+            return;
+        }
+        let timer_ptr: *mut EventLoopTimer = &raw mut self.memory_visualizer_timer;
+        self.timer_heap().remove(timer_ptr);
+    }
+
+    /// SAFETY: `timer` must be the `memory_visualizer_timer` field of a live, boxed `DevServer`.
+    pub(crate) unsafe fn emit_memory_visualizer_message_timer(timer: *mut EventLoopTimer) {
+        // SAFETY: caller contract; `from_timer_ptr` recovers the owning DevServer.
+        let dev: &mut DevServer = unsafe { &mut *DevServer::from_timer_ptr(timer) };
+        debug_assert!(dev.magic == Magic::Valid);
+        // Already popped by the event loop; left ACTIVE, `disarm` would remove() it again.
+        dev.memory_visualizer_timer.state = EventLoopTimerState::FIRED;
+        // Only armed under this flag; the check keeps the publish path out of stable builds.
+        if !feature_flags::BAKE_DEBUGGING_FEATURES {
+            return;
+        }
+        dev.emit_memory_visualizer_message();
+        dev.arm_memory_visualizer_timer();
     }
 
     pub(crate) fn emit_memory_visualizer_message_if_needed(&mut self) {}

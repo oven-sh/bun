@@ -1599,21 +1599,29 @@ describe("a TLS socket over a Duplex transport reports that transport's error", 
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L977
   // Without a listener on the transport, node:stream throws the error.
 
-  it.each(["client", "server"])("a %s wrap listens for the transport's 'error'", side => {
+  it.each(["client", "server", "tls.Server"])("a %s wrap listens for the transport's 'error'", side => {
     const transport = new Duplex({
       read() {},
       write(_chunk, _encoding, callback) {
         callback();
       },
     });
-    const socket =
-      side === "client"
-        ? tls.connect({ socket: transport, rejectUnauthorized: false })
-        : new TLSSocket(transport, { isServer: true, secureContext: tls.createSecureContext(COMMON_CERT_) });
-    // Exactly one, like node's wrap: the forward to the TLS socket.
-    expect(transport.listenerCount("error")).toBe(1);
-    socket.destroy();
-    transport.destroy();
+    let socket: TLSSocket | undefined;
+    try {
+      if (side === "client") {
+        socket = tls.connect({ socket: transport, rejectUnauthorized: false });
+      } else if (side === "server") {
+        socket = new TLSSocket(transport, { isServer: true, secureContext: tls.createSecureContext(COMMON_CERT_) });
+      } else {
+        // The server makes the wrap, and the transport's close ends it.
+        tls.createServer(COMMON_CERT_).emit("connection", transport);
+      }
+      // Exactly one, like node's wrap: the forward to the TLS socket.
+      expect(transport.listenerCount("error")).toBe(1);
+    } finally {
+      socket?.destroy();
+      transport.destroy();
+    }
   });
 
   it("a transport error reaches the TLS socket and leaves the process alive", async () => {
@@ -1626,10 +1634,12 @@ describe("a TLS socket over a Duplex transport reports that transport's error", 
       stdout: [
         "client early: _tlsError:transport failed|error:transport failed|close:false",
         "client late: _tlsError:transport failed|error:transport failed|close:false",
-        // A server wrap still owns its socket, so there is no 'error'. A
-        // tls.Server reports its '_tlsError' as 'tlsClientError'.
+        // A server wrap still owns its socket, so there is no 'error'.
         "server early: _tlsError:transport failed|close:false",
         "server late: _tlsError:transport failed|close:false",
+        // A tls.Server reports the '_tlsError' of its wrap as 'tlsClientError'.
+        "tls.Server early: tlsClientError:transport failed:TLSSocket|close:false",
+        "tls.Server late: tlsClientError:transport failed:TLSSocket|close:false",
       ].join("\n"),
       stderr: "",
       exitCode: 0,

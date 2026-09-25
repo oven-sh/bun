@@ -885,6 +885,80 @@ declare module "bun" {
       unix?: string;
     }
 
+    interface FdServeOptions<WebSocketData> extends BaseServeOptions<WebSocketData> {
+      /**
+       * The number of a file descriptor that is a bound socket. The server
+       * listens on that socket and does not bind one of its own.
+       *
+       * Use it when another process binds the socket and starts the server,
+       * for example systemd socket activation, where the first socket is
+       * descriptor `3`. The socket can be a TCP socket or a unix domain
+       * socket.
+       *
+       * - For a TCP socket, `server.port` is the bound port. `server.hostname`
+       *   and `server.url` use the bound IP address, or `localhost` when the
+       *   socket is bound to `0.0.0.0` or `::`. For a unix domain socket,
+       *   `server.port` and `server.hostname` are `undefined`.
+       * - The server owns the descriptor after a successful call, and
+       *   `server.stop()` closes it. Descriptors 0, 1 and 2 stay open. When
+       *   the call throws, the descriptor stays open.
+       * - The server never removes the file of a unix domain socket. The file
+       *   belongs to the process that bound the socket.
+       * - `fd` wins over `port`. `reusePort` and `ipv6Only` have no effect on
+       *   a socket that is already bound. `Bun.serve` throws when `fd` is set
+       *   together with `hostname`, `unix` or `http3`.
+       * - Not supported on Windows, where `Bun.serve` throws.
+       *
+       * @example
+       * ```ts
+       * // systemd: LISTEN_FDS=1, the socket is descriptor 3
+       * Bun.serve({
+       *   fd: 3,
+       *   fetch: () => new Response("Hello from an inherited socket"),
+       * });
+       * ```
+       */
+      fd?: number;
+
+      /**
+       * No effect next to {@link fd}: the socket has its port already.
+       */
+      port?: string | number;
+
+      /**
+       * No effect next to {@link fd}: the socket is bound already.
+       */
+      reusePort?: boolean;
+
+      /**
+       * No effect next to {@link fd}: the socket is bound already.
+       */
+      ipv6Only?: boolean;
+
+      /**
+       * Also serve HTTP/2 on the socket.
+       * @default false
+       * @experimental
+       */
+      http2?: boolean;
+
+      /**
+       * Serve HTTP/1.1. Set to `false` together with `http2: true` to refuse
+       * HTTP/1.x clients.
+       * @default true
+       * @experimental
+       */
+      http1?: boolean;
+
+      /**
+       * Sets the number of seconds to wait before timing out a connection
+       * due to inactivity.
+       *
+       * @default 10
+       */
+      idleTimeout?: number;
+    }
+
     /**
      * Options for {@link serve}, with support for `routes` and a safer
      * requirement for `fetch`
@@ -903,8 +977,8 @@ declare module "bun" {
      * ```
      */
     type Options<WebSocketData, R extends string = string> = Bun.__internal.XOR<
-      HostnamePortServeOptions<WebSocketData>,
-      UnixServeOptions<WebSocketData>
+      Bun.__internal.XOR<HostnamePortServeOptions<WebSocketData>, UnixServeOptions<WebSocketData>>,
+      FdServeOptions<WebSocketData>
     > &
       Bun.__internal.XOR<FetchOrRoutes<WebSocketData, R>, FetchOrRoutesWithWebSocket<WebSocketData, R>>;
   }

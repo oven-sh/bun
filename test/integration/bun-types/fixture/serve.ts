@@ -84,3 +84,67 @@ const s4 = Bun.serve({
     },
   },
 });
+
+// `fd`: a socket that another process bound.
+Bun.serve({
+  fd: 3,
+  fetch: () => new Response("hello"),
+});
+
+Bun.serve({
+  fd: 3,
+  tls: { cert: "cert", key: "key" },
+  http2: true,
+  idleTimeout: 30,
+  routes: {
+    "/:id": req => new Response(req.params.id),
+  },
+  websocket: {
+    message(ws) {
+      expectType(ws.data).is<undefined>();
+    },
+  },
+});
+
+// `fd` wins over a port, and a bind flag has no effect.
+Bun.serve({
+  port: 3000,
+  reusePort: true,
+  ipv6Only: true,
+  fd: 3,
+  fetch: () => new Response("hello"),
+});
+
+// @ts-expect-error - a bound socket has its address already
+Bun.serve({
+  hostname: "127.0.0.1",
+  fd: 3,
+  fetch: () => new Response("hello"),
+});
+
+// @ts-expect-error - a bound socket has its address already
+Bun.serve({
+  unix: "/tmp/bun.sock",
+  fd: 3,
+  fetch: () => new Response("hello"),
+});
+
+// @ts-expect-error - HTTP/3 needs a UDP socket
+Bun.serve({
+  http3: true,
+  fd: 3,
+  tls: { cert: "cert", key: "key" },
+  fetch: () => new Response("hello"),
+});
+
+Bun.serve({
+  // @ts-expect-error - the descriptor is a number
+  fd: "3",
+  fetch: () => new Response("hello"),
+});
+
+declare const maybeFd: number | undefined;
+Bun.serve({
+  fd: maybeFd,
+  fetch: () => new Response("hello"),
+});

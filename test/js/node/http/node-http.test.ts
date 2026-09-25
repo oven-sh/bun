@@ -31,6 +31,7 @@ import { Duplex, duplexPair, PassThrough, Writable } from "node:stream";
 import { connect as tlsConnect } from "node:tls";
 import { inspect } from "node:util";
 import tunnel from "tunnel";
+import { inheritListener } from "../../bun/http/serve-listen-fd";
 import { run as runHTTPProxyTest } from "./node-http-proxy.js";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock, test } = createTest(import.meta.path);
 
@@ -7119,4 +7120,134 @@ it("req.socket.setKeepAlive() and resetAndDestroy() return the socket", async ()
   } finally {
     server.close();
   }
+});
+
+// A supervisor such as systemd binds the socket and the server inherits the
+// descriptor. The expected values are what Node v26.3.0 gives.
+describe("listen({ fd })", () => {
+  const fixture = path.join(import.meta.dir, "node-http-listen-fd-fixture.ts");
+
+  // Windows has no descriptor to inherit: Node documents `listen({ fd })` as not supported there.
+  // Each test starts a child that loads node:http, which takes seconds in a debug build.
+  describe.skipIf(isWindows).concurrent("serves on a socket that the parent bound", () => {
+    test.each([
+      { kind: "tcp", tls: false },
+      { kind: "unix", tls: true },
+    ] as const)("$kind, tls: $tls", async ({ kind, tls }) => {
+      await using child = await inheritListener({ fixture, kind, tls });
+      expect(child.ready).toEqual({
+        address: kind === "tcp" ? { address: "127.0.0.1", family: "IPv4", port: child.port } : null,
+        listening: true,
+        newSockets: 0,
+      });
+      expect(await child.request()).toEqual({ status: 200, body: "served by " + child.nonce });
+      // `close()` closes the descriptor. The socket file belongs to the process that bound it.
+      expect(await child.stop()).toEqual({
+        fd: "EBADF",
+        unlinked: kind === "unix" ? false : undefined,
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("the descriptor wins over port, host and path", async () => {
+      await using child = await inheritListener({
+        fixture,
+        kind: "tcp",
+        options: { port: 0, host: "localhost", path: "{dir}/other.sock" },
+      });
+      expect(child.ready).toEqual({
+        address: { address: "127.0.0.1", family: "IPv4", port: child.port },
+        listening: true,
+        newSockets: 0,
+      });
+      expect(nodefs.existsSync(path.join(child.dir, "other.sock"))).toBe(false);
+      expect(await child.request()).toEqual({ status: 200, body: "served by " + child.nonce });
+    });
+
+    // NODE_UNIQUE_ID marks a cluster worker. A process with no channel has no primary to ask.
+    test("with $NODE_UNIQUE_ID and no channel", async () => {
+      await using child = await inheritListener({ fixture, kind: "tcp", env: { NODE_UNIQUE_ID: "1" } });
+      expect(child.ready).toEqual({
+        address: { address: "127.0.0.1", family: "IPv4", port: child.port },
+        listening: true,
+        newSockets: 0,
+      });
+      expect(await child.request()).toEqual({ status: 200, body: "served by " + child.nonce });
+    });
+  });
+
+  function listenError(fd: unknown) {
+    const server = createServer();
+    const { promise, resolve, reject } = Promise.withResolvers<any>();
+    server.once("error", resolve);
+    server.once("listening", () => {
+      const address = server.address();
+      server.close();
+      reject(new Error("listening on " + JSON.stringify(address)));
+    });
+    server.listen({ fd } as any);
+    return promise.then(error => ({
+      message: error.message,
+      code: error.code,
+      errno: error.errno,
+      syscall: error.syscall,
+      address: error.address,
+      listening: server.listening,
+    }));
+  }
+
+  test.each([
+    // Above every descriptor limit, so it is not open.
+    ["a descriptor that is not open", () => ({ fd: 0x7fffffff, close() {} })],
+    [
+      "a file",
+      () => {
+        const fd = nodefs.openSync(import.meta.path, "r");
+        return { fd, close: () => nodefs.closeSync(fd) };
+      },
+    ],
+    ["a fraction", () => ({ fd: 1.5, close() {} })],
+    ["a number above int32", () => ({ fd: 2 ** 31, close() {} })],
+  ] as const)("%s emits EINVAL", async (_, open) => {
+    const { fd, close } = open();
+    try {
+      expect(await listenError(fd)).toEqual({
+        message: "listen EINVAL: invalid argument",
+        code: "EINVAL",
+        errno: isWindows ? -4071 : -22,
+        syscall: "listen",
+        address: null,
+        listening: false,
+      });
+    } finally {
+      close();
+    }
+  });
+
+  test.each([[-1], ["3"], [null], [NaN], [true], [undefined]])("fd %p with no port and no path throws", fd => {
+    const server = createServer();
+    let error: any;
+    try {
+      server.listen({ fd } as any);
+    } catch (e) {
+      error = e;
+    } finally {
+      // An unfixed build ignores `fd` and binds a port.
+      if (server.listening) server.close();
+    }
+    expect({ name: error?.name, code: error?.code }).toEqual({ name: "TypeError", code: "ERR_INVALID_ARG_VALUE" });
+    expect(error.message).toStartWith(`The argument 'options' must have the property "port" or "path". Received `);
+  });
+
+  test("an fd that is not a descriptor number is ignored when a port is given", async () => {
+    const server = createServer((_req, res) => res.end("ok"));
+    try {
+      await once(server.listen({ fd: -1, port: 0, host: "127.0.0.1" } as any), "listening");
+      const { port } = server.address() as AddressInfo;
+      expect(await (await fetch(`http://127.0.0.1:${port}/`)).text()).toBe("ok");
+    } finally {
+      server.close();
+    }
+  });
 });

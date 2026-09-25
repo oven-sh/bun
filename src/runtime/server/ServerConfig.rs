@@ -116,6 +116,11 @@ pub(crate) enum Address {
     },
     /// Leading NUL is valid (Linux abstract sockets).
     Unix(ZBox),
+    /// A socket that the caller bound. The listen sets `unix` for a socket with no IP address.
+    Fd {
+        fd: i32,
+        unix: bool,
+    },
 }
 
 impl Default for Address {
@@ -132,7 +137,16 @@ impl Address {
     pub(crate) fn is_unix(&self) -> bool {
         match self {
             Address::Unix(_) => true,
+            Address::Fd { unix, .. } => *unix,
             Address::Tcp { .. } => false,
+        }
+    }
+
+    /// Records what the listen learned about the socket behind `Fd`.
+    pub(crate) fn set_adopted_family(&mut self, is_unix: bool) {
+        match self {
+            Address::Fd { unix, .. } => *unix = is_unix,
+            Address::Tcp { .. } | Address::Unix(_) => {}
         }
     }
 }
@@ -505,6 +519,9 @@ impl ServerConfig {
             Address::Unix(addr) => {
                 let _ = write!(&mut arraylist, "unix:{}", bstr::BStr::new(addr.as_bytes()));
             }
+            Address::Fd { fd, .. } => {
+                let _ = write!(&mut arraylist, "fd:{}", fd);
+            }
         }
 
         arraylist
@@ -560,6 +577,50 @@ fn validate_route_name(global: &JSGlobalObject, path: &[u8]) -> JsResult<()> {
         remaining = &remaining[end..];
     }
     Ok(())
+}
+
+/// The `fd` option. 0 is a valid value: inetd passes the socket as stdin.
+fn listen_fd_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<i32> {
+    if !value.is_number() {
+        return Err(global.throw_invalid_property_type_value(b"options.fd", b"number", value));
+    }
+    let number = value.as_number();
+    if !number.is_finite() || number.fract() != 0.0 {
+        return Err(global.throw_range_error(
+            number,
+            bun_fmt::OutOfRangeOptions {
+                field_name: b"options.fd",
+                msg: b"an integer",
+                ..Default::default()
+            },
+        ));
+    }
+    if !(0.0..=f64::from(i32::MAX)).contains(&number) {
+        return Err(global.throw_range_error(
+            number,
+            bun_fmt::OutOfRangeOptions {
+                min: 0,
+                max: i64::from(i32::MAX),
+                field_name: b"options.fd",
+                ..Default::default()
+            },
+        ));
+    }
+    // A Windows listener is a SOCKET handle and not a descriptor number.
+    #[cfg(windows)]
+    {
+        let err = crate::server::jsc::SystemError {
+            message: bun_core::String::static_(
+                "Bun.serve cannot listen on a file descriptor on Windows",
+            ),
+            code: bun_core::String::static_("ENOTSUP"),
+            syscall: bun_core::String::static_("listen"),
+            ..Default::default()
+        };
+        return Err(global.throw_value(err.to_error_instance(global)));
+    }
+    #[cfg(not(windows))]
+    Ok(number as i32)
 }
 
 fn get_routes_object(global: &JSGlobalObject, arg: JSValue) -> JsResult<Option<JSValue>> {
@@ -1112,6 +1173,11 @@ impl ServerConfig {
             }
         }
 
+        let fd: Option<i32> = match arg.fast_get(global, bun_jsc::BuiltinName::fd)? {
+            Some(value) if !value.is_null() => Some(listen_fd_from_js(global, value)?),
+            _ => None,
+        };
+
         if let Some(id) = arg.get(global, "id")? {
             if id.is_undefined_or_null() {
                 args.allow_hot = false;
@@ -1283,9 +1349,28 @@ impl ServerConfig {
                 "Cannot disable http1 without enabling http2 or http3"
             )));
         }
-        args.address = match unix {
-            Some(path) => Address::Unix(path),
-            None => Address::Tcp { port, hostname },
+        args.address = if let Some(fd) = fd {
+            // As `unix` does, `fd` wins over `port`, and a second listen target is an error.
+            if hostname.is_some() || unix.is_some() {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "Cannot specify both {} and fd",
+                    if hostname.is_some() {
+                        "hostname"
+                    } else {
+                        "unix"
+                    }
+                )));
+            }
+            if args.http3 {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "Cannot use http3 with fd. HTTP/3 needs a UDP socket and fd is a stream socket",
+                )));
+            }
+            Address::Fd { fd, unix: false }
+        } else if let Some(path) = unix {
+            Address::Unix(path)
+        } else {
+            Address::Tcp { port, hostname }
         };
 
         if !args.http1 && !args.http2 && args.address.is_unix() {
@@ -1376,7 +1461,9 @@ impl ServerConfig {
                     hostname: Some(hostname),
                     ..
                 } => hostname.as_bytes(),
-                Address::Tcp { hostname: None, .. } | Address::Unix(_) => b"0.0.0.0",
+                Address::Tcp { hostname: None, .. } | Address::Unix(_) | Address::Fd { .. } => {
+                    b"0.0.0.0"
+                }
             };
 
             let needs_brackets: bool =

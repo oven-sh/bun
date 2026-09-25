@@ -766,3 +766,91 @@ describe("Bun.serve unix socket validation", () => {
     }
   });
 });
+
+describe("Bun.serve fd", () => {
+  const fetch = () => new Response("ok");
+  // Above every descriptor limit, so the descriptor is not open and no case starts a server.
+  const fd = 0x7fffffff;
+
+  test.each([
+    ["a string", "3", "ERR_INVALID_ARG_TYPE"],
+    ["a boolean", true, "ERR_INVALID_ARG_TYPE"],
+    ["an object", {}, "ERR_INVALID_ARG_TYPE"],
+    ["a bigint", 3n, "ERR_INVALID_ARG_TYPE"],
+    ["NaN", NaN, "ERR_OUT_OF_RANGE"],
+    ["Infinity", Infinity, "ERR_OUT_OF_RANGE"],
+    ["a fraction", 1.5, "ERR_OUT_OF_RANGE"],
+    ["a negative number", -1, "ERR_OUT_OF_RANGE"],
+    ["a number above int32", 2 ** 31, "ERR_OUT_OF_RANGE"],
+  ])("%s throws", (_, value, code) => {
+    let server: ReturnType<typeof serve> | undefined;
+    let error: any;
+    try {
+      // @ts-expect-error - Testing runtime validation
+      server = serve({ fd: value, fetch });
+    } catch (e) {
+      error = e;
+    } finally {
+      // An unfixed build ignores `fd` and binds a port.
+      server?.stop(true);
+    }
+    expect(error?.code).toBe(code);
+    expect(error?.message).toContain("options.fd");
+  });
+
+  test.each([[undefined], [null]])("%p is the same as no fd", value => {
+    // @ts-expect-error - Testing runtime validation
+    using server = serve({ fd: value, port: 0, fetch });
+    expect(server.port).toBeGreaterThan(0);
+  });
+
+  // A Windows listener is not a descriptor number, so a valid `fd` throws there before these checks.
+  describe.skipIf(isWindows)("with another listen option", () => {
+    function error(options: object) {
+      let server: ReturnType<typeof serve> | undefined;
+      try {
+        server = serve({ fd, ...options, fetch } as any);
+      } catch (e: any) {
+        return { message: e.message, code: e.code };
+      } finally {
+        // An unfixed build ignores `fd` and binds a port.
+        server?.stop(true);
+      }
+    }
+
+    // A second listen target is an error, as it is for `unix`.
+    test.each([
+      ["hostname", { hostname: "127.0.0.1" }],
+      ["hostname", { host: "127.0.0.1" }],
+      ["unix", { unix: "never-bound.sock" }],
+    ])("%s throws", (name, options) => {
+      expect(error(options)?.message).toBe(`Cannot specify both ${name} and fd`);
+    });
+
+    test("http3 throws", () => {
+      expect(error({ tls, http3: true })?.message).toStartWith("Cannot use http3 with fd");
+    });
+
+    // `fd` wins over these, as `unix` does. The listen runs and fails: the descriptor is not open.
+    test.each([
+      ["port", { port: 0 }],
+      ["reusePort", { reusePort: true }],
+      ["ipv6Only", { ipv6Only: true }],
+      ["reusePort: false", { reusePort: false }],
+    ])("%s is not a conflict", (_, options) => {
+      expect(error(options)?.code).toBe("EBADF");
+    });
+
+    test("reload() checks fd and keeps the listener", async () => {
+      using server = serve({ port: 0, fetch });
+      const port = server.port;
+      // @ts-expect-error - Testing runtime validation
+      expect(() => server.reload({ fd: "3", fetch })).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+      );
+      server.reload({ fd, fetch: () => new Response("reloaded") } as any);
+      expect(server.port).toBe(port);
+      expect(await (await globalThis.fetch(`http://localhost:${port}/`)).text()).toBe("reloaded");
+    });
+  });
+});

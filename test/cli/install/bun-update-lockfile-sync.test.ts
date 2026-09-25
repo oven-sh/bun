@@ -925,8 +925,10 @@ describe.concurrent("$ref overrides", () => {
       PKG1,
     );
     await reinstall(dir, member("pkg2", { dependencies: { "dep-with-tags": "^1.0.0" } }), PKG2);
-    const { stderr } = await tryRun(dir, PKG1, "update", "dep-with-tags");
+    const { stderr, exitCode } = await tryRun(dir, PKG1, "update", "dep-with-tags");
     expect(stderr).toContain('workspaces declare different versions of "dep-with-tags"');
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
     expect((await pkg(dir, PKG1)).dependencies).toStrictEqual({ "one-range-dep": "1.0.0", "dep-with-tags": "^1.0.1" });
     expect((await pkg(dir, PKG2)).dependencies).toStrictEqual({ "dep-with-tags": "^1.0.0" });
     expect((await lock(dir)).overrides).toBeUndefined();

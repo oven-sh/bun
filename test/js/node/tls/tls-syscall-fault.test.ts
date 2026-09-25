@@ -170,6 +170,46 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
     }
   });
 
+  test("send → short write of the last TLS batch still closes a Bun.connect socket with no drain handler after end()", async () => {
+    // The end-after-flush close waits for the spill too. That wait ends on
+    // the writable event, which must run the native flush even when the
+    // handlers have no `drain`.
+    const payloadLen = 64 * 1024;
+    const server = tls.createServer({ key: certs.key, cert: certs.cert });
+    let received = 0;
+    const ended = Promise.withResolvers<void>();
+    server.on("secureConnection", s => {
+      s.on("error", () => {});
+      s.on("data", c => (received += c.length));
+      s.on("end", () => ended.resolve());
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const port = (server.address() as import("node:net").AddressInfo).port;
+    try {
+      const socket = await Bun.connect({
+        hostname: "127.0.0.1",
+        port,
+        tls: { ca: certs.cert },
+        socket: {
+          data() {},
+          handshake(socket) {
+            fault.set({ syscall: "send", action: "short", bytes: 4096, repeat: -1 });
+            socket.write(Buffer.alloc(payloadLen, 98));
+            socket.end();
+          },
+        },
+      });
+      await ended.promise;
+      fault.clear();
+      socket.terminate();
+      expect(received).toBe(payloadLen);
+    } finally {
+      fault.clear();
+      server.close();
+    }
+  });
+
   test("recv → 0 (peer closed) on established session emits 'end' without 'error'", async () => {
     using p = await connectedTLSPair();
     let gotError: unknown = null;

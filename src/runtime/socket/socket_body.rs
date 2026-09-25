@@ -949,10 +949,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
         }
         let handlers = this.get_handlers();
+        // The native flush (and the end-after-flush close) runs with or without a JS drain handler.
         let callback = handlers.on_writable();
-        if callback.is_empty() {
-            return Ok(());
-        }
 
         // Hold the socket alive for the rest of the dispatch: `internal_flush`
         // and the drain callback can both re-enter JS and close it.
@@ -1003,7 +1001,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             this.buffered_data_for_node_net.get().len()
         );
         // is not writable if we have buffered data or if we are already detached
-        if this.buffered_data_for_node_net.get().len() > 0 || this.socket.get().is_detached() {
+        if this.buffered_data_for_node_net.get().len() > 0
+            || this.socket.get().is_detached()
+            || callback.is_empty()
+        {
             return Ok(());
         }
 

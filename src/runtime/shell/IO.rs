@@ -11,7 +11,7 @@ use crate::shell::io_writer::IOWriter;
 use crate::shell::shell_body::subproc::ShellIO;
 
 #[derive(Clone, Default)]
-pub struct IO {
+pub(crate) struct IO {
     pub(crate) stdin: InKind,
     pub(crate) stdout: OutKind,
     pub(crate) stderr: OutKind,
@@ -39,7 +39,7 @@ impl IO {
 }
 
 #[derive(Clone, Default)]
-pub enum InKind {
+pub(crate) enum InKind {
     Fd(std::sync::Arc<IOReader>),
     #[default]
     Ignore,
@@ -48,7 +48,7 @@ pub enum InKind {
 /// Write to a file descriptor (via `IOWriter`), tee into a captured buffer,
 /// pipe to a subprocess, or drop.
 #[derive(Clone, Default)]
-pub enum OutKind {
+pub(crate) enum OutKind {
     Fd(OutFd),
     Pipe,
     #[default]
@@ -59,7 +59,7 @@ pub enum OutKind {
 // `ShellExecEnv::_buffered_{stdout,stderr}`; the env owns the Vec. `writer`
 // is `Arc` so it ref-counts on clone.
 #[derive(Clone)]
-pub struct OutFd {
+pub(crate) struct OutFd {
     pub(crate) writer: std::sync::Arc<IOWriter>,
     /// If set, also append every chunk to this buffer (the JS-side captured
     /// stdout/stderr). Points into `ShellExecEnv::_buffered_{stdout,stderr}`.

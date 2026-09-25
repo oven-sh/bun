@@ -1249,29 +1249,29 @@ impl<'a> SelectorParser<'a> {
             19 => match name {
                 b"view-transition-old" => {
                     return Ok(PseudoElement::ViewTransitionOld {
-                        part_name: ViewTransitionPartName::parse(self, input)?,
+                        part: ViewTransitionPartSelector::parse(self, input)?,
                     });
                 }
                 b"view-transition-new" => {
                     return Ok(PseudoElement::ViewTransitionNew {
-                        part_name: ViewTransitionPartName::parse(self, input)?,
+                        part: ViewTransitionPartSelector::parse(self, input)?,
                     });
                 }
                 _ => {}
             },
             21 if name == b"view-transition-group" => {
                 return Ok(PseudoElement::ViewTransitionGroup {
-                    part_name: ViewTransitionPartName::parse(self, input)?,
+                    part: ViewTransitionPartSelector::parse(self, input)?,
                 });
             }
             26 if name == b"view-transition-image-pair" => {
                 return Ok(PseudoElement::ViewTransitionImagePair {
-                    part_name: ViewTransitionPartName::parse(self, input)?,
+                    part: ViewTransitionPartSelector::parse(self, input)?,
                 });
             }
             30 if name == b"view-transition-group-children" => {
                 return Ok(PseudoElement::ViewTransitionGroupChildren {
-                    part_name: ViewTransitionPartName::parse(self, input)?,
+                    part: ViewTransitionPartSelector::parse(self, input)?,
                 });
             }
             _ => {}
@@ -1586,18 +1586,6 @@ impl<Impl: SelectorImpl> Default for GenericSelectorList<Impl> {
     }
 }
 
-impl<Impl: SelectorImpl> Default for GenericSelector<Impl> {
-    fn default() -> Self {
-        Self {
-            specificity_and_flags: SpecificityAndFlags {
-                specificity: 0,
-                flags: SelectorFlags::empty(),
-            },
-            components: Vec::new_in(ArenaPtr::global()),
-        }
-    }
-}
-
 impl<Impl: SelectorImpl> GenericSelectorList<Impl> {
     /// Consume `self.v` and return a heap slice — used by `:is()`/`:where()`/
     /// `:has()`/`:not()`/`:nth-*(.. of ..)` which store `Box<[Selector]>` to
@@ -1776,19 +1764,6 @@ impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
 
     pub(crate) fn hash(&self, hasher: &mut Wyhash) {
         hash_selector_slice(self.v.slice(), hasher);
-    }
-}
-
-impl<Impl: BunSelectorImpl> CssEql for GenericSelectorList<Impl> {
-    #[inline]
-    fn eql(&self, other: &Self) -> bool {
-        self.eql(other)
-    }
-}
-impl<Impl: BunSelectorImpl> CssHash for GenericSelectorList<Impl> {
-    #[inline]
-    fn hash(&self, hasher: &mut Wyhash) {
-        self.hash(hasher)
     }
 }
 
@@ -2405,19 +2380,6 @@ impl<Impl: BunSelectorImpl> GenericComponent<Impl> {
     }
 }
 
-impl<Impl: BunSelectorImpl> CssEql for GenericComponent<Impl> {
-    #[inline]
-    fn eql(&self, other: &Self) -> bool {
-        self.eql(other)
-    }
-}
-impl<Impl: BunSelectorImpl> CssHash for GenericComponent<Impl> {
-    #[inline]
-    fn hash(&self, hasher: &mut Wyhash) {
-        self.hash(hasher)
-    }
-}
-
 impl<Impl: BunSelectorImpl> fmt::Display for GenericComponent<Impl> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // A few variants get detail, the rest print
@@ -2954,28 +2916,28 @@ pub enum PseudoElement {
     ViewTransition,
     /// The [::view-transition-group()](https://w3c.github.io/csswg-drafts/css-view-transitions-1/#view-transition-group-pt-name-selector) functional pseudo element.
     ViewTransitionGroup {
-        /// A part name selector.
-        part_name: ViewTransitionPartName,
+        /// A part selector.
+        part: ViewTransitionPartSelector,
     },
     /// The [::view-transition-image-pair()](https://w3c.github.io/csswg-drafts/css-view-transitions-1/#view-transition-image-pair-pt-name-selector) functional pseudo element.
     ViewTransitionImagePair {
-        /// A part name selector.
-        part_name: ViewTransitionPartName,
+        /// A part selector.
+        part: ViewTransitionPartSelector,
     },
     /// The [::view-transition-old()](https://w3c.github.io/csswg-drafts/css-view-transitions-1/#view-transition-old-pt-name-selector) functional pseudo element.
     ViewTransitionOld {
-        /// A part name selector.
-        part_name: ViewTransitionPartName,
+        /// A part selector.
+        part: ViewTransitionPartSelector,
     },
     /// The [::view-transition-new()](https://w3c.github.io/csswg-drafts/css-view-transitions-1/#view-transition-new-pt-name-selector) functional pseudo element.
     ViewTransitionNew {
-        /// A part name selector.
-        part_name: ViewTransitionPartName,
+        /// A part selector.
+        part: ViewTransitionPartSelector,
     },
     /// The [::view-transition-group-children()](https://drafts.csswg.org/css-view-transitions-2/#::view-transition-group-children) functional pseudo element.
     ViewTransitionGroupChildren {
-        /// A part name selector.
-        part_name: ViewTransitionPartName,
+        /// A part selector.
+        part: ViewTransitionPartSelector,
     },
     /// The [::details-content](https://drafts.csswg.org/css-pseudo-4/#details-content-pseudo) pseudo element.
     DetailsContent,
@@ -4157,8 +4119,6 @@ pub enum ViewTransitionPartName {
     All,
     /// <custom-ident>
     Name(CustomIdent),
-    /// .<custom-ident>
-    Class(<impl_::Selectors as SelectorImpl>::LocalIdentifier),
 }
 
 impl ViewTransitionPartName {
@@ -4166,35 +4126,12 @@ impl ViewTransitionPartName {
         match self {
             Self::All => dest.write_str("*"),
             Self::Name(name) => name.to_css(dest),
-            Self::Class(class) => {
-                dest.write_char(b'.')?;
-                dest.write_ident_or_ref(*class, dest.css_module.is_some())
-            }
         }
     }
 
-    pub fn parse(
-        parser: &mut SelectorParser<'_>,
-        input: &mut CssParser,
-    ) -> CResult<ViewTransitionPartName> {
+    pub fn parse(input: &mut CssParser) -> CResult<ViewTransitionPartName> {
         if input.try_parse(|i| i.expect_delim(b'*')).is_ok() {
             return Ok(Self::All);
-        }
-
-        // Try to parse a class selector (.<custom-ident>)
-        let loc = input.position();
-        if input.try_parse(|i| i.expect_delim(b'.')).is_ok() {
-            let location = input.current_source_location();
-            let ident = input.expect_ident_cloned()?;
-            if crate::values::ident::is_reserved_custom_ident(ident) {
-                return Err(location.new_unexpected_token_error(Token::Ident(ident)));
-            }
-            return Ok(Self::Class(parser.new_local_identifier(
-                input,
-                css::CssRefTag::CLASS,
-                ident,
-                loc,
-            )));
         }
 
         Ok(Self::Name(CustomIdent::parse(input)?))
@@ -4204,7 +4141,6 @@ impl ViewTransitionPartName {
         match (self, rhs) {
             (Self::All, Self::All) => true,
             (Self::Name(a), Self::Name(b)) => a.eql(b),
-            (Self::Class(a), Self::Class(b)) => a.eql(b),
             _ => false,
         }
     }
@@ -4216,10 +4152,98 @@ impl ViewTransitionPartName {
                 hasher.update(&1u32.to_ne_bytes());
                 n.hash(hasher);
             }
-            Self::Class(n) => {
-                hasher.update(&2u32.to_ne_bytes());
-                n.hash(hasher);
+        }
+    }
+}
+
+/// A [view transition part selector](https://w3c.github.io/csswg-drafts/css-view-transitions-2/#typedef-pt-name-and-class-selector).
+#[derive(Clone)]
+pub struct ViewTransitionPartSelector {
+    /// The view transition part name.
+    pub name: Option<ViewTransitionPartName>,
+    /// The view transition classes, each written as `.<custom-ident>`.
+    pub classes: Box<[<impl_::Selectors as SelectorImpl>::LocalIdentifier]>,
+}
+
+impl ViewTransitionPartSelector {
+    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        if let Some(name) = &self.name {
+            name.to_css(dest)?;
+        }
+        for class in self.classes.iter() {
+            dest.write_char(b'.')?;
+            dest.write_ident_or_ref(*class, dest.css_module.is_some())?;
+        }
+        Ok(())
+    }
+
+    pub fn parse(
+        parser: &mut SelectorParser<'_>,
+        input: &mut CssParser,
+    ) -> CResult<ViewTransitionPartSelector> {
+        input.skip_whitespace();
+        let name = input.try_parse(ViewTransitionPartName::parse);
+
+        // White space is not allowed between the name and a class, or inside the classes.
+        let mut classes = Vec::new();
+        loop {
+            let start = input.state();
+            let loc = input.position();
+            let is_dot = matches!(
+                input.next_including_whitespace(),
+                Ok(Token::Delim(d)) if *d == u32::from(b'.')
+            );
+            if !is_dot {
+                input.reset(&start);
+                break;
             }
+            let location = input.current_source_location();
+            let class = match *input.next_including_whitespace()? {
+                Token::Ident(class) => class,
+                t => {
+                    let e = SelectorParseErrorKind::ClassNeedsIdent(t);
+                    return Err(location.new_custom_error(e.into_default_parser_error()));
+                }
+            };
+            if crate::values::ident::is_reserved_custom_ident(class) {
+                return Err(location.new_unexpected_token_error(Token::Ident(class)));
+            }
+            classes.push(parser.new_local_identifier(input, css::CssRefTag::CLASS, class, loc));
+        }
+
+        let name = match name {
+            Ok(name) => Some(name),
+            Err(e) if classes.is_empty() => return Err(e),
+            Err(_) => None,
+        };
+        Ok(ViewTransitionPartSelector {
+            name,
+            classes: classes.into_boxed_slice(),
+        })
+    }
+
+    pub fn eql(&self, rhs: &Self) -> bool {
+        let names_eql = match (&self.name, &rhs.name) {
+            (None, None) => true,
+            (Some(a), Some(b)) => a.eql(b),
+            _ => false,
+        };
+        names_eql
+            && self.classes.len() == rhs.classes.len()
+            && self
+                .classes
+                .iter()
+                .zip(rhs.classes.iter())
+                .all(|(a, b)| a.eql(b))
+    }
+
+    pub(crate) fn hash(&self, hasher: &mut Wyhash) {
+        if let Some(name) = &self.name {
+            name.hash(hasher);
+        }
+        for class in self.classes.iter() {
+            hasher.update(&2u32.to_ne_bytes());
+            class.hash(hasher);
         }
     }
 }

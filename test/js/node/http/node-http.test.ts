@@ -29,6 +29,7 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { Duplex, duplexPair, PassThrough, Writable } from "node:stream";
 import { connect as tlsConnect } from "node:tls";
+import { inspect } from "node:util";
 import tunnel from "tunnel";
 import { run as runHTTPProxyTest } from "./node-http-proxy.js";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock, test } = createTest(import.meta.path);
@@ -2771,6 +2772,68 @@ it("a pipelined request behind Connection: close is never dispatched (clientErro
   }
 });
 
+describe("bytes after a message that forbade keep-alive", () => {
+  // Sends `payload` on one connection and reads until the socket closes.
+  async function roundTrip(payload: string) {
+    const requests: string[] = [];
+    const clientErrors: string[] = [];
+    const server = createServer((req, res) => {
+      requests.push(req.url!);
+      req.resume();
+      // Keep the response pending while the parser walks the rest of the read.
+      // Once it is sent the connection closes and the rest is never parsed.
+      setImmediate(() => res.end("ok"));
+    });
+    server.on("clientError", (err: any, socket) => {
+      clientErrors.push(err.code);
+      socket.destroy();
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+
+      const chunks: Buffer[] = [];
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      socket.on("data", c => chunks.push(c));
+      socket.write(payload);
+      await once(socket, "close");
+      return { requests, clientErrors, raw: Buffer.concat(chunks).toString("latin1") };
+    } finally {
+      server.close();
+    }
+  }
+
+  // Node's parser skips CR and LF in its closed state and raises
+  // HPE_CLOSED_CONNECTION only on other bytes, so the legacy extra CRLF after
+  // a POST body (RFC 9112 2.2) still gets its response.
+  it.each([
+    [
+      "CRLF after a Connection: close POST body",
+      "POST /a HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Length: 5\r\n\r\nhello\r\n",
+    ],
+    ["blank line after an HTTP/1.0 request", "GET /a HTTP/1.0\r\nHost: x\r\n\r\n\r\n"],
+  ])("%s is not a clientError", async (_label, payload) => {
+    const { requests, clientErrors, raw } = await roundTrip(payload);
+    expect({ requests, clientErrors, status: raw.split("\r\n")[0], body: raw.slice(-2) }).toEqual({
+      requests: ["/a"],
+      clientErrors: [],
+      status: "HTTP/1.1 200 OK",
+      body: "ok",
+    });
+  });
+
+  // The bytes are never parsed as a request, so they surface as the closed
+  // connection error and not as whatever parse error they would produce.
+  it("other bytes after the CRLF are HPE_CLOSED_CONNECTION", async () => {
+    const { requests, clientErrors } = await roundTrip(
+      "GET /a HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n\r\n@@@ not HTTP\r\n\r\n",
+    );
+    expect({ requests, clientErrors }).toEqual({ requests: ["/a"], clientErrors: ["HPE_CLOSED_CONNECTION"] });
+  });
+});
+
 it("pipelined responses buffered past the high water mark pause reads on the connection", async () => {
   // Node's parserOnIncoming stops reading a connection once the bytes queued on
   // responses that do not own the socket yet (state.outgoingData) reach
@@ -3965,6 +4028,48 @@ it("a non-200 CONNECT through a proxy that holds the connection open is destroye
   }
 });
 
+// nodejs/node 3e9954a88b (CVE-2026-48615)
+it.each([
+  ["username and password", "user:s3cret", "user:s3cret"],
+  ["username only", "s3cret", "s3cret:"],
+  ["password only", ":s3cret", ":s3cret"],
+  ["percent-encoded", "us%40er:s3cret%3A", "us@er:s3cret:"],
+])("ERR_PROXY_TUNNEL does not expose the proxy credentials (%s)", async (_name, userinfo, credentials) => {
+  const { promise: proxyAuthorization, resolve: onProxyAuthorization } = Promise.withResolvers<string | undefined>();
+  const proxy = createServer();
+  proxy.on("connect", (req, socket) => {
+    onProxyAuthorization(req.headers["proxy-authorization"]);
+    socket.end("HTTP/1.1 407 Proxy Authentication Required\r\nConnection: close\r\n\r\n");
+  });
+  try {
+    proxy.listen(0, "127.0.0.1");
+    await once(proxy, "listening");
+    const proxyPort = (proxy.address() as AddressInfo).port;
+
+    const agent = new https.Agent({ proxyEnv: { HTTPS_PROXY: `http://${userinfo}@127.0.0.1:${proxyPort}` } });
+    try {
+      const { promise: errored, resolve: onError } = Promise.withResolvers<any>();
+      const req = https.request({ host: "example.com", port: 443, path: "/", agent }, () => {});
+      req.on("error", onError);
+      req.end();
+
+      const err = await errored;
+      expect({ code: err.code, statusCode: err.statusCode, message: err.message }).toEqual({
+        code: "ERR_PROXY_TUNNEL",
+        statusCode: 407,
+        message: `Failed to establish tunnel to example.com:443 via http://127.0.0.1:${proxyPort}/: HTTP/1.1 407 Proxy Authentication Required`,
+      });
+      expect(inspect(err)).not.toContain("s3cret");
+      // The proxy still receives the credentials.
+      expect(await proxyAuthorization).toBe(`Basic ${Buffer.from(credentials).toString("base64")}`);
+    } finally {
+      agent.destroy();
+    }
+  } finally {
+    proxy.close();
+  }
+});
+
 // Node.js v26 removed res.writeHeader (DEP0063 end-of-life, nodejs/node#60635).
 it("ServerResponse.prototype.writeHeader was removed (DEP0063 EOL)", () => {
   expect("writeHeader" in ServerResponse.prototype).toBe(false);
@@ -4605,4 +4710,32 @@ it("connectionListener pauses reads when queued pipelined responses back up", as
   expect(dispatched).toBe(N);
   clientSide.destroy();
   serverSide.destroy();
+});
+
+it("req.socket.setKeepAlive() and resetAndDestroy() return the socket", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers<{ setKeepAlive: boolean; resetAndDestroy: boolean }>();
+  const server = createServer((req, res) => {
+    try {
+      const socket = req.socket;
+      resolve({
+        setKeepAlive: socket.setKeepAlive(true).setNoDelay(true) === socket,
+        resetAndDestroy: socket.resetAndDestroy() === socket,
+      });
+    } catch (e) {
+      reject(e);
+    }
+    res.end();
+  });
+  try {
+    await once(server.listen(0), "listening");
+    // resetAndDestroy() resets the connection in node, so the request itself may fail.
+    const request = fetch(`http://localhost:${(server.address() as AddressInfo).port}/`).then(
+      response => response.text(),
+      () => {},
+    );
+    expect(await promise).toEqual({ setKeepAlive: true, resetAndDestroy: true });
+    await request;
+  } finally {
+    server.close();
+  }
 });

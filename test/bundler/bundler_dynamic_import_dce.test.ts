@@ -604,6 +604,48 @@ describe("bundler", () => {
     });
   }
 
+  // `q.a` is an import item that prints `q.a` unless the linker binds it, so it
+  // stays a use of `q`: with another use first, single-use substitution must not
+  // inline the declaration into that use and leave the read without it.
+  for (const [name, importee, splitting] of [
+    ["", "./x.js", false],
+    ["Splitting", "./x.js", true],
+    ["CommonJS", "./x.cjs", false],
+  ] as const) {
+    itBundled(`dynamic_import_dce/MinifyKeepsNamespaceLocalForItemRead${name}`, {
+      files: {
+        "/entry.js": /* js */ `
+          async function bare() { const q = await import("${importee}"); return [q, q.a]; }
+          async function copy() { const q = await import("${importee}"); let r = q; return [r, q.a]; }
+          async function test() { const q = await import("${importee}"); return q ? q.a : 0; }
+          async function typeOf() { const q = await import("${importee}"); return [typeof q, q.a]; }
+          function req() { const q = require("${importee}"); return [q, q.a]; }
+          for (const f of [bare, copy, test, typeOf, req]) {
+            let out;
+            try {
+              out = [await f()].flat().map(v => (typeof v === "object" ? "ns" : v)).join();
+            } catch (e) {
+              out = e.name + ": " + e.message;
+            }
+            console.log(f.name, out);
+          }
+        `,
+        "/x.js": `export const a = "A"; export const b = "B";`,
+        "/x.cjs": `exports.a = "A"; exports.b = "B";`,
+      },
+      minifySyntax: true,
+      splitting,
+      target: "bun",
+      format: "esm",
+      outdir: "/out",
+      run: { file: "/out/entry.js", stdout: "bare ns,A\ncopy ns,A\ntest A\ntypeOf object,A\nreq ns,A" },
+      onAfterBundle(api) {
+        // A read the linker can bind still reads the export directly.
+        if (name === "") api.expectFile("/out/entry.js").toContain("? a : 0");
+      },
+    });
+  }
+
   // The minifier substitutes a single-use `const x = cond ? (await import()).a() : b`
   // into its use and re-visits it; the re-visit must not mint a second,
   // untracked record for the same import().
@@ -3791,6 +3833,33 @@ describe("bundler", () => {
     stdout: "before\nt start\nt end\ngot u late\nthen late",
     output(out) {
       expect(out).toContain("await init_t().then(() => ({}))");
+    },
+  });
+
+  // The only `await` of the importee folds away and the rest hoists, so the
+  // importee has no `init_t` wrapper: there is nothing to call or await.
+  itElides("DeadTopLevelAwaitInImportee", {
+    variants: ["esm", "esmMinify"],
+    files: {
+      "/entry.js": /* js */ `
+        const { u } = await import("./t.js");
+        const ns = await import("./t.js");
+        console.log("got", u(), ns.t);
+        await import("./t.js").then(ns => console.log("then", ns.t));
+        import("./t.js");
+      `,
+      "/t.js": /* js */ `
+        export function u() { return "u"; }
+        export const t = "t";
+        export const d = "DROPPED";
+        false && await 0;
+      `,
+    },
+    stdout: "got u t\nthen t",
+    output(out) {
+      expect(out).not.toContain("init_t");
+      expect(out).toContain("await Promise.resolve();");
+      expect(out).toContain("await Promise.resolve().then(() => ({}));");
     },
   });
 

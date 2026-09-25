@@ -1541,11 +1541,10 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
       });
     });
 
-    // The stream close is the only notification left when the pump promise
-    // never settles, so this case cannot be handled in its resolve reaction.
-    // The end comes from a later microtask: an end inside the first pull()
-    // leaves the response already finished when the stream is attached, which
-    // takes a different path.
+    // The request hears the controller close, so it does not wait for a
+    // pull() that never settles. The end comes from a later microtask: an end
+    // inside the first pull() leaves the response already finished when the
+    // stream is attached, which takes a different path.
     test("a direct stream whose pull() never settles after it ended the response", async () => {
       await using server = Bun.serve({
         port: 0,
@@ -1774,6 +1773,54 @@ describe("Bun.serve HTTP/3 request validation", () => {
       [JSON.stringify("a\rb")]: "closed ERR_QUIC_APPLICATION_ERROR 270",
       wellFormed: "200 1",
       after: "200 1",
+    });
+  });
+
+  // QPACK delivers a field value as a length-prefixed string, so SP / HTAB at
+  // the ends arrive as part of the value. RFC 9110 section 5.5: a field value
+  // has no leading or trailing whitespace, and the HTTP/1 listener strips it.
+  test("strips leading and trailing whitespace from a field value, like the HTTP/1 listener", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      fetch(req) {
+        return Response.json({
+          "x-ws": req.headers.get("x-ws"),
+          "x-only-ws": req.headers.get("x-only-ws"),
+          "x-inner": req.headers.get("x-inner"),
+          host: req.headers.get("host"),
+          url: req.url,
+        });
+      },
+    });
+
+    const fields = {
+      "x-ws": " \tv\t ",
+      "x-only-ws": " \t ",
+      "x-inner": "a \t b",
+    };
+    const expected = {
+      "x-ws": "v",
+      "x-only-ws": "",
+      "x-inner": "a \t b",
+      host: "localhost",
+      url: "https://localhost/",
+    };
+    const results = {
+      authority: await h3Exchange(server.port, { ...requestHeaders("/", fields), ":authority": " \tlocalhost \t" }),
+      literalHost: await h3Exchange(server.port, {
+        ":method": "GET",
+        ":path": "/",
+        ":scheme": "https",
+        host: " \tlocalhost \t",
+        ...fields,
+      }),
+    };
+
+    expect(results).toEqual({
+      authority: "200 " + JSON.stringify(expected),
+      literalHost: "200 " + JSON.stringify(expected),
     });
   });
 

@@ -366,7 +366,9 @@ void WorkerMessagingProxy::drainMessagesToWorkerObject(ScriptExecutionContext& c
     }
     Ref workerObject = *m_workerObject;
     auto& globalObject = *defaultGlobalObject(context.globalObject());
-    bool more = drainInbox(m_toParent, globalObject, context, budget, [&](Event& event) {
+    // Ports the worker transfers are the Worker object's script's, as the message is.
+    auto* ownerContext = workerObject->scriptExecutionContext();
+    bool more = drainInbox(m_toParent, globalObject, ownerContext ? *ownerContext : context, budget, [&](Event& event) {
         workerObject->dispatchEvent(event);
     });
     if (more) {

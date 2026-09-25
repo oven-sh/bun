@@ -63,6 +63,8 @@ pub enum Error {
     UnsupportedTransferEncoding,
     #[error("RequestBodyNotReusable")]
     RequestBodyNotReusable,
+    #[error("RequestBodyLengthMismatch")]
+    RequestBodyLengthMismatch,
     #[error("UnsupportedRedirectProtocol")]
     UnsupportedRedirectProtocol,
     #[error("RedirectURLTooLong")]
@@ -244,8 +246,6 @@ pub enum CertError {
     SUITE_B_LOS_NOT_ALLOWED,
     #[error("SUITE_B_CANNOT_SIGN_P_384_WITH_P_256")]
     SUITE_B_CANNOT_SIGN_P_384_WITH_P_256,
-    #[error("HOSTNAME_MISMATCH")]
-    HOSTNAME_MISMATCH,
     #[error("EMAIL_MISMATCH")]
     EMAIL_MISMATCH,
     #[error("IP_ADDRESS_MISMATCH")]
@@ -295,6 +295,7 @@ impl Error {
             Self::InvalidContentLength => "InvalidContentLength",
             Self::UnsupportedTransferEncoding => "UnsupportedTransferEncoding",
             Self::RequestBodyNotReusable => "RequestBodyNotReusable",
+            Self::RequestBodyLengthMismatch => "RequestBodyLengthMismatch",
             Self::UnsupportedRedirectProtocol => "UnsupportedRedirectProtocol",
             Self::RedirectURLTooLong => "RedirectURLTooLong",
             Self::RedirectURLInvalid => "RedirectURLInvalid",

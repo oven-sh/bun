@@ -874,6 +874,35 @@ test("HTTPS proxy tunnel keeps a caller-supplied Host header out of SNI and cert
   }
 });
 
+// As on a direct connection, only an IP address in the strict form of net.isIP
+// gets no SNI inside the tunnel. ares_inet_pton also reads "127.1" (as
+// 127.1.0.0), "10" and a trailing "/bits" as an address.
+test("HTTPS proxy tunnel sends a tls.serverName that is IP shorthand as SNI", async () => {
+  const seen: (string | null)[] = [];
+  const target = tls.createServer(tlsCert, socket => {
+    socket.on("error", () => {});
+    seen.push(socket.servername || null);
+    socket.once("data", () => socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"));
+  });
+  target.listen(0);
+  await once(target, "listening");
+  try {
+    const port = (target.address() as net.AddressInfo).port;
+    const serverNames = ["127.1", "10", "0x7f000001", "1.2.3.4/8", "127.0.0.1", "::1"];
+    for (const serverName of serverNames) {
+      const res = await fetch(`https://localhost:${port}/`, {
+        proxy: httpProxyServer.url,
+        keepalive: false,
+        tls: { serverName, rejectUnauthorized: false },
+      });
+      expect(`${res.status} ${await res.text()}`).toBe("200 ok");
+    }
+    expect(seen).toEqual(["127.1", "10", "0x7f000001", "1.2.3.4/8", null, null]);
+  } finally {
+    target.close();
+  }
+});
+
 test("HTTPS proxy tunnel keep-alive does not share tunnel across different credentials", async () => {
   using target = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("ok") });
 
@@ -1124,10 +1153,10 @@ test("HTTPS origin close-delimited body via HTTP proxy does not ECONNRESET", asy
   }
 });
 
-// Use-after-free in the proxy tunnel close path: when the final response
-// bytes and the TLS close_notify arrive in one TCP batch, SSLWrapper's
-// handle_reading sets sent_ssl_shutdown before flushing the decrypted bytes.
-// The data callback completes the response, and the done path's
+// Use-after-free in the proxy tunnel close path: the final response bytes and
+// the TLS close_notify arrive in one TCP batch, so the data callback completes
+// the response while SSLWrapper's handle_reading is still on the stack. Back
+// then handle_reading had already set sent_ssl_shutdown, and the done path's
 // ProxyTunnel.shutdown() hit SSLWrapper.shutdown()'s already-shut-down early
 // return without marking the wrapper closed_notified, so after the client was
 // freed handle_reading still fired on_close into the stale handlers.ctx.
@@ -2467,6 +2496,39 @@ describe("proxy resolution", () => {
       ["http://example.test/#a@b", "", "", "example.test", ""],
       ["http://example.test:8080/user@other.test:9090", "", "", "example.test", "8080"],
       ["http://user:pass@example.test/path@other.test", "user", "pass", "example.test", ""],
+      // A `\` ends the authority of http, https, ws, wss, ftp and file, as it does for `new URL()`:
+      // an `@` after it is not userinfo, and the host and the port end there too.
+      [String.raw`http://user:pass@example.test\x@other.test/`, "user", "pass", "example.test", ""],
+      [String.raw`http://a:b@c\@d/`, "a", "b", "c", ""],
+      [String.raw`http://example.test\@other.test/`, "", "", "example.test", ""],
+      [String.raw`HTTPS://user:pass@example.test\@other.test/`, "user", "pass", "example.test", ""],
+      [String.raw`ws://user:pass@example.test\@other.test/`, "user", "pass", "example.test", ""],
+      [String.raw`wss://user:pass@example.test\@other.test/`, "user", "pass", "example.test", ""],
+      [String.raw`ftp://user:pass@example.test\@other.test/`, "user", "pass", "example.test", ""],
+      [String.raw`file://example.test\@other.test/`, "", "", "example.test", ""],
+      [String.raw`http://example.test\\@other.test/`, "", "", "example.test", ""],
+      [String.raw`http://example.test\@[::1]:8080/`, "", "", "example.test", ""],
+      [String.raw`http://u:p@[::1]:80\@other.test:8080/sub`, "u", "p", "[::1]", "80"],
+      [String.raw`http://u:p@example.test:8080\@other.test:9090/`, "u", "p", "example.test", "8080"],
+      // `new URL()` drops a tab before it parses. This keeps it, so the name resolves to nothing.
+      [`http://example.test\t\\@other.test/`, "", "", "example.test\t", ""],
+      // A `#` ends the authority too, with or without a `/` in front of it.
+      ["http://u:p@example.test:8080#@other.test/", "u", "p", "example.test", "8080"],
+      // In any other scheme a `\` is part of the userinfo, again as for `new URL()`.
+      [
+        String.raw`socks5://user:pass@example.test\x@other.test/`,
+        "user",
+        String.raw`pass@example.test\x`,
+        "other.test",
+        "",
+      ],
+      // The scheme ends at the first `:` and holds only the bytes RFC 3986 allows, so the `://` of
+      // a later one starts no authority. `new URL()` reads `other.test` as the host of these two,
+      // and the name this reads is one no user can have written down.
+      ["http:other.test://example.test/", "", "", "http", "other.test:"],
+      [String.raw`http:\other.test://example.test/`, "", "", "http", String.raw`\other.test:`],
+      ["1http://example.test/", "", "", "1http", ""],
+      ["git+ssh://user@example.test/repo.git", "user", "", "example.test", ""],
       // IPv6 hosts keep their brackets in `hostname`
       ["http://[::1]:3000/", "", "", "[::1]", "3000"],
       ["http://user:pass@[::1]:3000/", "user", "pass", "[::1]", "3000"],
@@ -2522,6 +2584,65 @@ describe.concurrent("proxy environment", () => {
     expect(exitCode).toBe(0);
     return parsed;
   }
+
+  // The host of an https:// proxy from the environment reaches TLS as typed,
+  // not through a URL parser. In IP shorthand it is a name: it goes out as
+  // SNI, and it is not the address in the certificate of the proxy. The
+  // Windows resolver does not read the shorthand, so a proxy at such a host
+  // needs a lookup there.
+  test.each([
+    ["127.0.0.1", "proxy", null],
+    ...(isWindows
+      ? []
+      : ["0x7f000001", "127.000.000.001"].map(host => [host, "ERR_TLS_CERT_ALTNAME_INVALID", host] as const)),
+  ])("an https:// proxy at %j", async (host, result, sni) => {
+    let name: string | null = null;
+    const proxy = tls.createServer(
+      {
+        ...tlsCert,
+        SNICallback(servername, cb) {
+          name = servername;
+          cb(null, tls.createSecureContext(tlsCert));
+        },
+      },
+      socket => {
+        socket.on("error", () => {});
+        socket.once("data", () => socket.end("HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nproxy"));
+      },
+    );
+    proxy.listen(0, "127.0.0.1");
+    await once(proxy, "listening");
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const tls = { ca: process.env.PROXY_CA };
+          const result = await fetch("http://example.invalid/", { keepalive: false, tls }).then(
+            r => r.text(),
+            e => e.code,
+          );
+          console.log(JSON.stringify(result));
+          `,
+        ],
+        env: {
+          ...bunEnv,
+          ...proxyFreeEnv,
+          HTTP_PROXY: `https://${host}:${(proxy.address() as net.AddressInfo).port}`,
+          PROXY_CA: tlsCert.cert,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect({ result: JSON.parse(stdout), sni: name }).toEqual({ result, sni });
+      expect(exitCode).toBe(0);
+    } finally {
+      proxy.close();
+    }
+  });
 
   test("NO_PROXY grammar", async () => {
     // The full grammar is in "proxy resolution" above; this is the path from
@@ -2679,6 +2800,19 @@ describe.concurrent("proxy environment", () => {
       `,
     );
     expect(results).toEqual(["proxy", "origin"]);
+  });
+
+  test("fetch('s3://…') reaches a proxy whose variable holds a domain login", async () => {
+    // S3 keeps the proxy as a string and parses it again, so it needs the same reading as fetch().
+    const results = await run(
+      () => ({}),
+      `
+      const s3 = { accessKeyId: "test", secretAccessKey: "test", endpoint: "http://127.0.0.1:" + ORIGIN_PORT };
+      process.env.HTTP_PROXY = PROXY.replace("http://", "http://DOMAIN" + String.fromCharCode(92) + "user:pass@");
+      console.log(JSON.stringify([await fetch("s3://bucket/key", { s3 }).then(r => r.text(), e => e.code)]));
+      `,
+    );
+    expect(results).toEqual(["proxy"]);
   });
 
   test("a worker starts from the proxy environment its parent has at that moment", async () => {
@@ -2905,6 +3039,23 @@ describe("http_proxy/NO_PROXY re-evaluated per redirect hop", () => {
       stdout: "FINAL-ORIGIN-B",
       proxyLog: [`GET http://127.0.0.1:${originA.port}/r302 HTTP/1.1`],
       proxyAuth: ["Basic dXNlcjpwYXNz"],
+    });
+    if (exitCode !== 0) console.error("stderr:", stderr);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a domain login in http_proxy reaches the proxy as written", async () => {
+    // `http://DOMAIN\user:pass@host:port` is how a Windows domain account is spelled in a proxy
+    // variable, and curl reads the `\` as an ordinary userinfo byte. Only this parser reads the
+    // variable, and it names the host that is dialed, so there is no second reading to agree with.
+    const { stdout, stderr, exitCode, proxyLog, proxyAuth } = await runFetch(
+      { http_proxy: String.raw`http://DOMAIN\user:pass@127.0.0.1:${proxy.port}` },
+      `http://127.0.0.1:${originA.port}/final`,
+    );
+    expect({ stdout, proxyLog, proxyAuth }).toEqual({
+      stdout: "FINAL-PROXY",
+      proxyLog: [`GET http://127.0.0.1:${originA.port}/final HTTP/1.1`],
+      proxyAuth: [`Basic ${btoa(String.raw`DOMAIN\user:pass`)}`],
     });
     if (exitCode !== 0) console.error("stderr:", stderr);
     expect(exitCode).toBe(0);

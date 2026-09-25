@@ -114,12 +114,14 @@ public:
      * caller has to run the close gate now, false when onData runs it.
      *
      * The socket onData is parsing gets onData's uncork and close gate once the
-     * read is consumed: false. A Bun.serve response leaves the cork to onData,
-     * so the responses to requests pipelined in one read share one send(). Bun
-     * sends them earlier, with sendCorked(), when the handler of a later
-     * request is about to run JavaScript. A node:http response is still sent
-     * now: its 'finish' event and end() callback run before onData gets control
-     * back and expect the bytes to be out.
+     * read is consumed: false. A Bun.serve response that needed no JavaScript
+     * (a static route) leaves the cork to onData, so such responses to requests
+     * pipelined in one read share one send(). Bun sends them earlier, with
+     * sendCorked(), when the handler of a later request is about to run
+     * JavaScript. A response that JavaScript produced (sendWhenComplete()) is
+     * sent now, and so is a node:http response: its 'finish' event and end()
+     * callback run before onData gets control back and expect the bytes to be
+     * out.
      *
      * Any other socket (an async handler completing, possibly inside another
      * socket's parse window via a drained microtask) is uncorked here and gets
@@ -130,10 +132,16 @@ public:
             this->uncork();
             return true;
         }
-        if (httpContext->isNodeHttp()) {
+        if (httpContext->isNodeHttp() || (getHttpResponseData()->state & HttpResponseData<SSL>::HTTP_SEND_WHEN_COMPLETE)) {
             this->uncork();
         }
         return false;
+    }
+
+    /* Marks the response in flight as one that user JavaScript produces. See
+     * HTTP_SEND_WHEN_COMPLETE. */
+    void sendWhenComplete() {
+        getHttpResponseData()->state |= HttpResponseData<SSL>::HTTP_SEND_WHEN_COMPLETE;
     }
 
     /* Ends the 101 of upgrade(): terminates the header section and marks the

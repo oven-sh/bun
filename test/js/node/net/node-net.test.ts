@@ -2894,6 +2894,131 @@ it.skipIf(isWindows)("a write after the peer reset the connection fails with a w
   }
 });
 
+// Node hands a write that fails at once to the stream inside write() itself,
+// so write() returns false and the socket is errored in the same call. The
+// stream runs the write callbacks and destroys the socket on the next tick.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L158-L159
+describe("a write that fails at once", () => {
+  type ErrnoException = NodeJS.ErrnoException;
+
+  async function connectedPair(listenOptions: import("node:net").ListenOptions) {
+    const server = createServer();
+    await once(server.listen(listenOptions), "listening");
+    const address = server.address() as string | import("node:net").AddressInfo;
+    const accepted = once(server, "connection") as Promise<[Socket]>;
+    const client = typeof address === "string" ? connect(address) : connect(address.port, address.address);
+    const [[peer]] = await Promise.all([accepted, once(client, "connect")]);
+    peer.on("error", () => {});
+    return {
+      client,
+      peer,
+      [Symbol.dispose]() {
+        client.destroy();
+        peer.destroy();
+        server.close();
+      },
+    };
+  }
+
+  const stateOf = (conn: Socket) => ({
+    destroyed: conn.destroyed,
+    errored: (conn.errored as ErrnoException | null)?.code,
+    writable: conn.writable,
+    writableLength: conn.writableLength,
+  });
+
+  // Records the write callbacks, 'error' and 'close' of `conn` in order.
+  function eventLog(conn: Socket, until: "error" | "close") {
+    const events: string[] = [];
+    const settled = new Promise<void>(resolve => {
+      conn.on("error", (e: ErrnoException) => {
+        events.push(`error ${e.code} ${e.syscall}`);
+        if (until === "error") resolve();
+      });
+      conn.on("close", hadError => {
+        events.push(`close ${hadError}`);
+        resolve();
+      });
+    });
+    const written = (n: number) => (e?: ErrnoException | null) =>
+      void events.push(`write#${n} ${e?.code} ${e?.syscall}`);
+    return { events, settled, written };
+  }
+
+  // Writes twice in the current tick and records what the first write() left
+  // behind before it returned.
+  async function writeTwice(conn: Socket, until: "error" | "close") {
+    const { events, settled, written } = eventLog(conn, until);
+    const first = conn.write("x", written(1));
+    const afterFirst = stateOf(conn);
+    const second = conn.write("y", written(2));
+    await settled;
+    return { first, afterFirst, second, events };
+  }
+
+  function expectFailedInsideWrite(result: Awaited<ReturnType<typeof writeTwice>>, code: string, lastEvents: string[]) {
+    expect(result).toEqual({
+      first: false,
+      afterFirst: { destroyed: false, errored: code, writable: false, writableLength: 0 },
+      second: false,
+      events: [`write#1 ${code} write`, `write#2 ${code} write`, ...lastEvents],
+    });
+  }
+
+  // The peer dies and the client writes in the same tick, so the event loop
+  // gets no chance to report the dead peer as a read error first.
+  // Windows: a path listens on a named pipe, which has its own write path.
+  it.skipIf(isWindows)("returns false from write() on a unix socket whose peer closed", async () => {
+    using pair = await connectedPair({ path: join(socket_domain, "write-epipe.sock") });
+    // A unix socket learns that its peer is gone inside the peer's close(2).
+    pair.peer.destroy();
+    expectFailedInsideWrite(await writeTwice(pair.client, "close"), "EPIPE", ["error EPIPE write", "close true"]);
+  });
+
+  it("returns false from write() on a TCP socket whose peer reset the connection", async () => {
+    // Loopback does not promise that the RST is processed before the next
+    // send(2). A send that beats it succeeds and the reset surfaces as a read
+    // error, so take a fresh connection until the kernel rejects the send.
+    let result: Awaited<ReturnType<typeof writeTwice>>;
+    let attempts = 0;
+    do {
+      using pair = await connectedPair({ port: 0, host: "127.0.0.1" });
+      pair.peer.resetAndDestroy();
+      result = await writeTwice(pair.client, "close");
+    } while (!result.events[0].endsWith(" write") && ++attempts < 100);
+    // BSD kernels report a send after a received RST as EPIPE.
+    const code = result.events[0] === "write#1 EPIPE write" ? "EPIPE" : "ECONNRESET";
+    expectFailedInsideWrite(result, code, [`error ${code} write`, "close true"]);
+  });
+
+  // test-net-socket-write-after-close.js covers the error, not the return value.
+  it("returns false from write() on a socket whose handle was closed directly", async () => {
+    using pair = await connectedPair({ port: 0, host: "127.0.0.1" });
+    (pair.client as any)._handle.close();
+    const code = isWindows ? "EPIPE" : "EBADF";
+    expectFailedInsideWrite(await writeTwice(pair.client, "error"), code, [`error ${code} write`]);
+  });
+
+  // uncork() sends the corked writes through _writev, which ends in the same _write.
+  it("errors the socket inside uncork() when the corked writes fail at once", async () => {
+    using pair = await connectedPair({ port: 0, host: "127.0.0.1" });
+    const conn = pair.client;
+    (conn as any)._handle.close();
+    const code = isWindows ? "EPIPE" : "EBADF";
+    const { events, settled, written } = eventLog(conn, "error");
+    conn.cork();
+    const corked = [conn.write("x", written(1)), conn.write("y", written(2))];
+    conn.uncork();
+    const afterUncork = stateOf(conn);
+    await settled;
+    expect({ corked, afterUncork, events }).toEqual({
+      corked: [true, true],
+      afterUncork: { destroyed: false, errored: code, writable: false, writableLength: 0 },
+      events: [`write#1 ${code} write`, `write#2 ${code} write`, `error ${code} write`],
+    });
+  });
+});
+
 // libuv's uv__tcp_bind always sets SO_REUSEADDR on Unix, so Node can bind a
 // client localPort that still has earlier connections in TIME_WAIT. Bun used
 // to call bind() bare here and fail with EADDRINUSE, which made

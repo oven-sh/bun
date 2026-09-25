@@ -575,6 +575,11 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
         m_connectionType = is_secure ? ConnectionType::TLS : ConnectionType::Plain;
     }
 
+    // What script of a disposed Bun.ModuleGraph starts does not start: nothing is dialed, nothing
+    // keeps this alive, and it stays CONNECTING.
+    if (auto* context = scriptExecutionContext(); context->isForModuleGraph() && context->isStopped())
+        return {};
+
     m_pendingActivity = makePendingActivity(*this);
 
     // Prepare proxy parameters (use local variables, not member fields).
@@ -1502,7 +1507,7 @@ void WebSocket::didClose(unsigned unhandledBufferedAmount, unsigned short code, 
     m_pendingActivity = nullptr;
 }
 
-void WebSocket::didConnect(us_socket_t* socket, void* bufferedData, const PerMessageDeflateParams* deflate_params, void* customSSLCtx)
+void WebSocket::didConnect(us_socket_t* socket, void* bufferedData, const PerMessageDeflateParams* deflate_params, void* customSSLCtx, std::span<const uint8_t> verifiedHostname)
 {
     this->m_upgradeClient = nullptr;
     setExtensionsFromDeflateParams(deflate_params);
@@ -1514,10 +1519,10 @@ void WebSocket::didConnect(us_socket_t* socket, void* bufferedData, const PerMes
     bool useTLSSocket = (m_connectionType == ConnectionType::TLS || m_connectionType == ConnectionType::ProxyTLS);
 
     if (useTLSSocket) {
-        this->m_connectedWebSocket.clientSSL = Bun__WebSocketClientTLS__init(reinterpret_cast<CppWebSocket*>(this), socket, this->scriptExecutionContext()->jsGlobalObject(), bufferedData, deflate_params, customSSLCtx);
+        this->m_connectedWebSocket.clientSSL = Bun__WebSocketClientTLS__init(reinterpret_cast<CppWebSocket*>(this), socket, this->scriptExecutionContext()->jsGlobalObject(), bufferedData, deflate_params, customSSLCtx, verifiedHostname.data(), verifiedHostname.size());
         this->m_connectedWebSocketKind = ConnectedWebSocketKind::ClientSSL;
     } else {
-        this->m_connectedWebSocket.client = Bun__WebSocketClient__init(reinterpret_cast<CppWebSocket*>(this), socket, this->scriptExecutionContext()->jsGlobalObject(), bufferedData, deflate_params, customSSLCtx);
+        this->m_connectedWebSocket.client = Bun__WebSocketClient__init(reinterpret_cast<CppWebSocket*>(this), socket, this->scriptExecutionContext()->jsGlobalObject(), bufferedData, deflate_params, customSSLCtx, verifiedHostname.data(), verifiedHostname.size());
         this->m_connectedWebSocketKind = ConnectedWebSocketKind::Client;
     }
     if (m_paused)
@@ -1727,9 +1732,10 @@ void WebSocket::didConnectWithTunnel(void* tunnel, void* bufferedData, const Per
 
 // `bufferedData` is an opaque Rust box (handshake overflow bytes) forwarded
 // untouched to `Bun__WebSocketClient*__init*`, which takes ownership.
-extern "C" void WebSocket__didConnect(WebCore::WebSocket* webSocket, us_socket_t* socket, void* bufferedData, const PerMessageDeflateParams* deflate_params, void* customSSLCtx)
+// `verifiedHostname` is borrowed for the call; the connected client copies it.
+extern "C" void WebSocket__didConnect(WebCore::WebSocket* webSocket, us_socket_t* socket, void* bufferedData, const PerMessageDeflateParams* deflate_params, void* customSSLCtx, WebCore::WebSocket::FfiSlice verifiedHostname)
 {
-    webSocket->didConnect(socket, bufferedData, deflate_params, customSSLCtx);
+    webSocket->didConnect(socket, bufferedData, deflate_params, customSSLCtx, verifiedHostname.span());
 }
 
 extern "C" void WebSocket__didConnectWithTunnel(WebCore::WebSocket* webSocket, void* tunnel, void* bufferedData, const PerMessageDeflateParams* deflate_params)
@@ -1790,6 +1796,13 @@ extern "C" void WebSocket__didReceiveBytes(WebCore::WebSocket* webSocket, WebCor
 extern "C" bool WebSocket__rejectUnauthorized(WebCore::WebSocket* webSocket)
 {
     return webSocket->rejectUnauthorized();
+}
+
+// The Rust half of the context of the script that made the WebSocket. Called from connect(),
+// which has the context.
+extern "C" void* WebSocket__bunContext(WebCore::WebSocket* webSocket)
+{
+    return webSocket->scriptExecutionContext()->bunContext();
 }
 
 // The native client keeps this object (and its wrapper) alive across work it has queued that will

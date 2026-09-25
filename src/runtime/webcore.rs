@@ -6,37 +6,37 @@ use core::ptr::NonNull;
 // `#[path]` is relative to the dir containing this file (`src/runtime/`).
 
 #[path = "webcore/ArrayBufferSink.rs"]
-pub mod array_buffer_sink;
+pub(crate) mod array_buffer_sink;
 #[path = "webcore/BakeResponse.rs"]
-pub mod bake_response;
+pub(crate) mod bake_response;
 #[path = "webcore/ByteBlobLoader.rs"]
-pub mod byte_blob_loader;
+pub(crate) mod byte_blob_loader;
 #[path = "webcore/ByteStream.rs"]
-pub mod byte_stream;
+pub(crate) mod byte_stream;
 #[path = "webcore/CompressionStreamCoder.rs"]
-pub mod compression_stream_coder;
+pub(crate) mod compression_stream_coder;
 #[path = "webcore/CookieMap.rs"]
-pub mod cookie_map;
+pub(crate) mod cookie_map;
 #[path = "webcore/Crypto.rs"]
-pub mod crypto;
+pub(crate) mod crypto;
 #[path = "webcore/S3Client.rs"]
-pub mod s3_client;
+pub(crate) mod s3_client;
 #[path = "webcore/S3File.rs"]
-pub mod s3_file;
+pub(crate) mod s3_file;
 #[path = "webcore/S3Stat.rs"]
-pub mod s3_stat;
+pub(crate) mod s3_stat;
 #[path = "webcore/TextEncoder.rs"]
-pub mod text_encoder;
+pub(crate) mod text_encoder;
 #[path = "webcore/TextEncoderStreamEncoder.rs"]
-pub mod text_encoder_stream_encoder;
+pub(crate) mod text_encoder_stream_encoder;
 
 // ─── flat re-exports ─────────────────────────────────────────────────────────
-pub use cookie_map::{CookieMap, CookieMapRef};
-pub use s3_client::S3Client;
-pub use s3_stat::S3Stat;
+pub(crate) use cookie_map::{CookieMap, CookieMapRef};
+pub(crate) use s3_client::S3Client;
+pub(crate) use s3_stat::S3Stat;
 
 #[path = "webcore/ObjectURLRegistry.rs"]
-pub mod object_url_registry;
+pub(crate) mod object_url_registry;
 pub(crate) use object_url_registry::ObjectURLRegistry;
 
 // ─── webcore-local jsc re-export ─────────────────────────────────────────────
@@ -46,18 +46,18 @@ pub(crate) use object_url_registry::ObjectURLRegistry;
 // returned `JSValue::default()` from `to_js_unchecked` has been removed —
 // every webcore caller now imports the real bindings directly
 // (`bun_jsc::generated::JS{Blob,Request,Response,…}`).
-pub mod jsc {
-    pub use crate::jsc::*;
-    pub use bun_jsc::virtual_machine::VirtualMachine;
+pub(crate) mod jsc {
+    pub(crate) use crate::jsc::*;
+    pub(crate) use bun_jsc::virtual_machine::VirtualMachine;
 }
 
 // Forward the real enums so `webcore::node_types::X` and
 // `crate::node::types::X` are the same type.
-pub mod node_types {
-    pub use crate::node::types::{PathLike, PathOrBlob, PathOrFileDescriptor};
+pub(crate) mod node_types {
+    pub(crate) use crate::node::types::{PathLike, PathOrBlob, PathOrFileDescriptor};
 }
 
-pub use crate::jsc::AbortSignal;
+pub(crate) use crate::jsc::AbortSignal;
 
 // ─── AutoFlusher (webcore tier) ──────────────────────────────────────────────
 // Takes a `&VirtualMachine` and reaches the queue via
@@ -65,14 +65,14 @@ pub use crate::jsc::AbortSignal;
 use bun_event_loop::deferred_task_queue::DeferredRepeatingTask;
 
 #[derive(Debug, Default)]
-pub struct AutoFlusher {
+pub(crate) struct AutoFlusher {
     /// `Cell` so register/unregister can be called from `&self` callbacks
     /// (R-2 §provenance — see `FileSink::on_write`).
     pub(crate) registered: core::cell::Cell<bool>,
 }
 
 /// Implemented below for `FileSink` and `HTTPServerWritable<_, _>`.
-pub trait HasAutoFlusher: Sized {
+pub(crate) trait HasAutoFlusher: Sized {
     fn auto_flusher(&self) -> &AutoFlusher;
     /// `Type.onAutoFlush` — `DeferredRepeatingTask` ABI after `@ptrCast`
     /// erasure: `fn(*anyopaque) bool`.
@@ -203,42 +203,42 @@ impl<const SSL: bool> HasAutoFlusher for streams::HTTPServerWritable<SSL> {
 pub(crate) mod headers_ref;
 
 #[path = "webcore/Blob.rs"]
-pub mod blob;
-pub use blob::Any as AnyBlob;
-pub use blob::Internal as InternalBlob;
-pub use blob::{Blob, BlobExt, SizeType as BlobSizeType};
+pub(crate) mod blob;
+pub(crate) use blob::Any as AnyBlob;
+pub(crate) use blob::Internal as InternalBlob;
+pub(crate) use blob::{Blob, BlobExt, SizeType as BlobSizeType};
 
 #[path = "webcore/Body.rs"]
-pub mod body;
-pub use body::{Body, Value as BodyValue};
+pub(crate) mod body;
+pub(crate) use body::{Body, Value as BodyValue};
 
 #[path = "webcore/Response.rs"]
-pub mod response;
-pub use response::Response;
+pub(crate) mod response;
+pub(crate) use response::Response;
 
 #[path = "webcore/Request.rs"]
-pub mod request;
-pub use request::Request;
+pub(crate) mod request;
+pub(crate) use request::Request;
 
 #[path = "webcore/ReadableStream.rs"]
-pub mod readable_stream;
-pub use readable_stream::ReadableStream;
+pub(crate) mod readable_stream;
+pub(crate) use readable_stream::ReadableStream;
 
 #[path = "webcore/FileReader.rs"]
-pub mod file_reader;
-pub use file_reader::FileReader;
+pub(crate) mod file_reader;
+pub(crate) use file_reader::FileReader;
 
 #[path = "webcore/Sink.rs"]
-pub mod sink;
+pub(crate) mod sink;
 
 #[path = "webcore/FileSink.rs"]
-pub mod file_sink;
-pub use file_sink::FileSink;
+pub(crate) mod file_sink;
+pub(crate) use file_sink::FileSink;
 
 // ByteStream/ByteBlobLoader: real bodies now live in webcore/ByteStream.rs and
 // webcore/ByteBlobLoader.rs (declared above). Re-export the struct types here.
-pub use byte_blob_loader::ByteBlobLoader;
-pub use byte_stream::ByteStream;
+pub(crate) use byte_blob_loader::ByteBlobLoader;
+pub(crate) use byte_stream::ByteStream;
 
 // TODO: make this pool per-JSGlobalObject so recycled buffers are not shared
 // across realms (the pool is process-global).
@@ -252,37 +252,37 @@ bun_collections::object_pool!(pub ByteListPool: Vec<u8>, threadsafe, 8);
 // Re-export the crate-local jsc shim's opaque type until `bun_jsc::fetch_headers`
 // is green; the shim's `#[repr(transparent)] struct FetchHeaders(usize)` matches the
 // opaque-handle ABI used by the `WebCore__FetchHeaders__*` extern fns.
-pub use crate::jsc::FetchHeaders;
+pub(crate) use crate::jsc::FetchHeaders;
 
 #[path = "webcore/EncodingLabel.rs"]
-pub mod encoding_label;
-pub use encoding_label::EncodingLabel;
+pub(crate) mod encoding_label;
+pub(crate) use encoding_label::EncodingLabel;
 
 #[path = "webcore/encoding.rs"]
-pub mod encoding;
+pub(crate) mod encoding;
 
 #[path = "webcore/wasm_streaming.rs"]
-pub mod wasm_streaming;
+pub(crate) mod wasm_streaming;
 
 #[path = "webcore/TextDecoder.rs"]
-pub mod text_decoder;
-pub use text_decoder::TextDecoder;
+pub(crate) mod text_decoder;
+pub(crate) use text_decoder::TextDecoder;
 
 #[path = "webcore/fetch.rs"]
-pub mod fetch;
+pub(crate) mod fetch;
 
 #[path = "webcore/prompt.rs"]
-pub mod prompt;
+pub(crate) mod prompt;
 
 #[path = "webcore/FormData.rs"]
-pub mod form_data;
+pub(crate) mod form_data;
 
 #[path = "webcore/ScriptExecutionContext.rs"]
-pub mod script_execution_context;
+pub(crate) mod script_execution_context;
 
 #[doc(hidden)]
-pub mod multipart_options_impl {
-    pub use bun_s3_signing::MultiPartUploadOptions;
+pub(crate) mod multipart_options_impl {
+    pub(crate) use bun_s3_signing::MultiPartUploadOptions;
 }
 // Note: inner `#[path]` inside an inline `mod s3 { }` resolves relative to
 // `<this-file's-dir>/s3/`, which would point at `src/runtime/s3/...` (does not
@@ -290,45 +290,45 @@ pub mod multipart_options_impl {
 // `src/runtime/`) and re-export them under `s3`.
 #[doc(hidden)]
 #[path = "webcore/s3/client.rs"]
-pub mod __s3_client;
+pub(crate) mod __s3_client;
 #[doc(hidden)]
 #[path = "webcore/s3/credentials_jsc.rs"]
-pub mod __s3_credentials_jsc;
+pub(crate) mod __s3_credentials_jsc;
 #[doc(hidden)]
 #[path = "webcore/s3/download_stream.rs"]
-pub mod __s3_download_stream;
+pub(crate) mod __s3_download_stream;
 #[doc(hidden)]
 #[path = "webcore/s3/list_objects.rs"]
-pub mod __s3_list_objects;
+pub(crate) mod __s3_list_objects;
 #[doc(hidden)]
 #[path = "webcore/s3/multipart.rs"]
-pub mod __s3_multipart;
+pub(crate) mod __s3_multipart;
 #[doc(hidden)]
 #[path = "webcore/s3/simple_request.rs"]
-pub mod __s3_simple_request;
+pub(crate) mod __s3_simple_request;
 #[doc(hidden)]
 #[path = "webcore/s3/xml_response.rs"]
-pub mod __s3_xml_response;
-pub mod s3 {
-    pub use super::multipart_options_impl as multipart_options;
-    pub use super::multipart_options_impl::MultiPartUploadOptions;
+pub(crate) mod __s3_xml_response;
+pub(crate) mod s3 {
+    pub(crate) use super::multipart_options_impl as multipart_options;
+    pub(crate) use super::multipart_options_impl::MultiPartUploadOptions;
 
     // Note: `client` is the umbrella re-export hub. It pulls in `simple_request`
     // / `download_stream` / `list_objects` / `multipart` transitively.
-    pub use super::__s3_client as client;
-    pub use super::__s3_credentials_jsc as credentials_jsc;
-    pub use super::__s3_download_stream as download_stream;
-    pub use super::__s3_list_objects as list_objects;
-    pub use super::__s3_multipart as multipart;
-    pub use super::__s3_simple_request as simple_request;
+    pub(crate) use super::__s3_client as client;
+    pub(crate) use super::__s3_credentials_jsc as credentials_jsc;
+    pub(crate) use super::__s3_download_stream as download_stream;
+    pub(crate) use super::__s3_list_objects as list_objects;
+    pub(crate) use super::__s3_multipart as multipart;
+    pub(crate) use super::__s3_simple_request as simple_request;
     pub(crate) use super::__s3_xml_response as xml_response;
-    pub use multipart::MultiPartUpload;
+    pub(crate) use multipart::MultiPartUpload;
 }
 
 #[path = "webcore/streams.rs"]
-pub mod streams;
+pub(crate) mod streams;
 
-pub enum PathOrFileDescriptor {
+pub(crate) enum PathOrFileDescriptor {
     Path(bun_core::Utf8Bytes<'static>),
     Fd(bun_sys::Fd),
 }
@@ -402,14 +402,14 @@ impl SinkHandle {
     }
 }
 
-pub enum DrainResult {
+pub(crate) enum DrainResult {
     Owned { list: Vec<u8>, size_hint: usize },
     EstimatedSize(usize),
     Aborted,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, core::marker::ConstParamTy)]
-pub enum Lifetime {
+pub(crate) enum Lifetime {
     Clone,
     Transfer,
     Share,

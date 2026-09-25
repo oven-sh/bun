@@ -833,6 +833,18 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
+    /// Whether `chunk` is one that bytecode (and, in an executable, module info) is made for. The output file list
+    /// counts those files with this before they are made (`OutputFileList::calculate_output_file_list_capacity`).
+    pub(crate) fn chunk_gets_bytecode(&self, chunk: &Chunk) -> bool {
+        // The CSS chunk of a JavaScript entry point has that entry point's loader.
+        let loader = if chunk.entry_point.is_entry_point() {
+            self.parse_graph().input_files.items_loader()[chunk.entry_point.source_index() as usize]
+        } else {
+            crate::options::Loader::Js
+        };
+        chunk.content.is_javascript() && loader.is_javascript_like()
+    }
+
     /// See [`Self::load`] for why `bundle` is a raw `*mut` (caller passes
     /// `self` while the receiver is `self.linker`; field-disjoint access only).
     ///
@@ -1419,6 +1431,8 @@ pub struct LinkerOptions {
     pub(crate) target_builtins: Option<std::sync::Arc<[u8]>>,
     pub(crate) bytecode_depth: u32,
     pub(crate) optimize_bytecode: bool,
+    /// The order files of `--bytecode-order` / `compile.bytecodeOrder`, read and merged when the bundle started.
+    pub(crate) bytecode_order: Option<crate::bytecode_order::BytecodeOrder>,
     pub(crate) output_format: Format,
     pub(crate) ignore_dce_annotations: bool,
     pub(crate) emit_dce_annotations: bool,
@@ -1469,6 +1483,7 @@ impl Default for LinkerOptions {
             target_builtins: None,
             bytecode_depth: u32::MAX,
             optimize_bytecode: true,
+            bytecode_order: None,
             output_format: Format::Esm,
             ignore_dce_annotations: false,
             emit_dce_annotations: true,
@@ -2531,6 +2546,7 @@ impl<'a> LinkerContext<'a> {
         was_unwrapped_require: bool,
     ) -> js_printer::RequireOrImportMeta {
         let flags = self.graph.meta.items_flags()[source_index as usize];
+        let wrapper_ref = self.graph.ast.items_wrapper_ref()[source_index as usize];
         js_printer::RequireOrImportMeta {
             exports_ref: if flags.wrap == WrapKind::Esm
                 || (was_unwrapped_require
@@ -2541,8 +2557,8 @@ impl<'a> LinkerContext<'a> {
             } else {
                 Ref::NONE
             },
-            is_wrapper_async: flags.is_async_or_has_async_dependency,
-            wrapper_ref: self.graph.ast.items_wrapper_ref()[source_index as usize],
+            is_wrapper_async: flags.is_async_or_has_async_dependency && wrapper_ref.is_valid(),
+            wrapper_ref,
 
             was_unwrapped_require: was_unwrapped_require
                 && self.graph.ast.items_flags()[source_index as usize]

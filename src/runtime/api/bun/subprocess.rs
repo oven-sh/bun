@@ -2,7 +2,6 @@
 //! code for `Bun.spawnSync`
 
 use core::cell::Cell;
-use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use bun_ptr::{RefCount, RefPtr};
@@ -34,25 +33,25 @@ use crate::webcore::{self, AbortSignal, FileSink};
 use bun_libuv_sys::UvHandle as _;
 
 #[path = "subprocess/ResourceUsage.rs"]
-pub mod resource_usage;
-pub use resource_usage::ResourceUsage;
+pub(crate) mod resource_usage;
+pub(crate) use resource_usage::ResourceUsage;
 
 #[path = "subprocess/SubprocessPipeReader.rs"]
-pub mod subprocess_pipe_reader;
-pub use subprocess_pipe_reader as PipeReader;
+pub(crate) mod subprocess_pipe_reader;
+pub(crate) use subprocess_pipe_reader as PipeReader;
 
 #[path = "subprocess/Readable.rs"]
-pub mod readable;
-pub use readable::Readable;
+pub(crate) mod readable;
+pub(crate) use readable::Readable;
 
 #[path = "subprocess/Writable.rs"]
-pub mod writable;
-pub use writable::Writable;
+pub(crate) mod writable;
+pub(crate) use writable::Writable;
 
-pub use bun_spawn::static_pipe_writer;
-pub use static_pipe_writer::StaticPipeWriter as NewStaticPipeWriter;
+pub(crate) use bun_spawn::static_pipe_writer;
+pub(crate) use static_pipe_writer::StaticPipeWriter as NewStaticPipeWriter;
 
-pub use bun_io::MaxBuf;
+pub(crate) use bun_io::MaxBuf;
 
 bun_output::declare_scope!(Subprocess, visible);
 bun_output::declare_scope!(IPC, visible);
@@ -61,7 +60,7 @@ bun_output::declare_scope!(IPC, visible);
 // proc-macro doesn't support generic structs); cached-property accessors
 // (exitedPromiseGetCached, stdinGetCached, …) from `jsc.Codegen.JSSubprocess` are
 // emitted here via `codegen_cached_accessors!`.
-pub mod js {
+pub(crate) mod js {
     bun_jsc::codegen_cached_accessors!(
         "Subprocess";
         stdin,
@@ -76,14 +75,14 @@ pub mod js {
 }
 
 /// Platform-dependent stdio result type.
-pub use bun_spawn::subprocess::StdioResult;
+pub(crate) use bun_spawn::subprocess::StdioResult;
 
 #[cfg(windows)]
 type StdioPipeItem = StdioResult;
 #[cfg(not(windows))]
 type StdioPipeItem = ExtraPipe;
 
-pub type StaticPipeWriter<'a> = NewStaticPipeWriter<Subprocess<'a>>;
+pub(crate) type StaticPipeWriter<'a> = NewStaticPipeWriter<Subprocess<'a>>;
 
 impl<'a> static_pipe_writer::StaticPipeWriterProcess for Subprocess<'a> {
     const POLL_OWNER_TAG: bun_io::PollTag = bun_io::posix_event_loop::poll_tag::STATIC_PIPE_WRITER;
@@ -100,7 +99,7 @@ pub enum ObservableGetter {
     Stderr,
 }
 
-pub use bun_spawn::process::StdioKind;
+pub(crate) use bun_spawn::process::StdioKind;
 
 // Note: `#[bun_jsc::JsClass]` does not yet handle generic structs (it emits the
 // bare ident in extern signatures). The `JsClass` impl + finalize/construct C-ABI
@@ -141,8 +140,12 @@ pub struct Subprocess<'a> {
     /// Weak observer of the stdin `FileSink` — holds no ownership/ref. `onStdinDestroyed`
     /// nulls this before the sink is freed, so it is never dereferenced after the sink dies.
     pub(crate) weak_file_sink_stdin_ptr: Cell<Option<NonNull<FileSink>>>,
-    /// Our ref on the `signal` option; released in `clear_abort_signal`.
-    pub(crate) abort_signal: JsCell<Option<bun_jsc::AbortSignalRef>>,
+    /// Follows the `signal` option until `clear_abort_signal`; armed only in a
+    /// `Bun.ModuleGraph` context, which kills it when disposed (children
+    /// of the realm's own script are the process auto-killer's).
+    pub(crate) abort_handle: bun_jsc::AbortHandle,
+    /// The context of the script that spawned the child: its exit is reported there.
+    pub(crate) context: bun_jsc::ContextId,
 
     pub(crate) event_loop_timer_refd: Cell<bool>,
     /// Intrusive timer node. `JsCell` so `&self` can hand `*mut EventLoopTimer`
@@ -287,7 +290,7 @@ bitflags::bitflags! {
         /// by the caller). Owned terminals are closed when the subprocess exits
         /// so the exit callback fires; borrowed terminals are left open for reuse.
         const OWNS_TERMINAL                = 1 << 6;
-        /// `handle_abort_signal` sent `kill_signal`; `on_process_exit` closes
+        /// The `signal` option fired and `kill_signal` was sent; `on_process_exit` closes
         /// pipe readers instead of waiting on EOF a grandchild may never send.
         const ABORT_SIGNAL_KILLED          = 1 << 7;
     }
@@ -306,30 +309,32 @@ macro_rules! assert_stdio_result {
 }
 pub(crate) use assert_stdio_result;
 
-impl Subprocess<'_> {
-    #[bun_uws::uws_callback(thunk = "on_abort_signal_c")]
-    fn handle_abort_signal(&self, _reason: JSValue) {
-        self.clear_abort_signal();
-        if !self.has_exited() {
-            self.update_flags(|f| f.insert(Flags::ABORT_SIGNAL_KILLED));
+bun_jsc::impl_abort_handle_owner!(Subprocess<'static>, abort_handle, |this, cause| {
+    // SAFETY: trait contract — `this` is live.
+    let this = unsafe { &*this };
+    let signal = match cause {
+        // Its own signal: the child is asked the way its script chose. It stays in its
+        // context, which may still stop before the child is gone.
+        bun_jsc::AbortCause::Signal(_) => {
+            this.abort_handle.unfollow();
+            this.kill_signal
         }
-        let _ = self.try_kill(self.kill_signal);
+        // A child outlives the VM that spawned it, as one the host spawned does.
+        bun_jsc::AbortCause::ContextStopped(bun_jsc::StopReason::VmTeardown) => {
+            this.clear_abort_signal();
+            return;
+        }
+        // Nobody is left to wait for a child that ignores being asked.
+        bun_jsc::AbortCause::ContextStopped(_) => {
+            this.clear_abort_signal();
+            SignalCode::SIGKILL
+        }
+    };
+    if !this.has_exited() {
+        this.update_flags(|f| f.insert(Flags::ABORT_SIGNAL_KILLED));
     }
-}
-
-/// Module-level wrapper so callers in `js_bun_spawn_bindings` (which alias the
-/// module as `Subprocess`) keep their existing `Subprocess::on_abort_signal`
-/// path. Forwards to the macro-emitted `unsafe extern "C" fn` thunk.
-///
-/// # Safety
-/// `ctx` must be the `*mut Subprocess` that was registered with
-/// `AbortSignal::add_listener`; the AbortSignal guarantees it is live for the
-/// duration of the callback.
-pub(crate) unsafe extern "C" fn on_abort_signal(ctx: *mut c_void, reason: JSValue) {
-    // SAFETY: caller upholds the `# Safety` contract above — `ctx` is the live
-    // `*mut Subprocess` registered with the AbortSignal.
-    unsafe { Subprocess::on_abort_signal_c(ctx, reason) }
-}
+    let _ = this.try_kill(signal);
+});
 
 bun_spawn::link_impl_ProcessExit! {
     Subprocess for Subprocess<'static> => |this| {
@@ -345,7 +350,7 @@ impl Subprocess<'_> {
     /// Shared borrow of the attached `AbortSignal`, if any.
     #[inline]
     pub(crate) fn abort_signal_ref(&self) -> Option<&AbortSignal> {
-        self.abort_signal.get().as_deref()
+        self.abort_handle.signal()
     }
 
     #[bun_jsc::host_fn(method)]
@@ -560,7 +565,10 @@ impl Subprocess<'_> {
         this.observable_getters
             .set(this.observable_getters.get() | ObservableGetter::Stderr);
         let exited = this.has_exited();
-        this.stderr.with_mut(|s| s.to_js(global_this, exited))
+        // The stream is the script's that reads the property.
+        let context = global_this.bun_vm().context_of_caller_no_frame();
+        this.stderr
+            .with_mut(|s| s.to_js(&global_this.js_thread(context), exited))
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -588,7 +596,10 @@ impl Subprocess<'_> {
         // gets cached on JSSubprocess (created via bindgen). This makes it
         // re-accessable to JS code but not via `this.stdout`, which is now `.closed`.
         let exited = this.has_exited();
-        this.stdout.with_mut(|s| s.to_js(global_this, exited))
+        // The stream is the script's that reads the property.
+        let context = global_this.bun_vm().context_of_caller_no_frame();
+        this.stdout
+            .with_mut(|s| s.to_js(&global_this.js_thread(context), exited))
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -1113,6 +1124,8 @@ impl Subprocess<'_> {
         // `&mut`-taking methods without tripping borrowck.
         let event_loop = (*jsc_vm).event_loop();
 
+        // The exit is reported to the script that spawned the child.
+        let _context = (*jsc_vm).enter_context(self.context);
         if !is_sync {
             if !this_jsvalue.is_empty() {
                 if let Some(promise) = js::exited_promise_take_cached(this_jsvalue, global_this) {
@@ -1144,7 +1157,9 @@ impl Subprocess<'_> {
                         Status::Signaled(signaled) => {
                             let _ = promise.as_any_promise().unwrap().resolve(
                                 global_this,
-                                JSValue::js_number(128u8.wrapping_add(*signaled) as f64),
+                                JSValue::js_number(
+                                    bun_sys::SignalCode(*signaled).to_exit_code() as f64
+                                ),
                             );
                             // TODO: properly propagate exception upwards
                         }
@@ -1184,7 +1199,15 @@ impl Subprocess<'_> {
                     }
 
                     // SAFETY: event_loop points into the live VM.
-                    unsafe { (*event_loop).run_callback(callback, global_this, this_value, &args) };
+                    unsafe {
+                        (*event_loop).run_callback(
+                            self.context,
+                            callback,
+                            global_this,
+                            this_value,
+                            &args,
+                        )
+                    };
                 }
             }
         }
@@ -1283,11 +1306,7 @@ impl Subprocess<'_> {
     }
 
     fn clear_abort_signal(&self) {
-        if let Some(signal) = self.abort_signal.take() {
-            signal.pending_activity_unref();
-            signal.clean_native_bindings(self.as_ctx_ptr().cast::<c_void>());
-            // Dropping `signal` unrefs it.
-        }
+        self.abort_handle.disarm();
     }
 
     pub fn finalize(&self) {
@@ -1365,9 +1384,7 @@ impl Subprocess<'_> {
             }
             Status::Signaled(signal) => JSPromise::resolved_promise_value(
                 global_this,
-                JSValue::js_number(
-                    bun_sys::SignalCode(*signal).to_exit_code().unwrap_or(254) as f64
-                ),
+                JSValue::js_number(bun_sys::SignalCode(*signal).to_exit_code() as f64),
             ),
             Status::Err(err) => {
                 let js_err = err.to_js(global_this);
@@ -1391,20 +1408,16 @@ impl Subprocess<'_> {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_signal_code(&self, global: &JSGlobalObject) -> JSValue {
-        if let Some(signal) = self.process().signal_code() {
-            // `process.signal_code()` returns the tier-0 `bun_core::SignalCode`
-            // (bare `#[repr(u8)]` discriminant); name/exit-code helpers live on
-            // `bun_sys::SignalCode`.
-            let sys_sig = bun_sys::SignalCode(signal as u8);
-            if let Some(name) = sys_sig.name() {
+        let Some(signal) = self.process().status.signal() else {
+            return JSValue::NULL;
+        };
+        match signal.name() {
+            Some(name) => {
                 use bun_jsc::EncodedSliceJsc as _;
-                return bun_core::EncodedSlice::latin1(name.as_bytes()).to_js(global);
-            } else {
-                return JSValue::js_number(signal as u32 as f64);
+                bun_core::EncodedSlice::latin1(name.as_bytes()).to_js(global)
             }
+            None => JSValue::js_number(f64::from(signal.0)),
         }
-
-        JSValue::NULL
     }
 
     pub(crate) fn handle_ipc_message(
@@ -1431,6 +1444,7 @@ impl Subprocess<'_> {
                         // accessed on the single JS mutator thread.
                         unsafe {
                             (*event_loop).run_callback(
+                                self.context,
                                 cb,
                                 global_this,
                                 this_jsvalue,
@@ -1472,6 +1486,7 @@ impl Subprocess<'_> {
                 // accessed on the single JS mutator thread.
                 unsafe {
                     (*event_loop).run_callback(
+                        self.context,
                         callback,
                         global_this,
                         this_jsvalue,
@@ -1487,7 +1502,7 @@ impl Subprocess<'_> {
     }
 }
 
-pub use bun_spawn::subprocess::{Source, SourceData};
+pub(crate) use bun_spawn::subprocess::{Source, SourceData};
 
 // JSC-tier payloads wrap as `Source::Any(Box<dyn SourceData>)` — the lower-tier
 // `bun_spawn` crate cannot name `webcore`/`jsc`, so the vtable travels with the
@@ -1551,7 +1566,7 @@ pub(crate) extern "C" fn on_pipe_close(this: *mut bun_sys::windows::libuv::Pipe)
     drop(unsafe { bun_core::heap::take(this) });
 }
 
-pub mod testing_apis {
+pub(crate) mod testing_apis {
     use super::*;
 
     /// Inject a synthetic read error into a subprocess's stdout/stderr
@@ -1607,4 +1622,4 @@ pub mod testing_apis {
 }
 // `generated_js2native.rs` snake-cases `TestingAPIs` as `testing_ap_is`
 // (the converter splits the trailing `…APIs` cluster into `AP` + `Is`).
-pub use testing_apis as testing_ap_is;
+pub(crate) use testing_apis as testing_ap_is;

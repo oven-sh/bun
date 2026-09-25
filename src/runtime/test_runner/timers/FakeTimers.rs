@@ -19,7 +19,7 @@ unsafe extern "C" {
 }
 
 #[derive(Default)]
-pub struct FakeTimers {
+pub(crate) struct FakeTimers {
     active: bool,
     /// Depth of [`FakeTimers::fire`] calls on the stack; each covers the callback and its microtask drain.
     firing: u32,

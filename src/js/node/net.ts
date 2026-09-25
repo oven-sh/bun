@@ -4037,9 +4037,6 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
       options.servername = tls.serverName;
       options[kSocketClass] = TLSSocketClass;
       contexts = tls.contexts;
-      if (!tls.requestCert) {
-        tls.rejectUnauthorized = false;
-      }
     } else {
       options[kSocketClass] = Socket;
     }
@@ -4363,6 +4360,11 @@ function listenInCluster(
       // The primary owns the socket file; the adopted fd only needs to report it from address().
       server[kClusterUnixPath] = path;
       try {
+        // The reply is asynchronous: a setSecureContext() or addContext() made since listen() counts.
+        if (tls) {
+          tls = server[bunTlsSymbol](port, hostname, false)[0];
+          contexts = tls.contexts;
+        }
         server[kRealListen](
           undefined,
           port,

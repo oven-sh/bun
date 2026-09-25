@@ -2533,7 +2533,9 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                 break 'escaped;
                             }
                             self.break_word(AddDelimiter::AfterText)?;
-                            self.eat_comment();
+                            if self.eat_comment() {
+                                self.tokens.push(Token::Newline);
+                            }
                             fell_through = true;
                         }
                         c if c == u32::from(b';') => {
@@ -3496,15 +3498,17 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         self.chars.peek()
     }
 
-    fn eat_comment(&mut self) {
+    /// Returns true when the comment ended at a newline (not EOF); the caller emits the `Newline` token it consumed.
+    fn eat_comment(&mut self) -> bool {
         while let Some(peeked) = self.eat() {
             if peeked.escaped {
                 continue;
             }
             if peeked.char == u32::from(b'\n') {
-                break;
+                return true;
             }
         }
+        false
     }
 }
 

@@ -815,6 +815,116 @@ describe("lex shell", () => {
     expect(JSON.parse(lex({ raw: [source] }))).toEqual(expected);
   });
 
+  // Line endings: CRLF is one newline, a lone CR is text, `\<EOL>` is a
+  // continuation, a tab breaks words, and a comment does not eat the newline.
+  test.each([
+    [
+      "CRLF is a single newline",
+      "echo a\r\necho b\r\n",
+      [
+        { Text: "echo" },
+        { Delimit: {} },
+        { Text: "a" },
+        { Delimit: {} },
+        { Newline: {} },
+        { Text: "echo" },
+        { Delimit: {} },
+        { Text: "b" },
+        { Delimit: {} },
+        { Newline: {} },
+        { Eof: {} },
+      ],
+    ],
+    [
+      "lone CR stays in the word",
+      "echo a\rb",
+      [{ Text: "echo" }, { Delimit: {} }, { Text: "a\rb" }, { Delimit: {} }, { Eof: {} }],
+    ],
+    [
+      "CR inside quotes stays literal",
+      "echo 'a\r\nb' \"c\r\nd\"",
+      [
+        { Text: "echo" },
+        { Delimit: {} },
+        { SingleQuotedText: "a\r\nb" },
+        { Delimit: {} },
+        { DoubleQuotedText: "c\r\nd" },
+        { Eof: {} },
+      ],
+    ],
+    [
+      "backslash CRLF is a continuation",
+      "echo a \\\r\nb",
+      [{ Text: "echo" }, { Delimit: {} }, { Text: "a" }, { Delimit: {} }, { Text: "b" }, { Delimit: {} }, { Eof: {} }],
+    ],
+    [
+      "backslash CRLF inside a word joins it",
+      "echo a\\\r\nb",
+      [{ Text: "echo" }, { Delimit: {} }, { Text: "ab" }, { Delimit: {} }, { Eof: {} }],
+    ],
+    [
+      "backslash CRLF inside double quotes is removed",
+      'echo "a \\\r\nb"',
+      [{ Text: "echo" }, { Delimit: {} }, { DoubleQuotedText: "a b" }, { Eof: {} }],
+    ],
+    [
+      "backslash CRLF inside single quotes is literal",
+      "echo 'a \\\r\nb'",
+      [{ Text: "echo" }, { Delimit: {} }, { SingleQuotedText: "a \\\r\nb" }, { Eof: {} }],
+    ],
+    [
+      "tab breaks words",
+      "echo\ta\tb",
+      [{ Text: "echo" }, { Delimit: {} }, { Text: "a" }, { Delimit: {} }, { Text: "b" }, { Delimit: {} }, { Eof: {} }],
+    ],
+    [
+      "trailing comment ends the line (LF)",
+      "echo a # c\necho b",
+      [
+        { Text: "echo" },
+        { Delimit: {} },
+        { Text: "a" },
+        { Delimit: {} },
+        { Newline: {} },
+        { Text: "echo" },
+        { Delimit: {} },
+        { Text: "b" },
+        { Delimit: {} },
+        { Eof: {} },
+      ],
+    ],
+    [
+      "trailing comment ends the line (CRLF)",
+      "echo a # c\r\necho b\r\n",
+      [
+        { Text: "echo" },
+        { Delimit: {} },
+        { Text: "a" },
+        { Delimit: {} },
+        { Newline: {} },
+        { Text: "echo" },
+        { Delimit: {} },
+        { Text: "b" },
+        { Delimit: {} },
+        { Newline: {} },
+        { Eof: {} },
+      ],
+    ],
+    [
+      "comment at end of input adds no newline",
+      "echo a # c",
+      [{ Text: "echo" }, { Delimit: {} }, { Text: "a" }, { Delimit: {} }, { Eof: {} }],
+    ],
+  ])("line endings: %s", (_name, source, expected) => {
+    expect(JSON.parse(lex({ raw: [source] }))).toEqual(expected);
+  });
+
+  test("Bun.$ template with CRLF and a trailing comment", async () => {
+    const { stdout, exitCode } = await $`${{ raw: "echo one # c\r\necho two\r\n" }}`.quiet();
+    expect(stdout.toString()).toBe("one\ntwo\n");
+    expect(exitCode).toBe(0);
+  });
+
   describe("errors", async () => {
     // This is disallowed because the js object references get turned into special vars: $__bun_0, $__bun_1, etc.
     // this will break things inside of a quote.

@@ -150,6 +150,26 @@ describe.concurrent("run-shell", () => {
     expect(exitCode).toBe(0);
   });
 
+  // A trailing `# comment` ends the line: the next line is a new command,
+  // not more arguments. bash: `echo start # c\necho second` prints two lines.
+  test.each([
+    ["LF", "echo start # begin\necho second\n"],
+    ["CRLF", "echo start # begin\r\necho second\r\n"],
+  ])("trailing comment does not swallow the line break (%s)", async (_eol, script) => {
+    using dir = tempDir("bun-shell-comment-eol", { "c.sh": script });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "c.sh")],
+      cwd: String(dir),
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stripAsanWarning(stderr)).toBe("");
+    expect(stdout).toBe("start\nsecond\n");
+    expect(exitCode).toBe(0);
+  });
+
   // https://github.com/oven-sh/bun/issues/29669
   test("CRLF with backslash line continuation inside double quotes", async () => {
     using dir = tempDir("bun-shell-crlf-dq", {

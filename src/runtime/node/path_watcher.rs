@@ -1090,6 +1090,13 @@ impl Linux {
                             name
                         }
                     } else if name.is_empty() {
+                        if ev.mask & (IN::ATTRIB | IN::MODIFY | IN::DELETE_SELF | IN::MOVE_SELF)
+                            != 0
+                        {
+                            // The wd of the parent reports it, under its name.
+                            oi += 1;
+                            continue;
+                        }
                         owner_subpath
                     } else {
                         join_z_buf_spill::<platform::Posix>(

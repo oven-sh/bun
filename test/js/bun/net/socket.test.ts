@@ -4407,8 +4407,8 @@ Reo=
     });
   });
 
-  // Not concurrent: the slow reader takes the spill slot of the loop.
-  describe("shutdown() while the handshake runs and another socket waits for a slow reader", () => {
+  // The slow reader takes the spill slot of the loop.
+  describe.serial("shutdown() while the handshake runs and another socket waits for a slow reader", () => {
     it("a client finishes its handshake", () =>
       whileAnotherSocketWaitsForASlowReader(async () => {
         using server = Bun.listen({

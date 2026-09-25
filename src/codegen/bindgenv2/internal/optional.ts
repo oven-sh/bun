@@ -1,9 +1,10 @@
 import { isAny } from "./any.ts";
-import { type RustType, trivialRust, Type, variantLayout } from "./base.ts";
+import { type RustType, trivialRust, Type, unsupportedInRust, variantLayout } from "./base.ts";
 
 const none: RustType = { ...trivialRust("u8", 1), member: "()", fromExtern: () => "()", arm: null };
 
 function optionalRust(payload: Type): RustType {
+  if (isAny(payload)) return unsupportedInRust("a nullable `RawAny` or `StrongAny`");
   const inner = payload.rust;
   if (inner.optional) return inner.optional;
   const some = inner.fromExtern("v");

@@ -13,12 +13,14 @@ export function Array(elemType: Type): ArrayType {
     }
     get rust(): RustType {
       const elem = elemType.rust;
+      const convert = elem.fromExtern("v");
+      const call = /^([\w:]+)\(v\)$/.exec(convert);
       return {
         extern: `ExternArrayList<${elem.extern}>`,
         size: 16,
         align: 8,
         member: `GenList<${elem.member}>`,
-        fromExtern: e => `adopt_array(${e}, |v| ${elem.fromExtern("v")})`,
+        fromExtern: e => `adopt_array(${e}, ${call ? call[1] : `|v| ${convert}`})`,
       };
     }
     toCpp(value: any[]): string {

@@ -160,7 +160,9 @@ export function union(
         }
 
         impl ${name} {
-          fn from_extern(ext: ${borrowed(this.rust.size)}Extern${name}) -> Self {
+          fn from_extern(ext: ${borrowed(this.rust.size)}Extern${name}) -> Self {${
+            arms.some(arm => arm.payload)
+              ? `
             // SAFETY: C++ wrote the arm that \`tag\` names.
             unsafe {
               match ext.tag {
@@ -175,7 +177,16 @@ export function union(
                 )}
                 _ => unreachable!(),
               }
-            }
+            }`
+              : `
+            match ext.tag {
+              ${joinIndented(
+                14,
+                arms.map(arm => `${arm.tag} => Self::${arm.variant},`),
+              )}
+              _ => unreachable!(),
+            }`
+          }
           }
         }${
           released.length === 0

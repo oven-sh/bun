@@ -16,6 +16,7 @@ import {
   toQuotedLiteral,
   Type,
   uniqueRustNames,
+  unsupportedInRust,
   validateName,
 } from "./base.ts";
 import * as optional from "./optional.ts";
@@ -68,6 +69,9 @@ export function dictionary(
   const fullMembers = Object.entries(members).map(
     ([name, value]) => new FullDictionaryMember(name, value),
   );
+  if (fullMembers.length === 0) {
+    throw RangeError(`${name}: a dictionary with no members is 1 byte in C++ and 0 bytes in Rust`);
+  }
   const rustNames = uniqueRustNames(
     name,
     fullMembers.map(m => rustField(snakeCase(m.internalName))),
@@ -82,15 +86,20 @@ export function dictionary(
     }
     get rust(): RustType {
       const { size, align } = structLayout(fullMembers.map(m => m.type.rust));
+      const dictionary = this;
       return {
         extern: `Extern${name}`,
         size,
         align,
         member: name,
         fromExtern: e => `${name}::from_extern(${borrowed(size)}${e})`,
-        arm: {
-          type: `Box<${name}>`,
-          fromExtern: e => `Box::new(${name}::from_extern(${borrowed(size)}${e}))`,
+        get arm() {
+          if (hasRawAny(dictionary))
+            return unsupportedInRust(`\`${name}\` holds a \`RawAny\`, and as a union arm it`);
+          return {
+            type: `Box<${name}>`,
+            fromExtern: (e: string) => `Box::new(${name}::from_extern(${borrowed(size)}${e}))`,
+          };
         },
       };
     }

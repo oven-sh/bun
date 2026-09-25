@@ -207,7 +207,7 @@ fn adopt_array<E: Copy, T>(list: ExternArrayList<E>, convert: impl Fn(E) -> T) -
         // SAFETY: C++ wrote `length` elements at `data`.
         out.push(convert(unsafe { *list.data.add(i) }));
     }
-    // SAFETY: C++ gave up the buffer, which `WTF::fastMalloc` allocated with mimalloc.
+    // SAFETY: C++ gave up the buffer, which `MimallocMalloc` in ExternVectorTraits.h allocated with `mi_malloc`.
     unsafe { bun_alloc::basic::free_without_size(list.data.cast()) };
     GenList(out)
 }

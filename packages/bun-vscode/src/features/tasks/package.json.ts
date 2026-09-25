@@ -156,14 +156,18 @@ interface CommandArgs {
  */
 function registerHoverProvider(context: vscode.ExtensionContext) {
   context.subscriptions.push(
-    vscode.languages.registerHoverProvider("json", {
+    vscode.languages.registerHoverProvider({
+        language: "json",
+        scheme: "file",
+        pattern: "**/package.json",
+      }, {
       provideHover(document, position) {
-        const { scripts } = extractScriptsFromPackageJson(document);
+        const extracted = extractScriptsFromPackageJson(document);
+        if (!extracted) return undefined;
+        const { scripts } = extracted;
 
         return {
-          contents: scripts.map(script => {
-            if (!script.range.contains(position)) return null;
-
+          contents: scripts.filter(script => script?.range?.contains(position)).map(script => {
             const command = encodeURI(JSON.stringify({ script: script.command, name: script.name }));
 
             const markdownString = new vscode.MarkdownString(

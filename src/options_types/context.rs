@@ -44,6 +44,22 @@ pub struct ContextData {
 
     pub preloads: Vec<Box<[u8]>>,
     pub has_loaded_global_config: bool,
+    pub cli_overrides: CliOverrides,
+}
+
+/// Settings that were given on the command line.
+///
+/// `Arguments::parse` loads bunfig.toml before it applies the flags for
+/// `bun file.js` / `bun -e` / `bun test`, but `bun run <target>` (and the
+/// `node` shim, `bun repl`) only load it afterwards, from `RunCommand`; the
+/// bunfig parser skips the keys recorded here so the flag wins in that order
+/// too.
+#[derive(Clone, Copy, Default)]
+pub struct CliOverrides {
+    /// `--smol`
+    pub smol: bool,
+    /// `--prefer-offline` or `--prefer-latest`
+    pub install_prefer: bool,
 }
 
 impl Default for ContextData {
@@ -84,6 +100,7 @@ impl Default for ContextData {
             no_exit_on_error: false,
             preloads: Vec::new(),
             has_loaded_global_config: false,
+            cli_overrides: CliOverrides::default(),
         }
     }
 }

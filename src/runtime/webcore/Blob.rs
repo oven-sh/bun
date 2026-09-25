@@ -5012,10 +5012,8 @@ pub(crate) fn write_file_internal(
             return image.write_to_blob(cx, data, destination_blob, &options);
         }
 
-        // Everything the `new Blob()` parser would otherwise coerce with
-        // `String()` ({}, 123, true, a Symbol, a Date, a URL, another DOM
-        // wrapper) is rejected here. The array form keeps the Blob spec's
-        // per-part `String()` semantics.
+        // Reject what the `new Blob()` parser would coerce with `String()`.
+        // The array form keeps the Blob spec's per-part `String()` semantics.
         let data_type = data.js_type();
         let is_blob_part = data.is_string()
             || data_type.is_array_buffer_like()

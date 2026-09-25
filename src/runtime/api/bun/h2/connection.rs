@@ -124,6 +124,8 @@ enum BlockDisposition {
     /// The embedder refused the stream (can_open_stream = false, node's maxSessionMemory):
     /// answered with RST_STREAM(ENHANCE_YOUR_CALM).
     Refused,
+    /// The block would open a stream after a GOAWAY this side sent: nothing is sent (§6.8).
+    Ignored,
 }
 
 pub(crate) struct Feed {
@@ -297,6 +299,8 @@ pub(crate) struct Connection {
     preface_received: usize,
     pub last_stream_id: u32,
     pub going_away: bool,
+    /// The embedder wrote a GOAWAY before this read (nghttp2's NGHTTP2_GOAWAY_SENT, set per read).
+    pub goaway_sent: bool,
 }
 
 impl Connection {
@@ -330,6 +334,7 @@ impl Connection {
             preface_received: 0,
             last_stream_id: 0,
             going_away: false,
+            goaway_sent: false,
         }
     }
 
@@ -931,12 +936,17 @@ impl Connection {
             return true;
         }
         let refused = is_new && self.is_server && !sink.can_open_stream();
+        // The response to a dropped PUSH_PROMISE opens no stream (§6.8). nghttp2 ends the session.
+        let ignored =
+            is_new && !self.is_server && hdr.stream_id.is_multiple_of(2) && self.goaway_sent;
         let mut disposition = if refused {
             BlockDisposition::Refused
+        } else if ignored {
+            BlockDisposition::Ignored
         } else {
             BlockDisposition::Deliver
         };
-        if !refused {
+        if !refused && !ignored {
             let cur_state = self
                 .streams
                 .entry(hdr.stream_id)
@@ -990,7 +1000,7 @@ impl Connection {
             if hdr.stream_id > self.last_stream_id {
                 self.last_stream_id = hdr.stream_id;
             }
-            if !refused {
+            if !refused && !ignored {
                 sink.on_stream_open(hdr.stream_id);
             }
         }
@@ -1078,7 +1088,9 @@ impl Connection {
         } = *meta;
         // Surface the push reservation before its request headers so the embedder can create the
         // pushed stream object that the on_header calls populate.
-        if let Some(parent) = push_parent {
+        if let Some(parent) = push_parent
+            && disposition == BlockDisposition::Deliver
+        {
             sink.on_push_promise(parent.get(), target);
         }
         let block = std::mem::take(&mut self.header_block);
@@ -1121,7 +1133,7 @@ impl Connection {
                         rejected = true;
                         continue;
                     }
-                    // HEADERS on a closed stream: decode for HPACK-table sync only (§4.3); the
+                    // A block that is not delivered: decode for HPACK-table sync only (§4.3); the
                     // fields are never surfaced.
                     if disposition != BlockDisposition::Deliver {
                         continue;
@@ -1244,6 +1256,7 @@ impl Connection {
                 sink.on_stream_reset(target, ErrorCode::StreamClosed.as_u32());
                 return false;
             }
+            BlockDisposition::Ignored => return false,
             BlockDisposition::Deliver => {}
         }
         // RFC 9113 §8.3.1 (nghttp2_http_on_request_headers): a request block needs exactly one
@@ -1703,9 +1716,12 @@ impl Connection {
             payload[off + 3],
         ]) & 0x7fff_ffff;
         off += 4;
+        // nghttp2: "We just discard PUSH_PROMISE after GOAWAY was sent", before it checks the id.
+        let ignored = self.goaway_sent;
         // §5.1.1 / §8.4: server-initiated streams use even ids, never 0, and
         // cannot be reused.
-        if promised == 0 || promised & 1 == 1 || self.streams.contains_key(&promised) {
+        if !ignored && (promised == 0 || promised & 1 == 1 || self.streams.contains_key(&promised))
+        {
             self.send_go_away(
                 sink,
                 ErrorCode::ProtocolError,
@@ -1714,16 +1730,18 @@ impl Connection {
             return true;
         }
 
-        // Reserve the promised (even) stream.
-        let send_init = self.remote_settings.initial_window_size;
-        let recv_init = self.local_settings.initial_window_size;
-        let entry = self
-            .streams
-            .entry(promised)
-            .or_insert_with(|| Stream::new(send_init, recv_init));
-        entry.state = State::ReservedRemote;
-        if promised > self.last_stream_id {
-            self.last_stream_id = promised;
+        if !ignored {
+            // Reserve the promised (even) stream.
+            let send_init = self.remote_settings.initial_window_size;
+            let recv_init = self.local_settings.initial_window_size;
+            let entry = self
+                .streams
+                .entry(promised)
+                .or_insert_with(|| Stream::new(send_init, recv_init));
+            entry.state = State::ReservedRemote;
+            if promised > self.last_stream_id {
+                self.last_stream_id = promised;
+            }
         }
 
         self.header_block.clear();
@@ -1735,7 +1753,11 @@ impl Connection {
             flags: 0,
             end_stream: false, // PUSH_PROMISE carries a request; it never ends the stream
             is_request: true,
-            disposition: BlockDisposition::Deliver,
+            disposition: if ignored {
+                BlockDisposition::Ignored
+            } else {
+                BlockDisposition::Deliver
+            },
         };
         self.finish_or_park_header_block(sink, hdr, meta)
     }

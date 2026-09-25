@@ -5039,6 +5039,10 @@ class ClientHttp2Session extends Http2Session {
         self.#parser?.rstStream(pushId, constants.NGHTTP2_CANCEL);
         return;
       }
+      if (self.#closeCalled) {
+        // Same read as close(). node refuses it too, and the GOAWAY it sent first drops its RST_STREAM: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L373-L381
+        return;
+      }
       self.#reservedStreamsCount++;
       // PUSH_PROMISE: surface the server-pushed stream (with its REQUEST headers) on the session
       // 'stream' event; its eventual response HEADERS will fire 'push' on the pushed stream.

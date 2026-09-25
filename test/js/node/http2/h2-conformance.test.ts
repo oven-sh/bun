@@ -12,7 +12,7 @@ import { bunEnv, bunExe, gcTick, normalizeBunSnapshot } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
-import { Writable } from "node:stream";
+import { Duplex, duplexPair, Writable } from "node:stream";
 
 const PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "latin1");
 
@@ -675,15 +675,26 @@ describe.concurrent("header block decoding errors (RFC 9113 §4.3)", () => {
 
 /** A minimal raw HTTP/2 server: accept one connection, collect parsed inbound frames. */
 class RawH2Server {
-  server: net.Server;
-  socket: net.Socket | null = null;
+  server: net.Server | null;
+  socket: net.Socket | Duplex | null = null;
   private buf: Buffer = Buffer.alloc(0);
   private sawPreface = false;
   frames: Frame[] = [];
+  /** Runs for each inbound frame, inside the socket's 'data' handler. */
+  onFrame: ((f: Frame) => void) | null = null;
   private waiters: Array<{ pred: (f: Frame) => boolean; resolve: (f: Frame) => void }> = [];
 
-  private constructor(server: net.Server) {
+  private constructor(server: net.Server | null) {
     this.server = server;
+  }
+
+  /** Serve one side of a `duplexPair()`. */
+  static overDuplex(side: Duplex): RawH2Server {
+    const s = new RawH2Server(null);
+    s.socket = side;
+    side.on("data", d => s.onData(d));
+    side.on("error", () => {});
+    return s;
   }
 
   static async listen(): Promise<RawH2Server> {
@@ -700,7 +711,7 @@ class RawH2Server {
   }
 
   get port(): number {
-    return (this.server.address() as net.AddressInfo).port;
+    return (this.server!.address() as net.AddressInfo).port;
   }
 
   private onData(d: Buffer) {
@@ -722,6 +733,7 @@ class RawH2Server {
       };
       this.buf = this.buf.subarray(9 + length);
       this.frames.push(frame);
+      this.onFrame?.(frame);
       const idx = this.waiters.findIndex(w => w.pred(frame));
       if (idx !== -1) this.waiters.splice(idx, 1)[0].resolve(frame);
     }
@@ -752,7 +764,7 @@ class RawH2Server {
 
   close() {
     this.socket?.destroy();
-    this.server.close();
+    this.server?.close();
   }
 }
 
@@ -1926,5 +1938,262 @@ describe("stream release after a queued END_STREAM", () => {
       client.close();
       server.close();
     }
+  });
+});
+
+// nghttp2 lets the peer open no stream after a GOAWAY that this side sent
+// (session_allow_incoming_new_stream). For a client: "We just discard PUSH_PROMISE after GOAWAY
+// was sent". Every case here gives the same result on node v26.3.0.
+describe("PUSH_PROMISE after the client sent GOAWAY (RFC 9113 §6.8)", () => {
+  const STATUS_200 = Buffer.from([0x88]);
+  // Literal with incremental indexing: the block that carries it adds `x-pushed: yes` to the
+  // HPACK dynamic table, where the indexed field 0xbe (index 62) finds it again.
+  const INSERT_X_PUSHED = Buffer.concat([Buffer.from([0x40]), hpackLiteral("x-pushed"), hpackLiteral("yes")]);
+  const USE_X_PUSHED = Buffer.from([0xbe]);
+
+  /** PUSH_PROMISE on stream `parent` that promises stream `promised`. */
+  function pushPromise(promised: number, flags: number, extra?: Buffer, parent = 1): Buffer {
+    const id = Buffer.alloc(4);
+    id.writeUInt32BE(promised, 0);
+    return encodeFrame(FrameType.PUSH_PROMISE, flags, parent, Buffer.concat([id, requestHeaderBlock("GET", extra)]));
+  }
+
+  /** A client with request stream 1 open and the SETTINGS exchange done. Over "duplexPair" one
+   *  write of the raw server is exactly one read of the client. */
+  async function connectedClient(transport: "tcp" | "duplexPair" = "tcp", options: http2.ClientSessionOptions = {}) {
+    let raw: RawH2Server;
+    let client: http2.ClientHttp2Session;
+    if (transport === "duplexPair") {
+      const [clientSide, serverSide] = duplexPair();
+      raw = RawH2Server.overDuplex(serverSide);
+      client = http2.connect("http://localhost", { ...options, createConnection: () => clientSide });
+    } else {
+      raw = await RawH2Server.listen();
+      client = http2.connect(`http://127.0.0.1:${raw.port}`, options);
+    }
+    const dispose = () => {
+      client.destroy();
+      raw.close();
+    };
+    const sessionErrors: Error[] = [];
+    client.on("error", err => sessionErrors.push(err));
+    const sessionClosed = new Promise<void>(resolve => client.once("close", () => resolve()));
+    const pushed: http2.ClientHttp2Stream[] = [];
+    client.on("stream", stream => {
+      stream.on("error", () => {});
+      pushed.push(stream);
+    });
+    const req = client.request({ ":path": "/" });
+    /** Settles when request stream 1 closes: its response, or the reason there is none. */
+    const response = new Promise<{ status: unknown; xPushed: unknown; rstCode: number }>((resolve, reject) => {
+      let headers: http2.IncomingHttpHeaders | undefined;
+      req.on("response", h => (headers = h));
+      req.on("error", reject);
+      req.on("close", () => {
+        if (!headers) return reject(new Error("request stream closed without a response"));
+        resolve({ status: headers[":status"], xPushed: headers["x-pushed"], rstCode: req.rstCode });
+      });
+      req.resume();
+    });
+    // A test that fails before it awaits `response` must not also report an unhandled rejection.
+    response.catch(() => {});
+    try {
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+    } catch (err) {
+      dispose();
+      throw err;
+    }
+    raw.sendFrame(FrameType.SETTINGS, 0, 0);
+    raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+    const rawClosed = new Promise<void>(resolve => raw.socket!.once("close", () => resolve()));
+    return {
+      raw,
+      client,
+      req,
+      response,
+      pushed,
+      sessionErrors,
+      sessionClosed,
+      /** Send GOAWAY through `how` and wait until the raw server has read it. */
+      async sendGoaway(how: "goaway" | "close") {
+        if (how === "goaway") client.goaway();
+        else client.close();
+        await raw.waitFor(f => f.type === FrameType.GOAWAY);
+      },
+      /** Finish the graceful close. Returns every RST_STREAM, and every GOAWAY with an error
+       *  code, that the client wrote during the session. */
+      async closeAndCollectErrors() {
+        client.close();
+        await sessionClosed;
+        await rawClosed;
+        return raw.frames
+          .filter(f => f.type === FrameType.RST_STREAM || (f.type === FrameType.GOAWAY && goawayErrorCode(f) !== 0))
+          .map(f => ({
+            type: f.type,
+            streamId: f.streamId,
+            code: f.payload.readUInt32BE(f.type === FrameType.GOAWAY ? 4 : 0),
+          }));
+      },
+      [Symbol.dispose]: dispose,
+    };
+  }
+
+  test.each(["goaway", "close"] as const)("after %s(), a PUSH_PROMISE creates no stream", async how => {
+    using peer = await connectedClient();
+    await peer.sendGoaway(how);
+    peer.raw.socket!.write(
+      Buffer.concat([
+        pushPromise(2, 0x4 /* END_HEADERS */, INSERT_X_PUSHED),
+        encodeFrame(FrameType.HEADERS, 0x5, 1, Buffer.concat([STATUS_200, USE_X_PUSHED])),
+      ]),
+    );
+    // The discarded block was still decoded (§4.3): the response finds `x-pushed` in the table.
+    expect(await peer.response).toEqual({ status: 200, xPushed: "yes", rstCode: 0 });
+    expect(peer.pushed.map(stream => stream.id)).toEqual([]);
+    expect(await peer.closeAndCollectErrors()).toEqual([]);
+    expect(peer.sessionErrors).toEqual([]);
+  });
+
+  test("a discarded PUSH_PROMISE block that spans a CONTINUATION frame is still decoded", async () => {
+    using peer = await connectedClient();
+    await peer.sendGoaway("goaway");
+    peer.raw.socket!.write(
+      Buffer.concat([
+        pushPromise(2, 0 /* no END_HEADERS */),
+        encodeFrame(FrameType.CONTINUATION, 0x4 /* END_HEADERS */, 1, INSERT_X_PUSHED),
+        encodeFrame(FrameType.HEADERS, 0x5, 1, Buffer.concat([STATUS_200, USE_X_PUSHED])),
+      ]),
+    );
+    expect(await peer.response).toEqual({ status: 200, xPushed: "yes", rstCode: 0 });
+    expect(peer.pushed.map(stream => stream.id)).toEqual([]);
+    expect(await peer.closeAndCollectErrors()).toEqual([]);
+    expect(peer.sessionErrors).toEqual([]);
+  });
+
+  // nghttp2 looks at the sent GOAWAY before it validates the promised id and before it looks for
+  // an idle parent. Without the GOAWAY each of these frames is a connection error.
+  test.each([
+    ["an odd promised id", 3, 1],
+    ["an idle parent stream", 2, 5],
+  ] as const)("a PUSH_PROMISE with %s is discarded too", async (_, promised, parent) => {
+    using peer = await connectedClient();
+    await peer.sendGoaway("goaway");
+    peer.raw.socket!.write(
+      Buffer.concat([
+        pushPromise(promised, 0x4, undefined, parent),
+        encodeFrame(FrameType.HEADERS, 0x5, 1, STATUS_200),
+      ]),
+    );
+    expect(await peer.response).toEqual({ status: 200, xPushed: undefined, rstCode: 0 });
+    expect(peer.pushed.map(stream => stream.id)).toEqual([]);
+    expect(await peer.closeAndCollectErrors()).toEqual([]);
+    expect(peer.sessionErrors).toEqual([]);
+  });
+
+  // A server that has not read the GOAWAY yet sends the pushed response behind the PUSH_PROMISE.
+  // node fails the session on those frames and bun drops them, so this case asserts only what
+  // both do: no pushed stream, the request settles, and nothing keeps the session open.
+  test.each(["goaway", "close"] as const)(
+    "after %s(), the response to a discarded PUSH_PROMISE leaves no stream open",
+    async how => {
+      using peer = await connectedClient();
+      await peer.sendGoaway(how);
+      peer.raw.socket!.write(
+        Buffer.concat([
+          pushPromise(2, 0x4),
+          encodeFrame(FrameType.HEADERS, 0x4, 2, STATUS_200),
+          encodeFrame(FrameType.DATA, 0x1 /* END_STREAM */, 2, Buffer.from("pushed")),
+          encodeFrame(FrameType.HEADERS, 0x5, 1, STATUS_200),
+        ]),
+      );
+      await peer.response.catch(() => {});
+      expect(peer.pushed.map(stream => stream.id)).toEqual([]);
+      peer.client.close();
+      await peer.sessionClosed;
+    },
+  );
+
+  // node's JS layer refuses every new stream once close() ran, also in the read that ran it. Its
+  // RST_STREAM for that stream never leaves: nghttp2 closes the stream when it sends the GOAWAY.
+  test("close() from a 'response' listener refuses a PUSH_PROMISE that follows in the same write", async () => {
+    using peer = await connectedClient();
+    peer.req.once("response", () => peer.client.close());
+    peer.raw.socket!.write(
+      Buffer.concat([
+        encodeFrame(FrameType.HEADERS, 0x4, 1, STATUS_200),
+        pushPromise(2, 0x4),
+        encodeFrame(FrameType.DATA, 0x1 /* END_STREAM */, 1, Buffer.from("body")),
+      ]),
+    );
+    expect(await peer.response).toEqual({ status: 200, xPushed: undefined, rstCode: 0 });
+    expect(peer.pushed.map(stream => stream.id)).toEqual([]);
+    expect(await peer.closeAndCollectErrors()).toEqual([]);
+    expect(peer.sessionErrors).toEqual([]);
+  });
+
+  // Over a duplexPair the peer's reply to the GOAWAY can reach the parser inside the listener,
+  // when a later call there flushes the GOAWAY. That reply is a later read than the GOAWAY.
+  test("goaway() from a 'response' listener discards a PUSH_PROMISE that answers the GOAWAY", async () => {
+    using peer = await connectedClient("duplexPair");
+    peer.raw.onFrame = f => {
+      if (f.type !== FrameType.GOAWAY) return;
+      peer.raw.socket!.write(
+        Buffer.concat([pushPromise(2, 0x4), encodeFrame(FrameType.DATA, 0x1 /* END_STREAM */, 1, Buffer.from("body"))]),
+      );
+    };
+    peer.req.once("response", () => {
+      peer.client.goaway();
+      peer.client.settings({ enablePush: true });
+    });
+    peer.raw.socket!.write(encodeFrame(FrameType.HEADERS, 0x4, 1, STATUS_200));
+    expect(await peer.response).toEqual({ status: 200, xPushed: undefined, rstCode: 0 });
+    expect(peer.pushed.map(stream => stream.id)).toEqual([]);
+    expect(peer.sessionErrors).toEqual([]);
+  });
+
+  // nghttp2 applies the reserved-stream limit before node's JS layer sees the stream, so a
+  // PUSH_PROMISE over that limit gets CANCEL after close() too, not REFUSED_STREAM.
+  test("close() from a 'response' listener leaves a PUSH_PROMISE over maxReservedRemoteStreams to CANCEL", async () => {
+    using peer = await connectedClient("tcp", { maxReservedRemoteStreams: 1 });
+    // Stream 2 gets no response and stays reserved. The PING ACK shows that the client has it.
+    peer.raw.socket!.write(Buffer.concat([pushPromise(2, 0x4), encodeFrame(FrameType.PING, 0, 0, Buffer.alloc(8))]));
+    await peer.raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+    peer.req.once("response", () => peer.client.close());
+    peer.raw.socket!.write(
+      Buffer.concat([
+        encodeFrame(FrameType.HEADERS, 0x4, 1, STATUS_200),
+        pushPromise(4, 0x4),
+        encodeFrame(FrameType.DATA, 0x1 /* END_STREAM */, 1, Buffer.from("body")),
+      ]),
+    );
+    const rst = await peer.raw.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 4);
+    expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.CANCEL);
+    expect(await peer.response).toEqual({ status: 200, xPushed: undefined, rstCode: 0 });
+    expect(peer.pushed.map(stream => stream.id)).toEqual([2]);
+    expect(peer.sessionErrors).toEqual([]);
+  });
+
+  // nghttp2 serializes a submitted GOAWAY after the read, so goaway() in a listener does not
+  // stop a PUSH_PROMISE that is later in the same read.
+  test("goaway() from a 'response' listener still accepts a PUSH_PROMISE in the same read", async () => {
+    using peer = await connectedClient("duplexPair");
+    peer.req.once("response", () => peer.client.goaway());
+    // The pushed response is in the same read: listen for it inside the 'stream' event. It is
+    // ahead of the END_STREAM of stream 1, so it is recorded before `response` settles.
+    let pushedResponse: { id: unknown; status: unknown } | undefined;
+    peer.client.once("stream", (stream: http2.ClientHttp2Stream) =>
+      stream.once("push", headers => (pushedResponse = { id: stream.id, status: headers[":status"] })),
+    );
+    peer.raw.socket!.write(
+      Buffer.concat([
+        encodeFrame(FrameType.HEADERS, 0x4, 1, STATUS_200),
+        pushPromise(2, 0x4),
+        encodeFrame(FrameType.HEADERS, 0x5, 2, STATUS_200),
+        encodeFrame(FrameType.DATA, 0x1 /* END_STREAM */, 1, Buffer.from("body")),
+      ]),
+    );
+    expect(await peer.response).toEqual({ status: 200, xPushed: undefined, rstCode: 0 });
+    expect(pushedResponse).toEqual({ id: 2, status: 200 });
+    expect(peer.sessionErrors).toEqual([]);
   });
 });

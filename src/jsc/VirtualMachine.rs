@@ -4281,6 +4281,11 @@ impl VirtualMachine {
             }
         }
 
+        // Not removed from the map: `process.env` and `Bun.serve` read it there.
+        if map.get(b"NODE_UNIQUE_ID").is_some() {
+            bun_dotenv::omit_cluster_unique_id_from_child_env();
+        }
+
         // Node.js checks if this is set to "1" and no other value
         if let Some(value) = map.get(b"NODE_PRESERVE_SYMLINKS") {
             self.transpiler.resolver.opts.preserve_symlinks = value == b"1";

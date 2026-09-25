@@ -1388,3 +1388,89 @@ test.concurrent("require('cluster') does not throw when NODE_UNIQUE_ID is set af
   expect({ stdout, stderr }).toEqual({ stdout: "loaded\n", stderr: "" });
   expect(exitCode).toBe(0);
 });
+
+// A worker is a process that starts with NODE_UNIQUE_ID, which cluster.fork() sets.
+test.concurrent("a process that a worker starts with Bun.spawn and no env option is not a worker", async () => {
+  // Bun.spawn with no `env` passes the startup env on, not process.env, where the worker setup deletes NODE_UNIQUE_ID.
+  using dir = tempDir("cluster-spawn-default-env", {
+    "worker.js": `
+const cmd = [process.execPath, "child.js"];
+const spawn = () => Bun.spawn({ cmd, stdout: "pipe", stderr: "inherit" }).stdout.text();
+const beforeWorkerSetup = spawn();
+require("node:cluster");
+const afterWorkerSetup = spawn();
+const thread = new Worker(require.resolve("./thread.js"));
+const fromThread = new Promise((resolve, reject) => {
+  thread.onmessage = event => resolve(event.data);
+  thread.onerror = reject;
+});
+const spawnSync = Bun.spawnSync({ cmd, stderr: "inherit" }).stdout.toString();
+Promise.all([beforeWorkerSetup, afterWorkerSetup, fromThread]).then(([before, after, inThread]) => {
+  console.log("Bun.spawn before the worker setup:", before.trim());
+  console.log("Bun.spawn:", after.trim());
+  console.log("Bun.spawnSync:", spawnSync.trim());
+  console.log("Bun.spawnSync in a worker thread:", inThread.trim());
+  process.exit(0);
+});
+`,
+    "thread.js": `
+postMessage(Bun.spawnSync({ cmd: [process.execPath, "child.js"], stderr: "inherit" }).stdout.toString());
+`,
+    "child.js": `
+// Read first: a process that takes itself for a worker deletes the variable when node:cluster loads.
+const uniqueId = process.env.NODE_UNIQUE_ID ?? null;
+console.log(JSON.stringify({ uniqueId, isWorker: require("node:cluster").isWorker }));
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "worker.js"],
+    env: { ...bunEnv, NODE_UNIQUE_ID: "1" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const notAWorker = '{"uniqueId":null,"isWorker":false}';
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout:
+      `Bun.spawn before the worker setup: ${notAWorker}\n` +
+      `Bun.spawn: ${notAWorker}\n` +
+      `Bun.spawnSync: ${notAWorker}\n` +
+      `Bun.spawnSync in a worker thread: ${notAWorker}\n`,
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+test.concurrent.skipIf(!isLinux)("Bun.serve in a worker defaults reusePort to true", async () => {
+  // docs/guides/http/cluster.mdx: reusePort is Linux only.
+  await using server = Bun.serve({ port: 0, reusePort: true, fetch: () => new Response("ok") });
+  using dir = tempDir("cluster-serve-reuse-port", {
+    "serve.js": `
+require("node:cluster");
+try {
+  Bun.serve({ port: Number(process.env.SERVE_PORT), fetch: () => new Response("ok") });
+  console.log("listening");
+} catch (error) {
+  console.log(error.code ?? String(error));
+}
+process.exit(0);
+`,
+  });
+  async function serve(env: Record<string, string>) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "serve.js"],
+      env: { ...bunEnv, SERVE_PORT: String(server.port), ...env },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+  const [notAWorker, worker] = await Promise.all([serve({}), serve({ NODE_UNIQUE_ID: "1" })]);
+  expect({ notAWorker, worker }).toEqual({
+    notAWorker: { stdout: "EADDRINUSE\n", stderr: "", exitCode: 0 },
+    worker: { stdout: "listening\n", stderr: "", exitCode: 0 },
+  });
+});

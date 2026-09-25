@@ -31,8 +31,8 @@ pub struct InputPathSet {
     paths: PathMap,
     /// `(st_dev, st_ino)` of each path, filled on the first destination that needs it.
     identities: std::cell::OnceCell<Vec<Option<(u64, u64)>>>,
-    /// `realpath` of each output subdirectory, `None` when it has no symlink in it or does not exist.
-    real_parents: std::cell::RefCell<bun_collections::StringHashMap<Option<Box<[u8]>>>>,
+    /// `realpath` of each output subdirectory.
+    real_parents: std::cell::RefCell<bun_collections::StringHashMap<RealPath>>,
     /// Real paths of files, and of directories whose every file is an input, read outside the module graph.
     roots: Vec<Box<[u8]>>,
 }
@@ -93,26 +93,42 @@ impl InputPathSet {
             &mut abs_buf.0,
             &[dest_path],
         );
-        let real = self.through_real_parent(&root.real, abs);
-        let real: &[u8] = real.as_deref().unwrap_or(abs);
+        let real_path;
         let link_target;
 
-        let input: &[u8] = if let Some(index) = self
-            .paths
-            .get_index(abs)
-            .or_else(|| self.paths.get_index(real))
-            .or_else(|| self.index_of_unresolved(root, dest_path))
-        {
+        let input: &[u8] = if let Some(index) = self.paths.get_index(abs) {
             &self.paths.keys()[index]
-        } else if self.is_under_a_root(real) {
-            real
-        } else if write == OutputWrite::Rename {
-            return None;
-        } else if let Some(target) = self.link_target_under_a_root(abs) {
-            link_target = target;
-            &link_target
         } else {
-            &self.paths.keys()[self.index_of_same_file(abs)?]
+            if root.missing
+                && resolve_path::is_parent_or_equal(&root.real, abs)
+                    != resolve_path::ParentEqual::Unrelated
+            {
+                return None;
+            }
+            let real: &[u8] = match self.through_real_parent(&root.real, abs) {
+                RealPath::Missing => return None,
+                RealPath::Same => abs,
+                RealPath::Other(path) => {
+                    real_path = path;
+                    &real_path
+                }
+            };
+            if let Some(index) = self
+                .paths
+                .get_index(real)
+                .or_else(|| self.index_of_unresolved(root, dest_path))
+            {
+                &self.paths.keys()[index]
+            } else if self.is_under_a_root(real) {
+                real
+            } else if write == OutputWrite::Rename {
+                return None;
+            } else if let Some(target) = self.link_target_under_a_root(abs) {
+                link_target = target;
+                &link_target
+            } else {
+                &self.paths.keys()[self.index_of_same_file(abs)?]
+            }
         };
         let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
         let mut rel: Box<[u8]> = Box::from(resolve_path::relative(top_level_dir, input));
@@ -122,32 +138,32 @@ impl InputPathSet {
 }
 
 impl InputPathSet {
-    /// `abs` with its directory symlink-resolved, when that differs. `root` is symlink-free already.
-    fn through_real_parent(&self, root: &[u8], abs: &[u8]) -> Option<Box<[u8]>> {
-        let parent = bun_paths::dirname(abs)?;
+    /// `abs` with its directory symlink-resolved. `root` is symlink-free already.
+    fn through_real_parent(&self, root: &[u8], abs: &[u8]) -> RealPath {
+        let Some(parent) = bun_paths::dirname(abs) else {
+            return RealPath::Same;
+        };
         if resolve_path::is_parent_or_equal(parent, root) != resolve_path::ParentEqual::Unrelated {
-            return None;
+            return RealPath::Same;
         }
         let mut real_parents = self.real_parents.borrow_mut();
         if real_parents.get(parent).is_none() {
-            let mut z_buf = bun_paths::path_buffer_pool::get();
-            let mut real_parent_buf = bun_paths::path_buffer_pool::get();
-            let real_parent: Option<Box<[u8]>> =
-                bun_sys::realpath(resolve_path::z(parent, &mut z_buf), &mut real_parent_buf)
-                    .ok()
-                    .filter(|real| *real != parent)
-                    .map(Box::from);
-            bun_core::handle_oom(real_parents.put(parent, real_parent));
+            bun_core::handle_oom(real_parents.put(parent, RealPath::of(parent)));
         }
-        let real_parent = real_parents.get(parent)?.as_deref()?;
-        let mut buf = bun_paths::path_buffer_pool::get();
-        Some(Box::from(
-            resolve_path::join_abs_string_buf::<platform::Auto>(
-                real_parent,
-                &mut buf.0,
-                &[bun_paths::basename(abs)],
-            ),
-        ))
+        match real_parents.get(parent) {
+            Some(RealPath::Other(real_parent)) => {
+                let mut buf = bun_paths::path_buffer_pool::get();
+                RealPath::Other(Box::from(
+                    resolve_path::join_abs_string_buf::<platform::Auto>(
+                        real_parent,
+                        &mut buf.0,
+                        &[bun_paths::basename(abs)],
+                    ),
+                ))
+            }
+            Some(RealPath::Missing) => RealPath::Missing,
+            Some(RealPath::Same) | None => RealPath::Same,
+        }
     }
 
     /// The inputs keep the spelling the resolver saw. On Windows `realpath` rewrites a subst or mapped drive.
@@ -221,12 +237,35 @@ impl InputPathSet {
     }
 }
 
+/// What `realpath` finds for the directory of an output file.
+enum RealPath {
+    /// No such directory, so no file is in it.
+    Missing,
+    /// The path has no symlink in it.
+    Same,
+    Other(Box<[u8]>),
+}
+
+impl RealPath {
+    fn of(dir: &[u8]) -> Self {
+        let mut z_buf = bun_paths::path_buffer_pool::get();
+        let mut real_buf = bun_paths::path_buffer_pool::get();
+        match bun_sys::realpath(resolve_path::z(dir, &mut z_buf), &mut real_buf) {
+            Ok(real) if real != dir => Self::Other(Box::from(real)),
+            Err(err) if err.get_errno() == bun_sys::E::ENOENT => Self::Missing,
+            _ => Self::Same,
+        }
+    }
+}
+
 /// The absolute directory that output files are written under.
 pub struct OutputRoot {
     /// Symlink-resolved.
     real: Box<[u8]>,
     /// As joined from the working directory, when that differs from `real`.
     unresolved: Option<Box<[u8]>>,
+    /// The directory does not exist yet.
+    missing: bool,
 }
 
 /// Empty `root_path` is the working directory.
@@ -238,17 +277,18 @@ pub fn resolve_output_root(root_path: &[u8]) -> OutputRoot {
         &mut abs_buf.0,
         &[root_path],
     );
-    let mut z_buf = bun_paths::path_buffer_pool::get();
-    let abs_z = resolve_path::z(abs, &mut z_buf);
-    let mut real_buf = bun_paths::path_buffer_pool::get();
-    match bun_sys::realpath(abs_z, &mut real_buf) {
-        Ok(real) if real != abs => OutputRoot {
-            real: Box::from(real),
+    let real = RealPath::of(abs);
+    let missing = matches!(real, RealPath::Missing);
+    match real {
+        RealPath::Other(real) => OutputRoot {
+            real,
             unresolved: Some(Box::from(abs)),
+            missing,
         },
-        _ => OutputRoot {
+        RealPath::Missing | RealPath::Same => OutputRoot {
             real: Box::from(abs),
             unresolved: None,
+            missing,
         },
     }
 }

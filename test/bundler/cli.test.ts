@@ -923,6 +923,27 @@ describe.concurrent("bun build refuses to write an output over an input", () => 
     expect(exitCode).toBe(1);
   });
 
+  // Nothing is in a directory that does not exist yet, but this output name leaves it.
+  test("an output name that leaves an --outdir that does not exist yet", async () => {
+    using dir = tempDir("build-overwrite-leaves-new-outdir", {
+      "src/app.js": `console.log("APP");\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "./src/app.js", "--outdir", "out", "--entry-naming", "../src/[name].[ext]"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain('Refusing to overwrite input file "src/app.js"');
+    expect(stdout).toBe("");
+    expect(fs.readdirSync(String(dir))).toEqual(["src"]);
+    expect(await Bun.file(path.join(String(dir), "src", "app.js")).text()).toBe(`console.log("APP");\n`);
+    expect(exitCode).toBe(1);
+  });
+
   test("--compile --target=browser with an HTML entry point and no --outdir", async () => {
     using dir = tempDir("build-overwrite-standalone-html", {
       "index.html": `<!doctype html><script type="module" src="./app.js"></script>\n`,
@@ -1184,6 +1205,23 @@ describe.concurrent("bun build refuses to write an output over an input", () => 
 
       await using proc = Bun.spawn({
         cmd: [bunExe(), "build", "./src/app.js", "--outdir", "out"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain('Refusing to overwrite input file "src/lib.js"');
+      expect(await Bun.file(path.join(String(dir), "src", "lib.js")).text()).toBe(files["src/lib.js"]);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a symlink to an input is at an output path that leaves an --outdir that does not exist yet", async () => {
+      using dir = tempDir("build-overwrite-symlink-leaves-new-outdir", files);
+      fs.symlinkSync("lib.js", path.join(String(dir), "src", "link.js"));
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "./src/app.js", "--outdir", "out", "--entry-naming", "../src/link.[ext]"],
         env: bunEnv,
         cwd: String(dir),
         stdout: "pipe",

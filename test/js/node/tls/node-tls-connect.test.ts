@@ -2501,6 +2501,37 @@ describe.each([
   });
 });
 
+it("end() still sends the FIN when the socket starts to connect again before the shutdown runs", async () => {
+  // The shutdown of a client that ends during its handshake runs one turn of the event loop after end(). What
+  // happens to the socket in between must not strand it: here connect() throws and leaves `connecting` set.
+  const peerSaw = Promise.withResolvers<number[]>();
+  const peer = net.createServer({ allowHalfOpen: true }, socket => {
+    const types: number[] = [];
+    socket.on("error", () => {});
+    socket.on("data", data => types.push(data[0]));
+    socket.on("end", () => {
+      peerSaw.resolve(types);
+      socket.end();
+    });
+  });
+  await once(peer.listen(0, "127.0.0.1"), "listening");
+  const port = (peer.address() as AddressInfo).port;
+  try {
+    const client = tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+    client.on("error", () => {});
+    const finished = once(client, "finish");
+    await once(client, "connect");
+    client.end();
+    expect(() => client.connect({ port, host: "127.0.0.1" })).toThrow("socket must be an instance of net.Socket");
+    // 22 is a handshake record: the ClientHello left before the FIN.
+    expect(await peerSaw.promise).toEqual([22]);
+    await finished;
+    client.destroy();
+  } finally {
+    peer.close();
+  }
+});
+
 it.each(["TLSv1.3", "TLSv1.2"] as const)(
   "%s: re-checks server identity on a resumed session (cross-servername resume must not authorize)",
   async version => {

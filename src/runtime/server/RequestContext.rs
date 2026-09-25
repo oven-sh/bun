@@ -384,6 +384,120 @@ fn release_body_stream(response: &mut Response, global_this: &JSGlobalObject) {
     }
 }
 
+/// Cancel the body stream of a Response the server will not transmit.
+fn cancel_unread_body(response: &Response, global_this: &JSGlobalObject) {
+    if let Some(stream) = response.get_body_readable_stream() {
+        let _keep = jsc::EnsureStillAlive(stream.value);
+        response.detach_readable_stream(global_this);
+        // Not `cancel()`: it skips a stream with no reader, which an unattached body is.
+        crate::dispatch::fold(stream.cancel_with_reason(global_this, JSValue::UNDEFINED));
+    }
+    *response.get_body_value() = Body::Value::Used;
+}
+
+/// [`cancel_unread_body`] for a rooted handler result: a `Response` or a settled promise of one.
+fn discard_response_body(global_this: &JSGlobalObject, value: JSValue) {
+    let value = match value.as_any_promise() {
+        Some(promise) => {
+            match promise.unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled) {
+                jsc::PromiseResult::Fulfilled(fulfilled) => fulfilled,
+                jsc::PromiseResult::Pending | jsc::PromiseResult::Rejected(_) => return,
+            }
+        }
+        None => value,
+    };
+    if let Some(response) = response::from_js_ref(value) {
+        cancel_unread_body(response.get(), global_this);
+    }
+    value.ensure_still_alive();
+}
+
+fn print_invalid_response_error(global_this: &JSGlobalObject, value: JSValue) {
+    let class_name = value.get_class_info_name().unwrap_or(b"");
+
+    Output::enable_buffering();
+    let writer = Output::error_writer();
+
+    if class_name == b"Response" {
+        bun_core::err_generic!(
+            "Expected a native Response object, but received a polyfilled Response object. Bun.serve() only supports native Response objects.",
+        );
+    } else if !value.is_empty() && !global_this.has_exception() {
+        let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
+        formatter.quote_strings = true;
+        bun_core::err_generic!(
+            "Expected a Response object, but received '{}'",
+            jsc::console_object::formatter::ZigFormatter::new(&mut formatter, value),
+        );
+        // `formatter` drops here.
+    } else {
+        bun_core::err_generic!("Expected a Response object");
+    }
+
+    Output::flush();
+    if !global_this.has_exception() {
+        jsc::ConsoleObject::write_trace(writer, global_this);
+    }
+    Output::flush();
+}
+
+fn write_status_line(resp: uws::AnyResponse, status: u16) {
+    if let Some(text) = HTTPStatusText::get(status) {
+        resp.write_status(text);
+    } else {
+        let mut buf = [0u8; 48];
+        let mut w = &mut buf[..];
+        let _ = write!(w, "{} HM", status);
+        let written = 48 - w.len();
+        resp.write_status(&buf[..written]);
+    }
+}
+
+fn write_filename_disposition(resp: uws::AnyResponse, blob: &AnyBlob) {
+    if let Some(filename) = blob.get_file_name() {
+        let basename = bun_paths::basename(&filename);
+        if !basename.is_empty() {
+            let mut filename_buf = [0u8; 1024];
+            let truncated = &basename[..basename.len().min(1024 - 32)];
+            if !strings::contains_any(truncated, b"\r\n\0\"") {
+                let header_value = {
+                    let mut w = &mut filename_buf[..];
+                    if write!(w, "filename=\"{}\"", bstr::BStr::new(truncated)).is_ok() {
+                        let written = 1024 - w.len();
+                        &filename_buf[..written]
+                    } else {
+                        &b""[..]
+                    }
+                };
+                if !header_value.is_empty() {
+                    resp.write_header(b"content-disposition", header_value);
+                }
+            }
+        }
+    }
+}
+
+fn write_content_range(resp: uws::AnyResponse, sendfile: SendfileContext) {
+    let mut crbuf = [0u8; RangeRequest::CONTENT_RANGE_BUF];
+    let end = sendfile.offset + sendfile.remain.saturating_sub(1);
+    // `total > 0` ⇒ we resolved an incoming Range header against the
+    // stat'd size, so the full size is meaningful. Otherwise this is a
+    // `.slice()`-driven range — omit the full size (it can change
+    // between requests and may leak PII).
+    let header_value = RangeRequest::format_content_range(
+        &mut crbuf,
+        RangeRequest::Result::Satisfiable {
+            start: sendfile.offset,
+            end,
+        },
+        (sendfile.total > 0).then_some(sendfile.total),
+    );
+    resp.write_header(b"content-range", header_value);
+    if sendfile.total > 0 {
+        resp.write_header(b"accept-ranges", b"bytes");
+    }
+}
+
 // ─── sibling-subtree shims ───────────────────────────────────────────────────
 // These forward to methods that exist in webcore/ but are currently inside
 // impl blocks that fail to compile (codegen gc-slot stubs, opaque AbortSignal).
@@ -723,7 +837,7 @@ where
         let Some(ctx) = NativePromiseContext::take::<Self>(arguments[1]) else {
             // A termination path (abort, end, upgrade) reclaimed the cell's
             // claim; the context may already be gone.
-            Self::discard_response_body(global, arguments[0]);
+            discard_response_body(global, arguments[0]);
             return Ok(JSValue::UNDEFINED);
         };
         let ctx = RequestContextRef::adopt(ctx.as_ptr());
@@ -736,38 +850,10 @@ where
         Ok(JSValue::UNDEFINED)
     }
 
-    /// Cancel the body stream of a Response the server will not transmit.
-    fn cancel_unread_body(response: &Response, global_this: &JSGlobalObject) {
-        if let Some(stream) = response.get_body_readable_stream() {
-            let _keep = jsc::EnsureStillAlive(stream.value);
-            response.detach_readable_stream(global_this);
-            // Not `cancel()`: it skips a stream with no reader, which an unattached body is.
-            crate::dispatch::fold(stream.cancel_with_reason(global_this, JSValue::UNDEFINED));
-        }
-        *response.get_body_value() = Body::Value::Used;
-    }
-
-    /// [`Self::cancel_unread_body`] for a rooted handler result: a `Response` or a settled promise of one.
-    fn discard_response_body(global_this: &JSGlobalObject, value: JSValue) {
-        let value = match value.as_any_promise() {
-            Some(promise) => {
-                match promise.unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled) {
-                    jsc::PromiseResult::Fulfilled(fulfilled) => fulfilled,
-                    jsc::PromiseResult::Pending | jsc::PromiseResult::Rejected(_) => return,
-                }
-            }
-            None => value,
-        };
-        if let Some(response) = response::from_js_ref(value) {
-            Self::cancel_unread_body(response.get(), global_this);
-        }
-        value.ensure_still_alive();
-    }
-
-    /// [`Self::discard_response_body`] for a request this context can no longer respond to.
+    /// [`discard_response_body`] for a request this context can no longer respond to.
     fn discard_handler_result(&self, global_this: &JSGlobalObject, result: JSValue) {
         let Some(promise) = result.as_any_promise() else {
-            Self::discard_response_body(global_this, result);
+            discard_response_body(global_this, result);
             return;
         };
         let resp_held = self.resp.get().is_some();
@@ -782,46 +868,19 @@ where
             // Nothing subscribes, so a rejection stays unhandled and reaches `unhandledRejection`.
             jsc::PromiseStatus::Pending | jsc::PromiseStatus::Rejected => {}
             jsc::PromiseStatus::Fulfilled => {
-                Self::discard_response_body(global_this, promise.result(global_this.vm()));
+                discard_response_body(global_this, promise.result(global_this.vm()));
             }
         }
     }
 
     fn render_missing_invalid_response(&self, value: JSValue) {
-        let class_name = value.get_class_info_name().unwrap_or(b"");
-
         if let Some(server) = self.server.get() {
             // server is a BACKREF — valid while this RequestContext is alive
-            let global_this: &JSGlobalObject = server.global_this();
-
-            Output::enable_buffering();
-            let writer = Output::error_writer();
-
-            if class_name == b"Response" {
-                bun_core::err_generic!(
-                    "Expected a native Response object, but received a polyfilled Response object. Bun.serve() only supports native Response objects.",
-                );
-            } else if !value.is_empty() && !global_this.has_exception() {
-                let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
-                formatter.quote_strings = true;
-                bun_core::err_generic!(
-                    "Expected a Response object, but received '{}'",
-                    jsc::console_object::formatter::ZigFormatter::new(&mut formatter, value),
-                );
-                // `formatter` drops here.
-            } else {
-                bun_core::err_generic!("Expected a Response object");
-            }
-
-            Output::flush();
-            if !global_this.has_exception() {
-                jsc::ConsoleObject::write_trace(writer, global_this);
-            }
-            Output::flush();
+            print_invalid_response_error(server.global_this(), value);
         }
-        // The formatter and `write_trace` above re-enter JS (getters, proxy
-        // traps, Error.prepareStackTrace), which can synchronously abort or
-        // end this request (e.g. AbortController.abort() inside a getter).
+        // `print_invalid_response_error` re-enters JS (getters, proxy traps,
+        // Error.prepareStackTrace), which can synchronously abort or end
+        // this request (e.g. AbortController.abort() inside a getter).
         // The `RequestContextRef` guard taken in `on_resolve` keeps the
         // allocation alive across the re-entry; re-check the request state so
         // we never render onto a response that was ended underneath us.
@@ -833,7 +892,7 @@ where
 
     fn handle_resolve(&self, global_this: &JSGlobalObject, value: JSValue) {
         if self.is_aborted_or_ended() || self.did_upgrade_web_socket() {
-            Self::discard_response_body(global_this, value);
+            discard_response_body(global_this, value);
             return;
         }
 
@@ -2652,7 +2711,7 @@ where
                 }
                 // HEAD never transmits the body.
                 if let Some(response) = this.response_mut() {
-                    Self::cancel_unread_body(response, global_this);
+                    cancel_unread_body(response, global_this);
                 }
                 this.end_without_body(this.should_close_connection());
             }
@@ -3453,7 +3512,7 @@ where
             && let Some(response) = this.response_mut()
             && matches!(response.get_body_value(), Body::Value::Locked(_))
         {
-            Self::cancel_unread_body(response, server.global_this());
+            cancel_unread_body(response, server.global_this());
         }
 
         if status == 304 {
@@ -3815,27 +3874,7 @@ where
         // 1. Bun.file("foo")
         // 2. The content-disposition header is not present
         if !has_content_disposition && content_type.category.autoset_filename() {
-            if let Some(filename) = blob.get_file_name() {
-                let basename = bun_paths::basename(&filename);
-                if !basename.is_empty() {
-                    let mut filename_buf = [0u8; 1024];
-                    let truncated = &basename[..basename.len().min(1024 - 32)];
-                    if !strings::contains_any(truncated, b"\r\n\0\"") {
-                        let header_value = {
-                            let mut w = &mut filename_buf[..];
-                            if write!(w, "filename=\"{}\"", bstr::BStr::new(truncated)).is_ok() {
-                                let written = 1024 - w.len();
-                                &filename_buf[..written]
-                            } else {
-                                &b""[..]
-                            }
-                        };
-                        if !header_value.is_empty() {
-                            resp.write_header(b"content-disposition", header_value);
-                        }
-                    }
-                }
-            }
+            write_filename_disposition(resp, blob);
         }
 
         if self.flags.needs_content_length() {
@@ -3845,24 +3884,7 @@ where
         }
 
         if needs_content_range && !has_content_range {
-            let mut crbuf = [0u8; RangeRequest::CONTENT_RANGE_BUF];
-            let end = sendfile.offset + sendfile.remain.saturating_sub(1);
-            // `total > 0` ⇒ we resolved an incoming Range header against the
-            // stat'd size, so the full size is meaningful. Otherwise this is a
-            // `.slice()`-driven range — omit the full size (it can change
-            // between requests and may leak PII).
-            let header_value = RangeRequest::format_content_range(
-                &mut crbuf,
-                RangeRequest::Result::Satisfiable {
-                    start: sendfile.offset,
-                    end,
-                },
-                (sendfile.total > 0).then_some(sendfile.total),
-            );
-            resp.write_header(b"content-range", header_value);
-            if sendfile.total > 0 {
-                resp.write_header(b"accept-ranges", b"bytes");
-            }
+            write_content_range(resp, sendfile);
             self.flags.set_needs_content_range(false);
         }
     }
@@ -3873,15 +3895,7 @@ where
 
         // `AnyResponse` is a `Copy` handle; methods take `self` by value.
         let Some(resp) = self.resp.get() else { return };
-        if let Some(text) = HTTPStatusText::get(status) {
-            resp.write_status(text);
-        } else {
-            let mut buf = [0u8; 48];
-            let mut w = &mut buf[..];
-            let _ = write!(w, "{} HM", status);
-            let written = 48 - w.len();
-            resp.write_status(&buf[..written]);
-        }
+        write_status_line(resp, status);
     }
 
     fn do_write_headers(&self, headers: &mut FetchHeaders) {

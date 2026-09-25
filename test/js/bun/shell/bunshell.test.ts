@@ -888,6 +888,44 @@ bar\n`,
       .runAsTest("Double Quote Dollar Paren Single Quote");
   });
 
+  // A tab outside quotes separates words, as a space does.
+  describe("tab", () => {
+    const script = (source: string) => TestBuilder.command`${{ raw: source }}`;
+
+    script("if true; then\n\techo tabbed\nfi").stdout("tabbed\n").runAsTest("indents the body of an if clause");
+
+    script("echo a\tb\t\tc").stdout("a b c\n").runAsTest("separates arguments");
+
+    script("echo a\t|\tcat\t&&\techo b").stdout("a\nb\n").runAsTest("surrounds operators");
+
+    script("FOO=bar\tBAZ=qux\necho $FOO $BAZ").stdout("bar qux\n").runAsTest("separates assignments");
+
+    script("if [[\t-n a\t]]; then echo yes; fi").stdout("yes\n").runAsTest("separates the operands of [[ ]]");
+
+    script(`echo "a\tb" 'c\td' e\\\tf`)
+      .stdout("a\tb c\td e\tf\n")
+      .runAsTest("is a literal character in quotes and after a backslash");
+
+    TestBuilder.command`${BUN} script.sh`
+      .ensureTempDir()
+      .file("script.sh", "if true; then\n\techo tabbed\nfi\n")
+      .stdout("tabbed\n")
+      .runAsTest("indents a .sh file");
+
+    // A tab-indented line is a command now, so the body of an unsupported
+    // construct must not run. The parse fails on the construct.
+    const reserved = (w: string) =>
+      `"${w}" is a reserved word that Bun Shell does not support yet. To run a command named "${w}", quote it.`;
+    test.each([
+      ["for", "for\tf in a b; do\n\techo BODY\ndone", reserved("for")],
+      ["while", "while\tfalse; do\n\techo BODY\ndone", reserved("while")],
+      ["!", "if\t!\tfalse; then\n\techo THEN\nelse\n\techo ELSE\nfi", reserved("!")],
+      ["a brace group", "false &&\t{\techo BODY;\t}", reserved("{")],
+    ])("does not run the body of an unsupported construct: %s", (_name, source, message) => {
+      expect(shellParseError(source)).toBe(message);
+    });
+  });
+
   describe("escaped_newline", () => {
     const printArgs = /* ts */ `console.log(JSON.stringify(process.argv))`;
 

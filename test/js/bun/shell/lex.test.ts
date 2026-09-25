@@ -706,6 +706,37 @@ describe("lex shell", () => {
     expect(JSON.parse(result)).toEqual(expected);
   });
 
+  // A tab outside quotes separates words, as a space does.
+  test.each([
+    ["between words", "echo\tfoo"],
+    ["at the start of a line", "if true; then\n\techo foo\nfi"],
+    ["at the end of a line", "echo foo\t\nls"],
+    ["in a run of blanks", "echo \t \tfoo"],
+    ["around an operator", "echo foo\t|\tcat"],
+    ["after a variable", "echo $FOO\tbar"],
+    ["after a closing quote", '"a"\tb'],
+    ["after a brace group", "{a,b}\tc"],
+    ["around a redirect", "echo foo\t>\tout.txt"],
+    ["before a comment", "echo foo\t# comment"],
+    ["before a comment that ends a line", "echo a\t# c\n\techo b"],
+    ["in a command substitution", "echo $(echo\tfoo)"],
+    ["in a script with a non-ascii character", "echo\tfoo é"],
+  ])("tab: %s lexes like a space", (_name, source) => {
+    expect(JSON.parse(lex({ raw: [source] }))).toEqual(JSON.parse(lex({ raw: [source.replaceAll("\t", " ")] })));
+  });
+
+  test.each([
+    ["in double quotes", 'echo "a\tb"', [{ Text: "echo" }, { Delimit: {} }, { DoubleQuotedText: "a\tb" }, { Eof: {} }]],
+    ["in single quotes", "echo 'a\tb'", [{ Text: "echo" }, { Delimit: {} }, { SingleQuotedText: "a\tb" }, { Eof: {} }]],
+    [
+      "after a backslash",
+      "echo a\\\tb",
+      [{ Text: "echo" }, { Delimit: {} }, { Text: "a\tb" }, { Delimit: {} }, { Eof: {} }],
+    ],
+  ])("tab: %s is a literal character", (_name, source, expected) => {
+    expect(JSON.parse(lex({ raw: [source] }))).toEqual(expected);
+  });
+
   // Where the lexer puts `Delimit` when a word's last part is not plain text
   // (a variable, a closing quote, a brace group), or when the word is split
   // into several tokens. Whitespace and operators delimit such a word; `;`

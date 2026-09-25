@@ -17,7 +17,12 @@ const HIGHWAY_COMMIT = "2607d3b5b0113992fe84d3848859eae13b3b52c1";
 // The scalable SVE/SVE2 targets and SVE_256, which Highway starts building at clang >= 22, stay
 // off: bun's movemask-style kernels (highway_json/xml/sourcemap.cpp) use BitsFromMask, which only
 // fixed-width targets have. SVE2_128 (Neoverse V2/N2) is fixed-width and stays on, as before.
-const disabledTargets = "HWY_DISABLED_TARGETS=HWY_ALL_SVE-HWY_SVE2_128";
+//
+// AVX10_2, which Highway starts building at clang >= 23, stays off too: each of bun's kernels
+// compiles to the same instructions for it as for AVX3_SPR (three of them: as for AVX3_DL), and a
+// CPU with AVX10.2 also reports AVX3_SPR (hwy/targets.cc), so it dispatches there. x86 and Arm
+// target bits do not overlap, so the sum is the union, and it has no `|` for cmd.exe to trip on.
+const disabledTargets = "HWY_DISABLED_TARGETS=HWY_ALL_SVE-HWY_SVE2_128+HWY_AVX10_2";
 
 export const highway: Dependency = {
   name: "highway",

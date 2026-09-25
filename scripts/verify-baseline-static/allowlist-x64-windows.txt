@@ -437,54 +437,8 @@ ctiMasmProbeTrampolineAVX  [AVX]
 
 # ----------------------------------------------------------------------------
 # Highway. MSVC-mangled bun::N_AVX* names.
-# (280 symbols)
+# (234 symbols)
 # ----------------------------------------------------------------------------
-bun::N_AVX10_2::ContainsNewlineOrNonASCIIOrQuoteImpl                 [AVX, AVX512BW, AVX512F]
-bun::N_AVX10_2::CopyAsciiPrefixImpl                                  [AVX, AVX512BW, AVX512F, AVX512VL]
-bun::N_AVX10_2::CopyU16ToU8Impl                                      [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]
-bun::N_AVX10_2::CountPrintableAscii16Impl                            [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
-bun::N_AVX10_2::DecodeHex16Impl                                      [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI]
-bun::N_AVX10_2::DecodeHex8Impl                                       [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, GFNI]
-bun::N_AVX10_2::EncodeHexLowerImpl                                   [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, GFNI]
-bun::N_AVX10_2::FillWithSkipMaskImpl                                 [AVX, AVX512DQ, AVX512F]
-bun::N_AVX10_2::FirstNonAscii16Impl                                  [AVX, AVX512BW, AVX512F]
-bun::N_AVX10_2::FirstNonAscii8Impl                                   [AVX, AVX512BW]
-bun::N_AVX10_2::HtmlEscapeExtraLen16Impl                             [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
-bun::N_AVX10_2::HtmlEscapeExtraLen8Impl                              [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
-bun::N_AVX10_2::IndexOfAnyCharImpl                                   [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_FP16]
-bun::N_AVX10_2::IndexOfCharImpl                                      [AVX, AVX512BW, BMI2]
-bun::N_AVX10_2::CountCharImpl                                        [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
-bun::N_AVX10_2::IndexOfNotCharImpl                                   [AVX, AVX512BW]
-bun::N_AVX10_2::LastIndexOfCharImpl                                  [AVX, AVX512BW]
-bun::N_AVX10_2::LastIndexOfAnyCharImpl                               [AVX, AVX512BW, AVX512F]
-bun::N_AVX10_2::IndexOfEscapeChar16Impl                              [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
-bun::N_AVX10_2::IndexOfEscapeChar8Impl                               [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
-bun::N_AVX10_2::IndexOfFirstAsciiUpper16Impl                                  [AVX, AVX512BW, AVX512F]
-bun::N_AVX10_2::IndexOfFirstAsciiUpperImpl                                    [AVX, AVX512BW, AVX512F]
-bun::N_AVX10_2::IndexOfHTMLEscapeChar16Impl                          [AVX, AVX512BW, AVX512F]
-bun::N_AVX10_2::IndexOfHTMLEscapeChar8Impl                           [AVX, AVX512BW, AVX512F]
-bun::N_AVX10_2::IndexOfInterestingCharacterInMultilineCommentImpl    [AVX, AVX512BW, AVX512F]
-bun::N_AVX10_2::IndexOfInterestingCharacterInStringLiteralImpl       [AVX, AVX512BW, AVX512F]
-bun::N_AVX10_2::IndexOfNeedsEscapeForJavaScriptStringImplBacktick    [AVX, AVX512BW, AVX512F]
-bun::N_AVX10_2::IndexOfNeedsEscapeForJavaScriptStringImplQuote       [AVX, AVX512BW, AVX512F]
-bun::N_AVX10_2::IndexOfNewlineOrNonASCIIImpl                         [AVX, AVX512BW, AVX512F]
-bun::N_AVX10_2::IndexOfNewlineOrNonASCIIOrHashOrAtImpl               [AVX, AVX512BW, AVX512F]
-bun::N_AVX10_2::IndexOfSpaceOrNewlineOrNonASCIIImpl                  [AVX, AVX512BW, AVX512F]
-bun::N_AVX10_2::LowerAscii16Impl                                              [AVX, AVX512BW, AVX512F, AVX512VL]
-bun::N_AVX10_2::LowerAsciiImpl                                                [AVX, AVX512BW, AVX512F, AVX512VL]
-bun::N_AVX10_2::MemMemImpl                                           [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
-bun::N_AVX10_2::VisibleLatin1WidthExcludeANSIImpl                    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
-bun::N_AVX10_2::VisibleLatin1WidthImpl                               [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
-bun::N_AVX10_2::VisibleUTF16WidthImpl                                [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
-bun::N_AVX10_2::BSwap16Impl                                          [AVX, AVX2, AVX512BW, AVX512F]
-bun::N_AVX10_2::BSwap32Impl                                          [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]
-bun::N_AVX10_2::BSwap64Impl                                          [AVX, AVX512BW, AVX512F]
-bun::N_AVX10_2::JsonIndexImpl                                        [AVX, AVX512BW, AVX512F, BMI1, BMI2, GFNI]
-bun::N_AVX10_2::MemMem16Impl                                         [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
-bun::N_AVX10_2::MemRMem16Impl                                        [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
-bun::N_AVX10_2::MemRMemImpl                                          [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
-bun::N_AVX10_2::XmlIndex16Impl                                       [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
-bun::N_AVX10_2::XmlIndexImpl                                         [AVX, AVX512BW, AVX512F, BMI2, GFNI]
 bun::N_AVX2::ContainsNewlineOrNonASCIIOrQuoteImpl                    [AVX, AVX2]
 bun::N_AVX2::CopyAsciiPrefixImpl                                     [AVX, AVX2]
 bun::N_AVX2::CopyU16ToU8Impl                                         [AVX, AVX2]
@@ -723,14 +677,12 @@ bun::N_AVX3_ZEN4::BSwap64Impl                                                  [
 
 # ----------------------------------------------------------------------------
 # Bun source-map VLQ decoder (src/jsc/bindings/highway_sourcemap.cpp).
-# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (12 symbols)
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (10 symbols)
 # ----------------------------------------------------------------------------
 bun::N_AVX2::CountDelimsImpl                                         [AVX, AVX2]
 bun::N_AVX2::ParseMappingsImpl                                       [AVX, AVX2, BMI1, BMI2]
 bun::N_AVX3::CountDelimsImpl                                         [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 bun::N_AVX3::ParseMappingsImpl                                       [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
-bun::N_AVX10_2::CountDelimsImpl                                      [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
-bun::N_AVX10_2::ParseMappingsImpl                                    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
 bun::N_AVX3_DL::CountDelimsImpl                                      [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 bun::N_AVX3_DL::ParseMappingsImpl                                    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
 bun::N_AVX3_SPR::CountDelimsImpl                                     [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
@@ -1072,7 +1024,7 @@ crc32_fold_vpclmulqdq_reset  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, 
 
 
 # ----------------------------------------------------------------------------
-# Bun xxHash3 windows-x64. Gate: BUN_HWY_DISPATCH -> hwy::SupportedTargets() via CPUID. (6 symbols)
+# Bun xxHash3 windows-x64. Gate: BUN_HWY_DISPATCH -> hwy::SupportedTargets() via CPUID. (5 symbols)
 # (PDB demangles to bun::xxh3::N_*::HashLong; unmaterialized variants show up as STALE.)
 # ----------------------------------------------------------------------------
 bun::xxh3::N_AVX2::HashLong       [AVX, AVX2, BMI2]
@@ -1080,13 +1032,12 @@ bun::xxh3::N_AVX3::HashLong       [AVX, AVX2, AVX512DQ, AVX512F, BMI2]
 bun::xxh3::N_AVX3_DL::HashLong    [AVX, AVX2, AVX512DQ, AVX512F, BMI2]
 bun::xxh3::N_AVX3_SPR::HashLong   [AVX, AVX2, AVX512DQ, AVX512F, BMI2]
 bun::xxh3::N_AVX3_ZEN4::HashLong  [AVX, AVX2, AVX512DQ, AVX512F, BMI2]
-bun::xxh3::N_AVX10_2::HashLong    [AVX, AVX2, AVX512DQ, AVX512F, BMI2]
 
 
 # ----------------------------------------------------------------------------
 # Bun.Image highway kernels (image_resize.cpp). Gate: BUN_HWY_DISPATCH ->
 # hwy::SupportedTargets() via CPUID. Same gate as the highway_strings block.
-# (52 symbols; PDB demangles these to bun_image::N_*::*)
+# (45 symbols; PDB demangles these to bun_image::N_*::*)
 # ----------------------------------------------------------------------------
 bun_image::N_AVX2::CmykToRgbaImpl  [AVX, AVX2]
 bun_image::N_AVX2::FlipHImpl  [AVX, AVX2]
@@ -1133,13 +1084,6 @@ bun_image::N_AVX3_ZEN4::Rotate180Impl  [AVX, AVX2, AVX512F]
 bun_image::N_AVX3_ZEN4::Rotate270Impl  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
 bun_image::N_AVX3_ZEN4::Rotate90Impl  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
 bun_image::N_AVX3_ZEN4::VertPass  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI, BMI1, FMA]
-bun_image::N_AVX10_2::CmykToRgbaImpl  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]
-bun_image::N_AVX10_2::FlipHImpl  [AVX, AVX512F]
-bun_image::N_AVX10_2::HorizPass  [AVX, AVX2, AVX512VL, AVX512_VNNI]
-bun_image::N_AVX10_2::ModulateImpl  [AVX, AVX512DQ, AVX512F, AVX512VL]
-bun_image::N_AVX10_2::NearestPaletteImpl  [AVX]
-bun_image::N_AVX10_2::Rotate180Impl  [AVX, AVX512F]
-bun_image::N_AVX10_2::VertPass  [AVX, AVX512BW, AVX512F, AVX512_VNNI, BMI1]
 
 
 # ----------------------------------------------------------------------------

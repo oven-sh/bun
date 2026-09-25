@@ -4683,11 +4683,8 @@ pub(crate) fn write_file_internal(
     {
         let mut needs_async = false;
         let fast_path_ok = matches!(*path_or_blob, PathOrBlob::Path(_))
-            || (matches!(*path_or_blob, PathOrBlob::Blob(ref b)
-                if b.offset.get() == 0 && !b.is_s3()
-                    && !(b.store.get().is_some()
-                        && matches!(b.store().expect("infallible: store present").data, store::Data::File(ref f)
-                            if f.mode != 0 && bun_core::kind_from_mode(f.mode) == bun_core::FileKind::File))));
+            || matches!(*path_or_blob, PathOrBlob::Blob(ref b)
+                if b.offset.get() == 0 && !b.is_s3());
         if fast_path_ok {
             if data.is_string() {
                 let len = data.get_length(cx.global())?;

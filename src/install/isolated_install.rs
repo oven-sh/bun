@@ -2415,7 +2415,7 @@ pub(crate) fn install_isolated_packages(
                                     cache_dir,
                                     cache_subpath_z,
                                     pkg_res_tag,
-                                    &lockfile_ro.packages.items_meta()[pkg_id as usize].integrity,
+                                    &installer.manager().cache_pin(pkg_id),
                                 );
                                 if exists {
                                     installer.manager_mut().set_preinstall_state(

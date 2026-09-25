@@ -25,7 +25,9 @@ use crate::package_manager_real::options::OfflineMode;
 use crate::package_manager_task as PmTask;
 use crate::resolution_real::Tag as ResolutionTag;
 use bun_install::lockfile::{Lockfile, Package};
-use bun_install::{DependencyID, PackageID, PackageManager, PreinstallState, invalid_package_id};
+use bun_install::{
+    DependencyID, Integrity, PackageID, PackageManager, PreinstallState, invalid_package_id,
+};
 
 impl PackageManager {
     pub(crate) fn ensure_preinstall_state_list_capacity(&mut self, count: usize) {
@@ -163,12 +165,8 @@ impl PackageManager {
                 let in_cache = if patch_hash.is_some() {
                     directories::is_folder_in_cache(self, folder_path)
                 } else {
-                    directories::is_package_in_cache(
-                        self,
-                        folder_path,
-                        pkg.resolution.tag,
-                        &pkg.meta.integrity,
-                    )
+                    let pin = self.cache_pin(pkg.meta.id);
+                    directories::is_package_in_cache(self, folder_path, pkg.resolution.tag, &pin)
                 };
                 if in_cache {
                     self.set_preinstall_state(pkg.meta.id, PreinstallState::Done);
@@ -193,11 +191,12 @@ impl PackageManager {
                         });
                     // Owned NUL-terminated copy.
                     let non_patched_path = ZBox::from_bytes(&folder_path.as_bytes()[..idx]);
+                    let pin = self.cache_pin(pkg.meta.id);
                     if directories::is_package_in_cache(
                         self,
                         &non_patched_path,
                         pkg.resolution.tag,
-                        &pkg.meta.integrity,
+                        &pin,
                     ) {
                         self.set_preinstall_state(pkg.meta.id, PreinstallState::ApplyPatch);
                         // yay step 1 is already done for us
@@ -519,6 +518,16 @@ impl PackageManager {
             && !self.integrity_pinned_packages.contains(&package_id)
             && (self.options.enable.force_install()
                 || self.dependency_is_update_request(dependency_id))
+    }
+
+    /// The integrity a URL/local tarball cache folder must carry to count as a
+    /// hit for `package_id`: the lockfile pin, or none when `--no-verify`
+    /// turned verification off.
+    pub(crate) fn cache_pin(&self, package_id: PackageID) -> Integrity {
+        if !self.options.do_.verify_integrity() {
+            return Integrity::default();
+        }
+        self.lockfile.packages.items_meta()[package_id as usize].integrity
     }
 
     /// Whether a fetch for this tarball already completed this run. Extract

@@ -15,7 +15,6 @@ use bun_threading::work_pool::Task as WorkPoolTask;
 #[cfg(windows)]
 use bun_threading::{ThreadPool, WaitGroup};
 
-use crate::lockfile::package::PackageColumns as _;
 use crate::package_installer::NodeModulesFolder;
 use crate::{
     BuntagHashBuf, Lockfile, Npm, PackageID, PackageManager, Repository, Resolution,
@@ -2268,8 +2267,7 @@ impl<'a> PackageInstall<'a> {
         match state {
             crate::PreinstallState::Done => false,
             _ => {
-                let pinned_integrity =
-                    &manager.lockfile.packages.items_meta()[package_id as usize].integrity;
+                let pinned_integrity = &manager.cache_pin(package_id);
                 let exists = if self.patch.is_none() {
                     crate::package_manager::directories::is_package_in_cache_at(
                         self.cache_dir,

@@ -1178,7 +1178,7 @@ impl TarballStream {
                 ResolutionTag::Github
                 | ResolutionTag::RemoteTarball
                 | ResolutionTag::LocalTarball => {
-                    if tarball.integrity.tag.is_supported() {
+                    if tarball.integrity.tag.is_supported() && !tarball.skip_verify {
                         tarball.integrity
                     } else {
                         self.hasher.final_()

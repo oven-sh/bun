@@ -66,13 +66,14 @@ impl ExtractTarball {
         // above, preventing a compromised server from silently swapping the tarball.
         let integrity = match self.resolution.tag {
             ResolutionTag::Github | ResolutionTag::RemoteTarball | ResolutionTag::LocalTarball => {
-                if self.integrity.tag.is_supported() {
+                if self.integrity.tag.is_supported() && !self.skip_verify {
                     // Re-installing with an existing lockfile: integrity was already
                     // verified above, propagate the known value to ExtractData so that
                     // the lockfile keeps it on re-serialisation.
                     self.integrity
                 } else {
-                    // First install (no integrity in the lockfile yet): compute it.
+                    // First install (no integrity in the lockfile yet), or the
+                    // pin was not checked: hash the bytes that were extracted.
                     Integrity::for_bytes(bytes)
                 }
             }
@@ -536,6 +537,13 @@ impl ExtractTarball {
             // if it's a namespace package, we need to make sure the @name folder exists
             let create_subdir = basename.len() != name.len() && !self.resolution.tag.is_git();
 
+            // The tag must never describe bytes it was not computed from: drop
+            // the old one before the folder swap, write the new one after.
+            let writes_tarball_tag = self.resolution.tag.is_tarball_cache_keyed_by_url();
+            if writes_tarball_tag {
+                directories::remove_tarball_integrity_tag(cache_dir.fd(), folder_name);
+            }
+
             // Now that we've extracted the archive, we rename.
             #[cfg(windows)]
             {
@@ -725,8 +733,21 @@ impl ExtractTarball {
                     return Err(crate::Error::InstallFailed);
                 }
             };
-            if self.resolution.tag.is_tarball_cache_keyed_by_url() {
-                directories::write_tarball_integrity_tag(cache_dir.fd(), folder_name, integrity);
+            if writes_tarball_tag {
+                if let Err(err) =
+                    directories::write_tarball_integrity_tag(cache_dir.fd(), folder_name, integrity)
+                {
+                    log.add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "failed to record the integrity of \"{}\" in the cache: {}",
+                            bun_fmt::s(name),
+                            err,
+                        ),
+                    );
+                    return Err(crate::Error::InstallFailed);
+                }
             }
             let final_path = match sys::get_fd_path_z(final_dir.fd(), &mut bufs.final_path_buf) {
                 Ok(p) => p,

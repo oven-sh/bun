@@ -1504,6 +1504,143 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball --force refr
     }
   });
 
+  it("a cache folder without its integrity tag is a miss", async () => {
+    // The tag is what ties the folder to the pin. Without it (a write that
+    // never happened, a crash between the folder swap and the tag write) the
+    // folder must not be trusted: the install re-downloads and verifies.
+    const v1 = buildTarball("VERSION_ONE");
+    const tarballRequests: string[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        if (new URL(req.url).pathname.endsWith("/my-url-pkg.tgz")) {
+          tarballRequests.push("hit");
+          return new Response(v1.tgz, { headers: { "content-length": String(v1.tgz.length) } });
+        }
+        return new Response("Not found", { status: 404 });
+      },
+    });
+
+    using dir = tempDir("issue-31864-notag-" + linker, {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "my-url-pkg": `http://127.0.0.1:${server.port}/my-url-pkg.tgz` },
+      }),
+      "bunfig.toml": `[install]\nlinker = "${linker}"\n`,
+    });
+    const cacheDir = join(String(dir), ".cache");
+    const spawnOpts = {
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: cacheDir },
+      stdout: "pipe" as const,
+      stderr: "pipe" as const,
+    };
+
+    {
+      await using proc = spawn({ cmd: [bunExe(), "install"], ...spawnOpts });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    }
+    const tags = Array.from(new Bun.Glob("@T@*.bun-tag").scanSync({ cwd: cacheDir, absolute: true }));
+    expect(tags).toHaveLength(1);
+    expect(await file(tags[0]).text()).toBe(v1.integrity);
+    expect(tarballRequests).toEqual(["hit"]);
+
+    await rm(tags[0]);
+    await rm(join(String(dir), "node_modules"), { recursive: true, force: true });
+    tarballRequests.length = 0;
+    {
+      await using proc = spawn({ cmd: [bunExe(), "install", "--frozen-lockfile"], ...spawnOpts });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(stdout + stderr).not.toContain("Integrity check failed");
+      expect(exitCode).toBe(0);
+    }
+    expect(tarballRequests).toEqual(["hit"]);
+    expect(await file(tags[0]).text()).toBe(v1.integrity);
+    expect(await file(join(String(dir), "node_modules", "my-url-pkg", "index.js")).text()).toBe(
+      'module.exports = "VERSION_ONE";\n',
+    );
+  });
+
+  it("--no-verify records the hash of the extracted bytes, not the unchecked pin", async () => {
+    // A `--no-verify` install of changed bytes must not leave a tag that
+    // vouches for the old pin, or a verifying project sharing the cache would
+    // take the new bytes as a hit.
+    const v1 = buildTarball("VERSION_ONE");
+    const v2 = buildTarball("VERSION_TWO");
+    let served = v1;
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        if (new URL(req.url).pathname.endsWith("/my-url-pkg.tgz")) {
+          const { tgz } = served;
+          return new Response(tgz, { headers: { "content-length": String(tgz.length) } });
+        }
+        return new Response("Not found", { status: 404 });
+      },
+    });
+    const pkgJson = JSON.stringify({
+      name: "app",
+      version: "1.0.0",
+      dependencies: { "my-url-pkg": `http://127.0.0.1:${server.port}/my-url-pkg.tgz` },
+    });
+    const bunfig = `[install]\nlinker = "${linker}"\n`;
+    using dir = tempDir("issue-31864-noverify-" + linker, {
+      "a/package.json": pkgJson,
+      "a/bunfig.toml": bunfig,
+      "b/package.json": pkgJson,
+      "b/bunfig.toml": bunfig,
+    });
+    const cacheDir = join(String(dir), ".cache");
+    const run = async (project: string, args: string[]) => {
+      await using proc = spawn({
+        cmd: [bunExe(), "install", ...args],
+        cwd: join(String(dir), project),
+        env: { ...env, BUN_INSTALL_CACHE_DIR: cacheDir },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { output: stdout + stderr, exitCode };
+    };
+
+    for (const project of ["a", "b"]) {
+      const { output, exitCode } = await run(project, []);
+      expect(output).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    }
+
+    // Cold cache, changed bytes, verification off: A installs v2 under a v1 pin.
+    await rm(cacheDir, { recursive: true, force: true });
+    await rm(join(String(dir), "a", "node_modules"), { recursive: true, force: true });
+    served = v2;
+    {
+      const { output, exitCode } = await run("a", ["--no-verify"]);
+      expect(output).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      expect(await file(join(String(dir), "a", "node_modules", "my-url-pkg", "index.js")).text()).toBe(
+        'module.exports = "VERSION_TWO";\n',
+      );
+    }
+    const tags = Array.from(new Bun.Glob("@T@*.bun-tag").scanSync({ cwd: cacheDir, absolute: true }));
+    expect(tags).toHaveLength(1);
+    expect(await file(tags[0]).text()).toBe(v2.integrity);
+
+    // B verifies into a fresh node_modules: the folder does not match its pin,
+    // so it downloads and fails.
+    await rm(join(String(dir), "b", "node_modules"), { recursive: true, force: true });
+    {
+      const { output, exitCode } = await run("b", ["--frozen-lockfile"]);
+      expect(output).toContain("Integrity check failed");
+      expect(exitCode).not.toBe(0);
+    }
+  });
+
   it.skipIf(linker !== "isolated")(
     "keeps the lockfile pin for a global-store entry whose tarball left the cache",
     async () => {

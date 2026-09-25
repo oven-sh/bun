@@ -734,7 +734,7 @@ pub fn cached_tarball_folder_name_print<'a>(
     let mut w = ByteCursor::new(buf);
     w.put(b"@T@");
     w.put_u64_hex16::<true>(Semver::semver_string::Builder::string_hash(url));
-    w.put_cache_version(Some(CacheVersion::CURRENT));
+    w.put_cache_version(Some(CacheVersion::TARBALL));
     w.put_patch_hash(patch_hash);
     w.finish_z()
 }
@@ -766,13 +766,15 @@ fn tarball_integrity_tag_path<'a>(buf: &'a mut PathBuffer, folder_path: &[u8]) -
     ZStr::from_buf(buf, len)
 }
 
-pub fn write_tarball_integrity_tag(cache_dir: Fd, folder_path: &[u8], integrity: &Integrity) {
-    if !integrity.tag.is_supported() {
-        return;
-    }
+pub fn write_tarball_integrity_tag(
+    cache_dir: Fd,
+    folder_path: &[u8],
+    integrity: &Integrity,
+) -> bun_sys::Result<()> {
+    debug_assert!(integrity.tag.is_supported());
     let mut buf = bun_paths::path_buffer_pool::get();
     let tag_path = tarball_integrity_tag_path(&mut buf, folder_path);
-    if File::openat(
+    let file = File::openat(
         cache_dir,
         tag_path,
         sys::O::WRONLY
@@ -780,19 +782,25 @@ pub fn write_tarball_integrity_tag(cache_dir: Fd, folder_path: &[u8], integrity:
             | sys::O::TRUNC
             | if cfg!(windows) { 0 } else { sys::O::NOFOLLOW },
         0o664,
-    )
-    .and_then(|f| f.write_all(integrity.to_string().as_bytes()))
-    .is_err()
-    {
+    )?;
+    if let Err(err) = file.write_all(integrity.to_string().as_bytes()) {
+        drop(file);
         let _ = sys::unlinkat(cache_dir, tag_path);
+        return Err(err);
     }
+    Ok(())
+}
+
+pub fn remove_tarball_integrity_tag(cache_dir: Fd, folder_path: &[u8]) {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let _ = sys::unlinkat(cache_dir, tarball_integrity_tag_path(&mut buf, folder_path));
 }
 
 /// Cache hit for an unpatched entry: npm folders must contain `package.json`,
 /// git checkouts the `.bun-tag` written last. A URL/local tarball folder is a
 /// hit only if its `<folder>.bun-tag` matches the lockfile pin, since the
 /// folder name is the URL and another project can refresh it with different
-/// bytes. A folder with no tag predates the tag and is accepted.
+/// bytes. No tag, or one that cannot be read, is a miss.
 pub fn is_package_in_cache_at(
     cache_dir: Fd,
     folder_path: &ZStr,
@@ -811,12 +819,9 @@ pub fn is_package_in_cache_at(
             }
             let mut buf = bun_paths::path_buffer_pool::get();
             let tag_path = tarball_integrity_tag_path(&mut buf, folder_path.as_bytes());
-            return match File::openat(cache_dir, tag_path, sys::O::RDONLY, 0)
+            return File::openat(cache_dir, tag_path, sys::O::RDONLY, 0)
                 .and_then(|f| f.read_to_end_small())
-            {
-                Ok(contents) => contents == pinned_integrity.to_string().as_bytes(),
-                Err(_) => true,
-            };
+                .is_ok_and(|contents| contents == pinned_integrity.to_string().as_bytes());
         }
         _ => return sys::directory_exists_at(cache_dir, folder_path).unwrap_or(false),
     };
@@ -1354,6 +1359,9 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
 pub(crate) struct CacheVersion;
 impl CacheVersion {
     pub(crate) const CURRENT: usize = 1;
+    /// URL/local tarball folders. 2 adds the `<folder>.bun-tag` file beside
+    /// the folder, so a folder of this version with no tag is a miss.
+    pub(crate) const TARBALL: usize = 2;
 }
 
 // ────────────────────────────── helpers ───────────────────────────────────────

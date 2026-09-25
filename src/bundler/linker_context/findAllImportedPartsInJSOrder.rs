@@ -2,6 +2,7 @@ use crate::mal_prelude::*;
 use bun_ast::{ImportKind, ImportRecord};
 use bun_collections::{AutoBitSet, HashMap, VecExt};
 
+use crate::linker_graph::PerEntryPointPartLiveness;
 use crate::{
     Chunk, Index, IndexInt, LinkerContext, PartRange,
     chunk::{self, Order},
@@ -152,6 +153,7 @@ pub(crate) fn find_imported_parts_in_js_order(
             flags: this.graph.meta.items_flags(),
             parts: this.graph.ast.items_parts(),
             import_records: this.graph.ast.items_import_records(),
+            parts_live_per_entry_point: this.graph.parts_live_per_entry_point.as_ref(),
             entry_bits: chunk.entry_bits(),
             c: this,
             chunk_index,
@@ -212,6 +214,7 @@ pub(crate) struct FindImportedPartsVisitor<'a, 'ctx> {
     pub(crate) flags: &'a [crate::js_meta::Flags],
     pub(crate) parts: &'a [bun_ast::PartList<'ctx>],
     pub(crate) import_records: &'a [bun_ast::import_record::List<'ctx>],
+    pub(crate) parts_live_per_entry_point: Option<&'a PerEntryPointPartLiveness>,
     pub(crate) files: Vec<IndexInt>,
     pub(crate) part_ranges: Vec<PartRange>,
     pub(crate) visited: HashMap<IndexInt, ()>,
@@ -248,6 +251,21 @@ enum PartsFrame {
 }
 
 impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
+    #[inline]
+    fn is_part_live_for_chunk(&self, source_index: usize, part_index: usize) -> bool {
+        let Some(parts_live) = self.parts_live_per_entry_point else {
+            return self.c.graph.parts_live[source_index].is_set(part_index);
+        };
+
+        let mut entry_point_ids = self.entry_bits.iterator::<true, true>();
+        while let Some(entry_point_id) = entry_point_ids.next() {
+            if parts_live.is_live(entry_point_id, source_index, part_index) {
+                return true;
+            }
+        }
+        false
+    }
+
     fn append_or_extend_range(
         &mut self,
         in_prefix: bool,
@@ -401,10 +419,12 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
                     let can_be_split = self.flags[source_index as usize].wrap == Wrap::None;
 
                     let parts = self.parts[source_index as usize].as_slice();
-                    let parts_live = &self.c.graph.parts_live[source_index as usize];
                     if can_be_split
                         && is_file_in_chunk
-                        && parts_live.is_set(bun_ast::NAMESPACE_EXPORT_PART_INDEX as usize)
+                        && self.is_part_live_for_chunk(
+                            source_index as usize,
+                            bun_ast::NAMESPACE_EXPORT_PART_INDEX as usize,
+                        )
                     {
                         self.append_or_extend_range(
                             false,
@@ -419,8 +439,8 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
                     for part_index_ in 0..parts.len() {
                         let part = &parts[part_index_];
                         let part_index = part_index_ as u32;
-                        let is_part_in_this_chunk =
-                            is_file_in_chunk && parts_live.is_set(part_index_);
+                        let is_part_in_this_chunk = is_file_in_chunk
+                            && self.is_part_live_for_chunk(source_index as usize, part_index_);
                         for &record_id in part.import_record_indices.slice() {
                             let record: &ImportRecord = &records[record_id as usize];
                             if record.source_index.is_valid()

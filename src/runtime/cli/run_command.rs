@@ -1247,12 +1247,9 @@ pub(crate) struct Run<'a> {
 static ANY_UNHANDLED: AtomicBool = AtomicBool::new(false);
 
 impl Run<'_> {
-    /// `onUnhandledRejectionBeforeClose` — print the error through the VM's
-    /// default error printer and fail the run. The exit code is set here, at
-    /// report time, so the `exit` event emitted later by `on_exit()` carries 1
-    /// (`process.exitCode` reads 1 inside the listeners) exactly as it does
-    /// after an uncaught exception, which `VirtualMachine::uncaught_exception`
-    /// records the same way. `ANY_UNHANDLED` only selects the version note.
+    /// `onUnhandledRejectionBeforeClose` — record that *something* rejected so
+    /// `start()` sets a non-zero exit code, then route through the VM's
+    /// default error printer.
     fn on_unhandled_rejection_before_close(
         this: &mut VirtualMachine,
         _global: &JSGlobalObject,
@@ -1263,7 +1260,6 @@ impl Run<'_> {
             .on_unhandled_rejection_exception_list
             .map(|p| unsafe { &mut *p.as_ptr() });
         this.run_error_handler(value, list);
-        this.exit_handler.exit_code = 1;
         ANY_UNHANDLED.store(true, Ordering::Relaxed);
     }
 
@@ -1571,9 +1567,20 @@ impl Run<'_> {
         if vm.unhandled_error_counter > 0 {
             vm.exit_handler.requested = true;
         }
+        // A printed error fails the run, whatever `process.exitCode` held since.
+        // Decide it before `on_exit()`: the 'exit' listeners receive this code,
+        // and the code they leave is final.
+        let failed_before_exit = ANY_UNHANDLED.load(Ordering::Relaxed);
+        if failed_before_exit {
+            vm.exit_handler.exit_code = 1;
+        }
         vm.on_exit();
 
         if ANY_UNHANDLED.load(Ordering::Relaxed) {
+            // First printed while an 'exit' listener ran the loop.
+            if !failed_before_exit {
+                vm.exit_handler.exit_code = 1;
+            }
             print_unhandled_version_note();
         }
 
@@ -1669,11 +1676,8 @@ fn entry_point_load_failed(vm: &mut VirtualMachine, err: &crate::Error) -> ! {
     exit_with_unhandled_note(vm);
 }
 
-/// Sourcemap note + version string, printed after `on_exit()` when
-/// `ANY_UNHANDLED` tripped. Deliberately does not touch the exit code: it was
-/// set to 1 when the error was reported (`on_unhandled_rejection_before_close`),
-/// and a `process.exitCode` assignment made by an `exit` listener since then
-/// stands, as in Node.
+/// Cold tail of an exit on which `ANY_UNHANDLED` tripped: print the sourcemap
+/// note + version string.
 #[cold]
 #[inline(never)]
 #[cfg_attr(

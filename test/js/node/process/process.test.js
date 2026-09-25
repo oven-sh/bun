@@ -2409,6 +2409,70 @@ describe("process.exitCode", () => {
     );
   });
 
+  // bun keeps running after it prints an error that nothing handled (node exits
+  // there), so code that runs later can assign process.exitCode. That must not
+  // turn the failed run into a success.
+  it.each([
+    ["reportError()", `reportError(new Error("oops"));`],
+    [
+      "a throwing EventTarget listener",
+      `const target = new EventTarget();
+      target.addEventListener("x", () => { throw new Error("oops"); });
+      target.dispatchEvent(new Event("x"));`,
+    ],
+  ])("process.exitCode = 0 after %s does not clear the failure", async (_, report) => {
+    await runInlineFixture(
+      `
+      process.on("exit", (code) => console.log("exit", code, process.exitCode));
+      ${report}
+      process.exitCode = 0;
+    `,
+      "exit 1 1\n",
+      1,
+    );
+  });
+
+  it("process.exitCode = 0 after a rejection in a --preload module does not clear the failure", async () => {
+    using dir = tempDir("process-exitcode-preload", {
+      "preload.js": `Promise.reject(new Error("oops"));`,
+      "index.js": `
+        process.on("exit", (code) => console.log("exit", code, process.exitCode));
+        process.exitCode = 0;
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--preload", "./preload.js", "index.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("error: oops");
+    expect({ stdout, exitCode }).toEqual({ stdout: "exit 1 1\n", exitCode: 1 });
+  });
+
+  it("an error first printed while an exit listener runs the event loop fails the run", async () => {
+    // Bun.build() with an async plugin runs the event loop inside the listener,
+    // so the rejection is printed after 'exit' was emitted with 0.
+    await runInlineFixture(
+      `
+      process.on("exit", (code) => {
+        console.log("exit", code, process.exitCode);
+        Promise.reject(new Error("oops"));
+        Bun.build({
+          entrypoints: [__filename],
+          plugins: [{ name: "wait", async setup() { await new Promise(resolve => setImmediate(resolve)); } }],
+        }).catch(() => {});
+      });
+    `,
+      "exit 0 undefined\n",
+      1,
+    );
+  });
+
   it("exitsOnExitCodeSet", async () => {
     await runInlineFixture(
       `

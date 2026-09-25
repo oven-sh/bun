@@ -26,10 +26,7 @@ describe.if(isPosix)("IOWriter epipe", () => {
 // A command whose output the shell cannot write exits 1, the status bash
 // builtins and coreutils use for a write error. EPIPE (nothing reads the
 // output anymore, which kills an external command through SIGPIPE without a
-// message) is silent; any other errno is reported on stderr. Before, every
-// builtin derived its own status from the errno (echo: 65504, the negated
-// errno as u16; ls, mkdir -v, rm -v: 0; an external command: the errno in
-// place of its own status) and none of them printed anything.
+// message) is silent; any other errno is reported on stderr.
 describe.if(isPosix)("exit status when the command's output cannot be written", () => {
   const builtins = ["echo", "pwd", "which", "seq", "basename", "dirname", "export", "yes", "ls", "cat", "mkdir", "rm"];
 

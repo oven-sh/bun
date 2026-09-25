@@ -306,8 +306,7 @@ afterAll(() => {
 });
 
 // The command's output was lost, so the shell fails the command with the
-// status a builtin gets for a failed output write (not the errno: that
-// collided with real exit codes and was a libuv code on Windows).
+// status a builtin gets for a failed output write.
 const OUTPUT_LOST = 1;
 
 const MODES = [

@@ -273,10 +273,6 @@ impl Cat {
                 CatState::WaitingWriteErr => {}
                 _ => panic!("Invalid state"),
             }
-            let wchild = ChildPtr::new(cmd, WriterTag::Builtin);
-            if let BuiltinIO::Fd(fd) = &Builtin::of(interp, cmd).stdout {
-                fd.writer.cancel_chunks(wchild);
-            }
             return Builtin::done(interp, cmd, 1);
         }
 

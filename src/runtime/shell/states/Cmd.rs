@@ -985,7 +985,7 @@ impl Cmd {
     /// Mark the subprocess's buffered stdout/stderr as closed (flushing the
     /// captured bytes into the shell buffers).
     ///
-    /// `err`: relayed output was lost; exit 1 unless the process exited non-zero itself.
+    /// `err`: relayed output was lost; exit 1 unless the process already exited non-zero.
     pub(crate) fn buffered_output_close(
         &mut self,
         kind: OutKind,

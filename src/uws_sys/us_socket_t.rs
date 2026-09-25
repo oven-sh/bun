@@ -471,8 +471,7 @@ impl us_socket_t {
         c::us_socket_is_established(self) > 0
     }
 
-    /// TLS ciphertext `write` already counted as written that still waits on a
-    /// writable event to reach the kernel. 0 for plain TCP.
+    /// TLS ciphertext counted as written that still waits for the kernel; 0 for TCP.
     pub(crate) fn ssl_spill_pending(&self) -> u32 {
         c::us_socket_ssl_spill_pending(self)
     }

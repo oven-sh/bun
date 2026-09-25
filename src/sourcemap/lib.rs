@@ -119,7 +119,7 @@ pub struct ParseFail {
 /// byte-compatible with this struct and bulk-copy them into the
 /// `MultiArrayList` column.
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct LineColumnOffset {
     /// The zero-based line offset
     pub lines: Ordinal,

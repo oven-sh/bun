@@ -1,6 +1,7 @@
 #include "root.h"
 #include "helpers.h"
 #include "BunCPUProfiler.h"
+#include "CodeCoverage.h"
 #include "NodeValidator.h"
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/VM.h>
@@ -144,10 +145,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_collectPreciseCoverage, (JSGlobalObject * gl
 
         auto functionArray = JSON::Array::create();
         for (const auto& functionRange : functionRanges) {
+            bool hasExecuted = std::get<0>(functionRange);
+            int start = static_cast<int>(std::get<1>(functionRange));
+            int end = static_cast<int>(std::get<2>(functionRange));
+            if (Bun::isSynthesizedDefaultConstructorRange(hasExecuted, start, end))
+                continue;
             auto range = JSON::Array::create();
-            range->pushDouble(static_cast<double>(std::get<1>(functionRange)));
-            range->pushDouble(static_cast<double>(std::get<2>(functionRange)));
-            range->pushBoolean(std::get<0>(functionRange));
+            range->pushDouble(static_cast<double>(start));
+            range->pushDouble(static_cast<double>(end));
+            range->pushBoolean(hasExecuted);
             functionArray->pushValue(WTF::move(range));
         }
         script->setValue("functions"_s, WTF::move(functionArray));

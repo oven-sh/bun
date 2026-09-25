@@ -2734,14 +2734,10 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
           return;
         }
         this[bunHTTP2StreamStatus] |= StreamState.FinalCalled;
-        // When waitForTrailers is active, writing an empty DATA frame with
-        // close=true emits a bare empty DATA frame (flags=0) to the wire
-        // before the trailer/noTrailers path runs, which then emits ANOTHER
-        // empty DATA (with END_STREAM). Two consecutive empty DATA frames
-        // confuse strict peers (nghttp2 callback failure). Skip the empty
-        // writeStream and drive the wantTrailers path directly — the
-        // eventual `sendTrailers({})` → `noTrailers` call terminates the
-        // stream with a single empty DATA END_STREAM frame, matching Node.
+        // With trailers pending there is no frame for _final to send (END_STREAM rides on the
+        // trailers), so drive the wantTrailers path directly. The eventual `sendTrailers()`, or
+        // `sendTrailers({})` -> `noTrailers` (a single empty DATA END_STREAM frame, as in Node),
+        // terminates the stream.
         if (this[bunHTTP2WaitForTrailers]) {
           this[bunHTTP2WaitForTrailers] = false;
           if ((this[bunHTTP2StreamStatus] & StreamState.WantTrailer) === 0) {
@@ -6639,7 +6635,7 @@ function onErrorSecureServerSession(err, socket) {
 }
 
 function emitFrameErrorEventNT(stream, frameType, errorCode) {
-  stream.emit("frameError", frameType, errorCode);
+  stream.emit("frameError", frameType, errorCode, stream.id);
 }
 interface Http2SecureServer extends UpgradableSecureServer {}
 class Http2SecureServer extends (tls.Server as unknown as Http2SecureServerBase) {

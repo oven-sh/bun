@@ -1742,9 +1742,9 @@ define_colorspace! {
     premultiply = rectangular;
     powerless = none;
     into_css = |srgb: &SRGB| {
-        // Serializes through 8-bit RGBA, matching upstream lightningcss
-        // (`color(srgb, ...)` would be more precise but would change output).
-        CssColor::Rgba(RGBA::from(*srgb))
+        // Not `into_rgba()`: an sRGB screen shows an out-of-gamut `color-mix()` result clipped, not gamut mapped.
+        let srgb = srgb.resolve_missing().clip();
+        CssColor::Rgba(RGBA::from_floats(srgb.r, srgb.g, srgb.b, srgb.alpha))
     };
 }
 
@@ -1762,7 +1762,7 @@ define_colorspace! {
     gamut = hsl_hwb;
     premultiply = polar;
     powerless = hsl;
-    into_css = |c: &HSL| CssColor::Rgba(RGBA::from(*c));
+    into_css = |c: &HSL| SRGB::from(*c).into_css_color();
 }
 
 define_colorspace! {
@@ -1772,7 +1772,7 @@ define_colorspace! {
     gamut = hsl_hwb;
     premultiply = polar;
     powerless = hwb;
-    into_css = |c: &HWB| CssColor::Rgba(RGBA::from(*c));
+    into_css = |c: &HWB| SRGB::from(*c).into_css_color();
 }
 
 define_colorspace! {

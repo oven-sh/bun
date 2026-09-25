@@ -550,13 +550,12 @@ static int BIO_s_custom_write(BIO *bio, const char *data, int length) {
                          loop_ssl_data->ssl_write_batch_owner != loop_ssl_data->ssl_socket;
 
   if (loop_ssl_data->ssl_write_batching && !batch_is_foreign &&
-      loop_ssl_data->ssl_spill_owner != loop_ssl_data->ssl_socket) {
+      loop_ssl_data->ssl_spill_owner == NULL) {
     /* Append the sealed record; the batch hits the kernel once, after
      * SSL_write returns. Reporting the full length keeps BoringSSL sealing
-     * the next record instead of parking a partial one. Skipped while this
-     * socket's own spill is pending: those bytes go first. us_internal_ssl_write
-     * does not batch while any spill is pending, so with another socket's
-     * spill this is the handshake hold of us_internal_ssl_on_data. */
+     * the next record instead of parking a partial one. Skipped while a
+     * spill occupies the slot: a later short flush could not park its
+     * remainder without clobbering that socket's pending ciphertext. */
     unsigned int needed = loop_ssl_data->ssl_write_batch_len + (unsigned int)length;
     if (needed > loop_ssl_data->ssl_write_batch_cap) {
       unsigned int new_cap = loop_ssl_data->ssl_write_batch_cap ? loop_ssl_data->ssl_write_batch_cap : 65536;
@@ -2364,24 +2363,6 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
   return s;
 }
 
-/* A read that finished the handshake and then ends the connection (the peer's
- * close_notify, a bad record, broken framing) reports the handshake before it
- * closes, as the no-data completion in us_internal_ssl_on_data does. The owner
- * may turn the peer down there, and that close releases the held flight: a
- * peer must not collect it by sending an alert or junk behind its Finished.
- * Returns 0 when the socket is gone. */
-static int ssl_report_handshake_before_close(struct us_socket_t *s, struct loop_ssl_data *loop_ssl_data) {
-  if (s->ssl_handshake_state != HANDSHAKE_PENDING || !SSL_is_init_finished(s_ssl(s))) return 1;
-  ERR_clear_error();
-  ssl_trigger_handshake(s, 1);
-  if (ssl_gone(s)) return 0;
-  loop_ssl_data->ssl_socket = s;
-  if (loop_ssl_data->ssl_write_batch_len && loop_ssl_data->ssl_write_batch_owner == s) {
-    ssl_flush_write_batch(loop_ssl_data, s);
-  }
-  return 1;
-}
-
 struct us_socket_t *us_internal_ssl_on_data(struct us_socket_t *s, char *data, int length) {
   /* See ssl_update_handshake: start this socket's SSL processing with a clean
    * per-thread error queue so a captured reason cannot belong to another
@@ -2433,15 +2414,12 @@ restart:
      * down right after the handshake (node's post-verify destroy, #40653)
      * close with the second segment unread, which turns its FIN teardown
      * into an RST and a bogus ECONNRESET at this side. Node's memory BIO
-     * drained once per cycle has the same single-segment shape. The hold
-     * also decides whether the owner's refusal in on_handshake can still
-     * withhold the flight, so another socket's pending spill does not switch
-     * it off: a short flush then fails this socket (ssl_flush_write_batch)
-     * and leaves that spill alone. A spill of this socket's own goes first,
-     * so its records are written through as before. */
+     * drained once per cycle has the same single-segment shape. Gated on a
+     * free spill slot like us_internal_ssl_write, so a short flush cannot
+     * clobber another socket's pending ciphertext. */
     int hs_batching = s->ssl_handshake_state == HANDSHAKE_PENDING &&
                       !loop_ssl_data->ssl_write_batching &&
-                      loop_ssl_data->ssl_spill_owner != s;
+                      !loop_ssl_data->ssl_spill_owner;
     if (hs_batching) loop_ssl_data->ssl_write_batching = 1;
     unsigned char ssl_was_in_use = s->ssl_in_use;
     s->ssl_in_use = 1;
@@ -2486,7 +2464,6 @@ restart:
           if (ssl_gone(s)) return NULL;
           err = SSL_ERROR_SSL;
         } else if (err == SSL_ERROR_ZERO_RETURN) {
-          if (!ssl_report_handshake_before_close(s, loop_ssl_data)) return NULL;
           /* Remote close_notify. A NewSessionTicket that rode in ahead of the
            * close_notify was parked by the new-session callback; deliver it
            * first (wire order - the ticket preceded these bytes, and Node's
@@ -2535,7 +2512,16 @@ restart:
           return s;
         }
 
-        if (!ssl_report_handshake_before_close(s, loop_ssl_data)) return NULL;
+        if (s->ssl_handshake_state == HANDSHAKE_PENDING && SSL_is_init_finished(s_ssl(s))) {
+          /* The read that finished the handshake failed on a later record.
+           * Report the handshake before the close, as the no-data completion
+           * below does. The owner may turn the peer down there, and that
+           * close releases the held flight: a peer must not collect it with
+           * a bad record behind its Finished. */
+          ERR_clear_error();
+          ssl_trigger_handshake(s, 1);
+          if (ssl_gone(s)) return NULL;
+        }
         if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
           ssl_park_fatal_reason(s);
         }
@@ -2548,7 +2534,6 @@ restart:
         /* If the BIO still has unread ciphertext at this point, the TLS
          * framing is broken — close. */
         if (loop_ssl_data->ssl_read_input_length) {
-          if (!ssl_report_handshake_before_close(s, loop_ssl_data)) return NULL;
           return ssl_close(s, 0, NULL);
         }
         /* SSL_read drove the handshake to completion but returned no app
@@ -2744,9 +2729,6 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
    * layers above fire 'finish' and close before the data reached the wire. */
   int outer_batching = loop_ssl_data->ssl_write_batching;
   int batching = (loop_ssl_data->ssl_spill_owner == NULL);
-  /* A flight held across on_handshake while another socket's spill is pending
-   * goes before the records this write sends through. */
-  if (!batching && !ssl_flush_write_batch(loop_ssl_data, s)) return 0;
   loop_ssl_data->ssl_write_batching = batching;
 
   int total = 0;

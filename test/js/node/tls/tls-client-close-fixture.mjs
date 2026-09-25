@@ -15,11 +15,7 @@
 // - `alerts` counts the client's alert records. A TLS 1.3 alert travels as an
 //   application data record of 19 bytes: the alert, the inner content type and
 //   the AEAD tag. Nothing else a mode sends has that size.
-//
-// A mode that ends with "while another TLS socket is backpressured" first
-// opens a second TLS connection whose peer stops reading, and writes to it
-// until the kernel takes no more.
-import { createCipheriv, createHmac } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHmac } from "node:crypto";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import http2 from "node:http2";
@@ -34,11 +30,10 @@ const pem = name => readFileSync(join(keys, name));
 // One application data record that does not decrypt.
 const junkRecord = Buffer.concat([Buffer.from([23, 3, 3, 0, 16]), Buffer.alloc(16, 0xa5)]);
 
-// A close_notify alert as the first record under the server's application
-// traffic secret (RFC 8446, sections 5.2 and 7.3). A TLS 1.3 server may send
-// records under that secret right behind its Finished. OpenSSL and BoringSSL
-// do not send this alert during their handshake, so the relay seals it.
-function sealedCloseNotify(serverHello, secret) {
+// The record protection keys of a TLS 1.3 traffic secret (RFC 8446, section
+// 7.3). `serverHello` starts with the ServerHello record, which names the
+// cipher suite.
+function trafficKeys(serverHello, secret) {
   const cipherSuite = serverHello.readUInt16BE(44 + serverHello[43]);
   const [hash, cipher, keyLength] = {
     0x1301: ["sha256", "aes-128-gcm", 16],
@@ -52,10 +47,54 @@ function sealedCloseNotify(serverHello, secret) {
       )
       .digest()
       .subarray(0, length);
+  return { cipher, key: expandLabel("key", keyLength), iv: expandLabel("iv", 12) };
+}
+
+// A close_notify alert as the first record under the server's application
+// traffic secret (RFC 8446, section 5.2). A TLS 1.3 server may send records
+// under that secret right behind its Finished. OpenSSL and BoringSSL do not
+// send this alert during their handshake, so the relay seals it.
+function sealedCloseNotify(serverHello, secret) {
+  const { cipher, key, iv } = trafficKeys(serverHello, secret);
   const header = Buffer.from([23, 3, 3, 0, 19]);
-  const seal = createCipheriv(cipher, expandLabel("key", keyLength), expandLabel("iv", 12), { authTagLength: 16 });
+  const seal = createCipheriv(cipher, key, iv, { authTagLength: 16 });
   seal.setAAD(header);
   return Buffer.concat([header, seal.update(Buffer.from([1, 0, 21])), seal.final(), seal.getAuthTag()]);
+}
+
+// The length of the server's first flight: all records up to the one that
+// completes its Finished. 0 while `bytes` does not hold the whole flight. The
+// relay opens the records under the server's handshake traffic secret to find
+// the Finished, so the way TCP splits the flight does not matter.
+function flightLength(bytes, secret) {
+  let keys;
+  let messages = Buffer.alloc(0);
+  let sequence = 0;
+  for (let at = 0; at + 5 <= bytes.length; ) {
+    const end = at + 5 + bytes.readUInt16BE(at + 3);
+    if (end > bytes.length) return 0;
+    if (bytes[at] === 23) {
+      keys ??= trafficKeys(bytes, secret);
+      const nonce = Buffer.from(keys.iv);
+      nonce[11] ^= sequence++;
+      const open = createDecipheriv(keys.cipher, keys.key, nonce, { authTagLength: 16 });
+      open.setAAD(bytes.subarray(at, at + 5));
+      open.setAuthTag(bytes.subarray(end - 16, end));
+      const inner = Buffer.concat([open.update(bytes.subarray(at + 5, end - 16)), open.final()]);
+      // A record holds its content, then the content type, then zero padding.
+      const contentType = inner.findLastIndex(byte => byte !== 0);
+      messages = Buffer.concat([messages, inner.subarray(0, contentType)]);
+      for (let message = 0; message + 4 <= messages.length; ) {
+        const next = message + 4 + messages.readUIntBE(message + 1, 3);
+        if (next > messages.length) break;
+        // Handshake message type 20 is Finished.
+        if (messages[message] === 20) return end;
+        message = next;
+      }
+    }
+    at = end;
+  }
+  return 0;
 }
 
 function wire(bytes) {
@@ -95,31 +134,16 @@ const inSecureConnect = {
   "destroySoon()": socket => socket.destroySoon(),
 };
 
-const backpressured = " while another TLS socket is backpressured";
-
-// A TLS connection of this process whose peer is a TCP relay. `stall()` makes
-// the relay stop reading and writes 32 MB: the kernel takes a part, and the
-// rest of the sealed records waits in the TLS layer.
+// A second TLS connection of this process.
 async function secondConnection() {
   const server = tls.createServer({ key: pem("agent1-key.pem"), cert: pem("agent1-cert.pem") }, socket => {
     socket.on("error", () => {});
     socket.resume();
   });
   await once(server.listen(0, "127.0.0.1"), "listening");
-  let downstream;
-  const relay = net.createServer(socket => {
-    downstream = socket;
-    const upstream = net.connect(server.address().port, "127.0.0.1");
-    downstream.on("data", chunk => upstream.write(chunk));
-    upstream.on("data", chunk => downstream.write(chunk));
-    downstream.on("error", () => upstream.destroy());
-    upstream.on("error", () => downstream.destroy());
-    downstream.on("close", () => upstream.destroy());
-  });
-  await once(relay.listen(0, "127.0.0.1"), "listening");
   const socket = tls.connect({
     host: "127.0.0.1",
-    port: relay.address().port,
+    port: server.address().port,
     ca: pem("ca1-cert.pem"),
     servername: "agent1",
   });
@@ -127,26 +151,16 @@ async function secondConnection() {
   await once(socket, "secureConnect");
   return {
     socket,
-    stall() {
-      downstream.pause();
-      socket.write(Buffer.alloc(32 * 1024 * 1024));
-    },
     close() {
       socket.destroy();
-      downstream.destroy();
-      relay.close();
       server.close();
     },
   };
 }
 
-export async function report(fullMode, version) {
-  const mode = fullMode.endsWith(backpressured) ? fullMode.slice(0, -backpressured.length) : fullMode;
+export async function report(mode, version) {
   const second =
-    mode !== fullMode || mode === "checkServerIdentity function that writes to another TLS socket"
-      ? await secondConnection()
-      : null;
-  if (mode !== fullMode) second.stall();
+    mode === "checkServerIdentity function that writes to another TLS socket" ? await secondConnection() : null;
   // agent1 is signed by ca1 and names only "agent1".
   let serverSaw = Promise.withResolvers();
   const server = tls.createServer({
@@ -169,28 +183,36 @@ export async function report(fullMode, version) {
     socket.on("close", () => serverSaw.resolve({ event: "secureConnection", peerCN, data, error }));
   });
   server.on("tlsClientError", error => serverSaw.resolve({ event: "tlsClientError", code: error.code }));
-  const serverSecret = Promise.withResolvers();
+  // The server derives its secrets before it sends the flight they protect.
+  const secrets = {};
   server.on("keylog", line => {
     const [label, , secret] = line.toString().trim().split(" ");
-    if (label === "SERVER_TRAFFIC_SECRET_0") serverSecret.resolve(Buffer.from(secret, "hex"));
+    secrets[label] = Buffer.from(secret, "hex");
   });
   await once(server.listen(0, "127.0.0.1"), "listening");
+
+  // What the relay puts behind the server's Finished, in the same write.
+  const behindFinished = {
+    "a junk record behind the server's Finished": () => junkRecord,
+    "a close_notify behind the server's Finished": flight => sealedCloseNotify(flight, secrets.SERVER_TRAFFIC_SECRET_0),
+  }[mode];
 
   let fromClient = [];
   const relay = net.createServer(downstream => {
     fromClient = [];
-    let serverChunks = 0;
+    let flight = behindFinished ? Buffer.alloc(0) : null;
     const upstream = net.connect(server.address().port, "127.0.0.1");
     downstream.on("data", chunk => {
       fromClient.push(chunk);
       upstream.write(chunk);
     });
-    upstream.on("data", async chunk => {
-      // The server's first chunk is its whole flight, up to its Finished.
-      if (serverChunks++ === 0 && mode === "a junk record behind the server's Finished") {
-        chunk = Buffer.concat([chunk, junkRecord]);
-      } else if (serverChunks === 1 && mode === "a close_notify behind the server's Finished") {
-        chunk = Buffer.concat([chunk, sealedCloseNotify(chunk, await serverSecret.promise)]);
+    upstream.on("data", chunk => {
+      if (flight) {
+        flight = Buffer.concat([flight, chunk]);
+        const length = flightLength(flight, secrets.SERVER_HANDSHAKE_TRAFFIC_SECRET);
+        if (!length) return;
+        chunk = Buffer.concat([flight.subarray(0, length), behindFinished(flight), flight.subarray(length)]);
+        flight = null;
       }
       downstream.write(chunk);
     });

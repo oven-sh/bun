@@ -2623,7 +2623,6 @@ describe("how a TLS client's way of closing reaches the server", () => {
     alerts: 0,
   });
   const altnameInvalid = "error:ERR_TLS_CERT_ALTNAME_INVALID";
-  const backpressured = " while another TLS socket is backpressured";
 
   const rows = [
     ["TLSv1.3", "checkServerIdentity", turnedDown(altnameInvalid, "close:true")],
@@ -2639,10 +2638,6 @@ describe("how a TLS client's way of closing reaches the server", () => {
     ["TLSv1.3", "destroy() from queueMicrotask", turnedDown("close:false")],
     ["TLSv1.3", "destroy() on a resumed session", turnedDown("reused:true", "close:false")],
     ["TLSv1.2", "destroy() on a resumed session", turnedDown("reused:true", "close:false")],
-
-    // The flight is held with or without other traffic on the event loop.
-    ["TLSv1.3", "checkServerIdentity" + backpressured, turnedDown(altnameInvalid, "close:true")],
-    ["TLSv1.3", "destroy()" + backpressured, turnedDown("close:false")],
     [
       "TLSv1.3",
       "checkServerIdentity function that writes to another TLS socket",
@@ -2653,7 +2648,6 @@ describe("how a TLS client's way of closing reaches the server", () => {
     ["TLSv1.3", "end()", delivered("", 1)],
     ["TLSv1.3", "end(data)", delivered("hello", 1)],
     ["TLSv1.3", "destroySoon()", delivered("", 1)],
-    ["TLSv1.3", "end()" + backpressured, delivered("", 1)],
 
     // In a full TLS 1.2 handshake the client's flight leaves before the server's Finished.
     ["TLSv1.2", "checkServerIdentity", delivered("", 0, [altnameInvalid, "close:true"])],

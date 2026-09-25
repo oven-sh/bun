@@ -7145,10 +7145,11 @@ declare module "bun" {
      * `close_notify` alert.
      *
      * Called from the `handshake` callback of a TLS socket, `close()` turns the
-     * peer down: the rest of the handshake is not sent. For a TLS 1.3 client
-     * that includes its certificate. {@link terminate terminate()} does the
-     * same. A socket with no `handshake` callback gets its `open` callback at
-     * that point, so the same holds there.
+     * peer down: Bun drops the part of the handshake that it has not sent yet.
+     * For a TLS 1.3 client that is usually its last flight, which carries the
+     * client certificate. {@link terminate terminate()} does the same. A socket
+     * with no `handshake` callback gets its `open` callback at that point, so
+     * the same holds there.
      *
      * Use {@link end end()} for a graceful close.
      *

@@ -332,6 +332,7 @@ const kOnreadPendingEnd = Symbol("kOnreadPendingEnd");
 const kOnreadReadRequested = Symbol("kOnreadReadRequested");
 const kOnreadEmptyTail = Buffer.alloc(0);
 const kwriteCallback = Symbol("writeCallback");
+const kshutdownCallback = Symbol("shutdownCallback");
 const kSocketClass = Symbol("kSocketClass");
 
 // A completed write whose status is a negative errno: Node hands it to the write
@@ -385,12 +386,23 @@ function writeErrnoException(negErrno) {
   }
   return er;
 }
-function endNT(socket, callback, err) {
+function endNT(socket, callback, self) {
   // Node's _final half-closes the writable side (sends FIN) and leaves the
   // readable side open; the Duplex's allowHalfOpen drives the eventual destroy.
   // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/net.js#L500
-  socket.shutdown();
-  callback(err);
+  if (socket.shutdown()) {
+    callback();
+    return;
+  }
+  // A wrapped Duplex still holds the close_notify; its drain or close completes this.
+  self[kshutdownCallback] = callback;
+}
+function completeShutdown(self, socket) {
+  const callback = self[kshutdownCallback];
+  if (callback && (!socket || socket.shutdown())) {
+    self[kshutdownCallback] = null;
+    callback();
+  }
 }
 function emitCloseNT(self, hasError) {
   self.emit("close", hasError);
@@ -415,6 +427,8 @@ function destroyNT(self, err) {
 // Node's wrap 'close' -> destroy(): https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L739-L741
 function onUpgradedClose(self, connection) {
   if (self[kupgraded] !== connection) return;
+  // Before the destroy, so _final still finishes (Node: doClose -> ECANCELED, ignored).
+  completeShutdown(self, null);
   // The stream-level engine reads its transport with no backpressure, so the
   // transport can close after the peer's EOF with plaintext still unread.
   if ((self[kended] || self[kOnreadPendingEnd]) && !self.readableEnded) self.once("end", self[kOnUpgradedClose]);
@@ -676,6 +690,7 @@ const SocketHandlers = {
 
       self[kBytesWritten] = socket.bytesWritten;
     }
+    completeShutdown(self, socket);
   },
   end(socket) {
     const self = socket.data;
@@ -873,6 +888,7 @@ function SocketEmitEndNT(self, _err?) {
       const er = new ErrnoException(errErrno, "read") as Error & { code?: string };
       if (typeof er.code === "string" && /^E[A-Z0-9]+$/.test(er.code)) {
         self.destroy(er);
+        completeShutdown(self, null);
         return;
       }
     }
@@ -891,6 +907,7 @@ function SocketEmitEndNT(self, _err?) {
       // Any other coded error (ETIMEDOUT, EPIPE, ...) keeps its identity.
       self.destroy(_err);
     }
+    completeShutdown(self, null);
     return;
   }
   if (!self[kended]) {
@@ -911,6 +928,7 @@ function SocketEmitEndNT(self, _err?) {
     self[kwriteCallback] = null;
     pendingWrite(_err ?? $ERR_SOCKET_CLOSED());
   }
+  if (self[kclosed] || self.destroyed) completeShutdown(self, null);
 }
 
 // --- SNICallback dispatch helpers (hoisted: no per-handshake closures) ---
@@ -1513,6 +1531,7 @@ const SocketHandlers2 = {
         self._pendingData = null;
       }
     }
+    completeShutdown(self, socket);
   },
   end(socket) {
     $debug("Bun.Socket end");
@@ -1569,6 +1588,7 @@ const SocketHandlers2 = {
         // enum values are filtered out in NewSocket::on_close).
         self.destroy(err);
       }
+      completeShutdown(self, null);
       return;
     }
     if (!leftToTLSSocket && !deferEndForOnreadTail(self)) finishSocketEnd(self);
@@ -1580,6 +1600,7 @@ const SocketHandlers2 = {
       self[kwriteCallback] = null;
       pendingWrite($ERR_SOCKET_CLOSED());
     }
+    completeShutdown(self, null);
   },
   handshake(socket, success, verifyError) {
     $debug("Bun.Socket handshake");
@@ -1798,6 +1819,7 @@ function Socket(options?): void {
   // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L401
   this[kTimeout] = null;
   this[kwriteCallback] = undefined;
+  this[kshutdownCallback] = undefined;
   this._pendingData = undefined;
   this._pendingEncoding = undefined; // for compatibility
   this._hadError = false;
@@ -2458,7 +2480,7 @@ Socket.prototype._final = function _final(callback) {
   if (!socket) return callback();
 
   // emit FIN allowHalfOpen only allow the readable side to close first
-  process.nextTick(endNT, socket, callback);
+  process.nextTick(endNT, socket, callback, this);
 };
 
 Object.defineProperty(Socket.prototype, "localAddress", {

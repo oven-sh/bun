@@ -120,6 +120,102 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
     expect(received.equals(payload)).toBe(true);
   });
 
+  test("send → short write of the last TLS batch holds write(cb) until the spilled ciphertext reached the kernel", async () => {
+    // us_internal_ssl_write flushes a batch of sealed records after the last
+    // SSL_write and reports the whole plaintext as written even when that
+    // flush was partial: the rest waits in the loop's spill slot for a
+    // writable event. write(cb) must not run before then, or an exit() in the
+    // callback cuts the stream short (node: "when the data is finally written
+    // out"). The client runs in a child so its exit is the real thing, and
+    // the fault table stays out of this process.
+    const payloadLen = 64 * 1024;
+    const server = tls.createServer({ key: certs.key, cert: certs.cert });
+    let received = 0;
+    const done = Promise.withResolvers<void>();
+    server.on("secureConnection", s => {
+      s.on("error", () => {});
+      s.on("data", c => (received += c.length));
+      s.on("close", () => done.resolve());
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const port = (server.address() as import("node:net").AddressInfo).port;
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          /* js */ `
+            const tls = require("node:tls");
+            const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+            const socket = tls.connect({ port: ${port}, host: "127.0.0.1", ca: ${JSON.stringify(certs.cert)} }, () => {
+              // Every send from here on takes 4 KiB: the 64 KiB batch below is
+              // a partial flush, and its remainder drains over later writable events.
+              fault.set({ syscall: "send", action: "short", bytes: 4096, repeat: -1 });
+              socket.write(Buffer.alloc(${payloadLen}, 97), () => process.exit(0));
+            });
+            socket.on("error", err => { console.error(err); process.exit(1); });
+          `,
+        ],
+        env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      await done.promise;
+      expect(received).toBe(payloadLen);
+    } finally {
+      server.close();
+    }
+  });
+
+  test("send → short write of the last TLS batch still closes a Bun.connect socket with no drain handler after end()", async () => {
+    // The end-after-flush close waits for the spill too. That wait ends on
+    // the writable event, which must run the native flush even when the
+    // handlers have no `drain`.
+    const payloadLen = 64 * 1024;
+    const server = tls.createServer({ key: certs.key, cert: certs.cert });
+    let received = 0;
+    const ended = Promise.withResolvers<void>();
+    server.on("secureConnection", s => {
+      s.on("error", () => {});
+      s.on("data", c => (received += c.length));
+      s.on("end", () => ended.resolve());
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const port = (server.address() as import("node:net").AddressInfo).port;
+    let socket: Awaited<ReturnType<typeof Bun.connect>> | undefined;
+    try {
+      socket = await Bun.connect({
+        hostname: "127.0.0.1",
+        port,
+        tls: { ca: certs.cert },
+        socket: {
+          data() {},
+          handshake(socket) {
+            fault.set({ syscall: "send", action: "short", bytes: 4096, repeat: -1 });
+            socket.write(Buffer.alloc(payloadLen, 98));
+            socket.end();
+          },
+          error(_, err) {
+            ended.reject(err);
+          },
+          close() {
+            ended.reject(new Error("closed before the peer saw end"));
+          },
+        },
+      });
+      await ended.promise;
+      expect(received).toBe(payloadLen);
+    } finally {
+      fault.clear();
+      socket?.terminate();
+      server.close();
+    }
+  });
+
   test("recv → 0 (peer closed) on established session emits 'end' without 'error'", async () => {
     using p = await connectedTLSPair();
     let gotError: unknown = null;

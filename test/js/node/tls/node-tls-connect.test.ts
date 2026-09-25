@@ -3,6 +3,7 @@ import { describe, expect, it } from "bun:test";
 import { once } from "events";
 import { writeFileSync } from "fs";
 import { bunEnv, bunExe, tls as COMMON_CERT_, isASAN, nodeExe, tempDir } from "harness";
+import http2 from "http2";
 import https from "https";
 import net from "net";
 import { join } from "path";
@@ -1297,6 +1298,218 @@ describe("a TLS socket over a Duplex transport follows that transport's teardown
       alive = nativeSockets() - baseline;
     }
     expect(alive).toBeLessThanOrEqual(count / 2);
+  });
+});
+
+describe("a write callback on a TLS socket over a Duplex waits for the transport", () => {
+  // Node's JSStreamSocket passes its own callback into `stream.write(chunk, cb)`
+  // and completes the TLS write only when the stream calls it, so `write(cb)`
+  // and `end(cb)` mean "the transport took the ciphertext". The transport's
+  // boolean return does not carry this: a small chunk stays under the
+  // highWaterMark, so write() returns true while _write has not completed.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js
+  // Two in-memory duplexes. Once `stall()` ran, the side named by `stalls`
+  // queues each ciphertext chunk with its write callback instead of
+  // delivering it, until `release()`.
+  function makePair(stalls: "server" | "client") {
+    const held: [Buffer, () => void][] = [];
+    let stalled = false;
+    const makeSide = (peer: () => Duplex, name: "server" | "client") =>
+      new Duplex({
+        read() {},
+        write(chunk: Buffer, _encoding, callback) {
+          if (stalled && name === stalls) {
+            held.push([chunk, callback]);
+            return;
+          }
+          peer().push(chunk);
+          callback();
+        },
+        final(callback) {
+          peer().push(null);
+          callback();
+        },
+      });
+    const clientSide: Duplex = makeSide(() => serverSide, "client");
+    const serverSide: Duplex = makeSide(() => clientSide, "server");
+    return {
+      clientSide,
+      serverSide,
+      held,
+      stall: () => (stalled = true),
+      release() {
+        stalled = false;
+        for (const [chunk, callback] of held.splice(0)) {
+          (stalls === "server" ? clientSide : serverSide).push(chunk);
+          callback();
+        }
+      },
+    };
+  }
+  const serverContext = () => ({ isServer: true, secureContext: tls.createSecureContext(COMMON_CERT_) });
+
+  // Both sockets, destroyed when the `using` scope ends, so a failed
+  // assertion does not leave two engines behind.
+  function connectPair(pair: ReturnType<typeof makePair>, clientOptions: tls.ConnectionOptions = {}) {
+    const server = new TLSSocket(pair.serverSide, serverContext());
+    const client = tls.connect({ socket: pair.clientSide, rejectUnauthorized: false, ...clientOptions });
+    return {
+      server,
+      client,
+      [Symbol.dispose]() {
+        client.destroy();
+        server.destroy();
+      },
+    };
+  }
+
+  async function run(pair: ReturnType<typeof makePair>, writer: "server" | "client", method: "write" | "end") {
+    using sockets = connectPair(pair);
+    const { server, client } = sockets;
+    const failed = Promise.withResolvers<never>();
+    server.on("error", failed.reject);
+    client.on("error", failed.reject);
+    const [from, to] = writer === "server" ? [server, client] : [client, server];
+    let received = "";
+    to.on("data", (chunk: Buffer) => (received += chunk));
+    await Promise.race([once(client, "secureConnect"), failed.promise]);
+
+    // Everything up to here reached the peer. The transport takes the next
+    // chunk but does not complete it until `release()`.
+    pair.stall();
+    const atCallback = Promise.withResolvers<{ received: string; queued: number }>();
+    from[method]("x", () => atCallback.resolve({ received, queued: pair.held.length }));
+    // The ciphertext for "x" is queued in the transport by now. A callback
+    // that ran before this turn ran too early.
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(pair.held.length).toBeGreaterThan(0);
+    pair.release();
+
+    expect(await Promise.race([atCallback.promise, failed.promise])).toEqual({ received: "x", queued: 0 });
+  }
+
+  describe.each(["write", "end"] as const)("%s(data, cb)", method => {
+    it("on a server-side TLSSocket fires after the stalled transport completes the write", async () => {
+      await run(makePair("server"), "server", method);
+    });
+    it("on tls.connect({ socket }) fires after the stalled transport completes the write", async () => {
+      await run(makePair("client"), "client", method);
+    });
+  });
+
+  it("a transport write error fails the write with EPIPE and leaves the transport's own 'error'", async () => {
+    // Node's JSStreamSocket maps the stream's write error to UV_EPIPE on the
+    // TLS write request, after the stream has handled it itself.
+    const pair = makePair("server");
+    using sockets = connectPair(pair);
+    const { server, client } = sockets;
+    client.on("error", () => {});
+    const log: string[] = [];
+    const done = Promise.withResolvers<void>();
+    pair.serverSide.on("error", err => log.push(`transport error ${err.message}`));
+    server.on("error", (err: NodeJS.ErrnoException) => log.push(`socket error ${err.code}`));
+    server.on("close", () => done.resolve());
+    await once(client, "secureConnect");
+
+    // The transport's next write fails. `stall()` parks it, so the failure
+    // can be injected through the held callback.
+    pair.stall();
+    server.write("x", (err: NodeJS.ErrnoException) => log.push(`write cb ${err?.code}`));
+    await new Promise<void>(resolve => setImmediate(resolve));
+    const [, callback] = pair.held.splice(0)[0];
+    callback(new Error("transport boom"));
+
+    await done.promise;
+    expect(log.sort()).toEqual(["socket error EPIPE", "transport error transport boom", "write cb EPIPE"]);
+  });
+
+  it("end(cb) completes with no error when the transport closes before it takes the close_notify", async () => {
+    // Node cancels the pending shutdown on close and afterShutdown ignores
+    // that status, so 'finish' still follows.
+    const pair = makePair("server");
+    using sockets = connectPair(pair);
+    const { server, client } = sockets;
+    client.on("error", () => {});
+    client.on("data", () => {});
+    const log: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    server.on("error", (err: NodeJS.ErrnoException) => log.push(`error ${err.code}`));
+    server.on("finish", () => log.push("finish"));
+    server.on("close", () => closed.resolve());
+    await once(client, "secureConnect");
+
+    pair.stall();
+    server.end(err => log.push(`end cb ${err ? (err as NodeJS.ErrnoException).code : null}`));
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(pair.held.length).toBe(1);
+    pair.serverSide.destroy();
+
+    await closed.promise;
+    expect(log).toEqual(["end cb null", "finish"]);
+  });
+
+  it("a transport whose write() runs the callback synchronously delivers a pre-handshake write once", async () => {
+    // A Writable defers the callback, a custom write() need not. The drain
+    // would then re-enter the flush that issued the write, with the plaintext
+    // still on the buffer, and send it again without end.
+    class SyncSide extends Duplex {
+      peer!: SyncSide;
+      _read() {}
+      write(chunk: Buffer, encoding: unknown, callback?: (err?: Error) => void): boolean {
+        if (typeof encoding === "function") callback = encoding as typeof callback;
+        this.peer.push(chunk);
+        callback?.();
+        return true;
+      }
+      _final(callback: () => void) {
+        this.peer.push(null);
+        callback();
+      }
+    }
+    const serverSide = new SyncSide();
+    const clientSide = new SyncSide();
+    serverSide.peer = clientSide;
+    clientSide.peer = serverSide;
+    using sockets = connectPair({ serverSide, clientSide } as ReturnType<typeof makePair>);
+    const { server, client } = sockets;
+    const failed = Promise.withResolvers<never>();
+    server.on("error", failed.reject);
+    client.on("error", failed.reject);
+    let received = "";
+    const got = Promise.withResolvers<void>();
+    server.on("data", (chunk: Buffer) => {
+      received += chunk;
+      got.resolve();
+    });
+    const written = Promise.withResolvers<void>();
+    client.write("x", () => written.resolve());
+    await Promise.race([Promise.all([written.promise, got.promise]), failed.promise]);
+    // One more turn for any repeat the recursion would produce.
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(received).toBe("x");
+  });
+
+  it("end(cb) completes while an http2 parser owns the socket's drain", async () => {
+    // An http2 client whose server did not negotiate h2 calls socket.end()
+    // and then attaches its native parser. That parser takes the native
+    // drain, so a parked end callback has to complete through the JS drain
+    // anyway. The peer's replies are stalled, so no close can complete it.
+    const pair = makePair("server");
+    using sockets = connectPair(pair, { ALPNProtocols: ["h2"] });
+    const { server, client } = sockets;
+    server.on("error", () => {});
+    server.on("data", () => {});
+    const log: string[] = [];
+    await once(client, "secureConnect");
+    const finished = once(client, "finish").then(() => log.push("finish"));
+    const session = http2.connect("https://localhost", { createConnection: () => client });
+    session.on("error", (err: NodeJS.ErrnoException) => {
+      log.push(`session error ${err.code}`);
+      pair.stall();
+    });
+    await finished;
+    expect(log).toEqual(["session error ERR_HTTP2_ERROR", "finish"]);
+    session.destroy();
   });
 });
 

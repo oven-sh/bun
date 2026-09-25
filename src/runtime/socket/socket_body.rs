@@ -943,13 +943,17 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(());
         }
         if this.native_callback.get().on_writable() {
-            return Ok(());
+            // The native drain ran JS that can close the socket; past a shutdown a parked end callback needs the JS drain.
+            if !this.has_handlers()
+                || this.socket.get().is_detached()
+                || !this.socket.get().is_shutdown()
+            {
+                return Ok(());
+            }
         }
         let handlers = this.get_handlers();
+        // The native flush (and the end-after-flush close) runs with or without a JS drain handler.
         let callback = handlers.on_writable();
-        if callback.is_empty() {
-            return Ok(());
-        }
 
         // Hold the socket alive for the rest of the dispatch: `internal_flush`
         // and the drain callback can both re-enter JS and close it.
@@ -1000,7 +1004,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             this.buffered_data_for_node_net.get().len()
         );
         // is not writable if we have buffered data or if we are already detached
-        if this.buffered_data_for_node_net.get().len() > 0 || this.socket.get().is_detached() {
+        if this.buffered_data_for_node_net.get().len() > 0
+            || this.socket.get().is_detached()
+            || callback.is_empty()
+        {
             return Ok(());
         }
 
@@ -2662,7 +2669,9 @@ impl<const SSL: bool> NewSocket<SSL> {
                         // node:net fails the write like Node's onWriteComplete;
                         // -1 stays the legacy closed/shutdown sentinel.
                         JSValue::js_number(f64::from(wrote))
-                    } else if usize::try_from(wrote.max(0)).expect("int cast") == total {
+                    } else if usize::try_from(wrote.max(0)).expect("int cast") == total
+                        && this.flushed_to_transport()
+                    {
                         JSValue::TRUE
                     } else {
                         JSValue::FALSE
@@ -2670,6 +2679,12 @@ impl<const SSL: bool> NewSocket<SSL> {
                 }
             },
         )
+    }
+
+    /// `false` parks the node:net callback until the transport drains (a BYPASS_TLS twin gets none).
+    #[inline]
+    fn flushed_to_transport(&self) -> bool {
+        !SSL || self.flags.get().contains(Flags::BYPASS_TLS) || self.socket.get().transport_idle()
     }
 
     #[bun_jsc::host_fn(method)]
@@ -2694,7 +2709,10 @@ impl<const SSL: bool> NewSocket<SSL> {
                     let _ = this.internal_flush();
                 }
 
-                JSValue::from(usize::try_from(wrote.max(0)).expect("int cast") == total)
+                JSValue::from(
+                    usize::try_from(wrote.max(0)).expect("int cast") == total
+                        && this.flushed_to_transport(),
+                )
             }
         };
         Ok(result)
@@ -3085,6 +3103,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             && flags.contains(Flags::END_AFTER_FLUSH)
             && !flags.contains(Flags::EMPTY_PACKET_PENDING)
             && self.buffered_data_for_node_net.get().len() == 0
+            && self.flushed_to_transport()
     }
 
     /// Flushes the node:net buffered tail. Returns 0, or the positive errno of
@@ -3225,7 +3244,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             this.socket.get().shutdown();
         }
 
-        Ok(JSValue::UNDEFINED)
+        // `false`: a drain completes it, like a `$write` that returns false.
+        Ok(JSValue::from(this.flushed_to_transport()))
     }
 
     #[bun_jsc::host_fn(method)]

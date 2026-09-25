@@ -296,6 +296,15 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         )
     }
 
+    /// No byte `write` counted still waits in the TLS spill or on a Duplex callback.
+    pub fn transport_idle(&self) -> bool {
+        match self.socket {
+            InternalSocket::Connected(s) => sock(s).ssl_spill_pending() == 0,
+            InternalSocket::UpgradedDuplex(d) => duplex(d).transport_idle(),
+            _ => true,
+        }
+    }
+
     #[inline]
     pub fn is_closed_or_has_error(&self) -> bool {
         self.is_closed() || self.is_shutdown() || self.get_error() != 0

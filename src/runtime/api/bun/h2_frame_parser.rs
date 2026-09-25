@@ -1127,6 +1127,8 @@ pub(crate) struct H2FrameParser {
     /// nghttp2 servers reject a GOAWAY naming a client-initiated id with a connection
     /// PROTOCOL_ERROR (node's last_proc_stream_id semantics).
     last_peer_stream_id: Cell<u32>,
+    /// The lowest last-stream-id of the GOAWAY frames `send_go_away` has written.
+    sent_goaway_last_stream_id: Cell<Option<u32>>,
     is_server: Cell<bool>,
     /// A frame callback left an exception pending in this batch (`Sink::should_stop`).
     left_exception: Cell<bool>,
@@ -2225,6 +2227,12 @@ impl H2FrameParser {
         value = value.swap_bytes();
         let _ = stream.write_all(&value.to_ne_bytes());
 
+        // Before the write: a JS-backed socket can feed the peer's reply back in from inside it.
+        self.sent_goaway_last_stream_id.set(Some(
+            self.sent_goaway_last_stream_id
+                .get()
+                .map_or(last_stream_id, |sent| sent.min(last_stream_id)),
+        ));
         let _ = self.write(&buffer);
         if !debug_data.is_empty() {
             let _ = self.write(debug_data);
@@ -3942,6 +3950,10 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         // node (Http2Session::OnBeginHeadersCallback): a new inbound stream is refused when the
         // session is over its maxSessionMemory budget.
         !self.is_over_session_memory_limit()
+    }
+
+    fn sent_goaway_last_stream_id(&self) -> Option<u32> {
+        self.sent_goaway_last_stream_id.get()
     }
 
     fn is_local_stream(&self, stream_id: u32) -> bool {
@@ -7467,6 +7479,7 @@ impl H2FrameParser {
             strict_single_value_fields: Cell::new(true),
             last_stream_id: Cell::new(0),
             last_peer_stream_id: Cell::new(0),
+            sent_goaway_last_stream_id: Cell::new(None),
             is_server: Cell::new(false),
             left_exception: Cell::new(false),
             write_buffer: JsCell::new(Vec::<u8>::default()),

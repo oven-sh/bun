@@ -4158,7 +4158,14 @@ class ServerHttp2Session extends Http2Session {
       headersTuple: [string[], Record<string, any>, string[] | undefined],
       flags: number,
     ) {
-      if (!self || typeof stream !== "object" || self.closed || stream.closed) return;
+      if (!self || typeof stream !== "object" || stream.closed) return;
+      if (self.closed) {
+        // node refuses it too: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L373-L381
+        if ((stream[bunHTTP2StreamStatus] & StreamState.Delivered) === 0) {
+          self.#parser?.rstStream(stream.id, constants.NGHTTP2_REFUSED_STREAM);
+        }
+        return;
+      }
       const requestPerf = stream[kPerfState];
       if (requestPerf !== undefined && requestPerf.firstHeader === 0) {
         requestPerf.firstHeader = performance.now() - requestPerf.start;

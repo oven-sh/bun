@@ -12,7 +12,7 @@ import { bunEnv, bunExe, gcTick, normalizeBunSnapshot } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
-import { Writable } from "node:stream";
+import { Duplex, duplexPair, Writable } from "node:stream";
 
 const PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "latin1");
 
@@ -56,14 +56,15 @@ function encodeFrame(type: number, flags: number, streamId: number, payload: Buf
 
 /** A minimal raw HTTP/2 client: send arbitrary frames, collect parsed inbound frames. */
 class RawH2 {
-  socket: net.Socket;
+  socket: Duplex;
   private buf: Buffer = Buffer.alloc(0);
   frames: Frame[] = [];
   closed = false;
   private waiters: Array<{ pred: (f: Frame) => boolean; resolve: (f: Frame) => void }> = [];
 
-  constructor(port: number) {
-    this.socket = net.connect(port, "127.0.0.1");
+  /** `target`: the server's port, or the client half of a `duplexPair()`. */
+  constructor(target: number | Duplex) {
+    this.socket = typeof target === "number" ? net.connect(target, "127.0.0.1") : target;
     this.socket.on("data", d => this.onData(d));
     this.socket.on("close", () => (this.closed = true));
     this.socket.on("error", () => {});
@@ -1711,6 +1712,272 @@ describe("inbound stream lifecycle", () => {
       expect(resp.type).toBe(FrameType.HEADERS);
       expect(c.frames.find(f => f.type === FrameType.GOAWAY)).toBeUndefined();
       expect(seen).toEqual([{ path: "/" }, { path: "/", sync: "1" }]);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+});
+
+// A request can cross the server's GOAWAY on the wire. RFC 9113 §6.8 lets the sender of the
+// GOAWAY discard frames on streams above its last-stream-id: the header block still goes through
+// HPACK, DATA still counts toward the connection window, and nothing else happens. nghttp2 does
+// that for node, so such a request never reaches JS and never delays the end of a graceful close.
+describe("requests that cross the server's GOAWAY (RFC 9113 §6.8)", () => {
+  /** A server that calls `shutdown(session)` from its first 'stream' event and answers a request
+   *  once its body ends. Streams that reach JS are recorded in `seen`. Over "duplexPair" each
+   *  write of the client is exactly one read of the server. */
+  async function shuttingDownSession(
+    shutdown: (session: http2.ServerHttp2Session) => void,
+    transport: "tcp" | "duplexPair" = "tcp",
+  ) {
+    const seen: number[] = [];
+    const sessionClosed = Promise.withResolvers<void>();
+    /** Wait for the session's 'close' event. */
+    const waitSessionClosed = (timeoutMs = 2000) =>
+      new Promise<void>((resolve, reject) => {
+        const t = setTimeout(() => reject(new Error("session did not close")), timeoutMs);
+        sessionClosed.promise.then(() => {
+          clearTimeout(t);
+          resolve();
+        });
+      });
+    const server = http2.createServer();
+    server.on("session", session => session.on("close", () => sessionClosed.resolve()));
+    server.on("stream", (stream: any) => {
+      seen.push(stream.id);
+      stream.on("error", () => {});
+      stream.on("end", () => {
+        // A failed test destroys the connection, which also ends the request.
+        if (stream.destroyed) return;
+        stream.respond({ ":status": 200 });
+        stream.end("ok");
+      });
+      stream.resume();
+      if (seen.length === 1) shutdown(stream.session);
+    });
+    let c: RawH2;
+    if (transport === "tcp") {
+      server.listen(0);
+      await once(server, "listening");
+      c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    } else {
+      const [clientSide, serverSide] = duplexPair();
+      server.emit("connection", serverSide);
+      c = new RawH2(clientSide);
+    }
+    c.sendPreface();
+    c.sendEmptySettings();
+    // A closed session waits 250ms for a SETTINGS ACK that is still due before it destroys itself.
+    await c.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0);
+    c.sendSettingsAck();
+    return { server, c, seen, waitSessionClosed };
+  }
+
+  function goawayFields(f: Frame) {
+    return { lastStreamId: f.payload.readUInt32BE(0), code: goawayErrorCode(f) };
+  }
+
+  const isErrorGoaway = (f: Frame) => f.type === FrameType.GOAWAY && goawayErrorCode(f) !== ErrorCode.NO_ERROR;
+  const endsStream = (id: number) => (f: Frame) =>
+    f.streamId === id && (f.type === FrameType.DATA || f.type === FrameType.HEADERS) && (f.flags & 0x1) === 1;
+
+  /** Ends request 1, then expects its response and the session 'close' while this client keeps
+   *  its side of the connection open. Over TCP the server's FIN closes the client's socket. */
+  async function expectGracefulCloseCompletes(c: RawH2, waitSessionClosed: () => Promise<void>) {
+    c.sendFrame(FrameType.DATA, 0x1, 1, Buffer.from("body"));
+    const frame = await c.waitFor(f => isErrorGoaway(f) || endsStream(1)(f));
+    expect(frame.type).toBe(FrameType.DATA);
+    if (c.socket instanceof net.Socket) await c.waitClosed();
+    await waitSessionClosed();
+  }
+
+  /** PING as a barrier: its ACK means that the server processed every frame sent before it. */
+  async function pingBarrier(c: RawH2) {
+    const opaque = Buffer.alloc(8, 0x42);
+    c.sendFrame(FrameType.PING, 0, 0, opaque);
+    const frame = await c.waitFor(
+      f => isErrorGoaway(f) || (f.type === FrameType.PING && (f.flags & 0x1) === 1 && f.payload.equals(opaque)),
+    );
+    expect(frame.type).toBe(FrameType.PING);
+  }
+
+  test.each([
+    ["in a later read than", "tcp"],
+    ["in the same read as", "duplexPair"],
+  ] as const)("ignores a request that arrives %s the request whose handler calls close()", async (_, transport) => {
+    const { server, c, seen, waitSessionClosed } = await shuttingDownSession(session => session.close(), transport);
+    try {
+      const first = encodeFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST"));
+      const second = encodeFrame(FrameType.HEADERS, 0x5, 3, requestHeaderBlock("GET"));
+      c.send(transport === "duplexPair" ? Buffer.concat([first, second]) : first);
+      expect(goawayFields(await c.waitForGoaway())).toEqual({ lastStreamId: 1, code: ErrorCode.NO_ERROR });
+      if (transport === "tcp") c.send(second);
+
+      await expectGracefulCloseCompletes(c, waitSessionClosed);
+      expect(seen).toEqual([1]);
+      expect(c.frames.filter(f => f.streamId === 3)).toEqual([]);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
+  test("keeps HPACK and the connection window in sync with the frames of an ignored request", async () => {
+    const { server, c, seen, waitSessionClosed } = await shuttingDownSession(session => session.close());
+    try {
+      c.sendFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST"));
+      await c.waitForGoaway();
+
+      // Request 3's block inserts `x-bun-sync: 1` into the HPACK dynamic table from its
+      // CONTINUATION half. Its body is more than half of the 65535-byte connection window.
+      const insert = Buffer.concat([Buffer.from([0x40]), hpackLiteral("x-bun-sync"), hpackLiteral("1")]);
+      const body = encodeFrame(FrameType.DATA, 0, 3, Buffer.alloc(16384, "a"));
+      const windowUpdate = Buffer.alloc(4);
+      windowUpdate.writeUInt32BE(1000, 0);
+      const priority = Buffer.alloc(5);
+      priority.writeUInt8(16, 4);
+      const cancel = Buffer.alloc(4);
+      cancel.writeUInt32BE(ErrorCode.CANCEL, 0);
+      c.send(
+        Buffer.concat([
+          encodeFrame(FrameType.HEADERS, 0, 3, requestHeaderBlock("POST")),
+          encodeFrame(FrameType.CONTINUATION, 0x4 /* END_HEADERS */, 3, insert),
+          body,
+          body,
+          body,
+        ]),
+      );
+      const update = await c.waitFor(f => isErrorGoaway(f) || (f.type === FrameType.WINDOW_UPDATE && f.streamId === 0));
+      expect(update.type).toBe(FrameType.WINDOW_UPDATE);
+
+      // The trailers of request 1 are 0xbe: indexed field 62, the entry that request 3's block
+      // inserted. If that block had not been decoded, they are a COMPRESSION_ERROR and request 1
+      // gets no response.
+      c.send(
+        Buffer.concat([
+          encodeFrame(FrameType.WINDOW_UPDATE, 0, 3, windowUpdate),
+          encodeFrame(FrameType.PRIORITY, 0, 3, priority),
+          encodeFrame(FrameType.RST_STREAM, 0, 3, cancel),
+          encodeFrame(FrameType.HEADERS, 0x5, 1, Buffer.from([0xbe])),
+        ]),
+      );
+      const frame = await c.waitFor(f => isErrorGoaway(f) || endsStream(1)(f));
+      expect(frame.type).toBe(FrameType.DATA);
+      await c.waitClosed();
+      await waitSessionClosed();
+      expect(seen).toEqual([1]);
+      expect(c.frames.filter(f => f.streamId === 3)).toEqual([]);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
+  test("ignores a DATA frame of an ignored request that arrives in one read or in two", async () => {
+    const { server, c, seen } = await shuttingDownSession(session => session.close(), "duplexPair");
+    try {
+      c.sendFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST"));
+      await c.waitForGoaway();
+      c.sendFrame(FrameType.HEADERS, 0x4, 3, requestHeaderBlock("POST"));
+      const data = encodeFrame(FrameType.DATA, 0, 3, Buffer.alloc(1024, "a"));
+      c.send(data);
+      c.send(data.subarray(0, 512));
+      c.send(data.subarray(512));
+      await pingBarrier(c);
+      expect(seen).toEqual([1]);
+      expect(c.frames.filter(f => f.streamId === 3)).toEqual([]);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
+  // §6.8: the last-stream-id of a later GOAWAY must not be higher, because the client can have
+  // sent request 3 again elsewhere. node v26.3.0 also names 1 in the second GOAWAY.
+  test("does not name an ignored request in the GOAWAY of a later connection error", async () => {
+    const { server, c, seen } = await shuttingDownSession(session => session.close());
+    try {
+      c.sendFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST"));
+      expect(goawayFields(await c.waitForGoaway())).toEqual({ lastStreamId: 1, code: ErrorCode.NO_ERROR });
+      // 0x80 is indexed field 0: a decoding error in every HPACK state (RFC 7541 §6.1).
+      c.sendFrame(FrameType.HEADERS, 0x5, 3, Buffer.from([0x80]));
+      expect(goawayFields(await c.waitFor(isErrorGoaway))).toEqual({
+        lastStreamId: 1,
+        code: ErrorCode.COMPRESSION_ERROR,
+      });
+      expect(seen).toEqual([1]);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
+  // node's onSessionHeaders: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L373-L381
+  test("refuses a request whose header block completes after close()", async () => {
+    // setImmediate: close() runs after the read that carries both HEADERS frames below.
+    const { server, c, seen, waitSessionClosed } = await shuttingDownSession(
+      session => setImmediate(() => session.close()),
+      "duplexPair",
+    );
+    try {
+      c.send(
+        Buffer.concat([
+          encodeFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST")),
+          encodeFrame(FrameType.HEADERS, 0x1 /* END_STREAM, no END_HEADERS */, 3, requestHeaderBlock("GET")),
+        ]),
+      );
+      // Last-stream-id 3: the server opened request 3 before close() ran. Only REFUSED_STREAM
+      // tells the client that it can send the request again.
+      expect(goawayFields(await c.waitForGoaway())).toEqual({ lastStreamId: 3, code: ErrorCode.NO_ERROR });
+      const rest = Buffer.concat([Buffer.from([0x40]), hpackLiteral("x-bun-sync"), hpackLiteral("1")]);
+      c.sendFrame(FrameType.CONTINUATION, 0x4 /* END_HEADERS */, 3, rest);
+      const rst = await c.waitFor(f => isErrorGoaway(f) || (f.type === FrameType.RST_STREAM && f.streamId === 3));
+      expect(rst.type).toBe(FrameType.RST_STREAM);
+      expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.REFUSED_STREAM);
+
+      await expectGracefulCloseCompletes(c, waitSessionClosed);
+      expect(seen).toEqual([1]);
+      expect(c.frames.filter(f => f.streamId === 3)).toEqual([rst]);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
+  test("ignores a request opened after goaway() while the session stays open", async () => {
+    const { server, c, seen } = await shuttingDownSession(session => session.goaway());
+    try {
+      c.sendFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST"));
+      expect(goawayFields(await c.waitForGoaway())).toEqual({ lastStreamId: 1, code: ErrorCode.NO_ERROR });
+      c.sendFrame(FrameType.HEADERS, 0x5, 3, requestHeaderBlock("GET"));
+      await pingBarrier(c);
+      expect(seen).toEqual([1]);
+      expect(c.frames.filter(f => f.streamId === 3)).toEqual([]);
+
+      c.sendFrame(FrameType.DATA, 0x1, 1, Buffer.from("body"));
+      const frame = await c.waitFor(f => isErrorGoaway(f) || endsStream(1)(f));
+      expect(frame.type).toBe(FrameType.DATA);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
+  // §6.8 graceful shutdown: the first GOAWAY names 2^31-1, and requests up to that id are still
+  // served until a later GOAWAY lowers it. nghttp2 ignores them after any GOAWAY, so on node such
+  // a request gets no answer.
+  test("serves a request at or below the last-stream-id of the GOAWAY that goaway() sent", async () => {
+    const { server, c, seen } = await shuttingDownSession(session =>
+      session.goaway(http2.constants.NGHTTP2_NO_ERROR, 2 ** 31 - 1),
+    );
+    try {
+      c.sendFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST"));
+      expect(goawayFields(await c.waitForGoaway())).toEqual({ lastStreamId: 2 ** 31 - 1, code: ErrorCode.NO_ERROR });
+      c.sendFrame(FrameType.HEADERS, 0x5, 3, requestHeaderBlock("GET"));
+      const frame = await c.waitFor(f => isErrorGoaway(f) || endsStream(3)(f));
+      expect(frame.type).toBe(FrameType.DATA);
+      expect(seen).toEqual([1, 3]);
     } finally {
       c.destroy();
       server.close();

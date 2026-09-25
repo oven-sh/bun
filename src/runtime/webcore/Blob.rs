@@ -847,16 +847,8 @@ impl BlobExt for Blob {
     }
 
     fn from_dom_form_data(global_this: &JSGlobalObject, form_data: &mut jsc::DOMFormData) -> Blob {
-        // "----WebKitFormBoundary" (22 bytes) + 32 lowercase-hex chars of a fresh UUID.
-        const BOUNDARY_PREFIX: &[u8; 22] = b"----WebKitFormBoundary";
-        let mut boundary_buf = [0u8; BOUNDARY_PREFIX.len() + 32];
-        let boundary: &[u8] = {
-            // SAFETY: bun_vm() never returns null for a Bun-owned global.
-            let random = global_this.bun_vm().as_mut().rare_data().next_uuid().bytes;
-            boundary_buf[..BOUNDARY_PREFIX.len()].copy_from_slice(BOUNDARY_PREFIX);
-            bun_core::fmt::bytes_to_hex_lower(&random, &mut boundary_buf[BOUNDARY_PREFIX.len()..]);
-            &boundary_buf
-        };
+        let boundary_buf = make_multipart_boundary(global_this);
+        let boundary: &[u8] = &boundary_buf;
 
         let mut context = FormDataContext {
             joiner: bun_core::string_joiner::StringJoiner::default(),
@@ -868,14 +860,12 @@ impl BlobExt for Blob {
         // string entry 8, plus 3 for the closing boundary.
         context.joiner.reserve(form_data.count() * 13 + 3);
 
-        // `bun_jsc::DOMFormData::for_each` yields the
-        // lower-tier `bun_jsc::dom_form_data::FormDataEntry`, whose `blob`
-        // field is `&bun_jsc::WebCore::Blob` (the forward-decl). The native
-        // pointer the C++ hands us is the `m_ctx` `*mut Blob`; reinterpret it
-        // as the runtime `&mut Blob` here. Driving the FFI directly (rather
-        // than going through `for_each`'s immutable wrapper) avoids a
-        // `&T → &mut T` cast. Every raw deref is wrapped locally; the safe fn
-        // item coerces to the callback-pointer type at `DOMFormData__forEach`.
+        // Every raw deref is wrapped locally; the safe fn item coerces to the
+        // callback-pointer type at `DOMFormData__forEach`.
+        //
+        // The strings and the Blob of an entry are owned by the `DOMFormData`.
+        // Nothing changes it before `joiner.done()` below, so each borrow
+        // taken here lives as long as the context that keeps it.
         extern "C" fn for_each_thunk(
             ctx_ptr: *mut c_void,
             name_: *mut EncodedSlice,
@@ -891,9 +881,9 @@ impl BlobExt for Blob {
                 FormDataEntry::String(unsafe { *value_ptr.cast::<EncodedSlice>() })
             } else {
                 FormDataEntry::File {
-                    // SAFETY: `value_ptr` is the C++ `JSBlob::m_ctx` (`*mut Blob`);
-                    // valid for the synchronous callback scope.
-                    blob: unsafe { &mut *value_ptr.cast::<Blob>() },
+                    // SAFETY: `value_ptr` is the C++ `JSBlob::m_ctx` (`*mut Blob`),
+                    // which the entry keeps alive.
+                    blob: unsafe { &*value_ptr.cast::<Blob>() },
                     filename: if filename.is_null() {
                         EncodedSlice::EMPTY
                     } else {
@@ -942,9 +932,7 @@ impl BlobExt for Blob {
             return Blob::init_empty(global_this);
         }
 
-        context.joiner.push_static(b"--");
-        context.joiner.push_static(boundary);
-        context.joiner.push_static(b"--\r\n");
+        write_multipart_closing_boundary(&mut context.joiner, boundary);
 
         let store = Store::init(
             context
@@ -3471,14 +3459,12 @@ use self::write_file::{WriteFilePromise, WriteFileWaitFromLockedValueTask};
 use bun_bundler::options_impl::LoaderExt as _;
 use bun_jsc::JsClass as _;
 
-/// Local mirror of `jsc.DOMFormData.FormDataEntry` (`union(enum) { string, file }`).
-/// `bun_jsc::dom_form_data::FormDataEntry` carries `&Blob` (immutable) but
-/// `FormDataContext::on_entry` needs `&mut Blob` to call `resolve_size()`, so
-/// we drive the C++ `DOMFormData__forEach` directly with this mutable variant.
+/// One entry of a `DOMFormData`, as `DOMFormData__forEach` yields it.
+#[derive(Clone, Copy)]
 pub(crate) enum FormDataEntry<'a> {
     String(EncodedSlice<'a>),
     File {
-        blob: &'a mut Blob,
+        blob: &'a Blob,
         filename: EncodedSlice<'a>,
     },
 }
@@ -3522,7 +3508,7 @@ where
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Stack-local helper for `Blob::from_dom_form_data`. `boundary` borrows the
-/// caller's `hex_buf` and `global_this` borrows the incoming `&JSGlobalObject`;
+/// caller's `boundary_buf` and `global_this` borrows the incoming `&JSGlobalObject`;
 /// both strictly outlive this struct, so they are stored as plain references
 /// rather than raw pointers.
 struct FormDataContext<'a> {
@@ -3591,34 +3577,105 @@ fn encode_form_data_component(bytes: &[u8], component: FormDataComponent) -> Opt
     Some(out.into_boxed_slice())
 }
 
-impl FormDataContext<'_> {
-    /// Append the UTF-8 view of a form-data string without copying it: the
-    /// borrowed case points into a WTF string owned by the `DOMFormData` being
-    /// serialized, which outlives `joiner.done()` in `from_dom_form_data`; an owned slice
-    /// (UTF-16 / non-ASCII Latin-1 conversion) transfers its allocation to the
-    /// joiner. `component` selects the spec's newline-normalization and
-    /// percent-encoding transforms, which copy when they apply.
-    fn push_string_slice(
-        joiner: &mut StringJoiner<'_>,
-        slice: Utf8Bytes,
-        component: FormDataComponent,
-    ) {
-        if let Some(encoded) = encode_form_data_component(slice.slice(), component) {
-            joiner.push_owned(encoded);
-            return;
-        }
-        match slice {
-            // `into_vec` moves the buffer out of an `Owned` slice without copying.
-            Utf8Bytes::Owned(_) => joiner.push_owned(slice.into_vec().into_boxed_slice()),
-            // SAFETY: borrowed bytes are owned by the `DOMFormData` being serialized,
-            // which outlives `joiner.done()` in `from_dom_form_data`.
-            Utf8Bytes::Borrowed(b) => joiner.push(unsafe { bun_ptr::detach_lifetime(b) }),
-            // Releases its ref on drop — copy rather than borrow past it.
-            Utf8Bytes::Shared(_) => joiner.push_cloned(slice.slice()),
-        }
+const MULTIPART_BOUNDARY_PREFIX: &[u8; 22] = b"----WebKitFormBoundary";
+/// The prefix, then the 32 lowercase hex digits of a UUID.
+const MULTIPART_BOUNDARY_LEN: usize = MULTIPART_BOUNDARY_PREFIX.len() + 32;
+
+fn make_multipart_boundary(global_this: &JSGlobalObject) -> [u8; MULTIPART_BOUNDARY_LEN] {
+    let mut boundary = [0u8; MULTIPART_BOUNDARY_LEN];
+    let random = global_this.bun_vm().as_mut().rare_data().next_uuid().bytes;
+    boundary[..MULTIPART_BOUNDARY_PREFIX.len()].copy_from_slice(MULTIPART_BOUNDARY_PREFIX);
+    bun_core::fmt::bytes_to_hex_lower(&random, &mut boundary[MULTIPART_BOUNDARY_PREFIX.len()..]);
+    boundary
+}
+
+/// Takes the bytes of a `multipart/form-data` body in the order of the wire.
+trait MultipartSink<'a> {
+    /// `bytes` stay valid until the sink is read.
+    fn push_borrowed(&mut self, bytes: &'a [u8]);
+    /// A name, a filename or a string value. `component` selects the
+    /// newline-normalization and percent-encoding transforms of the spec.
+    fn push_string(&mut self, string: Utf8Bytes<'a>, component: FormDataComponent);
+}
+
+impl<'a> MultipartSink<'a> for StringJoiner<'a> {
+    fn push_borrowed(&mut self, bytes: &'a [u8]) {
+        self.push(bytes);
     }
 
-    fn on_entry(&mut self, name: EncodedSlice, entry: FormDataEntry<'_>) {
+    /// Copies the string only when a transform applies. A borrowed string
+    /// stays borrowed. An owned string (a UTF-16 or non-ASCII Latin-1
+    /// conversion) gives its allocation to the joiner.
+    fn push_string(&mut self, string: Utf8Bytes<'a>, component: FormDataComponent) {
+        if let Some(encoded) = encode_form_data_component(string.slice(), component) {
+            self.push_owned(encoded);
+            return;
+        }
+        match string {
+            // `into_vec` moves the buffer out of an `Owned` slice without copying.
+            Utf8Bytes::Owned(_) => self.push_owned(string.into_vec().into_boxed_slice()),
+            Utf8Bytes::Borrowed(bytes) => self.push(bytes),
+            // Releases its ref on drop — copy rather than borrow past it.
+            Utf8Bytes::Shared(_) => self.push_cloned(string.slice()),
+        }
+    }
+}
+
+/// Writes one entry of a `multipart/form-data` body up to the bytes of a file:
+/// the boundary line and the part headers, and for a string entry its value.
+/// Returns the Blob of a file entry, whose bytes are next on the wire.
+/// `write_multipart_entry_end` ends the part.
+fn write_multipart_entry_head<'a, S: MultipartSink<'a>>(
+    sink: &mut S,
+    boundary: &'a [u8],
+    name: EncodedSlice<'a>,
+    entry: FormDataEntry<'a>,
+) -> Option<&'a Blob> {
+    sink.push_borrowed(b"--");
+    sink.push_borrowed(boundary);
+    sink.push_borrowed(b"\r\n");
+
+    sink.push_borrowed(b"Content-Disposition: form-data; name=\"");
+    sink.push_string(name.to_utf8(), FormDataComponent::Name);
+
+    match entry {
+        FormDataEntry::String(value) => {
+            sink.push_borrowed(b"\"\r\n\r\n");
+            sink.push_string(value.to_utf8(), FormDataComponent::StringValue);
+            None
+        }
+        FormDataEntry::File { blob, filename } => {
+            sink.push_borrowed(b"\"; filename=\"");
+            sink.push_string(filename.to_utf8(), FormDataComponent::Filename);
+            sink.push_borrowed(b"\"\r\n");
+
+            let blob_ct = blob.content_type_slice();
+            let content_type: &[u8] =
+                if !blob_ct.is_empty() && !strings::contains_any(blob_ct, b"\r\n") {
+                    blob_ct
+                } else {
+                    b"application/octet-stream"
+                };
+            sink.push_borrowed(b"Content-Type: ");
+            sink.push_borrowed(content_type);
+            sink.push_borrowed(b"\r\n\r\n");
+            Some(blob)
+        }
+    }
+}
+
+fn write_multipart_entry_end<'a, S: MultipartSink<'a>>(sink: &mut S) {
+    sink.push_borrowed(b"\r\n");
+}
+
+fn write_multipart_closing_boundary<'a, S: MultipartSink<'a>>(sink: &mut S, boundary: &'a [u8]) {
+    sink.push_borrowed(b"--");
+    sink.push_borrowed(boundary);
+    sink.push_borrowed(b"--\r\n");
+}
+
+impl<'a> FormDataContext<'a> {
+    fn on_entry(&mut self, name: EncodedSlice<'a>, entry: FormDataEntry<'a>) {
         if self.failed {
             return;
         }
@@ -3628,39 +3685,9 @@ impl FormDataContext<'_> {
         let boundary = self.boundary;
         let joiner = &mut self.joiner;
 
-        joiner.push_static(b"--");
-        joiner.push_static(boundary); // note: "static" here means "outlives the joiner"
-        joiner.push_static(b"\r\n");
-
-        joiner.push_static(b"Content-Disposition: form-data; name=\"");
-        Self::push_string_slice(joiner, name.to_utf8(), FormDataComponent::Name);
-
-        match entry {
-            FormDataEntry::String(value) => {
-                joiner.push_static(b"\"\r\n\r\n");
-                Self::push_string_slice(joiner, value.to_utf8(), FormDataComponent::StringValue);
-            }
-            FormDataEntry::File { blob, filename } => {
-                joiner.push_static(b"\"; filename=\"");
-                Self::push_string_slice(joiner, filename.to_utf8(), FormDataComponent::Filename);
-                joiner.push_static(b"\"\r\n");
-
-                // Borrowed from the blob, which the `DOMFormData` keeps alive
-                // past `joiner.done()`.
-                let blob_ct = blob.content_type_slice();
-                let content_type: &[u8] =
-                    if !blob_ct.is_empty() && !strings::contains_any(blob_ct, b"\r\n") {
-                        blob_ct
-                    } else {
-                        b"application/octet-stream"
-                    };
-                joiner.push_static(b"Content-Type: ");
-                // SAFETY: either a `'static` literal or borrowed from the entry's Blob,
-                // which the `DOMFormData` keeps alive past `joiner.done()` in
-                // `from_dom_form_data`.
-                joiner.push(unsafe { bun_ptr::detach_lifetime(content_type) });
-                joiner.push_static(b"\r\n\r\n");
-
+        match write_multipart_entry_head(joiner, boundary, name, entry) {
+            None => {}
+            Some(blob) => {
                 if blob.store.get().is_some() {
                     if blob.size.get() == MAX_SIZE {
                         blob.resolve_size();
@@ -3707,17 +3734,14 @@ impl FormDataContext<'_> {
                             }
                         }
                         store::Data::Bytes(_) => {
-                            // SAFETY: borrowed from the blob's store, which the
-                            // `DOMFormData` entry keeps alive until after
-                            // `joiner.done()`.
-                            joiner.push(unsafe { bun_ptr::detach_lifetime(blob.shared_view()) });
+                            joiner.push(blob.shared_view());
                         }
                     }
                 }
             }
         }
 
-        joiner.push_static(b"\r\n");
+        write_multipart_entry_end(joiner);
     }
 }
 

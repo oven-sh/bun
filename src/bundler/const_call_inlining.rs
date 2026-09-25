@@ -137,23 +137,19 @@ impl<'a> BundleV2<'a> {
         parse_result: &mut parse_task::Result,
     ) -> Option<i32> {
         let source_index = Index::init(parse_result.value.source_index());
-        let (needs, visited) = match &mut parse_result.value {
-            parse_task::ResultValue::NeedsConstCallValues(needs) => {
-                let empty = NeedsConstCallValues {
-                    imports: Vec::new(),
-                    source_log: bun_ast::Log::init(),
-                    ..**needs
-                };
-                (Box::new(core::mem::replace(&mut **needs, empty)), None)
-            }
-            parse_task::ResultValue::Success(success) => {
-                let needs = success.needs_const_call_values.take()?;
-                let held = parse_task::ResultValue::Empty { source_index };
-                let parse_task::ResultValue::Success(success) =
-                    core::mem::replace(&mut parse_result.value, held)
-                else {
-                    unreachable!()
-                };
+        let is_held = match &parse_result.value {
+            parse_task::ResultValue::NeedsConstCallValues(_) => true,
+            parse_task::ResultValue::Success(success) => success.needs_const_call_values.is_some(),
+            _ => false,
+        };
+        if !is_held {
+            return None;
+        }
+        let held = parse_task::ResultValue::Empty { source_index };
+        let (needs, visited) = match core::mem::replace(&mut parse_result.value, held) {
+            parse_task::ResultValue::NeedsConstCallValues(needs) => (needs, None),
+            parse_task::ResultValue::Success(mut success) => {
+                let needs = success.needs_const_call_values.take().expect("is_held");
                 let visited = Visited {
                     success,
                     watcher_data: core::mem::replace(
@@ -164,7 +160,7 @@ impl<'a> BundleV2<'a> {
                 };
                 (needs, Some(Box::new(visited)))
             }
-            _ => return None,
+            _ => unreachable!(),
         };
 
         let importer = source_index.get();

@@ -3127,9 +3127,8 @@ pub mod parse_worker {
             }
             ResultValue::Err(e) => drop(core::mem::take(&mut e.log)),
             ResultValue::Empty { .. } => {}
-            ResultValue::NeedsConstCallValues(needs) => {
-                drop(core::mem::take(&mut needs.imports));
-                drop(core::mem::take(&mut needs.source_log));
+            ResultValue::NeedsConstCallValues(_) => {
+                unreachable!("on_parse_task_complete takes it")
             }
         }
     }

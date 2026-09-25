@@ -194,6 +194,10 @@ static bool deliverToHandler(Zig::GlobalObject* globalObject, JSModuleGraph* gra
         return false;
     VM& vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    // The handler is its maker's: it runs in the context the graph was made in (the host's, or the
+    // enclosing graph's), so what it throws, rejects or starts is that context's. So does whatever
+    // else giving it the error runs (a trap of a reason that is a Proxy).
+    ErrorHandlerContextScope inMakersContext(globalObject, graph->maker());
     MarkedArgumentBuffer args;
     JSObject* handler;
     if (kind == GraphError::UnhandledRejection && graph->unhandledRejectionHandler()) {
@@ -213,9 +217,6 @@ static bool deliverToHandler(Zig::GlobalObject* globalObject, JSModuleGraph* gra
         args.append(error);
         args.append(jsNontrivialString(vm, "uncaughtException"_s));
     }
-    // The handler is its maker's: it runs in the context the graph was made in (the host's, or the
-    // enclosing graph's), so what it throws, rejects or starts is that context's.
-    ErrorHandlerContextScope inMakersContext(globalObject, graph->maker());
     JSC::call(globalObject, handler, getCallData(handler), jsUndefined(), args);
     if (scope.exception()) [[unlikely]] {
         if (vm.hasPendingTerminationException())

@@ -255,7 +255,10 @@ describe("ModuleGraph GC: an unreferenced graph is collected", () => {
   class Subclass extends ModuleGraph {}
   const kinds: [string, () => Graph][] = [
     ["without options", () => new ModuleGraph()],
-    ["with globals and uncaughtException", () => new ModuleGraph({ globals: { TAG: "g" }, uncaughtException() {} })],
+    [
+      "with globals, uncaughtException and unhandledRejection",
+      () => new ModuleGraph({ globals: { TAG: "g" }, uncaughtException() {}, unhandledRejection() {} }),
+    ],
     ["subclass", () => new Subclass()],
   ];
   for (const [kind, make] of kinds) {
@@ -305,7 +308,7 @@ describe("ModuleGraph GC: an unreferenced graph is collected", () => {
     });
   }
 
-  test("reference cycles through globals and uncaughtException do not keep a graph alive", async () => {
+  test("reference cycles through globals, uncaughtException and unhandledRejection do not keep a graph alive", async () => {
     const lifetimes = new Lifetimes();
     await (async () => {
       const holder: { graph?: Graph; namespace?: unknown } = {};
@@ -314,6 +317,9 @@ describe("ModuleGraph GC: an unreferenced graph is collected", () => {
         new ModuleGraph({
           globals: { TAG: "cycle", holder },
           uncaughtException() {
+            void graph;
+          },
+          unhandledRejection() {
             void graph;
           },
         }),

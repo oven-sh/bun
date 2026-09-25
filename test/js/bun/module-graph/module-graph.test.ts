@@ -1536,6 +1536,33 @@ describe("Bun.ModuleGraph — uncaughtException and unhandledRejection", () => {
     expect((named as Error).message).toEndWith('The promise rejected with the reason "[object Object]".');
   });
 
+  test("what giving a handler the error runs, runs in the context the handler does", async () => {
+    const dir = fixture(files);
+    const ran: string[] = [];
+    const names = new Map<unknown, string>([[undefined, "the host"]]);
+    const where = (what: string) => void ran.push(what + " in " + names.get(Bun.ModuleGraph.current));
+    using outer = new ModuleGraphClass({ uncaughtException() {} });
+    names.set(outer, "the graph that made it");
+    const outerApp = await outer.import(join(dir, "errors.mjs"));
+    const inner = outer.run(() =>
+      outerApp.makeGraph({ uncaughtException: () => where("uncaughtException") }),
+    ) as ModuleGraphInstance;
+    using _ = inner;
+    names.set(inner, "the graph");
+    const app = await inner.import(join(dir, "errors.mjs"));
+    // Naming a reason that is not an error looks at it.
+    const reason = new Proxy(
+      {},
+      { getOwnPropertyDescriptor: (...of) => (where("a trap of the reason"), Reflect.getOwnPropertyDescriptor(...of)) },
+    );
+    inner.run(() => app.rejectLaterWith(reason));
+    await until(() => ran.includes("uncaughtException in the graph that made it"));
+    expect([...new Set(ran)].sort()).toEqual([
+      "a trap of the reason in the graph that made it",
+      "uncaughtException in the graph that made it",
+    ]);
+  });
+
   test("the process is not told that a rejection a graph was given got handled", async () => {
     const dir = fixture({
       ...files,

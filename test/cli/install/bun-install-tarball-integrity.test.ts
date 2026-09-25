@@ -1398,6 +1398,25 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball --force refr
       expect(exitCode).toBe(0);
     }
     expect(requests).toEqual(["a"]);
+
+    // ws-a has the new bytes, ws-b keeps the old ones, and the lockfile pins
+    // exactly those.
+    const resolved = async (ws: string) => {
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", "console.log(require('my-url-pkg'))"],
+        cwd: join(String(dir), "packages", ws),
+        env: env2,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      return (await proc.stdout.text()).trim();
+    };
+    expect([await resolved("ws-a"), await resolved("ws-b")]).toEqual(["A_TWO", "B_ONE"]);
+    const lockContent = await file(join(String(dir), "bun.lock")).text();
+    expect(lockContent).toContain(a2.integrity);
+    expect(lockContent).toContain(b1.integrity);
+    expect(lockContent).not.toContain(a1.integrity);
+    expect(lockContent).not.toContain(b2.integrity);
   });
 
   it("a refresh in one project does not satisfy another project's older pin from the shared cache", async () => {

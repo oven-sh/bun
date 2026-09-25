@@ -89,7 +89,11 @@ for (const type of types) {
           length: 1,
         },
       },
-      values: ["pendingValue", "target", "columns", "binding"],
+      // `connection` lets a Postgres query find its BackendKeyData for cancel().
+      values:
+        type === "PostgresSQL"
+          ? ["pendingValue", "target", "columns", "binding", "connection"]
+          : ["pendingValue", "target", "columns", "binding"],
       estimatedSize: true,
     }),
   );

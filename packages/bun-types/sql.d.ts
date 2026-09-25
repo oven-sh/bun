@@ -464,7 +464,19 @@ declare module "bun" {
       cancelled: boolean;
 
       /**
-       * Cancels the executing query
+       * Requests cancellation of the query.
+       *
+       * A query that has not been sent to the database never runs. It rejects
+       * with the adapter's query-cancelled error (for example
+       * `ERR_POSTGRES_QUERY_CANCELLED`).
+       *
+       * For PostgreSQL, a query the server is running is cancelled with a
+       * `CancelRequest` on a second connection. If the server stops the query, it
+       * rejects with SQLSTATE 57014. If the query finishes first, it resolves as
+       * usual, and the request can stop the next query on that connection
+       * instead. The server ignores a request that arrives before the query
+       * does. A query that was already sent behind another query rejects with
+       * `ERR_POSTGRES_QUERY_CANCELLED` and a `hint`, but the server still runs it.
        */
       cancel(): Query<T>;
 

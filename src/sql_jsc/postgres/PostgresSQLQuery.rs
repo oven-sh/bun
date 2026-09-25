@@ -14,7 +14,7 @@ use super::PostgresSQLConnection;
 use super::PostgresSQLStatement;
 use super::Signature;
 use super::command_tag_jsc::CommandTagJsc;
-use super::error_jsc::postgres_error_to_js;
+use super::error_jsc::{postgres_error_to_js, postgres_error_to_js_with_hint};
 use super::postgres_request as PostgresRequest;
 use super::postgres_sql_connection;
 use super::postgres_sql_statement::Status as StatementStatus;
@@ -77,7 +77,7 @@ pub struct Flags {
     pub(crate) binary: bool,
     pub(crate) bigint: bool,
     pub(crate) simple: bool,
-    /// Rejected for an undecodable row: in flight, its response skipped, until `ReadyForQuery`.
+    /// Rejected while in flight: its response is skipped until `ReadyForQuery`.
     pub(crate) discard_response: bool,
     /// Which connection counter this request's dispatch incremented; reset to
     /// `None` when `finish_request` consumes that contribution, so the
@@ -190,6 +190,7 @@ impl PostgresSQLQuery {
         let Some(this_value) = self.this_value.get().try_get() else {
             return;
         };
+        Self::release_connection(this_value, global_object);
         let _downgrade = scopeguard::guard((), |_| self.this_value.with_mut(|r| r.downgrade()));
         let Some(target_value) = self.get_target(global_object, true) else {
             return;
@@ -218,13 +219,19 @@ impl PostgresSQLQuery {
         );
     }
 
+    /// The cached `connection` is a strong GC edge; every terminal path must
+    /// clear it or a retained `Query` pins the whole connection.
+    fn release_connection(this_value: JSValue, global_object: &JSGlobalObject) {
+        js::connection_set_cached(this_value, global_object, JSValue::ZERO);
+    }
+
     pub(crate) fn on_js_error(&self, err: JSValue, global_object: &JSGlobalObject) {
         self.status.set(Status::Fail);
         self.reject(err, global_object);
     }
 
     /// Rejects now, but `status` stays in flight: the server is still answering this query.
-    pub(crate) fn on_undecodable_row(&self, err: JSValue, global_object: &JSGlobalObject) {
+    pub(crate) fn reject_in_flight(&self, err: JSValue, global_object: &JSGlobalObject) {
         self.update_flags(|f| f.discard_response = true);
         self.reject(err, global_object);
     }
@@ -239,6 +246,7 @@ impl PostgresSQLQuery {
         let Some(this_value) = self.this_value.get().try_get() else {
             return;
         };
+        Self::release_connection(this_value, global_object);
         let _downgrade = scopeguard::guard((), |_| self.this_value.with_mut(|r| r.downgrade()));
         let Some(target_value) = self.get_target(global_object, true) else {
             return;
@@ -282,6 +290,7 @@ impl PostgresSQLQuery {
         js::binding_set_cached(this_value, global_object, JSValue::ZERO);
         js::pending_value_set_cached(this_value, global_object, JSValue::ZERO);
         js::target_set_cached(this_value, global_object, JSValue::ZERO);
+        Self::release_connection(this_value, global_object);
     }
 
     pub(crate) fn on_result(
@@ -466,7 +475,8 @@ impl PostgresSQLQuery {
         // duration of this call, satisfying the `ParentRef` outlives-holder
         // invariant. R-2: shared borrow — every connection field accessed below is
         // `Cell`/`JsCell`.
-        let Some(connection) = postgres_sql_connection::js::from_js_ref(arguments[0]) else {
+        let connection_value = arguments[0];
+        let Some(connection) = postgres_sql_connection::js::from_js_ref(connection_value) else {
             return Err(
                 global_object.throw(format_args!("connection must be a PostgresSQLConnection"))
             );
@@ -562,6 +572,7 @@ impl PostgresSQLQuery {
 
             this.this_value.with_mut(|r| r.upgrade(global_object));
             js::target_set_cached(this_value, global_object, query);
+            js::connection_set_cached(this_value, global_object, connection_value);
             if this.status.get() == Status::Running {
                 connection.flush_data_and_reset_timeout();
             } else {
@@ -825,6 +836,7 @@ impl PostgresSQLQuery {
         this.this_value.with_mut(|r| r.upgrade(global_object));
 
         js::target_set_cached(this_value, global_object, query);
+        js::connection_set_cached(this_value, global_object, connection_value);
         if did_write {
             connection.flush_data_and_reset_timeout();
         } else {
@@ -841,10 +853,45 @@ impl PostgresSQLQuery {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let _ = callframe;
-        let _ = global_object;
-        let _ = this;
+        let this_value = callframe.this();
+        let Some(connection_value) = js::connection_get_cached(this_value) else {
+            return Ok(JSValue::UNDEFINED);
+        };
+        let Some(connection) = postgres_sql_connection::js::from_js_ref(connection_value) else {
+            return Ok(JSValue::UNDEFINED);
+        };
 
+        let status = this.status.get();
+        if matches!(status, Status::Success | Status::Fail) {
+            return Ok(JSValue::UNDEFINED);
+        }
+
+        // A CancelRequest names the backend process, not a statement, so it only
+        // ever stops the FIFO head. Anything else is settled locally.
+        if status == Status::Pending {
+            // No Bind, Execute or Query of it is written, and a Fail entry never writes one.
+            let err = postgres_error_to_js(
+                global_object,
+                Some(b"Query cancelled"),
+                AnyPostgresError::QueryCancelled,
+            );
+            connection.finish_request(this);
+            this.on_js_error(err, global_object);
+            return Ok(JSValue::UNDEFINED);
+        }
+        if !connection.is_current_request(this) {
+            // Already on the wire: the backend runs it regardless, so the error says so.
+            let err = postgres_error_to_js_with_hint(
+                global_object,
+                Some(b"Query cancelled"),
+                Some(b"The server already received this query and still runs it. Bun discards the result."),
+                AnyPostgresError::QueryCancelled,
+            );
+            this.reject_in_flight(err, global_object);
+            return Ok(JSValue::UNDEFINED);
+        }
+
+        connection.send_cancel_request();
         Ok(JSValue::UNDEFINED)
     }
 }

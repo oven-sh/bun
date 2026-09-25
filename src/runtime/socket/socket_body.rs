@@ -1833,6 +1833,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         // node:tls sockets defer the hostname verdict: their JS layer applies
         // `checkServerIdentity` (default or user override) itself.
         let flags = this.flags.get();
+        // node:tls closes its own sockets, and nothing marks the ones its servers accept.
+        let failed_native_client = SSL
+            && success == 0
+            && !flags.contains(Flags::DEFERS_SERVER_IDENTITY)
+            && !this.acts_as_tls_server();
         // Deliberately independent of `success`: the inline-reject path
         // dispatches with success=0 after suppressing the client Finished, and
         // REJECTED must still be set there or the write-refusal guards are
@@ -1841,13 +1846,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // failure flavor).
         let reject_unauthorized = flags.contains(Flags::REJECT_UNAUTHORIZED)
             && (verify_failed
-                // A client's failed handshake verified nothing, whatever its error says. node:tls
-                // tears its own sockets down: after end() its client stays open until the peer
-                // closes. Nothing marks its server sockets, and their deferred close comes first.
-                || (SSL
-                    && success == 0
-                    && !flags.contains(Flags::DEFERS_SERVER_IDENTITY)
-                    && !this.acts_as_tls_server())
+                || failed_native_client
                 || (hostname_mismatch && !flags.contains(Flags::DEFERS_SERVER_IDENTITY)));
         // A handshake that failed outright (success == 0 with no policy
         // verdict: protocol error, peer alert, EOF mid-handshake) never has a
@@ -2432,8 +2431,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 return Ok(JSValue::NULL);
             }
         } else if this.flags.get().contains(Flags::HANDSHAKE_COMPLETE) && socket.is_shutdown() {
-            // What `on_handshake` reported stands: the SSL of a shut-down socket answers for a
-            // certificate that never came, or for one that a failed handshake did not report.
+            // What `on_handshake` reported stands.
             return Ok(this
                 .stored_verify_error_to_js(global)
                 .unwrap_or(JSValue::NULL));

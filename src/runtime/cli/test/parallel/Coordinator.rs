@@ -163,11 +163,7 @@ impl<'a> Coordinator<'a> {
                     sec: self.scale_up_after_ms / MS_PER_S,
                     nsec: (self.scale_up_after_ms % MS_PER_S) * bun_core::time::NS_PER_MS as i64,
                 };
-                // SAFETY: event_loop()/usockets_loop() return live pointers for the VM lifetime.
-                unsafe {
-                    (*(*self.vm.event_loop()).usockets_loop())
-                        .tick_with_timeout(Some(&ts), bun_uws::NOW_NS_UNKNOWN);
-                }
+                self.vm.event_loop_ref().promote_and_poll(ts);
             } else {
                 self.vm.event_loop_ref().auto_tick();
             }

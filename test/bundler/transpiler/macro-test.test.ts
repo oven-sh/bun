@@ -1,6 +1,6 @@
 import { escapeHTML } from "bun" assert { type: "macro" };
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isAndroid, isLinux, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import defaultMacro, {
@@ -402,6 +402,41 @@ describe("event loop routing around macros", () => {
       // The continuation runs on the macro loop if the work finishes while the macro is still being waited
       // on and on the regular loop otherwise, so its position relative to the entry module's output varies.
       expect({ lines: lines.sort(), stderr }).toEqual({ lines: ["settled", "value 1"], stderr: "" });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // Without pidfd_open the waiter thread posts the exit of a child. The macro's loop reports it in the
+  // turn that receives it: a report that waited for another poll would come after the macro returned.
+  test.concurrent.skipIf(!isLinux && !isAndroid)(
+    "the exit of a child that a macro spawned is reported in one turn of the macro's loop on the waiter thread",
+    async () => {
+      const { lines, stderr, exitCode } = await run(
+        {
+          "m.ts": [
+            `import { readFileSync } from "node:fs";`,
+            `export async function m() {`,
+            `  let seen = "no exit";`,
+            `  const child = Bun.spawn({ cmd: ["true"], stdio: ["ignore", "ignore", "ignore"], onExit: () => (seen = "exit") });`,
+            `  // Off the loop until the child is dead. The waiter thread handles its children in spawn order.`,
+            `  for (;;) {`,
+            `    let stat;`,
+            `    try { stat = readFileSync("/proc/" + child.pid + "/stat", "latin1"); } catch { break; }`,
+            `    const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");`,
+            `    if (fields[0] === "Z" && fields[17] === "1") break;`,
+            `    Bun.sleepSync(1);`,
+            `  }`,
+            `  Bun.spawnSync({ cmd: ["true"] });`,
+            `  await new Promise(resolve => setImmediate(resolve));`,
+            `  return seen;`,
+            `}`,
+          ].join("\n"),
+          "index.ts": `import { m } from "./m.ts" with { type: "macro" };\nconsole.log("value", m());\n`,
+        },
+        // The flag is read when BUN_GARBAGE_COLLECTOR_LEVEL is set, and bunEnv sets it.
+        { BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" },
+      );
+      expect({ lines, stderr }).toEqual({ lines: ["value exit"], stderr: "" });
       expect(exitCode).toBe(0);
     },
   );

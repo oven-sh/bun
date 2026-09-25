@@ -389,7 +389,14 @@ impl Blob {
         self.content_type_was_set.get()
             || self
                 .store()
-                .map(|s| matches!(s.data, store::Data::File(_) | store::Data::S3(_)))
+                .map(|s| match &s.data {
+                    // Never sniffed: it has the type `fs.openAsBlob` was given, or none.
+                    store::Data::File(file) if file.pinned().is_some() => {
+                        !file.mime_type.value.is_empty()
+                    }
+                    store::Data::File(_) | store::Data::S3(_) => true,
+                    store::Data::Bytes(_) => false,
+                })
                 .unwrap_or(false)
     }
 
@@ -413,6 +420,14 @@ impl Blob {
         matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::S3(_)))
     }
 
+    /// The pin of a Blob from `fs.openAsBlob`. Any failed read of one is a `NotReadableError`.
+    pub fn pinned_file(&self) -> Option<&store::PinnedFile> {
+        match &self.store.get().as_deref()?.data {
+            store::Data::File(file) => file.pinned(),
+            store::Data::Bytes(_) | store::Data::S3(_) => None,
+        }
+    }
+
     /// `Blob.needsToReadFile()` — backed by a filesystem `Store::File` (a
     /// `Bun.file()`), so the bytes must be fetched off-disk before any
     /// in-memory consumer can see them.
@@ -421,32 +436,37 @@ impl Blob {
         matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::File(_)))
     }
 
-    /// A usable filename: a non-empty `name`, else [`store_path`]. (`file.name`
+    /// A usable filename: a non-empty `name`, else [`path_for_display`]. (`file.name`
     /// itself may be `""`; that is not a filename.)
     ///
-    /// [`store_path`]: Self::store_path
+    /// [`path_for_display`]: Self::path_for_display
     pub fn get_file_name(&self) -> Option<bun_core::Utf8Bytes<'_>> {
         let name = self.name.get();
         if !name.is_empty() {
             return Some(name.to_utf8());
         }
-        self.store_path().map(bun_core::Utf8Bytes::Borrowed)
+        self.path_for_display().map(bun_core::Utf8Bytes::Borrowed)
     }
 
     /// `Bytes.stored_name`, the file path, or the S3 key, ignoring `name`.
-    /// `None` for fd-backed or unnamed stores.
-    pub fn store_path(&self) -> Option<&[u8]> {
+    /// `None` for fd-backed or unnamed stores. See [`store::File::display_path`].
+    pub fn path_for_display(&self) -> Option<&[u8]> {
         match &self.store.get().as_deref()?.data {
             store::Data::Bytes(bytes) => {
                 let n = &bytes.stored_name[..];
                 if n.is_empty() { None } else { Some(n) }
             }
-            store::Data::File(file) => match &file.pathlike {
-                PathOrFileDescriptor::Path(path) => Some(path.slice()),
-                PathOrFileDescriptor::Fd(_) => None,
-            },
+            store::Data::File(file) => file.display_path(),
             // Use `s3.path()` (URL-normalized), NOT `s3.pathlike.slice()`.
             store::Data::S3(s3) => Some(s3.path()),
+        }
+    }
+
+    /// [`Self::path_for_display`] for a caller that opens the path: `None` for a pinned file.
+    pub fn path_for_open(&self) -> Option<&[u8]> {
+        match &self.store.get().as_deref()?.data {
+            store::Data::File(file) if file.pinned().is_some() => None,
+            _ => self.path_for_display(),
         }
     }
 
@@ -787,7 +807,7 @@ pub mod store {
     /// A blob store referencing a file on disk.
     #[derive(Clone)]
     pub struct File {
-        pub pathlike: PathOrFileDescriptor<'static>,
+        path: FilePath,
         pub mime_type: MimeType,
         pub is_atty: Option<bool>,
         pub mode: bun_sys::Mode,
@@ -797,10 +817,66 @@ pub mod store {
         pub last_modified: crate::JSTimeType,
     }
 
+    /// Private: a reader gets the path of a pinned file only from [`File::source`].
+    #[derive(Clone)]
+    enum FilePath {
+        /// `Bun.file()`: each reader resolves the path, or uses the descriptor, again.
+        Lazy(PathOrFileDescriptor<'static>),
+        /// A file that must still be the one that was stat'd when the store was made.
+        Pinned(std::sync::Arc<PinnedFile>),
+    }
+
+    /// See [`File::source`].
+    pub enum FileSource<'a> {
+        Lazy(&'a PathOrFileDescriptor<'static>),
+        Pinned(&'a PinnedFile),
+    }
+
+    /// The path of a pinned [`File`] and the `stat` fields a read compares first.
+    pub struct PinnedFile {
+        path: PathOrFileDescriptor<'static>,
+        size: u64,
+        mtime_nsec: i64,
+    }
+
+    // SAFETY: `File::init_pinned` is the one constructor, and `path` is the copy of the
+    // bytes that it makes: never a JS string or a JS buffer.
+    unsafe impl Send for PinnedFile {}
+    // SAFETY: as above, and no field has interior mutability.
+    unsafe impl Sync for PinnedFile {}
+
+    impl PinnedFile {
+        /// node's `FdEntry::is_modified`: `st_size` and the nanoseconds of `st_mtim`.
+        pub fn matches(&self, stat: &bun_sys::Stat) -> bool {
+            stat.st_size as u64 == self.size && bun_sys::stat_mtime(stat).nsec == self.mtime_nsec
+        }
+
+        /// [`Self::matches`] as a result. A changed file is `EINVAL`, as in node.
+        pub fn verify(&self, stat: &bun_sys::Stat) -> bun_sys::Result<()> {
+            if self.matches(stat) {
+                return Ok(());
+            }
+            Err(
+                bun_sys::Error::from_code(bun_sys::E::EINVAL, bun_sys::Tag::fstat)
+                    .with_path(self.path.path().slice()),
+            )
+        }
+
+        /// [`Self::verify`] of an open descriptor. A failed `fstat` counts as a change, as in node.
+        pub fn recheck(&self, fd: bun_sys::Fd) -> bun_sys::Result<()> {
+            self.verify(&bun_sys::fstat(fd)?)
+        }
+
+        /// Always a path. The reader that opens it must `verify` the `fstat` of that open.
+        pub fn pathlike_for_unverified_open(&self) -> &PathOrFileDescriptor<'static> {
+            &self.path
+        }
+    }
+
     impl Default for File {
         fn default() -> Self {
             Self {
-                pathlike: PathOrFileDescriptor::Fd(bun_sys::Fd::INVALID),
+                path: FilePath::Lazy(PathOrFileDescriptor::Fd(bun_sys::Fd::INVALID)),
                 mime_type: bun_http_types::MimeType::OTHER,
                 is_atty: None,
                 mode: 0,
@@ -815,12 +891,105 @@ pub mod store {
         #[inline]
         pub fn init(pathlike: PathOrFileDescriptor<'static>, mime_type: Option<MimeType>) -> File {
             File {
-                pathlike,
+                path: FilePath::Lazy(pathlike),
                 mime_type: mime_type.unwrap_or(bun_http_types::MimeType::OTHER),
                 ..Default::default()
             }
         }
+
+        /// The store of a standard stream.
+        pub fn stdio(fd: bun_sys::Fd, is_atty: bool, mode: bun_sys::Mode) -> File {
+            File {
+                path: FilePath::Lazy(PathOrFileDescriptor::Fd(fd)),
+                is_atty: Some(is_atty),
+                mode,
+                ..Default::default()
+            }
+        }
+
+        /// A file at `path` that must still have the size and mtime of `stat` when it is read.
+        pub fn init_pinned(path: &[u8], stat: &bun_sys::Stat, mime_type: MimeType) -> File {
+            File {
+                path: FilePath::Pinned(std::sync::Arc::new(PinnedFile {
+                    path: PathOrFileDescriptor::Path(PathLike::owned(path.to_vec())),
+                    size: stat.st_size as u64,
+                    mtime_nsec: bun_sys::stat_mtime(stat).nsec,
+                })),
+                mime_type,
+                ..Default::default()
+            }
+        }
+
+        /// For a write and for metadata. A read of the contents uses [`File::source`].
+        #[inline]
+        pub fn pathlike_ignoring_pin(&self) -> &PathOrFileDescriptor<'static> {
+            match &self.path {
+                FilePath::Lazy(pathlike) => pathlike,
+                FilePath::Pinned(pinned) => &pinned.path,
+            }
+        }
+
+        /// What a reader of a `Bun.file()` opens. `None` for a pinned file: see [`File::pinned`].
+        #[inline]
+        pub fn lazy_pathlike(&self) -> Option<&PathOrFileDescriptor<'static>> {
+            match &self.path {
+                FilePath::Lazy(pathlike) => Some(pathlike),
+                FilePath::Pinned(_) => None,
+            }
+        }
+
+        /// [`Self::lazy_pathlike`] narrowed to a path, for a by-path call such as `clonefile`.
+        #[inline]
+        pub fn lazy_path(&self) -> Option<&PathLike<'static>> {
+            match &self.path {
+                FilePath::Lazy(PathOrFileDescriptor::Path(path)) => Some(path),
+                FilePath::Lazy(PathOrFileDescriptor::Fd(_)) | FilePath::Pinned(_) => None,
+            }
+        }
+
+        #[inline]
+        pub fn pinned(&self) -> Option<&PinnedFile> {
+            match &self.path {
+                FilePath::Lazy(_) => None,
+                FilePath::Pinned(pinned) => Some(pinned),
+            }
+        }
+
+        /// Both kinds of file, for a reader that opens either.
+        #[inline]
+        pub fn source(&self) -> FileSource<'_> {
+            match &self.path {
+                FilePath::Lazy(pathlike) => FileSource::Lazy(pathlike),
+                FilePath::Pinned(pinned) => FileSource::Pinned(pinned),
+            }
+        }
+
+        /// The descriptor of a `Bun.file(fd)`.
+        #[inline]
+        pub fn fd(&self) -> Option<bun_sys::Fd> {
+            match &self.path {
+                FilePath::Lazy(PathOrFileDescriptor::Fd(fd)) => Some(*fd),
+                FilePath::Lazy(PathOrFileDescriptor::Path(_)) | FilePath::Pinned(_) => None,
+            }
+        }
+
+        /// For names, inspect, error text and `stat` only: a read through it skips the pin.
+        pub fn display_path(&self) -> Option<&[u8]> {
+            match self.pathlike_ignoring_pin() {
+                PathOrFileDescriptor::Path(path) => Some(path.slice()),
+                PathOrFileDescriptor::Fd(_) => None,
+            }
+        }
+
+        pub fn estimated_size(&self) -> usize {
+            self.pathlike_ignoring_pin().estimated_size()
+        }
     }
+
+    // The pinned arm costs a `Bun.file()` store no bytes.
+    const _: () = assert!(
+        core::mem::size_of::<FilePath>() == core::mem::size_of::<PathOrFileDescriptor<'static>>()
+    );
 
     // ────────────────────────────────────────────────────────────────────
     // S3
@@ -906,19 +1075,14 @@ pub mod store {
             })
         }
 
-        pub fn get_path(&self) -> Option<&[u8]> {
+        /// See [`File::display_path`].
+        pub fn path_for_display(&self) -> Option<&[u8]> {
             match &self.data {
                 Data::Bytes(bytes) => {
                     let n = &bytes.stored_name[..];
                     if n.is_empty() { None } else { Some(n) }
                 }
-                Data::File(file) => {
-                    if let PathOrFileDescriptor::Path(path) = &file.pathlike {
-                        Some(path.slice())
-                    } else {
-                        None
-                    }
-                }
+                Data::File(file) => file.display_path(),
                 Data::S3(s3) => Some(s3.pathlike.slice()),
             }
         }

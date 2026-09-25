@@ -144,15 +144,14 @@ impl FileOpener for WriteFile {
         self.system_error = Some(e);
     }
     fn pathlike(&self) -> &PathOrFileDescriptor<'static> {
-        &self
-            .file_blob
+        self.file_blob
             .store
             .get()
             .as_ref()
             .unwrap()
             .data
             .as_file()
-            .pathlike
+            .pathlike_ignoring_pin()
     }
     #[cfg(not(windows))]
     fn try_mkdirp(
@@ -392,7 +391,7 @@ impl WriteFile {
             .unwrap()
             .data
             .as_file()
-            .pathlike
+            .pathlike_ignoring_pin()
             .is_path()
     }
 
@@ -423,7 +422,7 @@ impl WriteFile {
         self.could_block = 'brk: {
             if let Some(store) = self.file_blob.store.get().as_ref() {
                 if let blob::store::Data::File(file) = &store.data {
-                    if file.pathlike.is_fd() {
+                    if file.pathlike_ignoring_pin().is_fd() {
                         // If seekable was set, then so was mode
                         if file.seekable.is_some() {
                             // This is mostly to handle pipes which were passsed to the process somehow
@@ -640,7 +639,7 @@ mod windows_impl {
                     .unwrap()
                     .data
                     .as_file()
-                    .pathlike
+                    .pathlike_ignoring_pin()
                     .is_path();
             let write_file = Self::new(WriteFileWindows {
                 file_blob,
@@ -678,7 +677,7 @@ mod windows_impl {
                     .unwrap()
                     .data
                     .as_file()
-                    .pathlike
+                    .pathlike_ignoring_pin()
                 {
                     PathOrFileDescriptor::Path(_) => {
                         Self::open(write_file)?;
@@ -754,7 +753,7 @@ mod windows_impl {
                 .unwrap()
                 .data
                 .as_file()
-                .pathlike
+                .pathlike_ignoring_pin()
                 .path()
                 .slice();
             let posix_path = match sys::to_posix_path(path) {
@@ -829,7 +828,7 @@ mod windows_impl {
                         .unwrap()
                         .data
                         .as_file()
-                        .pathlike
+                        .pathlike_ignoring_pin()
                         .path()
                         .slice()
                 ),
@@ -858,7 +857,7 @@ mod windows_impl {
                     .unwrap()
                     .data
                     .as_file()
-                    .pathlike
+                    .pathlike_ignoring_pin()
                     .path()
                     .slice()
                     .into();
@@ -909,7 +908,7 @@ mod windows_impl {
                 .unwrap()
                 .data
                 .as_file()
-                .pathlike
+                .pathlike_ignoring_pin()
                 .path()
                 .slice();
             crate::node::fs::async_::AsyncMkdirp::schedule(crate::node::fs::async_::AsyncMkdirp {
@@ -1068,7 +1067,7 @@ mod windows_impl {
         pub(crate) fn to_system_error(&self) -> Option<SystemError> {
             if let Some(err) = &self.err {
                 let mut sys_err = err.clone();
-                sys_err = match &self
+                sys_err = match self
                     .file_blob
                     .store
                     .get()
@@ -1076,7 +1075,7 @@ mod windows_impl {
                     .unwrap()
                     .data
                     .as_file()
-                    .pathlike
+                    .pathlike_ignoring_pin()
                 {
                     PathOrFileDescriptor::Path(path) => sys_err.with_path(path.slice()),
                     PathOrFileDescriptor::Fd(fd) => sys_err.with_fd(*fd),

@@ -13,13 +13,12 @@ use bun_resolver::fs::StatHash;
 use bun_sys::{self, Fd};
 use bun_uws::{AnyRequest, AnyResponse};
 
-use crate::node::types::PathOrFileDescriptor;
 use crate::server::file_response_stream::{StartOptions as FileResponseStreamOptions, StreamOwner};
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
 use bun_jsc::bun_string_jsc;
 
 use crate::server::{AnyServer, FileResponseStream, HTTPStatusText, RangeRequest};
-use crate::webcore::blob::store::Data as StoreData;
+use crate::webcore::blob::store::{Data as StoreData, PinnedFileExt as _};
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::{Blob, FetchHeaders, Response};
 
@@ -147,8 +146,7 @@ impl FileRoute {
                     BodyValue::Blob(b)
                         if matches!(
                             b.store.get().as_ref().unwrap().data,
-                            StoreData::File(ref f)
-                                if matches!(f.pathlike, PathOrFileDescriptor::Fd(_))
+                            StoreData::File(ref f) if f.fd().is_some()
                         )
                 );
                 if is_fd {
@@ -249,7 +247,7 @@ impl FileRoute {
             resp.timeout(server.config().idle_timeout);
         }
         let store = route.blob.store().unwrap().clone();
-        let Some(path) = store.get_path() else {
+        let Some(path) = store.path_for_display() else {
             req.set_yield(true);
             route.on_response_complete(resp);
             return;
@@ -257,25 +255,34 @@ impl FileRoute {
 
         let open_flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NONBLOCK;
 
-        let fd_result: bun_sys::Result<Fd> = {
-            #[cfg(windows)]
-            {
-                let mut path_buffer = bun_paths::path_buffer_pool::get();
-                path_buffer[..path.len()].copy_from_slice(path);
-                path_buffer[path.len()] = 0;
-                bun_sys::open(
-                    bun_core::ZStr::from_buf(&path_buffer[..], path.len()),
-                    open_flags,
-                    0,
-                )
-            }
-            #[cfg(not(windows))]
-            {
-                bun_sys::open_a(path, open_flags, 0)
+        // A pinned file is opened by its store, which hands back the `fstat` it compared.
+        let pinned = match &store.data {
+            StoreData::File(file) => file.pinned(),
+            _ => None,
+        };
+        let opened: bun_sys::Result<(Fd, Option<bun_sys::Stat>)> = match pinned {
+            Some(pinned) => pinned
+                .open_verified(open_flags)
+                .map(|(fd, stat)| (fd, Some(stat))),
+            None => {
+                #[cfg(windows)]
+                let fd_result = {
+                    let mut path_buffer = bun_paths::path_buffer_pool::get();
+                    path_buffer[..path.len()].copy_from_slice(path);
+                    path_buffer[path.len()] = 0;
+                    bun_sys::open(
+                        bun_core::ZStr::from_buf(&path_buffer[..], path.len()),
+                        open_flags,
+                        0,
+                    )
+                };
+                #[cfg(not(windows))]
+                let fd_result = bun_sys::open_a(path, open_flags, 0);
+                fd_result.map(|fd| (fd, None))
             }
         };
 
-        let Ok(fd) = fd_result else {
+        let Ok((fd, verified_stat)) = opened else {
             req.set_yield(true);
             route.on_response_complete(resp);
             return;
@@ -286,7 +293,7 @@ impl FileRoute {
         // early returns — is `Serve::Done`, so neither the fd nor the route ref
         // (or the server's pending_requests counter) can leak regardless of
         // which branch ran.
-        match route.serve(fd, path, &mut req, resp, method) {
+        match route.serve(fd, verified_stat.as_ref(), path, &mut req, resp, method) {
             Serve::Done => {
                 #[cfg(windows)]
                 Closer::close(fd, bun_sys::windows::libuv::Loop::get());
@@ -320,13 +327,14 @@ impl FileRoute {
     fn serve(
         &self,
         fd: Fd,
+        verified_stat: Option<&bun_sys::Stat>,
         path: &[u8],
         req: &mut AnyRequest,
         resp: AnyResponse,
         method: Method,
     ) -> Serve {
         let (can_serve_file, offset, size, file_type, pollable) = 'brk: {
-            let stat = match bun_sys::fstat(fd) {
+            let stat = match verified_stat.map_or_else(|| bun_sys::fstat(fd), |stat| Ok(*stat)) {
                 Ok(s) => s,
                 // file_type is never read because can_serve_file == false
                 Err(_) => break 'brk (false, 0, 0, FileType::File, false),

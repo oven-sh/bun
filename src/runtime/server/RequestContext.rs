@@ -278,6 +278,7 @@ use crate::node::types::PathLikeExt as _;
 use crate::server::jsc::CallFrame;
 use crate::server::{AnyRequestContext, FileResponseStream, HTTPStatusText, file_response_stream};
 use crate::webcore::blob::BlobExt as _;
+use crate::webcore::blob::store::PinnedFileExt as _;
 use crate::webcore::{Blob, ReadableStream, body as Body, s3 as S3};
 use bun_jsc::SysErrorJsc as _;
 
@@ -1774,43 +1775,46 @@ where
         let crate::webcore::blob::store::Data::File(file) = &blob_ref.store().unwrap().data else {
             unreachable!("do_sendfile called with non-file blob");
         };
+        let open_flags = bun_sys::O::RDONLY | bun_sys::O::NONBLOCK | bun_sys::O::CLOEXEC;
         let mut file_buf = bun_paths::path_buffer_pool::get();
-        let auto_close = !matches!(
-            file.pathlike,
-            crate::webcore::node_types::PathOrFileDescriptor::Fd(_)
-        );
-        let fd: bun_sys::Fd = if !auto_close {
-            file.pathlike.fd()
-        } else {
-            match bun_sys::open(
-                file.pathlike.path().slice_z(&mut file_buf),
-                bun_sys::O::RDONLY | bun_sys::O::NONBLOCK | bun_sys::O::CLOEXEC,
-                0,
-            ) {
-                bun_sys::Result::Ok(fd_) => fd_,
-                bun_sys::Result::Err(err) => {
-                    let js_err = err
-                        .with_path(file.pathlike.path().slice())
-                        .to_js(global_this);
-                    return self.run_error_handler(js_err);
+        let auto_close = file.fd().is_none();
+        // A pinned file comes with the `fstat` of its verified open.
+        let (fd, verified_stat): (bun_sys::Fd, Option<bun_sys::Stat>) = match file.source() {
+            crate::webcore::blob::store::FileSource::Pinned(pinned) => {
+                match pinned.open_verified(open_flags) {
+                    bun_sys::Result::Ok((fd_, stat)) => (fd_, Some(stat)),
+                    bun_sys::Result::Err(_) => {
+                        let js_err = crate::webcore::blob::not_readable_error(global_this);
+                        return self.run_error_handler(js_err);
+                    }
                 }
             }
+            crate::webcore::blob::store::FileSource::Lazy(
+                crate::webcore::node_types::PathOrFileDescriptor::Fd(fd_),
+            ) => (*fd_, None),
+            crate::webcore::blob::store::FileSource::Lazy(
+                crate::webcore::node_types::PathOrFileDescriptor::Path(path),
+            ) => match bun_sys::open(path.slice_z(&mut file_buf), open_flags, 0) {
+                bun_sys::Result::Ok(fd_) => (fd_, None),
+                bun_sys::Result::Err(err) => {
+                    let js_err = err.with_path(path.slice()).to_js(global_this);
+                    return self.run_error_handler(js_err);
+                }
+            },
         };
 
-        let stat: bun_sys::Stat = match bun_sys::fstat(fd) {
+        let stat: bun_sys::Stat = match verified_stat.map_or_else(|| bun_sys::fstat(fd), Ok) {
             bun_sys::Result::Ok(s) => s,
             bun_sys::Result::Err(err) => {
                 if auto_close {
                     fd.close();
                 }
                 // Attach the path for the Path arm and the fd for the Fd arm.
-                let js_err = match &file.pathlike {
-                    crate::webcore::node_types::PathOrFileDescriptor::Path(p) => {
-                        err.with_path(p.slice()).to_js(global_this)
-                    }
-                    crate::webcore::node_types::PathOrFileDescriptor::Fd(pathlike_fd) => {
-                        err.with_fd(*pathlike_fd).to_js(global_this)
-                    }
+                let js_err = match file.fd() {
+                    None => err
+                        .with_path(file.display_path().unwrap_or_default())
+                        .to_js(global_this),
+                    Some(pathlike_fd) => err.with_fd(pathlike_fd).to_js(global_this),
                 };
                 return self.run_error_handler(js_err);
             }
@@ -1835,13 +1839,9 @@ where
                     syscall: bun_sys::Tag::read,
                     ..Default::default()
                 };
-                let err = match &file.pathlike {
-                    crate::webcore::node_types::PathOrFileDescriptor::Path(p) => {
-                        base_err.with_path(p.slice())
-                    }
-                    crate::webcore::node_types::PathOrFileDescriptor::Fd(pathlike_fd) => {
-                        base_err.with_fd(*pathlike_fd)
-                    }
+                let err = match file.fd() {
+                    None => base_err.with_path(file.display_path().unwrap_or_default()),
+                    Some(pathlike_fd) => base_err.with_fd(pathlike_fd),
                 };
                 let mut sys: jsc::SystemError = err.to_system_error().into();
                 sys.message = BunString::static_("Cannot stream a directory as a response body");

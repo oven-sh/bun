@@ -346,7 +346,8 @@ pub(crate) fn handle_template_value(
         if let Some(blob) = template_value.as_class_ref::<crate::webcore::Blob>() {
             if let Some(store) = blob.store.get().as_deref() {
                 if let crate::webcore::blob::store::Data::File(file) = &store.data {
-                    if let crate::node::PathOrFileDescriptor::Path(p) = &file.pathlike {
+                    // Only a `Bun.file(path)` is its path. Any other Blob is an object to read.
+                    if let Some(p) = file.lazy_path() {
                         let path: &[u8] = p.slice();
 
                         // Check for null bytes in path (security: prevent null byte injection)

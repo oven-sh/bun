@@ -1181,7 +1181,7 @@ impl Image {
             // unreachable, but this path should throw, not abort, when it isn't.)
             if let Some(store) = blob.store.get() {
                 if let blob_store::Data::File(file) = &store.data {
-                    if let PathOrFileDescriptor::Path(path) = &file.pathlike {
+                    if let Some(PathOrFileDescriptor::Path(path)) = file.lazy_pathlike() {
                         let p = ZBox::from_bytes(path.slice());
                         // `Source::Blob`'s `Strong` Drop releases the JS ref.
                         self.source.set(Source::Path(p));
@@ -1360,7 +1360,19 @@ impl<'a> BlobReadChain<'a> {
             }
             ReadBytesResult::Err(e) => {
                 drop(deliver);
-                outer.reject(global, Ok(e.to_error_instance(global)))
+                let pinned = matches!(
+                    image.source.get(),
+                    Source::Blob(blob) if blob
+                        .get()
+                        .as_class_ref::<Blob>()
+                        .is_some_and(|blob| blob.pinned_file().is_some())
+                );
+                let err = if pinned {
+                    crate::webcore::blob::not_readable_error(global)
+                } else {
+                    e.to_error_instance(global)
+                };
+                outer.reject(global, Ok(err))
             }
         }
     }

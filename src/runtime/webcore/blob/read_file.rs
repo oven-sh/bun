@@ -12,7 +12,7 @@ use crate::webcore::Lifetime;
 use crate::webcore::blob::ClosingState;
 #[cfg(windows)]
 use crate::webcore::blob::store::Bytes as ByteStore;
-use crate::webcore::blob::store::{Data, File as FileStore};
+use crate::webcore::blob::store::{Data, File as FileStore, FileSource};
 use crate::webcore::blob::{Blob, FileCloser, FileOpener, MAX_SIZE, SizeType, Store};
 use crate::webcore::node_types::PathOrFileDescriptor;
 #[cfg(windows)]
@@ -137,7 +137,11 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
                 // from here to `reject` it is a JS-thread stack local, kept
                 // alive by JSC's conservative stack scan.
                 let promise = unsafe { &mut *promise };
-                let val = err.to_error_instance_with_async_stack(global_this, promise);
+                let val = if blob.pinned_file().is_some() {
+                    crate::webcore::blob::not_readable_error(global_this)
+                } else {
+                    err.to_error_instance_with_async_stack(global_this, promise)
+                };
                 promise.reject(global_this, Ok(val))?;
             }
         }
@@ -326,7 +330,11 @@ impl FileOpener for ReadFile {
         self.system_error = Some(e);
     }
     fn pathlike(&self) -> &PathOrFileDescriptor<'static> {
-        &self.file_store.pathlike
+        match self.file_store.source() {
+            FileSource::Lazy(pathlike) => pathlike,
+            // `resolve_size_and_last_modified` verifies the `fstat` of this open.
+            FileSource::Pinned(pinned) => pinned.pathlike_for_unverified_open(),
+        }
     }
     #[cfg(windows)]
     fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t {
@@ -577,12 +585,9 @@ impl ReadFile {
                             self.system_error = Some(err.to_system_error().into());
                             if self.system_error.as_ref().unwrap().path.is_empty() {
                                 self.system_error.as_mut().unwrap().path =
-                                    if self.file_store.pathlike.is_path() {
-                                        BunString::clone_utf8(
-                                            self.file_store.pathlike.path().slice(),
-                                        )
-                                    } else {
-                                        BunString::EMPTY
+                                    match self.file_store.display_path() {
+                                        Some(path) => BunString::clone_utf8(path),
+                                        None => BunString::EMPTY,
                                     };
                             }
                             return false;
@@ -654,8 +659,8 @@ impl ReadFile {
         {
             self.io_task = Some(task);
 
-            if self.file_store.pathlike.is_fd() {
-                self.opened_fd = self.file_store.pathlike.fd();
+            if let Some(fd) = self.file_store.fd() {
+                self.opened_fd = fd;
             }
 
             self.get_fd(Self::run_async_with_fd);
@@ -664,7 +669,7 @@ impl ReadFile {
 
     #[cfg(not(windows))]
     pub(crate) fn is_allowed_to_close(&self) -> bool {
-        self.file_store.pathlike.is_path()
+        self.file_store.fd().is_none()
     }
 
     #[cfg(not(windows))]
@@ -698,6 +703,14 @@ impl ReadFile {
             }
         };
 
+        if let Some(pinned) = self.file_store.pinned()
+            && let Err(err) = pinned.verify(&stat)
+        {
+            self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
+            self.system_error = Some(err.to_system_error().into());
+            return;
+        }
+
         if let Some(store) = &self.store {
             if let Data::File(file) = Store::data_mut(store) {
                 let mtime = bun_sys::PosixStat::init(&stat).mtime();
@@ -709,10 +722,9 @@ impl ReadFile {
             self.errno = Some(crate::Error::Sys(bun_errno::SystemErrno::EISDIR));
             self.system_error = Some(SystemError {
                 code: BunString::static_("EISDIR"),
-                path: if self.file_store.pathlike.is_path() {
-                    BunString::clone_utf8(self.file_store.pathlike.path().slice())
-                } else {
-                    BunString::EMPTY
+                path: match self.file_store.display_path() {
+                    Some(path) => BunString::clone_utf8(path),
+                    None => BunString::EMPTY,
                 },
                 message: BunString::static_("Directories cannot be read like files"),
                 syscall: BunString::static_("read"),
@@ -914,6 +926,15 @@ impl ReadFile {
             }
             self.buffer = buffer;
 
+            // node compares the file again after it has read it.
+            if self.system_error.is_none()
+                && let Some(pinned) = self.file_store.pinned()
+                && let Err(err) = pinned.recheck(self.opened_fd)
+            {
+                self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
+                self.system_error = Some(err.to_system_error().into());
+            }
+
             if self.system_error.is_some() {
                 self.buffer = Vec::new(); // clearAndFree
             }
@@ -975,7 +996,11 @@ impl<'a> FileOpener for ReadFileUV<'a> {
         self.system_error = Some(e);
     }
     fn pathlike(&self) -> &PathOrFileDescriptor<'static> {
-        &self.file_store.pathlike
+        match self.file_store.source() {
+            FileSource::Lazy(pathlike) => pathlike,
+            // `on_file_initial_stat` verifies the `fstat` of this open.
+            FileSource::Pinned(pinned) => pinned.pathlike_for_unverified_open(),
+        }
     }
     fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t {
         self.loop_
@@ -1141,7 +1166,7 @@ impl<'a> ReadFileUV<'a> {
     }
 
     pub(crate) fn is_allowed_to_close(&self) -> bool {
-        self.file_store.pathlike.is_path()
+        self.file_store.fd().is_none()
     }
 
     fn on_finish(&mut self) {
@@ -1218,6 +1243,15 @@ impl<'a> ReadFileUV<'a> {
 
         let stat = this.req.statbuf;
 
+        if let Some(pinned) = this.file_store.pinned()
+            && let Err(err) = pinned.verify(&stat)
+        {
+            this.errno = Some(bun_errno::from_errno(err.errno as i32).into());
+            this.system_error = Some(err.to_system_error().into());
+            this.on_finish();
+            return;
+        }
+
         // keep in sync with resolveSizeAndLastModified
         if let Data::File(file) = Store::data_mut(&this.store) {
             // `uv_timespec_t` fields are `c_long` (i32 on Windows); widen to the
@@ -1230,10 +1264,9 @@ impl<'a> ReadFileUV<'a> {
             this.errno = Some(crate::Error::Sys(bun_errno::SystemErrno::EISDIR));
             this.system_error = Some(SystemError {
                 code: BunString::static_("EISDIR").into(),
-                path: if this.file_store.pathlike.is_path() {
-                    BunString::clone_utf8(this.file_store.pathlike.path().slice())
-                } else {
-                    BunString::EMPTY
+                path: match this.file_store.display_path() {
+                    Some(path) => BunString::clone_utf8(path),
+                    None => BunString::EMPTY,
                 }
                 .into(),
                 message: BunString::static_("Directories cannot be read like files").into(),
@@ -1385,12 +1418,55 @@ impl<'a> ReadFileUV<'a> {
             }
         } else {
             log!("ReadFileUV.queueRead done");
-
-            // We are done reading.
-            let owned = core::mem::take(&mut self.buffer).into_boxed_slice();
-            self.byte_store = ByteStore::init_owned(owned);
-            self.on_finish();
+            self.on_read_done();
         }
+    }
+
+    /// The read is complete. node compares a pinned file once more before it delivers the bytes.
+    fn on_read_done(&mut self) {
+        let owned = core::mem::take(&mut self.buffer).into_boxed_slice();
+        self.byte_store = ByteStore::init_owned(owned);
+        if self.file_store.pinned().is_none() {
+            self.on_finish();
+            return;
+        }
+
+        self.req.deinit();
+        self.req.data = core::ptr::from_mut(self).cast::<c_void>();
+        // SAFETY: FFI — same contract as the `uv_fs_fstat` in `on_file_open`;
+        // `on_final_stat` recovers `self` from `req.data` (set above).
+        let rc = unsafe {
+            libuv::uv_fs_fstat(
+                self.loop_,
+                &mut self.req,
+                self.opened_fd.uv(),
+                Some(Self::on_final_stat),
+            )
+        };
+        if let Some(errno) = rc.errno() {
+            self.fail_final_stat(bun_sys::Error::from_code(errno, bun_sys::Tag::fstat));
+        }
+    }
+
+    extern "C" fn on_final_stat(req: *mut libuv::fs_t) {
+        // SAFETY: req.data was set to *mut Self in on_read_done().
+        let this: &mut ReadFileUV = unsafe { bun_ptr::callback_ctx::<ReadFileUV>((*req).data) };
+        if let Some(errno) = this.req.result.errno() {
+            this.fail_final_stat(bun_sys::Error::from_code(errno, bun_sys::Tag::fstat));
+            return;
+        }
+        let stat = this.req.statbuf;
+        match this.file_store.pinned().map(|pinned| pinned.verify(&stat)) {
+            Some(Err(err)) => this.fail_final_stat(err),
+            _ => this.on_finish(),
+        }
+    }
+
+    fn fail_final_stat(&mut self, err: bun_sys::Error) {
+        self.byte_store = ByteStore::default();
+        self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
+        self.system_error = Some(err.to_system_error().into());
+        self.on_finish();
     }
 
     pub(crate) extern "C" fn on_read(req: *mut libuv::fs_t) {
@@ -1413,10 +1489,7 @@ impl<'a> ReadFileUV<'a> {
         }
 
         if result.int() == 0 {
-            // We are done reading.
-            let owned = core::mem::take(&mut this.buffer).into_boxed_slice();
-            this.byte_store = ByteStore::init_owned(owned);
-            this.on_finish();
+            this.on_read_done();
             return;
         }
 

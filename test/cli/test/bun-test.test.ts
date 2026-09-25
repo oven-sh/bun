@@ -2063,31 +2063,40 @@ describe.concurrent("test file discovery (scanner)", () => {
   }
 
   // https://github.com/oven-sh/bun/issues/39852
-  test.skipIf(isWindows)("does not keep a directory fd open per scanned directory", async () => {
-    const N = 64;
+  // https://github.com/oven-sh/bun/issues/42077
+  test.skipIf(isWindows)("does not retain directory fds needed by child processes", async () => {
+    const N = 2_600;
     const files: Record<string, string> = {};
     for (let i = 0; i < N; i++) {
       files[`sub${i}/a/b/c/.gitkeep`] = "";
     }
     files["sub0/probe.test.ts"] = /* ts */ `
       import { test } from "bun:test";
+      import { spawnSync } from "node:child_process";
       import { readdirSync } from "node:fs";
       test("probe", () => {
+        const child = spawnSync("/bin/echo", ["ok"], { encoding: "utf8" });
         console.log("OPEN_FDS=" + readdirSync(process.platform === "linux" ? "/proc/self/fd" : "/dev/fd").length);
+        console.log("SPAWN_STATUS=" + child.status);
+        console.log("SPAWN_STDOUT=" + JSON.stringify(child.stdout));
+        console.log("SPAWN_ERROR=" + (child.error?.message ?? "null"));
       });
     `;
     using dir = tempDir("scanner-dir-fds", files);
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "probe"],
+      cmd: [bunExe(), "test"],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // 4N+1 directories are scanned; none of them may stay open.
-    expect(Number(stdout.match(/OPEN_FDS=(\d+)/)?.[1])).toBeLessThan(N);
+    // A full-size tree keeps this close to OPEN_MAX on macOS and catches linear retention elsewhere.
+    expect(Number(stdout.match(/OPEN_FDS=(\d+)/)?.[1])).toBeLessThan(256);
+    expect(stdout).toContain("SPAWN_STATUS=0");
+    expect(stdout).toContain('SPAWN_STDOUT="ok\\n"');
+    expect(stdout).toContain("SPAWN_ERROR=null");
     expect(stderr).toContain(" 1 pass");
     expect(exitCode).toBe(0);
   });

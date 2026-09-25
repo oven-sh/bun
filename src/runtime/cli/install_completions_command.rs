@@ -1,9 +1,8 @@
+#[cfg(not(windows))]
+use bun_core::note;
 use bun_core::pretty_errorln;
 use bun_core::strings;
-use bun_core::{Global, Output, env_var};
-#[cfg(not(windows))]
-use bun_core::{note, print_errorln};
-#[cfg(not(windows))]
+use bun_core::{Global, Output, env_var, print_errorln};
 use bun_paths::{platform, resolve_path};
 use bun_sys::{self, E, File};
 
@@ -201,12 +200,106 @@ impl InstallCompletionsCommand {
         Ok(())
     }
 
-    fn print_powershell_completions_unsupported() {
-        Output::err_generic(
-            "PowerShell completions are not yet written for Bun.",
-            format_args!(""),
+    /// Installs `bun.ps1` into a PowerShell profile directory and exits. The
+    /// `explicit_dir` argument is the optional
+    /// `bun completions <dir>` argument.
+    fn install_powershell_completions(
+        cwd: &[u8],
+        explicit_dir: Option<&[u8]>,
+        fail_exit_code: u32,
+    ) -> ! {
+        let completions = Shell::Pwsh.completions();
+
+        let mut candidates: Vec<Vec<u8>> = Vec::new();
+        match explicit_dir {
+            Some(dir) => {
+                if bun_paths::is_absolute(dir) {
+                    candidates.push(dir.to_vec());
+                } else {
+                    candidates.push(
+                        resolve_path::join_abs_string::<platform::Auto>(cwd, &[dir]).to_vec(),
+                    );
+                }
+            }
+            None => {
+                // PowerShell 7+ then Windows PowerShell 5.1's default $PROFILE
+                // directory, matching where each looks for dot-sourced scripts.
+                #[cfg(windows)]
+                const DIRS: [&[u8]; 2] = [
+                    b"\\Documents\\PowerShell",
+                    b"\\Documents\\WindowsPowerShell",
+                ];
+                #[cfg(not(windows))]
+                const DIRS: [&[u8]; 2] = [b"/.config/powershell", b"/.local/share/powershell"];
+                if let Some(home_dir) = env_var::HOME.get() {
+                    for suffix in DIRS {
+                        let mut path = home_dir.to_vec();
+                        path.extend_from_slice(suffix);
+                        candidates.push(path);
+                    }
+                }
+            }
+        }
+
+        // Prefer an existing profile directory over creating one: on Windows,
+        // PowerShell 5.1 only reads Documents\WindowsPowerShell, so creating
+        // Documents\PowerShell on a 5.1-only machine would install a script
+        // that edition never loads.
+        let dir = candidates
+            .iter()
+            .find(|dir| bun_sys::open_dir_absolute(dir).is_ok())
+            .or_else(|| {
+                candidates.iter().find(|dir| {
+                    bun_sys::mkdir_recursive_at_mode(bun_sys::Fd::cwd(), dir, 0o755).is_ok()
+                })
+            });
+        let Some(dir) = dir else {
+            pretty_errorln!(
+                "<r><red>error:<r> Could not find a directory to install completions in.
+",
+            );
+            print_errorln!(
+                "Please either pipe it:
+   bun completions > bun.ps1
+
+ Or pass a directory:
+
+   bun completions /my/completions/dir
+",
+            );
+            Global::exit(fail_exit_code);
+        };
+
+        let output_dir = bun_sys::open_dir_absolute(dir).expect("dir was just opened or created");
+        let output_file = match File::create(output_dir, b"bun.ps1", true) {
+            Ok(f) => f,
+            Err(err) => {
+                let _ = bun_sys::close(output_dir);
+                pretty_errorln!(
+                    "<r><red>error:<r> Could not open bun.ps1 for writing: {}",
+                    bstr::BStr::new(err.name()),
+                );
+                Global::exit(fail_exit_code);
+            }
+        };
+        if output_file.write_all(completions).is_err() {
+            let _ = bun_sys::close(output_dir);
+            pretty_errorln!("<r><red>error:<r> Could not write to bun.ps1",);
+            Global::exit(fail_exit_code);
+        }
+        let _ = bun_sys::close(output_dir);
+        pretty_errorln!(
+            "<r><d>Installed completions to {}/bun.ps1<r>
+",
+            bstr::BStr::new(dir),
         );
-        Output::print_errorln("See https://github.com/oven-sh/bun/issues/8939");
+        print_errorln!(
+            "To enable them, add this line to your PowerShell profile:
+      . \"{}/bun.ps1\"",
+            bstr::BStr::new(dir),
+        );
+        Output::flush();
+        Global::exit(0);
     }
 
     pub(crate) fn exec() -> Result<(), crate::Error> {
@@ -259,33 +352,52 @@ impl InstallCompletionsCommand {
 
         #[cfg(windows)]
         {
-            Self::print_powershell_completions_unsupported();
-            return Ok(());
+            // `SHELL` is not readable through `env_var` on Windows, so the shell
+            // is always Unknown here: default to PowerShell, Windows' shell.
+            let shell = if shell == Shell::Unknown {
+                Shell::Pwsh
+            } else {
+                shell
+            };
+            // 'bun completions > bun.ps1' — write the script to stdout when piped.
+            if !env_var::IS_BUN_AUTO_UPDATE.get().unwrap_or(false)
+                && !bun_sys::isatty(stdout.handle)
+            {
+                if let Err(err) = stdout.write_all(shell.completions()) {
+                    if err.get_errno() == E::EPIPE {
+                        Global::exit(0);
+                    } else {
+                        return Err(err.into());
+                    }
+                }
+                Global::exit(0);
+            }
+
+            let mut explicit: Option<&[u8]> = None;
+            {
+                let argv = bun_core::argv();
+                let mut prev_was_completions = false;
+                for arg in argv {
+                    if prev_was_completions && !arg.starts_with(b"-") {
+                        explicit = Some(arg);
+                        break;
+                    }
+                    prev_was_completions = arg == b"completions";
+                }
+            }
+            Self::install_powershell_completions(cwd, explicit, fail_exit_code);
         }
 
         #[cfg(not(windows))]
         {
-            let filename: &[u8] = match shell {
-                Shell::Unknown => {
-                    Output::err_generic(
-                        "Unknown or unsupported shell. Please set $SHELL to one of zsh, fish, or bash.",
-                        format_args!(""),
-                    );
-                    note!("To manually output completions, run 'bun getcompletes'");
-                    Global::exit(fail_exit_code);
-                }
-                Shell::Pwsh => {
-                    Self::print_powershell_completions_unsupported();
-                    Global::exit(fail_exit_code);
-                }
-                Shell::Fish => b"bun.fish",
-                Shell::Zsh => b"_bun",
-                Shell::Bash => b"bun.completion.bash",
-            };
-
-            if !env_var::IS_BUN_AUTO_UPDATE.get().unwrap_or(false) {
-                if !bun_sys::isatty(stdout.handle) {
-                    if let Err(err) = stdout.write_all(shell.completions()) {
+            // Piped stdout prints the script for any shell with completions,
+            // before the interactive install paths below.
+            if !env_var::IS_BUN_AUTO_UPDATE.get().unwrap_or(false)
+                && !bun_sys::isatty(stdout.handle)
+            {
+                let completions = shell.completions();
+                if !completions.is_empty() {
+                    if let Err(err) = stdout.write_all(completions) {
                         if err.get_errno() == E::EPIPE {
                             Global::exit(0);
                         } else {
@@ -295,6 +407,36 @@ impl InstallCompletionsCommand {
                     Global::exit(0);
                 }
             }
+
+            let filename: &[u8] = match shell {
+                Shell::Unknown => {
+                    Output::err_generic(
+                        "Unknown or unsupported shell. Please set $SHELL to one of zsh, fish, bash, or pwsh.",
+                        format_args!(""),
+                    );
+                    note!("To manually output completions, run 'bun getcompletes'");
+                    Global::exit(fail_exit_code);
+                }
+                Shell::Pwsh => {
+                    // 'bun completions > bun.ps1' already printed the script above.
+                    let mut explicit: Option<&[u8]> = None;
+                    {
+                        let argv = bun_core::argv();
+                        let mut prev_was_completions = false;
+                        for arg in argv {
+                            if prev_was_completions && !arg.starts_with(b"-") {
+                                explicit = Some(arg);
+                                break;
+                            }
+                            prev_was_completions = arg == b"completions";
+                        }
+                    }
+                    Self::install_powershell_completions(cwd, explicit, fail_exit_code);
+                }
+                Shell::Fish => b"bun.fish",
+                Shell::Zsh => b"_bun",
+                Shell::Bash => b"bun.completion.bash",
+            };
 
             let mut completions_dir: &[u8];
             let output_dir: bun_sys::Fd = 'found: {

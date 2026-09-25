@@ -519,27 +519,6 @@ impl Builtin {
         Self::init_redirections(interp, cmd, kind)
     }
 
-    /// The stdin of a redirect from a pinned file: a reader of its verified descriptor.
-    fn pinned_stdin(
-        interp: &Interpreter,
-        global: &bun_jsc::JSGlobalObject,
-        blob: &crate::webcore::Blob,
-        redirect: ast::RedirectFlags,
-    ) -> Result<Option<BuiltinInput>, bun_jsc::JSValue> {
-        use crate::webcore::blob::store::PinnedFileExt as _;
-        let (true, Some(pinned)) = (redirect.stdin(), blob.pinned_file()) else {
-            return Ok(None);
-        };
-        match pinned.open_verified(bun_sys::O::RDONLY | bun_sys::O::NOCTTY) {
-            Ok((fd, _)) => {
-                let reader = IOReader::init(fd, interp.event_loop);
-                reader.set_interp(interp.as_ctx_ptr());
-                Ok(Some(BuiltinInput::Fd(reader)))
-            }
-            Err(_) => Err(crate::webcore::blob::not_readable_error(global)),
-        }
-    }
-
     /// Opens redirect files / wires ArrayBuffer & Blob targets / handles
     /// `2>&1` (`duplicate_out`).
     fn init_redirections(interp: &Interpreter, cmd: NodeId, kind: Kind) -> Option<Yield> {
@@ -761,23 +740,12 @@ impl Builtin {
                         drop(original_blob);
                         return None;
                     }
-                    let pinned_stdin =
-                        match Self::pinned_stdin(interp, global, &original_blob, redirect) {
-                            Ok(stdin) => stdin,
-                            Err(err) => {
-                                drop(original_blob);
-                                let _ = global.throw_value(err);
-                                return Some(Yield::Failed(cmd));
-                            }
-                        };
                     let blob = Arc::new(BuiltinBlob {
                         blob: original_blob.dupe(),
                     });
                     drop(original_blob);
                     let me = Self::of_mut(interp, cmd);
-                    if let Some(stdin) = pinned_stdin {
-                        me.stdin = stdin;
-                    } else if redirect.stdin() {
+                    if redirect.stdin() {
                         me.stdin = BuiltinInput::Blob(Arc::clone(&blob));
                     }
                     if redirect.stdout() {
@@ -793,21 +761,11 @@ impl Builtin {
                         ));
                         return Some(Yield::Failed(cmd));
                     }
-                    let pinned_stdin = match Self::pinned_stdin(interp, global, blob_ref, redirect)
-                    {
-                        Ok(stdin) => stdin,
-                        Err(err) => {
-                            let _ = global.throw_value(err);
-                            return Some(Yield::Failed(cmd));
-                        }
-                    };
                     let theblob = Arc::new(BuiltinBlob {
                         blob: blob_ref.dupe(),
                     });
                     let me = Self::of_mut(interp, cmd);
-                    if let Some(stdin) = pinned_stdin {
-                        me.stdin = stdin;
-                    } else if redirect.stdin() {
+                    if redirect.stdin() {
                         me.stdin = BuiltinInput::Blob(theblob);
                     } else if redirect.stdout() {
                         me.stdout = BuiltinIO::Blob(theblob);

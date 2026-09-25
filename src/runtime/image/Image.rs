@@ -15,6 +15,7 @@ use crate::generated_classes::PropertyName;
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
 use crate::webcore::blob::store as blob_store;
+use crate::webcore::blob::store::PinnedFileExt as _;
 use crate::webcore::blob::{ReadBytesHandler, ReadBytesResult};
 use crate::webcore::node_types::PathOrFileDescriptor;
 use bun_core::ZBox;
@@ -1181,7 +1182,14 @@ impl Image {
             // unreachable, but this path should throw, not abort, when it isn't.)
             if let Some(store) = blob.store.get() {
                 if let blob_store::Data::File(file) = &store.data {
-                    if let Some(PathOrFileDescriptor::Path(path)) = file.lazy_pathlike() {
+                    // `run()` reads the path inline, so a pinned file is compared here.
+                    if let Some(pinned) = file.pinned()
+                        && pinned.recheck_path().is_err()
+                    {
+                        let err = crate::webcore::blob::not_readable_error(global);
+                        return Err(global.throw_value(err));
+                    }
+                    if let PathOrFileDescriptor::Path(path) = file.pathlike_ignoring_pin() {
                         let p = ZBox::from_bytes(path.slice());
                         // `Source::Blob`'s `Strong` Drop releases the JS ref.
                         self.source.set(Source::Path(p));

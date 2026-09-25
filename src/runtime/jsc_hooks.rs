@@ -1435,7 +1435,7 @@ mod vm_loader_ctx {
             // `blob_deinit`; erased to `'static` per the interface signature —
             // sound because the bundler caller drops them before `blob_deinit`.
             blob_store_path(b) => blob(b)
-                .path_for_open()
+                .path_for_display()
                 .map(|s| core::slice::from_raw_parts(s.as_ptr(), s.len())),
             blob_needs_read_file(b) => blob(b).needs_to_read_file(),
             blob_shared_view(b) => {
@@ -3889,7 +3889,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
                 loader = blob.get_loader(unsafe { &*jsc_vm });
 
                 // "file:" loader makes no sense for blobs, so default to tsx.
-                if let Some(filename) = blob.path_for_open() {
+                if let Some(filename) = blob.path_for_display() {
                     // Only treat it as a file if it is a `Bun.file()`.
                     if blob.needs_to_read_file() {
                         // Note: borrowck — `Fs::Path<'a>` borrows

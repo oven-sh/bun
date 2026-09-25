@@ -1628,10 +1628,16 @@ impl<'a> CopyFileWindows<'a> {
         };
         let old_path: &bun_core::ZStr = 'brk: {
             match source_file_store.source() {
-                // `uv_fs_copyfile` takes a path, so a pinned source is copied from its descriptor.
-                FileSource::Pinned(_) => {
-                    self.prepare_read_write_loop();
-                    return;
+                // `uv_fs_copyfile` takes a path, so the file is compared before and after it.
+                FileSource::Pinned(pinned) => {
+                    if pinned.recheck_path().is_err() {
+                        self.reject(|global_this, _| Ok(blob::not_readable_error(global_this)));
+                        return;
+                    }
+                    break 'brk pinned
+                        .pathlike_for_unverified_open()
+                        .path()
+                        .slice_z(&mut pathbuf2);
                 }
                 FileSource::Lazy(PathOrFileDescriptor::Path(path)) => {
                     break 'brk path.slice_z(&mut pathbuf2);
@@ -1971,6 +1977,13 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
         }
 
         this.throw(err);
+        return;
+    }
+
+    if let Some(pinned) = this.source_file_store.data.as_file().pinned()
+        && pinned.recheck_path().is_err()
+    {
+        this.reject(|global_this, _| Ok(blob::not_readable_error(global_this)));
         return;
     }
 

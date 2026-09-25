@@ -776,10 +776,12 @@ impl BlobExt for Blob {
         writer.write_int_le::<u8>(self.content_type_was_set.get() as u8)?;
 
         let store_tag: store::SerializeTag = if let Some(store) = self.store.get() {
-            if matches!(store.data, store::Data::File(_)) {
-                store::SerializeTag::File
-            } else {
-                store::SerializeTag::Bytes
+            match &store.data {
+                store::Data::File(file) if file.pinned().is_some() => {
+                    store::SerializeTag::PinnedFile
+                }
+                store::Data::File(_) => store::SerializeTag::File,
+                store::Data::Bytes(_) | store::Data::S3(_) => store::SerializeTag::Bytes,
             }
         } else {
             store::SerializeTag::Empty
@@ -829,7 +831,7 @@ impl BlobExt for Blob {
         ctx: *mut c_void,
         write_bytes: crate::generated_classes::WriteBytesFn,
     ) {
-        if self.pinned_file().is_some() {
+        if self.not_cloneable.get() {
             // As in node. The serializer stops at the pending exception.
             let _ = global_this
                 .err(
@@ -3154,6 +3156,7 @@ impl BlobExt for Blob {
                                     ),
                                     charset: Cell::new(blob.charset.get()),
                                     is_jsdom_file: Cell::new(blob.is_jsdom_file.get()),
+                                    not_cloneable: Cell::new(false),
                                     ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
                                     global_this: Cell::new(blob.global_this.get()),
                                     last_modified: Cell::new(blob.last_modified.get()),
@@ -3867,6 +3870,39 @@ fn read_slice<B: AsRef<[u8]>>(
     Ok(slice)
 }
 
+/// The clone of a Blob of a pinned file: the same pin, and the `stat` fields of its store.
+fn read_pinned_file<B: AsRef<[u8]>>(
+    global_this: &JSGlobalObject,
+    reader: &mut bun_io::FixedBufferStream<B>,
+    path: &[u8],
+) -> crate::Result<Blob> {
+    let size = reader.read_int_le::<u64>()?;
+    let mtime_nsec = reader.read_int_le::<i64>()?;
+    let mode = reader.read_int_le::<u32>()?;
+    let last_modified = reader.read_int_le::<u64>()?;
+
+    let mut file =
+        store::File::init_pinned_to(path, size, mtime_nsec, bun_http_types::MimeType::NONE);
+    let is_regular = bun_sys::S::ISREG(mode as _);
+    file.max_size = if is_regular || size > 0 {
+        size as SizeType
+    } else {
+        MAX_SIZE
+    };
+    file.mode = mode;
+    file.seekable = Some(is_regular);
+    file.last_modified = last_modified;
+    Ok(Blob::init_with_store(
+        RefPtr::new(Store {
+            data: store::Data::File(file),
+            mime_type: bun_http_types::MimeType::NONE,
+            ref_count: bun_ptr::ThreadSafeRefCount::init(),
+            is_all_ascii: store::IsAllAscii::default(),
+        }),
+        global_this,
+    ))
+}
+
 fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
     global_this: &JSGlobalObject,
     reader: &mut bun_io::FixedBufferStream<B>,
@@ -3923,7 +3959,7 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
             let blob = scopeguard::ScopeGuard::into_inner(guard);
             break 'bytes Blob::new(blob);
         }
-        store::SerializeTag::File => 'file: {
+        store::SerializeTag::File | store::SerializeTag::PinnedFile => 'file: {
             use crate::node::types::PathOrFileDescriptorSerializeTag;
             if version >= 4 {
                 file_size = Some(reader.read_int_le::<u64>()?);
@@ -3933,6 +3969,11 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
                     .ok_or(crate::Error::InvalidValue)?;
 
             match pathlike_tag {
+                PathOrFileDescriptorSerializeTag::Fd
+                    if matches!(store_tag, store::SerializeTag::PinnedFile) =>
+                {
+                    return Err(crate::Error::InvalidValue);
+                }
                 PathOrFileDescriptorSerializeTag::Fd => {
                     let fd: Fd = reader.read_struct()?;
                     // Wire bytes are untrusted: enforce the same range as `FdJsc::from_js_validated`
@@ -3957,6 +3998,9 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
                     // syscall layer (`ZStr::as_cstr` would truncate / panic).
                     if strings::index_of_char(&path, 0).is_some() {
                         return Err(crate::Error::InvalidValue);
+                    }
+                    if matches!(store_tag, store::SerializeTag::PinnedFile) {
+                        break 'file Blob::new(read_pinned_file(global_this, reader, &path)?);
                     }
                     let mut dest = PathOrFileDescriptor::Path(PathLike::owned(path));
                     break 'file Blob::new(Blob::find_or_create_file_from_path(
@@ -4489,6 +4533,16 @@ pub(crate) fn write_file_with_source_destination(
     }
     // If this is file <> file, we can just copy the file
     else if destination_type == store::DataTag::File && source_type == store::DataTag::File {
+        // The size of a pin is for a read. It is not a limit for a copy into the file.
+        let max_length = match destination_blob.pinned_file() {
+            Some(pinned)
+                if destination_blob.offset.get() == 0
+                    && destination_blob.size.get() == pinned.size_and_mtime_nsec().0 =>
+            {
+                MAX_SIZE
+            }
+            _ => destination_blob.size.get(),
+        };
         #[cfg(windows)]
         {
             return Ok(copy_file::CopyFileWindows::init(
@@ -4497,7 +4551,7 @@ pub(crate) fn write_file_with_source_destination(
                 cx.vm().event_loop_shared(),
                 cx.context(),
                 options.mkdirp_if_not_exists.unwrap_or(true),
-                destination_blob.size.get(),
+                max_length,
                 options.mode,
             ));
         }
@@ -4507,7 +4561,7 @@ pub(crate) fn write_file_with_source_destination(
                 destination_store,
                 source_store,
                 destination_blob.offset.get(),
-                destination_blob.size.get(),
+                max_length,
                 cx,
                 options.mkdirp_if_not_exists.unwrap_or(true),
                 options.mode,
@@ -5626,6 +5680,7 @@ pub(crate) fn construct_open_as_blob(
         global_object,
     );
     blob.resolve_size();
+    blob.not_cloneable.set(true);
 
     let ptr = Blob::new(blob);
     // SAFETY: ptr was just produced by heap::alloc in Blob::new. Spelled

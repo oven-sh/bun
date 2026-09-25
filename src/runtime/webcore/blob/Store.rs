@@ -229,6 +229,14 @@ impl StoreExt for Store {
                         writer.write_all(path_slice)?;
                     }
                 }
+
+                if let Some(pinned) = file.pinned() {
+                    let (size, mtime_nsec) = pinned.size_and_mtime_nsec();
+                    writer.write_int_le::<u64>(size)?;
+                    writer.write_int_le::<i64>(mtime_nsec)?;
+                    writer.write_int_le::<u32>(file.mode)?;
+                    writer.write_int_le::<u64>(file.last_modified)?;
+                }
             }
             Data::S3(s3) => {
                 let pathlike_tag = PathOrFileDescriptorSerializeTag::Path;

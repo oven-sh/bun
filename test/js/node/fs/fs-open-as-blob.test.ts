@@ -212,14 +212,25 @@ describe.concurrent("fs.openAsBlob pins the file", () => {
     expect(() => openAsBlob(import.meta.path, { type: 123 })).toThrow(invalidArgType);
   });
 
-  it("is not cloneable", async () => {
-    const blob = await openAsBlob(import.meta.path);
+  it("is not cloneable, and every other Blob of the file is", async () => {
+    const { dir, file, blob } = await pinned();
+    using _ = dir;
     expect(() => structuredClone(blob)).toThrow(
       expect.objectContaining({
         code: "ERR_INVALID_STATE",
         message: "Invalid state: File-backed Blobs are not cloneable",
       }),
     );
+    // As in node. The clone has the pin.
+    const clones = [blob.slice(1, 4), blob.slice(), new Blob([blob]), new File([blob], "n")].map(each =>
+      structuredClone(each),
+    );
+    expect(await Promise.all(clones.map(clone => clone.text()))).toEqual(["ell", "hello", "hello", "hello"]);
+    writeFileSync(file, "swapped!");
+    expect(clones.map(clone => clone.size)).toEqual([3, 5, 5, 5]);
+    for (const clone of [...clones, structuredClone(blob.slice())]) {
+      await expect(clone.text()).rejects.toEqual(notReadable);
+    }
   });
 
   it.each([
@@ -261,6 +272,14 @@ describe.concurrent("fs.openAsBlob pins the file", () => {
     writeFileSync(file, "swapped!");
     await expect(Bun.write(destination, blob)).rejects.toEqual(notReadable);
     expect(statSync(destination).size).toBe(100_000);
+  });
+
+  // libuv takes a copy of a file onto itself as done. POSIX truncates the file first, for a `Bun.file()` too.
+  it.skipIf(!isWindows)("Bun.write of the file onto itself keeps the file", async () => {
+    const { dir, file, blob } = await pinned();
+    using _ = dir;
+    expect(await Bun.write(blob, blob)).toBe(5);
+    expect(readFileSync(file, "utf8")).toBe("hello");
   });
 
   // The FIFO is smaller than the file, so the copy cannot end before this test drains it.
@@ -356,32 +375,53 @@ describe.concurrent("fs.openAsBlob pins the file", () => {
     expect(await proc.exited).toBe(0);
     expect(readFileSync(file, "utf8")).toBe("from the child");
 
+    // The size of the pin is not a limit for a copy into the file.
+    const source = join(String(dir), "source.txt");
+    writeFileSync(source, "a source that is longer");
+    expect(await Bun.write(await openAsBlob(file), Bun.file(source))).toBe(23);
+    expect(readFileSync(file, "utf8")).toBe("a source that is longer");
+
     // @ts-expect-error BunFile members are not on node's Blob
     await (await openAsBlob(file)).unlink();
     expect(existsSync(file)).toBe(false);
   });
 
-  it("the shell reads a redirect from the Blob through the pin", async () => {
+  // The command opens the path. The Blob is the name of the file there, as a `Bun.file()` is.
+  it("is its path in the shell", async () => {
     const { dir, file, blob } = await pinned();
     using _ = dir;
+    expect(await $`cat ${blob}`.text()).toBe("hello");
     expect(await $`cat < ${blob}`.text()).toBe("hello");
-    expect(await $`cat < ${new Response(blob)}`.text()).toBe("hello");
-    writeFileSync(file, "swapped!");
-    await expect((async () => await $`cat < ${blob}`.text())()).rejects.toEqual(notReadable);
-    await expect((async () => await $`cat < ${new Response(blob)}`.text())()).rejects.toEqual(notReadable);
+    await $`echo first > ${blob}`;
+    await $`echo second >> ${blob}`;
+    expect(readFileSync(file, "utf8")).toBe("first\nsecond\n");
+    expect(await $`cat < ${blob}`.text()).toBe("first\nsecond\n");
   });
 
-  // These two take the path of a `Bun.file()`. The Blob gives none, as a `Bun.file(fd)` gives none.
-  it("is not a path for import() and for Bun.Image as a Response body", async () => {
-    const { dir, blob } = await pinned("export default 42;");
-    using _ = dir;
-    const url = URL.createObjectURL(blob);
+  it("is its path for import()", async () => {
+    using dir = tempDir("open-as-blob-import", { "module.js": "export default 42;" });
+    const url = URL.createObjectURL(await openAsBlob(join(String(dir), "module.js")));
     try {
-      await expect(import(url)).rejects.toThrow();
+      expect((await import(url)).default).toBe(42);
     } finally {
       URL.revokeObjectURL(url);
     }
-    expect(() => new Response(new Bun.Image(blob))).toThrow("pass `await file.bytes()` or a path string");
+  });
+
+  it("Bun.Image reads it as a Response body", async () => {
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    const { dir, file, blob } = await pinned(png);
+    using _ = dir;
+    const res = new Response(new Bun.Image(blob).png());
+    expect((await res.bytes()).subarray(1, 4)).toEqual(Buffer.from("PNG"));
+    expect(await new Bun.Image(blob).metadata()).toEqual({ width: 1, height: 1, format: "png" });
+
+    fs.appendFileSync(file, "b");
+    expect(() => new Response(new Bun.Image(blob).png())).toThrow(notReadable);
+    await expect(new Bun.Image(blob).metadata()).rejects.toEqual(notReadable);
   });
 
   it("takes a file descriptor as before", async () => {

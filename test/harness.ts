@@ -1714,7 +1714,9 @@ export function isGlibcVersionAtLeast(version: string): boolean {
   if (!glibcVersion) {
     return false;
   }
-  return Bun.semver.satisfies(glibcVersion, `>=${version}`);
+  // glibc reports "major.minor" (e.g. "2.41"), which semver rejects as a version; pad it to three components.
+  const [major, minor = "0", patch = "0"] = glibcVersion.split(".");
+  return Bun.semver.satisfies(`${major}.${minor}.${patch}`, `>=${version}`);
 }
 
 let macOSVersion: string | undefined;

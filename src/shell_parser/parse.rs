@@ -2911,7 +2911,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                     if !next.escaped && next.char == u32::from(b'\n') {
                         let _ = self.eat();
                         if self.chars.state != CharState::Double {
-                            self.break_word_impl(true, true, false)?;
+                            self.break_word(AddDelimiter::AfterWord)?;
                         }
                         continue;
                     }

@@ -68,6 +68,29 @@ describe.concurrent("run-shell", () => {
   });
 
   // https://github.com/oven-sh/bun/issues/29669
+  // Mixed endings: LF on one line, CRLF on the next. Each `\r\n` must be
+  // handled independently so `bun run build\r\n` still resolves `build`.
+  test("mixed LF/CRLF line endings resolve package scripts", async () => {
+    using dir = tempDir("bun-shell-mixed-eol", {
+      "package.json": JSON.stringify({ scripts: { build: "echo built-ok" } }),
+      "repro.sh": "export VITE_PARAM=value\nbun run build\r\n",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "repro.sh")],
+      cwd: String(dir),
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // `bun run` echoes the resolved script to stderr; a stray `\r` would show
+    // up here as `Script not found "build\r"` instead.
+    expect(stripAsanWarning(stderr)).toBe("$ echo built-ok\n");
+    expect(stdout).toBe("built-ok\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // https://github.com/oven-sh/bun/issues/29669
   test("CRLF with backslash line continuation", async () => {
     using dir = tempDir("bun-shell-crlf-cont", {
       "cont.sh": "echo first \\\r\n  second \\\r\n  third\r\n",

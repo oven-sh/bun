@@ -10,13 +10,16 @@ import {
   isBroken,
   isDebug,
   isLinux,
+  isMacOS,
   isPosix,
   isWindows,
+  libcPathForDlopen,
   shellExe,
   tempDir,
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
+import { mkfifo } from "mkfifo";
 import { closeSync, fstatSync, openSync, readFileSync, readSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "path";
 
@@ -932,6 +935,139 @@ describe.skipIf(isWindows)("stdout reader of an unref'd child and process lifeti
       setImmediate(() => child.stdin.write("s"));
     `);
     expect(stdout).toBe("resume\nend " + (16 * 65536 + 3) + "\n");
+  });
+});
+
+// One wakeup of the parent can report the last bytes of a child's stdout and
+// the hangup together. The consumer of that stdout must still get every byte,
+// also when more bytes are unread than one read takes (256 KiB). The child
+// queues the bytes on its stdout socket and closes it while the parent is
+// blocked in a synchronous read, so the parent polls the socket only after
+// the hangup.
+describe.skipIf(!isLinux && !isMacOS)("stdout bytes that are still unread when the child hangs up", () => {
+  const fixtures = {
+    // The bytes depend on their position, so a delivery that comes twice or out of order does not compare equal.
+    // 251 is prime: no read size is a multiple of it. The rewriter copies these bytes as they are.
+    "payload.ts": `
+      const unit = Buffer.from(
+        Array.from({ length: 251 }, (_, i) => "0123456789abcdefghijklmnopqrstuvwxyz".charCodeAt(i % 36)),
+      );
+      export const payload = (length: number) => Buffer.alloc(length, unit);
+    `,
+    // Queues the bytes without blocking, hangs up, and reports through the FIFO how many the socket took.
+    "child-fixture.ts": `
+      import { dlopen, ptr } from "bun:ffi";
+      import { closeSync, openSync, writeSync } from "node:fs";
+      import { payload } from "./payload.ts";
+
+      const [fifo, length] = [process.argv[2], Number(process.argv[3])];
+      // Blocks until the parent opens the FIFO for reading. It comes first: if a later step fails, the parent's
+      // read still ends when this process exits.
+      const report = openSync(fifo, "w");
+      const { setsockopt, send } = dlopen(process.env.LIBC_PATH, {
+        setsockopt: { args: ["i32", "i32", "i32", "ptr", "u32"], returns: "i32" },
+        send: { args: ["i32", "ptr", "usize", "i32"], returns: "i64" },
+      }).symbols;
+      const linux = process.platform === "linux";
+      const SOL_SOCKET = linux ? 1 : 0xffff;
+      const SO_SNDBUF = linux ? 7 : 0x1001;
+      const MSG_DONTWAIT = linux ? 0x40 : 0x80;
+      // A socket holds 208 KiB by default on Linux. The kernel cuts the request to net.core.wmem_max.
+      setsockopt(1, SOL_SOCKET, SO_SNDBUF, ptr(new Int32Array([1 << 20])), 4);
+      const queued = Number(send(1, ptr(payload(length)), length, MSG_DONTWAIT));
+      // The exit of a process closes its descriptors in no useful order. This close comes before the report, so
+      // the parent's socket holds the bytes and the hangup when the report arrives.
+      closeSync(1);
+      writeSync(report, String(queued));
+      process.exit(0);
+    `,
+    "parent-fixture.ts": `
+      import { $ } from "bun";
+      import { readFileSync } from "node:fs";
+      import { join } from "node:path";
+      import { payload } from "./payload.ts";
+
+      const [consumer, fifo, out, length] = process.argv.slice(2);
+      const cmd = [process.execPath, join(import.meta.dir, "child-fixture.ts"), fifo, length];
+      let queued;
+      // The child queues its bytes only after this open, and reports only after it hung up. The read blocks this
+      // thread until then, so nothing polls the stdout socket before the hangup.
+      const untilChildHungUp = () => {
+        queued = Number(readFileSync(fifo, "utf8"));
+      };
+
+      let received;
+      if (consumer === "shell") {
+        const captured = $\`\${cmd}\`.quiet().arrayBuffer();
+        setImmediate(untilChildHungUp);
+        received = Buffer.from(await captured);
+      } else {
+        const child = Bun.spawn({ cmd, stdin: "ignore", stdout: "pipe", stderr: "inherit" });
+        if (consumer === "write" || consumer === "write-response") {
+          const written = Bun.write(out, consumer === "write" ? child.stdout : new Response(child.stdout));
+          setImmediate(untilChildHungUp);
+          await written;
+          received = readFileSync(out);
+        } else if (consumer === "rewriter") {
+          const body = new HTMLRewriter().transform(new Response(child.stdout)).arrayBuffer();
+          setImmediate(untilChildHungUp);
+          received = Buffer.from(await body);
+        } else if (consumer === "stdin") {
+          const copier = Bun.spawn({
+            cmd: [process.execPath, "-e", "await Bun.write(process.argv[1], Bun.stdin.stream());", out],
+            stdin: child.stdout,
+            stdout: "inherit",
+            stderr: "inherit",
+          });
+          setImmediate(untilChildHungUp);
+          await copier.exited;
+          received = readFileSync(out);
+        } else if (consumer === "fetch") {
+          const chunks = [];
+          using server = Bun.serve({
+            port: 0,
+            async fetch(req) {
+              for await (const chunk of req.body) chunks.push(chunk);
+              return new Response("ok");
+            },
+          });
+          const response = fetch(server.url, { method: "POST", body: child.stdout });
+          setImmediate(untilChildHungUp);
+          await (await response).text();
+          received = Buffer.concat(chunks);
+        }
+        await child.exited;
+      }
+      const intact = received.equals(payload(Number(length)));
+      console.log(JSON.stringify({ queued, received: received.length, intact }));
+    `,
+  };
+
+  it.concurrent.each([
+    ["Bun.write(file, proc.stdout)", "write"],
+    ["Bun.write(file, new Response(proc.stdout))", "write-response"],
+    ["new HTMLRewriter().transform(new Response(proc.stdout))", "rewriter"],
+    // Guards: a wrong end-of-stream label does not cut these short, or not in every run.
+    ["Bun.spawn({ stdin: proc.stdout })", "stdin"],
+    ["fetch(url, { body: proc.stdout })", "fetch"],
+    ["a shell capture", "shell"],
+  ])("%s gets all of them", async (_, consumer) => {
+    const length = 270_000;
+    using dir = tempDir("spawn-stdout-unread-at-hangup", fixtures);
+    const fifo = join(String(dir), "hung-up.fifo");
+    mkfifo(fifo);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "parent-fixture.ts", consumer, fifo, join(String(dir), "out.bin"), String(length)],
+      env: { ...bunEnv, LIBC_PATH: libcPathForDlopen() },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ queued: length, received: length, intact: true });
+    expect(exitCode).toBe(0);
   });
 });
 

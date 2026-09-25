@@ -781,7 +781,7 @@ impl PosixBufferedReader {
                     } else if streaming {
                         vtable.on_read_chunk(
                             Chunk::Scratch(&scratch[..filled]),
-                            Self::read_state(stop.as_ref(), received_hup),
+                            Self::read_state(stop.as_ref()),
                         )
                     } else {
                         // SAFETY: caller contract; borrow ends at `;`.
@@ -802,7 +802,7 @@ impl PosixBufferedReader {
                         // Moved out so a re-entrant read cannot alias or reallocate it under the consumer.
                         // SAFETY: caller contract; borrow ends at `;`.
                         let mut buffer = unsafe { mem::take(&mut (*this)._buffer) };
-                        let state = Self::read_state(stop.as_ref(), received_hup);
+                        let state = Self::read_state(stop.as_ref());
                         if matches!(stop, Some(Stop::Eof | Stop::OverBudget | Stop::Error(_))) {
                             vtable.on_read_chunk(Chunk::Owned(buffer), state)
                         } else {
@@ -895,13 +895,11 @@ impl PosixBufferedReader {
         }
     }
 
-    fn read_state(stop: Option<&Stop>, received_hup: bool) -> ReadState {
+    fn read_state(stop: Option<&Stop>) -> ReadState {
         match stop {
             Some(Stop::Eof | Stop::OverBudget) => ReadState::Eof,
             Some(Stop::WouldBlock) => ReadState::Drained,
-            Some(Stop::Error(_)) => ReadState::Progress,
-            None if received_hup => ReadState::Eof,
-            None => ReadState::Progress,
+            Some(Stop::Error(_)) | None => ReadState::Progress,
         }
     }
 

@@ -1,6 +1,19 @@
 import type { Server } from "bun";
+import { dlopen, ptr } from "bun:ffi";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, isMacOS, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isLinux,
+  isMacOS,
+  isWindows,
+  libcPathForDlopen,
+  rmScope,
+  rss,
+  tempDir,
+  tempDirWithFiles,
+} from "harness";
 import { mkfifo } from "mkfifo";
 import { closeSync, openSync, unlinkSync, writeSync } from "node:fs";
 import { open as fsOpen } from "node:fs/promises";
@@ -1148,6 +1161,210 @@ process.exit(0);
     },
   );
 }
+
+// One wakeup of the server can report the last bytes of a pollable body and
+// the hangup of its writer together. The response must still carry every byte
+// and end as a complete message, and a read error behind the bytes must not
+// end it as one. Each row queues its bytes on one end of a socketpair and
+// closes that end, in one turn of this thread, while the server waits on its
+// poll for the other end.
+describe.skipIf(!isLinux && !isMacOS)("a file response whose socket hangs up with bytes unread", () => {
+  const AF_UNIX = 1;
+  const SOCK_STREAM = 1;
+  const SOL_SOCKET = isLinux ? 1 : 0xffff;
+  const SO_SNDBUF = isLinux ? 7 : 0x1001;
+  const SO_RCVBUF = isLinux ? 8 : 0x1002;
+  const MSG_DONTWAIT = isLinux ? 0x40 : 0x80;
+
+  let libc: any;
+  function socketPair() {
+    libc ??= dlopen(libcPathForDlopen(), {
+      socketpair: { args: ["i32", "i32", "i32", "ptr"], returns: "i32" },
+      setsockopt: { args: ["i32", "i32", "i32", "ptr", "u32"], returns: "i32" },
+      send: { args: ["i32", "ptr", "usize", "i32"], returns: "i64" },
+    }).symbols;
+    const fds = new Int32Array(2);
+    if (libc.socketpair(AF_UNIX, SOCK_STREAM, 0, ptr(fds)) !== 0) throw new Error("socketpair() failed");
+    const [source, peer] = fds;
+    // A socket holds 208 KiB by default on Linux and 8 KiB on macOS. The kernel cuts the request to its limit.
+    const size = new Int32Array([1 << 20]);
+    libc.setsockopt(peer, SOL_SOCKET, SO_SNDBUF, ptr(size), 4);
+    libc.setsockopt(source, SOL_SOCKET, SO_RCVBUF, ptr(size), 4);
+    let peerIsOpen = true;
+    return {
+      source,
+      peer,
+      // Queues the bytes without blocking, then closes: the source holds the bytes and the hangup.
+      hangUp(bytes: Buffer) {
+        const queued = Number(libc.send(peer, ptr(bytes), bytes.length, MSG_DONTWAIT));
+        closeSync(peer);
+        peerIsOpen = false;
+        return queued;
+      },
+      [Symbol.dispose]() {
+        if (peerIsOpen) closeSync(peer);
+        closeSync(source);
+      },
+    };
+  }
+
+  // The bytes depend on their position, so a delivery that comes twice or out of order does not compare equal.
+  // 251 is prime: no read size is a multiple of it.
+  const unit = Buffer.from(
+    Array.from({ length: 251 }, (_, i) => "0123456789abcdefghijklmnopqrstuvwxyz".charCodeAt(i % 36)),
+  );
+  const first = Buffer.from("first");
+
+  function parse(wire: Buffer) {
+    const headEnd = wire.indexOf("\r\n\r\n");
+    if (headEnd === -1) return { status: "", body: Buffer.alloc(0), complete: false };
+    const head = wire.subarray(0, headEnd).toString("latin1");
+    const status = head.slice(0, head.indexOf("\r\n"));
+    const rest = wire.subarray(headEnd + 4);
+    const declared = /^content-length:\s*(\d+)/im.exec(head);
+    if (declared) return { status, body: rest, complete: rest.length >= Number(declared[1]) };
+    const chunks: Buffer[] = [];
+    let at = 0;
+    for (;;) {
+      const lineEnd = rest.indexOf("\r\n", at);
+      const size = lineEnd === -1 ? NaN : parseInt(rest.subarray(at, lineEnd).toString("latin1"), 16);
+      if (Number.isNaN(size)) return { status, body: Buffer.concat(chunks), complete: false };
+      if (size === 0) return { status, body: Buffer.concat(chunks), complete: rest.length >= lineEnd + 4 };
+      chunks.push(rest.subarray(lineEnd + 2, lineEnd + 2 + size));
+      at = lineEnd + 2 + size + 2;
+    }
+  }
+
+  // One GET from a raw client on this thread. It ends when the message is complete or the connection is gone.
+  // `whenBodyStarts` runs once the first bytes of the body are in.
+  async function get(server: Server, unix: string | undefined, whenBodyStarts?: () => void) {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    let wire = Buffer.alloc(0);
+    let closed: string | undefined;
+    await using _ = await Bun.connect({
+      ...(unix ? { unix } : { hostname: "127.0.0.1", port: server.port }),
+      socket: {
+        open(socket) {
+          socket.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+        },
+        data(_socket, chunk) {
+          wire = Buffer.concat([wire, chunk]);
+          const { body, complete } = parse(wire);
+          if (body.length >= first.length) {
+            whenBodyStarts?.();
+            whenBodyStarts = undefined;
+          }
+          if (complete) resolve();
+        },
+        close(_socket, err) {
+          closed = (err as { code?: string } | undefined)?.code ?? "end";
+          resolve();
+        },
+        error(_socket, err) {
+          closed = (err as { code?: string }).code;
+          resolve();
+        },
+      },
+    });
+    await promise;
+    return { ...parse(wire), closed };
+  }
+
+  // Runs `fn` inside the read loop of another reader, which holds the 256 KiB buffer that the read loops of one
+  // thread share. A read loop that runs in there reads into a buffer of its own and delivers at 128 KiB.
+  async function insideAnotherReadLoop(fn: () => unknown) {
+    using other = socketPair();
+    const reader = Bun.file(other.source).stream().getReader();
+    const read = reader.read();
+    writeSync(other.peer, "x");
+    await read;
+    try {
+      await fn();
+    } finally {
+      await reader.cancel();
+    }
+  }
+
+  test.each([
+    // One read takes 256 KiB at most, so the first read does not reach the end.
+    [270_000, "after its first bytes", "tcp", "the event loop"],
+    [270_000, "on an empty source", "tcp", "the event loop"],
+    // A read that fills half of its buffer stops there. The next read finds the end and no bytes.
+    [200_000, "after its first bytes", "tcp", "the event loop"],
+    [200_000, "on an empty source", "tcp", "the event loop"],
+    // A unix socket takes less than one read of 256 KiB, and the client is on this thread, so the server writes
+    // the second delivery to a response that pushes back.
+    [400_000, "after its first bytes", "unix", "the event loop"],
+    [131_072, "on an empty source", "tcp", "the callback of another reader"],
+    [131_073, "on an empty source", "tcp", "the callback of another reader"],
+    [200_000, "on an empty source", "tcp", "the callback of another reader"],
+  ] as const)("%d bytes, response started %s, over %s, hangup handled by %s", async (length, started, over, by) => {
+    using dir = tempDir("serve-socket-hangup", {});
+    using pair = socketPair();
+    const unix = over === "unix" ? join(String(dir), "server.sock") : undefined;
+    const bytes = Buffer.alloc(length, unit);
+    let queued = -1;
+    const { promise: hungUp, resolve, reject } = Promise.withResolvers<void>();
+    // Runs when the server has started the response and waits on its poll.
+    const hangUp = () => {
+      if (by === "the event loop") {
+        queued = pair.hangUp(bytes);
+        return resolve();
+      }
+      // `resolves` runs the event loop until the promise settles, so the server handles the wakeup from in here.
+      insideAnotherReadLoop(async () => {
+        queued = pair.hangUp(bytes);
+        await expect(response).resolves.toBeDefined();
+      }).then(resolve, reject);
+    };
+
+    if (started === "after its first bytes") writeSync(pair.peer, first);
+    await using server = Bun.serve({
+      ...(unix ? { unix } : { port: 0, hostname: "127.0.0.1" }),
+      fetch() {
+        if (started === "on an empty source") setImmediate(hangUp);
+        return new Response(Bun.file(pair.source));
+      },
+    });
+    const response = get(server, unix, started === "after its first bytes" ? hangUp : undefined);
+    await hungUp;
+    const { status, body, complete, closed } = await response;
+
+    const expected = started === "after its first bytes" ? Buffer.concat([first, bytes]) : bytes;
+    expect({ queued, status, complete, closed, received: body.length, intact: body.equals(expected) }).toEqual({
+      queued: length,
+      status: "HTTP/1.1 200 OK",
+      complete: true,
+      closed: undefined,
+      received: expected.length,
+      intact: true,
+    });
+  });
+
+  // On Linux a unix socket whose peer closes with unread input is reset: the read after the peer's last bytes
+  // fails with ECONNRESET. The bytes are enough to end one read before that error (half of the read buffer).
+  // The server answers a failed body with a reset, so the client must not get a complete message.
+  test.skipIf(!isLinux)("a read error behind the bytes resets the connection", async () => {
+    using pair = socketPair();
+    writeSync(pair.source, "input that the peer never reads");
+    let queued = -1;
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        setImmediate(() => (queued = pair.hangUp(Buffer.alloc(160_000, unit))));
+        return new Response(Bun.file(pair.source));
+      },
+    });
+    const { status, complete, closed } = await get(server, undefined);
+    expect({ queued, status, complete, closed }).toEqual({
+      queued: 160_000,
+      status: "HTTP/1.1 200 OK",
+      complete: false,
+      closed: "ECONNRESET",
+    });
+  });
+});
 
 // A FIFO's stat size is 0, but the body length is unknown until EOF. Writing
 // Content-Length from the stat size and then streaming the pipe to EOF puts

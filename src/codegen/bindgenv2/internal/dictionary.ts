@@ -1,6 +1,7 @@
 import { hasRawAny, isAny } from "./any.ts";
 import {
   addIndent,
+  borrowed,
   dedent,
   headersForTypes,
   joinIndented,
@@ -80,8 +81,11 @@ export function dictionary(
         size,
         align,
         member: name,
-        fromExtern: e => `${name}::from_extern(&${e})`,
-        arm: { type: `Box<${name}>`, fromExtern: e => `Box::new(${name}::from_extern(&${e}))` },
+        fromExtern: e => `${name}::from_extern(${borrowed(size)}${e})`,
+        arm: {
+          type: `Box<${name}>`,
+          fromExtern: e => `Box::new(${name}::from_extern(${borrowed(size)}${e}))`,
+        },
       };
     }
     get rustLayout(): RustLayout {
@@ -103,6 +107,7 @@ export function dictionary(
         name: snakeCase(m.internalName),
         rust: m.type.rust,
       }));
+      const by = borrowed(this.rust.size);
       const conversion = !generateConversionFunction
         ? ""
         : `
@@ -111,7 +116,7 @@ export function dictionary(
             let mut ext = MaybeUninit::<Extern${name}>::uninit();
             crate::call_false_is_throw(global, || bindgenConvertJSTo${name}(global, value, &mut ext))?;
             // SAFETY: C++ filled \`ext\` because it returned true.
-            Ok(Self::from_extern(unsafe { ext.assume_init_ref() }))
+            Ok(Self::from_extern(unsafe { ext.${by ? "assume_init_ref" : "assume_init"}() }))
           }`;
       const declaration = !generateConversionFunction
         ? ""
@@ -143,7 +148,7 @@ export function dictionary(
         }${declaration}
 
         impl ${name} {
-          fn from_extern(ext: &Extern${name}) -> Self {
+          fn from_extern(ext: ${by}Extern${name}) -> Self {
             Self {
               ${joinIndented(
                 14,

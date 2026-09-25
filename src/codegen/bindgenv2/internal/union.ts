@@ -1,5 +1,6 @@
 import assert from "node:assert";
 import {
+  borrowed,
   headersForTypes,
   joinIndented,
   NamedType,
@@ -103,7 +104,7 @@ export function union(
         size,
         align,
         member: name,
-        fromExtern: e => `${name}::from_extern(&${e})`,
+        fromExtern: e => `${name}::from_extern(${borrowed(size)}${e})`,
       };
     }
     get rustLayout(): RustLayout {
@@ -154,7 +155,7 @@ export function union(
         }
 
         impl ${name} {
-          fn from_extern(ext: &Extern${name}) -> Self {
+          fn from_extern(ext: ${borrowed(this.rust.size)}Extern${name}) -> Self {
             // SAFETY: C++ wrote the arm that \`tag\` names.
             unsafe {
               match ext.tag {

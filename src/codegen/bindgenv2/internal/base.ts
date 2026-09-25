@@ -102,6 +102,11 @@ export function trivialRust(name: string, size: number): RustType {
   return { extern: name, size, align: size, member: name, fromExtern: e => e };
 }
 
+/** Clippy wants a `Copy` value of 8 bytes or less by value, and more than 64 bytes by reference. */
+export function borrowed(size: number): "" | "&" {
+  return size > 8 ? "&" : "";
+}
+
 export function unsupportedInRust(what: string): never {
   throw RangeError(`${what} has no Rust output`);
 }

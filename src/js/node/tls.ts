@@ -480,12 +480,16 @@ function checkServerIdentity(hostname, cert) {
 
   // As in Node.js (https://github.com/nodejs/node/commit/1d87a24050), a host is an IP address only as typed.
   if (net.isIP(hostname)) {
-    valid = ArrayPrototypeIncludes.$call(ips, canonicalizeIP(hostname));
+    // canonicalizeIP() is undefined for "::1%lo" and for a malformed IP SAN, and undefined must not match undefined.
+    const ip = canonicalizeIP(hostname);
+    valid = ip !== undefined && ArrayPrototypeIncludes.$call(ips, ip);
     if (!valid) reason = `IP: ${hostname} is not in the cert's list: ` + ArrayPrototypeJoin.$call(ips, ", ");
   } else {
     const hasDnsNames = dnsNames.length > 0;
     if (hasDnsNames || subject?.CN) {
-      const hostParts = splitHost(hostnameASCIIWithoutFQDN);
+      // Not in Node.js: a host with a character that no hostname has matches nothing, as in rustls and mozilla::pkix. "*.evil.test" would cover "localhost/.evil.test".
+      const isHostname = RegExpPrototypeExec.$call(/[^A-Za-z0-9._-]/, hostnameASCIIWithoutFQDN) === null;
+      const hostParts = isHostname ? splitHost(hostnameASCIIWithoutFQDN) : [];
       const wildcard = pattern => check(hostParts, pattern, true);
 
       if (hasDnsNames) {

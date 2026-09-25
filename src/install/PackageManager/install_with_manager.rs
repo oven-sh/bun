@@ -1505,6 +1505,13 @@ fn write_back_package_jsons(
         return Ok(());
     }
     let rows = rows_outside_synced_maps(&manager.lockfile, &changed.overridden, changed.catalogs);
+    bun_output::scoped_log!(
+        PackageManager,
+        "package.json write-back changed {} override names (catalogs: {}); {} rows resolve again",
+        changed.overridden.len(),
+        changed.catalogs,
+        rows.len()
+    );
     if rows.is_empty() {
         return Ok(());
     }

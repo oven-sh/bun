@@ -118,13 +118,6 @@ fn edit_after_resolve_slow(manager: &mut PackageManager) -> crate::Result<Change
     }
     .and_then(|()| sync_lockfile(manager, &edited));
 
-    if result.is_ok() && !updates.is_empty() {
-        manager.lockfile.bind_update_requests(
-            manager.pending_filtered_write.as_deref(),
-            manager.workspace_name_hash,
-            &mut updates,
-        );
-    }
     manager.update_requests = updates;
     manager.edited_package_jsons = edited;
     result

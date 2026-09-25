@@ -943,6 +943,8 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
   public closed: boolean = false;
   public totalQueries: number = 0;
   public onAllQueriesFinished: (() => void) | null = null;
+  /// Settles when the close() in progress does. Every later close() call returns it.
+  #closing: Promise<any> | null = null;
   /// AsyncLocalStorage context the SQL instance was created in. onconnect/onclose run
   /// inside it rather than in whatever context the native callback happens to fire in
   /// (none for a socket event, the close() caller's when the socket closes synchronously).
@@ -1334,10 +1336,6 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
   protected closeDedicatedConnections(): void {}
 
   async close(options?: { timeout?: number }): Promise<void> {
-    if (this.closed) {
-      return;
-    }
-
     let timeout = options?.timeout;
     // Presence, not truthiness: `timeout: 0` means close now, undefined/null mean drain with no timer.
     const hasTimeout = timeout != null;
@@ -1348,17 +1346,26 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
       }
     }
 
+    if (this.closed) {
+      if (timeout === 0) {
+        // stop waiting for the queries: do now what the pool does when the last of them ends
+        this.onAllQueriesFinished?.();
+      }
+      return this.#closing;
+    }
+
     this.closed = true;
     this.closeDedicatedConnections();
 
     if (hasTimeout) {
       if (timeout === 0 || !this.hasPendingQueries()) {
         // close immediately
-        await this.#close();
+        await (this.#closing = this.#close());
         return;
       }
 
       const { promise, resolve } = Promise.withResolvers<void>();
+      this.#closing = promise;
       const timer = setTimeout(() => {
         // timeout is reached, lets close and probably fail some queries
         this.#close().finally(resolve);
@@ -1375,12 +1382,13 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
     } else {
       if (!this.hasPendingQueries()) {
         // close immediately
-        await this.#close();
+        await (this.#closing = this.#close());
         return;
       }
 
       // gracefully close the pool
       const { promise, resolve } = Promise.withResolvers<void>();
+      this.#closing = promise;
 
       this.onAllQueriesFinished = () => {
         // everything is closed, lets close the pool

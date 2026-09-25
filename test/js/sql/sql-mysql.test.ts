@@ -1017,6 +1017,26 @@ if (isDockerEnabled()) {
           return expect(await error).toBe("ERR_MYSQL_CONNECTION_CLOSED");
         });
 
+        test("Connection end again waits for the pending end", async () => {
+          const sql = new SQL(getOptions());
+          const order: string[] = [];
+          const promise = sql`select SLEEP(0.2) as x`.execute().finally(() => order.push("query"));
+          const first = sql.end().then(() => order.push("first end"));
+          const later = sql.end().then(() => order.push("later end"));
+          expect(await promise).toEqual([{ x: 0 }]);
+          await Promise.all([first, later]);
+          expect(order).toEqual(["query", "first end", "later end"]);
+        });
+
+        test("Connection destroyed after end", async () => {
+          const sql = new SQL(getOptions());
+          const error = sql`select SLEEP(2)`.execute().catch(err => err.code);
+          const ended = sql.end();
+          await sql.end({ timeout: 0 });
+          expect(await error).toBe("ERR_MYSQL_CONNECTION_CLOSED");
+          await ended;
+        });
+
         test("unsafe", async () => {
           await using sql = new SQL({ ...getOptions(), max: 1 });
           await sql`create temporary table test_unsafe (x int)`;

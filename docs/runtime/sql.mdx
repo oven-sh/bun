@@ -980,6 +980,8 @@ await sql.close({ timeout: 0 }); // close all connections from the pool immediat
 
 `timeout` is in seconds. With `timeout: 0`, or when the timeout expires, queries that are still in flight reject with the adapter's `ERR_*_CONNECTION_CLOSED` error.
 
+You can call `close()` on the pool again while it is still closing. Every call resolves when the first `close()` resolves, and a later `close({ timeout: 0 })` closes immediately.
+
 ---
 
 ## Reserved Connections

@@ -1900,7 +1900,10 @@ static void ssl_trigger_handshake(struct us_socket_t *s, int success) {
   if (!success && ssl_dispatch_parked_reason(s)) {
     return;
   }
-  struct us_bun_verify_error_t verify_error = us_internal_ssl_verify_error(s);
+  /* A finished handshake reports the SSL's X509 verdict in every socket state. */
+  struct us_bun_verify_error_t verify_error =
+      success && s->ssl ? us_ssl_socket_verify_error_from_ssl(s_ssl(s))
+                        : us_internal_ssl_verify_error(s);
   us_dispatch_handshake(s, success, verify_error);
 }
 

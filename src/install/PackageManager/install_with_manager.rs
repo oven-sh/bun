@@ -11,7 +11,7 @@ use bun_semver::String as SemverString;
 
 use crate::GetJsonResult as WorkspacePackageJsonCacheResult;
 use crate::Subcommand;
-use crate::dependency::{DependencyExt as _, Tag as DependencyVersionTag};
+use crate::dependency::{Behavior, DependencyExt as _, Tag as DependencyVersionTag};
 use crate::lockfile::{self, Lockfile, reachable};
 use crate::resolution::Tag as ResolutionTag;
 use crate::update_transitive::{
@@ -1525,12 +1525,31 @@ fn write_back_package_jsons(
         .map(|&dependency_i| manager.lockfile.buffers.resolutions[dependency_i])
         .collect();
     crate::update_transitive::register_moved(manager, &from)?;
+    // A peer row resolves through the plain path only while its manifest is cached: once the task for it returns, the resolver reads the row from the buffer, peer flag and all.
+    let mut peer_targets: Vec<PackageID> = rows
+        .iter()
+        .zip(&from)
+        .filter(|&(&dependency_i, _)| {
+            manager.lockfile.buffers.dependencies[dependency_i]
+                .behavior
+                .is_peer()
+        })
+        .map(|(_, &package_id)| package_id)
+        .collect();
+    if !peer_targets.is_empty() {
+        index_sort::sort_slice_unstable_by(&mut peer_targets, |a, b| a.cmp(b));
+        peer_targets.dedup();
+        crate::package_manager_real::populate_manifest_cache::populate_manifest_cache(
+            manager,
+            crate::package_manager_real::populate_manifest_cache::Packages::Exact(&peer_targets),
+        )?;
+    }
     let moved: Vec<(DependencyID, PackageID)> = rows
         .into_iter()
         .map(|dependency_i| {
             (
                 dependency_i as DependencyID,
-                reenqueue_row(manager, dependency_i),
+                reenqueue_row(manager, dependency_i, true),
             )
         })
         .collect();
@@ -1547,7 +1566,7 @@ fn write_back_package_jsons(
     Ok(moved)
 }
 
-/// Resolved rows of reached packages that an override or a catalog entry governs and whose package does not satisfy the value bun.lock now declares. Left alone, as in the resolver and in `enqueue_named_updates`: workspace edges, peer and bundled rows (they follow their provider through `redirect_moved_edges`), plain rows of a name that a known `npm:` alias redirects, and values of a kind that `satisfies_dependency_version` cannot compare (a dist-tag, a folder, a tarball).
+/// Resolved rows of reached packages that an override or a catalog entry governs and whose package does not satisfy the value bun.lock now declares. Left alone, as in the resolver and in `enqueue_named_updates`: workspace edges, bundled rows and peer rows with a provider (they follow it through `redirect_moved_edges`), plain rows of a name that a known `npm:` alias redirects, and values of a kind that `satisfies_dependency_version` cannot compare (a dist-tag, a folder, a tarball). A peer row that is its target's only reason to exist (`plannable_peer_rows`) resolves again like a plain row.
 fn rows_outside_synced_maps(lockfile: &Lockfile, known_npm_aliases: &NpmAliasMap) -> Vec<usize> {
     let buf = lockfile.buffers.string_bytes.as_slice();
     let dependencies = lockfile.buffers.dependencies.as_slice();
@@ -1556,6 +1575,7 @@ fn rows_outside_synced_maps(lockfile: &Lockfile, known_npm_aliases: &NpmAliasMap
     let package_name_hashes = lockfile.packages.items_name_hash();
     let dependency_lists = lockfile.packages.items_dependencies();
     let reached = reachable::packages(lockfile, resolutions, reachable::Options::all(0));
+    let plannable_peers = plannable_peer_rows(lockfile, &DirectDependencies::default());
 
     let mut rows = Vec::new();
     for owner in 0..lockfile.packages.len() {
@@ -1569,8 +1589,8 @@ fn rows_outside_synced_maps(lockfile: &Lockfile, known_npm_aliases: &NpmAliasMap
             if package_id == invalid_package_id
                 || package_id as usize >= package_resolutions.len()
                 || dependency.behavior.is_workspace()
-                || dependency.behavior.is_peer()
                 || dependency.behavior.is_bundled()
+                || (dependency.behavior.is_peer() && !plannable_peers.is_set(dependency_i))
             {
                 continue;
             }
@@ -1618,9 +1638,12 @@ fn rows_outside_synced_maps(lockfile: &Lockfile, known_npm_aliases: &NpmAliasMap
     rows
 }
 
-/// Drops the row's resolution and queues it to resolve again; returns the package it resolved to. `enqueue_dependency_with_main` can grow `buffers.dependencies`, so the row is copied out first.
-fn reenqueue_row(manager: &mut PackageManager, dependency_i: usize) -> PackageID {
-    let dependency = manager.lockfile.buffers.dependencies[dependency_i].clone();
+/// Drops the row's resolution and queues it to resolve again; returns the package it resolved to. `enqueue_dependency_with_main` can grow `buffers.dependencies`, so the row is copied out first. With `as_plain` a peer row resolves through the plain path, like `update_transitive::reresolve`.
+fn reenqueue_row(manager: &mut PackageManager, dependency_i: usize, as_plain: bool) -> PackageID {
+    let mut dependency = manager.lockfile.buffers.dependencies[dependency_i].clone();
+    if as_plain {
+        dependency.behavior = dependency.behavior.with(Behavior::PEER, false);
+    }
     let from = core::mem::replace(
         &mut manager.lockfile.buffers.resolutions[dependency_i],
         invalid_package_id,
@@ -1653,7 +1676,7 @@ fn enqueue_overridden_rows(
             }
             let name_hash = manager.lockfile.buffers.dependencies[dependency_i].name_hash;
             if name_hashes.binary_search(&name_hash).is_ok() {
-                reenqueue_row(manager, dependency_i);
+                reenqueue_row(manager, dependency_i, false);
             }
         }
     }
@@ -1679,7 +1702,7 @@ fn enqueue_overridden_rows(
             {
                 continue;
             }
-            reenqueue_row(manager, dependency_i);
+            reenqueue_row(manager, dependency_i, false);
         }
     }
 }

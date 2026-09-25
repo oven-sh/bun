@@ -860,6 +860,20 @@ describe.concurrent("$ref overrides", () => {
     await expectInSync(dir, [""], { reinstall: true });
   });
 
+  // no-deps is reached through the peer row only: nothing provides it, so the row resolves again on its own.
+  test("a peer row without a provider resolves again", async () => {
+    const overrides = { "no-deps": "$dep-with-tags" };
+    const deps = (tags: string) => root({ dependencies: { "1-peer-dep-a": "1.0.0", "dep-with-tags": tags }, overrides });
+    const dir = await setup({ "package.json": deps("1.0.0") });
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.0.0"]);
+
+    await reinstall(dir, deps("^1.0.0"));
+    await run(dir, "update", "dep-with-tags");
+    expect((await lock(dir)).overrides).toStrictEqual({ "no-deps": "^1.0.1" });
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.1.0"]);
+    await expectInSync(dir, [""], { reinstall: true });
+  });
+
   test("bun update <name> re-resolves an optional row whose $name override value changed", async () => {
     const overrides = { "no-deps": "$dep-with-tags" };
     const deps = (tags: string) =>

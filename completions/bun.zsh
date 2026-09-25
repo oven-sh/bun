@@ -1168,15 +1168,15 @@ _bun_remove_param_package_completion() {
 
     local pkg_file="${target_cwd}/package.json"
     if [[ -f "${pkg_file}" && -r "${pkg_file}" ]]; then
+        if ! command -v jq &>/dev/null; then
+            return
+        fi
+
         local -a deps
-        deps=( "${(@f)$(BUN_PACKAGE_FILE="${pkg_file}" bun -e '
-            const pkg = await Bun.file(process.env.BUN_PACKAGE_FILE).json();
-            for (const section of ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"]) {
-                if (pkg[section] && typeof pkg[section] === "object") {
-                    for (const name of Object.keys(pkg[section])) console.log(name);
-                }
-            }
-        ' 2>/dev/null)}" )
+        deps=( "${(@f)$(jq -r '
+            .dependencies, .devDependencies, .peerDependencies, .optionalDependencies
+            | objects | keys[]
+        ' "${pkg_file}" 2>/dev/null)}" )
         deps=(${deps:#})
 
         if (( ${#deps} > 0 )); then

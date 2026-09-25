@@ -282,6 +282,7 @@ complete -c bun \
 complete -c bun \
        -n "__fish_seen_subcommand_from pm; and __fish_seen_subcommand_from licenses" -l 'filter' -s 'F' -d 'List only the matching workspaces' -r
 
+complete -c bun -n "__fish_seen_subcommand_from test" -F
 complete -c bun -n "__fish_seen_subcommand_from test" -l "bail" -s "b" -d "Exit immediately upon test failure"
 complete -c bun -n "__fish_seen_subcommand_from test" -l "coverage" -d "Generate coverage report"
 complete -c bun -n "__fish_seen_subcommand_from test" -l "watch" -d "Watch for changes"

@@ -1787,6 +1787,21 @@ pub fn move_opened_file_at(
     new_file_name: &[u16],
     replace_if_exists: bool,
 ) -> bun_sys::Result<()> {
+    let mut flags: ULONG =
+        win32::FILE_RENAME_POSIX_SEMANTICS | win32::FILE_RENAME_IGNORE_READONLY_ATTRIBUTE;
+    if replace_if_exists {
+        flags |= win32::FILE_RENAME_REPLACE_IF_EXISTS;
+    }
+    move_opened_file_at_with_flags(src_fd, new_dir_fd, new_file_name, flags)
+}
+
+/// [`move_opened_file_at`] with the `FILE_RENAME_*` flags chosen by the caller.
+fn move_opened_file_at_with_flags(
+    src_fd: Fd,
+    new_dir_fd: Fd,
+    new_file_name: &[u16],
+    flags: ULONG,
+) -> bun_sys::Result<()> {
     // FILE_RENAME_INFORMATION_EX and FILE_RENAME_POSIX_SEMANTICS require >= win10_rs1,
     // but FILE_RENAME_IGNORE_READONLY_ATTRIBUTE requires >= win10_rs5. We check >= rs5 here
     // so that we only use POSIX_SEMANTICS when we know IGNORE_READONLY_ATTRIBUTE will also be
@@ -1823,11 +1838,6 @@ pub fn move_opened_file_at(
     let rename_info: *mut win32::FILE_RENAME_INFORMATION_EX = rename_info_buf.as_mut_ptr().cast();
     let mut io_status_block: win32::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
 
-    let mut flags: ULONG =
-        win32::FILE_RENAME_POSIX_SEMANTICS | win32::FILE_RENAME_IGNORE_READONLY_ATTRIBUTE;
-    if replace_if_exists {
-        flags |= win32::FILE_RENAME_REPLACE_IF_EXISTS;
-    }
     // SAFETY: rename_info is aligned, non-null, and points into uninitialized storage we own;
     // ptr::write initializes the header without dropping prior (uninit) contents.
     unsafe {
@@ -1870,7 +1880,7 @@ pub fn move_opened_file_at(
         src_fd,
         new_dir_fd,
         bun_core::fmt::utf16(new_file_name),
-        if replace_if_exists {
+        if (flags & win32::FILE_RENAME_REPLACE_IF_EXISTS) != 0 {
             "replace_if_exists"
         } else {
             "no flag"
@@ -1878,8 +1888,12 @@ pub fn move_opened_file_at(
         format_args!("{:?}", rc)
     );
 
+    // Without FILE_RENAME_IGNORE_READONLY_ATTRIBUTE, ACCESS_DENIED is also what a read-only
+    // destination returns.
     #[cfg(debug_assertions)]
-    if rc == win32::ntstatus::ACCESS_DENIED {
+    if rc == win32::ntstatus::ACCESS_DENIED
+        && (flags & win32::FILE_RENAME_IGNORE_READONLY_ATTRIBUTE) != 0
+    {
         bun_core::debug_warn!(
             "moveOpenedFileAt was called on a file descriptor without access_mask=w.DELETE",
         );
@@ -1939,6 +1953,41 @@ pub(crate) fn rename_at_w(
     let _close = bun_sys::CloseOnDrop::new(src_fd);
 
     move_opened_file_at(src_fd, new_dir_fd, new_path_w, replace_if_exists)
+}
+
+/// Rename the file at `old_path` to `new_path` with POSIX semantics: a
+/// destination that has open handles is replaced when every one of them shares
+/// delete access, and those handles keep the file they opened. A directory
+/// source and a read-only destination are refused.
+pub(crate) fn rename_file_posix(old_path: &[u8], new_path: &[u8]) -> bun_sys::Result<()> {
+    let mut old_buf = bun_paths::w_path_buffer_pool::get();
+    let old_path_w = bun_paths::string_paths::to_nt_path(&mut old_buf.0[..], old_path);
+    let src_fd = bun_sys::open_file_at_windows(
+        Fd::cwd(),
+        old_path_w,
+        bun_sys::NtCreateFileOptions {
+            access_mask: win32::SYNCHRONIZE | win32::DELETE,
+            disposition: win32::FILE_OPEN,
+            options: win32::FILE_SYNCHRONOUS_IO_NONALERT
+                | win32::FILE_OPEN_REPARSE_POINT
+                | win32::FILE_NON_DIRECTORY_FILE,
+            ..Default::default()
+        },
+    )?;
+    let _close = bun_sys::CloseOnDrop::new(src_fd);
+
+    let mut new_buf = bun_paths::w_path_buffer_pool::get();
+    let mut new_nt_buf = bun_paths::w_path_buffer_pool::get();
+    let new_path_w = bun_paths::string_paths::to_nt_path(&mut new_buf.0[..], new_path);
+    let new_nt_path =
+        bun_sys::normalize_path_windows(Fd::cwd(), new_path_w, &mut new_nt_buf.0[..])?;
+
+    move_opened_file_at_with_flags(
+        src_fd,
+        Fd::cwd(),
+        new_nt_path,
+        win32::FILE_RENAME_POSIX_SEMANTICS | win32::FILE_RENAME_REPLACE_IF_EXISTS,
+    )
 }
 
 mod kernel32_2 {

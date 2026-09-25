@@ -8165,14 +8165,36 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// True if `root` is the binding of a top-level function declaration. That
     /// declaration declares the binding, so the caller prints no `var` for it.
     /// Tree shaking looks up a use by the ref as written, which is not always
-    /// the root, so this records a use of the root to keep the function.
+    /// the root. A part that uses the binding gets a use of the root, which
+    /// keeps the function. A `var` in dead code leaves no use.
     #[cold]
     #[inline(never)]
     fn keeps_function_merged_with_var(&mut self, root: Ref) -> bool {
         if !self.symbols[root.inner_index() as usize].function_merged_with_var() {
             return false;
         }
-        self.record_usage(root);
+        let generation = u64::from(self.part_generation) << 32;
+        let mut uses_linked_symbol = false;
+        for (at, &(used, _)) in self.part_uses.iter().enumerate() {
+            if self.part_use_slot[used.inner_index() as usize] != generation | at as u64 {
+                continue;
+            }
+            if used == root {
+                return true;
+            }
+            let mut used_root = used;
+            loop {
+                let link = self.symbols[used_root.inner_index() as usize].link.get();
+                if !link.is_valid() {
+                    break;
+                }
+                used_root = link;
+            }
+            uses_linked_symbol |= used_root == root;
+        }
+        if uses_linked_symbol {
+            self.record_usage(root);
+        }
         true
     }
 

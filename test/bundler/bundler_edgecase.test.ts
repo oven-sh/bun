@@ -4351,6 +4351,8 @@ describe("bundler", () => {
         var dropped = 5;
         var alsoDropped = () => 2;
         function alsoDropped() {}
+        function droppedWithDeadCode() { return 1; }
+        if (false) { var droppedWithDeadCode = 2; }
         function kept() { return 1; }
         var kept = (console.log("side effect"), 5);
         function used() { return "declaration"; }
@@ -4404,6 +4406,21 @@ describe("bundler", () => {
     compile: true,
     backend: "cli",
     run: { stdout: "1 2 var" },
+  });
+  // React Fast Refresh registers the function and the value of the `var`.
+  test("edgecase/FunctionAndVarOfOneNameReactFastRefresh", async () => {
+    using dir = tempDir("function-and-var-of-one-name", {
+      "app.jsx": `function App() { return "declaration"; }\nvar App = () => "var";\nconsole.log(App());`,
+    });
+    const build = await Bun.build({
+      entrypoints: [join(String(dir), "app.jsx")],
+      reactFastRefresh: true,
+      external: ["react-refresh/runtime"],
+    });
+    const output = (await build.outputs[0].text()).replace(/\s+/g, " ").replace(/"[^"]*app\.jsx:/g, '"app.jsx:');
+    expect(output).toContain(
+      `function App() { return "declaration"; } $RefreshReg$(App, "app.jsx:App"); App = () => "var"; $RefreshReg$(App, "app.jsx:App");`,
+    );
   });
   // The source of a file with `export` is strict code, and there the pair is an
   // early error. The dev server prints each file in a function. The transpiler

@@ -3549,14 +3549,14 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
 
     /// Returns true when the comment ended at a newline (not EOF); the caller emits the `Newline` token it consumed.
     fn eat_comment(&mut self) -> bool {
-        // A backslash does not continue a comment (bash, dash): stop at any newline.
-        // Inside backticks the first unescaped backtick closes the substitution (POSIX 2.6.3).
         let in_backtick = self.in_subshell == Some(SubShellKind::Backtick);
         while let Some(peeked) = self.peek() {
+            // The first unescaped backtick closes the substitution (POSIX 2.6.3).
             if in_backtick && !peeked.escaped && peeked.char == u32::from(b'`') {
                 return false;
             }
             let _ = self.eat();
+            // A backslash does not continue a comment (bash, dash).
             if peeked.char == u32::from(b'\n') {
                 return true;
             }

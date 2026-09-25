@@ -999,6 +999,18 @@ if (isDockerEnabled()) {
       expect((await sql`select 1`).command).toBe("SELECT");
     });
 
+    test("Result metadata is not enumerable", async () => {
+      const result = await sql`select 1 as x`;
+      expect(Object.keys(result)).toEqual(["0"]);
+      const metadata = ["count", "command", "lastInsertRowid", "affectedRows"];
+      expect(metadata.map(key => Object.getOwnPropertyDescriptor(result, key))).toEqual([
+        { value: 1, writable: true, enumerable: false, configurable: true },
+        { value: "SELECT", writable: true, enumerable: false, configurable: true },
+        { value: null, writable: true, enumerable: false, configurable: true },
+        { value: null, writable: true, enumerable: false, configurable: true },
+      ]);
+    });
+
     test("Create table", async () => {
       await sql`create table test(int int)`;
       await sql`drop table test`;

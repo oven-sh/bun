@@ -743,14 +743,7 @@ describe("lex shell", () => {
       // emit a delimiter: the variable and `ls` stay one word.
       "escaped newline after a variable joins the word",
       "echo $FOO\\\nls",
-      [
-        { Text: "echo" },
-        { Delimit: {} },
-        { Var: "FOO" },
-        { Text: "ls" },
-        { Delimit: {} },
-        { Eof: {} },
-      ],
+      [{ Text: "echo" }, { Delimit: {} }, { Var: "FOO" }, { Text: "ls" }, { Delimit: {} }, { Eof: {} }],
     ],
     [
       "operator after a variable",

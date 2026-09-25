@@ -1878,22 +1878,24 @@ impl<const SSL: bool> SocketHandler<SSL> {
                 // certificate.
                 let hostname = Self::identity_hostname(this, ssl_ptr);
                 if let Some(callback) = this.check_server_identity_callback() {
-                    // User JS: it can close this client.
                     let verdict = tls_server_identity::check_with_callback(
                         &this.global_object,
                         callback,
                         socket.ssl_mut(),
-                        &hostname.into_owned(),
+                        &hostname,
                     );
-                    if let Err(err) = verdict {
-                        return Self::fail_handshake(this, vm, err);
-                    }
-                    if this.client.get().status != valkey::Status::Connecting
-                        || this.client.get().socket.is_closed()
+                    // User JS ran: the verdict is for `socket`, and the client may have closed it or dialed again.
+                    let client = this.client.get();
+                    if client.status != valkey::Status::Connecting
+                        || socket.is_closed()
+                        || *client.socket.socket() != socket.socket
                     {
                         return Ok(());
                     }
-                    return this.client_mut().start();
+                    return match verdict {
+                        Ok(()) => this.client_mut().start(),
+                        Err(err) => Self::fail_handshake(this, vm, err),
+                    };
                 }
                 // With no `SSL*` there is no certificate to match: fail closed.
                 let identity_ok = hostname.is_empty()

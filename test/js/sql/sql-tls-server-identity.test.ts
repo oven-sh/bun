@@ -66,11 +66,15 @@ async function postgresServer(cert: ServerCert): Promise<MockServer> {
   const servernames: (string | false)[] = [];
   const { server, port } = await listeningServer(rawSocket => {
     rawSocket.on("error", () => {});
-    rawSocket.once("data", (chunk: Buffer) => {
-      // SSLRequest is Int32(8) Int32(80877103); the client sends nothing else
-      // until it has the one-byte answer.
+    let buffered = Buffer.alloc(0);
+    const onPlainData = (chunk: Buffer) => {
+      // SSLRequest is Int32(8) Int32(80877103). The client sends nothing else
+      // until it has the one-byte answer, then its ClientHello.
+      buffered = Buffer.concat([buffered, chunk]);
+      if (buffered.length < 8) return;
+      rawSocket.removeListener("data", onPlainData);
       rawSocket.write(pgSSLResponse("S"));
-      const socket = upgrade(rawSocket, cert, chunk.subarray(8), servernames);
+      const socket = upgrade(rawSocket, cert, buffered.subarray(8), servernames);
       let startup = true;
       socket.on("data", () => {
         if (startup) {
@@ -78,7 +82,8 @@ async function postgresServer(cert: ServerCert): Promise<MockServer> {
           socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
         }
       });
-    });
+    };
+    rawSocket.on("data", onPlainData);
   });
   return { url: `postgres://u@127.0.0.1:${port}/db`, servernames, close: () => server.close() };
 }
@@ -263,6 +268,83 @@ describe.each([
       );
       expect(result).toBe("CONNECTED");
       expect(calls).toBe(0);
+    });
+  });
+
+  test("a tls.checkServerIdentity that closes the client leaves it closed", async () => {
+    await withServer(localhost, async server => {
+      let calls = 0;
+      const sql = new SQL({
+        url: `${server.url}?sslmode=verify-full`,
+        max: 1,
+        idleTimeout: 1,
+        tls: {
+          ca: localhost.ca,
+          checkServerIdentity: () => {
+            calls++;
+            void sql.close();
+            return undefined;
+          },
+        },
+      });
+      // The pool decides how a connect in flight settles; the client must end up closed.
+      await sql.connect().catch(() => {});
+      const err: any = await sql`select 1`.then(
+        () => null,
+        e => e,
+      );
+      expect({ calls, code: err?.code }).toEqual({ calls: 1, code: `ERR_${scheme.toUpperCase()}_CONNECTION_CLOSED` });
+    });
+  });
+
+  // Node refuses the server for every truthy return value, so an `async` callback cannot accept it by accident.
+  test.each([
+    ["a Promise (async callback)", async () => undefined, "an instance of Promise"],
+    ["a string", () => "PIN_MISMATCH", "type string ('PIN_MISMATCH')"],
+    ["true", () => true, "type boolean (true)"],
+  ] as const)("tls.checkServerIdentity that returns %s fails the connection", async (_, callback, received) => {
+    await withServer(localhost, async server => {
+      const err: any = await connect(server.url, { ca: localhost.ca, checkServerIdentity: callback as any });
+      expect({ name: err?.name, code: err?.code, message: err?.message }).toEqual({
+        name: "TypeError",
+        code: "ERR_INVALID_RETURN_VALUE",
+        message: `Expected undefined or an instance of Error to be returned from the "tls.checkServerIdentity" function but got ${received}.`,
+      });
+    });
+  });
+
+  test.each([null, false, 0, ""])("tls.checkServerIdentity that returns %p accepts the server", async value => {
+    await withServer(localhost, async server => {
+      expect(await connect(server.url, { ca: localhost.ca, checkServerIdentity: (() => value) as any })).toBe(
+        "CONNECTED",
+      );
+    });
+  });
+
+  test("tls.checkServerIdentity receives the chain of getPeerCertificate(true)", async () => {
+    await withServer(agent1, async server => {
+      const chain: string[] = [];
+      let rootIsItsOwnIssuer = false;
+      const result = await connect(server.url, {
+        ca: agent1.ca,
+        checkServerIdentity: (_hostname: string, cert: tls.PeerCertificate) => {
+          // The walk of Node's certificate pinning example.
+          let current = cert as tls.DetailedPeerCertificate;
+          let last: string;
+          do {
+            chain.push(current.subject.CN);
+            last = current.fingerprint256;
+            current = current.issuerCertificate;
+          } while (current.fingerprint256 !== last);
+          rootIsItsOwnIssuer = current.issuerCertificate === current;
+          return undefined;
+        },
+      });
+      expect({ result, chain, rootIsItsOwnIssuer }).toEqual({
+        result: "CONNECTED",
+        chain: ["agent1", "ca1"],
+        rootIsItsOwnIssuer: true,
+      });
     });
   });
 

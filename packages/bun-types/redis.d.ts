@@ -47,8 +47,8 @@ declare module "bun" {
            * `serverName`, as in `tls.connect()`. It runs once the certificate
            * chain is verified, and not at all with `rejectUnauthorized: false`.
            * @param hostname The name the certificate is expected to match
-           * @param cert The server's certificate
-           * @returns An `Error` to refuse the connection, or `undefined` to accept it
+           * @param cert The server's certificate, with its issuers in `issuerCertificate`
+           * @returns `undefined` to accept the server. An `Error`, or any other truthy value, refuses it
            */
           checkServerIdentity?: NonNullable<import("node:tls").ConnectionOptions["checkServerIdentity"]> | undefined;
         });

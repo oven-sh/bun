@@ -414,4 +414,133 @@ describe("RedisClient tls.checkServerIdentity", () => {
       expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
     );
   });
+
+  // Node refuses the server for every truthy return value, so an `async` callback cannot accept it by accident.
+  test.each([
+    ["a Promise (async callback)", async () => undefined, "an instance of Promise"],
+    ["a string", () => "PIN_MISMATCH", "type string ('PIN_MISMATCH')"],
+  ] as const)("a callback that returns %s rejects the connection", async (_, callback, received) => {
+    await withServer({ key: localhostTls.key, cert: localhostTls.cert }, async port => {
+      const err: any = await ping(`rediss://localhost:${port}`, {
+        ca: localhostTls.cert,
+        checkServerIdentity: callback as any,
+      }).then(
+        () => null,
+        e => e,
+      );
+      expect({ name: err?.name, code: err?.code, message: err?.message }).toEqual({
+        name: "TypeError",
+        code: "ERR_INVALID_RETURN_VALUE",
+        message: `Expected undefined or an instance of Error to be returned from the "tls.checkServerIdentity" function but got ${received}.`,
+      });
+    });
+  });
+
+  test("receives the chain of getPeerCertificate(true)", async () => {
+    await withServer({ key: serverKey, cert: serverCert }, async port => {
+      const chain: string[] = [];
+      const result = await ping(`rediss://localhost:${port}`, {
+        ca,
+        checkServerIdentity: (_hostname: string, cert: tls.PeerCertificate) => {
+          let current = cert as tls.DetailedPeerCertificate;
+          let last: string;
+          do {
+            chain.push(current.subject.CN);
+            last = current.fingerprint256;
+            current = current.issuerCertificate;
+          } while (current.fingerprint256 !== last);
+          return undefined;
+        },
+      });
+      expect({ result, chain }).toEqual({ result: "PONG", chain: ["agent1", "ca1"] });
+    });
+  });
+
+  test("duplicate() keeps the callback", async () => {
+    await withServer({ key: localhostTls.key, cert: localhostTls.cert }, async port => {
+      let calls = 0;
+      const client = new RedisClient(`rediss://localhost:${port}`, {
+        autoReconnect: false,
+        connectionTimeout: 5000,
+        tls: {
+          ca: localhostTls.cert,
+          // Accepts the first connection only.
+          checkServerIdentity: () => (calls++ === 0 ? undefined : new Error("PIN_MISMATCH")),
+        },
+      });
+      try {
+        expect(await client.send("PING", [])).toBe("PONG");
+        // A connected client's duplicate dials at once: the callback refuses that connection.
+        const duplicate = await client.duplicate().then(
+          d => d,
+          e => e,
+        );
+        expect({ calls, duplicateConnected: duplicate instanceof RedisClient && duplicate.connected }).toEqual({
+          calls: 2,
+          duplicateConnected: false,
+        });
+        if (duplicate instanceof RedisClient) duplicate.close();
+      } finally {
+        client.close();
+      }
+    });
+  });
+
+  test("a callback that closes the client rejects the pending command", async () => {
+    await withServer({ key: localhostTls.key, cert: localhostTls.cert }, async port => {
+      const client = new RedisClient(`rediss://localhost:${port}`, {
+        autoReconnect: false,
+        connectionTimeout: 5000,
+        tls: {
+          ca: localhostTls.cert,
+          checkServerIdentity: () => {
+            client.close();
+            return undefined;
+          },
+        },
+      });
+      const err: any = await client.send("PING", []).then(
+        () => null,
+        e => e,
+      );
+      expect(err?.code).toBe("ERR_REDIS_CONNECTION_CLOSED");
+      expect(client.connected).toBe(false);
+    });
+  });
+
+  test("a callback that closes the client and dials again leaves the new connection to its own handshake", async () => {
+    await withServer({ key: localhostTls.key, cert: localhostTls.cert }, async (port, server) => {
+      const servernames = recordServernames(server);
+      let calls = 0;
+      let redial: Promise<unknown> | undefined;
+      const client = new RedisClient(`rediss://localhost:${port}`, {
+        autoReconnect: false,
+        connectionTimeout: 5000,
+        tls: {
+          ca: localhostTls.cert,
+          checkServerIdentity: () => {
+            if (calls++ === 0) {
+              client.close();
+              redial = client.connect();
+              // The first connection is refused; only the second one may be used.
+              return new Error("FIRST_CONNECTION_REFUSED");
+            }
+            return undefined;
+          },
+        },
+      });
+      try {
+        const first: any = await client.send("PING", []).then(
+          () => null,
+          e => e,
+        );
+        expect(first?.code).toBe("ERR_REDIS_CONNECTION_CLOSED");
+        await redial;
+        expect(await client.send("PING", [])).toBe("PONG");
+        expect({ calls, handshakes: servernames.length }).toEqual({ calls: 2, handshakes: 2 });
+      } finally {
+        client.close();
+      }
+    });
+  });
 });

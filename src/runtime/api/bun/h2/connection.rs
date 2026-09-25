@@ -142,6 +142,7 @@ const MAX_OUTBOUND_ACK_QUEUE: u32 = 1000;
 pub(crate) const DEFAULT_STREAM_RESET_BURST: u32 = 1000;
 pub(crate) const DEFAULT_STREAM_RESET_RATE: u32 = 33;
 
+#[derive(Clone, Copy)]
 enum ResetBy {
     Peer,
     Us,

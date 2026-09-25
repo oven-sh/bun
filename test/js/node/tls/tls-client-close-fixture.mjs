@@ -19,6 +19,7 @@
 // A mode that ends with "while another TLS socket is backpressured" first
 // opens a second TLS connection whose peer stops reading, and writes to it
 // until the kernel takes no more.
+import { createCipheriv, createHmac } from "node:crypto";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import http2 from "node:http2";
@@ -32,6 +33,30 @@ const pem = name => readFileSync(join(keys, name));
 
 // One application data record that does not decrypt.
 const junkRecord = Buffer.concat([Buffer.from([23, 3, 3, 0, 16]), Buffer.alloc(16, 0xa5)]);
+
+// A close_notify alert as the first record under the server's application
+// traffic secret (RFC 8446, sections 5.2 and 7.3). A TLS 1.3 server may send
+// records under that secret right behind its Finished. OpenSSL and BoringSSL
+// do not send this alert during their handshake, so the relay seals it.
+function sealedCloseNotify(serverHello, secret) {
+  const cipherSuite = serverHello.readUInt16BE(44 + serverHello[43]);
+  const [hash, cipher, keyLength] = {
+    0x1301: ["sha256", "aes-128-gcm", 16],
+    0x1302: ["sha384", "aes-256-gcm", 32],
+    0x1303: ["sha256", "chacha20-poly1305", 32],
+  }[cipherSuite];
+  const expandLabel = (label, length) =>
+    createHmac(hash, secret)
+      .update(
+        Buffer.concat([Buffer.from([0, length, 6 + label.length]), Buffer.from("tls13 " + label), Buffer.from([0, 1])]),
+      )
+      .digest()
+      .subarray(0, length);
+  const header = Buffer.from([23, 3, 3, 0, 19]);
+  const seal = createCipheriv(cipher, expandLabel("key", keyLength), expandLabel("iv", 12), { authTagLength: 16 });
+  seal.setAAD(header);
+  return Buffer.concat([header, seal.update(Buffer.from([1, 0, 21])), seal.final(), seal.getAuthTag()]);
+}
 
 function wire(bytes) {
   let alerts = 0;
@@ -144,6 +169,11 @@ export async function report(fullMode, version) {
     socket.on("close", () => serverSaw.resolve({ event: "secureConnection", peerCN, data, error }));
   });
   server.on("tlsClientError", error => serverSaw.resolve({ event: "tlsClientError", code: error.code }));
+  const serverSecret = Promise.withResolvers();
+  server.on("keylog", line => {
+    const [label, , secret] = line.toString().trim().split(" ");
+    if (label === "SERVER_TRAFFIC_SECRET_0") serverSecret.resolve(Buffer.from(secret, "hex"));
+  });
   await once(server.listen(0, "127.0.0.1"), "listening");
 
   let fromClient = [];
@@ -155,10 +185,14 @@ export async function report(fullMode, version) {
       fromClient.push(chunk);
       upstream.write(chunk);
     });
-    upstream.on("data", chunk => {
+    upstream.on("data", async chunk => {
       // The server's first chunk is its whole flight, up to its Finished.
-      const junk = mode === "a junk record behind the server's Finished" && serverChunks++ === 0;
-      downstream.write(junk ? Buffer.concat([chunk, junkRecord]) : chunk);
+      if (serverChunks++ === 0 && mode === "a junk record behind the server's Finished") {
+        chunk = Buffer.concat([chunk, junkRecord]);
+      } else if (serverChunks === 1 && mode === "a close_notify behind the server's Finished") {
+        chunk = Buffer.concat([chunk, sealedCloseNotify(chunk, await serverSecret.promise)]);
+      }
+      downstream.write(chunk);
     });
     downstream.on("end", () => upstream.end());
     upstream.on("end", () => downstream.end());
@@ -210,6 +244,7 @@ export async function report(fullMode, version) {
   switch (mode) {
     case "checkServerIdentity":
     case "a junk record behind the server's Finished":
+    case "a close_notify behind the server's Finished":
       closed = watch(tls.connect(refused));
       break;
     case "checkServerIdentity function":

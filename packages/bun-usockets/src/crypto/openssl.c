@@ -2364,12 +2364,13 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
   return s;
 }
 
-/* A read that finished the handshake and then failed (a bad record, broken
- * framing) reports the handshake before it closes, as the no-data completion
- * in us_internal_ssl_on_data does. The owner may turn the peer down there, and
- * that close releases the held flight: a peer must not collect it by sending
- * junk behind its Finished. Returns 0 when the socket is gone. */
-static int ssl_report_handshake_before_failed_read(struct us_socket_t *s, struct loop_ssl_data *loop_ssl_data) {
+/* A read that finished the handshake and then ends the connection (the peer's
+ * close_notify, a bad record, broken framing) reports the handshake before it
+ * closes, as the no-data completion in us_internal_ssl_on_data does. The owner
+ * may turn the peer down there, and that close releases the held flight: a
+ * peer must not collect it by sending an alert or junk behind its Finished.
+ * Returns 0 when the socket is gone. */
+static int ssl_report_handshake_before_close(struct us_socket_t *s, struct loop_ssl_data *loop_ssl_data) {
   if (s->ssl_handshake_state != HANDSHAKE_PENDING || !SSL_is_init_finished(s_ssl(s))) return 1;
   ERR_clear_error();
   ssl_trigger_handshake(s, 1);
@@ -2485,6 +2486,7 @@ restart:
           if (ssl_gone(s)) return NULL;
           err = SSL_ERROR_SSL;
         } else if (err == SSL_ERROR_ZERO_RETURN) {
+          if (!ssl_report_handshake_before_close(s, loop_ssl_data)) return NULL;
           /* Remote close_notify. A NewSessionTicket that rode in ahead of the
            * close_notify was parked by the new-session callback; deliver it
            * first (wire order - the ticket preceded these bytes, and Node's
@@ -2533,7 +2535,7 @@ restart:
           return s;
         }
 
-        if (!ssl_report_handshake_before_failed_read(s, loop_ssl_data)) return NULL;
+        if (!ssl_report_handshake_before_close(s, loop_ssl_data)) return NULL;
         if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
           ssl_park_fatal_reason(s);
         }
@@ -2546,7 +2548,7 @@ restart:
         /* If the BIO still has unread ciphertext at this point, the TLS
          * framing is broken — close. */
         if (loop_ssl_data->ssl_read_input_length) {
-          if (!ssl_report_handshake_before_failed_read(s, loop_ssl_data)) return NULL;
+          if (!ssl_report_handshake_before_close(s, loop_ssl_data)) return NULL;
           return ssl_close(s, 0, NULL);
         }
         /* SSL_read drove the handshake to completion but returned no app

@@ -2629,6 +2629,7 @@ describe("how a TLS client's way of closing reaches the server", () => {
     ["TLSv1.3", "checkServerIdentity", turnedDown(altnameInvalid, "close:true")],
     ["TLSv1.3", "checkServerIdentity function", turnedDown("error:ERR_PINNED_KEY", "close:true")],
     ["TLSv1.3", "a junk record behind the server's Finished", turnedDown(altnameInvalid, "close:true")],
+    ["TLSv1.3", "a close_notify behind the server's Finished", turnedDown(altnameInvalid, "close:true")],
     ["TLSv1.3", "tls.connect({ socket })", turnedDown(altnameInvalid, "close:true")],
     ["TLSv1.3", "https.request", turnedDown(altnameInvalid)],
     ["TLSv1.3", "http2.connect", turnedDown(altnameInvalid)],

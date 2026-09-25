@@ -39,6 +39,9 @@ public:
     static constexpr ASCIILiteral s_name = "ChaCha20-Poly1305"_s;
     static constexpr CryptoAlgorithmIdentifier s_identifier = CryptoAlgorithmIdentifier::ChaCha20_Poly1305;
     static constexpr size_t s_keyLengthBits = 256;
+    // RFC 8439 fixes the nonce at 96 bits and the tag at 128 bits.
+    static constexpr size_t s_ivLength = 12;
+    static constexpr uint8_t s_tagLengthBits = 128;
     static Ref<CryptoAlgorithm> create();
 
 private:

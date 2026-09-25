@@ -1285,8 +1285,6 @@ extern "C" napi_status napi_delete_reference(napi_env env, napi_ref ref)
     // napi_delete_reference with node_api_basic_env and deliberately omits
     // both CHECK_ENV_NOT_IN_GC and the pending-exception check, so we must
     // not use NAPI_CHECK_ENV_NOT_IN_GC or the throw-scope preamble here.
-    // Deleting the NapiRef mid-sweep is safe: WeakSet::sweep keeps the block
-    // it walks linked and reads the next block after the finalizers ran.
     NAPI_PREAMBLE_NO_THROW_SCOPE(env);
     NAPI_CHECK_ARG(env, ref);
     NapiRef* napiRef = toJS(ref);

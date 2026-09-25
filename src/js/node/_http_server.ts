@@ -3315,10 +3315,8 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     }
   }
   this._header = " ";
-  const req = this.req;
-  if (!req._consuming && !req?._readableState?.resumeScheduled) {
-    req._dump();
-  }
+  // A body that is still draining dumps its request when it finishes, so the request's 'close' follows 'finish'.
+  if (!draining) dumpUnreadRequest(this.req);
   // The socket is NOT detached here: like Node.js, res.socket stays assigned
   // until the response 'finish' machinery runs (the dispatcher detaches it
   // right after a synchronously-finished handler returns, or via its 'finish'
@@ -3357,10 +3355,18 @@ function emitResponseFinished(res, callback) {
   }
 }
 
+// Like Node.js's resOnFinish: a request that nothing read is resumed, so that it ends and closes.
+function dumpUnreadRequest(req) {
+  if (!req._consuming && !req?._readableState?.resumeScheduled) {
+    req._dump();
+  }
+}
+
 function flushPendingFinish(this: any) {
   const callback = this[kPendingFinish];
   if (callback === undefined) return;
   this[kPendingFinish] = undefined;
+  dumpUnreadRequest(this.req);
   queueResponseFinished(this, callback);
 }
 
@@ -3745,6 +3751,7 @@ ServerResponse.prototype.emit = function (event) {
       // The connection died mid-drain: like Node.js, the response still finishes, then closes.
       this[kPendingFinish] = undefined;
       this._closed = true;
+      dumpUnreadRequest(this.req);
       this._callPendingCallbacks();
       process.nextTick(emitResponseFinishedThenClose, this, callback);
       return false;

@@ -820,6 +820,71 @@ describe("backpressure", () => {
       expect(events).toEqual(backlog ? ["timeout", "finish"] : ["finish"]);
     });
 
+    // A request that nothing read is dumped when its response finishes, so its
+    // 'close' comes after 'finish'. The usual "stop when the client has left"
+    // guard relies on that: it must not destroy a response that still drains.
+    it("a request that the handler did not read closes after the response has finished", async () => {
+      const events: string[] = [];
+      let backlog = false;
+      const handled = Promise.withResolvers<void>();
+      const requestClosed = Promise.withResolvers<void>();
+      await using server = createServer(false, (req, res) => {
+        req.on("close", () => {
+          events.push(`request close, response finished: ${res.writableFinished}`);
+          if (!res.writableFinished) res.destroy();
+          requestClosed.resolve();
+        });
+        res.on("finish", () => events.push("finish"));
+        backlog = writeBody(res);
+        handled.resolve();
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const port = (server.address() as AddressInfo).port;
+      using client = pausedClient(port, "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+      await Promise.race([handled.promise, client.done]);
+      await ping(port);
+      // The client has not read anything yet.
+      if (backlog) expect(events).toEqual([]);
+      client.resume();
+      const [{ bytes }] = await Promise.all([client.done, requestClosed.promise]);
+      expect(bytes.length - bytes.indexOf("\r\n\r\n") - 4).toBe(BODY);
+      expect(events).toEqual(["finish", "request close, response finished: true"]);
+    });
+
+    // Not so for a request that the handler consumed: it closes when it has
+    // ended, whether the response is out or not. Node.js does the same.
+    it("a request that the handler resumed closes when it has ended", async () => {
+      const events: string[] = [];
+      let backlog = false;
+      const handled = Promise.withResolvers<void>();
+      const responseFinished = Promise.withResolvers<void>();
+      await using server = createServer(false, (req, res) => {
+        req.resume();
+        req.on("close", () => events.push(`request close, response finished: ${res.writableFinished}`));
+        res.on("finish", () => {
+          events.push("finish");
+          responseFinished.resolve();
+        });
+        backlog = writeBody(res);
+        handled.resolve();
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const port = (server.address() as AddressInfo).port;
+      using client = pausedClient(port, "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+      await Promise.race([handled.promise, client.done]);
+      await ping(port);
+      // The client has not read anything yet.
+      if (backlog) expect(events).toEqual(["request close, response finished: false"]);
+      client.resume();
+      const [{ bytes }] = await Promise.all([client.done, responseFinished.promise]);
+      expect(bytes.length - bytes.indexOf("\r\n\r\n") - 4).toBe(BODY);
+      expect(events).toEqual(
+        backlog
+          ? ["request close, response finished: false", "finish"]
+          : ["finish", "request close, response finished: true"],
+      );
+    });
+
     it("the unwritten part of the body keeps the process alive", async () => {
       // The child has nothing but the in-flight body left to do once its
       // handler has run and unref'd the server.

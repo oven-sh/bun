@@ -15,6 +15,7 @@ import {
   toASCIILiteral,
   toQuotedLiteral,
   Type,
+  uniqueRustNames,
   validateName,
 } from "./base.ts";
 import * as optional from "./optional.ts";
@@ -67,6 +68,10 @@ export function dictionary(
   const fullMembers = Object.entries(members).map(
     ([name, value]) => new FullDictionaryMember(name, value),
   );
+  const rustNames = uniqueRustNames(
+    name,
+    fullMembers.map(m => rustField(snakeCase(m.internalName))),
+  );
 
   return new (class extends DictionaryType {
     get name() {
@@ -98,14 +103,14 @@ export function dictionary(
         align,
         fields: fullMembers.map((m, i) => ({
           cpp: m.internalName,
-          rust: rustField(snakeCase(m.internalName)),
+          rust: rustNames[i],
           offset: offsets[i],
         })),
       };
     }
     get rustSource() {
-      const members = fullMembers.map(m => ({
-        name: rustField(snakeCase(m.internalName)),
+      const members = fullMembers.map((m, i) => ({
+        name: rustNames[i],
         rust: m.type.rust,
       }));
       const by = borrowed(this.rust.size);

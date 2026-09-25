@@ -169,18 +169,25 @@ export function rustField(name: string): string {
   return rustKeywords.has(name) ? name + "_" : name;
 }
 
-/** The variants of one enum, checked: each is an identifier and no two are equal. */
-export function rustVariants(owner: string, names: readonly string[]): string[] {
+/** The Rust names of the members of one type, checked: no two are equal. */
+export function uniqueRustNames(owner: string, names: readonly string[]): string[] {
   const seen = new Set<string>();
   for (const name of names) {
-    if (!/^[A-Z][A-Za-z0-9]*$/.test(name) || name === "Self") {
-      throw RangeError(`${owner}: \`${name}\` cannot be the name of a Rust variant`);
-    }
     if (seen.size === seen.add(name).size) {
       throw RangeError(`${owner}: two members have the Rust name \`${name}\``);
     }
   }
   return [...names];
+}
+
+/** The variants of one enum, checked: each is an identifier and no two are equal. */
+export function rustVariants(owner: string, names: readonly string[]): string[] {
+  for (const name of names) {
+    if (!/^[A-Z][A-Za-z0-9]*$/.test(name) || name === "Self") {
+      throw RangeError(`${owner}: \`${name}\` cannot be the name of a Rust variant`);
+    }
+  }
+  return uniqueRustNames(owner, names);
 }
 
 export function validateName(name: string): void {

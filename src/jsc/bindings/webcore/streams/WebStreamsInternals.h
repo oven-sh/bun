@@ -286,7 +286,9 @@ void setUpReadableStreamDefaultReader(JSC::JSGlobalObject*, JSReadableStreamDefa
 void setUpReadableStreamBYOBReader(JSC::JSGlobalObject*, JSReadableStreamBYOBReader*, JSReadableStream*); // userJS: no — ReadableStreamOperations.cpp
 JSC::JSPromise* readableStreamReaderGenericCancel(JSC::JSGlobalObject*, JSReadableStreamReaderBase*, JSC::JSValue reason); // userJS: yes — ReadableStreamOperations.cpp
 void readableStreamReaderGenericInitialize(JSC::JSGlobalObject*, JSReadableStreamReaderBase*, JSReadableStream*); // userJS: no, never throws — ReadableStreamOperations.cpp
-void readableStreamReaderGenericRelease(JSC::JSGlobalObject*, JSReadableStreamReaderBase*); // userJS: no (also runs Bun's native-handle updateRef(false) gate) — ReadableStreamOperations.cpp
+void readableStreamReaderGenericRelease(JSC::JSGlobalObject*, JSReadableStreamReaderBase*); // userJS: no — ReadableStreamOperations.cpp
+// Bun's native-handle updateRef(false) gate: the last step of a default reader's release.
+void readableStreamReleaseNativeSourceRef(JSC::JSGlobalObject*, JSReadableStream*); // userJS: no — ReadableStreamOperations.cpp
 
 // Stream-level state ops.
 JSC::JSPromise* readableStreamCancel(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue reason); // userJS: yes — ReadableStreamOperations.cpp
@@ -477,15 +479,15 @@ bool writableStreamCloseQueuedOrInFlight(JSWritableStream*); // userJS: no — W
 void writableStreamDealWithRejection(JSC::JSGlobalObject*, JSWritableStream*, JSC::JSValue error); // userJS: yes — WritableStreamOperations.cpp
 void writableStreamStartErroring(JSC::JSGlobalObject*, JSWritableStream*, JSC::JSValue reason); // userJS: yes — WritableStreamOperations.cpp
 void writableStreamFinishErroring(JSC::JSGlobalObject*, JSWritableStream*); // userJS: yes (user abort algorithm) — WritableStreamOperations.cpp
-void writableStreamFinishInFlightWrite(JSC::JSGlobalObject*, JSWritableStream*); // userJS: no — WritableStreamOperations.cpp
+void writableStreamFinishInFlightWrite(JSC::JSGlobalObject*, JSWritableStream*); // userJS: no, never throws — WritableStreamOperations.cpp
 void writableStreamFinishInFlightWriteWithError(JSC::JSGlobalObject*, JSWritableStream*, JSC::JSValue error); // userJS: yes — WritableStreamOperations.cpp
-void writableStreamFinishInFlightClose(JSC::JSGlobalObject*, JSWritableStream*); // userJS: no — WritableStreamOperations.cpp
+void writableStreamFinishInFlightClose(JSC::JSGlobalObject*, JSWritableStream*); // userJS: no, never throws — WritableStreamOperations.cpp
 void writableStreamFinishInFlightCloseWithError(JSC::JSGlobalObject*, JSWritableStream*, JSC::JSValue error); // userJS: yes — WritableStreamOperations.cpp
 bool writableStreamHasOperationMarkedInFlight(JSWritableStream*); // userJS: no — WritableStreamOperations.cpp
 void writableStreamMarkCloseRequestInFlight(JSC::VM&, JSWritableStream*); // userJS: no — WritableStreamOperations.cpp
 void writableStreamMarkFirstWriteRequestInFlight(JSC::VM&, JSWritableStream*); // userJS: no — WritableStreamOperations.cpp
 void writableStreamRejectCloseAndClosedPromiseIfNeeded(JSC::JSGlobalObject*, JSWritableStream*); // userJS: no, never throws — WritableStreamOperations.cpp
-void writableStreamUpdateBackpressure(JSC::JSGlobalObject*, JSWritableStream*, bool backpressure); // userJS: no — WritableStreamOperations.cpp
+void writableStreamUpdateBackpressure(JSC::JSGlobalObject*, JSWritableStream*, bool backpressure); // userJS: no, never throws — WritableStreamOperations.cpp
 void setUpWritableStreamDefaultController(JSC::JSGlobalObject*, JSWritableStream*, JSWritableStreamDefaultController*, JSC::JSValue startResult, double highWaterMark); // userJS: yes (thenable startResult) — WritableStreamOperations.cpp
 void setUpWritableStreamDefaultControllerFromUnderlyingSink(JSC::JSGlobalObject*, JSWritableStream*, JSC::JSValue underlyingSink, const UnderlyingSinkDict&, double highWaterMark, JSC::JSObject* sizeAlgorithm); // userJS: yes (invokes the user `start`) — WritableStreamOperations.cpp
 

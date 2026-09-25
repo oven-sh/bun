@@ -5122,7 +5122,7 @@ describe("direct stream edge cases", () => {
 // streams-termination-fixture.ts spins one streams operation per row under a timeout, so the
 // request lands inside it, and checks the stream afterwards.
 describe.concurrent("a node:vm timeout inside a streams operation", () => {
-  for (const [family, rows] of Object.entries({ writer: 7, reader: 7 })) {
+  for (const [family, rows] of Object.entries({ writer: 8, reader: 7 })) {
     test(family, async () => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), join(import.meta.dir, "streams-termination-fixture.ts"), family],

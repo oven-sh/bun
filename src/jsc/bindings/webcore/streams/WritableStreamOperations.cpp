@@ -231,7 +231,6 @@ JSPromise* writableStreamClose(JSGlobalObject* globalObject, JSWritableStream* s
         // Materialize-then-resolve so a later `.ready` read sees fulfilled even when the lazy
         // slot was null (close() does not clear [[backpressure]]).
         resolvePromise(globalObject, writer->readyPromise(globalObject), jsUndefined());
-        RETURN_IF_EXCEPTION(scope, nullptr);
     }
     writableStreamDefaultControllerClose(globalObject, stream->m_controller.get());
     RETURN_IF_EXCEPTION(scope, nullptr);
@@ -321,10 +320,8 @@ void writableStreamFinishErroring(JSGlobalObject* globalObject, JSWritableStream
 
     JSValue storedError = stream->m_storedError.get();
     // Rejecting runs no user JS, so nothing can mutate the deque under this loop.
-    for (auto& writeRequest : stream->m_writeRequests) {
+    for (auto& writeRequest : stream->m_writeRequests)
         rejectPromise(globalObject, writeRequest.get(), storedError);
-        RETURN_IF_EXCEPTION(scope, );
-    }
     {
         WTF::Locker locker { stream->cellLock() };
         stream->m_writeRequests.clear();
@@ -340,7 +337,6 @@ void writableStreamFinishErroring(JSGlobalObject* globalObject, JSWritableStream
 
     if (wasAlreadyErroring) {
         rejectPromise(globalObject, abortPromise, storedError);
-        RETURN_IF_EXCEPTION(scope, );
         RELEASE_AND_RETURN(scope, writableStreamRejectCloseAndClosedPromiseIfNeeded(globalObject, stream));
     }
 
@@ -354,11 +350,8 @@ void writableStreamFinishErroring(JSGlobalObject* globalObject, JSWritableStream
 
 void writableStreamFinishInFlightWrite(JSGlobalObject* globalObject, JSWritableStream* stream)
 {
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
     ASSERT(stream->m_inFlightWriteRequest);
     resolvePromise(globalObject, stream->m_inFlightWriteRequest.get(), jsUndefined());
-    RETURN_IF_EXCEPTION(scope, );
     stream->m_inFlightWriteRequest.clear();
 }
 
@@ -368,7 +361,6 @@ void writableStreamFinishInFlightWriteWithError(JSGlobalObject* globalObject, JS
     auto scope = DECLARE_THROW_SCOPE(vm);
     ASSERT(stream->m_inFlightWriteRequest);
     rejectPromise(globalObject, stream->m_inFlightWriteRequest.get(), error);
-    RETURN_IF_EXCEPTION(scope, );
     stream->m_inFlightWriteRequest.clear();
     ASSERT(stream->m_state == WritableStreamState::Writable || stream->m_state == WritableStreamState::Erroring);
     RELEASE_AND_RETURN(scope, writableStreamDealWithRejection(globalObject, stream, error));
@@ -377,10 +369,8 @@ void writableStreamFinishInFlightWriteWithError(JSGlobalObject* globalObject, JS
 void writableStreamFinishInFlightClose(JSGlobalObject* globalObject, JSWritableStream* stream)
 {
     auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
     ASSERT(stream->m_inFlightCloseRequest);
     resolvePromise(globalObject, stream->m_inFlightCloseRequest.get(), jsUndefined());
-    RETURN_IF_EXCEPTION(scope, );
     stream->m_inFlightCloseRequest.clear();
 
     WritableStreamState state = stream->m_state;
@@ -389,16 +379,13 @@ void writableStreamFinishInFlightClose(JSGlobalObject* globalObject, JSWritableS
         stream->m_storedError.clear();
         if (stream->m_pendingAbortRequest.promise) {
             resolvePromise(globalObject, stream->m_pendingAbortRequest.promise.get(), jsUndefined());
-            RETURN_IF_EXCEPTION(scope, );
             clearPendingAbortRequest(stream);
         }
     }
     stream->m_state = WritableStreamState::Closed;
     resolveStreamClosedPromise(vm, stream);
-    if (auto* writer = stream->m_writer.get()) {
+    if (auto* writer = stream->m_writer.get())
         resolvePromise(globalObject, writer->m_closedPromise.get(), jsUndefined());
-        RETURN_IF_EXCEPTION(scope, );
-    }
     ASSERT(!stream->m_pendingAbortRequest.promise);
     ASSERT(!stream->m_storedError);
 }
@@ -409,12 +396,10 @@ void writableStreamFinishInFlightCloseWithError(JSGlobalObject* globalObject, JS
     auto scope = DECLARE_THROW_SCOPE(vm);
     ASSERT(stream->m_inFlightCloseRequest);
     rejectPromise(globalObject, stream->m_inFlightCloseRequest.get(), error);
-    RETURN_IF_EXCEPTION(scope, );
     stream->m_inFlightCloseRequest.clear();
     ASSERT(stream->m_state == WritableStreamState::Writable || stream->m_state == WritableStreamState::Erroring);
     if (stream->m_pendingAbortRequest.promise) {
         rejectPromise(globalObject, stream->m_pendingAbortRequest.promise.get(), error);
-        RETURN_IF_EXCEPTION(scope, );
         clearPendingAbortRequest(stream);
     }
     RELEASE_AND_RETURN(scope, writableStreamDealWithRejection(globalObject, stream, error));
@@ -460,18 +445,14 @@ void writableStreamRejectCloseAndClosedPromiseIfNeeded(JSGlobalObject* globalObj
 
 void writableStreamUpdateBackpressure(JSGlobalObject* globalObject, JSWritableStream* stream, bool backpressure)
 {
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
     ASSERT(stream->m_state == WritableStreamState::Writable);
     ASSERT(!writableStreamCloseQueuedOrInFlight(stream));
     auto* writer = stream->m_writer.get();
     if (writer && backpressure != stream->m_backpressure) {
         if (backpressure)
             writer->m_readyPromise.clear();
-        else if (auto* ready = writer->m_readyPromise.get()) {
+        else if (auto* ready = writer->m_readyPromise.get())
             resolvePromise(globalObject, ready, jsUndefined());
-            RETURN_IF_EXCEPTION(scope, );
-        }
     }
     stream->m_backpressure = backpressure;
 }
@@ -533,29 +514,21 @@ namespace WebCore {
 
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onWSAbortStepsFulfilled, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* context = uncheckedDowncast<JSC::InternalFieldTuple>(callFrame->uncheckedArgument(1));
     auto* abortRequestPromise = uncheckedDowncast<JSC::JSPromise>(context->getInternalField(0));
     auto* stream = uncheckedDowncast<JSWritableStream>(context->getInternalField(1));
     Bun::WebStreams::resolvePromise(globalObject, abortRequestPromise, JSC::jsUndefined());
-    RETURN_IF_EXCEPTION(scope, {});
     Bun::WebStreams::writableStreamRejectCloseAndClosedPromiseIfNeeded(globalObject, stream);
-    RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onWSAbortStepsRejected, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* context = uncheckedDowncast<JSC::InternalFieldTuple>(callFrame->uncheckedArgument(1));
     auto* abortRequestPromise = uncheckedDowncast<JSC::JSPromise>(context->getInternalField(0));
     auto* stream = uncheckedDowncast<JSWritableStream>(context->getInternalField(1));
     Bun::WebStreams::rejectPromise(globalObject, abortRequestPromise, callFrame->argument(0));
-    RETURN_IF_EXCEPTION(scope, {});
     Bun::WebStreams::writableStreamRejectCloseAndClosedPromiseIfNeeded(globalObject, stream);
-    RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 

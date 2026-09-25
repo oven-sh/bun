@@ -7,7 +7,8 @@
 // process is alive, a lock and the promises of its holder agree, and no promise that the spec marks
 // as handled (reader.closed, writer.closed, writer.ready) was reported as an unhandled rejection.
 //
-// Prints "ok <rows>" or "FAIL" plus one line per failure ("<row>: <what> x<count>").
+// Prints "ok <rows>" or "FAIL" plus one line per failure ("<row>: <what> x<count>"). A family in
+// which no timeout landed inside an operation is a failure too: it checked nothing.
 import vm from "node:vm";
 
 const ROUNDS = Number(process.env.ROUNDS ?? 25);
@@ -133,6 +134,21 @@ const FAMILIES: Record<string, Record<string, Row>> = {
         }
       },
       check: reported,
+    },
+    // close() under backpressure resolves writer.ready, then queues the close.
+    "writer.close() under backpressure": {
+      spin() {
+        for (;;) {
+          globalThis.iterations++;
+          const stream = new WritableStream({}, { highWaterMark: 0 });
+          const writer = stream.getWriter();
+          globalThis.last = { writer };
+          writer.close().catch(noop);
+          globalThis.last = null;
+        }
+      },
+      settle: l => void l.writer.close().catch(noop),
+      check: l => (status(l.writer.closed) === "pending" ? "writer.closed never settles" : reported()),
     },
     "controller.error() with a writer": {
       spin() {
@@ -308,6 +324,7 @@ const family = FAMILIES[process.argv[2]];
 if (!family) throw new Error(`unknown family ${process.argv[2]}; one of ${Object.keys(FAMILIES).join(", ")}`);
 
 const failures: string[] = [];
+let landed = 0;
 for (const [name, row] of Object.entries(family)) {
   globalThis.spin = row.spin;
   const kinds = new Map<string, number>();
@@ -333,6 +350,7 @@ for (const [name, row] of Object.entries(family)) {
     await turn();
     if (!last) continue;
     checked++;
+    landed++;
     row.settle?.(last);
     await turn();
     await turn();
@@ -342,6 +360,7 @@ for (const [name, row] of Object.entries(family)) {
   for (const [what, count] of kinds) failures.push(`${name}: ${what} x${count}`);
 }
 
+if (!landed) failures.push("no timeout landed inside an operation");
 if (failures.length) {
   console.log(["FAIL", ...failures].join("\n"));
   process.exitCode = 1;

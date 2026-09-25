@@ -535,7 +535,6 @@ void readableStreamReaderGenericRelease(JSGlobalObject* globalObject, JSReadable
     else
         reader->m_closedPromise.set(vm, reader, promiseRejectedWithAsHandled(globalObject, releaseError));
 
-    JSObject* nativeHandle = nullptr;
     switch (stream->m_controllerKind) {
     case ControllerKind::None:
     case ControllerKind::NativeSink:
@@ -546,34 +545,41 @@ void readableStreamReaderGenericRelease(JSGlobalObject* globalObject, JSReadable
             pendingDirectRead->reject(vm, pendingReadError);
         }
         break;
-    case ControllerKind::Default: {
-        auto* controller = defaultControllerOf(stream);
-        controller->releaseSteps();
-        if (controller->m_algorithms.kind == SourceKind::Native)
-            nativeHandle = uncheckedDowncast<WebCore::JSNativeStreamSourceAdapter>(controller->m_algorithms.algorithmContext.get())->handle();
+    case ControllerKind::Default:
+        defaultControllerOf(stream)->releaseSteps();
         break;
-    }
     case ControllerKind::Byte:
         byteControllerOf(stream)->releaseSteps();
         break;
     }
     stream->m_reader.clear();
     reader->m_stream.clear();
+}
 
-    // Bun: drop the native handle's event-loop ref when its consumer releases the lock. This calls
-    // into the handle, so it comes after the release.
-    if (nativeHandle) {
-        JSValue updateRef = nativeHandle->getIfPropertyExists(globalObject, builtinNames(vm).updateRefPublicName());
-        RETURN_IF_EXCEPTION(scope, void());
-        if (updateRef && updateRef.isCallable()) {
-            auto callData = JSC::getCallData(updateRef);
-            MarkedArgumentBuffer args;
-            args.append(jsBoolean(false));
-            ASSERT(!args.hasOverflowed());
-            JSC::call(globalObject, updateRef, callData, nativeHandle, args);
-            RETURN_IF_EXCEPTION(scope, void());
-        }
-    }
+// Bun: drop the native handle's event-loop ref when its consumer releases the lock. This calls into
+// the handle, so it is the last step of a release: a termination taken in the call finds the
+// reader released and its read requests settled.
+void readableStreamReleaseNativeSourceRef(JSGlobalObject* globalObject, JSReadableStream* stream)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (stream->m_controllerKind != ControllerKind::Default)
+        return;
+    auto* controller = defaultControllerOf(stream);
+    if (controller->m_algorithms.kind != SourceKind::Native)
+        return;
+    auto* handle = uncheckedDowncast<WebCore::JSNativeStreamSourceAdapter>(controller->m_algorithms.algorithmContext.get())->handle();
+    if (!handle)
+        return;
+    JSValue updateRef = handle->getIfPropertyExists(globalObject, builtinNames(vm).updateRefPublicName());
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!updateRef || !updateRef.isCallable())
+        return;
+    MarkedArgumentBuffer args;
+    args.append(jsBoolean(false));
+    ASSERT(!args.hasOverflowed());
+    scope.release();
+    JSC::call(globalObject, updateRef, JSC::getCallData(updateRef), handle, args);
 }
 
 // ReadableStreamReaderGenericCancel(reader, reason)

@@ -436,6 +436,21 @@ describe("RedisClient tls.checkServerIdentity", () => {
     });
   });
 
+  test("an object that the callback returns is the reason the connection fails", async () => {
+    await withServer({ key: localhostTls.key, cert: localhostTls.cert }, async port => {
+      // Not an Error instance: the same rule as fetch() and node:tls.
+      const reason = { code: "PIN_MISMATCH" };
+      const err = await ping(`rediss://localhost:${port}`, {
+        ca: localhostTls.cert,
+        checkServerIdentity: (() => reason) as any,
+      }).then(
+        () => null,
+        e => e,
+      );
+      expect(err).toBe(reason);
+    });
+  });
+
   test("receives the chain of getPeerCertificate(true)", async () => {
     await withServer({ key: serverKey, cert: serverCert }, async port => {
       const chain: string[] = [];

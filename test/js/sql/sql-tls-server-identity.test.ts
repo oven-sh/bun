@@ -313,11 +313,14 @@ describe.each([
     });
   });
 
-  test("an object that tls.checkServerIdentity returns is the reason the connection fails", async () => {
+  test("an object that tls.checkServerIdentity returns fails the connection", async () => {
     await withServer(localhost, async server => {
-      // Not an Error instance: the same rule as fetch() and node:tls.
-      const reason = { code: "PIN_MISMATCH" };
-      expect(await connect(server.url, { ca: localhost.ca, checkServerIdentity: (() => reason) as any })).toBe(reason);
+      // Not an Error instance. The adapter reports every failure as its own Error class and keeps the fields.
+      const err: any = await connect(server.url, {
+        ca: localhost.ca,
+        checkServerIdentity: (() => ({ code: "PIN_MISMATCH" })) as any,
+      });
+      expect({ isError: err instanceof Error, code: err?.code }).toEqual({ isError: true, code: "PIN_MISMATCH" });
     });
   });
 

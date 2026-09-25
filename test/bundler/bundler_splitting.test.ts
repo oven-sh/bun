@@ -1491,6 +1491,49 @@ describe("bundler", () => {
     run: { file: "/out/e1.js", stdout: 'e1 ab ["b","a"]' },
   });
 
+  // mid.js is folded into the chunk of x.js, whose key b.js's chunk does not cover, so that chunk has no import of
+  // b.js's chunk. main.js must still import b.js's chunk ahead of it: a chunk only goes ahead of what its files import
+  // when it brings them in itself.
+  itBundled("splitting/FoldedChunkStaysBehindWhatItCannotImport", {
+    files: {
+      "/main.js": /* js */ `
+        import './mid.js'
+        import { x } from './x.js'
+        export const pages = [() => import('./page.js'), () => import('./tab.js')]
+        export const keep = x.length
+        console.log('main')
+      `,
+      "/ext.js": /* js */ `
+        import './b.js'
+        console.log('ext')
+      `,
+      "/page.js": /* js */ `
+        import './mid.js'
+        console.log('page')
+      `,
+      "/tab.js": /* js */ `
+        import { x } from './x.js'
+        console.log('tab', x.length)
+      `,
+      "/mid.js": /* js */ `
+        import './b.js'
+        console.log('mid')
+      `,
+      "/b.js": `console.log('b')`,
+      "/x.js": `export const x = "${Buffer.alloc(4000, "x").toString()}"`,
+    },
+    entryPoints: ["/main.js", "/ext.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      // main, ext, page, tab, the chunk of b.js, and the chunk mid.js and x.js share.
+      expect(jsFilesIn(api)).toHaveLength(6);
+      expect(chunkContaining(api, '"mid"')).toBe(chunkContaining(api, "xxxxxxxx"));
+    },
+    run: { file: "/out/main.js", stdout: "b\nmid\nmain" },
+  });
+
   // import() of another chunk is printed as import(); it does not pull the
   // runtime's __require into the bundle.
   itBundled("splitting/DynamicImportDoesNotNeedRequireShim", {
@@ -2625,6 +2668,71 @@ describe("bundler", () => {
         "foo.ts": `
           import { x } from './x.ts'
           export const foo = x
+        `,
+      },
+    },
+    // mid.ts imports its way to leaf.ts, whose call loads tool.ts, which needs mid.ts. In the source mid.ts is in the
+    // middle of being evaluated while leaf.ts runs, so tool.ts finds `Mid` uninitialized and mid.ts runs after leaf.ts.
+    // The chunk of mid.ts has to be entered before the chunk of leaf.ts and low.ts for the same to hold: a chunk that has
+    // not started is run on the spot, inside the call. (`late`, loaded after page.ts, is redundant in the key of leaf.ts
+    // and low.ts; 1.4 folded their chunk into mid.ts's, which had the same effect.)
+    "a file the target needs is being evaluated when the call runs": {
+      folding: true,
+      files: {
+        "main.ts": `await import('./page.ts')`,
+        "page.ts": `
+          import { mid } from './mid.ts'
+          console.log("page sees", mid())
+        `,
+        "mid.ts": `
+          import { Low, loadTool } from './low.ts'
+          import './leaf.ts'
+          export function mid() { return "mid" }
+          export const Mid = class extends Low {}
+          try { console.log("mid: tool is", loadTool()) } catch (e) { console.log("mid: loadTool threw", e.name) }
+          globalThis.later = () => import('./late.ts')
+        `,
+        "leaf.ts": `
+          import { loadTool } from './low.ts'
+          try { console.log("leaf: tool is", loadTool()) } catch (e) { console.log("leaf: loadTool threw", e.name) }
+        `,
+        "late.ts": `import './leaf.ts'`,
+        "low.ts": `
+          export class Low {}
+          export function loadTool() { return require('./tool.ts').tool() }
+        `,
+        "tool.ts": `
+          import { Mid } from './mid.ts'
+          export function tool() { return "tool" }
+          export let Tool: unknown
+          try { Tool = class extends Mid {} } catch { console.log("tool: Mid is not ready") }
+        `,
+      },
+    },
+    // The same, and the file being evaluated is the target itself. No fold can put one.ts and three.ts together:
+    // lazy.ts, which nothing loads before main.ts does, keeps three.ts apart.
+    "the target is being evaluated when the call runs": {
+      folding: true,
+      files: {
+        "main.ts": `
+          import { one } from './one.ts'
+          export const later = () => require('./lazy.ts')
+          console.log("main", one())
+        `,
+        "one.ts": `
+          import { loadOne } from './three.ts'
+          console.log("one starts")
+          export function one() { return "one" }
+          console.log("one sees", typeof loadOne())
+        `,
+        "three.ts": `
+          console.log("three starts")
+          export function loadOne() { return require('./one.ts').one }
+          console.log("three sees", typeof loadOne())
+        `,
+        "lazy.ts": `
+          import { loadOne } from './three.ts'
+          export const lazy = loadOne
         `,
       },
     },

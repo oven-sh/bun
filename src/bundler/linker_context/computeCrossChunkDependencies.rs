@@ -534,6 +534,29 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
             }
         }
 
+        // A chunk imports the chunks its files get to directly that load wherever it does, so the loader is inside it while they run.
+        for at in 0..chunks[chunk_index]
+            .content
+            .javascript()
+            .directly_reached_chunks
+            .len()
+        {
+            let other = chunks[chunk_index]
+                .content
+                .javascript()
+                .directly_reached_chunks[at];
+            if chunks[chunk_index]
+                .entry_bits
+                .subset_of(&chunks[other as usize].entry_bits)
+            {
+                let _ = chunks[chunk_index]
+                    .content
+                    .javascript_mut()
+                    .imports_from_other_chunks
+                    .get_or_put_value(other, CrossChunkImportItemList::default());
+            }
+        }
+
         // Make sure we also track dynamic cross-chunk imports. These need to be
         // tracked so we count them as dependencies of this chunk for the purpose
         // of hash calculation.

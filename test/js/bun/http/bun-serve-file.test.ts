@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test"
 import { bunEnv, bunExe, isASAN, isLinux, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
 import { mkfifo } from "mkfifo";
 import { appendFileSync, closeSync, openSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
+import { connect } from "node:net";
 import { join } from "node:path";
 
 const LARGE_SIZE = 1024 * 1024 * 8;
@@ -1338,6 +1339,46 @@ describe.concurrent("a reused Bun.file() handle after the file changes", () => {
         range: { status: 206, contentLength: "2", contentRange: `bytes 0-1/${after.length}`, body: after.slice(0, 2) },
       });
     });
+  });
+});
+
+// A read through an fd moves its position, so each row serves one request from its own fd.
+describe.skipIf(isWindows)("an open Bun.file(fd) after the file grows", () => {
+  it.concurrent.each([
+    [".size", (handle: BunFile) => handle.size],
+    ["await exists()", (handle: BunFile) => handle.exists()],
+    [".lastModified", (handle: BunFile) => handle.lastModified],
+  ] as const)("%s before the growth: the body has the bytes that Content-Length declares", async (_stat, stat) => {
+    using dir = tempDir("serve-fd-grows", { "log.txt": Buffer.alloc(100_000, "a").toString() });
+    const path = join(String(dir), "log.txt");
+    const fd = openSync(path, "r");
+    try {
+      const handle = Bun.file(fd);
+      await stat(handle);
+      appendFileSync(path, Buffer.alloc(100_000, "b"));
+      await using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response(handle) });
+
+      // fetch() waits for the bytes that a wrong Content-Length declares, so read the wire.
+      const { promise, resolve, reject } = Promise.withResolvers<Buffer>();
+      const chunks: Buffer[] = [];
+      const socket = connect(server.port, "127.0.0.1", () => {
+        socket.write("GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
+      });
+      socket.on("data", chunk => chunks.push(chunk));
+      socket.on("error", reject);
+      socket.on("close", () => resolve(Buffer.concat(chunks)));
+      const raw = await promise;
+
+      const headEnd = raw.indexOf("\r\n\r\n");
+      const head = raw.subarray(0, headEnd).toString("latin1");
+      expect({
+        status: head.split("\r\n")[0],
+        contentLength: /content-length: (\d+)/i.exec(head)?.[1],
+        body: raw.length - headEnd - 4,
+      }).toEqual({ status: "HTTP/1.1 200 OK", contentLength: "200000", body: 200_000 });
+    } finally {
+      closeSync(fd);
+    }
   });
 });
 

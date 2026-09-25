@@ -739,11 +739,11 @@ describe("lex shell", () => {
       ],
     ],
     [
-      // `\<newline>` is removed before tokenizing (POSIX 2.2.1), so it must not
-      // emit a delimiter: the variable and `ls` stay one word.
-      "escaped newline after a variable joins the word",
+      // `\<newline>` is removed before tokenizing (POSIX 2.2.1), so the
+      // variable name continues on the next line: bash reads `$FOOls`.
+      "escaped newline inside a variable name joins the name",
       "echo $FOO\\\nls",
-      [{ Text: "echo" }, { Delimit: {} }, { Var: "FOO" }, { Text: "ls" }, { Delimit: {} }, { Eof: {} }],
+      [{ Text: "echo" }, { Delimit: {} }, { Var: "FOOls" }, { Eof: {} }],
     ],
     [
       "operator after a variable",
@@ -873,6 +873,27 @@ describe("lex shell", () => {
       [{ Text: "echo" }, { Delimit: {} }, { SingleQuotedText: "a \\\r\nb" }, { Eof: {} }],
     ],
     [
+      "backslash CRLF inside a variable name joins the name",
+      "echo $FOO\\\r\nls \"$\\\r\nFOO\" $1\\\r\n2",
+      [
+        { Text: "echo" },
+        { Delimit: {} },
+        { Var: "FOOls" },
+        { Delimit: {} },
+        { Var: "FOO" },
+        { Delimit: {} },
+        { VarArgv: 1 },
+        { Text: "2" },
+        { Delimit: {} },
+        { Eof: {} },
+      ],
+    ],
+    [
+      "backslash CR not followed by LF ends a variable name",
+      "echo $FOO\\\rls",
+      [{ Text: "echo" }, { Delimit: {} }, { Var: "FOO" }, { Text: "\rls" }, { Delimit: {} }, { Eof: {} }],
+    ],
+    [
       "tab breaks words",
       "echo\ta\tb",
       [{ Text: "echo" }, { Delimit: {} }, { Text: "a" }, { Delimit: {} }, { Text: "b" }, { Delimit: {} }, { Eof: {} }],
@@ -917,6 +938,13 @@ describe("lex shell", () => {
     ],
   ])("line endings: %s", (_name, source, expected) => {
     expect(JSON.parse(lex({ raw: [source] }))).toEqual(expected);
+  });
+
+  // bash: `FOO=x FOOls=y; echo $FOO\<LF>ls` prints `y`.
+  test("Bun.$ backslash-newline inside a variable name", async () => {
+    const { stdout, exitCode } = await $`${{ raw: "FOO=x\nFOOls=y\necho $FOO\\\nls $FOO\\\r\nls\r\n" }}`.quiet();
+    expect(stdout.toString()).toBe("y y\n");
+    expect(exitCode).toBe(0);
   });
 
   test("Bun.$ template with CRLF and a trailing comment", async () => {

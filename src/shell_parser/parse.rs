@@ -3431,6 +3431,23 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             let char = result.char;
             let escaped = result.escaped;
 
+            // `\<newline>` is removed before tokenizing (POSIX 2.2.1): the name continues on the next line.
+            if escaped && (char == u32::from(b'\n') || char == u32::from(b'\r')) {
+                let snap = self.make_snapshot();
+                let _ = self.eat();
+                if char == u32::from(b'\n') {
+                    continue;
+                }
+                if let Some(next) = self.peek() {
+                    if !next.escaped && next.char == u32::from(b'\n') {
+                        let _ = self.eat();
+                        continue;
+                    }
+                }
+                self.backtrack(&snap);
+                return Ok(TextRange { start, end: self.j });
+            }
+
             if i == 0 {
                 match char {
                     c if c == u32::from(b'=') => {
